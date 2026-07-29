@@ -1,65 +1,92 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Protocol
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 
 
-def _same_expr(left: Any, right: Any) -> bool:
-    def _impl():
+class _CFunctionLike(Protocol):
+    """Structured C function surface needed by COD global statement coalescing."""
+
+    statements: object
+
+
+class _CodegenLike(Protocol):
+    """Codegen surface needed by COD global statement coalescing."""
+
+    cfunc: _CFunctionLike | None
+
+
+def _same_expr(left: object, right: object) -> bool:
+    def _impl() -> bool:
         if left is right:
             return True
         if type(left) is not type(right):
             return False
-        if isinstance(left, structured_c.CConstant):
-            return getattr(left, "value", None) == getattr(right, "value", None)
-        if isinstance(left, structured_c.CVariable):
+        if isinstance(left, structured_c.CConstant) and isinstance(right, structured_c.CConstant):
+            return left.value == right.value
+        if isinstance(left, structured_c.CVariable) and isinstance(right, structured_c.CVariable):
+            # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
             left_var = getattr(left, "variable", None)
+            # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
             right_var = getattr(right, "variable", None)
             if left_var is right_var:
                 return True
-            return getattr(left, "name", None) == getattr(right, "name", None) and getattr(
-                left_var, "name", None
-            ) == getattr(right_var, "name", None)
-        if isinstance(left, structured_c.CBinaryOp):
+            # Dynamic codegen boundary: rendered names and variable names are optional.
+            left_name = getattr(left, "name", None)
+            # Dynamic codegen boundary: rendered names and variable names are optional.
+            right_name = getattr(right, "name", None)
+            # Dynamic codegen boundary: rendered codegen variable names are optional.
+            left_var_name = getattr(left_var, "name", None)
+            # Dynamic codegen boundary: rendered codegen variable names are optional.
+            right_var_name = getattr(right_var, "name", None)
+            return left_name == right_name and left_var_name == right_var_name
+        if isinstance(left, structured_c.CBinaryOp) and isinstance(right, structured_c.CBinaryOp):
             return (
-                getattr(left, "op", None) == getattr(right, "op", None)
-                and _same_expr(getattr(left, "lhs", None), getattr(right, "lhs", None))
-                and _same_expr(getattr(left, "rhs", None), getattr(right, "rhs", None))
+                left.op == right.op
+                and _same_expr(left.lhs, right.lhs)
+                and _same_expr(left.rhs, right.rhs)
             )
-        if isinstance(left, structured_c.CUnaryOp):
-            return getattr(left, "op", None) == getattr(right, "op", None) and _same_expr(
-                getattr(left, "operand", None),
-                getattr(right, "operand", None),
-            )
+        if isinstance(left, structured_c.CUnaryOp) and isinstance(right, structured_c.CUnaryOp):
+            return left.op == right.op and _same_expr(left.operand, right.operand)
         return False
 
     return _impl()
 
 
-def _is_high_byte_projection(high_expr: Any, low_expr: Any) -> bool:
+def _is_high_byte_projection(high_expr: object, low_expr: object) -> bool:
     if not isinstance(high_expr, structured_c.CBinaryOp) or high_expr.op != "Shr":
         return False
-    shift = getattr(getattr(high_expr, "rhs", None), "value", None)
-    return shift == 8 and _same_expr(getattr(high_expr, "lhs", None), low_expr)
+    rhs = high_expr.rhs
+    if not isinstance(rhs, structured_c.CConstant):
+        return False
+    return rhs.value == 8 and _same_expr(high_expr.lhs, low_expr)
 
 
 def _coalesce_cod_word_global_statements(
-    project: Any,
-    codegen: Any,
-    synthetic_globals: Any,
+    project: object,
+    codegen: _CodegenLike,
+    synthetic_globals: object,
     *,
-    global_memory_addr: Callable[[Any], int | None],
-    high_byte_store_addr: Callable[[Any, Any], int | None],
-    synthetic_word_global_variable: Callable[[Any, Any, int], structured_c.CVariable | None],
+    global_memory_addr: Callable[[object], int | None],
+    high_byte_store_addr: Callable[[object, object], int | None],
+    synthetic_word_global_variable: Callable[[_CodegenLike, object, int], structured_c.CVariable | None],
 ) -> bool:
-    if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
+    cfunc = codegen.cfunc
+    if not synthetic_globals or cfunc is None:
         return False
 
     changed = False
 
-    def visit(node: Any) -> None:
+    def visit(node: object) -> None:
         nonlocal changed
 
         if isinstance(node, structured_c.CStatements):
@@ -86,7 +113,14 @@ def _coalesce_cod_word_global_statements(
                         if isinstance(stmt.rhs, structured_c.CConstant) and isinstance(
                             next_stmt.rhs, structured_c.CConstant
                         ):
-                            value = (stmt.rhs.value & 0xFF) | ((next_stmt.rhs.value & 0xFF) << 8)
+                            low_value = stmt.rhs.value
+                            high_value = next_stmt.rhs.value
+                            if not isinstance(low_value, int) or not isinstance(high_value, int):
+                                visit(stmt)
+                                new_statements.append(stmt)
+                                i += 1
+                                continue
+                            value = (low_value & 0xFF) | ((high_value & 0xFF) << 8)
                             new_statements.append(
                                 structured_c.CAssignment(
                                     word_global,
@@ -127,5 +161,5 @@ def _coalesce_cod_word_global_statements(
             if node.else_node is not None:
                 visit(node.else_node)
 
-    visit(codegen.cfunc.statements)
+    visit(cfunc.statements)
     return changed

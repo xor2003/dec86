@@ -1,7 +1,14 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: assemble immutable recovery artifacts from already-produced summaries.
+Forbidden: collecting new semantics, mutating output, or hiding failures.
+"""
+
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TypeAlias
 
 from .function_effect_summary import FunctionEffectSummary, summarize_x86_16_function_effects
 from .function_state_summary import FunctionStateSummary, summarize_x86_16_function_state
@@ -18,15 +25,17 @@ __all__ = [
     "build_x86_16_function_recovery_artifact",
 ]
 
+RecoverySource: TypeAlias = Mapping[str, object]
 
-def _value(source: Any, name: str, default: Any = None) -> Any:
-    if isinstance(source, dict):
-        return source.get(name, default)
-    return getattr(source, name, default)
+
+def _value(source: RecoverySource, name: str, default: object = None) -> object:
+    return source.get(name, default)
 
 
 @dataclass(frozen=True, slots=True)
 class FunctionRecoveryArtifact:
+    """Immutable function-level recovery report assembled from existing summaries."""
+
     cod_file: str
     proc_name: str
     proc_kind: str
@@ -44,6 +53,7 @@ class FunctionRecoveryArtifact:
     confidence: RecoveryConfidenceSummary
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-compatible function artifact."""
         return {
             "cod_file": self.cod_file,
             "proc_name": self.proc_name,
@@ -65,6 +75,8 @@ class FunctionRecoveryArtifact:
 
 @dataclass(frozen=True, slots=True)
 class CorpusRecoveryArtifact:
+    """Immutable corpus-level recovery report assembled from function artifacts."""
+
     function_rows: tuple[FunctionRecoveryArtifact, ...]
     confidence_status_counts: dict[str, int]
     ir_readiness_level_counts: dict[str, int]
@@ -76,6 +88,7 @@ class CorpusRecoveryArtifact:
     helper_family_rows: tuple[dict[str, object], ...]
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-compatible corpus artifact."""
         return {
             "function_rows": [row.to_dict() for row in self.function_rows],
             "confidence_status_counts": dict(self.confidence_status_counts),
@@ -89,16 +102,43 @@ class CorpusRecoveryArtifact:
         }
 
 
-def build_x86_16_function_recovery_artifact(source: Any) -> FunctionRecoveryArtifact:
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _string_int_counts(value: object) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    counts: dict[str, int] = {}
+    for key, count in value.items():
+        if isinstance(count, int):
+            counts[str(key)] = count
+    return counts
+
+
+def _mapping_rows(value: object) -> tuple[dict[str, object], ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return ()
+    rows: list[dict[str, object]] = []
+    for item in value:
+        if isinstance(item, Mapping):
+            rows.append({str(key): row_value for key, row_value in item.items()})
+    return tuple(rows)
+
+
+def build_x86_16_function_recovery_artifact(source: RecoverySource) -> FunctionRecoveryArtifact:
+    """Build one function recovery artifact from an already-produced mapping row."""
     return FunctionRecoveryArtifact(
         cod_file=str(_value(source, "cod_file", "")),
         proc_name=str(_value(source, "proc_name", "")),
         proc_kind=str(_value(source, "proc_kind", "")),
         ok=bool(_value(source, "ok", False)),
         stage_reached=str(_value(source, "stage_reached", "unknown")),
-        failure_class=_value(source, "failure_class", None),
-        fallback_kind=_value(source, "fallback_kind", None),
-        semantic_family=_value(source, "semantic_family", None),
+        failure_class=_optional_text(_value(source, "failure_class", None)),
+        fallback_kind=_optional_text(_value(source, "fallback_kind", None)),
+        semantic_family=_optional_text(_value(source, "semantic_family", None)),
         ir_summary=summarize_x86_16_ir_recovery(source),
         ir_readiness=summarize_x86_16_ir_readiness(source),
         effect_summary=summarize_x86_16_function_effects(source),
@@ -109,7 +149,8 @@ def build_x86_16_function_recovery_artifact(source: Any) -> FunctionRecoveryArti
     )
 
 
-def build_x86_16_corpus_recovery_artifact(results: list[Any]) -> CorpusRecoveryArtifact:
+def build_x86_16_corpus_recovery_artifact(results: Sequence[RecoverySource]) -> CorpusRecoveryArtifact:
+    """Build a deterministic corpus recovery artifact from existing mapping rows."""
     from .recovery_confidence import summarize_recovery_confidence
 
     def _sorted_counts(counts: dict[str, int]) -> dict[str, int]:
@@ -130,15 +171,15 @@ def build_x86_16_corpus_recovery_artifact(results: list[Any]) -> CorpusRecoveryA
             low_memory_read_region_counts[access.region] = low_memory_read_region_counts.get(access.region, 0) + 1
         for access in row.state_summary.low_memory_writes:
             low_memory_write_region_counts[access.region] = low_memory_write_region_counts.get(access.region, 0) + 1
-    confidence_summary = summarize_recovery_confidence(results)
+    confidence_summary = summarize_recovery_confidence(list(results))
     return CorpusRecoveryArtifact(
         function_rows=function_rows,
-        confidence_status_counts=dict(confidence_summary.get("status_counts", {}) or {}),
+        confidence_status_counts=_string_int_counts(confidence_summary.get("status_counts", {})),
         ir_readiness_level_counts=_sorted_counts(ir_readiness_level_counts),
         low_memory_read_region_counts=_sorted_counts(low_memory_read_region_counts),
         low_memory_write_region_counts=_sorted_counts(low_memory_write_region_counts),
-        helper_status_counts=dict(confidence_summary.get("helper_status_counts", {}) or {}),
-        helper_candidate_counts=dict(confidence_summary.get("helper_candidate_counts", {}) or {}),
-        helper_refusal_counts=dict(confidence_summary.get("helper_refusal_counts", {}) or {}),
-        helper_family_rows=tuple(confidence_summary.get("helper_family_rows", ()) or ()),
+        helper_status_counts=_string_int_counts(confidence_summary.get("helper_status_counts", {})),
+        helper_candidate_counts=_string_int_counts(confidence_summary.get("helper_candidate_counts", {})),
+        helper_refusal_counts=_string_int_counts(confidence_summary.get("helper_refusal_counts", {})),
+        helper_family_rows=_mapping_rows(confidence_summary.get("helper_family_rows", ())),
     )

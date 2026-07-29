@@ -1,4 +1,8 @@
-"""Refusal gates for unresolved decompiler output."""
+"""Refusal gates for unresolved decompiler output.
+
+Layer: CLI/fallback/reporting.
+Responsibility: owns final-output refusal checks for unresolved decompiler text.
+"""
 
 from __future__ import annotations
 
@@ -54,13 +58,53 @@ _RAW_IR_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
-_SOURCE_BACKED_LEAKAGE_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
+_FINAL_OUTPUT_LEAKAGE_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("unresolved-vvar", re.compile(r"\bvvar_\d+\b")),
     ("expr-cycle", re.compile(r"\bexpr_cycle\b")),
     ("raw-ds-segmented-access", re.compile(r"\b(?:SEG_PTR|SEG_U8|SEG_U16|SEG_U32|MK_FP)\s*\(\s*ds\s*,")),
     ("raw-ss-segmented-access", re.compile(r"\b(?:SEG_PTR|SEG_U8|SEG_U16|SEG_U32|MK_FP)\s*\(\s*ss\s*,")),
     ("raw-memory-symbol", re.compile(r"\bmem_[0-9a-fA-F]{4,}\b")),
 )
+
+_BP_STACK_LOCAL_DECL_RE = re.compile(
+    r"^\s*(?!extern\b|typedef\b|return\b)(?:[A-Za-z_]\w*(?:\s+|\s*\*)+)+(?P<name>[A-Za-z_]\w*)"
+    r"(?:\s*=\s*[^;]+)?\s*;\s*//\s*\[bp-0x[0-9a-fA-F]+\]"
+)
+
+
+def _bp_stack_locals_read_without_assignment(rendered_text: str) -> tuple[str, ...]:
+    """Return named BP locals that are read but never assigned.
+
+    This is a final quality gate, not semantic recovery. A stack local that
+    survives as a named C variable must have its defining store materialized by
+    lowering; otherwise validation can appear clean while emitted C still reads
+    an uninitialized recovered local.
+    """
+    locals_: list[str] = []
+    code_lines = _code_only_text(rendered_text).splitlines()
+    for line in code_lines:
+        match = _BP_STACK_LOCAL_DECL_RE.match(line)
+        if match is not None:
+            locals_.append(match.group("name"))
+    if not locals_:
+        return ()
+
+    body_without_decls = "\n".join(line for line in code_lines if _BP_STACK_LOCAL_DECL_RE.match(line) is None)
+    missing: list[str] = []
+    for name in locals_:
+        name_re = re.compile(rf"\b{re.escape(name)}\b")
+        if not name_re.search(body_without_decls):
+            continue
+        assignment_re = re.compile(
+            rf"(?:\b{re.escape(name)}\s*(?:[+\-*/%&|^]?=|\+\+|--)|(?:\+\+|--)\s*{re.escape(name)}\b)"
+        )
+        if assignment_re.search(body_without_decls):
+            continue
+        address_taken_re = re.compile(rf"(?:&\s*{re.escape(name)}\b|\b{re.escape(name)}\s*(?:\+|\[))")
+        if address_taken_re.search(body_without_decls):
+            continue
+        missing.append(name)
+    return tuple(missing)
 
 
 def _code_only_text(rendered_text: str) -> str:
@@ -101,13 +145,13 @@ def assess_decompiled_c_text(rendered_text: str) -> DecompilationQualityAssessme
     return _impl()
 
 
-def assess_source_backed_c_text(rendered_text: str) -> DecompilationQualityAssessment:
-    """Refuse source-evidenced output that still exposes unresolved recovery state.
+def assess_final_generated_c_text(rendered_text: str) -> DecompilationQualityAssessment:
+    """Refuse final generated C that still exposes unresolved recovery state.
 
-    The generic quality gate intentionally allows some ugly but honest C for
-    binaries without source evidence.  When source/COD evidence is embedded in
-    the acceptance payload, unresolved temporaries and raw segmented accesses are
-    evidence that a semantic stage failed to materialize facts before rewrite.
+    The generic quality gate intentionally allows some ugly but honest C during
+    intermediate diagnostics. Final emitted C cannot expose unresolved
+    temporaries, raw segmented accesses, or named stack locals whose stores were
+    not materialized before rewrite.
     """
     base = assess_decompiled_c_text(rendered_text)
     if base.reject_as_decompiled:
@@ -116,8 +160,10 @@ def assess_source_backed_c_text(rendered_text: str) -> DecompilationQualityAsses
         return DecompilationQualityAssessment(reject_as_decompiled=False, markers=())
 
     code_only_text = _code_only_text(rendered_text)
-    markers = tuple(label for label, pattern in _SOURCE_BACKED_LEAKAGE_MARKERS if pattern.search(code_only_text))
+    markers = list(label for label, pattern in _FINAL_OUTPUT_LEAKAGE_MARKERS if pattern.search(code_only_text))
+    if _bp_stack_locals_read_without_assignment(rendered_text):
+        markers.append("unassigned-stack-local")
     return DecompilationQualityAssessment(
         reject_as_decompiled=bool(markers),
-        markers=markers,
+        markers=tuple(markers),
     )

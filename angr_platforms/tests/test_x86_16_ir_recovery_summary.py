@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 from angr_platforms.X86_16.ir_recovery_summary import summarize_x86_16_ir_recovery
 
 
-def test_ir_recovery_summary_reads_prebuilt_vex_ir_summary():
+def test_ir_recovery_summary_reads_prebuilt_vex_ir_summary() -> None:
     summary = summarize_x86_16_ir_recovery(
         {
             "x86_16_vex_ir_summary": {
@@ -30,7 +32,7 @@ def test_ir_recovery_summary_reads_prebuilt_vex_ir_summary():
     assert summary.condition_counts == {"eq": 1}
 
 
-def test_ir_recovery_summary_defaults_deterministically_when_missing():
+def test_ir_recovery_summary_defaults_deterministically_when_missing() -> None:
     summary = summarize_x86_16_ir_recovery(
         {
             "cod_file": "DOSFUNC.COD",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import OrderedDict
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -7,41 +9,72 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CDirtyExpression,
     CDoWhileLoop,
     CExpressionStatement,
     CForLoop,
     CFunctionCall,
     CIfElse,
     CIndexedVariable,
+    CMultiStatementExpression,
     CStatements,
+    CStructField,
     CTypeCast,
     CUnaryOp,
     CVariable,
+    CVariableField,
     CWhileLoop,
 )
-from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
+from angr.sim_type import SimStruct, SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.decompiler_postprocess_stage import _is_direct_stack_update_materialization_delta_8616
+from angr_platforms.X86_16.ir.core import MemSpace
+from angr_platforms.X86_16.lowering import real_mode_linear, segmented_memory_lowering
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
 from angr_platforms.X86_16.lowering.real_mode_linear import (
     DirectStackMoveExpressionOp8616,
     DirectStackMoveSourceKind8616,
+    DirectStackUpdateFact8616,
     DirectStackUpdateOp8616,
     DirectStackUpdateSourceKind8616,
+    DirectStackWriteClassification8616,
+    RealModeLinearStackAccess8616,
     _direct_stack_move_instruction_facts_8616,
+    _direct_stack_update_instruction_facts_8616,
+    _filter_direct_stack_update_facts_for_active_function_8616,
+    _restore_same_block_stack_move_order_8616,
+    _tree_has_stack_assignment_for_instruction_addr_8616,
+    _tree_has_stack_move_assignment_8616,
     lower_stable_ss_linear_stack_dereferences_8616,
     materialize_direct_global_incdec_instructions_8616,
     materialize_direct_stack_incdec_instructions_8616,
     materialize_direct_stack_mov_instructions_8616,
+    prune_call_return_frame_stack_assignments_8616,
+    prune_callee_saved_stack_spills_8616,
+    prune_consumed_call_push_stack_assignments_8616,
+    prune_frame_prologue_stack_assignments_8616,
+    prune_materialized_call_push_stack_assignments_8616,
+    stack_cvar_for_stable_ss_linear_access_8616,
 )
 from angr_platforms.X86_16.lowering.segmented_memory_lowering import (
+    NearPointerArgumentFact8616,
+    NearPointerArgumentRefusalReason8616,
     apply_runtime_segment_lowering_8616,
     lower_runtime_segment_access_8616,
     lower_runtime_segment_address_8616,
 )
+from angr_platforms.X86_16.lowering.stack_aggregate_objects import StackAggregateObjectFact8616
+from angr_platforms.X86_16.lowering.storage_identity_facts import (
+    GlobalStorageIdentityFact8616,
+    StorageIdentityEvidenceKind8616,
+    global_storage_identity_facts_8616,
+)
 from angr_platforms.X86_16.pipeline.architecture_guard import assert_final_c_quality_8616
+from angr_platforms.X86_16.pipeline.contracts import PipelineHardError, assert_pipeline_contracts_8616
 from capstone.x86_const import (
+    X86_GRP_JUMP,
     X86_INS_ADC,
     X86_INS_ADD,
     X86_INS_CALL,
@@ -50,9 +83,12 @@ from capstone.x86_const import (
     X86_INS_DEC,
     X86_INS_IDIV,
     X86_INS_INC,
+    X86_INS_LCALL,
     X86_INS_MOV,
     X86_INS_OR,
+    X86_INS_POP,
     X86_INS_PUSH,
+    X86_INS_RET,
     X86_INS_SAR,
     X86_INS_SHL,
     X86_INS_SUB,
@@ -63,10 +99,13 @@ from capstone.x86_const import (
     X86_REG_AX,
     X86_REG_BP,
     X86_REG_BX,
+    X86_REG_CS,
     X86_REG_CX,
+    X86_REG_DI,
     X86_REG_DX,
     X86_REG_INVALID,
     X86_REG_SI,
+    X86_REG_SP,
 )
 
 import inertia_decompiler.recompile_check as recompile_check
@@ -105,8 +144,547 @@ def _bp_mem_operand(offset: int, *, size=2):
     )
 
 
+def _bp_indexed_mem_operand(offset: int, index: int, *, size: int = 1):
+    return SimpleNamespace(
+        type=X86_OP_MEM,
+        size=size,
+        mem=SimpleNamespace(base=X86_REG_BP, index=index, scale=1, disp=offset),
+    )
+
+
+def _reg_indirect_mem_operand(register: int, *, size: int = 2):
+    return SimpleNamespace(
+        type=X86_OP_MEM,
+        size=size,
+        mem=SimpleNamespace(base=register, index=X86_REG_INVALID, scale=1, disp=0),
+    )
+
+
+def _global_mem_operand(displacement: int, *, size: int = 2):
+    return SimpleNamespace(
+        type=X86_OP_MEM,
+        size=size,
+        mem=SimpleNamespace(
+            base=X86_REG_INVALID,
+            index=X86_REG_INVALID,
+            scale=1,
+            disp=displacement,
+        ),
+    )
+
+
 def _imm_operand(value: int, *, size=2):
     return SimpleNamespace(type=X86_OP_IMM, size=size, imm=value)
+
+
+def test_stable_ss_linear_positive_bp_access_requires_arg_evidence():
+    _project_obj, codegen = _project()
+
+    refused = stack_cvar_for_stable_ss_linear_access_8616(
+        codegen,
+        RealModeLinearStackAccess8616(4, 2),
+    )
+
+    assert refused is None
+    assert codegen._inertia_positive_bp_stack_access_without_arg_evidence_refused_8616 == 1
+
+    arg_var = SimStackVariable(4, 2, base="bp", name="arg_4", region=0x4010)
+    arg_cvar = CVariable(arg_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.arg_list = [arg_cvar]
+    codegen.cfunc.variables_in_use[arg_var] = arg_cvar
+
+    materialized = stack_cvar_for_stable_ss_linear_access_8616(
+        codegen,
+        RealModeLinearStackAccess8616(4, 2),
+    )
+
+    assert materialized is arg_cvar
+
+
+def test_direct_stack_cvar_width_preserves_signed_prototype_arg_type():
+    project, codegen = _project()
+    signed_type = SimTypeShort(True).with_arch(project.arch)
+    codegen.cfunc.functy = SimTypeFunction([signed_type], SimTypeShort(False), arg_names=("a",)).with_arch(project.arch)
+    arg_var = SimStackVariable(4, 2, base="bp", name="a", region=0x4010)
+    arg_cvar = CVariable(arg_var, variable_type=SimTypeShort(False), codegen=codegen)
+
+    real_mode_linear._ensure_stack_cvar_min_width_8616(codegen, arg_cvar, 2)
+
+    assert arg_cvar.variable_type.signed is True
+
+
+def test_lower_stable_ss_linear_stack_dereferences_returns_materialized_local():
+    project, codegen = _project()
+    local_var = SimStackVariable(-2, 2, base="bp", name="local_2", region=0x4010)
+    local_cvar = CVariable(local_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[local_var] = local_cvar
+    ss = CVariable(
+        SimRegisterVariable(project.arch.registers["ss"][0], 2, name="ss"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    bp = CVariable(
+        SimRegisterVariable(project.arch.registers["bp"][0], 2, name="bp"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    linear = CBinaryOp(
+        "Add",
+        CBinaryOp("Shl", ss, CConstant(4, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        CBinaryOp("Sub", bp, CConstant(2, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    deref = CUnaryOp("Dereference", linear, codegen=codegen)
+    dst = CVariable(SimRegisterVariable(0x80, 2, name="dst"), variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.statements.statements.append(CAssignment(dst, deref, codegen=codegen))
+
+    assert lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project) is True
+
+    lowered_rhs = codegen.cfunc.statements.statements[0].rhs
+    assert lowered_rhs is local_cvar
+
+
+class _BytesMemory:
+    def __init__(self, base: int, data: bytes):
+        self.base = base
+        self.data = data
+
+    def load(self, addr: int, size: int):
+        start = int(addr) - self.base
+        return self.data[start : start + int(size)]
+
+
+def test_direct_stack_instruction_facts_fall_back_to_linear_function_bytes():
+    # mov ax, [bp+4]; mov [bp-6], ax; inc word [bp-6]
+    code = bytes.fromhex("8b46048946faff46fa")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(memory=_BytesMemory(0x1000, code)),
+    )
+    function = SimpleNamespace(addr=0x1000, size=len(code), name="copy_and_inc")
+
+    move_facts = _direct_stack_move_instruction_facts_8616(project, function)
+    update_facts = _direct_stack_update_instruction_facts_8616(project, function)
+
+    assert len(move_facts) == 1
+    assert move_facts[0].dst_offset == -6
+    assert move_facts[0].source_kind is DirectStackMoveSourceKind8616.STACK_SLOT
+    assert move_facts[0].source_offset == 4
+    assert move_facts[0].ins_addr == 0x1003
+    assert len(update_facts) == 1
+    assert update_facts[0].offset == -6
+    assert update_facts[0].delta == 1
+    assert update_facts[0].ins_addr == 0x1006
+
+
+def test_direct_stack_write_inventory_distinguishes_stale_tag_from_unclassified_store() -> None:
+    # push bp; mov bp, sp; sub sp, 2; mov byte ptr [bp-2], al
+    code = bytes.fromhex("558bec83ec028846fe")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(memory=_BytesMemory(0x1000, code)),
+    )
+    function = SimpleNamespace(addr=0x1000, size=len(code), name="entry_then_store")
+    codegen = SimpleNamespace(_inertia_callsite_summary_inventory_8616={})
+
+    facts = real_mode_linear._direct_stack_move_instruction_facts_for_codegen_8616(
+        codegen,
+        project,
+        function,
+    )
+
+    assert facts == ()
+    inventory = codegen._inertia_direct_stack_write_inventory_8616
+    assert (
+        inventory.classify(ins_addr=0x1000, dst_offset=-2, width=2)
+        is DirectStackWriteClassification8616.PROVEN_NOT_WRITE
+    )
+    assert (
+        inventory.classify(ins_addr=0x1006, dst_offset=-2, width=1)
+        is DirectStackWriteClassification8616.EXACT_WRITE
+    )
+    assert inventory.failure_count == 0
+
+
+def test_direct_stack_instruction_facts_extend_to_exact_callsite_inventory_return() -> None:
+    # mov [bp-4], 0; mov [bp-2], 1; call next
+    code = bytes.fromhex("c746fc0000c746fe0100e80000")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(memory=_BytesMemory(0x1000, code)),
+    )
+    function = SimpleNamespace(addr=0x1000, size=5, name="partial_cfg_function")
+    summary = CallsiteSummary8616(
+        0x100A,
+        0x100D,
+        0x100D,
+        "direct_near",
+        0,
+        (),
+        0,
+        None,
+        False,
+    )
+    codegen = SimpleNamespace(_inertia_callsite_summary_inventory_8616={0x100A: summary})
+
+    facts = real_mode_linear._direct_stack_move_instruction_facts_for_codegen_8616(
+        codegen,
+        project,
+        function,
+    )
+
+    assert tuple((fact.ins_addr, fact.dst_offset, fact.source_value) for fact in facts) == (
+        (0x1000, -4, 0),
+        (0x1005, -2, 1),
+    )
+    evidence = codegen._inertia_direct_stack_move_extent_evidence_8616
+    assert evidence.raw_fact_count == 1
+    assert evidence.normalized_fact_count == 1
+    assert evidence.classified_fact_count == 1
+    assert evidence.materialized_count == 1
+    assert evidence.failure_count == 0
+    assert evidence.original_end == 0x1005
+    assert evidence.proven_end == 0x100D
+    assert evidence.recovered_fact_count == 1
+
+
+def test_direct_stack_instruction_facts_collect_binary_stack_expression():
+    # mov ax, [bp+4]; add ax, [bp+6]; mov [bp-2], ax
+    code = bytes.fromhex("8b46040346068946fe")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(memory=_BytesMemory(0x1000, code)),
+    )
+    function = SimpleNamespace(addr=0x1000, size=len(code), name="add_stack_words")
+
+    facts = _direct_stack_move_instruction_facts_8616(project, function)
+
+    assert len(facts) == 1
+    fact = facts[0]
+    assert fact.dst_offset == -2
+    assert fact.source_kind is DirectStackMoveSourceKind8616.STACK_SLOT_BINARY_EXPR
+    assert fact.source_offset == 4
+    assert fact.source_rhs_offset == 6
+    assert fact.source_op is DirectStackMoveExpressionOp8616.ADD
+
+
+def test_direct_stack_instruction_facts_collect_indexed_byte_store_with_global_index():
+    # mov si, word ptr [0x0ba2]; mov byte ptr [bp+si-44], 0
+    code = bytes.fromhex("8b36a20bc642d400")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(memory=_BytesMemory(0x1000, code)),
+    )
+    function = SimpleNamespace(addr=0x1000, size=len(code), name="terminate_local_row")
+
+    facts = _direct_stack_move_instruction_facts_8616(project, function)
+
+    assert len(facts) == 1
+    fact = facts[0]
+    assert fact.dst_offset == -44
+    assert fact.width == 1
+    assert fact.source_kind is DirectStackMoveSourceKind8616.IMMEDIATE
+    assert fact.source_value == 0
+    assert fact.dst_index_global_displacement == 0x0BA2
+    assert fact.dst_index_stack_offset is None
+    assert fact.dst_index_immediate is None
+    assert fact.dst_index_scale == 1
+    assert fact.ins_addr == 0x1004
+
+
+def test_direct_stack_update_facts_recover_register_mediated_store():
+    # mov ax, [bp-6]; inc ax; mov [bp-6], ax
+    code = bytes.fromhex("8b46fa408946fa")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(memory=_BytesMemory(0x1000, code)),
+    )
+    function = SimpleNamespace(addr=0x1000, size=len(code), name="register_inc_store")
+
+    update_facts = _direct_stack_update_instruction_facts_8616(project, function)
+
+    assert len(update_facts) == 1
+    assert update_facts[0].offset == -6
+    assert update_facts[0].source_kind is DirectStackUpdateSourceKind8616.STACK_SLOT
+    assert update_facts[0].source_offset == -6
+    assert update_facts[0].delta == 1
+    assert update_facts[0].ins_addr == 0x1004
+
+
+def test_direct_stack_update_facts_leave_cross_slot_expression_to_move_facts():
+    # mov ax, [bp+4]; inc ax; mov [bp-2], ax
+    code = bytes.fromhex("8b4604408946fe")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(memory=_BytesMemory(0x1000, code)),
+    )
+    function = SimpleNamespace(addr=0x1000, size=len(code), name="cross_slot_inc_store")
+
+    update_facts = _direct_stack_update_instruction_facts_8616(project, function)
+    move_facts = _direct_stack_move_instruction_facts_8616(project, function)
+
+    assert update_facts == ()
+    assert len(move_facts) == 1
+    assert move_facts[0].dst_offset == -2
+    assert move_facts[0].source_kind is DirectStackMoveSourceKind8616.STACK_SLOT_EXPR
+    assert move_facts[0].source_offset == 4
+    assert move_facts[0].source_op is DirectStackMoveExpressionOp8616.ADD
+    assert move_facts[0].source_immediate == 1
+
+
+def test_direct_stack_instruction_facts_use_linear_bytes_when_covering_block_lacks_capstone():
+    # call clock; add ax,[bp+4]; adc dx,[bp+6]; mov [bp-4],ax; mov [bp-2],dx
+    code = bytes.fromhex("e838040346041356068946fc8956fe")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(memory=_BytesMemory(0x100B, code)),
+        kb=SimpleNamespace(labels={0x1446: "_clock"}),
+    )
+    empty_covering_block = SimpleNamespace(addr=0x100B, size=len(code), capstone=SimpleNamespace(insns=()))
+    function = SimpleNamespace(addr=0x100B, size=len(code), name="sleep_like", blocks=(empty_covering_block,))
+
+    facts = _direct_stack_move_instruction_facts_8616(project, function)
+
+    assert len(facts) == 1
+    fact = facts[0]
+    assert fact.source_kind is DirectStackMoveSourceKind8616.WIDE_CALL_RETURN_STACK_ARITH
+    assert fact.dst_offset == -4
+    assert fact.width == 4
+    assert fact.source_offset == 4
+    assert fact.source_call_target == 0x1446
+    assert fact.source_call_name == "clock"
+    assert fact.ins_addr == 0x1014
+
+
+def test_direct_stack_instruction_facts_deduplicate_overlapping_linear_bytes():
+    # call clock; add ax,[bp+4]; adc dx,[bp+6]; mov [bp-4],ax; mov [bp-2],dx
+    code = bytes.fromhex("e838040346041356068946fc8956fe")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(memory=_BytesMemory(0x100B, code)),
+        kb=SimpleNamespace(labels={0x1446: "_clock"}),
+    )
+    project.arch.capstone.detail = True
+    partial_insns = tuple(project.arch.capstone.disasm(code[:3], 0x100B))
+    partial_block = SimpleNamespace(addr=0x100B, size=3, capstone=SimpleNamespace(insns=partial_insns))
+    function = SimpleNamespace(addr=0x100B, size=len(code), name="sleep_like", blocks=(partial_block,))
+
+    facts = _direct_stack_move_instruction_facts_8616(project, function)
+
+    assert len(facts) == 1
+    assert facts[0].source_kind is DirectStackMoveSourceKind8616.WIDE_CALL_RETURN_STACK_ARITH
+    assert facts[0].dst_offset == -4
+    assert facts[0].source_call_name == "clock"
+
+
+def test_direct_stack_move_instruction_facts_collect_signed_byte_stack_source():
+    load_byte = SimpleNamespace(
+        address=0x4010,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AL, size=1), _bp_mem_operand(-8, size=1)),
+    )
+    sign_extend = SimpleNamespace(address=0x4013, id=X86_INS_CBW, operands=())
+    store = SimpleNamespace(
+        address=0x4014,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-6), _reg_operand(X86_REG_AX)),
+    )
+    project = SimpleNamespace(arch=Arch86_16())
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load_byte, sign_extend, store))),),
+    )
+
+    facts = _direct_stack_move_instruction_facts_8616(project, function)
+
+    assert len(facts) == 1
+    fact = facts[0]
+    assert fact.dst_offset == -6
+    assert fact.width == 2
+    assert fact.source_kind is DirectStackMoveSourceKind8616.STACK_SLOT
+    assert fact.source_offset == -8
+    assert fact.source_access_width == 1
+    assert fact.source_sign_extend is True
+    assert fact.ins_addr == 0x4014
+
+
+def test_materialize_direct_stack_mov_reload_preserves_stack_slot_identity():
+    project, codegen = _project()
+    source_var = SimStackVariable(-8, 2, base="bp", name="barTemp", region=0x4010)
+    target_var = SimStackVariable(-6, 2, base="bp", name="iLength", region=0x4010)
+    source_cvar = CVariable(source_var, variable_type=SimTypeShort(False), codegen=codegen)
+    target_cvar = CVariable(target_var, variable_type=SimTypeShort(False), codegen=codegen)
+    ax_cvar = _reg(project, "ax", codegen)
+    codegen.cfunc.variables_in_use[source_var] = source_cvar
+    codegen.cfunc.variables_in_use[target_var] = target_cvar
+
+    tagged_store = CAssignment(
+        target_cvar,
+        ax_cvar,
+        codegen=codegen,
+        tags={"ins_addr": 0x4014},
+    )
+    guard = CIfElse(
+        [
+            (
+                CBinaryOp(
+                    "CmpLE",
+                    ax_cvar,
+                    CConstant(0, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                CStatements([], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    guard.tags = {"ins_addr": 0x401A}
+    codegen.cfunc.statements.statements.extend((tagged_store, guard))
+
+    load_byte = SimpleNamespace(
+        address=0x4010,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AL, size=1), _bp_mem_operand(-8, size=1)),
+    )
+    sign_extend = SimpleNamespace(address=0x4013, id=X86_INS_CBW, operands=())
+    store = SimpleNamespace(
+        address=0x4014,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-6), _reg_operand(X86_REG_AX)),
+    )
+    reload = SimpleNamespace(
+        address=0x4017,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-6)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(
+                    insns=(load_byte, sign_extend, store, reload),
+                )
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert changed is True
+    stack_store, register_reload, final_guard = codegen.cfunc.statements.statements
+    assert isinstance(stack_store, CAssignment)
+    assert stack_store.lhs is target_cvar
+    assert isinstance(register_reload, CAssignment)
+    assert register_reload.lhs.variable.name == "ax"
+    assert register_reload.rhs is target_cvar
+    assert final_guard is guard
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["reload_materialized_count"] == 1
+    assert stats["reload_failure_count"] == 0
+
+
+def test_direct_stack_move_signed_byte_source_projects_promoted_aggregate_field():
+    project, codegen = _project()
+    aggregate_type = SimStruct(
+        OrderedDict((('field_0', SimTypeChar(False)), ('field_1', SimTypeChar(False)))),
+        name='work_entry',
+        pack=True,
+    ).with_arch(project.arch)
+    source_var = SimStackVariable(-8, 2, base="bp", name="barTemp", region=0x4010)
+    source = CVariable(source_var, variable_type=aggregate_type, codegen=codegen)
+    codegen.cfunc.variables_in_use[source_var] = source
+    fact = real_mode_linear.DirectStackMoveFact8616(
+        dst_offset=-6,
+        width=2,
+        source_kind=DirectStackMoveSourceKind8616.STACK_SLOT,
+        ins_addr=0x4014,
+        source_offset=-8,
+        source_access_width=1,
+        source_sign_extend=True,
+    )
+
+    expr = real_mode_linear._direct_stack_move_source_expr_8616(codegen, fact)
+
+    assert isinstance(expr, CTypeCast)
+    assert isinstance(expr.expr, CVariableField)
+    assert expr.expr.variable is source
+    assert expr.expr.field.field == "field_0"
+
+
+def test_direct_stack_move_duplicate_check_matches_structural_indexed_rhs():
+    project, codegen = _project()
+    dst_var = SimStackVariable(-4, 2, base="bp", name="pivot", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    global_var = SimMemoryVariable(0x0BAA, 2, name="abarWork")
+    index_var = SimStackVariable(6, 2, base="bp", name="iHigh", region=0x4010)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+
+    existing_rhs = CIndexedVariable(
+        CVariable(global_var, variable_type=SimTypeShort(False), codegen=codegen),
+        CVariable(index_var, variable_type=SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(CAssignment(dst_cvar, existing_rhs, codegen=codegen))
+
+    fresh_rhs = CIndexedVariable(
+        CVariable(global_var, variable_type=SimTypeShort(False), codegen=codegen),
+        CVariable(index_var, variable_type=SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+
+    assert _tree_has_stack_move_assignment_8616(codegen.cfunc.statements, dst_cvar, fresh_rhs)
+
+
+def test_direct_stack_move_duplicate_check_matches_structural_aggregate_field_rhs():
+    project, codegen = _project()
+    aggregate_type = SimStruct(
+        OrderedDict((("field_0", SimTypeChar(False)), ("field_1", SimTypeChar(False)))),
+        name="work_entry",
+        pack=True,
+    ).with_arch(project.arch)
+    dst_var = SimStackVariable(-6, 2, base="bp", name="iLength", region=0x4010)
+    source_var = SimStackVariable(-8, 2, base="bp", name="barTemp", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    source = CVariable(source_var, variable_type=aggregate_type, codegen=codegen)
+    existing_rhs = CVariableField(
+        source,
+        CStructField(aggregate_type, 0, "field_0", codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(CAssignment(dst_cvar, existing_rhs, codegen=codegen))
+    fresh_source = CVariable(source_var, variable_type=aggregate_type, codegen=codegen)
+    fresh_rhs = CVariableField(
+        fresh_source,
+        CStructField(aggregate_type, 0, "field_0", codegen=codegen),
+        codegen=codegen,
+    )
+
+    assert _tree_has_stack_move_assignment_8616(codegen.cfunc.statements, dst_cvar, fresh_rhs)
+
+
+def test_direct_stack_move_duplicate_check_matches_instruction_and_destination():
+    project, codegen = _project()
+    dst_var = SimStackVariable(-4, 2, base="bp", name="pivot", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    existing = CAssignment(
+        dst_cvar,
+        CVariable(SimMemoryVariable(0x0BAA, 2, name="abarWork"), variable_type=SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x106E},
+    )
+    codegen.cfunc.statements.statements.append(existing)
+
+    assert _tree_has_stack_assignment_for_instruction_addr_8616(
+        codegen.cfunc.statements,
+        project,
+        0x106E,
+        dst_cvar,
+    )
 
 
 def test_direct_stack_move_wide_call_return_uses_original_project_for_rebased_call_target():
@@ -162,6 +740,10 @@ def test_direct_stack_move_wide_call_return_uses_original_project_for_rebased_ca
     assert fact.source_offset == 4
     assert fact.source_call_target == 0x1137E
     assert fact.source_call_name == "clock"
+    assert fact.source_call_ins_addr == 0x100B
+    assert fact.source_low_arith_ins_addr == 0x100E
+    assert fact.source_high_arith_ins_addr == 0x1011
+    assert fact.dst_high_ins_addr == 0x1017
 
 
 def test_materialize_wide_call_return_consumes_following_low_half_call_assignment():
@@ -185,7 +767,12 @@ def test_materialize_wide_call_return_consumes_following_low_half_call_assignmen
     codegen.cfunc.statements.statements.extend(
         [
             CAssignment(low_goal, CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen),
-            CAssignment(low_goal, CFunctionCall("clock", None, [], codegen=codegen), codegen=codegen),
+            CAssignment(
+                low_goal,
+                CFunctionCall("clock", None, [], codegen=codegen),
+                codegen=codegen,
+                tags={"ins_addr": 0x100B},
+            ),
         ]
     )
     call = SimpleNamespace(address=0x100B, id=X86_INS_CALL, operands=(_imm_operand(0x1446),))
@@ -223,15 +810,229 @@ def test_materialize_wide_call_return_consumes_following_low_half_call_assignmen
     stmt = codegen.cfunc.statements.statements[0]
     assert isinstance(stmt, CAssignment)
     assert isinstance(stmt.rhs, CBinaryOp)
+    assert isinstance(stmt.lhs.variable, SimStackVariable)
+    assert stmt.lhs.variable.size == 4
     assert stmt.rhs.op == "Add"
     assert isinstance(stmt.rhs.lhs, CFunctionCall)
-    assert getattr(stmt.rhs.lhs, "callee_target", None) == "clock"
+    assert stmt.rhs.lhs.callee_target == "clock"
+    assert stmt.rhs.lhs.tags["ins_addr"] == 0x100B
+
+    replayed_carrier = CAssignment(
+        low_goal,
+        CFunctionCall("clock", None, [], codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x100B},
+    )
+    codegen.cfunc.statements.statements.append(replayed_carrier)
+
+    replay_changed = materialize_direct_stack_mov_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert replay_changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    assert replayed_carrier not in codegen.cfunc.statements.statements
+
+
+def test_materialize_wide_call_return_consumes_exact_split_word_decomposition():
+    class _Functions:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            return None
+
+    project, codegen = _project()
+    original_project = SimpleNamespace(
+        kb=SimpleNamespace(functions=_Functions(), labels={}),
+        _inertia_lst_metadata=SimpleNamespace(code_labels={0x1137E: "_clock"}),
+    )
+    project.kb = SimpleNamespace(functions=_Functions(), labels={})
+    project._inertia_original_project = original_project
+    project._inertia_original_linear_delta = 0xFF38
+    low_goal = CVariable(
+        SimStackVariable(-4, 2, base="bp", name="goal"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    add_result = CVariable(
+        SimRegisterVariable(0, 2, name="ax_after_add"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    high_result = CVariable(
+        SimRegisterVariable(4, 2, name="dx_after_adc"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    high_goal = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="goal_high"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    unrelated_result = CVariable(
+        SimRegisterVariable(8, 2, name="unrelated"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    side_effect_result = CVariable(
+        SimRegisterVariable(10, 2, name="side_effect_result"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    low_call = CAssignment(
+        low_goal,
+        CFunctionCall("clock", None, [], codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x100B},
+    )
+    add_residue = CAssignment(
+        add_result,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x100E},
+    )
+    adc_residue = CAssignment(
+        high_result,
+        add_result,
+        codegen=codegen,
+        tags={"ins_addr": 0x1011},
+    )
+    high_store_residue = CAssignment(
+        high_goal,
+        high_result,
+        codegen=codegen,
+        tags={"ins_addr": 0x1017},
+    )
+    unrelated = CAssignment(
+        unrelated_result,
+        CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1012},
+    )
+    side_effecting = CAssignment(
+        side_effect_result,
+        CFunctionCall("observe", None, [], codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x100E},
+    )
+    codegen.cfunc.statements.statements.extend(
+        [
+            low_call,
+            add_residue,
+            adc_residue,
+            high_store_residue,
+            unrelated,
+            side_effecting,
+        ]
+    )
+    call = SimpleNamespace(address=0x100B, id=X86_INS_CALL, operands=(_imm_operand(0x1446),))
+    add = SimpleNamespace(
+        address=0x100E,
+        id=X86_INS_ADD,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(4)),
+    )
+    adc = SimpleNamespace(
+        address=0x1011,
+        id=X86_INS_ADC,
+        operands=(_reg_operand(X86_REG_DX), _bp_mem_operand(6)),
+    )
+    mov_lo = SimpleNamespace(
+        address=0x1014,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-4), _reg_operand(X86_REG_AX)),
+    )
+    mov_hi = SimpleNamespace(
+        address=0x1017,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        blocks=(
+            SimpleNamespace(capstone=SimpleNamespace(insns=(call,))),
+            SimpleNamespace(capstone=SimpleNamespace(insns=(add, adc, mov_lo, mov_hi))),
+        )
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    statements = codegen.cfunc.statements.statements
+    assert add_residue not in statements
+    assert adc_residue not in statements
+    assert high_store_residue not in statements
+    assert unrelated in statements
+    assert side_effecting in statements
+    assert codegen._inertia_direct_stack_move_lowering_8616["wide_call_decomposition_pruned_count"] == 3
+
+
+def test_materialize_wide_call_return_rebinds_later_low_half_condition_read():
+    class _Functions:
+        def function(self, *, addr=None, create=False, **_kwargs):
+            return None
+
+    project, codegen = _project()
+    original_project = SimpleNamespace(
+        kb=SimpleNamespace(functions=_Functions(), labels={}),
+        _inertia_lst_metadata=SimpleNamespace(code_labels={0x1137E: "_clock"}),
+    )
+    project.kb = SimpleNamespace(functions=_Functions(), labels={})
+    project._inertia_original_project = original_project
+    project._inertia_original_linear_delta = 0xFF38
+    low_goal = CVariable(
+        SimStackVariable(-4, 2, base="bp", name="goal"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    low_assign = CAssignment(low_goal, CFunctionCall("clock", None, [], codegen=codegen), codegen=codegen)
+    condition = CBinaryOp(
+        "CmpLE",
+        CFunctionCall("clock", None, [], codegen=codegen),
+        low_goal,
+        codegen=codegen,
+    )
+    loop = CWhileLoop(condition, CStatements([], codegen=codegen), codegen=codegen)
+    codegen.cfunc.statements.statements.extend([low_assign, loop])
+    call = SimpleNamespace(address=0x100B, id=X86_INS_CALL, operands=(_imm_operand(0x1446),))
+    add = SimpleNamespace(
+        address=0x100E,
+        id=X86_INS_ADD,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(4)),
+    )
+    adc = SimpleNamespace(
+        address=0x1011,
+        id=X86_INS_ADC,
+        operands=(_reg_operand(X86_REG_DX), _bp_mem_operand(6)),
+    )
+    mov_lo = SimpleNamespace(
+        address=0x1014,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-4), _reg_operand(X86_REG_AX)),
+    )
+    mov_hi = SimpleNamespace(
+        address=0x1017,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        blocks=(
+            SimpleNamespace(capstone=SimpleNamespace(insns=(call,))),
+            SimpleNamespace(capstone=SimpleNamespace(insns=(add, adc, mov_lo, mov_hi))),
+        )
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    stmt = codegen.cfunc.statements.statements[0]
+    assert isinstance(stmt, CAssignment)
+    assert isinstance(stmt.lhs.variable, SimStackVariable)
+    assert stmt.lhs.variable.size == 4
+    assert loop.condition.rhs is stmt.lhs
 
 
 def test_materialize_direct_global_inc_instruction_from_binary_evidence():
     project, codegen = _project()
-    metadata = SimpleNamespace(global_names=("counter",))
-    project._inertia_cod_metadata_by_func_addr_8616 = {0x4010: metadata}
+    project.kb = SimpleNamespace(labels={0x1234: "counter"})
     placeholder_var = SimRegisterVariable(0, 2, name="ax")
     placeholder = CVariable(placeholder_var, variable_type=SimTypeShort(False), codegen=codegen)
     codegen.cfunc.statements.statements.append(
@@ -256,12 +1057,21 @@ def test_materialize_direct_global_inc_instruction_from_binary_evidence():
     assert stmt.lhs.variable.addr == 0x1234
     assert isinstance(stmt.rhs, CBinaryOp)
     assert stmt.rhs.op == "Add"
+    assert global_storage_identity_facts_8616(codegen) == (
+        GlobalStorageIdentityFact8616(
+            space=MemSpace.DS,
+            offset=0x1234,
+            width=2,
+            name="counter",
+            evidence_addr=0x4018,
+            kind=StorageIdentityEvidenceKind8616.DIRECT_GLOBAL_UPDATE,
+        ),
+    )
 
 
 def test_materialize_direct_global_inc_instruction_is_idempotent():
     project, codegen = _project()
-    metadata = SimpleNamespace(global_names=("counter",))
-    project._inertia_cod_metadata_by_func_addr_8616 = {0x4010: metadata}
+    project.kb = SimpleNamespace(labels={0x1234: "counter"})
     placeholder_var = SimRegisterVariable(0, 2, name="ax")
     placeholder = CVariable(placeholder_var, variable_type=SimTypeShort(False), codegen=codegen)
     codegen.cfunc.statements.statements.append(
@@ -288,6 +1098,16 @@ def test_materialize_direct_global_inc_instruction_is_idempotent():
     assert stats["materialized_count"] == 1
     assert stats["already_materialized_count"] == 1
     assert stats["failure_count"] == 0
+    assert global_storage_identity_facts_8616(codegen) == (
+        GlobalStorageIdentityFact8616(
+            space=MemSpace.DS,
+            offset=0x1234,
+            width=2,
+            name="counter",
+            evidence_addr=0x4018,
+            kind=StorageIdentityEvidenceKind8616.DIRECT_GLOBAL_UPDATE,
+        ),
+    )
 
 
 def test_materialize_direct_global_add_refuses_duplicate_rebased_global_assignment():
@@ -362,8 +1182,7 @@ def test_materialize_direct_global_add_renames_generated_target_to_same_addr_sou
 
 def test_materialize_direct_global_inc_consumes_one_fact_once_for_duplicate_tags():
     project, codegen = _project()
-    metadata = SimpleNamespace(global_names=("counter",))
-    project._inertia_cod_metadata_by_func_addr_8616 = {0x4010: metadata}
+    project.kb = SimpleNamespace(labels={0x1234: "counter"})
     for reg_name in ("ax", "bx"):
         placeholder_var = SimRegisterVariable(0, 2, name=reg_name)
         placeholder = CVariable(placeholder_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -419,8 +1238,7 @@ def test_materialize_direct_global_inc_consumes_one_fact_once_for_duplicate_tags
 
 def test_materialize_direct_global_inc_materializes_distinct_same_global_facts():
     project, codegen = _project()
-    metadata = SimpleNamespace(global_names=("counter",))
-    project._inertia_cod_metadata_by_func_addr_8616 = {0x4010: metadata}
+    project.kb = SimpleNamespace(labels={0x1234: "counter"})
     for ins_addr, reg_name in ((0x4018, "ax"), (0x4020, "bx")):
         placeholder_var = SimRegisterVariable(0, 2, name=reg_name)
         placeholder = CVariable(placeholder_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -475,8 +1293,7 @@ def test_materialize_direct_global_inc_materializes_distinct_same_global_facts()
 
 def test_materialize_direct_global_inc_refuses_guard_condition_rewrite():
     project, codegen = _project()
-    metadata = SimpleNamespace(global_names=("counter",))
-    project._inertia_cod_metadata_by_func_addr_8616 = {0x4010: metadata}
+    project.kb = SimpleNamespace(labels={0x1234: "counter"})
 
     placeholder_var = SimRegisterVariable(0, 2, name="ax")
     statement_placeholder = CVariable(placeholder_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -514,8 +1331,7 @@ def test_materialize_direct_global_inc_refuses_guard_condition_rewrite():
 
 def test_materialize_direct_global_add_immediate_instruction_from_binary_evidence():
     project, codegen = _project()
-    metadata = SimpleNamespace(global_names=("seen",))
-    project._inertia_cod_metadata_by_func_addr_8616 = {0x4010: metadata}
+    project.kb = SimpleNamespace(labels={0x0048: "seen"})
     placeholder_var = SimRegisterVariable(0, 2, name="ax")
     placeholder = CVariable(placeholder_var, variable_type=SimTypeShort(False), codegen=codegen)
     codegen.cfunc.statements.statements.append(
@@ -546,7 +1362,7 @@ def test_materialize_direct_global_add_immediate_instruction_from_binary_evidenc
 
 def test_materialize_direct_global_inc_redecodes_blocks_without_capstone_details():
     project, codegen = _project()
-    project._inertia_cod_metadata_by_func_addr_8616 = {0x4010: SimpleNamespace(global_names=("counter",))}
+    project.kb = SimpleNamespace(labels={0x1234: "counter"})
     placeholder_var = SimRegisterVariable(0, 2, name="ax")
     placeholder = CVariable(placeholder_var, variable_type=SimTypeShort(False), codegen=codegen)
     codegen.cfunc.statements.statements.append(
@@ -591,7 +1407,7 @@ def test_materialize_direct_global_inc_refuses_without_tagged_site():
 
 def test_materialize_direct_global_inc_inserts_before_next_tagged_statement():
     project, codegen = _project()
-    project._inertia_cod_metadata_by_func_addr_8616 = {0x4010: SimpleNamespace(global_names=("counter",))}
+    project.kb = SimpleNamespace(labels={0x1234: "counter"})
     later_var = SimRegisterVariable(0, 2, name="ax")
     later = CVariable(later_var, variable_type=SimTypeShort(False), codegen=codegen)
     codegen.cfunc.statements.statements.append(
@@ -625,10 +1441,150 @@ def test_materialize_direct_global_inc_inserts_before_next_tagged_statement():
     assert stats["failure_count"] == 0
 
 
+def test_materialize_direct_global_inc_stays_inside_binary_proven_inner_loop():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(labels={0x1234: "counter"})
+    condition = CBinaryOp(
+        "CmpLE",
+        _reg(project, "ax", codegen),
+        CConstant(7, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1058},
+    )
+    guard = CIfElse(
+        [(condition, CStatements([], codegen=codegen))],
+        codegen=codegen,
+    )
+    inner_loop = CForLoop(
+        None,
+        CConstant(1, SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x1041}),
+        None,
+        guard,
+        codegen=codegen,
+    )
+    outer_body = CStatements([inner_loop], codegen=codegen)
+    outer_loop = CForLoop(
+        None,
+        CConstant(1, SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x101D}),
+        None,
+        outer_body,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(outer_loop)
+
+    mem = SimpleNamespace(base=X86_REG_INVALID, index=X86_REG_INVALID, disp=0x1234)
+    update = SimpleNamespace(
+        address=0x104A,
+        id=X86_INS_INC,
+        operands=(SimpleNamespace(type=X86_OP_MEM, size=2, mem=mem),),
+        groups=(),
+    )
+    inner_backedge = SimpleNamespace(
+        address=0x1085,
+        id=0,
+        operands=(_imm_operand(0x103E),),
+        groups=(X86_GRP_JUMP,),
+    )
+    outer_backedge = SimpleNamespace(
+        address=0x10AC,
+        id=0,
+        operands=(_imm_operand(0x1013),),
+        groups=(X86_GRP_JUMP,),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(update, inner_backedge, outer_backedge)),
+            ),
+        ),
+    )
+
+    changed = materialize_direct_global_incdec_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert changed is True
+    assert outer_body.statements == [inner_loop]
+    assert isinstance(inner_loop.body, CStatements)
+    assert len(inner_loop.body.statements) == 2
+    inserted = inner_loop.body.statements[0]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs.variable.name == "counter"
+    assert inner_loop.body.statements[1] is guard
+    stats = codegen._inertia_direct_global_update_lowering_8616
+    assert stats["loop_inserted_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_global_inc_refuses_outer_backedge_as_inner_scope_proof():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(labels={0x1234: "counter"})
+    condition = CBinaryOp(
+        "CmpLE",
+        _reg(project, "ax", codegen),
+        CConstant(7, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1058},
+    )
+    guard = CIfElse(
+        [(condition, CStatements([], codegen=codegen))],
+        codegen=codegen,
+    )
+    inner_loop = CForLoop(
+        None,
+        CConstant(1, SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x1041}),
+        None,
+        guard,
+        codegen=codegen,
+    )
+    outer_body = CStatements([inner_loop], codegen=codegen)
+    outer_loop = CForLoop(
+        None,
+        CConstant(1, SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x101D}),
+        None,
+        outer_body,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(outer_loop)
+
+    mem = SimpleNamespace(base=X86_REG_INVALID, index=X86_REG_INVALID, disp=0x1234)
+    update = SimpleNamespace(
+        address=0x104A,
+        id=X86_INS_INC,
+        operands=(SimpleNamespace(type=X86_OP_MEM, size=2, mem=mem),),
+        groups=(),
+    )
+    outer_backedge = SimpleNamespace(
+        address=0x10AC,
+        id=0,
+        operands=(_imm_operand(0x1013),),
+        groups=(X86_GRP_JUMP,),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(update, outer_backedge))),),
+    )
+
+    changed = materialize_direct_global_incdec_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert changed is False
+    assert outer_body.statements == [inner_loop]
+    assert inner_loop.body is guard
+    stats = codegen._inertia_direct_global_update_lowering_8616
+    assert stats["loop_inserted_count"] == 0
+    assert stats["failure_count"] == 1
+
+
 def test_materialize_direct_global_inc_inserts_at_body_start_after_stack_probe_prefix_without_tags():
     project, codegen = _project()
-    project.kb = SimpleNamespace(labels={0x2000: "aNchkstk"})
-    project._inertia_cod_metadata_by_func_addr_8616 = {0x4010: SimpleNamespace(global_names=("counter",))}
+    project.kb = SimpleNamespace(labels={0x2000: "aNchkstk", 0x1234: "counter"})
     later_var = SimRegisterVariable(0, 2, name="ax")
     later = CVariable(later_var, variable_type=SimTypeShort(False), codegen=codegen)
     codegen.cfunc.statements.statements.append(
@@ -704,12 +1660,224 @@ def test_materialize_direct_stack_inc_instruction_replaces_tagged_loop_iterator(
         "materialized_count": 1,
         "failure_count": 0,
         "refused_count": 0,
+        "conflicting_tagged_assignment_removed_count": 0,
     }
     assert isinstance(loop.iterator, CAssignment)
     assert loop.iterator.lhs.variable is stack_var
     assert isinstance(loop.iterator.rhs, CBinaryOp)
     assert loop.iterator.rhs.op == "Add"
     assert loop.iterator.rhs.rhs.value == 1
+    lane = codegen._inertia_direct_stack_update_lane_8616
+    assert lane.raw == 1
+    assert lane.normalized == 1
+    assert lane.classified == 1
+    assert lane.materialized == 1
+    assert lane.failures == 0
+    assert_pipeline_contracts_8616(codegen)
+
+
+def test_materialize_direct_stack_inc_removes_disproven_tagged_body_alias_after_proven_iterator():
+    project, codegen = _project()
+    iterator_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    stale_var = SimStackVariable(-4, 2, base="bp", name="stale", region=0x4010)
+    iterator_cvar = CVariable(iterator_var, variable_type=SimTypeShort(False), codegen=codegen)
+    stale_cvar = CVariable(stale_var, variable_type=SimTypeShort(False), codegen=codegen)
+    register_cvar = _reg(project, "dx", codegen)
+    for stack_var, stack_cvar in ((iterator_var, iterator_cvar), (stale_var, stale_cvar)):
+        codegen.cfunc.variables_in_use[stack_var] = stack_cvar
+        codegen.cfunc.unified_local_vars[stack_var] = {(stack_cvar, SimTypeShort(False))}
+
+    initializer = CAssignment(
+        iterator_cvar,
+        CConstant(0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    iterator = CAssignment(
+        iterator_cvar,
+        CBinaryOp(
+            "Add",
+            iterator_cvar,
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x4018},
+    )
+    stale_alias = CAssignment(
+        stale_cvar,
+        CBinaryOp(
+            "Add",
+            stale_cvar,
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x4018},
+    )
+    differently_tagged_stack_write = CAssignment(
+        stale_cvar,
+        CConstant(7, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4019},
+    )
+    same_tag_register_write = CAssignment(
+        register_cvar,
+        CConstant(0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4018},
+    )
+    body = CStatements(
+        [stale_alias, differently_tagged_stack_write, same_tag_register_write],
+        codegen=codegen,
+    )
+    loop = CForLoop(
+        initializer,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        iterator,
+        body,
+        codegen=codegen,
+    )
+    loop.tags["ins_addr"] = 0x401B
+    codegen.cfunc.statements.statements.append(loop)
+
+    update = SimpleNamespace(
+        address=0x4018,
+        size=3,
+        id=X86_INS_INC,
+        operands=(_bp_mem_operand(-2),),
+    )
+    guard = SimpleNamespace(
+        address=0x401B,
+        size=3,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-2)),
+    )
+    instructions = (update, guard)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=instructions)),),
+    )
+
+    changed = materialize_direct_stack_incdec_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert changed is True
+    assert loop.iterator is iterator
+    assert body.statements == [differently_tagged_stack_write, same_tag_register_write]
+    assert codegen._inertia_direct_stack_update_lowering_8616 == {
+        "raw_fact_count": 1,
+        "classified_fact_count": 1,
+        "materialized_count": 1,
+        "failure_count": 0,
+        "refused_count": 0,
+        "conflicting_tagged_assignment_removed_count": 1,
+    }
+    assert_pipeline_contracts_8616(codegen)
+
+
+def test_materialize_direct_stack_inc_separates_shared_iterators_by_binary_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, codegen = _project()
+    stack_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    stack_cvar = CVariable(stack_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[stack_var] = stack_cvar
+    codegen.cfunc.unified_local_vars[stack_var] = {(stack_cvar, SimTypeShort(False))}
+    placeholder_var = CVariable(
+        SimRegisterVariable(project.arch.registers["ax"][0], 2, name="high_byte_carrier"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    shared_iterator = CAssignment(
+        placeholder_var,
+        CBinaryOp(
+            "Shr",
+            placeholder_var,
+            CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x4018},
+    )
+
+    def make_loop(guard_addr: int) -> CForLoop:
+        initializer = CAssignment(
+            stack_cvar,
+            CConstant(0, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+        loop = CForLoop(
+            initializer,
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            shared_iterator,
+            CStatements([], codegen=codegen),
+            codegen=codegen,
+        )
+        loop.tags["ins_addr"] = guard_addr
+        return loop
+
+    first_loop = make_loop(0x401B)
+    second_loop = make_loop(0x403B)
+    codegen.cfunc.statements.statements.extend((first_loop, second_loop))
+    first_update = SimpleNamespace(
+        address=0x4018,
+        size=3,
+        id=X86_INS_INC,
+        operands=(_bp_mem_operand(-2),),
+    )
+    first_guard = SimpleNamespace(
+        address=0x401B,
+        size=3,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-2)),
+    )
+    second_update = SimpleNamespace(
+        address=0x4038,
+        size=3,
+        id=X86_INS_INC,
+        operands=(_bp_mem_operand(-2),),
+    )
+    second_guard = SimpleNamespace(
+        address=0x403B,
+        size=3,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-2)),
+    )
+    instructions = (first_update, first_guard, second_update, second_guard)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=instructions)),),
+    )
+    monkeypatch.setattr(
+        real_mode_linear,
+        "_direct_global_update_ordered_insns_8616",
+        lambda _project_obj, _function_obj: instructions,
+    )
+
+    changed = materialize_direct_stack_incdec_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert changed is True
+    assert first_loop.iterator is not second_loop.iterator
+    for loop, expected_addr in ((first_loop, 0x4018), (second_loop, 0x4038)):
+        assert isinstance(loop.iterator, CAssignment)
+        assert loop.iterator.tags["ins_addr"] == expected_addr
+        assert loop.iterator.lhs.variable is stack_var
+        assert isinstance(loop.iterator.rhs, CBinaryOp)
+        assert loop.iterator.rhs.op == "Add"
+        assert loop.iterator.rhs.rhs.value == 1
+    assert codegen.cfunc.statements.statements == [first_loop, second_loop]
+    stats = codegen._inertia_direct_stack_update_lowering_8616
+    assert stats["raw_fact_count"] == 2
+    assert stats["classified_fact_count"] == 2
+    assert stats["materialized_count"] == 2
+    assert stats["failure_count"] == 0
 
 
 def test_materialize_direct_stack_inc_instruction_replaces_tagged_iterator_expression():
@@ -748,6 +1916,302 @@ def test_materialize_direct_stack_inc_instruction_replaces_tagged_iterator_expre
     assert isinstance(loop.iterator.rhs, CBinaryOp)
     assert loop.iterator.rhs.op == "Add"
     assert loop.iterator.rhs.rhs.value == 1
+
+
+def test_materialize_direct_stack_inc_instruction_inserts_at_loop_body_start_after_condition():
+    project, codegen = _project()
+    counter_var = SimStackVariable(-4, 2, base="bp", name="iCompares", region=0x4010)
+    counter_cvar = CVariable(counter_var, variable_type=SimTypeShort(False), codegen=codegen)
+    iter_var = SimStackVariable(-2, 2, base="bp", name="iRowNext", region=0x4010)
+    iter_cvar = CVariable(iter_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[counter_var] = counter_cvar
+    codegen.cfunc.variables_in_use[iter_var] = iter_cvar
+    codegen.cfunc.unified_local_vars[counter_var] = {(counter_cvar, SimTypeShort(False))}
+
+    condition = CBinaryOp(
+        "CmpLT",
+        iter_cvar,
+        CConstant(7, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4067},
+    )
+    call = CFunctionCall("DrawTime", None, [iter_cvar], codegen=codegen, tags={"ins_addr": 0x4095})
+    guarded_body = CStatements([CExpressionStatement(call, codegen=codegen)], codegen=codegen)
+    guarded = CIfElse(
+        [(CConstant(1, SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x4083}), guarded_body)],
+        codegen=codegen,
+    )
+    loop_body = CStatements([guarded], codegen=codegen)
+    loop = CForLoop(
+        None,
+        condition,
+        None,
+        loop_body,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(loop)
+
+    inc = SimpleNamespace(address=0x4072, id=X86_INS_INC, operands=(_bp_mem_operand(-4),))
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(inc,))),))
+
+    changed = materialize_direct_stack_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    inserted = loop_body.statements[0]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs.variable is counter_var
+    assert isinstance(inserted.rhs, CBinaryOp)
+    assert inserted.rhs.op == "Add"
+    assert loop_body.statements[1] is guarded
+
+
+def test_materialize_direct_stack_inc_instruction_inserts_in_containing_loop_body():
+    project, codegen = _project()
+    counter_var = SimStackVariable(-4, 2, base="bp", name="iCompares", region=0x4010)
+    counter_cvar = CVariable(counter_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[counter_var] = counter_cvar
+    codegen.cfunc.unified_local_vars[counter_var] = {(counter_cvar, SimTypeShort(False))}
+
+    prior = CAssignment(
+        CVariable(SimStackVariable(-6, 2, base="bp", name="iRowMin"), codegen=codegen),
+        CConstant(0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4060},
+    )
+    later = CFunctionCall("DrawTime", None, [], codegen=codegen, tags={"ins_addr": 0x4095})
+    loop_body = CStatements([prior, CExpressionStatement(later, codegen=codegen)], codegen=codegen)
+    loop = CForLoop(
+        None,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        None,
+        loop_body,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(loop)
+
+    inc = SimpleNamespace(address=0x4072, id=X86_INS_INC, operands=(_bp_mem_operand(-4),))
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(inc,))),))
+
+    changed = materialize_direct_stack_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    inserted = loop_body.statements[1]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs.variable is counter_var
+    assert loop_body.statements[0] is prior
+    assert isinstance(loop_body.statements[2], CExpressionStatement)
+
+
+def test_materialize_direct_stack_inc_instruction_inserts_at_untagged_while_tail():
+    project, codegen = _project()
+    iter_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    iter_cvar = CVariable(iter_var, variable_type=SimTypeShort(False), codegen=codegen)
+    limit_var = SimStackVariable(4, 2, base="bp", name="limit", region=0x4010)
+    limit_cvar = CVariable(limit_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[iter_var] = iter_cvar
+    codegen.cfunc.variables_in_use[limit_var] = limit_cvar
+    codegen.cfunc.unified_local_vars[iter_var] = {(iter_cvar, SimTypeShort(False))}
+
+    first_guard = CIfElse(
+        [
+            (
+                CBinaryOp("CmpLE", limit_cvar, iter_cvar, codegen=codegen, tags={"ins_addr": 0x4081}),
+                CStatements(
+                    [
+                        CExpressionStatement(
+                            CFunctionCall("break_guard_a", None, [], codegen=codegen, tags={"ins_addr": 0x4088}),
+                            codegen=codegen,
+                        )
+                    ],
+                    codegen=codegen,
+                ),
+            )
+        ],
+        codegen=codegen,
+    )
+    second_guard = CIfElse(
+        [
+            (
+                CBinaryOp("CmpGT", iter_cvar, CConstant(7, SimTypeShort(False), codegen=codegen), codegen=codegen, tags={"ins_addr": 0x4091}),
+                CStatements(
+                    [
+                        CExpressionStatement(
+                            CFunctionCall("break_guard_b", None, [], codegen=codegen, tags={"ins_addr": 0x4099}),
+                            codegen=codegen,
+                        )
+                    ],
+                    codegen=codegen,
+                ),
+            )
+        ],
+        codegen=codegen,
+    )
+    loop_body = CStatements([first_guard, second_guard], codegen=codegen)
+    loop = CWhileLoop(CConstant(1, SimTypeShort(False), codegen=codegen), loop_body, codegen=codegen)
+    codegen.cfunc.statements.statements.append(loop)
+
+    inc = SimpleNamespace(address=0x409e, id=X86_INS_INC, operands=(_bp_mem_operand(-2),))
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(inc,))),))
+
+    changed = materialize_direct_stack_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    inserted = loop_body.statements[-1]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs.variable is iter_var
+    assert isinstance(inserted.rhs, CBinaryOp)
+    assert inserted.rhs.op == "Add"
+    assert inserted.rhs.rhs.value == 1
+    assert loop_body.statements[:2] == [first_guard, second_guard]
+
+
+def test_materialize_direct_stack_inc_ignores_unrendered_while_iterator_compat_field():
+    project, codegen = _project()
+    iter_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    iter_cvar = CVariable(iter_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[iter_var] = iter_cvar
+    codegen.cfunc.unified_local_vars[iter_var] = {(iter_cvar, SimTypeShort(False))}
+    hidden_update = CAssignment(
+        iter_cvar,
+        CBinaryOp(
+            "Add",
+            iter_cvar,
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x409E},
+    )
+    visible_body_stmt = CExpressionStatement(
+        CFunctionCall(
+            "body_effect",
+            None,
+            [],
+            codegen=codegen,
+            tags={"ins_addr": 0x4099},
+        ),
+        codegen=codegen,
+    )
+    loop_body = CStatements([visible_body_stmt], codegen=codegen)
+    loop = CWhileLoop(CConstant(1, SimTypeShort(False), codegen=codegen), loop_body, codegen=codegen)
+    loop.iteration = hidden_update
+    codegen.cfunc.statements.statements.append(loop)
+    inc = SimpleNamespace(address=0x409E, id=X86_INS_INC, operands=(_bp_mem_operand(-2),))
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(inc,))),))
+
+    changed = materialize_direct_stack_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert loop.iteration is hidden_update
+    assert len(loop_body.statements) == 2
+    assert loop_body.statements[0] is visible_body_stmt
+    inserted = loop_body.statements[1]
+    assert isinstance(inserted, CAssignment)
+    assert inserted is not hidden_update
+    assert inserted.lhs.variable is iter_var
+    assert isinstance(inserted.rhs, CBinaryOp)
+    assert inserted.rhs.op == "Add"
+
+
+def test_materialize_direct_stack_inc_before_condition_uses_proven_loopback():
+    project, codegen = _project()
+    real_arch = project.arch
+    jump = SimpleNamespace(
+        address=0x40A0,
+        mnemonic="jmp",
+        operands=(SimpleNamespace(type=X86_OP_IMM, imm=0x4094),),
+    )
+
+    class _ArchProxy:
+        capstone = SimpleNamespace(disasm=lambda _code, _start: (jump,))
+
+        def __getattr__(self, name: str):
+            return getattr(real_arch, name)
+
+    project.arch = _ArchProxy()
+    project.loader = SimpleNamespace(memory=SimpleNamespace(load=lambda _start, _size: b"\x90" * 32))
+    iter_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    iter_cvar = CVariable(iter_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[iter_var] = iter_cvar
+    codegen.cfunc.unified_local_vars[iter_var] = {(iter_cvar, SimTypeShort(False))}
+    guard = CIfElse(
+        [
+            (
+                CConstant(1, SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x4097}),
+                CStatements([], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    body_effect = CExpressionStatement(
+        CFunctionCall("body_effect", None, [], codegen=codegen, tags={"ins_addr": 0x40A0}),
+        codegen=codegen,
+    )
+    loop_body = CStatements([guard, body_effect], codegen=codegen)
+    loop = CWhileLoop(CConstant(1, SimTypeShort(False), codegen=codegen), loop_body, codegen=codegen)
+    codegen.cfunc.statements.statements.append(loop)
+    inc = SimpleNamespace(address=0x4094, id=X86_INS_INC, operands=(_bp_mem_operand(-2),))
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(inc,))),))
+
+    changed = materialize_direct_stack_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert loop_body.statements[:2] == [guard, body_effect]
+    inserted = loop_body.statements[-1]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs.variable is iter_var
+    assert isinstance(inserted.rhs, CBinaryOp)
+    assert inserted.rhs.op == "Add"
+
+
+def test_materialize_direct_stack_inc_instruction_inserts_rebased_untagged_while_tail():
+    project, codegen = _project()
+    project._inertia_original_linear_delta = 0xFCE0
+    iter_var = SimStackVariable(-6, 2, base="bp", name="iUp", region=0x1000)
+    iter_cvar = CVariable(iter_var, variable_type=SimTypeShort(False), codegen=codegen)
+    pivot_var = SimStackVariable(-4, 2, base="bp", name="iBreak", region=0x1000)
+    pivot_cvar = CVariable(pivot_var, variable_type=SimTypeShort(False), codegen=codegen)
+    limit_var = SimStackVariable(-2, 2, base="bp", name="iDown", region=0x1000)
+    limit_cvar = CVariable(limit_var, variable_type=SimTypeShort(False), codegen=codegen)
+    for variable, cvar in ((iter_var, iter_cvar), (pivot_var, pivot_cvar), (limit_var, limit_cvar)):
+        codegen.cfunc.variables_in_use[variable] = cvar
+    codegen.cfunc.unified_local_vars[iter_var] = {(iter_cvar, SimTypeShort(False))}
+
+    first_guard = CIfElse(
+        [
+            (
+                CBinaryOp("CmpGT", limit_cvar, iter_cvar, codegen=codegen, tags={"ins_addr": 0x10D57}),
+                CStatements([], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    second_guard = CIfElse(
+        [
+            (
+                CBinaryOp("CmpLE", iter_cvar, pivot_cvar, codegen=codegen, tags={"ins_addr": 0x10D69}),
+                CStatements([], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    loop_body = CStatements([first_guard, second_guard], codegen=codegen)
+    loop = CWhileLoop(CConstant(1, SimTypeShort(False), codegen=codegen), loop_body, codegen=codegen)
+    codegen.cfunc.statements.statements.append(loop)
+
+    inc = SimpleNamespace(address=0x108E, id=X86_INS_INC, operands=(_bp_mem_operand(-6),))
+    function = SimpleNamespace(addr=0x1000, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(inc,))),))
+
+    changed = materialize_direct_stack_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    inserted = loop_body.statements[-1]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs.variable is iter_var
+    assert isinstance(inserted.rhs, CBinaryOp)
+    assert inserted.rhs.op == "Add"
+    assert inserted.rhs.rhs.value == 1
+    assert loop_body.statements[:2] == [first_guard, second_guard]
 
 
 def test_materialize_direct_stack_inc_instruction_replaces_proven_untagged_for_iterator():
@@ -846,6 +2310,48 @@ def test_direct_stack_update_validation_delta_accepts_loop_body_write_evidence()
     assert _is_direct_stack_update_materialization_delta_8616(codegen, validation) is True
 
 
+def test_direct_stack_update_validation_delta_accepts_dowhile_guard_loop_write_evidence():
+    codegen = SimpleNamespace(
+        _inertia_direct_stack_update_lowering_8616={"materialized_count": 2},
+        _inertia_direct_stack_update_evidence_8616=(
+            (
+                ("offset", -6),
+                ("width", 2),
+                ("delta", 1),
+                ("ins_addr", 0x109e),
+            ),
+            (
+                ("offset", -2),
+                ("width", 2),
+                ("delta", -1),
+                ("ins_addr", 0x10C5),
+            ),
+        ),
+    )
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": ("stack_slot:SS:BP-0x6:size2",),
+                "removed": (),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "dowhile-body-writes:CmpLE(stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x6:size2):"
+                    "global:0xbaa,global:0xbab,stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x6:size2",
+                    "while-body-writes:const:True:stack_slot:SS:BP-0x2:size2",
+                    "while-body-writes:const:True:stack_slot:SS:BP-0x6:size2",
+                ),
+                "removed": (
+                    "dowhile-body-writes:CmpLE(stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x6:size2):"
+                    "global:0xbaa,global:0xbab,stack_slot:SS:BP-0x2:size2",
+                ),
+            },
+        }
+    }
+
+    assert _is_direct_stack_update_materialization_delta_8616(codegen, validation) is True
+
+
 def test_materialize_direct_stack_inc_instruction_removes_duplicate_tagged_assignments():
     project, codegen = _project()
     stack_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
@@ -924,6 +2430,7 @@ def test_materialize_direct_stack_add_stack_slot_replaces_tagged_assignment():
         "materialized_count": 1,
         "failure_count": 0,
         "refused_count": 0,
+        "conflicting_tagged_assignment_removed_count": 0,
     }
     evidence = codegen._inertia_direct_stack_update_evidence_8616
     assert dict(evidence[0])["source_kind"] is DirectStackUpdateSourceKind8616.STACK_SLOT
@@ -934,6 +2441,119 @@ def test_materialize_direct_stack_add_stack_slot_replaces_tagged_assignment():
     assert stmt.rhs.op == "Add"
     assert stmt.rhs.lhs.variable is total_var
     assert stmt.rhs.rhs.variable is i_var
+
+
+def test_direct_stack_update_blocks_append_linear_block_when_existing_block_has_partial_insns(monkeypatch):
+    project = object()
+    first_insn = SimpleNamespace(address=0x1000)
+    later_insn = SimpleNamespace(address=0x1010)
+    partial = SimpleNamespace(addr=0x1000, size=0x300, capstone=SimpleNamespace(insns=(first_insn,)))
+    linear = SimpleNamespace(addr=0x1000, size=0x40, capstone=SimpleNamespace(insns=(first_insn, later_insn)))
+    function = SimpleNamespace(addr=0x1000, blocks=(partial,))
+
+    monkeypatch.setattr(real_mode_linear, "_linear_capstone_function_block_8616", lambda _project, _function: (linear,))
+
+    blocks = real_mode_linear._direct_global_update_blocks_8616(project, function)
+
+    assert blocks == (partial, linear)
+
+
+def test_direct_stack_update_facts_recompute_empty_cache_when_instruction_evidence_appears():
+    project = SimpleNamespace()
+    mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-4)
+    operand = SimpleNamespace(type=X86_OP_MEM, size=2, mem=mem)
+    insn = SimpleNamespace(address=0x1018, id=X86_INS_INC, operands=(operand,))
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(insn,))),),
+        _inertia_direct_stack_update_instruction_facts_8616=(),
+    )
+
+    facts = _direct_stack_update_instruction_facts_8616(project, function)
+
+    assert facts == (DirectStackUpdateFact8616(-4, 2, 1, 0x1018),)
+
+
+def test_materialize_direct_stack_or_accepts_existing_assignment_as_consumed_evidence():
+    project, codegen = _project()
+    mask_var = SimStackVariable(-2, 2, base="bp", name="mask", region=0x4010)
+    mask_cvar = CVariable(mask_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[mask_var] = mask_cvar
+    codegen.cfunc.unified_local_vars[mask_var] = {(mask_cvar, SimTypeShort(False))}
+    existing = CAssignment(
+        mask_cvar,
+        CBinaryOp(
+            "Or",
+            mask_cvar,
+            CConstant(4, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(existing)
+    update = SimpleNamespace(
+        address=0x1039,
+        id=X86_INS_OR,
+        operands=(_bp_mem_operand(-2), _imm_operand(4)),
+    )
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(update,))),))
+
+    changed = materialize_direct_stack_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is False
+    assert codegen._inertia_direct_stack_update_lowering_8616 == {
+        "raw_fact_count": 1,
+        "classified_fact_count": 1,
+        "materialized_count": 1,
+        "failure_count": 0,
+        "refused_count": 0,
+        "conflicting_tagged_assignment_removed_count": 0,
+    }
+    evidence = dict(codegen._inertia_direct_stack_update_evidence_8616[0])
+    assert evidence["operation"] is DirectStackUpdateOp8616.OR
+    assert evidence["ins_addr"] == 0x1039
+    assert codegen.cfunc.statements.statements == [existing]
+
+
+def test_materialize_direct_stack_inc_accepts_existing_assignment_as_consumed_evidence():
+    project, codegen = _project()
+    j_var = SimStackVariable(-6, 2, base="bp", name="j", region=0x4010)
+    j_cvar = CVariable(j_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[j_var] = j_cvar
+    codegen.cfunc.unified_local_vars[j_var] = {(j_cvar, SimTypeShort(False))}
+    existing = CAssignment(
+        j_cvar,
+        CBinaryOp(
+            "Add",
+            j_cvar,
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(existing)
+    update = SimpleNamespace(
+        address=0x1030,
+        id=X86_INS_INC,
+        operands=(_bp_mem_operand(-6),),
+    )
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(update,))),))
+
+    changed = materialize_direct_stack_incdec_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is False
+    assert codegen._inertia_direct_stack_update_lowering_8616 == {
+        "raw_fact_count": 1,
+        "classified_fact_count": 1,
+        "materialized_count": 1,
+        "failure_count": 0,
+        "refused_count": 0,
+        "conflicting_tagged_assignment_removed_count": 0,
+    }
+    evidence = dict(codegen._inertia_direct_stack_update_evidence_8616[0])
+    assert evidence["operation"] is DirectStackUpdateOp8616.ARITHMETIC
+    assert evidence["ins_addr"] == 0x1030
+    assert codegen.cfunc.statements.statements == [existing]
 
 
 def test_materialize_direct_stack_add_indexed_pointer_source_replaces_tagged_assignment():
@@ -1056,6 +2676,30 @@ def test_lower_stable_stack_rewrites_seg_ptr_indexed_bp_address_argument():
     assert "SEG_PTR" not in str(rewritten)
 
 
+def test_lower_stable_stack_preserves_unrelated_cast_expression():
+    project, codegen = _project()
+    ax = _reg(project, "ax", codegen)
+    bx = _reg(project, "bx", codegen)
+    rhs = CTypeCast(
+        SimTypeShort(False),
+        SimTypeShort(False),
+        CBinaryOp("Add", ax, bx, codegen=codegen),
+        codegen=codegen,
+    )
+    target_var = SimStackVariable(-2, 2, base="bp", name="total", region=0x4010)
+    target = CVariable(target_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[target_var] = target
+    codegen.cfunc.unified_local_vars[target_var] = {(target, SimTypeShort(False))}
+    assignment = CAssignment(target, rhs, codegen=codegen)
+    codegen.cfunc.statements.statements.append(assignment)
+
+    changed = lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)
+
+    assert changed is False
+    assert assignment.rhs is rhs
+    assert isinstance(assignment.rhs, CTypeCast)
+
+
 def test_materialize_direct_stack_or_immediate_replaces_tagged_assignment():
     project, codegen = _project()
     mask_var = SimStackVariable(-2, 2, base="bp", name=None, region=0x4010)
@@ -1136,6 +2780,7 @@ def test_materialize_direct_stack_or_immediate_refuses_unguarded_fallback_insert
         "materialized_count": 0,
         "failure_count": 1,
         "refused_count": 1,
+        "conflicting_tagged_assignment_removed_count": 0,
     }
     guarded_body = guarded_later.condition_and_nodes[0][1]
     assert guarded_body.statements == [later_stmt]
@@ -1168,6 +2813,225 @@ def test_materialize_direct_stack_mov_immediate_instruction_replaces_tagged_assi
     assert stmt.lhs.variable is stack_var
     assert isinstance(stmt.rhs, CConstant)
     assert stmt.rhs.value == 0
+    lane = codegen._inertia_direct_stack_mov_lane_8616
+    assert lane.raw == 1
+    assert lane.normalized == 1
+    assert lane.classified == 1
+    assert lane.materialized == 1
+    assert lane.failures == 0
+    assert_pipeline_contracts_8616(codegen)
+
+
+def test_materialize_direct_stack_mov_indexes_local_array_with_proven_global_load():
+    project, codegen = _project()
+    local_var = SimStackVariable(-44, 44, base="bp", name="achT", region=0x4010)
+    local_cvar = CVariable(local_var, variable_type=SimTypeChar(False), codegen=codegen)
+    index_var = SimMemoryVariable(0x0BA2, 2, name="cRow", region=0x4010)
+    index_cvar = CVariable(index_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[local_var] = local_cvar
+    codegen.cfunc.variables_in_use[index_var] = index_cvar
+    codegen.cfunc.statements.statements.extend(
+        (
+            CExpressionStatement(index_cvar, codegen=codegen),
+            CAssignment(
+                local_cvar,
+                _reg(project, "di", codegen),
+                codegen=codegen,
+                tags={"ins_addr": 0x4014},
+            ),
+        )
+    )
+    load_index = SimpleNamespace(
+        address=0x4010,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_SI), SimpleNamespace(
+            type=X86_OP_MEM,
+            size=2,
+            mem=SimpleNamespace(base=X86_REG_INVALID, index=X86_REG_INVALID, disp=0x0BA2),
+        )),
+    )
+    store = SimpleNamespace(
+        address=0x4014,
+        id=X86_INS_MOV,
+        operands=(_bp_indexed_mem_operand(-44, X86_REG_SI), _imm_operand(0, size=1)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load_index, store))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    stmt = codegen.cfunc.statements.statements[1]
+    assert isinstance(stmt, CAssignment)
+    assert isinstance(stmt.lhs, CIndexedVariable)
+    assert stmt.lhs.variable is local_cvar
+    assert stmt.lhs.index is index_cvar
+    assert isinstance(stmt.rhs, CConstant)
+    assert stmt.rhs.value == 0
+    assert "Array" in type(local_cvar.variable_type).__name__
+    assert local_cvar.variable_type.length == 44
+    assert codegen._inertia_global_declaration_specs_8616 == (("unsigned short", "g_0BA2", None),)
+    assert_pipeline_contracts_8616(codegen)
+
+
+def test_materialize_direct_stack_mov_classified_refusal_fails_pipeline_contract(monkeypatch):
+    project, codegen = _project()
+    stack_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    stack_cvar = CVariable(stack_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[stack_var] = stack_cvar
+    codegen.cfunc.statements.statements.append(
+        CAssignment(
+            stack_cvar,
+            _reg(project, "di", codegen),
+            codegen=codegen,
+            tags={"ins_addr": 0x4018},
+        )
+    )
+
+    dst_mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-2)
+    insn = SimpleNamespace(
+        address=0x4018,
+        id=X86_INS_MOV,
+        operands=(
+            SimpleNamespace(type=X86_OP_MEM, size=2, mem=dst_mem),
+            SimpleNamespace(type=X86_OP_IMM, size=2, imm=0),
+        ),
+    )
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(insn,))),))
+
+    real_replace_tagged = real_mode_linear._replace_tagged_statement_assignment_8616
+    monkeypatch.setattr(real_mode_linear, "_replace_tagged_statement_assignment_8616", lambda *_, **__: False)
+    monkeypatch.setattr(real_mode_linear, "_insert_at_do_while_body_start_8616", lambda *_, **__: False)
+    monkeypatch.setattr(real_mode_linear, "_insert_into_conditional_branch_for_direct_stack_move_8616", lambda *_, **__: False)
+    monkeypatch.setattr(real_mode_linear, "_replace_precontrol_stack_assignment_8616", lambda *_, **__: False)
+    monkeypatch.setattr(real_mode_linear, "_insert_after_nearest_preceding_tagged_statement_8616", lambda *_, **__: False)
+    monkeypatch.setattr(real_mode_linear, "_insert_before_nearest_following_tagged_statement_8616", lambda *_, **__: False)
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is False
+    lane = codegen._inertia_direct_stack_mov_lane_8616
+    assert lane.classified == 1
+    assert lane.materialized == 0
+    assert lane.failures == 1
+    with pytest.raises(PipelineHardError, match="direct_stack_mov: 1 facts classified but 0 materialized"):
+        assert_pipeline_contracts_8616(codegen)
+
+    monkeypatch.setattr(
+        real_mode_linear,
+        "_replace_tagged_statement_assignment_8616",
+        real_replace_tagged,
+    )
+    changed = materialize_direct_stack_mov_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen._inertia_direct_stack_move_lowering_8616["failure_count"] == 1
+    lane = codegen._inertia_direct_stack_mov_lane_8616
+    assert lane.raw == 1
+    assert lane.classified == 1
+    assert lane.materialized == 1
+    assert lane.failures == 0
+    assert_pipeline_contracts_8616(codegen)
+
+
+def test_materialize_direct_stack_mov_replaces_one_tagged_carrier_per_instruction():
+    project, codegen = _project()
+    stack_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    stack_cvar = CVariable(stack_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[stack_var] = stack_cvar
+    for reg_name in ("di", "si"):
+        codegen.cfunc.statements.statements.append(
+            CAssignment(
+                stack_cvar,
+                _reg(project, reg_name, codegen),
+                codegen=codegen,
+                tags={"ins_addr": 0x4018},
+            )
+        )
+
+    dst_mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-2)
+    dst = SimpleNamespace(type=X86_OP_MEM, size=2, mem=dst_mem)
+    src = SimpleNamespace(type=X86_OP_IMM, size=2, imm=0)
+    insn = SimpleNamespace(address=0x4018, id=X86_INS_MOV, operands=(dst, src))
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(insn,))),))
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    replacements = [
+        stmt
+        for stmt in codegen.cfunc.statements.statements
+        if isinstance(stmt, CAssignment) and isinstance(stmt.rhs, CConstant) and stmt.rhs.value == 0
+    ]
+    assert len(replacements) == 1
+
+
+def test_materialize_direct_stack_mov_reconciles_tagged_clones_after_replay() -> None:
+    project, codegen = _project()
+    stack_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    stack_cvar = CVariable(stack_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[stack_var] = stack_cvar
+    codegen.cfunc.statements.statements.append(
+        CAssignment(
+            stack_cvar,
+            _reg(project, "di", codegen),
+            codegen=codegen,
+            tags={"ins_addr": 0x4018},
+        )
+    )
+
+    dst_mem = SimpleNamespace(base=X86_REG_BP, index=X86_REG_INVALID, disp=-2)
+    dst = SimpleNamespace(type=X86_OP_MEM, size=2, mem=dst_mem)
+    src = SimpleNamespace(type=X86_OP_IMM, size=2, imm=0)
+    insn = SimpleNamespace(address=0x4018, id=X86_INS_MOV, operands=(dst, src))
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(insn,))),),
+    )
+
+    assert materialize_direct_stack_mov_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+    codegen.cfunc.statements.statements.extend(
+        (
+            CAssignment(
+                stack_cvar,
+                _reg(project, "di", codegen),
+                codegen=codegen,
+                tags={"ins_addr": 0x4018},
+            ),
+            CAssignment(
+                stack_cvar,
+                _reg(project, "si", codegen),
+                codegen=codegen,
+                tags={"inertia_relocated_from_ins_addr": 0x4018},
+            ),
+        )
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert changed is True
+    assignments = [
+        statement
+        for statement in codegen.cfunc.statements.statements
+        if isinstance(statement, CAssignment)
+    ]
+    assert len(assignments) == 1
+    assert isinstance(assignments[0].rhs, CConstant)
+    assert assignments[0].rhs.value == 0
 
 
 def test_materialize_direct_stack_mov_zero_immediate_stays_constant_even_with_base_label():
@@ -1233,6 +3097,100 @@ def test_materialize_direct_stack_mov_immediate_to_known_function_infers_near_sy
     assert isinstance(stmt.lhs.variable_type.pts_to, SimTypeFunction)
     assert isinstance(stmt.rhs.variable_type, SimTypePointer)
     assert isinstance(stmt.rhs.variable_type.pts_to, SimTypeFunction)
+    assert codegen._inertia_callsite_prototype_decls == ("unsigned short inc_one(unsigned short a0);",)
+    assert codegen._inertia_function_pointer_target_prototype_decl_count_8616 == 1
+
+
+def test_materialize_direct_stack_mov_prunes_unsupported_function_pointer_overwrite():
+    project, codegen = _project()
+    project.loader = SimpleNamespace(main_object=SimpleNamespace(min_addr=0x10000))
+    project._inertia_lst_metadata = SimpleNamespace(code_labels={0x10010: "_inc_one", 0x10028: "_dec_one"})
+    fn_var = SimStackVariable(-2, 2, base="bp", name="fn", region=0x4010)
+    fn_type = SimTypePointer(SimTypeFunction([SimTypeShort(False)], SimTypeShort(False), variadic=False))
+    fn_cvar = CVariable(fn_var, variable_type=fn_type, codegen=codegen)
+    which_var = SimStackVariable(4, 2, base="bp", name="which", region=0x4010)
+    which_cvar = CVariable(which_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[fn_var] = fn_cvar
+    codegen.cfunc.variables_in_use[which_var] = which_cvar
+
+    then_store = CAssignment(fn_cvar, _reg(project, "di", codegen), codegen=codegen, tags={"ins_addr": 0x4018})
+    else_store = CAssignment(fn_cvar, _reg(project, "si", codegen), codegen=codegen, tags={"ins_addr": 0x4020})
+    branch = CIfElse(
+        [(which_cvar, CStatements([then_store], codegen=codegen))],
+        else_node=CStatements([else_store], codegen=codegen),
+        codegen=codegen,
+    )
+    unsupported = CAssignment(fn_cvar, which_cvar, codegen=codegen, tags={"ins_addr": 0x4024})
+    codegen.cfunc.statements.statements.extend([branch, unsupported])
+
+    dst = _bp_mem_operand(-2)
+    inc_store = SimpleNamespace(address=0x4018, id=X86_INS_MOV, operands=(dst, _imm_operand(0x10)))
+    dec_store = SimpleNamespace(address=0x4020, id=X86_INS_MOV, operands=(dst, _imm_operand(0x28)))
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(inc_store, dec_store))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert codegen._inertia_direct_stack_move_lowering_8616[
+        "unsupported_function_pointer_assignment_pruned_count"
+    ] == 1
+    assert codegen.cfunc.statements.statements == [branch]
+    then_stmt = branch.condition_and_nodes[0][1].statements[0]
+    else_stmt = branch.else_node.statements[0]
+    assert then_stmt.rhs.variable.name == "inc_one"
+    assert else_stmt.rhs.variable.name == "dec_one"
+    assert codegen._inertia_callsite_prototype_decls == (
+        "unsigned short inc_one(unsigned short a0);",
+        "unsigned short dec_one(unsigned short a0);",
+    )
+
+
+def test_materialize_direct_stack_mov_immediate_places_function_pointer_stores_in_empty_if_else():
+    project, codegen = _project()
+    project.loader = SimpleNamespace(main_object=SimpleNamespace(min_addr=0x10000))
+    project._inertia_lst_metadata = SimpleNamespace(code_labels={0x10010: "_inc_one", 0x10028: "_dec_one"})
+    fn_var = SimStackVariable(-2, 2, base="bp", name="fn", region=0x4010)
+    fn_type = SimTypePointer(SimTypeFunction([SimTypeShort(False)], SimTypeShort(False), variadic=False))
+    fn_cvar = CVariable(fn_var, variable_type=fn_type, codegen=codegen)
+    which_var = SimStackVariable(4, 2, base="bp", name="which", region=0x4010)
+    which_cvar = CVariable(which_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[fn_var] = fn_cvar
+    codegen.cfunc.variables_in_use[which_var] = which_cvar
+
+    branch = CIfElse(
+        [
+            (
+                CConstant(1, SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x400F}),
+                CStatements([], codegen=codegen),
+            )
+        ],
+        else_node=CStatements([], codegen=codegen),
+        codegen=codegen,
+    )
+    unsupported = CAssignment(fn_cvar, which_cvar, codegen=codegen, tags={"ins_addr": 0x4024})
+    codegen.cfunc.statements.statements.extend([branch, unsupported])
+
+    dst = _bp_mem_operand(-2)
+    insns = (
+        SimpleNamespace(address=0x400F, mnemonic="jne", operands=(_imm_operand(0x4014),)),
+        SimpleNamespace(address=0x4011, mnemonic="jmp", operands=(_imm_operand(0x401C),)),
+        SimpleNamespace(address=0x4014, id=X86_INS_MOV, mnemonic="mov", operands=(dst, _imm_operand(0x10))),
+        SimpleNamespace(address=0x4019, mnemonic="jmp", operands=(_imm_operand(0x4023),)),
+        SimpleNamespace(address=0x401C, id=X86_INS_MOV, mnemonic="mov", operands=(dst, _imm_operand(0x28))),
+    )
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=insns)),))
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [branch]
+    then_stmt = branch.condition_and_nodes[0][1].statements[0]
+    else_stmt = branch.else_node.statements[0]
+    assert then_stmt.rhs.variable.name == "inc_one"
+    assert else_stmt.rhs.variable.name == "dec_one"
 
 
 def test_materialize_direct_stack_mov_immediate_inserts_missing_setup_before_loop_without_dup_init():
@@ -1290,6 +3248,299 @@ def test_materialize_direct_stack_mov_immediate_inserts_missing_setup_before_loo
     assert statements[1] is loop
     assert codegen._inertia_direct_stack_move_lowering_8616["materialized_count"] == 1
     assert codegen._inertia_direct_stack_move_lowering_8616["already_materialized_count"] == 1
+
+
+def test_materialize_direct_stack_mov_immediate_precedes_precontrol_read_before_while():
+    project, codegen = _project()
+    i_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    child_var = SimStackVariable(-4, 2, base="bp", name="iChild", region=0x4010)
+    i_cvar = CVariable(i_var, variable_type=SimTypeShort(False), codegen=codegen)
+    child_cvar = CVariable(child_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[i_var] = i_cvar
+    codegen.cfunc.variables_in_use[child_var] = child_cvar
+    child_assignment = CAssignment(
+        child_cvar,
+        CBinaryOp("Shl", i_cvar, CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4015},
+    )
+    loop = CWhileLoop(
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        CStatements([], codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.extend((child_assignment, loop))
+
+    store = SimpleNamespace(
+        address=0x400B,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), SimpleNamespace(type=X86_OP_IMM, size=2, imm=0)),
+    )
+    first_control = SimpleNamespace(
+        address=0x4020,
+        groups=(X86_GRP_JUMP,),
+        operands=(SimpleNamespace(type=X86_OP_IMM, imm=0x4030),),
+    )
+    function = SimpleNamespace(
+        addr=0x4000,
+        blocks=(SimpleNamespace(addr=0x400B, capstone=SimpleNamespace(insns=(store, first_control))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 3
+    inserted = statements[0]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs is i_cvar
+    assert isinstance(inserted.rhs, CConstant)
+    assert inserted.rhs.value == 0
+    assert statements[1:] == [child_assignment, loop]
+
+
+def test_materialize_repeated_stack_expression_moves_assignment_into_while_body():
+    project, codegen = _project()
+    i_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    child_var = SimStackVariable(-4, 2, base="bp", name="iChild", region=0x4010)
+    marker_var = SimRegisterVariable(project.arch.registers["bx"][0], 2, name="bx")
+    i_cvar = CVariable(i_var, variable_type=SimTypeShort(False), codegen=codegen)
+    child_cvar = CVariable(child_var, variable_type=SimTypeShort(False), codegen=codegen)
+    marker_cvar = CVariable(marker_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[i_var] = i_cvar
+    codegen.cfunc.variables_in_use[child_var] = child_cvar
+    misplaced_init = CAssignment(
+        i_cvar,
+        CConstant(0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x100B},
+    )
+    repeated_assignment = CAssignment(
+        child_cvar,
+        CBinaryOp("Shl", i_cvar, CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1015},
+    )
+    body_marker = CAssignment(
+        marker_cvar,
+        i_cvar,
+        codegen=codegen,
+        tags={"ins_addr": 0x1020},
+    )
+    loop_body = CStatements([misplaced_init, body_marker], codegen=codegen)
+    loop = CWhileLoop(CConstant(1, SimTypeShort(False), codegen=codegen), loop_body, codegen=codegen)
+    codegen.cfunc.statements.statements.extend((repeated_assignment, loop))
+
+    ax = _reg_operand(X86_REG_AX)
+    init_store = SimpleNamespace(
+        address=0x100B,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _imm_operand(0)),
+    )
+    load = SimpleNamespace(address=0x1010, id=X86_INS_MOV, operands=(ax, _bp_mem_operand(-2)))
+    shift = SimpleNamespace(address=0x1013, id=X86_INS_SHL, operands=(ax, _imm_operand(1, size=1)))
+    store = SimpleNamespace(address=0x1015, id=X86_INS_MOV, operands=(_bp_mem_operand(-4), ax))
+    body_insn = SimpleNamespace(
+        address=0x1020,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_BX), _reg_operand(X86_REG_BX)),
+    )
+    loopback = SimpleNamespace(
+        address=0x1090,
+        groups=(X86_GRP_JUMP,),
+        operands=(SimpleNamespace(type=X86_OP_IMM, imm=0x1010),),
+    )
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(
+            SimpleNamespace(
+                addr=0x100B,
+                capstone=SimpleNamespace(insns=(init_store, load, shift, store, body_insn, loopback)),
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    statements = codegen.cfunc.statements.statements
+    assert len(statements) == 2
+    relocated_init = statements[0]
+    assert isinstance(relocated_init, CAssignment)
+    assert relocated_init.lhs.variable is i_var
+    assert isinstance(relocated_init.rhs, CConstant)
+    assert relocated_init.rhs.value == 0
+    assert statements[1] is loop
+    relocated = loop_body.statements[0]
+    assert isinstance(relocated, CAssignment)
+    assert relocated.lhs.variable is child_var
+    assert isinstance(relocated.rhs, CBinaryOp)
+    assert relocated.rhs.op == "Shl"
+    assert loop_body.statements[1] is body_marker
+
+
+def test_materialize_repeated_stack_expression_precedes_live_loop_carrier():
+    project, codegen = _project()
+    i_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    child_var = SimStackVariable(-4, 2, base="bp", name="iChild", region=0x4010)
+    live_var = SimRegisterVariable(project.arch.registers["bx"][0], 2, name="bx")
+    marker_var = SimRegisterVariable(project.arch.registers["dx"][0], 2, name="dx")
+    i_cvar = CVariable(i_var, variable_type=SimTypeShort(False), codegen=codegen)
+    child_cvar = CVariable(child_var, variable_type=SimTypeShort(False), codegen=codegen)
+    live_cvar = CVariable(live_var, variable_type=SimTypeShort(False), codegen=codegen)
+    marker_cvar = CVariable(marker_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[i_var] = i_cvar
+    codegen.cfunc.variables_in_use[child_var] = child_cvar
+
+    live_read = CAssignment(live_cvar, child_cvar, codegen=codegen)
+    misplaced_definition = CAssignment(
+        child_cvar,
+        CBinaryOp("Shl", i_cvar, CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1015},
+    )
+    body_marker = CAssignment(
+        marker_cvar,
+        i_cvar,
+        codegen=codegen,
+        tags={"ins_addr": 0x1020},
+    )
+    loop_body = CStatements([live_read, misplaced_definition, body_marker], codegen=codegen)
+    loop = CWhileLoop(CConstant(1, SimTypeShort(False), codegen=codegen), loop_body, codegen=codegen)
+    codegen.cfunc.statements.statements.append(loop)
+
+    ax = _reg_operand(X86_REG_AX)
+    load = SimpleNamespace(address=0x1010, id=X86_INS_MOV, operands=(ax, _bp_mem_operand(-2)))
+    shift = SimpleNamespace(address=0x1013, id=X86_INS_SHL, operands=(ax, _imm_operand(1, size=1)))
+    store = SimpleNamespace(address=0x1015, id=X86_INS_MOV, operands=(_bp_mem_operand(-4), ax))
+    body_insn = SimpleNamespace(
+        address=0x1020,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_DX), _reg_operand(X86_REG_DX)),
+    )
+    loopback = SimpleNamespace(
+        address=0x1090,
+        groups=(X86_GRP_JUMP,),
+        operands=(SimpleNamespace(type=X86_OP_IMM, imm=0x1010),),
+    )
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(
+            SimpleNamespace(
+                addr=0x1010,
+                capstone=SimpleNamespace(insns=(load, shift, store, body_insn, loopback)),
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert len(loop_body.statements) == 3
+    relocated = loop_body.statements[0]
+    assert isinstance(relocated, CAssignment)
+    assert relocated.lhs.variable is child_var
+    assert isinstance(relocated.rhs, CBinaryOp)
+    assert relocated.rhs.op == "Shl"
+    assert loop_body.statements[1:] == [live_read, body_marker]
+
+    materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    child_definitions = [
+        statement
+        for statement in loop_body.statements
+        if isinstance(statement, CAssignment)
+        and isinstance(statement.lhs, CVariable)
+        and statement.lhs.variable is child_var
+    ]
+    assert child_definitions == [relocated]
+    assert loop_body.statements[0] is relocated
+    assert loop_body.statements[1] is live_read
+
+
+def test_materialize_stack_expression_does_not_precede_live_read_without_loopback():
+    project, codegen = _project()
+    i_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x4010)
+    child_var = SimStackVariable(-4, 2, base="bp", name="iChild", region=0x4010)
+    live_var = SimRegisterVariable(project.arch.registers["bx"][0], 2, name="bx")
+    i_cvar = CVariable(i_var, variable_type=SimTypeShort(False), codegen=codegen)
+    child_cvar = CVariable(child_var, variable_type=SimTypeShort(False), codegen=codegen)
+    live_cvar = CVariable(live_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[i_var] = i_cvar
+    codegen.cfunc.variables_in_use[child_var] = child_cvar
+
+    live_read = CAssignment(live_cvar, child_cvar, codegen=codegen)
+    tagged_definition = CAssignment(
+        child_cvar,
+        CBinaryOp("Shl", i_cvar, CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1015},
+    )
+    loop_body = CStatements([live_read, tagged_definition], codegen=codegen)
+    loop = CWhileLoop(CConstant(1, SimTypeShort(False), codegen=codegen), loop_body, codegen=codegen)
+    codegen.cfunc.statements.statements.append(loop)
+
+    ax = _reg_operand(X86_REG_AX)
+    load = SimpleNamespace(address=0x1010, id=X86_INS_MOV, operands=(ax, _bp_mem_operand(-2)))
+    shift = SimpleNamespace(address=0x1013, id=X86_INS_SHL, operands=(ax, _imm_operand(1, size=1)))
+    store = SimpleNamespace(address=0x1015, id=X86_INS_MOV, operands=(_bp_mem_operand(-4), ax))
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(
+            SimpleNamespace(
+                addr=0x1010,
+                capstone=SimpleNamespace(insns=(load, shift, store)),
+            ),
+        ),
+    )
+
+    materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert loop_body.statements[0] is live_read
+    assert isinstance(loop_body.statements[1], CAssignment)
+    assert loop_body.statements[1].lhs.variable is child_var
+
+
+def test_materialize_direct_stack_mov_replaces_tagged_stale_for_initializer_carrier():
+    project, codegen = _project()
+    dst_var = SimStackVariable(-6, 2, base="bp", name="i", region=0x4010)
+    stale_var = SimStackVariable(4, 2, base="bp", name="arg_4", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    stale_cvar = CVariable(stale_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[stale_var] = stale_cvar
+    stale_init = CAssignment(
+        stale_cvar,
+        CConstant(0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x400B},
+    )
+    loop = CForLoop(
+        stale_init,
+        CBinaryOp("CmpLT", dst_cvar, CConstant(6, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        None,
+        CStatements([], codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(loop)
+    store = SimpleNamespace(
+        address=0x400B,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-6), _imm_operand(0)),
+    )
+    function = SimpleNamespace(
+        addr=0x4000,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(store,))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [loop]
+    assert isinstance(loop.initializer, CAssignment)
+    assert loop.initializer.lhs is dst_cvar
+    assert isinstance(loop.initializer.rhs, CConstant)
+    assert loop.initializer.rhs.value == 0
 
 
 def test_materialize_direct_stack_mov_stale_evidence_keeps_existing_for_initializer():
@@ -1448,6 +3699,516 @@ def test_materialize_direct_stack_mov_stack_copy_instruction_replaces_tagged_ass
     assert stmt.rhs is src_cvar
 
 
+def test_materialize_direct_stack_mov_stack_copy_inserts_before_nested_loop_when_tagged_carrier_disappeared():
+    project, codegen = _project()
+    cur_var = SimStackVariable(-6, 2, base="bp", name="iRowCur", region=0x4010)
+    next_var = SimStackVariable(-2, 2, base="bp", name="iRowNext", region=0x4010)
+    limit_var = SimMemoryVariable(0xB7E, 2, name="cRow", region=0x4010)
+    cur_cvar = CVariable(cur_var, variable_type=SimTypeShort(False), codegen=codegen)
+    next_cvar = CVariable(next_var, variable_type=SimTypeShort(False), codegen=codegen)
+    limit_cvar = CVariable(limit_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[cur_var] = cur_cvar
+    codegen.cfunc.variables_in_use[next_var] = next_cvar
+    codegen.cfunc.variables_in_use[limit_var] = limit_cvar
+
+    guard = CIfElse(
+        [
+            (
+                CBinaryOp(
+                    "CmpGE",
+                    next_cvar,
+                    limit_cvar,
+                    codegen=codegen,
+                    tags={"ins_addr": 0x1031},
+                ),
+                CStatements([], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    inner_loop = CWhileLoop(
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        CStatements([guard], codegen=codegen),
+        codegen=codegen,
+    )
+    outer_body = CStatements([inner_loop], codegen=codegen)
+    outer_loop = CForLoop(
+        CAssignment(cur_cvar, CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        CBinaryOp("CmpLT", cur_cvar, limit_cvar, codegen=codegen, tags={"ins_addr": 0x1016}),
+        CAssignment(
+            cur_cvar,
+            CBinaryOp("Add", cur_cvar, CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen),
+            codegen=codegen,
+            tags={"ins_addr": 0x1083},
+        ),
+        outer_body,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(outer_loop)
+
+    load = SimpleNamespace(
+        address=0x1028,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-6)),
+    )
+    store = SimpleNamespace(
+        address=0x102B,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_AX)),
+    )
+    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load, store))),))
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert outer_body.statements[1] is inner_loop
+    inserted = outer_body.statements[0]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs.variable is next_var
+    assert inserted.rhs is cur_cvar
+    assert inner_loop.body.statements[0] is guard
+
+
+def test_materialize_direct_stack_mov_relocates_tagged_copy_after_nested_loop_read():
+    project, codegen = _project()
+    cur_var = SimStackVariable(-6, 2, base="bp", name="iRow", region=0x4010)
+    next_var = SimStackVariable(-2, 2, base="bp", name="iRowTmp", region=0x4010)
+    prior_var = SimStackVariable(-8, 2, base="bp", name="barTemp", region=0x4010)
+    cur_cvar = CVariable(cur_var, variable_type=SimTypeShort(False), codegen=codegen)
+    next_cvar = CVariable(next_var, variable_type=SimTypeShort(False), codegen=codegen)
+    prior_cvar = CVariable(prior_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[cur_var] = cur_cvar
+    codegen.cfunc.variables_in_use[next_var] = next_cvar
+    codegen.cfunc.variables_in_use[prior_var] = prior_cvar
+
+    guard = CIfElse(
+        [
+            (
+                CBinaryOp(
+                    "CmpEQ",
+                    next_cvar,
+                    CConstant(0, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                CStatements([], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    late_carrier = CAssignment(
+        next_cvar,
+        _reg(project, "ax", codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x102B},
+    )
+    inner_loop = CWhileLoop(
+        CConstant(1, SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x1031}),
+        CStatements([guard, late_carrier], codegen=codegen),
+        codegen=codegen,
+    )
+    prior_relocated = CAssignment(
+        prior_cvar,
+        CConstant(7, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"inertia_relocated_from_ins_addr": 0x1020},
+    )
+    outer_body = CStatements([prior_relocated, inner_loop], codegen=codegen)
+    outer_loop = CForLoop(
+        None,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        None,
+        outer_body,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(outer_loop)
+
+    load = SimpleNamespace(
+        address=0x1028,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-6)),
+    )
+    store = SimpleNamespace(
+        address=0x102B,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_AX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load, store))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert len(outer_body.statements) == 3
+    assert outer_body.statements[0] is prior_relocated
+    relocated = outer_body.statements[1]
+    assert isinstance(relocated, CAssignment)
+    assert relocated.lhs is next_cvar
+    assert relocated.rhs is cur_cvar
+    assert outer_body.statements[2] is inner_loop
+    assert inner_loop.body.statements == [guard]
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["read_before_tagged_assignment_relocated_count"] == 1
+
+    regenerated_late_carrier = CAssignment(
+        next_cvar,
+        cur_cvar,
+        codegen=codegen,
+        tags={"ins_addr": 0x102B},
+    )
+    inner_loop.body.statements.append(regenerated_late_carrier)
+    duplicate_relocation = CAssignment(
+        next_cvar,
+        cur_cvar,
+        codegen=codegen,
+        tags={"inertia_relocated_from_ins_addr": 0x102B},
+    )
+
+    removed = real_mode_linear._relocate_tagged_stack_move_before_proven_loop_8616(
+        codegen.cfunc.statements,
+        project,
+        function,
+        0x102B,
+        next_cvar,
+        cur_cvar,
+        duplicate_relocation,
+    )
+
+    assert removed == 1
+    assert outer_body.statements == [prior_relocated, relocated, inner_loop]
+    assert inner_loop.body.statements == [guard]
+
+
+def test_materialize_direct_stack_mov_keeps_outer_loop_store_inside_enclosing_backedge():
+    project, codegen = _project()
+    project._inertia_original_linear_delta = 0xF000
+    source_var = SimStackVariable(-8, 2, base="bp", name="barTemp", region=0x4010)
+    target_var = SimStackVariable(-6, 2, base="bp", name="iLength", region=0x4010)
+    source_cvar = CVariable(source_var, variable_type=SimTypeShort(False), codegen=codegen)
+    target_cvar = CVariable(target_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[source_var] = source_cvar
+    codegen.cfunc.variables_in_use[target_var] = target_cvar
+
+    guard = CIfElse(
+        [
+            (
+                CBinaryOp(
+                    "CmpLE",
+                    source_cvar,
+                    target_cvar,
+                    codegen=codegen,
+                    tags={"ins_addr": 0x1040},
+                ),
+                CStatements([], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    inner_loop = CWhileLoop(
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        CStatements([guard], codegen=codegen),
+        codegen=codegen,
+    )
+    late_carrier = CAssignment(
+        target_cvar,
+        _reg(project, "ax", codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1032},
+    )
+    outer_body = CStatements([inner_loop, late_carrier], codegen=codegen)
+    outer_loop = CForLoop(
+        None,
+        CConstant(
+            1,
+            SimTypeShort(False),
+            codegen=codegen,
+            tags={"ins_addr": 0x101D},
+        ),
+        None,
+        outer_body,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(outer_loop)
+
+    load = SimpleNamespace(
+        address=0x102F,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-8)),
+        groups=(),
+    )
+    store = SimpleNamespace(
+        address=0x1032,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-6), _reg_operand(X86_REG_AX)),
+        groups=(),
+    )
+    inner_backedge = SimpleNamespace(
+        address=0x1085,
+        id=0,
+        operands=(_imm_operand(0x1038),),
+        groups=(X86_GRP_JUMP,),
+    )
+    outer_backedge = SimpleNamespace(
+        address=0x10AC,
+        id=0,
+        operands=(_imm_operand(0x1013),),
+        groups=(X86_GRP_JUMP,),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(
+                    insns=(load, store, inner_backedge, outer_backedge),
+                )
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [outer_loop]
+    assert len(outer_body.statements) == 2
+    relocated = outer_body.statements[0]
+    assert isinstance(relocated, CAssignment)
+    assert relocated.lhs is target_cvar
+    assert relocated.rhs is source_cvar
+    assert outer_body.statements[1] is inner_loop
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["read_before_tagged_assignment_relocated_count"] == 1
+
+
+def test_materialize_direct_stack_mov_refuses_nested_backedge_as_outer_scope_proof():
+    project, codegen = _project()
+    source_var = SimStackVariable(-8, 2, base="bp", name="barTemp", region=0x4010)
+    target_var = SimStackVariable(-6, 2, base="bp", name="iLength", region=0x4010)
+    source_cvar = CVariable(source_var, variable_type=SimTypeShort(False), codegen=codegen)
+    target_cvar = CVariable(target_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[source_var] = source_cvar
+    codegen.cfunc.variables_in_use[target_var] = target_cvar
+
+    guard = CIfElse(
+        [
+            (
+                CBinaryOp(
+                    "CmpLE",
+                    source_cvar,
+                    target_cvar,
+                    codegen=codegen,
+                    tags={"ins_addr": 0x1040},
+                ),
+                CStatements([], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    inner_loop = CWhileLoop(
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        CStatements([guard], codegen=codegen),
+        codegen=codegen,
+    )
+    late_carrier = CAssignment(
+        target_cvar,
+        _reg(project, "ax", codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1032},
+    )
+    outer_body = CStatements([inner_loop, late_carrier], codegen=codegen)
+    outer_loop = CForLoop(
+        None,
+        CConstant(
+            1,
+            SimTypeShort(False),
+            codegen=codegen,
+            tags={"ins_addr": 0x101D},
+        ),
+        None,
+        outer_body,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(outer_loop)
+
+    load = SimpleNamespace(
+        address=0x102F,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-8)),
+        groups=(),
+    )
+    store = SimpleNamespace(
+        address=0x1032,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-6), _reg_operand(X86_REG_AX)),
+        groups=(),
+    )
+    inner_backedge = SimpleNamespace(
+        address=0x1085,
+        id=0,
+        operands=(_imm_operand(0x1038),),
+        groups=(X86_GRP_JUMP,),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(load, store, inner_backedge)),
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [outer_loop]
+    assert outer_body.statements[0] is inner_loop
+    materialized = outer_body.statements[1]
+    assert isinstance(materialized, CAssignment)
+    assert materialized.lhs is target_cvar
+    assert materialized.rhs is source_cvar
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats.get("read_before_tagged_assignment_relocated_count", 0) == 0
+
+
+def test_materialize_direct_stack_mov_keeps_posttest_loop_copy_in_body():
+    project, codegen = _project()
+    source_var = SimStackVariable(-6, 2, base="bp", name="iRow", region=0x4010)
+    target_var = SimStackVariable(-2, 2, base="bp", name="iSwitch", region=0x4010)
+    source_cvar = CVariable(source_var, variable_type=SimTypeShort(False), codegen=codegen)
+    target_cvar = CVariable(target_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[source_var] = source_cvar
+    codegen.cfunc.variables_in_use[target_var] = target_cvar
+
+    tagged_carrier = CAssignment(
+        target_cvar,
+        _reg(project, "ax", codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x102B},
+    )
+    loop = CDoWhileLoop(
+        CBinaryOp(
+            "CmpNE",
+            target_cvar,
+            CConstant(0, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+            tags={"ins_addr": 0x1031},
+        ),
+        CStatements([tagged_carrier], codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(loop)
+
+    load = SimpleNamespace(
+        address=0x1028,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-6)),
+    )
+    store = SimpleNamespace(
+        address=0x102B,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_AX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load, store))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [loop]
+    assert len(loop.body.statements) == 1
+    materialized = loop.body.statements[0]
+    assert isinstance(materialized, CAssignment)
+    assert materialized.lhs is target_cvar
+    assert materialized.rhs is source_cvar
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats.get("read_before_tagged_assignment_relocated_count", 0) == 0
+
+
+def test_materialize_direct_stack_mov_relocates_fallback_copy_after_nested_loop_read(monkeypatch):
+    project, codegen = _project()
+    monkeypatch.setattr(real_mode_linear, "_strict_same_instruction_block_8616", lambda *_args: True)
+    cur_var = SimStackVariable(-6, 2, base="bp", name="iRow", region=0x4010)
+    next_var = SimStackVariable(-2, 2, base="bp", name="iRowTmp", region=0x4010)
+    cur_cvar = CVariable(cur_var, variable_type=SimTypeShort(False), codegen=codegen)
+    next_cvar = CVariable(next_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[cur_var] = cur_cvar
+    codegen.cfunc.variables_in_use[next_var] = next_cvar
+
+    predecessor = CAssignment(
+        cur_cvar,
+        _reg(project, "ax", codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4017},
+    )
+    guard = CIfElse(
+        [
+            (
+                CBinaryOp(
+                    "CmpEQ",
+                    next_cvar,
+                    CConstant(0, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                CStatements([], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    inner_loop = CWhileLoop(
+        CConstant(1, SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x4020}),
+        CStatements([predecessor, guard], codegen=codegen),
+        codegen=codegen,
+    )
+    outer_body = CStatements([inner_loop], codegen=codegen)
+    outer_loop = CForLoop(
+        None,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        None,
+        outer_body,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(outer_loop)
+
+    load = SimpleNamespace(
+        address=0x4017,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-6)),
+    )
+    store = SimpleNamespace(
+        address=0x401A,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_AX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load, store))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert len(outer_body.statements) == 2
+    relocated = outer_body.statements[0]
+    assert isinstance(relocated, CAssignment)
+    assert relocated.lhs is next_cvar
+    assert relocated.rhs is cur_cvar
+    assert outer_body.statements[1] is inner_loop
+    assert inner_loop.body.statements == [predecessor, guard]
+    assert predecessor.lhs is cur_cvar
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["read_before_tagged_assignment_relocated_count"] == 1
+
+
 def test_materialize_direct_stack_mov_shifted_stack_source_replaces_tagged_assignment():
     project, codegen = _project()
     dst_var = SimStackVariable(-4, 2, base="bp", name="iChild", region=0x4010)
@@ -1491,6 +4252,429 @@ def test_materialize_direct_stack_mov_shifted_stack_source_replaces_tagged_assig
     assert stmt.rhs.op == "Shl"
     assert stmt.rhs.lhs is src_cvar
     assert stmt.rhs.rhs.value == 1
+
+
+def test_collects_scaled_indexed_stack_store_from_adjusted_stack_value() -> None:
+    project, _codegen = _project()
+    instructions = (
+        SimpleNamespace(
+            address=0x4010,
+            id=X86_INS_MOV,
+            operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-2)),
+        ),
+        SimpleNamespace(
+            address=0x4013,
+            id=X86_INS_INC,
+            operands=(_reg_operand(X86_REG_AX),),
+        ),
+        SimpleNamespace(
+            address=0x4014,
+            id=X86_INS_MOV,
+            operands=(_reg_operand(X86_REG_SI), _bp_mem_operand(-2)),
+        ),
+        SimpleNamespace(
+            address=0x4017,
+            id=X86_INS_SHL,
+            operands=(_reg_operand(X86_REG_SI), _imm_operand(1, size=1)),
+        ),
+        SimpleNamespace(
+            address=0x4019,
+            id=X86_INS_MOV,
+            operands=(
+                _bp_indexed_mem_operand(-90, X86_REG_SI, size=2),
+                _reg_operand(X86_REG_AX),
+            ),
+        ),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=instructions)),),
+    )
+
+    facts = _direct_stack_move_instruction_facts_8616(project, function)
+
+    assert len(facts) == 1
+    fact = facts[0]
+    assert fact.source_kind is DirectStackMoveSourceKind8616.STACK_SLOT_EXPR
+    assert fact.source_offset == -2
+    assert fact.source_immediate == 1
+    assert fact.dst_offset == -90
+    assert fact.dst_index_stack_offset == -2
+    assert fact.dst_index_byte_scale == 2
+
+
+def test_collects_global_decrement_into_stack_slot() -> None:
+    project, _codegen = _project()
+    instructions = (
+        SimpleNamespace(
+            address=0x4010,
+            id=X86_INS_MOV,
+            operands=(
+                _reg_operand(X86_REG_AX),
+                _global_mem_operand(0x0BA2),
+            ),
+        ),
+        SimpleNamespace(
+            address=0x4013,
+            id=X86_INS_DEC,
+            operands=(_reg_operand(X86_REG_AX),),
+        ),
+        SimpleNamespace(
+            address=0x4014,
+            id=X86_INS_MOV,
+            operands=(_bp_mem_operand(-4), _reg_operand(X86_REG_AX)),
+        ),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=instructions)),),
+    )
+
+    facts = _direct_stack_move_instruction_facts_8616(project, function)
+
+    assert len(facts) == 1
+    fact = facts[0]
+    assert fact.source_kind is DirectStackMoveSourceKind8616.GLOBAL_EXPR
+    assert fact.source_global_displacement == 0x0BA2
+    assert fact.source_op is DirectStackMoveExpressionOp8616.ADD
+    assert fact.source_immediate == -1
+    assert fact.dst_offset == -4
+
+
+def test_materializes_global_decrement_into_stack_slot() -> None:
+    project, codegen = _project()
+    codegen._func = SimpleNamespace(info={})
+    dst_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.statements.statements.append(
+        CAssignment(
+            dst_cvar,
+            _reg(project, "ax", codegen),
+            codegen=codegen,
+            tags={"ins_addr": 0x4014},
+        )
+    )
+    instructions = (
+        SimpleNamespace(
+            address=0x4010,
+            id=X86_INS_MOV,
+            operands=(
+                _reg_operand(X86_REG_AX),
+                _global_mem_operand(0x0BA2),
+            ),
+        ),
+        SimpleNamespace(
+            address=0x4013,
+            id=X86_INS_DEC,
+            operands=(_reg_operand(X86_REG_AX),),
+        ),
+        SimpleNamespace(
+            address=0x4014,
+            id=X86_INS_MOV,
+            operands=(_bp_mem_operand(-4), _reg_operand(X86_REG_AX)),
+        ),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=instructions)),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert changed is True
+    assignment = codegen.cfunc.statements.statements[0]
+    assert isinstance(assignment, CAssignment)
+    assert assignment.lhs is dst_cvar
+    assert isinstance(assignment.rhs, CBinaryOp)
+    assert assignment.rhs.op == "Sub"
+    assert isinstance(assignment.rhs.lhs, CVariable)
+    assert isinstance(assignment.rhs.lhs.variable, SimMemoryVariable)
+    assert assignment.rhs.lhs.variable.addr == 0x0BA2
+    assert assignment.rhs.rhs.value == 1
+
+
+def test_materializes_global_decrement_between_structured_loops() -> None:
+    project, codegen = _project()
+    codegen._func = SimpleNamespace(info={})
+    dst_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    first_loop = CWhileLoop(
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        CStatements(
+            [
+                CExpressionStatement(
+                    CConstant(1, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                    tags={"ins_addr": 0x400F},
+                )
+            ],
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    second_loop = CWhileLoop(
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        CStatements(
+            [
+                CExpressionStatement(
+                    dst_cvar,
+                    codegen=codegen,
+                    tags={"ins_addr": 0x4020},
+                )
+            ],
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.extend((first_loop, second_loop))
+    instructions = (
+        SimpleNamespace(
+            address=0x4010,
+            id=X86_INS_MOV,
+            operands=(
+                _reg_operand(X86_REG_AX),
+                _global_mem_operand(0x0BA2),
+            ),
+        ),
+        SimpleNamespace(
+            address=0x4013,
+            id=X86_INS_DEC,
+            operands=(_reg_operand(X86_REG_AX),),
+        ),
+        SimpleNamespace(
+            address=0x4014,
+            id=X86_INS_MOV,
+            operands=(_bp_mem_operand(-4), _reg_operand(X86_REG_AX)),
+        ),
+    )
+    function = SimpleNamespace(
+        addr=0x4000,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=instructions)),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert changed is True
+    statements = codegen.cfunc.statements.statements
+    assert statements[0] is first_loop
+    assert statements[2] is second_loop
+    inserted = statements[1]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs is dst_cvar
+    assert isinstance(inserted.rhs, CBinaryOp)
+    assert inserted.rhs.op == "Sub"
+
+
+def test_collects_indexed_stack_aggregate_load_into_scalar_slot() -> None:
+    project, _codegen = _project()
+    instructions = (
+        SimpleNamespace(
+            address=0x4010,
+            id=X86_INS_MOV,
+            operands=(_reg_operand(X86_REG_SI), _bp_mem_operand(-118)),
+        ),
+        SimpleNamespace(
+            address=0x4013,
+            id=X86_INS_SHL,
+            operands=(_reg_operand(X86_REG_SI), _imm_operand(1, size=1)),
+        ),
+        SimpleNamespace(
+            address=0x4015,
+            id=X86_INS_MOV,
+            operands=(
+                _reg_operand(X86_REG_AX),
+                _bp_indexed_mem_operand(-90, X86_REG_SI, size=2),
+            ),
+        ),
+        SimpleNamespace(
+            address=0x4018,
+            id=X86_INS_MOV,
+            operands=(_bp_mem_operand(-114), _reg_operand(X86_REG_AX)),
+        ),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=instructions)),),
+    )
+
+    facts = _direct_stack_move_instruction_facts_8616(project, function)
+
+    assert len(facts) == 1
+    fact = facts[0]
+    assert fact.source_kind is DirectStackMoveSourceKind8616.STACK_AGGREGATE_ELEMENT
+    assert fact.source_aggregate_base_offset == -90
+    assert fact.source_index_offset == -118
+    assert fact.source_index_byte_scale == 2
+    assert fact.source_access_width == 2
+    assert fact.dst_offset == -114
+
+
+def test_collects_indexed_stack_aggregate_element_copy() -> None:
+    project, _codegen = _project()
+    instructions = (
+        SimpleNamespace(
+            address=0x4010,
+            id=X86_INS_MOV,
+            operands=(_reg_operand(X86_REG_SI), _bp_mem_operand(-4)),
+        ),
+        SimpleNamespace(
+            address=0x4013,
+            id=X86_INS_SHL,
+            operands=(_reg_operand(X86_REG_SI), _imm_operand(1, size=1)),
+        ),
+        SimpleNamespace(
+            address=0x4015,
+            id=X86_INS_MOV,
+            operands=(
+                _reg_operand(X86_REG_AX),
+                _bp_indexed_mem_operand(-90, X86_REG_SI, size=2),
+            ),
+        ),
+        SimpleNamespace(
+            address=0x4018,
+            id=X86_INS_MOV,
+            operands=(_reg_operand(X86_REG_SI), _bp_mem_operand(-118)),
+        ),
+        SimpleNamespace(
+            address=0x401B,
+            id=X86_INS_SHL,
+            operands=(_reg_operand(X86_REG_SI), _imm_operand(1, size=1)),
+        ),
+        SimpleNamespace(
+            address=0x401D,
+            id=X86_INS_MOV,
+            operands=(
+                _bp_indexed_mem_operand(-90, X86_REG_SI, size=2),
+                _reg_operand(X86_REG_AX),
+            ),
+        ),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=instructions)),),
+    )
+
+    facts = _direct_stack_move_instruction_facts_8616(project, function)
+
+    assert len(facts) == 1
+    fact = facts[0]
+    assert fact.source_kind is DirectStackMoveSourceKind8616.STACK_AGGREGATE_ELEMENT
+    assert fact.source_index_offset == -4
+    assert fact.source_index_byte_scale == 2
+    assert fact.dst_index_stack_offset == -118
+    assert fact.dst_index_byte_scale == 2
+
+
+def test_restores_same_block_aggregate_copy_before_update_across_nested_statements() -> None:
+    project, codegen = _project()
+    instructions = (
+        SimpleNamespace(
+            address=0x4010,
+            id=X86_INS_MOV,
+            operands=(_reg_operand(X86_REG_SI), _bp_mem_operand(-4)),
+        ),
+        SimpleNamespace(
+            address=0x4013,
+            id=X86_INS_SHL,
+            operands=(_reg_operand(X86_REG_SI), _imm_operand(1, size=1)),
+        ),
+        SimpleNamespace(
+            address=0x4015,
+            id=X86_INS_MOV,
+            operands=(
+                _reg_operand(X86_REG_AX),
+                _bp_indexed_mem_operand(-90, X86_REG_SI, size=2),
+            ),
+        ),
+        SimpleNamespace(
+            address=0x4018,
+            id=X86_INS_MOV,
+            operands=(_reg_operand(X86_REG_SI), _bp_mem_operand(-118)),
+        ),
+        SimpleNamespace(
+            address=0x401B,
+            id=X86_INS_SHL,
+            operands=(_reg_operand(X86_REG_SI), _imm_operand(1, size=1)),
+        ),
+        SimpleNamespace(
+            address=0x401D,
+            id=X86_INS_MOV,
+            operands=(
+                _bp_indexed_mem_operand(-90, X86_REG_SI, size=2),
+                _reg_operand(X86_REG_AX),
+            ),
+        ),
+        SimpleNamespace(
+            address=0x4020,
+            id=X86_INS_DEC,
+            operands=(_bp_mem_operand(-4),),
+        ),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=instructions)),),
+    )
+    function._inertia_instruction_block_addr_map_8616 = {
+        instruction.address: 0x4010 for instruction in instructions
+    }
+    fact = _direct_stack_move_instruction_facts_8616(project, function)[0]
+    function._inertia_direct_stack_update_instruction_facts_8616 = (
+        DirectStackUpdateFact8616(-4, 2, -1, 0x4020),
+    )
+    codegen._func = function
+    value_type = SimTypeShort(False)
+    aggregate_var = SimStackVariable(-90, 86, base="bp", name="aTemp", region=0x4010)
+    source_index_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    destination_index_var = SimStackVariable(-118, 2, base="bp", name="iRand", region=0x4010)
+    aggregate = CVariable(aggregate_var, variable_type=value_type, codegen=codegen)
+    source_index = CVariable(source_index_var, variable_type=value_type, codegen=codegen)
+    destination_index = CVariable(destination_index_var, variable_type=value_type, codegen=codegen)
+    codegen.cfunc.variables_in_use[source_index_var] = source_index
+    source_expr = CIndexedVariable(aggregate, source_index, variable_type=value_type, codegen=codegen)
+    destination_expr = CIndexedVariable(
+        aggregate,
+        destination_index,
+        variable_type=value_type,
+        codegen=codegen,
+    )
+    move_assignment = CAssignment(destination_expr, source_expr, codegen=codegen)
+    update_assignment = CAssignment(
+        source_index,
+        CBinaryOp(
+            "Sub",
+            source_index,
+            CConstant(1, value_type, codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    update_container = CStatements([update_assignment], codegen=codegen)
+    move_container = CStatements([move_assignment], codegen=codegen)
+    codegen.cfunc.statements.statements.extend((update_container, move_container))
+
+    changed = _restore_same_block_stack_move_order_8616(
+        codegen.cfunc.statements,
+        codegen,
+        project,
+        function,
+        fact,
+        destination_expr,
+        source_expr,
+    )
+
+    assert changed is True
+    assert update_container.statements == [move_assignment, update_assignment]
+    assert move_container.statements == []
 
 
 def test_materialize_direct_stack_mov_signed_half_stack_source_replaces_tagged_assignment():
@@ -1618,6 +4802,71 @@ def test_materialize_direct_stack_mov_signed_half_inserts_before_first_stack_use
     assert isinstance(body.statements[0].rhs, CBinaryOp)
     assert body.statements[0].rhs.op == "Div"
     assert body.statements[1].__class__ is CIfElse
+
+
+def test_materialize_direct_stack_mov_signed_half_inserts_before_outer_branch_first_use():
+    project, codegen = _project()
+    dst_var = SimStackVariable(-2, 2, base="bp", name="iParent", region=0x4010)
+    src_var = SimStackVariable(-4, 2, base="bp", name="i", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    src_cvar = CVariable(src_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[src_var] = src_cvar
+    branch = CIfElse(
+        [
+            (
+                CConstant(1, SimTypeShort(False), codegen=codegen),
+                CStatements([], codegen=codegen),
+            )
+        ],
+        else_node=CStatements([CExpressionStatement(dst_cvar, codegen=codegen)], codegen=codegen),
+        codegen=codegen,
+    )
+    body = CStatements([branch], codegen=codegen)
+    loop = CForLoop(
+        CAssignment(src_cvar, CConstant(7, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        CAssignment(src_cvar, dst_cvar, codegen=codegen),
+        body,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(loop)
+
+    load = SimpleNamespace(
+        address=0x4010,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-4)),
+    )
+    sign_extend = SimpleNamespace(address=0x4013, id=X86_INS_CDQ, operands=())
+    subtract_sign = SimpleNamespace(
+        address=0x4014,
+        id=X86_INS_SUB,
+        operands=(_reg_operand(X86_REG_AX), _reg_operand(X86_REG_DX)),
+    )
+    signed_shift = SimpleNamespace(
+        address=0x4016,
+        id=X86_INS_SAR,
+        operands=(_reg_operand(X86_REG_AX), _imm_operand(1, size=1)),
+    )
+    store = SimpleNamespace(
+        address=0x401A,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_AX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(capstone=SimpleNamespace(insns=(load, sign_extend, subtract_sign, signed_shift, store))),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert isinstance(body.statements[0], CAssignment)
+    assert body.statements[0].lhs.variable is dst_var
+    assert body.statements[1] is branch
+    assert isinstance(branch.else_node.statements[0], CExpressionStatement)
 
 
 def test_materialize_direct_stack_mov_recurses_into_nested_statements_before_first_stack_use():
@@ -1754,6 +5003,204 @@ def test_materialize_direct_stack_mov_reload_inserts_source_expr_before_register
     assert stats["reload_failure_count"] == 0
 
 
+def test_aggregate_reload_refuses_unscoped_source_replay(monkeypatch: pytest.MonkeyPatch) -> None:
+    project, codegen = _project()
+    codegen._func = SimpleNamespace(info={})
+    array_var = SimStackVariable(-90, 86, base="bp", name="aTemp", region=0x4010)
+    index_var = SimStackVariable(-118, 2, base="bp", name="iRand", region=0x4010)
+    dst_var = SimStackVariable(-114, 2, base="bp", name="iLength", region=0x4010)
+    array_cvar = CVariable(
+        array_var,
+        variable_type=real_mode_linear.SimTypeFixedSizeArray(SimTypeShort(False), 43),
+        codegen=codegen,
+    )
+    index_cvar = CVariable(index_var, variable_type=SimTypeShort(False), codegen=codegen)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    ax_cvar = _reg(project, "ax", codegen)
+    codegen.cfunc.variables_in_use.update(
+        {
+            array_var: array_cvar,
+            index_var: index_cvar,
+            dst_var: dst_cvar,
+        }
+    )
+    aggregate = StackAggregateObjectFact8616(-90, 86, 2, 118, 0, 3, (-90,), -4, 2)
+    codegen._inertia_stack_aggregate_object_facts_8616 = (aggregate,)
+    codegen._inertia_stack_aggregate_cvars_8616 = {-90: array_cvar}
+    monkeypatch.setattr(
+        real_mode_linear,
+        "materialize_stack_aggregate_objects_8616",
+        lambda *_args, **_kwargs: False,
+    )
+    bad_store = CAssignment(
+        dst_cvar,
+        ax_cvar,
+        codegen=codegen,
+        tags={"ins_addr": 0x4018},
+    )
+    guard = CIfElse(
+        [
+            (
+                CBinaryOp(
+                    "CmpLE",
+                    ax_cvar,
+                    CConstant(0, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                CStatements([], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    guard.tags = {"ins_addr": 0x401B}
+    codegen.cfunc.statements.statements.extend((bad_store, guard))
+    instructions = (
+        SimpleNamespace(
+            address=0x4010,
+            id=X86_INS_MOV,
+            operands=(_reg_operand(X86_REG_SI), _bp_mem_operand(-118)),
+        ),
+        SimpleNamespace(
+            address=0x4013,
+            id=X86_INS_SHL,
+            operands=(_reg_operand(X86_REG_SI), _imm_operand(1, size=1)),
+        ),
+        SimpleNamespace(
+            address=0x4015,
+            id=X86_INS_MOV,
+            operands=(
+                _reg_operand(X86_REG_AX),
+                _bp_indexed_mem_operand(-90, X86_REG_SI, size=2),
+            ),
+        ),
+        SimpleNamespace(
+            address=0x4018,
+            id=X86_INS_MOV,
+            operands=(_bp_mem_operand(-114), _reg_operand(X86_REG_AX)),
+        ),
+        SimpleNamespace(
+            address=0x401B,
+            id=X86_INS_MOV,
+            operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-114)),
+        ),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=instructions)),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+
+    assert changed is True
+    store = codegen.cfunc.statements.statements[0]
+    assert isinstance(store, CAssignment)
+    assert isinstance(store.rhs, CIndexedVariable)
+    assert store.rhs.variable is array_cvar
+    assert codegen.cfunc.statements.statements[1] is guard
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["aggregate_reload_unscoped_fallback_refused_count"] == 1
+    assert stats["reload_failure_count"] == 1
+
+
+def test_materialize_direct_stack_mov_reload_after_update_does_not_replay_initial_stack_store():
+    project, codegen = _project()
+    total_var = SimStackVariable(-2, 2, base="bp", name="total", region=0x4010)
+    total_cvar = CVariable(total_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[total_var] = total_cvar
+    init = CAssignment(
+        total_cvar,
+        CConstant(0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    update = CAssignment(
+        total_cvar,
+        CBinaryOp("Add", total_cvar, CConstant(1, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4018},
+    )
+    use = CExpressionStatement(total_cvar, codegen=codegen, tags={"ins_addr": 0x4020})
+    codegen.cfunc.statements.statements.extend([init, update, use])
+
+    store = SimpleNamespace(
+        address=0x4010,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _imm_operand(0)),
+    )
+    intervening_update = SimpleNamespace(address=0x4018, id=X86_INS_INC, operands=(_bp_mem_operand(-2),))
+    reload = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-2)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(store, intervening_update, reload))),),
+    )
+
+    materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assignments_to_total = [
+        stmt
+        for stmt in codegen.cfunc.statements.statements
+        if isinstance(stmt, CAssignment) and stmt.lhs is total_cvar
+    ]
+    assert len(assignments_to_total) == 2
+    assert isinstance(assignments_to_total[0].rhs, CConstant)
+    assert assignments_to_total[0].rhs.value == 0
+    assert assignments_to_total[1] is update
+
+
+def test_materialize_direct_stack_mov_reload_does_not_duplicate_existing_stack_store():
+    project, codegen = _project()
+    dst_var = SimStackVariable(-2, 2, base="bp", name="up", region=0x4010)
+    src_var = SimStackVariable(4, 2, base="bp", name="low", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    src_cvar = CVariable(src_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[src_var] = src_cvar
+    existing = CAssignment(dst_cvar, src_cvar, codegen=codegen, tags={"ins_addr": 0x4010})
+    use = CExpressionStatement(dst_cvar, codegen=codegen, tags={"ins_addr": 0x4020})
+    codegen.cfunc.statements.statements.extend([existing, use])
+
+    load = SimpleNamespace(
+        address=0x400D,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(4)),
+    )
+    store = SimpleNamespace(
+        address=0x4010,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_AX)),
+    )
+    reload = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(-2)),
+    )
+    function = SimpleNamespace(
+        addr=0x4000,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(load, store, reload))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 2
+    assignment = codegen.cfunc.statements.statements[0]
+    assert isinstance(assignment, CAssignment)
+    assert assignment.lhs is dst_cvar
+    assert assignment.rhs is src_cvar
+    assert codegen.cfunc.statements.statements[1] is use
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["reload_stack_slot_visible_guard_already_present_count"] == 1
+    assert stats["reload_failure_count"] == 0
+
+
 def test_materialize_direct_stack_mov_segmented_byte_source_replaces_tagged_assignment():
     project, codegen = _project()
     dst_var = SimStackVariable(-4, 2, base="bp", name="iBreak", region=0x4010)
@@ -1831,6 +5278,28 @@ def test_materialize_direct_stack_mov_signed_idiv_remainder_replaces_tagged_assi
     divisor_cvar = CVariable(divisor_var, variable_type=SimTypeShort(False), codegen=codegen)
     codegen.cfunc.variables_in_use[dst_var] = dst_cvar
     codegen.cfunc.variables_in_use[divisor_var] = divisor_cvar
+    auxiliary_lhs = CVariable(
+        SimRegisterVariable(8, 2, name="ir_aux"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(
+        CAssignment(
+            auxiliary_lhs,
+            CFunctionCall(
+                "_INSERT",
+                None,
+                [
+                    CConstant(0, SimTypeShort(False), codegen=codegen),
+                    CConstant(2, SimTypeShort(False), codegen=codegen),
+                    divisor_cvar,
+                ],
+                codegen=codegen,
+            ),
+            codegen=codegen,
+            tags={"ins_addr": 0x4016},
+        )
+    )
     bad_stmt = CAssignment(dst_cvar, _reg(project, "dx", codegen), codegen=codegen, tags={"ins_addr": 0x4020})
     codegen.cfunc.statements.statements.append(bad_stmt)
 
@@ -1868,6 +5337,7 @@ def test_materialize_direct_stack_mov_signed_idiv_remainder_replaces_tagged_assi
     assert facts[0].source_call_ins_addr == 0x4010
     changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
     assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
     stmt = codegen.cfunc.statements.statements[0]
     assert stmt.lhs.variable is dst_var
     assert isinstance(stmt.rhs, CBinaryOp)
@@ -1875,11 +5345,14 @@ def test_materialize_direct_stack_mov_signed_idiv_remainder_replaces_tagged_assi
     assert isinstance(stmt.rhs.lhs, CTypeCast)
     assert isinstance(stmt.rhs.lhs.expr, CFunctionCall)
     assert stmt.rhs.lhs.expr.callee_target == "rand"
+    assert stmt.rhs.lhs.expr.tags["ins_addr"] == 0x4010
     assert isinstance(stmt.rhs.rhs, CTypeCast)
     assert isinstance(stmt.rhs.rhs.expr, CBinaryOp)
     assert stmt.rhs.rhs.expr.op == "Add"
     assert stmt.rhs.rhs.expr.lhs is divisor_cvar
     assert stmt.rhs.rhs.expr.rhs.value == 1
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["idiv_auxiliary_insert_pruned_count"] == 1
 
 
 def test_materialize_direct_stack_mov_signed_idiv_remainder_replaces_nested_insert_artifact():
@@ -2038,6 +5511,644 @@ def test_materialize_direct_stack_mov_signed_idiv_reuses_call_result_and_reload(
     assert stats["reload_materialized_count"] == 1
     assert stats["reload_failure_count"] == 0
 
+    materialize_direct_stack_mov_instructions_8616(
+        codegen,
+        project=project,
+        function=function,
+    )
+    assert codegen.cfunc.statements.statements[1] is store_stmt
+    assert stats["idiv_call_statement_materialized_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_stack_mov_signed_idiv_adds_visible_guard_after_tagged_store():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(functions=None, labels={0x5000: "_rand"})
+    dst_var = SimStackVariable(-0x76, 2, base="bp", name="iRand", region=0x4010)
+    divisor_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    divisor_cvar = CVariable(divisor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    ax_cvar = _reg(project, "ax", codegen)
+    si_cvar = _reg(project, "si", codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[divisor_var] = divisor_cvar
+    call_stmt = CAssignment(
+        ax_cvar,
+        CFunctionCall("rand", None, [], codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    bad_store = CAssignment(dst_cvar, _reg(project, "dx", codegen), codegen=codegen, tags={"ins_addr": 0x4020})
+    use_stmt = CAssignment(si_cvar, dst_cvar, codegen=codegen, tags={"ins_addr": 0x4023})
+    loop = CForLoop(
+        None,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        None,
+        CStatements([use_stmt], codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.extend([call_stmt, bad_store, loop])
+
+    call = SimpleNamespace(address=0x4010, id=X86_INS_CALL, operands=(_imm_operand(0x5000),))
+    load_divisor = SimpleNamespace(
+        address=0x4013,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_CX), _bp_mem_operand(-4)),
+    )
+    inc_divisor = SimpleNamespace(address=0x4016, id=X86_INS_INC, operands=(_reg_operand(X86_REG_CX),))
+    sign_extend = SimpleNamespace(address=0x4017, id=X86_INS_CDQ, operands=())
+    idiv = SimpleNamespace(address=0x4018, id=X86_INS_IDIV, operands=(_reg_operand(X86_REG_CX),))
+    store_remainder = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-0x76), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(call, load_divisor, inc_divisor, sign_extend, idiv, store_remainder))
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    rewritten_call = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten_call, CAssignment)
+    assert rewritten_call.lhs is dst_cvar
+    assert isinstance(rewritten_call.rhs, CBinaryOp)
+    assert isinstance(rewritten_call.rhs.lhs, CTypeCast)
+    assert isinstance(rewritten_call.rhs.lhs.expr, CFunctionCall)
+    assert isinstance(codegen.cfunc.statements.statements[1].rhs, CBinaryOp)
+    assert loop.body.statements[0] is use_stmt
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["idiv_call_statement_materialized_count"] == 1
+    assert stats["materialized_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_stack_mov_signed_idiv_reload_accepts_existing_stack_guard_without_register_use():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(functions=None, labels={0x5000: "_rand"})
+    dst_var = SimStackVariable(-0x76, 2, base="bp", name="iRand", region=0x4010)
+    divisor_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    next_var = SimStackVariable(-8, 2, base="bp", name="nextUse", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    divisor_cvar = CVariable(divisor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    next_cvar = CVariable(next_var, variable_type=SimTypeShort(False), codegen=codegen)
+    ax_cvar = _reg(project, "ax", codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[divisor_var] = divisor_cvar
+    codegen.cfunc.variables_in_use[next_var] = next_cvar
+    call_stmt = CAssignment(
+        ax_cvar,
+        CFunctionCall("rand", None, [], codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    bad_store = CAssignment(dst_cvar, _reg(project, "dx", codegen), codegen=codegen, tags={"ins_addr": 0x4020})
+    following_stmt = CAssignment(
+        next_cvar,
+        CConstant(3, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4024},
+    )
+    codegen.cfunc.statements.statements.extend([call_stmt, bad_store, following_stmt])
+
+    call = SimpleNamespace(address=0x4010, id=X86_INS_CALL, operands=(_imm_operand(0x5000),))
+    load_divisor = SimpleNamespace(
+        address=0x4013,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_CX), _bp_mem_operand(-4)),
+    )
+    inc_divisor = SimpleNamespace(address=0x4016, id=X86_INS_INC, operands=(_reg_operand(X86_REG_CX),))
+    sign_extend = SimpleNamespace(address=0x4017, id=X86_INS_CDQ, operands=())
+    idiv = SimpleNamespace(address=0x4018, id=X86_INS_IDIV, operands=(_reg_operand(X86_REG_CX),))
+    store_remainder = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-0x76), _reg_operand(X86_REG_DX)),
+    )
+    reload_remainder = SimpleNamespace(
+        address=0x4023,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_SI), _bp_mem_operand(-0x76)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(
+                    insns=(call, load_divisor, inc_divisor, sign_extend, idiv, store_remainder, reload_remainder)
+                )
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    rewritten_store = codegen.cfunc.statements.statements[1]
+    assert isinstance(rewritten_store, CAssignment)
+    assert isinstance(rewritten_store.rhs, CBinaryOp)
+    assert isinstance(rewritten_store.rhs.lhs, CTypeCast)
+    assert rewritten_store.rhs.lhs.expr is ax_cvar
+    assert codegen.cfunc.statements.statements[2] is following_stmt
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["reload_stack_slot_visible_guard_already_present_count"] == 1
+    assert stats["reload_materialized_count"] == 1
+    assert stats["reload_failure_count"] == 0
+
+
+def test_materialize_direct_stack_mov_signed_idiv_inserts_before_first_destination_use():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(functions=None, labels={0x5000: "_rand"})
+    dst_var = SimStackVariable(-0x76, 2, base="bp", name="iRand", region=0x4010)
+    divisor_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    divisor_cvar = CVariable(divisor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    ax_cvar = _reg(project, "ax", codegen)
+    si_cvar = _reg(project, "si", codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[divisor_var] = divisor_cvar
+    call_stmt = CAssignment(
+        ax_cvar,
+        CFunctionCall("rand", None, [], codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    use_stmt = CAssignment(si_cvar, dst_cvar, codegen=codegen, tags={"ins_addr": 0x4023})
+    loop = CForLoop(
+        None,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        None,
+        CStatements([use_stmt], codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.extend([call_stmt, loop])
+
+    call = SimpleNamespace(address=0x4010, id=X86_INS_CALL, operands=(_imm_operand(0x5000),))
+    load_divisor = SimpleNamespace(
+        address=0x4013,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_CX), _bp_mem_operand(-4)),
+    )
+    inc_divisor = SimpleNamespace(address=0x4016, id=X86_INS_INC, operands=(_reg_operand(X86_REG_CX),))
+    sign_extend = SimpleNamespace(address=0x4017, id=X86_INS_CDQ, operands=())
+    idiv = SimpleNamespace(address=0x4018, id=X86_INS_IDIV, operands=(_reg_operand(X86_REG_CX),))
+    store_remainder = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-0x76), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(capstone=SimpleNamespace(insns=(call,))),
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(load_divisor, inc_divisor, sign_extend, idiv, store_remainder))
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    rewritten_call = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten_call, CAssignment)
+    assert rewritten_call.lhs is dst_cvar
+    assert isinstance(rewritten_call.rhs, CBinaryOp)
+    assert rewritten_call.rhs.op == "Mod"
+    assert isinstance(rewritten_call.rhs.lhs, CTypeCast)
+    assert isinstance(rewritten_call.rhs.lhs.expr, CFunctionCall)
+    assert loop.body.statements[0] is use_stmt
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["idiv_call_statement_materialized_count"] == 1
+    assert stats["materialized_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_stack_mov_signed_idiv_replaces_degraded_call_statement():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(functions=None, labels={0x5000: "_rand"})
+    dst_var = SimStackVariable(-0x76, 2, base="bp", name="iRand", region=0x4010)
+    divisor_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    divisor_cvar = CVariable(divisor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[divisor_var] = divisor_cvar
+    call_stmt = CFunctionCall("rand", None, [], codegen=codegen, tags={"ins_addr": 0x4010})
+    decrement_stmt = CAssignment(
+        divisor_cvar,
+        CBinaryOp("Sub", divisor_cvar, _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4024},
+    )
+    codegen.cfunc.statements.statements.extend([call_stmt, decrement_stmt])
+
+    call = SimpleNamespace(address=0x4010, id=X86_INS_CALL, operands=(_imm_operand(0x5000),))
+    load_divisor = SimpleNamespace(
+        address=0x4013,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_CX), _bp_mem_operand(-4)),
+    )
+    inc_divisor = SimpleNamespace(address=0x4016, id=X86_INS_INC, operands=(_reg_operand(X86_REG_CX),))
+    sign_extend = SimpleNamespace(address=0x4017, id=X86_INS_CDQ, operands=())
+    idiv = SimpleNamespace(address=0x4018, id=X86_INS_IDIV, operands=(_reg_operand(X86_REG_CX),))
+    store_remainder = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-0x76), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(call, load_divisor, inc_divisor, sign_extend, idiv, store_remainder))
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    rewritten = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten, CAssignment)
+    assert rewritten.lhs is dst_cvar
+    assert isinstance(rewritten.rhs, CBinaryOp)
+    assert rewritten.rhs.op == "Mod"
+    assert isinstance(rewritten.rhs.lhs, CTypeCast)
+    assert isinstance(rewritten.rhs.lhs.expr, CFunctionCall)
+    assert rewritten.rhs.lhs.expr.callee_target == "rand"
+    assert codegen.cfunc.statements.statements[1] is decrement_stmt
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["idiv_call_statement_materialized_count"] == 1
+    assert stats["materialized_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_stack_mov_signed_idiv_degraded_call_keeps_inline_call_when_ax_carrier_exists():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(functions=None, labels={0x5000: "_rand"})
+    dst_var = SimStackVariable(-0x76, 2, base="bp", name="iRand", region=0x4010)
+    divisor_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    divisor_cvar = CVariable(divisor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    ax_cvar = _reg(project, "ax", codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[divisor_var] = divisor_cvar
+    ax_call_stmt = CAssignment(
+        ax_cvar,
+        CFunctionCall("rand", None, [], codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    degraded_call_stmt = CFunctionCall("rand", None, [], codegen=codegen, tags={"ins_addr": 0x4010})
+    decrement_stmt = CAssignment(
+        divisor_cvar,
+        CBinaryOp("Sub", divisor_cvar, _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4024},
+    )
+    codegen.cfunc.statements.statements.extend([ax_call_stmt, degraded_call_stmt, decrement_stmt])
+
+    call = SimpleNamespace(address=0x4010, id=X86_INS_CALL, operands=(_imm_operand(0x5000),))
+    load_divisor = SimpleNamespace(
+        address=0x4013,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_CX), _bp_mem_operand(-4)),
+    )
+    inc_divisor = SimpleNamespace(address=0x4016, id=X86_INS_INC, operands=(_reg_operand(X86_REG_CX),))
+    sign_extend = SimpleNamespace(address=0x4017, id=X86_INS_CDQ, operands=())
+    idiv = SimpleNamespace(address=0x4018, id=X86_INS_IDIV, operands=(_reg_operand(X86_REG_CX),))
+    store_remainder = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-0x76), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(call, load_divisor, inc_divisor, sign_extend, idiv, store_remainder))
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    rewritten = codegen.cfunc.statements.statements[1]
+    assert isinstance(rewritten, CAssignment)
+    assert rewritten.lhs is dst_cvar
+    assert isinstance(rewritten.rhs, CBinaryOp)
+    assert isinstance(rewritten.rhs.lhs, CTypeCast)
+    assert isinstance(rewritten.rhs.lhs.expr, CFunctionCall)
+    assert rewritten.rhs.lhs.expr.callee_target == "rand"
+    assert rewritten.rhs.lhs.expr is not ax_cvar
+    assert codegen.cfunc.statements.statements[2] is decrement_stmt
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["call_result_reused_count"] == 1
+    assert stats["idiv_call_statement_materialized_count"] == 1
+    assert stats["materialized_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_stack_mov_signed_idiv_replaces_wrapped_degraded_call_statement():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(functions=None, labels={0x5000: "_rand"})
+    dst_var = SimStackVariable(-0x76, 2, base="bp", name="iRand", region=0x4010)
+    divisor_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    divisor_cvar = CVariable(divisor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[divisor_var] = divisor_cvar
+    wrapped_call_stmt = CExpressionStatement(
+        CFunctionCall("rand", None, [], codegen=codegen, tags={"ins_addr": 0x4010}),
+        codegen=codegen,
+    )
+    decrement_stmt = CAssignment(
+        divisor_cvar,
+        CBinaryOp("Sub", divisor_cvar, _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4024},
+    )
+    codegen.cfunc.statements.statements.extend([wrapped_call_stmt, decrement_stmt])
+
+    call = SimpleNamespace(address=0x4010, id=X86_INS_CALL, operands=(_imm_operand(0x5000),))
+    load_divisor = SimpleNamespace(
+        address=0x4013,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_CX), _bp_mem_operand(-4)),
+    )
+    inc_divisor = SimpleNamespace(address=0x4016, id=X86_INS_INC, operands=(_reg_operand(X86_REG_CX),))
+    sign_extend = SimpleNamespace(address=0x4017, id=X86_INS_CDQ, operands=())
+    idiv = SimpleNamespace(address=0x4018, id=X86_INS_IDIV, operands=(_reg_operand(X86_REG_CX),))
+    store_remainder = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-0x76), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(call, load_divisor, inc_divisor, sign_extend, idiv, store_remainder))
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    rewritten = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten, CAssignment)
+    assert rewritten.lhs is dst_cvar
+    assert isinstance(rewritten.rhs, CBinaryOp)
+    assert isinstance(rewritten.rhs.lhs, CTypeCast)
+    assert isinstance(rewritten.rhs.lhs.expr, CFunctionCall)
+    assert rewritten.rhs.lhs.expr.callee_target == "rand"
+    assert codegen.cfunc.statements.statements[1] is decrement_stmt
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["idiv_call_statement_materialized_count"] == 1
+    assert stats["materialized_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_stack_mov_signed_idiv_replaces_unique_untagged_degraded_call_statement():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(functions=None, labels={0x5000: "_rand"})
+    dst_var = SimStackVariable(-0x76, 2, base="bp", name="iRand", region=0x4010)
+    divisor_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    divisor_cvar = CVariable(divisor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[divisor_var] = divisor_cvar
+    wrapped_call_stmt = CExpressionStatement(CFunctionCall("rand", None, [], codegen=codegen), codegen=codegen)
+    decrement_stmt = CAssignment(
+        divisor_cvar,
+        CBinaryOp("Sub", divisor_cvar, _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4024},
+    )
+    codegen.cfunc.statements.statements.extend([wrapped_call_stmt, decrement_stmt])
+
+    call = SimpleNamespace(address=0x4010, id=X86_INS_CALL, operands=(_imm_operand(0x5000),))
+    load_divisor = SimpleNamespace(
+        address=0x4013,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_CX), _bp_mem_operand(-4)),
+    )
+    inc_divisor = SimpleNamespace(address=0x4016, id=X86_INS_INC, operands=(_reg_operand(X86_REG_CX),))
+    sign_extend = SimpleNamespace(address=0x4017, id=X86_INS_CDQ, operands=())
+    idiv = SimpleNamespace(address=0x4018, id=X86_INS_IDIV, operands=(_reg_operand(X86_REG_CX),))
+    store_remainder = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-0x76), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(call, load_divisor, inc_divisor, sign_extend, idiv, store_remainder))
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    rewritten = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten, CAssignment)
+    assert rewritten.lhs is dst_cvar
+    assert isinstance(rewritten.rhs, CBinaryOp)
+    assert isinstance(rewritten.rhs.lhs, CTypeCast)
+    assert isinstance(rewritten.rhs.lhs.expr, CFunctionCall)
+    assert rewritten.rhs.lhs.expr.callee_target == "rand"
+    assert codegen.cfunc.statements.statements[1] is decrement_stmt
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["idiv_call_statement_materialized_count"] == 1
+    assert stats["materialized_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_stack_mov_signed_idiv_matches_call_target_alias_for_degraded_call_statement():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(functions=None, labels={0x5000: "_rand"})
+    dst_var = SimStackVariable(-0x76, 2, base="bp", name="iRand", region=0x4010)
+    divisor_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    divisor_cvar = CVariable(divisor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[divisor_var] = divisor_cvar
+    wrapped_call_stmt = CExpressionStatement(CFunctionCall("rand", None, [], codegen=codegen), codegen=codegen)
+    codegen.cfunc.statements.statements.append(wrapped_call_stmt)
+
+    call = SimpleNamespace(address=0x4010, id=X86_INS_CALL, operands=(_imm_operand(0x5000),))
+    load_divisor = SimpleNamespace(
+        address=0x4013,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_CX), _bp_mem_operand(-4)),
+    )
+    inc_divisor = SimpleNamespace(address=0x4016, id=X86_INS_INC, operands=(_reg_operand(X86_REG_CX),))
+    sign_extend = SimpleNamespace(address=0x4017, id=X86_INS_CDQ, operands=())
+    idiv = SimpleNamespace(address=0x4018, id=X86_INS_IDIV, operands=(_reg_operand(X86_REG_CX),))
+    store_remainder = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-0x76), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(call, load_divisor, inc_divisor, sign_extend, idiv, store_remainder))
+            ),
+        ),
+    )
+    facts = list(_direct_stack_move_instruction_facts_8616(project, function))
+    assert len(facts) == 1
+    facts[0] = replace(facts[0], source_call_name="sub_5000")
+    function._inertia_direct_stack_move_instruction_facts_8616 = tuple(facts)
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    rewritten = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten, CAssignment)
+    assert rewritten.lhs is dst_cvar
+    assert isinstance(rewritten.rhs, CBinaryOp)
+    assert isinstance(rewritten.rhs.lhs, CTypeCast)
+    assert isinstance(rewritten.rhs.lhs.expr, CFunctionCall)
+    assert rewritten.rhs.lhs.expr.callee_target == "rand"
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["idiv_call_statement_materialized_count"] == 1
+    assert stats["materialized_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_stack_mov_signed_idiv_matches_rebased_numeric_call_target():
+    project, codegen = _project()
+    project._inertia_original_linear_delta = 0x10000
+    project.kb = SimpleNamespace(functions=None, labels={0x15000: "_rand"})
+    dst_var = SimStackVariable(-0x76, 2, base="bp", name="iRand", region=0x4010)
+    divisor_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    divisor_cvar = CVariable(divisor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[divisor_var] = divisor_cvar
+    numeric_target = CConstant(0x5000, SimTypeShort(False), codegen=codegen)
+    numeric_call = CFunctionCall(numeric_target, None, [], codegen=codegen, tags={"ins_addr": 0x4010})
+    codegen.cfunc.statements.statements.append(numeric_call)
+
+    call = SimpleNamespace(address=0x4010, id=X86_INS_CALL, operands=(_imm_operand(0x5000),))
+    load_divisor = SimpleNamespace(
+        address=0x4013,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_CX), _bp_mem_operand(-4)),
+    )
+    inc_divisor = SimpleNamespace(address=0x4016, id=X86_INS_INC, operands=(_reg_operand(X86_REG_CX),))
+    sign_extend = SimpleNamespace(address=0x4017, id=X86_INS_CDQ, operands=())
+    idiv = SimpleNamespace(address=0x4018, id=X86_INS_IDIV, operands=(_reg_operand(X86_REG_CX),))
+    store_remainder = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-0x76), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(call, load_divisor, inc_divisor, sign_extend, idiv, store_remainder))
+            ),
+        ),
+    )
+    facts = list(_direct_stack_move_instruction_facts_8616(project, function))
+    assert len(facts) == 1
+    facts[0] = replace(
+        facts[0],
+        source_call_target=0x15000,
+        source_call_name="rand",
+    )
+    function._inertia_direct_stack_move_instruction_facts_8616 = tuple(facts)
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    rewritten = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten, CAssignment)
+    assert rewritten.lhs is dst_cvar
+    assert isinstance(rewritten.rhs, CBinaryOp)
+    assert isinstance(rewritten.rhs.lhs, CTypeCast)
+    assert isinstance(rewritten.rhs.lhs.expr, CFunctionCall)
+    assert rewritten.rhs.lhs.expr.callee_target == "rand"
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["idiv_call_statement_materialized_count"] == 1
+    assert stats["materialized_count"] == 1
+    assert stats["failure_count"] == 0
+
+
+def test_materialize_direct_stack_mov_signed_idiv_consumes_ax_call_carrier_assignment():
+    project, codegen = _project()
+    project.kb = SimpleNamespace(functions=None, labels={0x5000: "_rand"})
+    dst_var = SimStackVariable(-0x76, 2, base="bp", name="iRand", region=0x4010)
+    divisor_var = SimStackVariable(-4, 2, base="bp", name="iRowMax", region=0x4010)
+    dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    divisor_cvar = CVariable(divisor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    ax_cvar = _reg(project, "ax", codegen)
+    codegen.cfunc.variables_in_use[dst_var] = dst_cvar
+    codegen.cfunc.variables_in_use[divisor_var] = divisor_cvar
+    ax_call_stmt = CAssignment(
+        ax_cvar,
+        CFunctionCall("rand", None, [], codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    codegen.cfunc.statements.statements.append(ax_call_stmt)
+
+    call = SimpleNamespace(address=0x4010, id=X86_INS_CALL, operands=(_imm_operand(0x5000),))
+    load_divisor = SimpleNamespace(
+        address=0x4013,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_CX), _bp_mem_operand(-4)),
+    )
+    inc_divisor = SimpleNamespace(address=0x4016, id=X86_INS_INC, operands=(_reg_operand(X86_REG_CX),))
+    sign_extend = SimpleNamespace(address=0x4017, id=X86_INS_CDQ, operands=())
+    idiv = SimpleNamespace(address=0x4018, id=X86_INS_IDIV, operands=(_reg_operand(X86_REG_CX),))
+    store_remainder = SimpleNamespace(
+        address=0x4020,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-0x76), _reg_operand(X86_REG_DX)),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                capstone=SimpleNamespace(insns=(call, load_divisor, inc_divisor, sign_extend, idiv, store_remainder))
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    rewritten = codegen.cfunc.statements.statements[0]
+    assert isinstance(rewritten, CAssignment)
+    assert rewritten.lhs is dst_cvar
+    assert isinstance(rewritten.rhs, CBinaryOp)
+    assert isinstance(rewritten.rhs.lhs, CTypeCast)
+    assert isinstance(rewritten.rhs.lhs.expr, CFunctionCall)
+    assert rewritten.rhs.lhs.expr.callee_target == "rand"
+    stats = codegen._inertia_direct_stack_move_lowering_8616
+    assert stats["call_result_reused_count"] == 1
+    assert stats["idiv_call_statement_materialized_count"] == 1
+    assert stats["materialized_count"] == 1
+    assert stats["failure_count"] == 0
+
 
 def test_materialize_direct_stack_mov_shifted_stack_source_inserts_before_following_nested_tagged_statement():
     project, codegen = _project()
@@ -2112,7 +6223,15 @@ def test_materialize_direct_stack_mov_immediate_replaces_untagged_precontrol_ass
     dst = SimpleNamespace(type=X86_OP_MEM, size=2, mem=dst_mem)
     src = SimpleNamespace(type=X86_OP_IMM, size=2, imm=0)
     insn = SimpleNamespace(address=0x4018, id=X86_INS_MOV, operands=(dst, src))
-    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(insn,))),))
+    first_control = SimpleNamespace(
+        address=0x4020,
+        groups=(X86_GRP_JUMP,),
+        operands=(SimpleNamespace(type=X86_OP_IMM, imm=0x4030),),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(insn, first_control))),),
+    )
 
     changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
 
@@ -2134,7 +6253,15 @@ def test_materialize_direct_stack_mov_immediate_descends_nested_precontrol_state
     dst = SimpleNamespace(type=X86_OP_MEM, size=2, mem=dst_mem)
     src = SimpleNamespace(type=X86_OP_IMM, size=2, imm=0)
     insn = SimpleNamespace(address=0x4018, id=X86_INS_MOV, operands=(dst, src))
-    function = SimpleNamespace(addr=0x4010, blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(insn,))),))
+    first_control = SimpleNamespace(
+        address=0x4020,
+        groups=(X86_GRP_JUMP,),
+        operands=(SimpleNamespace(type=X86_OP_IMM, imm=0x4030),),
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(capstone=SimpleNamespace(insns=(insn, first_control))),),
+    )
 
     changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
 
@@ -2542,16 +6669,239 @@ def test_materialize_direct_stack_mov_adjusted_arg_copy_inserts_before_precontro
     assert codegen.cfunc.statements.statements[1] is loop
 
 
+def test_materialize_direct_stack_mov_adjusted_arg_copy_prefers_precontrol_over_nested_use():
+    project, codegen = _project()
+    high_var = SimStackVariable(6, 2, base="bp", name="high", region=0x4010)
+    down_var = SimStackVariable(-6, 2, base="bp", name="down", region=0x4010)
+    guard_var = SimRegisterVariable(0, 2, name="flags")
+    high_cvar = CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
+    down_cvar = CVariable(down_var, variable_type=SimTypeShort(False), codegen=codegen)
+    guard_cvar = CVariable(guard_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[high_var] = high_cvar
+    codegen.cfunc.variables_in_use[down_var] = down_cvar
+    inner_loop = CForLoop(
+        None,
+        CBinaryOp("CmpGT", down_cvar, CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen),
+        None,
+        CStatements([], codegen=codegen),
+        codegen=codegen,
+    )
+    outer_loop = CWhileLoop(
+        guard_cvar,
+        CStatements([inner_loop], codegen=codegen),
+        codegen=codegen,
+    )
+    outer_loop.tags["ins_addr"] = 0x100C
+    codegen.cfunc.statements.statements.append(outer_loop)
+
+    ax_dst = _reg_operand(X86_REG_AX)
+    ax_src = _reg_operand(X86_REG_AX)
+    load = SimpleNamespace(address=0x100B, id=X86_INS_MOV, operands=(ax_dst, _bp_mem_operand(6)))
+    decrement = SimpleNamespace(address=0x100E, id=X86_INS_DEC, operands=(ax_dst,))
+    store = SimpleNamespace(address=0x100F, id=X86_INS_MOV, operands=(_bp_mem_operand(-6), ax_src))
+    branch = SimpleNamespace(address=0x1011, id=0, groups=(X86_GRP_JUMP,), operands=())
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(SimpleNamespace(addr=0x100B, capstone=SimpleNamespace(insns=(load, decrement, store, branch))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 2
+    inserted = codegen.cfunc.statements.statements[0]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs is down_cvar
+    assert isinstance(inserted.rhs, CBinaryOp)
+    assert inserted.rhs.op == "Sub"
+    assert inserted.rhs.lhs is high_cvar
+    assert inserted.rhs.rhs.value == 1
+    assert codegen.cfunc.statements.statements[1] is outer_loop
+    assert outer_loop.body.statements == [inner_loop]
+
+
+def test_materialize_direct_stack_mov_segmented_source_inserts_before_precontrol_loop():
+    project, codegen = _project()
+    high_var = SimStackVariable(6, 2, base="bp", name="high", region=0x4010)
+    pivot_var = SimStackVariable(-2, 2, base="bp", name="pivot", region=0x4010)
+    high_cvar = CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
+    pivot_cvar = CVariable(pivot_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[high_var] = high_cvar
+    codegen.cfunc.variables_in_use[pivot_var] = pivot_cvar
+    codegen.cfunc.arg_list = [high_cvar]
+    loop_condition = CVariable(
+        SimRegisterVariable(0, 2, name="flags"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+        tags={"ins_addr": 0x1010},
+    )
+    loop = CWhileLoop(loop_condition, CStatements([], codegen=codegen), codegen=codegen)
+    codegen.cfunc.statements.statements.append(loop)
+
+    bx_dst = _reg_operand(X86_REG_BX)
+    bx_src = _reg_operand(X86_REG_BX)
+    ax_src = _reg_operand(X86_REG_AX)
+    load_index = SimpleNamespace(address=0x100B, id=X86_INS_MOV, operands=(bx_dst, _bp_mem_operand(6)))
+    shift_index = SimpleNamespace(address=0x100E, id=X86_INS_SHL, operands=(bx_src, _imm_operand(1, size=1)))
+    load_pivot = SimpleNamespace(
+        address=0x1011,
+        id=X86_INS_MOV,
+        operands=(
+            _reg_operand(X86_REG_AX),
+            SimpleNamespace(
+                type=X86_OP_MEM,
+                size=2,
+                mem=SimpleNamespace(base=X86_REG_BX, index=X86_REG_INVALID, disp=0xB4C),
+            ),
+        ),
+    )
+    store = SimpleNamespace(address=0x1015, id=X86_INS_MOV, operands=(_bp_mem_operand(-2), ax_src))
+    branch = SimpleNamespace(address=0x1018, id=0, groups=(X86_GRP_JUMP,), operands=())
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(
+            SimpleNamespace(
+                addr=0x100B,
+                capstone=SimpleNamespace(insns=(load_index, shift_index, load_pivot, store, branch)),
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 2
+    inserted = codegen.cfunc.statements.statements[0]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs is pivot_cvar
+    assert isinstance(inserted.rhs, CFunctionCall)
+    assert inserted.rhs.callee_target == "SEG_U16"
+    assert inserted.rhs.args[0].variable.name == "ds"
+    assert isinstance(inserted.rhs.args[1], CBinaryOp)
+    assert codegen.cfunc.statements.statements[1] is loop
+
+
+def test_materialize_direct_stack_mov_removes_duplicate_tagged_carrier_overwrite():
+    project, codegen = _project()
+    high_var = SimStackVariable(6, 2, base="bp", name="high", region=0x4010)
+    pivot_var = SimStackVariable(-4, 2, base="bp", name="pivot", region=0x4010)
+    high_cvar = CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
+    pivot_cvar = CVariable(pivot_var, variable_type=SimTypeShort(False), codegen=codegen)
+    stale_a = CVariable(
+        SimRegisterVariable(0x40, 2, name="vvar_483"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    stale_b = CVariable(
+        SimRegisterVariable(0x42, 2, name="vvar_484"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.variables_in_use[high_var] = high_cvar
+    codegen.cfunc.variables_in_use[pivot_var] = pivot_cvar
+    codegen.cfunc.statements.statements.extend(
+        (
+            CAssignment(pivot_cvar, stale_a, codegen=codegen, tags={"ins_addr": 0x100E}),
+            CAssignment(pivot_cvar, stale_b, codegen=codegen, tags={"ins_addr": 0x100E}),
+        )
+    )
+
+    ax_dst = _reg_operand(X86_REG_AX)
+    ax_src = _reg_operand(X86_REG_AX)
+    load = SimpleNamespace(address=0x100B, id=X86_INS_MOV, operands=(ax_dst, _bp_mem_operand(6)))
+    store = SimpleNamespace(address=0x100E, id=X86_INS_MOV, operands=(_bp_mem_operand(-4), ax_src))
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(SimpleNamespace(addr=0x100B, capstone=SimpleNamespace(insns=(load, store))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    stmt = codegen.cfunc.statements.statements[0]
+    assert isinstance(stmt, CAssignment)
+    assert stmt.lhs is pivot_cvar
+    assert stmt.rhs is high_cvar
+
+
+def test_materialize_direct_stack_mov_arg_copy_inserts_inside_else_after_prior_stack_assignment():
+    project, codegen = _project()
+    high_var = SimStackVariable(6, 2, base="bp", name="high", region=0x4010)
+    up_var = SimStackVariable(-6, 2, base="bp", name="up", region=0x4010)
+    pivot_var = SimStackVariable(-4, 2, base="bp", name="pivot", region=0x4010)
+    high_cvar = CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
+    up_cvar = CVariable(up_var, variable_type=SimTypeShort(False), codegen=codegen)
+    pivot_cvar = CVariable(pivot_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[high_var] = high_cvar
+    codegen.cfunc.variables_in_use[up_var] = up_cvar
+    codegen.cfunc.variables_in_use[pivot_var] = pivot_cvar
+    pivot_assignment = CAssignment(
+        pivot_cvar,
+        high_cvar,
+        codegen=codegen,
+        tags={"ins_addr": 0x100E},
+    )
+    loop_condition = CVariable(
+        up_var,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+        tags={"ins_addr": 0x1016},
+    )
+    loop = CWhileLoop(loop_condition, CStatements([], codegen=codegen), codegen=codegen)
+    else_body = CStatements([pivot_assignment, loop], codegen=codegen)
+    if_stmt = CIfElse(
+        [
+            (CConstant(0, SimTypeShort(False), codegen=codegen), CStatements([], codegen=codegen)),
+            (None, else_body),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(if_stmt)
+
+    ax_dst = _reg_operand(X86_REG_AX)
+    ax_src = _reg_operand(X86_REG_AX)
+    load = SimpleNamespace(
+        address=0x1011,
+        id=X86_INS_MOV,
+        operands=(ax_dst, _bp_mem_operand(6)),
+    )
+    store = SimpleNamespace(
+        address=0x1014,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-6), ax_src),
+    )
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(SimpleNamespace(addr=0x100E, capstone=SimpleNamespace(insns=(load, store))),),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert else_body.statements[0] is pivot_assignment
+    inserted = else_body.statements[1]
+    assert isinstance(inserted, CAssignment)
+    assert inserted.lhs is up_cvar
+    assert inserted.rhs is high_cvar
+    assert else_body.statements[2] is loop
+
+
 def test_materialize_direct_stack_mov_immediate_inserts_at_do_while_body_start():
     project, codegen = _project()
     changed_var = SimStackVariable(-6, 2, base="bp", name="changed", region=0x4010)
     changed_cvar = CVariable(changed_var, variable_type=SimTypeShort(False), codegen=codegen)
     codegen.cfunc.variables_in_use[changed_var] = changed_cvar
     body_stmt = CExpressionStatement(
-        CFunctionCall("body_step", None, [], codegen=codegen, tags={"ins_addr": 0x1010}),
+        CFunctionCall("body_step", None, [], codegen=codegen, tags={"ins_addr": 0x106C}),
         codegen=codegen,
     )
-    condition = CVariable(changed_var, variable_type=SimTypeShort(False), codegen=codegen, tags={"ins_addr": 0x106F})
+    condition = CVariable(
+        changed_var,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+        tags={"ins_addr": 0x106C},
+    )
     do_body = CStatements([body_stmt], codegen=codegen)
     do_loop = CDoWhileLoop(condition, do_body, codegen=codegen)
     codegen.cfunc.statements.statements.append(do_loop)
@@ -2565,9 +6915,14 @@ def test_materialize_direct_stack_mov_immediate_inserts_at_do_while_body_start()
             SimpleNamespace(type=X86_OP_IMM, size=2, imm=0),
         ),
     )
+    loopback = SimpleNamespace(
+        address=0x106C,
+        groups=(X86_GRP_JUMP,),
+        operands=(SimpleNamespace(type=X86_OP_IMM, imm=0x100B),),
+    )
     function = SimpleNamespace(
         addr=0x1000,
-        blocks=(SimpleNamespace(addr=0x100B, capstone=SimpleNamespace(insns=(store,))),),
+        blocks=(SimpleNamespace(addr=0x100B, capstone=SimpleNamespace(insns=(store, loopback))),),
     )
 
     changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
@@ -2579,6 +6934,1606 @@ def test_materialize_direct_stack_mov_immediate_inserts_at_do_while_body_start()
     assert inserted.lhs is changed_cvar
     assert inserted.rhs.value == 0
     assert do_body.statements[1] is body_stmt
+
+
+def test_do_while_shared_condition_boundary_refuses_without_exact_loopback():
+    project, codegen = _project()
+    changed_var = SimStackVariable(-6, 2, base="bp", name="changed", region=0x4010)
+    changed_cvar = CVariable(changed_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[changed_var] = changed_cvar
+    body_stmt = CExpressionStatement(
+        CFunctionCall("body_step", None, [], codegen=codegen, tags={"ins_addr": 0x106C}),
+        codegen=codegen,
+    )
+    condition = CVariable(
+        changed_var,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+        tags={"ins_addr": 0x106C},
+    )
+    do_body = CStatements([body_stmt], codegen=codegen)
+    do_loop = CDoWhileLoop(condition, do_body, codegen=codegen)
+    codegen.cfunc.statements.statements.append(do_loop)
+    assignment = CAssignment(
+        changed_cvar,
+        CConstant(0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x100B},
+    )
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(SimpleNamespace(addr=0x100B, capstone=SimpleNamespace(insns=())),),
+    )
+
+    changed = real_mode_linear._insert_at_do_while_body_start_8616(
+        codegen.cfunc.statements,
+        project,
+        function,
+        0x100B,
+        assignment,
+    )
+
+    assert changed is False
+    assert do_body.statements == [body_stmt]
+
+
+def test_materialize_direct_stack_mov_stack_copy_inserts_at_repeated_do_while_body_start():
+    project, codegen = _project()
+    low_var = SimStackVariable(4, 2, base="bp", name="iLow", region=0x4010)
+    high_var = SimStackVariable(6, 2, base="bp", name="iHigh", region=0x4010)
+    up_var = SimStackVariable(-6, 2, base="bp", name="iUp", region=0x4010)
+    down_var = SimStackVariable(-2, 2, base="bp", name="iDown", region=0x4010)
+    low_cvar = CVariable(low_var, variable_type=SimTypeShort(False), codegen=codegen)
+    high_cvar = CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
+    up_cvar = CVariable(up_var, variable_type=SimTypeShort(False), codegen=codegen)
+    down_cvar = CVariable(down_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[low_var] = low_cvar
+    codegen.cfunc.variables_in_use[high_var] = high_cvar
+    codegen.cfunc.variables_in_use[up_var] = up_cvar
+    codegen.cfunc.variables_in_use[down_var] = down_cvar
+    body_stmt = CExpressionStatement(
+        CFunctionCall("body_step", None, [], codegen=codegen, tags={"ins_addr": 0x1020}),
+        codegen=codegen,
+    )
+    condition = CBinaryOp(
+        "CmpLT",
+        up_cvar,
+        down_cvar,
+        codegen=codegen,
+    )
+    do_body = CStatements([body_stmt], codegen=codegen)
+    do_loop = CDoWhileLoop(condition, do_body, codegen=codegen)
+    stale_up = CAssignment(down_cvar, low_cvar, codegen=codegen, tags={"ins_addr": 0x100E})
+    stale_down = CAssignment(down_cvar, up_cvar, codegen=codegen, tags={"ins_addr": 0x1014})
+    codegen.cfunc.statements.statements.extend((stale_up, stale_down, do_loop))
+
+    load = SimpleNamespace(address=0x100B, id=X86_INS_MOV, operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(4)))
+    store = SimpleNamespace(address=0x100E, id=X86_INS_MOV, operands=(_bp_mem_operand(-6), _reg_operand(X86_REG_AX)))
+    high_load = SimpleNamespace(
+        address=0x1011,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(6)),
+    )
+    down_store = SimpleNamespace(
+        address=0x1014,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-2), _reg_operand(X86_REG_AX)),
+    )
+    loopback = SimpleNamespace(
+        address=0x106C,
+        groups=(X86_GRP_JUMP,),
+        operands=(SimpleNamespace(type=X86_OP_IMM, imm=0x100B),),
+    )
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(
+            SimpleNamespace(
+                addr=0x100B,
+                capstone=SimpleNamespace(insns=(load, store, high_load, down_store, loopback)),
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [do_loop]
+    assert len(do_body.statements) == 3
+    up_assignment = do_body.statements[0]
+    down_assignment = do_body.statements[1]
+    assert isinstance(up_assignment, CAssignment)
+    assert up_assignment.lhs is up_cvar
+    assert up_assignment.rhs is low_cvar
+    assert isinstance(down_assignment, CAssignment)
+    assert down_assignment.lhs is down_cvar
+    assert down_assignment.rhs is high_cvar
+    assert do_body.statements[2] is body_stmt
+
+    up_assignment.tags = {}
+    down_assignment.tags = {}
+    do_body.statements[:2] = []
+    codegen.cfunc.statements.statements[:0] = [up_assignment, down_assignment]
+
+    replay_changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert replay_changed is True
+    assert codegen.cfunc.statements.statements == [do_loop]
+    assert [assignment.lhs for assignment in do_body.statements[:2]] == [up_cvar, down_cvar]
+    assert [assignment.rhs for assignment in do_body.statements[:2]] == [low_cvar, high_cvar]
+    assert do_body.statements[2] is body_stmt
+
+
+def test_repeated_do_body_stack_copy_precedes_nested_pretest_loop():
+    project, codegen = _project()
+    low_var = SimStackVariable(4, 2, base="bp", name="iLow", region=0x4010)
+    high_var = SimStackVariable(6, 2, base="bp", name="iHigh", region=0x4010)
+    up_var = SimStackVariable(-6, 2, base="bp", name="iUp", region=0x4010)
+    low_cvar = CVariable(low_var, variable_type=SimTypeShort(False), codegen=codegen)
+    high_cvar = CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
+    up_cvar = CVariable(up_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[low_var] = low_cvar
+    codegen.cfunc.variables_in_use[high_var] = high_cvar
+    codegen.cfunc.variables_in_use[up_var] = up_cvar
+
+    nested_marker = CExpressionStatement(
+        CFunctionCall("scan", None, [up_cvar], codegen=codegen, tags={"ins_addr": 0x1020}),
+        codegen=codegen,
+    )
+    nested_body = CStatements([nested_marker], codegen=codegen)
+    nested_loop = CWhileLoop(
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        nested_body,
+        codegen=codegen,
+    )
+    do_body = CStatements([nested_loop], codegen=codegen)
+    do_loop = CDoWhileLoop(
+        CBinaryOp("CmpLT", up_cvar, high_cvar, codegen=codegen),
+        do_body,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(do_loop)
+
+    load = SimpleNamespace(
+        address=0x100B,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _bp_mem_operand(4)),
+    )
+    store = SimpleNamespace(
+        address=0x100E,
+        id=X86_INS_MOV,
+        operands=(_bp_mem_operand(-6), _reg_operand(X86_REG_AX)),
+    )
+    loopback = SimpleNamespace(
+        address=0x106C,
+        groups=(X86_GRP_JUMP,),
+        operands=(SimpleNamespace(type=X86_OP_IMM, imm=0x100B),),
+    )
+    function = SimpleNamespace(
+        addr=0x1000,
+        blocks=(
+            SimpleNamespace(
+                addr=0x100B,
+                capstone=SimpleNamespace(insns=(load, store, loopback)),
+            ),
+        ),
+    )
+
+    changed = materialize_direct_stack_mov_instructions_8616(codegen, project=project, function=function)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [do_loop]
+    assert len(do_body.statements) == 2
+    relocated = do_body.statements[0]
+    assert isinstance(relocated, CAssignment)
+    assert relocated.lhs is up_cvar
+    assert relocated.rhs is low_cvar
+    assert do_body.statements[1] is nested_loop
+    assert nested_body.statements == [nested_marker]
+
+
+def test_prune_consumed_call_push_stack_assignments_removes_misplaced_pure_carrier():
+    project, codegen = _project()
+    down_var = SimStackVariable(-2, 2, base="bp", name="iDown", region=0x4010)
+    down_cvar = CVariable(down_var, variable_type=SimTypeShort(False), codegen=codegen)
+    carrier = _reg(project, "ax", codegen)
+    false_push_write = CAssignment(
+        down_cvar,
+        CBinaryOp(
+            "Add",
+            carrier,
+            CConstant(2892, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    independent_write = CAssignment(
+        down_cvar,
+        carrier,
+        codegen=codegen,
+        tags={"ins_addr": 0x4018},
+    )
+    codegen.cfunc.statements.statements.extend((false_push_write, independent_write))
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(address=0x4016, id=X86_INS_PUSH),
+                        SimpleNamespace(address=0x4018, id=X86_INS_MOV),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_consumed_call_push_stack_assignments_8616(
+        project,
+        codegen,
+        frozenset({0x4016}),
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [independent_write]
+    stats = codegen._inertia_consumed_call_push_carrier_prune_8616
+    assert stats.raw_fact_count == 1
+    assert stats.normalized_fact_count == 1
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 0
+
+
+def test_prune_consumed_call_push_removes_nested_condition_mse_carrier():
+    project, codegen = _project()
+    index_var = SimStackVariable(-2, 2, base="bp", name="index", region=0x4010)
+    index_cvar = CVariable(index_var, variable_type=SimTypeShort(False), codegen=codegen)
+    push_carrier = CAssignment(
+        index_cvar,
+        CConstant(0x68, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    condition = CMultiStatementExpression(
+        CStatements([push_carrier], codegen=codegen),
+        CBinaryOp(
+            "CmpEQ",
+            CFunctionCall(
+                "is_flag",
+                None,
+                [index_cvar, CConstant(0x68, SimTypeShort(False), codegen=codegen)],
+                codegen=codegen,
+            ),
+            CConstant(0, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    guard = CIfElse([(condition, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.statements.statements.append(guard)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(SimpleNamespace(address=0x4016, id=X86_INS_PUSH),)
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_consumed_call_push_stack_assignments_8616(
+        project,
+        codegen,
+        frozenset({0x4016}),
+        function=function,
+    )
+
+    assert changed is True
+    assert condition.stmts.statements == []
+    assert condition.expr.lhs.args[0] is index_cvar
+    stats = codegen._inertia_consumed_call_push_carrier_prune_8616
+    assert (
+        stats.raw_fact_count,
+        stats.normalized_fact_count,
+        stats.classified_fact_count,
+        stats.materialized_count,
+        stats.failure_count,
+    ) == (1, 1, 1, 1, 0)
+
+
+def test_prune_consumed_call_push_keeps_nested_condition_mse_near_match():
+    project, codegen = _project()
+    local_var = SimStackVariable(-2, 2, base="bp", name="index", region=0x4010)
+    local_cvar = CVariable(local_var, variable_type=SimTypeShort(False), codegen=codegen)
+    ordinary_assignment = CAssignment(
+        local_cvar,
+        CConstant(0x68, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4018},
+    )
+    condition = CMultiStatementExpression(
+        CStatements([ordinary_assignment], codegen=codegen),
+        CBinaryOp(
+            "CmpEQ",
+            local_cvar,
+            CConstant(0, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.append(
+        CIfElse([(condition, CStatements([], codegen=codegen))], codegen=codegen)
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(address=0x4016, id=X86_INS_PUSH),
+                        SimpleNamespace(address=0x4018, id=X86_INS_MOV),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_consumed_call_push_stack_assignments_8616(
+        project,
+        codegen,
+        frozenset({0x4016}),
+        function=function,
+    )
+
+    assert changed is False
+    assert condition.stmts.statements == [ordinary_assignment]
+    stats = codegen._inertia_consumed_call_push_carrier_prune_8616
+    assert stats.raw_fact_count == 0
+    assert stats.materialized_count == 0
+
+
+def test_prune_consumed_call_push_stack_assignments_decodes_outside_cfg_blocks():
+    project, codegen = _project()
+    local_var = SimStackVariable(-2, 2, base="bp", name="index", region=0x4010)
+    local_cvar = CVariable(local_var, variable_type=SimTypeShort(False), codegen=codegen)
+    false_push_write = CAssignment(
+        local_cvar,
+        CConstant(0x68, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    codegen.cfunc.statements.statements.append(false_push_write)
+    push = SimpleNamespace(address=0x4016, id=X86_INS_PUSH)
+    project.factory = SimpleNamespace(
+        block=lambda addr, num_inst=1, opt_level=0: SimpleNamespace(
+            capstone=SimpleNamespace(insns=(push,) if addr == 0x4016 else ())
+        )
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(SimpleNamespace(addr=0x4010, capstone=SimpleNamespace(insns=())),),
+    )
+
+    changed = prune_consumed_call_push_stack_assignments_8616(
+        project,
+        codegen,
+        frozenset({0x4016}),
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
+    stats = codegen._inertia_consumed_call_push_carrier_prune_8616
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 0
+
+
+def test_prune_consumed_call_push_removes_exact_ss_store_and_sp_carrier():
+    project, codegen = _project()
+    sp_cvar = _reg(project, "sp", codegen)
+    ss_cvar = _reg(project, "ss", codegen)
+    push_addr = 0x4016
+    sp_carrier = CAssignment(
+        sp_cvar,
+        CBinaryOp(
+            "Sub",
+            sp_cvar,
+            CConstant(2, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": push_addr},
+    )
+    stack_store = CAssignment(
+        CFunctionCall(
+            "SEG_U8",
+            None,
+            [
+                ss_cvar,
+                CBinaryOp(
+                    "Add",
+                    sp_cvar,
+                    CConstant(1, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+            ],
+            codegen=codegen,
+        ),
+        CBinaryOp(
+            "Shr",
+            _reg(project, "ax", codegen),
+            CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": push_addr},
+    )
+    codegen.cfunc.statements.statements.extend((sp_carrier, stack_store))
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(SimpleNamespace(address=push_addr, id=X86_INS_PUSH),)
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_consumed_call_push_stack_assignments_8616(
+        project,
+        codegen,
+        frozenset({push_addr}),
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
+    stats = codegen._inertia_consumed_call_push_carrier_prune_8616
+    assert (
+        stats.raw_fact_count,
+        stats.normalized_fact_count,
+        stats.classified_fact_count,
+        stats.materialized_count,
+        stats.failure_count,
+    ) == (2, 2, 2, 2, 0)
+
+
+def test_prune_materialized_call_push_replay_follows_nested_exact_callsite_identity():
+    project, codegen = _project()
+    push_addr = 0x4016
+    nested_call_addr = 0x4018
+    sp_cvar = _reg(project, "sp", codegen)
+    ss_cvar = _reg(project, "ss", codegen)
+    sp_carrier = CAssignment(
+        sp_cvar,
+        CBinaryOp(
+            "Sub",
+            sp_cvar,
+            CConstant(2, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": push_addr},
+    )
+    stack_store = CAssignment(
+        CFunctionCall(
+            "SEG_U8",
+            None,
+            [
+                ss_cvar,
+                CBinaryOp(
+                    "Add",
+                    sp_cvar,
+                    CConstant(1, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+            ],
+            codegen=codegen,
+        ),
+        _reg(project, "ax", codegen),
+        codegen=codegen,
+        tags={"ins_addr": push_addr},
+    )
+    nested_call = CFunctionCall(
+        "aNldiv",
+        None,
+        [CConstant(7, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+        tags={"ins_addr": nested_call_addr},
+    )
+    outer_call = CFunctionCall(
+        "sprintf",
+        None,
+        [nested_call],
+        codegen=codegen,
+    )
+    call_statement = CExpressionStatement(outer_call, codegen=codegen)
+    codegen.cfunc.statements.statements.extend((sp_carrier, stack_store, call_statement))
+    summary = CallsiteSummary8616(
+        nested_call_addr,
+        0x5000,
+        nested_call_addr + 3,
+        "direct_near",
+        1,
+        (2,),
+        2,
+        "ax",
+        True,
+        push_arg_instruction_addrs=(push_addr,),
+    )
+    codegen._inertia_callsite_summary_inventory_8616 = {nested_call_addr: summary}
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(SimpleNamespace(address=push_addr, id=X86_INS_PUSH),)
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_materialized_call_push_stack_assignments_8616(
+        project,
+        codegen,
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [call_statement]
+    replay = codegen._inertia_materialized_call_push_replay_8616
+    assert (
+        replay.raw_fact_count,
+        replay.normalized_fact_count,
+        replay.classified_fact_count,
+        replay.materialized_count,
+        replay.failure_count,
+        replay.consumed_push_instruction_count,
+    ) == (1, 1, 1, 1, 0, 1)
+    prune = codegen._inertia_consumed_call_push_carrier_prune_8616
+    assert (
+        prune.raw_fact_count,
+        prune.normalized_fact_count,
+        prune.classified_fact_count,
+        prune.materialized_count,
+        prune.failure_count,
+    ) == (2, 2, 2, 2, 0)
+
+
+def test_prune_materialized_call_push_replay_follows_condition_mse_statements():
+    project, codegen = _project()
+    push_addr = 0x4016
+    callsite_addr = 0x4018
+    sp_cvar = _reg(project, "sp", codegen)
+    sp_carrier = CAssignment(
+        sp_cvar,
+        CBinaryOp(
+            "Sub",
+            sp_cvar,
+            CConstant(2, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": push_addr},
+    )
+    condition_call = CFunctionCall(
+        "sub_5000",
+        None,
+        [CConstant(7, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+        tags={"ins_addr": callsite_addr},
+    )
+    condition_mse = CMultiStatementExpression(
+        CStatements(
+            [CExpressionStatement(condition_call, codegen=codegen)],
+            codegen=codegen,
+        ),
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    condition = CIfElse(
+        [
+            (
+                condition_mse,
+                CStatements([], codegen=codegen),
+            )
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.extend((sp_carrier, condition))
+    codegen._inertia_callsite_summary_inventory_8616 = {
+        callsite_addr: CallsiteSummary8616(
+            callsite_addr,
+            0x5000,
+            callsite_addr + 3,
+            "direct_near",
+            1,
+            (2,),
+            2,
+            "ax",
+            True,
+            push_arg_instruction_addrs=(push_addr,),
+        )
+    }
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(SimpleNamespace(address=push_addr, id=X86_INS_PUSH),)
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_materialized_call_push_stack_assignments_8616(
+        project,
+        codegen,
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [condition]
+    replay = codegen._inertia_materialized_call_push_replay_8616
+    assert (
+        replay.raw_fact_count,
+        replay.normalized_fact_count,
+        replay.classified_fact_count,
+        replay.materialized_count,
+        replay.failure_count,
+        replay.consumed_push_instruction_count,
+    ) == (1, 1, 1, 1, 0, 1)
+
+
+def test_prune_consumed_call_push_refuses_non_ss_segment_store():
+    project, codegen = _project()
+    ds_cvar = _reg(project, "ds", codegen)
+    push_addr = 0x4016
+    global_store = CAssignment(
+        CFunctionCall(
+            "SEG_U8",
+            None,
+            [ds_cvar, CConstant(0x1234, SimTypeShort(False), codegen=codegen)],
+            codegen=codegen,
+        ),
+        _reg(project, "ax", codegen),
+        codegen=codegen,
+        tags={"ins_addr": push_addr},
+    )
+    codegen.cfunc.statements.statements.append(global_store)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(SimpleNamespace(address=push_addr, id=X86_INS_PUSH),)
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_consumed_call_push_stack_assignments_8616(
+        project,
+        codegen,
+        frozenset({push_addr}),
+        function=function,
+    )
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [global_store]
+    stats = codegen._inertia_consumed_call_push_carrier_prune_8616
+    assert stats.raw_fact_count == 1
+    assert stats.classified_fact_count == 0
+    assert stats.materialized_count == 0
+    assert stats.failure_count == 1
+
+
+def test_prune_call_return_frame_stack_assignments_removes_exact_call_carrier():
+    project, codegen = _project()
+    local_var = SimStackVariable(-2, 2, base="bp", name="index", region=0x4010)
+    local_cvar = CVariable(local_var, variable_type=SimTypeShort(False), codegen=codegen)
+    false_return_frame_write = CAssignment(
+        local_cvar,
+        CConstant(0x4019, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    independent_write = CAssignment(
+        local_cvar,
+        CConstant(7, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x401A},
+    )
+    codegen.cfunc.statements.statements.extend((false_return_frame_write, independent_write))
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(address=0x4016, id=X86_INS_CALL),
+                        SimpleNamespace(address=0x401A, id=X86_INS_MOV),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_call_return_frame_stack_assignments_8616(
+        project,
+        codegen,
+        {0x4016: 0x4019},
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [independent_write]
+    stats = codegen._inertia_call_return_frame_carrier_prune_8616
+    assert stats.raw_fact_count == 1
+    assert stats.normalized_fact_count == 1
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 0
+
+
+def test_prune_call_return_frame_removes_exact_far_call_cs_byte_carriers():
+    project, codegen = _project()
+    ss_cvar = _reg(project, "ss", codegen)
+    cs_cvar = _reg(project, "cs", codegen)
+    low_store = CAssignment(
+        CFunctionCall(
+            "SEG_U8",
+            None,
+            [ss_cvar, CConstant(0xFFFA, SimTypeShort(False), codegen=codegen)],
+            codegen=codegen,
+        ),
+        cs_cvar,
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    high_store = CAssignment(
+        CFunctionCall(
+            "SEG_U8",
+            None,
+            [ss_cvar, CConstant(0xFFFB, SimTypeShort(False), codegen=codegen)],
+            codegen=codegen,
+        ),
+        CBinaryOp(
+            "Shr",
+            cs_cvar,
+            CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    codegen.cfunc.statements.statements.extend((low_store, high_store))
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(SimpleNamespace(address=0x4016, id=X86_INS_LCALL),)
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_call_return_frame_stack_assignments_8616(
+        project,
+        codegen,
+        {0x4016: 0x401B},
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
+    stats = codegen._inertia_call_return_frame_carrier_prune_8616
+    assert (
+        stats.raw_fact_count,
+        stats.normalized_fact_count,
+        stats.classified_fact_count,
+        stats.materialized_count,
+        stats.failure_count,
+    ) == (2, 2, 2, 2, 0)
+
+
+def test_prune_call_return_frame_removes_only_exact_indexed_ss_cs_carriers():
+    project, codegen = _project()
+    cs_cvar = _reg(project, "cs", codegen)
+
+    def indexed_stack_lvalue(
+        offset: int,
+        *,
+        segment_name: str = "ss",
+        scale: int = 16,
+    ) -> CIndexedVariable:
+        """Build the flattened indexed stack-store shape emitted by angr."""
+        stack_cvar = CVariable(
+            SimStackVariable(
+                offset,
+                1,
+                base="bp",
+                name=f"carrier_{offset}",
+                region=0x4010,
+            ),
+            variable_type=SimTypeChar(),
+            codegen=codegen,
+        )
+        return CIndexedVariable(
+            CUnaryOp("Reference", stack_cvar, codegen=codegen),
+            CBinaryOp(
+                "Mul",
+                CConstant(scale, SimTypeShort(False), codegen=codegen),
+                _reg(project, segment_name, codegen),
+                codegen=codegen,
+            ),
+            variable_type=SimTypeChar(),
+            codegen=codegen,
+        )
+
+    low_store = CAssignment(
+        indexed_stack_lvalue(-8),
+        cs_cvar,
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    high_store = CAssignment(
+        indexed_stack_lvalue(-7),
+        CBinaryOp(
+            "Shr",
+            cs_cvar,
+            CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    wrong_segment = CAssignment(
+        indexed_stack_lvalue(-6, segment_name="ds"),
+        cs_cvar,
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    wrong_scale = CAssignment(
+        indexed_stack_lvalue(-5, scale=8),
+        cs_cvar,
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    codegen.cfunc.statements.statements.extend(
+        (low_store, high_store, wrong_segment, wrong_scale)
+    )
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(SimpleNamespace(address=0x4016, id=X86_INS_LCALL),)
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_call_return_frame_stack_assignments_8616(
+        project,
+        codegen,
+        {0x4016: 0x401B},
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == [wrong_segment, wrong_scale]
+    stats = codegen._inertia_call_return_frame_carrier_prune_8616
+    assert (
+        stats.raw_fact_count,
+        stats.normalized_fact_count,
+        stats.classified_fact_count,
+        stats.materialized_count,
+        stats.failure_count,
+    ) == (2, 2, 2, 2, 0)
+
+
+def test_prune_call_return_frame_removes_linked_push_cs_virtual_byte_carriers():
+    project, codegen = _project()
+    ss_cvar = _reg(project, "ss", codegen)
+    carrier_cvar = CVariable(
+        SimStackVariable(-8, 2, base="bp", name="carrier", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    low_store = CAssignment(
+        CFunctionCall(
+            "SEG_U8",
+            None,
+            [ss_cvar, CConstant(0xFFFA, SimTypeShort(False), codegen=codegen)],
+            codegen=codegen,
+        ),
+        carrier_cvar,
+        codegen=codegen,
+        tags={"ins_addr": 0x4015},
+    )
+    high_store = CAssignment(
+        CFunctionCall(
+            "SEG_U8",
+            None,
+            [ss_cvar, CConstant(0xFFFB, SimTypeShort(False), codegen=codegen)],
+            codegen=codegen,
+        ),
+        CBinaryOp(
+            "Shr",
+            carrier_cvar,
+            CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x4015},
+    )
+    codegen.cfunc.statements.statements.extend((low_store, high_store))
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(
+                            address=0x4015,
+                            id=X86_INS_PUSH,
+                            size=1,
+                            operands=(_reg_operand(X86_REG_CS),),
+                        ),
+                        SimpleNamespace(address=0x4016, id=X86_INS_CALL),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_call_return_frame_stack_assignments_8616(
+        project,
+        codegen,
+        {0x4016: 0x4019},
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
+    stats = codegen._inertia_call_return_frame_carrier_prune_8616
+    assert (
+        stats.raw_fact_count,
+        stats.normalized_fact_count,
+        stats.classified_fact_count,
+        stats.materialized_count,
+        stats.failure_count,
+    ) == (2, 2, 2, 2, 0)
+
+
+def test_prune_call_return_frame_refuses_nonadjacent_push_cs_and_call():
+    project, codegen = _project()
+    destination = CVariable(
+        SimStackVariable(-4, 2, base="bp", name="return_segment", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    assignment = CAssignment(
+        destination,
+        CVariable(
+            SimStackVariable(-8, 2, base="bp", name="carrier", region=0x4010),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x4015},
+    )
+    codegen.cfunc.statements.statements.append(assignment)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(
+                            address=0x4015,
+                            id=X86_INS_PUSH,
+                            size=1,
+                            operands=(_reg_operand(X86_REG_CS),),
+                        ),
+                        SimpleNamespace(address=0x4016, id=X86_INS_MOV),
+                        SimpleNamespace(address=0x4017, id=X86_INS_CALL),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_call_return_frame_stack_assignments_8616(
+        project,
+        codegen,
+        {0x4017: 0x401A},
+        function=function,
+    )
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [assignment]
+    stats = codegen._inertia_call_return_frame_carrier_prune_8616
+    assert stats.classified_fact_count == 0
+    assert stats.materialized_count == 0
+    assert stats.failure_count == 0
+
+
+def test_prune_call_return_frame_refuses_non_cs_push_before_call():
+    project, codegen = _project()
+    destination = CVariable(
+        SimStackVariable(-4, 2, base="bp", name="return_segment", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    assignment = CAssignment(
+        destination,
+        _reg(project, "cs", codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4015},
+    )
+    codegen.cfunc.statements.statements.append(assignment)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(
+                            address=0x4015,
+                            id=X86_INS_PUSH,
+                            size=1,
+                            operands=(_reg_operand(X86_REG_AX),),
+                        ),
+                        SimpleNamespace(address=0x4016, id=X86_INS_CALL),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_call_return_frame_stack_assignments_8616(
+        project,
+        codegen,
+        {0x4016: 0x4019},
+        function=function,
+    )
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [assignment]
+    stats = codegen._inertia_call_return_frame_carrier_prune_8616
+    assert stats.classified_fact_count == 0
+    assert stats.materialized_count == 0
+    assert stats.failure_count == 0
+
+
+@pytest.mark.parametrize(("instruction_id", "register_name"), ((X86_INS_CALL, "cs"), (X86_INS_LCALL, "ds")))
+def test_prune_call_return_frame_refuses_unproven_segment_carrier(
+    instruction_id: int,
+    register_name: str,
+):
+    project, codegen = _project()
+    destination = CVariable(
+        SimStackVariable(-4, 2, base="bp", name="return_segment", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    assignment = CAssignment(
+        destination,
+        _reg(project, register_name, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    codegen.cfunc.statements.statements.append(assignment)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(SimpleNamespace(address=0x4016, id=instruction_id),)
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_call_return_frame_stack_assignments_8616(
+        project,
+        codegen,
+        {0x4016: 0x401B},
+        function=function,
+    )
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [assignment]
+    stats = codegen._inertia_call_return_frame_carrier_prune_8616
+    assert stats.classified_fact_count == 0
+    assert stats.materialized_count == 0
+    assert stats.failure_count == 0
+
+
+def test_prune_call_return_frame_stack_assignments_ignores_nonconstant_call_result():
+    project, codegen = _project()
+    destination = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="result", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    call_result = CVariable(
+        SimStackVariable(4, 2, base="bp", name="argument", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    source_assignment = CAssignment(
+        destination,
+        call_result,
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    codegen.cfunc.statements.statements.append(source_assignment)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(insns=(SimpleNamespace(address=0x4016, id=X86_INS_CALL),)),
+            ),
+        ),
+    )
+
+    changed = prune_call_return_frame_stack_assignments_8616(
+        project,
+        codegen,
+        {0x4016: 0x4019},
+        function=function,
+    )
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [source_assignment]
+    stats = codegen._inertia_call_return_frame_carrier_prune_8616
+    assert stats.raw_fact_count == 0
+    assert stats.normalized_fact_count == 0
+    assert stats.classified_fact_count == 0
+    assert stats.materialized_count == 0
+    assert stats.failure_count == 0
+
+
+def test_prune_frame_prologue_stack_assignments_removes_exact_push_bp_carrier():
+    project, codegen = _project()
+    saved_frame_var = SimStackVariable(2, 2, base="bp", name="saved_frame", region=0x4010)
+    frame_anchor_var = SimStackVariable(0, 2, base="bp", name="frame_anchor", region=0x4010)
+    saved_frame = CVariable(saved_frame_var, variable_type=SimTypeShort(False), codegen=codegen)
+    frame_anchor = CVariable(frame_anchor_var, variable_type=SimTypeShort(False), codegen=codegen)
+    artifact = CAssignment(
+        saved_frame,
+        CUnaryOp("Reference", frame_anchor, codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    nested = CStatements([artifact], codegen=codegen)
+    codegen.cfunc.statements.statements.append(nested)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(
+                            address=0x4010,
+                            size=1,
+                            id=X86_INS_PUSH,
+                            operands=(_reg_operand(X86_REG_BP),),
+                        ),
+                        SimpleNamespace(
+                            address=0x4011,
+                            size=2,
+                            id=X86_INS_MOV,
+                            operands=(_reg_operand(X86_REG_BP), _reg_operand(X86_REG_SP)),
+                        ),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_frame_prologue_stack_assignments_8616(
+        project,
+        codegen,
+        function=function,
+    )
+
+    assert changed is True
+    assert nested.statements == []
+    stats = codegen._inertia_frame_prologue_carrier_prune_8616
+    assert (
+        stats.raw_fact_count,
+        stats.normalized_fact_count,
+        stats.classified_fact_count,
+        stats.materialized_count,
+        stats.failure_count,
+    ) == (1, 1, 1, 1, 0)
+
+    changed_again = prune_frame_prologue_stack_assignments_8616(
+        project,
+        codegen,
+        function=function,
+    )
+
+    assert changed_again is False
+    assert codegen._inertia_frame_prologue_carrier_prune_8616 == stats
+
+
+def test_prune_frame_prologue_stack_assignments_removes_typed_bp_dirty_carrier():
+    project, codegen = _project()
+    saved_frame = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    bp_offset = project.arch.registers["bp"][0]
+    artifact = CAssignment(
+        saved_frame,
+        CDirtyExpression(SimpleNamespace(reg=bp_offset), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    codegen.cfunc.statements.statements.append(artifact)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(
+                            address=0x4010,
+                            size=1,
+                            id=X86_INS_PUSH,
+                            operands=(_reg_operand(X86_REG_BP),),
+                        ),
+                        SimpleNamespace(
+                            address=0x4011,
+                            size=2,
+                            id=X86_INS_MOV,
+                            operands=(_reg_operand(X86_REG_BP), _reg_operand(X86_REG_SP)),
+                        ),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_frame_prologue_stack_assignments_8616(
+        project,
+        codegen,
+        function=function,
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
+    assert codegen._inertia_frame_prologue_carrier_prune_8616 == real_mode_linear.FramePrologueCarrierPrune8616(
+        raw_fact_count=1,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=1,
+        failure_count=0,
+    )
+
+
+def test_prune_frame_prologue_stack_assignments_refuses_non_bp_dirty_carrier():
+    project, codegen = _project()
+    saved_frame = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    ax_offset = project.arch.registers["ax"][0]
+    artifact = CAssignment(
+        saved_frame,
+        CDirtyExpression(SimpleNamespace(reg=ax_offset), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    codegen.cfunc.statements.statements.append(artifact)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(
+                            address=0x4010,
+                            size=1,
+                            id=X86_INS_PUSH,
+                            operands=(_reg_operand(X86_REG_BP),),
+                        ),
+                        SimpleNamespace(
+                            address=0x4011,
+                            size=2,
+                            id=X86_INS_MOV,
+                            operands=(_reg_operand(X86_REG_BP), _reg_operand(X86_REG_SP)),
+                        ),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_frame_prologue_stack_assignments_8616(
+        project,
+        codegen,
+        function=function,
+    )
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [artifact]
+
+
+def test_prune_frame_prologue_stack_assignments_refuses_non_bp_push():
+    project, codegen = _project()
+    saved_frame = CVariable(
+        SimStackVariable(2, 2, base="bp", name="saved_frame", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    frame_anchor = CVariable(
+        SimStackVariable(0, 2, base="bp", name="frame_anchor", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    artifact = CAssignment(
+        saved_frame,
+        CUnaryOp("Reference", frame_anchor, codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    codegen.cfunc.statements.statements.append(artifact)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(
+                            address=0x4010,
+                            size=1,
+                            id=X86_INS_PUSH,
+                            operands=(_reg_operand(X86_REG_AX),),
+                        ),
+                        SimpleNamespace(
+                            address=0x4011,
+                            size=2,
+                            id=X86_INS_MOV,
+                            operands=(_reg_operand(X86_REG_BP), _reg_operand(X86_REG_SP)),
+                        ),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_frame_prologue_stack_assignments_8616(
+        project,
+        codegen,
+        function=function,
+    )
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [artifact]
+    stats = codegen._inertia_frame_prologue_carrier_prune_8616
+    assert stats.classified_fact_count == 0
+    assert stats.materialized_count == 0
+
+
+def test_callee_saved_frame_evidence_retries_after_incomplete_decode(monkeypatch):
+    project, _codegen = _project()
+    function = SimpleNamespace(addr=0x4010)
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(function=lambda *, addr, create: function if addr == function.addr else None)
+    )
+    push_di = SimpleNamespace(
+        address=0x4014,
+        id=X86_INS_PUSH,
+        operands=(_reg_operand(X86_REG_DI),),
+        reg_name=lambda reg: "di" if reg == X86_REG_DI else "",
+    )
+    pop_di = SimpleNamespace(
+        address=0x4030,
+        id=X86_INS_POP,
+        operands=(_reg_operand(X86_REG_DI),),
+        reg_name=lambda reg: "di" if reg == X86_REG_DI else "",
+    )
+    ret = SimpleNamespace(address=0x4031, id=X86_INS_RET, operands=())
+    current_insns = [push_di]
+
+    monkeypatch.setattr(
+        real_mode_linear,
+        "_direct_global_update_blocks_8616",
+        lambda _project, _function: (
+            SimpleNamespace(capstone=SimpleNamespace(insns=tuple(current_insns))),
+        ),
+    )
+    monkeypatch.setattr(
+        real_mode_linear,
+        "_capstone_insns_for_direct_global_update_8616",
+        lambda _project, block: block.capstone.insns,
+    )
+
+    assert real_mode_linear._callee_saved_register_names_from_frame_evidence_8616(project, function.addr) == frozenset()
+    assert project._inertia_decode_function_insns_cache_8616 == {}
+    assert project._inertia_callee_saved_register_names_cache_8616 == {}
+
+    current_insns[:] = [push_di, pop_di, ret]
+
+    assert real_mode_linear._callee_saved_register_names_from_frame_evidence_8616(project, function.addr) == frozenset(
+        {"di"}
+    )
+    assert project._inertia_decode_function_insns_cache_8616[(function.addr, 0x100)] == (push_di, pop_di, ret)
+    assert project._inertia_callee_saved_register_names_cache_8616[function.addr] == frozenset({"di"})
+
+
+def test_prune_callee_saved_stack_spills_refuses_mismatched_restore(monkeypatch):
+    project, codegen = _project()
+    local = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    di = CVariable(
+        SimRegisterVariable(project.arch.registers["di"][0], 2, name="di"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    assignment = CAssignment(local, di, codegen=codegen, tags={"ins_addr": 0x4014})
+    codegen.cfunc.statements.statements.append(assignment)
+    push_di = SimpleNamespace(
+        address=0x4014,
+        id=X86_INS_PUSH,
+        operands=(_reg_operand(X86_REG_DI),),
+        reg_name=lambda reg: "di" if reg == X86_REG_DI else "",
+    )
+    pop_si = SimpleNamespace(
+        address=0x4030,
+        id=X86_INS_POP,
+        operands=(_reg_operand(X86_REG_SI),),
+        reg_name=lambda reg: "si" if reg == X86_REG_SI else "",
+    )
+    ret = SimpleNamespace(address=0x4031, id=X86_INS_RET, operands=())
+    monkeypatch.setattr(
+        real_mode_linear,
+        "_decode_function_insns_8616",
+        lambda _project, _addr, limit=0x100, function=None: (push_di, pop_si, ret),
+    )
+
+    assert prune_callee_saved_stack_spills_8616(codegen, project) is False
+    assert codegen.cfunc.statements.statements == [assignment]
+    assert project._inertia_callee_saved_register_names_cache_8616 == {}
+
+
+def test_prune_callee_saved_stack_spills_uses_current_structuring_function(monkeypatch):
+    project, codegen = _project()
+    local = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    di = CVariable(
+        SimRegisterVariable(project.arch.registers["di"][0], 2, name="di"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    assignment = CAssignment(local, di, codegen=codegen, tags={"ins_addr": 0x4014})
+    codegen.cfunc.statements.statements.append(assignment)
+    push_di = SimpleNamespace(
+        address=0x4014,
+        id=X86_INS_PUSH,
+        operands=(_reg_operand(X86_REG_DI),),
+        reg_name=lambda reg: "di" if reg == X86_REG_DI else "",
+    )
+    pop_di = SimpleNamespace(
+        address=0x4030,
+        id=X86_INS_POP,
+        operands=(_reg_operand(X86_REG_DI),),
+        reg_name=lambda reg: "di" if reg == X86_REG_DI else "",
+    )
+    ret = SimpleNamespace(address=0x4031, id=X86_INS_RET, operands=())
+    stale_function = SimpleNamespace(addr=0x4010, evidence=(push_di,))
+    current_function = SimpleNamespace(addr=0x4010, evidence=(push_di, pop_di, ret))
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(function=lambda *, addr, create: stale_function if addr == 0x4010 else None)
+    )
+    monkeypatch.setattr(
+        real_mode_linear,
+        "_direct_global_update_blocks_8616",
+        lambda _project, function: (
+            SimpleNamespace(capstone=SimpleNamespace(insns=function.evidence)),
+        ),
+    )
+    monkeypatch.setattr(
+        real_mode_linear,
+        "_capstone_insns_for_direct_global_update_8616",
+        lambda _project, block: block.capstone.insns,
+    )
+
+    assert prune_callee_saved_stack_spills_8616(
+        codegen,
+        project,
+        function=current_function,
+    ) is True
+    assert codegen.cfunc.statements.statements == []
+    assert project._inertia_callee_saved_register_names_cache_8616[
+        (current_function.addr, id(current_function))
+    ] == frozenset({"di"})
+
+
+@pytest.mark.parametrize(
+    ("instruction_id", "rhs_value"),
+    (
+        (X86_INS_MOV, 0x4019),
+        (X86_INS_CALL, 0x4020),
+    ),
+)
+def test_prune_call_return_frame_stack_assignments_refuses_near_matches(
+    instruction_id: int,
+    rhs_value: int,
+):
+    project, codegen = _project()
+    local_var = SimStackVariable(-2, 2, base="bp", name="index", region=0x4010)
+    local_cvar = CVariable(local_var, variable_type=SimTypeShort(False), codegen=codegen)
+    assignment = CAssignment(
+        local_cvar,
+        CConstant(rhs_value, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4016},
+    )
+    codegen.cfunc.statements.statements.append(assignment)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(insns=(SimpleNamespace(address=0x4016, id=instruction_id),)),
+            ),
+        ),
+    )
+
+    changed = prune_call_return_frame_stack_assignments_8616(
+        project,
+        codegen,
+        {0x4016: 0x4019},
+        function=function,
+    )
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [assignment]
+    stats = codegen._inertia_call_return_frame_carrier_prune_8616
+    assert stats.raw_fact_count == 1
+    assert stats.normalized_fact_count == 1
+    assert stats.classified_fact_count == 0
+    assert stats.materialized_count == 0
+    assert stats.failure_count == 0
 
 
 def test_materialize_direct_stack_mov_stack_copy_is_idempotent():
@@ -2691,6 +8646,33 @@ def test_materialize_direct_stack_dec_refuses_without_tagged_assignment():
     assert codegen._inertia_direct_stack_update_lowering_8616["classified_fact_count"] == 1
     assert codegen._inertia_direct_stack_update_lowering_8616["materialized_count"] == 0
     assert codegen._inertia_direct_stack_update_lowering_8616["failure_count"] == 1
+    lane = codegen._inertia_direct_stack_update_lane_8616
+    assert lane.classified == 1
+    assert lane.materialized == 0
+    assert lane.failures == 1
+    with pytest.raises(PipelineHardError, match="direct_stack_update: 1 facts classified but 0 materialized"):
+        assert_pipeline_contracts_8616(codegen)
+
+
+def test_direct_stack_update_facts_filter_broad_slice_to_active_function():
+    project = SimpleNamespace(_inertia_tv_active_function_addr=0x1200)
+    function = SimpleNamespace(addr=0x1000)
+    before = DirectStackUpdateFact8616(-2, 2, 1, 0x1010)
+    active = DirectStackUpdateFact8616(-2, 2, 1, 0x1210)
+
+    filtered = _filter_direct_stack_update_facts_for_active_function_8616(project, function, (before, active))
+
+    assert filtered == (active,)
+
+
+def test_direct_stack_update_facts_filter_keeps_exact_region_facts_for_original_active_addr():
+    project = SimpleNamespace(_inertia_tv_active_function_addr=0x10054, _inertia_original_linear_delta=0xF054)
+    function = SimpleNamespace(addr=0x1000)
+    exact_fact = DirectStackUpdateFact8616(-4, 2, 1, 0x1018)
+
+    filtered = _filter_direct_stack_update_facts_for_active_function_8616(project, function, (exact_fact,))
+
+    assert filtered == (exact_fact,)
 
 
 def _const(value: int, codegen, sim_type=None):
@@ -2721,6 +8703,435 @@ def test_lower_runtime_segment_access_rewrites_ds_word_dereference_to_seg_u16():
     assert lowered.callee_target == "SEG_U16"
     assert lowered.args[0].variable.name == "ds"
     assert lowered.args[1].value == 0x0BA2
+
+
+def test_lower_runtime_segment_access_rewrites_zero_plus_pointer_arg_to_indexed_load():
+    project, codegen = _project()
+    arg_var = SimStackVariable(4, 2, base="bp", name="bar1", region=0x4010)
+    arg_type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    arg_cvar = CVariable(arg_var, variable_type=arg_type, codegen=codegen)
+    codegen.cfunc.arg_list = [arg_cvar]
+    codegen.cfunc.functy = SimTypeFunction([arg_type], SimTypeShort(False), arg_names=["bar1"]).with_arch(
+        project.arch
+    )
+    offset = CBinaryOp("Add", _const(0, codegen), arg_cvar, codegen=codegen)
+    operand = _seg_linear(project, "ds", offset, codegen)
+    operand._type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    expr = CUnaryOp("Dereference", operand, codegen=codegen)
+
+    lowered = lower_runtime_segment_access_8616(expr, target="portable-flat")
+
+    assert isinstance(lowered, CIndexedVariable)
+    assert lowered.variable is arg_cvar
+    assert isinstance(lowered.index, CConstant)
+    assert lowered.index.value == 0
+
+
+def test_lower_runtime_segment_access_rewrites_scaled_pointer_arg_to_indexed_load():
+    project, codegen = _project()
+    arg_var = SimStackVariable(6, 2, base="bp", name="argv", region=0x4010)
+    arg_type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    arg_cvar = CVariable(arg_var, variable_type=arg_type, codegen=codegen)
+    index_cvar = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="index", region=0x4010),
+        variable_type=SimTypeShort(False).with_arch(project.arch),
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [arg_cvar]
+    codegen.cfunc.functy = SimTypeFunction([arg_type], SimTypeShort(False), arg_names=["argv"]).with_arch(
+        project.arch
+    )
+    scaled_index = CBinaryOp("Shl", index_cvar, _const(1, codegen), codegen=codegen)
+    offset = CBinaryOp("Add", arg_cvar, scaled_index, codegen=codegen)
+    operand = _seg_linear(project, "ds", offset, codegen)
+    operand._type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    expr = CUnaryOp("Dereference", operand, codegen=codegen)
+
+    lowered = lower_runtime_segment_access_8616(expr, target="portable-flat")
+
+    assert isinstance(lowered, CIndexedVariable)
+    assert lowered.variable is arg_cvar
+    assert lowered.index is index_cvar
+
+
+def test_lower_runtime_segment_access_refuses_pointer_arg_with_wrong_index_scale():
+    project, codegen = _project()
+    arg_var = SimStackVariable(6, 2, base="bp", name="argv", region=0x4010)
+    arg_type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    arg_cvar = CVariable(arg_var, variable_type=arg_type, codegen=codegen)
+    index_cvar = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="index", region=0x4010),
+        variable_type=SimTypeShort(False).with_arch(project.arch),
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [arg_cvar]
+    codegen.cfunc.functy = SimTypeFunction([arg_type], SimTypeShort(False), arg_names=["argv"]).with_arch(
+        project.arch
+    )
+    wrong_scale = CBinaryOp("Shl", index_cvar, _const(2, codegen), codegen=codegen)
+    offset = CBinaryOp("Add", arg_cvar, wrong_scale, codegen=codegen)
+    operand = _seg_linear(project, "ds", offset, codegen)
+    operand._type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    expr = CUnaryOp("Dereference", operand, codegen=codegen)
+
+    lowered = lower_runtime_segment_access_8616(expr, target="portable-flat")
+
+    assert isinstance(lowered, CFunctionCall)
+    assert lowered.callee_target == "SEG_U16"
+
+
+def test_lower_runtime_segment_access_does_not_drop_unparsed_proven_index():
+    project, codegen = _project()
+    scalar_type = SimTypeShort(False).with_arch(project.arch)
+    argv_var = SimStackVariable(6, 2, base="bp", name="argv", region=0x4010)
+    argv_cvar = CVariable(argv_var, variable_type=scalar_type, codegen=codegen)
+    index_cvar = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="index", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [argv_cvar]
+    codegen.cfunc.functy = SimTypeFunction(
+        [scalar_type],
+        SimTypeShort(False),
+        arg_names=["argv"],
+    ).with_arch(project.arch)
+    codegen._inertia_near_pointer_argument_facts_8616 = (
+        NearPointerArgumentFact8616(
+            stack_offset=6,
+            carrier_load_ins_addr=0x4014,
+            dereference_ins_addr=0x4018,
+            access_width_bytes=2,
+        ),
+    )
+    codegen._inertia_near_pointer_argument_classified_offsets_8616 = set()
+    codegen._inertia_near_pointer_argument_materialized_offsets_8616 = set()
+    unproven_scale = CBinaryOp(
+        "Shl",
+        index_cvar,
+        _const(2, codegen),
+        codegen=codegen,
+    )
+    offset = CBinaryOp("Add", argv_cvar, unproven_scale, codegen=codegen)
+    operand = _seg_linear(project, "ds", offset, codegen)
+    operand._type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    expr = CUnaryOp("Dereference", operand, codegen=codegen)
+
+    lowered = lower_runtime_segment_access_8616(expr, target="portable-flat")
+
+    assert isinstance(lowered, CFunctionCall)
+    assert lowered.callee_target == "SEG_U16"
+    assert argv_cvar.variable_type is scalar_type
+
+
+def test_lower_runtime_segment_access_joins_cloned_argument_to_canonical_pointer_type():
+    project, codegen = _project()
+    scalar_type = SimTypeShort(False).with_arch(project.arch)
+    pointer_type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    canonical_argv = CVariable(
+        SimStackVariable(6, 2, base="bp", name="argv", region=0x4010),
+        variable_type=pointer_type,
+        codegen=codegen,
+    )
+    cloned_argv = CVariable(
+        SimStackVariable(6, 2, base="bp", name="argv", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    index = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="index", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [canonical_argv]
+    codegen.cfunc.functy = SimTypeFunction(
+        [pointer_type],
+        SimTypeShort(False),
+        arg_names=["argv"],
+    ).with_arch(project.arch)
+    offset = CBinaryOp(
+        "Add",
+        cloned_argv,
+        CBinaryOp("Shl", index, _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    operand = _seg_linear(project, "ds", offset, codegen)
+    operand._type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    expr = CUnaryOp("Dereference", operand, codegen=codegen)
+
+    lowered = lower_runtime_segment_access_8616(expr, target="portable-flat")
+
+    assert isinstance(lowered, CIndexedVariable)
+    assert lowered.variable is cloned_argv
+    assert lowered.index is index
+    assert cloned_argv.variable_type is pointer_type
+
+
+def test_apply_runtime_segment_lowering_promotes_only_binary_proven_pointer_argument():
+    project, codegen = _project()
+    scalar_type = SimTypeShort(False).with_arch(project.arch)
+    argc = CVariable(
+        SimStackVariable(4, 2, base="bp", name="argc", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    argv = CVariable(
+        SimStackVariable(6, 2, base="bp", name="argv", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [argc, argv]
+    codegen.cfunc.functy = SimTypeFunction(
+        [scalar_type, scalar_type],
+        SimTypeShort(False),
+        arg_names=["argc", "argv"],
+    ).with_arch(project.arch)
+    local_a = CVariable(SimStackVariable(-2, 2, base="bp", name="a"), codegen=codegen)
+    local_b = CVariable(SimStackVariable(-4, 2, base="bp", name="b"), codegen=codegen)
+    local_c = CVariable(SimStackVariable(-6, 2, base="bp", name="c"), codegen=codegen)
+    index = CVariable(
+        SimStackVariable(-8, 2, base="bp", name="index"),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    argc_operand = _seg_linear(project, "ds", CBinaryOp("Add", _const(0, codegen), argc, codegen=codegen), codegen)
+    argc_operand._type = SimTypePointer(SimTypeShort(False)).with_arch(project.arch)
+    argv_helper = CFunctionCall(
+        "SEG_U16",
+        None,
+        [
+            _reg(project, "ds", codegen),
+            CBinaryOp("Add", _const(0, codegen), argv, codegen=codegen),
+        ],
+        codegen=codegen,
+        tags={"inertia_x86_16_runtime_segment_helper": "SEG_U16"},
+    )
+    indexed_argv_helper = CFunctionCall(
+        "SEG_U16",
+        None,
+        [
+            _reg(project, "ds", codegen),
+            CBinaryOp(
+                "Add",
+                argv,
+                CBinaryOp("Shl", index, _const(1, codegen), codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        codegen=codegen,
+        tags={"inertia_x86_16_runtime_segment_helper": "SEG_U16"},
+    )
+    codegen.cfunc.statements.statements.extend(
+        [
+            CAssignment(local_a, CUnaryOp("Dereference", argc_operand, codegen=codegen), codegen=codegen),
+            CAssignment(local_b, argv_helper, codegen=codegen),
+            CAssignment(local_c, indexed_argv_helper, codegen=codegen),
+        ]
+    )
+    load_argv = SimpleNamespace(
+        address=0x1000,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_BX), _bp_mem_operand(6)),
+    )
+    dereference_argv = SimpleNamespace(
+        address=0x1003,
+        id=X86_INS_PUSH,
+        operands=(_reg_indirect_mem_operand(X86_REG_BX),),
+    )
+    function = SimpleNamespace(
+        blocks=(
+            SimpleNamespace(
+                addr=0x1000,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(insn=load_argv),
+                        SimpleNamespace(insn=dereference_argv),
+                    )
+                ),
+            ),
+        )
+    )
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(get=lambda _addr: function),
+    )
+
+    changed = apply_runtime_segment_lowering_8616(codegen)
+
+    assert changed is True
+    first, second, third = codegen.cfunc.statements.statements
+    assert isinstance(first.rhs, CFunctionCall)
+    assert first.rhs.callee_target == "SEG_U16"
+    assert isinstance(second.rhs, CIndexedVariable)
+    assert isinstance(third.rhs, CIndexedVariable)
+    assert third.rhs.variable is argv
+    assert third.rhs.index is index
+    assert not isinstance(argc.variable_type, SimTypePointer)
+    assert isinstance(argv.variable_type, SimTypePointer)
+    assert not isinstance(codegen.cfunc.functy.args[0], SimTypePointer)
+    assert isinstance(codegen.cfunc.functy.args[1], SimTypePointer)
+    stats = codegen._inertia_near_pointer_argument_stats_8616
+    assert (
+        stats.raw_fact_count,
+        stats.normalized_fact_count,
+        stats.classified_fact_count,
+        stats.materialized_count,
+        stats.failure_count,
+    ) == (1, 1, 1, 1, 0)
+
+
+def test_apply_runtime_segment_lowering_appends_exact_trailing_pointer_argument():
+    project, codegen = _project()
+    scalar_type = SimTypeShort(False).with_arch(project.arch)
+    argc = CVariable(
+        SimStackVariable(4, 2, base="bp", name="argc", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    argv = CVariable(
+        SimStackVariable(6, 2, base="bp", name="local_3", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    index = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="index", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [argc]
+    codegen.cfunc.functy = SimTypeFunction(
+        [scalar_type],
+        SimTypeShort(False),
+        arg_names=["argc"],
+    ).with_arch(project.arch)
+    codegen.cfunc.variables_in_use = {
+        argc.variable: argc,
+        argv.variable: argv,
+        index.variable: index,
+    }
+    helper = CFunctionCall(
+        "SEG_U16",
+        None,
+        [
+            _reg(project, "ds", codegen),
+            CBinaryOp(
+                "Add",
+                argv,
+                CBinaryOp("Shl", index, _const(1, codegen), codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        codegen=codegen,
+        tags={"inertia_x86_16_runtime_segment_helper": "SEG_U16"},
+    )
+    codegen.cfunc.statements.statements.append(CExpressionStatement(helper, codegen=codegen))
+    load_argv = SimpleNamespace(
+        address=0x1000,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_BX), _bp_mem_operand(6)),
+    )
+    dereference_argv = SimpleNamespace(
+        address=0x1003,
+        id=X86_INS_PUSH,
+        operands=(_reg_indirect_mem_operand(X86_REG_BX),),
+    )
+    function = SimpleNamespace(
+        blocks=(
+            SimpleNamespace(
+                addr=0x1000,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(insn=load_argv),
+                        SimpleNamespace(insn=dereference_argv),
+                    )
+                ),
+            ),
+        )
+    )
+    project.kb = SimpleNamespace(functions=SimpleNamespace(get=lambda _addr: function))
+
+    changed = apply_runtime_segment_lowering_8616(codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.arg_list) == 2
+    assert codegen.cfunc.arg_list[1] is argv
+    assert argv.variable.name == "arg_6"
+    assert isinstance(argv.variable_type, SimTypePointer)
+    assert len(codegen.cfunc.functy.args) == 2
+    assert isinstance(codegen.cfunc.functy.args[1], SimTypePointer)
+    lowered = codegen.cfunc.statements.statements[0].expr
+    assert isinstance(lowered, CIndexedVariable)
+    assert lowered.variable is argv
+    assert lowered.index is index
+    assert codegen._inertia_near_pointer_argument_stats_8616.refusals == ()
+
+
+def test_apply_runtime_segment_lowering_refuses_noncontiguous_pointer_argument():
+    project, codegen = _project()
+    scalar_type = SimTypeShort(False).with_arch(project.arch)
+    argc = CVariable(
+        SimStackVariable(4, 2, base="bp", name="argc", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    candidate = CVariable(
+        SimStackVariable(8, 2, base="bp", name="local_4", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [argc]
+    codegen.cfunc.functy = SimTypeFunction(
+        [scalar_type],
+        SimTypeShort(False),
+        arg_names=["argc"],
+    ).with_arch(project.arch)
+    codegen.cfunc.variables_in_use = {argc.variable: argc, candidate.variable: candidate}
+    helper = CFunctionCall(
+        "SEG_U16",
+        None,
+        [
+            _reg(project, "ds", codegen),
+            CBinaryOp("Add", _const(0, codegen), candidate, codegen=codegen),
+        ],
+        codegen=codegen,
+        tags={"inertia_x86_16_runtime_segment_helper": "SEG_U16"},
+    )
+    codegen.cfunc.statements.statements.append(CExpressionStatement(helper, codegen=codegen))
+    load_candidate = SimpleNamespace(
+        address=0x1000,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_BX), _bp_mem_operand(8)),
+    )
+    dereference_candidate = SimpleNamespace(
+        address=0x1003,
+        id=X86_INS_PUSH,
+        operands=(_reg_indirect_mem_operand(X86_REG_BX),),
+    )
+    function = SimpleNamespace(
+        blocks=(
+            SimpleNamespace(
+                addr=0x1000,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(insn=load_candidate),
+                        SimpleNamespace(insn=dereference_candidate),
+                    )
+                ),
+            ),
+        )
+    )
+    project.kb = SimpleNamespace(functions=SimpleNamespace(get=lambda _addr: function))
+
+    changed = apply_runtime_segment_lowering_8616(codegen)
+
+    assert changed is False
+    assert codegen.cfunc.arg_list == [argc]
+    assert not isinstance(candidate.variable_type, SimTypePointer)
+    unchanged = codegen.cfunc.statements.statements[0].expr
+    assert isinstance(unchanged, CFunctionCall)
+    refusal = codegen._inertia_near_pointer_argument_stats_8616.refusals
+    assert len(refusal) == 1
+    assert refusal[0].reason is NearPointerArgumentRefusalReason8616.NO_CANONICAL_ARGUMENT
+    assert refusal[0].stack_offset == 8
 
 
 def test_lower_runtime_segment_access_rewrites_es_byte_runtime_offset_to_seg_u8():
@@ -2816,6 +9227,28 @@ def test_apply_runtime_segment_lowering_prunes_pure_address_self_assignment():
     assert codegen._inertia_runtime_segment_address_self_assign_refused_8616 == 0
 
 
+def test_runtime_segment_self_assignment_prune_accepts_statements_only_cfunc():
+    class _StatementsOnlyCFunction:
+        __slots__ = ("statements",)
+
+        def __init__(self, statements):
+            self.statements = statements
+
+    project, codegen = _project()
+    address = _seg_linear(project, "ds", _const(0x160, codegen), codegen)
+    lowered_address = lower_runtime_segment_address_8616(address, target="portable-flat")
+    assert lowered_address is not None
+    stmt = CAssignment(lowered_address, lowered_address, codegen=codegen)
+    root = CStatements([stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc = _StatementsOnlyCFunction(root)
+
+    changed = segmented_memory_lowering._prune_runtime_segment_address_self_assignments_8616(codegen)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
+    assert not hasattr(codegen.cfunc, "body")
+
+
 def test_apply_runtime_segment_lowering_preserves_ss_stack_dereferences():
     project, codegen = _project()
     ss = _reg(project, "ss", codegen)
@@ -2842,6 +9275,18 @@ def test_architecture_guard_rejects_raw_linear_segment_arithmetic():
         assert_final_c_quality_8616("x = *((unsigned short *)((ds << 4) + 2978));", function_addr=0x10498)
 
 
+def test_architecture_guard_ignores_forbidden_tokens_inside_comments():
+    assert_final_c_quality_8616(
+        "int f(void)\n"
+        "{\n"
+        "    /* forbidden example, not emitted code: ds << 4 and stack[0xfffc] */\n"
+        "    /// previous leak shape: *((ds << 4) + 2978)\n"
+        "    return SEG_U16(ds, 2978);\n"
+        "}\n",
+        function_addr=0x10498,
+    )
+
+
 def test_architecture_guard_accepts_segment_helpers():
     assert_final_c_quality_8616("x = SEG_U16(ds, 2978);\ny = MK_FP(es, di + 4);\n", function_addr=0x10498)
 
@@ -2850,6 +9295,19 @@ def test_architecture_guard_rejects_unreachable_call_after_return():
     with pytest.raises(Exception):
         assert_final_c_quality_8616(
             "int f(void)\n{\n    helper();\n    return 2;\n    aNchkstk();\n}\n",
+            function_addr=0x1000,
+        )
+
+
+def test_architecture_guard_rejects_unary_not_shift_precedence_leak():
+    with pytest.raises(Exception):
+        assert_final_c_quality_8616(
+            "int f(void)\n{\n    if (!clPause >> 16)\n        return 1;\n    return 0;\n}\n",
+            function_addr=0x1000,
+        )
+    with pytest.raises(Exception):
+        assert_final_c_quality_8616(
+            "int f(void)\n{\n    if (!(clPause) >> 16)\n        return 1;\n    return 0;\n}\n",
             function_addr=0x1000,
         )
 
@@ -2886,20 +9344,18 @@ def test_segment_linearization_through_tmp_is_rejected():
     )
 
 
-def test_architecture_guard_rejects_heapsort_constant_percolatedown_arg():
-    with pytest.raises(Exception):
-        assert_final_c_quality_8616(
-            "short HeapSort(void)\n{\n    PercolateDown(3);\n}\n",
-            function_addr=0x10970,
-        )
+def test_architecture_guard_accepts_generic_value_percolatedown_arg():
+    assert_final_c_quality_8616(
+        "short HeapSort(void)\n{\n    PercolateDown(3);\n}\n",
+        function_addr=0x10970,
+    )
 
 
-def test_architecture_guard_rejects_heapsort_reversed_swapbars_args():
-    with pytest.raises(Exception):
-        assert_final_c_quality_8616(
-            "short HeapSort(void)\n{\n    SwapBars(i, 0);\n}\n",
-            function_addr=0x10970,
-        )
+def test_architecture_guard_accepts_generic_value_swapbars_args():
+    assert_final_c_quality_8616(
+        "short HeapSort(void)\n{\n    SwapBars(i, 0);\n}\n",
+        function_addr=0x10970,
+    )
 
 
 def test_architecture_guard_accepts_heapsort_pointer_and_value_arg_shapes():
@@ -2963,6 +9419,7 @@ def test_render_c_runtime_header_msc_dos_uses_far_mk_fp():
     header = render_c_runtime_header_8616("msc-dos")
 
     assert "#include <DOS.H>" in header
+    assert "typedef signed long    int32_t;" in header
     assert "#define MK_FP(seg, off) ((uint8_t far *)" in header
     assert "SEG_U16" in header
     assert "MEM_U16" in header
@@ -2981,6 +9438,16 @@ def test_recompile_check_accepts_simple_portable_flat_c():
     result = check_c_recompiles_8616(
         "int demo(unsigned short ds) { return (int)SEG_U16(ds, 0x0BA2); }\n",
         target="portable-flat",
+    )
+
+    assert result.passed is True, result.stderr
+
+
+def test_recompile_check_msc51_accepts_portable_signed_fixed_width_aliases():
+    result = check_c_recompiles_8616(
+        "int32_t aNldiv(int32_t dividend, int32_t divisor);\n"
+        "int32_t demo(void) { return aNldiv(900L, 30L); }\n",
+        target="msc-dos",
     )
 
     assert result.passed is True, result.stderr
@@ -3056,7 +9523,7 @@ def test_recompile_check_msc51_sanitizes_c99_line_comments():
 
 def test_recompile_check_msc51_dedupes_existing_runtime_typedefs():
     payload = recompile_check._compile_input_payload_8616(
-        "typedef unsigned long clock_t;\n"
+        "typedef long clock_t;\n"
         "typedef long time_t;\n"
         "typedef unsigned short uint16_t;\n"
         "clock_t clock(void);\n"
@@ -3064,7 +9531,7 @@ def test_recompile_check_msc51_dedupes_existing_runtime_typedefs():
         target="msc-dos",
     )
 
-    assert payload.count("typedef unsigned long clock_t;") == 1
+    assert payload.count("typedef long clock_t;") == 1
     assert payload.count("typedef long time_t;") == 1
     assert payload.count("typedef unsigned short uint16_t;") == 1
     assert "void Sleep(clock_t wait)" in payload

@@ -1,13 +1,21 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, cast
+from typing import Callable, Mapping, TypeAlias, cast
 
-NamingCandidate = tuple[int, int, int]
+NamingCandidate: TypeAlias = tuple[int, int, int]
 
 
 @dataclass(frozen=True)
 class AccessTraitStrideEvidence:
+    """Evidence that a storage access follows a stable base/index/stride pattern."""
+
     segment: str
     base_key: tuple[object, ...] | None
     index_key: tuple[object, ...] | None
@@ -20,6 +28,8 @@ class AccessTraitStrideEvidence:
 
 @dataclass(frozen=True)
 class AccessTraitInductionVar:
+    """Induction-variable candidate derived from stable access evidence."""
+
     base_key: tuple[object, ...] | None
     index_key: tuple[object, ...] | None
     stride: int
@@ -30,6 +40,8 @@ class AccessTraitInductionVar:
 
 @dataclass(frozen=True)
 class InductionSummary:
+    """Normalized induction summary for array-like or loop-carried access."""
+
     base_key: tuple[object, ...] | None
     index_key: tuple[object, ...] | None
     stride: int
@@ -42,6 +54,8 @@ class InductionSummary:
 
 @dataclass(frozen=True)
 class AccessTraitEvidenceProfile:
+    """Grouped access evidence used to choose safe cleanup naming hints."""
+
     member_like: tuple[NamingCandidate, ...] = ()
     array_like: tuple[NamingCandidate, ...] = ()
     induction_like: tuple[NamingCandidate, ...] = ()
@@ -64,6 +78,7 @@ class AccessTraitEvidenceProfile:
         return tuple(candidates)
 
     def naming_candidates(self, base_key: tuple[object, ...] | None = None) -> tuple[NamingCandidate, ...]:
+        """Return deduplicated candidate offsets ordered by evidence strength."""
         structured = self._structured_candidates()
         if base_key is not None and base_key and base_key[0] == "stack":
             ordered = self.stack_like + structured + self.member_like + self.array_like + self.induction_like
@@ -80,6 +95,7 @@ class AccessTraitEvidenceProfile:
         return tuple(deduped)
 
     def has_any_evidence(self) -> bool:
+        """Return whether this profile contains any accepted access evidence."""
         return bool(
             self.member_like
             or self.array_like
@@ -90,7 +106,9 @@ class AccessTraitEvidenceProfile:
         )
 
     def best_rewrite_kind(self, base_key: tuple[object, ...] | None = None) -> str | None:
-        def _impl():
+        """Return the safest rewrite category implied by this profile."""
+
+        def _impl() -> str | None:
             if base_key is not None and base_key and base_key[0] == "stack" and self.stack_like:
                 return "stack"
             structured_counts: dict[str, int] = {}
@@ -127,6 +145,7 @@ class AccessTraitEvidenceProfile:
 
 
 def infer_induction_variable(profile: AccessTraitEvidenceProfile) -> AccessTraitInductionVar | None:
+    """Return the induction variable candidate for a stable induction profile."""
     summary = infer_induction_summary(profile)
     if summary is None:
         return None
@@ -141,7 +160,9 @@ def infer_induction_variable(profile: AccessTraitEvidenceProfile) -> AccessTrait
 
 
 def infer_induction_summary(profile: AccessTraitEvidenceProfile) -> InductionSummary | None:
-    def _impl():
+    """Return a normalized induction summary when evidence has one stable shape."""
+
+    def _impl() -> InductionSummary | None:
         candidates = tuple(
             evidence
             for evidence in profile.induction_evidence + profile.stride_evidence
@@ -178,16 +199,21 @@ def infer_induction_summary(profile: AccessTraitEvidenceProfile) -> InductionSum
 
 @dataclass(frozen=True)
 class AccessTraitRewriteDecision:
+    """Decision helper for naming access-trait-backed storage objects."""
+
     base_key: tuple[object, ...]
     profile: AccessTraitEvidenceProfile
 
     def should_rename_stack(self) -> bool:
+        """Return whether stack naming can follow this profile."""
         return self.profile.best_rewrite_kind(self.base_key) in {"member", "array", "stack"}
 
     def preferred_kind(self) -> str | None:
+        """Return the preferred rewrite category for this base key."""
         return self.profile.best_rewrite_kind(self.base_key)
 
-    def candidate_field_names(self, access_trait_field_name) -> tuple[str, ...]:
+    def candidate_field_names(self, access_trait_field_name: Callable[[int, int], str]) -> tuple[str, ...]:
+        """Return stable field-name candidates for this decision."""
         if self.preferred_kind() is None:
             return ()
         candidates = self.profile.naming_candidates(self.base_key)
@@ -208,6 +234,7 @@ def access_trait_profile_for_key(
     evidence_profiles: Mapping[tuple[object, ...], AccessTraitEvidenceProfile],
     base_key: tuple[object, ...],
 ) -> AccessTraitEvidenceProfile | None:
+    """Return an evidence profile, falling back from stack-region keys when needed."""
     profile = evidence_profiles.get(base_key)
     if profile is not None:
         return profile
@@ -219,6 +246,7 @@ def access_trait_profile_for_key(
 def build_access_trait_evidence_profiles(
     traits: dict[str, dict[tuple[object, ...], object]],
 ) -> dict[tuple[object, ...], AccessTraitEvidenceProfile]:
+    """Group raw access trait buckets into typed evidence profiles."""
     raw_profiles: dict[tuple[object, ...], dict[str, list[object]]] = {}
 
     def add_bucket(
@@ -317,6 +345,7 @@ def build_access_trait_evidence_profiles(
 def access_trait_member_candidates(
     traits: dict[str, dict[tuple[object, ...], object]],
 ) -> dict[tuple[object, ...], list[NamingCandidate]]:
+    """Return member-name candidates for all bases with accepted evidence."""
     profiles = build_access_trait_evidence_profiles(traits)
     return {
         base_key: list(profile.naming_candidates(base_key))

@@ -1,8 +1,18 @@
 """Shared C AST utilities for postprocess consumers.
 
+Layer: Rewrite/Postprocess cleanup.
+Responsibility: provide syntax-only helpers for already-rendered angr C AST nodes.
+
 This module should stay boring: traversal helpers, child replacement, constant
 inspection, and syntactic matchers for already-rendered C nodes. It is allowed
 to describe C AST shapes, but it must not decide semantic truth.
+
+Ownership rule:
+- Keep this module syntax-only and compatibility-oriented.
+- If a caller can prove semantic evidence in alias/lowering/structuring, that
+  logic must live there and this module should only pass through proven tokens.
+- As structured proof coverage improves, trim any shape-based heuristics and
+  migrate callers to the owning layer.
 
 Current migration debt:
 - several matchers recognize real-mode linear/segmented memory and BP-stack
@@ -18,13 +28,21 @@ callers can consume structured facts instead.
 Do not add new recovery logic, text parsing, compiler-specific patterns, or
 validation exceptions here. New helpers should be syntax-only utilities used by
 postprocess passes after evidence has already been collected.
+
+Dynamic attribute access in this module is limited to the angr codegen/C AST
+boundary, where structured-codegen node classes expose version-dependent child
+attributes.
 """
 
 from __future__ import annotations
 
+import builtins
 import re
+import typing
+from collections.abc import Iterator
 from contextlib import suppress
 from functools import lru_cache
+from typing import Any, Callable, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
@@ -41,6 +59,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
+from .c_ast_utils import _safe_assign_cfunc_statements_8616
 from .lowering.real_mode_linear import _stack_base_bp_bias_8616, _stack_pointer_carrier_offset_8616
 
 _SEGMENT_REGISTER_NAMES_8616 = {"cs", "ds", "es", "ss"}
@@ -72,6 +91,16 @@ _STRUCTURED_CHILD_ATTRS_BY_CLASS_8616 = {
 }
 
 
+def _dynamic_c_ast_getattr_8616(obj: object, name: str, default: object = None) -> Any:
+    """Read an attribute across the dynamic angr codegen/C AST boundary."""
+    return builtins.getattr(obj, name, default)
+
+
+def _dynamic_c_ast_setattr_8616(obj: object, name: str, value: object) -> None:
+    """Set an attribute across the dynamic angr codegen/C AST boundary."""
+    builtins.setattr(obj, name, value)
+
+
 def _strip_typed_name_suffix_8616(name: object) -> str | None:
     if not isinstance(name, str):
         return None
@@ -87,26 +116,9 @@ def _is_linear_temp_name_8616(name: object) -> bool:
     return isinstance(normalized, str) and _LINEAR_TEMP_NAME_RE_8616.fullmatch(normalized) is not None
 
 
-def _safe_assign_cfunc_statements_8616(codegen, new_root, old_root):
-    """Assign new_root to codegen.cfunc.statements preserving CStatements wrapper.
-
-    Multiple transform() functions return plain lists or single nodes instead of
-    CStatements, which corrupts all downstream passes. This helper ensures the
-    CStatements wrapper is always present.
-    """
-    from angr.analyses.decompiler.structured_codegen.c import CStatements
-
-    if isinstance(old_root, CStatements) and not isinstance(new_root, CStatements):
-        if isinstance(new_root, list):
-            new_root = CStatements(statements=new_root, codegen=codegen)
-        else:
-            new_root = CStatements(statements=[new_root], codegen=codegen)
-    codegen.cfunc.statements = new_root
-    return new_root
-
-
 __all__ = [
     "_structured_codegen_node_8616",
+    "_safe_assign_cfunc_statements_8616",
     "_c_constant_value_8616",
     "_segment_reg_name_8616",
     "_match_real_mode_linear_expr_8616",
@@ -124,7 +136,7 @@ __all__ = [
 ]
 
 
-def _unwrap_statements_8616(node) -> tuple:
+def _unwrap_statements_8616(node: object) -> tuple[object, ...]:
     """Safely extract statement children from any C AST container node.
 
     CStatements is not iterable in some angr versions.  This function
@@ -133,10 +145,10 @@ def _unwrap_statements_8616(node) -> tuple:
     if node is None:
         return ()
     if isinstance(node, CStatements):
-        return tuple(getattr(node, "statements", ()) or ())
+        return tuple(_dynamic_c_ast_getattr_8616(node, "statements", ()) or ())
     if isinstance(node, (list, tuple)):
         return tuple(node)
-    raw = getattr(node, "statements", ())
+    raw = _dynamic_c_ast_getattr_8616(node, "statements", ())
     if isinstance(raw, CStatements):
         return tuple(raw.statements)
     if isinstance(raw, (list, tuple)):
@@ -144,7 +156,7 @@ def _unwrap_statements_8616(node) -> tuple:
     return ()
 
 
-def _structured_codegen_node_8616(value) -> bool:
+def _structured_codegen_node_8616(value: object) -> bool:
     return type(value).__module__.startswith("angr.analyses.decompiler.structured_codegen")
 
 
@@ -155,7 +167,7 @@ def _structured_slot_names_for_type_8616(value_type: type) -> tuple[str, ...]:
         return ()
 
     for cls in value_type.mro():
-        slots = getattr(cls, "__slots__", ())
+        slots = _dynamic_c_ast_getattr_8616(cls, "__slots__", ())
         if not slots:
             continue
         if isinstance(slots, str):
@@ -174,8 +186,8 @@ def _structured_slot_names_for_type_8616(value_type: type) -> tuple[str, ...]:
     return tuple(ordered)
 
 
-def _structured_slot_names_8616(value) -> tuple[str, ...]:
-    def _impl():
+def _structured_slot_names_8616(value: object) -> tuple[str, ...]:
+    def _impl() -> tuple[str, ...]:
         child_attrs = _STRUCTURED_CHILD_ATTRS_BY_CLASS_8616.get(type(value).__name__)
         if child_attrs is not None:
             return child_attrs
@@ -211,7 +223,7 @@ def _structured_slot_names_8616(value) -> tuple[str, ...]:
     return _impl()
 
 
-def _iter_c_node_children_8616(value, seen_values: set[int] | None = None):
+def _iter_c_node_children_8616(value: object, seen_values: set[int] | None = None) -> Iterator[object]:
     if seen_values is None:
         seen_values = set()
 
@@ -248,27 +260,30 @@ def _iter_c_node_children_8616(value, seen_values: set[int] | None = None):
         # body, which can leak detached nodes into analyses.
 
 
-def _c_constant_value_8616(node) -> int | None:
+def _c_constant_value_8616(node: object) -> int | None:
     if isinstance(node, CConstant) and isinstance(node.value, int):
         return node.value
     return None
 
 
-def _segment_reg_name_8616(node, project) -> str | None:
+def _segment_reg_name_8616(node: object, project: object) -> str | None:
     if not isinstance(node, CVariable):
         return None
-    variable = getattr(node, "variable", None)
+    variable = _dynamic_c_ast_getattr_8616(node, "variable", None)
     if not isinstance(variable, SimRegisterVariable):
         return None
-    reg_name = project.arch.register_names.get(variable.reg)
+    project_view = cast(Any, project)
+    reg_name = project_view.arch.register_names.get(variable.reg)
     if isinstance(reg_name, str) and reg_name in _SEGMENT_REGISTER_NAMES_8616:
         return reg_name
     return None
 
 
-def _match_real_mode_linear_expr_8616(node, project, codegen=None) -> tuple[str | None, int | None]:
-    def _impl():
-        def _maybe_resolve(term):
+def _match_real_mode_linear_expr_8616(
+    node: object, project: object, codegen: object | None = None
+) -> tuple[str | None, int | None]:
+    def _impl() -> tuple[str | None, int | None]:
+        def _maybe_resolve(term: object) -> object:
             if codegen is None:
                 return term
             return _resolve_stack_bp_term_8616(term, project, codegen)
@@ -318,7 +333,9 @@ def _match_real_mode_linear_expr_8616(node, project, codegen=None) -> tuple[str 
     return _impl()
 
 
-def _match_real_mode_segmented_store_shape_8616(node, project) -> tuple[str | None, tuple[tuple[int, object], ...]]:
+def _match_real_mode_segmented_store_shape_8616(
+    node: object, project: object
+) -> tuple[str | None, tuple[tuple[int, object], ...]]:
     """Match a real-mode dereference shaped as one segment base plus explicit offset terms.
 
     This stays stricter than "lhs contains ss somewhere": the node must be a real
@@ -326,12 +343,12 @@ def _match_real_mode_segmented_store_shape_8616(node, project) -> tuple[str | No
     segment-base term plus zero or more signed offset terms.
     """
 
-    def _strip_casts(expr):
+    def _strip_casts(expr: object) -> object:
         while isinstance(expr, CTypeCast):
             expr = expr.expr
         return expr
 
-    def _segment_base_name(expr) -> str | None:
+    def _segment_base_name(expr: object) -> str | None:
         expr = _strip_casts(expr)
         if isinstance(expr, CBinaryOp) and expr.op == "Shl":
             for maybe_seg, maybe_scale in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
@@ -343,7 +360,7 @@ def _match_real_mode_segmented_store_shape_8616(node, project) -> tuple[str | No
                     return _segment_reg_name_8616(maybe_seg, project)
         return None
 
-    def _collect_signed_terms(expr, sign: int, out: list[tuple[int, object]]) -> None:
+    def _collect_signed_terms(expr: object, sign: int, out: list[tuple[int, object]]) -> None:
         expr = _strip_casts(expr)
         if isinstance(expr, CBinaryOp) and expr.op == "Add":
             _collect_signed_terms(expr.lhs, sign, out)
@@ -378,7 +395,7 @@ def _match_real_mode_segmented_store_shape_8616(node, project) -> tuple[str | No
     return segment_name, tuple(offset_terms)
 
 
-def _match_segmented_dereference_8616(node, project) -> tuple[str | None, int | None]:
+def _match_segmented_dereference_8616(node: object, project: object) -> tuple[str | None, int | None]:
     while isinstance(node, CTypeCast):
         node = node.expr
     if not isinstance(node, CUnaryOp) or node.op != "Dereference":
@@ -390,11 +407,11 @@ def _match_segmented_dereference_8616(node, project) -> tuple[str | None, int | 
 
 
 def _replace_c_children_8616(
-    node,
-    transform,
+    node: object,
+    transform: Callable[[object], object],
     seen: set[int] | None = None,
     *,
-    should_process_child: object | None = None,
+    should_process_child: Callable[[object, str], bool] | None = None,
 ) -> bool:
     scalar_attrs = (
         "lhs",
@@ -410,19 +427,21 @@ def _replace_c_children_8616(
         "body",
         "iffalse",
         "iftrue",
+        "switch",
+        "default",
         "callee_target",
         "else_node",
         "retval",
     )
     list_attrs = ("args", "operands", "statements")
 
-    def _process_scalar_attr(current, attr: str, node_stack: list[object]) -> bool:
-        if callable(should_process_child) and not bool(should_process_child(current, attr)):
+    def _process_scalar_attr(current: object, attr: str, node_stack: list[object]) -> bool:
+        if should_process_child is not None and not bool(should_process_child(current, attr)):
             return False
         if not hasattr(current, attr):
             return False
         try:
-            value = getattr(current, attr)
+            value = _dynamic_c_ast_getattr_8616(current, attr)
         except Exception:
             return False
         if not _structured_codegen_node_8616(value):
@@ -430,17 +449,17 @@ def _replace_c_children_8616(
         new_value = transform(value)
         changed_local = False
         if new_value is not value:
-            setattr(current, attr, new_value)
+            _dynamic_c_ast_setattr_8616(current, attr, new_value)
             changed_local = True
             value = new_value
         node_stack.append(value)
         return changed_local
 
-    def _process_list_attr(current, attr: str, node_stack: list[object]) -> bool:
+    def _process_list_attr(current: object, attr: str, node_stack: list[object]) -> bool:
         if not hasattr(current, attr):
             return False
         try:
-            items = getattr(current, attr)
+            items = _dynamic_c_ast_getattr_8616(current, attr)
         except Exception:
             return False
         if not items:
@@ -465,15 +484,15 @@ def _replace_c_children_8616(
         # Setting a plain list breaks downstream passes expecting .statements
         # on structured nodes (e.g. CIfElse, CWhileLoop, CForLoop).
         if attr == "statements" and isinstance(items, CStatements):
-            new_items = CStatements(statements=new_items, codegen=getattr(current, "codegen", None))
-        setattr(current, attr, new_items)
+            new_items = CStatements(statements=new_items, codegen=_dynamic_c_ast_getattr_8616(current, "codegen", None))
+        _dynamic_c_ast_setattr_8616(current, attr, new_items)
         return changed_local
 
-    def _process_condition_pairs(current, node_stack: list[object]) -> bool:
+    def _process_condition_pairs(current: object, node_stack: list[object]) -> bool:
         if not hasattr(current, "condition_and_nodes"):
             return False
         try:
-            pairs = getattr(current, "condition_and_nodes")
+            pairs = _dynamic_c_ast_getattr_8616(current, "condition_and_nodes")
         except Exception:
             pairs = None
         if not pairs:
@@ -491,8 +510,39 @@ def _replace_c_children_8616(
                 node_stack.append(new_body)
             new_pairs.append((new_cond, new_body))
         if pair_changed:
-            setattr(current, "condition_and_nodes", new_pairs)
+            typing.cast(typing.Any, current).condition_and_nodes = new_pairs
         return pair_changed
+
+    def _process_switch_cases(current: object, node_stack: list[object]) -> bool:
+        if not hasattr(current, "cases"):
+            return False
+        try:
+            # Dynamic angr codegen boundary: CSwitchCase exposes cases structurally.
+            cases = _dynamic_c_ast_getattr_8616(current, "cases")
+        except Exception:
+            return False
+        if not cases:
+            return False
+        changed_local = False
+        new_cases = []
+        for item in cases:
+            if not isinstance(item, tuple) or len(item) != 2:
+                new_cases.append(item)
+                continue
+            case_value, case_body = item
+            new_value = transform(case_value) if _structured_codegen_node_8616(case_value) else case_value
+            new_body = transform(case_body) if _structured_codegen_node_8616(case_body) else case_body
+            if new_value is not case_value or new_body is not case_body:
+                changed_local = True
+            if _structured_codegen_node_8616(new_value):
+                node_stack.append(new_value)
+            if _structured_codegen_node_8616(new_body):
+                node_stack.append(new_body)
+            new_cases.append((new_value, new_body))
+        if changed_local:
+            # Dynamic angr codegen boundary: update CSwitchCase child cases.
+            typing.cast(typing.Any, current).cases = new_cases
+        return changed_local
 
     if seen is None:
         seen = set()
@@ -516,11 +566,13 @@ def _replace_c_children_8616(
                 changed = True
         if _process_condition_pairs(current, node_stack):
             changed = True
+        if _process_switch_cases(current, node_stack):
+            changed = True
 
     return changed
 
 
-def _iter_c_nodes_deep_8616(node, seen: set[int] | None = None):
+def _iter_c_nodes_deep_8616(node: object, seen: set[int] | None = None) -> Iterator[object]:
     if seen is None:
         seen = set()
     if not _structured_codegen_node_8616(node):
@@ -539,7 +591,7 @@ def _iter_c_nodes_deep_8616(node, seen: set[int] | None = None):
 
         for attr in _structured_slot_names_8616(current):
             try:
-                value = getattr(current, attr)
+                value = _dynamic_c_ast_getattr_8616(current, attr)
             except Exception:
                 continue
             for child in _iter_c_node_children_8616(value, set()):
@@ -547,17 +599,17 @@ def _iter_c_nodes_deep_8616(node, seen: set[int] | None = None):
                     node_stack.append(child)
 
 
-def _global_memory_addr_8616(node) -> int | None:
+def _global_memory_addr_8616(node: object) -> int | None:
     if not isinstance(node, CVariable):
         return None
-    variable = getattr(node, "variable", None)
+    variable = _dynamic_c_ast_getattr_8616(node, "variable", None)
     if not isinstance(variable, SimMemoryVariable):
         return None
-    addr = getattr(variable, "addr", None)
+    addr = _dynamic_c_ast_getattr_8616(variable, "addr", None)
     return addr if isinstance(addr, int) else None
 
 
-def _make_word_global_8616(codegen, addr: int):
+def _make_word_global_8616(codegen: Any, addr: int) -> CVariable:
     from angr.analyses.decompiler.structured_codegen.c import CVariable
     from angr.sim_type import SimTypeShort
 
@@ -568,96 +620,99 @@ def _make_word_global_8616(codegen, addr: int):
     )
 
 
-def _same_c_expression_8616(lhs, rhs) -> bool:
+def _same_c_expression_8616(lhs: object, rhs: object) -> bool:
     def _same_stack_variable_8616(lvar: SimStackVariable, rvar: SimStackVariable) -> bool:
         return (
-            getattr(lvar, "offset", None) == getattr(rvar, "offset", None)
-            and getattr(lvar, "size", None) == getattr(rvar, "size", None)
-            and getattr(lvar, "base", None) == getattr(rvar, "base", None)
-            and getattr(lvar, "region", None) == getattr(rvar, "region", None)
+            _dynamic_c_ast_getattr_8616(lvar, "offset", None) == _dynamic_c_ast_getattr_8616(rvar, "offset", None)
+            and _dynamic_c_ast_getattr_8616(lvar, "size", None) == _dynamic_c_ast_getattr_8616(rvar, "size", None)
+            and _dynamic_c_ast_getattr_8616(lvar, "base", None) == _dynamic_c_ast_getattr_8616(rvar, "base", None)
+            and _dynamic_c_ast_getattr_8616(lvar, "region", None) == _dynamic_c_ast_getattr_8616(rvar, "region", None)
         )
 
-    def _dirty_identity_8616(node) -> tuple[str, object] | None:
-        dirty = getattr(node, "dirty", None)
+    def _dirty_identity_8616(node: object) -> tuple[str, object] | None:
+        dirty = _dynamic_c_ast_getattr_8616(node, "dirty", None)
         reg_offset = None
         for attr in ("reg_offset", "reg", "variable_offset"):
             value = None
             with suppress(AttributeError, TypeError, ValueError):
-                value = getattr(dirty, attr, None)
+                value = _dynamic_c_ast_getattr_8616(dirty, attr, None)
             if isinstance(value, int):
                 reg_offset = value
                 break
         if isinstance(reg_offset, int):
             bits = None
             with suppress(AttributeError, TypeError, ValueError):
-                bits = getattr(dirty, "bits", None)
+                bits = _dynamic_c_ast_getattr_8616(dirty, "bits", None)
             size = None
             with suppress(AttributeError, TypeError, ValueError):
-                size = getattr(dirty, "size", None)
+                size = _dynamic_c_ast_getattr_8616(dirty, "size", None)
             size_bits = bits if isinstance(bits, int) else size * 8 if isinstance(size, int) else None
             return ("dirty-reg", (reg_offset, size_bits))
         if isinstance(dirty, str) and dirty:
             return ("dirty-name", dirty)
-        varid = getattr(dirty, "varid", None)
+        varid = _dynamic_c_ast_getattr_8616(dirty, "varid", None)
         if isinstance(varid, int):
             return ("dirty-varid", varid)
-        tmp_idx = getattr(dirty, "tmp_idx", None)
+        tmp_idx = _dynamic_c_ast_getattr_8616(dirty, "tmp_idx", None)
         if isinstance(tmp_idx, int):
             return ("dirty-tmp", tmp_idx)
-        name = getattr(dirty, "name", None)
+        name = _dynamic_c_ast_getattr_8616(dirty, "name", None)
         if isinstance(name, str) and name:
             return ("dirty-name", name)
         return None
 
-    def _impl():
+    def _impl() -> bool:
         if type(lhs) is not type(rhs):
             return False
+        rhs_node = cast(Any, rhs)
         if isinstance(lhs, CConstant):
-            return lhs.value == rhs.value
+            return lhs.value == rhs_node.value
         if isinstance(lhs, CTypeCast):
-            return _same_c_expression_8616(lhs.expr, rhs.expr)
+            return _same_c_expression_8616(lhs.expr, rhs_node.expr)
         if isinstance(lhs, CUnaryOp):
-            return lhs.op == rhs.op and _same_c_expression_8616(lhs.operand, rhs.operand)
+            return lhs.op == rhs_node.op and _same_c_expression_8616(lhs.operand, rhs_node.operand)
         if isinstance(lhs, CBinaryOp):
             return (
-                lhs.op == rhs.op
-                and _same_c_expression_8616(lhs.lhs, rhs.lhs)
-                and _same_c_expression_8616(lhs.rhs, rhs.rhs)
+                lhs.op == rhs_node.op
+                and _same_c_expression_8616(lhs.lhs, rhs_node.lhs)
+                and _same_c_expression_8616(lhs.rhs, rhs_node.rhs)
             )
         if isinstance(lhs, CITE):
             return (
-                _same_c_expression_8616(lhs.cond, rhs.cond)
-                and _same_c_expression_8616(lhs.iftrue, rhs.iftrue)
-                and _same_c_expression_8616(lhs.iffalse, rhs.iffalse)
+                _same_c_expression_8616(lhs.cond, rhs_node.cond)
+                and _same_c_expression_8616(lhs.iftrue, rhs_node.iftrue)
+                and _same_c_expression_8616(lhs.iffalse, rhs_node.iffalse)
             )
         if isinstance(lhs, CFunctionCall):
-            if not _same_call_target_8616(lhs, rhs):
+            if not _same_call_target_8616(lhs, rhs_node):
                 return False
-            lhs_args = tuple(getattr(lhs, "args", ()) or ())
-            rhs_args = tuple(getattr(rhs, "args", ()) or ())
+            lhs_args = tuple(_dynamic_c_ast_getattr_8616(lhs, "args", ()) or ())
+            rhs_args = tuple(_dynamic_c_ast_getattr_8616(rhs_node, "args", ()) or ())
             return len(lhs_args) == len(rhs_args) and all(
                 _same_c_expression_8616(lhs_arg, rhs_arg) for lhs_arg, rhs_arg in zip(lhs_args, rhs_args, strict=True)
             )
         if isinstance(lhs, CIndexedVariable):
-            return _same_c_expression_8616(lhs.variable, rhs.variable) and _same_c_expression_8616(lhs.index, rhs.index)
+            return _same_c_expression_8616(lhs.variable, rhs_node.variable) and _same_c_expression_8616(
+                lhs.index, rhs_node.index
+            )
         if isinstance(lhs, CDirtyExpression):
             lhs_key = _dirty_identity_8616(lhs)
-            rhs_key = _dirty_identity_8616(rhs)
+            rhs_key = _dirty_identity_8616(rhs_node)
             if lhs_key is not None or rhs_key is not None:
                 return lhs_key == rhs_key
-            return getattr(lhs, "dirty", None) is getattr(rhs, "dirty", None)
+            return _dynamic_c_ast_getattr_8616(lhs, "dirty", None) is _dynamic_c_ast_getattr_8616(rhs_node, "dirty", None)
         if isinstance(lhs, CVariable):
-            lvar = getattr(lhs, "variable", None)
-            rvar = getattr(rhs, "variable", None)
+            lvar = _dynamic_c_ast_getattr_8616(lhs, "variable", None)
+            rvar = _dynamic_c_ast_getattr_8616(rhs_node, "variable", None)
             if type(lvar) is not type(rvar):
                 return False
             if isinstance(lvar, SimRegisterVariable):
-                return getattr(lvar, "reg", None) == getattr(rvar, "reg", None)
+                return _dynamic_c_ast_getattr_8616(lvar, "reg", None) == _dynamic_c_ast_getattr_8616(rvar, "reg", None)
             if isinstance(lvar, SimMemoryVariable):
-                return getattr(lvar, "addr", None) == getattr(rvar, "addr", None) and getattr(
+                return _dynamic_c_ast_getattr_8616(lvar, "addr", None) == _dynamic_c_ast_getattr_8616(rvar, "addr", None) and _dynamic_c_ast_getattr_8616(
                     lvar, "size", None
-                ) == getattr(rvar, "size", None)
-            if isinstance(lvar, SimStackVariable):
+                ) == _dynamic_c_ast_getattr_8616(rvar, "size", None)
+            if isinstance(lvar, SimStackVariable) and isinstance(rvar, SimStackVariable):
                 return _same_stack_variable_8616(lvar, rvar)
         return lhs is rhs
 
@@ -665,24 +720,24 @@ def _same_c_expression_8616(lhs, rhs) -> bool:
 
 
 def _same_call_target_8616(lhs: CFunctionCall, rhs: CFunctionCall) -> bool:
-    lhs_func = getattr(lhs, "callee_func", None)
-    rhs_func = getattr(rhs, "callee_func", None)
+    lhs_func = _dynamic_c_ast_getattr_8616(lhs, "callee_func", None)
+    rhs_func = _dynamic_c_ast_getattr_8616(rhs, "callee_func", None)
     if lhs_func is not None or rhs_func is not None:
         if lhs_func is None or rhs_func is None:
             return False
-        lhs_addr = getattr(lhs_func, "addr", None)
-        rhs_addr = getattr(rhs_func, "addr", None)
+        lhs_addr = _dynamic_c_ast_getattr_8616(lhs_func, "addr", None)
+        rhs_addr = _dynamic_c_ast_getattr_8616(rhs_func, "addr", None)
         if isinstance(lhs_addr, int) or isinstance(rhs_addr, int):
             return lhs_addr == rhs_addr
-        return getattr(lhs_func, "name", None) == getattr(rhs_func, "name", None)
-    lhs_target = getattr(lhs, "callee_target", None)
-    rhs_target = getattr(rhs, "callee_target", None)
+        return _dynamic_c_ast_getattr_8616(lhs_func, "name", None) == _dynamic_c_ast_getattr_8616(rhs_func, "name", None)
+    lhs_target = _dynamic_c_ast_getattr_8616(lhs, "callee_target", None)
+    rhs_target = _dynamic_c_ast_getattr_8616(rhs, "callee_target", None)
     if lhs_target is None or rhs_target is None:
         return lhs_target is rhs_target
     return _same_c_expression_8616(lhs_target, rhs_target)
 
 
-def _is_shifted_high_byte_8616(high_expr, low_expr) -> bool:
+def _is_shifted_high_byte_8616(high_expr: object, low_expr: object) -> bool:
     if not isinstance(high_expr, CBinaryOp) or high_expr.op != "Shr":
         return False
     if _c_constant_value_8616(high_expr.rhs) != 8:
@@ -690,13 +745,13 @@ def _is_shifted_high_byte_8616(high_expr, low_expr) -> bool:
     return _same_c_expression_8616(high_expr.lhs, low_expr)
 
 
-def _single_assignment_expr_for_variable_8616(codegen, target):
-    cfunc = getattr(codegen, "cfunc", None)
-    root = getattr(cfunc, "statements", None)
+def _single_assignment_expr_for_variable_8616(codegen: object, target: object) -> object | None:
+    cfunc = _dynamic_c_ast_getattr_8616(codegen, "cfunc", None)
+    root = _dynamic_c_ast_getattr_8616(cfunc, "statements", None)
     if root is None:
         return None
 
-    def _iter_statement_nodes(node):
+    def _iter_statement_nodes(node: object) -> Iterator[object]:
         stack = [node]
         seen: set[int] = set()
         while stack:
@@ -709,20 +764,20 @@ def _single_assignment_expr_for_variable_8616(codegen, target):
             seen.add(current_id)
             yield current
 
-            nested_statements = getattr(current, "statements", None)
+            nested_statements = _dynamic_c_ast_getattr_8616(current, "statements", None)
             if isinstance(nested_statements, (list, tuple)):
                 for item in reversed(tuple(nested_statements)):
                     stack.append(item)
 
-            body = getattr(current, "body", None)
+            body = _dynamic_c_ast_getattr_8616(current, "body", None)
             if body is not None:
                 stack.append(body)
 
-            else_node = getattr(current, "else_node", None)
+            else_node = _dynamic_c_ast_getattr_8616(current, "else_node", None)
             if else_node is not None:
                 stack.append(else_node)
 
-            condition_and_nodes = getattr(current, "condition_and_nodes", None)
+            condition_and_nodes = _dynamic_c_ast_getattr_8616(current, "condition_and_nodes", None)
             if isinstance(condition_and_nodes, (list, tuple)):
                 for pair in reversed(tuple(condition_and_nodes)):
                     if isinstance(pair, tuple):
@@ -733,19 +788,24 @@ def _single_assignment_expr_for_variable_8616(codegen, target):
     for stmt in _iter_statement_nodes(root):
         if not isinstance(stmt, CAssignment):
             continue
-        lhs = getattr(stmt, "lhs", None)
+        lhs = _dynamic_c_ast_getattr_8616(stmt, "lhs", None)
         if not isinstance(lhs, CVariable):
             continue
         if not _same_c_expression_8616(lhs, target):
             continue
-        matches.append(getattr(stmt, "rhs", None))
+        matches.append(_dynamic_c_ast_getattr_8616(stmt, "rhs", None))
         if len(matches) > 1:
             return None
     return matches[0] if len(matches) == 1 else None
 
 
-def _resolve_stack_bp_term_8616(node, project=None, codegen=None, seen: set[int] | None = None):
-    def _impl():
+def _resolve_stack_bp_term_8616(
+    node: object,
+    project: object | None = None,
+    codegen: object | None = None,
+    seen: set[int] | None = None,
+) -> object:
+    def _impl() -> object:
         nonlocal seen
         if seen is None:
             seen = set()
@@ -760,10 +820,10 @@ def _resolve_stack_bp_term_8616(node, project=None, codegen=None, seen: set[int]
         if not isinstance(node, CVariable) or codegen is None:
             return node
 
-        variable = getattr(node, "variable", None)
+        variable = _dynamic_c_ast_getattr_8616(node, "variable", None)
         if variable is None:
             return node
-        name = _strip_typed_name_suffix_8616(getattr(node, "name", None) or getattr(variable, "name", None))
+        name = _strip_typed_name_suffix_8616(_dynamic_c_ast_getattr_8616(node, "name", None) or _dynamic_c_ast_getattr_8616(variable, "name", None))
         should_follow_single_assignment = _is_linear_temp_name_8616(name)
         if isinstance(variable, SimStackVariable):
             should_follow_single_assignment = True
@@ -783,14 +843,19 @@ def _resolve_stack_bp_term_8616(node, project=None, codegen=None, seen: set[int]
     return _impl()
 
 
-def _stack_bp_displacement_8616(node, project=None, codegen=None, seen: set[int] | None = None) -> int | None:
+def _stack_bp_displacement_8616(
+    node: object,
+    project: object | None = None,
+    codegen: object | None = None,
+    seen: set[int] | None = None,
+) -> int | None:
     if seen is None:
         seen = set()
     total = 0
     stack_offsets: list[int] = []
     found_stack_ref = False
 
-    def collect(term) -> None:
+    def collect(term: object) -> None:
         nonlocal total
         nonlocal found_stack_ref
 
@@ -815,9 +880,9 @@ def _stack_bp_displacement_8616(node, project=None, codegen=None, seen: set[int]
         if isinstance(term, CUnaryOp) and term.op == "Reference":
             operand = term.operand
             if isinstance(operand, CVariable):
-                variable = getattr(operand, "variable", None)
+                variable = _dynamic_c_ast_getattr_8616(operand, "variable", None)
                 if isinstance(variable, SimStackVariable):
-                    offset = getattr(variable, "offset", None)
+                    offset = _dynamic_c_ast_getattr_8616(variable, "offset", None)
                     if isinstance(offset, int):
                         stack_offsets.append(offset)
                         found_stack_ref = True
@@ -866,8 +931,10 @@ def _stack_bp_displacement_8616(node, project=None, codegen=None, seen: set[int]
     return stack_offsets[0] + total
 
 
-def _match_bp_stack_dereference_8616(node, project, codegen=None) -> int | None:
-    def _impl():
+def _match_bp_stack_dereference_8616(
+    node: object, project: object, codegen: object | None = None
+) -> int | None:
+    def _impl() -> int | None:
         nonlocal node
         while isinstance(node, CTypeCast):
             node = node.expr
@@ -878,7 +945,7 @@ def _match_bp_stack_dereference_8616(node, project, codegen=None) -> int | None:
         while isinstance(operand, CTypeCast):
             operand = operand.expr
 
-        def _flatten_add_sub(term, sign: int = 1) -> list[tuple[object, int]]:
+        def _flatten_add_sub(term: object, sign: int = 1) -> list[tuple[object, int]]:
             while isinstance(term, CTypeCast):
                 term = term.expr
             if isinstance(term, CBinaryOp) and term.op == "Add":
@@ -923,8 +990,8 @@ def _match_bp_stack_dereference_8616(node, project, codegen=None) -> int | None:
     return _impl()
 
 
-def _match_bp_stack_load_8616(node, project, codegen=None) -> int | None:
-    def _impl():
+def _match_bp_stack_load_8616(node: object, project: object, codegen: object | None = None) -> int | None:
+    def _impl() -> int | None:
         direct = _match_bp_stack_dereference_8616(node, project, codegen)
         if direct is not None:
             return direct

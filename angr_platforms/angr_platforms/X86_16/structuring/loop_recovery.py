@@ -1,14 +1,18 @@
-from __future__ import annotations
+"""Recover natural loop metadata from CFG and structured IR evidence.
 
-"""Layer: Structuring (control-flow recovery).
-
-Loop detection: find back-edges from raw CFG, build natural loops,
-detect induction variables and loop guards from structured IR evidence.
+Layer: Structuring.
+Responsibility: owns CFG shape, loops, switches, and structured condition lowering from proven
+IR/semantic evidence.
+Do not perform alias-state ownership, widening, type/materialization recovery,
+rewrite cleanup, postprocess, or CLI/reporting work here.
 
 Output: metadata-only dataclasses (RecoveredLoop, etc.).
 Do NOT emit C `for` loops here — lowering belongs in a later pass.
 
-Forbidden: text matching, asm/C regex, sample-specific address hacks."""
+Forbidden: text matching, asm/C regex, sample-specific address hacks.
+"""
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, Protocol
@@ -35,12 +39,16 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class LoopBackEdge:
+    """CFG edge from a latch block back to a loop header."""
+
     header: int
     latch: int
 
 
 @dataclass(frozen=True, slots=True)
 class NaturalLoop:
+    """Natural loop membership recovered from a back edge."""
+
     header: int
     latch: int
     blocks: frozenset[int]
@@ -48,6 +56,8 @@ class NaturalLoop:
 
 @dataclass(frozen=True, slots=True)
 class InductionUpdate:
+    """Recovered induction-variable update evidence."""
+
     variable: object
     initial: object | None
     step: int
@@ -57,6 +67,8 @@ class InductionUpdate:
 
 @dataclass(frozen=True, slots=True)
 class LoopGuard:
+    """Recovered loop guard evidence tied to an induction variable."""
+
     variable: object
     bound: object
     op: str
@@ -67,6 +79,8 @@ class LoopGuard:
 
 @dataclass(frozen=True, slots=True)
 class RecoveredLoop:
+    """Recovered loop with optional induction and guard evidence."""
+
     loop: NaturalLoop
     induction: InductionUpdate | None
     guard: LoopGuard | None
@@ -74,16 +88,31 @@ class RecoveredLoop:
 
 
 class CFGView(Protocol):
-    def successors(self, block: int) -> Iterable[int]: ...
-    def predecessors(self, block: int) -> Iterable[int]: ...
+    """Minimal CFG interface used by loop recovery."""
+
+    def successors(self, block: int) -> Iterable[int]:
+        """Return successor block ids."""
+        ...
+
+    def predecessors(self, block: int) -> Iterable[int]:
+        """Return predecessor block ids."""
+        ...
 
 
 class BlockSemantics(Protocol):
-    def statements(self, block: int) -> Iterable[object]: ...
-    def terminator_condition(self, block: int) -> object | None: ...
+    """Minimal block semantics interface used by loop recovery."""
+
+    def statements(self, block: int) -> Iterable[object]:
+        """Return semantic statements for a block."""
+        ...
+
+    def terminator_condition(self, block: int) -> object | None:
+        """Return the block terminator condition when one exists."""
+        ...
 
 
 def compute_dominators(cfg: CFGView, entry: int, blocks: Iterable[int]) -> dict[int, set[int]]:
+    """Compute dominator sets for the selected CFG blocks."""
     block_set = set(blocks)
     dom = {b: set(block_set) for b in block_set}
     dom[entry] = {entry}
@@ -107,6 +136,7 @@ def compute_dominators(cfg: CFGView, entry: int, blocks: Iterable[int]) -> dict[
 
 
 def find_back_edges(cfg: CFGView, entry: int, blocks: Iterable[int]) -> list[LoopBackEdge]:
+    """Find CFG edges whose destination dominates their source."""
     block_list = list(blocks)
     dom = compute_dominators(cfg, entry, block_list)
     edges: list[LoopBackEdge] = []
@@ -120,6 +150,7 @@ def find_back_edges(cfg: CFGView, entry: int, blocks: Iterable[int]) -> list[Loo
 
 
 def build_natural_loop(cfg: CFGView, edge: LoopBackEdge) -> NaturalLoop:
+    """Build the natural loop induced by a back edge."""
     members = {edge.header, edge.latch}
     worklist = [edge.latch]
 
@@ -138,6 +169,7 @@ def build_natural_loop(cfg: CFGView, edge: LoopBackEdge) -> NaturalLoop:
 
 
 def recover_natural_loops(cfg: CFGView, entry: int, blocks: Iterable[int]) -> list[NaturalLoop]:
+    """Recover natural loops from CFG topology only."""
     return [build_natural_loop(cfg, edge) for edge in find_back_edges(cfg, entry, blocks)]
 
 
@@ -145,6 +177,7 @@ def recover_natural_loops(cfg: CFGView, entry: int, blocks: Iterable[int]) -> li
 
 
 def _is_const(expr: object) -> bool:
+    """Return whether a dynamic angr/compatibility boundary expression carries an int constant."""
     return hasattr(expr, "value") and isinstance(getattr(expr, "value"), int)
 
 
@@ -153,10 +186,12 @@ def _same_var(a: object, b: object) -> bool:
 
 
 def match_induction_update(stmt: object) -> InductionUpdate | None:
-    def _impl():
-        """Match:  i = i + c  or  i = i - c
+    """Match one structured statement as an induction update."""
 
-        Operates on structured IR node objects, not rendered text.
+    def _impl() -> InductionUpdate | None:
+        """Match ``i = i + c`` or ``i = i - c``.
+
+        Operates on dynamic angr/compatibility boundary node objects, not rendered text.
         """
         target = getattr(stmt, "target", None) or getattr(stmt, "lhs", None)
         value = getattr(stmt, "value", None) or getattr(stmt, "rhs", None)
@@ -183,6 +218,7 @@ def match_induction_update(stmt: object) -> InductionUpdate | None:
 
 
 def find_loop_induction(loop: NaturalLoop, semantics: BlockSemantics) -> InductionUpdate | None:
+    """Find a unique induction update inside a recovered loop."""
     candidates: list[InductionUpdate] = []
 
     for block in sorted(loop.blocks):
@@ -206,10 +242,12 @@ def find_loop_induction(loop: NaturalLoop, semantics: BlockSemantics) -> Inducti
 
 
 def match_loop_guard(cond: object, induction: InductionUpdate | None, guard_block: int) -> LoopGuard | None:
-    def _impl():
-        """Match:  i < N, i <= N, i != N, i > N, i >= N
+    """Match a typed condition as a loop guard for an induction update."""
 
-        Operates on typed condition objects, not text.
+    def _impl() -> LoopGuard | None:
+        """Match ``i < N``, ``i <= N``, ``i != N``, ``i > N``, or ``i >= N``.
+
+        Operates on dynamic angr/compatibility boundary condition objects, not text.
         """
         if cond is None or induction is None:
             return None
@@ -251,6 +289,7 @@ def find_loop_guard(
     semantics: BlockSemantics,
     induction: InductionUpdate | None,
 ) -> LoopGuard | None:
+    """Find the loop guard attached to a loop header or latch."""
     for block in (loop.header, loop.latch):
         cond = semantics.terminator_condition(block)
         guard = match_loop_guard(cond, induction, block)
@@ -269,6 +308,7 @@ def recover_loops(
     entry: int,
     blocks: Iterable[int],
 ) -> list[RecoveredLoop]:
+    """Recover natural loops with optional induction and guard evidence."""
     recovered: list[RecoveredLoop] = []
 
     for loop in recover_natural_loops(cfg, entry, blocks):

@@ -1,10 +1,19 @@
+"""Transfer semantic alias facts from lifting into codegen materialization.
+
+Layer: Types/Lowering.
+Responsibility: consumes alias, widening, and typed facts by moving normalized
+AliasStorageFacts into stack/global materialization state.
+Do not recover semantics from COD, source, assembly, or rendered C text.
+"""
+
 from __future__ import annotations
 
 import logging
 import os
+import typing
+from collections.abc import Iterable
+from typing import Protocol, cast
 
-# Layer: Lowering (bridge)
-# Responsibility: transfer semantic alias facts from VEX lifter to codegen.
 # Input: AliasStorageFacts from IR lifting
 # Output: materialized SimStackVariable/CVariable
 # Forbidden:
@@ -26,7 +35,42 @@ __all__ = [
 ]
 
 
-def _lift_block_and_collect_facts(project, block_addr: int) -> list[object]:
+class _StackSlotIdentityLike(Protocol):
+    offset: int
+    width: int | None
+
+
+def _dynamic_boundary_attr_8616(obj: object, name: str, default: object = None) -> object:
+    """Dynamic angr/codegen boundary: read optional project, KB, function, or metadata attributes."""
+    return getattr(obj, name, default)
+
+
+def _has_dynamic_codegen_attr_8616(obj: object, name: str) -> bool:
+    """Dynamic codegen boundary: check optional semantic fact-transfer metadata."""
+    return hasattr(obj, name)
+
+
+def _stack_slot_identity_from_fact_8616(fact: object) -> _StackSlotIdentityLike | None:
+    """Return the owned stack-slot identity carried by an alias fact."""
+    from ..alias.alias_model_impl import AliasStorageFacts
+
+    if not isinstance(fact, AliasStorageFacts):
+        return None
+    identity = fact.identity
+    if not isinstance(identity, tuple) or len(identity) < 2 or identity[0] != "stack":
+        return None
+    return cast(_StackSlotIdentityLike, identity[1])
+
+
+def _sorted_int_iterable_attr_8616(obj: object, name: str) -> list[int]:
+    """Dynamic angr boundary: read and sort optional integer address sets."""
+    value = _dynamic_boundary_attr_8616(obj, name, ())
+    if not isinstance(value, Iterable):
+        return []
+    return sorted(item for item in value if isinstance(item, int))
+
+
+def _lift_block_and_collect_facts(project: object, block_addr: int) -> list[object]:
     """Lift one block and collect semantic alias facts from the MODULE CACHE.
 
     During VEX lifting, _record_semantic_memory_access() writes AliasStorageFacts
@@ -38,7 +82,10 @@ def _lift_block_and_collect_facts(project, block_addr: int) -> list[object]:
     """
     try:
         # Re-lift to populate the module cache (keyed by block_addr)
-        project.factory.block(block_addr, opt_level=0)
+        factory = _dynamic_boundary_attr_8616(project, "factory")
+        block = _dynamic_boundary_attr_8616(factory, "block")
+        if callable(block):
+            block(block_addr, opt_level=0)
     except Exception as ex:
         import logging
 
@@ -57,22 +104,12 @@ def _lift_block_and_collect_facts(project, block_addr: int) -> list[object]:
     return []
 
 
-def _set_function_context(function_addr: int) -> None:
-    """Set module-level function context for the coming block lift."""
-    from ..semantics.evidence_cache import set_current_function_addr
+def collect_normalized_semantic_alias_facts_from_project_8616(
+    project: object, function_addr: int
+) -> tuple[list[object], list[object], list[object]]:
+    """Collect normalized facts, failures, and their function-owned raw evidence."""
 
-    set_current_function_addr(function_addr)
-
-
-def _clear_function_context() -> None:
-    """Clear module-level function context after block lift."""
-    from ..semantics.evidence_cache import set_current_function_addr
-
-    set_current_function_addr(None)
-
-
-def collect_normalized_semantic_alias_facts_from_project_8616(project, function_addr: int):
-    def _impl():
+    def _impl() -> tuple[list[object], list[object], list[object]]:
         """Collect and normalize semantic alias facts AFTER stack-frame recovery.
 
         Pipeline order:
@@ -89,15 +126,8 @@ def collect_normalized_semantic_alias_facts_from_project_8616(project, function_
         """
         from ..access import _inertia_module_alias_fact_cache
         from ..alias.alias_model_impl import AliasFailure, alias_facts_for_ir_address_8616
-        from ..semantics.evidence_cache import get_accesses_for_function as _evidence_get_accesses
-
-        # ── Migrate block-keyed accesses → function-keyed ──
-        # During initial CFG construction (when function context is unknown),
-        # accesses are recorded by block address.  Now that we know which
-        # blocks belong to this function, migrate them.
-        from ..semantics.evidence_cache import (
-            migrate_block_accesses_to_function,
-        )
+        from ..ir.core import IRAddress
+        from ..semantics.evidence_cache import collect_accesses_for_function
         from ..semantics.stack_frame_recovery import (
             StackFrameInfo8616,
             _detect_sp_proven_delta_from_blocks,
@@ -107,25 +137,37 @@ def collect_normalized_semantic_alias_facts_from_project_8616(project, function_
             normalize_semantic_accesses_8616,
         )
 
-        kb = getattr(project, "kb", None) if project is not None else None
+        kb = _dynamic_boundary_attr_8616(project, "kb") if project is not None else None
+        block_addrs: list[int] = []
         if kb is not None:
-            func = kb.functions.function(addr=function_addr, create=False)
+            functions = _dynamic_boundary_attr_8616(kb, "functions")
+            function_for_addr = _dynamic_boundary_attr_8616(functions, "function")
+            func = function_for_addr(addr=function_addr, create=False) if callable(function_for_addr) else None
             if func is not None:
-                block_addrs = sorted(getattr(func, "block_addrs_set", set()) or set())
-                total_migrated = 0
-                for ba in block_addrs:
-                    n = migrate_block_accesses_to_function(ba, function_addr)
-                    total_migrated += n
-                if total_migrated > 0:
-                    logging.getLogger(__name__).debug(
-                        "migrated %d block-keyed accesses from %d blocks for 0x%x",
-                        total_migrated,
-                        len(block_addrs),
-                        function_addr,
-                    )
+                block_addrs = _sorted_int_iterable_attr_8616(func, "block_addrs_set")
 
-        # Read raw semantic accesses from canonical evidence_cache (function-keyed)
-        raw_accesses = _evidence_get_accesses(function_addr)
+        # Re-lift only blocks proven to belong to this function. The context owns
+        # every resulting access, so equal addresses in other projects cannot leak.
+        with collect_accesses_for_function(function_addr) as collection:
+            factory = _dynamic_boundary_attr_8616(project, "factory")
+            lift_block = _dynamic_boundary_attr_8616(factory, "block")
+            if callable(lift_block):
+                for block_addr in block_addrs:
+                    try:
+                        lift_block(block_addr, opt_level=0)
+                    except Exception as ex:
+                        logging.getLogger(__name__).debug(
+                            "semantic evidence re-lift failed block_addr=%#x: %s",
+                            block_addr,
+                            ex,
+                        )
+            raw_accesses = list(collection.accesses)
+
+        raw_access_tuples = [
+            (access.mode, access.addr)
+            for access in raw_accesses
+            if isinstance(access.addr, IRAddress)
+        ]
 
         # ── Collect IR artifacts for BP frame detection (VEX blocks, NOT text) ──
         ir_artifacts = _gather_ir_artifacts_from_function_blocks(project, function_addr)
@@ -133,7 +175,7 @@ def collect_normalized_semantic_alias_facts_from_project_8616(project, function_
         frame = detect_stack_frame_8616(
             function_addr=function_addr,
             ir_artifacts=ir_artifacts,
-            semantic_accesses=raw_accesses,
+            semantic_accesses=raw_access_tuples,
         )
 
         # ── SP delta: detect proven frame size from VEX ──
@@ -156,7 +198,7 @@ def collect_normalized_semantic_alias_facts_from_project_8616(project, function_
         failures = []
 
         for acc in normalized:
-            addr = acc.addr if hasattr(acc, "addr") else acc[1]
+            addr = acc[1]
             fact = alias_facts_for_ir_address_8616(addr)
             if isinstance(fact, AliasFailure):
                 failures.append(fact)
@@ -164,12 +206,12 @@ def collect_normalized_semantic_alias_facts_from_project_8616(project, function_
                 facts.append(fact)
 
         _inertia_module_alias_fact_cache[function_addr] = facts + failures
-        return facts, failures
+        return facts, failures, list(raw_accesses)
 
     return _impl()
 
 
-def collect_semantic_alias_facts_from_project_8616(project, func_addr: int) -> list[object]:
+def collect_semantic_alias_facts_from_project_8616(project: object, func_addr: int) -> list[object]:
     """Collect semantic alias facts for a function by re-lifting its blocks.
 
     During VEX→IR lifting, _record_semantic_memory_access() writes facts into
@@ -179,17 +221,21 @@ def collect_semantic_alias_facts_from_project_8616(project, func_addr: int) -> l
 
     Returns a deduplicated, deterministic list of alias facts.
     """
-    kb = getattr(project, "kb", None) if project is not None else None
+    kb = _dynamic_boundary_attr_8616(project, "kb") if project is not None else None
     if kb is None:
         return []
 
-    func = kb.functions.function(addr=func_addr, create=False)
+    functions = _dynamic_boundary_attr_8616(kb, "functions")
+    function_for_addr = _dynamic_boundary_attr_8616(functions, "function")
+    func = function_for_addr(addr=func_addr, create=False) if callable(function_for_addr) else None
     if func is None:
         return []
 
-    block_addrs = sorted(getattr(func, "block_addrs_set", set()) or set())
+    block_addrs = _sorted_int_iterable_attr_8616(func, "block_addrs_set")
     if not block_addrs:
         return []
+
+    from ..alias.alias_model_impl import AliasStorageFacts
 
     all_facts: list[object] = []
     for block_addr in block_addrs:
@@ -209,13 +255,13 @@ def collect_semantic_alias_facts_from_project_8616(project, func_addr: int) -> l
 
     # Deterministic sort: stack facts by offset, then others
     def _sort_key(fact: object) -> tuple:
-        identity = getattr(fact, "identity", None)
+        identity = fact.identity if isinstance(fact, AliasStorageFacts) else None
         if identity is None:
             return ("z", 0, 0)
         kind = identity[0] if isinstance(identity, tuple) and len(identity) >= 2 else "z"
-        slot = identity[1] if len(identity) >= 2 else None
-        offset = getattr(slot, "offset", 0) if slot is not None else 0
-        width = getattr(slot, "width", 0) if slot is not None and getattr(slot, "width", None) is not None else 0
+        slot = _stack_slot_identity_from_fact_8616(fact)
+        offset = slot.offset if slot is not None else 0
+        width = slot.width if slot is not None and slot.width is not None else 0
         order = {"stack": "a", "register": "b", "memory": "c"}.get(kind, "z")
         return (order, offset, width)
 
@@ -223,8 +269,10 @@ def collect_semantic_alias_facts_from_project_8616(project, func_addr: int) -> l
     return unique
 
 
-def transfer_semantic_alias_facts_to_codegen_8616(project, codegen) -> int:
-    def _impl():
+def transfer_semantic_alias_facts_to_codegen_8616(project: object, codegen: object) -> int:
+    """Transfer normalized semantic alias facts into codegen pipeline diagnostics."""
+
+    def _impl() -> int:
         """Transfer semantic alias facts from project blocks to codegen.
 
         This bridges the gap between the VEX lifter (which records facts on
@@ -234,74 +282,73 @@ def transfer_semantic_alias_facts_to_codegen_8616(project, codegen) -> int:
         Sets codegen._inertia_stack_lane with a SemanticLaneState for the STACK lane.
         Returns the number of facts transferred.
         """
+        from ..alias.alias_model_impl import AliasStorageFacts
         from ..pipeline.contracts import SemanticLaneState
 
-        cfunc = getattr(codegen, "cfunc", None)
+        cfunc = _dynamic_boundary_attr_8616(codegen, "cfunc")
         if cfunc is None:
-            codegen._inertia_semantic_alias_facts = []
-            codegen._inertia_semantic_facts_transferred = True
+            typing.cast(typing.Any, codegen)._inertia_semantic_alias_facts = []
+            typing.cast(typing.Any, codegen)._inertia_semantic_facts_transferred = True
             return 0
 
-        func_addr = getattr(cfunc, "addr", None)
-        if func_addr is None:
-            codegen._inertia_semantic_alias_facts = []
-            codegen._inertia_semantic_facts_transferred = True
+        func_addr = _dynamic_boundary_attr_8616(cfunc, "addr")
+        if not isinstance(func_addr, int):
+            typing.cast(typing.Any, codegen)._inertia_semantic_alias_facts = []
+            typing.cast(typing.Any, codegen)._inertia_semantic_facts_transferred = True
             return 0
 
         # Only allow legacy fallback if explicitly enabled by debug flag.
         # Silent fallback is FORBIDDEN — it makes regressions invisible.
-        allow_legacy = bool(getattr(project, "_inertia_allow_legacy_fact_fallback", False))
+        allow_legacy = bool(_dynamic_boundary_attr_8616(project, "_inertia_allow_legacy_fact_fallback", False))
 
         try:
-            facts, failures = collect_normalized_semantic_alias_facts_from_project_8616(project, func_addr)
+            facts, failures, raw_accesses = collect_normalized_semantic_alias_facts_from_project_8616(
+                project, func_addr
+            )
         except Exception as e:
-            codegen._inertia_semantic_fact_transfer_error = repr(e)
+            typing.cast(typing.Any, codegen)._inertia_semantic_fact_transfer_error = repr(e)
             if allow_legacy:
                 facts = collect_semantic_alias_facts_from_project_8616(project, func_addr)
                 failures = []
-                codegen._inertia_semantic_fact_transfer_fallback_used = True
+                raw_accesses = []
+                typing.cast(typing.Any, codegen)._inertia_semantic_fact_transfer_fallback_used = True
             else:
                 raise
 
-        # Read raw semantic access counts from canonical evidence_cache
-        # MUST be read AFTER collect_normalized (which re-lifts blocks and populates the cache).
-        from ..semantics.evidence_cache import get_accesses_for_function as _evidence_get_accesses_raw
-
-        raw_accesses = _evidence_get_accesses_raw(func_addr)
         raw_count = len(raw_accesses)
 
-        codegen._inertia_semantic_alias_facts = facts + failures
-        codegen._inertia_semantic_facts_transferred = True
-        codegen._inertia_semantic_alias_fact_count = len(facts) + len(failures)
+        typing.cast(typing.Any, codegen)._inertia_semantic_alias_facts = facts + failures
+        typing.cast(typing.Any, codegen)._inertia_semantic_facts_transferred = True
+        typing.cast(typing.Any, codegen)._inertia_semantic_alias_fact_count = len(facts) + len(failures)
 
         # Count stack facts and normalized accesses for diagnostics
         normalized_count = sum(
-            1 for fact in facts if getattr(fact, "identity", None) is not None and isinstance(fact.identity, tuple)
+            1 for fact in facts if isinstance(fact, AliasStorageFacts) and isinstance(fact.identity, tuple)
         )
         stack_count = sum(
             1
             for fact in facts
-            if getattr(fact, "identity", None) is not None
+            if isinstance(fact, AliasStorageFacts)
             and isinstance(fact.identity, tuple)
             and len(fact.identity) >= 2
             and fact.identity[0] == "stack"
         )
 
-        codegen._inertia_semantic_raw_access_count = raw_count
-        codegen._inertia_semantic_normalized_access_count = normalized_count
-        codegen._inertia_semantic_stack_fact_count = stack_count
-        codegen._inertia_semantic_failure_count = len(failures)
+        typing.cast(typing.Any, codegen)._inertia_semantic_raw_access_count = raw_count
+        typing.cast(typing.Any, codegen)._inertia_semantic_normalized_access_count = normalized_count
+        typing.cast(typing.Any, codegen)._inertia_semantic_stack_fact_count = stack_count
+        typing.cast(typing.Any, codegen)._inertia_semantic_failure_count = len(failures)
 
         # Initialize consumption counters (filled later by materialization passes)
-        if not hasattr(codegen, "_inertia_semantic_stack_materialized_count"):
-            codegen._inertia_semantic_stack_materialized_count = 0
-        if not hasattr(codegen, "_inertia_semantic_condition_fact_count"):
-            codegen._inertia_semantic_condition_fact_count = 0
-        if not hasattr(codegen, "_inertia_semantic_condition_materialized_count"):
-            codegen._inertia_semantic_condition_materialized_count = 0
+        if not _has_dynamic_codegen_attr_8616(codegen, "_inertia_semantic_stack_materialized_count"):
+            typing.cast(typing.Any, codegen)._inertia_semantic_stack_materialized_count = 0
+        if not _has_dynamic_codegen_attr_8616(codegen, "_inertia_semantic_condition_fact_count"):
+            typing.cast(typing.Any, codegen)._inertia_semantic_condition_fact_count = 0
+        if not _has_dynamic_codegen_attr_8616(codegen, "_inertia_semantic_condition_materialized_count"):
+            typing.cast(typing.Any, codegen)._inertia_semantic_condition_materialized_count = 0
 
         # ── Initialize STACK lane contract ──
-        codegen._inertia_stack_lane = SemanticLaneState(
+        typing.cast(typing.Any, codegen)._inertia_stack_lane = SemanticLaneState(
             name="stack",
             raw=raw_count,
             normalized=normalized_count,
@@ -320,9 +367,11 @@ def transfer_semantic_alias_facts_to_codegen_8616(project, codegen) -> int:
             "normalized_accesses": normalized_count,
             "alias_facts": len(facts),
             "stack_facts": stack_count,
-            "stack_materialized": getattr(codegen, "_inertia_semantic_stack_materialized_count", 0),
-            "condition_facts": getattr(codegen, "_inertia_semantic_condition_fact_count", 0),
-            "condition_materialized": getattr(codegen, "_inertia_semantic_condition_materialized_count", 0),
+            "stack_materialized": _dynamic_boundary_attr_8616(codegen, "_inertia_semantic_stack_materialized_count", 0),
+            "condition_facts": _dynamic_boundary_attr_8616(codegen, "_inertia_semantic_condition_fact_count", 0),
+            "condition_materialized": _dynamic_boundary_attr_8616(
+                codegen, "_inertia_semantic_condition_materialized_count", 0
+            ),
             "failures": len(failures),
             "primary_blocker": (
                 "raw_accesses=0 (check lifter access recording / function context)"
@@ -330,7 +379,7 @@ def transfer_semantic_alias_facts_to_codegen_8616(project, codegen) -> int:
                 else ("stack_materialized=0 (fix lowering/stack_lowering_from_facts.py)" if stack_count > 0 else None)
             ),
         }
-        codegen._inertia_pipeline_diag = _diagnostic
+        typing.cast(typing.Any, codegen)._inertia_pipeline_diag = _diagnostic
         if os.environ.get("INERTIA_DEBUG_STACK_FACTS"):
             logging.getLogger(__name__).warning(
                 "[stack-facts] func=0x%x raw=%d normalized=%d facts=%d stack=%d failures=%d blocker=%s",
@@ -350,10 +399,11 @@ def transfer_semantic_alias_facts_to_codegen_8616(project, codegen) -> int:
     return _impl()
 
 
-def emit_pipeline_diagnostic_8616(codegen) -> dict:
+def emit_pipeline_diagnostic_8616(codegen: object) -> dict[str, object]:
     """Return the compact pipeline diagnostic dict for this function.
 
     Callers should print or log this dict.  The dict is already attached
     to codegen._inertia_pipeline_diag after fact transfer.
     """
-    return getattr(codegen, "_inertia_pipeline_diag", {})
+    diag = _dynamic_boundary_attr_8616(codegen, "_inertia_pipeline_diag", {})
+    return diag if isinstance(diag, dict) else {}

@@ -1,0 +1,200 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CFunctionCall, CTypeCast, CVariable
+from angr.sim_type import SimTypeLong, SimTypeShort
+from angr.sim_variable import SimRegisterVariable
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+
+from inertia_decompiler import cli_decompilation
+
+
+class _DummyCodegen:
+    def __init__(self):
+        self._idx = 0
+        self.project = SimpleNamespace(arch=Arch86_16())
+        self.show_casts = False
+        self.cstyle_null_cmp = False
+        self.display_vvar_ids = False
+        self.const_formats = {}
+        self.text = ""
+        self._inertia_callsite_args_ast_materialized_8616 = True
+        self.cfunc = _DummyCFunc(self)
+
+    def next_idx(self, _name: str) -> int:
+        self._idx += 1
+        return self._idx
+
+    def render_text(self, cfunc):
+        return cfunc.c_repr()
+
+    def regenerate_text(self):
+        self.text = self.cfunc.c_repr()
+
+
+class _DummyCFunc:
+    def __init__(self, codegen):
+        self.addr = 0x1000
+        self.codegen = codegen
+        self.statements = None
+        self.body = None
+
+    def c_repr(self):
+        if self.statements is None:
+            return ""
+        return "".join(str(text) for text, _obj in self.statements.c_repr_chunks(asexpr=True)) + ";"
+
+
+def _const(value: int, codegen):
+    return CConstant(value, SimTypeShort(False), codegen=codegen)
+
+
+def _call_with_unfolded_long_constant(codegen):
+    long_type = SimTypeLong(False)
+    frequency = CVariable(
+        SimRegisterVariable(0, 2, name="frequency"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    dividend = CBinaryOp(
+        "Or",
+        CTypeCast(None, long_type, _const(13532, codegen), codegen=codegen),
+        CBinaryOp(
+            "Shl",
+            CTypeCast(None, long_type, _const(18, codegen), codegen=codegen),
+            _const(16, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    return CFunctionCall(
+        "aNldiv",
+        None,
+        [dividend, CTypeCast(None, long_type, frequency, codegen=codegen)],
+        codegen=codegen,
+    )
+
+
+def test_regenerate_codegen_text_simplifies_replayed_callsite_arguments(monkeypatch):
+    codegen = _DummyCodegen()
+    replay_count = 0
+
+    def fake_replay(_project, replay_codegen):
+        nonlocal replay_count
+        replay_count += 1
+        if replay_count > 1:
+            return False
+        replay_codegen.cfunc.statements = _call_with_unfolded_long_constant(replay_codegen)
+        replay_codegen.cfunc.body = replay_codegen.cfunc.statements
+        return True
+
+    monkeypatch.setattr(cli_decompilation, "replay_callsite_stack_arguments_after_regeneration_8616", fake_replay)
+
+    text, regenerated = cli_decompilation._regenerate_codegen_text_safely(codegen, context="0x1000 Beep")
+
+    assert regenerated is True
+    assert "aNldiv(1193180" in text
+    assert "18 << 16" not in text
+
+
+def test_regenerate_codegen_text_replays_call_arguments_after_broad_simplification(monkeypatch):
+    stale_text = "void f(void) { consume(stale); }\n"
+    correct_text = "void f(void) { consume(iDown); }\n"
+    simplified_wrong_text = "void f(void) { consume(vvar_1215); }\n"
+
+    class _TextCFunc:
+        def __init__(self) -> None:
+            self.text = stale_text
+
+        def c_repr(self) -> str:
+            return self.text
+
+    codegen = SimpleNamespace(
+        text=stale_text,
+        cfunc=_TextCFunc(),
+        project=SimpleNamespace(arch=SimpleNamespace(name="86_16")),
+        _inertia_postprocess_changed=True,
+        _inertia_callsite_args_ast_materialized_8616=True,
+    )
+    replay_count = 0
+    events: list[str] = []
+
+    def replay_call_arguments(_project: object, replay_codegen: object) -> bool:
+        nonlocal replay_count
+        assert replay_codegen is codegen
+        replay_count += 1
+        events.append("call")
+        codegen.cfunc.text = correct_text
+        return True
+
+    def simplify_after_replay(simplify_codegen: object) -> bool:
+        assert simplify_codegen is codegen
+        events.append("simplify")
+        codegen.cfunc.text = simplified_wrong_text
+        return True
+
+    def replay_stack_semantics(replay_codegen: object) -> bool:
+        assert replay_codegen is codegen
+        events.append("stack")
+        return True
+
+    monkeypatch.setattr(cli_decompilation, "repair_cfunctioncall_render_targets_8616", lambda _codegen: None)
+    monkeypatch.setattr(cli_decompilation, "_bind_codegen_render_variable_types_8616", lambda _codegen: None)
+    monkeypatch.setattr(
+        cli_decompilation,
+        "replay_callsite_stack_arguments_after_regeneration_8616",
+        replay_call_arguments,
+    )
+    for name in (
+            "_replay_named_segmented_global_lowering_after_regen_8616",
+            "_replay_indexed_segmented_global_lowering_after_regen_8616",
+            "_replay_stack_address_lowering_after_regen_8616",
+            "_replay_runtime_segment_lowering_after_regen_8616",
+            "_stabilize_regenerated_noncall_ast_8616",
+    ):
+        monkeypatch.setattr(cli_decompilation, name, lambda _codegen: False)
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_replay_direct_stack_semantics_after_regen_8616",
+        replay_stack_semantics,
+    )
+    monkeypatch.setattr(cli_decompilation, "_simplify_structured_expressions_8616", simplify_after_replay)
+
+    text, regenerated = cli_decompilation._regenerate_codegen_text_safely(codegen, context="0x1000 f")
+
+    assert regenerated is True
+    assert replay_count >= 3
+    assert events[-2:] == ["stack", "call"]
+    assert text == correct_text
+
+
+def test_callsite_finalize_enforces_structuring_identity_after_call_replay(monkeypatch):
+    codegen = SimpleNamespace(project=object())
+    events: list[str] = []
+
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_replay_direct_stack_semantics_after_regen_8616",
+        lambda _codegen: events.append("stack") or False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "replay_callsite_stack_arguments_after_regeneration_8616",
+        lambda _project, _codegen: events.append("calls") or False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_finalize_typed_call_interfaces_before_render_8616",
+        lambda _codegen: events.append("interfaces") or False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "finalize_shared_call_occurrences_8616",
+        lambda _codegen: events.append("occurrences") or False,
+    )
+
+    changed = cli_decompilation._finalize_callsite_arguments_after_noncall_regen_8616(codegen)
+
+    assert changed is False
+    assert events == ["stack", "calls", "interfaces", "occurrences"]

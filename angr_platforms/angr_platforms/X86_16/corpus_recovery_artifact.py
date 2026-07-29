@@ -1,9 +1,16 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: build corpus-level recovery artifacts from bounded scan results.
+Forbidden: replacing scan failures with source-backed or guessed recovery output.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .corpus_scan import extract_cod_functions, scan_function
+from .corpus_scan import FunctionScanResult, extract_cod_functions, scan_function
 from .recovery_artifact_writer import RecoveryArtifactWriteResult, write_x86_16_corpus_recovery_artifact
 from .recovery_artifacts import build_x86_16_corpus_recovery_artifact
 
@@ -13,8 +20,16 @@ __all__ = [
 ]
 
 
+def _scan_result_row(result: Mapping[str, object] | FunctionScanResult) -> Mapping[str, object]:
+    if isinstance(result, Mapping):
+        return result
+    return asdict(result)
+
+
 @dataclass(frozen=True, slots=True)
 class CorpusCodRecoveryArtifactResult:
+    """Result metadata for one bounded COD corpus recovery artifact."""
+
     cod_path: Path
     proc_count: int
     write_result: RecoveryArtifactWriteResult
@@ -24,6 +39,7 @@ class CorpusCodRecoveryArtifactResult:
     low_memory_write_region_counts: dict[str, int]
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-compatible corpus artifact result."""
         return {
             "cod_path": str(self.cod_path),
             "proc_count": self.proc_count,
@@ -48,6 +64,7 @@ def write_x86_16_cod_corpus_recovery_artifact(
     max_loop_bytes: int = 128,
     limit: int | None = None,
 ) -> CorpusCodRecoveryArtifactResult:
+    """Scan bounded COD procedures and write a corpus recovery artifact."""
     source_path = Path(cod_path)
     entries = extract_cod_functions(source_path)
     if limit is not None and limit >= 0:
@@ -69,8 +86,9 @@ def write_x86_16_cod_corpus_recovery_artifact(
         )
         for proc_name, proc_kind, code in entries
     ]
-    artifact = build_x86_16_corpus_recovery_artifact(results)
-    write_result = write_x86_16_corpus_recovery_artifact(results, output_path)
+    result_rows = tuple(_scan_result_row(result) for result in results)
+    artifact = build_x86_16_corpus_recovery_artifact(result_rows)
+    write_result = write_x86_16_corpus_recovery_artifact(result_rows, output_path)
     return CorpusCodRecoveryArtifactResult(
         cod_path=source_path,
         proc_count=len(results),

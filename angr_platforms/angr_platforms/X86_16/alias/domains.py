@@ -1,45 +1,58 @@
+"""Alias-domain keys and register view helpers.
+
+Layer: Alias.
+Responsibility: owns storage identity for register domains and bit views.
+Owns storage identity for register domains and bit views.
+Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting
+work here.
+"""
+
 from __future__ import annotations
 
-# Layer: Alias
-# Responsibility: canonical alias-domain helpers.
-# Forbidden: lowering and rewrite ownership.
 from dataclasses import dataclass
 from typing import Literal
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DomainKey:
+    """Canonical key for an alias storage domain."""
+
     kind: Literal["reg"]
     name: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class View:
+    """Bit range within a canonical alias domain."""
+
     bit_offset: int
     bit_width: int
 
     @property
     def bit_end(self) -> int:
+        """Return the exclusive bit offset for this view."""
         return self.bit_offset + self.bit_width
 
     def can_join(self, other: "View") -> bool:
+        """Return whether two views are adjacent and can form a wider view."""
         return self.bit_end == other.bit_offset or other.bit_end == self.bit_offset
 
     def join(self, other: "View") -> "View | None":
+        """Return a combined view when two views are adjacent."""
         if not self.can_join(other):
             return None
         first, second = (self, other) if self.bit_offset <= other.bit_offset else (other, self)
         return View(first.bit_offset, first.bit_width + second.bit_width)
 
 
-FULL16 = View(0, 16)
-LOW8 = View(0, 8)
-HIGH8 = View(8, 8)
+FULL16: View = View(0, 16)
+LOW8: View = View(0, 8)
+HIGH8: View = View(8, 8)
 
-AX = DomainKey("reg", "AX")
-BX = DomainKey("reg", "BX")
-CX = DomainKey("reg", "CX")
-DX = DomainKey("reg", "DX")
+AX: DomainKey = DomainKey("reg", "AX")
+BX: DomainKey = DomainKey("reg", "BX")
+CX: DomainKey = DomainKey("reg", "CX")
+DX: DomainKey = DomainKey("reg", "DX")
 
 REGISTER_VIEWS: dict[str, tuple[DomainKey, View]] = {
     "ax": (AX, FULL16),
@@ -76,18 +89,27 @@ REGISTER_PAIR_NAMES: dict[str, str] = {
 
 
 def register_domain_for_name(name: str | None) -> DomainKey | None:
+    """Return the canonical register alias domain for a register name."""
     if not isinstance(name, str):
         return None
-    return REGISTER_VIEWS.get(name.lower(), (None, None))[0]
+    view_entry = REGISTER_VIEWS.get(name.lower())
+    if view_entry is None:
+        return None
+    return view_entry[0]
 
 
 def register_view_for_name(name: str | None) -> View | None:
+    """Return the bit view represented by a register name."""
     if not isinstance(name, str):
         return None
-    return REGISTER_VIEWS.get(name.lower(), (None, None))[1]
+    view_entry = REGISTER_VIEWS.get(name.lower())
+    if view_entry is None:
+        return None
+    return view_entry[1]
 
 
 def register_pair_name(name: str | None) -> str | None:
+    """Return the full 16-bit register name for a byte or word register."""
     if not isinstance(name, str):
         return None
     name = name.lower()
@@ -99,16 +121,19 @@ def register_pair_name(name: str | None) -> str | None:
 
 
 def register_offset_for_name(name: str | None) -> int | None:
+    """Return the 16-bit angr register offset for a register name."""
     if not isinstance(name, str):
         return None
     return REGISTER_OFFSETS.get(name.lower())
 
 
 def register_views_can_join(left: View, right: View) -> bool:
+    """Return whether two register views are adjacent."""
     return left.can_join(right)
 
 
 def join_register_views(left: View, right: View) -> View | None:
+    """Return the joined register view when two views are adjacent."""
     return left.join(right)
 
 

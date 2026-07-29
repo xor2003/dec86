@@ -1,20 +1,30 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: describe readability goals and diagnostic clusters for recovered output.
+Forbidden: performing semantic recovery, rewrite cleanup, or validation acceptance.
+"""
+
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ReadabilityClusterSpec:
+    """Describe one ugly-output pattern and its owning architectural surface."""
+
     name: str
     pattern: str
     purpose: str
     owner: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ReadabilityGoalSpec:
+    """Describe a bounded readability goal without making it semantic proof."""
+
     step: str
     title: str
     priority: str
@@ -137,7 +147,25 @@ READABILITY_GOALS: tuple[ReadabilityGoalSpec, ...] = (
 )
 
 
+def _record_count(item: Mapping[str, object]) -> int:
+    count = item.get("count", 0)
+    if isinstance(count, bool):
+        return int(count)
+    if isinstance(count, int):
+        return count
+    if isinstance(count, str) and count.isdecimal():
+        return int(count)
+    return 0
+
+
+def _mapping_sequence(value: object) -> tuple[Mapping[str, object], ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(item for item in value if isinstance(item, Mapping))
+
+
 def describe_x86_16_readability_goals() -> tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...], str], ...]:
+    """Return the deterministic public readability goal surface."""
     return tuple(
         (
             goal.step,
@@ -152,6 +180,7 @@ def describe_x86_16_readability_goals() -> tuple[tuple[str, str, str, tuple[str,
 
 
 def classify_readability_cluster(text: str | None) -> tuple[str | None, str | None]:
+    """Classify one emitted text fragment into a known readability cluster."""
     if not text:
         return None, None
     for spec in READABILITY_CLUSTER_SPECS:
@@ -165,16 +194,18 @@ def summarize_readability_goals(
     readability_clusters: list[dict[str, object]],
     family_ownership: Mapping[str, object],
 ) -> tuple[dict[str, object], ...]:
-    def _impl():
+    """Summarize observed readability debt against the declared goal set."""
+
+    def _impl() -> tuple[dict[str, object], ...]:
         cluster_counts = {
-            str(item.get("cluster")): int(item.get("count", 0) or 0)
+            str(item.get("cluster")): _record_count(item)
             for item in (readability_clusters or top_ugly_clusters)
             if item.get("cluster") is not None
         }
         family_clusters = {
-            (str(item.get("cluster")), str(item.get("family"))): int(item.get("count", 0) or 0)
-            for item in family_ownership.get("top_ugly_clusters", [])  # type: ignore[index]
-            if isinstance(item, dict) and item.get("cluster") is not None and item.get("family") is not None
+            (str(item.get("cluster")), str(item.get("family"))): _record_count(item)
+            for item in _mapping_sequence(family_ownership.get("top_ugly_clusters", ()))
+            if item.get("cluster") is not None and item.get("family") is not None
         }
         summaries: list[dict[str, object]] = []
         for goal in READABILITY_GOALS:
@@ -206,11 +237,12 @@ def summarize_readability_goals(
 def rank_readability_goal_queue(
     goal_summary: tuple[dict[str, object], ...] | list[dict[str, object]],
 ) -> tuple[dict[str, object], ...]:
+    """Rank readability goals by observed cluster pressure."""
     ordered = sorted(
         goal_summary,
         key=lambda item: (
-            -int(item.get("observed_cluster_count", 0) or 0),
-            -int(item.get("observed_family_count", 0) or 0),
+            -_record_count({"count": item.get("observed_cluster_count", 0)}),
+            -_record_count({"count": item.get("observed_family_count", 0)}),
             str(item.get("step", "")),
         ),
     )
@@ -231,6 +263,7 @@ def summarize_readability_focus(
     readability_clusters: list[dict[str, object]],
     family_ownership: Mapping[str, object],
 ) -> dict[str, object]:
+    """Build the milestone-report readability focus payload."""
     goal_summary = summarize_readability_goals(top_ugly_clusters, readability_clusters, family_ownership)
     goal_queue = rank_readability_goal_queue(goal_summary)
     next_goal = goal_queue[0] if goal_queue else None

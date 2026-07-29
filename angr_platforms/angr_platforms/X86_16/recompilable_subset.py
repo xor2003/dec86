@@ -1,3 +1,9 @@
+"""Layer: Recompilable output.
+
+Responsibility: orchestrate bounded generated-C syntax checks over the recompilable subset.
+Forbidden: semantic recovery, fallback body substitution, or source-backed output repair.
+"""
+
 from __future__ import annotations
 
 from .recompilable_cases import (
@@ -18,6 +24,7 @@ __all__ = [
 
 
 def run_x86_16_recompilable_subset_syntax_checks() -> tuple[dict[str, object], ...]:
+    """Run syntax, compile, and shape checks for every recompilable subset case."""
     results: list[dict[str, object]] = []
     for case in get_x86_16_recompilable_subset_cases():
         c_text, decompile_meta = decompile_recompilable_subset_case(case)

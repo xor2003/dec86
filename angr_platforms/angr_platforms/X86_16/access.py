@@ -1,19 +1,30 @@
-from pyvex.lifting.util import JumpKind
-from pyvex.lifting.util.vex_helper import Type
+"""Layer: Helper boundary.
 
-ITY_I8 = Type.int_8
-ITY_I16 = Type.int_16
-ITY_I32 = Type.int_32
+Responsibility: execute memory access while recording segmented IR facts for alias/type consumers.
+Forbidden: treating linear execution addresses as semantic storage identity.
+"""
+
+from __future__ import annotations
+
+from typing import Protocol, cast
+
+from pyvex.lifting.util import JumpKind
+from pyvex.lifting.util.syntax_wrapper import VexValue
+from pyvex.lifting.util.vex_helper import Type
 
 from .addressing_helpers import ResolvedMemoryOperand, linear_address, resolve_memory_operand_8616
 from .hardware import Hardware
 from .regs import reg16_t, sgreg_t
-from .stack_helpers import pop16, pop32, push16, push32, push_far_return_frame16
+from .stack_helpers import StackEmulator, pop16, pop32, push16, push32, push_far_return_frame16
+
+ITY_I8: object = Type.int_8
+ITY_I16: object = Type.int_16
+ITY_I32: object = Type.int_32
 
 # Constants for access modes
-MODE_READ = 0
-MODE_WRITE = 1
-MODE_EXEC = 2
+MODE_READ: int = 0
+MODE_WRITE: int = 1
+MODE_EXEC: int = 2
 
 # Module-level fact cache — bridges ephemeral emulator → persistent pipeline.
 # Key = function address (int), value = list of AliasStorageFacts/AliasFailure.
@@ -22,29 +33,74 @@ MODE_EXEC = 2
 _inertia_module_alias_fact_cache: dict[int, list[object]] = {}
 
 
+class _AddableValue(Protocol):
+    """VEX value subset that can be added after address arithmetic."""
+
+    def __add__(self, _other: object) -> object:
+        """Return this value plus another VEX helper expression."""
+        ...
+
+
+class _CastableValue(Protocol):
+    """VEX value subset that can be cast and shifted by access helpers."""
+
+    def cast_to(self, _ty: object) -> _CastableValue:
+        """Return this value cast to the requested VEX type."""
+        ...
+
+    def __lshift__(self, _other: int) -> _AddableValue:
+        """Return this value shifted left by a constant bit count."""
+        ...
+
+
+class _JumpEmitter(Protocol):
+    """Active lifter instruction jump API used by far control transfers."""
+
+    def jump(
+        self,
+        _condition: object,
+        _target: object,
+        _jumpkind: object | None = None,
+        **_kwargs: object,
+    ) -> None:
+        """Emit a VEX control-flow edge for the active instruction."""
+        ...
+
+
 class DataAccess(Hardware):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.tlb = []  # Translation Lookaside Buffer
-        self._inertia_last_resolved_operand = None
-        self._inertia_resolved_operands = []
+    """Frontend access surface that keeps execution and semantic addresses separate."""
 
-    def set_segment(self, reg, sel):
-        self.set_gpreg(reg, sel)
+    def __init__(self, size: int = 0) -> None:
+        """Initialize TLB state and owned semantic access logs."""
+        super().__init__(size)
+        self.tlb: list[object | None] = []  # Translation Lookaside Buffer
+        self._inertia_last_resolved_operand: ResolvedMemoryOperand | None = None
+        self._inertia_resolved_operands: list[tuple[int, ResolvedMemoryOperand]] = []
+        self._inertia_semantic_access_log: list[tuple[int, object]] = []
+        self._inertia_current_block_addr: int | None = None
+        self._inertia_uncollected_accesses: int = 0
 
-    def get_segment(self, reg):
+    def set_segment(self, reg: sgreg_t, sel: object) -> None:
+        """Write a segment selector through the frontend register surface."""
+        self.set_sgreg(reg, sel)
+
+    def get_segment(self, reg: sgreg_t | VexValue) -> object:
+        """Read a segment selector through the frontend register surface."""
         return self.get_sgreg(reg)
 
-    def convert_ss_vaddr(self, vaddr):
+    def convert_ss_vaddr(self, vaddr: object) -> object:
+        """Return the execution-linear address for an SS-relative offset."""
         _, off = self.convert_segoff2vexv(sgreg_t.SS, vaddr)
-        ss = self.get_sgreg(sgreg_t.SS).cast_to(ITY_I32)
+        ss = cast(_CastableValue, self.get_sgreg(sgreg_t.SS)).cast_to(ITY_I32)
         return (ss << 4) + off
 
-    def v2p(self, seg, off):
+    def v2p(self, seg: object, off: object) -> object:
+        """Return the execution-linear address for a segment:offset pair."""
         sg, vaddr = self.convert_segoff2vexv(seg, off)
         return (sg << 4) + vaddr
 
-    def convert_segoff2vexv(self, seg, vaddr):
+    def convert_segoff2vexv(self, seg: object, vaddr: object) -> tuple[_CastableValue, object]:
+        """Normalize a segment and offset into VEX-width execution values."""
         if isinstance(seg, sgreg_t):
             sg = self.get_sgreg(seg)
         elif isinstance(seg, int):
@@ -52,17 +108,13 @@ class DataAccess(Hardware):
         else:
             sg = seg
         if not isinstance(vaddr, int):
-            vaddr = vaddr.cast_to(ITY_I32)
-        sg = sg.cast_to(ITY_I32)
-        return sg, vaddr
+            vaddr = cast(_CastableValue, vaddr).cast_to(ITY_I32)
+        return cast(_CastableValue, sg).cast_to(ITY_I32), vaddr
 
     def _record_resolved_operand(self, operand: ResolvedMemoryOperand, mode: int) -> ResolvedMemoryOperand:
+        """Remember the last decoded operand and record semantic evidence."""
         self._inertia_last_resolved_operand = operand
-        history = getattr(self, "_inertia_resolved_operands", None)
-        if not isinstance(history, list):
-            history = []
-            self._inertia_resolved_operands = history
-        history.append((mode, operand))
+        self._inertia_resolved_operands.append((mode, operand))
         DataAccess._record_semantic_memory_access(self, operand, mode)
         return operand
 
@@ -80,11 +132,6 @@ class DataAccess(Hardware):
         # Hard block: no linear addresses in semantic logs
         operand.assert_semantic_safe()
 
-        semantic_log = getattr(self, "_inertia_semantic_access_log", None)
-        if not isinstance(semantic_log, list):
-            semantic_log = []
-            self._inertia_semantic_access_log = semantic_log
-
         addr = operand.ir_address()
 
         # Do NOT create alias facts here.
@@ -93,19 +140,15 @@ class DataAccess(Hardware):
         # in collect_normalized_semantic_alias_facts_from_project_8616().
 
         if isinstance(addr, IRAddress):
-            semantic_log.append((mode, addr))
+            self._inertia_semantic_access_log.append((mode, addr))
             # Write to canonical evidence_cache.
             #
-            # During initial CFG construction, function context is unknown.
-            # Record by BLOCK address (available from the emulator's lifter/irsb).
-            # The collection phase (fact_transfer.py) migrates block→function
-            # via migrate_block_accesses_to_function().
-            #
-            # When function context IS known (re-lift), record directly by function.
+            # CFG-time lifting has no function owner and must not publish evidence.
+            # Normalized collection re-lifts known blocks inside an explicit,
+            # context-local function collection.
             from .semantics.evidence_cache import (
                 get_current_function_addr,
                 record_access,
-                record_access_by_block,
             )
 
             func_addr = get_current_function_addr()
@@ -115,115 +158,127 @@ class DataAccess(Hardware):
                     mode=mode,
                     addr=addr,
                 )
-            else:
-                # No function context — record by block address.
-                # The lifter sets _inertia_current_block_addr on the emulator
-                # before lifting each block (lift_86_16.py line ~98/115).
-                block_addr = getattr(self, "_inertia_current_block_addr", None)
-                if isinstance(block_addr, int):
-                    record_access_by_block(
-                        block_addr=block_addr,
-                        mode=mode,
-                        addr=addr,
-                    )
-                else:
-                    # No block address either — truly uncollected
-                    _uncollected = getattr(self, "_inertia_uncollected_accesses", 0)
-                    self._inertia_uncollected_accesses = _uncollected + 1
 
-    def _resolve_memory_operand(self, seg, addr, width_bits: int, mode: int) -> ResolvedMemoryOperand:
+    def _resolve_memory_operand(
+        self, seg: object, addr: object, width_bits: int, mode: int
+    ) -> ResolvedMemoryOperand:
+        """Decode an operand and record its semantic segmented address."""
         operand = self._resolved_segment_operand(seg, addr, width_bits)
         self._record_resolved_operand(operand, mode)
         return operand
 
-    def _resolved_segment_operand(self, seg, addr, width_bits: int) -> ResolvedMemoryOperand:
+    def _resolved_segment_operand(self, seg: object, addr: object, width_bits: int) -> ResolvedMemoryOperand:
+        """Resolve a segment-relative operand without recording side effects."""
         return resolve_memory_operand_8616(self, seg, addr, width_bits, address_bits=16)
 
-    def search_tlb(self, vpn):
+    def search_tlb(self, vpn: int) -> object | None:
+        """Return a cached TLB entry when present."""
         if vpn + 1 > len(self.tlb) or self.tlb[vpn] is None:
             return None
         return self.tlb[vpn]
 
-    def cache_tlb(self, vpn, pte):
+    def cache_tlb(self, vpn: int, pte: object) -> None:
+        """Cache a TLB entry for frontend execution."""
         if vpn + 1 > len(self.tlb):
             self.tlb.extend([None] * (vpn + 1 - len(self.tlb)))
         self.tlb[vpn] = pte
 
-    def push32(self, value):
-        push32(self, value)
+    def push32(self, value: object) -> None:
+        """Push a 32-bit value through the stack helper surface."""
+        push32(cast(StackEmulator, self), value)
 
-    def pop32(self):
-        return pop32(self)
+    def pop32(self) -> object:
+        """Pop a 32-bit value through the stack helper surface."""
+        return pop32(cast(StackEmulator, self))
 
-    def push16(self, value):
-        push16(self, value)
+    def push16(self, value: object) -> None:
+        """Push a 16-bit value through the stack helper surface."""
+        push16(cast(StackEmulator, self), value)
 
-    def pop16(self):
-        return pop16(self)
+    def pop16(self) -> object:
+        """Pop a 16-bit value through the stack helper surface."""
+        return pop16(cast(StackEmulator, self))
 
-    def read_mem32_seg(self, seg, addr):
+    def read_mem32_seg(self, seg: object, addr: object) -> object:
+        """Read 32 bits from segmented memory while recording semantic evidence."""
         operand = self._resolve_memory_operand(seg, addr, 32, MODE_READ)
-        return self.read_mem32(operand.exec_linear)
+        return self.read_mem32(cast(int | VexValue, operand.exec_linear))
 
-    def read_mem16_seg(self, seg, addr):
+    def read_mem16_seg(self, seg: object, addr: object) -> object:
+        """Read 16 bits from segmented memory while recording semantic evidence."""
         operand = self._resolve_memory_operand(seg, addr, 16, MODE_READ)
         return self.read_mem16(operand.exec_linear)
 
-    def read_mem8_seg(self, seg, addr):
+    def read_mem8_seg(self, seg: object, addr: object) -> object:
+        """Read 8 bits from segmented memory while recording semantic evidence."""
         operand = self._resolve_memory_operand(seg, addr, 8, MODE_READ)
-        return self.read_mem8(operand.exec_linear)
+        return self.read_mem8(cast(int | VexValue, operand.exec_linear))
 
-    def write_mem32_seg(self, seg, addr, value):
+    def write_mem32_seg(self, seg: object, addr: object, value: object) -> None:
+        """Write 32 bits to segmented memory while recording semantic evidence."""
         operand = self._resolve_memory_operand(seg, addr, 32, MODE_WRITE)
-        self.write_mem32(operand.exec_linear, value)
+        self.write_mem32(cast(int | VexValue, operand.exec_linear), cast(int | VexValue, value))
 
-    def write_mem16_seg(self, seg, addr, value):
+    def write_mem16_seg(self, seg: object, addr: object, value: object) -> None:
+        """Write 16 bits to segmented memory while recording semantic evidence."""
         operand = self._resolve_memory_operand(seg, addr, 16, MODE_WRITE)
         self.write_mem16(operand.exec_linear, value)
 
-    def write_mem8_seg(self, seg, addr, value):
+    def write_mem8_seg(self, seg: object, addr: object, value: object) -> None:
+        """Write 8 bits to segmented memory while recording semantic evidence."""
         operand = self._resolve_memory_operand(seg, addr, 8, MODE_WRITE)
-        self.write_mem8(operand.exec_linear, value)
+        self.write_mem8(cast(int | VexValue, operand.exec_linear), cast(int | VexValue, value))
 
-    def get_code8(self, offset):
+    def get_code8(self, offset: int) -> int:
+        """Read an 8-bit immediate from the instruction bitstream."""
         assert offset == 0
         return self.bitstream.read("uint:8")
 
-    def get_code16(self, offset):
+    def get_code16(self, offset: int) -> int:
+        """Read a 16-bit immediate from the instruction bitstream."""
         assert offset == 0
         return self.bitstream.read("uintle:16")
 
-    def get_code32(self, offset):
+    def get_code32(self, offset: int) -> int:
+        """Read a 32-bit immediate from the instruction bitstream."""
         assert offset == 0
         return self.bitstream.read("uintle:32")
 
-    def get_data16(self, seg, addr):
+    def get_data16(self, seg: object, addr: object) -> object:
+        """Read 16-bit segmented data for instruction helpers."""
         return self.read_mem16_seg(seg, addr)
 
-    def get_data32(self, seg, addr):
+    def get_data32(self, seg: object, addr: object) -> object:
+        """Read 32-bit segmented data for instruction helpers."""
         return self.read_mem32_seg(seg, addr)
 
-    def get_data8(self, seg, addr):
+    def get_data8(self, seg: object, addr: object) -> object:
+        """Read 8-bit segmented data for instruction helpers."""
         return self.read_mem8_seg(seg, addr)
 
-    def put_data8(self, seg, addr, value):
+    def put_data8(self, seg: object, addr: object, value: object) -> None:
+        """Write 8-bit segmented data for instruction helpers."""
         self.write_mem8_seg(seg, addr, value)
 
-    def put_data16(self, seg, addr, value):
+    def put_data16(self, seg: object, addr: object, value: object) -> None:
+        """Write 16-bit segmented data for instruction helpers."""
         self.write_mem16_seg(seg, addr, value)
 
-    def put_data32(self, seg, addr, value):
+    def put_data32(self, seg: object, addr: object, value: object) -> None:
+        """Write 32-bit segmented data for instruction helpers."""
         self.write_mem32_seg(seg, addr, value)
 
-    def callf(self, seg, ip, return_ip=None):
-        push_far_return_frame16(self, return_ip)
+    def callf(self, seg: object, ip: object, return_ip: object | None = None) -> None:
+        """Emit a far call using execution-linear control flow."""
+        push_far_return_frame16(cast(StackEmulator, self), return_ip)
         self.set_sgreg(sgreg_t.CS, seg)
         self.set_gpreg(reg16_t.IP, ip)
         laddr = linear_address(self, seg, ip)
-        self.lifter_instruction.jump(None, laddr, jumpkind=JumpKind.Call)
+        cast(_JumpEmitter, self.lifter_instruction).jump(None, laddr, jumpkind=JumpKind.Call)
 
-    def jmpf(self, seg, ip):
+    def jmpf(self, seg: object, ip: object) -> None:
+        """Emit a far jump using execution-linear control flow."""
         self.set_sgreg(sgreg_t.CS, seg)
         self.set_gpreg(reg16_t.IP, ip)
         laddr = linear_address(self, seg, ip)
-        self.lifter_instruction.jump(None, laddr, jumpkind=JumpKind.Boring)
+        cast(_JumpEmitter, self.lifter_instruction).jump(None, laddr, jumpkind=JumpKind.Boring)

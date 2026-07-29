@@ -42,6 +42,27 @@ def test_string_instruction_lowering_accepts_rep_movs_as_memcpy_class():
     assert tuple(item.family for item in lowered.records) == ("memcpy_class",)
 
 
+def test_string_instruction_lowering_keeps_unknown_direction_as_generic_movs():
+    artifact = StringInstructionArtifact(
+        records=(
+            _record(
+                index=0,
+                family="movs",
+                repeat_kind="rep",
+                width=2,
+                direction_mode="unknown",
+            ),
+        )
+    )
+
+    lowered = build_x86_16_string_intrinsic_artifact(artifact)
+    rendered = render_x86_16_string_intrinsic_c("copy_words", lowered)
+
+    assert tuple(item.family for item in lowered.records) == ("movs_class",)
+    assert "__x86_16_movs(2);" in rendered
+    assert "memcpy_class" not in rendered
+
+
 def test_string_instruction_lowering_accepts_repne_scas_zero_seed_as_strlen_class():
     artifact = StringInstructionArtifact(
         records=(_record(index=0, family="scas", repeat_kind="repnz", width=1, zero_seeded_accumulator=True),)

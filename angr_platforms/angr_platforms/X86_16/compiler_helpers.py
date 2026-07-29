@@ -1,7 +1,14 @@
+"""Layer: Recovery metadata.
+
+Responsibility: identify and hook proven compiler helper patterns such as stack probes.
+Forbidden: helper signature synthesis from COD/source names or rendered C.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Protocol, cast
 
 import claripy
 from angr import SimProcedure
@@ -21,11 +28,15 @@ __all__ = [
 
 
 class CompilerHelperEvidenceKind8616(Enum):
+    """Binary evidence category for a recognized compiler helper."""
+
     STACK_PROBE = "stack_probe"
 
 
 @dataclass(frozen=True, slots=True)
 class CompilerHelperEvidence8616:
+    """Evidence for a compiler helper recognized from binary bytes."""
+
     addr: int
     name: str
     kind: CompilerHelperEvidenceKind8616
@@ -38,10 +49,11 @@ class X86_16MscStackProbeSimProcedure8616(SimProcedure):
 
     NO_RET = False
 
-    def run(self):  # pylint:disable=arguments-differ
-        sp = self.state.regs.sp
-        ax = self.state.regs.ax
-        ss = self.state.regs.ss
+    def run(self) -> None:  # pylint:disable=arguments-differ
+        """Model the stack probe effect without inventing call signatures."""
+        sp = cast(claripy.ast.BV, self.state.regs.sp)
+        ax = cast(claripy.ast.BV, self.state.regs.ax)
+        ss = cast(claripy.ast.BV, self.state.regs.ss)
         sp32 = claripy.ZeroExt(16, sp)
         ss32 = claripy.ZeroExt(16, ss)
         stack_addr = (ss32 << claripy.BVV(4, 32)) + sp32
@@ -83,18 +95,25 @@ _MSC_ANCHKSTK_PATTERN_8616: tuple[int | None, ...] = (
 )
 
 
+class _ArchWithStackProbeRegistry8616(Protocol):
+    _inertia_stack_probe_helper_targets_8616: frozenset[int]
+
+
 def is_x86_16_stack_probe_name_8616(name: str | None) -> bool:
+    """Return whether a normalized symbol name is a known stack-probe spelling."""
     normalized = normalize_callee_name_8616(name)
     if not isinstance(normalized, str):
         return False
     return normalized.strip().lower().lstrip("_") in _STACK_PROBE_NORMALIZED_NAMES_8616
 
 
-def _project_arch_name_8616(project) -> str | None:
+def _project_arch_name_8616(project: object) -> str | None:
+    """Read the architecture name from a dynamic angr project boundary."""
     return getattr(getattr(project, "arch", None), "name", None)
 
 
-def _load_project_bytes_8616(project, addr: int, size: int) -> bytes | None:
+def _load_project_bytes_8616(project: object, addr: int, size: int) -> bytes | None:
+    """Read bytes from a dynamic angr loader memory boundary."""
     loader = getattr(project, "loader", None)
     memories = (
         getattr(loader, "memory", None),
@@ -110,14 +129,13 @@ def _load_project_bytes_8616(project, addr: int, size: int) -> bytes | None:
             continue
         if isinstance(raw, bytes):
             return raw
-        try:
+        if isinstance(raw, bytearray | memoryview):
             return bytes(raw)
-        except Exception:
-            continue
     return None
 
 
-def _main_object_addr_range_8616(project) -> tuple[int, int] | None:
+def _main_object_addr_range_8616(project: object) -> tuple[int, int] | None:
+    """Return the main-object address range from a dynamic angr loader boundary."""
     main_object = getattr(getattr(project, "loader", None), "main_object", None)
     min_addr = getattr(main_object, "min_addr", None)
     max_addr = getattr(main_object, "max_addr", None)
@@ -135,35 +153,59 @@ def _matches_masked_prefix_8616(data: bytes, pattern: tuple[int | None, ...]) ->
     return True
 
 
-def identify_x86_16_compiler_helper_at_8616(project, addr: int | None) -> CompilerHelperEvidence8616 | None:
+def identify_x86_16_compiler_helper_at_8616(
+    project: object, addr: int | None
+) -> CompilerHelperEvidence8616 | None:
+    """Identify a helper through binary bytes and a dynamic angr project boundary."""
     if not isinstance(addr, int) or _project_arch_name_8616(project) != "86_16":
         return None
 
-    code = _load_project_bytes_8616(project, addr, len(_MSC_ANCHKSTK_PATTERN_8616))
-    if code is not None and _matches_masked_prefix_8616(code, _MSC_ANCHKSTK_PATTERN_8616):
-        return CompilerHelperEvidence8616(
-            addr=addr,
-            name="aNchkstk",
-            kind=CompilerHelperEvidenceKind8616.STACK_PROBE,
-            pattern_name="msc_aNchkstk_popcx_sp_ax",
-            matched_bytes=len(_MSC_ANCHKSTK_PATTERN_8616),
-        )
+    candidates: list[tuple[object, int]] = [(project, addr)]
+    original_project = getattr(project, "_inertia_original_project", None)
+    original_delta = getattr(project, "_inertia_original_linear_delta", None)
+    if original_project is not None:
+        # Exact-slice calls may preserve a linked absolute external target or
+        # expose a slice-local target. Both coordinates require byte proof.
+        candidates.append((original_project, addr))
+        if isinstance(original_delta, int):
+            candidates.append((original_project, addr + original_delta))
+    seen: set[tuple[int, int]] = set()
+    for candidate_project, candidate_addr in candidates:
+        key = id(candidate_project), candidate_addr
+        if key in seen:
+            continue
+        seen.add(key)
+        code = _load_project_bytes_8616(candidate_project, candidate_addr, len(_MSC_ANCHKSTK_PATTERN_8616))
+        if code is not None and _matches_masked_prefix_8616(code, _MSC_ANCHKSTK_PATTERN_8616):
+            return CompilerHelperEvidence8616(
+                addr=addr,
+                name="aNchkstk",
+                kind=CompilerHelperEvidenceKind8616.STACK_PROBE,
+                pattern_name="msc_aNchkstk_popcx_sp_ax",
+                matched_bytes=len(_MSC_ANCHKSTK_PATTERN_8616),
+            )
     return None
 
 
-def hook_x86_16_compiler_helper_at_8616(project, addr: int | None) -> CompilerHelperEvidence8616 | None:
+def hook_x86_16_compiler_helper_at_8616(project: object, addr: int | None) -> CompilerHelperEvidence8616 | None:
+    """Hook a recognized compiler helper through the dynamic angr project API."""
     evidence = identify_x86_16_compiler_helper_at_8616(project, addr)
     if evidence is None:
         return None
     if evidence.kind is CompilerHelperEvidenceKind8616.STACK_PROBE:
-        if not project.is_hooked(evidence.addr):
-            project.hook(evidence.addr, X86_16MscStackProbeSimProcedure8616(display_name=evidence.name))
+        # Dynamic boundary: project is an angr.Project-like object supplied by callers.
+        is_hooked = getattr(project, "is_hooked", None)
+        # Dynamic boundary: hook installation is provided by the same angr.Project-like object.
+        hook = getattr(project, "hook", None)
+        if callable(is_hooked) and callable(hook) and not is_hooked(evidence.addr):
+            hook(evidence.addr, X86_16MscStackProbeSimProcedure8616(display_name=evidence.name))
     return evidence
 
 
 def hook_x86_16_known_compiler_helpers_8616(
-    project, *, max_scan_bytes: int = 0x20000
+    project: object, *, max_scan_bytes: int = 0x20000
 ) -> tuple[CompilerHelperEvidence8616, ...]:
+    """Scan the main object for known compiler helpers and hook proven matches."""
     if _project_arch_name_8616(project) != "86_16":
         return ()
     addr_range = _main_object_addr_range_8616(project)
@@ -189,9 +231,11 @@ def hook_x86_16_known_compiler_helpers_8616(
 
 
 def _register_compiler_helper_targets_on_arch_8616(
-    project,
+    project: object,
     evidence: tuple[CompilerHelperEvidence8616, ...],
 ) -> None:
+    """Register stack-probe helper addresses on the dynamic angr arch object."""
+    # Dynamic boundary: project is an angr.Project-like object with a runtime arch.
     arch = getattr(project, "arch", None)
     if arch is None:
         return
@@ -201,11 +245,14 @@ def _register_compiler_helper_targets_on_arch_8616(
             targets.add(item.addr)
             targets.add(item.addr & 0xFFFF)
     if targets:
-        arch._inertia_stack_probe_helper_targets_8616 = frozenset(sorted(targets))
+        registry = cast(_ArchWithStackProbeRegistry8616, arch)
+        registry._inertia_stack_probe_helper_targets_8616 = frozenset(sorted(targets))
 
 
-def is_x86_16_registered_stack_probe_target_8616(arch, target: int | None) -> bool:
+def is_x86_16_registered_stack_probe_target_8616(arch: object, target: int | None) -> bool:
+    """Return whether an arch has recorded a target as a proven stack probe."""
     if not isinstance(target, int):
         return False
+    # Dynamic boundary: arch is an angr Arch object carrying optional runtime metadata.
     targets = getattr(arch, "_inertia_stack_probe_helper_targets_8616", frozenset())
     return target in targets or (target & 0xFFFF) in targets

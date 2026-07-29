@@ -1,3 +1,9 @@
+"""Layer: Optional evidence/reporting.
+
+Responsibility: parse LST/debug evidence into optional labels and diagnostics.
+Forbidden: requiring listing text for arguments, types, control flow, or validation success.
+"""
+
 from __future__ import annotations
 
 import re
@@ -7,6 +13,8 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class DebugTypeMemberEvidence:
+    """Optional debug evidence for one member of a recovered type."""
+
     name: str
     offset: int | None = None
     owner_type_index: int | None = None
@@ -18,6 +26,8 @@ class DebugTypeMemberEvidence:
 
 @dataclass(frozen=True)
 class DebugTypeReferenceEvidence:
+    """Optional debug evidence linking a symbol name to a type index."""
+
     name: str
     type_index: int
     symbol_class: str = ""
@@ -26,6 +36,8 @@ class DebugTypeReferenceEvidence:
 
 @dataclass(frozen=True)
 class DebugSymbolEvidence:
+    """Optional debug evidence for one named data or code symbol."""
+
     name: str
     symbol_class: str = ""
     storage: str = ""
@@ -42,6 +54,8 @@ class DebugSymbolEvidence:
 
 @dataclass(frozen=True)
 class DebugTypeDescriptorEvidence:
+    """Optional debug evidence describing a type record from listing metadata."""
+
     type_index: int
     kind: str
     name: str = ""
@@ -58,6 +72,8 @@ class DebugTypeDescriptorEvidence:
 
 @dataclass(frozen=True)
 class DebugEnumMemberEvidence:
+    """Optional debug evidence for one enum member value."""
+
     name: str
     value: int
     owner_type_index: int | None = None
@@ -67,6 +83,8 @@ class DebugEnumMemberEvidence:
 
 @dataclass(frozen=True)
 class LSTMetadata:
+    """Optional listing metadata consumed as labels and diagnostics only."""
+
     data_labels: dict[int, str]
     code_labels: dict[int, str]
     code_ranges: dict[int, tuple[int, int]] = field(default_factory=dict)
@@ -159,7 +177,7 @@ def _consume_summary_row_8616(
 def _maybe_update_current_segment_8616(
     stripped: str, upper: str, current_segment: str | None
 ) -> tuple[str | None, bool]:
-    def _impl():
+    def _impl() -> tuple[str | None, bool]:
         segment_match = _SEGMENT_RE.match(stripped)
         if segment_match is not None:
             segment_name = segment_match.group(1).lower()
@@ -228,6 +246,7 @@ def _infer_lst_source_format_8616(lines: list[str]) -> str:
 
 
 def extract_lst_metadata(lst_path: Path) -> LSTMetadata:
+    """Parse optional LST labels without making listing text semantic proof."""
     lines = lst_path.read_text(errors="ignore").splitlines()
     data_labels: dict[int, str] = {}
     code_labels: dict[int, str] = {}

@@ -1,18 +1,24 @@
-from __future__ import annotations
+"""Layer: Rewrite/Postprocess cleanup.
 
-"""Layer: Optimization (mid-level, pre-rewrite).
+Responsibility: perform conservative dead-code elimination only after liveness evidence is available.
+Consumes already-proven IR, alias, widening, typed, and structuring facts.
+Do not recover new semantics, storage identity, types, call signatures, control flow, or facts from rendered text, COD, source, or CLI/reporting evidence here.
 
 Conservative dead-code elimination.
 Only removes plain local/temp assignments proven unread by backward liveness.
 Unknown cases are refused and preserved.
-
-Forbidden: semantic recovery, alias decisions beyond liveness, type inference.
 """
 
+from __future__ import annotations
+
+import builtins
 import contextlib
 import os
 import sys
+import typing
+from collections.abc import Iterable, Iterator
 from enum import Enum
+from typing import Any
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -27,31 +33,49 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CTypeCast,
     CUnaryOp,
     CVariable,
+    CVariableField,
 )
-from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
 
 from ...decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
 
 __all__ = ["_dead_code_elimination_8616"]
 
 
+def _dynamic_dce_getattr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
+    """Read an attribute across the dynamic third-party angr/codegen DCE boundary."""
+    return builtins.getattr(obj, name, default)
+
+
+def _dynamic_dce_setattr_8616(obj: object, name: str, value: object) -> None:
+    """Write an attribute across the dynamic third-party angr/codegen DCE boundary."""
+    builtins.setattr(obj, name, value)
+
+
 class DceValuePurity8616(Enum):
+    """Purity classification used by conservative DCE decisions."""
+
     LOCAL_VALUE = "local_value"
     GLOBAL_MEMORY_READ = "global_memory_read"
     UNKNOWN = "unknown"
 
 
-def _dead_code_elimination_8616(codegen) -> bool:
-    """Eliminate only definitely-dead assignments within each statement block."""
-    cfunc = getattr(codegen, "cfunc", None)
+def _dead_code_elimination_8616(codegen: object) -> bool:
+    """Eliminate only definitely-dead assignments within each statement block.
+
+    Dynamic boundary: this pass traverses third-party angr structured-C nodes
+    and mutable codegen compatibility counters; owned Inertia facts must still
+    be narrowed to typed contracts before dot access.
+    """
+    cfunc = _dynamic_dce_getattr_8616(codegen, "cfunc", None)
     if cfunc is None:
         return False
-    root = getattr(cfunc, "statements", None)
+    root = _dynamic_dce_getattr_8616(cfunc, "statements", None)
     if root is None:
         root = cfunc
     if os.environ.get("INERTIA_DEBUG_OPTIMIZATION", "").strip().lower() in {"1", "true", "yes", "on"}:
-        root_statements = getattr(root, "statements", None)
-        cfunc_statements = getattr(cfunc, "statements", None)
+        root_statements = _dynamic_dce_getattr_8616(root, "statements", None)
+        cfunc_statements = _dynamic_dce_getattr_8616(cfunc, "statements", None)
         print(
             "[optimization] dce_root "
             f"cfunc={type(cfunc).__name__} "
@@ -85,33 +109,46 @@ def _dead_code_elimination_8616(codegen) -> bool:
         "dce_arg_overwrite_artifact_candidates",
         "dce_arg_overwrite_artifact_deleted",
         "dce_arg_overwrite_artifact_refused",
+        "dce_frame_anchor_candidates",
+        "dce_frame_anchor_deleted",
+        "dce_frame_anchor_refused",
+        "dce_overwritten_local_candidates",
+        "dce_overwritten_local_deleted",
+        "dce_overwritten_local_refused",
     ):
-        if not isinstance(getattr(codegen, counter, None), int):
-            setattr(codegen, counter, 0)
+        if not isinstance(_dynamic_dce_getattr_8616(codegen, counter, None), int):
+            _dynamic_dce_setattr_8616(codegen, counter, 0)
+
+    def _bump_codegen_counter_8616(name: str) -> None:
+        """Increment a dynamic codegen diagnostic counter."""
+        # Dynamic codegen compatibility boundary.
+        _dynamic_dce_setattr_8616(codegen, name, int(_dynamic_dce_getattr_8616(codegen, name, 0)) + 1)
 
     changed = False
+    pruned_decl_keys: set[tuple[str, int | str]] = set()
+    pruned_decl_names: set[str] = set()
 
-    def _safe_attr(node: object, attr: str, default=None):
+    def _safe_attr(node: object, attr: str, default: object | None = None) -> object | None:
         try:
-            return getattr(node, attr, default)
+            return _dynamic_dce_getattr_8616(node, attr, default)
         except (TypeError, ValueError):
             return default
 
     def _var_key(node: CVariable) -> tuple[str, int | str]:
-        var = getattr(node, "variable", None)
+        var = _dynamic_dce_getattr_8616(node, "variable", None)
         if var is None:
             return ("node", id(node))
-        if isinstance(var, SimStackVariable) and getattr(var, "base", None) == "bp":
-            offset = getattr(var, "offset", None)
+        if isinstance(var, SimStackVariable) and _dynamic_dce_getattr_8616(var, "base", None) == "bp":
+            offset = _dynamic_dce_getattr_8616(var, "offset", None)
             if isinstance(offset, int):
                 return ("stack", int(offset))
-        name = getattr(var, "name", None)
+        name = _dynamic_dce_getattr_8616(var, "name", None)
         if isinstance(name, str) and name:
             return ("name", name)
-        node_name = getattr(node, "name", None)
+        node_name = _dynamic_dce_getattr_8616(node, "name", None)
         if isinstance(node_name, str) and node_name:
             return ("name", node_name)
-        ident = getattr(var, "ident", None)
+        ident = _dynamic_dce_getattr_8616(var, "ident", None)
         if isinstance(ident, str) and ident:
             return ("ident", ident)
         return ("var", id(var))
@@ -161,8 +198,17 @@ def _dead_code_elimination_8616(codegen) -> bool:
     def _dirty_is_storage_free_temp_8616(node: object) -> bool:
         return (
             type(node).__name__ == "CDirtyExpression"
-            and bool(getattr(codegen, "_inertia_dce_allow_storage_free_dirty_8616", False))
+            and bool(_dynamic_dce_getattr_8616(codegen, "_inertia_dce_allow_storage_free_dirty_8616", False))
             and not _dirty_has_storage_provenance_8616(node)
+        )
+
+    def _dirty_is_storage_free_carrier_8616(node: object) -> bool:
+        return type(node).__name__ == "CDirtyExpression" and not _dirty_has_storage_provenance_8616(node)
+
+    def _dirty_temp_cleanup_mode_8616(node: object) -> bool:
+        return type(node).__name__ == "CDirtyExpression" and bool(
+            # Dynamic codegen compatibility boundary.
+            _dynamic_dce_getattr_8616(codegen, "_inertia_dce_allow_storage_free_dirty_8616", False)
         )
 
     def _node_key(node: object) -> tuple[str, int | str] | None:
@@ -170,7 +216,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
             return _var_key(node)
         return _dirty_key(node)
 
-    def _iter_with_root(node: object):
+    def _iter_with_root(node: object) -> Iterator[object]:
         if node is not None:
             yield node
         yield from _iter_c_nodes_deep_8616(node)
@@ -181,34 +227,34 @@ def _dead_code_elimination_8616(codegen) -> bool:
         for child in _iter_c_nodes_deep_8616(lhs):
             if isinstance(child, CVariable):
                 return child
-        variable = getattr(lhs, "variable", None)
-        if variable is not None:
+        variable = _dynamic_dce_getattr_8616(lhs, "variable", None)
+        if isinstance(variable, SimVariable):
             try:
-                return CVariable(None, variable, None)
+                return CVariable(variable, variable, None)
             except Exception:
                 return None
         return None
 
     def _var_name(node: CVariable) -> str:
-        var = getattr(node, "variable", None)
-        name = getattr(var, "name", None)
+        var = _dynamic_dce_getattr_8616(node, "variable", None)
+        name = _dynamic_dce_getattr_8616(var, "name", None)
         if isinstance(name, str) and name:
             return name
-        node_name = getattr(node, "name", None)
+        node_name = _dynamic_dce_getattr_8616(node, "name", None)
         return node_name if isinstance(node_name, str) else ""
 
     def _is_observable_lvalue(lhs: object) -> bool:
-        if isinstance(lhs, (CUnaryOp, CStructField, CBinaryOp, CIndexedVariable)):
+        if isinstance(lhs, (CUnaryOp, CStructField, CBinaryOp, CIndexedVariable, CVariableField)):
             return True
         if isinstance(lhs, CFunctionCall):
             return True
         if isinstance(lhs, CVariable):
-            var = getattr(lhs, "variable", None)
+            var = _dynamic_dce_getattr_8616(lhs, "variable", None)
             if isinstance(var, (SimStackVariable, SimRegisterVariable)):
                 return False
             if isinstance(var, SimMemoryVariable):
                 return True
-            region = getattr(var, "region", None)
+            region = _dynamic_dce_getattr_8616(var, "region", None)
             if isinstance(region, str) and region.lower() in {"global", "argument", "arg"}:
                 return True
         return False
@@ -222,19 +268,19 @@ def _dead_code_elimination_8616(codegen) -> bool:
         return False
 
     def _call_name_8616(call: CFunctionCall) -> str | None:
-        target = getattr(call, "callee_target", None)
+        target = _dynamic_dce_getattr_8616(call, "callee_target", None)
         if isinstance(target, str) and target:
             return target
-        target_name = getattr(target, "name", None)
+        target_name = _dynamic_dce_getattr_8616(target, "name", None)
         if isinstance(target_name, str) and target_name:
             return target_name
-        callee = getattr(call, "callee", None)
+        callee = _dynamic_dce_getattr_8616(call, "callee", None)
         if isinstance(callee, str) and callee:
             return callee
-        callee = getattr(call, "callee_func", None)
+        callee = _dynamic_dce_getattr_8616(call, "callee_func", None)
         if isinstance(callee, str) and callee:
             return callee
-        name = getattr(callee, "name", None)
+        name = _dynamic_dce_getattr_8616(callee, "name", None)
         return name if isinstance(name, str) and name else None
 
     def _is_pure_address_helper_call_8616(call: CFunctionCall) -> bool:
@@ -247,7 +293,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
         return _is_pure_address_helper_call_8616(call) or _is_pure_memory_read_helper_call_8616(call)
 
     def _standalone_expression_is_definitely_dead_8616(stmt: object) -> bool:
-        if not isinstance(stmt, CUnaryOp) or getattr(stmt, "op", None) != "Dereference":
+        if not isinstance(stmt, CUnaryOp) or _dynamic_dce_getattr_8616(stmt, "op", None) != "Dereference":
             return False
 
         saw_pure_address_helper = False
@@ -260,13 +306,13 @@ def _dead_code_elimination_8616(codegen) -> bool:
                 saw_pure_address_helper = True
                 continue
             if isinstance(node, CUnaryOp):
-                op = getattr(node, "op", None)
+                op = _dynamic_dce_getattr_8616(node, "op", None)
                 if node is stmt and op == "Dereference":
                     continue
                 if op in {"Reference", "AddressOf", "Neg", "Not", "BitNot"}:
                     continue
                 return False
-            if isinstance(node, CBinaryOp) and getattr(node, "op", None) not in {
+            if isinstance(node, CBinaryOp) and _dynamic_dce_getattr_8616(node, "op", None) not in {
                 "Add",
                 "Sub",
                 "Mul",
@@ -281,13 +327,51 @@ def _dead_code_elimination_8616(codegen) -> bool:
 
     def _standalone_expression_payload_8616(stmt: object) -> object:
         if isinstance(stmt, CExpressionStatement):
-            return getattr(stmt, "expr", None)
+            return _dynamic_dce_getattr_8616(stmt, "expr", None)
         return stmt
+
+    def _is_structured_or_control_statement_8616(stmt: object) -> bool:
+        if type(stmt).__name__ in {
+            "CBreak",
+            "CContinue",
+            "CForLoop",
+            "CGoto",
+            "CIfBreak",
+            "CIfElse",
+            "CReturn",
+            "CSwitchCase",
+            "CWhileLoop",
+        }:
+            return True
+        for attr in (
+            "body",
+            "condition",
+            "condition_and_nodes",
+            "cond",
+            "default",
+            "else_node",
+            "iftrue",
+            "iffalse",
+            "ret_exprs",
+            "retval",
+            "statements",
+            "true_node",
+            "false_node",
+        ):
+            # Dynamic angr/codegen structured-C compatibility boundary.
+            if _dynamic_dce_getattr_8616(stmt, attr, None) is not None:
+                return True
+        return False
 
     def _expr_is_discardable_dead_value_8616(expr: object) -> bool:
         """True when evaluating expr has no observable effect if its value is unused."""
         if expr is None:
             return False
+        if (
+            isinstance(expr, CVariableField)
+            and _expr_value_purity_8616(expr) is DceValuePurity8616.GLOBAL_MEMORY_READ
+        ):
+            return True
         saw_discardable_artifact = False
         for node in _iter_with_root(expr):
             if isinstance(node, CAssignment):
@@ -304,7 +388,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
             if type(node).__name__ == "CDirtyExpression":
                 if not (
                     _dirty_is_storage_free_temp_8616(node)
-                    or bool(getattr(codegen, "_inertia_dce_allow_dirty_value_reads_8616", False))
+                    or bool(_dynamic_dce_getattr_8616(codegen, "_inertia_dce_allow_dirty_value_reads_8616", False))
                 ):
                     return False
                 saw_discardable_artifact = True
@@ -312,7 +396,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
             if isinstance(node, CTypeCast):
                 continue
             if isinstance(node, CUnaryOp):
-                if getattr(node, "op", None) in {
+                if _dynamic_dce_getattr_8616(node, "op", None) in {
                     "Dereference",
                     "Reference",
                     "AddressOf",
@@ -320,11 +404,11 @@ def _dead_code_elimination_8616(codegen) -> bool:
                     "Not",
                     "BitNot",
                 }:
-                    if getattr(node, "op", None) == "Dereference":
+                    if _dynamic_dce_getattr_8616(node, "op", None) == "Dereference":
                         saw_discardable_artifact = True
                     continue
                 return False
-            if isinstance(node, CBinaryOp) and getattr(node, "op", None) not in {
+            if isinstance(node, CBinaryOp) and _dynamic_dce_getattr_8616(node, "op", None) not in {
                 "Add",
                 "Sub",
                 "Mul",
@@ -340,12 +424,18 @@ def _dead_code_elimination_8616(codegen) -> bool:
     def _is_plain_local_lvalue_8616(lhs: object) -> bool:
         if not isinstance(lhs, CVariable):
             return False
-        var = getattr(lhs, "variable", None)
+        var = _dynamic_dce_getattr_8616(lhs, "variable", None)
         if isinstance(var, SimStackVariable):
             return True
         if isinstance(var, SimRegisterVariable):
             return True
         return False
+
+    def _is_frame_anchor_stack_lvalue_8616(lhs: object) -> bool:
+        if not isinstance(lhs, CVariable):
+            return False
+        var = lhs.variable
+        return isinstance(var, SimStackVariable) and var.base == "bp" and var.offset == 0
 
     def _expr_is_pure_local_value_8616(expr: object) -> bool:
         if expr is None or _rhs_has_side_effects(expr):
@@ -360,18 +450,18 @@ def _dead_code_elimination_8616(codegen) -> bool:
             if type(node).__name__ == "CDirtyExpression":
                 if not (
                     _dirty_is_storage_free_temp_8616(node)
-                    or bool(getattr(codegen, "_inertia_dce_allow_dirty_value_reads_8616", False))
+                    or bool(_dynamic_dce_getattr_8616(codegen, "_inertia_dce_allow_dirty_value_reads_8616", False))
                 ):
                     return False
                 continue
-            if isinstance(node, CUnaryOp) and getattr(node, "op", None) in {
+            if isinstance(node, CUnaryOp) and _dynamic_dce_getattr_8616(node, "op", None) in {
                 "Dereference",
                 "Reference",
                 "AddressOf",
             }:
                 return False
             if isinstance(node, CVariable):
-                var = getattr(node, "variable", None)
+                var = _dynamic_dce_getattr_8616(node, "variable", None)
                 if isinstance(var, (SimStackVariable, SimRegisterVariable)):
                     continue
                 if isinstance(var, SimMemoryVariable):
@@ -388,40 +478,40 @@ def _dead_code_elimination_8616(codegen) -> bool:
     def _is_direct_memory_variable_8616(node: object) -> bool:
         if not isinstance(node, CVariable):
             return False
-        return isinstance(getattr(node, "variable", None), SimMemoryVariable)
+        return isinstance(_dynamic_dce_getattr_8616(node, "variable", None), SimMemoryVariable)
 
     def _is_global_indexed_read_8616(node: object) -> bool:
         if not isinstance(node, CIndexedVariable):
             return False
-        base = getattr(node, "variable", None)
+        base = _dynamic_dce_getattr_8616(node, "variable", None)
         if not _is_direct_memory_variable_8616(base):
             return False
-        index = getattr(node, "index", None)
+        index = _dynamic_dce_getattr_8616(node, "index", None)
         return _expr_value_purity_8616(index) is DceValuePurity8616.LOCAL_VALUE
 
     def _address_expr_is_pure_global_read_address_8616(expr: object) -> bool:
         if expr is None:
             return False
         if isinstance(expr, CTypeCast):
-            return _address_expr_is_pure_global_read_address_8616(getattr(expr, "expr", None))
+            return _address_expr_is_pure_global_read_address_8616(_dynamic_dce_getattr_8616(expr, "expr", None))
         if isinstance(expr, CConstant):
             return True
         if isinstance(expr, CVariable):
-            var = getattr(expr, "variable", None)
+            var = _dynamic_dce_getattr_8616(expr, "variable", None)
             return isinstance(var, (SimStackVariable, SimRegisterVariable))
         if isinstance(expr, CIndexedVariable):
             return _is_global_indexed_read_8616(expr)
         if isinstance(expr, CFunctionCall):
             return _is_pure_address_helper_call_8616(expr)
         if isinstance(expr, CUnaryOp):
-            op = getattr(expr, "op", None)
-            operand = getattr(expr, "operand", None)
+            op = _dynamic_dce_getattr_8616(expr, "op", None)
+            operand = _dynamic_dce_getattr_8616(expr, "operand", None)
             if op in {"Reference", "AddressOf"}:
                 return _is_direct_memory_variable_8616(operand) or _is_global_indexed_read_8616(operand)
             if op in {"Neg", "Not", "BitNot"}:
                 return _address_expr_is_pure_global_read_address_8616(operand)
             return False
-        if isinstance(expr, CBinaryOp) and getattr(expr, "op", None) in {
+        if isinstance(expr, CBinaryOp) and _dynamic_dce_getattr_8616(expr, "op", None) in {
             "Add",
             "Sub",
             "Mul",
@@ -432,22 +522,22 @@ def _dead_code_elimination_8616(codegen) -> bool:
             "Xor",
         }:
             return _address_expr_is_pure_global_read_address_8616(
-                getattr(expr, "lhs", None)
-            ) and _address_expr_is_pure_global_read_address_8616(getattr(expr, "rhs", None))
+                _dynamic_dce_getattr_8616(expr, "lhs", None)
+            ) and _address_expr_is_pure_global_read_address_8616(_dynamic_dce_getattr_8616(expr, "rhs", None))
         return False
 
     def _address_expr_has_global_read_anchor_8616(expr: object) -> bool:
         if expr is None:
             return False
         if isinstance(expr, CTypeCast):
-            return _address_expr_has_global_read_anchor_8616(getattr(expr, "expr", None))
+            return _address_expr_has_global_read_anchor_8616(_dynamic_dce_getattr_8616(expr, "expr", None))
         if isinstance(expr, CIndexedVariable):
             return _is_global_indexed_read_8616(expr)
         if isinstance(expr, CFunctionCall):
             return _is_pure_address_helper_call_8616(expr)
         if isinstance(expr, CUnaryOp):
-            op = getattr(expr, "op", None)
-            operand = getattr(expr, "operand", None)
+            op = _dynamic_dce_getattr_8616(expr, "op", None)
+            operand = _dynamic_dce_getattr_8616(expr, "operand", None)
             if op in {"Reference", "AddressOf"}:
                 return _is_direct_memory_variable_8616(operand) or _is_global_indexed_read_8616(operand)
             if op in {"Neg", "Not", "BitNot"}:
@@ -455,70 +545,92 @@ def _dead_code_elimination_8616(codegen) -> bool:
             return False
         if isinstance(expr, CBinaryOp):
             return _address_expr_has_global_read_anchor_8616(
-                getattr(expr, "lhs", None)
-            ) or _address_expr_has_global_read_anchor_8616(getattr(expr, "rhs", None))
+                _dynamic_dce_getattr_8616(expr, "lhs", None)
+            ) or _address_expr_has_global_read_anchor_8616(_dynamic_dce_getattr_8616(expr, "rhs", None))
         return False
 
-    def _expr_value_purity_8616(expr: object) -> DceValuePurity8616:
+    def _expr_value_purity_8616(
+        expr: object,
+        visiting: set[int] | None = None,
+    ) -> DceValuePurity8616:
+        """Classify RHS purity, refusing cyclic C-AST expression graphs."""
         if expr is None or _rhs_has_side_effects(expr):
             return DceValuePurity8616.UNKNOWN
-        if isinstance(expr, CConstant):
-            return DceValuePurity8616.LOCAL_VALUE
-        if isinstance(expr, CTypeCast):
-            return _expr_value_purity_8616(getattr(expr, "expr", None))
-        if isinstance(expr, CVariable):
-            var = getattr(expr, "variable", None)
-            if isinstance(var, (SimStackVariable, SimRegisterVariable)):
-                return DceValuePurity8616.LOCAL_VALUE
-            if isinstance(var, SimMemoryVariable):
-                return DceValuePurity8616.GLOBAL_MEMORY_READ
+        active = visiting if visiting is not None else set()
+        marker = id(expr)
+        if marker in active:
             return DceValuePurity8616.UNKNOWN
-        if isinstance(expr, CIndexedVariable):
-            return (
-                DceValuePurity8616.GLOBAL_MEMORY_READ
-                if _is_global_indexed_read_8616(expr)
-                else DceValuePurity8616.UNKNOWN
-            )
-        if isinstance(expr, CFunctionCall):
-            if _is_pure_address_helper_call_8616(expr):
+        active.add(marker)
+        try:
+            if isinstance(expr, CConstant):
                 return DceValuePurity8616.LOCAL_VALUE
-            if _is_pure_memory_read_helper_call_8616(expr):
-                return DceValuePurity8616.GLOBAL_MEMORY_READ
-            return DceValuePurity8616.UNKNOWN
-        if isinstance(expr, CUnaryOp):
-            op = getattr(expr, "op", None)
-            operand = getattr(expr, "operand", None)
-            if op == "Dereference":
+            if isinstance(expr, CTypeCast):
+                return _expr_value_purity_8616(_dynamic_dce_getattr_8616(expr, "expr", None), active)
+            if isinstance(expr, CVariable):
+                var = _dynamic_dce_getattr_8616(expr, "variable", None)
+                if isinstance(var, (SimStackVariable, SimRegisterVariable)):
+                    return DceValuePurity8616.LOCAL_VALUE
+                if isinstance(var, SimMemoryVariable):
+                    return DceValuePurity8616.GLOBAL_MEMORY_READ
+                return DceValuePurity8616.UNKNOWN
+            if isinstance(expr, CIndexedVariable):
                 return (
                     DceValuePurity8616.GLOBAL_MEMORY_READ
-                    if _address_expr_is_pure_global_read_address_8616(operand)
-                    and _address_expr_has_global_read_anchor_8616(operand)
+                    if _is_global_indexed_read_8616(expr)
                     else DceValuePurity8616.UNKNOWN
                 )
-            if op in {"Reference", "AddressOf"}:
+            if isinstance(expr, CVariableField):
+                base_purity = _expr_value_purity_8616(
+                    _dynamic_dce_getattr_8616(expr, "variable", None),
+                    active,
+                )
                 return (
-                    DceValuePurity8616.LOCAL_VALUE
-                    if _address_expr_is_pure_global_read_address_8616(expr)
+                    DceValuePurity8616.GLOBAL_MEMORY_READ
+                    if base_purity is DceValuePurity8616.GLOBAL_MEMORY_READ
                     else DceValuePurity8616.UNKNOWN
                 )
-            if op in {"Neg", "Not", "BitNot"}:
-                return _expr_value_purity_8616(operand)
+            if isinstance(expr, CFunctionCall):
+                if _is_pure_address_helper_call_8616(expr):
+                    return DceValuePurity8616.LOCAL_VALUE
+                if _is_pure_memory_read_helper_call_8616(expr):
+                    return DceValuePurity8616.GLOBAL_MEMORY_READ
+                return DceValuePurity8616.UNKNOWN
+            if isinstance(expr, CUnaryOp):
+                op = _dynamic_dce_getattr_8616(expr, "op", None)
+                operand = _dynamic_dce_getattr_8616(expr, "operand", None)
+                if op == "Dereference":
+                    return (
+                        DceValuePurity8616.GLOBAL_MEMORY_READ
+                        if _address_expr_is_pure_global_read_address_8616(operand)
+                        and _address_expr_has_global_read_anchor_8616(operand)
+                        else DceValuePurity8616.UNKNOWN
+                    )
+                if op in {"Reference", "AddressOf"}:
+                    return (
+                        DceValuePurity8616.LOCAL_VALUE
+                        if _address_expr_is_pure_global_read_address_8616(expr)
+                        else DceValuePurity8616.UNKNOWN
+                    )
+                if op in {"Neg", "Not", "BitNot"}:
+                    return _expr_value_purity_8616(operand, active)
+                return DceValuePurity8616.UNKNOWN
+            if isinstance(expr, CBinaryOp) and _dynamic_dce_getattr_8616(expr, "op", None) in {
+                "Add",
+                "Sub",
+                "Mul",
+                "Shl",
+                "Shr",
+                "And",
+                "Or",
+                "Xor",
+            }:
+                return _merge_value_purity_8616(
+                    _expr_value_purity_8616(_dynamic_dce_getattr_8616(expr, "lhs", None), active),
+                    _expr_value_purity_8616(_dynamic_dce_getattr_8616(expr, "rhs", None), active),
+                )
             return DceValuePurity8616.UNKNOWN
-        if isinstance(expr, CBinaryOp) and getattr(expr, "op", None) in {
-            "Add",
-            "Sub",
-            "Mul",
-            "Shl",
-            "Shr",
-            "And",
-            "Or",
-            "Xor",
-        }:
-            return _merge_value_purity_8616(
-                _expr_value_purity_8616(getattr(expr, "lhs", None)),
-                _expr_value_purity_8616(getattr(expr, "rhs", None)),
-            )
-        return DceValuePurity8616.UNKNOWN
+        finally:
+            active.remove(marker)
 
     def _expr_is_discardable_value_8616(expr: object) -> bool:
         return _expr_value_purity_8616(expr) in {
@@ -528,7 +640,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
 
     def _expr_contains_memory_read_shape_8616(expr: object) -> bool:
         for node in _iter_with_root(expr):
-            if isinstance(node, CUnaryOp) and getattr(node, "op", None) == "Dereference":
+            if isinstance(node, CUnaryOp) and _dynamic_dce_getattr_8616(node, "op", None) == "Dereference":
                 return True
             if isinstance(node, CIndexedVariable):
                 return True
@@ -537,6 +649,49 @@ def _dead_code_elimination_8616(codegen) -> bool:
             if _is_direct_memory_variable_8616(node):
                 return True
         return False
+
+    def _rhs_evaluation_is_proven_unobservable_8616(expr: object) -> bool:
+        """True when evaluating an overwritten RHS cannot affect program state."""
+        if expr is None or _rhs_has_side_effects(expr):
+            return False
+        if _expr_contains_memory_read_shape_8616(expr):
+            return False
+        for node in _iter_with_root(expr):
+            if isinstance(node, CAssignment):
+                return False
+            if isinstance(node, CFunctionCall) and not _is_pure_address_helper_call_8616(node):
+                return False
+            if isinstance(node, CStructField):
+                return False
+            if isinstance(node, CIndexedVariable):
+                return False
+            if isinstance(node, CFakeVariable):
+                continue
+            if type(node).__name__ == "CDirtyExpression":
+                continue
+            if isinstance(node, CVariable):
+                var = node.variable
+                if isinstance(var, SimMemoryVariable):
+                    return False
+                continue
+            if isinstance(node, CTypeCast):
+                continue
+            if isinstance(node, CUnaryOp):
+                if node.op in {"Reference", "AddressOf", "Neg", "Not", "BitNot"}:
+                    continue
+                return False
+            if isinstance(node, CBinaryOp) and node.op not in {
+                "Add",
+                "Sub",
+                "Mul",
+                "Shl",
+                "Shr",
+                "And",
+                "Or",
+                "Xor",
+            }:
+                return False
+        return True
 
     def _dirty_lhs_delete_proven_8616(lhs: object, rhs: object) -> bool:
         if _dirty_is_storage_free_temp_8616(lhs):
@@ -554,14 +709,15 @@ def _dead_code_elimination_8616(codegen) -> bool:
     def _transparent_empty_8616(stmt: object) -> bool:
         if not isinstance(stmt, CStatements):
             return False
-        return all(_transparent_empty_8616(child) for child in list(getattr(stmt, "statements", ()) or ()))
+        return all(_transparent_empty_8616(child) for child in list(_dynamic_dce_getattr_8616(stmt, "statements", ()) or ()))
 
     def _transparent_single_assignment_8616(stmt: object) -> CAssignment | None:
         if isinstance(stmt, CAssignment):
             return stmt
         if not isinstance(stmt, CStatements):
             return None
-        nested = list(getattr(stmt, "statements", ()) or ())
+        # Dynamic angr/codegen structured-C compatibility boundary.
+        nested: list[object] = list(_dynamic_dce_getattr_8616(stmt, "statements", ()) or ())
         if len(nested) != 1:
             return None
         return _transparent_single_assignment_8616(nested[0])
@@ -571,7 +727,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
             return stmt
         if not isinstance(stmt, CStatements):
             return None
-        for child in list(getattr(stmt, "statements", ()) or ()):
+        for child in list(_dynamic_dce_getattr_8616(stmt, "statements", ()) or ()):
             if _transparent_empty_8616(child):
                 continue
             return _transparent_first_assignment_8616(child)
@@ -582,7 +738,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
             return stmt
         if not isinstance(stmt, CStatements):
             return None
-        for child in reversed(list(getattr(stmt, "statements", ()) or ())):
+        for child in reversed(list(_dynamic_dce_getattr_8616(stmt, "statements", ()) or ())):
             if _transparent_empty_8616(child):
                 continue
             return _transparent_last_assignment_8616(child)
@@ -594,12 +750,12 @@ def _dead_code_elimination_8616(codegen) -> bool:
     ) -> bool:
         if not isinstance(first_assignment, CAssignment) or not isinstance(second_assignment, CAssignment):
             return False
-        if not _same_c_expression_8616(getattr(first_assignment, "lhs", None), getattr(second_assignment, "lhs", None)):
+        if not _same_c_expression_8616(_dynamic_dce_getattr_8616(first_assignment, "lhs", None), _dynamic_dce_getattr_8616(second_assignment, "lhs", None)):
             return False
-        if not _same_c_expression_8616(getattr(first_assignment, "rhs", None), getattr(second_assignment, "rhs", None)):
+        if not _same_c_expression_8616(_dynamic_dce_getattr_8616(first_assignment, "rhs", None), _dynamic_dce_getattr_8616(second_assignment, "rhs", None)):
             return False
-        lhs = getattr(second_assignment, "lhs", None)
-        rhs = getattr(second_assignment, "rhs", None)
+        lhs = _dynamic_dce_getattr_8616(second_assignment, "lhs", None)
+        rhs = _dynamic_dce_getattr_8616(second_assignment, "rhs", None)
         return _is_plain_local_lvalue_8616(lhs) and _expr_is_pure_local_value_8616(rhs)
 
     def _adjacent_duplicate_assignment_is_definitely_dead_8616(first: object, second: object) -> bool:
@@ -618,7 +774,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
         if not isinstance(stmt, CStatements):
             return stmt, False
 
-        nested = list(getattr(stmt, "statements", ()) or ())
+        nested = list(_dynamic_dce_getattr_8616(stmt, "statements", ()) or ())
         for index, child in enumerate(nested):
             if _transparent_empty_8616(child):
                 continue
@@ -631,16 +787,16 @@ def _dead_code_elimination_8616(codegen) -> bool:
             if new_child is None or _transparent_empty_8616(new_child):
                 del nested[index]
             else:
-                nested[index] = new_child
+                nested = [new_child if nested_index == index else nested_item for nested_index, nested_item in enumerate(nested)]
             stmt.statements = nested
             if not nested:
                 return None, True
             return stmt, True
         return stmt, False
 
-    def _prune_adjacent_duplicate_assignments_8616(statements) -> bool:
+    def _prune_adjacent_duplicate_assignments_8616(statements: object) -> bool:
         nonlocal changed
-        stmts = list(getattr(statements, "statements", ()) or ())
+        stmts = list(_dynamic_dce_getattr_8616(statements, "statements", ()) or ())
         if len(stmts) < 2:
             return False
         new_stmts: list[object] = []
@@ -653,39 +809,27 @@ def _dead_code_elimination_8616(codegen) -> bool:
             next_assignment = _transparent_first_assignment_8616(next_stmt)
             if isinstance(stmt_assignment, CAssignment) and isinstance(next_assignment, CAssignment):
                 same_assignment = _same_c_expression_8616(
-                    getattr(stmt_assignment, "lhs", None),
-                    getattr(next_assignment, "lhs", None),
+                    _dynamic_dce_getattr_8616(stmt_assignment, "lhs", None),
+                    _dynamic_dce_getattr_8616(next_assignment, "lhs", None),
                 ) and _same_c_expression_8616(
-                    getattr(stmt_assignment, "rhs", None),
-                    getattr(next_assignment, "rhs", None),
+                    _dynamic_dce_getattr_8616(stmt_assignment, "rhs", None),
+                    _dynamic_dce_getattr_8616(next_assignment, "rhs", None),
                 )
                 if same_assignment:
-                    setattr(
-                        codegen,
-                        "dce_duplicate_assignment_candidates",
-                        int(getattr(codegen, "dce_duplicate_assignment_candidates", 0)) + 1,
-                    )
+                    typing.cast(typing.Any, codegen).dce_duplicate_assignment_candidates = int(_dynamic_dce_getattr_8616(codegen, "dce_duplicate_assignment_candidates", 0)) + 1
                     if _adjacent_duplicate_assignment_is_definitely_dead_8616(stmt, next_stmt):
                         pruned_next_stmt, removed = _remove_first_transparent_assignment_8616(
                             next_stmt,
                             next_assignment,
                         )
                         if not removed:
-                            setattr(
-                                codegen,
-                                "dce_duplicate_assignment_refused",
-                                int(getattr(codegen, "dce_duplicate_assignment_refused", 0)) + 1,
-                            )
+                            typing.cast(typing.Any, codegen).dce_duplicate_assignment_refused = int(_dynamic_dce_getattr_8616(codegen, "dce_duplicate_assignment_refused", 0)) + 1
                             new_stmts.append(stmt)
                             i += 1
                             continue
-                        setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
-                        setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
-                        setattr(
-                            codegen,
-                            "dce_duplicate_assignment_deleted",
-                            int(getattr(codegen, "dce_duplicate_assignment_deleted", 0)) + 1,
-                        )
+                        typing.cast(typing.Any, codegen).dce_candidates = int(_dynamic_dce_getattr_8616(codegen, "dce_candidates", 0)) + 1
+                        typing.cast(typing.Any, codegen).dce_deleted = int(_dynamic_dce_getattr_8616(codegen, "dce_deleted", 0)) + 1
+                        typing.cast(typing.Any, codegen).dce_duplicate_assignment_deleted = int(_dynamic_dce_getattr_8616(codegen, "dce_duplicate_assignment_deleted", 0)) + 1
                         new_stmts.append(stmt)
                         if pruned_next_stmt is not None:
                             new_stmts.append(pruned_next_stmt)
@@ -693,30 +837,27 @@ def _dead_code_elimination_8616(codegen) -> bool:
                         block_changed = True
                         i += 2
                         continue
-                    setattr(
-                        codegen,
-                        "dce_duplicate_assignment_refused",
-                        int(getattr(codegen, "dce_duplicate_assignment_refused", 0)) + 1,
-                    )
+                    typing.cast(typing.Any, codegen).dce_duplicate_assignment_refused = int(_dynamic_dce_getattr_8616(codegen, "dce_duplicate_assignment_refused", 0)) + 1
             new_stmts.append(stmt)
             i += 1
         if block_changed:
-            statements.statements = new_stmts
+            # Dynamic angr/codegen statement-block compatibility boundary.
+            typing.cast(typing.Any, statements).statements = new_stmts
         return block_changed
 
     def _rhs_is_pure_stack_base_carrier_8616(rhs: object) -> bool:
         if rhs is None or _rhs_has_side_effects(rhs):
             return False
-        saw_stack_base = isinstance(rhs, CFakeVariable) and getattr(rhs, "name", None) == "stack_base"
+        saw_stack_base = isinstance(rhs, CFakeVariable) and _dynamic_dce_getattr_8616(rhs, "name", None) == "stack_base"
         for node in _iter_with_root(rhs):
-            if isinstance(node, CFakeVariable) and getattr(node, "name", None) == "stack_base":
+            if isinstance(node, CFakeVariable) and _dynamic_dce_getattr_8616(node, "name", None) == "stack_base":
                 saw_stack_base = True
                 continue
             if isinstance(node, CFunctionCall):
                 return False
-            if isinstance(node, CUnaryOp) and getattr(node, "op", None) not in {"Reference", "AddressOf"}:
+            if isinstance(node, CUnaryOp) and _dynamic_dce_getattr_8616(node, "op", None) not in {"Reference", "AddressOf"}:
                 return False
-            if isinstance(node, CBinaryOp) and getattr(node, "op", None) not in {"Add", "Sub"}:
+            if isinstance(node, CBinaryOp) and _dynamic_dce_getattr_8616(node, "op", None) not in {"Add", "Sub"}:
                 return False
         return saw_stack_base
 
@@ -743,7 +884,77 @@ def _dead_code_elimination_8616(codegen) -> bool:
         except Exception:
             return False
 
-    def _iter_statement_blocks(root):
+    def _debug_node_shape_8616(node: object) -> str:
+        def _expr_shape(expr: object, depth: int = 0) -> str:
+            if expr is None:
+                return "None"
+            name = type(expr).__name__
+            if depth >= 2:
+                return name
+            if isinstance(expr, CBinaryOp):
+                return (
+                    f"{name}:{expr.op}("
+                    f"{_expr_shape(expr.lhs, depth + 1)},"
+                    f"{_expr_shape(expr.rhs, depth + 1)})"
+                )
+            if isinstance(expr, CUnaryOp):
+                return f"{name}:{expr.op}({_expr_shape(expr.operand, depth + 1)})"
+            if isinstance(expr, CFunctionCall):
+                return f"{name}:{_call_name_8616(expr)}"
+            return name
+
+        parts = [type(node).__name__]
+        for attr in (
+            "condition",
+            "cond",
+            "expr",
+            "body",
+            "else_node",
+            "iftrue",
+            "iffalse",
+            "true_node",
+            "false_node",
+        ):
+            # Dynamic angr/codegen structured-C compatibility boundary.
+            child = _dynamic_dce_getattr_8616(node, attr, None)
+            if child is not None:
+                parts.append(f"{attr}={type(child).__name__}")
+        # Dynamic angr/codegen structured-C compatibility boundary.
+        statements = _dynamic_dce_getattr_8616(node, "statements", None)
+        if statements is not None:
+            items = list(statements or ())
+            parts.append(
+                "statements=["
+                + ",".join(type(item).__name__ for item in items[:8])
+                + (",..." if len(items) > 8 else "")
+                + "]"
+            )
+        # Dynamic angr/codegen structured-C compatibility boundary.
+        pairs = _dynamic_dce_getattr_8616(node, "condition_and_nodes", None)
+        if pairs:
+            pair_shapes = []
+            for pair in tuple(pairs)[:4]:
+                if not isinstance(pair, (tuple, list)) or len(pair) < 2:
+                    pair_shapes.append(type(pair).__name__)
+                    continue
+                cond, body = pair[0], pair[1]
+                pair_shapes.append(f"{_expr_shape(cond)}->{type(body).__name__}")
+            parts.append("condition_and_nodes=[" + ",".join(pair_shapes) + "]")
+        return " ".join(parts)
+
+    def _iter_switch_case_bodies_8616(cases: object) -> Iterator[object]:
+        if isinstance(cases, dict):
+            yield from cases.values()
+            return
+        case_items = tuple(cases) if isinstance(cases, Iterable) else ()
+        for item in case_items:
+            if isinstance(item, tuple):
+                if len(item) >= 2:
+                    yield item[1]
+                continue
+            yield item
+
+    def _iter_statement_blocks(root: object) -> Iterator[object]:
         seen: set[int] = set()
         stack = [root]
         while stack:
@@ -756,7 +967,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
             seen.add(node_id)
             if hasattr(node, "statements"):
                 yield node
-                for stmt in list(getattr(node, "statements", ()) or ()):
+                for stmt in list(_dynamic_dce_getattr_8616(node, "statements", ()) or ()):
                     stack.append(stmt)
             for attr in (
                 "condition",
@@ -770,18 +981,16 @@ def _dead_code_elimination_8616(codegen) -> bool:
                 "expr",
                 "retval",
             ):
-                child = getattr(node, attr, None)
+                child = _dynamic_dce_getattr_8616(node, attr, None)
                 if child is not None:
                     stack.append(child)
-            for pair in getattr(node, "condition_and_nodes", ()) or ():
+            for pair in _dynamic_dce_getattr_8616(node, "condition_and_nodes", ()) or ():
                 if len(pair) >= 2:
                     stack.append(pair[0])
                     stack.append(pair[1])
-            cases = getattr(node, "cases", None)
-            if isinstance(cases, dict):
-                for body in cases.values():
-                    stack.append(body)
-            default = getattr(node, "default", None)
+            cases = _dynamic_dce_getattr_8616(node, "cases", None)
+            stack.extend(_iter_switch_case_bodies_8616(cases))
+            default = _dynamic_dce_getattr_8616(node, "default", None)
             if default is not None:
                 stack.append(default)
 
@@ -795,23 +1004,23 @@ def _dead_code_elimination_8616(codegen) -> bool:
                     reads.add(key)
 
         if isinstance(stmt, CAssignment):
-            rhs = getattr(stmt, "rhs", None)
+            rhs = _dynamic_dce_getattr_8616(stmt, "rhs", None)
             _collect_expr(rhs)
-            lhs = getattr(stmt, "lhs", None)
+            lhs = _dynamic_dce_getattr_8616(stmt, "lhs", None)
             if (
                 isinstance(lhs, CUnaryOp)
-                and getattr(lhs, "op", None) in {"Dereference", "Reference"}
-                or isinstance(lhs, (CIndexedVariable, CStructField))
+                and _dynamic_dce_getattr_8616(lhs, "op", None) in {"Dereference", "Reference"}
+                or isinstance(lhs, (CIndexedVariable, CStructField, CVariableField))
             ):
                 _collect_expr(lhs)
             return reads
 
         condition_roots = []
         for attr in ("condition", "cond", "expr", "retval"):
-            child = getattr(stmt, attr, None)
+            child = _dynamic_dce_getattr_8616(stmt, attr, None)
             if child is not None:
                 condition_roots.append(child)
-        condition_and_nodes = getattr(stmt, "condition_and_nodes", None)
+        condition_and_nodes = _dynamic_dce_getattr_8616(stmt, "condition_and_nodes", None)
         if condition_and_nodes:
             for pair in condition_and_nodes:
                 if len(pair) >= 1:
@@ -835,7 +1044,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
             "cases",
             "default",
         ):
-            if getattr(stmt, attr, None) is not None:
+            if _dynamic_dce_getattr_8616(stmt, attr, None) is not None:
                 return reads
 
         _collect_expr(stmt)
@@ -854,15 +1063,14 @@ def _dead_code_elimination_8616(codegen) -> bool:
             "false_node",
             "default",
         ):
-            child = getattr(stmt, attr, None)
+            child = _dynamic_dce_getattr_8616(stmt, attr, None)
             if child is not None:
                 work.append(child)
-        for pair in getattr(stmt, "condition_and_nodes", ()) or ():
+        for pair in _dynamic_dce_getattr_8616(stmt, "condition_and_nodes", ()) or ():
             if len(pair) >= 2:
                 work.append(pair[1])
-        cases = getattr(stmt, "cases", None)
-        if isinstance(cases, dict):
-            work.extend(cases.values())
+        cases = _dynamic_dce_getattr_8616(stmt, "cases", None)
+        work.extend(_iter_switch_case_bodies_8616(cases))
 
         while work:
             node = work.pop()
@@ -873,7 +1081,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
                 continue
             seen.add(node_id)
             if hasattr(node, "statements"):
-                for child_stmt in list(getattr(node, "statements", ()) or ()):
+                for child_stmt in list(_dynamic_dce_getattr_8616(node, "statements", ()) or ()):
                     reads.update(_collect_stmt_reads(child_stmt))
                     work.append(child_stmt)
                 continue
@@ -881,19 +1089,95 @@ def _dead_code_elimination_8616(codegen) -> bool:
         return reads
 
     def _collect_read_counts_by_block(
-        root,
+        root: object,
     ) -> tuple[dict[tuple[str, int | str], int], dict[int, dict[tuple[str, int | str], int]]]:
         total_reads: dict[tuple[str, int | str], int] = {}
         block_reads: dict[int, dict[tuple[str, int | str], int]] = {}
         for block in _iter_statement_blocks(root):
             local_reads: dict[tuple[str, int | str], int] = {}
-            for stmt in list(getattr(block, "statements", ()) or ()):
-                for key in _collect_nested_stmt_reads(stmt):
+            for stmt in list(_dynamic_dce_getattr_8616(block, "statements", ()) or ()):
+                for key in _collect_stmt_reads(stmt):
                     total_reads[key] = total_reads.get(key, 0) + 1
                 for key in _collect_stmt_reads(stmt):
                     local_reads[key] = local_reads.get(key, 0) + 1
             block_reads[id(block)] = local_reads
         return total_reads, block_reads
+
+    def _collect_loop_backedge_reads_by_block_8616(
+        root: object,
+    ) -> dict[int, frozenset[tuple[str, int | str]]]:
+        """Return reads that remain live across each structured loop backedge.
+
+        A write near the end of a loop body may feed a read near the beginning
+        of the next iteration.  Straight-line backward liveness cannot see
+        that edge.  Seed every block owned by the loop with the loop's reads;
+        this conservatively preserves such writes without inventing data flow.
+        """
+        mutable_reads: dict[int, set[tuple[str, int | str]]] = {}
+        for container in _iter_statement_blocks(root):
+            statements = tuple(_dynamic_dce_getattr_8616(container, "statements", ()) or ())
+            for stmt in statements:
+                if type(stmt).__name__ not in {"CDoWhileLoop", "CForLoop", "CWhileLoop"}:
+                    continue
+                body = _dynamic_dce_getattr_8616(stmt, "body", None)
+                if body is None:
+                    continue
+                body_blocks = tuple(_iter_statement_blocks(body))
+                loop_reads = set(_collect_stmt_reads(stmt))
+                for body_block in body_blocks:
+                    for body_stmt in tuple(_dynamic_dce_getattr_8616(body_block, "statements", ()) or ()):
+                        loop_reads.update(_collect_stmt_reads(body_stmt))
+                for body_block in body_blocks:
+                    mutable_reads.setdefault(id(body_block), set()).update(loop_reads)
+        return {block_id: frozenset(reads) for block_id, reads in mutable_reads.items()}
+
+    def _collect_observable_read_counts_8616(root: object) -> dict[tuple[str, int | str], int]:
+        reads: dict[tuple[str, int | str], int] = {}
+        for block in _iter_statement_blocks(root):
+            # Dynamic angr/codegen statement-block compatibility boundary.
+            for stmt in list(_dynamic_dce_getattr_8616(block, "statements", ()) or ()):
+                if not isinstance(stmt, CAssignment):
+                    for key in _collect_stmt_reads(stmt):
+                        reads[key] = reads.get(key, 0) + 1
+                    continue
+                rhs = stmt.rhs
+                if _dirty_is_storage_free_carrier_8616(stmt.lhs) and not _rhs_has_side_effects(
+                    rhs
+                ) and not _expr_contains_memory_read_shape_8616(rhs):
+                    continue
+                for key in _collect_stmt_reads(stmt):
+                    reads[key] = reads.get(key, 0) + 1
+        return reads
+
+    def _collect_storage_free_dirty_carrier_read_counts_8616(root: object) -> dict[tuple[str, int | str], int]:
+        reads: dict[tuple[str, int | str], int] = {}
+        for block in _iter_statement_blocks(root):
+            # Dynamic angr/codegen statement-block compatibility boundary.
+            for stmt in list(_dynamic_dce_getattr_8616(block, "statements", ()) or ()):
+                if not isinstance(stmt, CAssignment):
+                    continue
+                rhs = stmt.rhs
+                if not _dirty_is_storage_free_carrier_8616(stmt.lhs) or _rhs_has_side_effects(
+                    rhs
+                ) or _expr_contains_memory_read_shape_8616(rhs):
+                    continue
+                for key in _collect_stmt_reads(stmt):
+                    reads[key] = reads.get(key, 0) + 1
+        return reads
+
+    def _collect_dirty_carrier_read_counts_8616(root: object) -> dict[tuple[str, int | str], int]:
+        reads: dict[tuple[str, int | str], int] = {}
+        for block in _iter_statement_blocks(root):
+            # Dynamic angr/codegen statement-block compatibility boundary.
+            for stmt in list(_dynamic_dce_getattr_8616(block, "statements", ()) or ()):
+                if not isinstance(stmt, CAssignment):
+                    continue
+                rhs = stmt.rhs
+                if _dirty_key(stmt.lhs) is None or _rhs_has_side_effects(rhs):
+                    continue
+                for key in _collect_stmt_reads(stmt):
+                    reads[key] = reads.get(key, 0) + 1
+        return reads
 
     def _is_temp_like_var(var_node: CVariable) -> bool:
         name = _var_name(var_node)
@@ -919,43 +1203,31 @@ def _dead_code_elimination_8616(codegen) -> bool:
         return _var_key(lhs_var), ("name", _var_name(lhs_var)), _is_temp_like_var(lhs_var)
 
     def _argument_keys_8616() -> tuple[set[tuple[str, int | str]], set[tuple[str, str]]]:
-        cfunc_obj = getattr(codegen, "cfunc", None)
+        # Dynamic codegen compatibility boundary.
+        cfunc_obj = _dynamic_dce_getattr_8616(codegen, "cfunc", None)
         keys: set[tuple[str, int | str]] = set()
         name_keys: set[tuple[str, str]] = set()
-        for arg in tuple(getattr(cfunc_obj, "arg_list", ()) or ()):
+        for arg in tuple(_dynamic_dce_getattr_8616(cfunc_obj, "arg_list", ()) or ()):
             if not isinstance(arg, CVariable):
                 continue
             keys.add(_var_key(arg))
             name = _var_name(arg)
             if name:
                 name_keys.add(("name", name))
-        prototype = getattr(cfunc_obj, "functy", None) or getattr(cfunc_obj, "prototype", None)
-        for name in tuple(getattr(prototype, "arg_names", ()) or ()):
+        prototype = _dynamic_dce_getattr_8616(cfunc_obj, "functy", None) or _dynamic_dce_getattr_8616(cfunc_obj, "prototype", None)
+        for name in tuple(_dynamic_dce_getattr_8616(prototype, "arg_names", ()) or ()):
             if isinstance(name, str) and name:
                 name_keys.add(("name", name))
-        project = getattr(codegen, "project", None)
-        func_addr = getattr(cfunc_obj, "addr", None)
-        metadata_by_addr = getattr(project, "_inertia_cod_metadata_by_func_addr_8616", None)
-        metadata = (
-            metadata_by_addr.get(func_addr)
-            if isinstance(metadata_by_addr, dict) and isinstance(func_addr, int)
-            else None
-        )
-        stack_aliases = getattr(metadata, "stack_aliases", None)
-        if isinstance(stack_aliases, dict):
-            for offset, name in stack_aliases.items():
-                if isinstance(offset, int) and offset >= 4 and isinstance(name, str) and name:
-                    name_keys.add(("name", name))
         return keys, name_keys
 
     def _stack_offset_from_plain_lvalue_8616(lhs: object) -> int | None:
         lhs_var = _lhs_variable_8616(lhs)
         if lhs_var is None:
             return None
-        variable = getattr(lhs_var, "variable", None)
+        variable = _dynamic_dce_getattr_8616(lhs_var, "variable", None)
         if not isinstance(variable, SimStackVariable):
             return None
-        offset = getattr(variable, "offset", None)
+        offset = _dynamic_dce_getattr_8616(variable, "offset", None)
         return int(offset) if isinstance(offset, int) else None
 
     def _has_direct_stack_write_evidence_for_offset_8616(offset: int | None) -> bool:
@@ -965,7 +1237,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
             ("_inertia_direct_stack_move_evidence_8616", "dst_offset"),
             ("_inertia_direct_stack_update_evidence_8616", "offset"),
         ):
-            evidence = getattr(codegen, attr, ()) or ()
+            evidence = _dynamic_dce_getattr_8616(codegen, attr, ()) or ()
             for item in evidence:
                 pairs = (
                     tuple(item.items())
@@ -984,7 +1256,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
 
     def _node_has_instruction_evidence_8616(node: object) -> bool:
         for item in _iter_with_root(node):
-            tags = getattr(item, "tags", None)
+            tags = _dynamic_dce_getattr_8616(item, "tags", None)
             if isinstance(tags, dict) and isinstance(tags.get("ins_addr"), int):
                 return True
         return False
@@ -1000,12 +1272,44 @@ def _dead_code_elimination_8616(codegen) -> bool:
         offset = _stack_offset_from_plain_lvalue_8616(lhs)
         return isinstance(offset, int) and offset >= 4
 
+    def _drop_pruned_codegen_declarations_8616() -> bool:
+        """Remove declaration table entries whose generated assignments were eliminated."""
+        if not pruned_decl_keys and not pruned_decl_names:
+            return False
+        live_reads, _block_reads = _collect_read_counts_by_block(root)
+        # Dynamic codegen compatibility boundary.
+        cfunc_obj = _dynamic_dce_getattr_8616(codegen, "cfunc", None)
+        if cfunc_obj is None:
+            return False
+        local_changed = False
+        for attr_name in ("variables_in_use", "unified_local_vars"):
+            # Dynamic codegen CFunction compatibility boundary.
+            mapping = _dynamic_dce_getattr_8616(cfunc_obj, attr_name, None)
+            if not isinstance(mapping, dict):
+                continue
+            for variable, cvar in tuple(mapping.items()):
+                cvar_key = _var_key(cvar) if isinstance(cvar, CVariable) else None
+                cvar_name = _var_name(cvar) if isinstance(cvar, CVariable) else None
+                # Dynamic angr SimVariable compatibility boundary.
+                variable_name = _dynamic_dce_getattr_8616(variable, "name", None)
+                key_is_dead = cvar_key in pruned_decl_keys and int(live_reads.get(cvar_key, 0)) <= 0
+                name_is_dead = (
+                    isinstance(cvar_name, str)
+                    and cvar_name in pruned_decl_names
+                    or isinstance(variable_name, str)
+                    and variable_name in pruned_decl_names
+                )
+                if key_is_dead or name_is_dead:
+                    del mapping[variable]
+                    local_changed = True
+        return local_changed
+
     def _collect_defined_keys_8616(root_node: object) -> set[tuple[str, int | str]]:
         defined: set[tuple[str, int | str]] = set()
         for node in _iter_with_root(root_node):
             if not isinstance(node, CAssignment):
                 continue
-            lhs_key, _lhs_name_key, _lhs_temp_like = _lhs_key_and_name_8616(getattr(node, "lhs", None))
+            lhs_key, _lhs_name_key, _lhs_temp_like = _lhs_key_and_name_8616(_dynamic_dce_getattr_8616(node, "lhs", None))
             if lhs_key is not None:
                 defined.add(lhs_key)
         return defined
@@ -1015,7 +1319,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
         defined_keys: set[tuple[str, int | str]],
     ) -> bool:
         while isinstance(rhs, CTypeCast):
-            rhs = getattr(rhs, "expr", None)
+            rhs = _dynamic_dce_getattr_8616(rhs, "expr", None)
         if type(rhs).__name__ != "CDirtyExpression":
             return False
         key = _dirty_key(rhs)
@@ -1058,7 +1362,7 @@ def _dead_code_elimination_8616(codegen) -> bool:
             "_inertia_linear_recurrence_state",
         )
         for attr in attrs:
-            obj = getattr(codegen, attr, None)
+            obj = _dynamic_dce_getattr_8616(codegen, attr, None)
             if obj is None:
                 continue
             work = [obj]
@@ -1079,14 +1383,13 @@ def _dead_code_elimination_8616(codegen) -> bool:
                 if isinstance(cur, (list, tuple, set, frozenset)):
                     work.extend(cur)
                     continue
-                name = cur if isinstance(cur, str) else getattr(cur, "name", None)
+                name = cur if isinstance(cur, str) else _dynamic_dce_getattr_8616(cur, "name", None)
                 if isinstance(name, str) and name:
                     protected.add(("name", name))
         for attr, offset_key in (
             ("_inertia_direct_stack_move_evidence_8616", "dst_offset"),
-            ("_inertia_direct_stack_update_evidence_8616", "offset"),
         ):
-            evidence = getattr(codegen, attr, ()) or ()
+            evidence = _dynamic_dce_getattr_8616(codegen, attr, ()) or ()
             for item in evidence:
                 pairs = ()
                 if isinstance(item, dict):
@@ -1101,6 +1404,31 @@ def _dead_code_elimination_8616(codegen) -> bool:
                         protected.add(("stack", int(value)))
         return protected
 
+    def _direct_stack_update_evidence_pairs_8616() -> frozenset[tuple[int, int]]:
+        pairs: set[tuple[int, int]] = set()
+        # Dynamic codegen evidence compatibility boundary.
+        evidence = _dynamic_dce_getattr_8616(codegen, "_inertia_direct_stack_update_evidence_8616", ()) or ()
+        for item in evidence:
+            values = dict(item.items()) if isinstance(item, dict) else dict(item) if isinstance(item, (tuple, list)) else {}
+            offset = values.get("offset")
+            ins_addr = values.get("ins_addr")
+            if isinstance(offset, int) and isinstance(ins_addr, int):
+                pairs.add((offset, ins_addr))
+        return frozenset(pairs)
+
+    direct_stack_update_evidence_pairs = _direct_stack_update_evidence_pairs_8616()
+
+    def _stmt_is_direct_stack_update_evidence_8616(stmt: object, lhs: object) -> bool:
+        offset = _stack_offset_from_plain_lvalue_8616(lhs)
+        if not isinstance(offset, int):
+            return False
+        for node in _iter_with_root(stmt):
+            # Dynamic angr/codegen statement compatibility boundary.
+            tags = _dynamic_dce_getattr_8616(node, "tags", None)
+            if isinstance(tags, dict) and (offset, tags.get("ins_addr")) in direct_stack_update_evidence_pairs:
+                return True
+        return False
+
     protected = _protected_var_keys()
     debug_optimization = os.environ.get("INERTIA_DEBUG_OPTIMIZATION", "").strip().lower() in {"1", "true", "yes", "on"}
     if debug_optimization:
@@ -1112,13 +1440,13 @@ def _dead_code_elimination_8616(codegen) -> bool:
         lhs_samples: list[str] = []
         for dbg_block in _iter_statement_blocks(root):
             block_count += 1
-            for dbg_stmt in list(getattr(dbg_block, "statements", ()) or ()):
+            for dbg_stmt in list(_dynamic_dce_getattr_8616(dbg_block, "statements", ()) or ()):
                 stmt_count += 1
                 cls_name = type(dbg_stmt).__name__
                 class_counts[cls_name] = class_counts.get(cls_name, 0) + 1
                 if isinstance(dbg_stmt, CAssignment):
                     assign_count += 1
-                    lhs = getattr(dbg_stmt, "lhs", None)
+                    lhs = _dynamic_dce_getattr_8616(dbg_stmt, "lhs", None)
                     lhs_name = type(lhs).__name__
                     lhs_counts[lhs_name] = lhs_counts.get(lhs_name, 0) + 1
                     if len(lhs_samples) < 6:
@@ -1153,8 +1481,8 @@ def _dead_code_elimination_8616(codegen) -> bool:
                                         "c_repr_chunks_with_addr",
                                     }
                                 ][:16]
-                                dirty = getattr(lhs, "dirty", None)
-                                idx = getattr(lhs, "idx", None)
+                                dirty = _dynamic_dce_getattr_8616(lhs, "dirty", None)
+                                idx = _dynamic_dce_getattr_8616(lhs, "idx", None)
                                 dirty_attrs = [
                                     attr
                                     for attr in dir(dirty)
@@ -1181,10 +1509,10 @@ def _dead_code_elimination_8616(codegen) -> bool:
                 if isinstance(expr, CVariable):
                     return _var_name(expr)
                 if isinstance(expr, CBinaryOp):
-                    return f"({_expr_debug_label_8616(getattr(expr, 'lhs', None))} {getattr(expr, 'op', '?')} {_expr_debug_label_8616(getattr(expr, 'rhs', None))})"
+                    return f"({_expr_debug_label_8616(_dynamic_dce_getattr_8616(expr, 'lhs', None))} {_dynamic_dce_getattr_8616(expr, 'op', '?')} {_expr_debug_label_8616(_dynamic_dce_getattr_8616(expr, 'rhs', None))})"
                 if type(expr).__name__ == "CDirtyExpression":
                     return "dirty"
-                value = getattr(expr, "value", None)
+                value = _dynamic_dce_getattr_8616(expr, "value", None)
                 if isinstance(value, (int, str)):
                     return str(value)
                 return type(expr).__name__
@@ -1194,80 +1522,121 @@ def _dead_code_elimination_8616(codegen) -> bool:
                     return
                 seen_paths.add(id(node))
                 if hasattr(node, "statements"):
-                    statements = list(getattr(node, "statements", ()) or ())
+                    statements = list(_dynamic_dce_getattr_8616(node, "statements", ()) or ())
                     for index, stmt in enumerate(statements):
                         stmt_path = f"{path}.{index}"
                         if isinstance(stmt, CAssignment):
                             print(
                                 "[optimization] dce_path "
                                 f"path={stmt_path} parent_len={len(statements)} "
-                                f"lhs={_expr_debug_label_8616(getattr(stmt, 'lhs', None))} "
-                                f"rhs={_expr_debug_label_8616(getattr(stmt, 'rhs', None))} "
+                                f"lhs={_expr_debug_label_8616(_dynamic_dce_getattr_8616(stmt, 'lhs', None))} "
+                                f"rhs={_expr_debug_label_8616(_dynamic_dce_getattr_8616(stmt, 'rhs', None))} "
                                 f"stmt_type={type(stmt).__name__}",
                                 file=sys.stderr,
                                 flush=True,
                             )
                         _dump_assignment_paths_8616(stmt, stmt_path, seen_paths)
                 for attr in ("body", "else_node", "iftrue", "iffalse", "true_node", "false_node"):
-                    child = getattr(node, attr, None)
+                    child = _dynamic_dce_getattr_8616(node, attr, None)
                     if child is not None:
                         _dump_assignment_paths_8616(child, f"{path}.{attr}", seen_paths)
-                for pair_index, pair in enumerate(getattr(node, "condition_and_nodes", ()) or ()):
+                # Dynamic angr/codegen structured-C compatibility boundary.
+                for pair_index, pair in enumerate(_dynamic_dce_getattr_8616(node, "condition_and_nodes", ()) or ()):
                     if len(pair) >= 2:
                         _dump_assignment_paths_8616(pair[1], f"{path}.cond{pair_index}", seen_paths)
+                # Dynamic angr/codegen structured-C compatibility boundary.
+                for case_index, body in enumerate(_iter_switch_case_bodies_8616(_dynamic_dce_getattr_8616(node, "cases", None))):
+                    _dump_assignment_paths_8616(body, f"{path}.case{case_index}", seen_paths)
+                # Dynamic angr/codegen structured-C compatibility boundary.
+                default = _dynamic_dce_getattr_8616(node, "default", None)
+                if default is not None:
+                    _dump_assignment_paths_8616(default, f"{path}.default", seen_paths)
 
             _dump_assignment_paths_8616(root, "root", set())
 
     def walk_statements(
-        statements,
+        statements: object,
         total_reads: dict[tuple[str, int | str], int],
-        block_reads,
+        block_reads: dict[int, dict[tuple[str, int | str], int]],
+        loop_backedge_reads: dict[int, frozenset[tuple[str, int | str]]],
         defined_keys: set[tuple[str, int | str]],
-    ):
+        observable_reads: dict[tuple[str, int | str], int],
+        dirty_carrier_reads: dict[tuple[str, int | str], int],
+        all_dirty_carrier_reads: dict[tuple[str, int | str], int],
+    ) -> bool:
         nonlocal changed
         duplicate_changed = _prune_adjacent_duplicate_assignments_8616(statements)
-        stmts = list(getattr(statements, "statements", ()) or ())
+        stmts = list(_dynamic_dce_getattr_8616(statements, "statements", ()) or ())
         if not stmts:
             return duplicate_changed
         local_reads = block_reads.get(id(statements), {})
-        live: set[tuple[str, int | str]] = set()
+        live = set(loop_backedge_reads.get(id(statements), ()))
+        later_local_defs: set[tuple[str, int | str]] = set()
         new_rev: list[object] = []
         block_changed = duplicate_changed
 
-        for stmt in reversed(stmts):
+        def _prefix_has_side_effect_8616(index: int) -> bool:
+            return any(_rhs_has_side_effects(prefix_stmt) for prefix_stmt in stmts[:index])
+
+        for stmt_index, stmt in reversed(list(enumerate(stmts))):
             if not isinstance(stmt, CAssignment):
+                if _is_structured_or_control_statement_8616(stmt):
+                    live.update(_collect_nested_stmt_reads(stmt))
+                    new_rev.append(stmt)
+                    continue
                 expr_stmt = _standalone_expression_payload_8616(stmt)
-                if isinstance(expr_stmt, CUnaryOp) and getattr(expr_stmt, "op", None) == "Dereference":
-                    setattr(
-                        codegen,
-                        "dce_pure_expression_candidates",
-                        int(getattr(codegen, "dce_pure_expression_candidates", 0)) + 1,
+                if debug_optimization and any(
+                    isinstance(node, CFunctionCall) and _is_pure_generated_helper_call_8616(node)
+                    for node in _iter_with_root(expr_stmt)
+                ):
+                    print(
+                        "[optimization] dce_non_assignment_helper "
+                        f"stmt_type={type(stmt).__name__} payload_type={type(expr_stmt).__name__} "
+                        f"shape={_debug_node_shape_8616(stmt)}",
+                        file=sys.stderr,
+                        flush=True,
                     )
+                if isinstance(expr_stmt, CUnaryOp) and expr_stmt.op == "Dereference":
+                    _bump_codegen_counter_8616("dce_pure_expression_candidates")
                     if _standalone_expression_is_definitely_dead_8616(expr_stmt):
-                        setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
-                        setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
-                        setattr(
-                            codegen,
-                            "dce_pure_expression_deleted",
-                            int(getattr(codegen, "dce_pure_expression_deleted", 0)) + 1,
-                        )
+                        _bump_codegen_counter_8616("dce_candidates")
+                        _bump_codegen_counter_8616("dce_deleted")
+                        _bump_codegen_counter_8616("dce_pure_expression_deleted")
                         changed = True
                         block_changed = True
                         continue
-                    setattr(
-                        codegen,
-                        "dce_pure_expression_refused",
-                        int(getattr(codegen, "dce_pure_expression_refused", 0)) + 1,
-                    )
-                live.update(_collect_stmt_reads(stmt))
+                    _bump_codegen_counter_8616("dce_pure_expression_refused")
+                elif _expr_is_discardable_dead_value_8616(expr_stmt):
+                    _bump_codegen_counter_8616("dce_pure_expression_candidates")
+                    _bump_codegen_counter_8616("dce_candidates")
+                    _bump_codegen_counter_8616("dce_deleted")
+                    _bump_codegen_counter_8616("dce_pure_expression_deleted")
+                    changed = True
+                    block_changed = True
+                    continue
+                live.update(_collect_nested_stmt_reads(stmt))
                 new_rev.append(stmt)
                 continue
-            lhs = getattr(stmt, "lhs", None)
-            rhs = getattr(stmt, "rhs", None)
+            lhs = _dynamic_dce_getattr_8616(stmt, "lhs", None)
+            rhs = _dynamic_dce_getattr_8616(stmt, "rhs", None)
             key, name_key, is_temp_like = _lhs_key_and_name_8616(lhs)
             if key is None:
                 live.update(_collect_stmt_reads(stmt))
                 new_rev.append(stmt)
+                continue
+            if _stmt_is_direct_stack_update_evidence_8616(stmt, lhs):
+                _bump_codegen_counter_8616("dce_keep_protected")
+                live.discard(key)
+                live.update(_collect_stmt_reads(stmt))
+                new_rev.append(stmt)
+                later_local_defs.add(key)
+                continue
+            if is_temp_like and id(statements) in loop_backedge_reads and _node_has_instruction_evidence_8616(stmt):
+                _bump_codegen_counter_8616("dce_keep_protected")
+                live.discard(key)
+                live.update(_collect_stmt_reads(stmt))
+                new_rev.append(stmt)
+                later_local_defs.add(key)
                 continue
             if (
                 _same_c_expression_8616(lhs, rhs)
@@ -1283,20 +1652,59 @@ def _dead_code_elimination_8616(codegen) -> bool:
                         file=sys.stderr,
                         flush=True,
                     )
-                setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
-                setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
+                typing.cast(typing.Any, codegen).dce_candidates = int(_dynamic_dce_getattr_8616(codegen, "dce_candidates", 0)) + 1
+                typing.cast(typing.Any, codegen).dce_deleted = int(_dynamic_dce_getattr_8616(codegen, "dce_deleted", 0)) + 1
                 changed = True
                 block_changed = True
                 continue
             outside_reads = (
                 0 if key[0] in {"dirty", "dirty_expr"} else int(total_reads.get(key, 0)) - int(local_reads.get(key, 0))
             )
+            if _is_frame_anchor_stack_lvalue_8616(lhs):
+                # BP+0 is the frame anchor/saved-BP artifact. This branch only
+                # deletes an unobservable assignment to that anchor when the
+                # value is unread or only feeds storage-free dirty carriers; it
+                # does not recover stack variables or infer alias identity.
+                _bump_codegen_counter_8616("dce_frame_anchor_candidates")
+                if (
+                    int(total_reads.get(key, 0)) <= int(all_dirty_carrier_reads.get(key, 0))
+                    and key not in protected
+                    and (name_key is None or name_key not in protected)
+                    and _rhs_evaluation_is_proven_unobservable_8616(rhs)
+                ):
+                    if debug_optimization:
+                        print(
+                            "[optimization] dce_decision "
+                            f"reason=delete_frame_anchor key={key!r} name_key={name_key!r} "
+                            f"stmt={stmt!r}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    _bump_codegen_counter_8616("dce_candidates")
+                    _bump_codegen_counter_8616("dce_deleted")
+                    _bump_codegen_counter_8616("dce_frame_anchor_deleted")
+                    changed = True
+                    block_changed = True
+                    continue
+                _bump_codegen_counter_8616("dce_frame_anchor_refused")
+                if debug_optimization:
+                    print(
+                        "[optimization] dce_frame_anchor_refused "
+                        f"key={key!r} name_key={name_key!r} outside_reads={outside_reads} "
+                        f"total_reads={int(total_reads.get(key, 0))} "
+                        f"dirty_carrier_reads={int(all_dirty_carrier_reads.get(key, 0))} "
+                        f"protected={key in protected or (name_key is not None and name_key in protected)} "
+                        f"rhs_unobservable={_rhs_evaluation_is_proven_unobservable_8616(rhs)}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                live.discard(key)
+                live.update(_collect_stmt_reads(stmt))
+                new_rev.append(stmt)
+                later_local_defs.add(key)
+                continue
             if _is_function_argument_lvalue_8616(lhs, key, name_key):
-                setattr(
-                    codegen,
-                    "dce_arg_overwrite_artifact_candidates",
-                    int(getattr(codegen, "dce_arg_overwrite_artifact_candidates", 0)) + 1,
-                )
+                typing.cast(typing.Any, codegen).dce_arg_overwrite_artifact_candidates = int(_dynamic_dce_getattr_8616(codegen, "dce_arg_overwrite_artifact_candidates", 0)) + 1
                 if debug_optimization:
                     print(
                         "[optimization] dce_arg_overwrite_probe "
@@ -1317,33 +1725,59 @@ def _dead_code_elimination_8616(codegen) -> bool:
                             file=sys.stderr,
                             flush=True,
                         )
-                    setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
-                    setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
-                    setattr(
-                        codegen,
-                        "dce_arg_overwrite_artifact_deleted",
-                        int(getattr(codegen, "dce_arg_overwrite_artifact_deleted", 0)) + 1,
-                    )
+                    _bump_codegen_counter_8616("dce_candidates")
+                    _bump_codegen_counter_8616("dce_deleted")
+                    typing.cast(typing.Any, codegen).dce_arg_overwrite_artifact_deleted = int(_dynamic_dce_getattr_8616(codegen, "dce_arg_overwrite_artifact_deleted", 0)) + 1
                     changed = True
                     block_changed = True
                     continue
-                setattr(
-                    codegen,
-                    "dce_arg_overwrite_artifact_refused",
-                    int(getattr(codegen, "dce_arg_overwrite_artifact_refused", 0)) + 1,
-                )
+                typing.cast(typing.Any, codegen).dce_arg_overwrite_artifact_refused = int(_dynamic_dce_getattr_8616(codegen, "dce_arg_overwrite_artifact_refused", 0)) + 1
+                live.discard(key)
+                live.update(_collect_stmt_reads(stmt))
+                new_rev.append(stmt)
+                later_local_defs.add(key)
+                continue
+            if (
+                _is_plain_local_lvalue_8616(lhs)
+                and later_local_defs
+                and key in later_local_defs
+                and key not in live
+                and outside_reads <= 0
+                and key not in protected
+                and (name_key is None or name_key not in protected)
+                and not _is_function_argument_lvalue_8616(lhs, key, name_key)
+            ):
+                _bump_codegen_counter_8616("dce_overwritten_local_candidates")
+                if _rhs_evaluation_is_proven_unobservable_8616(rhs):
+                    if debug_optimization:
+                        print(
+                            "[optimization] dce_decision "
+                            f"reason=delete_overwritten_local key={key!r} name_key={name_key!r} "
+                            f"stmt={stmt!r}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    _bump_codegen_counter_8616("dce_candidates")
+                    _bump_codegen_counter_8616("dce_deleted")
+                    _bump_codegen_counter_8616("dce_overwritten_local_deleted")
+                    changed = True
+                    block_changed = True
+                    continue
+                _bump_codegen_counter_8616("dce_overwritten_local_refused")
             if key[0].startswith("dirty"):
-                setattr(
-                    codegen,
-                    "dce_dirty_value_candidates",
-                    int(getattr(codegen, "dce_dirty_value_candidates", 0)) + 1,
-                )
+                typing.cast(typing.Any, codegen).dce_dirty_value_candidates = int(_dynamic_dce_getattr_8616(codegen, "dce_dirty_value_candidates", 0)) + 1
                 if (
                     key not in live
                     and outside_reads <= 0
                     and key not in protected
                     and (name_key is None or name_key not in protected)
                     and _dirty_lhs_delete_proven_8616(lhs, rhs)
+                ) or (
+                    _dirty_temp_cleanup_mode_8616(lhs)
+                    and int(observable_reads.get(key, 0)) <= 0
+                    and key not in protected
+                    and (name_key is None or name_key not in protected)
+                    and _rhs_evaluation_is_proven_unobservable_8616(rhs)
                 ):
                     if debug_optimization:
                         print(
@@ -1353,27 +1787,50 @@ def _dead_code_elimination_8616(codegen) -> bool:
                             file=sys.stderr,
                             flush=True,
                         )
-                    setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
-                    setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
-                    setattr(
-                        codegen,
-                        "dce_dirty_value_deleted",
-                        int(getattr(codegen, "dce_dirty_value_deleted", 0)) + 1,
-                    )
+                    _bump_codegen_counter_8616("dce_candidates")
+                    _bump_codegen_counter_8616("dce_deleted")
+                    typing.cast(typing.Any, codegen).dce_dirty_value_deleted = int(_dynamic_dce_getattr_8616(codegen, "dce_dirty_value_deleted", 0)) + 1
                     changed = True
                     block_changed = True
                     continue
-                setattr(
-                    codegen,
-                    "dce_dirty_value_refused",
-                    int(getattr(codegen, "dce_dirty_value_refused", 0)) + 1,
-                )
+                typing.cast(typing.Any, codegen).dce_dirty_value_refused = int(_dynamic_dce_getattr_8616(codegen, "dce_dirty_value_refused", 0)) + 1
             if not is_temp_like:
                 if key in protected or (name_key is not None and name_key in protected):
-                    setattr(codegen, "dce_keep_protected", int(getattr(codegen, "dce_keep_protected", 0)) + 1)
+                    typing.cast(typing.Any, codegen).dce_keep_protected = int(_dynamic_dce_getattr_8616(codegen, "dce_keep_protected", 0)) + 1
                     live.discard(key)
                     live.update(_collect_stmt_reads(stmt))
                     new_rev.append(stmt)
+                    later_local_defs.add(key)
+                    continue
+                if (
+                    _is_plain_local_lvalue_8616(lhs)
+                    and not _node_has_instruction_evidence_8616(stmt)
+                    and not _prefix_has_side_effect_8616(stmt_index)
+                    and (_expr_is_discardable_value_8616(rhs) or _expr_is_pure_local_value_8616(rhs))
+                    and (
+                        key not in live
+                        or int(total_reads.get(key, 0)) <= int(dirty_carrier_reads.get(key, 0))
+                    )
+                    and outside_reads <= 0
+                    and key not in protected
+                    and (name_key is None or name_key not in protected)
+                    and not _is_function_argument_lvalue_8616(lhs, key, name_key)
+                ):
+                    if debug_optimization:
+                        print(
+                            "[optimization] dce_decision "
+                            f"reason=delete_untagged_local_artifact key={key!r} name_key={name_key!r} "
+                            f"outside_reads={outside_reads} live={key in live} stmt={stmt!r}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    _bump_codegen_counter_8616("dce_candidates")
+                    _bump_codegen_counter_8616("dce_deleted")
+                    if _expr_value_purity_8616(rhs) is DceValuePurity8616.GLOBAL_MEMORY_READ:
+                        _bump_codegen_counter_8616("dce_dead_memory_read_candidates")
+                        _bump_codegen_counter_8616("dce_dead_memory_read_deleted")
+                    changed = True
+                    block_changed = True
                     continue
                 if (
                     _is_plain_local_lvalue_8616(lhs)
@@ -1392,19 +1849,11 @@ def _dead_code_elimination_8616(codegen) -> bool:
                             file=sys.stderr,
                             flush=True,
                         )
-                    setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
-                    setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
+                    typing.cast(typing.Any, codegen).dce_candidates = int(_dynamic_dce_getattr_8616(codegen, "dce_candidates", 0)) + 1
+                    _bump_codegen_counter_8616("dce_deleted")
                     if _expr_value_purity_8616(rhs) is DceValuePurity8616.GLOBAL_MEMORY_READ:
-                        setattr(
-                            codegen,
-                            "dce_dead_memory_read_candidates",
-                            int(getattr(codegen, "dce_dead_memory_read_candidates", 0)) + 1,
-                        )
-                        setattr(
-                            codegen,
-                            "dce_dead_memory_read_deleted",
-                            int(getattr(codegen, "dce_dead_memory_read_deleted", 0)) + 1,
-                        )
+                        typing.cast(typing.Any, codegen).dce_dead_memory_read_candidates = int(_dynamic_dce_getattr_8616(codegen, "dce_dead_memory_read_candidates", 0)) + 1
+                        typing.cast(typing.Any, codegen).dce_dead_memory_read_deleted = int(_dynamic_dce_getattr_8616(codegen, "dce_dead_memory_read_deleted", 0)) + 1
                     changed = True
                     block_changed = True
                     continue
@@ -1425,13 +1874,13 @@ def _dead_code_elimination_8616(codegen) -> bool:
                             file=sys.stderr,
                             flush=True,
                         )
-                    setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
-                    setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
+                    typing.cast(typing.Any, codegen).dce_candidates = int(_dynamic_dce_getattr_8616(codegen, "dce_candidates", 0)) + 1
+                    typing.cast(typing.Any, codegen).dce_deleted = int(_dynamic_dce_getattr_8616(codegen, "dce_deleted", 0)) + 1
                     changed = True
                     block_changed = True
                     continue
                 if (
-                    key[0] in {"dirty", "dirty_expr"}
+                    key[0].startswith("dirty")
                     and _rhs_is_pure_stack_base_carrier_8616(rhs)
                     and key not in live
                     and outside_reads <= 0
@@ -1447,29 +1896,57 @@ def _dead_code_elimination_8616(codegen) -> bool:
                             file=sys.stderr,
                             flush=True,
                         )
-                    setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
-                    setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
+                    typing.cast(typing.Any, codegen).dce_candidates = int(_dynamic_dce_getattr_8616(codegen, "dce_candidates", 0)) + 1
+                    typing.cast(typing.Any, codegen).dce_deleted = int(_dynamic_dce_getattr_8616(codegen, "dce_deleted", 0)) + 1
                     changed = True
                     block_changed = True
                     continue
-                setattr(codegen, "dce_keep_unknown", int(getattr(codegen, "dce_keep_unknown", 0)) + 1)
+                typing.cast(typing.Any, codegen).dce_keep_unknown = int(_dynamic_dce_getattr_8616(codegen, "dce_keep_unknown", 0)) + 1
                 live.discard(key)
                 live.update(_collect_stmt_reads(stmt))
                 new_rev.append(stmt)
+                later_local_defs.add(key)
                 continue
-            setattr(codegen, "dce_candidates", int(getattr(codegen, "dce_candidates", 0)) + 1)
+            typing.cast(typing.Any, codegen).dce_candidates = int(_dynamic_dce_getattr_8616(codegen, "dce_candidates", 0)) + 1
             removable = False
             lhs_var_for_observable = _lhs_variable_8616(lhs)
             if _is_observable_lvalue(lhs) or (
                 lhs_var_for_observable is not None and _is_observable_lvalue(lhs_var_for_observable)
             ):
-                setattr(codegen, "dce_keep_observable", int(getattr(codegen, "dce_keep_observable", 0)) + 1)
+                typing.cast(typing.Any, codegen).dce_keep_observable = int(_dynamic_dce_getattr_8616(codegen, "dce_keep_observable", 0)) + 1
             elif _rhs_has_side_effects(rhs):
-                setattr(codegen, "dce_keep_side_effect", int(getattr(codegen, "dce_keep_side_effect", 0)) + 1)
+                if (
+                    isinstance(rhs, CFunctionCall)
+                    and key not in live
+                    and outside_reads <= 0
+                    and key not in protected
+                    and (name_key is None or name_key not in protected)
+                    and id(statements) not in loop_backedge_reads
+                ):
+                    if debug_optimization:
+                        print(
+                            "[optimization] dce_decision "
+                            f"reason=preserve_call_drop_result key={key!r} name_key={name_key!r} "
+                            f"outside_reads={outside_reads} live={key in live} stmt={stmt!r}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    # Dynamic codegen CAssignment compatibility boundary.
+                    expression_statement = CExpressionStatement(rhs, codegen=_dynamic_dce_getattr_8616(stmt, "codegen", codegen))
+                    _bump_codegen_counter_8616("dce_deleted")
+                    pruned_decl_keys.add(key)
+                    if name_key is not None:
+                        pruned_decl_names.add(name_key[1])
+                    live.update(_collect_stmt_reads(expression_statement))
+                    new_rev.append(expression_statement)
+                    changed = True
+                    block_changed = True
+                    continue
+                typing.cast(typing.Any, codegen).dce_keep_side_effect = int(_dynamic_dce_getattr_8616(codegen, "dce_keep_side_effect", 0)) + 1
             elif key in protected or (name_key is not None and name_key in protected):
-                setattr(codegen, "dce_keep_protected", int(getattr(codegen, "dce_keep_protected", 0)) + 1)
+                typing.cast(typing.Any, codegen).dce_keep_protected = int(_dynamic_dce_getattr_8616(codegen, "dce_keep_protected", 0)) + 1
             elif key in live or outside_reads > 0:
-                setattr(codegen, "dce_keep_live_use", int(getattr(codegen, "dce_keep_live_use", 0)) + 1)
+                typing.cast(typing.Any, codegen).dce_keep_live_use = int(_dynamic_dce_getattr_8616(codegen, "dce_keep_live_use", 0)) + 1
                 if debug_optimization and key[0] in {"dirty", "dirty_expr"}:
                     print(
                         "[optimization] dce_keep_live "
@@ -1479,24 +1956,12 @@ def _dead_code_elimination_8616(codegen) -> bool:
                     )
             elif not _expr_is_discardable_value_8616(rhs):
                 if _expr_contains_memory_read_shape_8616(rhs):
-                    setattr(
-                        codegen,
-                        "dce_dead_memory_read_refused",
-                        int(getattr(codegen, "dce_dead_memory_read_refused", 0)) + 1,
-                    )
-                setattr(codegen, "dce_keep_unknown", int(getattr(codegen, "dce_keep_unknown", 0)) + 1)
+                    typing.cast(typing.Any, codegen).dce_dead_memory_read_refused = int(_dynamic_dce_getattr_8616(codegen, "dce_dead_memory_read_refused", 0)) + 1
+                typing.cast(typing.Any, codegen).dce_keep_unknown = int(_dynamic_dce_getattr_8616(codegen, "dce_keep_unknown", 0)) + 1
             else:
                 if _expr_value_purity_8616(rhs) is DceValuePurity8616.GLOBAL_MEMORY_READ:
-                    setattr(
-                        codegen,
-                        "dce_dead_memory_read_candidates",
-                        int(getattr(codegen, "dce_dead_memory_read_candidates", 0)) + 1,
-                    )
-                    setattr(
-                        codegen,
-                        "dce_dead_memory_read_deleted",
-                        int(getattr(codegen, "dce_dead_memory_read_deleted", 0)) + 1,
-                    )
+                    typing.cast(typing.Any, codegen).dce_dead_memory_read_candidates = int(_dynamic_dce_getattr_8616(codegen, "dce_dead_memory_read_candidates", 0)) + 1
+                    typing.cast(typing.Any, codegen).dce_dead_memory_read_deleted = int(_dynamic_dce_getattr_8616(codegen, "dce_dead_memory_read_deleted", 0)) + 1
                 removable = True
             if debug_optimization:
                 reason = (
@@ -1516,21 +1981,24 @@ def _dead_code_elimination_8616(codegen) -> bool:
                 print(
                     "[optimization] dce_decision "
                     f"reason={reason} key={key!r} name_key={name_key!r} "
-                    f"outside_reads={outside_reads} live={key in live} stmt={stmt!r}",
+                    f"outside_reads={outside_reads} live={key in live} "
+                    f"instruction_evidence={_node_has_instruction_evidence_8616(stmt)} stmt={stmt!r}",
                     file=sys.stderr,
                     flush=True,
                 )
             if removable:
-                setattr(codegen, "dce_deleted", int(getattr(codegen, "dce_deleted", 0)) + 1)
+                typing.cast(typing.Any, codegen).dce_deleted = int(_dynamic_dce_getattr_8616(codegen, "dce_deleted", 0)) + 1
                 changed = True
                 block_changed = True
                 continue
             live.discard(key)
             live.update(_collect_stmt_reads(stmt))
             new_rev.append(stmt)
+            later_local_defs.add(key)
         new_stmts = list(reversed(new_rev))
         if new_stmts != stmts:
-            statements.statements = new_stmts
+            # Dynamic angr/codegen statement-block compatibility boundary.
+            typing.cast(typing.Any, statements).statements = new_stmts
             block_changed = True
         return block_changed
 
@@ -1538,31 +2006,48 @@ def _dead_code_elimination_8616(codegen) -> bool:
     # deleted, earlier assignments in the same chain become provably unused.
     for _ in range(128):
         total_reads, block_reads = _collect_read_counts_by_block(root)
+        loop_backedge_reads = _collect_loop_backedge_reads_by_block_8616(root)
+        observable_reads = _collect_observable_read_counts_8616(root)
+        dirty_carrier_reads = _collect_storage_free_dirty_carrier_read_counts_8616(root)
+        all_dirty_carrier_reads = _collect_dirty_carrier_read_counts_8616(root)
         defined_keys = _collect_defined_keys_8616(root)
         pass_changed = False
         for block in _iter_statement_blocks(root):
-            pass_changed = walk_statements(block, total_reads, block_reads, defined_keys) or pass_changed
+            pass_changed = (
+                walk_statements(
+                    block,
+                    total_reads,
+                    block_reads,
+                    loop_backedge_reads,
+                    defined_keys,
+                    observable_reads,
+                    dirty_carrier_reads,
+                    all_dirty_carrier_reads,
+                )
+                or pass_changed
+            )
         if not pass_changed:
             break
+    changed = _drop_pruned_codegen_declarations_8616() or changed
     if debug_optimization:
         print(
             "[optimization] dce_counters "
-            f"dce_candidates={int(getattr(codegen, 'dce_candidates', 0) or 0)} "
-            f"dce_deleted={int(getattr(codegen, 'dce_deleted', 0) or 0)} "
-            f"dce_keep_live_use={int(getattr(codegen, 'dce_keep_live_use', 0) or 0)} "
-            f"dce_keep_side_effect={int(getattr(codegen, 'dce_keep_side_effect', 0) or 0)} "
-            f"dce_keep_protected={int(getattr(codegen, 'dce_keep_protected', 0) or 0)} "
-            f"dce_keep_observable={int(getattr(codegen, 'dce_keep_observable', 0) or 0)} "
-            f"dce_keep_unknown={int(getattr(codegen, 'dce_keep_unknown', 0) or 0)} "
-            f"dce_dirty_value_candidates={int(getattr(codegen, 'dce_dirty_value_candidates', 0) or 0)} "
-            f"dce_dirty_value_deleted={int(getattr(codegen, 'dce_dirty_value_deleted', 0) or 0)} "
-            f"dce_dirty_value_refused={int(getattr(codegen, 'dce_dirty_value_refused', 0) or 0)} "
-            f"dce_dead_memory_read_candidates={int(getattr(codegen, 'dce_dead_memory_read_candidates', 0) or 0)} "
-            f"dce_dead_memory_read_deleted={int(getattr(codegen, 'dce_dead_memory_read_deleted', 0) or 0)} "
-            f"dce_dead_memory_read_refused={int(getattr(codegen, 'dce_dead_memory_read_refused', 0) or 0)} "
-            f"dce_pure_expression_candidates={int(getattr(codegen, 'dce_pure_expression_candidates', 0) or 0)} "
-            f"dce_pure_expression_deleted={int(getattr(codegen, 'dce_pure_expression_deleted', 0) or 0)} "
-            f"dce_pure_expression_refused={int(getattr(codegen, 'dce_pure_expression_refused', 0) or 0)}",
+            f"dce_candidates={int(_dynamic_dce_getattr_8616(codegen, 'dce_candidates', 0) or 0)} "
+            f"dce_deleted={int(_dynamic_dce_getattr_8616(codegen, 'dce_deleted', 0) or 0)} "
+            f"dce_keep_live_use={int(_dynamic_dce_getattr_8616(codegen, 'dce_keep_live_use', 0) or 0)} "
+            f"dce_keep_side_effect={int(_dynamic_dce_getattr_8616(codegen, 'dce_keep_side_effect', 0) or 0)} "
+            f"dce_keep_protected={int(_dynamic_dce_getattr_8616(codegen, 'dce_keep_protected', 0) or 0)} "
+            f"dce_keep_observable={int(_dynamic_dce_getattr_8616(codegen, 'dce_keep_observable', 0) or 0)} "
+            f"dce_keep_unknown={int(_dynamic_dce_getattr_8616(codegen, 'dce_keep_unknown', 0) or 0)} "
+            f"dce_dirty_value_candidates={int(_dynamic_dce_getattr_8616(codegen, 'dce_dirty_value_candidates', 0) or 0)} "
+            f"dce_dirty_value_deleted={int(_dynamic_dce_getattr_8616(codegen, 'dce_dirty_value_deleted', 0) or 0)} "
+            f"dce_dirty_value_refused={int(_dynamic_dce_getattr_8616(codegen, 'dce_dirty_value_refused', 0) or 0)} "
+            f"dce_dead_memory_read_candidates={int(_dynamic_dce_getattr_8616(codegen, 'dce_dead_memory_read_candidates', 0) or 0)} "
+            f"dce_dead_memory_read_deleted={int(_dynamic_dce_getattr_8616(codegen, 'dce_dead_memory_read_deleted', 0) or 0)} "
+            f"dce_dead_memory_read_refused={int(_dynamic_dce_getattr_8616(codegen, 'dce_dead_memory_read_refused', 0) or 0)} "
+            f"dce_pure_expression_candidates={int(_dynamic_dce_getattr_8616(codegen, 'dce_pure_expression_candidates', 0) or 0)} "
+            f"dce_pure_expression_deleted={int(_dynamic_dce_getattr_8616(codegen, 'dce_pure_expression_deleted', 0) or 0)} "
+            f"dce_pure_expression_refused={int(_dynamic_dce_getattr_8616(codegen, 'dce_pure_expression_refused', 0) or 0)}",
             file=sys.stderr,
             flush=True,
         )

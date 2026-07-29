@@ -14,6 +14,38 @@ from angr_platforms.X86_16.structuring_region import Region, RegionGraph, Region
 class TestSwitchDetection:
     """Tests for detecting if-cascade patterns as switch candidates."""
 
+    def test_region_merge_preserves_statement_address_evidence(self):
+        graph = RegionGraph()
+        dst = Region(block_addr=0x1010)
+        src = Region(block_addr=0x1020)
+        dst.metadata["region_statement_ins_addrs"] = (0x1010,)
+        src.metadata["region_statement_ins_addrs"] = (0x1020, 0x1022)
+        graph.add_node(dst)
+        graph.add_node(src)
+
+        graph.merge_regions(src, dst)
+
+        assert dst.metadata["region_statement_ins_addrs"] == (0x1010, 0x1020, 0x1022)
+        assert dst.metadata["region_statement_span_source"] == "merged_region_statement_ins_addrs"
+
+    def test_region_merge_preserves_statement_provenance_key_evidence(self):
+        graph = RegionGraph()
+        dst = Region(block_addr=0x1010)
+        src = Region(block_addr=0x1020)
+        dst.metadata["region_statement_provenance_keys"] = (("vex", 0x1010, 1),)
+        src.metadata["region_statement_provenance_keys"] = (("vex", 0x1020, 1), ("vex", 0x1020, 2))
+        graph.add_node(dst)
+        graph.add_node(src)
+
+        graph.merge_regions(src, dst)
+
+        assert dst.metadata["region_statement_provenance_keys"] == (
+            ("vex", 0x1010, 1),
+            ("vex", 0x1020, 1),
+            ("vex", 0x1020, 2),
+        )
+        assert dst.metadata["region_statement_span_source"] == "merged_region_statement_provenance"
+
     def test_simple_three_way_branch_detected_as_switch(self):
         """
         Test that three-way branch can be processed structurally.
@@ -132,7 +164,167 @@ class TestSwitchDetection:
         assert cond_a.metadata["switch_case_values"] == (69, 27, 33)
         assert cond_a.metadata["switch_condition_lhs"] == lhs
         assert cond_a.metadata["switch_default_target"] == default
+        assert "switch_guard_statement_ins_addrs" not in cond_a.metadata
         assert analysis.stats.edge_guard_switches_detected == 1
+
+    def test_typed_edge_guard_switch_records_proven_guard_statement_span(self):
+        entry = Region(block_addr=0x2100, region_type=RegionType.Linear)
+        cond_a = Region(block_addr=0x2110, region_type=RegionType.Condition)
+        cond_b = Region(block_addr=0x2120, region_type=RegionType.Condition)
+        cond_c = Region(block_addr=0x2130, region_type=RegionType.Condition)
+        default = Region(block_addr=0x2140, region_type=RegionType.Linear)
+        cases = [
+            Region(block_addr=0x2150, region_type=RegionType.Linear),
+            Region(block_addr=0x2160, region_type=RegionType.Linear),
+            Region(block_addr=0x2170, region_type=RegionType.Linear),
+        ]
+        lhs = IRValue(MemSpace.REG, name="ax", size=2)
+
+        for condition, addrs in ((cond_a, (0x2110, 0x2112)), (cond_b, (0x2120,)), (cond_c, (0x2130,))):
+            condition.metadata["region_statement_ins_addrs"] = addrs
+
+        for case, condition, value in zip(cases, (cond_a, cond_b, cond_c), (69, 27, 33), strict=True):
+            case.metadata["typed_condition_edge_guards"] = (
+                ConditionIR(
+                    op="eq",
+                    lhs=lhs,
+                    rhs=IRValue(MemSpace.CONST, const=value, size=2),
+                    src_insn=case.block_addr,
+                    block_addr=case.block_addr,
+                    producer_insn=condition.block_addr,
+                ),
+            )
+
+        graph = RegionGraph()
+        graph.entry = entry
+        for region in [entry, cond_a, cond_b, cond_c, default, *cases]:
+            graph.add_node(region)
+
+        graph.add_edge(entry, cond_a)
+        graph.add_edge(cond_a, cases[0])
+        graph.add_edge(cond_a, cond_b)
+        graph.add_edge(cond_b, cases[1])
+        graph.add_edge(cond_b, cond_c)
+        graph.add_edge(cond_c, cases[2])
+        graph.add_edge(cond_c, default)
+
+        analysis = StructureAnalysis(graph)
+        analysis.structure()
+
+        assert cond_a.region_type == RegionType.IncSwitch
+        assert cond_a.metadata["switch_guard_statement_ins_addrs"] == (0x2110, 0x2112, 0x2120, 0x2130)
+        assert cond_a.metadata["switch_guard_statement_span_source"] == "condition_region_statement_ins_addrs"
+
+    def test_typed_edge_guard_switch_records_proven_guard_statement_keys(self):
+        cond_a = Region(block_addr=0x4110, region_type=RegionType.Condition)
+        cond_b = Region(block_addr=0x4120, region_type=RegionType.Condition)
+        cond_c = Region(block_addr=0x4130, region_type=RegionType.Condition)
+        default = Region(block_addr=0x4140, region_type=RegionType.Linear)
+        cases = [
+            Region(block_addr=0x4150, region_type=RegionType.Linear),
+            Region(block_addr=0x4160, region_type=RegionType.Linear),
+            Region(block_addr=0x4170, region_type=RegionType.Linear),
+        ]
+        lhs = IRValue(MemSpace.REG, name="ax", size=2)
+
+        for condition in (cond_a, cond_b, cond_c):
+            condition.metadata["region_statement_ins_addrs"] = (condition.block_addr,)
+            condition.metadata["region_statement_provenance_keys"] = (
+                ("vex", condition.block_addr, 1),
+                ("vex", condition.block_addr, 2),
+            )
+
+        for case, condition, value in zip(cases, (cond_a, cond_b, cond_c), (69, 27, 33), strict=True):
+            case.metadata["typed_condition_edge_guards"] = (
+                ConditionIR(
+                    op="eq",
+                    lhs=lhs,
+                    rhs=IRValue(MemSpace.CONST, const=value, size=2),
+                    src_insn=case.block_addr,
+                    block_addr=case.block_addr,
+                    producer_insn=condition.block_addr,
+                ),
+            )
+
+        graph = RegionGraph()
+        graph.entry = cond_a
+        for region in [cond_a, cond_b, cond_c, default, *cases]:
+            graph.add_node(region)
+        graph.add_edge(cond_a, cases[0])
+        graph.add_edge(cond_a, cond_b)
+        graph.add_edge(cond_b, cases[1])
+        graph.add_edge(cond_b, cond_c)
+        graph.add_edge(cond_c, cases[2])
+        graph.add_edge(cond_c, default)
+
+        analysis = StructureAnalysis(graph)
+        analysis.structure()
+
+        assert cond_a.metadata["switch_guard_statement_provenance_keys"] == (
+            ("vex", 0x4110, 1),
+            ("vex", 0x4110, 2),
+            ("vex", 0x4120, 1),
+            ("vex", 0x4120, 2),
+            ("vex", 0x4130, 1),
+            ("vex", 0x4130, 2),
+        )
+
+    def test_typed_edge_guard_switch_skips_unguarded_continuation_regions(self):
+        cond_a = Region(block_addr=0x3110, region_type=RegionType.Condition)
+        pass_a = Region(block_addr=0x3118, region_type=RegionType.Linear)
+        cond_b = Region(block_addr=0x3120, region_type=RegionType.Condition)
+        pass_b = Region(block_addr=0x3128, region_type=RegionType.Linear)
+        cond_c = Region(block_addr=0x3130, region_type=RegionType.Condition)
+        default = Region(block_addr=0x3140, region_type=RegionType.Linear)
+        cases = [
+            Region(block_addr=0x3150, region_type=RegionType.Linear),
+            Region(block_addr=0x3160, region_type=RegionType.Linear),
+            Region(block_addr=0x3170, region_type=RegionType.Linear),
+        ]
+        lhs = IRValue(MemSpace.REG, name="ax", size=2)
+
+        for region in (cond_a, pass_a, cond_b, pass_b, cond_c):
+            region.metadata["region_statement_ins_addrs"] = (region.block_addr,)
+
+        for case, condition, value in zip(cases, (cond_a, cond_b, cond_c), (69, 27, 33), strict=True):
+            case.metadata["typed_condition_edge_guards"] = (
+                ConditionIR(
+                    op="eq",
+                    lhs=lhs,
+                    rhs=IRValue(MemSpace.CONST, const=value, size=2),
+                    src_insn=case.block_addr,
+                    block_addr=case.block_addr,
+                    producer_insn=condition.block_addr,
+                ),
+            )
+
+        graph = RegionGraph()
+        graph.entry = cond_a
+        for region in [cond_a, pass_a, cond_b, pass_b, cond_c, default, *cases]:
+            graph.add_node(region)
+
+        graph.add_edge(cond_a, cases[0])
+        graph.add_edge(cond_a, pass_a)
+        graph.add_edge(pass_a, cond_b)
+        graph.add_edge(cond_b, cases[1])
+        graph.add_edge(cond_b, pass_b)
+        graph.add_edge(pass_b, cond_c)
+        graph.add_edge(cond_c, cases[2])
+        graph.add_edge(cond_c, default)
+
+        analysis = StructureAnalysis(graph)
+        analysis.structure()
+
+        assert cond_a.region_type == RegionType.IncSwitch
+        assert cond_a.metadata["switch_candidates"] == cases
+        assert cond_a.metadata["switch_case_values"] == (69, 27, 33)
+        assert cond_a.metadata["switch_guard_statement_ins_addrs"] == (
+            0x3110,
+            0x3118,
+            0x3120,
+            0x3128,
+            0x3130,
+        )
 
     def test_binary_branch_not_switch(self):
         """

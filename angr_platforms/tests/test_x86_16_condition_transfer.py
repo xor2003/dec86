@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import bitstring
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR, ConditionSource
-from angr_platforms.X86_16.ir.core import IRCondition, IRValue, MemSpace
+from angr_platforms.X86_16.ir.core import IRBinaryValue, IRCondition, IRValue, MemSpace
 from angr_platforms.X86_16.lowering.condition_transfer import (
+    _condition_from_pending_source_8616,
+    collect_typed_condition_artifacts_8616,
     collect_typed_conditions_from_emulator_8616,
     transfer_typed_conditions_to_codegen_8616,
 )
@@ -22,6 +25,137 @@ class _Emu:
 
     def clear_last_condition(self):
         self._last_condition = None
+
+
+def test_dec_reg_chain_to_jcc_is_simple_condition_semantics_without_affine(monkeypatch):
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    monkeypatch.delenv("INERTIA_ENABLE_AFFINE_SWITCH_CONDITIONS", raising=False)
+    operand = SimpleNamespace(type=0)
+
+    dec_before_jcc = SimpleNamespace(
+        cs=SimpleNamespace(mnemonic="dec"),
+        _next_instruction_is_incdec_reg16_from_bytes_8616=lambda: False,
+        _next_instruction_is_simple_jcc_from_bytes_8616=lambda: True,
+        _reg16_name=lambda op: "ax" if op is operand else None,
+    )
+    dec_before_dec = SimpleNamespace(
+        cs=SimpleNamespace(mnemonic="dec"),
+        _next_instruction_is_incdec_reg16_from_bytes_8616=lambda: True,
+        _next_instruction_is_simple_jcc_from_bytes_8616=lambda: False,
+        _reg16_name=lambda op: "ax" if op is operand else None,
+    )
+    inc_before_jcc = SimpleNamespace(
+        cs=SimpleNamespace(mnemonic="inc"),
+        _SIMPLE_JCC_8616=(),
+        _next_instruction_is_incdec_reg16_from_bytes_8616=lambda: False,
+        _next_instruction_is_simple_jcc_from_bytes_8616=lambda: True,
+        _reg16_name=lambda op: "ax" if op is operand else None,
+    )
+
+    assert Instruction_ANY._match_simple_unary_semantics_8616(dec_before_jcc, (operand,)) == ("dec_reg16", "ax")
+    assert Instruction_ANY._match_simple_unary_semantics_8616(dec_before_dec, (operand,)) == ("dec_reg16", "ax")
+    assert Instruction_ANY._match_simple_unary_semantics_8616(inc_before_jcc, (operand,)) is None
+
+
+def test_dec_reg_chain_counts_same_register_predecessors():
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    chained = SimpleNamespace(start=1, bitstrm=bitstring.ConstBitStream(bytes=b"\x48\x48\x75"))
+    single = SimpleNamespace(start=0, bitstrm=bitstring.ConstBitStream(bytes=b"\x48\x75"))
+
+    assert Instruction_ANY._same_preceding_incdec_reg16_count_8616(chained, "ax", mnemonic="dec") == 2
+    assert Instruction_ANY._same_preceding_incdec_reg16_count_8616(single, "ax", mnemonic="dec") == 1
+    assert Instruction_ANY._same_preceding_incdec_reg16_count_8616(chained, "cx", mnemonic="dec") == 1
+
+
+def test_pending_cmp_condition_harmonizes_mixed_width_operands_before_transfer():
+    lhs = IRValue(MemSpace.REG, name="al", size=1)
+    rhs = IRValue(MemSpace.CONST, const=0x1234, size=2)
+    source = ConditionSource(kind="cmp", lhs=lhs, rhs=rhs, width_bits=16, addr=0x4010, block_addr=0x4000)
+
+    cond = _condition_from_pending_source_8616(source, "jbe", src_insn=0x4013, block_addr=0x4000)
+
+    assert isinstance(cond, ConditionIR)
+    assert cond.op == "ule"
+    assert cond.width_bits == 16
+    assert isinstance(cond.lhs, IRValue)
+    assert isinstance(cond.rhs, IRValue)
+    assert cond.lhs.size == 2
+    assert cond.rhs.size == 2
+
+
+def test_logical_or_result_preserves_direct_global_operands():
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_index_state = dict(Instruction_ANY._inertia_condition_index_reg_state_8616)
+    instr = Instruction_ANY.__new__(Instruction_ANY)
+    instr.arch = Arch86_16()
+    instr.addr = 0x1003
+    instr.emu = _Emu()
+    instr.simple_semantics = ("or_reg_abs16", "ax", 0x132)
+    instr._next_instruction_is_simple_jcc = lambda: True
+
+    try:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = {
+            "ax": (IRValue(MemSpace.DS, offset=0x134, size=2), 0)
+        }
+        recorded = Instruction_ANY._record_logical_result_condition_source_8616(
+            instr,
+            "or",
+            "ax",
+            object(),
+        )
+    finally:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = original_index_state
+
+    assert recorded is True
+    source = instr.emu._inertia_last_condition_source
+    assert isinstance(source, ConditionSource)
+    assert source.semantics == ("or_reg_abs16", "ax", 0x132)
+    assert source.bind_operand_at_jcc is False
+    assert source.normalized_lhs == IRBinaryValue(
+        op="or",
+        lhs=IRValue(MemSpace.DS, offset=0x134, size=2),
+        rhs=IRValue(MemSpace.DS, offset=0x132, size=2, expr=("cmp-ds",)),
+        size=2,
+    )
+    condition = instr.emu.get_last_condition()
+    assert isinstance(condition, IRCondition)
+    assert condition.op == "zero"
+    assert condition.args == (source.normalized_lhs,)
+
+
+def test_pending_logical_result_condition_preserves_typed_value_expression():
+    value = IRBinaryValue(
+        op="or",
+        lhs=IRValue(MemSpace.DS, offset=0x134, size=2),
+        rhs=IRValue(MemSpace.DS, offset=0x132, size=2),
+        size=2,
+    )
+    source = ConditionSource(
+        kind="test",
+        lhs=object(),
+        normalized_lhs=value,
+        semantics=("or_reg_abs16", "ax", 0x132),
+        width_bits=16,
+        addr=0x1003,
+        block_addr=0x1000,
+    )
+
+    cond = _condition_from_pending_source_8616(
+        source,
+        "je",
+        src_insn=0x1007,
+        block_addr=0x1000,
+    )
+
+    assert isinstance(cond, ConditionIR)
+    assert cond.op == "zero"
+    assert cond.lhs is value
+    assert cond.producer_insn == 0x1003
+    assert cond.operand_bind_insn is None
 
 
 def test_collect_typed_conditions_relifts_blocks_when_cache_is_empty(monkeypatch):
@@ -48,11 +182,380 @@ def test_collect_typed_conditions_relifts_blocks_when_cache_is_empty(monkeypatch
 
     try:
         conditions = collect_typed_conditions_from_emulator_8616(project, 0x4010)
+        artifact_conditions, edge_evidence = collect_typed_condition_artifacts_8616(project, 0x4010)
     finally:
         Instruction_ANY._inertia_module_condition_cache = original_cache
 
     assert lifted_blocks == [0x4010, 0x4014]
     assert conditions == [condition]
+    assert artifact_conditions == [condition]
+    assert edge_evidence == []
+
+
+def test_collect_typed_conditions_relifts_partial_cache_after_reset(monkeypatch):
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_cache = getattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    original_pending = dict(getattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {}))
+    original_affine_state = dict(getattr(Instruction_ANY, "_inertia_condition_reg_affine_state_8616", {}))
+    original_affine_snapshots = dict(getattr(Instruction_ANY, "_inertia_condition_reg_affine_state_snapshots_8616", {}))
+    original_index_state = dict(getattr(Instruction_ANY, "_inertia_condition_index_reg_state_8616", {}))
+    stale_condition = ConditionIR("eq", "stale", "stale", src_insn=0x4010, block_addr=0x4010)
+    fresh_condition = ConditionIR("eq", "fresh", "fresh", src_insn=0x4014, block_addr=0x4014)
+    lifted_blocks: list[int] = []
+    affine_state_at_relift: list[dict[object, object]] = []
+
+    def _lift_block(block_addr: int, opt_level: int = 0):
+        lifted_blocks.append(block_addr)
+        affine_state_at_relift.append(dict(Instruction_ANY._inertia_condition_reg_affine_state_8616))
+        if block_addr == 0x4014:
+            Instruction_ANY._inertia_module_condition_cache[block_addr] = [fresh_condition]
+        else:
+            Instruction_ANY._inertia_module_condition_cache[block_addr] = []
+        return None
+
+    Instruction_ANY._inertia_module_condition_cache = {0x4010: [stale_condition]}
+    Instruction_ANY._inertia_pending_condition_sources_by_addr = {0x4010: object(), 0x4014: object()}
+    Instruction_ANY._inertia_condition_reg_affine_state_8616 = {"ax": (IRValue(MemSpace.REG, name="ax", size=2), 19)}
+    Instruction_ANY._inertia_condition_reg_affine_state_snapshots_8616 = {
+        0x4014: {"ax": (IRValue(MemSpace.REG, name="ax", size=2), 19)}
+    }
+    Instruction_ANY._inertia_condition_index_reg_state_8616 = {
+        "bx": (IRValue(MemSpace.SS, name="bp", offset=-2, size=2), 1)
+    }
+    project = SimpleNamespace(
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(
+                function=lambda addr, create=False: SimpleNamespace(block_addrs_set={addr, addr + 4})
+            )
+        ),
+        factory=SimpleNamespace(block=_lift_block),
+    )
+
+    try:
+        conditions = collect_typed_conditions_from_emulator_8616(project, 0x4010)
+    finally:
+        Instruction_ANY._inertia_module_condition_cache = original_cache
+        Instruction_ANY._inertia_pending_condition_sources_by_addr = original_pending
+        Instruction_ANY._inertia_condition_reg_affine_state_8616 = original_affine_state
+        Instruction_ANY._inertia_condition_reg_affine_state_snapshots_8616 = original_affine_snapshots
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = original_index_state
+
+    assert lifted_blocks == [0x4010, 0x4014]
+    assert affine_state_at_relift[0] == {}
+    assert conditions == [fresh_condition]
+
+
+def test_collect_typed_conditions_refuses_stale_block_generations():
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_cache = Instruction_ANY._inertia_module_condition_cache
+    original_pending = Instruction_ANY._inertia_pending_condition_sources_by_addr
+    current = ConditionIR(
+        "ne",
+        "current",
+        2,
+        source=("cmp", "jne"),
+        src_insn=0x4014,
+        block_addr=0x4010,
+        taken_target=0x4020,
+        fallthrough_target=0x4016,
+    )
+    stale_extent = ConditionIR(
+        "ne",
+        "stale-extent",
+        2,
+        source=("cmp", "jne"),
+        src_insn=0x4018,
+        block_addr=0x4010,
+        taken_target=0x4030,
+        fallthrough_target=0x401A,
+    )
+    stale_semantics = ConditionIR(
+        "sgt",
+        "stale-semantics",
+        2,
+        source=("cmp", "jg"),
+        src_insn=0x4014,
+        block_addr=0x4010,
+        taken_target=0x4020,
+        fallthrough_target=0x4016,
+    )
+    stale_targets = ConditionIR(
+        "ne",
+        "stale-targets",
+        2,
+        source=("cmp", "jne"),
+        src_insn=0x4014,
+        block_addr=0x4010,
+        taken_target=0x4030,
+        fallthrough_target=0x4016,
+    )
+    immediate = SimpleNamespace(imm=0x4020)
+    terminal = SimpleNamespace(
+        address=0x4014,
+        size=2,
+        mnemonic="jne",
+        operands=(immediate,),
+    )
+    block = SimpleNamespace(
+        addr=0x4010,
+        capstone=SimpleNamespace(insns=(SimpleNamespace(insn=terminal),)),
+    )
+    function = SimpleNamespace(block_addrs_set={0x4010}, blocks=(block,))
+    project = SimpleNamespace(
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: function)),
+    )
+    codegen = SimpleNamespace()
+    Instruction_ANY._inertia_module_condition_cache = {
+        0x4010: [stale_extent, current, stale_semantics, stale_targets, current]
+    }
+    Instruction_ANY._inertia_pending_condition_sources_by_addr = {}
+
+    try:
+        transferred = transfer_typed_conditions_to_codegen_8616(project, 0x4010, codegen)
+    finally:
+        Instruction_ANY._inertia_module_condition_cache = original_cache
+        Instruction_ANY._inertia_pending_condition_sources_by_addr = original_pending
+
+    assert transferred == 1
+    assert codegen._inertia_typed_conditions == [current]
+    stats = codegen._inertia_condition_ownership_stats
+    assert stats.raw_fact_count == 5
+    assert stats.normalized_fact_count == 4
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 3
+
+
+def test_record_typed_condition_deduplicates_module_cache():
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_cache = Instruction_ANY._inertia_module_condition_cache
+    condition = ConditionIR(
+        "ne",
+        "ax",
+        0,
+        source=("cmp", "jne"),
+        src_insn=0x4014,
+        block_addr=0x4010,
+        taken_target=0x4020,
+        fallthrough_target=0x4016,
+    )
+    instruction = Instruction_ANY.__new__(Instruction_ANY)
+    instruction.addr = 0x4014
+    instruction.emu = SimpleNamespace(
+        _inertia_current_block_addr=0x4010,
+        _inertia_typed_conditions=[],
+    )
+    Instruction_ANY._inertia_module_condition_cache = {}
+
+    try:
+        instruction._record_typed_condition_8616(condition)
+        instruction._record_typed_condition_8616(condition)
+    finally:
+        cache = Instruction_ANY._inertia_module_condition_cache
+        Instruction_ANY._inertia_module_condition_cache = original_cache
+
+    assert instruction.emu._inertia_typed_conditions == [condition, condition]
+    assert cache == {0x4010: [condition]}
+
+
+def test_indexed_byte_cmp_condition_operands_use_stack_index_state():
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_index_state = dict(getattr(Instruction_ANY, "_inertia_condition_index_reg_state_8616", {}))
+    instr = Instruction_ANY.__new__(Instruction_ANY)
+    instr.arch = Arch86_16()
+
+    try:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = {
+            "bx": (IRValue(MemSpace.SS, name="bp", offset=-2, size=2), 1)
+        }
+        lhs, rhs = Instruction_ANY._condition_operands_from_cmp_semantics_8616(
+            instr,
+            ("cmp_indexed_abs_reg8", ("bx", 0xB4C, 0xB4C), "al"),
+        )
+    finally:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = original_index_state
+
+    assert lhs == IRValue(
+        MemSpace.DS,
+        offset=0xB4C,
+        size=1,
+        expr=("cmp-ds-indexed", "bp", "-2", "2", "1", "1"),
+    )
+    assert rhs == IRValue(MemSpace.REG, name="al", offset=0, size=1, expr=("cmp-reg",))
+
+
+def test_indexed_byte_load_provenance_survives_word_cmp_operand_recovery():
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_index_state = dict(
+        getattr(Instruction_ANY, "_inertia_condition_index_reg_state_8616", {})
+    )
+    original_value_state = dict(
+        getattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
+    )
+    instr = Instruction_ANY.__new__(Instruction_ANY)
+    instr.arch = Arch86_16()
+    instr.addr = 0x4010
+    instr.cs = SimpleNamespace(size=2)
+    instr.emu = SimpleNamespace(_inertia_current_block_addr=0x4000)
+
+    try:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = {
+            "bx": (IRValue(MemSpace.SS, name="bp", offset=-4, size=2), 1)
+        }
+        Instruction_ANY._inertia_condition_reg_value_state_8616 = {}
+        instr._set_condition_reg_indexed_byte_value_8616(
+            "al",
+            ("bx", 0xB4A, 0xB4A),
+        )
+        instr.addr = 0x4012
+        instr.cs = SimpleNamespace(size=1)
+        instr._widen_condition_reg_value_state_8616("ax")
+        instr.addr = 0x4013
+        instr.cs = SimpleNamespace(size=3)
+        instr.simple_semantics = (
+            "cmp_reg_mem16",
+            "ax",
+            ("bp", 0xFFFA, -6),
+        )
+        lhs, rhs = instr._condition_operands_from_cmp_semantics_8616(
+            instr.simple_semantics,
+        )
+        instr._record_cmp_condition_source(object(), object())
+        source = instr.emu._inertia_last_condition_source
+    finally:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = (
+            original_index_state
+        )
+        Instruction_ANY._inertia_condition_reg_value_state_8616 = (
+            original_value_state
+        )
+
+    assert lhs == IRValue(
+        MemSpace.DS,
+        offset=0xB4A,
+        size=2,
+        expr=("cmp-ds-indexed", "bp", "-4", "2", "1", "1"),
+    )
+    assert rhs == IRValue(
+        MemSpace.SS,
+        name="bp",
+        offset=-6,
+        size=2,
+        expr=("cmp-stack", "bp"),
+    )
+    assert source.normalized_lhs == lhs
+    assert source.normalized_rhs == rhs
+
+
+def test_indexed_byte_load_provenance_refuses_noncontiguous_word_cmp():
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_index_state = dict(
+        getattr(Instruction_ANY, "_inertia_condition_index_reg_state_8616", {})
+    )
+    original_value_state = dict(
+        getattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
+    )
+    instr = Instruction_ANY.__new__(Instruction_ANY)
+    instr.arch = Arch86_16()
+    instr.addr = 0x4010
+    instr.cs = SimpleNamespace(size=2)
+    instr.emu = SimpleNamespace(_inertia_current_block_addr=0x4000)
+
+    try:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = {
+            "bx": (IRValue(MemSpace.SS, name="bp", offset=-4, size=2), 1)
+        }
+        Instruction_ANY._inertia_condition_reg_value_state_8616 = {}
+        instr._set_condition_reg_indexed_byte_value_8616(
+            "al",
+            ("bx", 0xB4A, 0xB4A),
+        )
+        instr.addr = 0x4013
+        instr.cs = SimpleNamespace(size=3)
+        lhs, _rhs = instr._condition_operands_from_cmp_semantics_8616(
+            ("cmp_reg_mem16", "ax", ("bp", 0xFFFA, -6)),
+        )
+    finally:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = (
+            original_index_state
+        )
+        Instruction_ANY._inertia_condition_reg_value_state_8616 = (
+            original_value_state
+        )
+
+    assert lhs == IRValue(
+        MemSpace.REG,
+        name="ax",
+        offset=0,
+        size=2,
+        expr=("cmp-reg",),
+    )
+
+
+def test_cbw_is_simple_sign_extension_semantics() -> None:
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    instruction = SimpleNamespace(cs=SimpleNamespace(mnemonic="cwde"))
+
+    assert (
+        Instruction_ANY._match_simple_unary_semantics_8616(instruction, ())
+        == ("sign_extend_al_ax",)
+    )
+
+
+def test_stack_cmp_register_operand_uses_unshifted_stack_register_state():
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_index_state = dict(getattr(Instruction_ANY, "_inertia_condition_index_reg_state_8616", {}))
+    instr = Instruction_ANY.__new__(Instruction_ANY)
+    instr.arch = Arch86_16()
+
+    try:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = {
+            "ax": (IRValue(MemSpace.SS, name="bp", offset=-6, size=2), 0)
+        }
+        lhs, rhs = Instruction_ANY._condition_operands_from_cmp_semantics_8616(
+            instr,
+            ("cmp_mem_reg16", ("bp", 0xFFFC, -4), "ax"),
+        )
+    finally:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = original_index_state
+
+    assert lhs == IRValue(MemSpace.SS, name="bp", offset=-4, size=2, expr=("cmp-stack", "bp"))
+    assert rhs == IRValue(MemSpace.SS, name="bp", offset=-6, size=2)
+
+
+def test_stack_cmp_register_operand_uses_unshifted_direct_global_register_state():
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_index_state = dict(getattr(Instruction_ANY, "_inertia_condition_index_reg_state_8616", {}))
+    instr = Instruction_ANY.__new__(Instruction_ANY)
+    instr.arch = Arch86_16()
+
+    try:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = {
+            "ax": (IRValue(MemSpace.DS, offset=0xBA2, size=2, expr=("cmp-ds",)), 0)
+        }
+        lhs, rhs = Instruction_ANY._condition_operands_from_cmp_semantics_8616(
+            instr,
+            ("cmp_mem_reg16", ("bp", 0xFFFE, -2), "ax"),
+        )
+    finally:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = original_index_state
+
+    assert lhs == IRValue(MemSpace.SS, name="bp", offset=-2, size=2, expr=("cmp-stack", "bp"))
+    assert rhs == IRValue(MemSpace.DS, offset=0xBA2, size=2, expr=("cmp-ds",))
 
 
 def test_direct_jcc_preserves_condition_for_back_to_back_jcc(monkeypatch):
@@ -106,7 +609,7 @@ def test_emit_simple_jcc_propagates_condition_source_for_following_jcc():
 
     try:
         Instruction_ANY._inertia_pending_condition_sources_by_addr = {}
-        Instruction_ANY._emit_simple_jcc(instr, object(), 0x430)
+        Instruction_ANY._emit_simple_jcc(instr, object(), SimpleNamespace(con=SimpleNamespace(value=0x42B)))
 
         assert current_emu._inertia_last_condition_source is source
         pending = Instruction_ANY._inertia_pending_condition_sources_by_addr[0x428]
@@ -114,6 +617,11 @@ def test_emit_simple_jcc_propagates_condition_source_for_following_jcc():
         assert pending.lhs is lhs
         assert pending.rhs is rhs
         assert pending.fallthrough_from_jcc == "jne"
+        target_pending = Instruction_ANY._inertia_pending_condition_sources_by_addr[0x42B]
+        assert target_pending is not source
+        assert target_pending.lhs is lhs
+        assert target_pending.rhs is rhs
+        assert target_pending.fallthrough_from_jcc is None
         assert [(cond.src_insn, cond.block_addr, cond.producer_insn, cond.op) for cond in recorded] == [
             (0x426, 0x423, 0x423, "ne")
         ]
@@ -153,6 +661,54 @@ def test_emit_simple_jcc_consumes_pending_fallthrough_condition_source():
         Instruction_ANY._inertia_pending_condition_sources_by_addr = original_pending
 
 
+def test_emit_simple_jcc_prefers_normalized_condition_operands():
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_pending = dict(getattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {}))
+    raw_lhs = object()
+    raw_rhs = object()
+    normalized_lhs = IRValue(MemSpace.REG, name="ax", size=2)
+    normalized_rhs = IRValue(MemSpace.CONST, const=60, size=2)
+    source = ConditionSource(
+        kind="cmp",
+        lhs=raw_lhs,
+        rhs=raw_rhs,
+        normalized_lhs=normalized_lhs,
+        normalized_rhs=normalized_rhs,
+        semantics=("sub_reg_imm16", "ax", 33),
+        addr=0x438,
+        block_addr=0x438,
+    )
+    current_emu = _Emu()
+    recorded: list[ConditionIR] = []
+    instr = SimpleNamespace(
+        _past_instructions=[],
+        simple_semantics=("jne",),
+        addr=0x43B,
+        cs=SimpleNamespace(size=2),
+        emu=current_emu,
+        _condition_operands_from_cmp_semantics_8616=lambda _semantics: (
+            IRValue(MemSpace.REG, name="ax", size=2),
+            IRValue(MemSpace.CONST, const=33, size=2),
+        ),
+        _record_typed_condition_8616=recorded.append,
+        jump=lambda *_args: None,
+    )
+
+    try:
+        Instruction_ANY._inertia_pending_condition_sources_by_addr = {0x43B: source}
+        Instruction_ANY._emit_simple_jcc(instr, object(), 0x450)
+
+        [cond] = recorded
+        assert cond.lhs == normalized_lhs
+        assert cond.rhs == normalized_rhs
+        pending = Instruction_ANY._inertia_pending_condition_sources_by_addr[0x43D]
+        assert pending.lhs == normalized_lhs
+        assert pending.rhs == normalized_rhs
+    finally:
+        Instruction_ANY._inertia_pending_condition_sources_by_addr = original_pending
+
+
 def test_collect_typed_conditions_materializes_pending_fallthrough_jcc():
     from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
 
@@ -174,6 +730,9 @@ def test_collect_typed_conditions_materializes_pending_fallthrough_jcc():
 
     def _lift_block(block_addr: int, **_kwargs):
         decoded_addrs.append(block_addr)
+        if block_addr == 0x1153:
+            Instruction_ANY._inertia_module_condition_cache[0x1153] = [first_condition]
+            Instruction_ANY._inertia_pending_condition_sources_by_addr[0x1158] = source
         return SimpleNamespace(capstone=SimpleNamespace(insns=(SimpleNamespace(mnemonic="jle"),)))
 
     Instruction_ANY._inertia_module_condition_cache = {0x1153: [first_condition]}
@@ -191,7 +750,7 @@ def test_collect_typed_conditions_materializes_pending_fallthrough_jcc():
         Instruction_ANY._inertia_module_condition_cache = original_cache
         Instruction_ANY._inertia_pending_condition_sources_by_addr = original_pending
 
-    assert decoded_addrs == [0x1158]
+    assert decoded_addrs == [0x1153, 0x1158, 0x1158]
     assert [(cond.src_insn, cond.block_addr, cond.producer_insn, cond.op) for cond in conditions] == [
         (0x1153, 0x1153, 0x114E, "ne"),
         (0x1158, 0x1158, 0x1153, "sle"),
@@ -210,6 +769,7 @@ def test_transfer_records_pending_fallthrough_jmp_as_edge_evidence_not_guard_con
         lhs=lhs,
         rhs=rhs,
         fallthrough_from_jcc="jne",
+        semantics=("cmp_reg_imm16", "ax", 69),
         width_bits=16,
         addr=0x1153,
         block_addr=0x1153,
@@ -224,7 +784,10 @@ def test_transfer_records_pending_fallthrough_jmp_as_edge_evidence_not_guard_con
         source=("cmp", "jne"),
     )
 
-    def _lift_block(_block_addr: int, **_kwargs):
+    def _lift_block(block_addr: int, **_kwargs):
+        if block_addr == 0x1153:
+            Instruction_ANY._inertia_module_condition_cache[0x1153] = [first_condition]
+            Instruction_ANY._inertia_pending_condition_sources_by_addr[0x1158] = source
         operand = SimpleNamespace(type=2, imm=0x109C)
         insn = SimpleNamespace(mnemonic="jmp", operands=(operand,))
         return SimpleNamespace(capstone=SimpleNamespace(insns=(insn,)))
@@ -258,4 +821,85 @@ def test_transfer_records_pending_fallthrough_jmp_as_edge_evidence_not_guard_con
         "jne",
         0x1153,
     )
+    assert edge.producer_semantics == ("cmp_reg_imm16", "ax", 69)
     assert (edge.condition.src_insn, edge.condition.block_addr, edge.condition.op) == (0x1158, 0x1158, "eq")
+
+
+def test_transfer_pending_fallthrough_jmp_preserves_normalized_edge_condition():
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_cache = getattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    original_pending = dict(getattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {}))
+    raw_lhs = IRValue(MemSpace.REG, name="ax", size=2)
+    raw_rhs = IRValue(MemSpace.CONST, const=4, size=2)
+    normalized_lhs = IRValue(MemSpace.REG, name="ax", size=2)
+    normalized_rhs = IRValue(MemSpace.CONST, const=66, size=2)
+    source = ConditionSource(
+        kind="cmp",
+        lhs=raw_lhs,
+        rhs=raw_rhs,
+        normalized_lhs=normalized_lhs,
+        normalized_rhs=normalized_rhs,
+        fallthrough_from_jcc="jne",
+        semantics=("sub_reg_imm16", "ax", 4),
+        width_bits=16,
+        addr=0x1177,
+        block_addr=0x1177,
+    )
+
+    def _lift_block(_block_addr: int, **_kwargs):
+        operand = SimpleNamespace(type=2, imm=0x109C)
+        insn = SimpleNamespace(mnemonic="jmp", operands=(operand,))
+        return SimpleNamespace(capstone=SimpleNamespace(insns=(insn,)))
+
+    Instruction_ANY._inertia_module_condition_cache = {0x117C: []}
+    Instruction_ANY._inertia_pending_condition_sources_by_addr = {0x117C: source}
+    project = SimpleNamespace(
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: SimpleNamespace(block_addrs_set={0x117C}))
+        ),
+        factory=SimpleNamespace(block=_lift_block),
+    )
+    codegen = SimpleNamespace()
+
+    try:
+        transferred = transfer_typed_conditions_to_codegen_8616(project, 0x1100, codegen)
+    finally:
+        Instruction_ANY._inertia_module_condition_cache = original_cache
+        Instruction_ANY._inertia_pending_condition_sources_by_addr = original_pending
+
+    assert transferred == 0
+    [edge] = codegen._inertia_condition_edge_evidence
+    assert edge.condition.lhs == normalized_lhs
+    assert edge.condition.rhs == normalized_rhs
+    assert edge.producer_semantics == (
+        "normalized_cmp_reg_imm16",
+        "ax",
+        66,
+        ("sub_reg_imm16", "ax", 4),
+    )
+
+
+def test_transfer_preserves_existing_edge_evidence_when_later_collection_is_empty():
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_cache = getattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    original_pending = dict(getattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {}))
+    edge = object()
+    project = SimpleNamespace(
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: SimpleNamespace(block_addrs_set={0x1153}))
+        ),
+        factory=SimpleNamespace(block=lambda *_args, **_kwargs: None),
+    )
+    codegen = SimpleNamespace(_inertia_condition_edge_evidence=(edge,))
+
+    try:
+        Instruction_ANY._inertia_module_condition_cache = {0x1153: []}
+        Instruction_ANY._inertia_pending_condition_sources_by_addr = {}
+        transfer_typed_conditions_to_codegen_8616(project, 0x1100, codegen)
+    finally:
+        Instruction_ANY._inertia_module_condition_cache = original_cache
+        Instruction_ANY._inertia_pending_condition_sources_by_addr = original_pending
+
+    assert codegen._inertia_condition_edge_evidence == [edge]

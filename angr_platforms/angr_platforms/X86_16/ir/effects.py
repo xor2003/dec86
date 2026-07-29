@@ -1,8 +1,14 @@
+"""Typed memory, register, and flag effect records.
+
+Layer: IR.
+Responsibility: owns typed Value, Address, Condition, instruction facts, and lossless
+normalization.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
 
-# Layer: IR
-# Responsibility: typed memory and register effect records (LOAD, STORE, REG_WRITE).
-# Forbidden: semantic recovery ownership, text-pattern semantics, postprocess cleanup.
 from dataclasses import dataclass
 from enum import Enum
 
@@ -38,6 +44,7 @@ class LoadEffect:
     addr: int | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this typed load effect for diagnostics and artifacts."""
         return {
             "kind": "load",
             "address": self.address.to_dict(),
@@ -57,6 +64,7 @@ class StoreEffect:
     addr: int | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this typed store effect for diagnostics and artifacts."""
         return {
             "kind": "store",
             "address": self.address.to_dict(),
@@ -76,6 +84,7 @@ class RegisterWriteEffect:
     addr: int | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this typed register-write effect for diagnostics and artifacts."""
         return {
             "kind": "reg_write",
             "register": self.register,
@@ -95,6 +104,7 @@ class FlagWriteEffect:
     addr: int | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this typed flag-write effect for diagnostics and artifacts."""
         return {
             "kind": "flag_write",
             "flag": self.flag,

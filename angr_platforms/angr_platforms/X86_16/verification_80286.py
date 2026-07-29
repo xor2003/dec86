@@ -1,12 +1,19 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: run 80286 instruction verification cases and report mismatches.
+Forbidden: using verification fixtures as decompiler semantic shortcuts or corpus-specific fixes.
+"""
+
 from __future__ import annotations
 
+import builtins
 import gzip
 import importlib.util
 import json
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import angr
 from angr import options as o
@@ -14,15 +21,36 @@ from capstone.x86_const import X86_OP_MEM
 
 from .arch_86_16 import Arch86_16
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_SUITE_DIR = REPO_ROOT / "borrow" / "80286" / "v1_real_mode"
-DEFAULT_REVOCATION_LIST = REPO_ROOT / "borrow" / "80286" / "revocation_list.txt"
-DEFAULT_MOO_PARSER = REPO_ROOT / "borrow" / "80286" / "tools" / "moo2json.py"
-MAX_INSN_BYTES = 15
-REG_ORDER = ("ax", "bx", "cx", "dx", "cs", "ss", "ds", "es", "sp", "bp", "si", "di", "ip", "flags")
-STRING_OPCODES = {0x6C, 0x6D, 0x6E, 0x6F, 0xA4, 0xA5, 0xA6, 0xA7, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF}
-PREFIX_BYTES = {0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65, 0x66, 0x67, 0xF0, 0xF2, 0xF3}
-REAL_MODE_FLAGS_MASK = 0x0FD7
+_AngrState = Any
+
+__all__ = [
+    "CaseMismatch",
+    "CaseResult",
+    "DEFAULT_MOO_PARSER",
+    "DEFAULT_REVOCATION_LIST",
+    "DEFAULT_SUITE_DIR",
+    "REPO_ROOT",
+    "case_linear_ip",
+    "discover_moo_files",
+    "load_moo_cases",
+    "load_revocation_hashes",
+    "opcode_name_for_path",
+    "real_mode_linear",
+    "summarize_results",
+    "summary_to_json",
+    "verify_case",
+    "verify_moo_file",
+]
+
+REPO_ROOT: Path = Path(__file__).resolve().parents[3]
+DEFAULT_SUITE_DIR: Path = REPO_ROOT / "borrow" / "80286" / "v1_real_mode"
+DEFAULT_REVOCATION_LIST: Path = REPO_ROOT / "borrow" / "80286" / "revocation_list.txt"
+DEFAULT_MOO_PARSER: Path = REPO_ROOT / "borrow" / "80286" / "tools" / "moo2json.py"
+MAX_INSN_BYTES: int = 15
+REG_ORDER: tuple[str, ...] = ("ax", "bx", "cx", "dx", "cs", "ss", "ds", "es", "sp", "bp", "si", "di", "ip", "flags")
+STRING_OPCODES: set[int] = {0x6C, 0x6D, 0x6E, 0x6F, 0xA4, 0xA5, 0xA6, 0xA7, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF}
+PREFIX_BYTES: set[int] = {0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65, 0x66, 0x67, 0xF0, 0xF2, 0xF3}
+REAL_MODE_FLAGS_MASK: int = 0x0FD7
 FLAGS_MASKS: dict[str, int] = {
     "D4": 0x04C4,
     "D5": 0x04C4,
@@ -44,6 +72,8 @@ FLAGS_MASKS: dict[str, int] = {
 
 @dataclass
 class CaseMismatch:
+    """Single observed mismatch between a MOO case expectation and angr execution."""
+
     kind: str
     name: str
     expected: int
@@ -53,6 +83,8 @@ class CaseMismatch:
 
 @dataclass
 class CaseResult:
+    """Verification result for one 80286 MOO case."""
+
     opcode: str
     idx: int
     name: str
@@ -63,7 +95,32 @@ class CaseResult:
     mismatches: list[CaseMismatch] = field(default_factory=list)
 
 
-def _load_moo_parser():
+def _dynamic_verifier_getattr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
+    """Read an attribute across the dynamic angr register/history verifier boundary."""
+    return builtins.getattr(obj, name, default)
+
+
+def _dynamic_verifier_setattr_8616(obj: object, name: str, value: object) -> None:
+    """Write an attribute across the dynamic angr register verifier boundary."""
+    builtins.setattr(obj, name, value)
+
+
+def _state_reg_expr_8616(state: _AngrState, reg: str) -> Any:  # noqa: ANN401
+    """Return an angr register expression by dynamic register name."""
+    return _dynamic_verifier_getattr_8616(state.regs, reg)
+
+
+def _state_reg_set_8616(state: _AngrState, reg: str, value: object) -> None:
+    """Assign an angr register by dynamic register name."""
+    _dynamic_verifier_setattr_8616(state.regs, reg, value)
+
+
+def _solver_eval_int_8616(state: _AngrState, expr: object) -> int:
+    """Evaluate a concrete angr expression as an integer for verifier comparisons."""
+    return int(state.solver.eval(cast(Any, expr)))
+
+
+def _load_moo_parser() -> Any:  # noqa: ANN401
     spec = importlib.util.spec_from_file_location("moo2json_local", DEFAULT_MOO_PARSER)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load MOO parser from {DEFAULT_MOO_PARSER}")
@@ -73,9 +130,10 @@ def _load_moo_parser():
 
 
 def load_revocation_hashes(path: Path = DEFAULT_REVOCATION_LIST) -> set[str]:
+    """Load lower-cased revoked MOO case hashes from a text file."""
     if not path.exists():
         return set()
-    hashes = set()
+    hashes: set[str] = set()
     for line in path.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -85,21 +143,25 @@ def load_revocation_hashes(path: Path = DEFAULT_REVOCATION_LIST) -> set[str]:
 
 
 def load_moo_cases(path: Path) -> tuple[str, list[dict[str, Any]]]:
+    """Parse one MOO or gzipped MOO file into CPU name and case dictionaries."""
     parser = _load_moo_parser()
     with gzip.open(path, "rb") if path.suffix == ".gz" else path.open("rb") as f:
         return parser.parse_moo_bytes(f.read())
 
 
 def case_linear_ip(case: dict[str, Any]) -> int:
+    """Return the real-mode linear address for a case's initial CS:IP."""
     regs = case["initial"]["regs"]
     return ((regs["cs"] & 0xFFFF) << 4) + (regs["ip"] & 0xFFFF)
 
 
 def real_mode_linear(cs: int, ip: int) -> int:
+    """Return the 20-bit real-mode linear address for CS:IP."""
     return (((cs & 0xFFFF) << 4) + (ip & 0xFFFF)) & 0xFFFFFF
 
 
 def opcode_name_for_path(path: Path) -> str:
+    """Return the opcode stem represented by a MOO fixture path."""
     name = path.name
     if name.endswith(".MOO.gz"):
         return name[:-7]
@@ -143,13 +205,13 @@ def _instruction_bytes(case: dict[str, Any]) -> bytes:
     return bytes(insns[0].bytes)
 
 
-def _should_retry_with_relocated_ip(case: dict[str, Any], state) -> bool:
+def _should_retry_with_relocated_ip(case: dict[str, Any], state: _AngrState) -> bool:
     regs = case["initial"]["regs"]
     if (regs["ip"] & 0xFFFF) >= 0x2000:
         return False
     if state.addr != (regs["ip"] & 0xFFFF):
         return False
-    if getattr(state.history, "bbl_addrs", None):
+    if _dynamic_verifier_getattr_8616(state.history, "bbl_addrs", None):
         if list(state.history.bbl_addrs):
             return False
     try:
@@ -200,7 +262,7 @@ def _should_retry_with_relocated_ip(case: dict[str, Any], state) -> bool:
     }
 
 
-def _first_insn(case: dict[str, Any], insn_bytes: bytes):
+def _first_insn(case: dict[str, Any], insn_bytes: bytes) -> Any:  # noqa: ANN401
     arch = Arch86_16()
     arch.capstone.detail = True
     insns = list(arch.capstone.disasm(insn_bytes, case_linear_ip(case), 1))
@@ -209,14 +271,14 @@ def _first_insn(case: dict[str, Any], insn_bytes: bytes):
     return insns[0]
 
 
-def _initial_state(project: angr.Project, case: dict[str, Any]):
+def _initial_state(project: angr.Project, case: dict[str, Any]) -> Any:  # noqa: ANN401
     regs = case["initial"]["regs"]
     state = project.factory.blank_state(
         addr=regs["ip"] & 0xFFFF,
         add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS},
     )
     for reg, value in regs.items():
-        setattr(state.regs, reg, value)
+        _state_reg_set_8616(state, reg, value)
     for addr, byte in case["initial"].get("ram", []):
         state.memory.store(addr, bytes([byte]))
     return state
@@ -238,15 +300,15 @@ def _mem_operand_offset_ffff(case: dict[str, Any], insn_bytes: bytes) -> bool:
     return False
 
 
-def _concrete_byte(state, addr: int) -> int:
-    return state.solver.eval(state.memory.load(addr, 1))
+def _concrete_byte(state: _AngrState, addr: int) -> int:
+    return _solver_eval_int_8616(state, state.memory.load(addr, 1))
 
 
-def _concrete_word(state, addr: int) -> int:
+def _concrete_word(state: _AngrState, addr: int) -> int:
     return _concrete_byte(state, addr) | (_concrete_byte(state, addr + 1) << 8)
 
 
-def _step_with_bytes(project: angr.Project, state, insn_bytes: bytes):
+def _step_with_bytes(project: angr.Project, state: _AngrState, insn_bytes: bytes) -> Any:  # noqa: ANN401
     simgr = project.factory.simgr(state)
     simgr.step(num_inst=1, insn_bytes=insn_bytes)
     if simgr.errored:
@@ -259,8 +321,8 @@ def _step_with_bytes(project: angr.Project, state, insn_bytes: bytes):
 
 
 def _step_with_lock_retry(
-    project: angr.Project, state, insn_bytes: bytes, *, advance_ip_for_stripped_lock: bool = True
-):
+    project: angr.Project, state: _AngrState, insn_bytes: bytes, *, advance_ip_for_stripped_lock: bool = True
+) -> Any:  # noqa: ANN401
     try:
         return _step_with_bytes(project, state, insn_bytes)
     except Exception as ex:  # pylint:disable=broad-except
@@ -270,29 +332,29 @@ def _step_with_lock_retry(
         original_addr = state.addr
         stepped = _step_with_bytes(project, state, stripped)
         if advance_ip_for_stripped_lock or stepped.addr != original_addr:
-            stepped.regs.ip = (stepped.solver.eval(stepped.regs.ip) + 1) & 0xFFFF
+            stepped.regs.ip = (_solver_eval_int_8616(stepped, stepped.regs.ip) + 1) & 0xFFFF
         return stepped
 
 
-def _push16_concrete(state, value: int):
-    sp = (state.solver.eval(state.regs.sp) - 2) & 0xFFFF
+def _push16_concrete(state: _AngrState, value: int) -> None:
+    sp = (_solver_eval_int_8616(state, state.regs.sp) - 2) & 0xFFFF
     state.regs.sp = sp
-    ss = state.solver.eval(state.regs.ss) & 0xFFFF
+    ss = _solver_eval_int_8616(state, state.regs.ss) & 0xFFFF
     state.memory.store(real_mode_linear(ss, sp), value.to_bytes(2, "little"))
 
 
-def _pop16_concrete(state) -> int:
-    sp = state.solver.eval(state.regs.sp) & 0xFFFF
-    value = _concrete_word(state, real_mode_linear(state.solver.eval(state.regs.ss) & 0xFFFF, sp))
+def _pop16_concrete(state: _AngrState) -> int:
+    sp = _solver_eval_int_8616(state, state.regs.sp) & 0xFFFF
+    value = _concrete_word(state, real_mode_linear(_solver_eval_int_8616(state, state.regs.ss) & 0xFFFF, sp))
     state.regs.sp = (sp + 2) & 0xFFFF
     return value
 
 
-def _simulate_documented_exception(state, case: dict[str, Any]) -> None:
+def _simulate_documented_exception(state: _AngrState, case: dict[str, Any]) -> None:
     exc = case["exception"]
-    current_flags = state.solver.eval(state.regs.flags) & 0xFFFF
-    current_cs = state.solver.eval(state.regs.cs) & 0xFFFF
-    current_ip = state.solver.eval(state.regs.ip) & 0xFFFF
+    current_flags = _solver_eval_int_8616(state, state.regs.flags) & 0xFFFF
+    current_cs = _solver_eval_int_8616(state, state.regs.cs) & 0xFFFF
+    current_ip = _solver_eval_int_8616(state, state.regs.ip) & 0xFFFF
     state.regs.flags = current_flags & 0xFCFF  # faults clear TF/IF
     _push16_concrete(state, current_flags)
     _push16_concrete(state, current_cs)
@@ -312,15 +374,20 @@ def _mem_operand_linear(case: dict[str, Any], insn_bytes: bytes) -> int | None:
         if op.type != X86_OP_MEM:
             continue
         offset = op.mem.disp
-        base_name = insn.reg_name(op.mem.base).lower() if op.mem.base else None
-        index_name = insn.reg_name(op.mem.index).lower() if op.mem.index else None
+        base_reg_name = insn.reg_name(op.mem.base) if op.mem.base else None
+        index_reg_name = insn.reg_name(op.mem.index) if op.mem.index else None
+        base_name = base_reg_name.lower() if base_reg_name is not None else None
+        index_name = index_reg_name.lower() if index_reg_name is not None else None
         if base_name:
             offset += regs.get(base_name, 0)
         if index_name:
             offset += regs.get(index_name, 0)
         offset &= 0xFFFF
         if op.mem.segment:
-            seg_name = insn.reg_name(op.mem.segment).lower()
+            segment_name = insn.reg_name(op.mem.segment)
+            if segment_name is None:
+                return None
+            seg_name = segment_name.lower()
         elif base_name in {"bp", "sp"}:
             seg_name = "ss"
         else:
@@ -329,8 +396,8 @@ def _mem_operand_linear(case: dict[str, Any], insn_bytes: bytes) -> int | None:
     return None
 
 
-def _simulate_manual_control_flow(case: dict[str, Any], state, insn_bytes: bytes) -> bool:
-    def _impl():
+def _simulate_manual_control_flow(case: dict[str, Any], state: _AngrState, insn_bytes: bytes) -> bool:
+    def _impl() -> bool:
         idx = 0
         while idx < len(insn_bytes) and insn_bytes[idx] in PREFIX_BYTES:
             idx += 1
@@ -443,7 +510,7 @@ def _simulate_manual_control_flow(case: dict[str, Any], state, insn_bytes: bytes
     return _impl()
 
 
-def _repeated_string_iteration_limit(state, insn_bytes: bytes) -> int | None:
+def _repeated_string_iteration_limit(state: _AngrState, insn_bytes: bytes) -> int | None:
     idx = 0
     saw_repeat = False
     while idx < len(insn_bytes) and insn_bytes[idx] in PREFIX_BYTES:
@@ -452,7 +519,7 @@ def _repeated_string_iteration_limit(state, insn_bytes: bytes) -> int | None:
         idx += 1
     if not saw_repeat or idx >= len(insn_bytes) or insn_bytes[idx] not in STRING_OPCODES:
         return None
-    return state.solver.eval(state.regs.cx)
+    return _solver_eval_int_8616(state, state.regs.cx)
 
 
 def _repeat_prefix_and_opcode(insn_bytes: bytes) -> tuple[int, int] | None:
@@ -476,29 +543,32 @@ def _prefixed_opcode(insn_bytes: bytes) -> int | None:
     return insn_bytes[idx]
 
 
-def _repeat_should_continue(state, insn_bytes: bytes) -> bool:
+def _repeat_should_continue(state: _AngrState, insn_bytes: bytes) -> bool:
     repeat_meta = _repeat_prefix_and_opcode(insn_bytes)
     if repeat_meta is None:
         return False
     repeat_prefix, opcode = repeat_meta
-    cx = state.solver.eval(state.regs.cx) & 0xFFFF
+    cx = _solver_eval_int_8616(state, state.regs.cx) & 0xFFFF
     if cx == 0:
         return False
     if opcode not in {0xA6, 0xA7, 0xAE, 0xAF}:
         return True
-    zf = (state.solver.eval(state.regs.flags) >> 6) & 1
+    zf = (_solver_eval_int_8616(state, state.regs.flags) >> 6) & 1
     if repeat_prefix == 0xF3:
         return zf == 1
     return zf == 0
 
 
-def _faulting_word_string_delta(state) -> int:
-    flags = state.solver.eval(state.regs.flags) & 0xFFFF
+def _faulting_word_string_delta(state: _AngrState) -> int:
+    flags = _solver_eval_int_8616(state, state.regs.flags) & 0xFFFF
     return -2 if ((flags >> 10) & 1) else 2
 
 
-def _simulate_faulting_word_string_case(project: angr.Project, state, case: dict[str, Any], insn_bytes: bytes):
-    def _impl():
+def _simulate_faulting_word_string_case(
+    project: angr.Project, state: _AngrState, case: dict[str, Any], insn_bytes: bytes
+) -> Any | None:  # noqa: ANN401
+    def _impl() -> Any | None:  # noqa: ANN401
+        nonlocal state
         exc = case.get("exception")
         if exc is None or exc.get("number") != 13:
             return None
@@ -511,15 +581,15 @@ def _simulate_faulting_word_string_case(project: angr.Project, state, case: dict
         index_reg = "si" if opcode == 0xAD else "di"
 
         while True:
-            offset = state.solver.eval(getattr(state.regs, index_reg)) & 0xFFFF
+            offset = _solver_eval_int_8616(state, _state_reg_expr_8616(state, index_reg)) & 0xFFFF
             if offset == 0xFFFF:
                 if repeat_limit is not None:
-                    cx = state.solver.eval(state.regs.cx) & 0xFFFF
+                    cx = _solver_eval_int_8616(state, state.regs.cx) & 0xFFFF
                     if cx == 0:
-                        state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
+                        state.regs.ip = (_solver_eval_int_8616(state, state.regs.ip) + len(insn_bytes)) & 0xFFFF
                         return state
                     state.regs.cx = (cx - 1) & 0xFFFF
-                setattr(state.regs, index_reg, (offset + _faulting_word_string_delta(state)) & 0xFFFF)
+                _state_reg_set_8616(state, index_reg, (offset + _faulting_word_string_delta(state)) & 0xFFFF)
                 _simulate_documented_exception(state, case)
                 return state
 
@@ -548,9 +618,9 @@ def _case_flags_mask(opcode: str, case: dict[str, Any]) -> int | None:
     return mask
 
 
-def _current_fetch_byte(state) -> int:
-    cs = state.solver.eval(state.regs.cs)
-    ip = state.solver.eval(state.regs.ip)
+def _current_fetch_byte(state: _AngrState) -> int:
+    cs = _solver_eval_int_8616(state, state.regs.cs)
+    ip = _solver_eval_int_8616(state, state.regs.ip)
     return _concrete_byte(state, real_mode_linear(cs, ip))
 
 
@@ -560,7 +630,7 @@ def _expected_reg(case: dict[str, Any], reg: str) -> int:
     return final_regs.get(reg, initial_regs[reg])
 
 
-def _maybe_execute_terminating_halt(project: angr.Project, state, case: dict[str, Any]):
+def _maybe_execute_terminating_halt(project: angr.Project, state: _AngrState, case: dict[str, Any]) -> tuple[_AngrState, bool]:
     if case["bytes"][:1] == [0xF4]:
         return state, False
     expected_cs = _expected_reg(case, "cs")
@@ -569,8 +639,8 @@ def _maybe_execute_terminating_halt(project: angr.Project, state, case: dict[str
     halt_linear = real_mode_linear(expected_cs, halt_ip)
     state.memory.store(halt_linear, b"\xf4")
 
-    current_cs = state.solver.eval(state.regs.cs)
-    current_ip = state.solver.eval(state.regs.ip)
+    current_cs = _solver_eval_int_8616(state, state.regs.cs)
+    current_ip = _solver_eval_int_8616(state, state.regs.ip)
     if current_cs == expected_cs and current_ip == halt_ip:
         return _step_with_bytes(project, state, b"\xf4"), True
 
@@ -580,8 +650,8 @@ def _maybe_execute_terminating_halt(project: angr.Project, state, case: dict[str
     return state, False
 
 
-def _compare_case(state, case: dict[str, Any], *, opcode: str, halted: bool) -> list[CaseMismatch]:
-    def _impl():
+def _compare_case(state: _AngrState, case: dict[str, Any], *, opcode: str, halted: bool) -> list[CaseMismatch]:
+    def _impl() -> list[CaseMismatch]:
         mismatches: list[CaseMismatch] = []
         initial_regs = case["initial"].get("regs", {})
         final_regs = case["final"].get("regs", {})
@@ -593,7 +663,7 @@ def _compare_case(state, case: dict[str, Any], *, opcode: str, halted: bool) -> 
             expected = final_regs.get(reg, initial_regs[reg])
             if reg == "ip" and not executed_hlt and reg in final_regs:
                 expected = (expected - 1) & 0xFFFF
-            actual = state.solver.eval(getattr(state.regs, reg))
+            actual = _solver_eval_int_8616(state, _state_reg_expr_8616(state, reg))
             if reg == "flags":
                 mask = _case_flags_mask(opcode, case)
                 if case.get("exception", {}).get("number") == 0:
@@ -630,7 +700,9 @@ def verify_case(
     execute_halt: bool = True,
     allow_ip_relocation_retry: bool = True,
 ) -> CaseResult:
-    def _impl():
+    """Verify a single parsed 80286 MOO case against the angr 16-bit execution model."""
+
+    def _impl() -> CaseResult:
         local_project = _make_project() if project is None else project
         result = CaseResult(opcode=opcode, idx=case["idx"], name=case["name"], hash=case.get("hash"), passed=False)
 
@@ -648,19 +720,16 @@ def verify_case(
                 raise
             start_addr = state.addr
             repeat_limit = _repeated_string_iteration_limit(state, insn_bytes)
-            handled_exception = False
             if _simulate_manual_control_flow(case, state, insn_bytes):
-                handled_exception = True
+                pass
             elif exc is not None:
                 faulted_string = _simulate_faulting_word_string_case(local_project, state, case, insn_bytes)
                 if faulted_string is not None:
                     state = faulted_string
-                    handled_exception = True
                 else:
                     _simulate_documented_exception(state, case)
-                    handled_exception = True
             elif repeat_limit == 0:
-                state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
+                state.regs.ip = (_solver_eval_int_8616(state, state.regs.ip) + len(insn_bytes)) & 0xFFFF
             else:
                 state = _step_with_lock_retry(
                     local_project,
@@ -694,7 +763,7 @@ def verify_case(
                 if state.addr == start_addr and (
                     iterations >= max_iterations or not _repeat_should_continue(state, insn_bytes)
                 ):
-                    state.regs.ip = (state.solver.eval(state.regs.ip) + len(insn_bytes)) & 0xFFFF
+                    state.regs.ip = (_solver_eval_int_8616(state, state.regs.ip) + len(insn_bytes)) & 0xFFFF
             halted = False
             if execute_halt:
                 state, halted = _maybe_execute_terminating_halt(local_project, state, case)
@@ -718,7 +787,9 @@ def verify_moo_file(
     case_start: int = 0,
     case_stop: int | None = None,
 ) -> dict[str, Any]:
-    def _impl():
+    """Verify selected cases from one MOO file and return a JSON-friendly summary."""
+
+    def _impl() -> dict[str, Any]:
         cpu_name, cases = load_moo_cases(path)
         opcode = opcode_name_for_path(path)
         active_revoked_hashes = revoked_hashes or set()
@@ -768,6 +839,7 @@ def verify_moo_file(
 
 
 def discover_moo_files(root: Path, opcodes: list[str] | None = None) -> list[Path]:
+    """Discover MOO fixtures under a suite root, optionally filtered by opcode stem."""
     if root.is_file():
         return [root]
     selected = {op.lower() for op in opcodes} if opcodes else None
@@ -778,6 +850,7 @@ def discover_moo_files(root: Path, opcodes: list[str] | None = None) -> list[Pat
 
 
 def summarize_results(file_summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate per-file verifier summaries into a suite-level summary."""
     return {
         "suite": "80286_real_mode",
         "files": file_summaries,
@@ -790,4 +863,5 @@ def summarize_results(file_summaries: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def summary_to_json(summary: dict[str, Any]) -> str:
+    """Render a verifier summary as stable pretty-printed JSON."""
     return json.dumps(summary, indent=2, sort_keys=False)

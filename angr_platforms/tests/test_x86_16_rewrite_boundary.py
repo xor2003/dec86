@@ -6,6 +6,8 @@ AGENTS rule: rewrite must not hide bad alias/type/condition recovery.
 If invariants fail, rewrite is blocked and honest partial output is emitted.
 """
 
+from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.alias.alias_model_impl import AliasStorageFacts, _StackSlotIdentity, _StorageDomainSignature
 from angr_platforms.X86_16.pipeline.invariants import (
     InvariantCheck,
     InvariantReport,
@@ -165,6 +167,41 @@ class TestValidateBeforeRewrite:
         # The only potential failure is stack_slots_materialized (which may be SKIPPED)
         stack_fails = [c for c in failed if c.name == "stack_slots_materialized"]
         assert len(failed) == len(stack_fails), f"Unexpected failures: {failed}"
+
+    def test_stack_slot_materialized_accepts_owned_stack_identity(self):
+        stack_var = SimStackVariable(-2, 2, base="bp")
+        cfunc = type("MockFunc", (), {"addr": 0x700, "name": "test_func", "variables_in_use": {stack_var: object()}})()
+        codegen = self._make_mock_codegen(
+            cfunc=cfunc,
+            _inertia_validation_passed=True,
+            _inertia_semantic_alias_facts=[
+                AliasStorageFacts(
+                    domain=_StorageDomainSignature("stack", 2),
+                    identity=("stack", _StackSlotIdentity("bp", -2, 2)),
+                )
+            ],
+        )
+
+        report = validate_before_rewrite_8616(codegen, c_text="void test_func(void) {}")
+
+        stack_checks = [c for c in report.checks if c.name == "stack_slots_materialized"]
+        assert stack_checks[-1].status == InvariantStatus.PASSED
+
+    def test_stack_slot_materialized_rejects_invalid_stack_identity_contract(self):
+        cfunc = type("MockFunc", (), {"addr": 0x700, "name": "test_func", "variables_in_use": {}})()
+        codegen = self._make_mock_codegen(
+            cfunc=cfunc,
+            _inertia_validation_passed=True,
+            _inertia_semantic_alias_facts=[
+                AliasStorageFacts(domain=_StorageDomainSignature("stack", 2), identity=("stack", object()))
+            ],
+        )
+
+        report = validate_before_rewrite_8616(codegen, c_text="void test_func(void) {}")
+
+        stack_checks = [c for c in report.checks if c.name == "stack_slots_materialized"]
+        assert stack_checks[-1].status == InvariantStatus.FAILED
+        assert "invalid contract type" in stack_checks[-1].evidence[0]
 
 
 class TestFormatInvariantReport:

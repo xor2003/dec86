@@ -1,7 +1,7 @@
-"""Confidence levels and assumption tracking for decompiler recovery.
+"""Layer: Recovery/reporting.
 
-Extends recovery_confidence.py with explicit confidence/assumption reporting
-infrastructure for structuring and type inference stages.
+Responsibility: attach confidence and assumption reporting metadata from already-collected recovery facts.
+Forbidden: creating proof, hiding assumptions, or changing recovered semantics.
 
 Confidence assignments:
 - HIGH: Strong evidence from multiple sources (e.g., proven types from alias model)
@@ -23,9 +23,10 @@ Output:
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional, cast
 
 from .codegen_metadata import get_codegen_sequence_attr, get_codegen_side_metadata
 
@@ -148,7 +149,6 @@ class FunctionConfidenceReport:
             return ConfidenceLevel.MEDIUM
 
         high = self.confidence_tracker.high_count()
-        medium = self.confidence_tracker.medium_count()
         low = self.confidence_tracker.low_count()
 
         high_ratio = high / total
@@ -264,12 +264,18 @@ class ScanConfidenceSummary:
         }
 
 
-def build_function_with_confidence_markers(cfunc, confidence_report: FunctionConfidenceReport, *, codegen=None) -> bool:
-    """Attach confidence markers to decompiled function.
+def build_function_with_confidence_markers(
+    cfunc: object | None,
+    confidence_report: FunctionConfidenceReport,
+    *,
+    codegen: object | None = None,
+) -> bool:
+    """Attach confidence markers across the dynamic third-party decompiler object boundary.
 
     Args:
         cfunc: Decompiled function (CFunction)
         confidence_report: Confidence report with markers and assumptions
+        codegen: Optional code generator that receives side metadata
 
     Returns:
         True if markers were successfully attached
@@ -282,44 +288,50 @@ def build_function_with_confidence_markers(cfunc, confidence_report: FunctionCon
         metadata = get_codegen_side_metadata(codegen)
         metadata["confidence_report"] = confidence_report
     try:
+        cfunc_dynamic = cast(Any, cfunc)
         cfunc_metadata = getattr(cfunc, "_recovery_metadata", None)
         if not isinstance(cfunc_metadata, dict):
             cfunc_metadata = {}
-            cfunc._recovery_metadata = cfunc_metadata
+            # Dynamic decompiler boundary: recovery metadata is optional on third-party CFunction objects.
+            typing.cast(typing.Any, cfunc)._recovery_metadata = cfunc_metadata
         cfunc_metadata["confidence_report"] = confidence_report
     except Exception:
         pass
 
     # Prepend comment header to function
-    if hasattr(cfunc, "decompile"):
-        original_decomp = cfunc.decompile()
+    if hasattr(cfunc_dynamic, "decompile"):
+        original_decomp = cfunc_dynamic.decompile()
         header = confidence_report.comment_header()
         if original_decomp:
-            cfunc._cached_decomp = header + "\n\n" + original_decomp
+            # Dynamic decompiler boundary: cached text is an optional CFunction diagnostic surface.
+            typing.cast(typing.Any, cfunc)._cached_decomp = header + "\n\n" + original_decomp
 
     return True
 
 
-def apply_x86_16_confidence_and_assumptions(codegen) -> bool:
-    def _impl():
-        """Decompiler pass: Attach confidence markers to all recovered functions.
+def apply_x86_16_confidence_and_assumptions(codegen: object) -> bool:
+    """Attach confidence metadata without marking structuring as changed."""
+
+    def _impl() -> bool:
+        """Attach confidence markers through the dynamic third-party angr codegen boundary.
 
         This pass:
         1. Collects confidence markers from type inference stages
         2. Aggregates assumptions from structuring/type analysis
         3. Attaches metadata to decompiled functions
-        4. Emits confidence hierarchy in function comment headers
+        4. Optionally caches confidence comment headers for report consumers
 
         Args:
             codegen: Decompiler code generator
 
         Returns:
-            True if pass succeeded
+            False because this reporting-only pass does not mutate recovered semantics
         """
         try:
             # For each function in the decompiler
-            if hasattr(codegen, "cfunc") and codegen.cfunc:
-                cfunc = codegen.cfunc
+            codegen_dynamic = cast(Any, codegen)
+            if hasattr(codegen_dynamic, "cfunc") and codegen_dynamic.cfunc:
+                cfunc = codegen_dynamic.cfunc
                 func_addr = getattr(cfunc, "addr", 0)
                 func_name = getattr(cfunc, "name", f"func_{hex(func_addr)}")
 
@@ -366,7 +378,8 @@ def apply_x86_16_confidence_and_assumptions(codegen) -> bool:
                     if seg_info and hasattr(seg_info, "associations"):
                         for assoc in seg_info.associations:
                             # Stable segment association = HIGH, over-associated = LOW
-                            seg_str = getattr(assoc, "segment_reg", "unknown").value
+                            segment_reg = getattr(assoc, "segment_reg", "unknown")
+                            seg_str = str(getattr(segment_reg, "value", segment_reg))
                             stability = getattr(assoc, "stability", 0.5)
                             if stability >= 0.8:
                                 confidence = ConfidenceLevel.HIGH
@@ -396,7 +409,7 @@ def apply_x86_16_confidence_and_assumptions(codegen) -> bool:
                 # Attach to function
                 build_function_with_confidence_markers(cfunc, report, codegen=codegen)
 
-            return True
+            return False
 
         except Exception:
             return False

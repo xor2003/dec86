@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Parallel COD-directory decompilation runner with resource and validation reporting.
+
+Layer: Tooling/gates.
+Responsibility: run bounded COD-directory decompilation batches with validation reporting.
+"""
 
 from __future__ import annotations
 
@@ -39,6 +44,32 @@ _SUCCESS_CACHE_SCHEMA = 1
 
 sys.path.insert(0, str(REPO_ROOT / "angr_platforms"))
 sys.path.insert(0, str(REPO_ROOT))
+
+_ARCHITECTURE_GUARD_RAN = False
+
+
+def _run_runtime_architecture_guard() -> int:
+    global _ARCHITECTURE_GUARD_RAN
+    if _ARCHITECTURE_GUARD_RAN:
+        return 0
+    from inertia_decompiler.architecture_runtime_guard import (
+        DecompilerArchitectureGuardError,
+        assert_decompiler_architecture_clean,
+    )
+
+    try:
+        assert_decompiler_architecture_clean()
+    except DecompilerArchitectureGuardError as ex:
+        print(str(ex), file=sys.stderr)
+        return 3
+    _ARCHITECTURE_GUARD_RAN = True
+    return 0
+
+
+if __name__ == "__main__":
+    _guard_exit = _run_runtime_architecture_guard()
+    if _guard_exit:
+        raise SystemExit(_guard_exit)
 
 try:
     import pyvex_compat
@@ -88,7 +119,11 @@ class _ThreadBoundTextIO(io.TextIOBase):
         return self._stream().write(data)
 
     def flush(self) -> None:
-        self._stream().flush()
+        """Flush the active thread-local stream when it is still open."""
+
+        stream = self._stream()
+        with contextlib.suppress(ValueError):
+            stream.flush()
 
     def isatty(self) -> bool:
         target = self._stream()
@@ -1117,7 +1152,13 @@ def _write_tail_validation_baseline(path: Path, baseline: dict[str, object]) -> 
 
 
 def main() -> int:
-    def _impl():
+    """Run COD-directory decompilation after the architecture guard passes."""
+
+    guard_exit = _run_runtime_architecture_guard()
+    if guard_exit:
+        return guard_exit
+
+    def _impl() -> int:
         parser = argparse.ArgumentParser(description="Decompile all .COD files into sibling .dec files.")
         parser.add_argument("cod_dir", type=Path, help="Root directory containing .COD files.")
         parser.add_argument(
@@ -1414,7 +1455,8 @@ def main() -> int:
         print(f"done in {elapsed:.1f}s; failures={failures}/{len(work_items)}")
         return 0 if failures == 0 else 1
 
-    if __name__ == "__main__":
-        raise SystemExit(main())
-
     return _impl()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

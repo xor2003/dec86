@@ -1,5 +1,9 @@
 """Typed indirect-site placeholder classification over CFG ownership artifacts.
 
+Layer: Structuring.
+Responsibility: classify conservative indirect-site placeholders from CFG ownership facts.
+Forbidden: inferring dispatch semantics, rewriting control flow, or repairing generated C.
+
 This keeps indirect-site reporting explicit and conservative. It does not infer
 dispatch semantics; it only marks graph shapes that deserve later classification.
 """
@@ -7,7 +11,6 @@ dispatch semantics; it only marks graph shapes that deserve later classification
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from .structuring_cfg_ownership import CFGOwnershipArtifact, build_cfg_ownership_artifact
 
@@ -51,7 +54,7 @@ class CFGIndirectSiteArtifact:
         }
 
 
-def build_cfg_indirect_site_artifact(codegen: Any) -> CFGIndirectSiteArtifact | None:
+def build_cfg_indirect_site_artifact(codegen: object) -> CFGIndirectSiteArtifact | None:
     """Build conservative indirect-site placeholders from CFG shape."""
     ownership = build_cfg_ownership_artifact(codegen)
     if ownership is None:

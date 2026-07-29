@@ -1,3 +1,9 @@
+"""Read source sidecars as optional labels and display-only evidence.
+
+Layer: CLI/fallback/reporting.
+Responsibility: read local source sidecars for display-only labels, never semantic recovery.
+"""
+
 from __future__ import annotations
 
 import re
@@ -54,7 +60,7 @@ def _looks_like_function_header(line: str, function_name: str) -> bool:
 
 
 def _extract_function_from_lines(lines: tuple[str, ...], function_name: str) -> str | None:
-    def _impl():
+    def _impl() -> str | None:
         start_idx = None
         open_idx = None
         for idx, raw in enumerate(lines):
@@ -155,6 +161,7 @@ def _collect_source_return_types_for_path(path: Path) -> dict[str, str]:
 
 
 def collect_local_source_sidecar_return_types(binary_path: Path | None) -> dict[str, str]:
+    """Collect display-only source return-type labels from local sidecars."""
     if binary_path is None:
         return {}
     merged: dict[str, str] = {}
@@ -165,6 +172,7 @@ def collect_local_source_sidecar_return_types(binary_path: Path | None) -> dict[
 
 
 def render_local_source_sidecar_function(binary_path: Path | None, function_name: str | None) -> str | None:
+    """Render a display-only local source function body when a sidecar exists."""
     if binary_path is None or not isinstance(function_name, str) or not function_name:
         return None
     source_name = function_name.lstrip("_")

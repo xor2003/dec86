@@ -1,9 +1,15 @@
+"""Layer: Recompilable output.
+
+Responsibility: summarize already-proven storage object artifacts for recompilation diagnostics.
+Forbidden: object-shape guessing, source-backed names, or semantic recovery.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Mapping, Protocol, TypeAlias, runtime_checkable
 
-from angr_platforms.X86_16.lowering.object_lowering import _build_stable_access_object_hints
+from angr_platforms.X86_16.lowering.object_lowering import BaseKey, _build_stable_access_object_hints
 from inertia_decompiler.cli_access_profiles import build_access_trait_evidence_profiles
 from inertia_decompiler.cli_storage_objects import (
     StorageObjectArtifact,
@@ -11,14 +17,28 @@ from inertia_decompiler.cli_storage_objects import (
 )
 
 __all__ = [
+    "AccessTraitCache",
     "RecompilableStorageObjectSummary",
+    "RecompilableStorageTraitSurface",
     "build_recompilable_storage_object_artifact",
     "summarize_recompilable_storage_object_artifact",
 ]
 
+AccessTraitTraits: TypeAlias = dict[str, dict[BaseKey, object]]
+AccessTraitCache: TypeAlias = Mapping[int | None, AccessTraitTraits]
 
-@dataclass(frozen=True)
+
+@runtime_checkable
+class RecompilableStorageTraitSurface(Protocol):
+    """Typed project surface that carries already-proven access trait evidence."""
+
+    _inertia_access_traits: AccessTraitCache
+
+
+@dataclass(frozen=True, slots=True)
 class RecompilableStorageObjectSummary:
+    """Counts and categories from recompilable storage object diagnostics."""
+
     record_count: int
     refusal_count: int
     object_kinds: tuple[str, ...]
@@ -26,12 +46,13 @@ class RecompilableStorageObjectSummary:
 
 
 def build_recompilable_storage_object_artifact(
-    project: Any,
+    project: object,
     function_addr: int | None,
 ) -> StorageObjectArtifact | None:
-    traits_cache = getattr(project, "_inertia_access_traits", None)
-    if not isinstance(traits_cache, dict):
+    """Build a storage-object artifact from a typed project access-trait surface."""
+    if not isinstance(project, RecompilableStorageTraitSurface):
         return None
+    traits_cache = project._inertia_access_traits
     traits = traits_cache.get(function_addr)
     if not isinstance(traits, dict):
         return None
@@ -48,6 +69,7 @@ def build_recompilable_storage_object_artifact(
 def summarize_recompilable_storage_object_artifact(
     artifact: StorageObjectArtifact | None,
 ) -> RecompilableStorageObjectSummary:
+    """Summarize accepted and refused recompilable storage object evidence."""
     if artifact is None:
         return RecompilableStorageObjectSummary(
             record_count=0,

@@ -1,22 +1,25 @@
+"""Layer: Rewrite/Postprocess cleanup.
+
+Responsibility: run cleanup optimization passes after semantics have been recovered.
+Consumes already-proven IR, alias, widening, typed, and structuring facts.
+Do not recover new semantics, storage identity, types, call signatures, control flow, or facts from rendered text, COD, source, or CLI/reporting evidence here.
+The codegen and C AST objects cross a dynamic third-party angr boundary; keep
+dynamic attribute access limited to that boundary and diagnostic counters.
+"""
+
 from __future__ import annotations
-
-"""Layer: Optimization (mid-level, pre-rewrite).
-
-Pass driver: runs optimization passes on structured codegen before postprocess.
-Inserted early in the postprocess stage, before rewrite passes.
-
-Forbidden: semantic recovery, alias decisions, type inference."""
 
 import os
 import sys
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable, cast
 
 from ...widening.widening_copyprop_8616 import _widening_copy_propagation_8616
 from ...widening.widening_memory_fold_8616 import _widening_store_to_load_forwarding_8616
 from .const_prop import _constant_propagation_8616
 from .dce import _dead_code_elimination_8616
 from .dead_setup import _prune_dead_setup_carriers_8616
+from .trivial_copy import prune_adjacent_temporary_copy_assignments_8616
 
 __all__ = [
     "OptimizationPassSpec",
@@ -35,11 +38,14 @@ __all__ = [
 from angr.analyses.decompiler.structured_codegen.c import CStatements as _CStatements
 
 if not hasattr(_CStatements, "__iter__"):
-    _CStatements.__iter__ = lambda self: iter(self.statements)
+    cast(Any, _CStatements).__iter__ = lambda self: iter(self.statements)
 
 
-def _normalize_cfunc_root_for_optimization_8616(codegen) -> None:
+def _normalize_cfunc_root_for_optimization_8616(codegen: object) -> None:
     """No-op: CStatements is now iterable via the module-level monkey-patch.
+
+    The codegen object crosses a dynamic third-party angr boundary, so cfunc and
+    statement-wrapper attributes are probed dynamically here.
 
     Previously this function replaced cfunc.statements (a CStatements wrapper)
     with a raw list, which broke c_repr_chunks() downstream.
@@ -56,6 +62,8 @@ def _normalize_cfunc_root_for_optimization_8616(codegen) -> None:
 
 @dataclass(frozen=True, slots=True)
 class OptimizationPassSpec:
+    """Declared cleanup optimization pass and human-readable ownership summary."""
+
     name: str
     func: Callable[..., bool]
     description: str
@@ -78,6 +86,11 @@ OPTIMIZATION_PASSES: tuple[OptimizationPassSpec, ...] = (
         "Forward store values to loads using alias domains (Widening)",
     ),
     OptimizationPassSpec(
+        "adjacent_temporary_copy_prune",
+        prune_adjacent_temporary_copy_assignments_8616,
+        "Collapse adjacent temporary copy carriers",
+    ),
+    OptimizationPassSpec(
         "dce",
         _dead_code_elimination_8616,
         "Eliminate dead assignments",
@@ -91,11 +104,16 @@ OPTIMIZATION_PASSES: tuple[OptimizationPassSpec, ...] = (
 
 
 def describe_x86_16_optimization_passes() -> tuple[tuple[str, str], ...]:
+    """Return the cleanup optimization inventory for tests and diagnostics."""
     return tuple((spec.name, spec.description) for spec in OPTIMIZATION_PASSES)
 
 
-def _run_optimization_passes_8616(codegen) -> bool:
+def _run_optimization_passes_8616(codegen: object) -> bool:
     """Run optimization passes on codegen.
+
+    The codegen object crosses a dynamic third-party angr boundary; this driver
+    only reads dynamic codegen shape and diagnostic counters after semantic
+    recovery has already completed.
 
     Returns True if any pass modified the codegen.
     """

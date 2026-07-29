@@ -1,43 +1,66 @@
+"""Layer: Helper boundary.
+
+Responsibility: summarize typed IR equivalence evidence for later type/object recovery.
+Forbidden: guessing objects or types from names, source text, or rendered C shape.
+"""
+
 from __future__ import annotations
 
 import logging
+import typing
 from dataclasses import dataclass, field
-from typing import Optional, Set
+from typing import Any, cast
 
-from .ir.core import IRAddress, IRCondition, MemSpace, SegmentOrigin
+from .ir.core import IRAddress, IRCondition, IRValue, MemSpace, SegmentOrigin
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-def _typed_ir_summary_from_codegen(codegen) -> dict[str, object]:
-    def _impl():
-        artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
+def _dynamic_codegen_attr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
+    """Dynamic angr/codegen compatibility boundary for optional typed-IR metadata."""
+    return getattr(obj, name, default)
+
+
+def _int_summary_value_8616(summary: dict[str, object], key: str) -> int:
+    """Read an integer summary counter from dynamic codegen metadata."""
+    value = summary.get(key, 0)
+    return int(value) if isinstance(value, int | str | float | bool) else 0
+
+
+def _dict_summary_value_8616(summary: dict[str, object], key: str) -> dict[str, object]:
+    """Read a dictionary summary value from dynamic codegen metadata."""
+    value = summary.get(key, {})
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _typed_ir_summary_from_codegen(codegen: object) -> dict[str, object]:
+    """Summarize typed-IR evidence already attached to a structured codegen."""
+
+    def _impl() -> dict[str, object]:
+        artifact = _dynamic_codegen_attr_8616(codegen, "_inertia_vex_ir_artifact", None)
         if artifact is None or not hasattr(artifact, "blocks"):
-            summary = getattr(codegen, "_inertia_vex_ir_summary", None)
+            summary = _dynamic_codegen_attr_8616(codegen, "_inertia_vex_ir_summary", None)
             return dict(summary) if isinstance(summary, dict) else {}
 
         provisional_addresses = 0
         multi_base_addresses = 0
         segment_origin_counts = {origin.value: 0 for origin in SegmentOrigin}
         condition_counts: dict[str, int] = {}
-        for block in tuple(getattr(artifact, "blocks", ()) or ()):
-            for instr in tuple(getattr(block, "instrs", ()) or ()):
-                for atom in tuple(getattr(instr, "args", ()) or ()):
+        for block in tuple(artifact.blocks or ()):
+            for instr in tuple(block.instrs or ()):
+                for atom in tuple(instr.args or ()):
                     if isinstance(atom, IRAddress):
-                        if (
-                            getattr(atom, "status", None) is not None
-                            and getattr(atom.status, "value", "") == "provisional"
-                        ):
+                        if atom.status.value == "provisional":
                             provisional_addresses += 1
-                        if len(getattr(atom, "base", ()) or ()) > 1:
+                        if len(atom.base or ()) > 1:
                             multi_base_addresses += 1
-                        origin = getattr(getattr(atom, "segment_origin", None), "value", "unknown")
+                        origin = atom.segment_origin.value
                         segment_origin_counts[origin] = segment_origin_counts.get(origin, 0) + 1
                     elif isinstance(atom, IRCondition):
-                        op = str(getattr(atom, "op", "unknown"))
+                        op = str(atom.op)
                         condition_counts[op] = condition_counts.get(op, 0) + 1
 
-        summary = getattr(codegen, "_inertia_vex_ir_summary", None)
+        summary = _dynamic_codegen_attr_8616(codegen, "_inertia_vex_ir_summary", None)
         base = dict(summary) if isinstance(summary, dict) else {}
         base["provisional_address_count"] = provisional_addresses
         base["multi_base_address_count"] = multi_base_addresses
@@ -51,42 +74,52 @@ def _typed_ir_summary_from_codegen(codegen) -> dict[str, object]:
 
 @dataclass(frozen=True)
 class ExpressionPattern:
+    """Normalized expression shape used by the equivalence-class builder."""
+
     pattern_type: str
-    base_expr: Optional[str]
-    offset: Optional[int]
-    stride: Optional[int]
+    base_expr: str | None
+    offset: int | None
+    stride: int | None
     width: int
 
     def __repr__(self) -> str:
+        """Render a compact deterministic debug representation."""
         if self.pattern_type == "pointer_add":
             return f"ptr({self.base_expr} + {self.offset} * {self.stride})"
-        elif self.pattern_type == "memory_load":
+        if self.pattern_type == "memory_load":
             return f"mem[{self.base_expr}]:{self.width}"
-        else:
-            return f"{self.pattern_type}:{self.width}"
+        return f"{self.pattern_type}:{self.width}"
 
 
 @dataclass
 class EquivalenceClass:
+    """Group of expressions proven equivalent by typed IR evidence."""
+
     class_id: int
-    expressions: Set[str] = field(default_factory=set)
-    type_constraints: Set[str] = field(default_factory=set)
+    expressions: set[str] = field(default_factory=set)
+    type_constraints: set[str] = field(default_factory=set)
     width: int = 0
 
     def add_expression(self, expr: str) -> None:
+        """Record an expression key in this class."""
         self.expressions.add(expr)
 
     def add_type_constraint(self, constraint: str) -> None:
+        """Record a type constraint proven for this class."""
         self.type_constraints.add(constraint)
 
     def merge(self, other: EquivalenceClass) -> None:
+        """Merge another class into this one."""
         self.expressions.update(other.expressions)
         self.type_constraints.update(other.type_constraints)
         self.width = max(self.width, other.width)
 
 
 class ExpressionNormalizer:
+    """Normalize expression text into simple typed-pattern evidence."""
+
     def normalize(self, expr: str) -> ExpressionPattern:
+        """Return a conservative variable-pattern fallback."""
         return ExpressionPattern(
             pattern_type="variable",
             base_expr=expr,
@@ -97,12 +130,16 @@ class ExpressionNormalizer:
 
 
 class EquivalenceClassBuilder:
+    """Build and merge deterministic expression equivalence classes."""
+
     def __init__(self) -> None:
+        """Initialize an empty equivalence-class builder."""
         self.next_class_id = 0
         self.expr_to_class: dict[str, int] = {}
         self.classes: dict[int, EquivalenceClass] = {}
 
     def build(self, expressions: list[str]) -> dict[int, EquivalenceClass]:
+        """Create one class per new expression key."""
         for expr in expressions:
             if expr not in self.expr_to_class:
                 class_id = self.next_class_id
@@ -113,6 +150,7 @@ class EquivalenceClassBuilder:
         return self.classes
 
     def merge_classes(self, expr1: str, expr2: str) -> None:
+        """Merge classes containing two expression keys when both exist."""
         if expr1 not in self.expr_to_class or expr2 not in self.expr_to_class:
             return
 
@@ -131,7 +169,10 @@ class EquivalenceClassBuilder:
 
 
 class TypeCollector:
+    """Attach simple type constraints to equivalence classes."""
+
     def collect(self, expr_classes: dict[int, EquivalenceClass]) -> None:
+        """Classify expression text into conservative type constraints."""
         for eq_class in expr_classes.values():
             for expr in eq_class.expressions:
                 if "_offset" in expr or "+" in expr:
@@ -140,30 +181,38 @@ class TypeCollector:
                     eq_class.add_type_constraint("integer")
 
 
-def _expr_key_for_value(value) -> str | None:
-    name = getattr(value, "name", None)
+def _expr_key_for_value(value: object) -> str | None:
+    """Return a deterministic key for typed IR values, refusing missing fields."""
+    if not isinstance(value, IRValue):
+        return None
+    name = value.name
     if name:
-        return f"value:{str(getattr(value, 'space', 'unknown')).lower()}:{name}"
-    const = getattr(value, "const", None)
+        space_value = value.space.value
+        if space_value is None:
+            return None
+        return f"value:memspace.{str(space_value).lower()}:{name}"
+    const = value.const
     if const is not None:
         return f"const:{int(const)}"
     return None
 
 
 def _expr_key_for_address(address: IRAddress) -> str | None:
-    base = tuple(getattr(address, "base", ()) or ())
+    base = tuple(address.base or ())
     if not base:
         return None
-    space = getattr(getattr(address, "space", None), "value", "unknown")
+    space = address.space.value
     return f"base:{space}:{'+'.join(base)}"
 
 
-def _typed_ir_equivalence_from_codegen(codegen) -> tuple[dict[int, EquivalenceClass], dict[str, str]]:
-    def _impl():
-        artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
+def _typed_ir_equivalence_from_codegen(codegen: object) -> tuple[dict[int, EquivalenceClass], dict[str, str]]:
+    """Build expression equivalence classes from typed-IR artifacts."""
+
+    def _impl() -> tuple[dict[int, EquivalenceClass], dict[str, str]]:
+        artifact = _dynamic_codegen_attr_8616(codegen, "_inertia_vex_ir_artifact", None)
         if artifact is None or not hasattr(artifact, "blocks"):
             return {}, {}
-        function_ssa = getattr(codegen, "_inertia_vex_ir_function_ssa", None)
+        function_ssa = _dynamic_codegen_attr_8616(codegen, "_inertia_vex_ir_function_ssa", None)
 
         builder = EquivalenceClassBuilder()
         exprs: list[str] = []
@@ -189,35 +238,33 @@ def _typed_ir_equivalence_from_codegen(codegen) -> tuple[dict[int, EquivalenceCl
             ensure_expr(right)
             merges.append((left, right))
 
-        for block in tuple(getattr(artifact, "blocks", ()) or ()):
-            for instr in tuple(getattr(block, "instrs", ()) or ()):
-                dst_key = _expr_key_for_value(getattr(instr, "dst", None))
+        for block in tuple(artifact.blocks or ()):
+            for instr in tuple(block.instrs or ()):
+                dst_key = _expr_key_for_value(instr.dst)
                 ensure_expr(dst_key)
-                for atom in tuple(getattr(instr, "args", ()) or ()):
+                for atom in tuple(instr.args or ()):
                     if isinstance(atom, IRAddress):
                         base_key = _expr_key_for_address(atom)
-                        status_value = getattr(getattr(atom, "status", None), "value", "")
+                        status_value = atom.status.value
                         if base_key is not None and status_value not in {"unknown", "provisional"}:
                             add_constraint(base_key, "pointer")
                         elif base_key is not None:
                             add_constraint(base_key, "address_like")
                     elif isinstance(atom, IRCondition):
                         add_constraint(f"cond:{atom.op}", "boolean")
-                        for cond_arg in tuple(getattr(atom, "args", ()) or ()):
+                        for cond_arg in tuple(atom.args or ()):
                             add_constraint(_expr_key_for_value(cond_arg), "integer")
                     else:
                         ensure_expr(_expr_key_for_value(atom))
 
-        for phi in tuple(getattr(function_ssa, "phi_nodes", ()) or ()):
-            target = getattr(phi, "target", None)
-            if target is None:
-                continue
+        for phi in tuple(function_ssa.phi_nodes if function_ssa is not None else ()):
+            target = phi.target
             phi_key = _expr_key_for_value(target)
             add_constraint(phi_key, "ssa_join")
-            if getattr(target, "space", None) == MemSpace.REG:
+            if target.space == MemSpace.REG:
                 add_constraint(phi_key, "integer")
-            for incoming in tuple(getattr(phi, "incoming", ()) or ()):
-                incoming_key = _expr_key_for_value(getattr(incoming, "value", None))
+            for incoming in tuple(phi.incoming or ()):
+                incoming_key = _expr_key_for_value(incoming.value)
                 add_merge(phi_key, incoming_key)
 
         if not exprs:
@@ -243,7 +290,10 @@ def _typed_ir_equivalence_from_codegen(codegen) -> tuple[dict[int, EquivalenceCl
 
 
 class TypeVariableReplacer:
+    """Resolve type-variable classes into coarse C type labels."""
+
     def replace(self, expr_classes: dict[int, EquivalenceClass]) -> dict[int, str]:
+        """Return a resolved type label for each equivalence class."""
         resolved_types: dict[int, str] = {}
 
         for class_id, eq_class in expr_classes.items():
@@ -261,61 +311,58 @@ class TypeVariableReplacer:
         return resolved_types
 
 
-def apply_x86_16_type_equivalence_classes(codegen) -> bool:
-    def _impl():
-        if getattr(codegen, "cfunc", None) is None:
+def apply_x86_16_type_equivalence_classes(codegen: object) -> bool:
+    """Attach typed-IR equivalence-class diagnostics to structured codegen."""
+
+    def _impl() -> bool:
+        if _dynamic_codegen_attr_8616(codegen, "cfunc", None) is None:
             return False
 
         try:
-            codegen._inertia_type_equivalence_applied = True
+            typing.cast(typing.Any, codegen)._inertia_type_equivalence_applied = True
             ir_summary = _typed_ir_summary_from_codegen(codegen)
             typed_classes, resolved_by_expr = _typed_ir_equivalence_from_codegen(codegen)
             if isinstance(ir_summary, dict):
-                codegen._inertia_type_equivalence_ir_summary = {
-                    "aliasable_value_count": int(ir_summary.get("aliasable_value_count", 0) or 0),
-                    "frame_slot_count": int(ir_summary.get("frame_slot_count", 0) or 0),
-                    "space_counts": dict(ir_summary.get("space_counts", {}) or {}),
-                    "provisional_address_count": int(ir_summary.get("provisional_address_count", 0) or 0),
-                    "multi_base_address_count": int(ir_summary.get("multi_base_address_count", 0) or 0),
-                    "segment_origin_counts": dict(ir_summary.get("segment_origin_counts", {}) or {}),
-                    "condition_counts": dict(ir_summary.get("condition_counts", {}) or {}),
+                typing.cast(typing.Any, codegen)._inertia_type_equivalence_ir_summary = {
+                        "aliasable_value_count": _int_summary_value_8616(ir_summary, "aliasable_value_count"),
+                        "frame_slot_count": _int_summary_value_8616(ir_summary, "frame_slot_count"),
+                        "space_counts": _dict_summary_value_8616(ir_summary, "space_counts"),
+                        "provisional_address_count": _int_summary_value_8616(ir_summary, "provisional_address_count"),
+                        "multi_base_address_count": _int_summary_value_8616(ir_summary, "multi_base_address_count"),
+                        "segment_origin_counts": _dict_summary_value_8616(ir_summary, "segment_origin_counts"),
+                        "condition_counts": _dict_summary_value_8616(ir_summary, "condition_counts"),
+                    }
+            function_ssa = _dynamic_codegen_attr_8616(codegen, "_inertia_vex_ir_function_ssa", None)
+            typing.cast(typing.Any, codegen)._inertia_type_equivalence_resolved_types = resolved_by_expr
+            typing.cast(typing.Any, codegen)._inertia_type_equivalence_classes = {
+                    class_id: {
+                        "expressions": tuple(sorted(eq_class.expressions)),
+                        "type_constraints": tuple(sorted(eq_class.type_constraints)),
+                        "width": eq_class.width,
+                    }
+                    for class_id, eq_class in sorted(typed_classes.items())
                 }
-            function_ssa = getattr(codegen, "_inertia_vex_ir_function_ssa", None)
-            codegen._inertia_type_equivalence_resolved_types = resolved_by_expr
-            codegen._inertia_type_equivalence_classes = {
-                class_id: {
-                    "expressions": tuple(sorted(eq_class.expressions)),
-                    "type_constraints": tuple(sorted(eq_class.type_constraints)),
-                    "width": eq_class.width,
-                }
-                for class_id, eq_class in sorted(typed_classes.items())
-            }
-            codegen._inertia_type_equivalence_stats = {
+            function_ssa_summary = (
+                cast(dict[str, object], function_ssa.summary)
+                if function_ssa is not None and isinstance(_dynamic_codegen_attr_8616(function_ssa, "summary", None), dict)
+                else {}
+            )
+            typing.cast(typing.Any, codegen)._inertia_type_equivalence_stats = {
                 "equivalence_classes": len(typed_classes),
                 "type_constraints": sum(len(eq_class.type_constraints) for eq_class in typed_classes.values()),
                 "resolved_types": len(resolved_by_expr),
-                "ir_aliasable_values": int(ir_summary.get("aliasable_value_count", 0) or 0)
-                if isinstance(ir_summary, dict)
-                else 0,
-                "ir_frame_slots": int(ir_summary.get("frame_slot_count", 0) or 0)
-                if isinstance(ir_summary, dict)
-                else 0,
-                "ir_provisional_addresses": int(ir_summary.get("provisional_address_count", 0) or 0)
-                if isinstance(ir_summary, dict)
-                else 0,
-                "ir_multi_base_addresses": int(ir_summary.get("multi_base_address_count", 0) or 0)
-                if isinstance(ir_summary, dict)
-                else 0,
-                "ir_phi_nodes": int(getattr(function_ssa, "summary", {}).get("phi_node_count", 0) or 0)
-                if function_ssa is not None
-                else 0,
+                "ir_aliasable_values": _int_summary_value_8616(ir_summary, "aliasable_value_count"),
+                "ir_frame_slots": _int_summary_value_8616(ir_summary, "frame_slot_count"),
+                "ir_provisional_addresses": _int_summary_value_8616(ir_summary, "provisional_address_count"),
+                "ir_multi_base_addresses": _int_summary_value_8616(ir_summary, "multi_base_address_count"),
+                "ir_phi_nodes": _int_summary_value_8616(function_ssa_summary, "phi_node_count"),
             }
 
             logger.debug("Type equivalence class pass completed")
             return False
         except Exception as ex:
             logger.warning("Type equivalence class pass failed: %s", ex)
-            codegen._inertia_type_equivalence_error = str(ex)
+            typing.cast(typing.Any, codegen)._inertia_type_equivalence_error = str(ex)
             return False
 
     return _impl()

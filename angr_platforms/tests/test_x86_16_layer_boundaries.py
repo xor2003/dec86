@@ -289,8 +289,8 @@ def test_layer_headers_present_on_migrated_modules() -> None:
     )
     missing: list[str] = []
     for path in targets:
-        head = "\n".join(path.read_text().splitlines()[:20])
-        if "# Layer:" not in head or "# Responsibility:" not in head:
+        docstring = ast.get_docstring(ast.parse(path.read_text(), filename=str(path))) or ""
+        if "Layer:" not in docstring or not ("Owns" in docstring or "Consumes" in docstring):
             missing.append(str(path))
     assert missing == []
 
@@ -310,12 +310,18 @@ def test_widening_entrypoint_runs_subpasses_in_fixed_order() -> None:
         calls.append("segmented")
         return True
 
+    def _copyprop(_codegen, *, enable_nested: bool) -> bool:
+        assert enable_nested is True
+        calls.append("copyprop")
+        return True
+
     changed = run_typed_widening_pass_8616(
         object(),
         object(),
         coalesce_direct_ss_local_word_statements=_direct,
         coalesce_segmented_word_store_statements=_segmented,
+        copy_propagation_fn=_copyprop,
         promote_stack_slots_from_instruction_widths=_widths,
     )
     assert changed is True
-    assert calls == ["widths", "direct", "segmented"]
+    assert calls == ["widths", "direct", "segmented", "copyprop"]

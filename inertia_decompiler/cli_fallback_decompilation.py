@@ -1,3 +1,10 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: run bounded fallback lanes and report their validation outcome.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+# ruff: noqa: ANN001,ANN202
+
 # AUTO-GENERATED split from cli_runtime_shared.py
 from __future__ import annotations
 
@@ -6,13 +13,15 @@ import os
 import re
 import sys
 import threading
+import typing
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import angr
+from angr_platforms.X86_16.cod_extract import CODProcMetadata
 
 from inertia_decompiler import cli_string_timeout_fallback as _cli_string_timeout_fallback
-from inertia_decompiler.cli_c_text_postprocess import _render_cod_source_function_text
 from inertia_decompiler.cli_decompilation import (
     _decompile_function_with_stats,
     _effective_decompile_timeout_8616,
@@ -20,6 +29,7 @@ from inertia_decompiler.cli_decompilation import (
     _prepare_function_for_decompilation,
     _sidecar_cod_metadata_for_function,
 )
+from inertia_decompiler.cli_function_discovery import _pick_function, _pick_function_lean
 from inertia_decompiler.cli_output import (
     _timestamped_print,
 )
@@ -29,14 +39,31 @@ from inertia_decompiler.disassembly_helpers import (
     _format_asm_range,
     _infer_linear_disassembly_window,
 )
+from inertia_decompiler.non_optimized_fallback import (
+    bounded_non_optimized_attempt_timeout,
+)
 from inertia_decompiler.project_loading import (
     _build_project_cached,
     _build_project_from_bytes,
     _describe_exception,
     _is_blob_only_input,
 )
+from inertia_decompiler.runtime_support import (
+    run_with_timeout_in_daemon_thread as _run_with_timeout_in_daemon_thread,
+)
+from inertia_decompiler.runtime_support import (
+    run_with_timeout_in_fork as _run_with_timeout_in_fork,
+)
 from inertia_decompiler.sidecar_metadata import (
+    LSTMetadata,
     _lst_code_region,
+)
+from inertia_decompiler.slice_recovery import (
+    BoundedSliceVerdict,
+    SliceRecoveryAttemptOutcome,
+    SliceRecoveryAttemptTrace,
+    build_default_slice_recovery_attempts,
+    run_bounded_slice_recovery,
 )
 from inertia_decompiler.tail_validation import (
     inherit_tail_validation_runtime_policy as _inherit_tail_validation_runtime_policy,
@@ -50,26 +77,13 @@ from inertia_decompiler.x86_16_exact_slice import (
     plan_x86_16_exact_slice,
 )
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
-from inertia_decompiler.cli_function_discovery import _pick_function, _pick_function_lean
-from inertia_decompiler.non_optimized_fallback import (
-    bounded_non_optimized_attempt_timeout,
-)
-from inertia_decompiler.runtime_support import (
-    run_with_timeout_in_daemon_thread as _run_with_timeout_in_daemon_thread,
-)
-from inertia_decompiler.runtime_support import (
-    run_with_timeout_in_fork as _run_with_timeout_in_fork,
-)
-from inertia_decompiler.slice_recovery import (
-    BoundedSliceVerdict,
-    SliceRecoveryAttemptOutcome,
-    build_default_slice_recovery_attempts,
-    run_bounded_slice_recovery,
-)
+print: Callable[..., None] = _timestamped_print
 
-print = _timestamped_print
+_SIDECAR_SLICE_DECOMPILE_TIMEOUT_CAP_8616 = 24
+_SIDECAR_SLICE_RUNNER_TIMEOUT_CAP_8616 = 30
+
 __all__ = [
     "NonOptimizedSliceOutcome",
     "_non_optimized_slice_rendered",
@@ -85,6 +99,8 @@ __all__ = [
 
 @dataclass(frozen=True)
 class NonOptimizedSliceOutcome:
+    """Result for non-optimized fallback decompilation attempts."""
+
     rendered: str | None
     status: str
     payload: str
@@ -123,7 +139,7 @@ def _try_decompile_sidecar_slice(
     binary_path: Path | None,
     failure_family_state: FailureFamilyState | None = None,
 ) -> SliceRecoveryAttemptOutcome | None:
-    def _impl():
+    def _impl() -> SliceRecoveryAttemptOutcome | None:
         region = _lst_code_region(lst_metadata, addr)
         if region is None:
             return None
@@ -133,18 +149,15 @@ def _try_decompile_sidecar_slice(
         try:
             code = bytes(project.loader.memory.load(start, end - start))
         except Exception as ex:
-            try:
-                logger.debug("sidecar slice runner wrapper failed: %s; retrying in-process", ex)
-                return _recover_and_decompile()
-            except Exception as inner_ex:
-                logger.debug("sidecar slice in-process retry failed: %s", inner_ex)
-                return SliceRecoveryAttemptOutcome(
-                    attempt_name="sidecar-slice",
-                    status="error",
-                    payload=f"sidecar slice failed: {_describe_exception(inner_ex)}",
-                )
+            logger.debug("sidecar slice byte load failed: %s", ex)
+            return SliceRecoveryAttemptOutcome(
+                attempt_name="sidecar-slice",
+                status="error",
+                payload=f"sidecar slice failed: {_describe_exception(ex)}",
+            )
 
-        def _recover_and_decompile():
+        def _recover_and_decompile() -> SliceRecoveryAttemptOutcome:
+            # Dynamic angr boundary: project architecture metadata is supplied by angr.
             arch_name = getattr(getattr(project, "arch", None), "name", None)
             slice_plan = plan_x86_16_exact_slice(start, end) if arch_name == "86_16" else None
             slice_start = slice_plan.slice_start if slice_plan is not None else start
@@ -156,18 +169,27 @@ def _try_decompile_sidecar_slice(
                 pick_function=_pick_function,
             )
 
-            def _decompile_attempt(attempt_name, slice_project, cfg, func):
-                func.name = name
+            def _decompile_attempt(
+                attempt_name: str,
+                slice_project: angr.Project,
+                cfg: object,
+                func: object,
+            ) -> SliceRecoveryAttemptOutcome:
+                # Dynamic angr boundary: recovered functions expose mutable names through angr.
+                typing.cast(typing.Any, func).name = name
                 if slice_plan is not None:
                     mark_function_original_addr(func, start)
-                    slice_project._inertia_disable_ail_narrowing = True
-                    slice_project._inertia_disable_complex_expr_scan = True
-                    slice_project._inertia_fast_block_peephole = True
+                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
+                    typing.cast(typing.Any, slice_project)._inertia_disable_ail_narrowing = True
+                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
+                    typing.cast(typing.Any, slice_project)._inertia_disable_complex_expr_scan = True
+                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
+                    typing.cast(typing.Any, slice_project)._inertia_fast_block_peephole = True
                 status, payload, *_ = _decompile_function_with_stats(
                     slice_project,
                     cfg,
                     func,
-                    max(1, min(timeout, 6)),
+                    max(1, min(timeout, _SIDECAR_SLICE_DECOMPILE_TIMEOUT_CAP_8616)),
                     api_style,
                     binary_path,
                     lst_metadata=lst_metadata,
@@ -177,17 +199,6 @@ def _try_decompile_sidecar_slice(
                 if status == "ok" and assess_decompiled_c_text(payload).reject_as_decompiled:
                     status = "empty"
                     payload = "Sidecar slice decompilation remained unresolved after bounded recovery."
-                if status == "empty":
-                    effective_cod_metadata = _sidecar_cod_metadata_for_function(
-                        slice_project,
-                        func,
-                        binary_path,
-                        lst_metadata,
-                    )
-                    rendered_sidecar = _render_cod_source_function_text(func, effective_cod_metadata)
-                    if rendered_sidecar is not None:
-                        status = "ok"
-                        payload = rendered_sidecar
                 snapshot = _tail_validation_snapshot_for_function_run(slice_project, func)
                 return SliceRecoveryAttemptOutcome(
                     attempt_name=attempt_name,
@@ -196,6 +207,15 @@ def _try_decompile_sidecar_slice(
                     snapshot=dict(snapshot) if snapshot else None,
                 )
 
+            def _inherit_slice_runtime_policy(slice_project: angr.Project) -> None:
+                if slice_plan is not None:
+                    typing.cast(typing.Any, slice_project)._inertia_original_project = project
+                    typing.cast(typing.Any, slice_project)._inertia_original_linear_delta = start - slice_start
+                    typing.cast(typing.Any, slice_project)._inertia_disable_ail_narrowing = True
+                    typing.cast(typing.Any, slice_project)._inertia_disable_complex_expr_scan = True
+                    typing.cast(typing.Any, slice_project)._inertia_fast_block_peephole = True
+                _inherit_tail_validation_runtime_policy(slice_project, project)
+
             outcomes = run_bounded_slice_recovery(
                 recovery_attempts,
                 build_slice_project=lambda: _build_project_from_bytes(
@@ -203,25 +223,15 @@ def _try_decompile_sidecar_slice(
                     base_addr=slice_start,
                     entry_point=slice_start,
                 ),
-                inherit_runtime_policy=lambda slice_project: (
-                    setattr(slice_project, "_inertia_original_project", project) if slice_plan is not None else None,
-                    setattr(slice_project, "_inertia_original_linear_delta", start - slice_start)
-                    if slice_plan is not None
-                    else None,
-                    setattr(slice_project, "_inertia_disable_ail_narrowing", True) if slice_plan is not None else None,
-                    setattr(slice_project, "_inertia_disable_complex_expr_scan", True)
-                    if slice_plan is not None
-                    else None,
-                    setattr(slice_project, "_inertia_fast_block_peephole", True) if slice_plan is not None else None,
-                    _inherit_tail_validation_runtime_policy(slice_project, project),
-                )[-1],
+                inherit_runtime_policy=_inherit_slice_runtime_policy,
                 describe_exception=_describe_exception,
                 decompile=_decompile_attempt,
             )
             for attempt in outcomes:
                 if attempt.status == "ok":
                     if attempt.snapshot:
-                        setattr(project, "_inertia_last_tail_validation_snapshot", dict(attempt.snapshot))
+                        # Dynamic angr boundary: project stores fallback validation metadata for later reporting.
+                        typing.cast(typing.Any, project)._inertia_last_tail_validation_snapshot = dict(attempt.snapshot)
                     if attempt.attempt_name != "lean":
                         print(
                             f"[dbg] sidecar slice fallback recovered {addr:#x} {name} via {attempt.attempt_name}",
@@ -238,7 +248,7 @@ def _try_decompile_sidecar_slice(
             return outcomes[-1]
 
         try:
-            runner_timeout = max(2, min(timeout, 8))
+            runner_timeout = max(2, min(timeout, _SIDECAR_SLICE_RUNNER_TIMEOUT_CAP_8616))
             result = None
             fork_error: BaseException | None = None
             if (
@@ -270,6 +280,12 @@ def _try_decompile_sidecar_slice(
                     attempt_name="sidecar-slice",
                     status="timeout",
                     payload=f"sidecar slice runner timed out after {runner_timeout}s",
+                )
+            if not isinstance(result, SliceRecoveryAttemptOutcome):
+                return SliceRecoveryAttemptOutcome(
+                    attempt_name="sidecar-slice",
+                    status="error",
+                    payload=f"sidecar slice runner returned unexpected {type(result).__name__}",
                 )
             return result
         except TimeoutError as ex:
@@ -304,7 +320,7 @@ def _try_decompile_non_optimized_slice(
 ) -> NonOptimizedSliceOutcome:
     # Non-optimized fallback output is intentionally never cached. It is a best-effort rescue path,
     # not a stable primary decompilation result.
-    def _impl():
+    def _impl() -> NonOptimizedSliceOutcome:
         helper_fallback = _try_emit_known_runtime_helper_c(name=name)
         if helper_fallback is not None:
             _mark_helper_fallback_tail_validation_passed(
@@ -318,12 +334,17 @@ def _try_decompile_non_optimized_slice(
             )
 
         def _attempt(slice_source_project: angr.Project, *, label: str) -> NonOptimizedSliceOutcome:
+            # Dynamic angr boundary: project architecture metadata is supplied by angr.
             arch_name = getattr(getattr(slice_source_project, "arch", None), "name", None)
             region = _lst_code_region(lst_metadata, addr)
             if region is None:
+                # Dynamic angr boundary: project entry point is supplied by angr.
                 if arch_name == "86_16" and addr == getattr(slice_source_project, "entry", None):
+                    # Dynamic angr boundary: loader objects expose backend-specific main object metadata.
                     main_object = getattr(slice_source_project.loader, "main_object", None)
+                    # Dynamic angr boundary: backend main objects expose linked image base.
                     linked_base = getattr(main_object, "linked_base", None)
+                    # Dynamic angr boundary: backend main objects expose image address bounds.
                     max_addr = getattr(main_object, "max_addr", None)
                     if isinstance(linked_base, int) and isinstance(max_addr, int):
                         region = (linked_base, linked_base + max_addr + 1)
@@ -355,6 +376,7 @@ def _try_decompile_non_optimized_slice(
             slice_start = slice_plan.slice_start if slice_plan is not None else start
             slice_end = slice_plan.slice_end if slice_plan is not None else end
             reuse_existing_slice_project = (
+                # Dynamic angr boundary: project entry point is supplied by angr.
                 lst_metadata is None and arch_name == "86_16" and addr == getattr(slice_source_project, "entry", None)
             )
             recovery_attempts = build_default_slice_recovery_attempts(
@@ -364,27 +386,44 @@ def _try_decompile_non_optimized_slice(
                 pick_function=_pick_function,
             )
 
-            def _decompile_attempt(attempt_name, slice_project, cfg, func):
+            def _decompile_attempt(
+                attempt_name: str,
+                slice_project: angr.Project,
+                cfg: object,
+                func: object,
+            ) -> SliceRecoveryAttemptOutcome:
+                # Dynamic angr boundary: recovered functions expose addresses through angr.
                 if not isinstance(getattr(func, "addr", None), int):
-                    func.addr = slice_start
+                    # Dynamic angr boundary: recovered functions expose mutable addresses through angr.
+                    typing.cast(typing.Any, func).addr = slice_start
                 if not hasattr(func, "normalized"):
-                    func.normalized = True
-                func.name = name
+                    # Dynamic angr boundary: recovered functions expose mutable normalization markers through angr.
+                    typing.cast(typing.Any, func).normalized = True
+                # Dynamic angr boundary: recovered functions expose mutable names through angr.
+                typing.cast(typing.Any, func).name = name
                 effective_cod_metadata = cod_metadata
                 if slice_plan is not None:
                     mark_function_original_addr(func, start)
-                    slice_project._inertia_disable_ail_narrowing = True
-                    slice_project._inertia_disable_complex_expr_scan = True
-                    slice_project._inertia_fast_block_peephole = True
+                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
+                    typing.cast(typing.Any, slice_project)._inertia_disable_ail_narrowing = True
+                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
+                    typing.cast(typing.Any, slice_project)._inertia_disable_complex_expr_scan = True
+                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
+                    typing.cast(typing.Any, slice_project)._inertia_fast_block_peephole = True
                 if arch_name == "86_16":
                     # Non-optimized rescue lane: prefer forward progress over expensive
                     # pre-SSA peephole passes that are known to assert on bitwidth
                     # mismatches for some tiny helpers.
-                    slice_project._inertia_tiny_core_disable_peephole = True
-                    slice_project._inertia_recover_variables_seed_empty = True
-                    slice_project._inertia_skip_clinic_simplify_block = True
-                    slice_project._inertia_skip_clinic_recover_variables_full = True
-                    slice_project._inertia_clinic_peephole_cap = 48
+                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
+                    typing.cast(typing.Any, slice_project)._inertia_tiny_core_disable_peephole = True
+                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
+                    typing.cast(typing.Any, slice_project)._inertia_recover_variables_seed_empty = True
+                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
+                    typing.cast(typing.Any, slice_project)._inertia_skip_clinic_simplify_block = True
+                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
+                    typing.cast(typing.Any, slice_project)._inertia_skip_clinic_recover_variables_full = True
+                    # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
+                    typing.cast(typing.Any, slice_project)._inertia_clinic_peephole_cap = 48
                 if isinstance(original_addr, int):
                     mark_function_original_addr(func, original_addr)
                 _prepare_function_for_decompilation(slice_project, func, effective_cod_metadata)
@@ -425,6 +464,7 @@ def _try_decompile_non_optimized_slice(
                     payload = "Non-optimized slice decompilation remained unresolved after bounded recovery."
                 if not isinstance(partial_payload, str):
                     partial_payload = None
+                # Dynamic angr boundary: slice project stores validation metadata from runtime passes.
                 snapshot = getattr(slice_project, "_inertia_last_tail_validation_snapshot", None)
                 return SliceRecoveryAttemptOutcome(
                     attempt_name=attempt_name,
@@ -434,7 +474,11 @@ def _try_decompile_non_optimized_slice(
                     snapshot=dict(snapshot) if isinstance(snapshot, dict) else None,
                 )
 
-            def _run_bounded_attempt(attempt_name: str, job, trace_snapshot):
+            def _run_bounded_attempt(
+                attempt_name: str,
+                job: Callable[[], SliceRecoveryAttemptOutcome],
+                trace_snapshot: Callable[[], SliceRecoveryAttemptTrace],
+            ) -> SliceRecoveryAttemptOutcome:
                 attempt_timeout = bounded_non_optimized_attempt_timeout(
                     max(
                         1,
@@ -453,15 +497,25 @@ def _try_decompile_non_optimized_slice(
                         and threading.active_count() == 1
                         and (
                             isinstance(slice_source_project, angr.Project)
+                            # Dynamic compatibility boundary: tests may monkeypatch timeout runners.
                             or getattr(_run_with_timeout_in_fork, "__module__", "")
                             != "inertia_decompiler.runtime_support"
                         )
                     ):
-                        return _run_with_timeout_in_fork(job, timeout=attempt_timeout)
-                    return _run_with_timeout_in_daemon_thread(
-                        job,
-                        timeout=attempt_timeout,
-                        thread_name_prefix=f"nonopt-attempt-{attempt_name}",
+                        result = _run_with_timeout_in_fork(job, timeout=attempt_timeout)
+                    else:
+                        result = _run_with_timeout_in_daemon_thread(
+                            job,
+                            timeout=attempt_timeout,
+                            thread_name_prefix=f"nonopt-attempt-{attempt_name}",
+                        )
+                    if isinstance(result, SliceRecoveryAttemptOutcome):
+                        return result
+                    return SliceRecoveryAttemptOutcome(
+                        attempt_name=attempt_name,
+                        status="error",
+                        payload=f"{attempt_name} bounded attempt returned unexpected {type(result).__name__}",
+                        attempt_trace=trace_snapshot(),
                     )
                 except TimeoutError as ex:
                     return SliceRecoveryAttemptOutcome(
@@ -478,6 +532,15 @@ def _try_decompile_non_optimized_slice(
                         attempt_trace=trace_snapshot(),
                     )
 
+            def _inherit_nonoptimized_slice_runtime_policy(slice_project: angr.Project) -> None:
+                if slice_plan is not None:
+                    typing.cast(typing.Any, slice_project)._inertia_original_project = slice_source_project
+                    typing.cast(typing.Any, slice_project)._inertia_original_linear_delta = start - slice_start
+                    typing.cast(typing.Any, slice_project)._inertia_disable_ail_narrowing = True
+                    typing.cast(typing.Any, slice_project)._inertia_disable_complex_expr_scan = True
+                    typing.cast(typing.Any, slice_project)._inertia_fast_block_peephole = True
+                _inherit_tail_validation_runtime_policy(slice_project, slice_source_project)
+
             outcomes = run_bounded_slice_recovery(
                 recovery_attempts,
                 build_slice_project=(
@@ -489,21 +552,7 @@ def _try_decompile_non_optimized_slice(
                         entry_point=slice_start,
                     )
                 ),
-                inherit_runtime_policy=lambda slice_project: (
-                    _inherit_tail_validation_runtime_policy(
-                        slice_project,
-                        slice_source_project,
-                    )
-                    if slice_plan is None
-                    else (
-                        setattr(slice_project, "_inertia_original_project", slice_source_project),
-                        setattr(slice_project, "_inertia_original_linear_delta", start - slice_start),
-                        setattr(slice_project, "_inertia_disable_ail_narrowing", True),
-                        setattr(slice_project, "_inertia_disable_complex_expr_scan", True),
-                        setattr(slice_project, "_inertia_fast_block_peephole", True),
-                        _inherit_tail_validation_runtime_policy(slice_project, slice_source_project),
-                    )[-1]
-                ),
+                inherit_runtime_policy=_inherit_nonoptimized_slice_runtime_policy,
                 describe_exception=_describe_exception,
                 decompile=_decompile_attempt,
                 run_attempt=_run_bounded_attempt,
@@ -577,7 +626,8 @@ def _try_decompile_non_optimized_slice(
 
             slice_snapshot = snapshot_holder["value"]
             if isinstance(slice_snapshot, dict):
-                setattr(slice_source_project, "_inertia_partial_tail_validation_snapshot", dict(slice_snapshot))
+                # Dynamic angr boundary: project stores partial validation metadata for later reporting.
+                typing.cast(typing.Any, slice_source_project)._inertia_partial_tail_validation_snapshot = dict(slice_snapshot)
             if outcome.rendered is not None and outcome.status != "ok":
                 print(
                     f"[dbg] non-optimized fallback produced partial output for {addr:#x} {name} via {label}",
@@ -602,11 +652,14 @@ def _try_decompile_non_optimized_slice(
             and (outcome.verdict is None or outcome.verdict.can_retry_with_fresh_project)
         )
         if should_try_fresh_project:
+            assert binary_path is not None
             try:
                 fresh_project = _build_project_cached(
                     str(Path(binary_path)),
                     force_blob=_is_blob_only_input(Path(binary_path)),
+                    # Dynamic angr boundary: loader objects expose backend-specific main object metadata.
                     base_addr=getattr(getattr(project.loader, "main_object", None), "linked_base", 0) or 0,
+                    # Dynamic angr boundary: project entry point is supplied by angr.
                     entry_point=getattr(project, "entry", 0),
                 )
                 _inherit_tail_validation_runtime_policy(fresh_project, project)
@@ -655,8 +708,8 @@ def _try_decompile_non_optimized_slice(
 
 def _try_decompile_non_optimized_known_function(
     project: angr.Project,
-    cfg,
-    function,
+    cfg: object,
+    function: object,
     *,
     timeout: int,
     api_style: str,
@@ -666,10 +719,12 @@ def _try_decompile_non_optimized_known_function(
     synthetic_globals: dict[int, tuple[str, int]] | None = None,
     failure_family_state: FailureFamilyState | None = None,
 ) -> NonOptimizedSliceOutcome:
+    # Dynamic angr boundary: function names are supplied by angr knowledge-base objects.
     helper_fallback = _try_emit_known_runtime_helper_c(name=getattr(function, "name", ""))
     if helper_fallback is not None:
         _mark_helper_fallback_tail_validation_passed(
             project,
+            # Dynamic angr boundary: function names are supplied by angr knowledge-base objects.
             reason=f"known compiler/runtime helper fallback: {getattr(function, 'name', '')}",
         )
         return NonOptimizedSliceOutcome(
@@ -809,19 +864,17 @@ def _mark_helper_fallback_tail_validation_passed(project: angr.Project, *, reaso
     }
     # Partial snapshots are always consumed by fallback tail-validation collection,
     # including non-optimized fallback lanes.
-    setattr(project, "_inertia_partial_tail_validation_snapshot", dict(snapshot))
-    setattr(
-        project,
-        "_inertia_last_tail_validation_snapshot",
-        dict(snapshot),
-    )
+    # Dynamic angr boundary: project stores fallback validation metadata for later reporting.
+    typing.cast(typing.Any, project)._inertia_partial_tail_validation_snapshot = dict(snapshot)
+    # Dynamic angr boundary: project stores fallback validation metadata for later reporting.
+    typing.cast(typing.Any, project)._inertia_last_tail_validation_snapshot = dict(snapshot)
 
 
 def _try_emit_known_runtime_helper_c(
     *,
     name: str,
 ) -> str | None:
-    def _impl():
+    def _impl() -> str | None:
         normalized = (name or "").strip()
         if not normalized:
             return None
@@ -956,7 +1009,7 @@ def _try_emit_known_runtime_helper_c(
 
 
 def _try_emit_known_runtime_helper_c_tail_8616(*, normalized: str, lowered: str) -> str | None:
-    def _impl():
+    def _impl() -> str | None:
         if lowered in {"anfld1", "a_nfld1"}:
             return "double aNfld1(void)\n{\n    return 1.0;\n}\n"
         if lowered in {"anlmul", "a_nlmul"}:
@@ -1029,7 +1082,7 @@ def _try_emit_known_runtime_helper_c_tail_8616(*, normalized: str, lowered: str)
 
 
 def _try_emit_known_runtime_helper_c_tail2_8616(*, normalized: str, lowered: str) -> str | None:
-    def _impl():
+    def _impl() -> str | None:
         if lowered.startswith("b$egachkbt"):
             safe_name = re.sub(r"[^A-Za-z0-9_$]", "_", normalized) or "B$EgaCHKBT"
             return f"unsigned short {safe_name}(void)\n{{\n    return 0;\n}}\n"

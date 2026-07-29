@@ -1,7 +1,15 @@
+"""Layer: Helper boundary.
+
+Responsibility: bridge recovered storage-object evidence into segmented object-lowering facts.
+Forbidden: allowing object lowering when segmented evidence records a refusal.
+Dynamic boundary: project and codegen objects are angr/plugin-owned carriers
+whose optional Inertia metadata may be absent in earlier pipeline modes.
+"""
+
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from inertia_decompiler.cli_access_object_hints import BaseKey, _build_stable_access_object_hints
 from inertia_decompiler.cli_access_profiles import build_access_trait_evidence_profiles
@@ -14,16 +22,18 @@ from inertia_decompiler.cli_storage_objects import (
     build_storage_object_artifact,
 )
 
-__all__ = [
+__all__ = (
     "SegmentedStorageFact",
     "StorageObjectBridge",
     "StorageObjectBridgeFact",
     "load_storage_object_bridge",
-]
+)
 
 
 @dataclass(frozen=True, slots=True)
 class SegmentedStorageFact:
+    """Segmented-memory permission fact for one storage-object base."""
+
     segment_register: str | None
     classification: str
     associated_space: str | None
@@ -32,6 +42,7 @@ class SegmentedStorageFact:
     reason: str
 
     def refusal_reason(self) -> str | None:
+        """Return the refusal reason when object lowering is not allowed."""
         if self.allow_object_lowering:
             return None
         return self.reason
@@ -39,6 +50,8 @@ class SegmentedStorageFact:
 
 @dataclass(frozen=True, slots=True)
 class StorageObjectBridgeFact:
+    """Storage-object fact enriched with segmented-memory lowering permission."""
+
     base_key: BaseKey
     object_kind: str
     candidate_offsets: tuple[int, ...]
@@ -48,6 +61,8 @@ class StorageObjectBridgeFact:
 
 @dataclass(frozen=True, slots=True)
 class StorageObjectBridge:
+    """Bridge artifact exposing object-lowering facts grouped by base key."""
+
     artifact: StorageObjectArtifact
     facts_by_base: dict[BaseKey, StorageObjectBridgeFact]
     member_facts: dict[BaseKey, StorageObjectBridgeFact]
@@ -55,6 +70,7 @@ class StorageObjectBridge:
     refusal_facts: dict[BaseKey, StorageObjectRefusal]
 
     def stats(self) -> dict[str, int]:
+        """Return deterministic bridge counters for diagnostics and tests."""
         return {
             "record_count": len(self.artifact.records),
             "member_fact_count": len(self.member_facts),
@@ -63,10 +79,12 @@ class StorageObjectBridge:
         }
 
     def allows_object_lowering(self, base_key: BaseKey) -> bool:
+        """Return whether segmented evidence permits object lowering for a base."""
         fact = self.facts_by_base.get(base_key)
         return bool(fact is not None and fact.segmented_memory.allow_object_lowering)
 
     def lowering_refusal_reason(self, base_key: BaseKey) -> str | None:
+        """Return the segmented or storage-object refusal reason for a base."""
         fact = self.facts_by_base.get(base_key)
         if fact is None:
             refusal = self.refusal_facts.get(base_key)
@@ -172,6 +190,7 @@ def load_storage_object_bridge(
         [dict[str, dict[BaseKey, object]]], StableHints
     ] = _build_storage_object_hints,
 ) -> StorageObjectBridge | None:
+    """Load facts from optional third-party project/codegen dynamic-boundary metadata."""
     if function_addr is None:
         return None
     traits_cache = getattr(project, "_inertia_access_traits", None)

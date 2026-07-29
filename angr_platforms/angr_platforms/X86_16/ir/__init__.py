@@ -1,6 +1,18 @@
+"""IR-layer package exports.
+
+Layer: IR.
+Responsibility: owns typed Value, Address, Condition, instruction facts, and lossless
+normalization.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
+from __future__ import annotations
+
 from .core import (
     AddressStatus,
     IRAddress,
+    IRBinaryValue,
     IRBlock,
     IRCondition,
     IRFunctionArtifact,
@@ -33,6 +45,7 @@ from .vex_import import (
 __all__ = [
     "IRBlock",
     "IRAddress",
+    "IRBinaryValue",
     "IRCondition",
     "IRFunctionArtifact",
     "IRInstr",

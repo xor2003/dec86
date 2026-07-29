@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Compare function-discovery backends without changing semantic ownership.
+
+Layer: Tooling/gates.
+Responsibility: compare optional discovery backends without turning sidecars or tool names into semantic proof.
+"""
 
 from __future__ import annotations
 
@@ -9,19 +14,18 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from inertia_decompiler.cli_function_discovery import (
+from inertia_decompiler.cli_function_discovery import (  # noqa: E402
     _recover_fast_exe_catalog,
     _recover_seeded_exe_functions,
 )
-from inertia_decompiler.project_loading import _build_project
-from inertia_decompiler.rizin_discovery import discover_rizin_function_entries
-from inertia_decompiler.sidecar_metadata import _load_lst_metadata
+from inertia_decompiler.project_loading import _build_project  # noqa: E402
+from inertia_decompiler.rizin_discovery import discover_rizin_function_entries  # noqa: E402
+from inertia_decompiler.sidecar_metadata import _load_lst_metadata  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -32,8 +36,9 @@ class FunctionRecord:
     source: str
 
 
-def _load_project(binary: Path, use_sidecar: bool, *, include_library_functions: bool) -> Any:
+def _load_project(binary: Path, use_sidecar: bool, *, include_library_functions: bool) -> object:
     project = _build_project(binary, force_blob=False, base_addr=0x10000, entry_point=0x1000)
+    # Dynamic angr boundary: discovery options are attached to Project for existing CLI helpers.
     setattr(project, "_inertia_include_library_functions", include_library_functions)
     if use_sidecar:
         lst_metadata = _load_lst_metadata(
@@ -43,11 +48,12 @@ def _load_project(binary: Path, use_sidecar: bool, *, include_library_functions:
             signature_catalog=None,
         )
         if lst_metadata is not None:
+            # Dynamic angr boundary: sidecar metadata is consumed through project-scoped compatibility attrs.
             setattr(project, "_inertia_lst_metadata", lst_metadata)
     return project
 
 
-def _discovery_image_end(project: Any) -> int:
+def _discovery_image_end(project: object) -> int:
     main_object = getattr(project.loader, "main_object", None)
     if main_object is None:
         return 0
@@ -201,7 +207,7 @@ def _rizin_available() -> bool:
     return shutil.which("rizin") is not None
 
 
-def _annotate_sizes(records: list[FunctionRecord], project: Any, default_size_source: str) -> list[FunctionRecord]:
+def _annotate_sizes(records: list[FunctionRecord], project: object, default_size_source: str) -> list[FunctionRecord]:
     if not records:
         return records
     image_end = _discovery_image_end(project)
@@ -226,7 +232,7 @@ def _merge_hybrid(
     angr_records: list[FunctionRecord],
     rizin_records: list[FunctionRecord],
     *,
-    project: Any,
+    project: object,
 ) -> list[FunctionRecord]:
     by_addr: dict[int, FunctionRecord] = {}
     for record in angr_records:
@@ -280,9 +286,9 @@ def _collect_overlaps(records: list[FunctionRecord]) -> list[tuple[int, int]]:
 
 def _compare_backends(
     records_by_backend: dict[str, list[FunctionRecord]],
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     names = sorted(records_by_backend.keys())
-    out: list[dict[str, Any]] = []
+    out: list[dict[str, object]] = []
     for idx, left in enumerate(names):
         for right in names[idx + 1 :]:
             left_addrs = set(_collect_addresses(records_by_backend[left]))
@@ -302,7 +308,7 @@ def _compare_backends(
     return out
 
 
-def _format_records(records: list[FunctionRecord]) -> list[dict[str, Any]]:
+def _format_records(records: list[FunctionRecord]) -> list[dict[str, object]]:
     return [
         {"addr": f"0x{record.addr:x}", "size": record.size, "name": record.name, "source": record.source}
         for record in records
@@ -318,7 +324,8 @@ def _print_backend_result(
     print(f"[{name}] count={len(records)} time={duration:.3f}s detail={detail}")
     for record in records:
         size_text = str(record.size) if isinstance(record.size, int) else "?"
-        print(f"  {record.addr:#x:>10} size={size_text:>4} source={record.source} name={record.name or '-'}")
+        addr_text = f"0x{record.addr:x}"
+        print(f"  {addr_text:>10} size={size_text:>4} source={record.source} name={record.name or '-'}")
 
 
 def _run_compare(
@@ -326,15 +333,15 @@ def _run_compare(
     args: argparse.Namespace,
     *,
     backend_override: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     project = _load_project(
         binary,
         use_sidecar=args.use_sidecar,
         include_library_functions=args.include_library_functions,
     )
-    outputs: dict[str, Any] = {"binary": str(binary)}
+    outputs: dict[str, object] = {"binary": str(binary)}
     results: dict[str, list[FunctionRecord]] = {}
-    metrics: dict[str, dict[str, Any]] = {}
+    metrics: dict[str, dict[str, object]] = {}
 
     backend = (backend_override or str(args.backends)).strip().lower()
     run_angr = backend in {"angr", "hybrid", "all"}

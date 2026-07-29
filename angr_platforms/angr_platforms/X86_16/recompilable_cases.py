@@ -1,3 +1,9 @@
+"""Layer: Recompilable output.
+
+Responsibility: define bounded generated-C syntax/shape cases and their expected anchors.
+Forbidden: semantic recovery from source, COD, assembly, or rendered C text.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,8 +20,10 @@ __all__ = [
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RecompilableSubsetCase:
+    """One bounded generated-C recompilation fixture and its output anchors."""
+
     name: str
     asm: str
     expected_kind: str
@@ -141,10 +149,12 @@ _RECOMPILABLE_SUBSET_CASES: Final[tuple[RecompilableSubsetCase, ...]] = (
 
 
 def get_x86_16_recompilable_subset_cases() -> tuple[RecompilableSubsetCase, ...]:
+    """Return the immutable recompilable subset fixture list."""
     return _RECOMPILABLE_SUBSET_CASES
 
 
 def describe_x86_16_recompilable_subset() -> tuple[dict[str, str], ...]:
+    """Return user-facing metadata for the recompilable subset fixtures."""
     return tuple(
         {
             "name": case.name,

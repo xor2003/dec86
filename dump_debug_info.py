@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Dump optional CodeView/Turbo Debug metadata for diagnostics.
+
+Layer: Tooling/gates.
+"""
+
 from __future__ import annotations
 
 import argparse

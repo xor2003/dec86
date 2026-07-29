@@ -1,10 +1,13 @@
+"""Layer: Rewrite/Postprocess cleanup.
+
+Responsibility: propagate copies only when alias storage facts prove the same storage.
+Consumes already-proven IR, alias, widening, typed, and structuring facts.
+Do not recover new semantics, storage identity, types, call signatures, control flow, or facts from rendered text, COD, source, or CLI/reporting evidence here.
+The codegen and C AST objects cross a dynamic third-party angr boundary; keep
+dynamic attribute access limited to traversing already-recovered C AST nodes.
+"""
+
 from __future__ import annotations
-
-"""Layer: Optimization (mid-level, pre-rewrite).
-
-Copy propagation using alias storage facts.
-
-Forbidden: semantic recovery outside alias layer, type inference, C text generation."""
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -16,7 +19,7 @@ from ...semantics.alias_query import _storage_domain_for_expr
 __all__ = ["_copy_propagation_8616"]
 
 
-def _same_storage_domain(lhs, rhs) -> bool:
+def _same_storage_domain(lhs: object, rhs: object) -> bool:
     """Prove two expressions refer to the same storage using alias facts."""
     lhs_domain = _storage_domain_for_expr(lhs)
     rhs_domain = _storage_domain_for_expr(rhs)
@@ -25,8 +28,11 @@ def _same_storage_domain(lhs, rhs) -> bool:
     return lhs_domain == rhs_domain
 
 
-def _copy_propagation_8616(codegen) -> bool:
+def _copy_propagation_8616(codegen: object) -> bool:
     """Propagate copies: t2 = t1 becomes t2 = original_source when alias-provable.
+
+    The codegen object crosses a dynamic third-party angr boundary; dynamic
+    access here is limited to the already-built C AST surface.
 
     Returns True if any copy was propagated.
     """
@@ -36,7 +42,8 @@ def _copy_propagation_8616(codegen) -> bool:
 
     changed = False
 
-    def walk_statements(statements):
+    def walk_statements(statements: object) -> None:
+        """Walk statement blocks across the dynamic third-party angr boundary."""
         nonlocal changed
         stmts = tuple(getattr(statements, "statements", ()) or ())
         # Track last assignment per storage domain within this block
@@ -44,8 +51,8 @@ def _copy_propagation_8616(codegen) -> bool:
 
         for stmt in stmts:
             if isinstance(stmt, CAssignment):
-                rhs = getattr(stmt, "rhs", None)
-                lhs = getattr(stmt, "lhs", None)
+                rhs = stmt.rhs
+                lhs = stmt.lhs
                 if isinstance(rhs, CVariable):
                     rhs_domain = _storage_domain_for_expr(rhs)
                     rhs_domain_key = str(rhs_domain) if rhs_domain is not None else None
@@ -63,7 +70,8 @@ def _copy_propagation_8616(codegen) -> bool:
                         block_defs[lhs_domain_key] = rhs
             _walk_node(stmt)
 
-    def _walk_node(node):
+    def _walk_node(node: object) -> None:
+        """Walk C AST child links across the dynamic third-party angr boundary."""
         if node is None:
             return
         if hasattr(node, "statements"):

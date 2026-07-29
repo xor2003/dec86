@@ -17,7 +17,7 @@ from angr_platforms.X86_16.string_instruction_artifact import StringInstructionA
 from angr_platforms.X86_16.type_array_matching import apply_x86_16_array_expression_matching
 
 
-def test_segment_state_tracks_explicit_ds_and_es_writes():
+def test_segment_state_tracks_explicit_ds_and_es_writes() -> None:
     artifact = IRFunctionArtifact(
         function_addr=0x1000,
         blocks=(
@@ -44,7 +44,7 @@ def test_segment_state_tracks_explicit_ds_and_es_writes():
     assert segment_state.summary["explicit_write_count"] >= 2
 
 
-def test_typed_string_effects_become_stable_from_segment_state_and_feed_array_matching():
+def test_typed_string_effects_become_stable_from_segment_state_and_feed_array_matching() -> None:
     segment_ir = IRFunctionArtifact(
         function_addr=0x2000,
         blocks=(
@@ -97,7 +97,7 @@ def test_typed_string_effects_become_stable_from_segment_state_and_feed_array_ma
     assert codegen._inertia_array_matching_stats["string_arrays"] == 2
 
 
-def test_typed_string_effects_without_segment_state_do_not_seed_string_arrays():
+def test_typed_string_effects_without_segment_state_do_not_seed_string_arrays() -> None:
     string_artifact = build_x86_16_typed_string_effect_artifact(
         StringInstructionArtifact(
             records=(

@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import decompile
 from inertia_decompiler import sidecar_metadata
 from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
 
 LIFE_EXE = Path(__file__).resolve().parents[2] / "LIFE.EXE"
+
+pytestmark = pytest.mark.skipif(not LIFE_EXE.exists(), reason="root LIFE.EXE signature fixture is not available")
 
 
 def test_life_metadata_marks_amallocbrk_as_signature_matched():

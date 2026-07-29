@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Capture SORTDEMO debug artifacts for focused decompiler diagnostics.
+
+Layer: Tooling/gates.
+Responsibility: gather reproducible SORTDEMO diagnostics without changing decompiler semantics.
+"""
 
 from __future__ import annotations
 
@@ -12,24 +17,26 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "angr_platforms"))
 sys.path.insert(0, str(REPO_ROOT))
 
-from angr_platforms.X86_16.analysis_helpers import (
+from angr_platforms.X86_16.analysis_helpers import (  # noqa: E402
     extend_cfg_for_far_calls,
     extend_cfg_for_neighbor_calls,
     patch_interrupt_service_call_sites,
     seed_calling_conventions,
 )
-from angr_platforms.X86_16.cod_extract import extract_cod_listing_metadata
-from angr_platforms.X86_16.decompiler_postprocess_calls import (
+from angr_platforms.X86_16.cod_extract import extract_cod_listing_metadata  # noqa: E402
+from angr_platforms.X86_16.decompiler_postprocess_calls import (  # noqa: E402
     _attach_callsite_summaries_8616,
     _materialize_callsite_prototypes_8616,
     _materialize_callsite_stack_arguments_8616,
 )
-from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
-from angr_platforms.X86_16.lowering.stack_probe_return_facts import build_typed_stack_probe_return_facts_8616
-from angr_platforms.X86_16.segmented_memory_reasoning import apply_x86_16_segmented_memory_reasoning
+from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616  # noqa: E402
+from angr_platforms.X86_16.lowering.stack_probe_return_facts import (  # noqa: E402
+    build_typed_stack_probe_return_facts_8616,
+)
+from angr_platforms.X86_16.segmented_memory_reasoning import apply_x86_16_segmented_memory_reasoning  # noqa: E402
 
-import inertia_decompiler.cli_function_discovery as function_discovery
-from inertia_decompiler.cli_decompilation import (
+import inertia_decompiler.cli_function_discovery as function_discovery  # noqa: E402
+from inertia_decompiler.cli_decompilation import (  # noqa: E402
     _function_complexity,
     _function_decompilation_profile,
     _preferred_decompiler_options,
@@ -38,13 +45,13 @@ from inertia_decompiler.cli_decompilation import (
     _rewrite_ss_stack_byte_offsets,
     _snapshot_codegen_text,
 )
-from inertia_decompiler.disassembly_helpers import _format_asm_range, _format_first_block_asm
-from inertia_decompiler.project_loading import _build_project, _is_blob_only_input
-from inertia_decompiler.x86_16_exact_slice import function_original_addr
+from inertia_decompiler.disassembly_helpers import _format_asm_range, _format_first_block_asm  # noqa: E402
+from inertia_decompiler.project_loading import _build_project, _is_blob_only_input  # noqa: E402
+from inertia_decompiler.x86_16_exact_slice import function_original_addr  # noqa: E402
 
 
 def _collect_cod_window_lines(cod_text: str, addr: int, radius: int = 4) -> list[str]:
-    def _impl():
+    def _impl() -> list[str]:
         """Return a small COD listing window centered on one offset."""
 
         lines = cod_text.splitlines()
@@ -86,6 +93,7 @@ for _name, _value in (
     ("seed_calling_conventions", seed_calling_conventions),
 ):
     if not hasattr(function_discovery, _name):
+        # Dynamic compatibility boundary: legacy discovery modules may not export injected helpers.
         setattr(function_discovery, _name, _value)
 
 
@@ -116,7 +124,7 @@ def _run_cli_capture(binary: Path, addr: int, timeout: int) -> tuple[int, str, s
     return result.returncode, result.stdout, result.stderr, cmd
 
 
-def _focused_codegen_stage_dump(project, function) -> tuple[dict[str, object], dict[str, str]]:
+def _focused_codegen_stage_dump(project: object, function: object) -> tuple[dict[str, object], dict[str, str]]:
     block_count, byte_count = _function_complexity(function)
     profile = _function_decompilation_profile(function, block_count, byte_count)
     options = _preferred_decompiler_options(

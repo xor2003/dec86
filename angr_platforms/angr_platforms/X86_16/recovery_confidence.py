@@ -1,14 +1,21 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: classify recovery confidence from already-collected structured diagnostics.
+Forbidden: creating proof, hiding assumptions, or changing recovered semantics.
+"""
+
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TypeAlias
 
-from .function_effect_summary import FunctionEffectSummary, summarize_x86_16_function_effects
+from .function_effect_summary import FunctionEffectSource, FunctionEffectSummary, summarize_x86_16_function_effects
 from .function_state_summary import FunctionStateSummary, summarize_x86_16_function_state
 from .helper_effect_summary import HelperEligibilitySummary, summarize_x86_16_helper_eligibility
 from .helper_family_routing import summarize_x86_16_helper_family_routes
-from .ir_readiness import summarize_x86_16_ir_readiness
+from .ir_readiness import IRReadinessSummary, summarize_x86_16_ir_readiness
 
 __all__ = [
     "FunctionEffectSummary",
@@ -23,21 +30,29 @@ __all__ = [
     "summarize_recovery_confidence",
 ]
 
+RecoveryConfidenceSource: TypeAlias = FunctionEffectSource
+
 
 @dataclass(frozen=True, slots=True)
 class RecoveryEvidence:
+    """Evidence item supporting a recovery confidence classification."""
+
     kind: str
     detail: str
 
 
 @dataclass(frozen=True, slots=True)
 class RecoveryAssumption:
+    """Open assumption that weakens a recovery confidence classification."""
+
     kind: str
     detail: str
 
 
 @dataclass(frozen=True, slots=True)
 class RecoveryConfidenceSummary:
+    """Deterministic confidence verdict derived from existing recovery diagnostics."""
+
     status: str
     evidence: tuple[RecoveryEvidence, ...] = ()
     assumptions: tuple[RecoveryAssumption, ...] = ()
@@ -46,6 +61,7 @@ class RecoveryConfidenceSummary:
     helper_summary: HelperEligibilitySummary | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible recovery confidence payload."""
         return {
             "status": self.status,
             "evidence": [{"kind": item.kind, "detail": item.detail} for item in self.evidence],
@@ -56,35 +72,37 @@ class RecoveryConfidenceSummary:
         }
 
 
-def _value(source: Any, name: str, default: Any = None) -> Any:
-    if isinstance(source, Mapping):
-        return source.get(name, default)
-    return getattr(source, name, default)
+def _value(source: RecoveryConfidenceSource, name: str, default: object = None) -> object:
+    return source.get(name, default)
 
 
-def _count(source: Any, name: str) -> int:
+def _count(source: RecoveryConfidenceSource, name: str) -> int:
     value = _value(source, name, 0)
+    return value if isinstance(value, int) else 0
+
+
+def _optional_text(value: object) -> str | None:
     if value is None:
-        return 0
-    return int(value)
+        return None
+    return str(value)
 
 
 def _append_recovery_evidence_8616(
-    source: Any,
+    source: RecoveryConfidenceSource,
     *,
     ok: bool,
     decompiled_count: int,
-    fallback_kind,
+    fallback_kind: str | None,
     interrupt_dos_helper_count: int,
     interrupt_bios_helper_count: int,
-    last_structuring_pass,
-    last_postprocess_pass,
-    effect_summary,
-    state_summary,
-    helper_summary,
-    ir_readiness,
+    last_structuring_pass: str | None,
+    last_postprocess_pass: str | None,
+    effect_summary: FunctionEffectSummary,
+    state_summary: FunctionStateSummary,
+    helper_summary: HelperEligibilitySummary,
+    ir_readiness: IRReadinessSummary,
 ) -> list[RecoveryEvidence]:
-    def _impl():
+    def _impl() -> list[RecoveryEvidence]:
         evidence: list[RecoveryEvidence] = []
         if ok and decompiled_count > 0:
             evidence.append(RecoveryEvidence("decompiled_output", "decompiler produced structured C output"))
@@ -155,7 +173,7 @@ def _append_recovery_evidence_8616(
 def _append_recovery_assumptions_8616(
     *,
     ok: bool,
-    fallback_kind,
+    fallback_kind: str | None,
     has_far_call_reloc: bool,
     rewrite_failed: bool,
     regeneration_failed: bool,
@@ -164,12 +182,12 @@ def _append_recovery_assumptions_8616(
     interrupt_wrapper_call_count: int,
     interrupt_dos_helper_count: int,
     interrupt_bios_helper_count: int,
-    effect_summary,
-    state_summary,
-    helper_summary,
-    ir_readiness,
+    effect_summary: FunctionEffectSummary,
+    state_summary: FunctionStateSummary,
+    helper_summary: HelperEligibilitySummary,
+    ir_readiness: IRReadinessSummary,
 ) -> list[RecoveryAssumption]:
-    def _impl():
+    def _impl() -> list[RecoveryAssumption]:
         assumptions: list[RecoveryAssumption] = []
         if interrupt_unresolved_wrapper_count > 0:
             assumptions.append(
@@ -257,7 +275,14 @@ def _append_recovery_assumptions_8616(
 
 
 def _recovery_diagnostics_8616(
-    *, reason, failure_class, stage_reached, effect_summary, state_summary, helper_summary, ir_readiness
+    *,
+    reason: str | None,
+    failure_class: str | None,
+    stage_reached: str | None,
+    effect_summary: FunctionEffectSummary,
+    state_summary: FunctionStateSummary,
+    helper_summary: HelperEligibilitySummary,
+    ir_readiness: IRReadinessSummary,
 ) -> list[str]:
     diagnostics: list[str] = []
     if reason:
@@ -286,10 +311,10 @@ def _recovery_diagnostics_8616(
 
 def _recovery_status_8616(
     *,
-    source: Any,
+    source: RecoveryConfidenceSource,
     ok: bool,
     decompiled_count: int,
-    fallback_kind,
+    fallback_kind: str | None,
     has_far_call_reloc: bool,
     rewrite_failed: bool,
     regeneration_failed: bool,
@@ -300,7 +325,7 @@ def _recovery_status_8616(
     interrupt_bios_helper_count: int,
     assumptions: list[RecoveryAssumption],
 ) -> str:
-    def _impl():
+    def _impl() -> str:
         if (
             ok
             and fallback_kind == "cfg_only"
@@ -338,10 +363,11 @@ def _scan_safe_classification_for_status_8616(status: str) -> str:
     return "unresolved"
 
 
-def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummary:
+def classify_x86_16_recovery_confidence(source: RecoveryConfidenceSource) -> RecoveryConfidenceSummary:
+    """Classify confidence from already-collected structured recovery diagnostics."""
     ok = bool(_value(source, "ok", False))
     decompiled_count = _count(source, "decompiled_count")
-    fallback_kind = _value(source, "fallback_kind", None)
+    fallback_kind = _optional_text(_value(source, "fallback_kind", None))
     has_far_call_reloc = bool(_value(source, "has_far_call_reloc", False))
     rewrite_failed = bool(_value(source, "rewrite_failed", False))
     regeneration_failed = bool(_value(source, "regeneration_failed", False))
@@ -350,11 +376,11 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
     interrupt_wrapper_call_count = _count(source, "interrupt_wrapper_call_count")
     interrupt_dos_helper_count = _count(source, "interrupt_dos_helper_count")
     interrupt_bios_helper_count = _count(source, "interrupt_bios_helper_count")
-    last_structuring_pass = _value(source, "last_structuring_pass", None)
-    last_postprocess_pass = _value(source, "last_postprocess_pass", None)
-    reason = _value(source, "reason", None)
-    failure_class = _value(source, "failure_class", None)
-    stage_reached = _value(source, "stage_reached", None)
+    last_structuring_pass = _optional_text(_value(source, "last_structuring_pass", None))
+    last_postprocess_pass = _optional_text(_value(source, "last_postprocess_pass", None))
+    reason = _optional_text(_value(source, "reason", None))
+    failure_class = _optional_text(_value(source, "failure_class", None))
+    stage_reached = _optional_text(_value(source, "stage_reached", None))
     effect_summary = summarize_x86_16_function_effects(source)
     state_summary = summarize_x86_16_function_state(source)
     helper_summary = summarize_x86_16_helper_eligibility(source)
@@ -426,8 +452,10 @@ def classify_x86_16_recovery_confidence(source: Any) -> RecoveryConfidenceSummar
     )
 
 
-def summarize_recovery_confidence(results: list[Any]) -> dict[str, object]:
-    def _impl():
+def summarize_recovery_confidence(results: Sequence[RecoveryConfidenceSource]) -> dict[str, object]:
+    """Summarize confidence classifications across existing recovery mapping rows."""
+
+    def _impl() -> dict[str, object]:
         summaries = [classify_x86_16_recovery_confidence(result) for result in results]
         status_counter = Counter(summary.status for summary in summaries)
         scan_safe_counter = Counter(summary.scan_safe_classification for summary in summaries)
@@ -479,4 +507,5 @@ RECOVERY_CONFIDENCE_AXES: tuple[tuple[str, str], ...] = (
 
 
 def describe_x86_16_recovery_confidence_axes() -> tuple[tuple[str, str], ...]:
+    """Return the stable recovery confidence axis descriptions."""
     return RECOVERY_CONFIDENCE_AXES

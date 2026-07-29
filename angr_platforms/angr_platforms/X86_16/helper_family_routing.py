@@ -1,8 +1,14 @@
+"""Layer: Recovery metadata.
+
+Responsibility: route helper refusal families to likely owner layers for diagnosis.
+Forbidden: treating routing as proof, recovery success, or emitted-C repair.
+"""
+
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from .helper_effect_summary import HelperEligibilitySummary
 
@@ -14,6 +20,8 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class HelperFamilyRoute:
+    """Diagnostic route from a helper eligibility signal to its owning layer."""
+
     family: str
     count: int
     likely_layer: str
@@ -21,6 +29,7 @@ class HelperFamilyRoute:
     signal: str
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-compatible helper family route."""
         return {
             "family": self.family,
             "count": self.count,
@@ -65,6 +74,7 @@ def _route_for_refusal(kind: str) -> tuple[str, str, str]:
 def summarize_x86_16_helper_family_routes(
     helper_summaries: Iterable[HelperEligibilitySummary],
 ) -> tuple[HelperFamilyRoute, ...]:
+    """Group helper eligibility summaries into stable owner-layer diagnostics."""
     refusal_counter: Counter[str] = Counter()
     eligible_counter = 0
     no_signal_counter = 0

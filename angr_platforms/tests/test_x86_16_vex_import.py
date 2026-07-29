@@ -3,10 +3,22 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from angr_platforms.X86_16.ir.core import AddressStatus, IRAddress, IRCondition, MemSpace, SegmentOrigin
+from angr_platforms.X86_16.ir.core import (
+    AddressStatus,
+    IRAddress,
+    IRBinaryValue,
+    IRBlock,
+    IRCondition,
+    IRFunctionArtifact,
+    IRInstr,
+    IRValue,
+    MemSpace,
+    SegmentOrigin,
+)
 from angr_platforms.X86_16.ir.vex_import import (
     apply_x86_16_vex_ir_artifact,
     build_x86_16_ir_function_artifact,
+    build_x86_16_ir_function_artifact_summary,
 )
 
 
@@ -24,6 +36,10 @@ def _rdtmp(tmp: int):
 
 def _binop(op: str, *args):
     return SimpleNamespace(tag="Iex_Binop", op=op, args=args)
+
+
+def _unop(op: str, arg):
+    return SimpleNamespace(tag="Iex_Unop", op=op, args=(arg,))
 
 
 def _wrtmp(tmp: int, data):
@@ -87,7 +103,46 @@ def _project(blocks, function):
     )
 
 
-def test_vex_import_maps_si_based_store_to_typed_provisional_ds_address():
+def test_ir_summary_traverses_binary_value_operands() -> None:
+    artifact = IRFunctionArtifact(
+        function_addr=0x1000,
+        blocks=(
+            IRBlock(
+                addr=0x1000,
+                instrs=(
+                    IRInstr(
+                        op="ASSIGN",
+                        dst=IRValue(space=MemSpace.TMP, name="t0", size=2),
+                        args=(
+                            IRBinaryValue(
+                                op="add",
+                                lhs=IRValue(space=MemSpace.REG, name="ax", size=2),
+                                rhs=IRValue(space=MemSpace.CONST, const=1, size=2),
+                                size=2,
+                            ),
+                        ),
+                        size=2,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    summary = build_x86_16_ir_function_artifact_summary(artifact)
+
+    assert summary["space_counts"] == {
+        "const": 1,
+        "ds": 0,
+        "es": 0,
+        "reg": 1,
+        "ss": 0,
+        "tmp": 1,
+        "unknown": 0,
+    }
+    assert summary["aliasable_value_count"] == 1
+
+
+def test_vex_import_maps_si_based_store_to_typed_provisional_ds_address() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
         {
@@ -116,7 +171,7 @@ def test_vex_import_maps_si_based_store_to_typed_provisional_ds_address():
     assert addr.segment_origin == SegmentOrigin.DEFAULTED
 
 
-def test_vex_import_keeps_load_arguments_typed_as_address():
+def test_vex_import_keeps_load_arguments_typed_as_address() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
         {
@@ -137,7 +192,39 @@ def test_vex_import_keeps_load_arguments_typed_as_address():
     assert load.args[0].base == ("si",)
 
 
-def test_vex_import_maps_bp_sub_offset_to_proven_ss_frame_slot():
+def test_vex_import_uses_vex_type_token_for_byte_load_width() -> None:
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
+    project = _project(
+        {
+            0x1000: _block(
+                0x1000,
+                _wrtmp(0, _get(10)),
+                _wrtmp(1, _binop("Iop_Add16", _rdtmp(0), _const(7))),
+                _wrtmp(
+                    2,
+                    SimpleNamespace(
+                        tag="Iex_Load",
+                        addr=_rdtmp(1),
+                        result_size=lambda _tyenv: 8,
+                        ty="Ity_I8",
+                    ),
+                ),
+            )
+        },
+        function,
+    )
+
+    artifact = build_x86_16_ir_function_artifact(project, function)
+    load = artifact.blocks[0].instrs[-1]
+
+    assert load.op == "LOAD"
+    assert load.size == 1
+    assert isinstance(load.args[0], IRAddress)
+    assert load.args[0].offset == 7
+    assert load.args[0].size == 1
+
+
+def test_vex_import_maps_bp_sub_offset_to_proven_ss_frame_slot() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
         {
@@ -167,7 +254,38 @@ def test_vex_import_maps_bp_sub_offset_to_proven_ss_frame_slot():
     assert artifact.summary["segment_origin_counts"]["proven"] >= 1
 
 
-def test_vex_import_keeps_register_pair_address_tuple_for_alias():
+def test_vex_import_recovers_explicit_ss_linearized_bp_offset_as_segmented_frame_slot() -> None:
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
+    project = _project(
+        {
+            0x1000: _block(
+                0x1000,
+                _wrtmp(0, _get(10)),
+                _wrtmp(1, _binop("Iop_Add16", _rdtmp(0), _const(0xFFFE))),
+                _wrtmp(2, _get(30)),
+                _wrtmp(3, _unop("Iop_16Uto32", _rdtmp(2))),
+                _wrtmp(4, _binop("Iop_Shl32", _rdtmp(3), _const(4))),
+                _wrtmp(5, _unop("Iop_16Uto32", _rdtmp(1))),
+                _wrtmp(6, _binop("Iop_Add32", _rdtmp(4), _rdtmp(5))),
+                _store(_rdtmp(6), _const(1)),
+            )
+        },
+        function,
+    )
+
+    artifact = build_x86_16_ir_function_artifact(project, function)
+    addr = artifact.blocks[0].instrs[-1].args[0]
+
+    assert isinstance(addr, IRAddress)
+    assert addr.space is MemSpace.SS
+    assert addr.base == ("bp",)
+    assert addr.offset == -2
+    assert addr.status is AddressStatus.STABLE
+    assert addr.segment_origin is SegmentOrigin.PROVEN
+    assert artifact.summary["frame_slot_count"] == 1
+
+
+def test_vex_import_keeps_register_pair_address_tuple_for_alias() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
         {
@@ -191,7 +309,7 @@ def test_vex_import_keeps_register_pair_address_tuple_for_alias():
     assert addr.segment_origin == SegmentOrigin.DEFAULTED
 
 
-def test_vex_import_marks_string_destination_di_as_proven_es():
+def test_vex_import_marks_string_destination_di_as_proven_es() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
         {
@@ -215,7 +333,7 @@ def test_vex_import_marks_string_destination_di_as_proven_es():
     assert addr.segment_origin == SegmentOrigin.PROVEN
 
 
-def test_vex_import_lifts_comparison_exit_to_typed_condition():
+def test_vex_import_lifts_comparison_exit_to_typed_condition() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
         {
@@ -241,7 +359,7 @@ def test_vex_import_lifts_comparison_exit_to_typed_condition():
     assert artifact.summary["condition_counts"] == {"eq": 1}
 
 
-def test_vex_import_folds_compare_with_zero_to_nonzero_condition():
+def test_vex_import_folds_compare_with_zero_to_nonzero_condition() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
         {
@@ -263,7 +381,7 @@ def test_vex_import_folds_compare_with_zero_to_nonzero_condition():
     assert [value.name for value in cond.args] == ["si"]
 
 
-def test_vex_import_lifts_unsigned_compare_condition():
+def test_vex_import_lifts_unsigned_compare_condition() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
         {
@@ -286,7 +404,7 @@ def test_vex_import_lifts_unsigned_compare_condition():
     assert [value.name for value in cond.args] == ["ax", "bx"]
 
 
-def test_vex_import_lifts_masked_nonzero_exit_to_typed_condition():
+def test_vex_import_lifts_masked_nonzero_exit_to_typed_condition() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
         {
@@ -312,7 +430,7 @@ def test_vex_import_lifts_masked_nonzero_exit_to_typed_condition():
     assert artifact.summary["condition_counts"] == {"masked_nonzero": 1}
 
 
-def test_vex_import_preserves_ite_wrapped_condition_temp_for_exit():
+def test_vex_import_preserves_ite_wrapped_condition_temp_for_exit() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
         {
@@ -351,7 +469,7 @@ def test_vex_import_preserves_ite_wrapped_condition_temp_for_exit():
         (_binop("Iop_And8", _flag_test(0x0040, is_set=False), _flags_equal(0x0080, 0x0800)), "sgt"),
     ],
 )
-def test_vex_import_lifts_flag_formula_jcc_variants_to_typed_compare(guard_expr, expected_op):
+def test_vex_import_lifts_flag_formula_jcc_variants_to_typed_compare(guard_expr, expected_op) -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
         {
@@ -375,7 +493,7 @@ def test_vex_import_lifts_flag_formula_jcc_variants_to_typed_compare(guard_expr,
     assert [value.name for value in cond.args] == ["ax", "bx"]
 
 
-def test_vex_import_inverts_ite_wrapped_flag_formula_to_complement_compare():
+def test_vex_import_inverts_ite_wrapped_flag_formula_to_complement_compare() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     sgt_formula = _binop("Iop_And8", _flag_test(0x0040, is_set=False), _flags_equal(0x0080, 0x0800))
     project = _project(
@@ -400,7 +518,7 @@ def test_vex_import_inverts_ite_wrapped_flag_formula_to_complement_compare():
     assert [value.name for value in cond.args] == ["ax", "bx"]
 
 
-def test_vex_import_records_successor_addrs_and_function_ssa():
+def test_vex_import_records_successor_addrs_and_function_ssa() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000, 0x1010, 0x1020}, info={})
     project = _project(
         {
@@ -420,7 +538,7 @@ def test_vex_import_records_successor_addrs_and_function_ssa():
     assert function.info["x86_16_vex_ir_function_ssa"]["summary"]["block_count"] == 3
 
 
-def test_apply_vex_ir_artifact_attaches_summary_to_codegen_and_function_info():
+def test_apply_vex_ir_artifact_attaches_summary_to_codegen_and_function_info() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
         {0x1000: _block(0x1000, _wrtmp(0, _get(14)), _store(_rdtmp(0), _const(2)))},

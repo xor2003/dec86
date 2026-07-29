@@ -1,21 +1,151 @@
+"""Lift VEX condition and flag expressions into typed IR conditions.
+
+Layer: IR.
+Responsibility: owns typed Value, Address, Condition, instruction facts, and lossless
+normalization.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from enum import Enum, IntEnum, auto
+from enum import Enum, IntEnum
+from typing import Protocol, cast
 
 from .condition_ir import build_condition_ir_8616, harmonize_condition_args_8616, normalize_condition_op_8616
 from .core import IRCondition, IRValue
 from .regs import register_name_from_offset
 
-__all__ = [
+__all__ = (
     "build_condition_from_binop",
     "expr_to_condition",
-]
+)
+
+_TmpValues = dict[int, IRValue]
+_TmpConditions = dict[int, IRCondition]
+_TmpExprs = dict[int, object]
+_ExprToValue = Callable[[object, _TmpValues, _TmpConditions], IRValue]
+
+
+class _VexConstBoundary(Protocol):
+    """Minimal pyvex constant surface consumed by condition lifting."""
+
+    value: object
+
+
+class _VexResultSizeBoundary(Protocol):
+    """Minimal pyvex result-size surface consumed by condition lifting."""
+
+    value: object
+
+
+class _VexExprBoundary(Protocol):
+    """Minimal pyvex expression surface consumed by condition lifting."""
+
+    tag: object
+    tmp: object
+    offset: object
+    op: object
+    args: object
+    con: _VexConstBoundary | None
+    cond: object
+    iftrue: object
+    iffalse: object
+    result_size: _VexResultSizeBoundary | None
+    ty: object
+
+
+def _expr_tag(expr: object | None) -> str:
+    """Return a VEX expression tag from the pyvex boundary."""
+    if expr is None:
+        return ""
+    try:
+        return str(cast(_VexExprBoundary, expr).tag)
+    except AttributeError:
+        return ""
+
+
+def _expr_tmp(expr: object) -> int:
+    """Return a VEX temporary id from the pyvex boundary."""
+    return _external_int(cast(_VexExprBoundary, expr).tmp)
+
+
+def _expr_offset(expr: object, default: int = -1) -> int:
+    """Return a VEX register offset from the pyvex boundary."""
+    try:
+        return _external_int(cast(_VexExprBoundary, expr).offset)
+    except AttributeError:
+        return default
+
+
+def _expr_op(expr: object | None, default: str = "") -> str:
+    """Return a VEX expression operation name from the pyvex boundary."""
+    if expr is None:
+        return default
+    try:
+        return str(cast(_VexExprBoundary, expr).op)
+    except AttributeError:
+        return default
+
+
+def _expr_args(expr: object | None) -> tuple[object, ...]:
+    """Return VEX expression arguments as a stable tuple."""
+    if expr is None:
+        return ()
+    try:
+        args = cast(_VexExprBoundary, expr).args
+    except AttributeError:
+        return ()
+    if args is None:
+        return ()
+    return tuple(cast(Iterable[object], args))
+
+
+def _expr_const(expr: object | None) -> _VexConstBoundary | None:
+    """Return a VEX constant boundary object when present."""
+    if expr is None:
+        return None
+    try:
+        return cast(_VexExprBoundary, expr).con
+    except AttributeError:
+        return None
+
+
+def _expr_cond(expr: object) -> object | None:
+    """Return the condition expression from a VEX ITE boundary."""
+    try:
+        return cast(_VexExprBoundary, expr).cond
+    except AttributeError:
+        return None
+
+
+def _expr_iftrue(expr: object) -> object | None:
+    """Return the true expression from a VEX ITE boundary."""
+    try:
+        return cast(_VexExprBoundary, expr).iftrue
+    except AttributeError:
+        return None
+
+
+def _expr_iffalse(expr: object) -> object | None:
+    """Return the false expression from a VEX ITE boundary."""
+    try:
+        return cast(_VexExprBoundary, expr).iffalse
+    except AttributeError:
+        return None
+
+
+def _external_int(value: object) -> int:
+    """Coerce pyvex integer-like boundary values without owning their type."""
+    return int(value)  # type: ignore[arg-type]
 
 
 class _FlagBit(IntEnum):
+    """x86 flags word bit masks used by VEX flag formulas."""
+
     CF = 0x0001
     ZF = 0x0040
     SF = 0x0080
@@ -23,16 +153,20 @@ class _FlagBit(IntEnum):
 
 
 class _FlagPredicateKind(Enum):
-    BIT_SET = auto()
-    BIT_CLEAR = auto()
-    BITS_EQUAL = auto()
-    BITS_NOT_EQUAL = auto()
-    AND = auto()
-    OR = auto()
+    """Typed flag predicate families recovered from VEX formulas."""
+
+    BIT_SET = "bit_set"
+    BIT_CLEAR = "bit_clear"
+    BITS_EQUAL = "bits_equal"
+    BITS_NOT_EQUAL = "bits_not_equal"
+    AND = "and"
+    OR = "or"
 
 
 @dataclass(frozen=True, slots=True)
 class _FlagPredicate:
+    """Structured predicate over one or more x86 flag bits."""
+
     kind: _FlagPredicateKind
     bit: _FlagBit | None = None
     left_bit: _FlagBit | None = None
@@ -76,6 +210,7 @@ def _compare_size_bytes(op: str) -> int:
 
 
 def build_condition_from_binop(op: str, left: IRValue, right: IRValue) -> IRCondition | None:
+    """Recover a typed IR condition from a two-argument VEX comparison op."""
     folded = op.lower()
     left, right = harmonize_condition_args_8616(left, right, size=_compare_size_bytes(op))
     variants = {
@@ -109,44 +244,41 @@ def _masked_nonzero_condition(left: IRValue, right: IRValue, *, source: str) -> 
     return IRCondition(op="masked_nonzero", args=(left, right), expr=(source,))
 
 
-def _const_value(expr) -> int | None:
-    con = getattr(expr, "con", None)
+def _const_value(expr: object | None) -> int | None:
+    con = _expr_const(expr)
     if con is None:
         return None
-    value = getattr(con, "value", None)
-    return None if value is None else int(value)
+    value = con.value
+    return None if value is None else _external_int(value)
 
 
 def _invert_condition(cond: IRCondition) -> IRCondition:
-    def _impl():
+    def _impl() -> IRCondition:
         inverted_op = _INVERT_CONDITION_OPS.get(cond.op)
         if inverted_op is not None:
-            return build_condition_ir_8616(inverted_op, *cond.args, expr=cond.expr)
+            args = cond.args
+            if all(isinstance(arg, IRValue) for arg in args):
+                value_args = cast(tuple[IRValue, ...], args)
+                return build_condition_ir_8616(normalize_condition_op_8616(inverted_op), *value_args, expr=cond.expr)
         if cond.op == "not" and len(cond.args) == 1 and isinstance(cond.args[0], IRCondition):
             return cond.args[0]
         if cond.op == "and" and len(cond.args) == 2 and all(isinstance(arg, IRCondition) for arg in cond.args):
-            return build_condition_ir_8616(
-                "or",
-                _invert_condition(cond.args[0]),
-                _invert_condition(cond.args[1]),
-                expr=cond.expr,
-            )
+            left = _invert_condition(cast(IRCondition, cond.args[0]))
+            right = _invert_condition(cast(IRCondition, cond.args[1]))
+            return IRCondition(op="or", args=(left, right), expr=cond.expr)
         if cond.op == "or" and len(cond.args) == 2 and all(isinstance(arg, IRCondition) for arg in cond.args):
-            return build_condition_ir_8616(
-                "and",
-                _invert_condition(cond.args[0]),
-                _invert_condition(cond.args[1]),
-                expr=cond.expr,
-            )
-        return build_condition_ir_8616("not", cond, expr=cond.expr)
+            left = _invert_condition(cast(IRCondition, cond.args[0]))
+            right = _invert_condition(cast(IRCondition, cond.args[1]))
+            return IRCondition(op="and", args=(left, right), expr=cond.expr)
+        return IRCondition(op="not", args=(cond,), expr=cond.expr)
 
     return _impl()
 
 
-def _resolve_tmp_expr(expr, tmp_exprs: dict[int, object] | None, seen: set[int] | None = None):
-    if getattr(expr, "tag", "") != "Iex_RdTmp" or tmp_exprs is None:
+def _resolve_tmp_expr(expr: object, tmp_exprs: _TmpExprs | None, seen: set[int] | None = None) -> object:
+    if _expr_tag(expr) != "Iex_RdTmp" or tmp_exprs is None:
         return expr
-    tmp_id = int(getattr(expr, "tmp"))
+    tmp_id = _expr_tmp(expr)
     if seen is None:
         seen = set()
     if tmp_id in seen:
@@ -158,13 +290,13 @@ def _resolve_tmp_expr(expr, tmp_exprs: dict[int, object] | None, seen: set[int] 
     return _resolve_tmp_expr(resolved, tmp_exprs, seen)
 
 
-def _is_flags_expr(expr, tmp_exprs: dict[int, object] | None) -> bool:
+def _is_flags_expr(expr: object, tmp_exprs: _TmpExprs | None) -> bool:
     resolved = _resolve_tmp_expr(expr, tmp_exprs)
-    tag = getattr(resolved, "tag", "")
+    tag = _expr_tag(resolved)
     if tag == "Iex_Get":
-        return register_name_from_offset(int(getattr(resolved, "offset", -1))) == "flags"
+        return register_name_from_offset(_expr_offset(resolved)) == "flags"
     if tag == "Iex_Unop":
-        args = tuple(getattr(resolved, "args", ()) or ())
+        args = _expr_args(resolved)
         return bool(args) and _is_flags_expr(args[0], tmp_exprs)
     return False
 
@@ -178,14 +310,14 @@ def _flag_bit_from_mask(mask: int | None) -> _FlagBit | None:
         return None
 
 
-def _extract_flag_bit_expr(expr, tmp_exprs: dict[int, object] | None) -> _FlagBit | None:
+def _extract_flag_bit_expr(expr: object, tmp_exprs: _TmpExprs | None) -> _FlagBit | None:
     resolved = _resolve_tmp_expr(expr, tmp_exprs)
-    if getattr(resolved, "tag", "") != "Iex_Binop":
+    if _expr_tag(resolved) != "Iex_Binop":
         return None
-    op = str(getattr(resolved, "op", "")).lower()
+    op = _expr_op(resolved).lower()
     if "and" not in op:
         return None
-    args = tuple(getattr(resolved, "args", ()) or ())
+    args = _expr_args(resolved)
     if len(args) != 2:
         return None
     left, right = args
@@ -196,12 +328,12 @@ def _extract_flag_bit_expr(expr, tmp_exprs: dict[int, object] | None) -> _FlagBi
     return None
 
 
-def _extract_boolean_flag_test(expr, tmp_exprs: dict[int, object] | None) -> tuple[_FlagBit, bool] | None:
+def _extract_boolean_flag_test(expr: object, tmp_exprs: _TmpExprs | None) -> tuple[_FlagBit, bool] | None:
     resolved = _resolve_tmp_expr(expr, tmp_exprs)
-    if getattr(resolved, "tag", "") != "Iex_Binop":
+    if _expr_tag(resolved) != "Iex_Binop":
         return None
-    op = str(getattr(resolved, "op", "")).lower()
-    args = tuple(getattr(resolved, "args", ()) or ())
+    op = _expr_op(resolved).lower()
+    args = _expr_args(resolved)
     if len(args) != 2:
         return None
     left, right = args
@@ -217,9 +349,9 @@ def _extract_boolean_flag_test(expr, tmp_exprs: dict[int, object] | None) -> tup
 
 
 def _extract_masked_flag_pair_test(
-    lhs,
-    rhs,
-    tmp_exprs: dict[int, object] | None,
+    lhs: object,
+    rhs: object,
+    tmp_exprs: _TmpExprs | None,
 ) -> tuple[_FlagBit, _FlagBit] | None:
     left_bit = _extract_flag_bit_expr(lhs, tmp_exprs)
     right_bit = _extract_flag_bit_expr(rhs, tmp_exprs)
@@ -229,7 +361,7 @@ def _extract_masked_flag_pair_test(
 
 
 def _invert_flag_predicate_8616(pred: _FlagPredicate) -> _FlagPredicate | None:
-    def _impl():
+    def _impl() -> _FlagPredicate | None:
         if pred.kind == _FlagPredicateKind.BIT_SET:
             return _FlagPredicate(_FlagPredicateKind.BIT_CLEAR, bit=pred.bit)
         if pred.kind == _FlagPredicateKind.BIT_CLEAR:
@@ -263,13 +395,13 @@ def _invert_flag_predicate_8616(pred: _FlagPredicate) -> _FlagPredicate | None:
     return _impl()
 
 
-def _flag_predicate_from_expr(expr, tmp_exprs: dict[int, object] | None) -> _FlagPredicate | None:
-    def _impl():
+def _flag_predicate_from_expr(expr: object, tmp_exprs: _TmpExprs | None) -> _FlagPredicate | None:
+    def _impl() -> _FlagPredicate | None:
         resolved = _resolve_tmp_expr(expr, tmp_exprs)
-        tag = getattr(resolved, "tag", "")
+        tag = _expr_tag(resolved)
         if tag == "Iex_Unop":
-            op = str(getattr(resolved, "op", "")).lower()
-            args = tuple(getattr(resolved, "args", ()) or ())
+            op = _expr_op(resolved).lower()
+            args = _expr_args(resolved)
             if len(args) != 1:
                 return None
             if "not" not in op:
@@ -279,8 +411,8 @@ def _flag_predicate_from_expr(expr, tmp_exprs: dict[int, object] | None) -> _Fla
                 return None
             return _invert_flag_predicate_8616(inner)
         if tag == "Iex_Binop":
-            op = str(getattr(resolved, "op", "")).lower()
-            args = tuple(getattr(resolved, "args", ()) or ())
+            op = _expr_op(resolved).lower()
+            args = _expr_args(resolved)
             if len(args) != 2:
                 return None
             left, right = args
@@ -425,7 +557,7 @@ def _condition_op_from_flag_predicate(pred: _FlagPredicate) -> str | None:
     return None
 
 
-def _flag_formula_condition(expr, conditions, tmp_exprs: dict[int, object] | None) -> IRCondition | None:
+def _flag_formula_condition(expr: object, conditions: _TmpConditions, tmp_exprs: _TmpExprs | None) -> IRCondition | None:
     pred = _flag_predicate_from_expr(expr, tmp_exprs)
     if pred is None:
         return None
@@ -436,16 +568,23 @@ def _flag_formula_condition(expr, conditions, tmp_exprs: dict[int, object] | Non
     if compare is None:
         return None
     lhs, rhs = compare.args
-    return build_condition_ir_8616(cond_op, lhs, rhs, expr=("flag_jcc_formula", cond_op))
+    if not isinstance(lhs, IRValue) or not isinstance(rhs, IRValue):
+        return None
+    return build_condition_ir_8616(normalize_condition_op_8616(cond_op), lhs, rhs, expr=("flag_jcc_formula", cond_op))
 
 
 def _try_expr_to_condition(
-    expr, tmps, conditions, *, expr_to_value: Callable, tmp_exprs: dict[int, object] | None = None
+    expr: object,
+    tmps: _TmpValues,
+    conditions: _TmpConditions,
+    *,
+    expr_to_value: _ExprToValue,
+    tmp_exprs: _TmpExprs | None = None,
 ) -> IRCondition | None:
-    def _impl():
-        tag = getattr(expr, "tag", "")
+    def _impl() -> IRCondition | None:
+        tag = _expr_tag(expr)
         if tag == "Iex_RdTmp":
-            tmp_id = int(getattr(expr, "tmp"))
+            tmp_id = _expr_tmp(expr)
             cond = conditions.get(tmp_id)
             if cond is not None:
                 return cond
@@ -458,8 +597,8 @@ def _try_expr_to_condition(
             formula_cond = _flag_formula_condition(expr, conditions, tmp_exprs)
             if formula_cond is not None:
                 return formula_cond
-            op = str(getattr(expr, "op", ""))
-            args = tuple(getattr(expr, "args", ()) or ())
+            op = _expr_op(expr)
+            args = _expr_args(expr)
             if len(args) != 2:
                 return None
             lowered = op.lower()
@@ -489,9 +628,9 @@ def _try_expr_to_condition(
             right = expr_to_value(args[1], tmps, conditions)
             return build_condition_from_binop(op, left, right)
         if tag == "Iex_ITE":
-            cond_expr = getattr(expr, "cond", None)
-            iftrue = getattr(expr, "iftrue", None)
-            iffalse = getattr(expr, "iffalse", None)
+            cond_expr = _expr_cond(expr)
+            iftrue = _expr_iftrue(expr)
+            iffalse = _expr_iffalse(expr)
             cond = _try_expr_to_condition(cond_expr, tmps, conditions, expr_to_value=expr_to_value, tmp_exprs=tmp_exprs)
             if cond is None:
                 return None
@@ -508,35 +647,42 @@ def _try_expr_to_condition(
 
 def _logical_condition(
     op: str,
-    lhs,
-    rhs,
-    tmps,
-    conditions,
+    lhs: object,
+    rhs: object,
+    tmps: _TmpValues,
+    conditions: _TmpConditions,
     *,
-    expr_to_value: Callable,
+    expr_to_value: _ExprToValue,
     source: str,
-    tmp_exprs: dict[int, object] | None = None,
+    tmp_exprs: _TmpExprs | None = None,
 ) -> IRCondition | None:
     lhs_cond = _try_expr_to_condition(lhs, tmps, conditions, expr_to_value=expr_to_value, tmp_exprs=tmp_exprs)
     rhs_cond = _try_expr_to_condition(rhs, tmps, conditions, expr_to_value=expr_to_value, tmp_exprs=tmp_exprs)
     if lhs_cond is None or rhs_cond is None:
         return None
-    return build_condition_ir_8616(op, lhs_cond, rhs_cond, expr=(source,))
+    return IRCondition(op=op, args=(lhs_cond, rhs_cond), expr=(source,))
 
 
 def expr_to_condition(
-    expr, tmps, conditions, *, expr_to_value: Callable, tmp_exprs: dict[int, object] | None = None
+    expr: object,
+    tmps: _TmpValues,
+    conditions: _TmpConditions,
+    *,
+    expr_to_value: _ExprToValue,
+    tmp_exprs: _TmpExprs | None = None,
 ) -> IRCondition:
-    def _impl():
-        tag = getattr(expr, "tag", "")
+    """Recover a typed IR condition from a VEX expression boundary."""
+
+    def _impl() -> IRCondition:
+        tag = _expr_tag(expr)
         if tag == "Iex_RdTmp":
-            tmp_id = int(getattr(expr, "tmp"))
+            tmp_id = _expr_tmp(expr)
             if tmp_id in conditions:
                 return conditions[tmp_id]
             return _nonzero_condition(expr_to_value(expr, tmps, conditions), source=f"rdtmp:{tmp_id}")
         if tag == "Iex_Binop":
-            op = str(getattr(expr, "op", ""))
-            args = tuple(getattr(expr, "args", ()) or ())
+            op = _expr_op(expr)
+            args = _expr_args(expr)
             if len(args) == 2:
                 formula_cond = _flag_formula_condition(expr, conditions, tmp_exprs)
                 if formula_cond is not None:

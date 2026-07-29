@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Root-level debugger startup script.
 
+Layer: Tooling/gates.
+
 Starts the GDB server (simulator environment) and launches the Textual TUI client.
 Supports both libdosbox and angr-based x86-16 simulation backends.
 
@@ -18,6 +20,7 @@ import socket
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -29,6 +32,14 @@ DEFAULT_HOST = "127.0.0.1"
 LIBDOSBOX_PATH = Path("/home/xor/inertia_player/libdosbox")
 WORKSPACE_PATH = Path(__file__).parent
 PROJECT_VENV_PYTHON = WORKSPACE_PATH / ".venv" / "bin" / "python"
+
+
+@dataclass(frozen=True, slots=True)
+class DebugServer:
+    """Own a debugger server process together with its listening port."""
+
+    process: subprocess.Popen[bytes]
+    port: int
 
 
 # ---------------------------------------------------------------------------
@@ -78,7 +89,7 @@ def find_free_port(host: str = "127.0.0.1") -> int:
         return s.getsockname()[1]
 
 
-def start_angr_gdb_server(exe_path: str, port: int, host: str) -> subprocess.Popen:
+def start_angr_gdb_server(exe_path: str, port: int, host: str) -> DebugServer:
     """Start the angr-based GDB RSP server."""
     # If port is 0, find a free port
     if port == 0:
@@ -95,15 +106,16 @@ def start_angr_gdb_server(exe_path: str, port: int, host: str) -> subprocess.Pop
     ]
     print(f"[*] Starting angr GDB server on {host}:{port}: {' '.join(cmd)}")
     proc = subprocess.Popen(cmd, cwd=str(WORKSPACE_PATH))
-    proc.debug_port = port
-    return proc
+    return DebugServer(process=proc, port=port)
 
 
-def start_dosbox_gdb_server(exe_path: str, port: int, host: str) -> subprocess.Popen:
+def start_dosbox_gdb_server(exe_path: str, port: int, host: str) -> DebugServer:
     """Start libdosbox with GDB server enabled."""
     binary = find_libdosbox_binary()
     if not binary:
         raise RuntimeError("libdosbox binary not found")
+    if port == 0:
+        port = find_free_port(host)
 
     # libdosbox typically uses -debug or -gdb flags
     cmd = [
@@ -120,17 +132,17 @@ def start_dosbox_gdb_server(exe_path: str, port: int, host: str) -> subprocess.P
     ]
     print(f"[*] Starting libdosbox GDB server: {' '.join(cmd)}")
     proc = subprocess.Popen(cmd, cwd=str(WORKSPACE_PATH))
-    proc.debug_port = port
-    return proc
+    return DebugServer(process=proc, port=port)
 
 
-def start_gdbserver_standalone(exe_path: str, port: int, host: str) -> subprocess.Popen:
+def start_gdbserver_standalone(exe_path: str, port: int, host: str) -> DebugServer:
     """Start gdbserver for native debugging (if available)."""
+    if port == 0:
+        port = find_free_port(host)
     cmd = ["gdbserver", f"{host}:{port}", exe_path]
     print(f"[*] Starting gdbserver: {' '.join(cmd)}")
     proc = subprocess.Popen(cmd, cwd=str(WORKSPACE_PATH))
-    proc.debug_port = port
-    return proc
+    return DebugServer(process=proc, port=port)
 
 
 def module_available(name: str) -> bool:
@@ -191,7 +203,9 @@ def launch_tui(host: str, port: int, arch: str) -> None:
 
 
 def main() -> None:
-    def _impl():
+    """Start a debugger backend and optionally attach the Textual TUI."""
+
+    def _impl() -> None:
         ensure_project_venv()
         parser = argparse.ArgumentParser(
             description="DOS Debugger with GDB server and Textual TUI",
@@ -260,25 +274,24 @@ def main() -> None:
                 backend = "angr"
 
         # Start GDB server
-        server_proc = None
+        server: DebugServer | None = None
         try:
             if backend == "angr":
                 if not module_available("angr"):
                     print("Error: missing Python module 'angr' required for the angr backend")
                     sys.exit(1)
-                server_proc = start_angr_gdb_server(str(exe_path), args.port, args.host)
+                server = start_angr_gdb_server(str(exe_path), args.port, args.host)
             elif backend == "dosbox":
-                server_proc = start_dosbox_gdb_server(str(exe_path), args.port, args.host)
+                server = start_dosbox_gdb_server(str(exe_path), args.port, args.host)
             elif backend == "gdbserver":
-                server_proc = start_gdbserver_standalone(str(exe_path), args.port, args.host)
+                server = start_gdbserver_standalone(str(exe_path), args.port, args.host)
             else:
                 print(f"Error: unknown backend '{backend}'")
                 sys.exit(1)
 
             # Wait for server to start
-            server_port = getattr(server_proc, "debug_port", args.port)
-            print(f"[*] Waiting for GDB server on {args.host}:{server_port}...")
-            wait_for_server(args.host, server_port, server_proc)
+            print(f"[*] Waiting for GDB server on {args.host}:{server.port}...")
+            wait_for_server(args.host, server.port, server.process)
 
             # Launch TUI unless --no-tui
             if not args.no_tui:
@@ -286,23 +299,23 @@ def main() -> None:
                     print("Error: missing Python module 'textual' required for the TUI")
                     sys.exit(1)
                 print("[*] Launching TUI...")
-                launch_tui(args.host, server_port, args.arch)
+                launch_tui(args.host, server.port, args.arch)
             else:
                 print("[*] Server running. Connect with:")
-                print(f"    python {__file__} --connect {args.host}:{server_port}")
+                print(f"    python {__file__} --connect {args.host}:{server.port}")
                 # Wait for server to exit
-                server_proc.wait()
+                server.process.wait()
 
         except KeyboardInterrupt:
             print("\n[*] Interrupted")
         finally:
-            if server_proc:
+            if server:
                 print("[*] Stopping GDB server...")
-                server_proc.terminate()
+                server.process.terminate()
                 try:
-                    server_proc.wait(timeout=5)
+                    server.process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    server_proc.kill()
+                    server.process.kill()
             print("[*] Debugger exited")
 
     return _impl()

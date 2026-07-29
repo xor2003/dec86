@@ -1,31 +1,43 @@
+"""Collect optional telemetry spans and compact runtime summaries.
+
+Layer: CLI/fallback/reporting.
+Responsibility: report optional runtime timing diagnostics without owning decompiler semantics.
+
+Dynamic attribute access is limited to third-party telemetry payloads and optional
+OpenTelemetry compatibility objects.
+"""
+
 from __future__ import annotations
 
 import atexit
 import contextlib
 import contextvars
 import functools
+import importlib
 import inspect
 import json
 import os
+import signal
 import sys
 import threading
 import time
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Iterator, TypeVar
+from typing import ParamSpec, Protocol, TypeVar, cast
 
-TRACE_ENABLE_ENV = "INERTIA_OTEL_SPANS"
-TRACE_FILE_ENV = "INERTIA_OTEL_SPAN_FILE"
-TRACE_TOP_N_ENV = "INERTIA_OTEL_TOP_N"
-TRACE_MIN_MS_ENV = "INERTIA_OTEL_MIN_MS"
-TRACE_FULL_JSONL_ENV = "INERTIA_OTEL_FULL_JSONL"
-TRACE_STDERR_ENV = "INERTIA_OTEL_STDERR"
-TRACE_FORMAT_ENV = "INERTIA_OTEL_SPAN_FORMAT"
-TRACE_TEXT_MAX_SPANS_ENV = "INERTIA_OTEL_TEXT_MAX_SPANS"
-TRACE_OTLP_ENABLE_ENV = "INERTIA_OTEL_EXPORT_OTLP"
-TRACE_SERVICE_NAME_ENV = "INERTIA_OTEL_SERVICE_NAME"
-TRACE_FORCE_FLUSH_MS_ENV = "INERTIA_OTEL_FORCE_FLUSH_MS"
+TRACE_ENABLE_ENV: str = "INERTIA_OTEL_SPANS"
+TRACE_FILE_ENV: str = "INERTIA_OTEL_SPAN_FILE"
+TRACE_TOP_N_ENV: str = "INERTIA_OTEL_TOP_N"
+TRACE_MIN_MS_ENV: str = "INERTIA_OTEL_MIN_MS"
+TRACE_FULL_JSONL_ENV: str = "INERTIA_OTEL_FULL_JSONL"
+TRACE_STDERR_ENV: str = "INERTIA_OTEL_STDERR"
+TRACE_FORMAT_ENV: str = "INERTIA_OTEL_SPAN_FORMAT"
+TRACE_TEXT_MAX_SPANS_ENV: str = "INERTIA_OTEL_TEXT_MAX_SPANS"
+TRACE_OTLP_ENABLE_ENV: str = "INERTIA_OTEL_EXPORT_OTLP"
+TRACE_SERVICE_NAME_ENV: str = "INERTIA_OTEL_SERVICE_NAME"
+TRACE_FORCE_FLUSH_MS_ENV: str = "INERTIA_OTEL_FORCE_FLUSH_MS"
 
 _TRUTHY = {"1", "true", "yes", "on"}
 _FALSY = {"0", "false", "no", "off"}
@@ -33,10 +45,88 @@ _MAX_ATTR_TEXT = 96
 
 
 class TraceOutputFormat(Enum):
+    """Supported compact telemetry output formats."""
+
     TEXT = "text"
     SLOW = "slow"
     JSON = "json"
     JSONL = "jsonl"
+
+
+class _OtelSpan(Protocol):
+    """Minimal optional OpenTelemetry span surface used by this module."""
+
+    def set_attribute(self, key: str, value: object) -> None:
+        """Attach one attribute to the active OpenTelemetry span."""
+        ...
+
+
+class _OtelTracer(Protocol):
+    """Minimal optional OpenTelemetry tracer surface used by this module."""
+
+    def start_as_current_span(self, name: str) -> contextlib.AbstractContextManager[_OtelSpan]:
+        """Return an OpenTelemetry span context manager."""
+        ...
+
+
+class _OtelTraceModule(Protocol):
+    """Minimal optional OpenTelemetry trace module surface used here."""
+
+    def get_tracer(self, name: str) -> _OtelTracer:
+        """Return a tracer by instrumentation name."""
+        ...
+
+    def set_tracer_provider(self, provider: object) -> None:
+        """Install a tracer provider."""
+        ...
+
+
+class _OtelProvider(Protocol):
+    """Minimal optional OpenTelemetry provider surface used by shutdown."""
+
+    def add_span_processor(self, _processor: object) -> None:
+        """Register a span processor."""
+        ...
+
+    def force_flush(self, _timeout_millis: int) -> None:
+        """Flush queued spans."""
+        ...
+
+    def shutdown(self) -> None:
+        """Shutdown the provider."""
+        ...
+
+
+class _ResourceFactory(Protocol):
+    """Factory protocol for optional OpenTelemetry resources."""
+
+    def create(self, _attributes: dict[str, str]) -> object:
+        """Create an OpenTelemetry resource object."""
+        ...
+
+
+class _ProviderFactory(Protocol):
+    """Factory protocol for optional OpenTelemetry tracer providers."""
+
+    def __call__(self, *, resource: object) -> _OtelProvider:
+        """Create a provider from a resource."""
+        ...
+
+
+class _ProcessorFactory(Protocol):
+    """Factory protocol for optional OpenTelemetry span processors."""
+
+    def __call__(self, _exporter: object) -> object:
+        """Create a span processor from an exporter."""
+        ...
+
+
+class _ExporterFactory(Protocol):
+    """Factory protocol for optional OpenTelemetry exporters."""
+
+    def __call__(self) -> object:
+        """Create an exporter."""
+        ...
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -71,7 +161,7 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def _compact_attr(value: Any) -> Any:
+def _compact_attr(value: object) -> object:
     if value is None or isinstance(value, bool | int | float):
         return value
     if isinstance(value, Path):
@@ -83,7 +173,7 @@ def _compact_attr(value: Any) -> Any:
     return value
 
 
-def _compact_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
+def _compact_attrs(attrs: dict[str, object]) -> dict[str, object]:
     return {str(key): _compact_attr(value) for key, value in attrs.items() if value is not None}
 
 
@@ -93,12 +183,13 @@ class _SpanRecord:
     parent_id: int | None
     name: str
     start_ns: int
-    attrs: dict[str, Any] = field(default_factory=dict)
+    attrs: dict[str, object] = field(default_factory=dict)
     end_ns: int | None = None
     status: str = "ok"
 
     @property
     def duration_ms(self) -> float:
+        """Return elapsed span duration in milliseconds."""
         end_ns = self.end_ns if self.end_ns is not None else time.perf_counter_ns()
         return max(0.0, (end_ns - self.start_ns) / 1_000_000.0)
 
@@ -118,10 +209,11 @@ class _TelemetryState:
     records: list[_SpanRecord] = field(default_factory=list)
     next_id: int = 1
     lock: threading.Lock = field(default_factory=threading.Lock)
-    otel_tracer: Any = None
-    otel_provider: Any = None
+    otel_tracer: _OtelTracer | None = None
+    otel_provider: _OtelProvider | None = None
     otel_export_status: str | None = None
     otel_shutdown: bool = False
+    signal_handlers_installed: bool = False
 
 
 _STATE = _TelemetryState()
@@ -129,7 +221,8 @@ _CURRENT_SPAN_ID: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "inertia_current_span_id",
     default=None,
 )
-_F = TypeVar("_F", bound=Callable[..., Any])
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 _AUTO_ATTR_NAMES = {
     "addr",
     "address",
@@ -168,6 +261,7 @@ def configure_telemetry_from_env(
     force_flush_ms: int | None = None,
     otlp_endpoint: str | None = None,
 ) -> bool:
+    """Configure optional trace collection from explicit arguments and environment variables."""
     requested = _env_bool(TRACE_ENABLE_ENV) if enabled is None else bool(enabled)
     if not requested:
         return False
@@ -210,15 +304,37 @@ def configure_telemetry_from_env(
         if not _STATE.configured:
             _STATE.otel_tracer = _optional_otel_tracer()
             atexit.register(emit_compact_summary)
+            _install_signal_handlers()
             _STATE.configured = True
     return True
 
 
+def _install_signal_handlers() -> None:
+    """Flush compact diagnostics before an external timeout kills the process."""
+    if _STATE.signal_handlers_installed:
+        return
+
+    def _handle_signal(signum: int, _frame: object | None) -> None:
+        try:
+            emit_compact_summary()
+        finally:
+            raise SystemExit(128 + int(signum))
+
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(signum, _handle_signal)
+        except (OSError, ValueError):
+            continue
+    _STATE.signal_handlers_installed = True
+
+
 def telemetry_enabled() -> bool:
+    """Return whether optional telemetry collection is active."""
     return _STATE.enabled
 
 
 def caller_span_name(stacklevel: int = 1) -> str:
+    """Return a stable module-qualified span name for the caller frame."""
     try:
         frame = inspect.currentframe()
         for _ in range(max(1, int(stacklevel))):
@@ -236,9 +352,12 @@ def caller_span_name(stacklevel: int = 1) -> str:
         return "unknown"
 
 
-def _optional_otel_tracer() -> Any:
+def _optional_otel_tracer() -> _OtelTracer | None:
+    """Load optional OpenTelemetry tracing through a dynamic third-party boundary."""
     try:
-        from opentelemetry import trace
+        # Dynamic third-party optional dependency boundary: OpenTelemetry is not
+        # required for normal CLI runs.
+        trace = cast(_OtelTraceModule, importlib.import_module("opentelemetry.trace"))
     except Exception:
         return None
     if _otlp_export_requested():
@@ -284,33 +403,44 @@ def _resolve_output_format(
     return TraceOutputFormat.TEXT
 
 
-def _configure_otlp_exporter() -> tuple[Any | None, str]:
+def _configure_otlp_exporter() -> tuple[_OtelProvider | None, str]:
+    """Configure optional OTLP export through a dynamic third-party boundary."""
     try:
-        from opentelemetry import trace
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        from opentelemetry.sdk.resources import Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        # Dynamic third-party optional dependency boundary: OTLP export is an
+        # opt-in integration and must stay absent-tolerant.
+        trace = cast(_OtelTraceModule, importlib.import_module("opentelemetry.trace"))
+        exporter_module = importlib.import_module("opentelemetry.exporter.otlp.proto.http.trace_exporter")
+        resources_module = importlib.import_module("opentelemetry.sdk.resources")
+        trace_sdk_module = importlib.import_module("opentelemetry.sdk.trace")
+        trace_export_module = importlib.import_module("opentelemetry.sdk.trace.export")
+        # Dynamic third-party boundary: optional OpenTelemetry modules are imported by name.
+        otlp_span_exporter = cast(_ExporterFactory, getattr(exporter_module, "OTLPSpanExporter"))
+        # Dynamic third-party boundary: optional OpenTelemetry modules are imported by name.
+        resource_factory = cast(_ResourceFactory, getattr(resources_module, "Resource"))
+        # Dynamic third-party boundary: optional OpenTelemetry SDK classes are absent-tolerant.
+        provider_factory = cast(_ProviderFactory, getattr(trace_sdk_module, "TracerProvider"))
+        # Dynamic third-party boundary: optional OpenTelemetry SDK classes are absent-tolerant.
+        processor_factory = cast(_ProcessorFactory, getattr(trace_export_module, "BatchSpanProcessor"))
     except Exception as ex:
         return None, f"unavailable:{type(ex).__name__}"
 
     try:
-        resource = Resource.create(
+        resource = resource_factory.create(
             {
                 "service.name": os.environ.get(TRACE_SERVICE_NAME_ENV, "inertia-decompiler"),
                 "service.namespace": "inertia",
             }
         )
-        provider = TracerProvider(resource=resource)
-        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        provider = provider_factory(resource=resource)
+        provider.add_span_processor(processor_factory(otlp_span_exporter()))
         trace.set_tracer_provider(provider)
         return provider, "configured"
     except Exception as ex:
         return None, f"configure_failed:{type(ex).__name__}"
 
 
-def _auto_span_attrs(target: Callable[..., Any], args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
-    attrs: dict[str, Any] = {}
+def _auto_span_attrs(target: Callable[..., object], args: tuple[object, ...], kwargs: dict[str, object]) -> dict[str, object]:
+    attrs: dict[str, object] = {}
     try:
         signature = inspect.signature(target)
         bound = signature.bind_partial(*args, **kwargs)
@@ -326,7 +456,7 @@ def _auto_span_attrs(target: Callable[..., Any], args: tuple[Any, ...], kwargs: 
     return attrs
 
 
-def _collect_auto_attr(attrs: dict[str, Any], name: str, value: Any) -> None:
+def _collect_auto_attr(attrs: dict[str, object], name: str, value: object) -> None:
     if value is None:
         return
     if name in _AUTO_ATTR_NAMES:
@@ -347,22 +477,27 @@ def _collect_auto_attr(attrs: dict[str, Any], name: str, value: Any) -> None:
         _collect_project_attrs(attrs, value)
         return
     if name in {"item", "task"}:
+        # Dynamic third-party payload boundary: queued work items are not owned contracts.
         item_function = getattr(value, "function", None)
         if item_function is not None:
             _collect_function_attrs(attrs, item_function)
+        # Dynamic third-party payload boundary: queued work items are not owned contracts.
         item_index = getattr(value, "index", None)
         if isinstance(item_index, int):
             attrs.setdefault("index", item_index)
         return
 
 
-def _collect_function_attrs(attrs: dict[str, Any], function: Any) -> None:
+def _collect_function_attrs(attrs: dict[str, object], function: object) -> None:
+    # Dynamic third-party payload boundary: angr function objects provide optional fields.
     addr = getattr(function, "addr", None)
     if isinstance(addr, int):
         attrs.setdefault("addr", hex(addr))
+    # Dynamic third-party payload boundary: angr function objects provide optional fields.
     name = getattr(function, "name", None)
     if isinstance(name, str) and name:
         attrs.setdefault("name", name)
+    # Dynamic third-party payload boundary: angr function objects provide optional fields.
     block_addrs = getattr(function, "block_addrs_set", None)
     if block_addrs:
         try:
@@ -371,20 +506,24 @@ def _collect_function_attrs(attrs: dict[str, Any], function: Any) -> None:
             pass
 
 
-def _collect_project_attrs(attrs: dict[str, Any], project: Any) -> None:
+def _collect_project_attrs(attrs: dict[str, object], project: object) -> None:
+    # Dynamic third-party payload boundary: angr projects expose optional metadata fields.
     filename = getattr(project, "filename", None)
     if isinstance(filename, str) and filename:
         attrs.setdefault("binary", Path(filename).name)
+    # Dynamic third-party payload boundary: angr projects expose optional metadata fields.
     entry = getattr(project, "entry", None)
     if isinstance(entry, int):
         attrs.setdefault("entry", hex(entry))
+    # Dynamic third-party payload boundary: angr projects expose optional metadata fields.
     arch = getattr(project, "arch", None)
+    # Dynamic third-party payload boundary: angr projects expose optional metadata fields.
     arch_name = getattr(arch, "name", None)
     if isinstance(arch_name, str) and arch_name:
         attrs.setdefault("arch", arch_name)
 
 
-def _format_auto_value(name: str, value: Any) -> Any:
+def _format_auto_value(name: str, value: object) -> object:
     if isinstance(value, Path):
         return value.name
     if isinstance(value, int) and ("addr" in name or name in {"entry_point", "image_end"}):
@@ -395,7 +534,8 @@ def _format_auto_value(name: str, value: Any) -> Any:
 
 
 @contextlib.contextmanager
-def span(span_name: str, **attrs: Any) -> Iterator[None]:
+def span(span_name: str, **attrs: object) -> Iterator[None]:
+    """Collect a timing span around a decompiler operation when telemetry is enabled."""
     if not _STATE.enabled:
         yield
         return
@@ -427,7 +567,8 @@ def span(span_name: str, **attrs: Any) -> Iterator[None]:
         _CURRENT_SPAN_ID.reset(token)
 
 
-def annotate_current_span(**attrs: Any) -> None:
+def annotate_current_span(**attrs: object) -> None:
+    """Attach compact attributes to the currently active telemetry span."""
     if not _STATE.enabled:
         return
     span_id = _CURRENT_SPAN_ID.get()
@@ -441,27 +582,30 @@ def annotate_current_span(**attrs: Any) -> None:
                 return
 
 
-def span_here(**attrs: Any) -> contextlib.AbstractContextManager[None]:
+def span_here(**attrs: object) -> contextlib.AbstractContextManager[None]:
+    """Collect a span named after the immediate caller when telemetry is enabled."""
     if not _STATE.enabled:
         return contextlib.nullcontext()
     return span(caller_span_name(stacklevel=2), **attrs)
 
 
 def trace_function(
-    func: _F | None = None,
+    func: Callable[_P, _R] | None = None,
     *,
     name: str | None = None,
-    attrs: dict[str, Any] | None = None,
-    attr_factory: Callable[..., dict[str, Any] | None] | None = None,
-) -> _F | Callable[[_F], _F]:
-    def _decorate(target: _F) -> _F:
+    attrs: dict[str, object] | None = None,
+    attr_factory: Callable[_P, dict[str, object] | None] | None = None,
+) -> Callable[_P, _R] | Callable[[Callable[_P, _R]], Callable[_P, _R]]:
+    """Decorate a function so calls are wrapped in optional telemetry spans."""
+
+    def _decorate(target: Callable[_P, _R]) -> Callable[_P, _R]:
         span_name = name or f"{target.__module__}.{target.__name__}"
 
         @functools.wraps(target)
-        def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        def _wrapped(*args: _P.args, **kwargs: _P.kwargs) -> _R:
             if not _STATE.enabled:
                 return target(*args, **kwargs)
-            span_attrs = _auto_span_attrs(target, args, kwargs)
+            span_attrs = _auto_span_attrs(target, tuple(args), dict(kwargs))
             span_attrs.update(attrs or {})
             if attr_factory is not None:
                 try:
@@ -473,7 +617,7 @@ def trace_function(
             with span(span_name, **span_attrs):
                 return target(*args, **kwargs)
 
-        return _wrapped  # type: ignore[return-value]
+        return _wrapped
 
     if func is None:
         return _decorate
@@ -481,7 +625,7 @@ def trace_function(
 
 
 @contextlib.contextmanager
-def _otel_span_context(span_name: str, attrs: dict[str, Any]) -> Iterator[None]:
+def _otel_span_context(span_name: str, attrs: dict[str, object]) -> Iterator[None]:
     tracer = _STATE.otel_tracer
     if tracer is None:
         yield
@@ -500,12 +644,12 @@ def _otel_span_context(span_name: str, attrs: dict[str, Any]) -> Iterator[None]:
         yield
 
 
-def build_compact_summary() -> dict[str, Any]:
+def build_compact_summary() -> dict[str, object]:
+    """Build a parser-friendly aggregate summary for collected telemetry spans."""
     with _STATE.lock:
         records = list(_STATE.records)
-    finished = [record for record in records if record.end_ns is not None]
-    if not finished:
-        summary: dict[str, Any] = {
+    if not records:
+        summary: dict[str, object] = {
             "span_count": 0,
             "total_ms": 0.0,
             "top": [],
@@ -516,14 +660,15 @@ def build_compact_summary() -> dict[str, Any]:
             summary["otel_export"] = _STATE.otel_export_status
         return summary
 
-    first_start = min(record.start_ns for record in finished)
-    last_end = max(record.end_ns or record.start_ns for record in finished)
+    current_ns = time.perf_counter_ns()
+    first_start = min(record.start_ns for record in records)
+    last_end = max(record.end_ns or current_ns for record in records)
     total_ms = max(0.0, (last_end - first_start) / 1_000_000.0)
-    visible = [record for record in finished if record.duration_ms >= _STATE.min_ms]
+    visible = [record for record in records if record.duration_ms >= _STATE.min_ms]
     top = sorted(visible, key=lambda record: record.duration_ms, reverse=True)[: _STATE.top_n]
 
     aggregate: dict[str, dict[str, float | int]] = {}
-    for record in finished:
+    for record in records:
         entry = aggregate.setdefault(record.name, {"count": 0, "cum_ms": 0.0, "max_ms": 0.0})
         entry["count"] = int(entry["count"]) + 1
         entry["cum_ms"] = float(entry["cum_ms"]) + record.duration_ms
@@ -538,7 +683,7 @@ def build_compact_summary() -> dict[str, Any]:
     )[: _STATE.top_n]
 
     summary = {
-        "span_count": len(finished),
+        "span_count": len(records),
         "total_ms": round(total_ms, 1),
         "top": [
             [
@@ -551,7 +696,7 @@ def build_compact_summary() -> dict[str, Any]:
         "agg": agg_rows,
         "errors": [
             [record.name, round(record.duration_ms, 1), _summary_attrs(record.attrs)]
-            for record in finished
+            for record in records
             if record.status == "error"
         ][: _STATE.top_n],
     }
@@ -561,22 +706,23 @@ def build_compact_summary() -> dict[str, Any]:
 
 
 def build_agent_trace_text() -> str:
+    """Render collected spans as compact text suitable for agent handoff and stderr."""
     with _STATE.lock:
         records = list(_STATE.records)
-    finished = [record for record in records if record.end_ns is not None]
     summary = build_compact_summary()
     otel_status = summary.get("otel_export", "-")
     if otel_status == "disabled":
         otel_status = "off"
-    errors = summary.get("errors", [])
+    errors_value = summary.get("errors", [])
+    errors = errors_value if isinstance(errors_value, list) else []
     lines = [
         (
             f"summary total_ms={summary.get('total_ms', 0.0)} "
-            f"spans={len(finished)} otel={otel_status} errors={len(errors)}"
+            f"spans={len(records)} otel={otel_status} errors={len(errors)}"
         ),
         "schema: id|parent|ms|name|attrs",
     ]
-    ordered = sorted(finished, key=lambda record: record.span_id)
+    ordered = sorted(records, key=lambda record: record.span_id)
     limit = max(1, int(_STATE.text_max_spans))
     shown = ordered[:limit]
     if len(ordered) > len(shown):
@@ -592,21 +738,25 @@ def build_agent_trace_text() -> str:
 
 
 def build_agent_slow_trace_text() -> str:
+    """Render the slowest visible spans as compact text for profiling decompiler runs."""
     with _STATE.lock:
         records = list(_STATE.records)
-    finished = [record for record in records if record.end_ns is not None]
     summary = build_compact_summary()
     otel_status = summary.get("otel_export", "-")
     if otel_status == "disabled":
         otel_status = "off"
-    errors = summary.get("errors", [])
+    errors_value = summary.get("errors", [])
+    errors = errors_value if isinstance(errors_value, list) else []
     lines = [
-        (f"trace total={summary.get('total_ms', 0.0)}ms spans={len(finished)} otel={otel_status} errors={len(errors)}")
+        (f"trace total={summary.get('total_ms', 0.0)}ms spans={len(records)} otel={otel_status} errors={len(errors)}")
     ]
-    visible = [record for record in finished if record.duration_ms >= _STATE.min_ms]
+    visible = [record for record in records if record.duration_ms >= _STATE.min_ms]
     top = sorted(visible, key=lambda record: record.duration_ms, reverse=True)[: max(1, int(_STATE.top_n))]
     for record in top:
-        attrs = _format_agent_attrs(record.attrs)
+        attrs_dict = dict(record.attrs)
+        if record.end_ns is None:
+            attrs_dict.setdefault("status", "active")
+        attrs = _format_agent_attrs(attrs_dict)
         status = "" if record.status == "ok" else f" status={record.status}"
         suffix = f" {attrs}" if attrs else ""
         lines.append(f"{round(record.duration_ms, 3)} {record.name}{suffix}{status}")
@@ -632,12 +782,17 @@ def _agent_trace_name_dictionary(records: list[_SpanRecord]) -> dict[str, int] |
 
 def _format_agent_trace_record(record: _SpanRecord, *, name_ids: dict[str, int] | None = None) -> str:
     parent = "-" if record.parent_id is None else str(record.parent_id)
-    attrs = _format_agent_attrs(record.attrs)
+    attrs_dict = dict(record.attrs)
+    if record.end_ns is None:
+        attrs_dict.setdefault("status", "active")
+    elif record.status != "ok":
+        attrs_dict.setdefault("status", record.status)
+    attrs = _format_agent_attrs(attrs_dict)
     name = str(name_ids[record.name]) if name_ids is not None else record.name
     return f"{record.span_id}|{parent}|{round(record.duration_ms, 3)}|{name}|{attrs}"
 
 
-def _format_agent_attrs(attrs: dict[str, Any]) -> str:
+def _format_agent_attrs(attrs: dict[str, object]) -> str:
     if not attrs:
         return ""
     preferred = (
@@ -683,7 +838,7 @@ def _format_agent_attrs(attrs: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def _format_agent_attr_value(value: Any) -> str:
+def _format_agent_attr_value(value: object) -> str:
     if isinstance(value, bool):
         return "1" if value else "0"
     if value is None:
@@ -696,7 +851,7 @@ def _format_agent_attr_value(value: Any) -> str:
     return text.replace("|", "/")
 
 
-def _summary_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
+def _summary_attrs(attrs: dict[str, object]) -> dict[str, object]:
     preferred = (
         "binary",
         "addr",
@@ -711,7 +866,7 @@ def _summary_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
         "cache",
         "exception",
     )
-    out: dict[str, Any] = {}
+    out: dict[str, object] = {}
     for key in preferred:
         value = attrs.get(key)
         if value is not None:
@@ -720,6 +875,7 @@ def _summary_attrs(attrs: dict[str, Any]) -> dict[str, Any]:
 
 
 def emit_compact_summary() -> None:
+    """Emit the compact telemetry summary once to stderr and the configured file."""
     if not _STATE.enabled or _STATE.emitted:
         return
     _STATE.emitted = True
@@ -762,15 +918,11 @@ def _flush_and_shutdown_otel() -> None:
     _STATE.otel_shutdown = True
     timeout_ms = max(1, _env_int(TRACE_FORCE_FLUSH_MS_ENV, 3000))
     try:
-        force_flush = getattr(provider, "force_flush", None)
-        if callable(force_flush):
-            force_flush(timeout_millis=timeout_ms)
+        provider.force_flush(timeout_ms)
     except Exception as ex:
         _STATE.otel_export_status = f"flush_failed:{type(ex).__name__}"
     try:
-        shutdown = getattr(provider, "shutdown", None)
-        if callable(shutdown):
-            shutdown()
+        provider.shutdown()
     except Exception as ex:
         _STATE.otel_export_status = f"shutdown_failed:{type(ex).__name__}"
 
@@ -801,6 +953,7 @@ def _write_full_jsonl(path: Path) -> None:
 
 
 def reset_telemetry_for_tests() -> None:
+    """Reset module-level telemetry state between focused tests."""
     with _STATE.lock:
         _STATE.enabled = False
         _STATE.configured = False
@@ -818,4 +971,5 @@ def reset_telemetry_for_tests() -> None:
         _STATE.otel_provider = None
         _STATE.otel_export_status = None
         _STATE.otel_shutdown = False
+        _STATE.signal_handlers_installed = False
     _CURRENT_SPAN_ID.set(None)

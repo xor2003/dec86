@@ -1,10 +1,18 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: list golden readability anchors used by bounded diagnostics and tests.
+Forbidden: substituting source-backed output or treating anchors as semantic proof.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class GoldenReadabilityCase:
+    """Describe one bounded readability fixture and the anchors it should keep."""
+
     source: str
     proc_name: str
     anchors: tuple[str, ...]
@@ -64,10 +72,12 @@ GOLDEN_READABILITY_SET: tuple[GoldenReadabilityCase, ...] = (
 
 
 def describe_x86_16_golden_readability_set() -> tuple[GoldenReadabilityCase, ...]:
+    """Return the deterministic golden readability fixture set."""
     return GOLDEN_READABILITY_SET
 
 
 def summarize_x86_16_golden_readability_set() -> tuple[tuple[str, str, int], ...]:
+    """Return compact fixture summaries for reports and milestone checks."""
     return tuple((case.source, case.proc_name, len(case.anchors)) for case in GOLDEN_READABILITY_SET)
 
 

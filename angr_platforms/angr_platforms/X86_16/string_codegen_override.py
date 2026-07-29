@@ -1,11 +1,26 @@
+"""Layer: Helper boundary.
+
+Responsibility: attach a codegen-boundary render override for fully proven string intrinsic artifacts.
+Forbidden: repairing arbitrary generated C or inferring semantics from rendered output text.
+Dynamic attribute boundary: getattr/setattr use here is limited to third-party
+angr/codegen compatibility objects and optional diagnostic metadata.
+"""
+
 from __future__ import annotations
+
+import typing
 
 from .string_instruction_lowering import StringIntrinsicArtifact, render_x86_16_string_intrinsic_c
 
 __all__ = ["apply_x86_16_string_codegen_override"]
 
 
-def _render_override_text(codegen) -> str | None:
+def _render_override_text(codegen: object) -> str | None:
+    """Return proven string-intrinsic replacement text for a codegen object.
+
+    Dynamic attribute boundary: codegen/cfunc are third-party angr/codegen
+    compatibility objects that intentionally carry optional diagnostic metadata.
+    """
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
         return None
@@ -18,7 +33,12 @@ def _render_override_text(codegen) -> str | None:
     return render_x86_16_string_intrinsic_c(name, artifact)
 
 
-def apply_x86_16_string_codegen_override(project, codegen) -> bool:  # noqa: ARG001
+def apply_x86_16_string_codegen_override(project: object, codegen: object) -> bool:  # noqa: ARG001
+    """Install the string-intrinsic render override when the artifact is proven.
+
+    Dynamic attribute boundary: codegen is a third-party angr/codegen
+    compatibility object whose render hook is patched at this helper boundary.
+    """
     rendered = _render_override_text(codegen)
     if rendered is None:
         return False
@@ -28,10 +48,10 @@ def apply_x86_16_string_codegen_override(project, codegen) -> bool:  # noqa: ARG
     if not callable(original):
         return False
 
-    def _render_text_override(_cfunc):  # noqa: ANN001
+    def _render_text_override(_cfunc: object) -> str:
         return rendered
 
-    setattr(codegen, "_inertia_original_render_text", original)
-    setattr(codegen, "_inertia_string_codegen_override_text", rendered)
-    setattr(codegen, "render_text", _render_text_override)
+    typing.cast(typing.Any, codegen)._inertia_original_render_text = original
+    typing.cast(typing.Any, codegen)._inertia_string_codegen_override_text = rendered
+    typing.cast(typing.Any, codegen).render_text = _render_text_override
     return True

@@ -53,23 +53,10 @@ Semantic recovery → `X86_16/`. Cleanup-only → `postprocess/`. Do not add to 
 9. **No guessing** — insufficient evidence → honest ugly output.
 10. **Determinism** — same input → same output.
 11. **Typed status/state, not text matching** — for any new work, represent statuses/verdicts with enums or structured fields instead of string matching/parsing.
+12. **Dot access for owned contracts** — use `obj.field` for owned/internal dataclasses, enums, state, and pipeline contracts. Avoid getattr/setattr; use `getattr`/`setattr` only at dynamic third-party/angr/codegen/plugin boundaries with a clear reason. Existing avoidable dynamic attribute access is cleanup debt and should be removed when touching nearby code.
+13. **Docstrings and types ratchet** — types are mandatory for non-test code: every new or touched non-test module must state `Layer:` and `Responsibility:`, and every new/touched function, method, dataclass, enum, and pipeline contract must keep explicit type annotations and useful docstrings on public owned definitions. Do not strip docs/types to silence tools; legacy missing docs/types are cleanup debt and must be fixed when touching nearby code.
 
-## Golden rules
-
-```text
-1. Semantics early, not late
-2. Alias is the source of truth
-3. Never flatten memory
-4. Stack → variables (never stack[x])
-5. Conditions must be explicit
-6. No text-based reasoning
-7. Rewrite does not solve semantics
-8. Validation must be honest
-9. Never guess
-10. Deterministic output
-```
-
-> If a fix makes output prettier without improving underlying semantics, it is wrong.
+If a fix makes output prettier without improving underlying semantics, it is wrong.
 
 ## Agent execution rules
 
@@ -88,6 +75,8 @@ Sidecars/COD/debug listings are optional evidence only. They may provide labels,
 - `if "...substring..." in asm_text`, regex over assembly lines
 - name-based helper substitution as recovered semantics
 - corpus-specific allowlists, address-specific helper substitution
+- avoidable `getattr`/`setattr` on owned Inertia objects instead of explicit dot access
+- removing docstrings or type annotations to pass checks instead of improving the owned contract
 
 ## Execution discipline
 
@@ -120,20 +109,12 @@ Every semantic improvement needs closed evidence loop: `raw_fact_count`, `normal
 
 ## Improving code
 
-```bash
-INERTIA_ENABLE_TAIL_VALIDATION=1 ./decompile.py --alternate-source-c ./SORTDEMO.EXE
-```
+Regular local gate: `make quality-fast PYTHON=./.venv/bin/python`. Use `make test-pipeline PYTHON=./.venv/bin/python` before claiming semantic decompiler improvements, and `make test-pipeline-expanded PYTHON=./.venv/bin/python` for broad slow audits.
 
-When decompilation is slow, turn on compact OpenTelemetry spans before profiling:
-
-```bash
-INERTIA_OTEL_SPANS=1 INERTIA_OTEL_SPAN_FILE=angr_platforms/.cache/otel.trace.txt ./decompile.py ./SORTDEMO.EXE
-```
-
-The compact text summary shows slow spans by duration and is designed for token-efficient agent handoff. Use JSON/JSONL only for parsers. OTLP export is optional through `INERTIA_OTEL_EXPORT_OTLP=1`; details: `reference/telemetry.md`.
-
-Current `SORTDEMO.EXE` handoff: read `SORTDEMO_HANDOFF.md` before restarting work on ReInitBars/SwapBars/HeapSort.
+Diagnostics, telemetry, and CLI quickstart live under `reference/`. Current `SORTDEMO.EXE` handoff: read `SORTDEMO_HANDOFF.md` before restarting work on ReInitBars/SwapBars/HeapSort.
 
 ## Reference files
 
-Detailed rules, diagnostics, testing, CLI quickstart → `reference/`. Agent execution details → `reference/agent-rules.md`.
+Detailed diagnostics, testing, and CLI quickstart → `reference/`. Supplemental glossary and long-running-agent guidance → `reference/agent-rules.md`.
+
+Before changing code, read `reference/project-map.md`. For decompiler internals, also read `reference/decompiler-map.md`; for DOS execution, also read `reference/dosunit-execution-spec.md`.

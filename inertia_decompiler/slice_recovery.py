@@ -1,11 +1,17 @@
+"""Run bounded slice recovery attempts and record their outcomes.
+
+Layer: CLI/fallback/reporting.
+Responsibility: orchestrate bounded slice fallback attempts without accepting them as semantic proof.
+"""
+
 from __future__ import annotations
 
 import time
 from dataclasses import asdict, dataclass, replace
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Iterator, Sequence, TypeAlias
 
-SliceRecoverCallable = Callable[[Any], tuple[Any, Any]]
-SliceRecoveryRunner = Callable[
+SliceRecoverCallable: TypeAlias = Callable[[Any], tuple[Any, Any]]
+SliceRecoveryRunner: TypeAlias = Callable[
     [str, Callable[[], "SliceRecoveryAttemptOutcome"], Callable[[], "SliceRecoveryAttemptTrace"]],
     "SliceRecoveryAttemptOutcome",
 ]
@@ -13,6 +19,8 @@ SliceRecoveryRunner = Callable[
 
 @dataclass(frozen=True)
 class SliceRecoveryAttemptTrace:
+    """Timing and failure-stage trace for one slice recovery attempt."""
+
     failure_stage: str
     build_ms: int | None = None
     recover_ms: int | None = None
@@ -21,6 +29,8 @@ class SliceRecoveryAttemptTrace:
 
 @dataclass(frozen=True)
 class BoundedSliceVerdict:
+    """Structured retry verdict for a bounded slice recovery attempt."""
+
     stage: str | None
     stop_family: str | None
     can_widen_locally: bool
@@ -29,6 +39,8 @@ class BoundedSliceVerdict:
 
 @dataclass(frozen=True)
 class SliceRecoveryAttemptOutcome:
+    """Outcome payload and retry metadata for one slice recovery attempt."""
+
     attempt_name: str
     status: str
     payload: str
@@ -37,14 +49,17 @@ class SliceRecoveryAttemptOutcome:
     attempt_trace: SliceRecoveryAttemptTrace | None = None
     verdict: BoundedSliceVerdict | None = None
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
+        """Iterate status and payload for legacy tuple-unpacking callers."""
         yield self.status
         yield self.payload
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """Return the legacy tuple-compatible item count."""
         return 2
 
     def __getitem__(self, index: int) -> str:
+        """Return status or payload for legacy tuple-indexing callers."""
         if index == 0:
             return self.status
         if index == 1:
@@ -52,6 +67,7 @@ class SliceRecoveryAttemptOutcome:
         raise IndexError(index)
 
     def __eq__(self, other: object) -> bool:
+        """Compare with either another outcome or a legacy status/payload tuple."""
         if isinstance(other, tuple):
             return (self.status, self.payload) == other
         if isinstance(other, SliceRecoveryAttemptOutcome):
@@ -132,6 +148,7 @@ def build_default_slice_recovery_attempts(
     pick_function_lean: Callable[..., tuple[Any, Any]],
     pick_function: Callable[..., tuple[Any, Any]],
 ) -> tuple[tuple[str, SliceRecoverCallable], ...]:
+    """Build the default bounded recovery attempt sequence."""
     region = [(start, end)]
     return (
         (
@@ -176,6 +193,7 @@ def run_bounded_slice_recovery(
     describe_exception: Callable[[Exception], str],
     run_attempt: SliceRecoveryRunner | None = None,
 ) -> tuple[SliceRecoveryAttemptOutcome, ...]:
+    """Run bounded slice recovery attempts until success or a stable stop verdict."""
     outcomes: list[SliceRecoveryAttemptOutcome] = []
     for attempt_name, recover in attempts:
         trace_state: dict[str, int | str | None] = {
@@ -258,5 +276,6 @@ def bounded_slice_runner_timeout(
     setup_slack: int = 1,
     max_timeout: int,
 ) -> int:
+    """Compute the timeout budget for bounded slice recovery attempts."""
     per_attempt_timeout = max(1, min(timeout, per_attempt_timeout_cap))
     return max(2, min(attempt_count * (per_attempt_timeout + setup_slack), max_timeout))

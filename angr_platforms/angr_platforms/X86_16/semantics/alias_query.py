@@ -1,8 +1,16 @@
+"""Expression-facing alias queries over typed alias storage facts.
+
+Layer: Semantics.
+Responsibility: owns instruction effects, flags, branch meaning, and expression interpretation.
+This module interprets expression storage domains without owning alias state.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
 
-# Layer: Semantics
-# Responsibility: expression-facing alias queries over typed alias storage facts.
-# Forbidden: alias-state ownership, CLI formatting, rendered-text matching.
+from typing import Any
+
 from ..alias.alias_model_impl import (
     AliasStorageFacts,
     _alias_identity_for_variable,
@@ -13,14 +21,21 @@ from ..alias.alias_model_impl import (
 from .expression_analysis import _mk_fp_components, _unwrap_c_casts
 
 
-def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
-    def _impl():
+def _dynamic_attr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
+    """Dynamic C-AST boundary: read optional third-party codegen attributes."""
+    return getattr(obj, name, default)
+
+
+def _storage_domain_for_expr(expr: object) -> _StorageDomainSignature:
+    """Return the alias storage domain represented by a structured C expression."""
+
+    def _impl() -> _StorageDomainSignature:
         nonlocal expr
         expr = _unwrap_c_casts(expr)
         from angr.analyses.decompiler.structured_codegen import c as structured_c
 
         if isinstance(expr, structured_c.CVariable):
-            variable = getattr(expr, "variable", None)
+            variable = _dynamic_attr_8616(expr, "variable", None)
             if variable is None:
                 return _StorageDomainSignature("unknown")
             return _storage_domain_for_variable(variable)
@@ -56,14 +71,15 @@ def _storage_domain_for_expr(expr) -> _StorageDomainSignature:
     return _impl()
 
 
-def describe_alias_storage(expr) -> AliasStorageFacts:
+def describe_alias_storage(expr: object) -> AliasStorageFacts:
+    """Describe the alias storage facts proven for a structured C expression."""
     domain = _storage_domain_for_expr(expr)
     identity = None
     expr = _unwrap_c_casts(expr)
     from angr.analyses.decompiler.structured_codegen import c as structured_c
 
     if isinstance(expr, structured_c.CVariable):
-        variable = getattr(expr, "variable", None)
+        variable = _dynamic_attr_8616(expr, "variable", None)
         if variable is not None:
             identity = _alias_identity_for_variable(variable)
     else:
@@ -73,19 +89,23 @@ def describe_alias_storage(expr) -> AliasStorageFacts:
     return AliasStorageFacts(domain, identity)
 
 
-def same_alias_storage_domain(lhs, rhs) -> bool:
+def same_alias_storage_domain(lhs: object, rhs: object) -> bool:
+    """Return whether two expressions have the same alias storage domain."""
     return describe_alias_storage(lhs).same_domain(describe_alias_storage(rhs))
 
 
-def compatible_alias_storage_views(lhs, rhs) -> bool:
+def compatible_alias_storage_views(lhs: object, rhs: object) -> bool:
+    """Return whether two expression storage views are adjacent or compatible."""
     return describe_alias_storage(lhs).compatible_view(describe_alias_storage(rhs))
 
 
-def needs_alias_synthesis(expr) -> bool:
+def needs_alias_synthesis(expr: object) -> bool:
+    """Return whether the expression needs explicit synthesized alias storage."""
     return describe_alias_storage(expr).needs_synthesis()
 
 
-def can_join_alias_storage(lhs, rhs) -> bool:
+def can_join_alias_storage(lhs: object, rhs: object) -> bool:
+    """Return whether two expression storage facts can be joined safely."""
     return describe_alias_storage(lhs).can_join(describe_alias_storage(rhs))
 
 

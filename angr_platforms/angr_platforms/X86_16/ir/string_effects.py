@@ -1,9 +1,20 @@
+"""Convert string-instruction artifacts into typed IR string effects.
+
+Layer: IR.
+Responsibility: owns typed Value, Address, Condition, instruction facts, and lossless
+normalization.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol, cast
 
 from ..string_instruction_artifact import StringInstructionArtifact, StringInstructionRecord
 from .core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
+from .segment_state import SegmentStateArtifact
 
 __all__ = [
     "IRStringEffectArtifact",
@@ -13,8 +24,18 @@ __all__ = [
 ]
 
 
+class _StringEffectCodegenBoundary(Protocol):
+    """Dynamic codegen attributes consumed and produced by this IR attachment."""
+
+    _inertia_string_instruction_artifact: object
+    _inertia_segment_state_artifact: object
+    _inertia_string_effect_artifact: IRStringEffectArtifact
+
+
 @dataclass(frozen=True, slots=True)
 class IRStringEffectRecord:
+    """Typed IR effect recovered from one 16-bit string instruction."""
+
     index: int
     family: str
     repeat_kind: str
@@ -26,6 +47,7 @@ class IRStringEffectRecord:
     zero_seeded_accumulator: bool | None
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
         return {
             "index": self.index,
             "family": self.family,
@@ -41,10 +63,13 @@ class IRStringEffectRecord:
 
 @dataclass(frozen=True, slots=True)
 class IRStringEffectArtifact:
+    """Typed string-effect facts available to later IR consumers."""
+
     records: tuple[IRStringEffectRecord, ...] = ()
     refusal_kinds: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
         return {
             "records": [record.to_dict() for record in self.records],
             "refusal_kinds": list(self.refusal_kinds),
@@ -73,7 +98,9 @@ def _destination_base_for_family(family: str) -> tuple[str, ...]:
     return ()
 
 
-def _segment_state_status(segment: str | None, segment_state_artifact) -> AddressStatus:
+def _segment_state_status(
+    segment: str | None, segment_state_artifact: SegmentStateArtifact | None
+) -> AddressStatus:
     if segment_state_artifact is None:
         return AddressStatus.PROVISIONAL
     if segment is None:
@@ -92,7 +119,7 @@ def _typed_address(
     width: int,
     expr: str,
     *,
-    segment_state_artifact=None,
+    segment_state_artifact: SegmentStateArtifact | None = None,
 ) -> IRAddress | None:
     space = _space_for_segment(segment)
     if space is None:
@@ -108,7 +135,12 @@ def _typed_address(
     )
 
 
-def _typed_record(index: int, record: StringInstructionRecord, *, segment_state_artifact=None) -> IRStringEffectRecord:
+def _typed_record(
+    index: int,
+    record: StringInstructionRecord,
+    *,
+    segment_state_artifact: SegmentStateArtifact | None = None,
+) -> IRStringEffectRecord:
     return IRStringEffectRecord(
         index=index,
         family=record.family,
@@ -137,8 +169,9 @@ def _typed_record(index: int, record: StringInstructionRecord, *, segment_state_
 def build_x86_16_typed_string_effect_artifact(
     artifact: StringInstructionArtifact,
     *,
-    segment_state_artifact=None,
+    segment_state_artifact: SegmentStateArtifact | None = None,
 ) -> IRStringEffectArtifact:
+    """Convert raw string-instruction recovery into typed IR effects."""
     return IRStringEffectArtifact(
         records=tuple(
             _typed_record(index, record, segment_state_artifact=segment_state_artifact)
@@ -148,13 +181,25 @@ def build_x86_16_typed_string_effect_artifact(
     )
 
 
-def apply_x86_16_typed_string_effect_artifact(project, codegen) -> bool:  # noqa: ARG001
-    raw_artifact = getattr(codegen, "_inertia_string_instruction_artifact", None)
-    if raw_artifact is None:
+def apply_x86_16_typed_string_effect_artifact(project: object, codegen: object) -> bool:  # noqa: ARG001
+    """Attach typed string effects to codegen for later IR consumers."""
+    boundary = cast(_StringEffectCodegenBoundary, codegen)
+    try:
+        raw_artifact = boundary._inertia_string_instruction_artifact
+    except AttributeError:
         return False
+    if not isinstance(raw_artifact, StringInstructionArtifact):
+        return False
+    try:
+        segment_state_candidate = boundary._inertia_segment_state_artifact
+    except AttributeError:
+        segment_state_candidate = None
+    segment_state_artifact = (
+        segment_state_candidate if isinstance(segment_state_candidate, SegmentStateArtifact) else None
+    )
     artifact = build_x86_16_typed_string_effect_artifact(
         raw_artifact,
-        segment_state_artifact=getattr(codegen, "_inertia_segment_state_artifact", None),
+        segment_state_artifact=segment_state_artifact,
     )
-    setattr(codegen, "_inertia_string_effect_artifact", artifact)
+    boundary._inertia_string_effect_artifact = artifact
     return False

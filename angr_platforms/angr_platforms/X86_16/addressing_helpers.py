@@ -1,7 +1,13 @@
+"""Layer: Helper boundary.
+
+Responsibility: decode operands into segmented IR addresses plus execution-only linear addresses.
+Forbidden: flattening SS/DS/ES into semantic storage identity.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Protocol, cast
 
 from pyvex.lifting.util.vex_helper import Type
 
@@ -9,29 +15,115 @@ from .ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from .regs import reg16_t, reg32_t, sgreg_t
 
 
+class _AddressValue(Protocol):
+    """VEX helper value operations used while computing effective addresses."""
+
+    def __add__(self, _other: object) -> _AddressValue:
+        """Return this address value plus another helper value."""
+        ...
+
+    def __mul__(self, _other: int) -> _AddressValue:
+        """Return this address value multiplied by a scale."""
+        ...
+
+
+class _AddressingEmulator(Protocol):
+    """Frontend emulator surface needed by addressing helpers."""
+
+    def constant(self, value: int, _ty: object) -> _AddressValue:
+        """Return a VEX constant wrapper."""
+        ...
+
+    def get_gpreg(self, reg: object) -> _AddressValue:
+        """Read a general-purpose register value."""
+        ...
+
+    def v2p(self, segment: object, offset: object) -> object:
+        """Return an execution-linear address for segment:offset."""
+        ...
+
+    def convert_ss_vaddr(self, offset: object) -> object:
+        """Return an execution-linear SS-relative address."""
+        ...
+
+    def get_data8(self, segment: object, offset: object) -> object:
+        """Read 8-bit segmented data."""
+        ...
+
+    def get_data16(self, segment: object, offset: object) -> object:
+        """Read 16-bit segmented data."""
+        ...
+
+    def get_data32(self, segment: object, offset: object) -> object:
+        """Read 32-bit segmented data."""
+        ...
+
+    def put_data8(self, segment: object, offset: object, value: object) -> None:
+        """Write 8-bit segmented data."""
+        ...
+
+    def put_data16(self, segment: object, offset: object, value: object) -> None:
+        """Write 16-bit segmented data."""
+        ...
+
+    def put_data32(self, segment: object, offset: object, value: object) -> None:
+        """Write 32-bit segmented data."""
+        ...
+
+
+class _ExpressionFactory(Protocol):
+    """pyvex expression constructor shape used when rebuilding expression args."""
+
+    def __call__(self, _op: object, _args: object) -> object:
+        """Build a pyvex expression with a replacement argument list."""
+        ...
+
+
+class _ModRM(Protocol):
+    """Decoded ModRM fields consumed by addressing helpers."""
+
+    mod: int
+    rm: int
+
+
+class _SIB(Protocol):
+    """Decoded SIB fields consumed by 32-bit addressing helpers."""
+
+    base: int
+    index: int
+    scale: int
+
+
 def operand_width_bits(mode32: bool, chsz_op: bool = False) -> int:
+    """Return the operand width after applying the operand-size override bit."""
     return 32 if mode32 ^ bool(chsz_op) else 16
 
 
 def address_width_bits(mode32: bool, chsz_ad: bool = False) -> int:
+    """Return the address width after applying the address-size override bit."""
     return 32 if mode32 ^ bool(chsz_ad) else 16
 
 
 @dataclass(frozen=True)
 class WidthProfile:
+    """Operand/address width pair for a decode mode."""
+
     operand_bits: int
     address_bits: int
 
     @property
     def operand_bytes(self) -> int:
+        """Return operand width in bytes."""
         return self.operand_bits // 8
 
     @property
     def address_bytes(self) -> int:
+        """Return address width in bytes."""
         return self.address_bits // 8
 
 
 def decode_width_profile(mode32: bool, chsz_op: bool = False, chsz_ad: bool = False) -> WidthProfile:
+    """Build a width profile from mode and override-prefix bits."""
     return WidthProfile(
         operand_bits=operand_width_bits(mode32, chsz_op),
         address_bits=address_width_bits(mode32, chsz_ad),
@@ -40,6 +132,8 @@ def decode_width_profile(mode32: bool, chsz_op: bool = False, chsz_ad: bool = Fa
 
 @dataclass(frozen=True)
 class DecodeWidthMatrixCase:
+    """Named decode-width matrix row used by diagnostics and tests."""
+
     name: str
     mode32: bool
     chsz_op: bool
@@ -56,6 +150,7 @@ DECODE_WIDTH_MATRIX: tuple[DecodeWidthMatrixCase, ...] = (
 
 
 def decode_width_case(mode32: bool, chsz_op: bool = False, chsz_ad: bool = False) -> DecodeWidthMatrixCase:
+    """Return the named width-matrix case for mode and override-prefix bits."""
     for case in DECODE_WIDTH_MATRIX:
         if case.mode32 == mode32 and case.chsz_op == chsz_op and case.chsz_ad == chsz_ad:
             return case
@@ -63,6 +158,7 @@ def decode_width_case(mode32: bool, chsz_op: bool = False, chsz_ad: bool = False
 
 
 def decode_width_case_for_profile(operand_bits: int, address_bits: int) -> DecodeWidthMatrixCase:
+    """Return the named width-matrix case for an explicit width profile."""
     for case in DECODE_WIDTH_MATRIX:
         if case.profile.operand_bits == operand_bits and case.profile.address_bits == address_bits:
             return case
@@ -70,6 +166,7 @@ def decode_width_case_for_profile(operand_bits: int, address_bits: int) -> Decod
 
 
 def displacement_width_bits(mod: int, rm: int, address_bits: int) -> int | None:
+    """Return displacement width for a ModRM memory operand, if any."""
     if address_bits == 16:
         if mod == 0 and rm == 6:
             return 16
@@ -88,6 +185,7 @@ def displacement_width_bits(mod: int, rm: int, address_bits: int) -> int | None:
 
 
 def signed_displacement(value: int, width_bits: int) -> int:
+    """Sign-extend an unsigned displacement of the requested bit width."""
     mask = (1 << width_bits) - 1
     value &= mask
     sign_bit = 1 << (width_bits - 1)
@@ -96,7 +194,8 @@ def signed_displacement(value: int, width_bits: int) -> int:
     return value
 
 
-def type_for_bits(width_bits: int):
+def type_for_bits(width_bits: int) -> object:
+    """Return the VEX helper integer type for a bit width."""
     if width_bits == 8:
         return Type.int_8
     if width_bits == 16:
@@ -106,15 +205,18 @@ def type_for_bits(width_bits: int):
     raise ValueError(f"unsupported width: {width_bits}")
 
 
-def address_step(emu, step_bytes: int, address_bits: int = 16):
-    return emu.constant(step_bytes, type_for_bits(address_bits))
+def address_step(emu: object, step_bytes: int, address_bits: int = 16) -> _AddressValue:
+    """Return a VEX constant step for address arithmetic."""
+    return cast(_AddressingEmulator, emu).constant(step_bytes, type_for_bits(address_bits))
 
 
 def describe_x86_16_decode_width_matrix() -> tuple[tuple[str, int, int], ...]:
+    """Return compact decode-width matrix rows for diagnostics."""
     return tuple((case.name, case.profile.operand_bits, case.profile.address_bits) for case in DECODE_WIDTH_MATRIX)
 
 
 def describe_x86_16_mixed_width_extension_surface() -> dict[str, object]:
+    """Describe the mixed-width decode surface exposed to tests and reports."""
     return {
         "matrix": tuple(
             {
@@ -136,6 +238,7 @@ def describe_x86_16_mixed_width_extension_surface() -> dict[str, object]:
 
 
 def describe_x86_16_mixed_width_instruction_surface() -> dict[str, object]:
+    """Describe how mixed-width facts are consumed by instruction helpers."""
     return {
         "boundary": "mixed-width decode facts feed shared helpers instead of handler-local branches",
         "consumer_paths": (
@@ -154,38 +257,43 @@ def describe_x86_16_mixed_width_instruction_surface() -> dict[str, object]:
     }
 
 
-def linear_address(emu, segment, offset):
+def linear_address(emu: object, segment: object, offset: object) -> object:
+    """Return the execution-only linear address for a segment:offset pair."""
     # EXECUTION ONLY. Forbidden for alias/type/rewrite semantics.
-    return emu.v2p(segment, offset)
+    return cast(_AddressingEmulator, emu).v2p(segment, offset)
 
 
 def resolve_memory_operand_8616(
-    emu,
-    seg,
-    addr,
+    emu: object,
+    seg: object,
+    addr: object,
     width_bits: int,
     *,
     address_bits: int = 16,
 ) -> "ResolvedMemoryOperand":
+    """Resolve a memory operand into execution-linear and semantic segmented forms."""
     # EXECUTION ONLY: exec_linear is computed for the engine, not for semantics.
     # Alias/type/structuring layers MUST use operand.ir_address() instead.
+    emulator = cast(_AddressingEmulator, emu)
     if isinstance(seg, sgreg_t) and seg == sgreg_t.SS:
-        exec_linear = emu.convert_ss_vaddr(addr)
+        exec_linear = emulator.convert_ss_vaddr(addr)
     else:
-        exec_linear = emu.v2p(seg, addr)
+        exec_linear = emulator.v2p(seg, addr)
     return ResolvedMemoryOperand(seg, addr, exec_linear, width_bits, address_bits)
 
 
 @dataclass(frozen=True)
 class ResolvedMemoryOperand:
-    segment: sgreg_t
-    offset: Any
-    exec_linear: Any
+    """Resolved memory operand carrying execution and semantic address views."""
+
+    segment: object
+    offset: object
+    exec_linear: object
     width_bits: int
     address_bits: int
 
     @property
-    def linear(self) -> Any:
+    def linear(self) -> object:
         """Deprecated: use exec_linear for execution-only linear address.
 
         This property exists only for backward compatibility.
@@ -213,7 +321,14 @@ class ResolvedMemoryOperand:
             )
 
     def typed_address(self, *, expr: tuple[str, ...] | None = None) -> IRAddress:
-        def _impl():
+        """Return a segmented IR address for alias/type/structuring consumers.
+
+        Dynamic boundary: third-party pyvex expressions expose runtime fields
+        such as rdt, irsb_c, op, args, tmp, and register offsets.
+        """
+
+        def _impl() -> IRAddress:
+            """Build an IRAddress from third-party pyvex dynamic-boundary fields."""
             space_map = {
                 sgreg_t.SS: MemSpace.SS,
                 sgreg_t.DS: MemSpace.DS,
@@ -244,8 +359,11 @@ class ResolvedMemoryOperand:
             # Unwrap VexValue wrapper and resolve RdTmp chain via IRSB
             offset_raw = self.offset
             tmp_defs = None
+            # Dynamic boundary: offset may be a third-party pyvex VexValue wrapper.
             if hasattr(self.offset, "rdt"):
-                offset_raw = self.offset.rdt
+                # Dynamic boundary: third-party pyvex VexValue exposes rdt dynamically.
+                offset_raw = getattr(self.offset, "rdt", self.offset)
+                # Dynamic boundary: pyvex customizers expose IRSB state at runtime.
                 irsb_c = getattr(self.offset, "irsb_c", None)
                 if irsb_c is not None:
                     tmp_defs = _build_tmp_defs_from_irsb(irsb_c)
@@ -323,6 +441,7 @@ class ResolvedMemoryOperand:
 
 
 def default_segment_for_modrm16(mod: int, rm: int) -> sgreg_t:
+    """Return the default segment register for a 16-bit ModRM operand."""
     if rm in (2, 3):
         return sgreg_t.SS
     if rm == 6 and mod != 0:
@@ -331,6 +450,7 @@ def default_segment_for_modrm16(mod: int, rm: int) -> sgreg_t:
 
 
 def default_segment_for_modrm32(mod: int, rm: int, sib_base: int | None = None) -> sgreg_t:
+    """Return the default segment register for a 32-bit ModRM/SIB operand."""
     if rm == 4 and sib_base is not None:
         if sib_base in (4, 5):
             return sgreg_t.SS
@@ -340,145 +460,188 @@ def default_segment_for_modrm32(mod: int, rm: int, sib_base: int | None = None) 
     return sgreg_t.DS
 
 
-def modrm16_effective_offset(emu, modrm, disp8: int, disp16: int):
-    addr = emu.constant(0, Type.int_16)
+def modrm16_effective_offset(emu: object, modrm: _ModRM, disp8: int, disp16: int) -> _AddressValue:
+    """Compute the 16-bit effective offset expression for a ModRM operand."""
+    emulator = cast(_AddressingEmulator, emu)
+    addr = emulator.constant(0, Type.int_16)
 
     if modrm.mod == 1:
-        addr = addr + emu.constant(signed_displacement(disp8, 8) & 0xFFFF, Type.int_16)
+        addr = addr + emulator.constant(signed_displacement(disp8, 8) & 0xFFFF, Type.int_16)
     elif modrm.mod == 2:
-        addr = addr + emu.constant(disp16, Type.int_16)
+        addr = addr + emulator.constant(disp16, Type.int_16)
 
     rm = modrm.rm
     if rm in (0, 1, 7):
-        addr = addr + emu.get_gpreg(reg16_t.BX)
+            addr = addr + emulator.get_gpreg(reg16_t.BX)
     elif rm in (2, 3, 6):
         if modrm.mod == 0 and rm == 6:
-            addr = addr + emu.constant(disp16, Type.int_16)
+            addr = addr + emulator.constant(disp16, Type.int_16)
         else:
-            addr = addr + emu.get_gpreg(reg16_t.BP)
+            addr = addr + emulator.get_gpreg(reg16_t.BP)
 
     if rm < 6:
         if rm % 2:
-            addr = addr + emu.get_gpreg(reg16_t.DI)
+            addr = addr + emulator.get_gpreg(reg16_t.DI)
         else:
-            addr = addr + emu.get_gpreg(reg16_t.SI)
+            addr = addr + emulator.get_gpreg(reg16_t.SI)
 
     return addr
 
 
-def modrm32_effective_offset(emu, modrm, sib, disp8: int, disp32: int):
-    addr = emu.constant(0, Type.int_32)
+def modrm32_effective_offset(
+    emu: object, modrm: _ModRM, sib: _SIB, disp8: int, disp32: int
+) -> _AddressValue:
+    """Compute the 32-bit effective offset expression for a ModRM/SIB operand."""
+    emulator = cast(_AddressingEmulator, emu)
+    addr = emulator.constant(0, Type.int_32)
 
     if modrm.mod == 1:
-        addr = addr + emu.constant(signed_displacement(disp8, 8) & 0xFFFFFFFF, Type.int_32)
+        addr = addr + emulator.constant(signed_displacement(disp8, 8) & 0xFFFFFFFF, Type.int_32)
     elif modrm.mod == 2:
-        addr = addr + emu.constant(disp32, Type.int_32)
+        addr = addr + emulator.constant(disp32, Type.int_32)
 
     rm = modrm.rm
     if rm == 4:
         if sib.base == 5 and modrm.mod == 0:
-            base = emu.constant(disp32, Type.int_32)
+            base = emulator.constant(disp32, Type.int_32)
         elif sib.base == 4:
-            base = emu.get_gpreg(reg32_t.ESP)
+            base = emulator.get_gpreg(reg32_t.ESP)
         else:
-            base = emu.get_gpreg(reg32_t(sib.base))
+            base = emulator.get_gpreg(reg32_t(sib.base))
         if sib.index == 4:
-            index = emu.constant(0, Type.int_32)
+            index = emulator.constant(0, Type.int_32)
         else:
-            index = emu.get_gpreg(reg32_t(sib.index))
+            index = emulator.get_gpreg(reg32_t(sib.index))
         addr = addr + base + index * (1 << sib.scale)
         return addr
 
     if rm == 5 and modrm.mod == 0:
-        return addr + emu.constant(disp32, Type.int_32)
-    return addr + emu.get_gpreg(reg32_t(rm))
+        return addr + emulator.constant(disp32, Type.int_32)
+    return addr + emulator.get_gpreg(reg32_t(rm))
 
 
-def resolve_modrm16_address(emu, modrm, disp8: int, disp16: int) -> tuple[sgreg_t, Any]:
+def resolve_modrm16_address(
+    emu: object, modrm: _ModRM, disp8: int, disp16: int
+) -> tuple[sgreg_t, object]:
+    """Resolve a 16-bit ModRM memory address to segment and offset expression."""
     segment = default_segment_for_modrm16(modrm.mod, modrm.rm)
     return segment, modrm16_effective_offset(emu, modrm, disp8, disp16)
 
 
-def resolve_modrm32_address(emu, modrm, sib, disp8: int, disp32: int) -> tuple[sgreg_t, Any]:
+def resolve_modrm32_address(
+    emu: object, modrm: _ModRM, sib: _SIB, disp8: int, disp32: int
+) -> tuple[sgreg_t, object]:
+    """Resolve a 32-bit ModRM/SIB memory address to segment and offset expression."""
     segment = default_segment_for_modrm32(modrm.mod, modrm.rm, sib.base if modrm.rm == 4 else None)
     return segment, modrm32_effective_offset(emu, modrm, sib, disp8, disp32)
 
 
-def resolve_linear_operand(emu, segment: sgreg_t, offset, width_bits: int, address_bits: int) -> ResolvedMemoryOperand:
+def resolve_linear_operand(
+    emu: object, segment: sgreg_t, offset: object, width_bits: int, address_bits: int
+) -> ResolvedMemoryOperand:
+    """Resolve an already-decoded operand while keeping linear address execution-only."""
     # EXECUTION ONLY
     return ResolvedMemoryOperand(segment, offset, linear_address(emu, segment, offset), width_bits, address_bits)
 
 
-def load_resolved_operand(emu, operand: ResolvedMemoryOperand):
+def load_resolved_operand(emu: object, operand: ResolvedMemoryOperand) -> object:
+    """Load a value from a resolved segmented operand."""
+    emulator = cast(_AddressingEmulator, emu)
     if operand.width_bits == 8:
-        return emu.get_data8(operand.segment, operand.offset)
+        return emulator.get_data8(operand.segment, operand.offset)
     if operand.width_bits == 16:
-        return emu.get_data16(operand.segment, operand.offset)
+        return emulator.get_data16(operand.segment, operand.offset)
     if operand.width_bits == 32:
-        return emu.get_data32(operand.segment, operand.offset)
+        return emulator.get_data32(operand.segment, operand.offset)
     raise ValueError(f"unsupported resolved operand width: {operand.width_bits}")
 
 
-def store_resolved_operand(emu, operand: ResolvedMemoryOperand, value) -> None:
+def store_resolved_operand(emu: object, operand: ResolvedMemoryOperand, value: object) -> None:
+    """Store a value through a resolved segmented operand."""
+    emulator = cast(_AddressingEmulator, emu)
     if operand.width_bits == 8:
-        emu.put_data8(operand.segment, operand.offset, value)
+        emulator.put_data8(operand.segment, operand.offset, value)
         return
     if operand.width_bits == 16:
-        emu.put_data16(operand.segment, operand.offset, value)
+        emulator.put_data16(operand.segment, operand.offset, value)
         return
     if operand.width_bits == 32:
-        emu.put_data32(operand.segment, operand.offset, value)
+        emulator.put_data32(operand.segment, operand.offset, value)
         return
     raise ValueError(f"unsupported resolved operand width: {operand.width_bits}")
 
 
-def load_word_pair16(emu, segment: sgreg_t, offset, address_bits: int = 16):
+def load_word_pair16(
+    emu: object, segment: sgreg_t, offset: object, address_bits: int = 16
+) -> tuple[object, object]:
+    """Load two adjacent 16-bit words from segmented memory."""
+    emulator = cast(_AddressingEmulator, emu)
     if isinstance(offset, int):
-        offset = emu.constant(offset, type_for_bits(address_bits))
+        offset = emulator.constant(offset, type_for_bits(address_bits))
+    offset_value = cast(_AddressValue, offset)
     step = address_step(emu, 2, address_bits)
-    first = emu.get_data16(segment, offset)
-    second = emu.get_data16(segment, offset + step)
+    first = emulator.get_data16(segment, offset_value)
+    second = emulator.get_data16(segment, offset_value + step)
     return first, second
 
 
-def load_far_pointer(emu, segment: sgreg_t, offset, operand_bits: int, address_bits: int = 16):
+def load_far_pointer(
+    emu: object, segment: sgreg_t, offset: object, operand_bits: int, address_bits: int = 16
+) -> tuple[object, object]:
+    """Load a far pointer with a 16- or 32-bit offset plus 16-bit segment."""
+    emulator = cast(_AddressingEmulator, emu)
     if isinstance(offset, int):
-        offset = emu.constant(offset, type_for_bits(address_bits))
+        offset = emulator.constant(offset, type_for_bits(address_bits))
+    offset_value = cast(_AddressValue, offset)
     step = address_step(emu, operand_bits // 8, address_bits)
     if operand_bits == 16:
-        far_offset = emu.get_data16(segment, offset)
+        far_offset = emulator.get_data16(segment, offset_value)
     elif operand_bits == 32:
-        far_offset = emu.get_data32(segment, offset)
+        far_offset = emulator.get_data32(segment, offset_value)
     else:
         raise ValueError(f"unsupported far pointer operand width: {operand_bits}")
-    far_segment = emu.get_data16(segment, offset + step)
+    far_segment = emulator.get_data16(segment, offset_value + step)
     return far_offset, far_segment
 
 
-def load_far_pointer16(emu, segment: sgreg_t, offset, address_bits: int = 16):
+def load_far_pointer16(
+    emu: object, segment: sgreg_t, offset: object, address_bits: int = 16
+) -> tuple[object, object]:
+    """Load a legacy 16:16 far pointer."""
     return load_word_pair16(emu, segment, offset, address_bits=address_bits)
 
 
-def _build_tmp_defs_from_irsb(irsb_c) -> dict[int, Any]:
-    """Build a tmp_index → WrTmp statement mapping from an IRSB or IRSBCustomizer."""
-    tmp_defs = {}
+def _build_tmp_defs_from_irsb(irsb_c: object) -> dict[int, object]:
+    """Build a tmp_index → WrTmp statement mapping from an IRSB or IRSBCustomizer.
+
+    Dynamic boundary: third-party pyvex IRSB objects expose statements and tmp
+    fields dynamically.
+    """
+    tmp_defs: dict[int, object] = {}
     if irsb_c is None:
         return tmp_defs
+    # Dynamic boundary: pyvex customizers and IRSBs expose statements at runtime.
     # Unwrap IRSBCustomizer to underlying IRSB
     irsb = getattr(irsb_c, "irsb", irsb_c)
     stmts = getattr(irsb, "statements", None) or ()
     for stmt in stmts:
+        # Dynamic boundary: pyvex WrTmp statements expose tmp numbers dynamically.
         stmt_tmp = getattr(stmt, "tmp", None)
         if isinstance(stmt_tmp, int):
             tmp_defs[stmt_tmp] = stmt
     return tmp_defs
 
 
-def _resolve_rdtmp_chain(expr: Any, tmp_defs: dict) -> Any:
-    """Resolve RdTmp nodes to their defining expressions, recursively."""
+def _resolve_rdtmp_chain(expr: object, tmp_defs: dict[int, object]) -> object:
+    """Resolve RdTmp nodes to their defining expressions, recursively.
+
+    Dynamic boundary: third-party pyvex expression objects expose class names,
+    op, args, tmp, and statement data dynamically.
+    """
     if not isinstance(tmp_defs, dict) or not tmp_defs:
         return expr
 
+    # Dynamic boundary: pyvex expression classes expose names and fields dynamically.
     class_name = getattr(type(expr), "__name__", "")
     if "RdTmp" in class_name:
         tmp_idx = getattr(expr, "tmp", None)
@@ -490,34 +653,31 @@ def _resolve_rdtmp_chain(expr: Any, tmp_defs: dict) -> Any:
                 return _resolve_rdtmp_chain(stmt_expr, tmp_defs)
 
     # For Binop/Unop/etc, resolve args recursively
+    # Dynamic boundary: pyvex expression args/op are runtime attributes.
     args = getattr(expr, "args", None)
     if args is not None:
         resolved_args = [_resolve_rdtmp_chain(a, tmp_defs) for a in args]
         if resolved_args != list(args):
-            new_expr = type(expr)(getattr(expr, "op", None), resolved_args)
+            factory = cast(_ExpressionFactory, type(expr))
+            # Dynamic boundary: third-party pyvex expressions expose op dynamically.
+            new_expr = factory(getattr(expr, "op", None), resolved_args)
             return new_expr
 
     return expr
 
 
 def extract_bp_relative_offset_8616(
-    offset_expr: Any, *, tmp_defs: dict | None = None
+    offset_expr: object, *, tmp_defs: dict[int, object] | None = None
 ) -> tuple[int, tuple[str, ...]] | None:
-    def _impl():
+    """Extract a proven BP-relative constant offset from a VEX offset expression.
+
+    Dynamic boundary: third-party pyvex Binop/Get/Const nodes expose op and args
+    dynamically.
+    """
+
+    def _impl() -> tuple[int, tuple[str, ...]] | None:
+        """Match BP-relative forms through third-party pyvex dynamic-boundary fields."""
         nonlocal offset_expr
-        """Extract a BP-relative constant offset from a symbolic offset expression.
-
-        Handles only proven forms:
-            BP + const
-            BP - const
-            const + BP
-            BP
-            BP + SI/DI + const
-            BP + SI/DI - const
-
-        Returns (offset, base_tuple) or None.
-        Does NOT guess for BX+SI, SP+unknown, tmp, or other complex forms.
-        """
         # Resolve RdTmp → defining expression if tmp_defs available
         if tmp_defs is not None:
             offset_expr = _resolve_rdtmp_chain(offset_expr, tmp_defs)
@@ -527,6 +687,7 @@ def extract_bp_relative_offset_8616(
             return (offset_expr, ("bp",))
 
         # VEX expression: try to match BP +/- const pattern
+        # Dynamic boundary: pyvex Binop/Const/Get nodes expose op and args at runtime.
         op = getattr(offset_expr, "op", None)
         if op is None:
             return None
@@ -542,8 +703,8 @@ def extract_bp_relative_offset_8616(
             return None
 
         # Flatten nested Add/Sub chains into terms
-        terms, const = _collect_add_sub_terms(offset_expr, tmp_defs=tmp_defs)
-        if terms is None:
+        collected = _collect_add_sub_terms(offset_expr, tmp_defs=tmp_defs)
+        if collected is None:
             # Fallback to simple 2-arg patterns
             left, right = args[0], args[1]
             if op_str in {"Iop_Add16", "Iop_Add32"}:
@@ -556,9 +717,10 @@ def extract_bp_relative_offset_8616(
                     return (-(right & 0xFFFF), ("bp",))
             return None
 
+        terms, const = collected
+
         # Accept: BP (+ SI/DI) + const
         has_bp = any(_is_bp_reg(term, tmp_defs=tmp_defs) for term in terms)
-        has_index = any(_is_index_reg_8616(term) for term in terms)
         non_reg_terms = [t for t in terms if not _is_bp_reg(t, tmp_defs=tmp_defs) and not _is_index_reg_8616(t)]
 
         if has_bp and not non_reg_terms:
@@ -571,22 +733,24 @@ def extract_bp_relative_offset_8616(
 
 
 def _collect_add_sub_terms(
-    expr: Any,
+    expr: object,
     *,
-    tmp_defs: dict | None = None,
-) -> tuple[list[Any], int] | None:
-    def _impl():
-        nonlocal expr
-        """Flatten Iop_Add16/Add32 and Iop_Sub16/Sub32 chains.
+    tmp_defs: dict[int, object] | None = None,
+) -> tuple[list[object], int] | None:
+    """Flatten supported pyvex add/sub expression trees into terms and constants.
 
-        Returns (non_constant_terms, constant_total) or None if unsupported.
-        Constant terms are summed into the constant_total.
-        Sub-expressions in Sub positions negate their constant contribution.
-        """
+    Dynamic boundary: third-party pyvex expression trees expose op, tag, con,
+    args, and register fields dynamically.
+    """
+
+    def _impl() -> tuple[list[object], int] | None:
+        """Flatten terms through third-party pyvex dynamic-boundary fields."""
+        nonlocal expr
         # Resolve RdTmp chains through tmp_defs first
         if tmp_defs is not None:
             expr = _resolve_rdtmp_chain(expr, tmp_defs)
 
+        # Dynamic boundary: pyvex expression trees expose op/tag/con/args dynamically.
         op = getattr(expr, "op", None)
         if op is None:
             # Leaf expression: VEX Get, RdTmp, Const, or int literal.
@@ -639,15 +803,6 @@ def _collect_add_sub_terms(
                 return (right_terms + [args[0]], (-right_const) & 0xFFFF)
             return ([args[0], args[1]], 0)
 
-            # Leaf: constant or register
-            # Handle VEX Const objects (tag=Iex_Const, .con.value)
-            tag = getattr(expr, "tag", None)
-            if tag == "Iex_Const":
-                con = getattr(expr, "con", None)
-                if con is not None:
-                    val = getattr(con, "value", None)
-                    if isinstance(val, int):
-                        return ([], val & 0xFFFF)
         if isinstance(expr, int):
             return ([], expr & 0xFFFF)
         reg_offset = getattr(expr, "reg", None)
@@ -659,14 +814,18 @@ def _collect_add_sub_terms(
     return _impl()
 
 
-def _is_index_reg_8616(expr: Any) -> bool:
+def _is_index_reg_8616(expr: object) -> bool:
     """Check if a VEX expression is SI or DI.
+
+    Dynamic boundary: third-party pyvex Get nodes expose class names and offsets
+    dynamically.
 
     VEX guest state offsets (from archinfo arch_from_id('x86_16')):
       si → offset=32
       di → offset=36
     The reg16_t enum values (SI=6, DI=7) are NOT VEX guest offsets.
     """
+    # Dynamic boundary: pyvex Get nodes expose class names and offsets at runtime.
     class_name = getattr(type(expr), "__name__", "")
     if "Get" in class_name:
         offset = getattr(expr, "offset", None)
@@ -681,16 +840,20 @@ def _is_index_reg_8616(expr: Any) -> bool:
     return False
 
 
-def _is_bp_reg(expr: Any, *, tmp_defs: dict | None = None) -> bool:
-    def _impl():
-        """Check if a VEX expression is a BP register reference.
+def _is_bp_reg(expr: object, *, tmp_defs: dict[int, object] | None = None) -> bool:
+    """Check if a VEX expression is a BP register reference.
 
-        BP appears as:
-          - Get(offset=28, ...)   — VEX guest state offset for bp (archinfo arch_from_id('x86_16'))
-          - RdTmp(tmp=N) when tmp_defs maps N → WrTmp(..., Get(offset=28, ...))
+    Dynamic boundary: third-party pyvex RdTmp/Get nodes expose class names,
+    tmp definitions, statement data, and register offsets dynamically.
 
-        The old reg16_t enum value 5 is NOT a VEX guest offset — that was a bug.
-        """
+    BP appears as a pyvex Get for the BP guest-state offset, or as an RdTmp
+    whose definition resolves to that Get. The old reg16_t enum value is
+    intentionally treated only as legacy rescue evidence.
+    """
+
+    def _impl() -> bool:
+        """Classify BP through third-party pyvex dynamic-boundary fields."""
+        # Dynamic boundary: pyvex RdTmp/Get nodes expose class names and fields dynamically.
         class_name = getattr(type(expr), "__name__", "")
 
         # RdTmp: resolve through tmp_defs if available
@@ -719,9 +882,13 @@ def _is_bp_reg(expr: Any, *, tmp_defs: dict | None = None) -> bool:
     return _impl()
 
 
-def advance_ip16(emu, byte_count: int):
-    return emu.get_gpreg(reg16_t.IP) + emu.constant(byte_count, Type.int_16)
+def advance_ip16(emu: object, byte_count: int) -> _AddressValue:
+    """Return IP advanced by a byte count in 16-bit mode."""
+    emulator = cast(_AddressingEmulator, emu)
+    return emulator.get_gpreg(reg16_t.IP) + emulator.constant(byte_count, Type.int_16)
 
 
-def advance_eip32(emu, byte_count: int):
-    return emu.get_gpreg(reg32_t.EIP) + emu.constant(byte_count, Type.int_32)
+def advance_eip32(emu: object, byte_count: int) -> _AddressValue:
+    """Return EIP advanced by a byte count in 32-bit mode."""
+    emulator = cast(_AddressingEmulator, emu)
+    return emulator.get_gpreg(reg32_t.EIP) + emulator.constant(byte_count, Type.int_32)

@@ -7,7 +7,7 @@ import inertia_decompiler.sidecar_metadata as sidecar_metadata
 from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LIFE_EXE = REPO_ROOT / "LIFE.EXE"
+LIFE_EXE = REPO_ROOT / "examples" / "LIFE.EXE"
 
 
 def test_life_rand_never_reports_ir_shaped_output_as_success() -> None:
@@ -70,7 +70,7 @@ def test_life_main_does_not_use_verbatim_source_sidecar() -> None:
     assert payload != source_text
 
 
-def test_life_exit_refuses_ir_shaped_codegen_as_success() -> None:
+def test_life_exit_accepts_clean_helper_model_without_ir_shaped_codegen() -> None:
     project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
     metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project)
     cfg = project.analyses.CFGFast(
@@ -93,11 +93,14 @@ def test_life_exit_refuses_ir_shaped_codegen_as_success() -> None:
         lst_metadata=metadata,
     )
 
-    assert status != "ok"
-    assert "unresolved IR-shaped C" in payload
+    assert status == "ok"
+    assert "void exit(int status)" in payload
+    assert "ctermsub(" in payload
+    assert "STORE(addr=" not in payload
+    assert "Goto None" not in payload
 
 
-def test_life_exit_nonoptimized_fallback_refuses_ir_shaped_output() -> None:
+def test_life_exit_nonoptimized_fallback_accepts_clean_helper_model_output() -> None:
     project = decompile._build_project(LIFE_EXE, force_blob=False, base_addr=0x1000, entry_point=0)
     metadata = sidecar_metadata._load_lst_metadata(LIFE_EXE, project)
 
@@ -111,9 +114,11 @@ def test_life_exit_nonoptimized_fallback_refuses_ir_shaped_output() -> None:
         lst_metadata=metadata,
     )
 
-    assert outcome.status != "ok"
-    assert outcome.rendered is None
-    assert "unresolved" in outcome.payload.lower()
+    assert outcome.status == "ok"
+    assert outcome.rendered == "void exit(int status)\n{\n    (void)status;\n}\n"
+    assert outcome.payload == outcome.rendered
+    assert "STORE(addr=" not in outcome.payload
+    assert "Goto None" not in outcome.payload
 
 
 def test_life_pause_screen_does_not_use_verbatim_source_sidecar() -> None:

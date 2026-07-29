@@ -1,8 +1,15 @@
+"""Cache parsed sidecar metadata as optional evidence artifacts.
+
+Layer: CLI/fallback/reporting.
+Responsibility: persist optional sidecar metadata without turning debug evidence into required semantics.
+"""
+
 from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Protocol, TypeAlias
 
 from angr_platforms.X86_16.lst_extract import (
     DebugEnumMemberEvidence,
@@ -28,7 +35,33 @@ _SOURCE_FORMAT_DROP_TOKENS = {
     "local_pat",
     "peer_exe",
 }
-_SIDECAR_METADATA_PARSER_CACHE_VERSION = 10
+_SIDECAR_METADATA_PARSER_CACHE_VERSION = 11
+
+PayloadSequence: TypeAlias = tuple[object, ...]
+PayloadPairs: TypeAlias = tuple[tuple[object, object], ...]
+PayloadTriples: TypeAlias = tuple[tuple[object, object, object], ...]
+
+
+class _KnowledgeBaseLike(Protocol):
+    """Project knowledge-base surface used to attach sidecar labels."""
+
+    labels: dict[int, str]
+
+
+class _ProjectLike(Protocol):
+    """Third-party angr project attributes used by sidecar caching."""
+
+    kb: _KnowledgeBaseLike
+    _inertia_lst_metadata: LSTMetadata
+    _inertia_debug_source_files: tuple[str, ...]
+    _inertia_debug_type_names: tuple[str, ...]
+    _inertia_debug_type_descriptors: tuple[DebugTypeDescriptorEvidence, ...]
+    _inertia_debug_type_references: tuple[DebugTypeReferenceEvidence, ...]
+    _inertia_debug_symbols: tuple[DebugSymbolEvidence, ...]
+    _inertia_debug_type_members: tuple[DebugTypeMemberEvidence, ...]
+    _inertia_debug_enum_members: tuple[DebugEnumMemberEvidence, ...]
+    _inertia_debug_identifiers: tuple[str, ...]
+    _inertia_debug_line_map: dict[int, tuple[int, int]]
 
 
 def _visible_source_format(source_format: str | None) -> str:
@@ -62,13 +95,17 @@ _PROJECT_ATTR_KEYS = (
 
 @dataclass(frozen=True)
 class CachedSidecarMetadata:
+    """Cached sidecar metadata plus optional project-scoped signature attributes."""
+
     metadata: LSTMetadata
     project_attrs: dict[str, tuple[str, ...]]
 
 
-def _maybe_rebase_stale_absolute_metadata(metadata: LSTMetadata, project) -> LSTMetadata:
-    def _impl():
+def _maybe_rebase_stale_absolute_metadata(metadata: LSTMetadata, project: _ProjectLike) -> LSTMetadata:
+    def _impl() -> LSTMetadata:
+        # Dynamic angr boundary: loader/main_object are supplied by the third-party Project.
         main_object = getattr(getattr(project, "loader", None), "main_object", None)
+        # Dynamic angr boundary: linked_base is optional on loader main objects.
         linked_base = getattr(main_object, "linked_base", 0) or 0
         if linked_base <= 0:
             return metadata
@@ -81,6 +118,7 @@ def _maybe_rebase_stale_absolute_metadata(metadata: LSTMetadata, project) -> LST
             return metadata
         if max(code_keys) >= linked_base:
             return metadata
+        # Dynamic angr boundary: project entry can be absent in synthetic tests.
         if getattr(project, "entry", 0) < linked_base:
             return metadata
         shift = linked_base
@@ -121,6 +159,7 @@ def sidecar_metadata_cache_key(
     pat_backend: str | None,
     signature_catalog: Path | None,
 ) -> dict[str, object] | None:
+    """Build the cache key for sidecar metadata inputs."""
     extra: dict[str, object] = {
         "pat_backend": pat_backend or "",
         "parser_version": _SIDECAR_METADATA_PARSER_CACHE_VERSION,
@@ -137,6 +176,7 @@ def load_cached_sidecar_metadata(
     pat_backend: str | None,
     signature_catalog: Path | None,
 ) -> tuple[CachedSidecarMetadata | None, dict[str, object] | None]:
+    """Load cached sidecar metadata and its cache key when available."""
     cache_key = sidecar_metadata_cache_key(
         binary_path=binary_path,
         pat_backend=pat_backend,
@@ -161,8 +201,9 @@ def store_cached_sidecar_metadata(
     *,
     cache_key: dict[str, object] | None,
     metadata: LSTMetadata,
-    project,
+    project: _ProjectLike,
 ) -> None:
+    """Store parsed sidecar metadata in the optional evidence cache."""
     if cache_key is None:
         return
     payload = {
@@ -172,7 +213,8 @@ def store_cached_sidecar_metadata(
     _store_cache_json("sidecar_metadata", cache_key, payload)
 
 
-def apply_cached_sidecar_metadata(project, cached: CachedSidecarMetadata) -> LSTMetadata:
+def apply_cached_sidecar_metadata(project: _ProjectLike, cached: CachedSidecarMetadata) -> LSTMetadata:
+    """Attach cached sidecar metadata to a project and return the effective metadata."""
     metadata = _maybe_rebase_stale_absolute_metadata(cached.metadata, project)
     project._inertia_lst_metadata = metadata
     _attach_debug_evidence_attrs(project, metadata)
@@ -181,11 +223,12 @@ def apply_cached_sidecar_metadata(project, cached: CachedSidecarMetadata) -> LST
     for addr, name in metadata.code_labels.items():
         project.kb.labels[addr] = name
     for key, values in cached.project_attrs.items():
+        # Dynamic compatibility boundary: cached project attrs are keyed optional angr Project sidecars.
         setattr(project, key, values)
     return metadata
 
 
-def _attach_debug_evidence_attrs(project, metadata: LSTMetadata) -> None:
+def _attach_debug_evidence_attrs(project: _ProjectLike, metadata: LSTMetadata) -> None:
     project._inertia_debug_source_files = metadata.debug_source_files
     project._inertia_debug_type_names = metadata.debug_type_names
     project._inertia_debug_type_descriptors = metadata.debug_type_descriptors
@@ -197,7 +240,8 @@ def _attach_debug_evidence_attrs(project, metadata: LSTMetadata) -> None:
     project._inertia_debug_line_map = metadata.debug_line_map
 
 
-def emit_sidecar_metadata_debug(project, metadata: LSTMetadata) -> None:
+def emit_sidecar_metadata_debug(project: _ProjectLike, metadata: LSTMetadata) -> None:
+    """Emit a compact debug summary for loaded sidecar metadata."""
     print(
         f"[dbg] loaded sidecar metadata: format={_visible_source_format(metadata.source_format)} "
         f"code_labels={len(metadata.code_labels)} data_labels={len(metadata.data_labels)} "
@@ -210,6 +254,7 @@ def emit_sidecar_metadata_debug(project, metadata: LSTMetadata) -> None:
         file=sys.stderr,
         flush=True,
     )
+    # Dynamic compatibility boundary: signature metadata is attached opportunistically to angr Project objects.
     compiler_names = getattr(project, "_inertia_signature_compiler_names", ())
     if compiler_names:
         filtered_compiler_names = []
@@ -225,6 +270,7 @@ def emit_sidecar_metadata_debug(project, metadata: LSTMetadata) -> None:
                 file=sys.stderr,
                 flush=True,
             )
+    # Dynamic compatibility boundary: flair metadata is attached opportunistically to angr Project objects.
     flair_titles = getattr(project, "_inertia_flair_sig_titles", ())
     if flair_titles:
         print(
@@ -317,24 +363,68 @@ def _serialize_lst_metadata(metadata: LSTMetadata) -> dict[str, object]:
     }
 
 
+def _payload_sequence(payload: dict[str, object], key: str) -> PayloadSequence:
+    value = payload.get(key, ())
+    if isinstance(value, (list, tuple)):
+        return tuple(value)
+    return ()
+
+
+def _payload_pairs(payload: dict[str, object], key: str) -> PayloadPairs:
+    pairs: list[tuple[object, object]] = []
+    for item in _payload_sequence(payload, key):
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            pairs.append((item[0], item[1]))
+    return tuple(pairs)
+
+
+def _payload_triples(payload: dict[str, object], key: str) -> PayloadTriples:
+    triples: list[tuple[object, object, object]] = []
+    for item in _payload_sequence(payload, key):
+        if isinstance(item, (list, tuple)) and len(item) == 3:
+            triples.append((item[0], item[1], item[2]))
+    return tuple(triples)
+
+
+def _payload_ints(payload: dict[str, object], key: str) -> tuple[int, ...]:
+    values: list[int] = []
+    for item in _payload_sequence(payload, key):
+        value = _optional_int(item)
+        if value is not None:
+            values.append(value)
+    return tuple(values)
+
+
+def _coerce_cache_int(value: object) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, (str, bytes, bytearray)):
+        return int(value)
+    return int(str(value))
+
+
 def _deserialize_lst_metadata(payload: dict[str, object]) -> LSTMetadata | None:
     try:
-        data_labels = {int(addr): str(name) for addr, name in payload.get("data_labels", ())}
-        code_labels = {int(addr): str(name) for addr, name in payload.get("code_labels", ())}
-        code_ranges = {int(addr): (int(start), int(end)) for addr, start, end in payload.get("code_ranges", ())}
-        signature_code_addrs = frozenset(int(addr) for addr in payload.get("signature_code_addrs", ()))
-        cod_proc_kinds = {int(addr): str(kind) for addr, kind in payload.get("cod_proc_kinds", ())}
-        struct_names = tuple(str(name) for name in payload.get("struct_names", ()))
-        debug_source_files = tuple(str(name) for name in payload.get("debug_source_files", ()))
-        debug_type_names = tuple(str(name) for name in payload.get("debug_type_names", ()))
+        data_labels = {_coerce_cache_int(addr): str(name) for addr, name in _payload_pairs(payload, "data_labels")}
+        code_labels = {_coerce_cache_int(addr): str(name) for addr, name in _payload_pairs(payload, "code_labels")}
+        code_ranges = {
+            _coerce_cache_int(addr): (_coerce_cache_int(start), _coerce_cache_int(end))
+            for addr, start, end in _payload_triples(payload, "code_ranges")
+        }
+        signature_code_addrs = frozenset(_payload_ints(payload, "signature_code_addrs"))
+        cod_proc_kinds = {_coerce_cache_int(addr): str(kind) for addr, kind in _payload_pairs(payload, "cod_proc_kinds")}
+        struct_names = tuple(str(name) for name in _payload_sequence(payload, "struct_names"))
+        debug_source_files = tuple(str(name) for name in _payload_sequence(payload, "debug_source_files"))
+        debug_type_names = tuple(str(name) for name in _payload_sequence(payload, "debug_type_names"))
         debug_type_descriptors = _deserialize_debug_type_descriptors(payload.get("debug_type_descriptors", ()))
         debug_type_references = _deserialize_debug_type_references(payload.get("debug_type_references", ()))
         debug_symbols = _deserialize_debug_symbols(payload.get("debug_symbols", ()))
         debug_type_members = _deserialize_debug_type_members(payload.get("debug_type_members", ()))
         debug_enum_members = _deserialize_debug_enum_members(payload.get("debug_enum_members", ()))
-        debug_identifiers = tuple(str(name) for name in payload.get("debug_identifiers", ()))
+        debug_identifiers = tuple(str(name) for name in _payload_sequence(payload, "debug_identifiers"))
         debug_line_map = {
-            int(addr): (int(line), int(col)) for addr, line, col in payload.get("debug_line_map", ())
+            _coerce_cache_int(addr): (_coerce_cache_int(line), _coerce_cache_int(col))
+            for addr, line, col in _payload_triples(payload, "debug_line_map")
         }
         cod_path = payload.get("cod_path")
         if cod_path is not None:
@@ -510,12 +600,15 @@ def _deserialize_debug_enum_members(payload: object) -> tuple[DebugEnumMemberEvi
 def _optional_int(value: object) -> int | None:
     if value is None:
         return None
+    if not isinstance(value, (int, str, bytes, bytearray)):
+        return None
     return int(value)
 
 
-def _serialize_project_attrs(project) -> dict[str, list[str]]:
+def _serialize_project_attrs(project: _ProjectLike) -> dict[str, list[str]]:
     payload: dict[str, list[str]] = {}
     for key in _PROJECT_ATTR_KEYS:
+        # Dynamic compatibility boundary: project signature attrs are optional third-party Project sidecars.
         values = getattr(project, key, ())
         if not isinstance(values, (tuple, list)) or not values:
             continue

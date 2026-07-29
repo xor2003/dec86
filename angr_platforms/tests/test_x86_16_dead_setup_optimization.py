@@ -68,7 +68,7 @@ def test_dead_setup_prunes_unread_setup_carrier_and_updates_counters():
 def test_dead_setup_live_carrier_is_not_pruned_or_escaped():
     codegen = _mk_codegen_with_statements([])
     vvar_1 = _mk_cvar(codegen, "vvar_1", 0)
-    base = _mk_cvar(codegen, "s_6", 2)
+    base = _mk_cvar(codegen, "local_6", 2)
     sink = _mk_cvar(codegen, "s_8", 4)
     rhs = structured_c.CBinaryOp(
         "Add",
@@ -93,7 +93,7 @@ def test_dead_setup_live_carrier_is_not_pruned_or_escaped():
 def test_dead_setup_escape_counter_flags_unpruned_dead_candidate():
     codegen = _mk_codegen_with_statements([])
     vvar_1 = _mk_cvar(codegen, "vvar_1", 0)
-    base = _mk_cvar(codegen, "s_6", 2)
+    base = _mk_cvar(codegen, "local_6", 2)
     rhs = structured_c.CBinaryOp(
         "Add",
         base,
@@ -104,11 +104,12 @@ def test_dead_setup_escape_counter_flags_unpruned_dead_candidate():
     # that escape counting catches it.
     setup_assign = structured_c.CAssignment(vvar_1, rhs, codegen=codegen)
     codegen.cfunc.statements = structured_c.CStatements([setup_assign], codegen=codegen)
+    codegen._inertia_enable_safe_dead_setup_prune = True
 
     assert _count_dead_setup_escaped_8616(codegen) == 1
 
 
-def test_dead_setup_prune_is_disabled_by_default():
+def test_dead_setup_prune_is_diagnostic_by_default():
     codegen = _mk_codegen_with_statements([])
     vvar_1 = _mk_cvar(codegen, "vvar_1", 0)
     base = _mk_cvar(codegen, "local_6", 2)
@@ -123,9 +124,10 @@ def test_dead_setup_prune_is_disabled_by_default():
 
     changed = _prune_dead_setup_carriers_8616(codegen)
 
-    assert changed is True
-    assert len(list(codegen.cfunc.statements.statements)) == 0
-    assert getattr(codegen, "dead_setup_pruned", 0) >= 1
+    assert changed is False
+    assert len(list(codegen.cfunc.statements.statements)) == 1
+    assert getattr(codegen, "dead_setup_candidates", 0) >= 1
+    assert getattr(codegen, "dead_setup_pruned", 0) == 0
 
 
 def test_dead_setup_prune_can_be_forced_disabled_with_env(monkeypatch):

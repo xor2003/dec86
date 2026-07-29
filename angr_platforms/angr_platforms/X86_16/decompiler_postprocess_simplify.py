@@ -1,5 +1,8 @@
 """Structured-C cleanup pass; keep semantic proof outside this module.
 
+Layer: Rewrite/Postprocess cleanup.
+Responsibility: cleanup-only simplification of already-proven structured C AST expressions.
+
 This module may simplify C AST expressions after earlier stages have already
 proved the underlying facts. Legitimate work here includes projection cleanup,
 constant folding, redundant boolean wrapper removal, and inlining/deleting
@@ -20,12 +23,18 @@ Do not add new alias, width, stack, register, or memory recovery here. If a
 simplification needs proof, add the proof to the earliest owning layer and make
 this pass consume a structured fact. Unknown or unproven cases must keep the
 original C AST.
+
+Dynamic attributes in this codegen boundary are limited to third-party angr C
+AST/codegen compatibility objects.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Any, Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
@@ -33,11 +42,16 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
     CDirtyExpression,
+    CDoWhileLoop,
+    CForLoop,
     CFunctionCall,
+    CIfElse,
     CStatements,
+    CSwitchCase,
     CTypeCast,
     CUnaryOp,
     CVariable,
+    CWhileLoop,
 )
 from angr.sim_type import SimTypeLong, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -59,7 +73,26 @@ from .widening_model import prove_adjacent_storage_slices
 
 _log = logging.getLogger(__name__)
 
-PROJECTION_CLEANUP_RULES = (
+
+@dataclass(frozen=True, slots=True)
+class SingleUseTemporaryEliminationStats8616:
+    """Closed-loop evidence counters for cleanup-only temporary elimination."""
+
+    raw_fact_count: int
+    normalized_fact_count: int
+    classified_fact_count: int
+    materialized_count: int
+    failure_count: int
+
+
+class _SingleUseTemporaryCodegen8616(Protocol):
+    """Owned temporary-elimination metadata on the dynamic angr codegen boundary."""
+
+    cfunc: object
+    _inertia_single_use_temporary_elimination_stats_8616: SingleUseTemporaryEliminationStats8616
+
+
+PROJECTION_CLEANUP_RULES: tuple[tuple[str, str], ...] = (
     (
         "concat_fold",
         "Fold concatenations of constant halves into one constant and preserve the narrower shift width otherwise.",
@@ -101,19 +134,19 @@ __all__ = [
 
 
 def describe_x86_16_projection_cleanup_rules() -> tuple[tuple[str, str], ...]:
+    """Describe cleanup-only projection simplification rules for architecture checks."""
     return PROJECTION_CLEANUP_RULES
 
 
-def _virtual_expr_keys_8616(node) -> tuple[tuple[str, object], ...]:
-    def _dirty_attr_8616(obj, attr: str):
+def _virtual_expr_keys_8616(node: object) -> tuple[tuple[str, object], ...]:
+    def _dirty_attr_8616(obj: object, attr: str) -> object | None:
         try:
             return getattr(obj, attr, None)
         except (AttributeError, TypeError, ValueError):
             return None
 
     keys: list[tuple[str, object]] = []
-    dirty = getattr(node, "dirty", None)
-    if isinstance(node, CDirtyExpression) and dirty is not None:
+    if isinstance(node, CDirtyExpression) and (dirty := node.dirty) is not None:
         if isinstance(dirty, str) and dirty:
             keys.append(("dirty-name", dirty))
         varid = _dirty_attr_8616(dirty, "varid")
@@ -139,14 +172,14 @@ def _virtual_expr_keys_8616(node) -> tuple[tuple[str, object], ...]:
         if isinstance(reg_offset, int):
             keys.append(("dirty-reg", (reg_offset, bits if isinstance(bits, int) else None)))
     if isinstance(node, CVariable):
-        variable = getattr(node, "variable", None)
-        name = getattr(node, "name", None) or getattr(variable, "name", None)
+        variable = node.variable
+        name = node.name or variable.name
         if isinstance(name, str) and name.startswith(("tmp_", "vvar_", "ir_")):
             keys.append(("virtual-name", name))
     return tuple(dict.fromkeys(keys))
 
 
-def _virtual_expr_key_8616(node) -> tuple[str, object] | None:
+def _virtual_expr_key_8616(node: object) -> tuple[str, object] | None:
     keys = _virtual_expr_keys_8616(node)
     if keys:
         return keys[0]
@@ -168,14 +201,14 @@ def _virtual_inline_identity_keys_8616(keys: tuple[tuple[str, object], ...]) -> 
     return tmp_keys or keys
 
 
-def _debug_c_repr_8616(node) -> str:
+def _debug_c_repr_8616(node: object) -> str:
     try:
-        return "".join(str(text) for text, _obj in node.c_repr_chunks(asexpr=True))
+        return "".join(str(text) for text, _obj in cast(Any, node).c_repr_chunks(asexpr=True))
     except Exception:
         return repr(node)
 
 
-def _pure_virtual_inline_rhs_8616(expr) -> bool:
+def _pure_virtual_inline_rhs_8616(expr: object) -> bool:
     if isinstance(expr, (CConstant, CVariable, CDirtyExpression)):
         return True
     if isinstance(expr, CTypeCast):
@@ -195,7 +228,7 @@ def _pure_virtual_inline_rhs_8616(expr) -> bool:
     return False
 
 
-def _expr_contains_virtual_key_8616(node, target_key: tuple[str, object]) -> bool:
+def _expr_contains_virtual_key_8616(node: object, target_key: tuple[str, object]) -> bool:
     if node is None:
         return False
     if _virtual_expr_key_8616(node) == target_key:
@@ -225,7 +258,7 @@ def _expr_contains_virtual_key_8616(node, target_key: tuple[str, object]) -> boo
     return False
 
 
-def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
+def _inline_single_assignment_virtual_expressions_8616(codegen: object) -> bool:
     """Inline pure SSA-like virtual definitions by structural AST evidence.
 
     This consumes CDirtyExpression/CVariable virtual definitions that are unique
@@ -237,7 +270,7 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
     if root is None:
         return False
 
-    def _walk(node):
+    def _walk(node: object) -> Iterator[object]:
         if node is None:
             return
         yield node
@@ -270,12 +303,12 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
     for node in _walk(root):
         if not isinstance(node, CAssignment):
             continue
-        raw_keys = _virtual_expr_keys_8616(getattr(node, "lhs", None))
+        raw_keys = _virtual_expr_keys_8616(node.lhs)
         keys = _virtual_inline_identity_keys_8616(raw_keys)
         if not keys:
             continue
         candidate_count += 1
-        rhs = getattr(node, "rhs", None)
+        rhs = node.rhs
         if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE"):
             _log.warning(
                 "[virtual-inline] def keys=%r raw_keys=%r lhs=%s rhs=%s",
@@ -300,10 +333,10 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
     replacements = {key: rhs for key, rhs in definitions.items() if rhs is not None}
     if not replacements:
         if candidate_count:
-            codegen._inertia_virtual_inline_candidates = (
+            cast(Any, codegen)._inertia_virtual_inline_candidates = (
                 int(getattr(codegen, "_inertia_virtual_inline_candidates", 0) or 0) + candidate_count
             )
-            codegen._inertia_virtual_inline_refused = (
+            cast(Any, codegen)._inertia_virtual_inline_refused = (
                 int(getattr(codegen, "_inertia_virtual_inline_refused", 0) or 0) + refused_count
             )
         return False
@@ -313,12 +346,12 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
     protected_refused_count = 0
 
     def _transform(
-        node,
+        node: object,
         *,
         assignment_lhs: bool = False,
         protected_address_context: bool = False,
         resolving_keys: set[tuple[str, object]] | None = None,
-    ):
+    ) -> object:
         nonlocal changed, protected_refused_count
         if node is None:
             return node
@@ -328,8 +361,10 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
             raw_keys = _virtual_expr_keys_8616(node)
             keys = _virtual_inline_identity_keys_8616(raw_keys)
             key = next((candidate_key for candidate_key in keys if candidate_key in replacements), None)
-            replacement = replacements.get(key)
+            replacement = replacements.get(key) if key is not None else None
             if replacement is not None:
+                if key is None:
+                    return node
                 if key in resolving_keys:
                     if os.environ.get("INERTIA_DEBUG_VIRTUAL_INLINE"):
                         _log.warning("[virtual-inline] cycle-refuse key=%r expr=%s", key, _debug_c_repr_8616(node))
@@ -381,7 +416,7 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
                 protected_address_context=child_protected_address_context,
             )
             if new_child is not child:
-                setattr(node, attr, new_child)
+                setattr(cast(Any, node), attr, new_child)
         for attr in ("statements", "operands", "args"):
             seq = getattr(node, attr, None)
             if not seq:
@@ -396,7 +431,7 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
                 else:
                     new_seq.append(item)
             if seq_changed:
-                setattr(node, attr, new_seq)
+                setattr(cast(Any, node), attr, new_seq)
         pairs = getattr(node, "condition_and_nodes", None)
         if pairs:
             new_pairs = []
@@ -415,17 +450,17 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
                 pair_changed |= new_cond is not cond or new_body is not body
                 new_pairs.append((new_cond, new_body))
             if pair_changed:
-                setattr(node, "condition_and_nodes", new_pairs)
+                cast(Any, node).condition_and_nodes = new_pairs
         return node
 
     _transform(root)
     if protected_refused_count:
-        codegen._inertia_virtual_inline_protected_address_refused = (
+        cast(Any, codegen)._inertia_virtual_inline_protected_address_refused = (
             int(getattr(codegen, "_inertia_virtual_inline_protected_address_refused", 0) or 0) + protected_refused_count
         )
 
     def _collect_virtual_key_use_counts_8616(
-        node,
+        node: object,
         tracked_keys: set[tuple[str, object]],
         *,
         assignment_lhs: bool = False,
@@ -490,13 +525,13 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
 
         return counts
 
-    def _prune_consumed_virtual_definitions_8616(node) -> int:
+    def _prune_consumed_virtual_definitions_8616(node: object) -> int:
         pruned = 0
         replacement_keys = set(replacements)
         use_counts = _collect_virtual_key_use_counts_8616(root, replacement_keys)
         visited: set[int] = set()
 
-        def _visit(container) -> None:
+        def _visit(container: object) -> None:
             nonlocal pruned
             if not _structured_codegen_node_8616(container):
                 return
@@ -510,7 +545,7 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
                 for statement in statements:
                     keys = (
                         _virtual_inline_identity_keys_8616(
-                            _virtual_expr_keys_8616(getattr(statement, "lhs", None))
+                            _virtual_expr_keys_8616(statement.lhs)
                         )
                         if isinstance(statement, CAssignment)
                         else ()
@@ -518,14 +553,14 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
                     if (
                         keys
                         and any(key in replacements for key in keys)
-                        and _pure_virtual_inline_rhs_8616(getattr(statement, "rhs", None))
+                        and _pure_virtual_inline_rhs_8616(statement.rhs)
                         and all(use_counts.get(key, 0) == 0 for key in keys)
                     ):
                         pruned += 1
                         continue
                     kept.append(statement)
                 if len(kept) != len(statements):
-                    container.statements = kept
+                    cast(Any, container).statements = kept
                 for statement in kept:
                     _visit(statement)
 
@@ -545,45 +580,45 @@ def _inline_single_assignment_virtual_expressions_8616(codegen) -> bool:
     if changed:
         pruned_defs = _prune_consumed_virtual_definitions_8616(root)
         if pruned_defs:
-            codegen._inertia_virtual_inline_pruned_defs = (
+            cast(Any, codegen)._inertia_virtual_inline_pruned_defs = (
                 int(getattr(codegen, "_inertia_virtual_inline_pruned_defs", 0) or 0) + pruned_defs
             )
-        codegen._inertia_virtual_inline_candidates = (
+        cast(Any, codegen)._inertia_virtual_inline_candidates = (
             int(getattr(codegen, "_inertia_virtual_inline_candidates", 0) or 0) + candidate_count
         )
-        codegen._inertia_virtual_inline_materialized = int(
+        cast(Any, codegen)._inertia_virtual_inline_materialized = int(
             getattr(codegen, "_inertia_virtual_inline_materialized", 0) or 0
         ) + len(replacements)
-        codegen._inertia_virtual_inline_refused = (
+        cast(Any, codegen)._inertia_virtual_inline_refused = (
             int(getattr(codegen, "_inertia_virtual_inline_refused", 0) or 0) + refused_count
         )
     return changed
 
 
-def _simplify_boolean_cites_8616(codegen) -> bool:
+def _simplify_boolean_cites_8616(codegen: object) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
 
     changed = False
 
-    def transform(node):
+    def transform(node: object) -> object:
         if not isinstance(node, CITE):
             return node
         values = _bool_cite_values_8616(node)
         if values == (1, 0):
             return node.cond
         if values == (0, 1):
-            return CUnaryOp("Not", node.cond, codegen=codegen, tags=getattr(node, "tags", None))
+            return CUnaryOp("Not", node.cond, codegen=codegen, tags=node.tags)
         return node
 
-    root = codegen.cfunc.statements
+    root = cast(Any, codegen).cfunc.statements
     new_root = transform(root)
     if new_root is not root:
         if isinstance(root, CStatements) and not isinstance(new_root, CStatements):
             new_root = CStatements(
                 statements=[new_root] if not isinstance(new_root, list) else new_root, codegen=codegen
             )
-        codegen.cfunc.statements = new_root
+        cast(Any, codegen).cfunc.statements = new_root
         root = new_root
         changed = True
 
@@ -592,7 +627,7 @@ def _simplify_boolean_cites_8616(codegen) -> bool:
     return changed
 
 
-def _simplify_structured_expressions_8616(codegen) -> bool:
+def _simplify_structured_expressions_8616(codegen: object) -> bool:
     if getattr(codegen, "cfunc", None) is None:
         return False
 
@@ -606,23 +641,23 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             "CmpNE": "CmpEQ",
         }.get(op)
 
-    def _is_c_constant_int_8616(expr, value: int) -> bool:
+    def _is_c_constant_int_8616(expr: object, value: int) -> bool:
         return isinstance(expr, CConstant) and isinstance(expr.value, int) and expr.value == value
 
-    def _c_constant_int_value_8616(expr) -> int | None:
+    def _c_constant_int_value_8616(expr: object) -> int | None:
         if isinstance(expr, CConstant) and isinstance(expr.value, int):
             return int(expr.value)
         return None
 
-    def _unwrap_c_casts_8616(expr):
+    def _unwrap_c_casts_8616(expr: object) -> object:
         while isinstance(expr, CTypeCast):
-            expr = getattr(expr, "expr", None)
+            expr = expr.expr
         return expr
 
-    def _constant_result_type_8616(node, value: int):
+    def _constant_result_type_8616(node: CBinaryOp | CUnaryOp, value: int) -> object:
         if value < 0 or value > 0xFFFF:
             return SimTypeLong(value < 0)
-        return getattr(node, "type", None) or SimTypeShort(False)
+        return node.type or SimTypeShort(False)
 
     def _fold_pure_constant_binary_8616(op: str, lhs: int, rhs: int) -> int | None:
         if op == "Add":
@@ -647,12 +682,12 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return None if rhs < 0 or rhs > 63 else lhs >> rhs
         return None
 
-    def _pure_constant_expr_value_8616(expr) -> int | None:
+    def _pure_constant_expr_value_8616(expr: object) -> int | None:
         expr = _unwrap_c_casts_8616(expr)
         if isinstance(expr, CConstant) and isinstance(expr.value, int):
             return int(expr.value)
         if isinstance(expr, CUnaryOp):
-            operand = _pure_constant_expr_value_8616(getattr(expr, "operand", None))
+            operand = _pure_constant_expr_value_8616(expr.operand)
             if operand is None:
                 return None
             if expr.op == "Neg":
@@ -663,20 +698,20 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                 return ~operand
             return None
         if isinstance(expr, CBinaryOp):
-            lhs = _pure_constant_expr_value_8616(getattr(expr, "lhs", None))
-            rhs = _pure_constant_expr_value_8616(getattr(expr, "rhs", None))
+            lhs = _pure_constant_expr_value_8616(expr.lhs)
+            rhs = _pure_constant_expr_value_8616(expr.rhs)
             if lhs is None or rhs is None:
                 return None
-            return _fold_pure_constant_binary_8616(str(getattr(expr, "op", "")), lhs, rhs)
+            return _fold_pure_constant_binary_8616(str(expr.op), lhs, rhs)
         return None
 
-    def _runtime_segment_helper_name_8616(node) -> str | None:
+    def _runtime_segment_helper_name_8616(node: object) -> str | None:
         node = _unwrap_c_casts_8616(node)
         if not isinstance(node, CFunctionCall):
             return None
         for raw in (
-            getattr(node, "callee_target", None),
-            getattr(getattr(node, "callee_func", None), "name", None),
+            node.callee_target,
+            getattr(node.callee_func, "name", None),
         ):
             if isinstance(raw, str) and raw:
                 normalized = raw.strip().upper()
@@ -684,16 +719,16 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                     return normalized
         return None
 
-    def _runtime_segment_helper_args_8616(node) -> tuple[object, object] | None:
+    def _runtime_segment_helper_args_8616(node: object) -> tuple[object, object] | None:
         node = _unwrap_c_casts_8616(node)
         if not isinstance(node, CFunctionCall):
             return None
-        args = getattr(node, "args", None)
+        args = node.args
         if not isinstance(args, (list, tuple)) or len(args) != 2:
             return None
         return args[0], args[1]
 
-    def _flatten_offset_terms_8616(expr, sign: int = 1) -> tuple[int, tuple[tuple[int, object], ...]]:
+    def _flatten_offset_terms_8616(expr: object, sign: int = 1) -> tuple[int, tuple[tuple[int, object], ...]]:
         expr = _unwrap_c_casts_8616(expr)
         const_value = _pure_constant_expr_value_8616(expr)
         if const_value is not None:
@@ -708,7 +743,10 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return lhs_const + rhs_const, lhs_terms + rhs_terms
         return 0, ((sign, expr),)
 
-    def _same_signed_term_multiset_8616(lhs_terms, rhs_terms) -> bool:
+    def _same_signed_term_multiset_8616(
+        lhs_terms: tuple[tuple[int, object], ...],
+        rhs_terms: tuple[tuple[int, object], ...],
+    ) -> bool:
         unmatched = list(rhs_terms)
         for lhs_sign, lhs_expr in lhs_terms:
             found_index = None
@@ -721,17 +759,17 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             del unmatched[found_index]
         return not unmatched
 
-    def _offset_exprs_are_adjacent_8616(low_offset, high_offset) -> bool:
+    def _offset_exprs_are_adjacent_8616(low_offset: object, high_offset: object) -> bool:
         low_const, low_terms = _flatten_offset_terms_8616(low_offset)
         high_const, high_terms = _flatten_offset_terms_8616(high_offset)
         return high_const == low_const + 1 and _same_signed_term_multiset_8616(low_terms, high_terms)
 
-    def _seg_u8_call_info_8616(expr) -> tuple[object, object] | None:
+    def _seg_u8_call_info_8616(expr: object) -> tuple[object, object] | None:
         if _runtime_segment_helper_name_8616(expr) != "SEG_U8":
             return None
         return _runtime_segment_helper_args_8616(expr)
 
-    def _shifted_seg_u8_high_byte_8616(expr) -> tuple[object, object] | None:
+    def _shifted_seg_u8_high_byte_8616(expr: object) -> tuple[object, object] | None:
         expr = _unwrap_c_casts_8616(expr)
         if not isinstance(expr, CBinaryOp):
             return None
@@ -745,7 +783,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                     return _seg_u8_call_info_8616(maybe_call)
         return None
 
-    def _fold_runtime_seg_u8_pair_8616(expr):
+    def _fold_runtime_seg_u8_pair_8616(expr: object) -> object | None:
         if not isinstance(expr, CBinaryOp) or expr.op not in {"Or", "Add"}:
             return None
         for maybe_low, maybe_high in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
@@ -768,22 +806,22 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             )
         return None
 
-    def _global_byte_reference_addr_8616(expr) -> int | None:
+    def _global_byte_reference_addr_8616(expr: object) -> int | None:
         expr = _unwrap_c_casts_8616(expr)
         if not isinstance(expr, CUnaryOp) or expr.op != "Reference":
             return None
-        target = _unwrap_c_casts_8616(getattr(expr, "operand", None))
+        target = _unwrap_c_casts_8616(expr.operand)
         if not isinstance(target, CVariable):
             return None
-        variable = getattr(target, "variable", None)
+        variable = target.variable
         if not isinstance(variable, SimMemoryVariable):
             return None
-        if getattr(variable, "size", None) != 1:
+        if variable.size != 1:
             return None
-        addr = getattr(variable, "addr", None)
+        addr = variable.addr
         return addr if isinstance(addr, int) else None
 
-    def _global_byte_address_terms_8616(expr):
+    def _global_byte_address_terms_8616(expr: object) -> tuple[int, tuple[tuple[int, object], ...], bool]:
         const_value, terms = _flatten_offset_terms_8616(expr)
         normalized_terms: list[tuple[int, object]] = []
         saw_global_byte_ref = False
@@ -796,17 +834,19 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             normalized_terms.append((sign, term))
         return const_value, tuple(normalized_terms), saw_global_byte_ref
 
-    def _byte_deref_address_info_8616(expr):
+    def _byte_deref_address_info_8616(expr: object) -> tuple[object, int, tuple[tuple[int, object], ...]] | None:
         expr = _unwrap_c_casts_8616(expr)
         if not isinstance(expr, CUnaryOp) or expr.op != "Dereference":
             return None
-        addr_expr = getattr(expr, "operand", None)
+        addr_expr = expr.operand
         const_value, terms, saw_global_byte_ref = _global_byte_address_terms_8616(addr_expr)
         if not saw_global_byte_ref:
             return None
         return addr_expr, const_value, terms
 
-    def _shifted_byte_deref_high_info_8616(expr):
+    def _shifted_byte_deref_high_info_8616(
+        expr: object,
+    ) -> tuple[object, int, tuple[tuple[int, object], ...]] | None:
         expr = _unwrap_c_casts_8616(expr)
         if not isinstance(expr, CBinaryOp):
             return None
@@ -820,7 +860,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                     return _byte_deref_address_info_8616(maybe_deref)
         return None
 
-    def _make_word_deref_from_addr_expr_8616(addr_expr):
+    def _make_word_deref_from_addr_expr_8616(addr_expr: object) -> CFunctionCall:
         return CFunctionCall(
             "MEM_U16",
             None,
@@ -829,7 +869,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             tags={"inertia_x86_16_runtime_pointer_helper": "MEM_U16"},
         )
 
-    def _fold_global_byte_deref_pair_8616(expr):
+    def _fold_global_byte_deref_pair_8616(expr: object) -> object | None:
         if not isinstance(expr, CBinaryOp) or expr.op not in {"Or", "Add"}:
             return None
         for maybe_low, maybe_high in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
@@ -864,7 +904,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return 0
         return value.bit_length()
 
-    def _extract_same_zero_compare_expr_8616(expr):
+    def _extract_same_zero_compare_expr_8616(expr: object) -> object | None:
         if not isinstance(expr, CBinaryOp) or expr.op != "CmpEQ":
             return None
         if _is_c_constant_int_8616(expr.rhs, 0):
@@ -873,7 +913,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return expr.rhs
         return None
 
-    def _extract_zero_flag_source_expr_8616(expr):
+    def _extract_zero_flag_source_expr_8616(expr: object) -> object | None:
         if isinstance(expr, CBinaryOp):
             if expr.op == "Mul":
                 for maybe_logic, maybe_scale in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
@@ -896,18 +936,18 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         return extracted
 
         elif isinstance(expr, CUnaryOp):
-            child = getattr(expr, "operand", None)
+            child = expr.operand
             if _structured_codegen_node_8616(child):
                 return _extract_zero_flag_source_expr_8616(child)
 
         elif isinstance(expr, CTypeCast):
-            child = getattr(expr, "expr", None)
+            child = expr.expr
             if _structured_codegen_node_8616(child):
                 return _extract_zero_flag_source_expr_8616(child)
 
         return None
 
-    def _expr_contains_stack_or_flags_register_8616(expr) -> bool:
+    def _expr_contains_stack_or_flags_register_8616(expr: object) -> bool:
         stack_or_flags_offsets: set[int] = set()
         arch = getattr(getattr(codegen, "project", None), "arch", None)
         registers = getattr(arch, "registers", {}) if arch is not None else {}
@@ -916,13 +956,13 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             if isinstance(register_info, tuple) and register_info and isinstance(register_info[0], int):
                 stack_or_flags_offsets.add(register_info[0])
 
-        def _contains(node) -> bool:
+        def _contains(node: object) -> bool:
             node = _unwrap_c_casts_8616(node)
             if isinstance(node, CVariable):
-                variable = getattr(node, "variable", None)
+                variable = node.variable
                 if not isinstance(variable, SimRegisterVariable):
                     return False
-                name = getattr(variable, "name", None)
+                name = variable.name
                 if isinstance(name, str) and name.lower() in {"sp", "bp", "esp", "ebp", "eflags", "flags"}:
                     return True
                 for attr in ("reg", "reg_offset", "offset"):
@@ -951,9 +991,9 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
 
         return _contains(expr)
 
-    def _shifted_high_byte_source_8616(expr):
+    def _shifted_high_byte_source_8616(expr: object) -> object | None:
         while isinstance(expr, CTypeCast):
-            expr = getattr(expr, "expr", None)
+            expr = expr.expr
         if not isinstance(expr, CBinaryOp):
             return None
         if expr.op == "Shl" and _is_c_constant_int_8616(expr.rhs, 8):
@@ -964,12 +1004,12 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return expr.rhs
         return None
 
-    def _or_terms_8616(expr) -> list[object]:
+    def _or_terms_8616(expr: object) -> list[object]:
         if isinstance(expr, CBinaryOp) and expr.op == "Or":
             return [*_or_terms_8616(expr.lhs), *_or_terms_8616(expr.rhs)]
         return [expr]
 
-    def _match_word_or_carrier_expr_8616(expr, target) -> int | None:
+    def _match_word_or_carrier_expr_8616(expr: object, target: object) -> int | None:
         terms = _or_terms_8616(expr)
         constant_terms: list[int] = []
         saw_target = False
@@ -994,7 +1034,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return None
         return value
 
-    def _match_word_or_carrier_expr_pair_8616(expr, low_target, high_target) -> int | None:
+    def _match_word_or_carrier_expr_pair_8616(expr: object, low_target: object, high_target: object) -> int | None:
         terms = _or_terms_8616(expr)
         constant_terms: list[int] = []
         saw_low = False
@@ -1019,40 +1059,40 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return None
         return value
 
-    def _match_word_or_carrier_shift_8616(expr, target) -> int | None:
+    def _match_word_or_carrier_shift_8616(expr: object, target: object) -> int | None:
         if not isinstance(expr, CBinaryOp) or expr.op != "Shr":
             return None
         if not _is_c_constant_int_8616(expr.rhs, 8):
             return None
         return _match_word_or_carrier_expr_8616(expr.lhs, target)
 
-    def _match_word_or_carrier_pair_shift_8616(expr, low_target, high_target) -> int | None:
+    def _match_word_or_carrier_pair_shift_8616(expr: object, low_target: object, high_target: object) -> int | None:
         if not isinstance(expr, CBinaryOp) or expr.op != "Shr":
             return None
         if not _is_c_constant_int_8616(expr.rhs, 8):
             return None
         return _match_word_or_carrier_expr_pair_8616(expr.lhs, low_target, high_target)
 
-    def _stack_word_contains_high_byte_8616(word_expr, high_expr) -> bool:
+    def _stack_word_contains_high_byte_8616(word_expr: object, high_expr: object) -> bool:
         word_domain = _storage_domain_for_expr(word_expr)
         high_domain = _storage_domain_for_expr(high_expr)
-        if getattr(word_domain, "space", None) != "stack" or getattr(high_domain, "space", None) != "stack":
+        if word_domain.space != "stack" or high_domain.space != "stack":
             return False
-        word_slot = getattr(word_domain, "stack_slot", None)
-        high_slot = getattr(high_domain, "stack_slot", None)
+        word_slot = word_domain.stack_slot
+        high_slot = high_domain.stack_slot
         if word_slot is None or high_slot is None:
             return False
-        if getattr(word_slot, "base", None) != getattr(high_slot, "base", None):
+        if word_slot.base != high_slot.base:
             return False
-        if getattr(word_slot, "region", None) != getattr(high_slot, "region", None):
+        if word_slot.region != high_slot.region:
             return False
-        word_offset = _canonical_stack_offset_8616(getattr(word_slot, "offset", None))
-        high_offset = _canonical_stack_offset_8616(getattr(high_slot, "offset", None))
+        word_offset = _canonical_stack_offset_8616(word_slot.offset)
+        high_offset = _canonical_stack_offset_8616(high_slot.offset)
         if not isinstance(word_offset, int) or not isinstance(high_offset, int):
             return False
-        return int(getattr(word_domain, "width", 0) or 0) == 2 and high_offset == word_offset + 1
+        return int(word_domain.width or 0) == 2 and high_offset == word_offset + 1
 
-    def _materialize_joined_word_expr_8616(low_expr, high_expr):
+    def _materialize_joined_word_expr_8616(low_expr: object, high_expr: object) -> object | None:
         low_domain = _storage_domain_for_expr(low_expr)
         high_domain = _storage_domain_for_expr(high_expr)
         alias_state = getattr(codegen, "_inertia_alias_state", None)
@@ -1069,8 +1109,8 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             )
             if widened_register is not None:
                 return widened_register
-            if isinstance(getattr(low_expr, "variable", None), SimRegisterVariable) or isinstance(
-                getattr(high_expr, "variable", None), SimRegisterVariable
+            if isinstance(low_expr.variable, SimRegisterVariable) or isinstance(
+                high_expr.variable, SimRegisterVariable
             ):
                 return None
         joined = proof.merged_domain if proof.ok else None
@@ -1082,9 +1122,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return None
 
         region = getattr(getattr(codegen, "cfunc", None), "addr", None)
-        vartype = (
-            getattr(low_expr, "variable_type", None) or getattr(high_expr, "variable_type", None) or SimTypeShort(False)
-        )
+        vartype = low_expr.variable_type or high_expr.variable_type or SimTypeShort(False)
 
         if joined.space == "stack" and joined.stack_slot is not None:
             stack_slot = joined.stack_slot
@@ -1108,30 +1146,34 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             stage = str(getattr(getattr(codegen, "project", None), "_inertia_decompiler_stage", "") or "")
             if stage in {"core", "structuring"}:
                 return None
-            low_var = getattr(low_expr, "variable", None)
-            high_var = getattr(high_expr, "variable", None)
-            low_addr = getattr(low_var, "addr", None)
-            high_addr = getattr(high_var, "addr", None)
-            if isinstance(low_addr, int) and isinstance(high_addr, int):
-                addr = min(low_addr, high_addr)
-                variable = SimMemoryVariable(addr, 2, name=f"g_{addr:x}", region=region)
-                return CVariable(variable, variable_type=vartype, codegen=codegen)
+            low_var = low_expr.variable
+            high_var = high_expr.variable
+            if not isinstance(low_var, SimMemoryVariable) or not isinstance(high_var, SimMemoryVariable):
+                return None
+            low_addr = low_var.addr
+            high_addr = high_var.addr
+            if not isinstance(low_addr, int) or not isinstance(high_addr, int):
+                return None
+            addr = min(low_addr, high_addr)
+            variable = SimMemoryVariable(addr, 2, name=f"g_{addr:x}", region=region)
+            return CVariable(variable, variable_type=vartype, codegen=codegen)
 
         if joined.space == "register":
-            low_var = getattr(low_expr, "variable", None)
-            high_var = getattr(high_expr, "variable", None)
-            low_reg = getattr(low_var, "reg", None)
-            high_reg = getattr(high_var, "reg", None)
-            if isinstance(low_reg, int) and isinstance(high_reg, int):
-                reg = min(low_reg, high_reg)
-                variable = SimRegisterVariable(
-                    reg, 2, name=getattr(low_var, "name", None) or getattr(high_var, "name", None)
-                )
-                return CVariable(variable, variable_type=vartype, codegen=codegen)
+            low_var = low_expr.variable
+            high_var = high_expr.variable
+            if not isinstance(low_var, SimRegisterVariable) or not isinstance(high_var, SimRegisterVariable):
+                return None
+            low_reg = low_var.reg
+            high_reg = high_var.reg
+            if not isinstance(low_reg, int) or not isinstance(high_reg, int):
+                return None
+            reg = min(low_reg, high_reg)
+            variable = SimRegisterVariable(reg, 2, name=low_var.name or high_var.name)
+            return CVariable(variable, variable_type=vartype, codegen=codegen)
 
         return None
 
-    def _simplify_zero_flag_comparison_8616(expr):
+    def _simplify_zero_flag_comparison_8616(expr: object) -> object:
         if not isinstance(expr, CBinaryOp) or expr.op not in {"CmpEQ", "CmpNE"}:
             return expr
 
@@ -1145,23 +1187,114 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
         source_expr = _extract_zero_flag_source_expr_8616(source)
         if source_expr is None:
             return expr
+        source_expr = _restore_not_shift_zero_flag_source_8616(source_expr)
         if _expr_contains_stack_or_flags_register_8616(source_expr):
             return expr
         if expr.op == "CmpEQ":
             return source_expr
-        return CUnaryOp("Not", source_expr, codegen=codegen)
+        return CUnaryOp("Not", cast(Any, source_expr), codegen=codegen)
 
-    def transform(node):
+    def _restore_not_shift_zero_flag_source_8616(source_expr: object) -> object | None:
+        source_expr = _unwrap_c_casts_8616(source_expr)
+        if not isinstance(source_expr, CBinaryOp) or source_expr.op not in {"Shr", "Sar"}:
+            return source_expr
+        lhs = _unwrap_c_casts_8616(source_expr.lhs)
+        if not isinstance(lhs, CUnaryOp) or lhs.op != "Not":
+            return source_expr
+        shift = source_expr.rhs
+        restored_shift = CBinaryOp(
+            source_expr.op,
+            cast(Any, lhs.operand),
+            shift,
+            codegen=codegen,
+            tags=source_expr.tags,
+        )
+        return CBinaryOp(
+            "CmpEQ",
+            restored_shift,
+            CConstant(0, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+            tags=lhs.tags or source_expr.tags,
+        )
+
+    def _restore_not_shift_condition_expr_8616(expr: object) -> tuple[object, bool]:
+        expr = _unwrap_c_casts_8616(expr)
+        if isinstance(expr, CBinaryOp):
+            lhs, lhs_changed = _restore_not_shift_condition_expr_8616(expr.lhs)
+            rhs, rhs_changed = _restore_not_shift_condition_expr_8616(expr.rhs)
+            if lhs_changed:
+                expr.lhs = lhs
+            if rhs_changed:
+                expr.rhs = rhs
+            if expr.op in {"Shr", "Sar"}:
+                lhs_node = _unwrap_c_casts_8616(expr.lhs)
+                shift = _c_constant_int_value_8616(_unwrap_c_casts_8616(expr.rhs))
+                if isinstance(lhs_node, CUnaryOp) and lhs_node.op == "Not" and isinstance(shift, int) and shift > 0:
+                    restored = _restore_not_shift_zero_flag_source_8616(expr)
+                    if restored is not expr:
+                        return restored, True
+            return expr, lhs_changed or rhs_changed
+        if isinstance(expr, CUnaryOp):
+            operand, operand_changed = _restore_not_shift_condition_expr_8616(expr.operand)
+            if operand_changed:
+                cast(Any, expr).operand = operand
+            return expr, operand_changed
+        if isinstance(expr, CTypeCast):
+            inner, inner_changed = _restore_not_shift_condition_expr_8616(expr.expr)
+            if inner_changed:
+                cast(Any, expr).expr = inner
+            return expr, inner_changed
+        return expr, False
+
+    def _restore_not_shift_conditions_in_node_8616(node: object) -> bool:
+        if not _structured_codegen_node_8616(node):
+            return False
+        changed_local = False
+        for attr in ("condition", "cond"):
+            condition = getattr(node, attr, None)
+            if not _structured_codegen_node_8616(condition):
+                continue
+            new_condition, condition_changed = _restore_not_shift_condition_expr_8616(condition)
+            if condition_changed:
+                setattr(cast(Any, node), attr, new_condition)
+                changed_local = True
+        pairs = getattr(node, "condition_and_nodes", None)
+        if pairs:
+            new_pairs = []
+            pair_changed = False
+            for condition, body in pairs:
+                new_condition = condition
+                if _structured_codegen_node_8616(condition):
+                    new_condition, condition_changed = _restore_not_shift_condition_expr_8616(condition)
+                    pair_changed = pair_changed or condition_changed
+                if _structured_codegen_node_8616(body):
+                    changed_local = _restore_not_shift_conditions_in_node_8616(body) or changed_local
+                new_pairs.append((new_condition, body))
+            if pair_changed:
+                cast(Any, node).condition_and_nodes = new_pairs
+                changed_local = True
+        for attr in ("body", "else_node"):
+            child = getattr(node, attr, None)
+            if _structured_codegen_node_8616(child):
+                changed_local = _restore_not_shift_conditions_in_node_8616(child) or changed_local
+        statements = getattr(node, "statements", None)
+        if statements:
+            for statement in tuple(statements):
+                if _structured_codegen_node_8616(statement):
+                    changed_local = _restore_not_shift_conditions_in_node_8616(statement) or changed_local
+        return changed_local
+
+    def transform(node: object) -> object:
         if isinstance(node, CBinaryOp) and node.op in {"Or", "Add"}:
             folded_seg_word = _fold_runtime_seg_u8_pair_8616(node)
             if folded_seg_word is not None:
-                codegen._inertia_runtime_seg_u8_pair_folded_count_8616 = (
+                cast(Any, codegen)._inertia_runtime_seg_u8_pair_folded_count_8616 = (
                     int(getattr(codegen, "_inertia_runtime_seg_u8_pair_folded_count_8616", 0) or 0) + 1
                 )
                 return folded_seg_word
             folded_global_word = _fold_global_byte_deref_pair_8616(node)
             if folded_global_word is not None:
-                codegen._inertia_global_byte_pair_folded_count_8616 = (
+                cast(Any, codegen)._inertia_global_byte_pair_folded_count_8616 = (
                     int(getattr(codegen, "_inertia_global_byte_pair_folded_count_8616", 0) or 0) + 1
                 )
                 return folded_global_word
@@ -1169,42 +1302,42 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
         if isinstance(node, (CBinaryOp, CUnaryOp)):
             folded_constant = _pure_constant_expr_value_8616(node)
             if folded_constant is not None:
-                codegen._inertia_pure_constant_folded_count_8616 = (
+                cast(Any, codegen)._inertia_pure_constant_folded_count_8616 = (
                     int(getattr(codegen, "_inertia_pure_constant_folded_count_8616", 0) or 0) + 1
                 )
                 return CConstant(
                     folded_constant,
-                    _constant_result_type_8616(node, folded_constant),
+                    cast(Any, _constant_result_type_8616(node, folded_constant)),
                     codegen=codegen,
-                    tags=getattr(node, "tags", None),
+                    tags=node.tags,
                 )
 
         if isinstance(node, CBinaryOp) and node.op == "Concat":
             lhs_val = _c_constant_value_8616(node.lhs)
             rhs_val = _c_constant_value_8616(node.rhs)
-            rhs_bits = getattr(getattr(node.rhs, "type", None), "size", None)
-            lhs_bits = getattr(getattr(node.lhs, "type", None), "size", None)
+            rhs_bits = getattr(node.rhs.type, "size", None)
+            lhs_bits = getattr(node.lhs.type, "size", None)
             if rhs_bits is None:
                 rhs_bits = lhs_bits if lhs_bits is not None else 16
 
             if lhs_val is not None and rhs_val is not None:
-                return CConstant((lhs_val << rhs_bits) | rhs_val, getattr(node, "type", None), codegen=codegen)
+                return CConstant((lhs_val << rhs_bits) | rhs_val, cast(Any, node.type), codegen=codegen)
 
             shift = CConstant(
-                rhs_bits, getattr(node.rhs, "type", None) or getattr(node.lhs, "type", None), codegen=codegen
+                rhs_bits, cast(Any, node.rhs.type or node.lhs.type), codegen=codegen
             )
             return CBinaryOp(
                 "Or",
-                CBinaryOp("Shl", node.lhs, shift, codegen=codegen, tags=getattr(node, "tags", None)),
+                CBinaryOp("Shl", node.lhs, shift, codegen=codegen, tags=node.tags),
                 node.rhs,
                 codegen=codegen,
-                tags=getattr(node, "tags", None),
+                tags=node.tags,
             )
 
         if isinstance(node, CBinaryOp) and node.op == "Mul":
             if _is_c_constant_int_8616(node.lhs, 0) or _is_c_constant_int_8616(node.rhs, 0):
                 type_ = (
-                    getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                    node.type or node.lhs.type or node.rhs.type
                 )
                 if type_ is not None:
                     return CConstant(0, type_, codegen=codegen)
@@ -1228,13 +1361,13 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
         if isinstance(node, CBinaryOp) and node.op == "And":
             if _is_c_constant_int_8616(node.lhs, 0) or _is_c_constant_int_8616(node.rhs, 0):
                 type_ = (
-                    getattr(node, "type", None) or getattr(node.lhs, "type", None) or getattr(node.rhs, "type", None)
+                    node.type or node.lhs.type or node.rhs.type
                 )
                 if type_ is not None:
                     return CConstant(0, type_, codegen=codegen)
 
         if isinstance(node, CUnaryOp) and node.op == "Not":
-            operand = getattr(node, "operand", None)
+            operand = node.operand
             if isinstance(operand, CUnaryOp) and operand.op == "Not":
                 return operand.operand
             if isinstance(operand, CBinaryOp):
@@ -1245,11 +1378,11 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         operand.lhs,
                         operand.rhs,
                         codegen=codegen,
-                        tags=getattr(node, "tags", None) or getattr(operand, "tags", None),
+                        tags=node.tags or operand.tags,
                     )
 
         if isinstance(node, CITE) and _same_c_expression_8616(node.iftrue, node.iffalse):
-            codegen._inertia_same_arm_cite_simplified_count_8616 = (
+            cast(Any, codegen)._inertia_same_arm_cite_simplified_count_8616 = (
                 int(getattr(codegen, "_inertia_same_arm_cite_simplified_count_8616", 0) or 0) + 1
             )
             return node.iftrue
@@ -1272,7 +1405,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         node.lhs.lhs,
                         node.lhs.rhs,
                         codegen=codegen,
-                        tags=getattr(node, "tags", None),
+                        tags=node.tags,
                     )
             if isinstance(node.lhs, CConstant) and node.lhs.value == 0:
                 if isinstance(node.rhs, CBinaryOp) and node.rhs.op == "Sub" and isinstance(node.rhs.rhs, CConstant):
@@ -1281,31 +1414,31 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         node.rhs.lhs,
                         node.rhs.rhs,
                         codegen=codegen,
-                        tags=getattr(node, "tags", None),
+                        tags=node.tags,
                     )
         if isinstance(node, CBinaryOp) and node.op == "Sub" and _same_c_expression_8616(node.lhs, node.rhs):
-            type_ = getattr(node, "type", None) or getattr(node.lhs, "type", None)
+            type_ = node.type or node.lhs.type
             if type_ is not None:
                 return CConstant(0, type_, codegen=codegen)
         return node
 
-    def _materialize_word_or_update_statements_8616(root_node) -> bool:
+    def _materialize_word_or_update_statements_8616(root_node: object) -> bool:
         changed_local = False
 
-        def _unwrap_expr_8616(expr):
+        def _unwrap_expr_8616(expr: object) -> object:
             while isinstance(expr, CTypeCast):
-                expr = getattr(expr, "expr", None)
+                expr = expr.expr
             return expr
 
-        def _virtual_assignment_key_8616(stmt) -> tuple[str, object] | None:
+        def _virtual_assignment_key_8616(stmt: object) -> tuple[str, object] | None:
             if not isinstance(stmt, CAssignment):
                 return None
-            return _virtual_expr_key_8616(getattr(stmt, "lhs", None))
+            return _virtual_expr_key_8616(stmt.lhs)
 
-        def _virtual_assignment_keys_8616(stmt) -> tuple[tuple[str, object], ...]:
+        def _virtual_assignment_keys_8616(stmt: object) -> tuple[tuple[str, object], ...]:
             if not isinstance(stmt, CAssignment):
                 return ()
-            return _virtual_expr_keys_8616(getattr(stmt, "lhs", None))
+            return _virtual_expr_keys_8616(stmt.lhs)
 
         def _copy_alias_map_8616(statements: list[object]) -> dict[tuple[str, object], object]:
             aliases: dict[tuple[str, object], object] = {}
@@ -1315,7 +1448,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                 keys = _virtual_assignment_keys_8616(candidate)
                 if not keys:
                     continue
-                rhs = getattr(candidate, "rhs", None)
+                rhs = candidate.rhs
                 if not _pure_virtual_inline_rhs_8616(rhs):
                     for key in keys:
                         aliases.pop(key, None)
@@ -1330,8 +1463,8 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return [f"{key}={_debug_c_repr_8616(value)}" for key, value in sorted(aliases.items(), key=str)]
 
         def _resolve_copy_alias_expr_8616(
-            expr, aliases: dict[tuple[str, object], object], used: set[tuple[str, object]]
-        ):
+            expr: object, aliases: dict[tuple[str, object], object], used: set[tuple[str, object]]
+        ) -> object:
             expr = _unwrap_expr_8616(expr)
             keys = _virtual_expr_keys_8616(expr)
             if not keys:
@@ -1349,12 +1482,12 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return _resolve_copy_alias_expr_8616(replacement, aliases, used)
 
         def _match_joined_stack_word_base_8616(
-            expr,
-            word_target,
-            high_target,
+            expr: object,
+            word_target: object,
+            high_target: object,
             aliases: dict[tuple[str, object], object],
             used: set[tuple[str, object]],
-        ):
+        ) -> object | None:
             expr = _unwrap_expr_8616(expr)
             if not isinstance(expr, CBinaryOp) or expr.op != "Or":
                 return None
@@ -1369,8 +1502,8 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return None
 
         def _same_after_copy_alias_8616(
-            left,
-            right,
+            left: object,
+            right: object,
             aliases: dict[tuple[str, object], object],
             used: set[tuple[str, object]],
         ) -> bool:
@@ -1378,7 +1511,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             right_resolved = _resolve_copy_alias_expr_8616(right, aliases, used)
             return _same_c_expression_8616(left_resolved, right_resolved)
 
-        def _contains_unresolved_virtual_expr_8616(expr) -> bool:
+        def _contains_unresolved_virtual_expr_8616(expr: object) -> bool:
             if expr is None:
                 return False
             if _virtual_expr_key_8616(expr) is not None:
@@ -1403,10 +1536,10 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return False
 
         def _match_stack_word_arithmetic_update_8616(
-            low_rhs,
-            high_rhs,
-            word_target,
-            high_target,
+            low_rhs: object,
+            high_rhs: object,
+            word_target: object,
+            high_target: object,
             aliases: dict[tuple[str, object], object],
         ) -> tuple[str, object, set[tuple[str, object]]] | None:
             def _refuse(reason: str) -> None:
@@ -1444,7 +1577,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                 _refuse("high-update-not-same-op")
                 return None
 
-            def _arithmetic_candidates_8616(expr) -> list[tuple[object, object]]:
+            def _arithmetic_candidates_8616(expr: object) -> list[tuple[object, object]]:
                 if not isinstance(expr, CBinaryOp):
                     return []
                 if expr.op == "Add":
@@ -1510,8 +1643,8 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             return None
 
         def _match_duplicate_word_arithmetic_shift_8616(
-            rhs,
-            word_target,
+            rhs: object,
+            word_target: object,
             aliases: dict[tuple[str, object], object],
         ) -> tuple[str, object, set[tuple[str, object]]] | None:
             def _refuse(reason: str) -> None:
@@ -1528,7 +1661,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                     )
 
             target_domain = _storage_domain_for_expr(word_target)
-            if getattr(target_domain, "space", None) != "stack" or getattr(target_domain, "width", None) != 2:
+            if target_domain.space != "stack" or target_domain.width != 2:
                 _refuse("target-not-stack-word")
                 return None
             used: set[tuple[str, object]] = set()
@@ -1594,7 +1727,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                 kept.append(statement)
             statements[:] = kept
 
-        def visit(node) -> None:
+        def visit(node: object) -> None:
             nonlocal changed_local
             if isinstance(node, list):
                 replacement = _rewrite_statement_list_8616(node)
@@ -1604,7 +1737,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
             if isinstance(node, CStatements):
                 new_statements = _rewrite_statement_list_8616(list(node.statements))
                 if new_statements != node.statements:
-                    node.statements = new_statements
+                    cast(Any, node).statements = new_statements
                 return
             pairs = getattr(node, "condition_and_nodes", None)
             if pairs:
@@ -1640,10 +1773,10 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                             type(stmt).__name__,
                             type(next_stmt).__name__ if next_stmt is not None else None,
                             same_lhs,
-                            type(getattr(stmt, "lhs", None)).__name__,
-                            type(getattr(stmt, "rhs", None)).__name__,
-                            type(getattr(next_stmt, "lhs", None)).__name__ if next_stmt is not None else None,
-                            type(getattr(next_stmt, "rhs", None)).__name__ if next_stmt is not None else None,
+                            type(stmt.lhs).__name__ if isinstance(stmt, CAssignment) else None,
+                            type(stmt.rhs).__name__ if isinstance(stmt, CAssignment) else None,
+                            type(next_stmt.lhs).__name__ if isinstance(next_stmt, CAssignment) else None,
+                            type(next_stmt.rhs).__name__ if isinstance(next_stmt, CAssignment) else None,
                         )
                 if isinstance(stmt, CAssignment) and isinstance(next_stmt, CAssignment):
                     if (
@@ -1678,14 +1811,14 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                                 next_stmt.rhs, stmt.lhs, next_stmt.lhs
                             )
                         try:
-                            codegen._inertia_word_or_update_candidates = (
+                            cast(Any, codegen)._inertia_word_or_update_candidates = (
                                 int(getattr(codegen, "_inertia_word_or_update_candidates", 0) or 0) + 1
                             )
                         except Exception:
                             pass
                 if isinstance(stmt, CAssignment) and isinstance(stmt.lhs, CVariable):
                     try:
-                        codegen._inertia_word_arithmetic_shift_candidates = (
+                        cast(Any, codegen)._inertia_word_arithmetic_shift_candidates = (
                             int(getattr(codegen, "_inertia_word_arithmetic_shift_candidates", 0) or 0) + 1
                         )
                     except Exception:
@@ -1706,7 +1839,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         )
                         new_statements.append(CAssignment(stmt.lhs, replacement_rhs, codegen=codegen))
                         try:
-                            codegen._inertia_word_arithmetic_shift_materialized_count = (
+                            cast(Any, codegen)._inertia_word_arithmetic_shift_materialized_count = (
                                 int(getattr(codegen, "_inertia_word_arithmetic_shift_materialized_count", 0) or 0) + 1
                             )
                         except Exception:
@@ -1716,21 +1849,24 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         continue
                 if (
                     replacement_lhs is not None
+                    and isinstance(stmt, CAssignment)
                     and isinstance(next_stmt, CAssignment)
                     and isinstance(next_stmt.lhs, CVariable)
                     and _stack_word_contains_high_byte_8616(replacement_lhs, next_stmt.lhs)
                 ):
                     try:
-                        codegen._inertia_word_arithmetic_update_candidates = (
+                        cast(Any, codegen)._inertia_word_arithmetic_update_candidates = (
                             int(getattr(codegen, "_inertia_word_arithmetic_update_candidates", 0) or 0) + 1
                         )
                     except Exception:
                         pass
+                    current_assignment = cast(CAssignment, stmt)
+                    next_assignment = cast(CAssignment, next_stmt)
                     arithmetic_update = _match_stack_word_arithmetic_update_8616(
-                        stmt.rhs,
-                        next_stmt.rhs,
+                        current_assignment.rhs,
+                        next_assignment.rhs,
                         replacement_lhs,
-                        next_stmt.lhs,
+                        next_assignment.lhs,
                         copy_aliases,
                     )
                     if arithmetic_update is not None:
@@ -1744,7 +1880,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         )
                         new_statements.append(CAssignment(replacement_lhs, replacement_rhs, codegen=codegen))
                         try:
-                            codegen._inertia_word_arithmetic_update_materialized_count = (
+                            cast(Any, codegen)._inertia_word_arithmetic_update_materialized_count = (
                                 int(getattr(codegen, "_inertia_word_arithmetic_update_materialized_count", 0) or 0) + 1
                             )
                         except Exception:
@@ -1752,16 +1888,21 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                         changed_local = True
                         i += 2
                         continue
-                if replacement_lhs is not None and immediate is not None and shifted_immediate == immediate:
+                if (
+                    replacement_lhs is not None
+                    and isinstance(stmt, CAssignment)
+                    and immediate is not None
+                    and shifted_immediate == immediate
+                ):
                     replacement_rhs = CBinaryOp(
                         "Or",
                         replacement_lhs,
-                        CConstant(immediate, getattr(stmt.rhs, "type", None), codegen=codegen),
+                        CConstant(immediate, cast(Any, stmt.rhs.type), codegen=codegen),
                         codegen=codegen,
                     )
                     new_statements.append(CAssignment(replacement_lhs, replacement_rhs, codegen=codegen))
                     try:
-                        codegen._inertia_word_or_update_materialized_count = (
+                        cast(Any, codegen)._inertia_word_or_update_materialized_count = (
                             int(getattr(codegen, "_inertia_word_or_update_materialized_count", 0) or 0) + 1
                         )
                     except Exception:
@@ -1769,16 +1910,16 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                     changed_local = True
                     i += 2
                     continue
-                if replacement_lhs is not None and isinstance(next_stmt, CAssignment):
+                if replacement_lhs is not None and isinstance(stmt, CAssignment) and isinstance(next_stmt, CAssignment):
                     if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
                         term_debug = []
-                        for term in _or_terms_8616(getattr(stmt, "rhs", None)):
+                        for term in _or_terms_8616(stmt.rhs):
                             term_debug.append(
                                 (
                                     type(term).__name__,
                                     _c_constant_int_value_8616(term),
-                                    _same_c_expression_8616(term, getattr(stmt, "lhs", None)),
-                                    _same_c_expression_8616(term, getattr(next_stmt, "lhs", None)),
+                                    _same_c_expression_8616(term, stmt.lhs),
+                                    _same_c_expression_8616(term, next_stmt.lhs),
                                     type(_shifted_high_byte_source_8616(term)).__name__
                                     if _shifted_high_byte_source_8616(term) is not None
                                     else None,
@@ -1795,7 +1936,7 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
                             term_debug,
                         )
                     try:
-                        codegen._inertia_word_or_update_refused = (
+                        cast(Any, codegen)._inertia_word_or_update_refused = (
                             int(getattr(codegen, "_inertia_word_or_update_refused", 0) or 0) + 1
                         )
                     except Exception:
@@ -1808,37 +1949,80 @@ def _simplify_structured_expressions_8616(codegen) -> bool:
         visit(root_node)
         return changed_local
 
-    root = codegen.cfunc.statements
-    new_root = transform(root)
-    if new_root is not root:
-        if isinstance(root, CStatements) and not isinstance(new_root, CStatements):
-            new_root = CStatements(
-                statements=[new_root] if not isinstance(new_root, list) else new_root, codegen=codegen
-            )
-        codegen.cfunc.statements = new_root
-        root = new_root
-        changed = True
-    else:
-        changed = False
+    roots: list[tuple[list[str], object]] = []
+    seen_roots: dict[int, list[str]] = {}
+    for attr in ("body", "statements", "stmt"):
+        root = getattr(cast(Any, codegen).cfunc, attr, None)
+        if root is None:
+            continue
+        root_id = id(root)
+        if root_id in seen_roots:
+            seen_roots[root_id].append(attr)
+            continue
+        attrs = [attr]
+        seen_roots[root_id] = attrs
+        roots.append((attrs, root))
 
-    for _ in range(3):
-        if not _replace_c_children_8616(root, transform):
-            break
-        changed = True
+    changed = False
+    active_roots: list[object] = []
+    for attrs, root in roots:
+        new_root = transform(root)
+        if new_root is not root:
+            if isinstance(root, CStatements) and not isinstance(new_root, CStatements):
+                new_root = CStatements(
+                    statements=[new_root] if not isinstance(new_root, list) else new_root, codegen=codegen
+                )
+            for attr in attrs:
+                setattr(cast(Any, codegen).cfunc, attr, new_root)
+            root = new_root
+            changed = True
+        active_roots.append(root)
+
+    for root in active_roots:
+        for _ in range(3):
+            if not _replace_c_children_8616(root, transform):
+                break
+            changed = True
+        if _restore_not_shift_conditions_in_node_8616(root):
+            cast(Any, codegen)._inertia_not_shift_condition_restored_count_8616 = (
+                int(getattr(codegen, "_inertia_not_shift_condition_restored_count_8616", 0) or 0) + 1
+            )
+            changed = True
+    for root in active_roots:
+        if _materialize_word_or_update_statements_8616(root):
+            changed = True
     for _ in range(4):
         if not _inline_single_assignment_virtual_expressions_8616(codegen):
             break
         changed = True
-    if _materialize_word_or_update_statements_8616(root):
-        changed = True
+    for root in active_roots:
+        if _materialize_word_or_update_statements_8616(root):
+            changed = True
     return changed
 
 
-def _eliminate_single_use_temporaries_8616(codegen) -> bool:
+def _eliminate_single_use_temporaries_8616(codegen: object) -> bool:
+    """Inline one-use register carriers without crossing storage or control scope."""
+    typed_codegen = cast(_SingleUseTemporaryCodegen8616, codegen)
     if getattr(codegen, "cfunc", None) is None:
         return False
 
-    def _safe_inline_expr(expr) -> bool:
+    raw_fact_count = 0
+    normalized_fact_count = 0
+    classified_fact_count = 0
+    materialized_count = 0
+    failure_count = 0
+
+    def _is_virtual_register_temporary(lhs: object) -> bool:
+        """Accept only register-backed carriers, never stack or memory storage."""
+        return isinstance(lhs, CVariable) and isinstance(lhs.variable, SimRegisterVariable)
+
+    def _crosses_nested_execution_scope(stmt: object) -> bool:
+        """Refuse moving a definition into control flow with different frequency."""
+        return isinstance(stmt, (CDoWhileLoop, CForLoop, CIfElse, CSwitchCase, CWhileLoop))
+
+    def _safe_inline_expr(expr: object) -> bool:
+        """Return whether an expression is free of direct memory reads and calls."""
         if isinstance(expr, (CConstant, CVariable)):
             return True
         if isinstance(expr, CTypeCast):
@@ -1853,7 +2037,8 @@ def _eliminate_single_use_temporaries_8616(codegen) -> bool:
             return _safe_inline_expr(expr.cond) and _safe_inline_expr(expr.iftrue) and _safe_inline_expr(expr.iffalse)
         return False
 
-    def _count_var_uses(node, target, *, assignment_lhs: bool = False) -> int:
+    def _count_var_uses(node: object, target: object, *, assignment_lhs: bool = False) -> int:
+        """Count structural uses of one temporary across the dynamic angr AST."""
         if node is None:
             return 0
         if isinstance(node, CVariable):
@@ -1888,7 +2073,14 @@ def _eliminate_single_use_temporaries_8616(codegen) -> bool:
                     total += _count_var_uses(body, target)
         return total
 
-    def _replace_var_use(node, target, replacement, *, assignment_lhs: bool = False):
+    def _replace_var_use(
+        node: object,
+        target: object,
+        replacement: object,
+        *,
+        assignment_lhs: bool = False,
+    ) -> tuple[object, bool]:
+        """Replace one temporary use across the dynamic angr AST."""
         if isinstance(node, CVariable):
             if not assignment_lhs and _same_c_expression_8616(node, target):
                 return replacement, True
@@ -1906,7 +2098,7 @@ def _eliminate_single_use_temporaries_8616(codegen) -> bool:
                 assignment_lhs=assignment_lhs and attr == "lhs" and isinstance(node, CAssignment),
             )
             if child_changed:
-                setattr(node, attr, new_child)
+                setattr(cast(Any, node), attr, new_child)
                 changed_local = True
         for attr in ("statements", "operands", "args"):
             seq = getattr(node, attr, None)
@@ -1922,7 +2114,7 @@ def _eliminate_single_use_temporaries_8616(codegen) -> bool:
                 else:
                     new_seq.append(item)
             if seq_changed:
-                setattr(node, attr, new_seq)
+                setattr(cast(Any, node), attr, new_seq)
                 changed_local = True
         pairs = getattr(node, "condition_and_nodes", None)
         if pairs:
@@ -1942,14 +2134,17 @@ def _eliminate_single_use_temporaries_8616(codegen) -> bool:
                 new_pairs.append((new_cond, new_body))
                 pair_changed |= cond_changed or body_changed
             if pair_changed:
-                setattr(node, "condition_and_nodes", new_pairs)
+                cast(Any, node).condition_and_nodes = new_pairs
                 changed_local = True
         return node, changed_local
 
     changed = False
 
-    def visit(node):
+    def visit(node: object) -> None:
+        """Visit one statement block and eliminate locally proven carriers."""
         nonlocal changed
+        nonlocal classified_fact_count, failure_count, materialized_count
+        nonlocal normalized_fact_count, raw_fact_count
         if not isinstance(node, CStatements):
             return
 
@@ -1967,13 +2162,27 @@ def _eliminate_single_use_temporaries_8616(codegen) -> bool:
                 and _safe_inline_expr(stmt.rhs)
                 and next_stmt is not None
             ):
-                immediate_uses = _count_var_uses(next_stmt, stmt.lhs)
-                later_uses = sum(_count_var_uses(rest, stmt.lhs) for rest in statements[idx + 2 :])
-                if immediate_uses == 1 and later_uses == 0:
-                    _, replaced = _replace_var_use(next_stmt, stmt.lhs, stmt.rhs)
-                    if replaced:
-                        changed = True
-                        removed = True
+                raw_fact_count += 1
+                if not _is_virtual_register_temporary(stmt.lhs):
+                    failure_count += 1
+                else:
+                    normalized_fact_count += 1
+                    if _crosses_nested_execution_scope(next_stmt):
+                        failure_count += 1
+                    else:
+                        immediate_uses = _count_var_uses(next_stmt, stmt.lhs)
+                        later_uses = sum(_count_var_uses(rest, stmt.lhs) for rest in statements[idx + 2 :])
+                        if immediate_uses == 1 and later_uses == 0:
+                            classified_fact_count += 1
+                            _, replaced = _replace_var_use(next_stmt, stmt.lhs, stmt.rhs)
+                            if replaced:
+                                changed = True
+                                materialized_count += 1
+                                removed = True
+                            else:
+                                failure_count += 1
+                        else:
+                            failure_count += 1
 
             if not removed:
                 new_statements.append(stmt)
@@ -1981,14 +2190,23 @@ def _eliminate_single_use_temporaries_8616(codegen) -> bool:
             idx += 1
 
         if len(new_statements) != len(node.statements):
-            node.statements = new_statements
+            cast(Any, node).statements = new_statements
 
-    root = codegen.cfunc.statements
+    root = cast(Any, typed_codegen.cfunc).statements
     visit(root)
+    typed_codegen._inertia_single_use_temporary_elimination_stats_8616 = (
+        SingleUseTemporaryEliminationStats8616(
+            raw_fact_count=raw_fact_count,
+            normalized_fact_count=normalized_fact_count,
+            classified_fact_count=classified_fact_count,
+            materialized_count=materialized_count,
+            failure_count=failure_count,
+        )
+    )
     return changed
 
 
-def _maybe_eliminate_single_use_temporaries_8616(project, codegen) -> bool:
+def _maybe_eliminate_single_use_temporaries_8616(project: object, codegen: object) -> bool:
     if not getattr(project, "_inertia_postprocess_single_use_temporaries_enabled", False):
         return False
     return _eliminate_single_use_temporaries_8616(codegen)

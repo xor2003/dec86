@@ -1,10 +1,60 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: define command-line options and parse user-selected execution policy.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
 import argparse
 import os
 from pathlib import Path
 
-__all__ = ["_build_cli_argument_parser"]
+__all__ = ["CliArguments", "_build_cli_argument_parser", "parse_cli_arguments"]
+
+
+class CliArguments(argparse.Namespace):
+    """Typed command-line policy consumed by the CLI orchestration layer."""
+
+    binary: Path
+    addr: int | None
+    blob: bool
+    base_addr: int
+    entry_point: int
+    show_asm: bool
+    alternate_source_c: bool
+    c_target: str
+    trace_c_stages: bool
+    dump_layers: bool
+    dump_layer_dir: Path
+    dump_layer_filter: str
+    proc: str | None
+    proc_kind: str
+    timeout: int
+    window: int
+    max_memory_mb: int
+    max_functions: int
+    include_library_functions: bool
+    ignore_local_sidecar_hints: bool
+    api_style: str
+    pat_backend: str
+    function_discovery_backend: str
+    rizin_timeout: int
+    signature_catalog: Path | None
+    seed_engine: str
+    brief: bool
+    otel_spans: bool | None
+    otel_top_n: int | None
+    otel_min_ms: float | None
+    otel_full_jsonl: bool | None
+    otel_stderr: bool | None
+    otel_format: str | None
+    otel_text_max_spans: int | None
+    otel_export_otlp: bool | None
+    otel_service_name: str | None
+    otel_force_flush_ms: int | None
+    otel_endpoint: str | None
+    otel_span_file: Path | None
 
 
 def _parse_int(value: str) -> int:
@@ -12,6 +62,7 @@ def _parse_int(value: str) -> int:
 
 
 def _build_cli_argument_parser() -> argparse.ArgumentParser:
+    """Build the parser defining the public decompiler CLI surface."""
     parser = argparse.ArgumentParser(
         description="Decompile a DOS/x86-16 sample with angr-platforms.",
     )
@@ -258,3 +309,12 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         help="Write telemetry summary/spans to this file.",
     )
     return parser
+
+
+def parse_cli_arguments(argv: list[str] | None = None) -> CliArguments:
+    """Parse ``argv`` into the owned typed CLI argument contract."""
+    parser = _build_cli_argument_parser()
+    parsed = parser.parse_args(argv, namespace=CliArguments())
+    if not isinstance(parsed, CliArguments):
+        raise TypeError("CLI parser returned an unexpected namespace type")
+    return parsed

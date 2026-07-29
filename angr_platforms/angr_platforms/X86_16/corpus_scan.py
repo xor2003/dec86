@@ -1,13 +1,39 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: scan corpora and report decompilation, readability, and validation outcomes.
+Forbidden: making scan outcomes a semantic recovery source or acceptance shortcut.
+"""
+
 from __future__ import annotations
 
+import builtins
 import io
 import logging
 import re
 import resource
 import signal
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any, cast
+
+import angr
+
+from .analysis_helpers import INT21_SERVICE_SPECS, INTERRUPT_SERVICE_SPECS, seed_calling_conventions
+from .arch_86_16 import Arch86_16
+from .cod_extract import join_cod_entries_with_synthetic_globals
+from .lift_86_16 import Lifter86_16  # noqa: F401
+from .readability_goals import classify_readability_cluster
+from .recovery_confidence import (
+    RecoveryConfidenceSummary,
+    classify_x86_16_recovery_confidence,
+    summarize_recovery_confidence,
+)
+from .tail_validation import (
+    build_x86_16_tail_validation_aggregate,
+    extract_x86_16_tail_validation_snapshot,
+)
 
 
 def _silence_scan_loggers() -> None:
@@ -23,24 +49,48 @@ def _silence_scan_loggers() -> None:
 
 _silence_scan_loggers()
 
-import angr
 
-from .analysis_helpers import INT21_SERVICE_SPECS, INTERRUPT_SERVICE_SPECS, seed_calling_conventions
-from .arch_86_16 import Arch86_16
-from .lift_86_16 import Lifter86_16  # noqa: F401
-from .readability_goals import classify_readability_cluster
-from .recovery_confidence import classify_x86_16_recovery_confidence, summarize_recovery_confidence
-from .tail_validation import (
-    build_x86_16_tail_validation_aggregate,
-    extract_x86_16_tail_validation_snapshot,
-)
+def _dynamic_corpus_scan_getattr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
+    """Read an attribute across the dynamic angr/Capstone/codegen boundary."""
+    return builtins.getattr(obj, name, default)
 
-ENTRY_RE = re.compile(r"\*\*\*\s+([0-9A-Fa-f]+)\s+((?:[0-9A-Fa-f]{2}\s+)+)(.*)$")
-PROC_RE = re.compile(r"^([^\s]+)\tPROC (NEAR|FAR)$")
+
+def _dynamic_corpus_scan_tuple_attr_8616(obj: object, name: str) -> tuple[object, ...]:
+    """Read tuple-like data across the dynamic angr/Capstone/codegen boundary."""
+    value = _dynamic_corpus_scan_getattr_8616(obj, name, ())
+    if value is None:
+        return ()
+    try:
+        return tuple(cast(Any, value))
+    except TypeError:
+        return ()
+
+
+def _counter_payload_8616(payload: dict[str, object], key: str) -> Counter[object]:
+    """Return a counter payload produced by the scan summary builders."""
+    value = payload.get(key)
+    return value if isinstance(value, Counter) else Counter()
+
+
+def _int_payload_8616(payload: dict[str, object], key: str) -> int:
+    """Return an integer payload produced by the scan summary builders."""
+    value = payload.get(key, 0)
+    return value if isinstance(value, int) else 0
+
+
+def _dict_payload_8616(payload: dict[str, object], key: str) -> dict[str, object]:
+    """Return a dictionary payload produced by scan aggregation helpers."""
+    value = payload.get(key)
+    return value if isinstance(value, dict) else {}
+
+ENTRY_RE: re.Pattern[str] = re.compile(r"\*\*\*\s+([0-9A-Fa-f]+)\s+((?:[0-9A-Fa-f]{2}\s+)+)(.*)$")
+PROC_RE: re.Pattern[str] = re.compile(r"^([^\s]+)\tPROC (NEAR|FAR)$")
 
 
 @dataclass
 class StageResult:
+    """Single scan pipeline stage verdict."""
+
     stage: str
     ok: bool
     reason: str | None = None
@@ -49,6 +99,8 @@ class StageResult:
 
 @dataclass
 class FunctionScanResult:
+    """Structured per-function corpus scan result."""
+
     cod_file: str
     proc_name: str
     proc_kind: str
@@ -94,24 +146,24 @@ class FunctionScanResult:
 
 
 class ScanTimeout(Exception):
-    pass
+    """Raised when a bounded corpus scan exceeds its per-function timeout."""
 
 
 def _patch_scan_destructors() -> None:
     from angr.knowledge_plugins.rtdb import rtdb
 
-    if getattr(rtdb.RuntimeDb.__del__, "_inertia_scan_safe", False):
+    if _dynamic_corpus_scan_getattr_8616(rtdb.RuntimeDb.__del__, "_inertia_scan_safe", False):
         return
 
     original_del = rtdb.RuntimeDb.__del__
 
-    def _safe_del(self):  # noqa: ANN001
+    def _safe_del(self: object) -> None:
         try:
-            original_del(self)
+            original_del(cast(Any, self))
         except Exception:
             return
 
-    _safe_del._inertia_scan_safe = True  # type: ignore[attr-defined]
+    cast(Any, _safe_del)._inertia_scan_safe = True
     rtdb.RuntimeDb.__del__ = _safe_del
 
 
@@ -121,7 +173,7 @@ _patch_scan_destructors()
 _SCAN_ACTIVE = False
 
 
-def _alarm_handler(_signum, _frame):
+def _alarm_handler(_signum: int, _frame: object) -> None:
     global _SCAN_ACTIVE
     if _SCAN_ACTIVE:
         _SCAN_ACTIVE = False
@@ -136,7 +188,7 @@ def _clear_alarm() -> None:
 def _finish_scan(result: FunctionScanResult) -> FunctionScanResult:
     global _SCAN_ACTIVE
     _SCAN_ACTIVE = False
-    confidence = classify_x86_16_recovery_confidence(result)
+    confidence = classify_x86_16_recovery_confidence(asdict(result))
     result.confidence_status = confidence.status
     result.confidence_scan_safe_classification = confidence.scan_safe_classification
     result.confidence_evidence_count = len(confidence.evidence)
@@ -282,7 +334,7 @@ def _classify_semantic_family_from_text(
 
 
 def _classify_semantic_family_from_failure(result: FunctionScanResult) -> tuple[str | None, str | None]:
-    def _impl():
+    def _impl() -> tuple[str | None, str | None]:
         parts = " ".join(
             part.lower()
             for part in (
@@ -323,6 +375,7 @@ def _classify_semantic_family_from_failure(result: FunctionScanResult) -> tuple[
 
 
 def set_memory_limit(max_memory_mb: int) -> None:
+    """Set an address-space limit for corpus scanning when requested."""
     if max_memory_mb <= 0:
         return
     limit_bytes = max_memory_mb * 1024 * 1024
@@ -330,27 +383,29 @@ def set_memory_limit(max_memory_mb: int) -> None:
 
 
 def extract_cod_functions(cod_path: Path) -> list[tuple[str, str, bytes]]:
+    """Extract COD procedures as normalized byte blobs for corpus scanning."""
     lines = cod_path.read_text(errors="ignore").splitlines()
     out: list[tuple[str, str, bytes]] = []
     collect = False
     proc_name = ""
     proc_kind = ""
-    chunks: list[bytes] = []
+    entries: list[dict[str, object]] = []
 
     for line in lines:
         proc_match = PROC_RE.match(line)
         if proc_match:
             collect = True
             proc_name, proc_kind = proc_match.groups()
-            chunks = []
+            entries = []
             continue
 
         if collect and f"{proc_name}\tENDP" in line:
-            out.append((proc_name, proc_kind, b"".join(chunks)))
+            code, _synthetic_globals = join_cod_entries_with_synthetic_globals(entries)
+            out.append((proc_name, proc_kind, code))
             collect = False
             proc_name = ""
             proc_kind = ""
-            chunks = []
+            entries = []
             continue
 
         if not collect:
@@ -358,12 +413,19 @@ def extract_cod_functions(cod_path: Path) -> list[tuple[str, str, bytes]]:
 
         entry_match = ENTRY_RE.search(line)
         if entry_match:
-            chunks.append(bytes.fromhex("".join(entry_match.group(2).split())))
+            entries.append(
+                {
+                    "offset": int(entry_match.group(1), 16),
+                    "bytes": bytes.fromhex("".join(entry_match.group(2).split())),
+                    "text": entry_match.group(3).strip(),
+                }
+            )
 
     return out
 
 
 def project_from_bytes(code: bytes) -> angr.Project:
+    """Build a bounded blob project for one normalized COD procedure."""
     return angr.Project(
         io.BytesIO(code),
         main_opts={
@@ -383,7 +445,9 @@ def classify_failure(
     rewrite_failed: bool = False,
     regeneration_failed: bool = False,
 ) -> tuple[str, str]:
-    def _impl():
+    """Classify a scan failure into stable reporting buckets."""
+
+    def _impl() -> tuple[str, str]:
         if empty_codegen:
             if rewrite_failed:
                 return "rewrite_failure", "Decompiler postprocess rewrite failed."
@@ -438,7 +502,7 @@ def _mark_stage(
 
 
 def _classify_ugly_cluster(result: FunctionScanResult) -> str | None:
-    def _impl():
+    def _impl() -> str | None:
         parts: list[str] = []
         if result.reason:
             parts.append(result.reason)
@@ -483,7 +547,7 @@ def _classify_readability_cluster(result: FunctionScanResult, text: str | None) 
     return classify_readability_cluster(text)
 
 
-def _scan_cfg(project: angr.Project, code_len: int):
+def _scan_cfg(project: angr.Project, code_len: int) -> object:
     return project.analyses.CFGFast(
         normalize=True,
         force_complete_scan=False,
@@ -502,15 +566,16 @@ def _should_skip_scan_safe_cfg(code_len: int, mode: str, max_cfg_bytes: int) -> 
 
 
 def _probe_scan_safe_lift(code: bytes, mode: str, max_cfg_bytes: int, probe_bytes: int = 16) -> bytes | None:
-    def _impl():
+    def _impl() -> bytes | None:
         if mode != "scan-safe" or not code:
             return None
 
+        local_probe_bytes = probe_bytes
         if max_cfg_bytes > 0:
-            probe_bytes = min(probe_bytes, max_cfg_bytes)
+            local_probe_bytes = min(local_probe_bytes, max_cfg_bytes)
 
         arch = Arch86_16()
-        raw = code[: max(1, probe_bytes)]
+        raw = code[: max(1, local_probe_bytes)]
         insns = list(arch.capstone.disasm(raw, 0x1000, 1))
         if insns:
             return bytes(insns[0].bytes)
@@ -531,7 +596,7 @@ def _probe_scan_safe_lift(code: bytes, mode: str, max_cfg_bytes: int, probe_byte
     return _impl()
 
 
-def _decode_scan_safe_prefix_insns(code: bytes, mode: str, max_bytes: int):
+def _decode_scan_safe_prefix_insns(code: bytes, mode: str, max_bytes: int) -> tuple[object, ...]:
     if mode != "scan-safe" or max_bytes <= 0 or not code:
         return ()
 
@@ -540,17 +605,19 @@ def _decode_scan_safe_prefix_insns(code: bytes, mode: str, max_bytes: int):
     return tuple(arch.capstone.disasm(code[: min(len(code), max_bytes)], 0x1000))
 
 
-def _should_skip_scan_safe_call_chain(capstone_block, mode: str, max_cfg_bytes: int, min_call_count: int = 3) -> bool:
+def _should_skip_scan_safe_call_chain(
+    capstone_block: object, mode: str, max_cfg_bytes: int, min_call_count: int = 3
+) -> bool:
     if mode != "scan-safe" or max_cfg_bytes <= 0:
         return False
 
-    block = getattr(capstone_block, "insns", None)
+    block = _dynamic_corpus_scan_getattr_8616(capstone_block, "insns", None)
     if not block:
         return False
 
     call_count = 0
     for insn in block:
-        if getattr(insn, "mnemonic", "").lower() != "call":
+        if _dynamic_corpus_scan_getattr_8616(insn, "mnemonic", "").lower() != "call":
             continue
         call_count += 1
         if call_count >= min_call_count:
@@ -558,13 +625,15 @@ def _should_skip_scan_safe_call_chain(capstone_block, mode: str, max_cfg_bytes: 
     return False
 
 
-def _should_skip_scan_safe_call_chain_from_insns(insns, mode: str, max_cfg_bytes: int, min_call_count: int = 3) -> bool:
+def _should_skip_scan_safe_call_chain_from_insns(
+    insns: Sequence[object], mode: str, max_cfg_bytes: int, min_call_count: int = 3
+) -> bool:
     if mode != "scan-safe" or max_cfg_bytes <= 0:
         return False
 
     call_count = 0
     for insn in insns:
-        if getattr(insn, "mnemonic", "").lower() != "call":
+        if _dynamic_corpus_scan_getattr_8616(insn, "mnemonic", "").lower() != "call":
             continue
         call_count += 1
         if call_count >= min_call_count:
@@ -572,25 +641,27 @@ def _should_skip_scan_safe_call_chain_from_insns(insns, mode: str, max_cfg_bytes
     return False
 
 
-def _should_skip_scan_safe_tiny_guard_call_helper(insns, mode: str, max_cfg_bytes: int, max_insns: int = 8) -> bool:
-    def _impl():
+def _should_skip_scan_safe_tiny_guard_call_helper(
+    insns: Sequence[object], mode: str, max_cfg_bytes: int, max_insns: int = 8
+) -> bool:
+    def _impl() -> bool:
         if mode != "scan-safe" or max_cfg_bytes <= 0 or not insns:
             return False
 
-        insns = tuple(insns)
-        if len(insns) > max_insns:
+        local_insns = tuple(insns)
+        if len(local_insns) > max_insns:
             return False
 
-        total_bytes = sum(len(getattr(insn, "bytes", b"")) or 1 for insn in insns)
+        total_bytes = sum(len(_dynamic_corpus_scan_getattr_8616(insn, "bytes", b"")) or 1 for insn in local_insns)
         if total_bytes > max_cfg_bytes:
             return False
 
-        calls = [idx for idx, insn in enumerate(insns) if getattr(insn, "mnemonic", "").lower() == "call"]
+        calls = [idx for idx, insn in enumerate(local_insns) if _dynamic_corpus_scan_getattr_8616(insn, "mnemonic", "").lower() == "call"]
         if len(calls) != 1:
             return False
         call_idx = calls[0]
 
-        rets = [idx for idx, insn in enumerate(insns) if getattr(insn, "mnemonic", "").lower().startswith("ret")]
+        rets = [idx for idx, insn in enumerate(insns) if _dynamic_corpus_scan_getattr_8616(insn, "mnemonic", "").lower().startswith("ret")]
         if len(rets) != 1 or rets[0] != len(insns) - 1:
             return False
         conditional_jump_idx = _tiny_guard_conditional_jump_index_8616(insns, call_idx)
@@ -601,14 +672,14 @@ def _should_skip_scan_safe_tiny_guard_call_helper(insns, mode: str, max_cfg_byte
         for idx, insn in enumerate(insns[:call_idx]):
             if idx == conditional_jump_idx:
                 continue
-            if getattr(insn, "mnemonic", "").lower() not in allowed_pre_call:
+            if _dynamic_corpus_scan_getattr_8616(insn, "mnemonic", "").lower() not in allowed_pre_call:
                 return False
 
         for insn in insns[call_idx + 1 : -1]:
-            mnemonic = getattr(insn, "mnemonic", "").lower()
+            mnemonic = _dynamic_corpus_scan_getattr_8616(insn, "mnemonic", "").lower()
             if mnemonic == "nop":
                 continue
-            if mnemonic != "add" or not getattr(insn, "op_str", "").replace(" ", "").startswith("sp,"):
+            if mnemonic != "add" or not _dynamic_corpus_scan_getattr_8616(insn, "op_str", "").replace(" ", "").startswith("sp,"):
                 return False
 
         return True
@@ -616,24 +687,26 @@ def _should_skip_scan_safe_tiny_guard_call_helper(insns, mode: str, max_cfg_byte
     return _impl()
 
 
-def _tiny_guard_conditional_jump_index_8616(insns, call_idx: int) -> int | None:
-    def _impl():
-        ret_addr = insns[-1].address
+def _tiny_guard_conditional_jump_index_8616(insns: Sequence[object], call_idx: int) -> int | None:
+    def _impl() -> int | None:
+        ret_addr = _dynamic_corpus_scan_getattr_8616(insns[-1], "address", None)
+        if not isinstance(ret_addr, int):
+            return None
         conditional_jump_idx = None
         for idx, insn in enumerate(insns):
-            mnemonic = getattr(insn, "mnemonic", "").lower()
+            mnemonic = _dynamic_corpus_scan_getattr_8616(insn, "mnemonic", "").lower()
             if not mnemonic.startswith("j"):
                 continue
             if mnemonic == "jmp" or mnemonic.startswith("loop"):
                 return None
             if conditional_jump_idx is not None:
                 return None
-            operands = getattr(insn, "operands", ())
+            operands = _dynamic_corpus_scan_getattr_8616(insn, "operands", ())
             if not operands:
                 return None
-            target = getattr(operands[0], "imm", None)
+            target = _dynamic_corpus_scan_getattr_8616(operands[0], "imm", None)
             if target is None and hasattr(operands[0], "value"):
-                target = getattr(operands[0].value, "imm", None)
+                target = _dynamic_corpus_scan_getattr_8616(operands[0].value, "imm", None)
             if target != ret_addr or idx >= call_idx:
                 return None
             conditional_jump_idx = idx
@@ -658,29 +731,30 @@ def _should_skip_scan_safe_known_hotspot(cod_file: str, proc_name: str, mode: st
     return (cod_file, proc_name) in _SCAN_SAFE_KNOWN_HOTSPOTS
 
 
-def _should_skip_scan_safe_back_edge(capstone_block, mode: str, max_loop_bytes: int) -> bool:
-    def _impl():
+def _should_skip_scan_safe_back_edge(capstone_block: object, mode: str, max_loop_bytes: int) -> bool:
+    def _impl() -> bool:
         if mode != "scan-safe" or max_loop_bytes <= 0:
             return False
 
-        block = getattr(capstone_block, "insns", None)
+        block = _dynamic_corpus_scan_getattr_8616(capstone_block, "insns", None)
         if not block:
             return False
 
         for insn in block:
-            mnemonic = getattr(insn, "mnemonic", "")
+            mnemonic = _dynamic_corpus_scan_getattr_8616(insn, "mnemonic", "")
             if not (mnemonic.startswith("j") or mnemonic.startswith("loop")):
                 continue
 
-            operands = getattr(insn, "operands", ())
+            operands = _dynamic_corpus_scan_getattr_8616(insn, "operands", ())
             if not operands:
                 continue
-            target = getattr(operands[0], "imm", None)
+            target = _dynamic_corpus_scan_getattr_8616(operands[0], "imm", None)
             if target is None and hasattr(operands[0], "value"):
-                target = getattr(operands[0].value, "imm", None)
+                target = _dynamic_corpus_scan_getattr_8616(operands[0].value, "imm", None)
             if target is None:
                 continue
-            if target < insn.address and insn.address < 0x1000 + (max_loop_bytes * 2):
+            insn_addr = _dynamic_corpus_scan_getattr_8616(insn, "address", None)
+            if isinstance(insn_addr, int) and target < insn_addr and insn_addr < 0x1000 + (max_loop_bytes * 2):
                 return True
 
         return False
@@ -688,10 +762,13 @@ def _should_skip_scan_safe_back_edge(capstone_block, mode: str, max_loop_bytes: 
     return _impl()
 
 
-def _should_skip_scan_safe_decompile_for_cfg_shape(cfg, mode: str, max_cfg_blocks: int, max_cfg_insns: int) -> bool:
+def _should_skip_scan_safe_decompile_for_cfg_shape(
+    cfg: object, mode: str, max_cfg_blocks: int, max_cfg_insns: int
+) -> bool:
     if mode != "scan-safe" or (max_cfg_blocks <= 0 and max_cfg_insns <= 0):
         return False
-    func = cfg.functions.get(0x1000)
+    cfg_any = cast(Any, cfg)
+    func = cfg_any.functions.get(0x1000)
     if func is None:
         return False
     blocks = list(func.blocks)
@@ -786,8 +863,8 @@ def _aggregate_scan_tail_validation_8616(
     ]
     aggregate = build_x86_16_tail_validation_aggregate(tail_validation_records, scanned=len(results))
     return (
-        aggregate["summary"],
-        aggregate["surface"],
+        _dict_payload_8616(aggregate, "summary"),
+        _dict_payload_8616(aggregate, "surface"),
         {
             "cache_key": aggregate["cache_key"],
             "cache_hit": bool(aggregate["cache_hit"]),
@@ -802,8 +879,8 @@ def _scan_rate_8616(count: int, total: int) -> float:
 
 
 def _scan_summary_counters_8616(results: list[FunctionScanResult]) -> dict[str, object]:
-    def _impl():
-        confidence_summaries = [classify_x86_16_recovery_confidence(result) for result in results]
+    def _impl() -> dict[str, object]:
+        confidence_summaries = [classify_x86_16_recovery_confidence(asdict(result)) for result in results]
         return {
             "confidence_summaries": confidence_summaries,
             "failure_counter": Counter(result.failure_class for result in results if result.failure_class is not None),
@@ -863,9 +940,9 @@ def _scan_summary_counters_8616(results: list[FunctionScanResult]) -> dict[str, 
 
 
 def _scan_summary_totals_8616(
-    results: list[FunctionScanResult], confidence_summaries: list[object]
+    results: list[FunctionScanResult], confidence_summaries: list[RecoveryConfidenceSummary]
 ) -> dict[str, object]:
-    def _impl():
+    def _impl() -> dict[str, object]:
         fallback_results = [result for result in results if _scan_has_fallback_kind_8616(result)]
         return {
             "files": _classify_scan_files_8616(results),
@@ -908,27 +985,30 @@ def _scan_summary_totals_8616(
 def _scan_summary_output_8616(
     results: list[FunctionScanResult], mode: str, counters: dict[str, object], totals: dict[str, object]
 ) -> dict[str, object]:
-    failure_counter = counters["failure_counter"]
-    fallback_counter = counters["fallback_counter"]
-    stage_failure_counter = counters["stage_failure_counter"]
-    timeout_stage_counter = counters["timeout_stage_counter"]
-    failure_file_counter = counters["failure_file_counter"]
-    failure_function_counter = counters["failure_function_counter"]
-    fallback_file_counter = counters["fallback_file_counter"]
-    fallback_function_counter = counters["fallback_function_counter"]
-    family_counter = counters["family_counter"]
-    family_failure_counter = counters["family_failure_counter"]
-    family_fallback_counter = counters["family_fallback_counter"]
-    family_cluster_counter = counters["family_cluster_counter"]
-    readability_cluster_counter = counters["readability_cluster_counter"]
-    ugly_cluster_counter = counters["ugly_cluster_counter"]
-    files_zero_success, files_scan_clean, files_partial_success = totals["files"]
-    full_decompile_count = totals["full_decompile_count"]
-    cfg_only_count = totals["cfg_only_count"]
-    lift_only_count = totals["lift_only_count"]
-    block_lift_count = totals["block_lift_count"]
-    fallback_only_count = totals["fallback_only_count"]
-    true_failure_count = totals["true_failure_count"]
+    failure_counter = _counter_payload_8616(counters, "failure_counter")
+    fallback_counter = _counter_payload_8616(counters, "fallback_counter")
+    stage_failure_counter = _counter_payload_8616(counters, "stage_failure_counter")
+    timeout_stage_counter = _counter_payload_8616(counters, "timeout_stage_counter")
+    failure_file_counter = _counter_payload_8616(counters, "failure_file_counter")
+    failure_function_counter = _counter_payload_8616(counters, "failure_function_counter")
+    fallback_file_counter = _counter_payload_8616(counters, "fallback_file_counter")
+    fallback_function_counter = _counter_payload_8616(counters, "fallback_function_counter")
+    family_counter = _counter_payload_8616(counters, "family_counter")
+    family_failure_counter = _counter_payload_8616(counters, "family_failure_counter")
+    family_fallback_counter = _counter_payload_8616(counters, "family_fallback_counter")
+    family_cluster_counter = _counter_payload_8616(counters, "family_cluster_counter")
+    readability_cluster_counter = _counter_payload_8616(counters, "readability_cluster_counter")
+    ugly_cluster_counter = _counter_payload_8616(counters, "ugly_cluster_counter")
+    files_payload = totals.get("files", ((), (), ()))
+    files_zero_success, files_scan_clean, files_partial_success = (
+        files_payload if isinstance(files_payload, tuple) and len(files_payload) == 3 else ((), (), ())
+    )
+    full_decompile_count = _int_payload_8616(totals, "full_decompile_count")
+    cfg_only_count = _int_payload_8616(totals, "cfg_only_count")
+    lift_only_count = _int_payload_8616(totals, "lift_only_count")
+    block_lift_count = _int_payload_8616(totals, "block_lift_count")
+    fallback_only_count = _int_payload_8616(totals, "fallback_only_count")
+    true_failure_count = _int_payload_8616(totals, "true_failure_count")
 
     top_failure_classes = _sorted_top_8616(failure_counter, "failure_class")
     top_fallback_kinds = _sorted_top_8616(fallback_counter, "fallback_kind")
@@ -983,27 +1063,35 @@ def _scan_summary_output_8616(
         "cfg_only_count": cfg_only_count,
         "lift_only_count": lift_only_count,
         "block_lift_count": block_lift_count,
-        "rewrite_failure_count": totals["rewrite_failure_count"],
-        "structuring_failure_count": totals["structuring_failure_count"],
-        "regeneration_failure_count": totals["regeneration_failure_count"],
+        "rewrite_failure_count": _int_payload_8616(totals, "rewrite_failure_count"),
+        "structuring_failure_count": _int_payload_8616(totals, "structuring_failure_count"),
+        "regeneration_failure_count": _int_payload_8616(totals, "regeneration_failure_count"),
         "fallback_only_count": fallback_only_count,
         "true_failure_count": true_failure_count,
         "visibility_debt": true_failure_count,
         "recovery_debt": fallback_only_count,
         "readability_debt": full_decompile_count,
-        "unclassified_failure_count": totals["unclassified_failure_count"],
+        "unclassified_failure_count": _int_payload_8616(totals, "unclassified_failure_count"),
         "interrupt_api": {
-            "dos_helpers": totals["interrupt_dos_helper_count"],
-            "bios_helpers": totals["interrupt_bios_helper_count"],
-            "wrapper_calls": totals["interrupt_wrapper_call_count"],
-            "unresolved_wrappers": totals["interrupt_unresolved_wrapper_count"],
+            "dos_helpers": _int_payload_8616(totals, "interrupt_dos_helper_count"),
+            "bios_helpers": _int_payload_8616(totals, "interrupt_bios_helper_count"),
+            "wrapper_calls": _int_payload_8616(totals, "interrupt_wrapper_call_count"),
+            "unresolved_wrappers": _int_payload_8616(totals, "interrupt_unresolved_wrapper_count"),
         },
-        "confidence": summarize_recovery_confidence(results),
-        "confidence_status_counts": dict(sorted(totals["confidence_status_counter"].items())),
-        "confidence_scan_safe_counts": dict(sorted(totals["confidence_scan_safe_counter"].items())),
-        "confidence_assumption_counts": dict(sorted(totals["confidence_assumption_counter"].items())),
-        "confidence_evidence_counts": dict(sorted(totals["confidence_evidence_counter"].items())),
-        "confidence_diagnostic_counts": dict(sorted(totals["confidence_diagnostic_counter"].items())),
+        "confidence": summarize_recovery_confidence([asdict(result) for result in results]),
+        "confidence_status_counts": dict(sorted(_counter_payload_8616(totals, "confidence_status_counter").items())),
+        "confidence_scan_safe_counts": dict(
+            sorted(_counter_payload_8616(totals, "confidence_scan_safe_counter").items())
+        ),
+        "confidence_assumption_counts": dict(
+            sorted(_counter_payload_8616(totals, "confidence_assumption_counter").items())
+        ),
+        "confidence_evidence_counts": dict(
+            sorted(_counter_payload_8616(totals, "confidence_evidence_counter").items())
+        ),
+        "confidence_diagnostic_counts": dict(
+            sorted(_counter_payload_8616(totals, "confidence_diagnostic_counter").items())
+        ),
         "tail_validation": tail_validation_summary,
         "tail_validation_surface": tail_validation_surface,
         "tail_validation_cache": tail_validation_cache,
@@ -1029,10 +1117,10 @@ def _scan_safe_prefix_skip_result_8616(
     code_len: int,
     mode: str,
     max_cfg_bytes: int,
-    prefix_insns,
+    prefix_insns: Sequence[object],
     cod_file: Path,
 ) -> FunctionScanResult | None:
-    def _impl():
+    def _impl() -> FunctionScanResult | None:
         is_3dplanes = "3DPLANES" in str(cod_file)
         is_oversized = _should_skip_scan_safe_cfg(code_len, mode, max_cfg_bytes)
         should_skip_call_chain = is_3dplanes and is_oversized
@@ -1041,7 +1129,7 @@ def _scan_safe_prefix_skip_result_8616(
             and not should_skip_call_chain
             and _should_skip_scan_safe_call_chain_from_insns(prefix_insns, mode, max_cfg_bytes)
         ):
-            call_count = sum(1 for insn in prefix_insns if getattr(insn, "mnemonic", "").lower() == "call")
+            call_count = sum(1 for insn in prefix_insns if _dynamic_corpus_scan_getattr_8616(insn, "mnemonic", "").lower() == "call")
             return _finish_scan_safe_skip(
                 result,
                 fallback_kind="cfg_only",
@@ -1109,7 +1197,9 @@ def scan_function(
     max_decompile_bytes: int = 384,
     max_loop_bytes: int = 128,
 ) -> FunctionScanResult:
-    def _impl():
+    """Scan a single COD procedure and return structured recovery/reporting status."""
+
+    def _impl() -> FunctionScanResult:
         global _SCAN_ACTIVE
         result = FunctionScanResult(
             cod_file=cod_file.name,
@@ -1199,8 +1289,8 @@ def scan_function(
             if loop_block is not None and _should_skip_scan_safe_call_chain(loop_block.capstone, mode, max_cfg_bytes):
                 call_count = sum(
                     1
-                    for insn in getattr(loop_block.capstone, "insns", ())
-                    if getattr(insn, "mnemonic", "").lower() == "call"
+                    for insn in _dynamic_corpus_scan_getattr_8616(loop_block.capstone, "insns", ())
+                    if _dynamic_corpus_scan_getattr_8616(insn, "mnemonic", "").lower() == "call"
                 )
                 return _finish_scan_safe_skip(
                     result,
@@ -1215,7 +1305,7 @@ def scan_function(
             try:
                 cfg = _scan_cfg(project, len(code))
                 seed_calling_conventions(cfg)
-                func = cfg.functions[0x1000]
+                func = cast(Any, cfg).functions[0x1000]
                 _mark_stage(result, "cfg", True)
             except Exception as exc:  # noqa: BLE001
                 failure_class, reason = classify_failure("cfg", exc)
@@ -1263,25 +1353,25 @@ def scan_function(
                 return _finish_scan(result)
 
             try:
-                dec = project.analyses.Decompiler(func, cfg=cfg)
-                codegen = getattr(dec, "codegen", None)
-                func_info = getattr(func, "info", None)
+                dec = project.analyses.Decompiler(func, cfg=cast(Any, cfg))
+                codegen = _dynamic_corpus_scan_getattr_8616(dec, "codegen", None)
+                func_info = _dynamic_corpus_scan_getattr_8616(func, "info", None)
                 result.tail_validation = extract_x86_16_tail_validation_snapshot(func_info)
                 if not result.tail_validation and codegen is not None:
-                    result.tail_validation = dict(getattr(codegen, "_inertia_tail_validation_snapshot", {}) or {})
+                    result.tail_validation = dict(_dynamic_corpus_scan_getattr_8616(codegen, "_inertia_tail_validation_snapshot", {}) or {})
                 if codegen is not None:
-                    result.last_postprocess_pass = getattr(codegen, "_inertia_last_postprocess_pass", None)
-                    result.last_structuring_pass = getattr(codegen, "_inertia_last_structuring_pass", None)
-                    result.rewrite_failed = bool(getattr(codegen, "_inertia_rewrite_failed", False))
-                    result.rewrite_failure_pass = getattr(codegen, "_inertia_rewrite_failure_pass", None)
-                    result.rewrite_failure_reason = getattr(codegen, "_inertia_rewrite_failure_error", None)
-                    result.structuring_failed = bool(getattr(codegen, "_inertia_structuring_failed", False))
-                    result.structuring_failure_pass = getattr(codegen, "_inertia_structuring_failure_pass", None)
-                    result.structuring_failure_reason = getattr(codegen, "_inertia_structuring_failure_error", None)
-                    result.regeneration_failed = bool(getattr(codegen, "_inertia_regeneration_failed", False))
-                    result.regeneration_failure_pass = getattr(codegen, "_inertia_regeneration_last_pass", None)
-                    result.regeneration_failure_reason = getattr(codegen, "_inertia_regeneration_error", None)
-                if codegen is None or not getattr(codegen, "text", ""):
+                    result.last_postprocess_pass = _dynamic_corpus_scan_getattr_8616(codegen, "_inertia_last_postprocess_pass", None)
+                    result.last_structuring_pass = _dynamic_corpus_scan_getattr_8616(codegen, "_inertia_last_structuring_pass", None)
+                    result.rewrite_failed = bool(_dynamic_corpus_scan_getattr_8616(codegen, "_inertia_rewrite_failed", False))
+                    result.rewrite_failure_pass = _dynamic_corpus_scan_getattr_8616(codegen, "_inertia_rewrite_failure_pass", None)
+                    result.rewrite_failure_reason = _dynamic_corpus_scan_getattr_8616(codegen, "_inertia_rewrite_failure_error", None)
+                    result.structuring_failed = bool(_dynamic_corpus_scan_getattr_8616(codegen, "_inertia_structuring_failed", False))
+                    result.structuring_failure_pass = _dynamic_corpus_scan_getattr_8616(codegen, "_inertia_structuring_failure_pass", None)
+                    result.structuring_failure_reason = _dynamic_corpus_scan_getattr_8616(codegen, "_inertia_structuring_failure_error", None)
+                    result.regeneration_failed = bool(_dynamic_corpus_scan_getattr_8616(codegen, "_inertia_regeneration_failed", False))
+                    result.regeneration_failure_pass = _dynamic_corpus_scan_getattr_8616(codegen, "_inertia_regeneration_last_pass", None)
+                    result.regeneration_failure_reason = _dynamic_corpus_scan_getattr_8616(codegen, "_inertia_regeneration_error", None)
+                if codegen is None or not _dynamic_corpus_scan_getattr_8616(codegen, "text", ""):
                     failure_class, reason = classify_failure(
                         "decompile",
                         None,
@@ -1339,8 +1429,13 @@ def scan_function(
 
 
 def summarize_results(results: list[FunctionScanResult], mode: str) -> dict[str, object]:
+    """Summarize structured corpus scan results for reporting."""
     counters = _scan_summary_counters_8616(results)
-    totals = _scan_summary_totals_8616(results, counters["confidence_summaries"])
+    confidence_summaries = counters.get("confidence_summaries", [])
+    totals = _scan_summary_totals_8616(
+        results,
+        confidence_summaries if isinstance(confidence_summaries, list) else [],
+    )
     return _scan_summary_output_8616(results, mode, counters, totals)
 
 

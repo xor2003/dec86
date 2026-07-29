@@ -1,37 +1,78 @@
+"""Register-slice widening candidates and join proofs.
+
+Layer: Widening.
+Responsibility: owns register-slice widening candidates and join proofs.
+Owns register-slice widening candidates and join proofs.
+Consumes alias-proven storage identity for register domains before joining
+byte and word views.
+Do not join values from rendered text, cosmetic shape, postprocess, or
+CLI/reporting evidence.
+Dynamic boundary: this module reads third-party angr and codegen attributes
+when translating register variables and generated code into owned widening
+candidates.
+"""
+
 from __future__ import annotations
 
-# Layer: Widening
-# Responsibility: register-slice widening candidates and join proofs.
-# Forbidden: CLI/text-shape recovery and postprocess ownership.
 from dataclasses import dataclass
+from typing import Protocol, TypeGuard
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 
-from ..alias_domains import (
+from ..alias.domains import (
     FULL16,
     HIGH8,
     LOW8,
     DomainKey,
+    View,
     register_domain_for_name,
     register_offset_for_name,
     register_pair_name,
     register_view_for_name,
 )
+from ..alias.state import AliasState
+
+
+class _RegisterWideningProofLike(Protocol):
+    """Structural alias proof required before register slices can widen."""
+
+    ok: bool
+    register_pair: str | None
+    left_version: int | None
+    right_version: int | None
+
+
+def _is_register_widening_proof_like(value: object) -> TypeGuard[_RegisterWideningProofLike]:
+    """Validate dynamic boundary proof fields from the widening-model plugin contract."""
+    ok = getattr(value, "ok", None)
+    register_pair = getattr(value, "register_pair", None)
+    left_version = getattr(value, "left_version", None)
+    right_version = getattr(value, "right_version", None)
+    return (
+        isinstance(ok, bool)
+        and (register_pair is None or isinstance(register_pair, str))
+        and (left_version is None or isinstance(left_version, int))
+        and (right_version is None or isinstance(right_version, int))
+    )
 
 
 @dataclass(frozen=True)
 class RegisterWideningCandidate:
+    """Alias-proven register slice that may participate in a widening join."""
+
     domain: DomainKey
-    view: object
+    view: View
     expr: object
 
     def is_joinable_with(self, other: "RegisterWideningCandidate") -> bool:
+        """Return whether this slice is adjacent-compatible with another slice."""
         return self.domain == other.domain and self.view.can_join(other.view)
 
     @classmethod
     def from_expr(cls, expr: object) -> "RegisterWideningCandidate":
+        """Build a candidate across the dynamic boundary from third-party angr C expressions."""
         if not isinstance(expr, structured_c.CVariable):
             raise ValueError("expected a register CVariable")
         variable = getattr(expr, "variable", None)
@@ -44,6 +85,7 @@ class RegisterWideningCandidate:
 
 
 def _register_pair_name_for_variable(variable: SimRegisterVariable) -> str | None:
+    """Read register identity across the dynamic boundary from third-party angr variables."""
     pair_name = register_pair_name(getattr(variable, "name", None))
     if pair_name is not None:
         return pair_name
@@ -57,8 +99,11 @@ def _register_pair_name_for_variable(variable: SimRegisterVariable) -> str | Non
     return None
 
 
-def _register_domain_and_view(variable: SimRegisterVariable) -> tuple[DomainKey | None, object | None]:
-    def _impl():
+def _register_domain_and_view(variable: SimRegisterVariable) -> tuple[DomainKey | None, View | None]:
+    """Return alias domain/view across the dynamic boundary from third-party angr variables."""
+
+    def _impl() -> tuple[DomainKey | None, View | None]:
+        """Read register view fields across the dynamic boundary from third-party angr variables."""
         pair_name = _register_pair_name_for_variable(variable)
         if pair_name is None:
             return None, None
@@ -81,8 +126,12 @@ def _register_domain_and_view(variable: SimRegisterVariable) -> tuple[DomainKey 
     return _impl()
 
 
-def can_join_adjacent_register_slices(low_expr, high_expr, *, alias_state=None, proof=None) -> bool:
-    def _impl():
+def can_join_adjacent_register_slices(
+    low_expr: object, high_expr: object, *, alias_state: AliasState | None = None, proof: object | None = None
+) -> bool:
+    """Return whether alias/version evidence proves two register slices join."""
+
+    def _impl() -> bool:
         if alias_state is None:
             return False
         candidate_proof = proof
@@ -92,6 +141,8 @@ def can_join_adjacent_register_slices(low_expr, high_expr, *, alias_state=None, 
             candidate_proof = _widening_model.prove_adjacent_storage_slices(
                 low_expr, high_expr, alias_state=alias_state
             )
+        if not _is_register_widening_proof_like(candidate_proof):
+            return False
         if not candidate_proof.ok:
             return False
         if candidate_proof.register_pair is None:
@@ -118,16 +169,25 @@ def can_join_adjacent_register_slices(low_expr, high_expr, *, alias_state=None, 
 
 
 def join_adjacent_register_slices(
-    low_expr, high_expr, codegen, *, alias_state=None, proof=None
+    low_expr: object,
+    high_expr: object,
+    codegen: object,
+    *,
+    alias_state: AliasState | None = None,
+    proof: object | None = None,
 ) -> structured_c.CVariable | None:
-    if proof is None and alias_state is not None:
+    """Materialize a widened register C variable at the dynamic codegen boundary."""
+    candidate_proof = proof
+    if candidate_proof is None and alias_state is not None:
         from .. import widening_model as _widening_model
 
-        proof = _widening_model.prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
-    if not can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state, proof=proof):
+        candidate_proof = _widening_model.prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
+    if not _is_register_widening_proof_like(candidate_proof):
+        return None
+    if not can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state, proof=candidate_proof):
         return None
 
-    pair_name = proof.register_pair if proof is not None else None
+    pair_name = candidate_proof.register_pair
     if pair_name is None:
         return None
 

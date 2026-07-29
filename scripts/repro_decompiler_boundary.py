@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Reproduce decompiler boundary cases through the CLI orchestration layer.
+
+Layer: Tooling/gates.
+Responsibility: reproduce decompiler boundary diagnostics without acting as a recovery stage.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +18,7 @@ UPSTREAM_DECOMPILER_PATH = (
 )
 
 
-def _format_variables(variable_manager) -> list[str]:
+def _format_variables(variable_manager: object) -> list[str]:
     try:
         variables = list(variable_manager.get_variables())
     except Exception as ex:  # noqa: BLE001
@@ -42,7 +47,7 @@ def _format_variables(variable_manager) -> list[str]:
     return rendered
 
 
-def _stack_variables_by_offset(variable_manager) -> dict[int, object]:
+def _stack_variables_by_offset(variable_manager: object) -> dict[int, object]:
     by_offset: dict[int, object] = {}
     for variable in variable_manager.get_variables():
         offset = getattr(variable, "offset", None)
@@ -51,7 +56,14 @@ def _stack_variables_by_offset(variable_manager) -> dict[int, object]:
     return by_offset
 
 
-def _probe_decompiler(project, function, decompiler_options, *, generate_code: bool, regen_clinic: bool | None = None):
+def _probe_decompiler(
+    project: object,
+    function: object,
+    decompiler_options: object,
+    *,
+    generate_code: bool,
+    regen_clinic: bool | None = None,
+) -> object:
     with cli._guard_angr_peephole_expr_bitwidth_assertion():
         with cli._guard_angr_variable_recovery_binop_sub_size_mismatch():
             kwargs = {"cfg": None, "options": decompiler_options, "generate_code": generate_code}
@@ -61,7 +73,9 @@ def _probe_decompiler(project, function, decompiler_options, *, generate_code: b
 
 
 def main() -> int:
-    def _impl():
+    """Run the boundary reproduction and print diagnostic state."""
+
+    def _impl() -> int:
         parser = argparse.ArgumentParser(description="Reproduce clinic/decompiler boundary state for one function.")
         parser.add_argument("binary", type=Path)
         parser.add_argument("--addr", type=lambda value: int(value, 0), required=True)

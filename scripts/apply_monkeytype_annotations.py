@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Apply MonkeyType inferred annotations to selected project modules.
+
+Layer: Tooling/gates.
+Responsibility: owns applying traced annotations to selected modules.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -6,7 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -93,6 +99,8 @@ def _write_failures(failed: list[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Apply MonkeyType annotations to modules selected by prefix."""
+
     args = _parse_args(argv)
 
     if not MONKEYTYPE_DB_PATH.exists():

@@ -1,9 +1,11 @@
+"""Layer: Helper boundary.
+
+Responsibility: preserve the legacy ALU helper import surface while semantics live in semantics/.
+Dynamic boundary: compatibility re-export only; canonical semantics.alu_semantics
+owns the literal public API.
+Forbidden: adding fresh ALU semantics or condition recovery to this compatibility shim.
+"""
+
 from __future__ import annotations
 
-# Layer: Compatibility shim
-# Responsibility: re-export moved semantics module
-from .semantics import alu_semantics as _alu_semantics
-
-globals().update({name: getattr(_alu_semantics, name) for name in dir(_alu_semantics) if not name.startswith("__")})
-
-__all__ = getattr(_alu_semantics, "__all__", tuple())
+from .semantics.alu_semantics import *  # noqa: F403

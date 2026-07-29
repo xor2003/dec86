@@ -1,5 +1,8 @@
 """Async GDB Remote Serial Protocol (RSP) client.
 
+Layer: CLI/fallback/reporting.
+Responsibility: speak RSP for debugger UI/control without owning decompiler semantics.
+
 Speaks directly to gdbserver / QEMU GDB stub over TCP.
 Implements the minimal RSP packet set needed for a debugger TUI:
   - Connection / ack / nack
@@ -16,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field
-from enum import Enum, auto
+from enum import Enum
 from typing import Any, Callable
 
 # ---------------------------------------------------------------------------
@@ -27,14 +30,14 @@ from typing import Any, Callable
 class StopReason(Enum):
     """Why the target stopped."""
 
-    UNKNOWN = auto()
-    SIGTRAP = auto()  # 05 – breakpoint / single-step
-    SIGINT = auto()  # 02 – interrupt
-    SIGSEGV = auto()  # 0b
-    SIGILL = auto()  # 04
-    SIGFPE = auto()  # 08
-    EXITED = auto()  # Wxx
-    SIGNALLED = auto()  # Xxx
+    UNKNOWN = "unknown"
+    SIGTRAP = "sigtrap"  # 05 – breakpoint / single-step
+    SIGINT = "sigint"  # 02 – interrupt
+    SIGSEGV = "sigsegv"  # 0b
+    SIGILL = "sigill"  # 04
+    SIGFPE = "sigfpe"  # 08
+    EXITED = "exited"  # Wxx
+    SIGNALLED = "signalled"  # Xxx
 
 
 @dataclass
@@ -59,10 +62,13 @@ class RegisterDef:
 
 @dataclass
 class MemoryRegion:
+    """Bytes read from target memory at one address."""
+
     address: int
     data: bytes
 
     def hexdump(self, width: int = 16) -> str:
+        """Render the memory region as fixed-width hexadecimal rows."""
         lines: list[str] = []
         for i in range(0, len(self.data), width):
             chunk = self.data[i : i + width]
@@ -169,7 +175,7 @@ def _decode_mem(hexstr: str, nbytes: int) -> int:
 
 
 class GDBClientError(Exception):
-    pass
+    """Raised when RSP communication or parsing fails."""
 
 
 class GDBClient:
@@ -191,6 +197,7 @@ class GDBClient:
     """
 
     def __init__(self) -> None:
+        """Initialize a disconnected RSP client."""
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._connected = False
@@ -208,19 +215,23 @@ class GDBClient:
 
     @property
     def is_connected(self) -> bool:
+        """Return whether the TCP RSP connection is active."""
         return self._connected
 
     @property
     def is_stopped(self) -> bool:
+        """Return whether the target is currently stopped."""
         return self._stopped
 
     @property
     def arch(self) -> str:
+        """Return the current register decoding architecture."""
         return self._arch
 
     # -- connection --------------------------------------------------------
 
     async def connect(self, host: str, port: int) -> None:
+        """Connect to an RSP server and consume the initial stop reply."""
         self._reader, self._writer = await asyncio.open_connection(host, port)
         self._connected = True
         # Read initial stop reply
@@ -228,6 +239,7 @@ class GDBClient:
         self._parse_stop_reply(reply)
 
     async def disconnect(self) -> None:
+        """Close the current RSP connection."""
         if self._writer:
             self._writer.close()
             await self._writer.wait_closed()
@@ -252,7 +264,7 @@ class GDBClient:
     # -- low-level packet I/O ----------------------------------------------
 
     async def _read_packet(self) -> str:
-        async def _impl():
+        async def _impl() -> str:
             """Read one RSP packet (handles $...#cc and acks)."""
             assert self._reader is not None
             while True:
@@ -307,7 +319,7 @@ class GDBClient:
     # -- stop reply parsing -----------------------------------------------
 
     def _parse_stop_reply(self, reply: str) -> StopInfo:
-        def _impl():
+        def _impl() -> StopInfo:
             info = StopInfo()
             if not reply:
                 return info
@@ -421,6 +433,7 @@ class GDBClient:
         return info
 
     async def step_with_signal(self, sig: int = 0) -> StopInfo:
+        """Single-step one instruction while delivering a signal."""
         self._stopped = False
         reply = await self._send_packet(f"s{sig:02x}")
         return self._parse_stop_reply(reply)
@@ -531,6 +544,7 @@ class GDBClient:
         return await self._send_packet(f"Z{wp_type},{addr:x},{length:x}")
 
     async def remove_watchpoint(self, addr: int, length: int, wp_type: int = 2) -> str:
+        """Remove a watchpoint."""
         return await self._send_packet(f"z{wp_type},{addr:x},{length:x}")
 
     # -- threads -----------------------------------------------------------

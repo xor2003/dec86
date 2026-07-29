@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""
-Probe decompilation on all files under angr_platforms/x16_samples and report files
-that fall back to ASM or produce no decompiled code.
+"""Probe decompilation on x16 samples and report fallback/no-output cases.
+
+Layer: Tooling/gates.
+Responsibility: run bounded sample probes and report fallback diagnostics without semantic repair.
 
 Writes results to `reports/x16_decompile_report.json` and `reports/x16_decompile_report.txt`.
 """
+
+from __future__ import annotations
 
 import json
 import subprocess
@@ -56,7 +59,7 @@ for path in sorted(SAMPLES.rglob("*")):
         fallback_reasons.append("ellipsis_fallback")
 
     status = "ok" if not fallback_reasons else "fallback"
-    summary = fallback_reasons[:3] if fallback_reasons else [l for l in out.splitlines()[:6]]
+    summary = fallback_reasons[:3] if fallback_reasons else [line for line in out.splitlines()[:6]]
     snippet = "\n".join(out.splitlines()[:200])
     results.append({"file": str(rel), "status": status, "summary": summary, "snippet": snippet})
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import angr
+import pytest
 from angr import options as o
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
@@ -10,8 +11,11 @@ MATRIX_DIR = Path(__file__).resolve().parents[1] / "x16_samples"
 
 
 def _com_project(name: str):
+    path = MATRIX_DIR / name
+    if not path.exists():
+        pytest.skip(f"optional x16 sample fixture is not available: {name}")
     return angr.Project(
-        MATRIX_DIR / name,
+        path,
         main_opts={
             "backend": "blob",
             "arch": Arch86_16(),

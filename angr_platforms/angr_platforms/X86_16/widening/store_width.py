@@ -1,15 +1,40 @@
+"""Typed store-width joins after alias compatibility proof.
+
+Layer: Widening.
+Responsibility: owns typed store-width joins after alias compatibility proof.
+Consumes alias-proven storage identity and instruction width evidence before
+coalescing byte/word stores.
+Do not join values from rendered text, cosmetic shape, postprocess, or
+CLI/reporting evidence.
+"""
+
 from __future__ import annotations
 
-# Layer: Widening
-# Responsibility: typed store-width joins after alias compatibility proof.
-# Forbidden: rendered-text adjacency as semantic proof.
+from collections.abc import Callable
+from typing import Protocol, TypeGuard, cast
+
 import angr
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable
 
 
-def _global_memory_addr(node) -> int | None:
+class _SegmentedGlobalAccessLike8616(Protocol):
+    """Structural view of lowering-owned segmented global access classifications."""
+
+    kind: str
+    linear: int | None
+
+
+def _is_segmented_global_access_8616(value: object) -> TypeGuard[_SegmentedGlobalAccessLike8616]:
+    """Return whether a dynamic angr/codegen boundary result names a linear global access."""
+    kind = getattr(value, "kind", None)
+    linear = getattr(value, "linear", None)
+    return kind == "global" and isinstance(linear, int)
+
+
+def _global_memory_addr(node: object) -> int | None:
+    """Read a global address from dynamic angr/codegen boundary CVariable metadata."""
     if not isinstance(node, structured_c.CVariable):
         return None
     variable = getattr(node, "variable", None)
@@ -19,11 +44,17 @@ def _global_memory_addr(node) -> int | None:
     return addr if isinstance(addr, int) else None
 
 
-def _global_load_addr(node, _project: angr.Project) -> int | None:
+def _global_load_addr(node: object, _project: angr.Project) -> int | None:
     return _global_memory_addr(node)
 
 
-def _match_scaled_high_byte(node, project: angr.Project, *, c_constant_value, global_load_addr) -> int | None:
+def _match_scaled_high_byte(
+    node: object,
+    project: angr.Project,
+    *,
+    c_constant_value: Callable[[object], object],
+    global_load_addr: Callable[[object, angr.Project], int | None],
+) -> int | None:
     if not isinstance(node, structured_c.CBinaryOp):
         return None
 
@@ -48,7 +79,7 @@ def _match_scaled_high_byte(node, project: angr.Project, *, c_constant_value, gl
     return None
 
 
-def _extract_dereference_addr_expr(node):
+def _extract_dereference_addr_expr(node: object) -> object | None:
     if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
         return None
     operand = node.operand
@@ -57,14 +88,15 @@ def _extract_dereference_addr_expr(node):
     return operand
 
 
-def _safe_type_bits(node) -> int | None:
+def _safe_type_bits(node: object) -> int | None:
+    """Read bit width from dynamic angr/codegen boundary C AST type metadata."""
     try:
         return getattr(getattr(node, "type", None), "size", None)
     except ValueError:
         return None
 
 
-def _match_byte_load_addr_expr(node, *, unwrap_c_casts):
+def _match_byte_load_addr_expr(node: object, *, unwrap_c_casts: Callable[[object], object]) -> object | None:
     node = unwrap_c_casts(node)
     addr_expr = _extract_dereference_addr_expr(node)
     if addr_expr is None:
@@ -75,7 +107,7 @@ def _match_byte_load_addr_expr(node, *, unwrap_c_casts):
     return addr_expr
 
 
-def _match_byte_store_addr_expr(node):
+def _match_byte_store_addr_expr(node: object) -> object | None:
     addr_expr = _extract_dereference_addr_expr(node)
     if addr_expr is None:
         return None
@@ -85,7 +117,13 @@ def _match_byte_store_addr_expr(node):
     return addr_expr
 
 
-def _match_shifted_high_byte_addr_expr(node, *, unwrap_c_casts, c_constant_value, match_byte_load_addr_expr):
+def _match_shifted_high_byte_addr_expr(
+    node: object,
+    *,
+    unwrap_c_casts: Callable[[object], object],
+    c_constant_value: Callable[[object], object],
+    match_byte_load_addr_expr: Callable[[object], object | None],
+) -> object | None:
     node = unwrap_c_casts(node)
     if not isinstance(node, structured_c.CBinaryOp):
         return None
@@ -106,12 +144,12 @@ def _match_shifted_high_byte_addr_expr(node, *, unwrap_c_casts, c_constant_value
 
 
 def _addr_exprs_are_same_or_byte_pair(
-    low_addr_expr,
-    high_addr_expr,
+    low_addr_expr: object,
+    high_addr_expr: object,
     project: angr.Project,
     *,
-    addr_exprs_are_same,
-    addr_exprs_are_byte_pair,
+    addr_exprs_are_same: Callable[[object, object, angr.Project], bool],
+    addr_exprs_are_byte_pair: Callable[[object, object, angr.Project], bool],
 ) -> tuple[bool, bool]:
     return (
         addr_exprs_are_same(low_addr_expr, high_addr_expr, project),
@@ -120,14 +158,14 @@ def _addr_exprs_are_same_or_byte_pair(
 
 
 def _match_word_pair_low_addr_expr(
-    node,
+    node: object,
     project: angr.Project,
     *,
-    unwrap_c_casts,
-    match_byte_load_addr_expr,
-    match_shifted_high_byte_addr_expr,
-    addr_exprs_are_byte_pair,
-):
+    unwrap_c_casts: Callable[[object], object],
+    match_byte_load_addr_expr: Callable[[object], object | None],
+    match_shifted_high_byte_addr_expr: Callable[[object], object | None],
+    addr_exprs_are_byte_pair: Callable[[object, object, angr.Project], object],
+) -> object | None:
     node = unwrap_c_casts(node)
     if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Or", "Add"}:
         return None
@@ -143,17 +181,20 @@ def _match_word_pair_low_addr_expr(
     return None
 
 
-def _make_word_dereference_from_addr_expr(codegen, project: angr.Project, addr_expr):
+def _make_word_dereference_from_addr_expr(
+    codegen: object, project: angr.Project, addr_expr: object
+) -> structured_c.CUnaryOp:
     word_type = SimTypeShort(False)
     ptr_type = SimTypePointer(word_type).with_arch(project.arch)
+    typed_addr_expr = cast(structured_c.CExpression, addr_expr)
     return structured_c.CUnaryOp(
         "Dereference",
-        structured_c.CTypeCast(None, ptr_type, addr_expr, codegen=codegen),
+        structured_c.CTypeCast(None, ptr_type, typed_addr_expr, codegen=codegen),
         codegen=codegen,
     )
 
 
-def _match_word_dereference_addr_expr(node):
+def _match_word_dereference_addr_expr(node: object) -> object | None:
     addr_expr = _extract_dereference_addr_expr(node)
     if addr_expr is None:
         return None
@@ -163,8 +204,13 @@ def _match_word_dereference_addr_expr(node):
     return addr_expr
 
 
-def _high_byte_store_addr(node, project: angr.Project, *, classify_segmented_dereference) -> int | None:
+def _high_byte_store_addr(
+    node: object,
+    project: angr.Project,
+    *,
+    classify_segmented_dereference: Callable[[object, angr.Project], object],
+) -> int | None:
     classified = classify_segmented_dereference(node, project)
-    if classified is None or classified.kind != "global":
+    if not _is_segmented_global_access_8616(classified):
         return None
     return classified.linear

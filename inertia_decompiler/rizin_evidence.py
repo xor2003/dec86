@@ -1,3 +1,9 @@
+"""Collect optional rizin evidence for diagnostics and candidate ranking.
+
+Layer: CLI/fallback/reporting.
+Responsibility: collect optional rizin diagnostics without making them semantic proof.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,10 +13,11 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 
 class RizinEvidenceStatus(Enum):
+    """Status of one optional rizin evidence collection attempt."""
+
     OK = "ok"
     UNAVAILABLE = "unavailable"
     TIMEOUT = "timeout"
@@ -19,6 +26,8 @@ class RizinEvidenceStatus(Enum):
 
 @dataclass(frozen=True)
 class RizinFunctionFact:
+    """Function-level fact reported by rizin for diagnostics."""
+
     addr: int
     size: int
     name: str
@@ -28,6 +37,8 @@ class RizinFunctionFact:
 
 @dataclass(frozen=True)
 class RizinXrefFact:
+    """Cross-reference fact reported by rizin for diagnostics."""
+
     src: int
     dst: int
     kind: str
@@ -35,12 +46,16 @@ class RizinXrefFact:
 
 @dataclass(frozen=True)
 class RizinStringFact:
+    """String fact reported by rizin for diagnostics."""
+
     vaddr: int
     value: str
 
 
 @dataclass(frozen=True)
 class RizinSymbolFact:
+    """Symbol fact reported by rizin for diagnostics."""
+
     vaddr: int
     name: str
     kind: str
@@ -48,6 +63,8 @@ class RizinSymbolFact:
 
 @dataclass(frozen=True)
 class RizinStackVarFact:
+    """Stack-variable fact reported by rizin for diagnostics."""
+
     function_addr: int
     name: str
     kind: str
@@ -56,6 +73,8 @@ class RizinStackVarFact:
 
 @dataclass(frozen=True)
 class RizinCcFact:
+    """Calling-convention fact reported by rizin for diagnostics."""
+
     function_addr: int
     cc: str
     nargs: int | None
@@ -63,6 +82,8 @@ class RizinCcFact:
 
 @dataclass(frozen=True)
 class RizinEvidence:
+    """Collected optional rizin evidence for one binary."""
+
     status: RizinEvidenceStatus
     elapsed_ms: float
     detail: str
@@ -75,10 +96,12 @@ class RizinEvidence:
 
     @property
     def function_offsets(self) -> tuple[int, ...]:
+        """Return discovered function offsets from optional rizin evidence."""
         return tuple(f.addr for f in self.functions)
 
     @property
     def function_name_by_addr(self) -> dict[int, str]:
+        """Return rizin function names keyed by address."""
         out: dict[int, str] = {}
         for fact in self.functions:
             if fact.name:
@@ -90,7 +113,7 @@ def _rizin_available() -> bool:
     return shutil.which("rizin") is not None
 
 
-def _run_json(binary_path: Path, command: str, *, timeout_sec: int) -> Any:
+def _run_json(binary_path: Path, command: str, *, timeout_sec: int) -> object:
     cmd = ["rizin", "-2", "-q", "-c", command, str(binary_path)]
     completed = subprocess.run(
         cmd,
@@ -109,6 +132,7 @@ def _run_json(binary_path: Path, command: str, *, timeout_sec: int) -> Any:
 
 
 def collect_rizin_evidence(binary_path: Path, *, timeout_sec: int = 8) -> RizinEvidence:
+    """Collect optional rizin facts for diagnostics and candidate ranking."""
     started = time.perf_counter()
     if not _rizin_available():
         return RizinEvidence(

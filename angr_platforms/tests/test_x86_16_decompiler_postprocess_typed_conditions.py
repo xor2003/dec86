@@ -3,20 +3,29 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CITE,
     CAssignment,
     CBinaryOp,
     CConstant,
+    CFunctionCall,
     CIfElse,
+    CReturn,
     CStatements,
+    CSwitchCase,
     CUnaryOp,
     CVariable,
 )
-from angr.sim_type import SimTypeShort
-from angr.sim_variable import SimRegisterVariable
+from angr.sim_type import SimTypeFunction, SimTypeShort
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.decompiler_postprocess_typed_conditions import _apply_typed_conditions_to_codegen_8616
+from angr_platforms.X86_16.decompiler_postprocess_typed_conditions import (
+    _apply_typed_condition_stack_arg_signedness_8616,
+    _apply_typed_conditions_to_codegen_8616,
+    _build_c_condition_expr,
+    _build_c_expr_for_operand,
+)
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
-from angr_platforms.X86_16.ir.core import IRValue, MemSpace
+from angr_platforms.X86_16.ir.core import IRBinaryValue, IRValue, MemSpace
 
 
 class _DummyCodegen:
@@ -50,6 +59,264 @@ def _reg(project, name: str, codegen, *, var_name: str | None = None):
     return CVariable(SimRegisterVariable(reg_offset, reg_size, name=var_name or name), codegen=codegen)
 
 
+def test_build_c_expr_for_indexed_ds_condition_operand_uses_stack_index():
+    project = _project()
+    codegen = _codegen([])
+    operand = IRValue(
+        MemSpace.DS,
+        offset=0xB4C,
+        size=2,
+        expr=("cmp-ds-indexed", "bp", "-2", "2", "1", "1"),
+    )
+
+    expr = _build_c_expr_for_operand(project, operand, codegen)
+
+    assert isinstance(expr, CFunctionCall)
+    assert expr.callee_target == "SEG_U8"
+    assert expr.args[0].variable.name == "ds"
+    offset = expr.args[1]
+    assert isinstance(offset, CBinaryOp)
+    assert offset.op == "Add"
+    assert offset.lhs.value == 0xB4C
+    scaled_index = offset.rhs
+    assert isinstance(scaled_index, CBinaryOp)
+    assert scaled_index.op == "Shl"
+    assert scaled_index.lhs.variable.name == "local_2"
+    assert scaled_index.rhs.value == 1
+
+
+def test_build_c_condition_expr_preserves_signed_stack_operand_types():
+    project = _project()
+    codegen = _codegen([])
+    cond = ConditionIR(
+        "sgt",
+        IRValue(MemSpace.SS, name="bp", offset=6, size=2),
+        IRValue(MemSpace.SS, name="bp", offset=4, size=2),
+        src_insn=0x4020,
+        block_addr=0x4000,
+    )
+
+    expr = _build_c_condition_expr(project, cond, codegen)
+
+    assert isinstance(expr, CBinaryOp)
+    assert expr.op == "CmpGT"
+    assert isinstance(expr.lhs, CVariable)
+    assert isinstance(expr.rhs, CVariable)
+    assert expr.lhs.variable_type.signed is True
+    assert expr.rhs.variable_type.signed is True
+
+
+def test_build_c_zero_condition_expr_materializes_typed_logical_value():
+    project = _project()
+    codegen = _codegen([])
+    cond = ConditionIR(
+        "zero",
+        IRBinaryValue(
+            op="or",
+            lhs=IRValue(MemSpace.DS, offset=0x134, size=2),
+            rhs=IRValue(MemSpace.DS, offset=0x132, size=2),
+            size=2,
+        ),
+        src_insn=0x1007,
+        block_addr=0x1000,
+        producer_insn=0x1003,
+    )
+
+    expr = _build_c_condition_expr(project, cond, codegen)
+
+    assert isinstance(expr, CBinaryOp)
+    assert expr.op == "CmpEQ"
+    assert isinstance(expr.lhs, CBinaryOp)
+    assert expr.lhs.op == "Or"
+    assert isinstance(expr.lhs.lhs, CFunctionCall)
+    assert expr.lhs.lhs.callee_target == "SEG_U16"
+    assert expr.lhs.lhs.args[1].value == 0x134
+    assert isinstance(expr.lhs.rhs, CFunctionCall)
+    assert expr.lhs.rhs.callee_target == "SEG_U16"
+    assert expr.lhs.rhs.args[1].value == 0x132
+    assert isinstance(expr.rhs, CConstant)
+    assert expr.rhs.value == 0
+
+
+def test_build_c_condition_expr_preserves_signed_register_resolved_stack_operand_type():
+    project = _project()
+    codegen = _codegen([])
+    stack_arg = CVariable(
+        SimStackVariable(4, 2, base="bp", name="a"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen._inertia_typed_condition_register_exprs_by_ins_addr_8616 = {
+        (0x4010, "ax", 2): stack_arg,
+    }
+    cond = ConditionIR(
+        "slt",
+        IRValue(MemSpace.REG, name="ax", size=2),
+        IRValue(MemSpace.CONST, const=0, size=2),
+        producer_insn=0x4012,
+        src_insn=0x4018,
+        block_addr=0x4000,
+    )
+
+    expr = _build_c_condition_expr(project, cond, codegen)
+
+    assert isinstance(expr, CBinaryOp)
+    assert isinstance(expr.lhs, CVariable)
+    assert expr.lhs.variable is stack_arg.variable
+    assert expr.lhs is not stack_arg
+    assert expr.lhs.variable_type.signed is True
+    assert stack_arg.variable_type.signed is False
+
+
+def test_apply_typed_condition_stack_arg_signedness_updates_only_signed_bp_args():
+    project = _project()
+    codegen = _codegen([])
+    signed_arg = CVariable(
+        SimStackVariable(4, 2, base="bp", name="a"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    unsigned_arg = CVariable(
+        SimStackVariable(6, 2, base="bp", name="b"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [signed_arg, unsigned_arg]
+    codegen.cfunc.functy = SimTypeFunction(
+        [SimTypeShort(False), SimTypeShort(False)],
+        SimTypeShort(False),
+        arg_names=("a", "b"),
+    )
+    codegen._inertia_typed_conditions = [
+        ConditionIR(
+            "slt",
+            IRValue(MemSpace.REG, name="ax", size=2),
+            IRValue(MemSpace.CONST, const=0, size=2),
+            producer_insn=0x4012,
+            src_insn=0x4010,
+            block_addr=0x4000,
+        ),
+        ConditionIR(
+            "sgt",
+            IRValue(MemSpace.SS, name="bp", offset=4, size=2),
+            IRValue(MemSpace.SS, name="bp", offset=6, size=2),
+            src_insn=0x4018,
+            block_addr=0x4000,
+        ),
+        ConditionIR(
+            "ult",
+            IRValue(MemSpace.SS, name="bp", offset=6, size=2),
+            IRValue(MemSpace.CONST, const=10, size=2),
+            src_insn=0x4020,
+            block_addr=0x4000,
+        ),
+    ]
+    codegen._inertia_typed_condition_register_exprs_by_ins_addr_8616 = {
+        (0x4010, "ax", 2): signed_arg,
+    }
+
+    changed = _apply_typed_condition_stack_arg_signedness_8616(project, codegen)
+
+    assert changed is True
+    assert signed_arg.variable_type.signed is True
+    assert unsigned_arg.variable_type.signed is False
+    assert codegen.cfunc.functy.args[0].signed is True
+    assert codegen.cfunc.functy.args[1].signed is False
+
+
+def test_apply_typed_condition_stack_arg_signedness_refuses_unowned_condition_drift(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    signed_arg = CVariable(
+        SimStackVariable(4, 2, base="bp", name="a"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [signed_arg]
+    codegen.cfunc.functy = SimTypeFunction(
+        [SimTypeShort(False)],
+        SimTypeShort(False),
+        arg_names=("a",),
+    )
+    codegen._inertia_typed_conditions = [
+        ConditionIR(
+            "slt",
+            IRValue(MemSpace.SS, name="bp", offset=4, size=2),
+            IRValue(MemSpace.CONST, const=0, size=2),
+            src_insn=0x4018,
+            block_addr=0x4000,
+        )
+    ]
+    fingerprints = iter(
+        (
+            {1: ("CmpLT(stack_slot:SS:BP-0x2:size2,const:1)", frozenset())},
+            {1: ("CmpGE(stack_slot:SS:BP-0x2:size2,const:1)", frozenset())},
+        )
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_typed_conditions."
+        "_comparison_fingerprints_by_node_8616",
+        lambda *_args: next(fingerprints),
+    )
+
+    changed = _apply_typed_condition_stack_arg_signedness_8616(project, codegen)
+
+    assert changed is False
+    assert signed_arg.variable_type.signed is False
+    assert codegen.cfunc.functy.args[0].signed is False
+    assert codegen._inertia_typed_condition_signed_stack_arg_refused_reason_8616 == "condition_fingerprint_drift"
+
+
+def test_apply_typed_condition_stack_arg_signedness_promotes_return_type_from_return_expr(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    stack_var = SimStackVariable(4, 2, base="bp", name="x")
+    stack_arg = CVariable(stack_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.arg_list = [stack_arg]
+    codegen.cfunc.functy = SimTypeFunction(
+        [SimTypeShort(False)],
+        SimTypeShort(False),
+        arg_names=("x",),
+    )
+    codegen.cfunc.statements = CStatements(
+        [
+            CReturn(
+                CBinaryOp(
+                    "Sub",
+                    stack_arg,
+                    CConstant(5, SimTypeShort(False), codegen=codegen),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            )
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_typed_conditions = [
+        ConditionIR(
+            "slt",
+            IRValue(MemSpace.SS, name="bp", offset=4, size=2),
+            IRValue(MemSpace.CONST, const=1, size=2),
+            src_insn=0x4018,
+            block_addr=0x4000,
+        )
+    ]
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_typed_conditions."
+        "_condition_fingerprint_changes_are_owned_by_stack_args_8616",
+        lambda *_args: True,
+    )
+
+    changed = _apply_typed_condition_stack_arg_signedness_8616(project, codegen)
+
+    assert changed is True
+    assert codegen.cfunc.functy.args[0].signed is True
+    assert codegen.cfunc.functy.returnty.signed is True
+    assert "prototype_return" in codegen._inertia_typed_condition_signed_stack_arg_changed_fields_8616
+
+
 def test_apply_typed_conditions_refuses_self_compare_replacement(monkeypatch):
     project = _project()
     codegen = _codegen([])
@@ -81,6 +348,29 @@ def test_apply_typed_conditions_refuses_self_compare_replacement(monkeypatch):
     assert getattr(codegen, "_inertia_semantic_condition_materialized_count", 0) == 0
 
 
+def test_apply_typed_conditions_accepts_direct_cifelse_statement_root():
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    cond = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.statements = if_stmt
+    codegen.cfunc.body = if_stmt
+    codegen._inertia_typed_conditions = ()
+
+    changed = _apply_typed_conditions_to_codegen_8616(project, codegen)
+
+    assert changed is False
+    assert if_stmt.condition_and_nodes[0][0] is cond
+    assert getattr(codegen, "_inertia_semantic_condition_materialized_count", 0) == 0
+
+
 def test_apply_typed_conditions_rewrites_cifelse_condition_and_nodes(monkeypatch):
     project = _project()
     codegen = _codegen([])
@@ -94,6 +384,47 @@ def test_apply_typed_conditions_rewrites_cifelse_condition_and_nodes(monkeypatch
     )
     if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
     codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_typed_conditions = [
+        SimpleNamespace(src_insn=0x4020, block_addr=0x4000, op="sgt", lhs="ax", rhs="bx")
+    ]
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_typed_conditions._build_c_condition_expr",
+        lambda _project, _cond, _codegen: CBinaryOp(
+            "CmpGT",
+            _reg(project, "ax", _codegen),
+            _reg(project, "bx", _codegen),
+            codegen=_codegen,
+        ),
+    )
+
+    changed = _apply_typed_conditions_to_codegen_8616(project, codegen)
+
+    assert changed is True
+    assert if_stmt.condition_and_nodes[0][0].op == "CmpGT"
+    assert getattr(codegen, "_inertia_semantic_condition_materialized_count", 0) == 1
+
+
+def test_apply_typed_conditions_rewrites_tuple_switch_case_body(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    cond = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    switch = CSwitchCase(
+        _reg(project, "ax", codegen),
+        [(33, CStatements([if_stmt], codegen=codegen))],
+        None,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements([switch], addr=0x4010, codegen=codegen)
     codegen.cfunc.body = codegen.cfunc.statements
     codegen._inertia_typed_conditions = [
         SimpleNamespace(src_insn=0x4020, block_addr=0x4000, op="sgt", lhs="ax", rhs="bx")
@@ -150,6 +481,146 @@ def test_apply_typed_conditions_rewrites_wrapped_flag_condition(monkeypatch):
     assert changed is True
     assert if_stmt.condition_and_nodes[0][0].op == "CmpGT"
     assert getattr(codegen, "_inertia_semantic_condition_materialized_count", 0) == 1
+
+
+def test_apply_typed_conditions_rewrites_cmp_wrapped_virtual_flag_carrier(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    carrier = _reg(project, "flags", codegen, var_name="vvar_1357")
+    cond = CBinaryOp(
+        "CmpEQ",
+        CITE(carrier, _const(0, codegen), _const(1, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1118, "vex_block_addr": 0x1118},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_typed_conditions = [
+        SimpleNamespace(src_insn=0x1118, block_addr=0x1118, op="slt", lhs="dx", rhs=0)
+    ]
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_typed_conditions._build_c_condition_expr",
+        lambda _project, _cond, _codegen: CBinaryOp(
+            "CmpLT",
+            _reg(project, "dx", _codegen),
+            _const(0, _codegen),
+            codegen=_codegen,
+        ),
+    )
+
+    changed = _apply_typed_conditions_to_codegen_8616(project, codegen)
+
+    assert changed is True
+    assert if_stmt.condition_and_nodes[0][0].op == "CmpLT"
+    assert getattr(codegen, "_inertia_semantic_condition_materialized_count", 0) == 1
+
+
+def test_apply_typed_conditions_rewrites_unary_wrapped_virtual_flag_carrier(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    carrier = _reg(project, "flags", codegen, var_name="vvar_1357")
+    cond = CUnaryOp(
+        "Not",
+        CITE(carrier, _const(0, codegen), _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1118, "vex_block_addr": 0x1118},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_typed_conditions = [
+        SimpleNamespace(src_insn=0x1118, block_addr=0x1118, op="slt", lhs="dx", rhs=0)
+    ]
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_typed_conditions._build_c_condition_expr",
+        lambda _project, _cond, _codegen: CBinaryOp(
+            "CmpLT",
+            _reg(project, "dx", _codegen),
+            _const(0, _codegen),
+            codegen=_codegen,
+        ),
+    )
+
+    changed = _apply_typed_conditions_to_codegen_8616(project, codegen)
+
+    assert changed is True
+    assert if_stmt.condition_and_nodes[0][0].op == "CmpLT"
+    assert getattr(codegen, "_inertia_semantic_condition_materialized_count", 0) == 1
+
+
+def test_apply_typed_conditions_rewrites_tagged_cite_carrier_without_name_heuristic(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    carrier = _reg(project, "ax", codegen, var_name="carrier")
+    cond = CUnaryOp(
+        "Not",
+        CITE(carrier, _const(0, codegen), _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1118, "vex_block_addr": 0x1118},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_typed_conditions = [
+        SimpleNamespace(src_insn=0x1118, block_addr=0x1118, op="slt", lhs="dx", rhs=0)
+    ]
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_typed_conditions._build_c_condition_expr",
+        lambda _project, _cond, _codegen: CBinaryOp(
+            "CmpLT",
+            _reg(project, "dx", _codegen),
+            _const(0, _codegen),
+            codegen=_codegen,
+        ),
+    )
+
+    changed = _apply_typed_conditions_to_codegen_8616(project, codegen)
+
+    assert changed is True
+    assert if_stmt.condition_and_nodes[0][0].op == "CmpLT"
+
+
+def test_apply_typed_conditions_preserves_inverted_cite_truth_table(monkeypatch) -> None:
+    project = _project()
+    codegen = _codegen([])
+    carrier = _reg(project, "ax", codegen, var_name="carrier")
+    cond = CITE(
+        carrier,
+        _const(0, codegen),
+        _const(1, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1118, "vex_block_addr": 0x1118},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_typed_conditions = [
+        SimpleNamespace(src_insn=0x1118, block_addr=0x1118, op="slt", lhs="dx", rhs=0)
+    ]
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_typed_conditions._build_c_condition_expr",
+        lambda _project, _cond, _codegen: CBinaryOp(
+            "CmpLT",
+            _reg(project, "dx", _codegen),
+            _const(0, _codegen),
+            codegen=_codegen,
+        ),
+    )
+
+    changed = _apply_typed_conditions_to_codegen_8616(project, codegen)
+
+    replacement = if_stmt.condition_and_nodes[0][0]
+    assert changed is True
+    assert isinstance(replacement, CUnaryOp)
+    assert replacement.op == "Not"
+    assert isinstance(replacement.operand, CBinaryOp)
+    assert replacement.operand.op == "CmpLT"
 
 
 def test_apply_typed_conditions_refuses_fingerprint_equal_replacement(monkeypatch):
@@ -247,6 +718,11 @@ def test_apply_typed_conditions_materializes_irvalue_operands():
     updated = if_stmt.condition_and_nodes[0][0]
     assert isinstance(updated, CBinaryOp)
     assert updated.op == "CmpLE"
+    assert updated.tags == {
+        "typed_condition": True,
+        "ins_addr": 0x4020,
+        "vex_block_addr": 0x4000,
+    }
 
 
 def test_apply_typed_conditions_binds_register_operand_before_flag_producer():

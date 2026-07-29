@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Summarize layer-dump manifests produced by `decompile.py --dump-layers`.
 
+Layer: Tooling/gates.
+Responsibility: summarize diagnostic layer dumps without owning decompiler semantics.
+
 Examples:
 
     ./scripts/analyze_decompilation_layers.py
@@ -19,6 +22,8 @@ from pathlib import Path
 
 @dataclass
 class LayerDumpSummary:
+    """Summary of one function layer-dump manifest."""
+
     function_addr: str
     function_name: str
     attempt: int
@@ -101,7 +106,7 @@ def _collect_run(manifest: Path) -> LayerDumpSummary | None:
     )
 
 
-def _iter_manifests(root: Path):
+def _iter_manifests(root: Path) -> tuple[Path, ...]:
     if not root.exists():
         return ()
     return tuple(root.rglob("manifest.jsonl"))
@@ -207,6 +212,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Analyze layer-dump manifests and return nonzero when failures are present."""
     args = _build_parser().parse_args(argv)
     manifests = _iter_manifests(args.root)
 

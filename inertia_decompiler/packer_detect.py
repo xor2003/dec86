@@ -1,5 +1,8 @@
 """Efficient packed DOS EXE detector.
 
+Layer: CLI/fallback/reporting.
+Responsibility: detect known DOS packers for reporting and loader policy only.
+
 Strategy:
 1. Primary scan: entry region ± 2KB (95% detection accuracy)
 2. Secondary scan: first 16KB of file
@@ -20,7 +23,7 @@ from typing import Optional
 
 
 class PackerType(Enum):
-    """Known DOS packer types"""
+    """Known DOS packer types."""
 
     PKLITE = "PKLITE"
     LZEXE = "LZEXE"
@@ -30,7 +33,7 @@ class PackerType(Enum):
 
 @dataclass
 class PackerDetection:
-    """Result of packer detection"""
+    """Result of packer detection."""
 
     packer_type: PackerType
     signature: str  # The actual signature found
@@ -104,20 +107,9 @@ def _scan_region(data: bytes, start: int, end: int, signatures: dict[str, str]) 
 
 
 def detect_packer(binary_path: Path) -> Optional[PackerDetection]:
-    def _impl():
-        """Detect if DOS EXE is packed and by which packer.
+    """Detect if DOS EXE is packed and by which packer."""
 
-        Uses efficient scanning strategy:
-        1. Entry region ± 2KB (primary, 95% accuracy)
-        2. First 16KB of file (secondary)
-        3. Full file (fallback only)
-
-        Args:
-            binary_path: Path to DOS EXE file
-
-        Returns:
-            PackerDetection if packed, else None
-        """
+    def _impl() -> Optional[PackerDetection]:
         try:
             data = binary_path.read_bytes()
         except (OSError, IOError):

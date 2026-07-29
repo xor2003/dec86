@@ -1,41 +1,65 @@
+"""Layer: Frontend/runtime.
+
+Responsibility: parse instruction prefixes, operands, and width state for the lifter.
+Forbidden: decompiler semantic recovery, source/COD-backed repair, or validation acceptance.
+"""
+
+from __future__ import annotations
+
 import logging
 import struct
-from typing import TYPE_CHECKING
 
 from pyvex.lifting.util import ParseError
-from pyvex.lifting.util.vex_helper import Type
 
-from angr_platforms.X86_16.emulator import Emulator
-from angr_platforms.X86_16.instruction import InstrData
-
-if TYPE_CHECKING:
-    from .emulator import Emulator
 from .addressing_helpers import decode_width_case_for_profile, decode_width_profile
-from .instruction import *
+from .emulator import Emulator
+from .instruction import (
+    CHK_IMM8,
+    CHK_IMM16,
+    CHK_IMM32,
+    CHK_MODRM,
+    CHK_MOFFS,
+    CHK_PTR16,
+    MAX_OPCODE,
+    REPNZ,
+    REPZ,
+    InstrData,
+    InstrFlags,
+    X86Instruction,
+)
+from .regs import sgreg_t
 
 CHSZ_NONE: int = 0
 CHSZ_OP: int = 1
 CHSZ_AD: int = 2
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 class ParseInstr(X86Instruction):
+    """Parse x86 instruction bytes into frontend decode metadata."""
+
     def __init__(self, emu: Emulator, instr: InstrData, mode32: bool) -> None:
+        """Bind parser state to the current emulator byte stream and instruction record."""
         super().__init__(emu, instr, mode32)
         self.emu: Emulator = emu
-        self.chk = [InstrFlags()] * MAX_OPCODE
-        self.chsz = CHSZ_NONE
-        self.chsz_ad = False
+        self.chk: list[int | InstrFlags] = [InstrFlags()] * MAX_OPCODE
+        self.chsz: int = CHSZ_NONE
+        self.chsz_ad: bool = False
 
     def parse_prefix(self) -> int:
-        def _impl():
+        """Consume instruction prefixes and return the operand/address-size override mask."""
+
+        def _impl() -> int:
             chsz = 0
             prefix_len = 0
 
             while True:
                 # code = self.emu.get_code8_(bitstream)
-                code = self.emu.bitstream.peek("uint:8")
+                raw_code = self.emu.bitstream.peek("uint:8")
+                if not isinstance(raw_code, int):
+                    raise ParseError(f"Expected byte prefix at {self.emu.bitstream.bytepos:08x}, got {raw_code!r}")
+                code = raw_code
                 match code:
                     case 0x26:
                         self.instr.pre_segment = sgreg_t.ES
@@ -76,7 +100,9 @@ class ParseInstr(X86Instruction):
         # self.emu.update_eip(1)
 
     def parse(self) -> None:
-        def _impl():
+        """Parse opcode, operands, immediates, and normalized decode metadata."""
+
+        def _impl() -> None:
             start = self.emu.bitstream.bytepos
             widths = decode_width_profile(
                 self.emu.is_mode32(),
@@ -93,7 +119,8 @@ class ParseInstr(X86Instruction):
             if opcode >> 8 == 0x0F:
                 opcode = (opcode & 0xFF) | 0x0100
 
-            if opcode >= len(self.chk) or isinstance(self.chk[opcode], InstrFlags):
+            opcode_entry = self.chk[opcode] if opcode < len(self.chk) else InstrFlags()
+            if isinstance(opcode_entry, InstrFlags):
                 logger.error(
                     "Unknown opcode at %08x: %02x, next bytes: %08x",
                     self.emu.bitstream.bytepos,
@@ -104,16 +131,17 @@ class ParseInstr(X86Instruction):
                     f"Unknown opcode {self.emu.bitstream.bytepos:08x}: {opcode:02x}{self.emu.bitstream.peek('uint:32'):08x}"
                 )
                 # sys.exit(1)
-            if self.chk[opcode] & CHK_MODRM:
+            opcode_flags = opcode_entry
+            if opcode_flags & CHK_MODRM:
                 self.parse_modrm_sib_disp()
 
-            if self.chk[opcode] & CHK_IMM32:
+            if opcode_flags & CHK_IMM32:
                 self.instr.imm32 = self.emu.get_code32(0)
                 # self.emu.update_eip(4)
-            if self.chk[opcode] & CHK_IMM16:
+            if opcode_flags & CHK_IMM16:
                 self.instr.imm16 = self.emu.get_code16(0)
                 # self.emu.update_eip(2)
-            if self.chk[opcode] & CHK_IMM8:
+            if opcode_flags & CHK_IMM8:
                 self.instr.imm8 = struct.unpack("b", struct.pack("B", self.emu.get_code8(0)))[0]
                 # self.emu.update_eip(1)
                 if opcode == 0xCD and self.instr.imm8 in (0x34, 0x35, 0x38, 0x39):
@@ -122,11 +150,11 @@ class ParseInstr(X86Instruction):
                     # bytes as part of this instruction so later decoding does not
                     # split the FPU operand into bogus integer instructions.
                     self.parse_modrm_sib_disp()
-            if self.chk[opcode] & CHK_PTR16:
+            if opcode_flags & CHK_PTR16:
                 self.instr.ptr16 = self.emu.get_code16(0)
                 # self.emu.update_eip(2)
 
-            if self.chk[opcode] & CHK_MOFFS:
+            if opcode_flags & CHK_MOFFS:
                 self.parse_moffs()
 
             if opcode == 0xF6 and self.instr.modrm.reg in (0, 1):  # test
@@ -148,7 +176,7 @@ class ParseInstr(X86Instruction):
         return "none"
 
     def _classify_control_flow(self, opcode: int) -> str:
-        def _impl():
+        def _impl() -> str:
             if opcode == 0xCD and self.instr.imm8 in (0x34, 0x35, 0x38, 0x39, 0x3D):
                 return "none"
             if opcode in {0xCC, 0xCD, 0xCE}:
@@ -211,6 +239,7 @@ class ParseInstr(X86Instruction):
         return _impl()
 
     def parse_opcode(self) -> None:
+        """Parse the one-byte or 0F-prefixed opcode."""
         self.instr.opcode = self.emu.get_code8(0)
         # self.emu.update_eip(1)
 
@@ -221,6 +250,7 @@ class ParseInstr(X86Instruction):
         logger.debug(f"opcode: {self.instr.opcode:0x}")
 
     def parse_modrm_sib_disp(self) -> None:
+        """Parse ModR/M, optional SIB, and displacement bytes."""
         modrm = self.emu.get_code8(0)
         self.instr.modrm.mod = modrm >> 6
         self.instr.modrm.reg = (modrm >> 3) & 0b111
@@ -233,6 +263,7 @@ class ParseInstr(X86Instruction):
             self.parse_modrm16()
 
     def parse_modrm32(self) -> None:
+        """Parse 32-bit addressing displacement and SIB fields."""
         if self.instr.modrm.mod != 3 and self.instr.modrm.rm == 4:
             sib = self.emu.get_code8(0)
             self.instr.sib.scale = sib >> 6
@@ -254,18 +285,18 @@ class ParseInstr(X86Instruction):
             # self.emu.update_eip(1)
 
     def parse_modrm16(self) -> None:
+        """Parse 16-bit addressing displacement fields."""
         if (self.instr.modrm.mod == 0 and self.instr.modrm.rm == 6) or self.instr.modrm.mod == 2:
-            self.instr.disp16 = self.emu.constant(self.emu.get_code16(0), Type.int_16)
+            self.instr.disp16 = self.emu.get_code16(0)
             self.instr.displacement_bits = 16
             # self.emu.update_eip(2)
         elif self.instr.modrm.mod == 1:
-            self.instr.disp8 = self.emu.constant(
-                struct.unpack("b", struct.pack("B", self.emu.get_code8(0)))[0], Type.int_8
-            )
+            self.instr.disp8 = struct.unpack("b", struct.pack("B", self.emu.get_code8(0)))[0]
             self.instr.displacement_bits = 8
             # self.emu.update_eip(1)
 
     def parse_moffs(self) -> None:
+        """Parse a direct memory offset operand for the active address size."""
         if self.instr.address_bits == 32:
             self.instr.moffs = self.emu.get_code32(0)
             self.instr.displacement_bits = 32

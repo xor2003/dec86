@@ -1,3 +1,8 @@
+"""Runtime compatibility patches for local pyvex/angr execution.
+
+Layer: Frontend/runtime.
+"""
+
 from __future__ import annotations
 
 import functools

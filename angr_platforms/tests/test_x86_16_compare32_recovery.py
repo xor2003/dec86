@@ -3,6 +3,7 @@ from __future__ import annotations
 from angr_platforms.X86_16.structuring.compare32_recovery import (
     Instruction8616,
     Operand8616,
+    _function_instructions_8616,
     recover_32bit_compare_c_from_instructions_8616,
 )
 
@@ -78,3 +79,49 @@ def test_recover_32bit_compare_refuses_without_low_word_compare_evidence():
     ]
 
     assert recover_32bit_compare_c_from_instructions_8616(insns, function_name="bad") is None
+
+
+def test_function_instructions_collects_compare_evidence_across_function_blocks():
+    block_insns = {
+        0x1000: [
+            _insn("mov", _reg("ax"), _bp(4)),
+            _insn("mov", _reg("dx"), _bp(6)),
+            _insn("cmp", _bp(10), _reg("dx")),
+            _insn("jle", Operand8616(None, None)),
+        ],
+        0x1010: [
+            _insn("cmp", _bp(8), _reg("ax")),
+            _insn("jbe", Operand8616(None, None)),
+        ],
+        0x1020: [
+            _insn("mov", _reg("ax"), _bp(4)),
+            _insn("mov", _reg("dx"), _bp(6)),
+        ],
+        0x1030: [
+            _insn("mov", _reg("ax"), _bp(8)),
+            _insn("mov", _reg("dx"), _bp(10)),
+        ],
+    }
+
+    class _CapstoneInsn:
+        def __init__(self, insn: Instruction8616) -> None:
+            self.insn = insn
+
+    class _Factory:
+        def block(self, addr: int) -> object:
+            return type(
+                "Block",
+                (),
+                {"capstone": type("Capstone", (), {"insns": [_CapstoneInsn(insn) for insn in block_insns[addr]]})()},
+            )()
+
+    project = type("Project", (), {"factory": _Factory()})()
+    function = type("Function", (), {"addr": 0x1000, "block_addrs_set": set(block_insns)})()
+
+    recovered = recover_32bit_compare_c_from_instructions_8616(
+        _function_instructions_8616(project, function),
+        function_name="select_max",
+    )
+
+    assert recovered is not None
+    assert "long select_max(long a, long b)" in recovered

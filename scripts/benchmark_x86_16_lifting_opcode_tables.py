@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""
-Micro-benchmarks for x86-16 opcode table registration hot paths.
+"""Micro-benchmarks for x86-16 opcode table registration hot paths.
+
+Layer: Tooling/gates.
+Responsibility: benchmark x86-16 opcode registration paths without changing decompiler semantics.
 
 Run:
   PYTHONPATH=angr_platforms ./.venv/bin/python scripts/benchmark_x86_16_lifting_opcode_tables.py
@@ -20,6 +22,7 @@ def _dummy_handler() -> None:
 
 
 def _new_host() -> SimpleNamespace:
+    """Return a minimal instruction-table host for opcode registration benchmarks."""
     return SimpleNamespace(instrfuncs=[None] * MAX_OPCODE, chk=[0] * MAX_OPCODE)
 
 
@@ -45,6 +48,7 @@ def _bench_register_range(iterations: int) -> float:
 
 
 def main() -> None:
+    """Run opcode registration benchmarks and print plain-text timing summaries."""
     iterations = 20000
     set_funcflag_s = _bench_set_funcflag(iterations)
     register_range_s = _bench_register_range(iterations)

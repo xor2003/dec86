@@ -1,15 +1,14 @@
-"""Structure field merging for Inertia decompiler Phase 2.3.
+"""Layer: Helper boundary.
 
-Merges field access patterns from multiple functions to synthesize
-common struct layouts. Detects overlapping field accesses and
-unifies struct type definitions across the binary.
-
-Evidence: consistent field offset patterns, matching widths, shared base pointers
+Responsibility: merge proven field-access evidence into shared structure layout candidates.
+Forbidden: inventing structs from names, source text, rendered C shape, or sample-specific offsets.
+Dynamic boundary: this module reads and writes optional third-party angr codegen metadata only at pass entry points.
 """
 
 from __future__ import annotations
 
 import logging
+import typing
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional, Set
 
@@ -19,26 +18,29 @@ from .type_storage_object_bridge import load_storage_object_bridge
 if TYPE_CHECKING:
     pass
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-def _typed_ir_struct_candidates(codegen) -> dict[tuple[str, tuple[str, ...]], dict[str, object]]:
-    def _impl():
+def _typed_ir_struct_candidates(codegen: object) -> dict[tuple[str, tuple[str, ...]], dict[str, object]]:
+    """Collect typed IR field-offset candidates for structure layout recovery."""
+
+    def _impl() -> dict[tuple[str, tuple[str, ...]], dict[str, object]]:
+        """Read optional typed IR from the dynamic third-party angr codegen boundary."""
         artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
         function_ssa = getattr(codegen, "_inertia_vex_ir_function_ssa", None)
         if artifact is None or not hasattr(artifact, "blocks"):
             return {}
 
         phi_registers = {
-            getattr(phi.target, "name", None)
-            for phi in tuple(getattr(function_ssa, "phi_nodes", ()) or ())
-            if getattr(getattr(phi, "target", None), "name", None) is not None
+            phi.target.name
+            for phi in tuple(function_ssa.phi_nodes if function_ssa is not None else ())
+            if phi.target.name is not None
         }
         offsets_by_key: dict[tuple[str, tuple[str, ...]], set[int]] = {}
         widths_by_key: dict[tuple[str, tuple[str, ...]], set[int]] = {}
-        for block in tuple(getattr(artifact, "blocks", ()) or ()):
-            for instr in tuple(getattr(block, "instrs", ()) or ()):
-                for atom in tuple(getattr(instr, "args", ()) or ()):
+        for block in tuple(artifact.blocks or ()):
+            for instr in tuple(block.instrs or ()):
+                for atom in tuple(instr.args or ()):
                     if not isinstance(atom, IRAddress) or not atom.base:
                         continue
                     if not phi_registers.intersection(set(atom.base)):
@@ -75,6 +77,7 @@ class StructField:
     functions: Set[str] = field(default_factory=set)  # Functions accessing this field
 
     def __repr__(self) -> str:
+        """Render a compact deterministic field description."""
         return f"{self.name}@+{self.offset}:{self.field_type}({self.width}b)"
 
     def overlaps_with(self, other: StructField) -> bool:
@@ -116,6 +119,7 @@ class StructType:
             existing.functions.update(other_field.functions)
 
     def __repr__(self) -> str:
+        """Render a compact deterministic struct layout summary."""
         kind = "union" if self.is_union else "struct"
         return f"{kind} {self.name} {{ {len(self.fields)} fields, size={self.total_size} }}"
 
@@ -133,6 +137,7 @@ class FieldAccessPattern:
     line_number: Optional[int]  # For tracking
 
     def __repr__(self) -> str:
+        """Render a compact deterministic access pattern description."""
         name_str = f".{self.field_name}" if self.field_name else f"+{self.field_offset}"
         return f"{self.struct_base}{name_str}:{self.access_type}"
 
@@ -140,7 +145,8 @@ class FieldAccessPattern:
 class FieldAccessCollector:
     """Collects field access patterns from multiple functions."""
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize an empty field-access collection."""
         self.patterns: list[FieldAccessPattern] = []
 
     def collect_from_function(self, func_name: str, accesses: list[FieldAccessPattern]) -> None:
@@ -169,7 +175,8 @@ class StructureFieldMerger:
     5. Merge compatible structs across functions
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize empty structure merge state."""
         self.next_struct_id = 0
         self.structs: dict[str, StructType] = {}
         self.base_ptr_to_struct: dict[str, int] = {}  # base_ptr -> struct_id
@@ -267,7 +274,8 @@ class StructureFieldMerger:
 class StructRecoveryInfo:
     """High-level struct recovery metadata."""
 
-    def __init__(self, struct_type: StructType):
+    def __init__(self, struct_type: StructType) -> None:
+        """Snapshot user-facing metadata from a recovered structure type."""
         self.name = struct_type.name
         self.size = struct_type.total_size
         self.fields = struct_type.fields
@@ -275,25 +283,15 @@ class StructRecoveryInfo:
         self.confidence = struct_type.confidence
 
     def __repr__(self) -> str:
+        """Render a compact deterministic recovery summary."""
         return f"{self.name} (size={self.size}, confidence={self.confidence:.1%})"
 
 
-def apply_x86_16_structure_field_merging(codegen) -> bool:
-    def _impl():
-        """Apply structure field merging pass to codegen.
+def apply_x86_16_structure_field_merging(codegen: object) -> bool:
+    """Collect structure field metadata without modifying generated C text."""
 
-        This is the entry point for Phase 2.3 decompiler framework integration.
-
-        Args:
-            codegen: The decompiler codegen object
-
-        Returns:
-            True if struct synthesis occurred, False otherwise
-
-        Note:
-            This pass collects struct recovery metadata but doesn't modify
-            codegen text directly (that happens in later phases).
-        """
+    def _impl() -> bool:
+        """Attach optional struct-merging metadata across the dynamic third-party angr codegen boundary."""
         if getattr(codegen, "cfunc", None) is None:
             return False
 
@@ -305,18 +303,16 @@ def apply_x86_16_structure_field_merging(codegen) -> bool:
                 bridge = load_storage_object_bridge(project, function_addr, codegen=codegen)
             typed_ir_facts = _typed_ir_struct_candidates(codegen)
 
-            # Track that struct merging pass ran
-            codegen._inertia_struct_merging_applied = True
-            codegen._inertia_struct_merging_bridge = bridge
-            codegen._inertia_struct_merging_struct_facts = {} if bridge is None else bridge.facts_by_base
-            codegen._inertia_struct_merging_member_facts = {} if bridge is None else bridge.member_facts
-            codegen._inertia_struct_merging_array_facts = {} if bridge is None else bridge.array_facts
-            codegen._inertia_struct_merging_refusal_facts = {} if bridge is None else bridge.refusal_facts
-            codegen._inertia_struct_merging_typed_ir_facts = typed_ir_facts
-            codegen._inertia_struct_merging_changed = bool(
-                (bridge is not None and bridge.facts_by_base) or typed_ir_facts
-            )
-            codegen._inertia_struct_merging_stats = {
+            # Dynamic codegen boundary: attach optional struct-merging metadata to third-party angr codegen.
+            typing.cast(typing.Any, codegen)._inertia_struct_merging_applied = True
+            typing.cast(typing.Any, codegen)._inertia_struct_merging_bridge = bridge
+            typing.cast(typing.Any, codegen)._inertia_struct_merging_struct_facts = {} if bridge is None else bridge.facts_by_base
+            typing.cast(typing.Any, codegen)._inertia_struct_merging_member_facts = {} if bridge is None else bridge.member_facts
+            typing.cast(typing.Any, codegen)._inertia_struct_merging_array_facts = {} if bridge is None else bridge.array_facts
+            typing.cast(typing.Any, codegen)._inertia_struct_merging_refusal_facts = {} if bridge is None else bridge.refusal_facts
+            typing.cast(typing.Any, codegen)._inertia_struct_merging_typed_ir_facts = typed_ir_facts
+            typing.cast(typing.Any, codegen)._inertia_struct_merging_changed = bool((bridge is not None and bridge.facts_by_base) or typed_ir_facts)
+            typing.cast(typing.Any, codegen)._inertia_struct_merging_stats = {
                 "field_accesses": 0
                 if bridge is None
                 else sum(len(fact.candidate_offsets) for fact in bridge.facts_by_base.values()),
@@ -338,7 +334,8 @@ def apply_x86_16_structure_field_merging(codegen) -> bool:
             return False  # No direct modifications at this stage
         except Exception as ex:
             logger.warning("Structure field merging pass failed: %s", ex)
-            codegen._inertia_struct_merging_error = str(ex)
+            # Dynamic codegen boundary: preserve the failure reason on third-party angr codegen for diagnostics.
+            typing.cast(typing.Any, codegen)._inertia_struct_merging_error = str(ex)
             return False
 
     return _impl()

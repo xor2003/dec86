@@ -1,0 +1,797 @@
+from __future__ import annotations
+
+from scripts import test_ownership_manifest
+
+EXISTING_SOURCE_PATH = "scripts/test_ownership_manifest.py"
+
+
+def test_selects_manifest_tests_for_implementation_file():
+    selected = test_ownership_manifest.select_tests_for_files(("scripts/test_pipeline.py",))
+
+    assert selected == ("angr_platforms/tests/test_test_pipeline.py",)
+
+
+def test_selects_agent_context_check_tests_for_implementation_file():
+    selected = test_ownership_manifest.select_tests_for_files(("scripts/agent_context_check.py",))
+
+    assert selected == ("angr_platforms/tests/test_agent_context_check.py",)
+
+
+def test_selects_type_ratchet_tests_for_implementation_file():
+    selected = test_ownership_manifest.select_tests_for_files(("scripts/check_changed_non_test_types.py",))
+
+    assert selected == ("angr_platforms/tests/test_check_changed_non_test_types.py",)
+
+
+def test_selects_ultra_quickc_fixture_tests_for_implementation_file():
+    selected = test_ownership_manifest.select_tests_for_files(("scripts/import_ultra_quickc_fixtures.py",))
+
+    assert selected == ("angr_platforms/tests/test_import_ultra_quickc_fixtures.py",)
+
+
+def test_selects_real_mode_linear_focused_tests_for_implementation_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/lowering/real_mode_linear.py",)
+    )
+
+    assert selected == (
+        "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
+        "test_materialize_direct_stack_mov_signed_half_inserts_before_outer_branch_first_use",
+        "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
+        "test_materialize_direct_stack_mov_signed_half_inserts_before_first_stack_use_without_tagged_stmt",
+        "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
+        "test_materialize_direct_stack_mov_arg_copy_inserts_inside_else_after_prior_stack_assignment",
+    )
+
+
+def test_selects_pipeline_invariant_tests_for_implementation_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/pipeline/invariants.py",)
+    )
+
+    assert selected == ("angr_platforms/tests/test_x86_16_rewrite_boundary.py",)
+
+
+def test_selects_final_emission_guard_tests_for_architecture_guard_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/pipeline/architecture_guard.py",)
+    )
+
+    assert selected == (
+        "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
+        "test_architecture_guard_rejects_raw_linear_segment_arithmetic",
+        "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
+        "test_architecture_guard_ignores_forbidden_tokens_inside_comments",
+        "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
+        "test_architecture_guard_rejects_unreachable_call_after_return",
+        "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
+        "test_architecture_guard_rejects_unary_not_shift_precedence_leak",
+    )
+
+
+def test_selects_validation_semantics_tests_for_root_validation_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/validation_semantics.py",)
+    )
+
+    assert selected == ("angr_platforms/tests/test_x86_16_validation_semantics.py",)
+
+
+def test_selects_validation_dataflow_tests_for_root_validation_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/validation_dataflow.py",)
+    )
+
+    assert selected == ("angr_platforms/tests/test_x86_16_validation_dataflow.py",)
+
+
+def test_selects_ir_layer_fallback_for_unowned_ir_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/ir/core.py",)
+    )
+
+    assert selected == ("angr_platforms/tests/test_x86_16_ir_core.py",)
+
+
+def test_selects_semantics_layer_fallback_for_unowned_semantics_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/semantics/branch_target_return.py",)
+    )
+
+    assert selected == ("angr_platforms/tests/test_x86_16_compare_semantics.py",)
+
+
+def test_selects_structuring_layer_fallback_for_unowned_structuring_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/structuring/control_flow.py",)
+    )
+
+    assert selected == ("angr_platforms/tests/test_x86_16_structuring_pass_validation.py",)
+
+
+def test_specific_rule_takes_precedence_over_layer_fallback():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py",)
+    )
+
+    assert selected == ("angr_platforms/tests/test_x86_16_condition_transfer.py",)
+
+
+def test_selects_tail_validation_family_tests_for_related_modules():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/tail_validation_fingerprint.py",)
+    )
+
+    assert selected == (
+        "angr_platforms/tests/test_x86_16_tail_validation.py",
+        "angr_platforms/tests/test_x86_16_tail_validation_fingerprint.py",
+        "angr_platforms/tests/test_x86_16_tail_validation_routing.py",
+    )
+
+
+def test_selects_tail_validation_routing_test_for_routing_module():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/tail_validation_routing.py",)
+    )
+
+    assert selected == ("angr_platforms/tests/test_x86_16_tail_validation_routing.py",)
+
+
+def test_selects_validation_package_tests_for_canonicalizer():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/validation/canonicalize.py",)
+    )
+
+    assert selected == ("angr_platforms/tests/test_x86_16_validation_canonicalize.py",)
+
+
+def test_selects_type_array_matching_tests_for_implementation_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/type_array_matching.py",)
+    )
+
+    assert selected == ("angr_platforms/tests/test_x86_16_array_matching.py",)
+
+
+def test_selects_type_equivalence_classes_tests_for_implementation_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/type_equivalence_classes.py",)
+    )
+
+    assert selected == ("angr_platforms/tests/test_x86_16_type_equivalence_classes.py",)
+
+
+def test_selects_type_structure_merging_tests_for_implementation_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/type_structure_merging.py",)
+    )
+
+    assert selected == ("angr_platforms/tests/test_x86_16_struct_merging.py",)
+
+
+def test_selects_postprocess_stage_direct_stack_validation_tests_for_implementation_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/decompiler_postprocess_stage.py",)
+    )
+
+    assert selected == (
+        "angr_platforms/tests/test_decompiler_architecture_check.py",
+        "angr_platforms/tests/test_x86_16_jcc_typed_condition_order.py",
+        "angr_platforms/tests/test_x86_16_decompiler_postprocess_utils.py",
+        "angr_platforms/tests/test_x86_16_postprocess_snapshot.py::"
+        "test_direct_stack_move_materialization_delta_accepts_evidenced_loop_body_write_precision",
+        "angr_platforms/tests/test_x86_16_postprocess_snapshot.py::"
+        "test_direct_stack_move_materialization_delta_accepts_for_body_global_high_byte_precision",
+        "angr_platforms/tests/test_x86_16_postprocess_snapshot.py::"
+        "test_direct_stack_move_materialization_delta_refuses_unrelated_for_body_global_precision",
+    )
+
+
+def test_selects_postprocess_callsite_argument_tests_for_implementation_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/decompiler_postprocess_calls.py",)
+    )
+
+    assert selected == (
+        "angr_platforms/tests/test_decompiler_architecture_check.py",
+        "angr_platforms/tests/test_x86_16_jcc_typed_condition_order.py",
+        "angr_platforms/tests/test_x86_16_decompiler_postprocess_utils.py",
+        "angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py::"
+        "test_conservative_call_arg_seed_uses_known_default_for_zero_arg_helper_summary",
+    )
+
+
+def test_selects_cli_direct_fallback_focused_tests_for_legacy_cli_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        (
+            "inertia_decompiler/cli_core.py",
+            "inertia_decompiler/cli_fallback_decompilation.py",
+            "angr_platforms/tests/test_x86_16_cli.py",
+        )
+    )
+
+    assert selected == (
+        "angr_platforms/tests/test_decompiler_architecture_check.py",
+        "angr_platforms/tests/test_x86_16_cli.py::"
+        "test_direct_addr_project_local_fallback_addr_uses_rebased_function_addr",
+        "angr_platforms/tests/test_x86_16_cli.py::"
+        "test_try_decompile_sidecar_slice_uses_extended_bounded_timeout",
+    )
+
+
+def test_selects_promoted_sortdemo_anchor_for_sortdemo_regression_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/tests/test_x86_16_sortdemo_regressions.py",)
+    )
+
+    assert selected == (
+        "angr_platforms/tests/test_x86_16_sortdemo_regressions.py::"
+        "test_sortdemo_bubblesort_direct_path_validates_and_preserves_array_calls",
+    )
+
+
+def test_selects_tail_validation_focused_tests_for_implementation_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/tail_validation.py",)
+    )
+
+    assert selected == (
+        "angr_platforms/tests/test_x86_16_validation_dataflow.py::"
+        "test_tail_validation_refuses_def_use_failure_even_when_baseline_already_lost_definition",
+        "angr_platforms/tests/test_x86_16_validation_control_flow.py::"
+        "test_tail_validation_refuses_duplicate_guard_when_baseline_already_has_it",
+        "angr_platforms/tests/test_x86_16_validation_storage.py::"
+        "test_tail_validation_refuses_storage_loss_already_present_in_baseline",
+        "angr_platforms/tests/test_x86_16_tail_validation.py::"
+        "test_tail_validation_compare_suppresses_loop_body_local_stack_write_precision",
+        "angr_platforms/tests/test_x86_16_tail_validation.py::"
+        "test_tail_validation_compare_suppresses_added_loop_body_local_stack_write_precision",
+        "angr_platforms/tests/test_x86_16_tail_validation.py::"
+        "test_tail_validation_compare_keeps_loop_body_global_write_delta_observable",
+    )
+
+
+def test_selects_manifest_tests_for_absolute_path():
+    selected = test_ownership_manifest.select_tests_for_files(
+        (str(test_ownership_manifest.REPO_ROOT / "scripts" / "decompile_cod_dir.py"),)
+    )
+
+    assert selected == (
+        "angr_platforms/tests/test_decompile_cod_dir_parallelism.py",
+        "angr_platforms/tests/test_decompiler_architecture_check.py",
+    )
+
+
+def test_selects_unique_tests_for_multiple_matching_files():
+    selected = test_ownership_manifest.select_tests_for_files(
+        (
+            "scripts/check_decompiler_architecture.py",
+            "inertia_decompiler/architecture_runtime_guard.py",
+        )
+    )
+
+    assert selected == ("angr_platforms/tests/test_decompiler_architecture_check.py",)
+
+
+def test_manifest_cli_prints_space_separated_pytest_targets(capsys):
+    rc = test_ownership_manifest.main(["scripts/test_pipeline.py", "scripts/decompile_cod_dir.py"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.out.strip() == (
+        "angr_platforms/tests/test_test_pipeline.py "
+        "angr_platforms/tests/test_decompile_cod_dir_parallelism.py "
+        "angr_platforms/tests/test_decompiler_architecture_check.py"
+    )
+
+
+def test_validate_manifest_targets_rejects_missing_pytest_file():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="stale",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=("angr_platforms/tests/test_missing_file.py::test_case",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "stale"
+    assert violations[0].target == "angr_platforms/tests/test_missing_file.py::test_case"
+
+
+def test_validate_manifest_targets_rejects_empty_owner():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner=" ",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=("angr_platforms/tests/test_test_ownership_manifest.py",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].target == "<owner>"
+    assert "non-empty owner" in violations[0].reason
+
+
+def test_validate_manifest_targets_rejects_duplicate_owner_names():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="duplicate-owner",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=("angr_platforms/tests/test_test_ownership_manifest.py",),
+        ),
+        test_ownership_manifest.TestOwnershipRule(
+            owner="duplicate-owner",
+            paths=("scripts/test_pipeline.py",),
+            tests=("angr_platforms/tests/test_test_pipeline.py",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "duplicate-owner"
+    assert violations[0].target == "<owner>"
+    assert "owner names must be unique" in violations[0].reason
+
+
+def test_validate_manifest_targets_rejects_empty_source_paths():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="empty-source-paths",
+            paths=(),
+            tests=("angr_platforms/tests/test_test_ownership_manifest.py",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "empty-source-paths"
+    assert violations[0].target == "<paths>"
+    assert "at least one source path" in violations[0].reason
+
+
+def test_validate_manifest_targets_rejects_duplicate_source_paths_within_rule():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="duplicate-source-path",
+            paths=(EXISTING_SOURCE_PATH, EXISTING_SOURCE_PATH),
+            tests=("angr_platforms/tests/test_test_ownership_manifest.py",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "duplicate-source-path"
+    assert violations[0].target == EXISTING_SOURCE_PATH
+    assert "source paths must be unique" in violations[0].reason
+
+
+def test_validate_manifest_targets_rejects_non_posix_source_path():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="non-posix-source-path",
+            paths=("scripts\\test_ownership_manifest.py",),
+            tests=("angr_platforms/tests/test_test_ownership_manifest.py",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert any(
+        violation.owner == "non-posix-source-path"
+        and violation.target == "scripts\\test_ownership_manifest.py"
+        and "POSIX" in violation.reason
+        for violation in violations
+    )
+
+
+def test_validate_manifest_targets_rejects_absolute_source_path():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="absolute-source-path",
+            paths=("/tmp/source.py",),
+            tests=("angr_platforms/tests/test_test_ownership_manifest.py",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert any(
+        violation.owner == "absolute-source-path"
+        and violation.target == "/tmp/source.py"
+        and "repository-relative" in violation.reason
+        for violation in violations
+    )
+
+
+def test_validate_manifest_targets_rejects_empty_pytest_targets():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="empty-pytest-targets",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=(),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "empty-pytest-targets"
+    assert violations[0].target == "<tests>"
+    assert "at least one pytest target" in violations[0].reason
+
+
+def test_validate_manifest_targets_rejects_duplicate_pytest_targets_within_rule():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="duplicate-pytest-target",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=(
+                "angr_platforms/tests/test_test_ownership_manifest.py",
+                "angr_platforms/tests/test_test_ownership_manifest.py",
+            ),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "duplicate-pytest-target"
+    assert violations[0].target == "angr_platforms/tests/test_test_ownership_manifest.py"
+    assert "pytest targets must be unique" in violations[0].reason
+
+
+def test_validate_manifest_targets_rejects_non_posix_pytest_target_path():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="non-posix-pytest-path",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=("angr_platforms\\tests\\test_test_ownership_manifest.py",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert any(
+        violation.owner == "non-posix-pytest-path"
+        and violation.target == "angr_platforms\\tests\\test_test_ownership_manifest.py"
+        and "POSIX" in violation.reason
+        for violation in violations
+    )
+
+
+def test_validate_manifest_targets_rejects_pytest_target_outside_test_lane():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="outside-test-lane",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=("scripts/test_ownership_manifest.py",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert any(
+        violation.owner == "outside-test-lane"
+        and violation.target == "scripts/test_ownership_manifest.py"
+        and "angr_platforms/tests/" in violation.reason
+        for violation in violations
+    )
+
+
+def test_validate_manifest_targets_rejects_pytest_target_non_test_module_name():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="non-test-module-target",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=("angr_platforms/tests/helper_manifest.py",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert any(
+        violation.owner == "non-test-module-target"
+        and violation.target == "angr_platforms/tests/helper_manifest.py"
+        and "test_*.py" in violation.reason
+        for violation in violations
+    )
+
+
+def test_validate_manifest_targets_rejects_missing_source_path():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="stale-source",
+            paths=("missing/source.py",),
+            tests=("angr_platforms/tests/test_test_ownership_manifest.py",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "stale-source"
+    assert violations[0].target == "missing/source.py"
+    assert "source path does not exist" in violations[0].reason
+
+
+def test_validate_manifest_targets_rejects_missing_pytest_node():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="stale-node",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=("angr_platforms/tests/test_test_ownership_manifest.py::test_missing_case",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "stale-node"
+    assert violations[0].target == "angr_platforms/tests/test_test_ownership_manifest.py::test_missing_case"
+    assert "pytest node does not exist" in violations[0].reason
+
+
+def test_validate_manifest_targets_accepts_existing_pytest_node():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="fresh-node",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=("angr_platforms/tests/test_test_ownership_manifest.py::test_manifest_cli_check_passes_for_current_manifest",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert violations == ()
+
+
+def test_validate_manifest_targets_accepts_existing_class_pytest_node(monkeypatch, tmp_path):
+    tests_dir = tmp_path / "angr_platforms" / "tests"
+    tests_dir.mkdir(parents=True)
+    test_file = tests_dir / "test_class_nodes.py"
+    test_file.write_text(
+        "class TestFocused:\n"
+        "    def test_case(self):\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "source.py").write_text('"""Temporary source path."""\n', encoding="utf-8")
+    monkeypatch.setattr(test_ownership_manifest, "REPO_ROOT", tmp_path)
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="fresh-class-node",
+            paths=("source.py",),
+            tests=("angr_platforms/tests/test_class_nodes.py::TestFocused::test_case",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert violations == ()
+
+
+def test_validate_manifest_targets_accepts_existing_class_pytest_container_node(monkeypatch, tmp_path):
+    tests_dir = tmp_path / "angr_platforms" / "tests"
+    tests_dir.mkdir(parents=True)
+    test_file = tests_dir / "test_class_nodes.py"
+    test_file.write_text(
+        "class TestFocused:\n"
+        "    def test_case(self):\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "source.py").write_text('"""Temporary source path."""\n', encoding="utf-8")
+    monkeypatch.setattr(test_ownership_manifest, "REPO_ROOT", tmp_path)
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="fresh-class-container-node",
+            paths=("source.py",),
+            tests=("angr_platforms/tests/test_class_nodes.py::TestFocused",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert violations == ()
+
+
+def test_validate_manifest_targets_rejects_fast_pytest_target_skip(monkeypatch, tmp_path):
+    tests_dir = tmp_path / "angr_platforms" / "tests"
+    tests_dir.mkdir(parents=True)
+    test_file = tests_dir / "test_fast_skip.py"
+    test_file.write_text(
+        "from __future__ import annotations\n\n"
+        "import pytest\n\n"
+        "def test_case():\n"
+        "    pytest.skip('optional local fixture')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "source.py").write_text('"""Temporary source path."""\n', encoding="utf-8")
+    monkeypatch.setattr(test_ownership_manifest, "REPO_ROOT", tmp_path)
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="fast-skip",
+            paths=("source.py",),
+            tests=("angr_platforms/tests/test_fast_skip.py::test_case",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "fast-skip"
+    assert violations[0].target == "angr_platforms/tests/test_fast_skip.py::test_case"
+    assert "must not use skip/xfail" in violations[0].reason
+
+
+def test_validate_manifest_targets_allows_unselected_skip_in_legacy_test_file(monkeypatch, tmp_path):
+    tests_dir = tmp_path / "angr_platforms" / "tests"
+    tests_dir.mkdir(parents=True)
+    test_file = tests_dir / "test_legacy_nodes.py"
+    test_file.write_text(
+        "from __future__ import annotations\n\n"
+        "import pytest\n\n"
+        "def test_optional_fixture_case():\n"
+        "    pytest.skip('optional local fixture')\n\n"
+        "def test_selected_fast_case():\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "source.py").write_text('"""Temporary source path."""\n', encoding="utf-8")
+    monkeypatch.setattr(test_ownership_manifest, "REPO_ROOT", tmp_path)
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="selected-fast-node",
+            paths=("source.py",),
+            tests=("angr_platforms/tests/test_legacy_nodes.py::test_selected_fast_case",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert violations == ()
+
+
+def test_validate_manifest_targets_rejects_missing_class_pytest_container_node(monkeypatch, tmp_path):
+    tests_dir = tmp_path / "angr_platforms" / "tests"
+    tests_dir.mkdir(parents=True)
+    test_file = tests_dir / "test_class_nodes.py"
+    test_file.write_text(
+        "class TestFocused:\n"
+        "    def test_case(self):\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "source.py").write_text('"""Temporary source path."""\n', encoding="utf-8")
+    monkeypatch.setattr(test_ownership_manifest, "REPO_ROOT", tmp_path)
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="stale-class-container-node",
+            paths=("source.py",),
+            tests=("angr_platforms/tests/test_class_nodes.py::TestMissing",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "stale-class-container-node"
+    assert "pytest node does not exist" in violations[0].reason
+
+
+def test_validate_manifest_targets_rejects_missing_class_pytest_node(monkeypatch, tmp_path):
+    tests_dir = tmp_path / "angr_platforms" / "tests"
+    tests_dir.mkdir(parents=True)
+    test_file = tests_dir / "test_class_nodes.py"
+    test_file.write_text(
+        "class TestFocused:\n"
+        "    def test_case(self):\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "source.py").write_text('"""Temporary source path."""\n', encoding="utf-8")
+    monkeypatch.setattr(test_ownership_manifest, "REPO_ROOT", tmp_path)
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="stale-class-node",
+            paths=("source.py",),
+            tests=("angr_platforms/tests/test_class_nodes.py::TestFocused::test_missing",),
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "stale-class-node"
+    assert "pytest node does not exist" in violations[0].reason
+
+
+def test_validate_manifest_targets_rejects_non_fast_rule_tier():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="slow-rule",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=("angr_platforms/tests/test_test_ownership_manifest.py",),
+            tier="slow",
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "slow-rule"
+    assert violations[0].target == "slow"
+    assert "fast tier" in violations[0].reason
+
+
+def test_validate_manifest_targets_requires_fallback_reason():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="undocumented-fallback",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=("angr_platforms/tests/test_test_ownership_manifest.py",),
+            fallback=True,
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "undocumented-fallback"
+    assert violations[0].target == "<reason>"
+    assert "architectural coverage" in violations[0].reason
+
+
+def test_validate_manifest_targets_rejects_vague_fallback_reason():
+    rules = (
+        test_ownership_manifest.TestOwnershipRule(
+            owner="vague-fallback",
+            paths=(EXISTING_SOURCE_PATH,),
+            tests=("angr_platforms/tests/test_test_ownership_manifest.py",),
+            fallback=True,
+            reason="general fallback checks",
+        ),
+    )
+
+    violations = test_ownership_manifest.validate_manifest_targets(rules)
+
+    assert len(violations) == 1
+    assert violations[0].owner == "vague-fallback"
+    assert violations[0].target == "<reason>"
+    assert "unowned scope and coverage" in violations[0].reason
+
+
+def test_manifest_cli_check_fails_for_stale_manifest_rule(monkeypatch, capsys):
+    monkeypatch.setattr(
+        test_ownership_manifest,
+        "TEST_OWNERSHIP_RULES",
+        (
+            test_ownership_manifest.TestOwnershipRule(
+                owner="stale",
+                paths=(EXISTING_SOURCE_PATH,),
+                tests=("angr_platforms/tests/test_missing_file.py",),
+            ),
+        ),
+    )
+
+    rc = test_ownership_manifest.main(["--check"])
+
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "pytest file does not exist" in captured.out
+
+
+def test_manifest_cli_check_passes_for_current_manifest(capsys):
+    rc = test_ownership_manifest.main(["--check"])
+
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert captured.out == ""

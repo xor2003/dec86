@@ -1,4 +1,8 @@
-"""Content-addressed cache keys for decompiler recovery artifacts."""
+"""Content-addressed cache keys for decompiler recovery artifacts.
+
+Layer: CLI/fallback/reporting.
+Responsibility: derive cache keys from binary, sidecar, and implementation fingerprints only.
+"""
 
 from __future__ import annotations
 
@@ -9,9 +13,9 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
 
-DECOMPILATION_CACHE_SCHEMA = 5
-DECOMPILATION_CACHE_DIR = _ROOT / ".inertia_decomp_cache"
-RECOVERY_CACHE_SOURCE_FILES = (
+DECOMPILATION_CACHE_SCHEMA: int = 5
+DECOMPILATION_CACHE_DIR: Path = _ROOT / ".inertia_decomp_cache"
+RECOVERY_CACHE_SOURCE_FILES: tuple[Path, ...] = (
     _ROOT / "decompile.py",
     _ROOT / "inertia_decompiler" / "cli.py",
     _ROOT / "inertia_decompiler" / "cli_decompilation.py",
@@ -31,7 +35,7 @@ RECOVERY_CACHE_SOURCE_FILES = (
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "load_dos_ne.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "lift_86_16.py",
 )
-SIDECAR_METADATA_CACHE_SOURCE_FILES = (
+SIDECAR_METADATA_CACHE_SOURCE_FILES: tuple[Path, ...] = (
     _ROOT / "inertia_decompiler" / "cache.py",
     _ROOT / "inertia_decompiler" / "sidecar_parsers.py",
     _ROOT / "inertia_decompiler" / "sidecar_metadata.py",
@@ -46,7 +50,7 @@ SIDECAR_METADATA_CACHE_SOURCE_FILES = (
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "lst_extract.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "turbo_debug_tdinfo.py",
 )
-DECOMPILATION_CACHE_SOURCE_FILES = (
+DECOMPILATION_CACHE_SOURCE_FILES: tuple[Path, ...] = (
     _ROOT / "decompile.py",
     _ROOT / "inertia_decompiler" / "cli.py",
     _ROOT / "inertia_decompiler" / "cli_decompilation.py",

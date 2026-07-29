@@ -1,15 +1,43 @@
+"""Layer: Widening compatibility.
+
+Responsibility: preserve flat widening_model callers while delegating proof to widening.stack_widening.
+Forbidden: alias ownership, text-backed storage joins, or rewrite-stage widening repairs.
+"""
+
 from __future__ import annotations
 
-# Layer: Compatibility shim
-# Responsibility: preserve flat widening_model import surface during widening package migration.
-# Forbidden: semantic ownership; import canonical widening.stack_widening only.
-from .widening import stack_widening as _stack_widening
+from .alias_state import AliasState
+from .widening.stack_widening import (
+    WIDENING_PIPELINE,
+    RegisterWideningCandidate,
+    StorageJoinAnalysis,
+    WideningCandidate,
+    WideningPipelineSpec,
+    WideningProof,
+    _StorageDomainSignature,
+    can_join_adjacent_register_slices,
+    collect_widening_candidates,
+    describe_widening_candidates,
+    describe_x86_16_widening_pipeline,
+)
+from .widening.stack_widening import (
+    _register_version_for_expr as _canonical_register_version_for_expr,
+)
+from .widening.stack_widening import (
+    prove_adjacent_storage_slices as _prove_adjacent_storage_slices,
+)
 
-_register_version_for_expr = _stack_widening._register_version_for_expr
+_register_version_for_expr = _canonical_register_version_for_expr
 
 
-def prove_adjacent_storage_slices(low_expr, high_expr, *, alias_state=None):
-    return _stack_widening.prove_adjacent_storage_slices(
+def prove_adjacent_storage_slices(
+    low_expr: object,
+    high_expr: object,
+    *,
+    alias_state: AliasState | None = None,
+) -> WideningProof:
+    """Prove adjacent storage slices through the canonical widening layer."""
+    return _prove_adjacent_storage_slices(
         low_expr,
         high_expr,
         alias_state=alias_state,
@@ -17,35 +45,48 @@ def prove_adjacent_storage_slices(low_expr, high_expr, *, alias_state=None):
     )
 
 
-def analyze_adjacent_storage_slices(low_expr, high_expr, *, alias_state=None):
-    return _stack_widening.StorageJoinAnalysis(
+def analyze_adjacent_storage_slices(
+    low_expr: object,
+    high_expr: object,
+    *,
+    alias_state: AliasState | None = None,
+) -> StorageJoinAnalysis:
+    """Return compatibility analysis for adjacent storage slices."""
+    return StorageJoinAnalysis(
         prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
     )
 
 
-def can_join_adjacent_storage_slices(low_expr, high_expr, *, alias_state=None) -> bool:
-    def _impl():
+def can_join_adjacent_storage_slices(
+    low_expr: object,
+    high_expr: object,
+    *,
+    alias_state: AliasState | None = None,
+) -> bool:
+    """Return whether adjacent storage slices are proven safe to join."""
+
+    def _impl() -> bool:
         proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
         if not proof.ok:
             return False
         try:
-            low_candidate = _stack_widening.RegisterWideningCandidate.from_expr(low_expr)
-            high_candidate = _stack_widening.RegisterWideningCandidate.from_expr(high_expr)
+            low_candidate = RegisterWideningCandidate.from_expr(low_expr)
+            high_candidate = RegisterWideningCandidate.from_expr(high_expr)
         except ValueError:
             low_candidate = None
             high_candidate = None
         if low_candidate is not None and high_candidate is not None:
             if alias_state is None:
                 return low_candidate.is_joinable_with(high_candidate)
-            return _stack_widening.can_join_adjacent_register_slices(
+            return can_join_adjacent_register_slices(
                 low_expr,
                 high_expr,
                 alias_state=alias_state,
                 proof=proof,
             )
         try:
-            low_generic = _stack_widening.WideningCandidate.from_expr(low_expr)
-            high_generic = _stack_widening.WideningCandidate.from_expr(high_expr)
+            low_generic = WideningCandidate.from_expr(low_expr)
+            high_generic = WideningCandidate.from_expr(high_expr)
         except ValueError:
             return False
         if low_generic.domain.is_unknown() or high_generic.domain.is_unknown():
@@ -57,37 +98,32 @@ def can_join_adjacent_storage_slices(low_expr, high_expr, *, alias_state=None) -
     return _impl()
 
 
-def merge_storage_slice_domains(low_expr, high_expr, *, alias_state=None):
+def merge_storage_slice_domains(
+    low_expr: object,
+    high_expr: object,
+    *,
+    alias_state: AliasState | None = None,
+) -> _StorageDomainSignature:
+    """Return the merged storage domain for proven adjacent slices."""
     proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
     if not proof.ok or proof.merged_domain is None:
-        return _stack_widening._StorageDomainSignature("mixed")
+        return _StorageDomainSignature("mixed")
     return proof.merged_domain
 
 
-globals().update(
-    {
-        name: getattr(_stack_widening, name)
-        for name in dir(_stack_widening)
-        if not name.startswith("__")
-        and name
-        not in {
-            "prove_adjacent_storage_slices",
-            "analyze_adjacent_storage_slices",
-            "can_join_adjacent_storage_slices",
-            "merge_storage_slice_domains",
-        }
-    }
-)
-
-__all__ = getattr(
-    _stack_widening,
-    "__all__",
-    tuple(name for name in dir(_stack_widening) if not name.startswith("__")),
-)
-__all__ = tuple(__all__) + (
+__all__ = (
+    "StorageJoinAnalysis",
+    "RegisterWideningCandidate",
+    "WIDENING_PIPELINE",
+    "WideningCandidate",
+    "WideningPipelineSpec",
+    "WideningProof",
     "_register_version_for_expr",
-    "prove_adjacent_storage_slices",
     "analyze_adjacent_storage_slices",
     "can_join_adjacent_storage_slices",
+    "collect_widening_candidates",
+    "describe_widening_candidates",
+    "describe_x86_16_widening_pipeline",
     "merge_storage_slice_domains",
+    "prove_adjacent_storage_slices",
 )

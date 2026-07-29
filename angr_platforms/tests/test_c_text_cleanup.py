@@ -47,3 +47,13 @@ def test_normalize_unresolved_c_text_strips_callee_namespace_prefixes() -> None:
     normalized = normalize_unresolved_c_text(rendered)
     assert "::0x1e22::" not in normalized
     assert "sprintf();" in normalized
+
+
+def test_normalize_unresolved_c_text_does_not_guess_void_object_type() -> None:
+    rendered = "extern void g_unknown;\nstatic void local_unknown;\n"
+    normalized = normalize_unresolved_c_text(rendered)
+
+    assert "extern void g_unknown;" in normalized
+    assert "static void local_unknown;" in normalized
+    assert "unsigned short g_unknown" not in normalized
+    assert "unsigned short local_unknown" not in normalized

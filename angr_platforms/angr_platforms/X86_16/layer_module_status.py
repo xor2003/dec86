@@ -1,17 +1,19 @@
-from __future__ import annotations
+"""Layer: Recovery/reporting.
 
-"""Layer module admission registry.
-
-This file records whether architectural modules are production-wired,
-compatibility wrappers, or test-only prototypes.  It is intentionally
-metadata-only: importing it must not admit a pass into the pipeline.
+Responsibility: record whether architectural modules are production-wired,
+compatibility wrappers, or test-only prototypes.
+Forbidden: admitting a pass into the pipeline or changing recovery behavior by import.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
 
 
 class LayerModuleAdmission(Enum):
+    """Admission state for a layer module in the production architecture."""
+
     PRODUCTION_WIRED = "production_wired"
     COMPATIBILITY_WRAPPER = "compatibility_wrapper"
     TEST_ONLY_PROTOTYPE = "test_only_prototype"
@@ -19,6 +21,8 @@ class LayerModuleAdmission(Enum):
 
 @dataclass(frozen=True, slots=True)
 class LayerModuleRecord:
+    """Document whether a module is production, compatibility, or prototype code."""
+
     module: str
     admission: LayerModuleAdmission
     owner_layer: str
@@ -90,7 +94,7 @@ LAYER_MODULE_RECORDS: tuple[LayerModuleRecord, ...] = (
         "angr_platforms.X86_16.postprocess.cleanup",
         LayerModuleAdmission.COMPATIBILITY_WRAPPER,
         "postprocess",
-        "Wrapper exposing existing postprocess cleanup symbols without hidden logic.",
+        "Reserved cleanup compatibility module; no hidden logic or mirrored dynamic exports.",
     ),
     LayerModuleRecord(
         "angr_platforms.X86_16.lowering.segmented_lowering",
@@ -114,6 +118,7 @@ LAYER_MODULE_RECORDS: tuple[LayerModuleRecord, ...] = (
 
 
 def layer_module_records_by_module() -> dict[str, LayerModuleRecord]:
+    """Return layer module admission records keyed by module name."""
     return {record.module: record for record in LAYER_MODULE_RECORDS}
 
 

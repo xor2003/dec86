@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import json
 
 from angr_platforms.X86_16.targeted_recovery_artifact import write_x86_16_targeted_cod_recovery_artifact
 
 
-def test_targeted_recovery_artifact_writes_bounded_scan_safe_result(tmp_path):
+def test_targeted_recovery_artifact_writes_bounded_scan_safe_result(tmp_path) -> None:
     cod_path = tmp_path / "HELPER.COD"
     cod_path.write_text(
         "\n".join(

@@ -1,8 +1,14 @@
+"""Recover typed conditions from x86-16 flag and test instruction evidence.
+
+Layer: Semantics.
+Responsibility: owns instruction effects, flags, branch meaning, and expression interpretation.
+This module builds IRCondition objects from decoded instruction facts, not text.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
 
-# Layer: Semantics
-# Responsibility: recover typed IRCondition objects from x86-16 flag/test instruction patterns.
-# Forbidden: text-pattern semantics, CLI formatting, postprocess cleanup ownership.
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -43,6 +49,11 @@ _FLAG_SF = 0x80
 _FLAG_OF = 0x800
 
 
+def _dynamic_boundary_attr_8616(obj: object, name: str, default: object = None) -> object:
+    """Dynamic angr/codegen boundary: read optional decoded operand or C AST attributes."""
+    return getattr(obj, name, default)
+
+
 class ConditionConfidence(Enum):
     """How certain we are about a recovered condition."""
 
@@ -63,15 +74,17 @@ class RecoveredCondition:
 
     @property
     def is_proven(self) -> bool:
+        """Return whether the recovered condition is proven by instruction evidence."""
         return self.confidence == ConditionConfidence.PROVEN
 
     @property
     def is_likely(self) -> bool:
+        """Return whether the condition is at least likely enough to consume."""
         return self.confidence in {ConditionConfidence.PROVEN, ConditionConfidence.LIKELY}
 
 
-def _ir_value_from_vex_expr(expr, size_hint: int = 0) -> IRValue:
-    def _impl():
+def _ir_value_from_vex_expr(expr: object, size_hint: int = 0) -> IRValue:
+    def _impl() -> IRValue:
         """Best-effort conversion of a VEX-style expression operand into IRValue."""
         if expr is None:
             return IRValue(MemSpace.UNKNOWN, size=size_hint or 1)
@@ -81,20 +94,20 @@ def _ir_value_from_vex_expr(expr, size_hint: int = 0) -> IRValue:
             return IRValue(MemSpace.CONST, const=expr, size=size_hint or _size_for_int(expr))
 
         # VEX constant: has .value attribute
-        const_value = getattr(expr, "value", None)
+        const_value = _dynamic_boundary_attr_8616(expr, "value")
         if isinstance(const_value, int):
             return IRValue(MemSpace.CONST, const=const_value, size=size_hint or _size_for_int(const_value))
 
         # Register operand: has .reg or .reg_name
-        reg_offset = getattr(expr, "reg", None)
-        reg_name = getattr(expr, "reg_name", None)
+        reg_offset = _dynamic_boundary_attr_8616(expr, "reg")
+        reg_name = _dynamic_boundary_attr_8616(expr, "reg_name")
         if isinstance(reg_offset, int):
             return IRValue(
                 MemSpace.REG, name=str(reg_name or f"reg_{reg_offset}"), offset=reg_offset, size=size_hint or 2
             )
 
         # Generic tmp
-        return IRValue(MemSpace.TMP, name=getattr(expr, "__class__", type(expr)).__name__, size=size_hint or 2)
+        return IRValue(MemSpace.TMP, name=type(expr).__name__, size=size_hint or 2)
 
     return _impl()
 
@@ -109,20 +122,20 @@ def _size_for_int(value: int) -> int:
     return 4
 
 
-def _c_constant_int_value_8616(node) -> int | None:
+def _c_constant_int_value_8616(node: object) -> int | None:
     """Extract integer value from a structured-codegen CConstant node."""
     if node is None:
         return None
     cls_name = type(node).__name__
     if cls_name != "CConstant":
         return None
-    value = getattr(node, "value", None)
+    value = _dynamic_boundary_attr_8616(node, "value")
     if isinstance(value, int):
         return value
     return None
 
 
-def _c_variable_register_name_8616(node) -> str | None:
+def _c_variable_register_name_8616(node: object) -> str | None:
     """Extract register name from a CVariable or its nested variable attribute."""
     if node is None:
         return None
@@ -131,7 +144,7 @@ def _c_variable_register_name_8616(node) -> str | None:
         return None
     variable = None
     for attr in ("variable", "unified_variable"):
-        candidate = getattr(node, attr, None)
+        candidate = _dynamic_boundary_attr_8616(node, attr)
         cls = type(candidate).__name__ if candidate is not None else ""
         if cls == "SimRegisterVariable":
             variable = candidate
@@ -139,10 +152,11 @@ def _c_variable_register_name_8616(node) -> str | None:
     if variable is None:
         return None
     # Try to get register name from project context or from variable reg offset
-    reg_offset = getattr(variable, "reg", None)
+    reg_offset = _dynamic_boundary_attr_8616(variable, "reg")
     if isinstance(reg_offset, int):
         return f"reg_{reg_offset}"
-    return getattr(variable, "name", None)
+    name = _dynamic_boundary_attr_8616(variable, "name")
+    return name if isinstance(name, str) else None
 
 
 def classify_flag_mask_bit_8616(mask: int) -> tuple[str | None, int | None]:
@@ -159,13 +173,15 @@ def classify_flag_mask_bit_8616(mask: int) -> tuple[str | None, int | None]:
 
 
 def build_typed_condition_from_flag_mask_8616(
-    flag_var,
+    flag_var: object,
     mask: int,
     negate: bool,
     *,
-    operands: tuple | None = None,
+    operands: tuple[object, ...] | None = None,
 ) -> RecoveredCondition | None:
-    def _impl():
+    """Recover a typed condition from a flag mask test like ``(flags & ZF) != 0``."""
+
+    def _impl() -> RecoveredCondition | None:
         """Recover a typed condition from a flag mask test like ``(flags & ZF) != 0``.
 
         Args:
@@ -231,8 +247,8 @@ def build_typed_condition_from_flag_mask_8616(
 
 
 def build_typed_condition_from_cmp_pair_8616(
-    lhs_node,
-    rhs_node,
+    lhs_node: object,
+    rhs_node: object,
     *,
     jcc_mnemonic: str | None = None,
 ) -> RecoveredCondition | None:
@@ -271,7 +287,7 @@ def build_typed_condition_from_cmp_pair_8616(
     )
 
 
-def build_typed_condition_from_test_self_8616(operand) -> RecoveredCondition | None:
+def build_typed_condition_from_test_self_8616(operand: object) -> RecoveredCondition | None:
     """Recover a nonzero test from a TEST/OR self pattern."""
     op_val = _ir_value_from_vex_expr(operand)
     if op_val.space == MemSpace.UNKNOWN:
@@ -282,10 +298,10 @@ def build_typed_condition_from_test_self_8616(operand) -> RecoveredCondition | N
     )
 
 
-def _same_operand_test_8616(lhs, rhs) -> bool:
+def _same_operand_test_8616(lhs: object, rhs: object) -> bool:
     """Check if two operands represent the same register (test/or self)."""
-    lhs_reg = getattr(lhs, "reg", None)
-    rhs_reg = getattr(rhs, "reg", None)
+    lhs_reg = _dynamic_boundary_attr_8616(lhs, "reg")
+    rhs_reg = _dynamic_boundary_attr_8616(rhs, "reg")
     if isinstance(lhs_reg, int) and isinstance(rhs_reg, int):
         return lhs_reg == rhs_reg
     if lhs is rhs:
@@ -315,7 +331,7 @@ _JCC_COMPARE_OP_8616: dict[str, ConditionOp] = {
 }
 
 
-def _jcc_to_condition_op_8616(mnemonic: str | None, lhs, rhs) -> ConditionOp:
+def _jcc_to_condition_op_8616(mnemonic: str | None, lhs: object, rhs: object) -> ConditionOp:
     """Map a JCC mnemonic to a ConditionOp, defaulting to unsigned."""
     if isinstance(mnemonic, str):
         mnemonic = mnemonic.lower().strip()
@@ -331,8 +347,8 @@ def _jcc_to_condition_op_8616(mnemonic: str | None, lhs, rhs) -> ConditionOp:
     return "compare"
 
 
-def _jcc_to_condition_op_with_zero_8616(mnemonic: str | None, lhs, rhs) -> ConditionOp:
-    def _impl():
+def _jcc_to_condition_op_with_zero_8616(mnemonic: str | None, lhs: object, rhs: object) -> ConditionOp:
+    def _impl() -> ConditionOp:
         nonlocal mnemonic
         """Map a JCC against zero to the appropriate condition op."""
         if isinstance(mnemonic, str):

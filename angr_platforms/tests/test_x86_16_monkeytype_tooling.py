@@ -22,6 +22,16 @@ def test_monkeytype_code_filter_rejects_external_sources():
     assert not monkeytype_tools.is_traceable_repo_path(Path("/tmp/random_script.py"))
 
 
+def test_monkeytype_code_filter_uses_code_filename(monkeypatch):
+    monkeypatch.setattr(monkeytype_tools, "default_code_filter", lambda code: True)
+
+    repo_code = compile("value = 1", str(monkeytype_tools.REPO_ROOT / "inertia_decompiler" / "runtime_support.py"), "exec")
+    external_code = compile("value = 1", "/tmp/random_script.py", "exec")
+
+    assert monkeytype_tools.monkeytype_code_filter(repo_code)
+    assert not monkeytype_tools.monkeytype_code_filter(external_code)
+
+
 def test_parse_list_modules_output_filters_and_sorts_modules():
     output = "\n".join(
         [

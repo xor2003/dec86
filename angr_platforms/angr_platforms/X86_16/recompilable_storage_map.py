@@ -1,3 +1,9 @@
+"""Layer: Recompilable output.
+
+Responsibility: materialize proven segmented storage rows for generated-C recompilation.
+Forbidden: segment flattening, guessed objects, or text-derived storage identity.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,8 +28,10 @@ _SEGMENT_ORDER = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RecompilableStorageMapCandidate:
+    """Candidate segmented storage identity for recompilable C output."""
+
     segment_reg: str
     segment_value: int | None
     offset: int
@@ -35,8 +43,10 @@ class RecompilableStorageMapCandidate:
     stable_object_name: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RecompilableStorageMapRow:
+    """Accepted segmented storage row with proven linear-lowering support."""
+
     segment_reg: str
     segment_value: int | None
     offset: int
@@ -46,8 +56,10 @@ class RecompilableStorageMapRow:
     stable_object_name: str | None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RecompilableStorageMapRefusal:
+    """Rejected segmented storage candidate with an explicit refusal reason."""
+
     segment_reg: str
     offset: int
     width: int
@@ -56,8 +68,10 @@ class RecompilableStorageMapRefusal:
     reason: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RecompilableStorageMapArtifact:
+    """Complete accepted/refused segmented storage map for recompilation reports."""
+
     rows: tuple[RecompilableStorageMapRow, ...]
     refusals: tuple[RecompilableStorageMapRefusal, ...]
 
@@ -93,6 +107,7 @@ def _refusal_reason(candidate: RecompilableStorageMapCandidate) -> str:
 def build_recompilable_storage_map(
     candidates: Iterable[RecompilableStorageMapCandidate],
 ) -> RecompilableStorageMapArtifact:
+    """Build a deterministic storage map from proven segmented candidates."""
     rows: list[RecompilableStorageMapRow] = []
     refusals: list[RecompilableStorageMapRefusal] = []
 

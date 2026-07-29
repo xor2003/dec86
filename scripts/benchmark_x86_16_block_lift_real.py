@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""
-Benchmark real-byte x86-16 block lifting and report latency percentiles.
+"""Benchmark real-byte x86-16 block lifting and report latency percentiles.
+
+Layer: Tooling/gates.
+Responsibility: measure frontend lifting latency without changing decompiler semantics.
 
 Run:
   PYTHONPATH=. ./.venv/bin/python scripts/benchmark_x86_16_block_lift_real.py
@@ -11,6 +13,7 @@ from __future__ import annotations
 import argparse
 import statistics
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from inertia_decompiler.project_loading import _build_project
@@ -31,8 +34,8 @@ def _percentile(sorted_values: list[float], q: float) -> float:
 
 
 def _bench(
-    project,
-    project_builder,
+    project: object,
+    project_builder: Callable[[], object],
     addrs: list[int],
     rounds: int,
     *,
@@ -73,6 +76,7 @@ def _print_stats(
 
 
 def main() -> None:
+    """Run warm and/or cold block-lifting timing samples."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=50)
     ap.add_argument(
@@ -83,7 +87,7 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    def _build_sortdemo_project():
+    def _build_sortdemo_project() -> object:
         return _build_project(
             path=Path("./SORTDEMO.EXE"),
             force_blob=False,

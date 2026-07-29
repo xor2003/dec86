@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Verify MS C example runtime gates against compiled fixture outputs.
+
+Layer: Tooling/gates.
+Responsibility: verify decompiled MS C examples by compiling and running focused harnesses.
+"""
 
 from __future__ import annotations
 

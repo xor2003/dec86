@@ -1,7 +1,14 @@
+"""Layer: Recovery metadata.
+
+Responsibility: attach readable interface summaries from recovered function-state facts.
+Forbidden: prototype recovery, source-backed signatures, or semantic repair.
+"""
+
 from __future__ import annotations
 
 import re
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import Protocol, TypeAlias
 
 from .analysis_helpers import collect_neighbor_call_targets
 from .function_state_summary import FunctionStateSummary, summarize_x86_16_function_state
@@ -10,6 +17,52 @@ from .low_memory_regions import format_x86_16_low_memory_access
 __all__ = ["apply_x86_16_function_interface_surface"]
 
 _PROTOTYPE_RE = re.compile(r"^\s*[A-Za-z_][\w\s\*\[\]]*?\s+[A-Za-z_][\w$?@]*\s*\([^)]*\)\s*;\s*$")
+_RenderText: TypeAlias = Callable[[object], object]
+
+
+class _FunctionInfoSurface(Protocol):
+    """Owned function metadata consumed by this reporting-only surface."""
+
+    addr: int
+    name: str
+    info: Mapping[str, object]
+
+
+_FunctionLookup: TypeAlias = Callable[..., _FunctionInfoSurface | None]
+
+
+class _CodegenFunctionSurface(Protocol):
+    """Codegen function fields needed to identify the current function."""
+
+    addr: int
+    name: str
+
+
+class _FunctionLookupSurface(Protocol):
+    """Project KB function lookup used by interface annotation."""
+
+    function: _FunctionLookup
+
+
+class _KnowledgeBaseSurface(Protocol):
+    """Project knowledge-base fields consumed by this module."""
+
+    functions: _FunctionLookupSurface
+
+
+class _ProjectSurface(Protocol):
+    """Project fields consumed by interface annotation."""
+
+    kb: _KnowledgeBaseSurface
+
+
+class _CodegenSurface(Protocol):
+    """Codegen fields patched at the render boundary."""
+
+    cfunc: _CodegenFunctionSurface
+    render_text: _RenderText
+    _inertia_function_interface_surface_installed: bool
+    _inertia_function_interface_original_render_text: _RenderText
 
 
 def _bp_disp(offset: int) -> str:
@@ -27,11 +80,10 @@ def _join(items: tuple[str, ...] | tuple[int, ...], *, ints: bool = False) -> st
     return ", ".join(str(item) for item in items)
 
 
-def _summary_from_source(source: Any) -> FunctionStateSummary:
-    info = getattr(source, "info", None)
-    if isinstance(info, dict) and info:
-        return summarize_x86_16_function_state(info)
-    return summarize_x86_16_function_state(source)
+def _summary_from_source(source: _FunctionInfoSurface) -> FunctionStateSummary:
+    if source.info:
+        return summarize_x86_16_function_state(source.info)
+    return summarize_x86_16_function_state({})
 
 
 def _format_memory_summary(items: tuple[str, ...]) -> str:
@@ -98,7 +150,7 @@ def _prepend_header(rendered: str, header_lines: list[str]) -> str:
 
 
 def _annotate_call_lines(rendered: str, call_comments: dict[str, str]) -> str:
-    def _impl():
+    def _impl() -> str:
         if not call_comments:
             return rendered
         lines = rendered.splitlines()
@@ -128,22 +180,20 @@ def _annotate_call_lines(rendered: str, call_comments: dict[str, str]) -> str:
     return _impl()
 
 
-def _render_with_interface_surface(project, codegen, rendered: str) -> str:
-    cfunc = getattr(codegen, "cfunc", None)
-    if cfunc is None:
-        return rendered
-    function = project.kb.functions.function(addr=getattr(cfunc, "addr", None), create=False)
+def _render_with_interface_surface(project: _ProjectSurface, codegen: _CodegenSurface, rendered: str) -> str:
+    cfunc = codegen.cfunc
+    function = project.kb.functions.function(addr=cfunc.addr, create=False)
     if function is None:
         return rendered
     current_summary = _summary_from_source(function)
-    rendered = _prepend_header(rendered, _function_header_lines(getattr(cfunc, "name", "sub"), current_summary))
+    rendered = _prepend_header(rendered, _function_header_lines(cfunc.name, current_summary))
 
     call_comments: dict[str, str] = {}
     for seed in collect_neighbor_call_targets(function):
-        callee = project.kb.functions.function(addr=getattr(seed, "target_addr", None), create=False)
+        callee = project.kb.functions.function(addr=seed.target_addr, create=False)
         if callee is None:
             continue
-        callee_name = getattr(callee, "name", None)
+        callee_name = callee.name
         if not isinstance(callee_name, str) or not callee_name:
             continue
         comment = _call_comment(callee_name, _summary_from_source(callee))
@@ -153,18 +203,14 @@ def _render_with_interface_surface(project, codegen, rendered: str) -> str:
     return _annotate_call_lines(rendered, call_comments)
 
 
-def apply_x86_16_function_interface_surface(project, codegen) -> bool:
-    cfunc = getattr(codegen, "cfunc", None)
-    if cfunc is None:
-        return False
-    original = getattr(codegen, "render_text", None)
-    if not callable(original):
-        return False
-    if getattr(codegen, "_inertia_function_interface_surface_installed", False):
+def apply_x86_16_function_interface_surface(project: _ProjectSurface, codegen: _CodegenSurface) -> bool:
+    """Install readable interface annotations from already-recovered state facts."""
+    original = codegen.render_text
+    if bool(vars(codegen).get("_inertia_function_interface_surface_installed", False)):
         return False
 
-    def _render_text_with_interface(_cfunc):  # noqa: ANN001
-        # ── Runtime contract: facts produced must be consumed before C emission ──
+    def _render_text_with_interface(_cfunc: object) -> object:
+        # Runtime contract: facts produced must be consumed before C emission.
         from .pipeline.contracts import assert_pipeline_contracts_8616
 
         assert_pipeline_contracts_8616(codegen)
@@ -174,7 +220,7 @@ def apply_x86_16_function_interface_surface(project, codegen) -> bool:
             return rendered
         return _render_with_interface_surface(project, codegen, rendered)
 
-    setattr(codegen, "_inertia_function_interface_surface_installed", True)
-    setattr(codegen, "_inertia_function_interface_original_render_text", original)
-    setattr(codegen, "render_text", _render_text_with_interface)
+    codegen._inertia_function_interface_surface_installed = True
+    codegen._inertia_function_interface_original_render_text = original
+    codegen.render_text = _render_text_with_interface
     return True

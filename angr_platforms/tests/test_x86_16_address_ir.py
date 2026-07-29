@@ -6,7 +6,7 @@ from angr_platforms.X86_16.ir.core import AddressStatus, MemSpace, SegmentOrigin
 from angr_platforms.X86_16.regs import sgreg_t
 
 
-def test_build_address_ir_keeps_explicit_segment_spaces_distinct():
+def test_build_address_ir_keeps_explicit_segment_spaces_distinct() -> None:
     ss = build_address_ir_8616(MemSpace.SS, ("bp",), offset=-2, size=2).to_ir_address()
     ds = build_address_ir_8616(MemSpace.DS, ("bx",), offset=8, size=2).to_ir_address()
     es = build_address_ir_8616(MemSpace.ES, ("di",), offset=4, size=1).to_ir_address()
@@ -16,7 +16,7 @@ def test_build_address_ir_keeps_explicit_segment_spaces_distinct():
     assert es.space is MemSpace.ES
 
 
-def test_resolved_operand_to_address_ir_marks_explicit_segments_proven():
+def test_resolved_operand_to_address_ir_marks_explicit_segments_proven() -> None:
     ss = resolved_operand_to_address_ir_8616(ResolvedMemoryOperand(sgreg_t.SS, -4, 0x1FFC, 16, 16))
     ds = resolved_operand_to_address_ir_8616(ResolvedMemoryOperand(sgreg_t.DS, 8, 0x1008, 16, 16))
     es = resolved_operand_to_address_ir_8616(ResolvedMemoryOperand(sgreg_t.ES, 2, 0x2002, 8, 16))

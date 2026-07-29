@@ -1,18 +1,16 @@
-"""Array expression matching for Inertia decompiler Phase 2.2.
+"""Layer: Helper boundary.
 
-Detects array access patterns (base + index * stride + offset)
-and loop induction variables with stride to enable array subscript
-recovery instead of raw pointer arithmetic.
-
-Pattern: base[index * stride + offset]
-Evidence: loop-carried stride patterns, consistent field access
+Responsibility: summarize typed IR, string-effect, and induction evidence into array-access candidates.
+Forbidden: guessing arrays from names, source text, rendered C shape, or postprocess-only patterns.
+Dynamic boundary: this module traverses third-party angr codegen/C-AST objects while preserving owned typed evidence contracts.
 """
 
 from __future__ import annotations
 
 import logging
+import typing
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Set
+from typing import TYPE_CHECKING, Any, Optional, Set, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -30,19 +28,22 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from inertia_decompiler.cli_access_profiles import (
+    AccessTraitEvidenceProfile,
+    AccessTraitInductionVar,
+    InductionSummary,
     build_access_trait_evidence_profiles,
     infer_induction_variable,
 )
 
-from .decompiler_postprocess_utils import _replace_c_children_8616, _same_c_expression_8616
+from .c_ast_utils import _replace_c_children_8616, _safe_assign_cfunc_statements_8616, _same_c_expression_8616
 from .ir.core import IRAddress
 from .type_storage_object_bridge import load_storage_object_bridge
 
 if TYPE_CHECKING:
     pass
 
-logger = logging.getLogger(__name__)
-MAX_TYPED_ARRAY_CANDIDATES = 64
+logger: logging.Logger = logging.getLogger(__name__)
+MAX_TYPED_ARRAY_CANDIDATES: int = 64
 
 
 def _limit_sorted_mapping_8616(mapping: dict, limit: int) -> dict:
@@ -51,25 +52,29 @@ def _limit_sorted_mapping_8616(mapping: dict, limit: int) -> dict:
     return dict(list(mapping.items())[:limit])
 
 
-def _typed_ir_array_candidates(codegen) -> dict[tuple[str, tuple[str, ...], int], dict[str, object]]:
-    def _impl():
+def _typed_ir_array_candidates(codegen: object) -> dict[tuple[str, tuple[str, ...], int], dict[str, object]]:
+    """Collect typed IR address candidates that look like indexed array accesses."""
+
+    def _impl() -> dict[tuple[str, tuple[str, ...], int], dict[str, object]]:
+        """Read optional typed IR from the dynamic third-party angr codegen boundary."""
+        # Dynamic codegen boundary: typed IR metadata is optional on third-party angr codegen objects.
         artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
         function_ssa = getattr(codegen, "_inertia_vex_ir_function_ssa", None)
         if artifact is None or not hasattr(artifact, "blocks"):
             return {}
 
         phi_registers = {
-            getattr(phi.target, "name", None)
-            for phi in tuple(getattr(function_ssa, "phi_nodes", ()) or ())
-            if getattr(getattr(phi, "target", None), "name", None) is not None
+            phi.target.name
+            for phi in tuple(function_ssa.phi_nodes if function_ssa is not None else ())
+            if phi.target.name is not None
         }
         candidates: dict[tuple[str, tuple[str, ...], int], dict[str, object]] = {}
-        for block in tuple(getattr(artifact, "blocks", ()) or ()):
-            for instr in tuple(getattr(block, "instrs", ()) or ()):
-                for atom in tuple(getattr(instr, "args", ()) or ()):
+        for block in tuple(artifact.blocks or ()):
+            for instr in tuple(block.instrs or ()):
+                for atom in tuple(instr.args or ()):
                     if not isinstance(atom, IRAddress):
                         continue
-                    if len(getattr(atom, "base", ()) or ()) < 2:
+                    if len(atom.base or ()) < 2:
                         continue
                     if not phi_registers.intersection(set(atom.base)):
                         continue
@@ -85,14 +90,17 @@ def _typed_ir_array_candidates(codegen) -> dict[tuple[str, tuple[str, ...], int]
     return _impl()
 
 
-def _typed_string_array_candidates(codegen) -> dict[tuple[str, tuple[str, ...], int], dict[str, object]]:
-    def _impl():
+def _typed_string_array_candidates(codegen: object) -> dict[tuple[str, tuple[str, ...], int], dict[str, object]]:
+    """Collect stable string-effect addresses that look like array bases."""
+
+    def _impl() -> dict[tuple[str, tuple[str, ...], int], dict[str, object]]:
+        # Dynamic codegen boundary: string-effect metadata is optional on third-party angr codegen objects.
         artifact = getattr(codegen, "_inertia_string_effect_artifact", None)
         if artifact is None or not hasattr(artifact, "records"):
             return {}
 
         candidates: dict[tuple[str, tuple[str, ...], int], dict[str, object]] = {}
-        for record in tuple(getattr(artifact, "records", ()) or ()):
+        for record in tuple(artifact.records or ()):
             for role, address in (("source", record.source), ("destination", record.destination)):
                 if not isinstance(address, IRAddress):
                     continue
@@ -116,7 +124,11 @@ def _typed_string_array_candidates(codegen) -> dict[tuple[str, tuple[str, ...], 
     return _impl()
 
 
-def _cached_access_trait_profiles_8616(project, func_addr: int):
+def _cached_access_trait_profiles_8616(
+    project: object, func_addr: int
+) -> dict[tuple[object, ...], AccessTraitEvidenceProfile] | None:
+    """Build cached access-trait profiles across the dynamic compatibility project boundary."""
+    # Dynamic compatibility boundary: project-side access-trait caches are optional CLI/fallback metadata.
     traits_cache = getattr(project, "_inertia_access_traits", None)
     if not isinstance(traits_cache, dict) or func_addr not in traits_cache:
         return None
@@ -124,17 +136,21 @@ def _cached_access_trait_profiles_8616(project, func_addr: int):
     if not isinstance(traits, dict):
         return None
 
+    # Dynamic compatibility boundary: legacy callers may not pre-create the derived profile cache.
     profile_cache = getattr(project, "_inertia_access_trait_profiles_cache", None)
     if not isinstance(profile_cache, dict):
         profile_cache = {}
-        setattr(project, "_inertia_access_trait_profiles_cache", profile_cache)
+        typing.cast(typing.Any, project)._inertia_access_trait_profiles_cache = profile_cache
 
     cache_key = (func_addr, id(traits))
     profiles = profile_cache.get(cache_key)
     if profiles is None:
-        profiles = build_access_trait_evidence_profiles(traits)
+        typed_traits = cast(dict[str, dict[tuple[object, ...], object]], traits)
+        profiles = build_access_trait_evidence_profiles(typed_traits)
         profile_cache[cache_key] = profiles
-    return profiles
+    if not isinstance(profiles, dict):
+        return None
+    return cast(dict[tuple[object, ...], AccessTraitEvidenceProfile], profiles)
 
 
 @dataclass(frozen=True)
@@ -149,6 +165,18 @@ class InductionVariable:
 
     def __repr__(self) -> str:
         return f"IndVar({self.var_name}, stride={self.stride}, width={self.element_width})"
+
+
+def _access_trait_induction_var_8616(candidate: AccessTraitInductionVar, variable: object) -> InductionVariable:
+    """Convert CLI access-trait induction evidence into the owned array-matching contract."""
+    var_name = variable.name or f"reg_{variable.reg}" if isinstance(variable, SimRegisterVariable) else "reg_unknown"
+    return InductionVariable(
+        var_name=var_name,
+        stride=int(candidate.stride),
+        base_value=int(candidate.offset),
+        loop_bound=None,
+        element_width=int(candidate.width),
+    )
 
 
 @dataclass
@@ -191,7 +219,7 @@ class InductionVariableCollector:
     - Loop-carried across function calls
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.induction_vars: dict[str, InductionVariable] = {}
         self.stride_patterns: dict[str, int] = {}
 
@@ -241,7 +269,7 @@ class ArrayExpressionMatcher:
     - Nested arrays: base[i][j]
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.detected_patterns: list[ArrayAccessPattern] = []
         self.array_infos: dict[str, ArrayRecoveryInfo] = {}
 
@@ -340,22 +368,24 @@ def _invert_cmp_op_8616(op: str) -> str | None:
     }.get(op)
 
 
-def _literal_true_8616(node) -> bool:
+def _literal_true_8616(node: object) -> bool:
     return isinstance(node, CConstant) and isinstance(node.value, int) and node.value != 0
 
 
-def _extract_break_guard_8616(stmt):
-    def _impl():
+def _extract_break_guard_8616(stmt: object) -> object | None:
+    def _impl() -> object | None:
         if type(stmt).__name__ not in {"CIfElse", "CIfBreak"}:
             return None
+        # Dynamic angr boundary: CIfElse/CIfBreak expose variant-specific children outside a common typed base.
         cond_nodes = getattr(stmt, "condition_and_nodes", None) or ()
         if len(cond_nodes) != 1:
             return None
         cond, body = cond_nodes[0]
-        if not isinstance(body, CStatements) or len(getattr(body, "statements", ()) or ()) != 1:
+        if not isinstance(body, CStatements) or len(body.statements or ()) != 1:
             return None
         if not isinstance(body.statements[0], CBreak):
             return None
+        # Dynamic angr boundary: else_node exists only on the CIfElse-shaped guard variant.
         else_node = getattr(stmt, "else_node", None)
         if else_node is not None and not (isinstance(else_node, CStatements) and not else_node.statements):
             return None
@@ -364,8 +394,8 @@ def _extract_break_guard_8616(stmt):
     return _impl()
 
 
-def _extract_monotonic_update_8616(stmt):
-    def _impl():
+def _extract_monotonic_update_8616(stmt: object) -> tuple[CVariable, int] | None:
+    def _impl() -> tuple[CVariable, int] | None:
         if not isinstance(stmt, CAssignment) or not isinstance(stmt.lhs, CVariable):
             return None
         rhs = stmt.rhs
@@ -390,40 +420,42 @@ def _extract_monotonic_update_8616(stmt):
     return _impl()
 
 
-def _cond_uses_var_8616(node, target) -> bool:
+def _cond_uses_var_8616(node: object, target: object) -> bool:
     if isinstance(node, CVariable):
         return _same_c_expression_8616(node, target)
     target_key = _expr_index_key_8616(target)
     if target_key is not None and _expr_index_key_8616(node) == target_key:
         return True
     for attr in ("lhs", "rhs", "operand", "cond", "iftrue", "iffalse", "expr", "condition", "retval"):
+        # Dynamic angr boundary: recursive C-AST traversal crosses expression variants with different child names.
         child = getattr(node, attr, None)
         if child is not None and _cond_uses_var_8616(child, target):
             return True
     return False
 
 
-def _loop_index_key_8616(loop_var) -> tuple[object, ...] | None:
+def _loop_index_key_8616(loop_var: object) -> tuple[object, ...] | None:
+    # Dynamic angr boundary: CVariable wraps several SimVariable subclasses behind a common .variable slot.
     variable = getattr(loop_var, "variable", None)
     if isinstance(variable, SimRegisterVariable):
-        return ("reg", getattr(variable, "reg", None))
+        return ("reg", variable.reg)
     if isinstance(variable, SimStackVariable):
-        base = getattr(variable, "base", None)
-        offset = getattr(variable, "offset", None)
-        region = getattr(variable, "region", None)
+        base = variable.base
+        offset = variable.offset
+        region = variable.region
         if base is None or offset is None:
             return None
         return ("stack", base, offset, region)
     if isinstance(variable, SimMemoryVariable):
-        addr = getattr(variable, "addr", None)
+        addr = variable.addr
         if addr is None:
             return None
         return ("mem", addr)
     return None
 
 
-def _expr_index_key_8616(expr) -> tuple[object, ...] | None:
-    def _impl():
+def _expr_index_key_8616(expr: object) -> tuple[object, ...] | None:
+    def _impl() -> tuple[object, ...] | None:
         if isinstance(expr, CVariable):
             return _loop_index_key_8616(expr)
         if isinstance(expr, CTypeCast):
@@ -431,22 +463,22 @@ def _expr_index_key_8616(expr) -> tuple[object, ...] | None:
         if isinstance(expr, CUnaryOp) and expr.op in {"Dereference", "Reference"}:
             return _expr_index_key_8616(expr.operand)
         if isinstance(expr, CIndexedVariable):
-            base_expr = getattr(expr, "variable", None)
+            base_expr = expr.variable
             if isinstance(base_expr, CUnaryOp) and base_expr.op == "Reference":
                 base_expr = base_expr.operand
-            index_expr = getattr(expr, "index", None)
+            index_expr = expr.index
             if (
                 not isinstance(base_expr, CVariable)
                 or not isinstance(index_expr, CConstant)
                 or not isinstance(index_expr.value, int)
             ):
                 return None
-            variable = getattr(base_expr, "variable", None)
+            variable = base_expr.variable
             if not isinstance(variable, SimStackVariable):
                 return None
-            base = getattr(variable, "base", None)
-            offset = getattr(variable, "offset", None)
-            region = getattr(variable, "region", None)
+            base = variable.base
+            offset = variable.offset
+            region = variable.region
             if base is None or not isinstance(offset, int):
                 return None
             return ("stack", base, offset + int(index_expr.value), region)
@@ -455,7 +487,7 @@ def _expr_index_key_8616(expr) -> tuple[object, ...] | None:
     return _impl()
 
 
-def _unwrap_double_negation_8616(node):
+def _unwrap_double_negation_8616(node: object) -> object | None:
     if (
         isinstance(node, CUnaryOp)
         and node.op == "Not"
@@ -466,7 +498,7 @@ def _unwrap_double_negation_8616(node):
     return None
 
 
-def _condition_index_key_8616(node) -> tuple[object, ...] | None:
+def _condition_index_key_8616(node: object) -> tuple[object, ...] | None:
     if isinstance(node, CBinaryOp):
         lhs_key = _expr_index_key_8616(node.lhs)
         if lhs_key is not None:
@@ -477,11 +509,20 @@ def _condition_index_key_8616(node) -> tuple[object, ...] | None:
     return None
 
 
-def _has_induction_evidence_for_key_8616(codegen, index_key: tuple[object, ...]) -> bool:
-    def _impl():
-        summaries = tuple(getattr(codegen, "_inertia_induction_summaries", ()) or ())
-        if any(getattr(summary, "index_key", None) == index_key for summary in summaries):
+def _typed_induction_summaries_8616(codegen: object) -> tuple[InductionSummary, ...]:
+    """Return typed induction summaries attached by the structuring stage."""
+    # Dynamic codegen boundary: structuring attaches optional induction summaries to angr codegen objects.
+    summaries = getattr(codegen, "_inertia_induction_summaries", ()) or ()
+    return tuple(summary for summary in summaries if isinstance(summary, InductionSummary))
+
+
+def _has_induction_evidence_for_key_8616(codegen: object, index_key: tuple[object, ...]) -> bool:
+    def _impl() -> bool:
+        """Check induction evidence through the dynamic third-party angr codegen/project boundary."""
+        summaries = _typed_induction_summaries_8616(codegen)
+        if any(summary.index_key == index_key for summary in summaries):
             return True
+        # Dynamic codegen boundary: project/cfunc are third-party angr codegen attachments.
         project = getattr(codegen, "project", None)
         cfunc = getattr(codegen, "cfunc", None)
         func_addr = getattr(cfunc, "addr", None)
@@ -502,38 +543,40 @@ def _has_induction_evidence_for_key_8616(codegen, index_key: tuple[object, ...])
     return _impl()
 
 
-def _profile_induction_match_8616(codegen, loop_var) -> InductionVariable | None:
-    def _impl():
+def _profile_induction_match_8616(codegen: object, loop_var: object) -> InductionVariable | None:
+    def _impl() -> InductionVariable | None:
+        """Match induction evidence through the dynamic third-party angr codegen/project boundary."""
+        # Dynamic angr boundary: CVariable-compatible loop nodes expose the wrapped SimVariable dynamically.
         variable = getattr(loop_var, "variable", None)
         index_key = _loop_index_key_8616(loop_var)
         if variable is None or index_key is None:
             return None
 
-        summaries = tuple(getattr(codegen, "_inertia_induction_summaries", ()) or ())
+        summaries = _typed_induction_summaries_8616(codegen)
         best_summary = None
         best_summary_score: tuple[int, int, int] | None = None
         for summary in summaries:
-            if getattr(summary, "index_key", None) != index_key:
+            if summary.index_key != index_key:
                 continue
             score = (
-                int(getattr(summary, "count", 0) or 0),
-                abs(int(getattr(summary, "stride", 0) or 0)),
-                int(getattr(summary, "width", 0) or 0),
+                int(summary.count),
+                abs(int(summary.stride)),
+                int(summary.width),
             )
             if best_summary_score is None or score > best_summary_score:
                 best_summary = summary
                 best_summary_score = score
         if best_summary is not None:
+            var_name = variable.name if isinstance(variable, SimRegisterVariable) else "reg_unknown"
             return InductionVariable(
-                var_name=getattr(variable, "name", None) or f"reg_{getattr(variable, 'reg', 'unknown')}",
-                stride=int(getattr(best_summary, "stride", 0) or 0),
-                base_value=int(getattr(best_summary, "offset", 0) or 0),
-                loop_bound=int(getattr(best_summary, "bound_candidate", 0))
-                if getattr(best_summary, "bound_candidate", None) is not None
-                else None,
-                element_width=int(getattr(best_summary, "width", 0) or 0),
+                var_name=var_name or f"reg_{variable.reg}",
+                stride=int(best_summary.stride),
+                base_value=int(best_summary.offset),
+                loop_bound=int(best_summary.bound_candidate) if best_summary.bound_candidate is not None else None,
+                element_width=int(best_summary.width),
             )
 
+        # Dynamic codegen boundary: access-trait evidence is attached to third-party angr project/codegen objects.
         project = getattr(codegen, "project", None)
         cfunc = getattr(codegen, "cfunc", None)
         func_addr = getattr(cfunc, "addr", None)
@@ -547,7 +590,7 @@ def _profile_induction_match_8616(codegen, loop_var) -> InductionVariable | None
         if direct_profile is not None:
             direct_match = infer_induction_variable(direct_profile)
             if direct_match is not None and direct_match.index_key == index_key:
-                return direct_match
+                return _access_trait_induction_var_8616(direct_match, variable)
 
         best_match: InductionVariable | None = None
         best_score: tuple[int, int, int, int] | None = None
@@ -562,23 +605,25 @@ def _profile_induction_match_8616(codegen, loop_var) -> InductionVariable | None
                 1 if profile_key == index_key else 0,
             )
             if best_score is None or score > best_score:
-                best_match = candidate
+                best_match = _access_trait_induction_var_8616(candidate, variable)
                 best_score = score
         return best_match
 
     return _impl()
 
 
-def _rewrite_induction_loops_8616(codegen) -> bool:
+def _rewrite_induction_loops_8616(codegen: object) -> bool:
+    """Rewrite induction loop shape at the dynamic third-party angr codegen boundary."""
+    # Dynamic codegen boundary: this pass is called with third-party angr codegen instances.
     if getattr(codegen, "cfunc", None) is None:
         return False
 
     changed = False
 
-    def transform(node):
+    def transform(node: object) -> object:
         nonlocal changed
         if isinstance(node, CForLoop):
-            simplified = _unwrap_double_negation_8616(getattr(node, "condition", None))
+            simplified = _unwrap_double_negation_8616(node.condition)
             if simplified is not None:
                 index_key = _condition_index_key_8616(simplified)
                 if index_key is not None:
@@ -588,12 +633,12 @@ def _rewrite_induction_loops_8616(codegen) -> bool:
             return node
         if not isinstance(node, CWhileLoop):
             return node
-        if not _literal_true_8616(getattr(node, "condition", None)):
+        if not _literal_true_8616(node.condition):
             return node
-        body = getattr(node, "body", None)
+        body = node.body
         if not isinstance(body, CStatements):
             return node
-        statements = list(getattr(body, "statements", ()) or ())
+        statements = list(body.statements or ())
         if len(statements) < 2:
             return node
         guard = _extract_break_guard_8616(statements[0])
@@ -616,7 +661,7 @@ def _rewrite_induction_loops_8616(codegen) -> bool:
         induction_info = _profile_induction_match_8616(codegen, loop_var)
         if induction_info is None:
             return node
-        if abs(int(_delta)) != int(getattr(induction_info, "stride", 0) or 0):
+        if abs(int(_delta)) != int(induction_info.stride):
             return node
 
         node.condition = CBinaryOp(
@@ -624,45 +669,35 @@ def _rewrite_induction_loops_8616(codegen) -> bool:
             guard.lhs,
             guard.rhs,
             codegen=codegen,
-            tags=getattr(guard, "tags", None),
+            tags=guard.tags,
         )
         body.statements = statements[1:]
         changed = True
         return node
 
-    root = codegen.cfunc.statements
+    cfunc = cast(Any, getattr(codegen, "cfunc"))
+    root = cfunc.statements
     new_root = transform(root)
     if new_root is not root:
-        from .decompiler_postprocess_utils import _safe_assign_cfunc_statements_8616
-
         root = _safe_assign_cfunc_statements_8616(codegen, new_root, root)
-        if hasattr(codegen.cfunc, "body"):
-            codegen.cfunc.body = codegen.cfunc.statements
-    if _replace_c_children_8616(codegen.cfunc.statements, transform):
+        if hasattr(cfunc, "body"):
+            cfunc.body = cfunc.statements
+    if _replace_c_children_8616(cfunc.statements, transform):
         changed = True
     return changed
 
 
-def apply_x86_16_array_expression_matching(codegen) -> bool:
-    def _impl():
-        """Apply array expression matching pass to codegen.
+def apply_x86_16_array_expression_matching(codegen: object) -> bool:
+    """Attach array matching evidence to an angr codegen object without rewriting semantics."""
 
-        This is the entry point for Phase 2.2 decompiler framework integration.
-
-        Args:
-            codegen: The decompiler codegen object
-
-        Returns:
-            True if array patterns were detected, False otherwise
-
-        Note:
-            This pass collects array recovery metadata but doesn't modify
-            codegen text directly (that happens in later phases).
-        """
+    def _impl() -> bool:
+        """Attach optional array metadata across the dynamic third-party angr codegen boundary."""
+        # Dynamic codegen boundary: angr codegen supplies cfunc/project at runtime.
         if getattr(codegen, "cfunc", None) is None:
             return False
 
         try:
+            # Dynamic codegen boundary: project and function address live on third-party angr objects.
             project = getattr(codegen, "project", None)
             function_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
             bridge = None
@@ -690,14 +725,14 @@ def apply_x86_16_array_expression_matching(codegen) -> bool:
             typed_string_candidates = _typed_string_array_candidates(codegen)
             typed_ir_candidates = _limit_sorted_mapping_8616(typed_ir_candidates, MAX_TYPED_ARRAY_CANDIDATES)
             typed_string_candidates = _limit_sorted_mapping_8616(typed_string_candidates, MAX_TYPED_ARRAY_CANDIDATES)
-            # Track that array matching pass ran
-            codegen._inertia_array_matching_applied = True
-            codegen._inertia_array_matching_bridge = bridge
-            codegen._inertia_array_matching_lowerable_arrays = lowerable_arrays
-            codegen._inertia_array_matching_refused_arrays = refused_arrays
-            codegen._inertia_array_matching_typed_ir_candidates = typed_ir_candidates
-            codegen._inertia_array_matching_string_candidates = typed_string_candidates
-            codegen._inertia_array_matching_stats = {
+            # Dynamic codegen boundary: attach optional array-matching metadata to third-party angr codegen.
+            typing.cast(typing.Any, codegen)._inertia_array_matching_applied = True
+            typing.cast(typing.Any, codegen)._inertia_array_matching_bridge = bridge
+            typing.cast(typing.Any, codegen)._inertia_array_matching_lowerable_arrays = lowerable_arrays
+            typing.cast(typing.Any, codegen)._inertia_array_matching_refused_arrays = refused_arrays
+            typing.cast(typing.Any, codegen)._inertia_array_matching_typed_ir_candidates = typed_ir_candidates
+            typing.cast(typing.Any, codegen)._inertia_array_matching_string_candidates = typed_string_candidates
+            typing.cast(typing.Any, codegen)._inertia_array_matching_stats = {
                 "induction_vars": len(typed_ir_candidates),
                 "array_patterns": 0 if bridge is None else len(bridge.array_facts),
                 "recovered_arrays": len(lowerable_arrays) + len(typed_ir_candidates) + len(typed_string_candidates),
@@ -710,7 +745,8 @@ def apply_x86_16_array_expression_matching(codegen) -> bool:
             return changed
         except Exception as ex:
             logger.warning("Array expression matching pass failed: %s", ex)
-            codegen._inertia_array_matching_error = str(ex)
+            # Dynamic codegen boundary: preserve the failure reason on the third-party codegen object for diagnostics.
+            typing.cast(typing.Any, codegen)._inertia_array_matching_error = str(ex)
             return False
 
     return _impl()

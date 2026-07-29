@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate the BYTEOPS.dec file with the current bounded_live decompilation output.
+
+Layer: Tooling/gates.
 """
 
 import sys

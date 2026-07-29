@@ -13,6 +13,7 @@ Verifies:
 
 from angr_platforms.X86_16.ir.condition_ir import (
     build_condition_ir_8616,
+    canonicalize_condition_storage_fingerprint_8616,
     condition_compare_symbol_8616,
     inverted_comparison_op_8616,
     is_condition_compare_family_8616,
@@ -95,6 +96,17 @@ class TestConditionOpNormalization:
             "Shl(stack_slot:SS:BP-0x6:size2,const:1),"
             "const:2892)),"
             "stack_slot:SS:BP-0x4:size2)"
+        )
+
+    def test_named_stack_argument_fingerprint_normalizes_to_exact_bp_slot(self):
+        value = (
+            "CmpGT(stack_slot:SS:BP-0x4:size2,"
+            "stack_arg:iMaxLevel:size2:bp+0x4)"
+        )
+
+        assert canonicalize_condition_storage_fingerprint_8616(value) == (
+            "CmpGT(stack_slot:SS:BP-0x4:size2,"
+            "stack_slot:SS:BP+0x4:size2)"
         )
 
     def test_lt_u_normalizes_to_ult(self):

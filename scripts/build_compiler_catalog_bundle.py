@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Bundle compiler signature catalogs as optional evidence artifacts.
+
+Layer: Tooling/gates.
+Responsibility: package optional signature catalogs without making signatures semantic proof.
+"""
 
 from __future__ import annotations
 
@@ -13,8 +18,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from omf_pat import load_cached_pat_regex_specs
-from signature_catalog import build_signature_catalog
+from omf_pat import load_cached_pat_regex_specs  # noqa: E402
+from signature_catalog import build_signature_catalog  # noqa: E402
 
 DEFAULT_COMPILERS_ROOT = Path("/home/xor/inertia_player/dos_compilers")
 DEFAULT_BUNDLE_DIR = REPO_ROOT / "signature_catalogs"
@@ -39,6 +44,7 @@ def _zip_tree(bundle_path: Path, root: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Build and package one optional compiler signature-catalog bundle."""
     parser = argparse.ArgumentParser(
         description="Build all-compilers PAT catalog + cache and package them into a shareable zip bundle."
     )

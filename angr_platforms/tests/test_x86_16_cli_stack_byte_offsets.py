@@ -52,7 +52,9 @@ def test_rewrite_ss_stack_byte_offsets_uses_vvar_alias_for_stack_slot_recovery()
     codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
 
     stack_base_var = SimStackVariable(-10, 1, base="bp", name="s_a", region=0x10010)
-    stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=SimTypeShort(False), codegen=codegen)
+    # angr can leave a recovered stack carrier untyped. The lowering pass must
+    # still provide CTypeCast with an explicit source type.
+    stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=None, codegen=codegen)
     temp_var = SimRegisterVariable(0, 2, name="vvar_20")
     temp_cvar = structured_c.CVariable(temp_var, variable_type=SimTypeShort(False), codegen=codegen)
     cfunc.variables_in_use[stack_base_var] = stack_base_cvar

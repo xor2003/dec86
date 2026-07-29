@@ -1,10 +1,18 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: describe correctness goals and completion signals for decompiler governance.
+Forbidden: changing recovery behavior, validation verdicts, or generated C.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CorrectnessGoalSpec:
+    """Governance descriptor for one decompiler correctness goal."""
+
     code: str
     title: str
     priority: str
@@ -86,6 +94,7 @@ CORRECTNESS_GOALS: tuple[CorrectnessGoalSpec, ...] = (
 
 
 def describe_x86_16_correctness_goals() -> tuple[tuple[str, str, str, str, tuple[str, ...], str], ...]:
+    """Return deterministic correctness goal rows for reports."""
     return tuple(
         (
             goal.code,
@@ -100,7 +109,9 @@ def describe_x86_16_correctness_goals() -> tuple[tuple[str, str, str, str, tuple
 
 
 def summarize_x86_16_correctness_goals() -> dict[str, object]:
-    def _impl():
+    """Return aggregate completion counters for correctness goals."""
+
+    def _impl() -> dict[str, object]:
         landed = sum(1 for goal in CORRECTNESS_GOALS if goal.status == "landed")
         partial = sum(1 for goal in CORRECTNESS_GOALS if goal.status == "partial")
         open_ = sum(1 for goal in CORRECTNESS_GOALS if goal.status == "open")

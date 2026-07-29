@@ -1,6 +1,7 @@
 import itertools
 from types import SimpleNamespace
 
+import angr_platforms.X86_16.tail_validation_fingerprint as tail_validation_fingerprint_module
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -9,11 +10,13 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CFunctionCall,
     CIndexedVariable,
     CStatements,
+    CStructField,
     CTypeCast,
     CUnaryOp,
     CVariable,
+    CVariableField,
 )
-from angr.sim_type import SimTypeFunction, SimTypeShort
+from angr.sim_type import SimStruct, SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.alias_model import _stack_storage_facts_for_segmented_address_8616
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -143,7 +146,7 @@ def test_expr_fingerprint_normalizes_stack_word_pair():
 
     fingerprint = _expr_fingerprint(expr, project)
 
-    assert fingerprint == "stack:+0x2"
+    assert fingerprint == "stack_slot:SS:BP+0x2:size2"
 
 
 def test_expr_fingerprint_canonicalizes_negated_compare_to_inverted_compare():
@@ -167,6 +170,98 @@ def test_expr_fingerprint_allows_shared_child_nodes_without_cycle():
 
     assert _expr_fingerprint(shared_tree, project) == _expr_fingerprint(duplicated_tree, project)
     assert "expr_cycle" not in _expr_fingerprint(shared_tree, project)
+
+
+def test_location_fingerprint_falls_back_to_expression_without_self_cycle():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    expr = CBinaryOp(
+        "Add",
+        CUnaryOp(
+            "Reference",
+            CVariable(SimMemoryVariable(0xB4C, 2, name="g_lower"), codegen=codegen),
+            codegen=codegen,
+        ),
+        CBinaryOp("Shl", _stack(-2, codegen), _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+
+    fingerprint = _location_fingerprint(expr, project)
+
+    assert fingerprint == _expr_fingerprint(expr, project)
+    assert "expr_cycle" not in fingerprint
+
+
+def test_segment_register_fingerprint_refuses_unrelated_copy_alias():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    codegen.project = None
+    ds = _reg(project, "ds", codegen)
+    unrelated_global = CVariable(SimMemoryVariable(0xBA2, 2, name="cRow"), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        statements=CStatements(
+            [CAssignment(ds, unrelated_global, codegen=codegen)],
+            codegen=codegen,
+        ),
+        variables_in_use={ds.variable: ds, unrelated_global.variable: unrelated_global},
+    )
+
+    assert _location_fingerprint(ds, project) == "reg:ds"
+
+
+def test_segment_linear_address_fingerprint_precedes_unrelated_ds_value_alias():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    ds = _reg(project, "ds", codegen)
+    unrelated_global = CVariable(SimMemoryVariable(0xBA2, 2, name="cRow"), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        statements=CStatements(
+            [CAssignment(ds, unrelated_global, codegen=codegen)],
+            codegen=codegen,
+        ),
+        variables_in_use={ds.variable: ds, unrelated_global.variable: unrelated_global},
+    )
+    aliased = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp("Mul", ds, _const(16, codegen), codegen=codegen),
+            _const(0xB4C, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    clean = _ds_linear_deref(project, 0xB4C, _DummyCodegen())
+
+    assert _expr_fingerprint(aliased, project) == _expr_fingerprint(clean, project)
+
+
+def test_dirty_segment_register_fingerprint_precedes_unrelated_value_alias():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    ds_offset, ds_size = project.arch.registers["ds"]
+    dirty_lhs = CDirtyExpression(
+        SimpleNamespace(varid=90, name="vvar_90", reg=ds_offset, bits=ds_size * 8),
+        codegen=codegen,
+    )
+    unrelated_global = CVariable(SimMemoryVariable(0xBA2, 2, name="cRow"), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        statements=CStatements(
+            [CAssignment(dirty_lhs, unrelated_global, codegen=codegen)],
+            addr=0x4010,
+            codegen=codegen,
+        ),
+        body=None,
+        variables_in_use={},
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    dirty_use = CDirtyExpression(
+        SimpleNamespace(varid=90, name="vvar_90", reg=ds_offset, bits=ds_size * 8),
+        codegen=codegen,
+    )
+
+    assert _expr_fingerprint(dirty_use, project) == "reg:ds"
 
 
 def test_location_fingerprint_ignores_nested_casts_on_segmented_dereference():
@@ -331,6 +426,155 @@ def test_expr_fingerprint_matches_variable_indexed_global_to_ds_linear_deref():
     )
 
     assert _expr_fingerprint(indexed, project) == _expr_fingerprint(raw, project)
+
+
+def test_expr_fingerprint_matches_indexed_global_field_to_ds_linear_deref():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    ds = _reg(project, "ds", codegen)
+    index = _stack(-6, codegen)
+    struct_type = SimStruct({"value": SimTypeShort(False), "other": SimTypeShort(False)}, name="DemoPair")
+    base = CVariable(SimMemoryVariable(0x56, 4, name="g_demo_pairs"), codegen=codegen)
+    indexed = CIndexedVariable(base, index, variable_type=struct_type, codegen=codegen)
+    field = CVariableField(indexed, CStructField(struct_type, 2, "other", codegen=codegen), codegen=codegen)
+    raw = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp(
+                "Add",
+                CBinaryOp("Mul", ds, _const(16, codegen), codegen=codegen),
+                _const(0x58, codegen),
+                codegen=codegen,
+            ),
+            CBinaryOp("Shl", index, _const(2, codegen), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    assert _expr_fingerprint(field, project) == _expr_fingerprint(raw, project)
+
+
+def test_expr_fingerprint_distributes_scaled_index_constant_in_runtime_segment_address():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    ds = _reg(project, "ds", codegen)
+    index = _stack(-2, codegen)
+    shifted_increment = CBinaryOp(
+        "Shl",
+        CBinaryOp("Add", index, _const(1, codegen), codegen=codegen),
+        _const(1, codegen),
+        codegen=codegen,
+    )
+    shifted_index = CBinaryOp("Shl", index, _const(1, codegen), codegen=codegen)
+    distributed = CFunctionCall(
+        "SEG_U8",
+        None,
+        [
+            ds,
+            CBinaryOp(
+                "Add",
+                shifted_increment,
+                _const(0xB4C, codegen),
+                codegen=codegen,
+            ),
+        ],
+        codegen=codegen,
+    )
+    folded = CFunctionCall(
+        "SEG_U8",
+        None,
+        [
+            ds,
+            CBinaryOp(
+                "Add",
+                shifted_index,
+                _const(0xB4E, codegen),
+                codegen=codegen,
+            ),
+        ],
+        codegen=codegen,
+    )
+
+    assert _expr_fingerprint(distributed, project) == _expr_fingerprint(folded, project)
+
+
+def test_expr_fingerprint_distributes_scaled_index_constant_in_indexed_global_address():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    index = _stack(-2, codegen)
+    element_type = SimTypeShort(False)
+    lower_base = CVariable(SimMemoryVariable(0xB4C, 2, name="g_lower"), codegen=codegen)
+    upper_base = CVariable(SimMemoryVariable(0xB4E, 2, name="g_upper"), codegen=codegen)
+    distributed = CIndexedVariable(
+        lower_base,
+        CBinaryOp("Add", index, _const(1, codegen), codegen=codegen),
+        variable_type=element_type,
+        codegen=codegen,
+    )
+    folded = CIndexedVariable(
+        upper_base,
+        index,
+        variable_type=element_type,
+        codegen=codegen,
+    )
+
+    assert _expr_fingerprint(distributed, project) == _expr_fingerprint(folded, project)
+
+
+def test_expr_fingerprint_distributes_scaled_index_constant_in_raw_dereference_address():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    ds = _reg(project, "ds", codegen)
+    index = _stack(-2, codegen)
+    shifted_increment = CBinaryOp(
+        "Shl",
+        CBinaryOp("Add", index, _const(1, codegen), codegen=codegen),
+        _const(1, codegen),
+        codegen=codegen,
+    )
+    shifted_index = CBinaryOp("Shl", index, _const(1, codegen), codegen=codegen)
+    segment_base = CBinaryOp("Mul", ds, _const(16, codegen), codegen=codegen)
+    distributed = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp("Add", segment_base, shifted_increment, codegen=codegen),
+            _const(0xB4C, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    folded = CUnaryOp(
+        "Dereference",
+        CBinaryOp(
+            "Add",
+            CBinaryOp("Add", segment_base, shifted_index, codegen=codegen),
+            _const(0xB4E, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+
+    assert _expr_fingerprint(distributed, project) == _expr_fingerprint(folded, project)
+
+
+def test_expr_fingerprint_refuses_pointer_indexed_global_field_equivalence():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    index = _stack(-6, codegen)
+    struct_type = SimStruct({"value": SimTypeShort(False)}, name="DemoPair")
+    base = CVariable(SimMemoryVariable(0x56, 2, name="g_demo_pairs"), codegen=codegen)
+    indexed = CIndexedVariable(base, index, variable_type=struct_type, codegen=codegen)
+    field = CVariableField(
+        indexed,
+        CStructField(struct_type, 0, "value", codegen=codegen),
+        var_is_ptr=True,
+        codegen=codegen,
+    )
+
+    assert _expr_fingerprint(field, project) == "CVariableField"
 
 
 def test_expr_fingerprint_normalizes_global_word_pair_with_shifted_high_byte():
@@ -640,6 +884,56 @@ def test_expr_fingerprint_elides_zero_mul_inside_or_guard():
     assert _expr_fingerprint(plain, project) == _expr_fingerprint(noisy, project)
 
 
+def test_expr_fingerprint_does_not_cache_temporary_simplified_rebuilds(monkeypatch):
+    codegen = _DummyCodegen()
+    project = codegen.project
+    project._inertia_tail_validation_snapshot_expr_cache_enabled_8616 = True
+    rebuilt_ids: list[int] = []
+    original_rebuild = tail_validation_fingerprint_module._safe_rebuild_binary_8616
+
+    def tracked_rebuild(op: str, lhs: object, rhs: object, template: object) -> object:
+        rebuilt = original_rebuild(op, lhs, rhs, template)
+        if rebuilt is not template:
+            rebuilt_ids.append(id(rebuilt))
+        return rebuilt
+
+    monkeypatch.setattr(tail_validation_fingerprint_module, "_safe_rebuild_binary_8616", tracked_rebuild)
+    expr = CBinaryOp(
+        "Add",
+        CTypeCast(SimTypeShort(False), SimTypeShort(False), _stack(4, codegen), codegen=codegen),
+        _const(1, codegen),
+        codegen=codegen,
+    )
+
+    assert _expr_fingerprint(expr, project) == "Add(stack_slot:SS:BP+0x4:size2,const:1)"
+    cache = getattr(project, "_inertia_tail_validation_expr_fingerprint_cache_8616", {})
+
+    assert rebuilt_ids
+    assert all(key[1] not in rebuilt_ids for key in cache)
+
+
+def test_expr_fingerprint_cache_requires_same_retained_node_identity():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    current = _const(1, codegen)
+    stale = _const(2978, codegen)
+    key = (None, id(current), type(current).__name__)
+    project._inertia_tail_validation_expr_fingerprint_cache_8616 = {
+        key: "const:2978",
+    }
+    project._inertia_tail_validation_expr_fingerprint_cache_nodes_8616 = {
+        key: stale,
+    }
+
+    assert _expr_fingerprint(current, project) == "const:1"
+    assert (
+        project._inertia_tail_validation_expr_fingerprint_cache_nodes_8616[
+            key
+        ]
+        is current
+    )
+
+
 def test_runtime_segment_helper_matches_raw_dereference_fingerprint():
     codegen = _DummyCodegen()
     project = codegen.project
@@ -649,6 +943,24 @@ def test_runtime_segment_helper_matches_raw_dereference_fingerprint():
 
     assert _expr_fingerprint(raw, project) == _expr_fingerprint(helper, project)
     assert _location_fingerprint(raw, project) == _location_fingerprint(helper, project)
+
+
+def test_runtime_segment_helper_preserves_structural_ds_argument_before_value_cache():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    ds = _reg(project, "ds", codegen)
+    copied_value = CVariable(SimMemoryVariable(0xBA2, 2, name="cRow"), codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        statements=CStatements([CAssignment(ds, copied_value, codegen=codegen)], codegen=codegen),
+        variables_in_use={ds.variable: ds, copied_value.variable: copied_value},
+    )
+    offset = _const(0xB4C, codegen)
+    codegen.project = None
+
+    _expr_fingerprint(ds, project)
+    helper = CFunctionCall("SEG_U8", None, [ds, offset], codegen=codegen)
+
+    assert _expr_fingerprint(helper, project) == "Dereference(Add(Mul(reg:ds,const:16),const:2892))"
 
 
 def test_runtime_pointer_helper_matches_raw_dereference_fingerprint():

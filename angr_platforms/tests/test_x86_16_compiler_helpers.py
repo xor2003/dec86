@@ -41,6 +41,33 @@ def test_identify_msc_anchkstk_from_binary_bytes_without_sidecars():
     assert evidence.matched_bytes == len(MSC_ANCHKSTK_BYTES)
 
 
+def test_identify_stack_probe_through_rebased_original_project_bytes():
+    original = _project_with_memory(MSC_ANCHKSTK_BYTES, base=0x11032)
+    sliced = _project_with_memory(b"", base=0x1000)
+    sliced._inertia_original_project = original
+    sliced._inertia_original_linear_delta = 0xF000
+
+    evidence = identify_x86_16_compiler_helper_at_8616(sliced, 0x2032)
+
+    assert evidence is not None
+    assert evidence.addr == 0x2032
+    assert evidence.kind is CompilerHelperEvidenceKind8616.STACK_PROBE
+
+
+def test_identify_stack_probe_through_preserved_linked_original_target():
+    original = _project_with_memory(MSC_ANCHKSTK_BYTES, base=0x11222)
+    sliced = _project_with_memory(b"", base=0x1000)
+    sliced._inertia_original_project = original
+    sliced._inertia_original_linear_delta = 0xF560
+
+    evidence = identify_x86_16_compiler_helper_at_8616(sliced, 0x11222)
+
+    assert evidence is not None
+    assert evidence.addr == 0x11222
+    assert evidence.kind is CompilerHelperEvidenceKind8616.STACK_PROBE
+    assert evidence.matched_bytes == len(MSC_ANCHKSTK_BYTES)
+
+
 def test_stack_probe_name_normalization_covers_msc_and_chkstk_spellings():
     assert is_x86_16_stack_probe_name_8616("__aNchkstk") is True
     assert is_x86_16_stack_probe_name_8616("_chkstk") is True

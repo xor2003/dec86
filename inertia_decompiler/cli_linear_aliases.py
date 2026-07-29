@@ -1,60 +1,55 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable, Iterable
+from typing import Protocol
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 
 
+class _CFunctionLike(Protocol):
+    """Structured C function surface needed by adjacent byte-pair alias seeding."""
+
+    statements: object
+
+
+class _CodegenLike(Protocol):
+    """Codegen surface needed by adjacent byte-pair alias seeding."""
+
+    cfunc: _CFunctionLike | None
+
+
 def _seed_adjacent_byte_pair_aliases(
-    project,
-    codegen,
+    project: object,
+    codegen: _CodegenLike,
     *,
-    structured_codegen_node,
-    unwrap_c_casts,
-    iter_c_nodes_deep,
-    match_byte_load_addr_expr,
-    addr_exprs_are_byte_pair,
-    make_word_dereference_from_addr_expr,
-):
-    if getattr(codegen, "cfunc", None) is None:
+    structured_codegen_node: Callable[[object], bool],
+    unwrap_c_casts: Callable[[object], object],
+    iter_c_nodes_deep: Callable[[object], Iterable[object]],
+    match_byte_load_addr_expr: Callable[[object], object | None],
+    addr_exprs_are_byte_pair: Callable[[object, object, object], bool],
+    make_word_dereference_from_addr_expr: Callable[[_CodegenLike, object, object], object],
+) -> dict[int, object]:
+    cfunc = codegen.cfunc
+    if cfunc is None:
         return {}
 
-    statements = getattr(codegen.cfunc, "statements", None)
+    statements = cfunc.statements
     if not structured_codegen_node(statements):
         return {}
 
     aliases: dict[int, object] = {}
 
-    def _collect_variable_ids(expr, ids: set[int]) -> None:
+    def _count_variable_ids(expr: object, counts: Counter[int]) -> None:
         expr = unwrap_c_casts(expr)
         if isinstance(expr, structured_c.CVariable):
-            variable = getattr(expr, "variable", None)
-            if variable is not None:
-                ids.add(id(variable))
-            return
-        for attr in ("lhs", "rhs", "operand", "expr"):
-            if not hasattr(expr, attr):
-                continue
-            try:
-                value = getattr(expr, attr)
-            except Exception:
-                continue
-            if structured_codegen_node(value):
-                _collect_variable_ids(value, ids)
-        for attr in ("args", "operands", "statements"):
-            if not hasattr(expr, attr):
-                continue
-            try:
-                items = getattr(expr, attr)
-            except Exception:
-                continue
-            for item in items or ():
-                if structured_codegen_node(item):
-                    _collect_variable_ids(item, ids)
-
-    def _count_variable_ids(expr, counts: Counter[int]) -> None:
-        expr = unwrap_c_casts(expr)
-        if isinstance(expr, structured_c.CVariable):
+            # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
             variable = getattr(expr, "variable", None)
             if variable is not None:
                 counts[id(variable)] += 1
@@ -63,6 +58,7 @@ def _seed_adjacent_byte_pair_aliases(
             if not hasattr(expr, attr):
                 continue
             try:
+                # Dynamic codegen boundary: child field names vary across angr C AST nodes.
                 value = getattr(expr, attr)
             except Exception:
                 continue
@@ -72,6 +68,7 @@ def _seed_adjacent_byte_pair_aliases(
             if not hasattr(expr, attr):
                 continue
             try:
+                # Dynamic codegen boundary: child sequence fields vary across angr C AST nodes.
                 items = getattr(expr, attr)
             except Exception:
                 continue
@@ -82,17 +79,19 @@ def _seed_adjacent_byte_pair_aliases(
     dereference_counts: Counter[int] = Counter()
     for node in iter_c_nodes_deep(statements):
         if isinstance(node, structured_c.CUnaryOp) and node.op == "Dereference":
+            # Dynamic codegen boundary: CUnaryOp operand is supplied by angr structured codegen.
             _count_variable_ids(getattr(node, "operand", None), dereference_counts)
 
-    def _record_alias(lhs, expr) -> None:
+    def _record_alias(lhs: object, expr: object) -> None:
+        # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
         variable = getattr(lhs, "variable", None)
         if variable is None:
             return
         aliases[id(variable)] = expr
 
-    def visit(node) -> None:
+    def visit(node: object) -> None:
         if isinstance(node, structured_c.CStatements):
-            stmt_list = getattr(node, "statements", None)
+            stmt_list = node.statements
             if isinstance(stmt_list, list):
                 for index in range(len(stmt_list) - 1):
                     low_stmt = stmt_list[index]
@@ -121,33 +120,45 @@ def _seed_adjacent_byte_pair_aliases(
                     word_expr = make_word_dereference_from_addr_expr(codegen, project, low_addr_expr)
                     _record_alias(low_stmt.lhs, word_expr)
                     _record_alias(high_stmt.lhs, word_expr)
-            for stmt in getattr(node, "statements", ()) or ():
+            for stmt in node.statements:
                 visit(stmt)
             return
 
         if isinstance(node, structured_c.CIfElse):
+            # Dynamic codegen boundary: CIfElse condition/body pairs are angr codegen metadata.
             for cond, body in getattr(node, "condition_and_nodes", ()) or ():
                 visit(cond)
                 visit(body)
+            # Dynamic codegen boundary: CIfElse else payload is optional.
             else_node = getattr(node, "else_node", None)
             if else_node is not None:
                 visit(else_node)
             return
 
         if isinstance(node, structured_c.CWhileLoop):
+            visit(node.condition)
+            visit(node.body)
+            return
+
+        # Dynamic codegen boundary: older/newer angr versions differ on loop node classes.
+        do_while_type = getattr(structured_c, "CDoWhileLoop", None)
+        if do_while_type is not None and isinstance(node, do_while_type):
+            # Dynamic codegen boundary: loop payload fields vary across angr C AST nodes.
             visit(getattr(node, "condition", None))
+            # Dynamic codegen boundary: loop payload fields vary across angr C AST nodes.
             visit(getattr(node, "body", None))
             return
 
-        if hasattr(structured_c, "CDoWhileLoop") and isinstance(node, getattr(structured_c, "CDoWhileLoop")):
-            visit(getattr(node, "condition", None))
-            visit(getattr(node, "body", None))
-            return
-
-        if hasattr(structured_c, "CForLoop") and isinstance(node, getattr(structured_c, "CForLoop")):
+        # Dynamic codegen boundary: older/newer angr versions differ on loop node classes.
+        for_loop_type = getattr(structured_c, "CForLoop", None)
+        if for_loop_type is not None and isinstance(node, for_loop_type):
+            # Dynamic codegen boundary: for-loop payload fields vary across angr C AST nodes.
             visit(getattr(node, "init", None))
+            # Dynamic codegen boundary: for-loop payload fields vary across angr C AST nodes.
             visit(getattr(node, "condition", None))
+            # Dynamic codegen boundary: for-loop payload fields vary across angr C AST nodes.
             visit(getattr(node, "iteration", None))
+            # Dynamic codegen boundary: for-loop payload fields vary across angr C AST nodes.
             visit(getattr(node, "body", None))
             return
 

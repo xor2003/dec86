@@ -1,20 +1,24 @@
-from __future__ import annotations
+"""Pre-rewrite invariant checks for semantic correctness.
 
-"""Layer: Pipeline governance.
-
-Responsibility: pre-rewrite invariant checks that ensure semantic correctness
-before formatting/cleanup.
+Layer: Pipeline governance.
+Responsibility: owns runtime ordering, invariant checks, hard failures, and final emission gates.
+Do not recover semantic facts or perform IR, alias, widening,
+lowering/materialization, structuring, rewrite, postprocess, or CLI/reporting
+work here.
 
 AGENTS rule: Rewrite must not hide bad alias/type/condition recovery.
 If invariants fail, rewrite is skipped and honest partial output is emitted.
 
-Forbidden: semantic recovery, type inference, condition reconstruction."""
+Forbidden: semantic recovery, type inference, condition reconstruction.
+"""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from ..decompiler_postprocess_utils import _iter_c_nodes_deep_8616
+from ..c_ast_utils import _iter_c_nodes_deep_8616
 
 __all__ = [
     "InvariantStatus",
@@ -25,7 +29,14 @@ __all__ = [
 ]
 
 
+def _dynamic_attr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
+    """Dynamic codegen/C-AST boundary: read optional third-party attributes."""
+    return getattr(obj, name, default)
+
+
 class InvariantStatus(Enum):
+    """Structured result state for one pre-rewrite invariant check."""
+
     PASSED = "passed"
     FAILED = "failed"
     SKIPPED = "skipped"
@@ -34,6 +45,8 @@ class InvariantStatus(Enum):
 
 @dataclass(frozen=True, slots=True)
 class InvariantCheck:
+    """One invariant verdict plus compact evidence for diagnostics."""
+
     name: str
     status: InvariantStatus
     detail: str = ""
@@ -41,11 +54,14 @@ class InvariantCheck:
 
     @property
     def is_blocking(self) -> bool:
+        """Return whether this check must block rewrite."""
         return self.status == InvariantStatus.FAILED
 
 
 @dataclass(slots=True)
 class InvariantReport:
+    """Aggregate pre-rewrite invariant status for one function."""
+
     function_addr: int = 0
     function_name: str = ""
     checks: list[InvariantCheck] = field(default_factory=list)
@@ -54,13 +70,16 @@ class InvariantReport:
 
     @property
     def all_passed(self) -> bool:
+        """Return whether no failed invariant blocks rewrite."""
         return not self.rewrite_blocked and all(c.status != InvariantStatus.FAILED for c in self.checks)
 
     @property
     def failed_checks(self) -> list[InvariantCheck]:
+        """Return checks that should block rewrite."""
         return [c for c in self.checks if c.is_blocking]
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize the report for JSON diagnostics."""
         return {
             "function_addr": self.function_addr,
             "function_name": self.function_name,
@@ -79,10 +98,10 @@ class InvariantReport:
 
 
 def validate_before_rewrite_8616(
-    codegen: Any,
+    codegen: object,
     *,
     c_text: str = "",
-    project: Any = None,
+    project: object | None = None,
 ) -> InvariantReport:
     """Run pre-rewrite invariant checks against a function ready for rewrite.
 
@@ -98,10 +117,10 @@ def validate_before_rewrite_8616(
     rewrite/formatting and emit honest partial output.
     """
     report = InvariantReport()
-    cfunc = getattr(codegen, "cfunc", None)
+    cfunc = _dynamic_attr_8616(codegen, "cfunc", None)
     if cfunc is not None:
-        report.function_addr = getattr(cfunc, "addr", 0)
-        report.function_name = getattr(cfunc, "name", "") or ""
+        report.function_addr = _dynamic_attr_8616(cfunc, "addr", 0)
+        report.function_name = _dynamic_attr_8616(cfunc, "name", "") or ""
 
     # Check 1: No linear SS expressions in output
     _check_no_ss_linear_expr(c_text, report)
@@ -200,7 +219,7 @@ def _check_no_stack_indexing(c_text: str, report: InvariantReport) -> None:
         report.checks.append(InvariantCheck(name="no_stack_indexing", status=InvariantStatus.PASSED))
 
 
-def _check_no_tmp_conditions(c_text: str, codegen: Any, report: InvariantReport) -> None:
+def _check_no_tmp_conditions(c_text: str, codegen: object, report: InvariantReport) -> None:
     """Check: no ``if (tmp_*)`` when typed ConditionIR is available."""
     import re
 
@@ -209,7 +228,7 @@ def _check_no_tmp_conditions(c_text: str, codegen: Any, report: InvariantReport)
 
     # Check if typed conditions exist in the function
     has_typed_conditions = bool(
-        getattr(codegen, "_inertia_typed_conditions", None) or getattr(codegen, "_inertia_condition_facts", None)
+        _dynamic_attr_8616(codegen, "_inertia_typed_conditions", None) or _dynamic_attr_8616(codegen, "_inertia_condition_facts", None)
     )
 
     if matches and has_typed_conditions:
@@ -252,11 +271,11 @@ def _check_no_raw_flag_conditions(c_text: str, report: InvariantReport) -> None:
         report.checks.append(InvariantCheck(name="no_raw_flag_conditions", status=InvariantStatus.PASSED))
 
 
-def _check_validation_not_uncollected(codegen: Any, report: InvariantReport) -> None:
+def _check_validation_not_uncollected(codegen: object, report: InvariantReport) -> None:
     """Check: uncollected validation is not treated as success."""
-    validation_passed = bool(getattr(codegen, "_inertia_validation_passed", False))
-    validation_uncollected = bool(getattr(codegen, "_inertia_validation_uncollected", False))
-    validation_verdict = getattr(codegen, "_inertia_validation_verdict", None)
+    validation_passed = bool(_dynamic_attr_8616(codegen, "_inertia_validation_passed", False))
+    validation_uncollected = bool(_dynamic_attr_8616(codegen, "_inertia_validation_uncollected", False))
+    validation_verdict = _dynamic_attr_8616(codegen, "_inertia_validation_verdict", None)
 
     if validation_uncollected and validation_passed:
         report.checks.append(
@@ -283,10 +302,10 @@ def _check_validation_not_uncollected(codegen: Any, report: InvariantReport) -> 
         )
 
 
-def _check_stack_slots_materialized(codegen: Any, report: InvariantReport) -> None:
-    def _impl():
+def _check_stack_slots_materialized(codegen: object, report: InvariantReport) -> None:
+    def _impl() -> None:
         """Check: all proven SS stack slots have been materialized as named variables."""
-        semantic_alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
+        semantic_alias_facts = _dynamic_attr_8616(codegen, "_inertia_semantic_alias_facts", None)
         if not semantic_alias_facts:
             report.checks.append(
                 InvariantCheck(
@@ -298,9 +317,9 @@ def _check_stack_slots_materialized(codegen: Any, report: InvariantReport) -> No
             return
 
         # Check if any AliasFailure records exist for proven SS
-        from ..alias.alias_model_impl import AliasFailure, AliasStorageFacts
+        from ..alias.alias_model_impl import AliasFailure, AliasStorageFacts, _StackSlotIdentity
 
-        def _canonical_stack_offset_8616(offset):
+        def _canonical_stack_offset_8616(offset: object) -> object:
             if not isinstance(offset, int):
                 return offset
             if 0x8000 <= offset <= 0xFFFF:
@@ -323,16 +342,19 @@ def _check_stack_slots_materialized(codegen: Any, report: InvariantReport) -> No
                 if fact.identity and fact.identity[0] == "stack":
                     # Stack slot identified — check if it's been materialized
                     identity_val = fact.identity[1]
-                    offset = _canonical_stack_offset_8616(getattr(identity_val, "offset", None))
+                    if not isinstance(identity_val, _StackSlotIdentity):
+                        failures.append(f"stack identity has invalid contract type: {type(identity_val).__name__}")
+                        continue
+                    offset = _canonical_stack_offset_8616(identity_val.offset)
                     if offset is not None:
-                        cfunc = getattr(codegen, "cfunc", None)
-                        variables = getattr(cfunc, "variables_in_use", {}) if cfunc else {}
+                        cfunc = _dynamic_attr_8616(codegen, "cfunc", None)
+                        variables = _dynamic_attr_8616(cfunc, "variables_in_use", {}) if cfunc else {}
                         # Check if any variable matches this offset
                         from angr.sim_variable import SimStackVariable
 
                         found = any(
                             isinstance(v, SimStackVariable)
-                            and _canonical_stack_offset_8616(getattr(v, "offset", None)) == offset
+                            and _canonical_stack_offset_8616(_dynamic_attr_8616(v, "offset", None)) == offset
                             for v in variables
                         )
                         if not found:
@@ -355,15 +377,15 @@ def _check_stack_slots_materialized(codegen: Any, report: InvariantReport) -> No
     return _impl()
 
 
-def _check_stack_facts_consumed(codegen: Any, report: InvariantReport) -> None:
+def _check_stack_facts_consumed(codegen: object, report: InvariantReport) -> None:
     """Quantitative gate: if stack alias facts exist, at least one must be materialized.
 
     AGENTS rule: facts produced but not consumed is a pipeline failure.
     If stack_fact_count > 0 and stack_materialized_count == 0, block rewrite
     with a precise diagnostic indicating the next missing layer.
     """
-    stack_facts = getattr(codegen, "_inertia_semantic_stack_fact_count", 0)
-    materialized = getattr(codegen, "_inertia_semantic_stack_materialized_count", 0)
+    stack_facts = _dynamic_attr_8616(codegen, "_inertia_semantic_stack_fact_count", 0)
+    materialized = _dynamic_attr_8616(codegen, "_inertia_semantic_stack_materialized_count", 0)
 
     if stack_facts == 0:
         report.checks.append(
@@ -392,15 +414,15 @@ def _check_stack_facts_consumed(codegen: Any, report: InvariantReport) -> None:
         )
 
 
-def _check_condition_facts_consumed(codegen: Any, report: InvariantReport) -> None:
+def _check_condition_facts_consumed(codegen: object, report: InvariantReport) -> None:
     """Quantitative gate: if condition facts exist, at least one must be consumed.
 
     AGENTS rule: condition facts produced but no condition replacements applied
     means the materialization pass is missing.  Block rewrite so the problem
     is visible.
     """
-    condition_facts = getattr(codegen, "_inertia_semantic_condition_fact_count", 0)
-    materialized = getattr(codegen, "_inertia_semantic_condition_materialized_count", 0)
+    condition_facts = _dynamic_attr_8616(codegen, "_inertia_semantic_condition_fact_count", 0)
+    materialized = _dynamic_attr_8616(codegen, "_inertia_semantic_condition_materialized_count", 0)
 
     if condition_facts == 0:
         report.checks.append(
@@ -429,12 +451,12 @@ def _check_condition_facts_consumed(codegen: Any, report: InvariantReport) -> No
         )
 
 
-def _check_goto_targets_resolved(codegen: Any, report: InvariantReport) -> None:
-    def _impl():
+def _check_goto_targets_resolved(codegen: object, report: InvariantReport) -> None:
+    def _impl() -> None:
         """Check: every CGoto target resolves to an emitted C label."""
         from angr.analyses.decompiler.structured_codegen.c import CGoto
 
-        cfunc = getattr(codegen, "cfunc", None)
+        cfunc = _dynamic_attr_8616(codegen, "cfunc", None)
         root = _find_cfunc_root_8616(cfunc)
         if root is None:
             report.checks.append(
@@ -449,14 +471,14 @@ def _check_goto_targets_resolved(codegen: Any, report: InvariantReport) -> None:
         defined_labels = _collect_cfunc_label_names_8616(root)
         mapped_labels = _collect_cfunc_map_addr_label_names_8616(cfunc)
         defined_all = defined_labels | set(mapped_labels)
-        map_addr_to_label = getattr(cfunc, "map_addr_to_label", None) if cfunc is not None else None
+        map_addr_to_label = _dynamic_attr_8616(cfunc, "map_addr_to_label", None) if cfunc is not None else None
 
         unresolved: list[str] = []
         for node in _iter_c_nodes_deep_8616(root):
             if not isinstance(node, CGoto):
                 continue
-            target = getattr(node, "target", None)
-            target_idx = getattr(node, "target_idx", None)
+            target = _dynamic_attr_8616(node, "target", None)
+            target_idx = _dynamic_attr_8616(node, "target_idx", None)
             if not isinstance(target, int):
                 continue
 
@@ -467,7 +489,7 @@ def _check_goto_targets_resolved(codegen: Any, report: InvariantReport) -> None:
                 if mapped_label is None and target_idx is not None:
                     mapped_label = map_addr_to_label.get((target, None))
                 if mapped_label is not None:
-                    mapped_name = getattr(mapped_label, "name", None)
+                    mapped_name = _dynamic_attr_8616(mapped_label, "name", None)
             if mapped_name is None:
                 mapped_name = _format_legacy_goto_label_name_8616(target)
 
@@ -477,7 +499,7 @@ def _check_goto_targets_resolved(codegen: Any, report: InvariantReport) -> None:
 
             # Mapping exists but label node may be missing from emitted statements.
             if mapped_label is not None:
-                mapped_node_name = getattr(mapped_label, "name", None)
+                mapped_node_name = _dynamic_attr_8616(mapped_label, "name", None)
                 if isinstance(mapped_node_name, str) and mapped_node_name not in defined_labels:
                     unresolved.append(f"{mapped_node_name} (mapped-only, target={target:#x}, idx={target_idx})")
 
@@ -496,36 +518,38 @@ def _check_goto_targets_resolved(codegen: Any, report: InvariantReport) -> None:
     return _impl()
 
 
-def _find_cfunc_root_8616(cfunc: Any):
+def _find_cfunc_root_8616(cfunc: object) -> object | None:
+    """Return the first known C function body/root field."""
     if cfunc is None:
         return None
     for attr in ("body", "statements", "stmt"):
-        value = getattr(cfunc, attr, None)
+        value = _dynamic_attr_8616(cfunc, attr, None)
         if value is not None:
             return value
     return None
 
 
-def _collect_cfunc_label_names_8616(root) -> set[str]:
+def _collect_cfunc_label_names_8616(root: object) -> set[str]:
     """Collect explicit CLabel names from an AST subtree."""
     from angr.analyses.decompiler.structured_codegen.c import CLabel
 
     labels: set[str] = set()
     for node in _iter_c_nodes_deep_8616(root):
         if isinstance(node, CLabel):
-            name = getattr(node, "name", None)
+            name = _dynamic_attr_8616(node, "name", None)
             if isinstance(name, str) and name:
                 labels.add(name)
     return labels
 
 
-def _collect_cfunc_map_addr_label_names_8616(codegen: Any) -> list[str]:
-    mapping = getattr(codegen, "map_addr_to_label", None) if codegen is not None else None
+def _collect_cfunc_map_addr_label_names_8616(codegen: object) -> list[str]:
+    """Collect label names from codegen address-to-label maps."""
+    mapping = _dynamic_attr_8616(codegen, "map_addr_to_label", None) if codegen is not None else None
     if not isinstance(mapping, dict):
         return []
     names: list[str] = []
     for node in mapping.values():
-        name = getattr(node, "name", None)
+        name = _dynamic_attr_8616(node, "name", None)
         if isinstance(name, str) and name:
             names.append(name)
     return names
@@ -535,7 +559,7 @@ def _format_legacy_goto_label_name_8616(target: int) -> str:
     return f"LABEL_{target:#x}"
 
 
-def classify_stack_blocker_8616(diag) -> str | None:
+def classify_stack_blocker_8616(diag: dict[str, int]) -> str | None:
     """Classify stack-materialization blockers from diagnostics.
 
     Returns a human-readable blocker label, or None if no hard blocker is found.

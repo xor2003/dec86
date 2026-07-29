@@ -48,27 +48,46 @@ from angr_platforms.X86_16.stack_helpers import (
 )
 
 
+class _RegisterBank(dict):
+    @staticmethod
+    def _reg_key(reg):
+        return (type(reg), reg)
+
+    def __init__(self, pairs=()):
+        super().__init__((self._reg_key(reg), value) for reg, value in pairs)
+
+    def __getitem__(self, reg):
+        return super().__getitem__(self._reg_key(reg))
+
+    def __setitem__(self, reg, value):
+        super().__setitem__(self._reg_key(reg), value)
+
+    def get(self, reg, default=None):
+        return super().get(self._reg_key(reg), default)
+
+
 class _StackEmu:
     def __init__(self):
-        self.gpregs = {
-            reg16_t.AX: 0x1111,
-            reg16_t.CX: 0x2222,
-            reg16_t.DX: 0x3333,
-            reg16_t.BX: 0x4444,
-            reg16_t.SP: 0x1000,
-            reg16_t.BP: 0x2222,
-            reg16_t.SI: 0x5555,
-            reg16_t.DI: 0x6666,
-            reg16_t.IP: 0x0100,
-            reg32_t.EAX: 0x11111111,
-            reg32_t.ECX: 0x22222222,
-            reg32_t.EDX: 0x33333333,
-            reg32_t.EBX: 0x44444444,
-            reg32_t.ESP: 0x2000,
-            reg32_t.EBP: 0x55555555,
-            reg32_t.ESI: 0x66666666,
-            reg32_t.EDI: 0x77777777,
-        }
+        gpreg_pairs = (
+            (reg16_t.AX, 0x1111),
+            (reg16_t.CX, 0x2222),
+            (reg16_t.DX, 0x3333),
+            (reg16_t.BX, 0x4444),
+            (reg16_t.SP, 0x1000),
+            (reg16_t.BP, 0x2222),
+            (reg16_t.SI, 0x5555),
+            (reg16_t.DI, 0x6666),
+            (reg16_t.IP, 0x0100),
+            (reg32_t.EAX, 0x11111111),
+            (reg32_t.ECX, 0x22222222),
+            (reg32_t.EDX, 0x33333333),
+            (reg32_t.EBX, 0x44444444),
+            (reg32_t.ESP, 0x2000),
+            (reg32_t.EBP, 0x55555555),
+            (reg32_t.ESI, 0x66666666),
+            (reg32_t.EDI, 0x77777777),
+        )
+        self.gpregs = _RegisterBank(gpreg_pairs)
         self.sgregs = {sgreg_t.CS: 0x1234, sgreg_t.SS: 0x2000}
         self.memory = {}
         self.irsb = type("_IRSB", (), {"next": None, "jumpkind": None})()

@@ -1,3 +1,9 @@
+"""Write a single decompiler recovery artifact for diagnostics.
+
+Layer: Tooling/gates.
+Responsibility: write bounded recovery diagnostics without changing decompiler semantics.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -8,7 +14,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from angr_platforms.X86_16.targeted_recovery_artifact import write_x86_16_targeted_cod_recovery_artifact
+from angr_platforms.X86_16.targeted_recovery_artifact import (  # noqa: E402
+    write_x86_16_targeted_cod_recovery_artifact,
+)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,19 +1,42 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: summarize typed IR recovery counters from existing pipeline artifacts.
+Forbidden: mutating IR, fabricating facts, or treating missing summaries as success.
+"""
+
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import TypeAlias
 
 __all__ = ["IRRecoverySummary", "summarize_x86_16_ir_recovery"]
 
+IRRecoverySource: TypeAlias = Mapping[str, object]
 
-def _value(source: Any, name: str, default: Any = None) -> Any:
-    if isinstance(source, dict):
-        return source.get(name, default)
-    return getattr(source, name, default)
+
+def _value(source: IRRecoverySource, name: str, default: object = None) -> object:
+    return source.get(name, default)
+
+
+def _count(value: object) -> int:
+    return value if isinstance(value, int) else 0
+
+
+def _string_int_counts(value: object) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    counts: dict[str, int] = {}
+    for key, count in value.items():
+        if isinstance(count, int):
+            counts[str(key)] = count
+    return counts
 
 
 @dataclass(frozen=True, slots=True)
 class IRRecoverySummary:
+    """Deterministic summary of already-collected typed IR recovery counters."""
+
     block_count: int
     instruction_count: int
     refusal_count: int
@@ -28,6 +51,7 @@ class IRRecoverySummary:
     condition_counts: dict[str, int]
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-compatible IR recovery payload."""
         return {
             "block_count": self.block_count,
             "instruction_count": self.instruction_count,
@@ -44,29 +68,31 @@ class IRRecoverySummary:
         }
 
 
-def summarize_x86_16_ir_recovery(source: Any) -> IRRecoverySummary:
-    def _impl():
+def summarize_x86_16_ir_recovery(source: IRRecoverySource) -> IRRecoverySummary:
+    """Summarize typed IR recovery counters from an existing mapping row."""
+
+    def _impl() -> IRRecoverySummary:
         summary = (
             _value(source, "x86_16_vex_ir_summary")
             or _value(source, "_inertia_vex_ir_summary")
             or _value(source, "vex_ir_summary")
             or {}
         )
-        if not isinstance(summary, dict):
+        if not isinstance(summary, Mapping):
             summary = {}
         return IRRecoverySummary(
-            block_count=int(summary.get("block_count", 0) or 0),
-            instruction_count=int(summary.get("instruction_count", 0) or 0),
-            refusal_count=int(summary.get("refusal_count", 0) or 0),
-            aliasable_value_count=int(summary.get("aliasable_value_count", 0) or 0),
-            ssa_binding_count=int(summary.get("ssa_binding_count", 0) or 0),
-            phi_node_count=int(summary.get("phi_node_count", 0) or 0),
-            frame_slot_count=int(summary.get("frame_slot_count", 0) or 0),
-            frame_refusal_count=int(summary.get("frame_refusal_count", 0) or 0),
-            space_counts=dict(summary.get("space_counts", {}) or {}),
-            address_status_counts=dict(summary.get("address_status_counts", {}) or {}),
-            segment_origin_counts=dict(summary.get("segment_origin_counts", {}) or {}),
-            condition_counts=dict(summary.get("condition_counts", {}) or {}),
+            block_count=_count(summary.get("block_count", 0)),
+            instruction_count=_count(summary.get("instruction_count", 0)),
+            refusal_count=_count(summary.get("refusal_count", 0)),
+            aliasable_value_count=_count(summary.get("aliasable_value_count", 0)),
+            ssa_binding_count=_count(summary.get("ssa_binding_count", 0)),
+            phi_node_count=_count(summary.get("phi_node_count", 0)),
+            frame_slot_count=_count(summary.get("frame_slot_count", 0)),
+            frame_refusal_count=_count(summary.get("frame_refusal_count", 0)),
+            space_counts=_string_int_counts(summary.get("space_counts", {})),
+            address_status_counts=_string_int_counts(summary.get("address_status_counts", {})),
+            segment_origin_counts=_string_int_counts(summary.get("segment_origin_counts", {})),
+            condition_counts=_string_int_counts(summary.get("condition_counts", {})),
         )
 
     return _impl()

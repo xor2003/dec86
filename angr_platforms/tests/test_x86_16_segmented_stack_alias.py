@@ -26,10 +26,7 @@ from angr_platforms.X86_16 import decompiler_structuring_stage as _structuring_s
 from angr_platforms.X86_16.alias_model import _stack_storage_facts_for_segmented_address_8616
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.decompiler_postprocess_utils import (
-    _match_bp_stack_dereference_8616,
-    _stack_bp_displacement_8616,
-)
+from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.lowering.real_mode_linear import (
     DirectStackMoveFallbackDecision8616,
     _build_assignment_maps_8616,
@@ -39,6 +36,7 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     _replace_precontrol_stack_assignment_8616,
     _replace_tagged_assignment_8616,
     _resolve_direct_stack_update_cvar_8616,
+    _stack_offset_from_expr_8616,
     lower_stable_ds_es_linear_global_addresses_8616,
     lower_stable_ds_es_linear_global_dereferences_8616,
     lower_stable_ss_linear_stack_dereferences_8616,
@@ -50,11 +48,16 @@ from angr_platforms.X86_16.lowering.segmented_memory_lowering import (
     apply_runtime_segment_lowering_8616,
     lower_runtime_ss_segment_helpers_to_stack_8616,
 )
+from angr_platforms.X86_16.lowering.stack_c_ast_matching import (
+    _match_bp_stack_dereference_8616,
+    _stack_bp_displacement_8616,
+)
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
 from angr_platforms.X86_16.lowering.stack_probe_return_facts import (
     TypedStackProbeReturnFact8616,
     build_typed_stack_probe_return_facts_8616,
 )
+from angr_platforms.X86_16.lowering.stack_variable_binding import StackBaseBpBiasEvidence8616
 from angr_platforms.X86_16.segmented_memory_reasoning import (
     SegmentAssignment,
     SegmentRegister,
@@ -1167,7 +1170,12 @@ def test_stack_cvar_canonicalization_rebases_non_alias_stack_base_offset_to_alia
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", -4, 2, region=0x4010)
     ]
-    codegen._inertia_stack_base_bp_bias_evidence_8616 = (codegen.cfunc.statements, 2)
+    codegen._inertia_stack_base_bp_bias_evidence_8616 = StackBaseBpBiasEvidence8616(
+        statement_root=codegen.cfunc.statements,
+        stack_base_displacements=(-6,),
+        known_bp_offsets=frozenset({-4}),
+        inferred_bias=2,
+    )
 
     canonical = decompile._canonicalize_stack_cvar_expr(raw_cvar, codegen)
 
@@ -1684,6 +1692,140 @@ def test_runtime_ss_segment_helper_lowering_materializes_ss_register_carrier_sta
     assert codegen._inertia_runtime_ss_helper_candidate_count_8616 == 1
     assert codegen._inertia_runtime_ss_helper_materialized_count_8616 == 1
     assert codegen._inertia_runtime_ss_helper_refused_count_8616 == 0
+
+
+def test_runtime_ss_segment_helper_refreshes_stale_bias_and_offset_caches():
+    project, codegen = _codegen([])
+    alias_facts = [
+        _stack_storage_facts_for_segmented_address_8616("ss", 4, 2, region=0x4010),
+        _stack_storage_facts_for_segmented_address_8616("ss", 6, 2, region=0x4010),
+    ]
+    codegen._inertia_semantic_alias_facts = alias_facts
+    ss_reg_offset, ss_reg_size = project.arch.registers["ss"]
+    ss_carrier = CVariable(SimRegisterVariable(ss_reg_offset, ss_reg_size, name="v2"), codegen=codegen)
+    stack_base = CFakeVariable("stack_base", SimTypePointer(SimTypeBottom()), codegen=codegen)
+    offset_expr = CBinaryOp("Add", stack_base, _const(4, codegen), codegen=codegen)
+    helper = CFunctionCall("SEG_U16", None, [ss_carrier, offset_expr], codegen=codegen)
+    target = _stack(-2, codegen, name="sink")
+    codegen.cfunc.variables_in_use[target.variable] = target
+    seed_offset_a = CBinaryOp("Add", stack_base, _const(-4, codegen), codegen=codegen)
+    seed_offset_b = CBinaryOp("Add", stack_base, _const(-2, codegen), codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                target,
+                CFunctionCall("SEG_U16", None, [ss_carrier, seed_offset_a], codegen=codegen),
+                codegen=codegen,
+            ),
+            CAssignment(
+                target,
+                CFunctionCall("SEG_U16", None, [ss_carrier, seed_offset_b], codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    assert _stack_offset_from_expr_8616(seed_offset_a, project, codegen) == 4
+    assert _stack_offset_from_expr_8616(offset_expr, project, codegen) == 12
+    stale_evidence = codegen._inertia_stack_base_bp_bias_evidence_8616
+    assert isinstance(stale_evidence, StackBaseBpBiasEvidence8616)
+    assert stale_evidence.inferred_bias == 8
+
+    codegen.cfunc.statements.statements[:] = [CAssignment(target, helper, codegen=codegen)]
+    changed = apply_runtime_segment_lowering_8616(codegen)
+
+    assert changed is True
+    rhs = codegen.cfunc.statements.statements[0].rhs
+    assert isinstance(rhs, CVariable)
+    assert isinstance(rhs.variable, SimStackVariable)
+    assert rhs.variable.offset == 6
+    refreshed_evidence = codegen._inertia_stack_base_bp_bias_evidence_8616
+    assert isinstance(refreshed_evidence, StackBaseBpBiasEvidence8616)
+    assert refreshed_evidence.inferred_bias is None
+    assert refreshed_evidence.known_bp_offsets.issuperset({4, 6})
+    assert codegen._inertia_runtime_ss_helper_materialized_count_8616 == 1
+    assert codegen._inertia_runtime_ss_helper_refused_count_8616 == 0
+
+
+def test_runtime_ss_segment_helper_refuses_stale_bias_after_evidence_changes():
+    project, codegen = _codegen([])
+    alias_facts = [
+        _stack_storage_facts_for_segmented_address_8616("ss", 4, 2, region=0x4010),
+        _stack_storage_facts_for_segmented_address_8616("ss", 6, 2, region=0x4010),
+    ]
+    codegen._inertia_semantic_alias_facts = alias_facts
+    ss_reg_offset, ss_reg_size = project.arch.registers["ss"]
+    ss_carrier = CVariable(SimRegisterVariable(ss_reg_offset, ss_reg_size, name="v2"), codegen=codegen)
+    stack_base = CFakeVariable("stack_base", SimTypePointer(SimTypeBottom()), codegen=codegen)
+    offset_expr = CBinaryOp("Add", stack_base, _const(4, codegen), codegen=codegen)
+    helper = CFunctionCall("SEG_U16", None, [ss_carrier, offset_expr], codegen=codegen)
+    target = _stack(-2, codegen, name="sink")
+    codegen.cfunc.variables_in_use[target.variable] = target
+    seed_offset_a = CBinaryOp("Add", stack_base, _const(-4, codegen), codegen=codegen)
+    seed_offset_b = CBinaryOp("Add", stack_base, _const(-2, codegen), codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [
+            CAssignment(
+                target,
+                CFunctionCall("SEG_U16", None, [ss_carrier, seed_offset_a], codegen=codegen),
+                codegen=codegen,
+            ),
+            CAssignment(
+                target,
+                CFunctionCall("SEG_U16", None, [ss_carrier, seed_offset_b], codegen=codegen),
+                codegen=codegen,
+            ),
+        ],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    assert _stack_offset_from_expr_8616(seed_offset_a, project, codegen) == 4
+    assert _stack_offset_from_expr_8616(offset_expr, project, codegen) == 12
+    alias_facts[:] = [
+        _stack_storage_facts_for_segmented_address_8616("ss", 4, 2, region=0x4010),
+        _stack_storage_facts_for_segmented_address_8616("ss", 8, 2, region=0x4010),
+    ]
+    codegen.cfunc.statements.statements[:] = [CAssignment(target, helper, codegen=codegen)]
+    changed = apply_runtime_segment_lowering_8616(codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements[0].rhs is helper
+    refreshed_evidence = codegen._inertia_stack_base_bp_bias_evidence_8616
+    assert isinstance(refreshed_evidence, StackBaseBpBiasEvidence8616)
+    assert refreshed_evidence.inferred_bias is None
+    assert codegen._inertia_runtime_ss_helper_materialized_count_8616 == 0
+    assert codegen._inertia_runtime_ss_helper_refused_count_8616 == 1
+
+
+def test_runtime_segment_helper_lowering_refuses_unknown_offset_without_exception():
+    project, codegen = _codegen([])
+    ss_reg_offset, ss_reg_size = project.arch.registers["ss"]
+    ss_carrier = CVariable(SimRegisterVariable(ss_reg_offset, ss_reg_size, name="v3"), codegen=codegen)
+    unknown_offset = CDirtyExpression(SimpleNamespace(varid=91, name="vvar_91"), codegen=codegen)
+    helper = CFunctionCall(
+        "SEG_U16",
+        None,
+        [ss_carrier, unknown_offset],
+        codegen=codegen,
+    )
+    target = _stack(-10, codegen, name="sink")
+    codegen.cfunc.variables_in_use[target.variable] = target
+    codegen.cfunc.statements = CStatements(
+        [CAssignment(target, helper, codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = apply_runtime_segment_lowering_8616(codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements[0].rhs is helper
 
 
 def test_real_mode_linear_stack_lowering_recurses_into_condition_and_nodes():
@@ -2352,7 +2494,16 @@ def test_stack_lowering_entrypoint_builds_typed_stack_probe_return_facts_from_su
     project, codegen = _codegen([])
     probe = SimpleNamespace()
     codegen._inertia_callsite_summaries = {
-        id(probe): SimpleNamespace(
+        id(probe): CallsiteSummary8616(
+            callsite_addr=0x4010,
+            target_addr=0x1000,
+            return_addr=0x4013,
+            kind="near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=0,
+            return_register="ax",
+            return_used=True,
             stack_probe_helper=True,
             helper_return_state="stack_address",
             helper_return_space="ss",
@@ -2383,14 +2534,32 @@ def test_stack_lowering_entrypoint_builds_typed_stack_probe_return_facts_from_su
 def test_stack_lowering_builder_refuses_non_ss_or_unknown_width_facts():
     project, codegen = _codegen([])
     codegen._inertia_callsite_summaries = {
-        1: SimpleNamespace(
+        1: CallsiteSummary8616(
+            callsite_addr=0x4010,
+            target_addr=0x1000,
+            return_addr=0x4013,
+            kind="near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=0,
+            return_register="ax",
+            return_used=True,
             stack_probe_helper=True,
             helper_return_state="stack_address",
             helper_return_space="ds",
             helper_return_width=2,
             helper_return_address_kind="stack",
         ),
-        2: SimpleNamespace(
+        2: CallsiteSummary8616(
+            callsite_addr=0x4020,
+            target_addr=0x1000,
+            return_addr=0x4023,
+            kind="near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=0,
+            return_register="ax",
+            return_used=True,
             stack_probe_helper=True,
             helper_return_state="stack_address",
             helper_return_space="ss",

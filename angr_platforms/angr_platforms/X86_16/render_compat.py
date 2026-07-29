@@ -1,6 +1,13 @@
+"""Layer: Frontend/angr compatibility.
+
+Responsibility: deterministic structured-codegen rendering for already-proven facts.
+Forbidden: semantic recovery from rendered C, source, COD, or assembly text.
+"""
+
 from __future__ import annotations
 
-from collections.abc import Iterable
+import typing
+from collections.abc import Iterable, Iterator
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -8,13 +15,13 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 __all__ = ["install_structured_codegen_sort_compat_8616", "repair_cfunctioncall_render_targets_8616"]
 
 
-def _stable_ident_key_8616(value) -> tuple[int, str, str]:
+def _stable_ident_key_8616(value: object | None) -> tuple[int, str, str]:
     if value is None:
         return (0, "", "")
     return (1, type(value).__name__, str(value))
 
 
-def _stable_offset_key_8616(value) -> tuple[int, int | str]:
+def _stable_offset_key_8616(value: object | None) -> tuple[int, int | str]:
     if isinstance(value, int):
         return (0, value)
     return (1, str(value))
@@ -28,6 +35,8 @@ def install_structured_codegen_sort_compat_8616() -> bool:
     sorts by ``(offset, ident)``. Python 3 rejects comparisons between
     ``None`` and ``str`` idents. The compatibility layer keeps angr's ordering
     categories and only normalizes sort keys.
+    Dynamic attribute boundary: this patches third-party angr renderer classes
+    and reads optional third-party angr SimVariable identity fields.
     """
     cfunc_cls = getattr(structured_c, "CFunction", None)
     if cfunc_cls is None:
@@ -36,7 +45,8 @@ def install_structured_codegen_sort_compat_8616() -> bool:
     if getattr(current, "_inertia_x86_16_stable_sort", False):
         return False
 
-    def _sort_local_vars(local_vars):
+    def _sort_local_vars(local_vars: Iterable[object]) -> list[object]:
+        """Sort local variables across the dynamic third-party angr boundary."""
         reg_vars, stack_vars, mem_vars = [], [], []
         for var in local_vars:
             if isinstance(var, SimRegisterVariable):
@@ -68,7 +78,8 @@ def install_structured_codegen_sort_compat_8616() -> bool:
     return True
 
 
-def _iter_c_nodes_8616(root):
+def _iter_c_nodes_8616(root: object) -> Iterator[object]:
+    """Iterate C AST nodes across the dynamic third-party angr/codegen boundary."""
     stack = [root]
     seen: set[int] = set()
     while stack:
@@ -88,6 +99,9 @@ def _iter_c_nodes_8616(root):
             "condition",
             "init",
             "iteration",
+            "switch",
+            "cases",
+            "default",
             "retval",
             "lhs",
             "rhs",
@@ -108,7 +122,8 @@ def _iter_c_nodes_8616(root):
                 stack.append(value)
 
 
-def _kb_function_for_addr_8616(project, addr: int):
+def _kb_function_for_addr_8616(project: object, addr: int) -> object | None:
+    """Resolve functions across the dynamic third-party angr project boundary."""
     kb_functions = getattr(getattr(project, "kb", None), "functions", None)
     if kb_functions is None:
         return None
@@ -120,7 +135,7 @@ def _kb_function_for_addr_8616(project, addr: int):
     return None
 
 
-def repair_cfunctioncall_render_targets_8616(codegen) -> int:
+def repair_cfunctioncall_render_targets_8616(codegen: object) -> int:
     """Repair copied call-target metadata before angr C rendering.
 
     angr's ``CFunctionCall`` renderer checks callee-name ambiguity through
@@ -128,6 +143,8 @@ def repair_cfunctioncall_render_targets_8616(codegen) -> int:
     the callee address/name but lose the ``Function.project`` back-reference.
     Reattach the function from the current KB when possible; otherwise disable
     only the renderer's disambiguated-name check for that call.
+    Dynamic attribute boundary: codegen, cfunc, and C AST nodes are third-party
+    angr/codegen objects with optional renderer metadata.
     """
     project = getattr(codegen, "project", None)
     root = getattr(getattr(codegen, "cfunc", None), "statements", None)
@@ -145,7 +162,7 @@ def repair_cfunctioncall_render_targets_8616(codegen) -> int:
         if isinstance(addr, int) and project is not None:
             replacement = _kb_function_for_addr_8616(project, addr)
             if replacement is not None and getattr(replacement, "project", None) is not None:
-                node.callee_func = replacement
+                typing.cast(typing.Any, node).callee_func = replacement
                 repaired += 1
                 continue
         if getattr(node, "show_disambiguated_name", False):

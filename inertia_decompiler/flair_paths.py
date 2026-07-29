@@ -1,3 +1,9 @@
+"""Resolve local FLAIR signature paths used by optional library classification.
+
+Layer: CLI/fallback/reporting.
+Responsibility: resolve optional FLAIR tool paths without owning decompiler semantics.
+"""
+
 from __future__ import annotations
 
 import os
@@ -8,6 +14,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def default_flair_startup_root() -> Path:
+    """Return the repository-local default FLAIR startup root."""
     return _REPO_ROOT / "flair_startup"
 
 
@@ -62,7 +69,6 @@ def copy_flair_patterns_to_local(
     for subdir in ("bin",):
         source_dir = source / subdir
         if source_dir.exists():
-            target_dir = target / subdir
             if source_dir.is_dir():
                 for source_entry in sorted(source_dir.rglob("*")):
                     if source_entry.is_dir():

@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 from angr_platforms.X86_16.recovery_manifest import RECOVERY_LAYERS, describe_x86_16_recovery_layers
 
 
-def test_x86_16_recovery_layers_cover_current_recovery_boundary():
+def test_x86_16_recovery_layers_cover_current_recovery_boundary() -> None:
     assert [layer.name for layer in RECOVERY_LAYERS] == [
         "segmented_memory_association",
         "member_and_array_recovery",
@@ -22,7 +24,7 @@ def test_x86_16_recovery_layers_cover_current_recovery_boundary():
     )
 
 
-def test_x86_16_recovery_layers_pin_existing_helpers():
+def test_x86_16_recovery_layers_pin_existing_helpers() -> None:
     stack = RECOVERY_LAYERS[2]
     proto = RECOVERY_LAYERS[8]
     structuring = RECOVERY_LAYERS[7]
@@ -34,7 +36,7 @@ def test_x86_16_recovery_layers_pin_existing_helpers():
     assert "apply_x86_16_decompiler_return_compatibility" in proto.helpers
 
 
-def test_x86_16_segmented_memory_association_helpers_are_explicit():
+def test_x86_16_segmented_memory_association_helpers_are_explicit() -> None:
     seg = RECOVERY_LAYERS[0]
 
     assert seg.name == "segmented_memory_association"

@@ -1,4 +1,16 @@
+"""ALU operand and comparison semantics for typed IR conditions.
+
+Layer: Semantics.
+Responsibility: owns instruction effects, flags, branch meaning, and expression interpretation.
+This module maps VEX-like operands into typed IR values and conditions.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
+
+from collections.abc import Callable
+from typing import Any
 
 from pyvex.lifting.util.vex_helper import Type
 
@@ -7,18 +19,64 @@ from ..ir.condition_ir import build_condition_ir_8616, harmonize_condition_args_
 from ..ir.core import IRCondition, IRValue, MemSpace
 from ..ir.regs import REG16_OFFSET_MAP, register_name_from_offset
 
+__all__ = (
+    "binary_operation",
+    "binary_operation_with_carry",
+    "build_carry_compare_condition_8616",
+    "build_compare_condition_8616",
+    "compare_operation",
+    "masked_shift_count",
+    "rotate_count",
+    "rotate_left_operation",
+    "rotate_right_operation",
+    "rotate_through_carry_count",
+    "rotate_through_carry_left_state",
+    "rotate_through_carry_right_state",
+    "shift_left_operation",
+    "shift_right_arithmetic_operation",
+    "shift_right_operation",
+    "unary_operation",
+)
 
-def _type_name_for_operand(value) -> str:
-    ty = getattr(value, "ty", None)
-    return str(getattr(ty, "name", ty or type(value).__name__))
+
+_SymbolicValue8616 = Any
+_ValueGetter8616 = Callable[[], _SymbolicValue8616]
+_ValueSetter8616 = Callable[[_SymbolicValue8616], None]
+_DynamicOperator8616 = Callable[..., _SymbolicValue8616]
+_FlagUpdater8616 = Callable[..., object]
 
 
-def _size_bytes_from_operand(value) -> int:
-    width = getattr(value, "width", None)
+def _dynamic_vex_attr_8616(obj: object | None, name: str, default: object | None = None) -> object | None:
+    """Dynamic VEX/emulator boundary: read optional pyvex or callback attributes."""
+    if obj is None:
+        return default
+    try:
+        # Dynamic third-party VEX/emulator boundary: symbolic objects do not expose an owned contract.
+        return getattr(obj, name, default)
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def _dynamic_flag_callback_name_8616(update_flags: object) -> str:
+    """Dynamic flag-callback boundary: return the external callback name."""
+    name = _dynamic_vex_attr_8616(update_flags, "__name__", "")
+    return name if isinstance(name, str) else ""
+
+
+def _type_name_for_operand(value: object) -> str:
+    ty = _dynamic_vex_attr_8616(value, "ty")
+    ty_name = _dynamic_vex_attr_8616(ty, "name")
+    return str(ty_name if ty_name is not None else ty or type(value).__name__)
+
+
+def _size_bytes_from_operand(value: object) -> int:
+    width = _dynamic_vex_attr_8616(value, "width")
     if isinstance(width, int) and width > 0:
         return max(1, (width + 7) // 8)
-    ty = getattr(value, "ty", None)
-    ty_name = getattr(ty, "name", str(ty or ""))
+    ty = _dynamic_vex_attr_8616(value, "ty")
+    ty_name = _dynamic_vex_attr_8616(ty, "name", str(ty or ""))
+    if not isinstance(ty_name, str):
+        ty_name = str(ty_name)
     if ty_name.startswith("Ity_I"):
         try:
             bits = int(ty_name[5:])
@@ -29,8 +87,8 @@ def _size_bytes_from_operand(value) -> int:
     return 0
 
 
-def _condition_value_from_operand(value, *, size_hint: int = 0) -> IRValue:
-    def _impl():
+def _condition_value_from_operand(value: object, *, size_hint: int = 0) -> IRValue:
+    def _impl() -> IRValue:
         hinted_size = int(size_hint or 0)
         if isinstance(value, bool):
             return IRValue(MemSpace.CONST, const=int(value), size=max(1, hinted_size), expr=("bool",))
@@ -42,15 +100,12 @@ def _condition_value_from_operand(value, *, size_hint: int = 0) -> IRValue:
                 if not -(1 << 15) <= value < (1 << 16):
                     size = 4
             return IRValue(MemSpace.CONST, const=value, size=size, expr=("int",))
-        try:
-            value_const = getattr(value, "value", None)
-        except Exception:
-            value_const = None
+        value_const = _dynamic_vex_attr_8616(value, "value")
         if isinstance(value_const, int):
             size = _size_bytes_from_operand(value) or hinted_size
             return IRValue(MemSpace.CONST, const=value_const, size=size, expr=("vex_const",))
 
-        reg_offset = getattr(value, "reg", None)
+        reg_offset = _dynamic_vex_attr_8616(value, "reg")
         if isinstance(reg_offset, int) and int(reg_offset) in REG16_OFFSET_MAP:
             reg_name = register_name_from_offset(reg_offset)
             size = _size_bytes_from_operand(value) or hinted_size
@@ -58,10 +113,10 @@ def _condition_value_from_operand(value, *, size_hint: int = 0) -> IRValue:
                 MemSpace.REG, name=reg_name, offset=reg_offset, size=size, expr=(_type_name_for_operand(value),)
             )
 
-        reg_name = getattr(value, "reg_name", None)
+        reg_name = _dynamic_vex_attr_8616(value, "reg_name")
         if isinstance(reg_name, str) and reg_name:
             size = _size_bytes_from_operand(value) or hinted_size
-            reg_offset = getattr(value, "offset", None)
+            reg_offset = _dynamic_vex_attr_8616(value, "offset")
             return IRValue(
                 MemSpace.REG,
                 name=reg_name.lower(),
@@ -70,7 +125,7 @@ def _condition_value_from_operand(value, *, size_hint: int = 0) -> IRValue:
                 expr=(_type_name_for_operand(value),),
             )
 
-        reg_offset = getattr(value, "offset", None)
+        reg_offset = _dynamic_vex_attr_8616(value, "offset")
         if isinstance(reg_offset, int) and int(reg_offset) in REG16_OFFSET_MAP:
             size = _size_bytes_from_operand(value) or hinted_size
             reg_name = register_name_from_offset(reg_offset)
@@ -82,7 +137,7 @@ def _condition_value_from_operand(value, *, size_hint: int = 0) -> IRValue:
                 expr=(_type_name_for_operand(value),),
             )
 
-        tmp = getattr(value, "tmp", None)
+        tmp = _dynamic_vex_attr_8616(value, "tmp")
         if isinstance(tmp, int):
             return IRValue(
                 MemSpace.TMP,
@@ -96,14 +151,14 @@ def _condition_value_from_operand(value, *, size_hint: int = 0) -> IRValue:
             name=type(value).__name__,
             size=_size_bytes_from_operand(value) or hinted_size,
             expr=(
-                str(getattr(getattr(value, "ty", None), "name", getattr(value, "ty", None) or type(value).__name__)),
+                _type_name_for_operand(value),
             ),
         )
 
     return _impl()
 
 
-def _same_condition_operand_8616(lhs, rhs) -> bool:
+def _same_condition_operand_8616(lhs: object, rhs: object) -> bool:
     if lhs is rhs:
         return True
     try:
@@ -112,8 +167,9 @@ def _same_condition_operand_8616(lhs, rhs) -> bool:
         return False
 
 
-def build_compare_condition_8616(lhs, rhs, update_flags) -> IRCondition | None:
-    name = getattr(update_flags, "__name__", "")
+def build_compare_condition_8616(lhs: object, rhs: object, update_flags: object) -> IRCondition | None:
+    """Build typed comparison IR from a two-operand flag update callback."""
+    name = _dynamic_flag_callback_name_8616(update_flags)
     target_size = max(_size_bytes_from_operand(lhs), _size_bytes_from_operand(rhs))
     lhs_value = _condition_value_from_operand(lhs, size_hint=target_size)
     rhs_value = _condition_value_from_operand(rhs, size_hint=target_size)
@@ -154,8 +210,14 @@ def build_compare_condition_8616(lhs, rhs, update_flags) -> IRCondition | None:
     return None
 
 
-def build_carry_compare_condition_8616(lhs, rhs, carry, update_flags) -> IRCondition | None:
-    name = getattr(update_flags, "__name__", "")
+def build_carry_compare_condition_8616(
+    lhs: object,
+    rhs: object,
+    carry: object,
+    update_flags: object,
+) -> IRCondition | None:
+    """Build typed comparison IR from an ADC/SBB-style flag update callback."""
+    name = _dynamic_flag_callback_name_8616(update_flags)
     if name not in {"update_eflags_adc", "update_eflags_sbb"}:
         return None
     target_size = max(_size_bytes_from_operand(lhs), _size_bytes_from_operand(rhs), _size_bytes_from_operand(carry))
@@ -172,25 +234,46 @@ def build_carry_compare_condition_8616(lhs, rhs, carry, update_flags) -> IRCondi
     )
 
 
-def _record_last_condition_from_update_flags(emu, lhs, rhs, update_flags) -> None:
-    owner = getattr(update_flags, "__self__", None)
-    if owner is None or not hasattr(owner, "set_last_condition"):
+def _record_last_condition_from_update_flags(
+    emu: object | None,
+    lhs: object,
+    rhs: object,
+    update_flags: object,
+) -> None:
+    owner = _dynamic_vex_attr_8616(update_flags, "__self__")
+    set_last_condition = _dynamic_vex_attr_8616(owner, "set_last_condition")
+    if not callable(set_last_condition):
         return
     condition = build_compare_condition_8616(lhs, rhs, update_flags)
     if condition is not None:
-        owner.set_last_condition(condition)
+        set_last_condition(condition)
 
 
-def _record_last_condition_from_carry_update_flags(emu, lhs, rhs, carry, update_flags) -> None:
-    owner = getattr(update_flags, "__self__", None)
-    if owner is None or not hasattr(owner, "set_last_condition"):
+def _record_last_condition_from_carry_update_flags(
+    emu: object | None,
+    lhs: object,
+    rhs: object,
+    carry: object,
+    update_flags: object,
+) -> None:
+    owner = _dynamic_vex_attr_8616(update_flags, "__self__")
+    set_last_condition = _dynamic_vex_attr_8616(owner, "set_last_condition")
+    if not callable(set_last_condition):
         return
     condition = build_carry_compare_condition_8616(lhs, rhs, carry, update_flags)
     if condition is not None:
-        owner.set_last_condition(condition)
+        set_last_condition(condition)
 
 
-def binary_operation(emu, get_lhs, get_rhs, set_result, update_flags, operator):
+def binary_operation(
+    emu: object,
+    get_lhs: _ValueGetter8616,
+    get_rhs: _ValueGetter8616,
+    set_result: _ValueSetter8616,
+    update_flags: _FlagUpdater8616,
+    operator: _DynamicOperator8616,
+) -> None:
+    """Apply a binary ALU operation and record its typed flag condition."""
     lhs = get_lhs()
     rhs = get_rhs()
     set_result(operator(lhs, rhs))
@@ -199,14 +282,15 @@ def binary_operation(emu, get_lhs, get_rhs, set_result, update_flags, operator):
 
 
 def binary_operation_with_carry(
-    emu,
-    get_lhs,
-    get_rhs,
-    set_result,
-    update_flags,
-    operator,
+    emu: _SymbolicValue8616,
+    get_lhs: _ValueGetter8616,
+    get_rhs: _ValueGetter8616,
+    set_result: _ValueSetter8616,
+    update_flags: _FlagUpdater8616,
+    operator: _DynamicOperator8616,
     width_bits: int,
-):
+) -> None:
+    """Apply a carry-aware ALU operation and record its typed flag condition."""
     lhs = get_lhs()
     rhs = get_rhs()
     carry = emu.is_carry()
@@ -219,14 +303,25 @@ def binary_operation_with_carry(
     _record_last_condition_from_carry_update_flags(emu, lhs, rhs, carry, update_flags)
 
 
-def compare_operation(get_lhs, get_rhs, update_flags):
+def compare_operation(
+    get_lhs: _ValueGetter8616,
+    get_rhs: _ValueGetter8616,
+    update_flags: _FlagUpdater8616,
+) -> None:
+    """Run a compare-only ALU operation and record its typed flag condition."""
     lhs = get_lhs()
     rhs = get_rhs()
     update_flags(lhs, rhs)
     _record_last_condition_from_update_flags(None, lhs, rhs, update_flags)
 
 
-def unary_operation(get_value, set_result, update_flags, operator):
+def unary_operation(
+    get_value: _ValueGetter8616,
+    set_result: _ValueSetter8616,
+    update_flags: _FlagUpdater8616 | None,
+    operator: _DynamicOperator8616,
+) -> None:
+    """Apply a unary ALU operation and record the resulting flag condition."""
     value = get_value()
     set_result(operator(value))
     if update_flags is not None:
@@ -234,7 +329,13 @@ def unary_operation(get_value, set_result, update_flags, operator):
         _record_last_condition_from_update_flags(None, value, 0, update_flags)
 
 
-def masked_shift_count(emu, count, width_bits: int, mask: int = 0x1F):
+def masked_shift_count(
+    emu: _SymbolicValue8616,
+    count: _SymbolicValue8616,
+    width_bits: int,
+    mask: int = 0x1F,
+) -> _SymbolicValue8616:
+    """Mask an x86 shift count to the architecturally active bits."""
     count_v = (
         emu.constant(count, type_for_bits(width_bits))
         if isinstance(count, int)
@@ -243,36 +344,81 @@ def masked_shift_count(emu, count, width_bits: int, mask: int = 0x1F):
     return count_v & emu.constant(mask, type_for_bits(width_bits))
 
 
-def rotate_count(emu, count, modulo: int, width_bits: int, mask: int = 0x1F):
+def rotate_count(
+    emu: _SymbolicValue8616,
+    count: _SymbolicValue8616,
+    modulo: int,
+    width_bits: int,
+    mask: int = 0x1F,
+) -> _SymbolicValue8616:
+    """Normalize a rotate count for the target operand width."""
     return masked_shift_count(emu, count, width_bits, mask) % emu.constant(modulo, type_for_bits(width_bits))
 
 
-def rotate_through_carry_count(emu, count, width_bits: int, mask: int = 0x1F):
+def rotate_through_carry_count(
+    emu: _SymbolicValue8616,
+    count: _SymbolicValue8616,
+    width_bits: int,
+    mask: int = 0x1F,
+) -> _SymbolicValue8616:
+    """Normalize a rotate-through-carry count for the target width."""
     return masked_shift_count(emu, count, width_bits, mask) % emu.constant(width_bits + 1, type_for_bits(width_bits))
 
 
-def shift_left_operation(emu, get_value, set_result, update_flags, count, width_bits: int):
+def shift_left_operation(
+    emu: _SymbolicValue8616,
+    get_value: _ValueGetter8616,
+    set_result: _ValueSetter8616,
+    update_flags: _FlagUpdater8616,
+    count: _SymbolicValue8616,
+    width_bits: int,
+) -> None:
+    """Apply an x86 logical left shift and update flags."""
     value = get_value()
     shift = masked_shift_count(emu, count, width_bits)
     set_result(value << shift)
     update_flags(value, shift)
 
 
-def shift_right_operation(emu, get_value, set_result, update_flags, count, width_bits: int):
+def shift_right_operation(
+    emu: _SymbolicValue8616,
+    get_value: _ValueGetter8616,
+    set_result: _ValueSetter8616,
+    update_flags: _FlagUpdater8616,
+    count: _SymbolicValue8616,
+    width_bits: int,
+) -> None:
+    """Apply an x86 logical right shift and update flags."""
     value = get_value()
     shift = masked_shift_count(emu, count, width_bits)
     set_result(value >> shift)
     update_flags(value, shift)
 
 
-def shift_right_arithmetic_operation(emu, get_value, set_result, update_flags, count, width_bits: int):
+def shift_right_arithmetic_operation(
+    emu: _SymbolicValue8616,
+    get_value: _ValueGetter8616,
+    set_result: _ValueSetter8616,
+    update_flags: _FlagUpdater8616,
+    count: _SymbolicValue8616,
+    width_bits: int,
+) -> None:
+    """Apply an x86 arithmetic right shift and update flags."""
     value = get_value()
     shift = masked_shift_count(emu, count, width_bits)
     set_result(value.sar(shift))
     update_flags(value, shift)
 
 
-def rotate_left_operation(emu, get_value, set_result, update_flags, count, width_bits: int):
+def rotate_left_operation(
+    emu: _SymbolicValue8616,
+    get_value: _ValueGetter8616,
+    set_result: _ValueSetter8616,
+    update_flags: _FlagUpdater8616,
+    count: _SymbolicValue8616,
+    width_bits: int,
+) -> None:
+    """Apply an x86 rotate-left operation and update flags."""
     value = get_value()
     shift = rotate_count(emu, count, width_bits, width_bits)
     width = emu.constant(width_bits, type_for_bits(width_bits))
@@ -281,7 +427,15 @@ def rotate_left_operation(emu, get_value, set_result, update_flags, count, width
     update_flags(value, shift)
 
 
-def rotate_right_operation(emu, get_value, set_result, update_flags, count, width_bits: int):
+def rotate_right_operation(
+    emu: _SymbolicValue8616,
+    get_value: _ValueGetter8616,
+    set_result: _ValueSetter8616,
+    update_flags: _FlagUpdater8616,
+    count: _SymbolicValue8616,
+    width_bits: int,
+) -> None:
+    """Apply an x86 rotate-right operation and update flags."""
     value = get_value()
     shift = rotate_count(emu, count, width_bits, width_bits)
     width = emu.constant(width_bits, type_for_bits(width_bits))
@@ -290,7 +444,14 @@ def rotate_right_operation(emu, get_value, set_result, update_flags, count, widt
     update_flags(value, shift)
 
 
-def rotate_through_carry_left_state(emu, value, count, width_bits: int, ite_value):
+def rotate_through_carry_left_state(
+    emu: _SymbolicValue8616,
+    value: _SymbolicValue8616,
+    count: _SymbolicValue8616,
+    width_bits: int,
+    ite_value: _DynamicOperator8616,
+) -> tuple[_SymbolicValue8616, _SymbolicValue8616 | None, _SymbolicValue8616 | None]:
+    """Return result, carry, and overflow for rotate-through-carry left."""
     shift = rotate_through_carry_count(emu, count, width_bits)
     shift_value = emu._const_u8_value(shift)
     mask = emu.constant((1 << width_bits) - 1, type_for_bits(width_bits))
@@ -320,7 +481,14 @@ def rotate_through_carry_left_state(emu, value, count, width_bits: int, ite_valu
     return selected_result, selected_carry.cast_to(Type.int_1), overflow
 
 
-def rotate_through_carry_right_state(emu, value, count, width_bits: int, ite_value):
+def rotate_through_carry_right_state(
+    emu: _SymbolicValue8616,
+    value: _SymbolicValue8616,
+    count: _SymbolicValue8616,
+    width_bits: int,
+    ite_value: _DynamicOperator8616,
+) -> tuple[_SymbolicValue8616, _SymbolicValue8616 | None, _SymbolicValue8616 | None]:
+    """Return result, carry, and overflow for rotate-through-carry right."""
     shift = rotate_through_carry_count(emu, count, width_bits)
     shift_value = emu._const_u8_value(shift)
     mask = emu.constant((1 << width_bits) - 1, type_for_bits(width_bits))

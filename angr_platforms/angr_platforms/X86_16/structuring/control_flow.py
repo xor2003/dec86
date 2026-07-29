@@ -1,15 +1,12 @@
+"""Compatibility exports for control-flow structuring helpers.
+
+Layer: Structuring.
+Responsibility: owns CFG shape, loops, switches, and structured condition lowering from proven
+IR/semantic evidence.
+Do not perform alias-state ownership, widening, type/materialization recovery,
+rewrite cleanup, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
 
-# Layer: Structuring
-# Responsibility: control-flow structuring ownership
-# Forbidden: CLI formatting and postprocess cleanup ownership
-from .. import decompiler_structuring_stage as _decompiler_structuring_stage
-
-globals().update(
-    {
-        name: getattr(_decompiler_structuring_stage, name)
-        for name in dir(_decompiler_structuring_stage)
-        if not name.startswith("__")
-    }
-)
-__all__ = [name for name in dir(_decompiler_structuring_stage) if not name.startswith("__")]
+from ..decompiler_structuring_stage import *  # noqa: F403

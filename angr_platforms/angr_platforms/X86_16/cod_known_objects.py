@@ -1,14 +1,30 @@
+"""Layer: Optional evidence/reporting.
+
+Responsibility: describe known COD-visible library objects for diagnostics and guarded labels.
+Forbidden: guessing object layouts or treating names as semantic proof.
+"""
+
 from __future__ import annotations
 
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
 
-from angr.sim_type import SimStruct, SimTypeChar, SimTypePointer, SimTypeShort, SimUnion
+from angr.sim_type import SimStruct, SimType, SimTypeChar, SimTypePointer, SimTypeShort, SimUnion
+
+__all__ = [
+    "CODKnownObjectSpec",
+    "canonical_known_cod_object_name",
+    "describe_x86_16_cod_known_objects",
+    "known_cod_object_names",
+    "known_cod_object_spec",
+]
 
 
 @dataclass(frozen=True)
 class CODKnownObjectSpec:
+    """Optional COD-visible object description for diagnostics and guarded labels."""
+
     name: str
     type: object
     size: int
@@ -22,10 +38,10 @@ class CODKnownObjectSpec:
 
 
 def _make_union_regs_type() -> SimUnion:
-    word = SimTypeShort(False)
-    byte = SimTypeChar()
+    word: SimType = SimTypeShort(False)
+    byte: SimType = SimTypeChar()
 
-    x_fields = OrderedDict(
+    x_fields: OrderedDict[str, SimType] = OrderedDict(
         (
             ("ax", word),
             ("bx", word),
@@ -36,7 +52,7 @@ def _make_union_regs_type() -> SimUnion:
             ("cflag", word),
         )
     )
-    h_fields = OrderedDict(
+    h_fields: OrderedDict[str, SimType] = OrderedDict(
         (
             ("al", byte),
             ("ah", byte),
@@ -58,7 +74,7 @@ def _make_union_regs_type() -> SimUnion:
 
 
 def _make_sregs_type() -> SimStruct:
-    word = SimTypeShort(False)
+    word: SimType = SimTypeShort(False)
     return SimStruct(
         OrderedDict(
             (
@@ -74,8 +90,8 @@ def _make_sregs_type() -> SimStruct:
 
 
 def _make_exe_load_params_type() -> SimStruct:
-    word = SimTypeShort(False)
-    fields = OrderedDict(
+    word: SimType = SimTypeShort(False)
+    fields: OrderedDict[str, SimType] = OrderedDict(
         (
             ("envSegment", word),
             ("cmdlineOffset", word),
@@ -94,7 +110,7 @@ def _make_exe_load_params_type() -> SimStruct:
 
 
 def _make_ovl_load_params_type() -> SimStruct:
-    word = SimTypeShort(False)
+    word: SimType = SimTypeShort(False)
     return SimStruct(
         OrderedDict((("segment", word), ("reloc", word))),
         name="struct OvlLoadParams",
@@ -103,7 +119,7 @@ def _make_ovl_load_params_type() -> SimStruct:
 
 
 def _make_ovl_header_type() -> SimTypePointer:
-    word = SimTypeShort(False)
+    word: SimType = SimTypeShort(False)
     header = SimStruct(
         OrderedDict((("code_segment", word), ("slot", word))),
         name="struct OvlHeader",
@@ -117,7 +133,9 @@ def _make_slot_array_type() -> SimTypePointer:
 
 
 def _type_name(type_obj: object) -> str:
-    return getattr(type_obj, "name", None) or type_obj.__class__.__name__
+    if isinstance(type_obj, SimStruct | SimUnion) and type_obj.name:
+        return str(type_obj.name)
+    return type_obj.__class__.__name__
 
 
 _KNOWN_COD_OBJECT_SPECS: dict[str, CODKnownObjectSpec] = {
@@ -233,6 +251,7 @@ def _sanitize_known_object_name(name: str | None) -> str | None:
 
 
 def known_cod_object_spec(name: str | None) -> CODKnownObjectSpec | None:
+    """Return a guarded known-object spec for a sanitized COD-visible name."""
     sanitized = _sanitize_known_object_name(name)
     if sanitized is None:
         return None
@@ -240,6 +259,7 @@ def known_cod_object_spec(name: str | None) -> CODKnownObjectSpec | None:
 
 
 def canonical_known_cod_object_name(name: str | None) -> str | None:
+    """Return the canonical known-object name when the input matches one."""
     spec = known_cod_object_spec(name)
     if spec is not None:
         return spec.name
@@ -247,10 +267,12 @@ def canonical_known_cod_object_name(name: str | None) -> str | None:
 
 
 def known_cod_object_names() -> tuple[str, ...]:
+    """Return all guarded known COD object names in deterministic order."""
     return tuple(_KNOWN_COD_OBJECT_SPECS)
 
 
 def describe_x86_16_cod_known_objects() -> dict[str, object]:
+    """Describe guarded known COD objects for reporting and export diagnostics."""
     return {
         "count": len(_KNOWN_COD_OBJECT_SPECS),
         "names": known_cod_object_names(),

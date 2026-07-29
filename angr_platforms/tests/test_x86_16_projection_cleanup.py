@@ -24,6 +24,10 @@ def test_x86_16_projection_cleanup_rules_expose_low_level_cleanup_surface():
             "Convert zero comparisons into the underlying projection or flag source when the evidence is explicit.",
         ),
         (
+            "word_or_update_materialization",
+            "Materialize proven in-place word OR updates on stable locals instead of leaking byte-carrier projections.",
+        ),
+        (
             "sub_self_zero",
             "Collapse self-subtractions into typed zero constants once the low-level operands are proven identical.",
         ),

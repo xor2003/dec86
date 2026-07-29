@@ -1,7 +1,13 @@
+"""Layer: Recompilable output.
+
+Responsibility: convert proven codegen storage seeds into recompilation storage maps.
+Forbidden: segment recovery, alias ownership, or source/COD-backed storage synthesis.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Mapping, Protocol, TypeAlias
 
 from .recompilable_storage_map import (
     RecompilableStorageMapArtifact,
@@ -10,13 +16,27 @@ from .recompilable_storage_map import (
 )
 
 __all__ = [
+    "SegmentedCodegenStorageSurface",
     "SegmentedStorageSeed",
     "export_recompilable_storage_map_from_codegen",
 ]
 
+SegmentSummaryEntry: TypeAlias = Mapping[str, object]
+SegmentSummaryBuckets: TypeAlias = Mapping[str, Mapping[str, SegmentSummaryEntry]]
+SegmentLoweringMap: TypeAlias = Mapping[str, SegmentSummaryEntry]
 
-@dataclass(frozen=True)
+
+class SegmentedCodegenStorageSurface(Protocol):
+    """Typed codegen attributes required for recompilable storage-map export."""
+
+    _inertia_segmented_memory_summary: SegmentSummaryBuckets
+    _inertia_segmented_memory_lowering: SegmentLoweringMap
+
+
+@dataclass(frozen=True, slots=True)
 class SegmentedStorageSeed:
+    """Proven segmented storage seed exported from codegen or alias evidence."""
+
     segment_reg: str
     offset: int
     width: int
@@ -25,23 +45,22 @@ class SegmentedStorageSeed:
     stable_object_name: str | None = None
 
 
-def _segment_summary_entry(codegen, segment_reg: str) -> dict[str, object]:
-    summary = getattr(codegen, "_inertia_segmented_memory_summary", {}) or {}
+def _segment_summary_entry(codegen: SegmentedCodegenStorageSurface, segment_reg: str) -> SegmentSummaryEntry:
+    summary = codegen._inertia_segmented_memory_summary
     normalized = segment_reg.upper()
     for bucket in ("stable", "over_associated", "unknown"):
-        entry = ((summary.get(bucket) or {}).get(normalized)) if isinstance(summary, dict) else None
-        if isinstance(entry, dict):
+        entry = summary.get(bucket, {}).get(normalized)
+        if entry is not None:
             return entry
     return {}
 
 
-def _segment_lowering_entry(codegen, segment_reg: str) -> dict[str, object]:
-    lowering = getattr(codegen, "_inertia_segmented_memory_lowering", {}) or {}
-    entry = lowering.get(segment_reg.upper()) if isinstance(lowering, dict) else None
-    return entry if isinstance(entry, dict) else {}
+def _segment_lowering_entry(codegen: SegmentedCodegenStorageSurface, segment_reg: str) -> SegmentSummaryEntry:
+    lowering = codegen._inertia_segmented_memory_lowering
+    return lowering.get(segment_reg.upper(), {})
 
 
-def _segment_value_from_summary(entry: dict[str, object], classification: str) -> int | None:
+def _segment_value_from_summary(entry: SegmentSummaryEntry, classification: str) -> int | None:
     if classification != "const":
         return None
     known_values = entry.get("known_values")
@@ -51,7 +70,10 @@ def _segment_value_from_summary(entry: dict[str, object], classification: str) -
     return value if isinstance(value, int) else None
 
 
-def _candidate_from_seed(codegen, seed: SegmentedStorageSeed) -> RecompilableStorageMapCandidate:
+def _candidate_from_seed(
+    codegen: SegmentedCodegenStorageSurface,
+    seed: SegmentedStorageSeed,
+) -> RecompilableStorageMapCandidate:
     summary_entry = _segment_summary_entry(codegen, seed.segment_reg)
     lowering_entry = _segment_lowering_entry(codegen, seed.segment_reg)
     classification = str(lowering_entry.get("classification") or summary_entry.get("classification") or "unknown")
@@ -70,8 +92,9 @@ def _candidate_from_seed(codegen, seed: SegmentedStorageSeed) -> RecompilableSto
 
 
 def export_recompilable_storage_map_from_codegen(
-    codegen,
+    codegen: SegmentedCodegenStorageSurface,
     seeds: Iterable[SegmentedStorageSeed],
 ) -> RecompilableStorageMapArtifact:
+    """Export a deterministic recompilable storage map from typed codegen evidence."""
     candidates = tuple(_candidate_from_seed(codegen, seed) for seed in seeds)
     return build_recompilable_storage_map(candidates)

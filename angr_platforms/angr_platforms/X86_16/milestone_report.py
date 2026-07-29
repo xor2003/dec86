@@ -1,9 +1,15 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: assemble milestone reports from existing layer descriptions and summaries.
+Forbidden: collecting new proof, changing pipeline behavior, or hiding incomplete surfaces.
+"""
+
 from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 
 from .addressing_helpers import (
     describe_x86_16_decode_width_matrix,
@@ -43,6 +49,8 @@ from .widening_model import describe_x86_16_widening_pipeline
 
 @dataclass(frozen=True)
 class MilestoneReportSection:
+    """Named report section emitted by the X86_16 milestone report builder."""
+
     name: str
     summary: Mapping[str, object]
 
@@ -99,7 +107,7 @@ def _append_hotspot_and_family_lines_8616(
     for family_row in changed_families[:3]:
         family = family_row.get("family")
         if isinstance(family, str) and family:
-            stages = ",".join(family_row.get("stages", ()) or ())
+            stages = ",".join(cast(Sequence[str], family_row.get("stages", ()) or ()))
             lines.append(
                 f"family[{family_row.get('count')}] {family} functions={family_row.get('function_count')} stages={stages}"
             )
@@ -118,28 +126,37 @@ def _append_verdict_and_function_lines_8616(
         label = _label_for_proc_item_8616(item)
         if label is None:
             continue
-        stages = ",".join(item.get("stages", ()) or ())
-        verdicts = list(item.get("verdicts", ()) or ())
+        stages = ",".join(cast(Sequence[str], item.get("stages", ()) or ()))
+        verdicts = list(cast(Sequence[object], item.get("verdicts", ()) or ()))
         lines.append(f"function[{stages}] {label}: {verdicts[0]}" if verdicts else f"function[{stages}] {label}")
 
 
 def _render_tail_validation_lines(surface: Mapping[str, object]) -> list[str]:
-    def _impl():
+    def _impl() -> list[str]:
+        surface_payload = cast(Mapping[str, Any], surface)
         headline = str(surface.get("headline", "whole-tail validation summary unavailable"))
         severity = str(surface.get("severity", "uncollected"))
         merge_gate = bool(surface.get("merge_gate", False))
-        stage_hotspots = list(surface.get("stage_hotspots", []) or [])
-        changed_families = list(surface.get("changed_families", []) or [])
-        top_changed_verdicts = list(surface.get("top_changed_verdicts", []) or [])
-        top_changed_functions = list(surface.get("top_changed_functions", []) or [])
-        top_uncollected_functions = list(surface.get("top_uncollected_functions", []) or [])
-        top_unknown_functions = list(surface.get("top_unknown_functions", []) or [])
-        coverage_count = int(surface.get("coverage_count", 0) or 0)
-        missing_stage_total = int(surface.get("missing_stage_total", 0) or 0)
-        unknown_stage_total = int(surface.get("unknown_stage_total", 0) or 0)
+        stage_hotspots = list(cast(Sequence[Mapping[str, object]], surface_payload.get("stage_hotspots", []) or []))
+        changed_families = list(cast(Sequence[Mapping[str, object]], surface_payload.get("changed_families", []) or []))
+        top_changed_verdicts = list(
+            cast(Sequence[Mapping[str, object]], surface_payload.get("top_changed_verdicts", []) or [])
+        )
+        top_changed_functions = list(
+            cast(Sequence[Mapping[str, object]], surface_payload.get("top_changed_functions", []) or [])
+        )
+        top_uncollected_functions = list(
+            cast(Sequence[Mapping[str, object]], surface_payload.get("top_uncollected_functions", []) or [])
+        )
+        top_unknown_functions = list(
+            cast(Sequence[Mapping[str, object]], surface_payload.get("top_unknown_functions", []) or [])
+        )
+        coverage_count = int(surface_payload.get("coverage_count", 0) or 0)
+        missing_stage_total = int(surface_payload.get("missing_stage_total", 0) or 0)
+        unknown_stage_total = int(surface_payload.get("unknown_stage_total", 0) or 0)
         baseline_status = surface.get("baseline_status")
-        baseline_unexpected_count = int(surface.get("baseline_unexpected_count", 0) or 0)
-        baseline_missing_count = int(surface.get("baseline_missing_count", 0) or 0)
+        baseline_unexpected_count = int(surface_payload.get("baseline_unexpected_count", 0) or 0)
+        baseline_missing_count = int(surface_payload.get("baseline_missing_count", 0) or 0)
 
         lines = [headline]
         if severity == "clean":
@@ -189,33 +206,34 @@ def _milestone_descriptors_8616() -> dict[str, object]:
 
 
 def _milestone_scan_inputs_8616(scan_summary: Mapping[str, object]) -> dict[str, object]:
-    def _impl():
+    def _impl() -> dict[str, object]:
+        summary_payload = cast(Mapping[str, Any], scan_summary)
         return {
-            "failure_counts": dict(scan_summary.get("failure_counts", {}) or {}),
-            "fallback_counts": dict(scan_summary.get("fallback_counts", {}) or {}),
-            "top_failure_classes": list(scan_summary.get("top_failure_classes", []) or []),
-            "top_fallback_kinds": list(scan_summary.get("top_fallback_kinds", []) or []),
-            "top_failure_stages": list(scan_summary.get("top_failure_stages", []) or []),
-            "timeout_stage_counts": dict(scan_summary.get("timeout_stage_counts", {}) or {}),
-            "top_failure_files": list(scan_summary.get("top_failure_files", []) or []),
-            "top_failure_functions": list(scan_summary.get("top_failure_functions", []) or []),
-            "top_fallback_files": list(scan_summary.get("top_fallback_files", []) or []),
-            "top_fallback_functions": list(scan_summary.get("top_fallback_functions", []) or []),
-            "blind_spot_budget": dict(scan_summary.get("blind_spot_budget", {}) or {}),
-            "debt": dict(scan_summary.get("debt", {}) or {}),
-            "confidence": dict(scan_summary.get("confidence", {}) or {}),
-            "confidence_status_counts": dict(scan_summary.get("confidence_status_counts", {}) or {}),
-            "confidence_scan_safe_counts": dict(scan_summary.get("confidence_scan_safe_counts", {}) or {}),
-            "confidence_assumption_counts": dict(scan_summary.get("confidence_assumption_counts", {}) or {}),
-            "confidence_evidence_counts": dict(scan_summary.get("confidence_evidence_counts", {}) or {}),
-            "confidence_diagnostic_counts": dict(scan_summary.get("confidence_diagnostic_counts", {}) or {}),
-            "tail_validation": dict(scan_summary.get("tail_validation", {}) or {}),
-            "tail_validation_surface": dict(scan_summary.get("tail_validation_surface", {}) or {}),
-            "top_ugly_clusters": list(scan_summary.get("top_ugly_clusters", []) or []),
-            "readability_clusters": list(scan_summary.get("readability_clusters", []) or []),
-            "family_ownership": dict(scan_summary.get("family_ownership", {}) or {}),
-            "interrupt_api": dict(scan_summary.get("interrupt_api", {}) or {}),
-            "scan_results": list(scan_summary.get("results", []) or []),
+            "failure_counts": dict(summary_payload.get("failure_counts", {}) or {}),
+            "fallback_counts": dict(summary_payload.get("fallback_counts", {}) or {}),
+            "top_failure_classes": list(summary_payload.get("top_failure_classes", []) or []),
+            "top_fallback_kinds": list(summary_payload.get("top_fallback_kinds", []) or []),
+            "top_failure_stages": list(summary_payload.get("top_failure_stages", []) or []),
+            "timeout_stage_counts": dict(summary_payload.get("timeout_stage_counts", {}) or {}),
+            "top_failure_files": list(summary_payload.get("top_failure_files", []) or []),
+            "top_failure_functions": list(summary_payload.get("top_failure_functions", []) or []),
+            "top_fallback_files": list(summary_payload.get("top_fallback_files", []) or []),
+            "top_fallback_functions": list(summary_payload.get("top_fallback_functions", []) or []),
+            "blind_spot_budget": dict(summary_payload.get("blind_spot_budget", {}) or {}),
+            "debt": dict(summary_payload.get("debt", {}) or {}),
+            "confidence": dict(summary_payload.get("confidence", {}) or {}),
+            "confidence_status_counts": dict(summary_payload.get("confidence_status_counts", {}) or {}),
+            "confidence_scan_safe_counts": dict(summary_payload.get("confidence_scan_safe_counts", {}) or {}),
+            "confidence_assumption_counts": dict(summary_payload.get("confidence_assumption_counts", {}) or {}),
+            "confidence_evidence_counts": dict(summary_payload.get("confidence_evidence_counts", {}) or {}),
+            "confidence_diagnostic_counts": dict(summary_payload.get("confidence_diagnostic_counts", {}) or {}),
+            "tail_validation": dict(summary_payload.get("tail_validation", {}) or {}),
+            "tail_validation_surface": dict(summary_payload.get("tail_validation_surface", {}) or {}),
+            "top_ugly_clusters": list(summary_payload.get("top_ugly_clusters", []) or []),
+            "readability_clusters": list(summary_payload.get("readability_clusters", []) or []),
+            "family_ownership": dict(summary_payload.get("family_ownership", {}) or {}),
+            "interrupt_api": dict(summary_payload.get("interrupt_api", {}) or {}),
+            "scan_results": list(summary_payload.get("results", []) or []),
         }
 
     return _impl()
@@ -226,6 +244,7 @@ def render_x86_16_tail_validation_console_summary(
     *,
     cache_path: str | Path | None = None,
 ) -> dict[str, object]:
+    """Render a deterministic tail-validation console summary with optional cache reuse."""
     cache_key = _tail_validation_cache_key(surface)
     if cache_path is not None:
         path = Path(cache_path)
@@ -261,6 +280,7 @@ def cache_x86_16_tail_validation_detail_artifact(
     *,
     cache_path: str | Path | None,
 ) -> dict[str, object]:
+    """Write or reuse a content-addressed tail-validation detail artifact."""
     artifact = dict(surface)
     cache_key = _tail_validation_cache_key(artifact)
     if cache_path is None:
@@ -308,20 +328,22 @@ def cache_x86_16_tail_validation_detail_artifact(
 
 
 def _success_rate(summary: Mapping[str, object]) -> float:
-    scanned = int(summary.get("scanned", 0) or 0)
-    ok = int(summary.get("ok", 0) or 0)
+    summary_payload = cast(Mapping[str, Any], summary)
+    scanned = int(summary_payload.get("scanned", 0) or 0)
+    ok = int(summary_payload.get("ok", 0) or 0)
     if scanned <= 0:
         return 0.0
     return round(ok / scanned, 6)
 
 
 def _readability_tier(result: Mapping[str, object], golden_cases: set[tuple[str, str]]) -> str:
+    result_payload = cast(Mapping[str, Any], result)
     if not bool(result.get("ok", False)):
         return "R0"
     fallback_kind = result.get("fallback_kind")
     if fallback_kind not in (None, "none"):
         return "R1"
-    if int(result.get("decompiled_count", 0) or 0) <= 0:
+    if int(result_payload.get("decompiled_count", 0) or 0) <= 0:
         return "R1"
     golden_key = (str(result.get("cod_file", "")), str(result.get("proc_name", "")))
     if golden_key in golden_cases:
@@ -341,30 +363,35 @@ def _build_corpus_completion_surface(
     family_ownership: Mapping[str, object],
     readability_focus: Mapping[str, object],
 ) -> dict[str, object]:
-    def _impl():
-        scanned = int(scan_summary.get("scanned", 0) or 0)
-        failed = int(scan_summary.get("failed", 0) or 0)
-        full_decompile_count = int(scan_summary.get("full_decompile_count", 0) or 0)
-        cfg_only_count = int(scan_summary.get("cfg_only_count", 0) or 0)
-        lift_only_count = int(scan_summary.get("lift_only_count", 0) or 0)
-        block_lift_count = int(scan_summary.get("block_lift_count", 0) or 0)
-        debt = dict(scan_summary.get("debt", {}) or {})
-        visibility_debt = int(scan_summary.get("visibility_debt", debt.get("traversal", 0)) or 0)
-        recovery_debt = int(scan_summary.get("recovery_debt", debt.get("recovery", 0)) or 0)
-        readability_debt = int(scan_summary.get("readability_debt", debt.get("readability", 0)) or 0)
-        unclassified_failure_count = int(scan_summary.get("unclassified_failure_count", 0) or 0)
-        rewrite_failure_count = int(scan_summary.get("rewrite_failure_count", 0) or 0)
-        structuring_failure_count = int(scan_summary.get("structuring_failure_count", 0) or 0)
-        regeneration_failure_count = int(scan_summary.get("regeneration_failure_count", 0) or 0)
-        confidence = dict(scan_summary.get("confidence", {}) or {})
-        confidence_status_counts = dict(scan_summary.get("confidence_status_counts", {}) or {})
-        confidence_scan_safe_counts = dict(scan_summary.get("confidence_scan_safe_counts", {}) or {})
-        confidence_assumption_counts = dict(scan_summary.get("confidence_assumption_counts", {}) or {})
-        confidence_evidence_counts = dict(scan_summary.get("confidence_evidence_counts", {}) or {})
-        confidence_diagnostic_counts = dict(scan_summary.get("confidence_diagnostic_counts", {}) or {})
-        tail_validation = dict(scan_summary.get("tail_validation", {}) or {})
-        tail_validation_surface = dict(scan_summary.get("tail_validation_surface", {}) or {})
-        blind_spot_budget = dict(scan_summary.get("blind_spot_budget", {}) or {})
+    def _impl() -> dict[str, object]:
+        summary_payload = cast(Mapping[str, Any], scan_summary)
+        focus_payload = cast(Mapping[str, Any], readability_focus)
+        scanned = int(summary_payload.get("scanned", 0) or 0)
+        failed = int(summary_payload.get("failed", 0) or 0)
+        full_decompile_count = int(summary_payload.get("full_decompile_count", 0) or 0)
+        cfg_only_count = int(summary_payload.get("cfg_only_count", 0) or 0)
+        lift_only_count = int(summary_payload.get("lift_only_count", 0) or 0)
+        block_lift_count = int(summary_payload.get("block_lift_count", 0) or 0)
+        debt = dict(summary_payload.get("debt", {}) or {})
+        visibility_debt = int(summary_payload.get("visibility_debt", debt.get("traversal", 0)) or 0)
+        recovery_debt = int(summary_payload.get("recovery_debt", debt.get("recovery", 0)) or 0)
+        readability_debt = int(summary_payload.get("readability_debt", debt.get("readability", 0)) or 0)
+        unclassified_failure_count = int(summary_payload.get("unclassified_failure_count", 0) or 0)
+        rewrite_failure_count = int(summary_payload.get("rewrite_failure_count", 0) or 0)
+        structuring_failure_count = int(summary_payload.get("structuring_failure_count", 0) or 0)
+        regeneration_failure_count = int(summary_payload.get("regeneration_failure_count", 0) or 0)
+        confidence = dict(summary_payload.get("confidence", {}) or {})
+        confidence_status_counts = dict(summary_payload.get("confidence_status_counts", {}) or {})
+        confidence_scan_safe_counts = dict(summary_payload.get("confidence_scan_safe_counts", {}) or {})
+        confidence_assumption_counts = dict(summary_payload.get("confidence_assumption_counts", {}) or {})
+        confidence_evidence_counts = dict(summary_payload.get("confidence_evidence_counts", {}) or {})
+        confidence_diagnostic_counts = dict(summary_payload.get("confidence_diagnostic_counts", {}) or {})
+        tail_validation = dict(summary_payload.get("tail_validation", {}) or {})
+        tail_validation_surface = dict(summary_payload.get("tail_validation_surface", {}) or {})
+        blind_spot_budget = dict(summary_payload.get("blind_spot_budget", {}) or {})
+        goal_queue = list(cast(Sequence[Mapping[str, object]], focus_payload.get("goal_queue", []) or []))
+        next_goal = focus_payload.get("next_goal")
+        next_goal_payload = cast(Mapping[str, object], next_goal) if isinstance(next_goal, Mapping) else None
         return {
             "no_crashes": failed == 0,
             "no_blind_spots": unclassified_failure_count == 0,
@@ -415,30 +442,30 @@ def _build_corpus_completion_surface(
                         "title": item["title"],
                         "priority": item["priority"],
                         "deterministic_goal": item["deterministic_goal"],
-                        "target_clusters": list(item["target_clusters"]),
-                        "owner_surfaces": list(item["owner_surfaces"]),
+                        "target_clusters": list(cast(Sequence[object], item["target_clusters"])),
+                        "owner_surfaces": list(cast(Sequence[object], item["owner_surfaces"])),
                         "completion_signal": item["completion_signal"],
                         "observed_cluster_count": item["observed_cluster_count"],
                         "observed_family_count": item["observed_family_count"],
                         "rank": item["rank"],
                         "is_next_focus": item["is_next_focus"],
                     }
-                    for item in readability_focus["goal_queue"]
+                    for item in goal_queue
                 ],
                 "next_goal": None
-                if readability_focus.get("next_goal") is None
+                if next_goal_payload is None
                 else {
-                    "step": readability_focus["next_goal"]["step"],
-                    "title": readability_focus["next_goal"]["title"],
-                    "priority": readability_focus["next_goal"]["priority"],
-                    "deterministic_goal": readability_focus["next_goal"]["deterministic_goal"],
-                    "target_clusters": list(readability_focus["next_goal"]["target_clusters"]),
-                    "owner_surfaces": list(readability_focus["next_goal"]["owner_surfaces"]),
-                    "completion_signal": readability_focus["next_goal"]["completion_signal"],
-                    "observed_cluster_count": readability_focus["next_goal"]["observed_cluster_count"],
-                    "observed_family_count": readability_focus["next_goal"]["observed_family_count"],
-                    "rank": readability_focus["next_goal"]["rank"],
-                    "is_next_focus": readability_focus["next_goal"]["is_next_focus"],
+                    "step": next_goal_payload["step"],
+                    "title": next_goal_payload["title"],
+                    "priority": next_goal_payload["priority"],
+                    "deterministic_goal": next_goal_payload["deterministic_goal"],
+                    "target_clusters": list(cast(Sequence[object], next_goal_payload["target_clusters"])),
+                    "owner_surfaces": list(cast(Sequence[object], next_goal_payload["owner_surfaces"])),
+                    "completion_signal": next_goal_payload["completion_signal"],
+                    "observed_cluster_count": next_goal_payload["observed_cluster_count"],
+                    "observed_family_count": next_goal_payload["observed_family_count"],
+                    "rank": next_goal_payload["rank"],
+                    "is_next_focus": next_goal_payload["is_next_focus"],
                 },
                 "top_ugly_clusters": top_ugly_clusters,
                 "readability_clusters": readability_clusters,
@@ -456,15 +483,17 @@ def build_x86_16_milestone_report(
     corpus_slice: str | None = None,
     blocked_mnemonics: Sequence[str] | None = None,
 ) -> dict[str, object]:
-    def _impl():
+    """Build the X86_16 milestone report from already-collected recovery summaries."""
+
+    def _impl() -> dict[str, object]:
         def _goal_item_payload(item: Mapping[str, object], *, include_rank: bool) -> dict[str, object]:
             payload = {
                 "step": item["step"],
                 "title": item["title"],
                 "priority": item["priority"],
                 "deterministic_goal": item["deterministic_goal"],
-                "target_clusters": list(item["target_clusters"]),
-                "owner_surfaces": list(item["owner_surfaces"]),
+                "target_clusters": list(cast(Sequence[object], item["target_clusters"])),
+                "owner_surfaces": list(cast(Sequence[object], item["owner_surfaces"])),
                 "completion_signal": item["completion_signal"],
                 "observed_cluster_count": item["observed_cluster_count"],
                 "observed_family_count": item["observed_family_count"],
@@ -480,68 +509,73 @@ def build_x86_16_milestone_report(
             return _goal_item_payload(next_goal, include_rank=True)
 
         def _corpus_rates_payload() -> dict[str, float]:
-            scanned = max(int(scan_summary.get("scanned", 0) or 0), 1)
+            scanned = max(int(summary_payload.get("scanned", 0) or 0), 1)
             return {
                 "success_rate": _success_rate(scan_summary),
                 "failure_rate": round(1.0 - _success_rate(scan_summary), 6),
-                "full_decompile_rate": round(int(scan_summary.get("full_decompile_count", 0) or 0) / scanned, 6),
-                "cfg_only_rate": round(int(scan_summary.get("cfg_only_count", 0) or 0) / scanned, 6),
-                "lift_only_rate": round(int(scan_summary.get("lift_only_count", 0) or 0) / scanned, 6),
-                "block_lift_rate": round(int(scan_summary.get("block_lift_count", 0) or 0) / scanned, 6),
+                "full_decompile_rate": round(int(summary_payload.get("full_decompile_count", 0) or 0) / scanned, 6),
+                "cfg_only_rate": round(int(summary_payload.get("cfg_only_count", 0) or 0) / scanned, 6),
+                "lift_only_rate": round(int(summary_payload.get("lift_only_count", 0) or 0) / scanned, 6),
+                "block_lift_rate": round(int(summary_payload.get("block_lift_count", 0) or 0) / scanned, 6),
             }
 
         descriptors = _milestone_descriptors_8616()
         scan_inputs = _milestone_scan_inputs_8616(scan_summary)
-        validation_layers = descriptors["validation_layers"]
-        validation_families = descriptors["validation_families"]
+        summary_payload = cast(Mapping[str, Any], scan_summary)
+        validation_layers = cast(Sequence[tuple[str, Sequence[str]]], descriptors["validation_layers"])
+        validation_families = cast(Sequence[tuple[str, Sequence[str]]], descriptors["validation_families"])
         validation_triage = descriptors["validation_triage"]
-        readability_set = descriptors["readability_set"]
-        correctness_goals = descriptors["correctness_goals"]
-        alias_api = descriptors["alias_api"]
-        widening_pipeline = descriptors["widening_pipeline"]
-        recovery_layers = descriptors["recovery_layers"]
-        object_recovery_focus = descriptors["object_recovery_focus"]
-        recovery_confidence_axes = descriptors["recovery_confidence_axes"]
-        projection_cleanup_rules = descriptors["projection_cleanup_rules"]
-        readability_goals = descriptors["readability_goals"]
-        decode_width_matrix = descriptors["decode_width_matrix"]
+        readability_set = cast(Sequence[Any], descriptors["readability_set"])
+        correctness_goals = cast(
+            Sequence[tuple[str, str, str, str, Sequence[str], str]], descriptors["correctness_goals"]
+        )
+        alias_api = cast(Sequence[tuple[str, str, Sequence[str]]], descriptors["alias_api"])
+        widening_pipeline = cast(Sequence[tuple[str, str, Sequence[str]]], descriptors["widening_pipeline"])
+        recovery_layers = cast(Sequence[tuple[str, str, Sequence[str]]], descriptors["recovery_layers"])
+        object_recovery_focus = cast(Sequence[tuple[str, str, Sequence[str]]], descriptors["object_recovery_focus"])
+        recovery_confidence_axes = cast(Sequence[tuple[str, str]], descriptors["recovery_confidence_axes"])
+        projection_cleanup_rules = cast(Sequence[tuple[str, str]], descriptors["projection_cleanup_rules"])
+        readability_goals = cast(
+            Sequence[tuple[str, str, str, Sequence[str], Sequence[str], str]], descriptors["readability_goals"]
+        )
+        decode_width_matrix = cast(Sequence[tuple[str, int, int]], descriptors["decode_width_matrix"])
         mixed_width_extension_surface = descriptors["mixed_width_extension_surface"]
         mixed_width_instruction_surface = descriptors["mixed_width_instruction_surface"]
         interrupt_api_surface = descriptors["interrupt_api_surface"]
         interrupt_core_surface = descriptors["interrupt_core_surface"]
         interrupt_lowering_boundary = descriptors["interrupt_lowering_boundary"]
         instruction_metadata_surface = descriptors["instruction_metadata_surface"]
-        failure_counts = scan_inputs["failure_counts"]
-        fallback_counts = scan_inputs["fallback_counts"]
-        top_failure_classes = scan_inputs["top_failure_classes"]
-        top_fallback_kinds = scan_inputs["top_fallback_kinds"]
-        top_failure_stages = scan_inputs["top_failure_stages"]
-        timeout_stage_counts = scan_inputs["timeout_stage_counts"]
-        top_failure_files = scan_inputs["top_failure_files"]
-        top_failure_functions = scan_inputs["top_failure_functions"]
-        top_fallback_files = scan_inputs["top_fallback_files"]
-        top_fallback_functions = scan_inputs["top_fallback_functions"]
-        blind_spot_budget = scan_inputs["blind_spot_budget"]
-        debt = scan_inputs["debt"]
-        visibility_debt = int(scan_summary.get("visibility_debt", debt.get("traversal", 0)) or 0)
-        recovery_debt = int(scan_summary.get("recovery_debt", debt.get("recovery", 0)) or 0)
-        readability_debt = int(scan_summary.get("readability_debt", debt.get("readability", 0)) or 0)
-        rewrite_failure_count = int(scan_summary.get("rewrite_failure_count", 0) or 0)
-        structuring_failure_count = int(scan_summary.get("structuring_failure_count", 0) or 0)
-        regeneration_failure_count = int(scan_summary.get("regeneration_failure_count", 0) or 0)
-        confidence = scan_inputs["confidence"]
-        confidence_status_counts = scan_inputs["confidence_status_counts"]
-        confidence_scan_safe_counts = scan_inputs["confidence_scan_safe_counts"]
-        confidence_assumption_counts = scan_inputs["confidence_assumption_counts"]
-        confidence_evidence_counts = scan_inputs["confidence_evidence_counts"]
-        confidence_diagnostic_counts = scan_inputs["confidence_diagnostic_counts"]
-        tail_validation = scan_inputs["tail_validation"]
-        tail_validation_surface = scan_inputs["tail_validation_surface"]
-        top_ugly_clusters = scan_inputs["top_ugly_clusters"]
-        readability_clusters = scan_inputs["readability_clusters"]
-        family_ownership = scan_inputs["family_ownership"]
-        interrupt_api = scan_inputs["interrupt_api"]
-        scan_results = scan_inputs["scan_results"]
+        failure_counts = cast(Mapping[str, object], scan_inputs["failure_counts"])
+        fallback_counts = cast(Mapping[str, object], scan_inputs["fallback_counts"])
+        top_failure_classes = cast(Sequence[object], scan_inputs["top_failure_classes"])
+        top_fallback_kinds = cast(Sequence[object], scan_inputs["top_fallback_kinds"])
+        top_failure_stages = cast(Sequence[object], scan_inputs["top_failure_stages"])
+        timeout_stage_counts = cast(Mapping[str, int], scan_inputs["timeout_stage_counts"])
+        top_failure_files = cast(Sequence[object], scan_inputs["top_failure_files"])
+        top_failure_functions = cast(Sequence[object], scan_inputs["top_failure_functions"])
+        top_fallback_files = cast(list[dict[str, object]], scan_inputs["top_fallback_files"])
+        top_fallback_functions = cast(list[dict[str, object]], scan_inputs["top_fallback_functions"])
+        blind_spot_budget = cast(Mapping[str, object], scan_inputs["blind_spot_budget"])
+        debt = cast(Mapping[str, Any], scan_inputs["debt"])
+        visibility_debt = int(summary_payload.get("visibility_debt", debt.get("traversal", 0)) or 0)
+        recovery_debt = int(summary_payload.get("recovery_debt", debt.get("recovery", 0)) or 0)
+        readability_debt = int(summary_payload.get("readability_debt", debt.get("readability", 0)) or 0)
+        rewrite_failure_count = int(summary_payload.get("rewrite_failure_count", 0) or 0)
+        structuring_failure_count = int(summary_payload.get("structuring_failure_count", 0) or 0)
+        regeneration_failure_count = int(summary_payload.get("regeneration_failure_count", 0) or 0)
+        confidence = cast(Mapping[str, object], scan_inputs["confidence"])
+        confidence_status_counts = cast(Mapping[str, object], scan_inputs["confidence_status_counts"])
+        confidence_scan_safe_counts = cast(Mapping[str, object], scan_inputs["confidence_scan_safe_counts"])
+        confidence_assumption_counts = cast(Mapping[str, object], scan_inputs["confidence_assumption_counts"])
+        confidence_evidence_counts = cast(Mapping[str, object], scan_inputs["confidence_evidence_counts"])
+        confidence_diagnostic_counts = cast(Mapping[str, object], scan_inputs["confidence_diagnostic_counts"])
+        tail_validation = cast(Mapping[str, object], scan_inputs["tail_validation"])
+        tail_validation_surface = cast(Mapping[str, object], scan_inputs["tail_validation_surface"])
+        top_ugly_clusters = cast(list[dict[str, object]], scan_inputs["top_ugly_clusters"])
+        readability_clusters = cast(list[dict[str, object]], scan_inputs["readability_clusters"])
+        family_ownership = cast(Mapping[str, object], scan_inputs["family_ownership"])
+        interrupt_api = cast(Mapping[str, Any], scan_inputs["interrupt_api"])
+        scan_results = cast(Sequence[Mapping[str, object]], scan_inputs["scan_results"])
         golden_cases = {(case.source, case.proc_name) for case in readability_set}
         readability_tier_counts = {"R0": 0, "R1": 0, "R2": 0, "R3": 0}
         for result in scan_results:
@@ -565,10 +599,12 @@ def build_x86_16_milestone_report(
         readability_goal_summary = summarize_readability_goals(
             top_ugly_clusters, readability_clusters, family_ownership
         )
+        raw_next_focus_goal = readability_focus.get("next_goal")
+        next_focus_goal = cast(Mapping[str, object], raw_next_focus_goal) if isinstance(raw_next_focus_goal, Mapping) else None
 
         report = {
             "corpus": corpus_name,
-            "corpus_slice": corpus_slice or scan_summary.get("slice", "active"),
+            "corpus_slice": corpus_slice or summary_payload.get("slice", "active"),
             "scan_summary": dict(scan_summary),
             "validation_layers": [{"name": name, "default_checks": list(checks)} for name, checks in validation_layers],
             "validation_families": [
@@ -667,10 +703,11 @@ def build_x86_16_milestone_report(
                 _goal_item_payload(item, include_rank=False) for item in readability_goal_summary
             ],
             "readability_goal_queue": [
-                _goal_item_payload(item, include_rank=True) for item in readability_focus["goal_queue"]
+                _goal_item_payload(item, include_rank=True)
+                for item in cast(Sequence[Mapping[str, object]], readability_focus["goal_queue"])
             ],
             "readability_focus": {
-                "next_goal": _next_goal_payload(readability_focus.get("next_goal")),
+                "next_goal": _next_goal_payload(next_focus_goal),
                 "top_ugly_clusters": top_ugly_clusters,
                 "readability_clusters": readability_clusters,
                 "family_ownership": family_ownership,
@@ -708,6 +745,7 @@ def write_x86_16_milestone_report(
     corpus_slice: str | None = None,
     blocked_mnemonics: Sequence[str] | None = None,
 ) -> Path:
+    """Write the X86_16 milestone report JSON and return the output path."""
     path = Path(output_path)
     path.write_text(
         json.dumps(

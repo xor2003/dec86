@@ -1,7 +1,20 @@
-from enum import Enum
+"""Layer: IR compatibility.
+
+Responsibility: stable register enums for legacy and migrated 16-bit x86 code.
+Forbidden: semantic recovery, alias ownership, lowering, structuring, or rewrite work.
+"""
+
+from __future__ import annotations
+
+from enum import Enum, IntEnum
+from typing import TypeVar
+
+_E = TypeVar("_E", bound=IntEnum)
 
 
-class reg32_t(Enum):
+class reg32_t(IntEnum):
+    """32-bit general register identifiers used by legacy 86:16 helpers."""
+
     EAX = 0
     ECX = 1
     EDX = 2
@@ -15,7 +28,9 @@ class reg32_t(Enum):
     EFLAGS = 10
 
 
-class reg16_t(Enum):
+class reg16_t(IntEnum):
+    """16-bit general register identifiers used by legacy 86:16 helpers."""
+
     AX = 0
     CX = 1
     DX = 2
@@ -28,7 +43,9 @@ class reg16_t(Enum):
     FLAGS = 9
 
 
-class reg8_t(Enum):
+class reg8_t(IntEnum):
+    """8-bit general register identifiers used by legacy 86:16 helpers."""
+
     AL = 0
     CL = 1
     DL = 2
@@ -39,7 +56,9 @@ class reg8_t(Enum):
     BH = 7
 
 
-class sgreg_t(Enum):
+class sgreg_t(IntEnum):
+    """Segment register identifiers for the 86:16 segmented memory model."""
+
     ES = 0
     CS = 1
     SS = 2
@@ -49,7 +68,9 @@ class sgreg_t(Enum):
     SGREGS_COUNT = 6
 
 
-class dtreg_t(Enum):
+class dtreg_t(IntEnum):
+    """Descriptor-table register identifiers accepted by legacy helpers."""
+
     GDTR = 0
     IDTR = 1
     LDTR = 2
@@ -57,13 +78,10 @@ class dtreg_t(Enum):
     DTREGS_COUNT = 4
 
 
-def _coerce_enum(enum_cls, value):
+def _coerce_enum(enum_cls: type[_E], value: object) -> _E:
     if isinstance(value, enum_cls):
         return value
-    try:
-        raw_value = getattr(value, "value", value)
-    except Exception:
-        raw_value = None
+    raw_value = value.value if isinstance(value, IntEnum) else value
     if isinstance(raw_value, enum_cls):
         return raw_value
     if isinstance(raw_value, int):
@@ -74,24 +92,29 @@ def _coerce_enum(enum_cls, value):
     raise ValueError(f"Register {value!r} does not exist")
 
 
-def coerce_reg32_t(value) -> reg32_t:
+def coerce_reg32_t(value: object) -> reg32_t:
+    """Return a 32-bit register enum from an enum member or numeric index."""
     return _coerce_enum(reg32_t, value)
 
 
-def coerce_reg16_t(value) -> reg16_t:
+def coerce_reg16_t(value: object) -> reg16_t:
+    """Return a 16-bit register enum from an enum member or numeric index."""
     return _coerce_enum(reg16_t, value)
 
 
-def coerce_reg8_t(value) -> reg8_t:
+def coerce_reg8_t(value: object) -> reg8_t:
+    """Return an 8-bit register enum from an enum member or numeric index."""
     return _coerce_enum(reg8_t, value)
 
 
-def coerce_sgreg_t(value) -> sgreg_t:
+def coerce_sgreg_t(value: object) -> sgreg_t:
+    """Return a segment register enum from an enum member or numeric index."""
     return _coerce_enum(sgreg_t, value)
 
 
-def register_name_8616(value) -> str:
-    if hasattr(value, "name") and isinstance(getattr(value, "name"), str):
+def register_name_8616(value: object) -> str:
+    """Return the lowercase canonical name for a known 86:16 register."""
+    if isinstance(value, Enum):
         return value.name.lower()
     try:
         coerced = _coerce_enum(reg32_t, value)

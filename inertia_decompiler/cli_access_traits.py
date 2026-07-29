@@ -1,44 +1,106 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
+
+from collections.abc import Callable, Iterable
+from typing import Protocol, TypeAlias, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
-from inertia_decompiler.cli_access_profiles import build_access_trait_evidence_profiles, infer_induction_variable
-from inertia_decompiler.cli_induction_rewrite import rewrite_for_loop_conditions_from_access_traits
+from inertia_decompiler.cli_access_profiles import (
+    AccessTraitStrideEvidence,
+    build_access_trait_evidence_profiles,
+    infer_induction_variable,
+)
+from inertia_decompiler.cli_induction_rewrite import (
+    BuildAccessTraitEvidenceProfiles,
+    InferInductionVariable,
+    rewrite_for_loop_conditions_from_access_traits,
+)
+from inertia_decompiler.cli_induction_rewrite import (
+    _CodegenLike as InductionCodegenLike,
+)
+from inertia_decompiler.cli_induction_rewrite import (
+    _ProjectLike as InductionProjectLike,
+)
+
+BaseKey: TypeAlias = tuple[object, ...]
+TraitBucket: TypeAlias = dict[BaseKey, object]
+Traits: TypeAlias = dict[str, TraitBucket]
+AddressSummary: TypeAlias = tuple[list[object], int, list[tuple[BaseKey, int]]]
+AddressSummarizer: TypeAlias = Callable[[object], AddressSummary]
+BaseKeyResolver: TypeAlias = Callable[[object], BaseKey | None]
+TraitRecorder: TypeAlias = Callable[[str, BaseKey], None]
+NodeIterator: TypeAlias = Callable[[object], Iterable[object]]
+CastUnwrapper: TypeAlias = Callable[[object], object]
+ConstantResolver: TypeAlias = Callable[[object], int | None]
+StackIdentityResolver: TypeAlias = Callable[[object], "_StackSlotIdentityLike | None"]
+StrideEvidenceRecorder: TypeAlias = Callable[..., None]
 
 
-def _prune_sparse_trait_counts(traits: dict[str, dict[tuple[object, ...], object]]) -> None:
+class _ArchLike(Protocol):
+    """Architecture width surface used to size C dereference nodes."""
+
+    byte_width: int
+
+
+class _ProjectLike(Protocol):
+    """angr project surface used by access-trait collection."""
+
+    arch: _ArchLike
+    _inertia_access_traits: object
+
+
+class _StackSlotIdentityLike(Protocol):
+    """Stack-slot identity contract returned by the owning stack helper."""
+
+    base: object
+
+
+class _SegmentedDereferenceLike(Protocol):
+    """Classified segmented dereference contract supplied by CLI C AST rewrites."""
+
+    addr_expr: object
+    seg_name: str
+
+
+def _prune_sparse_trait_counts(traits: Traits) -> None:
     for key, count in list(traits["repeated_offsets"].items()):
-        if count < 2:
+        if isinstance(count, int) and count < 2:
             del traits["repeated_offsets"][key]
     for key, count in list(traits["base_stride"].items()):
-        if count < 2:
+        if isinstance(count, int) and count < 2:
             del traits["base_stride"][key]
 
 
-def _node_access_size(project, node) -> int:
+def _node_access_size(project: _ProjectLike, node: object) -> int:
+    # Dynamic codegen boundary: angr structured-C nodes may omit type metadata.
     type_ = getattr(node, "type", None)
+    # Dynamic codegen boundary: angr type objects expose size only when available.
     bits = getattr(type_, "size", None)
     return max((bits // project.arch.byte_width) if isinstance(bits, int) and bits > 0 else 1, 1)
 
 
 def _record_plain_base_evidence(
     *,
-    node,
+    node: object,
     access_size: int,
-    summarize_address,
-    stable_base_key,
-    record,
-    structured_c_module,
-    SimRegisterVariableCls,
-    SimStackVariableCls,
-    SimMemoryVariableCls,
+    summarize_address: AddressSummarizer,
+    stable_base_key: BaseKeyResolver,
+    record: TraitRecorder,
 ) -> None:
+    # Dynamic codegen boundary: dereference operands are supplied by angr structured C.
     plain_base_terms, plain_offset, plain_stride_terms = summarize_address(getattr(node, "operand", None))
-    if len(plain_base_terms) != 1 or not isinstance(plain_base_terms[0], structured_c_module.CVariable):
+    if len(plain_base_terms) != 1 or not isinstance(plain_base_terms[0], structured_c.CVariable):
         return
+    # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
     plain_base_var = getattr(plain_base_terms[0], "variable", None)
-    if not isinstance(plain_base_var, (SimRegisterVariableCls, SimStackVariableCls, SimMemoryVariableCls)):
+    if not isinstance(plain_base_var, (SimRegisterVariable, SimStackVariable, SimMemoryVariable)):
         return
     plain_base_key = stable_base_key(plain_base_var)
     if plain_base_key is None:
@@ -53,23 +115,23 @@ def _record_plain_base_evidence(
 
 def _record_segmented_evidence(
     *,
-    project,
-    node,
+    project: _ProjectLike,
+    node: object,
     access_size: int,
-    classify_segmented_dereference,
-    summarize_address,
-    access_trait_variable_key,
-    record,
-    record_stride_evidence,
-    structured_c_module,
+    classify_segmented_dereference: Callable[[object, _ProjectLike], _SegmentedDereferenceLike | None],
+    summarize_address: AddressSummarizer,
+    access_trait_variable_key: BaseKeyResolver,
+    record: TraitRecorder,
+    record_stride_evidence: StrideEvidenceRecorder,
 ) -> None:
-    def _impl():
+    def _impl() -> None:
         classified = classify_segmented_dereference(node, project)
         if classified is None:
             return
         base_terms, offset, stride_terms = summarize_address(classified.addr_expr)
-        base_key = None
-        if len(base_terms) == 1 and isinstance(base_terms[0], structured_c_module.CVariable):
+        base_key: BaseKey | None = None
+        if len(base_terms) == 1 and isinstance(base_terms[0], structured_c.CVariable):
+            # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
             base_var = getattr(base_terms[0], "variable", None)
             base_key = access_trait_variable_key(base_var)
             if base_key is not None:
@@ -112,22 +174,23 @@ def _record_segmented_evidence(
 
 
 def _collect_access_traits(
-    project,
-    codegen,
+    project: _ProjectLike,
+    codegen: InductionCodegenLike,
     *,
-    iter_c_nodes_deep,
-    unwrap_c_casts,
-    c_constant_value,
-    classify_segmented_dereference,
-    stack_slot_identity_for_variable,
-    access_trait_variable_key,
-    AccessTraitStrideEvidence,
-):
-    def _impl():
-        if getattr(codegen, "cfunc", None) is None:
+    iter_c_nodes_deep: NodeIterator,
+    unwrap_c_casts: CastUnwrapper,
+    c_constant_value: ConstantResolver,
+    classify_segmented_dereference: Callable[[object, _ProjectLike], _SegmentedDereferenceLike | None],
+    stack_slot_identity_for_variable: StackIdentityResolver,
+    access_trait_variable_key: BaseKeyResolver,
+    AccessTraitStrideEvidence: type[AccessTraitStrideEvidence],
+) -> bool:
+    def _impl() -> bool:
+        cfunc = codegen.cfunc
+        if cfunc is None:
             return False
 
-        traits: dict[str, dict[tuple[object, ...], object]] = {
+        traits: Traits = {
             "base_const": {},
             "base_stride": {},
             "repeated_offsets": {},
@@ -139,18 +202,20 @@ def _collect_access_traits(
             "array_evidence": {},
         }
 
+        # Dynamic compatibility boundary: older callers may not have initialized the project cache yet.
         cache = getattr(project, "_inertia_access_traits", None)
         if isinstance(cache, dict):
-            existing = cache.get(getattr(codegen.cfunc, "addr", None))
+            existing = cache.get(cfunc.addr)
             if isinstance(existing, dict):
                 for bucket, bucket_data in existing.items():
                     if bucket not in traits or not isinstance(bucket_data, dict):
                         continue
                     traits[bucket].update(bucket_data)
 
-        def record(bucket: str, key: tuple[object, ...]) -> None:
+        def record(bucket: str, key: BaseKey) -> None:
             store = traits[bucket]
-            store[key] = store.get(key, 0) + 1
+            existing = store.get(key, 0)
+            store[key] = (existing if isinstance(existing, int) else 0) + 1
 
         def record_stride_evidence(
             *,
@@ -167,7 +232,9 @@ def _collect_access_traits(
             evidence_key = (kind, seg_name, base_key, index_key, stride, offset, access_size)
             bucket_name = "induction_evidence" if kind == "induction_like" else "stride_evidence"
             existing = traits[bucket_name].get(evidence_key)
-            existing_count = getattr(existing, "count", existing if isinstance(existing, int) else None)
+            existing_count = existing.count if isinstance(existing, AccessTraitStrideEvidence) else existing
+            if not isinstance(existing_count, int):
+                existing_count = None
             count = 1 if existing_count is None else int(existing_count) + 1
             traits[bucket_name][evidence_key] = AccessTraitStrideEvidence(
                 segment=seg_name,
@@ -180,51 +247,58 @@ def _collect_access_traits(
                 kind=kind,
             )
 
-        def stable_base_key(variable) -> tuple[object, ...] | None:
+        def stable_base_key(variable: object) -> BaseKey | None:
             if isinstance(variable, SimRegisterVariable):
-                return ("reg", getattr(variable, "reg", None))
+                return ("reg", variable.reg)
             if isinstance(variable, SimStackVariable):
                 identity = stack_slot_identity_for_variable(variable)
                 if identity is None:
                     return None
-                return ("stack", identity.base, getattr(variable, "offset", None), getattr(variable, "region", None))
+                return ("stack", identity.base, variable.offset, variable.region)
             if isinstance(variable, SimMemoryVariable):
-                return ("mem", getattr(variable, "addr", None))
+                return ("mem", variable.addr)
             return None
 
-        def expr_index_key(expr) -> tuple[object, ...] | None:
+        def expr_index_key(expr: object) -> BaseKey | None:
             expr = unwrap_c_casts(expr)
             if isinstance(expr, structured_c.CVariable):
+                # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
                 return access_trait_variable_key(getattr(expr, "variable", None))
             if isinstance(expr, structured_c.CUnaryOp) and expr.op == "Dereference":
+                # Dynamic codegen boundary: unary operands are supplied by angr structured C.
                 operand = unwrap_c_casts(getattr(expr, "operand", None))
                 if isinstance(operand, structured_c.CUnaryOp) and operand.op == "Reference":
+                    # Dynamic codegen boundary: reference operands are supplied by angr structured C.
                     expr = unwrap_c_casts(getattr(operand, "operand", None))
                 else:
                     return None
             if isinstance(expr, structured_c.CIndexedVariable):
+                # Dynamic codegen boundary: indexed variable bases are supplied by angr structured C.
                 base_expr = unwrap_c_casts(getattr(expr, "variable", None))
                 if isinstance(base_expr, structured_c.CUnaryOp) and base_expr.op == "Reference":
+                    # Dynamic codegen boundary: reference operands are supplied by angr structured C.
                     base_expr = unwrap_c_casts(getattr(base_expr, "operand", None))
+                # Dynamic codegen boundary: indexed variable indexes are supplied by angr structured C.
                 index = c_constant_value(unwrap_c_casts(getattr(expr, "index", None)))
                 if not isinstance(index, int) or not isinstance(base_expr, structured_c.CVariable):
                     return None
+                # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
                 base_var = getattr(base_expr, "variable", None)
                 if not isinstance(base_var, SimStackVariable):
                     return None
                 identity = stack_slot_identity_for_variable(base_var)
                 if identity is None:
                     return None
-                base_offset = getattr(base_var, "offset", None)
+                base_offset = base_var.offset
                 if not isinstance(base_offset, int):
                     return None
-                return ("stack", identity.base, base_offset + index, getattr(base_var, "region", None))
+                return ("stack", identity.base, base_offset + index, base_var.region)
             return None
 
-        def summarize_address(addr_expr):
+        def summarize_address(addr_expr: object) -> AddressSummary:
             from_terms: list[object] = []
             offset = 0
-            stride_terms: list[tuple[tuple[object, ...], int]] = []
+            stride_terms: list[tuple[BaseKey, int]] = []
 
             for term in _flatten_c_add_terms(addr_expr):
                 inner = unwrap_c_casts(term)
@@ -264,7 +338,7 @@ def _collect_access_traits(
 
             return from_terms, offset, stride_terms
 
-        def _flatten_c_add_terms(expr):
+        def _flatten_c_add_terms(expr: object) -> list[object]:
             if expr is None:
                 return []
             expr = unwrap_c_casts(expr)
@@ -272,7 +346,7 @@ def _collect_access_traits(
                 return [*_flatten_c_add_terms(expr.lhs), *_flatten_c_add_terms(expr.rhs)]
             return [expr]
 
-        for node in iter_c_nodes_deep(codegen.cfunc.statements):
+        for node in iter_c_nodes_deep(cfunc.statements):
             if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
                 continue
 
@@ -295,10 +369,6 @@ def _collect_access_traits(
                 summarize_address=summarize_address,
                 stable_base_key=stable_base_key,
                 record=record,
-                structured_c_module=structured_c,
-                SimRegisterVariableCls=SimRegisterVariable,
-                SimStackVariableCls=SimStackVariable,
-                SimMemoryVariableCls=SimMemoryVariable,
             )
             _record_segmented_evidence(
                 project=project,
@@ -309,20 +379,22 @@ def _collect_access_traits(
                 access_trait_variable_key=access_trait_variable_key,
                 record=record,
                 record_stride_evidence=record_stride_evidence,
-                structured_c_module=structured_c,
             )
 
         _prune_sparse_trait_counts(traits)
 
         if not isinstance(cache, dict):
             cache = {}
-            setattr(project, "_inertia_access_traits", cache)
-        cache[getattr(codegen.cfunc, "addr", 0)] = traits
+            # Dynamic compatibility boundary: project cache is attached to the third-party angr Project.
+            project._inertia_access_traits = cache
+        cache[cfunc.addr] = traits
         return rewrite_for_loop_conditions_from_access_traits(
-            project,
+            cast(InductionProjectLike, project),
             codegen,
-            build_access_trait_evidence_profiles=build_access_trait_evidence_profiles,
-            infer_induction_variable=infer_induction_variable,
+            build_access_trait_evidence_profiles=cast(
+                BuildAccessTraitEvidenceProfiles, build_access_trait_evidence_profiles
+            ),
+            infer_induction_variable=cast(InferInductionVariable, infer_induction_variable),
             iter_c_nodes_deep=iter_c_nodes_deep,
         )
 

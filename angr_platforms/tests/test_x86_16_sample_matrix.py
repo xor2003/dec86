@@ -164,7 +164,10 @@ def test_com_variants_disassemble_as_real_mode_blobs():
 
 
 def test_small_model_rep_cmps_block_lifts():
-    project = angr.Project(MATRIX_DIR / "ISOD.EXE")
+    path = MATRIX_DIR / "ISOD.EXE"
+    if not path.exists():
+        pytest.skip("optional x16 sample fixture is not available: ISOD.EXE")
+    project = angr.Project(path)
 
     block = project.factory.block(0x1267, size=8, opt_level=0)
     asm = "\n".join(f"{insn.mnemonic} {insn.op_str}".strip() for insn in block.capstone.insns).lower()
@@ -174,7 +177,10 @@ def test_small_model_rep_cmps_block_lifts():
 
 
 def test_medium_model_global_add_block_lifts():
-    project = angr.Project(MATRIX_DIR / "IMOD.EXE")
+    path = MATRIX_DIR / "IMOD.EXE"
+    if not path.exists():
+        pytest.skip("optional x16 sample fixture is not available: IMOD.EXE")
+    project = angr.Project(path)
 
     block = project.factory.block(0x1682, size=4, opt_level=0)
     vex_text = block.vex._pp_str()

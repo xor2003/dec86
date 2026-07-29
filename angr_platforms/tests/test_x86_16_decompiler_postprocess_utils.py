@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CUnaryOp, CVariable
+from angr.analyses.decompiler.structured_codegen.c import (
+    CBinaryOp,
+    CConstant,
+    CExpressionStatement,
+    CFunctionCall,
+    CStatements,
+    CSwitchCase,
+    CUnaryOp,
+    CVariable,
+)
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -13,6 +22,7 @@ from angr_platforms.X86_16.decompiler_postprocess_loads import (
 )
 from angr_platforms.X86_16.decompiler_postprocess_utils import (
     _match_real_mode_linear_expr_8616,
+    _replace_c_children_8616,
 )
 
 
@@ -102,3 +112,33 @@ def test_postprocess_utils_match_scaled_high_byte_only_for_true_globals():
 
     assert _match_global_scaled_high_byte_8616(global_high) == 0x235
     assert _match_global_scaled_high_byte_8616(ds_high) is None
+
+
+def test_replace_c_children_rewrites_switch_case_tuple_bodies_and_default():
+    codegen = _DummyCodegen()
+    case_helper = CFunctionCall("SEG_U16", None, [_reg(codegen.project, "ds", codegen), _const(0x0BA2, codegen)], codegen=codegen)
+    default_helper = CFunctionCall(
+        "SEG_U16",
+        None,
+        [_reg(codegen.project, "ds", codegen), _const(0x0B46, codegen)],
+        codegen=codegen,
+    )
+    case_body = CStatements([CExpressionStatement(case_helper, codegen=codegen)], codegen=codegen)
+    default_body = CStatements([CExpressionStatement(default_helper, codegen=codegen)], codegen=codegen)
+    replacement = CVariable(
+        SimMemoryVariable(0x0BA2, 2, name="cRow"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    switch = CSwitchCase(_reg(codegen.project, "ax", codegen), [(69, case_body)], default_body, codegen=codegen)
+
+    def transform(node):
+        if isinstance(node, CFunctionCall) and node.callee_target == "SEG_U16":
+            return replacement
+        return node
+
+    changed = _replace_c_children_8616(switch, transform)
+
+    assert changed is True
+    assert switch.cases[0][1].statements[0].expr is replacement
+    assert switch.default.statements[0].expr is replacement

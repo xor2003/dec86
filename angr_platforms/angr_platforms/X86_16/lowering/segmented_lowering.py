@@ -1,12 +1,64 @@
+"""Classify and lower typed segmented-address C AST carriers.
+
+Layer: Types/Lowering.
+Responsibility: typed segmented-address classification and SS/DS/ES lowering helpers.
+Consumes alias, widening, and typed facts to classify SS/DS/ES address forms
+before materialization.
+Do not recover semantics from COD, source, assembly, or rendered C text.
+"""
+
 from __future__ import annotations
 
-# Layer: Lowering
-# Responsibility: typed segmented-address classification and SS/DS/ES lowering helpers.
-# Forbidden: CLI formatting, rendered-text pattern recovery, late postprocess ownership.
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping
 from dataclasses import dataclass
+from typing import Protocol, TypeAlias, runtime_checkable
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
+
+_CacheMap8616: TypeAlias = MutableMapping[str, MutableMapping[int, object]]
+_ProjectRewriteCache8616: TypeAlias = Callable[[object], _CacheMap8616]
+_UnaryObjectCallback8616: TypeAlias = Callable[[object], object]
+_ConstantValueCallback8616: TypeAlias = Callable[[object], int | None]
+_NormalizeOffsetCallback8616: TypeAlias = Callable[[object], int]
+_StackMatchCallback8616: TypeAlias = Callable[[object], tuple[object, object] | None]
+_StackIdentityCallback8616: TypeAlias = Callable[[SimStackVariable], object | None]
+
+
+class _ArchRegisterNames8616(Protocol):
+    """Minimal project.arch contract needed for segmented lowering."""
+
+    register_names: Mapping[int, str]
+
+
+class _ProjectArch8616(Protocol):
+    """Minimal project contract needed for segmented lowering."""
+
+    arch: _ArchRegisterNames8616
+
+
+@runtime_checkable
+class _JoinableStackIdentity8616(Protocol):
+    """Owned stack-slot identity contract that can merge compatible slots."""
+
+    def can_join(self, other: object) -> bool:
+        """Return whether this identity can join with another identity."""
+        ...
+
+    def join(self, other: object) -> object | None:
+        """Return the joined identity when compatible."""
+        ...
+
+
+def _dynamic_c_attr_8616(obj: object | None, name: str, default: object | None = None) -> object | None:
+    """Dynamic third-party angr/codegen boundary: read optional C AST attributes."""
+    if obj is None:
+        return default
+    try:
+        # Dynamic third-party angr/codegen boundary: C AST nodes expose optional attributes by shape.
+        return getattr(obj, name, default)
+    except Exception:  # noqa: BLE001
+        return default
 
 
 @dataclass(frozen=True)
@@ -14,7 +66,7 @@ class _SegmentedAccess:
     kind: str
     seg_name: str | None
     assoc_kind: str = "unknown"
-    assoc_state: object | None = None
+    assoc_state: _SegmentAssociationState | None = None
     linear: int | None = None
     cvar: structured_c.CVariable | None = None
     stack_var: SimStackVariable | None = None
@@ -22,7 +74,8 @@ class _SegmentedAccess:
     addr_expr: object | None = None
 
     def allows_object_rewrite(self) -> bool:
-        if self.assoc_state is not None and hasattr(self.assoc_state, "is_over_associated"):
+        """Return whether this classified access may be rewritten as an object access."""
+        if self.assoc_state is not None:
             return not self.assoc_state.is_over_associated()
         return self.assoc_kind != "over"
 
@@ -37,6 +90,7 @@ class _SegmentAssociationState:
 
     @property
     def assoc_kind(self) -> str:
+        """Return the segment association classification for this address expression."""
         if self.seg_name is None:
             return "unknown"
         if len(self.stack_slots) > 1:
@@ -48,10 +102,11 @@ class _SegmentAssociationState:
         return "single"
 
     def is_over_associated(self) -> bool:
+        """Return whether the expression mixes segment identity with unrelated terms."""
         return self.assoc_kind == "over"
 
 
-def _merge_stack_slot_identity_8616(stack_slots: list[object], identity) -> None:
+def _merge_stack_slot_identity_8616(stack_slots: list[object], identity: object | None) -> None:
     if identity is None:
         return
     if not stack_slots:
@@ -59,19 +114,26 @@ def _merge_stack_slot_identity_8616(stack_slots: list[object], identity) -> None
         return
     if stack_slots[0] == identity:
         return
-    if hasattr(stack_slots[0], "can_join") and stack_slots[0].can_join(identity):
-        joined_identity = stack_slots[0].join(identity)
+    existing = stack_slots[0]
+    if isinstance(existing, _JoinableStackIdentity8616) and existing.can_join(identity):
+        joined_identity = existing.join(identity)
         if joined_identity is not None:
             stack_slots[0] = joined_identity
         return
     stack_slots.append(identity)
 
 
-def _segment_reg_name(node, project, *, project_rewrite_cache):
+def _segment_reg_name(
+    node: object,
+    project: _ProjectArch8616,
+    *,
+    project_rewrite_cache: _ProjectRewriteCache8616,
+) -> str | None:
     cache = project_rewrite_cache(project).setdefault("segment_reg_name", {})
     key = id(node)
     if key in cache:
-        return cache[key]
+        cached = cache[key]
+        return cached if isinstance(cached, str) else None
 
     reg_offset = _register_offset_for_node_8616(node)
     result = project.arch.register_names.get(reg_offset) if isinstance(reg_offset, int) else None
@@ -79,85 +141,85 @@ def _segment_reg_name(node, project, *, project_rewrite_cache):
     return result
 
 
-def _register_offset_for_node_8616(node) -> int | None:
+def _register_offset_for_node_8616(node: object) -> int | None:
     if isinstance(node, structured_c.CVariable):
-        variable = getattr(node, "variable", None)
+        variable = _dynamic_c_attr_8616(node, "variable")
         if isinstance(variable, SimRegisterVariable):
-            reg = getattr(variable, "reg", None)
+            reg = _dynamic_c_attr_8616(variable, "reg")
             return int(reg) if isinstance(reg, int) else None
     if type(node).__name__ == "CDirtyExpression":
-        dirty = getattr(node, "dirty", None)
+        dirty = _dynamic_c_attr_8616(node, "dirty")
         for attr in ("reg_offset", "reg"):
-            try:
-                reg = getattr(dirty, attr, None)
-            except (TypeError, ValueError):
-                continue
+            reg = _dynamic_c_attr_8616(dirty, attr)
             if isinstance(reg, int):
                 return int(reg)
     return None
 
 
-def _register_size_for_node_8616(node) -> int | None:
+def _register_size_for_node_8616(node: object) -> int | None:
     if isinstance(node, structured_c.CVariable):
-        variable = getattr(node, "variable", None)
-        size = getattr(variable, "size", None)
+        variable = _dynamic_c_attr_8616(node, "variable")
+        size = _dynamic_c_attr_8616(variable, "size")
         return int(size) if isinstance(size, int) else None
     if type(node).__name__ == "CDirtyExpression":
-        dirty = getattr(node, "dirty", None)
-        size = getattr(dirty, "size", None)
+        dirty = _dynamic_c_attr_8616(node, "dirty")
+        size = _dynamic_c_attr_8616(dirty, "size")
         if isinstance(size, int):
             return int(size)
-        bits = getattr(dirty, "bits", None)
+        bits = _dynamic_c_attr_8616(dirty, "bits")
         if isinstance(bits, int) and bits > 0:
             return max(1, int(bits) // 8)
     return None
 
 
 def _classify_segmented_addr_expr(
-    node,
-    project,
+    node: object,
+    project: _ProjectArch8616,
     *,
-    project_rewrite_cache,
-    flatten_c_add_terms,
-    unwrap_c_casts,
-    c_constant_value,
-    match_stack_cvar_and_offset,
-    normalize_16bit_signed_offset,
-    stack_slot_identity_for_variable,
-):
-    def _impl():
+    project_rewrite_cache: _ProjectRewriteCache8616,
+    flatten_c_add_terms: Callable[[object], Iterable[object]],
+    unwrap_c_casts: _UnaryObjectCallback8616,
+    c_constant_value: _ConstantValueCallback8616,
+    match_stack_cvar_and_offset: _StackMatchCallback8616,
+    normalize_16bit_signed_offset: _NormalizeOffsetCallback8616,
+    stack_slot_identity_for_variable: _StackIdentityCallback8616,
+) -> _SegmentedAccess | None:
+    def _impl() -> _SegmentedAccess | None:
         cache = project_rewrite_cache(project).setdefault("segmented_addr_expr", {})
         key = id(node)
         if key in cache:
-            return cache[key]
+            cached = cache[key]
+            return cached if isinstance(cached, _SegmentedAccess) else None
 
         seg_name = None
         cvar = None
         stack_var = None
         const_offset = 0
-        other_terms = []
+        other_terms: list[object] = []
         base_terms = 0
         stack_slots: list[object] = []
         resolved_term_cache: dict[int, object] = {}
 
-        def _synthetic_sp_anchor(term):
-            reg_name = getattr(project.arch, "register_names", {}).get(_register_offset_for_node_8616(term))
+        def _synthetic_sp_anchor(term: object) -> tuple[structured_c.CVariable, int] | None:
+            reg_offset = _register_offset_for_node_8616(term)
+            reg_name = project.arch.register_names.get(reg_offset) if isinstance(reg_offset, int) else None
             if reg_name not in {"bp", "sp"}:
                 return None
-            codegen = getattr(term, "codegen", None)
-            region = getattr(getattr(codegen, "cfunc", None), "addr", None)
+            codegen = _dynamic_c_attr_8616(term, "codegen")
+            cfunc = _dynamic_c_attr_8616(codegen, "cfunc")
+            region = _dynamic_c_attr_8616(cfunc, "addr")
             synthetic = SimStackVariable(
                 0,
                 _register_size_for_node_8616(term) or 2,
                 base=reg_name,
                 name=f"{reg_name}_0",
-                region=region,
+                region=region if isinstance(region, int) else None,
             )
             return structured_c.CVariable(
-                synthetic, variable_type=getattr(term, "variable_type", None), codegen=codegen
+                synthetic, variable_type=_dynamic_c_attr_8616(term, "variable_type"), codegen=codegen
             ), 0
 
-        def _synthetic_sp_match(term):
+        def _synthetic_sp_match(term: object) -> tuple[structured_c.CVariable, int] | None:
             synthetic = _synthetic_sp_anchor(term)
             if synthetic is not None:
                 return synthetic
@@ -175,7 +237,7 @@ def _classify_segmented_addr_expr(
                 return base, offset + lhs_const
             return None
 
-        def _segment_scale_name(term) -> str | None:
+        def _segment_scale_name(term: object) -> str | None:
             if not isinstance(term, structured_c.CBinaryOp):
                 return None
             if term.op == "Mul":
@@ -203,7 +265,7 @@ def _classify_segmented_addr_expr(
                         return local_seg
             return None
 
-        def _constant_term_value(term) -> int | None:
+        def _constant_term_value(term: object) -> int | None:
             term = unwrap_c_casts(term)
             constant = c_constant_value(term)
             if constant is not None:
@@ -216,7 +278,7 @@ def _classify_segmented_addr_expr(
                 return None
             return lhs + rhs if term.op == "Add" else lhs - rhs
 
-        def _iter_statement_nodes(root):
+        def _iter_statement_nodes(root: object) -> Iterator[structured_c.CConstruct]:
             stack = [root]
             seen: set[int] = set()
             while stack:
@@ -229,46 +291,47 @@ def _classify_segmented_addr_expr(
                 seen.add(current_id)
                 yield current
 
-                nested_statements = getattr(current, "statements", None)
+                nested_statements = _dynamic_c_attr_8616(current, "statements")
                 if isinstance(nested_statements, (list, tuple)):
                     for item in reversed(tuple(nested_statements)):
                         stack.append(item)
-                body = getattr(current, "body", None)
+                body = _dynamic_c_attr_8616(current, "body")
                 if body is not None:
                     stack.append(body)
-                else_node = getattr(current, "else_node", None)
+                else_node = _dynamic_c_attr_8616(current, "else_node")
                 if else_node is not None:
                     stack.append(else_node)
-                condition_and_nodes = getattr(current, "condition_and_nodes", None)
+                condition_and_nodes = _dynamic_c_attr_8616(current, "condition_and_nodes")
                 if isinstance(condition_and_nodes, (list, tuple)):
                     for pair in reversed(tuple(condition_and_nodes)):
                         if isinstance(pair, tuple):
                             for item in reversed(pair):
                                 stack.append(item)
 
-        def _single_assignment_rhs_for_cvar(term):
+        def _single_assignment_rhs_for_cvar(term: object) -> object | None:
             if not isinstance(term, structured_c.CVariable):
                 return None
-            term_var = getattr(term, "variable", None)
-            term_name = getattr(term, "name", None) or getattr(term_var, "name", None)
-            term_reg = getattr(term_var, "reg", None)
-            term_size = getattr(term_var, "size", None)
-            codegen = getattr(term, "codegen", None)
-            root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+            term_var = _dynamic_c_attr_8616(term, "variable")
+            term_name = _dynamic_c_attr_8616(term, "name") or _dynamic_c_attr_8616(term_var, "name")
+            term_reg = _dynamic_c_attr_8616(term_var, "reg")
+            term_size = _dynamic_c_attr_8616(term_var, "size")
+            codegen = _dynamic_c_attr_8616(term, "codegen")
+            cfunc = _dynamic_c_attr_8616(codegen, "cfunc")
+            root = _dynamic_c_attr_8616(cfunc, "statements")
             if root is None:
                 return None
 
-            def _same_lhs(lhs) -> bool:
+            def _same_lhs(lhs: object) -> bool:
                 if not isinstance(lhs, structured_c.CVariable):
                     return False
-                lhs_var = getattr(lhs, "variable", None)
+                lhs_var = _dynamic_c_attr_8616(lhs, "variable")
                 if lhs_var is term_var:
                     return True
-                lhs_name = getattr(lhs, "name", None) or getattr(lhs_var, "name", None)
+                lhs_name = _dynamic_c_attr_8616(lhs, "name") or _dynamic_c_attr_8616(lhs_var, "name")
                 if isinstance(term_name, str) and term_name and lhs_name == term_name:
                     return True
-                lhs_reg = getattr(lhs_var, "reg", None)
-                lhs_size = getattr(lhs_var, "size", None)
+                lhs_reg = _dynamic_c_attr_8616(lhs_var, "reg")
+                lhs_size = _dynamic_c_attr_8616(lhs_var, "size")
                 return (
                     isinstance(term_reg, int)
                     and isinstance(term_size, int)
@@ -278,18 +341,18 @@ def _classify_segmented_addr_expr(
                     and lhs_size == term_size
                 )
 
-            matches = []
+            matches: list[object] = []
             for stmt in _iter_statement_nodes(root):
                 if not isinstance(stmt, structured_c.CAssignment):
                     continue
-                if not _same_lhs(getattr(stmt, "lhs", None)):
+                if not _same_lhs(_dynamic_c_attr_8616(stmt, "lhs")):
                     continue
-                matches.append(getattr(stmt, "rhs", None))
+                matches.append(_dynamic_c_attr_8616(stmt, "rhs"))
                 if len(matches) > 1:
                     return None
             return matches[0] if len(matches) == 1 else None
 
-        def _resolve_term_aliases(term):
+        def _resolve_term_aliases(term: object) -> object:
             current = unwrap_c_casts(term)
             seen_ids: set[int] = set()
             while isinstance(current, structured_c.CVariable):
@@ -309,11 +372,17 @@ def _classify_segmented_addr_expr(
                 current = rhs_unwrapped
             return current
 
-        def _consume_stack_match(matched_cvar, stack_offset, term) -> tuple[bool, object, object, int, int]:
+        def _consume_stack_match(
+            matched_cvar: object,
+            stack_offset: object,
+            term: object,
+        ) -> tuple[bool, object | None, SimStackVariable | None, int, int]:
             nonlocal cvar, stack_var
             stack_offset = normalize_16bit_signed_offset(stack_offset)
-            matched_var = getattr(matched_cvar, "variable", None)
-            current_var = getattr(cvar, "variable", None) if cvar is not None else None
+            if not isinstance(matched_cvar, structured_c.CVariable):
+                return False, cvar, stack_var, 0, 0
+            matched_var = _dynamic_c_attr_8616(matched_cvar, "variable")
+            current_var = _dynamic_c_attr_8616(cvar, "variable") if cvar is not None else None
             if cvar is None:
                 cvar = matched_cvar
                 if isinstance(matched_var, SimStackVariable):
@@ -412,11 +481,18 @@ def _classify_segmented_addr_expr(
     return _impl()
 
 
-def _classify_segmented_dereference(node, project, *, project_rewrite_cache, classify_segmented_addr_expr):
+def _classify_segmented_dereference(
+    node: object,
+    project: _ProjectArch8616,
+    *,
+    project_rewrite_cache: _ProjectRewriteCache8616,
+    classify_segmented_addr_expr: Callable[[object, _ProjectArch8616], _SegmentedAccess | None],
+) -> _SegmentedAccess | None:
     cache = project_rewrite_cache(project).setdefault("segmented_dereference_class", {})
     key = id(node)
     if key in cache:
-        return cache[key]
+        cached = cache[key]
+        return cached if isinstance(cached, _SegmentedAccess) else None
 
     if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
         cache[key] = None
@@ -429,11 +505,18 @@ def _classify_segmented_dereference(node, project, *, project_rewrite_cache, cla
     return result
 
 
-def _match_real_mode_linear_expr(node, project, *, project_rewrite_cache, classify_segmented_addr_expr):
+def _match_real_mode_linear_expr(
+    node: object,
+    project: _ProjectArch8616,
+    *,
+    project_rewrite_cache: _ProjectRewriteCache8616,
+    classify_segmented_addr_expr: Callable[[object, _ProjectArch8616], _SegmentedAccess | None],
+) -> tuple[str | None, int | None]:
     cache = project_rewrite_cache(project).setdefault("real_mode_linear_expr", {})
     key = id(node)
     if key in cache:
-        return cache[key]
+        cached = cache[key]
+        return cached if isinstance(cached, tuple) and len(cached) == 2 else (None, None)
 
     classified = classify_segmented_addr_expr(node, project)
     if classified is None or classified.kind not in {"extra", "segment_const"}:
@@ -444,11 +527,18 @@ def _match_real_mode_linear_expr(node, project, *, project_rewrite_cache, classi
     return result
 
 
-def _match_segmented_dereference(node, project, *, project_rewrite_cache, classify_segmented_dereference):
+def _match_segmented_dereference(
+    node: object,
+    project: _ProjectArch8616,
+    *,
+    project_rewrite_cache: _ProjectRewriteCache8616,
+    classify_segmented_dereference: Callable[[object, _ProjectArch8616], _SegmentedAccess | None],
+) -> tuple[str | None, int | None]:
     cache = project_rewrite_cache(project).setdefault("segmented_dereference", {})
     key = id(node)
     if key in cache:
-        return cache[key]
+        cached = cache[key]
+        return cached if isinstance(cached, tuple) and len(cached) == 2 else (None, None)
 
     classified = classify_segmented_dereference(node, project)
     if classified is None or classified.linear is None:

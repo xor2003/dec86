@@ -9,7 +9,9 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
     CDirtyExpression,
+    CForLoop,
     CFunctionCall,
+    CIfElse,
     CReturn,
     CStatements,
     CTypeCast,
@@ -17,7 +19,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 from angr.sim_type import SimTypeLong, SimTypeShort
-from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_simplify import (
     _eliminate_single_use_temporaries_8616,
@@ -281,6 +283,95 @@ def test_simplify_structured_expressions_simplifies_direct_zero_flag_projection(
     assert result.operand is source
 
 
+def test_simplify_structured_expressions_preserves_not_shift_zero_flag_source():
+    project = _project()
+    codegen = _codegen([])
+    source = _global(0x132, codegen, size=4)
+    high_word_zero = CBinaryOp(
+        "Shr",
+        CUnaryOp("Not", source, codegen=codegen),
+        _const(16, codegen),
+        codegen=codegen,
+    )
+    zero_bit = CBinaryOp(
+        "Mul",
+        CBinaryOp("CmpEQ", high_word_zero, _const(0, codegen), codegen=codegen),
+        _const(64, codegen),
+        codegen=codegen,
+    )
+    flags = CBinaryOp(
+        "Or",
+        CBinaryOp("And", _reg(project, "eflags", codegen), _const(65471, codegen), codegen=codegen),
+        zero_bit,
+        codegen=codegen,
+    )
+    expr = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(64, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = expr
+    codegen.cfunc.body = expr
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    result = codegen.cfunc.statements
+    assert isinstance(result, CBinaryOp)
+    assert result.op == "CmpEQ"
+    shifted = result.lhs
+    assert isinstance(shifted, CBinaryOp)
+    assert shifted.op == "Shr"
+    assert shifted.lhs is source
+    assert isinstance(result.rhs, CConstant)
+    assert result.rhs.value == 0
+
+
+def test_simplify_structured_expressions_restores_not_shift_only_in_branch_conditions():
+    codegen = _codegen([])
+    source = _global(0x132, codegen, size=4)
+    condition = CBinaryOp(
+        "Shr",
+        CUnaryOp("Not", source, codegen=codegen),
+        _const(16, codegen),
+        codegen=codegen,
+    )
+    assignment_rhs = CBinaryOp(
+        "Shr",
+        CUnaryOp("Not", source, codegen=codegen),
+        _const(16, codegen),
+        codegen=codegen,
+    )
+    target = _global(0x200, codegen, size=2)
+    node = CStatements(
+        [
+            CIfElse([(condition, CStatements([], codegen=codegen))], codegen=codegen),
+            CAssignment(target, assignment_rhs, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = node
+    codegen.cfunc.body = node
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    branch = codegen.cfunc.statements.statements[0]
+    restored_condition = branch.condition_and_nodes[0][0]
+    assert isinstance(restored_condition, CBinaryOp)
+    assert restored_condition.op == "CmpEQ"
+    shifted = restored_condition.lhs
+    assert isinstance(shifted, CBinaryOp)
+    assert shifted.op == "Shr"
+    assert shifted.lhs is source
+    assert isinstance(restored_condition.rhs, CConstant)
+    assert restored_condition.rhs.value == 0
+    assignment = codegen.cfunc.statements.statements[1]
+    assert isinstance(assignment.rhs, CBinaryOp)
+    assert isinstance(assignment.rhs.lhs, CUnaryOp)
+
+
 def test_simplify_structured_expressions_refuses_stack_pointer_zero_flag_source():
     project = _project()
     codegen = _codegen([])
@@ -514,6 +605,14 @@ def test_eliminate_single_use_temporaries_inlines_immediate_use():
     retval = after_codegen.cfunc.statements.statements[0].retval
     assert isinstance(retval, CBinaryOp)
     assert retval.op == "Add"
+    stats = after_codegen._inertia_single_use_temporary_elimination_stats_8616
+    assert (
+        stats.raw_fact_count,
+        stats.normalized_fact_count,
+        stats.classified_fact_count,
+        stats.materialized_count,
+        stats.failure_count,
+    ) == (1, 1, 1, 1, 0)
 
 
 def test_eliminate_single_use_temporaries_refuses_multi_use_temporary():
@@ -535,6 +634,74 @@ def test_eliminate_single_use_temporaries_refuses_multi_use_temporary():
 
     assert changed is False
     assert len(codegen.cfunc.statements.statements) == 2
+
+
+def test_eliminate_single_use_temporaries_refuses_stack_local_cast_definition() -> None:
+    codegen = _codegen([])
+    source_word = CVariable(
+        SimStackVariable(-8, 2, base="bp", name="barTemp", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    signed_length = CVariable(
+        SimStackVariable(-6, 2, base="bp", name="iLength", region=0x4010),
+        variable_type=SimTypeShort(True),
+        codegen=codegen,
+    )
+    definition = CAssignment(
+        signed_length,
+        CTypeCast(SimTypeShort(False), SimTypeShort(True), source_word, codegen=codegen),
+        codegen=codegen,
+    )
+    use = CReturn(signed_length, codegen=codegen)
+    codegen.cfunc.statements = CStatements([definition, use], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _eliminate_single_use_temporaries_8616(codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [definition, use]
+    assert use.retval is signed_length
+    stats = codegen._inertia_single_use_temporary_elimination_stats_8616
+    assert (
+        stats.raw_fact_count,
+        stats.normalized_fact_count,
+        stats.classified_fact_count,
+        stats.materialized_count,
+        stats.failure_count,
+    ) == (1, 0, 0, 0, 1)
+
+
+def test_eliminate_single_use_temporaries_refuses_register_carrier_across_loop_scope() -> None:
+    project = _project()
+    codegen = _codegen([])
+    temp = CVariable(SimRegisterVariable(4, 2, name="tmp_1"), codegen=codegen)
+    expr = CBinaryOp("Add", _reg(project, "ax", codegen), _const(1, codegen), codegen=codegen)
+    loop_use = CReturn(temp, codegen=codegen)
+    loop = CForLoop(
+        None,
+        _const(1, codegen),
+        None,
+        CStatements([loop_use], codegen=codegen),
+        codegen=codegen,
+    )
+    definition = CAssignment(temp, expr, codegen=codegen)
+    codegen.cfunc.statements = CStatements([definition, loop], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _eliminate_single_use_temporaries_8616(codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [definition, loop]
+    assert loop_use.retval is temp
+    stats = codegen._inertia_single_use_temporary_elimination_stats_8616
+    assert (
+        stats.raw_fact_count,
+        stats.normalized_fact_count,
+        stats.classified_fact_count,
+        stats.materialized_count,
+        stats.failure_count,
+    ) == (1, 1, 0, 0, 1)
 
 
 def test_maybe_eliminate_single_use_temporaries_respects_feature_flag():

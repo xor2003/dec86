@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Export MonkeyType stubs for selected traced project modules.
+
+Layer: Tooling/gates.
+Responsibility: owns exporting traced MonkeyType stubs.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -6,7 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -18,7 +24,7 @@ from inertia_decompiler.monkeytype_tools import (  # noqa: E402
     stub_path_for_module,
 )
 
-PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
+PYTHON: Path = REPO_ROOT / ".venv" / "bin" / "python"
 
 
 def _python() -> str:
@@ -74,6 +80,8 @@ def _write_failures(failures: list[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Export MonkeyType stubs for modules selected by prefix."""
+
     args = _parse_args(argv)
 
     ensure_monkeytype_dirs()

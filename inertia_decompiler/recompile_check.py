@@ -1,3 +1,9 @@
+"""Run emitted-C recompilation checks as validation/reporting evidence.
+
+Layer: CLI/fallback/reporting.
+Responsibility: compile emitted C as validation evidence without repairing generated semantics.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -15,7 +21,7 @@ from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_hea
 def _sanitize_nested_block_comments(text: str) -> str:
     """Replace /* inside /* */ block comments to prevent -Werror=comment failures."""
 
-    def _fix_inner(match):
+    def _fix_inner(match: re.Match[str]) -> str:
         content = match.group(1)
         content = content.replace("/*", "/ *")
         return "/*" + content + "*/"
@@ -70,7 +76,9 @@ def _sanitize_c99_line_comments_for_msc_8616(text: str) -> str:
 
 def _dedupe_msc_runtime_typedefs_8616(text: str) -> str:
     typedef_re = re.compile(
-        r"^\s*typedef\s+.+?\s+(?P<name>uint8_t|uint16_t|uint32_t|clock_t|time_t)\s*;\s*$",
+        r"^\s*typedef\s+.+?\s+"
+        r"(?P<name>int8_t|int16_t|int32_t|uint8_t|uint16_t|uint32_t|clock_t|time_t)"
+        r"\s*;\s*$",
         re.IGNORECASE,
     )
     seen: set[str] = set()
@@ -88,6 +96,8 @@ def _dedupe_msc_runtime_typedefs_8616(text: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class RecompileCheckResult:
+    """Result from one emitted-C recompilation check."""
+
     passed: bool
     target: str
     exit_code: int
@@ -105,6 +115,15 @@ _DEFAULT_MSC51_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v
 _MSC51_MIRROR_CACHE: dict[Path, Path] = {}
 _DEFAULT_RECOMPILE_TIMEOUT_SEC = 20
 _MSC51_TRANSIENT_RETRY_LIMIT = 5
+
+
+def _timeout_stream_text(value: str | bytes | None) -> str:
+    """Normalize subprocess timeout stream payloads to text."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return value
 
 
 def _compile_input_payload_8616(c_text: str, *, target: str) -> str:
@@ -188,7 +207,7 @@ def _resolve_msc51_root() -> Path | None:
 
 
 def _prepare_msc51_mirror_tree(source_root: Path) -> Path:
-    def _impl():
+    def _impl() -> Path:
         cached = _MSC51_MIRROR_CACHE.get(source_root)
         if (
             cached is not None
@@ -234,7 +253,7 @@ def _prepare_msc51_mirror_tree(source_root: Path) -> Path:
 
 
 def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileCheckResult:
-    def _impl():
+    def _impl() -> RecompileCheckResult:
         kvikdos = _resolve_kvikdos_path()
         if kvikdos is None:
             compile_payload = _compile_input_payload_8616(c_text, target=target)
@@ -307,8 +326,8 @@ def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileChec
                     target=target,
                     exit_code=124,
                     compiler=str(kvikdos),
-                    stdout=(ex.stdout or ""),
-                    stderr=((ex.stderr or "") + "\nrecompile timeout (msc-dos)"),
+                    stdout=_timeout_stream_text(ex.stdout),
+                    stderr=_timeout_stream_text(ex.stderr) + "\nrecompile timeout (msc-dos)",
                     command=command,
                     checked_payload=checked_payload,
                     checked_payload_hash=checked_hash,
@@ -349,7 +368,9 @@ def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileChec
 
 
 def check_c_recompiles_8616(c_text: str, *, target: str = "portable-flat") -> RecompileCheckResult:
-    def _impl():
+    """Compile generated C with the requested target compiler profile."""
+
+    def _impl() -> RecompileCheckResult:
         if target == "msc-dos":
             return _check_c_recompiles_msc51_8616(c_text, target=target)
         compile_payload = _compile_input_payload_8616(c_text, target=target)
@@ -400,18 +421,14 @@ def check_c_recompiles_8616(c_text: str, *, target: str = "portable-flat") -> Re
                 target=target,
                 exit_code=124,
                 compiler=compiler,
-                stdout=(ex.stdout or ""),
-                stderr=((ex.stderr or "") + "\nrecompile timeout (portable-flat)"),
+                stdout=_timeout_stream_text(ex.stdout),
+                stderr=_timeout_stream_text(ex.stderr) + "\nrecompile timeout (portable-flat)",
                 command=command,
                 checked_payload=checked_payload,
                 checked_payload_hash=checked_hash,
                 source_path=str(src_path),
             )
-        stderr_text = proc.stderr or ""
-        stdout_text = proc.stdout or ""
-        combined_text = f"{stderr_text}\n{stdout_text}"
-        has_hard_error = re.search(r"(?mi)\berror:\b", combined_text) is not None
-        passed = proc.returncode == 0 or (proc.returncode != 0 and not has_hard_error)
+        passed = proc.returncode == 0
         if passed:
             shutil.rmtree(tmpdir, ignore_errors=True)
             source_path = None

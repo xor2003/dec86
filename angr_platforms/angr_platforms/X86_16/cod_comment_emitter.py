@@ -1,11 +1,32 @@
-from __future__ import annotations
-
 """Emit original COD assembly and C source as comment blocks in .dec output.
+
+Layer: Optional evidence/reporting.
+Responsibility: format optional COD/source evidence as comments only.
+Forbidden: semantic recovery, validation success, or output repair from COD/source text.
 
 AGENTS rule: no semantic recovery — this is pure formatting/fidelity output.
 """
 
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import TypeAlias
+
+CODCommentEntry: TypeAlias = Mapping[str, object]
+
+__all__ = (
+    "CODCommentEntry",
+    "format_cod_comment_block",
+    "format_cod_comment_block_from_proc_metadata",
+)
+
+
+def _cod_comment_offset(entry: CODCommentEntry) -> int:
+    value = entry["offset"]
+    if isinstance(value, int):
+        return value
+    return int(str(value), 0)
 
 
 def format_cod_comment_block(
@@ -13,7 +34,7 @@ def format_cod_comment_block(
     func_name: str,
     proc_kind: str = "NEAR",
     cod_path: str | None = None,
-    entries: list[dict[str, object]] | None = None,
+    entries: Sequence[CODCommentEntry] | None = None,
     source_lines: tuple[str, ...] = (),
 ) -> str:
     """Produce a ``/// ORIGINAL: ...`` comment block for a function.
@@ -45,8 +66,10 @@ def format_cod_comment_block(
         lines.append("///")
         lines.append("/// Assembly:")
         for entry in entries:
-            offset = int(entry["offset"])
+            offset = _cod_comment_offset(entry)
             raw_bytes = entry["bytes"]
+            if not isinstance(raw_bytes, bytes):
+                raw_bytes = bytes(raw_bytes) if isinstance(raw_bytes, Sequence) else b""
             asm_text = str(entry.get("text", "")).strip()
             hex_bytes = " ".join(f"{b:02X}" for b in raw_bytes)
             # Pad hex bytes to 16 chars for alignment
@@ -62,12 +85,10 @@ def format_cod_comment_block_from_proc_metadata(
     func_name: str,
     proc_kind: str = "NEAR",
     cod_path: str | None = None,
-    entries: list[dict[str, object]] | None = None,
+    entries: Sequence[CODCommentEntry] | None = None,
     source_lines: tuple[str, ...] = (),
 ) -> str:
-    """Same as :func:`format_cod_comment_block`, provided as an alias for direct use
-    with ``CODProcMetadata`` fields.
-    """
+    """Return the COD comment block for direct ``CODProcMetadata`` field callers."""
     return format_cod_comment_block(
         func_name=func_name,
         proc_kind=proc_kind,

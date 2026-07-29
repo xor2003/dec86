@@ -1,3 +1,9 @@
+"""Layer: Optional evidence/reporting.
+
+Responsibility: parse CodeView NB00 debug records into optional labels and diagnostics.
+Forbidden: requiring debug symbols for arguments, types, control flow, or validation success.
+"""
+
 from __future__ import annotations
 
 import struct
@@ -7,6 +13,8 @@ from pathlib import Path
 
 
 class CodeViewSubsectionType(IntEnum):
+    """NB00 subsection tags used to route optional CodeView debug tables."""
+
     MODULES = 0x101
     PUBLICS = 0x102
     TYPE = 0x103
@@ -19,6 +27,8 @@ class CodeViewSubsectionType(IntEnum):
 
 @dataclass(frozen=True)
 class CodeViewDirectoryEntry:
+    """Directory entry pointing at one NB00 debug subsection payload."""
+
     subsection_type: int
     module_index: int
     data_offset: int
@@ -27,6 +37,8 @@ class CodeViewDirectoryEntry:
 
 @dataclass(frozen=True)
 class CodeViewNB00Module:
+    """NB00 module span used to classify optional labels and source lines."""
+
     module_index: int
     cs_base: int
     cs_offset: int
@@ -37,12 +49,15 @@ class CodeViewNB00Module:
     name: str
 
     def linear_range(self, *, load_base_linear: int) -> tuple[int, int]:
+        """Return the display-only linear range covered by this module."""
         start = load_base_linear + (self.cs_base << 4) + self.cs_offset
         return start, start + self.cs_length
 
 
 @dataclass(frozen=True)
 class CodeViewNB00PublicSymbol:
+    """Public symbol recovered from NB00 debug data as optional label evidence."""
+
     module_index: int
     offset: int
     segment: int
@@ -50,11 +65,14 @@ class CodeViewNB00PublicSymbol:
     name: str
 
     def linear_addr(self, *, load_base_linear: int) -> int:
+        """Return a display-only linear address for this public symbol."""
         return load_base_linear + (self.segment << 4) + self.offset
 
 
 @dataclass(frozen=True)
 class CodeViewNB00Info:
+    """Parsed NB00 debug metadata exposed as optional labels and diagnostics."""
+
     version: str
     debug_base: int
     subsection_directory_offset: int
@@ -73,12 +91,16 @@ class CodeViewNB00Info:
 
 @dataclass(frozen=True)
 class CodeViewNB00TypeLeaf:
+    """Raw NB00 type-record leaf preserved for debug-schema reporting."""
+
     kind: str
     value: object
 
 
 @dataclass(frozen=True)
 class CodeViewNB00TypeMember:
+    """Member name and offset decoded from an NB00 type record."""
+
     name: str
     offset: int
     owner_type_index: int
@@ -87,12 +109,15 @@ class CodeViewNB00TypeMember:
 
 @dataclass(frozen=True)
 class CodeViewNB00TypeDefinition:
+    """NB00 type record retained as optional debug type evidence."""
+
     index: int
     linkage: int
     leaves: tuple[CodeViewNB00TypeLeaf, ...]
 
 
 def find_codeview_nb00(data: bytes) -> tuple[str, int, int] | None:
+    """Locate an NB00 trailer and subsection directory in executable bytes."""
     for trailer_offset in range(len(data) - 8, max(-1, len(data) - 256), -1):
         signature, debug_offset = struct.unpack_from("<4sI", data, trailer_offset)
         if not signature.startswith(b"NB0"):
@@ -108,10 +133,12 @@ def find_codeview_nb00(data: bytes) -> tuple[str, int, int] | None:
 
 
 def parse_codeview_nb00(path: Path, *, load_base_linear: int = 0) -> CodeViewNB00Info | None:
+    """Parse optional NB00 debug metadata from an executable path."""
     return parse_codeview_nb00_bytes(path.read_bytes(), load_base_linear=load_base_linear)
 
 
 def parse_codeview_nb00_bytes(data: bytes, *, load_base_linear: int = 0) -> CodeViewNB00Info | None:
+    """Parse optional NB00 debug metadata from executable bytes."""
     located = find_codeview_nb00(data)
     if located is None:
         return None
@@ -274,7 +301,7 @@ def _parse_type_record(record: bytes) -> tuple[CodeViewNB00TypeLeaf, ...]:
 
 
 def _read_leaf(record: bytes, offset: int) -> tuple[CodeViewNB00TypeLeaf, int]:
-    def _impl():
+    def _impl() -> tuple[CodeViewNB00TypeLeaf, int]:
         if offset >= len(record):
             return CodeViewNB00TypeLeaf("invalid", None), 0
         tag = record[offset]
@@ -451,7 +478,7 @@ def _synthesize_code_ranges(
     *,
     load_base_linear: int,
 ) -> dict[int, tuple[int, int]]:
-    def _impl():
+    def _impl() -> dict[int, tuple[int, int]]:
         module_ranges = {
             module.module_index: module.linear_range(load_base_linear=load_base_linear)
             for module in modules

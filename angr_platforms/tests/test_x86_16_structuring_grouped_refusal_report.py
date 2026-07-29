@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import networkx as nx
 from angr_platforms.X86_16.structuring_grouped_refusal_report import (
     build_x86_16_structuring_grouped_refusal_report,
@@ -6,29 +8,29 @@ from angr_platforms.X86_16.structuring_grouped_refusal_report import (
 
 
 class _Node:
-    def __init__(self, addr):
+    def __init__(self, addr: int) -> None:
         self.addr = addr
 
 
 class _Clinic:
-    def __init__(self, graph):
+    def __init__(self, graph: nx.DiGraph) -> None:
         self.graph = graph
 
 
 class _CFunc:
-    def __init__(self, addr):
+    def __init__(self, addr: int) -> None:
         self.addr = addr
         self.name = "func"
 
 
 class _Codegen:
-    def __init__(self, addr, clinic):
+    def __init__(self, addr: int, clinic: _Clinic) -> None:
         self.cfunc = _CFunc(addr)
         self._clinic = clinic
         self.project = None
 
 
-def test_structuring_grouped_refusal_report_counts_refusal_reasons():
+def test_structuring_grouped_refusal_report_counts_refusal_reasons() -> None:
     graph = nx.DiGraph()
     a = _Node(0x1000)
     b = _Node(0x1001)
@@ -55,7 +57,7 @@ def test_structuring_grouped_refusal_report_counts_refusal_reasons():
     }
 
 
-def test_structuring_grouped_refusal_report_surface_is_stable():
+def test_structuring_grouped_refusal_report_surface_is_stable() -> None:
     assert describe_x86_16_structuring_grouped_refusal_report_surface() == {
         "consumer": "structuring_grouped_refusal_report",
         "producer": "build_x86_16_cross_entry_grouped_units",

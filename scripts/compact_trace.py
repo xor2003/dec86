@@ -1,10 +1,15 @@
+"""Convert telemetry traces into compact text summaries for agent handoff.
+
+Layer: Tooling/gates.
+Responsibility: summarize telemetry for diagnostics without owning decompiler semantics.
+"""
+
 from __future__ import annotations
 
 import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 _ATTR_ALIASES = {
     "base_addr": "base",
@@ -15,7 +20,7 @@ _ATTR_ALIASES = {
 }
 
 
-def _format_attr_value(value: Any) -> str:
+def _format_attr_value(value: object) -> str:
     if isinstance(value, bool):
         return "1" if value else "0"
     if value is None:
@@ -28,7 +33,7 @@ def _format_attr_value(value: Any) -> str:
     return text.replace("|", "/")
 
 
-def _format_attrs(attrs: dict[str, Any]) -> str:
+def _format_attrs(attrs: dict[str, object]) -> str:
     if not attrs:
         return ""
     parts = []
@@ -38,7 +43,7 @@ def _format_attrs(attrs: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def _name_dictionary(rows: list[dict[str, Any]]) -> dict[str, int] | None:
+def _name_dictionary(rows: list[dict[str, object]]) -> dict[str, int] | None:
     if len(rows) < 16:
         return None
     names: dict[str, int] = {}
@@ -57,8 +62,9 @@ def _name_dictionary(rows: list[dict[str, Any]]) -> dict[str, int] | None:
 
 
 def convert_otlp_jsonl_text(text: str) -> str:
-    summary: dict[str, Any] | None = None
-    rows: list[dict[str, Any]] = []
+    """Convert Inertia OTEL JSONL trace text into compact line-oriented text."""
+    summary: dict[str, object] | None = None
+    rows: list[dict[str, object]] = []
 
     for line in text.splitlines():
         line = line.strip()

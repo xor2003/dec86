@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from angr_platforms.X86_16 import decompiler_structuring_stage as stage
 from angr_platforms.X86_16.function_interface_surface import apply_x86_16_function_interface_surface
 
 
-def test_function_interface_surface_prepends_header_and_annotates_calls(monkeypatch):
+def test_function_interface_surface_prepends_header_and_annotates_calls(monkeypatch) -> None:
     caller = SimpleNamespace(
         addr=0x1000,
         name="caller",
@@ -53,7 +54,7 @@ def test_function_interface_surface_prepends_header_and_annotates_calls(monkeypa
     assert "ax = callee(bx); /* io callee: in=bx, es; out=ax, cf; ret=word */" in rendered
 
 
-def test_function_interface_surface_formats_low_memory_effects(monkeypatch):
+def test_function_interface_surface_formats_low_memory_effects(monkeypatch) -> None:
     caller = SimpleNamespace(
         addr=0x1000,
         name="caller",
@@ -86,7 +87,7 @@ def test_function_interface_surface_formats_low_memory_effects(monkeypatch):
     assert "//   mem-w: bda.com2_port (0x0:0x402 -> 0x402)" in rendered
 
 
-def test_function_interface_surface_installs_once(monkeypatch):
+def test_function_interface_surface_installs_once(monkeypatch) -> None:
     caller = SimpleNamespace(addr=0x1000, name="caller", info={})
     project = SimpleNamespace(
         kb=SimpleNamespace(
@@ -107,3 +108,36 @@ def test_function_interface_surface_installs_once(monkeypatch):
 
     assert apply_x86_16_function_interface_surface(project, codegen) is True
     assert apply_x86_16_function_interface_surface(project, codegen) is False
+
+
+def test_function_interface_surface_structuring_adapter_is_reporting_only(monkeypatch) -> None:
+    caller = SimpleNamespace(
+        addr=0x1000,
+        name="caller",
+        info={
+            "register_inputs": ("ax",),
+            "register_outputs": ("ax",),
+            "return_kind": "word",
+        },
+    )
+    project = SimpleNamespace(
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(
+                function=lambda addr, create=False: caller if addr == 0x1000 else None,
+            )
+        ),
+    )
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1000, name="caller"),
+        render_text=lambda _cfunc: "int caller(void)\n{\n    return ax;\n}\n",
+    )
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.function_interface_surface.collect_neighbor_call_targets",
+        lambda _function: [],
+    )
+
+    assert stage._install_function_interface_surface_reporting_only_8616(project, codegen) is False
+    assert codegen._inertia_function_interface_surface_installed is True
+    rendered = codegen.render_text(codegen.cfunc)
+    assert rendered.startswith("// interface caller\n")

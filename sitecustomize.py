@@ -1,3 +1,8 @@
+"""Repository-local Python startup compatibility hooks.
+
+Layer: Tooling/gates.
+"""
+
 from __future__ import annotations
 
 import json

@@ -1,12 +1,19 @@
+"""Cleanup-only value-flow renaming over proven alias domains.
+
+Layer: Rewrite/Postprocess cleanup.
+Responsibility: inline value-flow temporaries only when alias facts prove storage identity.
+Consumes already-proven IR, alias, widening, typed, and structuring facts.
+This module may inline structured-codegen values only when alias facts already
+prove same-domain storage.
+Do not recover new semantics, storage identity, types, call signatures, control
+flow, or facts from rendered text, COD, source, or CLI/reporting evidence here.
+The codegen and C AST objects cross a dynamic third-party angr boundary; keep
+dynamic attribute access limited to traversing already-recovered C AST nodes.
+"""
+
 from __future__ import annotations
 
-"""Layer: Semantics (value flow, below alias).
-
-Light SSA-like renaming pass: version registers and inline definitions.
-Operates on structured C codegen nodes.
-Uses alias model for same-domain proofs.
-
-Forbidden: semantic recovery from text, type inference, postprocess ownership."""
+from collections.abc import Iterable, Iterator
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -16,7 +23,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 
-from ..decompiler_postprocess_utils import _same_c_expression_8616
+from ..c_ast_utils import _same_c_expression_8616
 from ..semantics.alias_query import _storage_domain_for_expr
 
 __all__ = ["_apply_value_flow_renaming_8616"]
@@ -31,7 +38,7 @@ def _same_var(a: object, b: object) -> bool:
     return domain_a == domain_b
 
 
-def _is_side_effecting(expr) -> bool:
+def _is_side_effecting(expr: object) -> bool:
     """Check for side effects that prevent inlining."""
     if isinstance(expr, CFunctionCall):
         return True
@@ -40,9 +47,11 @@ def _is_side_effecting(expr) -> bool:
     return False
 
 
-def _has_variable_use(expr, target) -> bool:
-    def _impl():
-        """Check if expr contains a use of target variable."""
+def _has_variable_use(expr: object, target: object) -> bool:
+    """Return whether an expression uses a target variable."""
+
+    def _impl() -> bool:
+        """Walk uses across the dynamic third-party angr C AST boundary."""
         if expr is None:
             return False
         if _same_var(expr, target):
@@ -60,8 +69,11 @@ def _has_variable_use(expr, target) -> bool:
     return _impl()
 
 
-def _apply_value_flow_renaming_8616(codegen) -> bool:
+def _apply_value_flow_renaming_8616(codegen: object) -> bool:
     """Inline single-use temporaries where alias-safe.
+
+    The codegen object crosses a dynamic third-party angr boundary; this pass
+    only traverses already-built C AST nodes and relies on alias facts.
 
     For each block:
     - Track assignments t = expr
@@ -80,8 +92,8 @@ def _apply_value_flow_renaming_8616(codegen) -> bool:
 
     changed = False
 
-    def _collect_var_uses(stmts) -> dict[int, int]:
-        """Count uses of each variable in the block."""
+    def _collect_var_uses(stmts: Iterable[object]) -> dict[int, int]:
+        """Count C AST variable uses across the dynamic third-party angr boundary."""
         count: dict[int, int] = {}
         for stmt in stmts:
             if isinstance(stmt, CAssignment):
@@ -95,13 +107,10 @@ def _apply_value_flow_renaming_8616(codegen) -> bool:
                 # Don't count definition site as a use
                 if lhs is not None and id(lhs) in count:
                     count[id(lhs)] -= 1
-                if rhs is not None:
-                    for node in _iter_c_nodes(rhs):
-                        if isinstance(node, (CIfElse, CWhileLoop, CDoWhileLoop, CForLoop)):
-                            pass  # Conditions in structured nodes handled separately
         return count
 
-    def _iter_c_nodes(node):
+    def _iter_c_nodes(node: object) -> Iterator[object]:
+        """Yield C AST descendants across the dynamic third-party angr boundary."""
         if node is None:
             return
         yield node
@@ -116,7 +125,8 @@ def _apply_value_flow_renaming_8616(codegen) -> bool:
         elif isinstance(node, CAssignment):
             yield from _iter_c_nodes(node.rhs)
 
-    def walk_statements(statements):
+    def walk_statements(statements: object) -> None:
+        """Walk statement blocks across the dynamic third-party angr boundary."""
         nonlocal changed
         stmts = list(getattr(statements, "statements", ()) or ())
         if len(stmts) < 2:
@@ -156,7 +166,8 @@ def _apply_value_flow_renaming_8616(codegen) -> bool:
                 # Re-record to track latest definition
                 pass
 
-    def _walk_node(node):
+    def _walk_node(node: object) -> None:
+        """Walk child links across the dynamic third-party angr boundary."""
         if node is None:
             return
         if hasattr(node, "statements"):

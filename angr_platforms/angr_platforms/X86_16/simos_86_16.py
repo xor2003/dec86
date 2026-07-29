@@ -1,5 +1,15 @@
+"""Layer: Frontend/runtime.
+
+Responsibility: register the 16-bit SimOS, calling conventions, and interrupt procedures.
+Forbidden: decompiler semantic recovery, source-backed signatures, or rewrite ownership.
+"""
+
+from __future__ import annotations
+
+from typing import ClassVar, Protocol, cast
+
 import claripy
-from angr import SimProcedure
+from angr import Project, SimProcedure
 from angr.calling_conventions import (
     SimCC,
     SimRegArg,
@@ -8,91 +18,147 @@ from angr.calling_conventions import (
     register_syscall_cc,
 )
 from angr.simos import SimOS, register_simos
+from claripy.ast.bv import BV
 
 from .arch_86_16 import Arch86_16
 
-INTERRUPT_BASE_ADDR = 0xFF000
-INTERRUPT_VECTOR_COUNT = 0x100
+__all__ = (
+    "BIOSInt12MemorySize",
+    "DOSInt21",
+    "INTERRUPT_BASE_ADDR",
+    "INTERRUPT_VECTOR_COUNT",
+    "InterruptHandler",
+    "SimCC8616MSC",
+    "SimCC8616MSCmedium",
+    "SimCC8616MSCsmall",
+    "SimDOS86_16",
+    "SimDOSintcall",
+    "get_interrupt_handler_class",
+    "interrupt_addr",
+    "runtime_interrupt_addr",
+)
+
+INTERRUPT_BASE_ADDR: int = 0xFF000
+INTERRUPT_VECTOR_COUNT: int = 0x100
 
 
 def interrupt_addr(vector: int) -> int:
+    """Return the synthetic linear interrupt target used by the DOS SimOS."""
     return INTERRUPT_BASE_ADDR + (vector & 0xFF)
 
 
 def runtime_interrupt_addr(vector: int) -> int:
+    """Return the 16-bit wrapped interrupt target used by lifted real-mode code."""
     return interrupt_addr(vector) & 0xFFFF
 
 
 class InterruptHandler(SimProcedure):
-    INT_VECTOR = None
-    INT_NAME = "interrupt"
-    IS_BIOS = False
-    IS_DOS = False
-    NO_RET = False
+    """Base symbolic interrupt handler for DOS/BIOS interrupt vectors."""
 
-    def run(self):  # pylint:disable=arguments-differ
+    INT_VECTOR: ClassVar[int | None] = None
+    INT_NAME: ClassVar[str] = "interrupt"
+    IS_BIOS: ClassVar[bool] = False
+    IS_DOS: ClassVar[bool] = False
+    NO_RET: ClassVar[bool] = False
+
+    def run(self) -> object:  # pylint:disable=arguments-differ
+        """Return a symbolic AX value for unmodeled interrupt behavior."""
         return claripy.BVS(f"{self.INT_NAME}_ax", 16, explicit_name=True)
 
 
+class _SyscallRegs(Protocol):
+    """Minimal register file surface for syscall-number lookup."""
+
+    ax: object
+
+
+class _SyscallState(Protocol):
+    """Minimal angr state surface used for synthetic DOS syscall dispatch."""
+
+    regs: _SyscallRegs
+
+
 class BIOSInterruptHandler(InterruptHandler):
-    IS_BIOS = True
+    """Base class for BIOS interrupt handlers."""
+
+    IS_BIOS: ClassVar[bool] = True
 
 
 class DOSInterruptHandler(InterruptHandler):
-    IS_DOS = True
+    """Base class for DOS interrupt handlers."""
+
+    IS_DOS: ClassVar[bool] = True
 
 
 class BIOSInt10Video(BIOSInterruptHandler):
-    INT_VECTOR = 0x10
-    INT_NAME = "bios_int10_video"
+    """BIOS video interrupt handler with minimal text-output semantics."""
 
-    def run(self):  # pylint:disable=arguments-differ
+    INT_VECTOR: ClassVar[int] = 0x10
+    INT_NAME: ClassVar[str] = "bios_int10_video"
+
+    def run(self) -> object:  # pylint:disable=arguments-differ
+        """Handle modeled text output or return symbolic AX."""
         ah = self.state.regs.ah
         # Common text-mode services can be treated as pure side-effect stubs.
         if self.state.solver.is_true(ah == 0x0E):
-            return claripy.ZeroExt(8, self.state.regs.al)
+            return claripy.ZeroExt(8, cast(BV, self.state.regs.al))
         return claripy.BVS("bios_int10_ax", 16, explicit_name=True)
 
 
 class BIOSInt11Equipment(BIOSInterruptHandler):
-    INT_VECTOR = 0x11
-    INT_NAME = "bios_int11_equipment"
+    """BIOS equipment-list interrupt handler."""
 
-    def run(self):  # pylint:disable=arguments-differ
+    INT_VECTOR: ClassVar[int] = 0x11
+    INT_NAME: ClassVar[str] = "bios_int11_equipment"
+
+    def run(self) -> object:  # pylint:disable=arguments-differ
+        """Return a deterministic empty equipment bitmask."""
         self.state.regs.ax = claripy.BVV(0, 16)
         return self.state.regs.ax
 
 
 class BIOSInt12MemorySize(BIOSInterruptHandler):
-    INT_VECTOR = 0x12
-    INT_NAME = "bios_int12_memory_size"
+    """BIOS conventional-memory-size interrupt handler."""
 
-    def run(self):  # pylint:disable=arguments-differ
+    INT_VECTOR: ClassVar[int] = 0x12
+    INT_NAME: ClassVar[str] = "bios_int12_memory_size"
+
+    def run(self) -> object:  # pylint:disable=arguments-differ
+        """Return the conventional 640 KiB memory size."""
         # Conventional memory size in KiB.
         self.state.regs.ax = claripy.BVV(640, 16)
         return self.state.regs.ax
 
 
 class BIOSInt13Disk(BIOSInterruptHandler):
-    INT_VECTOR = 0x13
-    INT_NAME = "bios_int13_disk"
+    """BIOS disk interrupt symbolic handler."""
+
+    INT_VECTOR: ClassVar[int] = 0x13
+    INT_NAME: ClassVar[str] = "bios_int13_disk"
 
 
 class BIOSInt14Serial(BIOSInterruptHandler):
-    INT_VECTOR = 0x14
-    INT_NAME = "bios_int14_serial"
+    """BIOS serial-port interrupt symbolic handler."""
+
+    INT_VECTOR: ClassVar[int] = 0x14
+    INT_NAME: ClassVar[str] = "bios_int14_serial"
 
 
 class BIOSInt15System(BIOSInterruptHandler):
-    INT_VECTOR = 0x15
-    INT_NAME = "bios_int15_system"
+    """BIOS system-services interrupt symbolic handler."""
+
+    INT_VECTOR: ClassVar[int] = 0x15
+    INT_NAME: ClassVar[str] = "bios_int15_system"
 
 
 class BIOSInt16Keyboard(BIOSInterruptHandler):
-    INT_VECTOR = 0x16
-    INT_NAME = "bios_int16_keyboard"
+    """BIOS keyboard interrupt handler with minimal read-key semantics."""
 
-    def run(self):  # pylint:disable=arguments-differ
+    INT_VECTOR: ClassVar[int] = 0x16
+    INT_NAME: ClassVar[str] = "bios_int16_keyboard"
+
+    def run(self) -> object:  # pylint:disable=arguments-differ
+        """Return deterministic no-key data for function 00h or symbolic AX."""
         ah = self.state.regs.ah
         if self.state.solver.is_true(ah == 0x00):
             self.state.regs.ax = claripy.BVV(0, 16)
@@ -101,15 +167,20 @@ class BIOSInt16Keyboard(BIOSInterruptHandler):
 
 
 class BIOSInt17Printer(BIOSInterruptHandler):
-    INT_VECTOR = 0x17
-    INT_NAME = "bios_int17_printer"
+    """BIOS printer interrupt symbolic handler."""
+
+    INT_VECTOR: ClassVar[int] = 0x17
+    INT_NAME: ClassVar[str] = "bios_int17_printer"
 
 
 class BIOSInt1AClock(BIOSInterruptHandler):
-    INT_VECTOR = 0x1A
-    INT_NAME = "bios_int1a_clock"
+    """BIOS clock interrupt handler with deterministic tick query behavior."""
 
-    def run(self):  # pylint:disable=arguments-differ
+    INT_VECTOR: ClassVar[int] = 0x1A
+    INT_NAME: ClassVar[str] = "bios_int1a_clock"
+
+    def run(self) -> object:  # pylint:disable=arguments-differ
+        """Return zeroed clock registers for function 00h or symbolic AX."""
         ah = self.state.regs.ah
         if self.state.solver.is_true(ah == 0x00):
             self.state.regs.ax = claripy.BVV(0, 16)
@@ -120,19 +191,25 @@ class BIOSInt1AClock(BIOSInterruptHandler):
 
 
 class DOSInt20Terminate(DOSInterruptHandler):
-    INT_VECTOR = 0x20
-    INT_NAME = "dos_int20_terminate"
-    NO_RET = True
+    """DOS terminate-program interrupt handler."""
 
-    def run(self):  # pylint:disable=arguments-differ
+    INT_VECTOR: ClassVar[int] = 0x20
+    INT_NAME: ClassVar[str] = "dos_int20_terminate"
+    NO_RET: ClassVar[bool] = True
+
+    def run(self) -> None:  # pylint:disable=arguments-differ
+        """Exit the simulated process with status 0."""
         self.exit(0)
 
 
 class DOSInt21(DOSInterruptHandler):
-    INT_VECTOR = 0x21
-    INT_NAME = "dos_int21"
+    """DOS API interrupt handler for a small modeled service subset."""
 
-    def run(self):  # pylint:disable=arguments-differ
+    INT_VECTOR: ClassVar[int] = 0x21
+    INT_NAME: ClassVar[str] = "dos_int21"
+
+    def run(self) -> object:  # pylint:disable=arguments-differ
+        """Handle modeled DOS services or return symbolic AX."""
         ah = self.state.regs.ah
 
         if self.state.solver.is_true(ah == 0x09):
@@ -159,51 +236,61 @@ class DOSInt21(DOSInterruptHandler):
             return self.state.regs.ax
 
         if self.state.solver.is_true(ah == 0x4C):
-            self.exit(claripy.ZeroExt(8, self.state.regs.al))
+            self.exit(claripy.ZeroExt(8, cast(BV, self.state.regs.al)))
 
         return claripy.BVS("dos_int21_ax", 16, explicit_name=True)
 
 
 class DOSInt25AbsoluteDiskRead(DOSInterruptHandler):
-    INT_VECTOR = 0x25
-    INT_NAME = "dos_int25_abs_disk_read"
+    """DOS absolute disk read symbolic handler."""
+
+    INT_VECTOR: ClassVar[int] = 0x25
+    INT_NAME: ClassVar[str] = "dos_int25_abs_disk_read"
 
 
 class DOSInt26AbsoluteDiskWrite(DOSInterruptHandler):
-    INT_VECTOR = 0x26
-    INT_NAME = "dos_int26_abs_disk_write"
+    """DOS absolute disk write symbolic handler."""
+
+    INT_VECTOR: ClassVar[int] = 0x26
+    INT_NAME: ClassVar[str] = "dos_int26_abs_disk_write"
 
 
 class DOSInt27TerminateStayResident(DOSInterruptHandler):
-    INT_VECTOR = 0x27
-    INT_NAME = "dos_int27_tsr"
-    NO_RET = True
+    """DOS terminate-and-stay-resident interrupt handler."""
 
-    def run(self):  # pylint:disable=arguments-differ
+    INT_VECTOR: ClassVar[int] = 0x27
+    INT_NAME: ClassVar[str] = "dos_int27_tsr"
+    NO_RET: ClassVar[bool] = True
+
+    def run(self) -> None:  # pylint:disable=arguments-differ
+        """Exit the simulated process with status 0."""
         self.exit(0)
 
 
 class DOSInt2FMultiplex(DOSInterruptHandler):
-    INT_VECTOR = 0x2F
-    INT_NAME = "dos_int2f_multiplex"
+    """DOS multiplex interrupt symbolic handler."""
+
+    INT_VECTOR: ClassVar[int] = 0x2F
+    INT_NAME: ClassVar[str] = "dos_int2f_multiplex"
 
 
-def _generic_interrupt_class(vector: int):
+def _generic_interrupt_class(vector: int) -> type[InterruptHandler]:
+    """Build a generic interrupt handler class for an unmodeled vector."""
     category = "bios" if 0x10 <= vector <= 0x1F else "dos" if 0x20 <= vector <= 0x2F else "interrupt"
     base = (
         BIOSInterruptHandler if category == "bios" else DOSInterruptHandler if category == "dos" else InterruptHandler
     )
-    return type(
+    return cast(type[InterruptHandler], type(
         f"Interrupt{vector:02X}",
         (base,),
         {
             "INT_VECTOR": vector,
             "INT_NAME": f"{category}_int{vector:02x}",
         },
-    )
+    ))
 
 
-_HANDLER_CLASSES = {
+_HANDLER_CLASSES: dict[int, type[InterruptHandler]] = {
     cls.INT_VECTOR: cls
     for cls in (
         BIOSInt10Video,
@@ -225,30 +312,39 @@ _HANDLER_CLASSES = {
 }
 
 
-def get_interrupt_handler_class(vector: int):
+def get_interrupt_handler_class(vector: int) -> type[InterruptHandler]:
+    """Return the concrete or generic handler class for an interrupt vector."""
     vector &= 0xFF
     return _HANDLER_CLASSES.setdefault(vector, _generic_interrupt_class(vector))
 
 
 class SimDOSintcall(SimCC):
-    ARG_REGS = ["ax", "bx", "cx", "dx"]
-    RETURN_VAL = SimRegArg("ax", 2)
-    ARCH = Arch86_16
+    """Synthetic DOS interrupt calling convention."""
+
+    ARG_REGS: ClassVar[list[str]] = ["ax", "bx", "cx", "dx"]
+    RETURN_VAL: ClassVar[SimRegArg] = SimRegArg("ax", 2)
+    ARCH: ClassVar[type[Arch86_16]] = Arch86_16
 
     @staticmethod
-    def _match(arch, args: list, sp_delta):  # pylint: disable=unused-argument
+    def _match(arch: object, args: list[object], sp_delta: object) -> bool:  # pylint: disable=unused-argument
+        """Disable automatic matching; this convention is registered explicitly."""
         return False
 
     @staticmethod
-    def syscall_num(state):
+    def syscall_num(state: _SyscallState) -> object:
+        """Return AX as the synthetic syscall selector."""
         return state.regs.ax
 
 
 class SimDOS86_16(SimOS):
-    def __init__(self, project, **kwargs):
+    """DOS SimOS that hooks every real-mode interrupt vector."""
+
+    def __init__(self, project: Project, **kwargs: object) -> None:
+        """Initialize the DOS SimOS with angr's third-party project object."""
         super().__init__(project, name="DOS", **kwargs)
 
-    def configure_project(self):
+    def configure_project(self) -> None:
+        """Install concrete and wrapped interrupt hooks into the project."""
         super().configure_project()
         for vector in range(INTERRUPT_VECTOR_COUNT):
             handler_cls = get_interrupt_handler_class(vector)
@@ -259,32 +355,36 @@ class SimDOS86_16(SimOS):
 
 
 class SimCC8616MSCsmall(SimCC):
-    ARG_REGS = []
-    FP_ARG_REGS = []
-    STACKARG_SP_DIFF = 2
-    RETURN_ADDR = SimStackArg(0, 2)
-    RETURN_VAL = SimRegArg("ax", 2)
-    OVERFLOW_RETURN_VAL = SimRegArg("dx", 2)
-    ARCH = Arch86_16
-    STACK_ALIGNMENT = 2
-    CALLEE_CLEANUP = True
+    """Microsoft C small-model 16-bit calling convention."""
+
+    ARG_REGS: ClassVar[list[str]] = []
+    FP_ARG_REGS: ClassVar[list[str]] = []
+    STACKARG_SP_DIFF: ClassVar[int] = 2
+    RETURN_ADDR: ClassVar[SimStackArg] = SimStackArg(0, 2)
+    RETURN_VAL: ClassVar[SimRegArg] = SimRegArg("ax", 2)
+    OVERFLOW_RETURN_VAL: ClassVar[SimRegArg] = SimRegArg("dx", 2)
+    ARCH: ClassVar[type[Arch86_16]] = Arch86_16
+    STACK_ALIGNMENT: ClassVar[int] = 2
+    CALLEE_CLEANUP: ClassVar[bool] = True
 
 
 class SimCC8616MSCmedium(SimCC):
-    ARG_REGS = []
-    FP_ARG_REGS = []
-    STACKARG_SP_DIFF = 2
-    RETURN_ADDR = SimStackArg(0, 2)
-    RETURN_VAL = SimRegArg("ax", 2)
-    OVERFLOW_RETURN_VAL = SimRegArg("dx", 2)
-    ARCH = Arch86_16
-    STACK_ALIGNMENT = 2
-    CALLEE_CLEANUP = True
+    """Microsoft C medium-model 16-bit calling convention."""
+
+    ARG_REGS: ClassVar[list[str]] = []
+    FP_ARG_REGS: ClassVar[list[str]] = []
+    STACKARG_SP_DIFF: ClassVar[int] = 2
+    RETURN_ADDR: ClassVar[SimStackArg] = SimStackArg(0, 2)
+    RETURN_VAL: ClassVar[SimRegArg] = SimRegArg("ax", 2)
+    OVERFLOW_RETURN_VAL: ClassVar[SimRegArg] = SimRegArg("dx", 2)
+    ARCH: ClassVar[type[Arch86_16]] = Arch86_16
+    STACK_ALIGNMENT: ClassVar[int] = 2
+    CALLEE_CLEANUP: ClassVar[bool] = True
 
 
 # Legacy compatibility alias for callers that imported the pre-memory-model
 # default Microsoft C calling convention by the unsuffixed name.
-SimCC8616MSC = SimCC8616MSCsmall
+SimCC8616MSC: type[SimCC8616MSCsmall] = SimCC8616MSCsmall
 
 
 register_simos("DOS", SimDOS86_16)

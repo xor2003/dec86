@@ -127,3 +127,19 @@ def test_structuring_stage_registers_induction_summary_pass_before_codegen():
 
     assert "_induction_summary_artifact_8616" in names
     assert names.index("_induction_summary_artifact_8616") < names.index("_structuring_codegen_8616")
+
+
+def test_structuring_stage_replays_widening_copyprop_after_loop_guard_repairs():
+    names = [spec.name for spec in DECOMPILER_STRUCTURING_PASSES]
+
+    assert names.index("_structuring_codegen_8616") < names.index("_widening_copy_propagation_8616")
+    assert names.index("_pretest_loop_break_guard_repair_8616") < names.index("_widening_copy_propagation_8616")
+    assert names.index("_switch_loop_exit_return_repair_8616") < names.index("_widening_copy_propagation_8616")
+
+
+def test_structuring_stage_transfers_condition_evidence_before_region_structuring():
+    specs = {spec.name: spec for spec in DECOMPILER_STRUCTURING_PASSES}
+    names = list(specs)
+
+    assert names.index("_condition_evidence_transfer_8616") < names.index("_region_based_structuring_8616")
+    assert specs["_condition_evidence_transfer_8616"].needs_project is True

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr.analyses.decompiler.structured_codegen.c import CFunction, CFunctionCall, CReturn, CStatements
+from angr.analyses.decompiler.structured_codegen.c import CFunction, CFunctionCall, CReturn, CStatements, CSwitchCase
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.render_compat import (
     install_structured_codegen_sort_compat_8616,
@@ -41,6 +41,20 @@ def test_render_compat_repairs_return_value_call_targets():
     callee = SimpleNamespace(project=None, addr=0x1234, name="helper")
     call = CFunctionCall("helper", callee, [], codegen=codegen)
     codegen.cfunc = SimpleNamespace(statements=CStatements([CReturn(call, codegen=codegen)], codegen=codegen))
+
+    repaired = repair_cfunctioncall_render_targets_8616(codegen)
+
+    assert repaired == 1
+    assert call.show_disambiguated_name is False
+
+
+def test_render_compat_repairs_switch_case_call_targets():
+    codegen = _Codegen(project=_NoKbProject())
+    callee = SimpleNamespace(project=None, addr=0x1234, name="helper")
+    call = CFunctionCall("helper", callee, [], codegen=codegen)
+    case_body = CStatements([CReturn(call, codegen=codegen)], codegen=codegen)
+    switch = CSwitchCase(SimpleNamespace(), [(69, case_body)], None, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=CStatements([switch], codegen=codegen))
 
     repaired = repair_cfunctioncall_render_targets_8616(codegen)
 

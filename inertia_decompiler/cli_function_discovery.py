@@ -1,18 +1,28 @@
 # AUTO-GENERATED split from cli_runtime_shared.py
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: discover and select function work items for orchestrated decompilation.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
+import builtins
 import contextlib
+import importlib
 import logging
 import os
 import sys
 import threading
 import time
+import typing
 import weakref
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import TimeoutError as FuturesTimeoutError
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Literal, TypeAlias, cast
 
 import angr
 from angr_platforms.X86_16.analysis_helpers import (
@@ -22,6 +32,13 @@ from angr_platforms.X86_16.analysis_helpers import (
     infer_com_region,
     patch_interrupt_service_call_sites,
     seed_calling_conventions,
+)
+from angr_platforms.X86_16.callsite_summary import (
+    CallerReturnUseEvidence8616,
+    CallerReturnUseVerdict8616,
+    caller_return_use_evidence_by_addr_8616,
+    collect_caller_return_use_evidence_8616,
+    record_caller_return_use_evidence_8616,
 )
 from angr_platforms.X86_16.exact_region_diagnostics import (
     build_exact_region_diagnostics_8616,
@@ -45,27 +62,6 @@ from inertia_decompiler.project_loading import (
     _build_project_cached,
     _build_project_from_bytes,
 )
-from inertia_decompiler.sidecar_metadata import (
-    _lst_code_label,
-    _lst_code_region,
-    _recovery_code_labels,
-    _signature_matched_code_addrs,
-    _visible_code_labels,
-)
-from inertia_decompiler.tail_validation import (
-    inherit_tail_validation_runtime_policy as _inherit_tail_validation_runtime_policy,
-)
-from inertia_decompiler.telemetry import trace_function
-from inertia_decompiler.x86_16_exact_slice import (
-    mark_function_original_addr,
-    plan_x86_16_exact_slice,
-)
-
-# Pseudo-callee DOS helper addresses (when materialized) live in a synthetic
-# high-address range, well above real 16-bit image code.
-DOS_SERVICE_BASE_ADDR = 0xF000_0000
-
-
 from inertia_decompiler.runtime_support import (
     AnalysisTimeout as _AnalysisTimeout,
 )
@@ -78,11 +74,156 @@ from inertia_decompiler.runtime_support import (
 from inertia_decompiler.runtime_support import (
     run_with_timeout_in_fork as _run_with_timeout_in_fork,
 )
+from inertia_decompiler.sidecar_metadata import (
+    _lst_code_label,
+    _lst_code_region,
+    _recovery_code_labels,
+    _signature_matched_code_addrs,
+    _visible_code_labels,
+)
+from inertia_decompiler.tail_validation import (
+    inherit_tail_validation_runtime_policy as _inherit_tail_validation_runtime_policy,
+)
+from inertia_decompiler.telemetry import trace_function
 from inertia_decompiler.work_items import (
     FunctionWorkResult,
 )
+from inertia_decompiler.x86_16_exact_slice import (
+    mark_function_original_addr,
+    plan_x86_16_exact_slice,
+)
 
-print = _timestamped_print
+# Pseudo-callee DOS helper addresses (when materialized) live in a synthetic
+# high-address range, well above real 16-bit image code.
+DOS_SERVICE_BASE_ADDR: int = 0xF000_0000
+
+_AngrCfg: TypeAlias = Any
+_AngrFunction: TypeAlias = Any
+_AngrBlock: TypeAlias = Any
+_AngrObject: TypeAlias = Any
+_FunctionCfgPair = tuple[_AngrCfg, _AngrFunction]
+_SeededRecoveryResult = list[_FunctionCfgPair] | tuple[list[_FunctionCfgPair], list[int]]
+_CandidateRecoveryCacheValue = tuple[Literal["ok"], _FunctionCfgPair] | tuple[Literal["keyerror"], str]
+
+
+def _dynamic_attr(obj: object, name: str, default: object = None) -> _AngrObject:
+    """Read dynamic angr/third-party attributes at the CLI recovery boundary."""
+    return builtins.getattr(obj, name, default)
+
+
+def _record_caller_return_use_evidence_8616(
+    project: object,
+    function_addr: int,
+    evidence: CallerReturnUseEvidence8616,
+) -> None:
+    """Store typed caller-use evidence on the exact-slice project contract."""
+    record_caller_return_use_evidence_8616(project, function_addr, evidence)
+
+
+def _caller_target_aliases_for_lst_function_8616(
+    lst_metadata: LSTMetadata,
+    *,
+    recovered_addr: int,
+    name: str,
+) -> tuple[int, ...]:
+    """Return proven sidecar label aliases for one adjusted function entry."""
+    normalized_name = name.lstrip("_")
+    label_aliases = tuple(
+        label_addr
+        for label_addr, label_name in _visible_code_labels(lst_metadata).items()
+        if label_name.lstrip("_") == normalized_name
+    )
+    return tuple(dict.fromkeys((recovered_addr, *label_aliases)))
+
+
+def _collect_caller_return_use_for_entry_aliases_8616(
+    project: object,
+    target_addrs: tuple[int, ...],
+    function_ranges: tuple[tuple[int, int], ...],
+) -> CallerReturnUseEvidence8616 | None:
+    """Collect caller-use evidence across proven label and prologue aliases.
+
+    Sidecar labels may point at entry padding while direct calls target the
+    adjusted prologue.  A used verdict is conservative and dominates; absent
+    a consumer, the strongest fully classified unused verdict is retained.
+    """
+    evidence_items = tuple(
+        collect_caller_return_use_evidence_8616(project, target_addr, function_ranges)
+        for target_addr in dict.fromkeys(target_addrs)
+    )
+    if os.environ.get("INERTIA_DEBUG_RETURN_TYPE_EVIDENCE") == "1":
+        logging.getLogger(__name__).warning(
+            "entry-alias return-use evidence: targets=%r facts=%r",
+            tuple(hex(target_addr) for target_addr in dict.fromkeys(target_addrs)),
+            tuple(
+                (
+                    hex(item.target_addr),
+                    item.verdict.value,
+                    item.callsite_addrs,
+                    item.used_callsite_count,
+                    item.unused_callsite_count,
+                    item.failure_count,
+                )
+                for item in evidence_items
+            ),
+        )
+    used = tuple(item for item in evidence_items if item.verdict is CallerReturnUseVerdict8616.USED)
+    if used:
+        return max(used, key=lambda item: item.classified_fact_count)
+    unused = tuple(item for item in evidence_items if item.verdict is CallerReturnUseVerdict8616.UNUSED)
+    if unused:
+        return max(unused, key=lambda item: item.classified_fact_count)
+    return None
+
+
+def _collect_direct_callee_return_use_evidence_8616(
+    project: object,
+    function: object,
+    function_ranges: tuple[tuple[int, int], ...],
+) -> dict[int, CallerReturnUseEvidence8616]:
+    """Collect whole-program return-use evidence for direct outgoing callees."""
+    existing = caller_return_use_evidence_by_addr_8616(project)
+    direct_targets = tuple(
+        dict.fromkeys(
+            target.target_addr
+            for target in collect_neighbor_call_targets(function)
+            if target.return_addr is not None
+        )
+    )
+    collected: dict[int, CallerReturnUseEvidence8616] = {}
+    for target_addr in direct_targets:
+        if target_addr in existing:
+            continue
+        boundary_aliases = tuple(
+            start
+            for start, end in function_ranges
+            if start <= target_addr < end
+        )
+        evidence = _collect_caller_return_use_for_entry_aliases_8616(
+            project,
+            tuple(dict.fromkeys((target_addr, *boundary_aliases))),
+            function_ranges,
+        )
+        if evidence is not None:
+            collected[target_addr] = replace(evidence, target_addr=target_addr)
+    if os.environ.get("INERTIA_DEBUG_RETURN_TYPE_EVIDENCE") == "1":
+        logger = logging.getLogger(__name__)
+        for target_addr in direct_targets:
+            evidence = existing.get(target_addr) or collected.get(target_addr)
+            logger.warning(
+                "direct-callee return-use evidence: target=%#x verdict=%s raw=%d classified=%d "
+                "materialized=%d failures=%d",
+                target_addr,
+                evidence.verdict.value if evidence is not None else "missing",
+                evidence.raw_fact_count if evidence is not None else 0,
+                evidence.classified_fact_count if evidence is not None else 0,
+                evidence.materialized_count if evidence is not None else 0,
+                evidence.failure_count if evidence is not None else 0,
+            )
+    return collected
+
+
+print: Callable[..., object] = _timestamped_print
 __all__ = [
     "_seed_scan_windows",
     "_entry_window_seed_targets",
@@ -151,31 +292,37 @@ __all__ = [
 ]
 
 
+@dataclass(frozen=True, slots=True)
+class _RankedBinaryPreviewItem:
+    function_cfg: _AngrCfg | None
+    function: _AngrFunction | None
+
+
 def _seed_scan_windows(project: angr.Project) -> list[tuple[int, int]]:
-    def _impl():
-        main_object = getattr(project.loader, "main_object", None)
+    def _impl() -> list[tuple[int, int]]:
+        main_object = _dynamic_attr(project.loader, "main_object", None)
         if main_object is None:
             return []
-        linked_base = getattr(main_object, "linked_base", None)
-        max_addr = getattr(main_object, "max_addr", None)
+        linked_base = _dynamic_attr(main_object, "linked_base", None)
+        max_addr = _dynamic_attr(main_object, "max_addr", None)
         if not isinstance(linked_base, int) or not isinstance(max_addr, int):
             return []
 
         image_end = linked_base + max_addr + 1
         windows: list[tuple[int, int]] = []
 
-        metadata = getattr(project, "_inertia_lst_metadata", None)
+        metadata = _dynamic_attr(project, "_inertia_lst_metadata", None)
         if metadata is not None:
-            for start, end in sorted(getattr(metadata, "code_ranges", {}).values()):
+            for start, end in sorted(_dynamic_attr(metadata, "code_ranges", {}).values()):
                 if start >= end:
                     continue
                 if _lst_code_label(metadata, start, project.entry) is None:
                     continue
                 windows.append((max(linked_base, start), min(image_end, end)))
 
-        for span in getattr(main_object, "mz_segment_spans", ()):
-            start = max(linked_base, getattr(span, "start_linear", linked_base))
-            end = min(image_end, getattr(span, "end_linear", image_end))
+        for span in _dynamic_attr(main_object, "mz_segment_spans", ()):
+            start = max(linked_base, _dynamic_attr(span, "start_linear", linked_base))
+            end = min(image_end, _dynamic_attr(span, "end_linear", image_end))
             if start < end:
                 windows.append((start, end))
 
@@ -200,7 +347,7 @@ def _entry_window_seed_targets(
     linked_base: int,
     entry_window: int = 0x200,
 ) -> set[int]:
-    def _impl():
+    def _impl() -> set[int]:
         start = max(linked_base, project.entry)
         end = min(linked_base + len(code), project.entry + max(1, entry_window))
         if start >= end:
@@ -237,7 +384,7 @@ def _linear_function_seed_targets(
     max_scan: int = 0x200,
     include_jumps: bool = True,
 ) -> set[int]:
-    def _impl():
+    def _impl() -> set[int]:
         try:
             code = bytes(project.loader.memory.load(start_addr, max_scan))
         except Exception:
@@ -261,7 +408,7 @@ def _linear_function_seed_targets(
             elif opcode == 0x9A and offset + 4 < len(code):
                 off = int.from_bytes(code[offset + 1 : offset + 3], "little")
                 seg = int.from_bytes(code[offset + 3 : offset + 5], "little")
-                linked_base = getattr(getattr(project.loader, "main_object", None), "linked_base", 0)
+                linked_base = _dynamic_attr(_dynamic_attr(project.loader, "main_object", None), "linked_base", 0)
                 targets.add(linked_base + (seg << 4) + off)
             elif include_jumps and opcode == 0xE9 and offset + 2 < len(code):
                 rel = int.from_bytes(code[offset + 1 : offset + 3], "little", signed=True)
@@ -315,7 +462,7 @@ def _resolve_x86_16_call_target(code: bytes, offset: int) -> int | None:
 
 
 def _infer_x86_16_linear_region(project: angr.Project, start_addr: int, *, window: int) -> tuple[int, int]:
-    def _impl():
+    def _impl() -> tuple[int, int]:
         end_limit = start_addr + max(window, 1)
         current = start_addr
         ah = None
@@ -375,11 +522,11 @@ def _pick_function(
     project: angr.Project,
     addr: int | None,
     *,
-    regions=None,
+    regions: Sequence[tuple[int, int]] | None = None,
     data_references: bool | None = None,
     force_smart_scan: bool | None = None,
-):
-    def _impl():
+) -> _FunctionCfgPair:
+    def _impl() -> _FunctionCfgPair:
         target_addr = project.entry if addr is None else addr
         data_refs = True if data_references is None else data_references
         if force_smart_scan is None and project.arch.name == "86_16" and regions is not None:
@@ -418,23 +565,29 @@ def _pick_function(
         function = cfg.functions[target_addr]
 
         if project.arch.name == "86_16":
-            extended_cfg = extend_cfg_for_far_calls(
-                project,
-                function,
-                entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+            extended_cfg = cast(
+                _AngrCfg,
+                extend_cfg_for_far_calls(
+                    project,
+                    function,
+                    entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+                ),
             )
             if extended_cfg is not None and target_addr in extended_cfg.functions:
                 cfg = extended_cfg
                 function = cfg.functions[target_addr]
-            extended_cfg = extend_cfg_for_neighbor_calls(
-                project,
-                function,
-                entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+            extended_cfg = cast(
+                _AngrCfg,
+                extend_cfg_for_neighbor_calls(
+                    project,
+                    function,
+                    entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+                ),
             )
             if extended_cfg is not None and target_addr in extended_cfg.functions:
                 cfg = extended_cfg
                 function = cfg.functions[target_addr]
-            patch_interrupt_service_call_sites(function, getattr(project.loader.main_object, "binary", None))
+            patch_interrupt_service_call_sites(function, _dynamic_attr(project.loader.main_object, "binary", None))
         seed_calling_conventions(cfg)
 
         return cfg, function
@@ -446,11 +599,11 @@ def _pick_function_lean(
     project: angr.Project,
     addr: int | None,
     *,
-    regions=None,
+    regions: Sequence[tuple[int, int]] | None = None,
     data_references: bool = False,
     extend_far_calls: bool = True,
-):
-    def _impl():
+) -> _FunctionCfgPair:
+    def _impl() -> _FunctionCfgPair:
         """Recover a known entry point with a deliberately cheap CFGFast pass.
 
         This is used as an early fast path for COD procedures that are dominated by
@@ -477,23 +630,29 @@ def _pick_function_lean(
 
         function = cfg.functions[target_addr]
         if extend_far_calls and project.arch.name == "86_16":
-            extended_cfg = extend_cfg_for_far_calls(
-                project,
-                function,
-                entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+            extended_cfg = cast(
+                _AngrCfg,
+                extend_cfg_for_far_calls(
+                    project,
+                    function,
+                    entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+                ),
             )
             if extended_cfg is not None and target_addr in extended_cfg.functions:
                 cfg = extended_cfg
                 function = cfg.functions[target_addr]
-            extended_cfg = extend_cfg_for_neighbor_calls(
-                project,
-                function,
-                entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+            extended_cfg = cast(
+                _AngrCfg,
+                extend_cfg_for_neighbor_calls(
+                    project,
+                    function,
+                    entry_window=(regions[0][1] - regions[0][0]) if regions else 0x200,
+                ),
             )
             if extended_cfg is not None and target_addr in extended_cfg.functions:
                 cfg = extended_cfg
                 function = cfg.functions[target_addr]
-            patch_interrupt_service_call_sites(function, getattr(project.loader.main_object, "binary", None))
+            patch_interrupt_service_call_sites(function, _dynamic_attr(project.loader.main_object, "binary", None))
         seed_calling_conventions(cfg)
         return cfg, function
 
@@ -539,7 +698,7 @@ def _recover_cfg(
     base_addr: int,
     window: int,
     low_memory: bool = False,
-):
+) -> _AngrCfg:
     print(
         f"[dbg] recover_cfg: entry={hex(project.entry)} base_addr={hex(base_addr)} window={hex(window)} binary={binary_path}"
     )
@@ -568,10 +727,14 @@ def _recover_cfg(
         sys.stdout.flush()
 
     if project.arch.name == "86_16" and project.entry in cfg.functions:
-        extended_cfg = extend_cfg_for_far_calls(project, cfg.functions[project.entry], entry_window=window)
+        extended_cfg = cast(
+            _AngrCfg, extend_cfg_for_far_calls(project, cfg.functions[project.entry], entry_window=window)
+        )
         if extended_cfg is not None and project.entry in extended_cfg.functions:
             cfg = extended_cfg
-        extended_cfg = extend_cfg_for_neighbor_calls(project, cfg.functions[project.entry], entry_window=window)
+        extended_cfg = cast(
+            _AngrCfg, extend_cfg_for_neighbor_calls(project, cfg.functions[project.entry], entry_window=window)
+        )
         if extended_cfg is not None and project.entry in extended_cfg.functions:
             cfg = extended_cfg
         patch_interrupt_service_call_sites(cfg.functions[project.entry], binary_path)
@@ -585,8 +748,8 @@ def _recover_partial_cfg(
     *,
     window: int,
     low_memory: bool = False,
-):
-    def _impl():
+) -> _AngrCfg:
+    def _impl() -> _AngrCfg:
         """Recover a bounded x86-16 catalog around the entry point.
 
         This is the whole-binary fallback for awkward real-mode executables such as
@@ -596,7 +759,7 @@ def _recover_partial_cfg(
         candidate_windows = _x86_16_recovery_windows(window, low_memory=low_memory)
         last_error: Exception | None = None
         for candidate_window in candidate_windows:
-            project._inertia_decompiler_stage = f"catalog:narrow:{candidate_window:#x}"
+            cast(_AngrObject, project)._inertia_decompiler_stage = f"catalog:narrow:{candidate_window:#x}"
             if project.arch.name == "86_16":
                 regions = [_infer_x86_16_linear_region(project, project.entry, window=candidate_window)]
             else:
@@ -619,23 +782,29 @@ def _recover_partial_cfg(
                     last_error = KeyError(f"Function {project.entry:#x} was not recovered by CFGFast.")
                     continue
                 if project.arch.name == "86_16":
-                    extended_cfg = extend_cfg_for_far_calls(
-                        project,
-                        cfg.functions[project.entry],
-                        entry_window=(regions[0][1] - regions[0][0]) if regions else candidate_window,
+                    extended_cfg = cast(
+                        _AngrCfg,
+                        extend_cfg_for_far_calls(
+                            project,
+                            cfg.functions[project.entry],
+                            entry_window=(regions[0][1] - regions[0][0]) if regions else candidate_window,
+                        ),
                     )
                     if extended_cfg is not None and project.entry in extended_cfg.functions:
                         cfg = extended_cfg
-                    extended_cfg = extend_cfg_for_neighbor_calls(
-                        project,
-                        cfg.functions[project.entry],
-                        entry_window=(regions[0][1] - regions[0][0]) if regions else candidate_window,
+                    extended_cfg = cast(
+                        _AngrCfg,
+                        extend_cfg_for_neighbor_calls(
+                            project,
+                            cfg.functions[project.entry],
+                            entry_window=(regions[0][1] - regions[0][0]) if regions else candidate_window,
+                        ),
                     )
                     if extended_cfg is not None and project.entry in extended_cfg.functions:
                         cfg = extended_cfg
                     patch_interrupt_service_call_sites(
                         cfg.functions[project.entry],
-                        getattr(project.loader.main_object, "binary", None),
+                        _dynamic_attr(project.loader.main_object, "binary", None),
                     )
                 seed_calling_conventions(cfg)
                 return cfg
@@ -647,28 +816,32 @@ def _recover_partial_cfg(
     return _impl()
 
 
-def _function_skip_reason(function):
-    if getattr(function, "is_simprocedure", False):
+def _function_skip_reason(function: _AngrFunction) -> str | None:
+    if _dynamic_attr(function, "is_simprocedure", False):
         return "SimProcedure (DOS helper)"
-    addr = getattr(function, "addr", None)
+    addr = _dynamic_attr(function, "addr", None)
     if isinstance(addr, int) and addr >= DOS_SERVICE_BASE_ADDR:
         return "DOS service address"
     return None
 
 
-def _function_recovery_score(function) -> tuple[int, int]:
-    blocks = tuple(getattr(function, "blocks", ()) or ())
+def _function_recovery_score(function: _AngrFunction) -> tuple[int, int]:
+    """Score coverage from a dynamic angr function object."""
+    blocks = cast(tuple[_AngrBlock, ...], tuple(_dynamic_attr(function, "blocks", ()) or ()))
     if not blocks:
         return (0, 0)
-    total_bytes = sum(max(0, getattr(block, "size", 0)) for block in blocks)
+    total_bytes = sum(max(0, int(_dynamic_attr(block, "size", 0) or 0)) for block in blocks)
     return (len(blocks), total_bytes)
 
 
-def _block_ranges_for_overlap_8616(blocks, exact_region: tuple[int, int] | None = None) -> list[tuple[int, int]]:
+def _block_ranges_for_overlap_8616(
+    blocks: Sequence[_AngrBlock] | None,
+    exact_region: tuple[int, int] | None = None,
+) -> list[tuple[int, int]]:
     ranges: list[tuple[int, int]] = []
     for block in tuple(blocks or ()):
-        addr = getattr(block, "addr", None)
-        size = max(0, getattr(block, "size", 0))
+        addr = _dynamic_attr(block, "addr", None)
+        size = max(0, _dynamic_attr(block, "size", 0))
         if not isinstance(addr, int) or size <= 0:
             continue
         end = addr + size
@@ -684,7 +857,7 @@ def _block_ranges_for_overlap_8616(blocks, exact_region: tuple[int, int] | None 
     return sorted(ranges)
 
 
-def _block_overlap_count_8616(blocks, exact_region: tuple[int, int] | None = None) -> int:
+def _block_overlap_count_8616(blocks: Sequence[_AngrBlock] | None, exact_region: tuple[int, int] | None = None) -> int:
     ranges = _block_ranges_for_overlap_8616(blocks, exact_region)
     overlap_count = 0
     last_end: int | None = None
@@ -695,7 +868,10 @@ def _block_overlap_count_8616(blocks, exact_region: tuple[int, int] | None = Non
     return overlap_count
 
 
-def _block_unique_covered_bytes_8616(blocks, exact_region: tuple[int, int] | None = None) -> int:
+def _block_unique_covered_bytes_8616(
+    blocks: Sequence[_AngrBlock] | None,
+    exact_region: tuple[int, int] | None = None,
+) -> int:
     ranges = _block_ranges_for_overlap_8616(blocks, exact_region)
     if not ranges:
         return 0
@@ -708,13 +884,13 @@ def _block_unique_covered_bytes_8616(blocks, exact_region: tuple[int, int] | Non
     return sum(end - start for start, end in merged)
 
 
-def _function_block_overlap_count_8616(function, exact_region: tuple[int, int] | None = None) -> int:
-    return _block_overlap_count_8616(tuple(getattr(function, "blocks", ()) or ()), exact_region)
+def _function_block_overlap_count_8616(function: _AngrFunction, exact_region: tuple[int, int] | None = None) -> int:
+    return _block_overlap_count_8616(tuple(_dynamic_attr(function, "blocks", ()) or ()), exact_region)
 
 
 def _should_replace_exact_region_candidate_8616(
-    current,
-    candidate,
+    current: _AngrFunction,
+    candidate: _AngrFunction,
     exact_region: tuple[int, int] | None,
 ) -> bool:
     current_score = _function_recovery_score(current)
@@ -729,17 +905,17 @@ def _should_replace_exact_region_candidate_8616(
     return True
 
 
-def _function_covered_ranges(function) -> list[tuple[int, int]]:
-    def _impl():
+def _function_covered_ranges(function: _AngrFunction) -> list[tuple[int, int]]:
+    def _impl() -> list[tuple[int, int]]:
         ranges: list[tuple[int, int]] = []
-        for block in tuple(getattr(function, "blocks", ()) or ()):
-            addr = getattr(block, "addr", None)
-            size = max(0, getattr(block, "size", 0))
+        for block in tuple(_dynamic_attr(function, "blocks", ()) or ()):
+            addr = _dynamic_attr(block, "addr", None)
+            size = max(0, _dynamic_attr(block, "size", 0))
             if not isinstance(addr, int) or size <= 0:
                 continue
             ranges.append((addr, addr + size))
         if not ranges:
-            addr = getattr(function, "addr", None)
+            addr = _dynamic_attr(function, "addr", None)
             score = _function_recovery_score(function)
             if isinstance(addr, int) and score[1] > 0:
                 ranges.append((addr, addr + score[1]))
@@ -795,7 +971,7 @@ def _maybe_extend_x86_16_exact_region_terminator(
     project: angr.Project | None,
     exact_region: tuple[int, int] | None,
 ) -> tuple[int, int] | None:
-    def _impl():
+    def _impl() -> tuple[int, int] | None:
         if exact_region is None:
             return None
         start, end = exact_region
@@ -804,8 +980,8 @@ def _maybe_extend_x86_16_exact_region_terminator(
             return exact_region
         if project is None:
             return exact_region
-        main_object = getattr(project.loader, "main_object", None)
-        max_addr = getattr(main_object, "max_addr", None)
+        main_object = _dynamic_attr(project.loader, "main_object", None)
+        max_addr = _dynamic_attr(main_object, "max_addr", None)
         if not isinstance(max_addr, int):
             return exact_region
         image_end = max_addr + 1
@@ -846,8 +1022,8 @@ def _x86_16_exact_region_has_terminator(
     size = max(0, end - start)
     if size <= 0:
         return False
-    main_object = getattr(project.loader, "main_object", None)
-    max_addr = getattr(main_object, "max_addr", None)
+    main_object = _dynamic_attr(project.loader, "main_object", None)
+    max_addr = _dynamic_attr(main_object, "max_addr", None)
     if not isinstance(max_addr, int):
         return False
     image_end = max_addr + 1
@@ -873,7 +1049,7 @@ def _recovery_score_good_enough(score: tuple[int, int]) -> bool:
 
 
 def _exact_region_recovery_looks_truncated(
-    function,
+    function: _AngrFunction,
     exact_region: tuple[int, int] | None,
 ) -> bool:
     if exact_region is None:
@@ -886,17 +1062,17 @@ def _exact_region_recovery_looks_truncated(
 
 
 def _x86_16_block_successors_from_capstone_8616(
-    block,
+    block: _AngrBlock,
     region_start: int,
     region_end: int,
 ) -> tuple[set[int], bool]:
-    def _impl():
-        insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+    def _impl() -> tuple[set[int], bool]:
+        insns = tuple(_dynamic_attr(_dynamic_attr(block, "capstone", None), "insns", ()) or ())
         if not insns:
             return set(), True
 
         last_insn = insns[-1]
-        mnemonic = str(getattr(last_insn, "mnemonic", "")).lower()
+        mnemonic = str(_dynamic_attr(last_insn, "mnemonic", "")).lower()
         successors: set[int] = set()
         block_end = block.addr + block.size
         in_region_fallthrough = block_end < region_end
@@ -908,15 +1084,15 @@ def _x86_16_block_successors_from_capstone_8616(
                 successors.add(target_addr)
             # Keep CFG faithful: branch targets outside region are treated as exits.
 
-        def _jump_target(last_insn) -> int | None:
-            capstone_insn = getattr(last_insn, "insn", None)
-            operands = getattr(capstone_insn, "operands", None)
+        def _jump_target(last_insn: object) -> int | None:
+            capstone_insn = _dynamic_attr(last_insn, "insn", None)
+            operands = _dynamic_attr(capstone_insn, "operands", None)
             if not operands:
                 return None
             for operand in operands:
-                if getattr(operand, "type", None) != 2:
+                if _dynamic_attr(operand, "type", None) != 2:
                     continue
-                imm = getattr(operand, "imm", None)
+                imm = _dynamic_attr(operand, "imm", None)
                 if isinstance(imm, int):
                     return imm
             return None
@@ -957,16 +1133,16 @@ def _x86_16_block_successors_from_capstone_8616(
 
 def _stitch_x86_16_exact_function_8616(
     project: angr.Project,
-    function,
+    function: _AngrFunction,
     exact_region: tuple[int, int] | None,
-) -> tuple[object, bool]:
+) -> tuple[_AngrFunction, bool]:
     if exact_region is None:
         return function, False
     start, end = exact_region
     if not (isinstance(start, int) and isinstance(end, int) and start < end):
         return function, False
 
-    entry = getattr(function, "addr", None)
+    entry = _dynamic_attr(function, "addr", None)
     if not isinstance(entry, int) or not (start <= entry < end):
         return function, False
 
@@ -989,7 +1165,7 @@ def _stitch_x86_16_exact_function_8616(
 def _collect_stitched_blocks_and_edges_8616(
     project: angr.Project, entry: int, start: int, end: int
 ) -> tuple[dict[int, object], set[tuple[int, int]]]:
-    reachable: dict[int, object] = {}
+    reachable: dict[int, _AngrBlock] = {}
     edges: set[tuple[int, int]] = set()
     queue: list[int] = [entry]
     visited: set[int] = set()
@@ -1003,7 +1179,7 @@ def _collect_stitched_blocks_and_edges_8616(
         except Exception:
             visited.remove(block_addr)
             continue
-        if len(getattr(block, "bytes", b"")) <= 0:
+        if len(_dynamic_attr(block, "bytes", b"")) <= 0:
             visited.remove(block_addr)
             continue
         reachable[block_addr] = block
@@ -1017,14 +1193,14 @@ def _collect_stitched_blocks_and_edges_8616(
     return reachable, edges
 
 
-def _cap_stitched_blocks_to_leaders_8616(project: angr.Project, reachable: dict[int, object]) -> dict[int, object]:
+def _cap_stitched_blocks_to_leaders_8616(project: angr.Project, reachable: dict[int, _AngrBlock]) -> dict[int, object]:
     if len(reachable) <= 1:
         return reachable
     leaders = sorted(reachable)
     capped: dict[int, object] = {}
     for block_addr in leaders:
         block = reachable[block_addr]
-        block_size = int(getattr(block, "size", 0) or 0)
+        block_size = int(_dynamic_attr(block, "size", 0) or 0)
         if block_size <= 0:
             capped[block_addr] = block
             continue
@@ -1042,7 +1218,7 @@ def _cap_stitched_blocks_to_leaders_8616(project: angr.Project, reachable: dict[
         except Exception:
             capped[block_addr] = block
             continue
-        if int(getattr(capped_block, "size", 0) or 0) > 0:
+        if int(_dynamic_attr(capped_block, "size", 0) or 0) > 0:
             capped[block_addr] = capped_block
         else:
             capped[block_addr] = block
@@ -1050,7 +1226,7 @@ def _cap_stitched_blocks_to_leaders_8616(project: angr.Project, reachable: dict[
 
 
 def _recompute_stitched_edges_8616(
-    reachable: dict[int, object],
+    reachable: dict[int, _AngrBlock],
     start: int,
     end: int,
 ) -> set[tuple[int, int]]:
@@ -1063,13 +1239,13 @@ def _recompute_stitched_edges_8616(
 
 
 def _should_replace_function_with_stitched_graph_8616(
-    function,
-    reachable: dict[int, object],
+    function: _AngrFunction,
+    reachable: dict[int, _AngrBlock],
     exact_region: tuple[int, int] | None = None,
 ) -> bool:
     current_block_count, current_block_bytes = _function_recovery_score(function)
-    stitched_bytes = sum(len(getattr(block, "bytes", b"")) for block in reachable.values())
-    current_blocks = tuple(getattr(function, "blocks", ()) or ())
+    stitched_bytes = sum(len(_dynamic_attr(block, "bytes", b"")) for block in reachable.values())
+    current_blocks = tuple(_dynamic_attr(function, "blocks", ()) or ())
     stitched_blocks = tuple(reachable.values())
     current_overlap = _block_overlap_count_8616(current_blocks, exact_region)
     stitched_overlap = _block_overlap_count_8616(stitched_blocks, exact_region)
@@ -1081,7 +1257,7 @@ def _should_replace_function_with_stitched_graph_8616(
     return stitched_bytes > current_block_bytes or len(reachable) > current_block_count
 
 
-def _reset_function_graph_state_8616(function) -> None:
+def _reset_function_graph_state_8616(function: _AngrFunction) -> None:
     try:
         function._addr_to_block_node.clear()
         function._block_sizes.clear()
@@ -1102,60 +1278,67 @@ def _reset_function_graph_state_8616(function) -> None:
 
 
 def _rebuild_function_transition_graph_8616(
-    function, reachable: dict[int, object], edges: set[tuple[int, int]]
+    function: _AngrFunction,
+    reachable: dict[int, _AngrBlock],
+    edges: set[tuple[int, int]],
 ) -> None:
-    from angr.knowledge_plugins.cfg.cfg_node import BlockNode
+    """Rebuild graph nodes through dynamic angr function internals."""
+    BlockNode = cast(
+        _AngrObject, _dynamic_attr(importlib.import_module("angr.knowledge_plugins.cfg.cfg_node"), "BlockNode")
+    )
 
     for block_addr in sorted(reachable):
         block = reachable[block_addr]
-        node = BlockNode(block_addr, block.size, bytestr=getattr(block, "bytes", None))
+        node = BlockNode(block_addr, block.size, bytestr=_dynamic_attr(block, "bytes", None))
         function._register_node(True, node)
     for source_addr, target_addr in edges:
         source_node = function.get_node(source_addr)
         target_node = function.get_node(target_addr)
         if source_node is None or target_node is None:
             continue
-        source_capstone = getattr(reachable[source_addr], "capstone", None)
-        insns = getattr(source_capstone, "insns", ())
-        ins_addr = int(getattr(insns[-1], "address", source_addr)) if insns else source_addr
+        source_capstone = _dynamic_attr(reachable[source_addr], "capstone", None)
+        insns = _dynamic_attr(source_capstone, "insns", ())
+        ins_addr = int(_dynamic_attr(insns[-1], "address", source_addr)) if insns else source_addr
         try:
             function.transition_graph.add_edge(source_node, target_node, type="transition", ins_addr=ins_addr)
         except Exception:
             continue
 
 
-def _mark_stitched_return_sites_8616(function, reachable: dict[int, object]) -> None:
+def _mark_stitched_return_sites_8616(function: _AngrFunction, reachable: dict[int, _AngrBlock]) -> None:
     for block_addr in sorted(reachable):
         source_node = function.get_node(block_addr)
         if source_node is None:
             continue
-        last_insns = tuple(getattr(getattr(reachable[block_addr], "capstone", None), "insns", ()) or ())
+        last_insns = tuple(_dynamic_attr(_dynamic_attr(reachable[block_addr], "capstone", None), "insns", ()) or ())
         if not last_insns:
             continue
-        last_mnemonic = str(getattr(last_insns[-1], "mnemonic", "")).lower()
+        last_mnemonic = str(_dynamic_attr(last_insns[-1], "mnemonic", "")).lower()
         if last_mnemonic in {"ret", "retf", "iret", "retw", "iretq"}:
             function._add_return_site(source_node)
         if last_mnemonic.startswith("j") and not tuple(function.transition_graph.edges(source_node)):
             function._add_return_site(source_node)
 
 
-def _mark_x86_16_stitched_recovery_8616(function) -> None:
-    info = getattr(function, "info", None)
+def _mark_x86_16_stitched_recovery_8616(function: _AngrFunction) -> None:
+    info = _dynamic_attr(function, "info", None)
     if not isinstance(info, dict):
         with contextlib.suppress(Exception):
             function.info = {}
-        info = getattr(function, "info", None)
+        info = _dynamic_attr(function, "info", None)
     if isinstance(info, dict):
         info["x86_16_stitched_recovery"] = True
     with contextlib.suppress(Exception):
-        setattr(function, "_inertia_x86_16_stitched_recovery", True)
+        typing.cast(typing.Any, function)._inertia_x86_16_stitched_recovery = True
 
 
 def _commit_exact_region_function_to_kb_8616(
-    project: angr.Project, cfg, function, exact_region: tuple[int, int] | None
+    project: angr.Project,
+    cfg: _AngrCfg,
+    function: _AngrFunction,
+    exact_region: tuple[int, int] | None,
 ) -> bool:
-    """Commit a selected exact-region function into the function managers that later
-    analysis consults.
+    """Commit a selected exact-region function into later function managers.
 
     CFGFast can leave smaller region-local pseudo-functions in the project KB
     even after the recovery layer stitches the full exact-region body. Leaving
@@ -1163,27 +1346,27 @@ def _commit_exact_region_function_to_kb_8616(
     block leaders as independent functions. The recovery layer owns this handoff:
     it has the exact-region evidence and the selected bounded graph.
     """
-    if getattr(getattr(project, "arch", None), "name", None) != "86_16":
+    if _dynamic_attr(_dynamic_attr(project, "arch", None), "name", None) != "86_16":
         return False
     if exact_region is None:
         return False
-    entry_addr = getattr(function, "addr", None)
+    entry_addr = _dynamic_attr(function, "addr", None)
     if not isinstance(entry_addr, int):
         return False
     start, end = exact_region
     if not (isinstance(start, int) and isinstance(end, int) and start <= entry_addr < end):
         return False
 
-    managers: list[object] = []
-    project_functions = getattr(getattr(project, "kb", None), "functions", None)
-    cfg_functions = getattr(cfg, "functions", None)
+    managers: list[_AngrObject] = []
+    project_functions = _dynamic_attr(_dynamic_attr(project, "kb", None), "functions", None)
+    cfg_functions = _dynamic_attr(cfg, "functions", None)
     for manager in (project_functions, cfg_functions):
         if manager is not None and all(id(manager) != id(existing) for existing in managers):
             managers.append(manager)
 
     changed = False
     for manager in managers:
-        keys = tuple(getattr(manager, "keys", lambda: ())() or ())
+        keys = tuple(_dynamic_attr(manager, "keys", lambda: ())() or ())
         for candidate_addr in keys:
             if not isinstance(candidate_addr, int):
                 continue
@@ -1198,7 +1381,7 @@ def _commit_exact_region_function_to_kb_8616(
         if existing is not function:
             with contextlib.suppress(Exception):
                 del manager[entry_addr]
-            function_map = getattr(manager, "_function_map", None)
+            function_map = _dynamic_attr(manager, "_function_map", None)
             if function_map is None:
                 continue
             try:
@@ -1209,7 +1392,7 @@ def _commit_exact_region_function_to_kb_8616(
 
         with contextlib.suppress(Exception):
             manager.function_addrs_set.add(entry_addr)
-        name = getattr(function, "name", None)
+        name = _dynamic_attr(function, "name", None)
         if isinstance(name, str) and name:
             with contextlib.suppress(Exception):
                 manager._func_name_to_addrs[name].add(entry_addr)
@@ -1221,44 +1404,44 @@ def _commit_exact_region_function_to_kb_8616(
             function._function_manager = weakref.proxy(project_functions)
     with contextlib.suppress(Exception):
         function._local_transition_graph = None
-    info = getattr(function, "info", None)
+    info = _dynamic_attr(function, "info", None)
     if isinstance(info, dict):
         info["x86_16_exact_region_committed"] = True
     return changed
 
 
-def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
-    """Best-effort, conservative CFG completion for x86-16 direct recovery paths.
+def _repair_x86_16_function_graph_8616(project: angr.Project, function: _AngrFunction) -> None:
+    """Best-effort CFG completion through dynamic angr function internals.
 
     The recovery layer should own this because missing return sites here are
     usually a graph-completion issue from bounded CFGFast extraction, not an
     IR/lowering defect.
     """
-    if getattr(project, "arch", None) is None or getattr(project.arch, "name", None) != "86_16":
+    if _dynamic_attr(project, "arch", None) is None or _dynamic_attr(project.arch, "name", None) != "86_16":
         return
 
-    entry_addr = getattr(function, "addr", None)
+    entry_addr = _dynamic_attr(function, "addr", None)
     if not isinstance(entry_addr, int):
         return
 
-    if bool(getattr(function, "returning", None)):
+    if bool(_dynamic_attr(function, "returning", None)):
         return
 
-    existing_ret_sites = tuple(getattr(function, "ret_sites", ()) or ())
+    existing_ret_sites = tuple(_dynamic_attr(function, "ret_sites", ()) or ())
     if existing_ret_sites:
         return
 
-    existing_blocks = tuple(getattr(function, "blocks", ()) or ())
+    existing_blocks = cast(tuple[_AngrBlock, ...], tuple(_dynamic_attr(function, "blocks", ()) or ()))
     if not existing_blocks:
         return
 
     block_addrs = sorted(
-        (addr for addr in (getattr(block, "addr", None) for block in existing_blocks) if isinstance(addr, int))
+        (addr for addr in (_dynamic_attr(block, "addr", None) for block in existing_blocks) if isinstance(addr, int))
     )
     if not block_addrs:
         return
 
-    seed_max_byte = sum(max(0, getattr(block, "size", 0)) for block in existing_blocks)
+    seed_max_byte = sum(max(0, int(_dynamic_attr(block, "size", 0) or 0)) for block in existing_blocks)
     scan_limit = max(0x200, min(0x2000, max(0x200, seed_max_byte * 4)))
     start_bound = max(min(block_addrs), entry_addr - 0x100)
     end_bound = max(block_addrs) + scan_limit
@@ -1266,7 +1449,7 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
     def _is_in_scan_bound(addr: int) -> bool:
         return isinstance(addr, int) and start_bound <= addr < end_bound
 
-    discovered: dict[int, object] = {}
+    discovered: dict[int, _AngrBlock] = {}
     edges: set[tuple[int, int]] = set()
     queue: list[int] = [entry_addr]
     visited: set[int] = set()
@@ -1283,18 +1466,18 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
             block = project.factory.block(block_addr, opt_level=0)
         except Exception:
             continue
-        block_size = int(getattr(block, "size", 0))
+        block_size = int(_dynamic_attr(block, "size", 0))
         if block_size <= 0:
             continue
         visited_bytes += block_size
         if visited_bytes > scan_limit:
             break
         discovered[block_addr] = block
-        insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+        insns = tuple(_dynamic_attr(_dynamic_attr(block, "capstone", None), "insns", ()) or ())
         if not insns:
             continue
         last_insn = insns[-1]
-        last_mnemonic = str(getattr(last_insn, "mnemonic", "")).lower()
+        last_mnemonic = str(_dynamic_attr(last_insn, "mnemonic", "")).lower()
         successors, _is_direct_exit = _x86_16_block_successors_from_capstone_8616(
             block,
             region_start=start_bound,
@@ -1311,11 +1494,13 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
     if not discovered:
         return
 
-    from angr.knowledge_plugins.cfg.cfg_node import BlockNode
+    BlockNode = cast(
+        _AngrObject, _dynamic_attr(importlib.import_module("angr.knowledge_plugins.cfg.cfg_node"), "BlockNode")
+    )
 
     def _seed_node_address_cache() -> None:
         try:
-            local_blocks = getattr(function, "_local_blocks", None)
+            local_blocks = _dynamic_attr(function, "_local_blocks", None)
             if isinstance(local_blocks, dict):
                 for node in local_blocks.values():
                     if isinstance(node, BlockNode):
@@ -1331,7 +1516,7 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
         if node is not None:
             return node
 
-        local_blocks = getattr(function, "_local_blocks", None)
+        local_blocks = _dynamic_attr(function, "_local_blocks", None)
         if isinstance(local_blocks, dict):
             candidate = local_blocks.get(block_addr)
             if isinstance(candidate, BlockNode):
@@ -1342,7 +1527,7 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
         if discovered_block is None:
             return None
 
-        block_size = int(getattr(discovered_block, "size", 0))
+        block_size = int(_dynamic_attr(discovered_block, "size", 0))
         if block_size <= 0:
             return None
 
@@ -1350,7 +1535,7 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
             new_node = BlockNode(
                 block_addr,
                 block_size,
-                bytestr=getattr(discovered_block, "bytes", None),
+                bytestr=_dynamic_attr(discovered_block, "bytes", None),
             )
             function._register_node(True, new_node)
             function._update_addr_to_block_cache(new_node)
@@ -1372,9 +1557,9 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
         if target_node is None:
             continue
         try:
-            source_capstone = getattr(discovered[source_addr], "capstone", None)
-            insns = tuple(getattr(source_capstone, "insns", ()) or ())
-            ins_addr = int(getattr(insns[-1], "address", source_addr))
+            source_capstone = _dynamic_attr(discovered[source_addr], "capstone", None)
+            insns = cast(tuple[_AngrObject, ...], tuple(_dynamic_attr(source_capstone, "insns", ()) or ()))
+            ins_addr = int(_dynamic_attr(insns[-1], "address", source_addr))
         except Exception:
             ins_addr = source_addr
         try:
@@ -1388,10 +1573,10 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
         if source_node is None:
             continue
         block = discovered[block_addr]
-        block_insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+        block_insns = tuple(_dynamic_attr(_dynamic_attr(block, "capstone", None), "insns", ()) or ())
         if not block_insns:
             continue
-        last_mnemonic = str(getattr(block_insns[-1], "mnemonic", "")).lower()
+        last_mnemonic = str(_dynamic_attr(block_insns[-1], "mnemonic", "")).lower()
         if last_mnemonic in {"ret", "retf", "iret", "retw", "iretq"}:
             with contextlib.suppress(Exception):
                 function._add_return_site(source_node)
@@ -1399,13 +1584,13 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function) -> None:
 
     if discovered_returns > 0:
         with contextlib.suppress(Exception):
-            setattr(function, "_inertia_x86_16_return_repair_applied", True)
+            typing.cast(typing.Any, function)._inertia_x86_16_return_repair_applied = True
 
 
-def _count_region_local_functions(cfg, exact_region: tuple[int, int] | None) -> int:
+def _count_region_local_functions(cfg: _AngrCfg, exact_region: tuple[int, int] | None) -> int:
     if exact_region is None or cfg is None:
         return 0
-    functions = getattr(cfg, "functions", None)
+    functions = _dynamic_attr(cfg, "functions", None)
     if functions is None:
         return 0
     start, end = exact_region
@@ -1413,22 +1598,22 @@ def _count_region_local_functions(cfg, exact_region: tuple[int, int] | None) -> 
 
 
 def _best_region_function_candidate(
-    cfg,
+    cfg: _AngrCfg,
     *,
     exact_region: tuple[int, int] | None,
     preferred_addr: int | None,
-):
-    def _impl():
+) -> _AngrFunction | None:
+    def _impl() -> _AngrFunction | None:
         if cfg is None or exact_region is None:
             return None
-        functions = getattr(cfg, "functions", None)
+        functions = _dynamic_attr(cfg, "functions", None)
         if functions is None:
             return None
         start, end = exact_region
-        best = None
-        best_rank = None
+        best: _AngrFunction | None = None
+        best_rank: tuple[int, int, int, int] | None = None
         for candidate in functions.values():
-            caddr = getattr(candidate, "addr", None)
+            caddr = _dynamic_attr(candidate, "addr", None)
             if not isinstance(caddr, int) or not (start <= caddr < end):
                 continue
             c_blocks, c_bytes = _function_recovery_score(candidate)
@@ -1436,7 +1621,7 @@ def _best_region_function_candidate(
             # Prefer non-truncated, semantically richer region-local bodies.
             distance = abs(caddr - preferred_addr) if isinstance(preferred_addr, int) else 0
             rank = (0 if not c_truncated else 1, -c_bytes, -c_blocks, distance)
-            if best is None or rank < best_rank:
+            if best is None or best_rank is None or rank < best_rank:
                 best = candidate
                 best_rank = rank
         return best
@@ -1444,13 +1629,13 @@ def _best_region_function_candidate(
     return _impl()
 
 
-def _function_recovery_truncated(function) -> bool:
-    info = getattr(function, "info", None)
+def _function_recovery_truncated(function: _AngrFunction) -> bool:
+    info = _dynamic_attr(function, "info", None)
     return isinstance(info, dict) and bool(info.get("x86_16_recovery_truncated"))
 
 
-def _needs_pre_entry_body_supplement(function, project_entry: int) -> bool:
-    addr = getattr(function, "addr", None)
+def _needs_pre_entry_body_supplement(function: _AngrFunction, project_entry: int) -> bool:
+    addr = _dynamic_attr(function, "addr", None)
     if not isinstance(addr, int) or addr >= project_entry:
         return False
     return _function_recovery_truncated(function) or _function_recovery_score(function)[1] <= 0x20
@@ -1458,21 +1643,21 @@ def _needs_pre_entry_body_supplement(function, project_entry: int) -> bool:
 
 def _prioritized_pre_entry_follow_on_targets(
     project: angr.Project,
-    function_cfg_pairs: list[tuple[object, object]],
+    function_cfg_pairs: list[_FunctionCfgPair],
     *,
     covered_ranges: list[tuple[int, int]],
     existing_addrs: set[int],
     image_end: int,
 ) -> list[int]:
-    main_object = getattr(project.loader, "main_object", None)
-    linked_base = getattr(main_object, "linked_base", None)
+    main_object = _dynamic_attr(project.loader, "main_object", None)
+    linked_base = _dynamic_attr(main_object, "linked_base", None)
     if not isinstance(linked_base, int):
         return []
 
     prioritized: list[int] = []
     queued = set(existing_addrs)
 
-    def _record(target_addrs) -> None:
+    def _record(target_addrs: Iterable[object]) -> None:
         for target_addr in target_addrs:
             if not isinstance(target_addr, int):
                 continue
@@ -1495,7 +1680,7 @@ def _prioritized_pre_entry_follow_on_targets(
     pre_entry_functions = [
         function
         for _cfg, function in function_cfg_pairs
-        if _needs_pre_entry_body_supplement(function, getattr(project, "entry", 0))
+        if _needs_pre_entry_body_supplement(function, _dynamic_attr(project, "entry", 0))
     ]
     for function in pre_entry_functions:
         _record(_linear_function_seed_targets(project, function.addr, include_jumps=False))
@@ -1503,7 +1688,7 @@ def _prioritized_pre_entry_follow_on_targets(
     for function in pre_entry_functions:
         neighbor_targets: list[int] = []
         for target in collect_neighbor_call_targets(function):
-            target_addr = getattr(target, "target_addr", None)
+            target_addr = _dynamic_attr(target, "target_addr", None)
             if isinstance(target_addr, int):
                 neighbor_targets.append(target_addr)
         _record(neighbor_targets)
@@ -1511,23 +1696,23 @@ def _prioritized_pre_entry_follow_on_targets(
     return prioritized
 
 
-def _mark_function_recovery_truncated(function, truncated: bool) -> None:
-    info = getattr(function, "info", None)
+def _mark_function_recovery_truncated(function: _AngrFunction, truncated: bool) -> None:
+    info = _dynamic_attr(function, "info", None)
     if isinstance(info, dict):
         info["x86_16_recovery_truncated"] = truncated
 
 
 @trace_function(name="discovery.recover_candidate")
 def _recover_candidate_function_pair(
-    candidate_project,
+    candidate_project: angr.Project,
     *,
     candidate_addr: int,
     image_end: int,
     metadata: LSTMetadata | None,
     project_entry: int,
     region_span: int,
-):
-    def _impl():
+) -> _FunctionCfgPair:
+    def _impl() -> _FunctionCfgPair:
         block = candidate_project.factory.block(candidate_addr, size=8, opt_level=0)
         insns = block.capstone.insns
         if len(insns) < 1:
@@ -1540,7 +1725,7 @@ def _recover_candidate_function_pair(
             region_span=region_span,
             project_entry=project_entry,
         )
-        best_pair: tuple[object, object] | None = None
+        best_pair: _FunctionCfgPair | None = None
         best_score = (-1, -1)
         last_error: Exception | None = None
         for candidate_region in candidate_regions:
@@ -1590,7 +1775,7 @@ def _recover_candidate_function_pair(
             bounded_region = _richest_bounded_recovery_region(
                 candidate_addr, image_end=image_end, region_span=region_span
             )
-            richer_best_pair: tuple[object, object] | None = None
+            richer_best_pair: _FunctionCfgPair | None = None
             richer_best_score = best_score
             for data_references in (False, True):
                 try:
@@ -1641,7 +1826,7 @@ def _recover_candidate_function_pair(
     return _impl()
 
 
-def _interesting_functions(cfg, *, limit: int | None):
+def _interesting_functions(cfg: _AngrCfg, *, limit: int | None) -> tuple[list[object], int]:
     functions = []
     skipped = 0
     for function in sorted(cfg.functions.values(), key=lambda function: function.addr):
@@ -1659,18 +1844,18 @@ def _interesting_functions(cfg, *, limit: int | None):
     return functions, total
 
 
-def _function_complexity_local(function) -> tuple[int, int]:
-    """Best-effort function complexity when cli_decompilation helper is unavailable."""
-    blocks = tuple(getattr(function, "blocks", ()) or ())
+def _function_complexity_local(function: _AngrFunction) -> tuple[int, int]:
+    """Best-effort complexity from dynamic angr function fields."""
+    blocks = cast(tuple[_AngrBlock, ...], tuple(_dynamic_attr(function, "blocks", ()) or ()))
     if blocks:
         count = len(blocks)
         total = 0
         for block in blocks:
-            size = getattr(block, "size", 0)
+            size = _dynamic_attr(block, "size", 0)
             if isinstance(size, int) and size > 0:
                 total += size
         return count, total
-    block_addrs = tuple(getattr(function, "block_addrs_set", ()) or ())
+    block_addrs = tuple(_dynamic_attr(function, "block_addrs_set", ()) or ())
     if block_addrs:
         return len(block_addrs), 0
     return 0, 0
@@ -1681,21 +1866,23 @@ _function_complexity = _function_complexity_local
 
 def _rank_function_cfg_pairs_for_display(
     project: angr.Project,
-    function_cfg_pairs: list[tuple[object, object]],
-) -> list[tuple[object, object]]:
+    function_cfg_pairs: list[_FunctionCfgPair],
+) -> list[_FunctionCfgPair]:
     if not function_cfg_pairs:
         return []
-    entry_addr = getattr(project, "entry", None)
+    entry_addr = _dynamic_attr(project, "entry", None)
+    if not isinstance(entry_addr, int):
+        return function_cfg_pairs
     direct_entry_targets = _linear_function_seed_targets(project, entry_addr, max_scan=0x180, include_jumps=False)
 
-    def _display_metrics(function) -> tuple[int, int]:
+    def _display_metrics(function: _AngrFunction) -> tuple[int, int]:
         complexity_blocks, complexity_bytes = _function_complexity_local(function)
         recovery_blocks, recovery_bytes = _function_recovery_score(function)
         return (max(complexity_blocks, recovery_blocks), max(complexity_bytes, recovery_bytes))
 
-    def _body_seed_rank(item: tuple[object, object]) -> tuple[int, int, int, int, int]:
+    def _body_seed_rank(item: _FunctionCfgPair) -> tuple[int, int, int, int, int]:
         _cfg, function = item
-        addr = getattr(function, "addr", None)
+        addr = _dynamic_attr(function, "addr", None)
         block_count, byte_count = _display_metrics(function)
         tiny_wrapper_like = int(block_count <= 3 and byte_count <= 0x20 and not _function_recovery_truncated(function))
         direct_entry_rank = 0 if isinstance(addr, int) and addr in direct_entry_targets else 1
@@ -1706,7 +1893,7 @@ def _rank_function_cfg_pairs_for_display(
     body_seed_candidates = [
         item
         for item in function_cfg_pairs
-        if isinstance(getattr(item[1], "addr", None), int) and item[1].addr < entry_addr
+        if isinstance(_dynamic_attr(item[1], "addr", None), int) and item[1].addr < entry_addr
     ]
     primary_body_seed = min(body_seed_candidates, key=_body_seed_rank)[1].addr if body_seed_candidates else None
     body_targets = (
@@ -1723,9 +1910,9 @@ def _rank_function_cfg_pairs_for_display(
             and (truncated or byte_count > 0x20)
         )
 
-    def _priority(item: tuple[object, object]) -> tuple[int, int, int, int, int]:
+    def _priority(item: _FunctionCfgPair) -> tuple[int, int, int, int, int]:
         _cfg, function = item
-        addr = getattr(function, "addr", 0)
+        addr = _dynamic_attr(function, "addr", 0)
         block_count, byte_count = _display_metrics(function)
         truncated = _function_recovery_truncated(function)
         tiny_wrapper_like = int(block_count <= 3 and byte_count <= 0x20 and not truncated)
@@ -1760,18 +1947,20 @@ def _expanded_exe_discovery_limit(limit: int | None) -> int | None:
 
 def _supplement_cached_seeded_recovery(
     project: angr.Project,
-    cached_recovered: list[tuple[object, object]],
+    cached_recovered: list[_FunctionCfgPair],
     cached_addrs: list[int],
     *,
     region_span: int,
     per_function_timeout: int,
     limit: int | None,
     cache_key: dict[str, object] | None,
-) -> tuple[list[tuple[object, object]], list[int]]:
-    def _impl():
+) -> tuple[list[_FunctionCfgPair], list[int]]:
+    def _impl() -> tuple[list[_FunctionCfgPair], list[int]]:
         nonlocal cached_recovered, cached_addrs
         cached_seen = {
-            function.addr for _cfg, function in cached_recovered if isinstance(getattr(function, "addr", None), int)
+            function.addr
+            for _cfg, function in cached_recovered
+            if isinstance(_dynamic_attr(function, "addr", None), int)
         }
         cached_covered_ranges: list[tuple[int, int]] = []
         for _cfg, function in cached_recovered:
@@ -1779,7 +1968,7 @@ def _supplement_cached_seeded_recovery(
         cached_pre_entry = [
             function
             for _cfg, function in cached_recovered
-            if isinstance(getattr(function, "addr", None), int) and function.addr < project.entry
+            if isinstance(_dynamic_attr(function, "addr", None), int) and function.addr < project.entry
         ]
         needs_body_supplement = not cached_pre_entry or all(
             _function_recovery_truncated(function) or _function_recovery_score(function)[1] <= 0x20
@@ -1788,11 +1977,11 @@ def _supplement_cached_seeded_recovery(
         if not needs_body_supplement:
             return cached_recovered, cached_addrs
 
-        main_object = getattr(project.loader, "main_object", None)
-        linked_base = getattr(main_object, "linked_base", None)
-        max_addr = getattr(main_object, "max_addr", None)
+        main_object = _dynamic_attr(project.loader, "main_object", None)
+        linked_base = _dynamic_attr(main_object, "linked_base", None)
+        max_addr = _dynamic_attr(main_object, "max_addr", None)
         image_end = linked_base + max_addr + 1 if isinstance(linked_base, int) and isinstance(max_addr, int) else None
-        supplemental_pairs: list[tuple[object, object]] = []
+        supplemental_pairs: list[_FunctionCfgPair] = []
         if image_end is not None:
             prioritized_candidates = _prioritized_pre_entry_follow_on_targets(
                 project,
@@ -1839,22 +2028,22 @@ def _supplement_cached_seeded_recovery(
 def _store_catalog_address_cache(
     project: angr.Project,
     binary_path: Path,
-    function_cfg_pairs: list[tuple[object, object]],
+    function_cfg_pairs: list[_FunctionCfgPair],
 ) -> None:
     cache_key = _recovery_cache_key(
         binary_path=binary_path,
         kind="display_catalog_addrs",
         extra={
-            "entry": getattr(project, "entry", None),
-            "arch": getattr(getattr(project, "arch", None), "name", None),
+            "entry": _dynamic_attr(project, "entry", None),
+            "arch": _dynamic_attr(_dynamic_attr(project, "arch", None), "name", None),
         },
     )
     if cache_key is None:
         return
     addrs = [
-        getattr(function, "addr", None)
+        _dynamic_attr(function, "addr", None)
         for _cfg, function in function_cfg_pairs
-        if isinstance(getattr(function, "addr", None), int)
+        if isinstance(_dynamic_attr(function, "addr", None), int)
     ]
     _store_cache_json("recovery", cache_key, {"addrs": addrs})
 
@@ -1864,8 +2053,8 @@ def _load_catalog_address_cache(project: angr.Project, binary_path: Path) -> lis
         binary_path=binary_path,
         kind="display_catalog_addrs",
         extra={
-            "entry": getattr(project, "entry", None),
-            "arch": getattr(getattr(project, "arch", None), "name", None),
+            "entry": _dynamic_attr(project, "entry", None),
+            "arch": _dynamic_attr(_dynamic_attr(project, "arch", None), "name", None),
         },
     )
     cached = _load_cache_json("recovery", cache_key) if cache_key is not None else None
@@ -1887,8 +2076,8 @@ def _supplement_functions_from_prologue_scan(
     scan_limit: int = 8,
     recover_limit: int = 1,
     per_function_timeout: int = 2,
-):
-    def _impl():
+) -> list[_FunctionCfgPair]:
+    def _impl() -> list[_FunctionCfgPair]:
         if project.arch.name != "86_16":
             return []
 
@@ -1903,12 +2092,15 @@ def _supplement_functions_from_prologue_scan(
         )
         if not ranked_candidates:
             return []
-        main_object = getattr(project.loader, "main_object", None)
-        linked_base = getattr(main_object, "linked_base", None)
-        binary_path = getattr(main_object, "binary", None)
+        main_object = _dynamic_attr(project.loader, "main_object", None)
+        if main_object is None:
+            return []
+        main_object = cast(_AngrObject, main_object)
+        linked_base = _dynamic_attr(main_object, "linked_base", None)
+        binary_path = _dynamic_attr(main_object, "binary", None)
         if not isinstance(linked_base, int):
             return []
-        max_addr = getattr(main_object, "max_addr", None)
+        max_addr = _dynamic_attr(main_object, "max_addr", None)
         if not isinstance(max_addr, int):
             return []
         try:
@@ -1916,14 +2108,14 @@ def _supplement_functions_from_prologue_scan(
         except Exception:
             return []
 
-        supplemental: list[tuple[object, object]] = []
+        supplemental: list[_FunctionCfgPair] = []
         scanned = 0
         for addr in ranked_candidates:
             if len(supplemental) >= recover_limit or scanned >= scan_limit:
                 break
             scanned += 1
 
-            def _recover_candidate(candidate_addr=addr):
+            def _recover_candidate(candidate_addr: int = addr) -> _FunctionCfgPair:
                 candidate_project = project
                 if binary_path is not None:
                     candidate_project = _build_project_cached(
@@ -1973,7 +2165,7 @@ def _supplement_functions_from_prologue_scan(
 
 def _rank_gap_scan_candidate_addrs(
     project: angr.Project,
-    recovered_function_pairs: list[tuple[object, object]],
+    recovered_function_pairs: list[_FunctionCfgPair],
     covered_ranges: list[tuple[int, int]],
     existing_addrs: set[int],
     *,
@@ -1982,21 +2174,16 @@ def _rank_gap_scan_candidate_addrs(
 ) -> list[int]:
     if project.arch.name != "86_16":
         return []
-    if getattr(getattr(project, "arch", None), "capstone", None) is None:
+    if _dynamic_attr(_dynamic_attr(project, "arch", None), "capstone", None) is None:
         return []
 
-    main_object = getattr(project.loader, "main_object", None)
+    main_object = _dynamic_attr(project.loader, "main_object", None)
     if main_object is None:
         return []
 
-    max_addr = getattr(main_object, "max_addr", None)
-    linked_base = getattr(main_object, "linked_base", None)
+    max_addr = _dynamic_attr(main_object, "max_addr", None)
+    linked_base = _dynamic_attr(main_object, "linked_base", None)
     if not isinstance(max_addr, int) or not isinstance(linked_base, int):
-        return []
-
-    try:
-        code = bytes(main_object.memory.load(0, max_addr + 1))
-    except Exception:
         return []
 
     merged_ranges = _normalize_and_merge_ranges_8616(covered_ranges, linked_base, image_end)
@@ -2063,11 +2250,17 @@ def _compute_gap_ranges_8616(
     return gap_ranges
 
 
-def _record_recovered_block_targets_8616(project, recovered_function_pairs, *, search_span: int, record) -> None:
+def _record_recovered_block_targets_8616(
+    project: angr.Project,
+    recovered_function_pairs: list[_FunctionCfgPair],
+    *,
+    search_span: int,
+    record: Callable[[int, int, int, int], None],
+) -> None:
     for _cfg, function in recovered_function_pairs:
-        for block in tuple(getattr(function, "blocks", ()) or ()):
-            block_addr = getattr(block, "addr", None)
-            block_size = max(0, getattr(block, "size", 0))
+        for block in tuple(_dynamic_attr(function, "blocks", ()) or ()):
+            block_addr = _dynamic_attr(block, "addr", None)
+            block_size = max(0, _dynamic_attr(block, "size", 0))
             if not isinstance(block_addr, int) or block_size <= 0:
                 continue
             try:
@@ -2083,7 +2276,7 @@ def _record_recovered_block_targets_8616(project, recovered_function_pairs, *, s
                 record(target_addr, 1, block_addr, target_addr)
 
 
-def _looks_like_86_16_frame_prologue_8616(project, addr: int) -> bool:
+def _looks_like_86_16_frame_prologue_8616(project: angr.Project, addr: int) -> bool:
     try:
         block = project.factory.block(addr, size=16, opt_level=0)
     except Exception:
@@ -2099,15 +2292,15 @@ def _looks_like_86_16_frame_prologue_8616(project, addr: int) -> bool:
 
 
 def _record_gap_scan_candidates_8616(
-    project,
-    main_object,
+    project: angr.Project,
+    main_object: _AngrObject,
     *,
     linked_base: int,
     gap_ranges: list[tuple[int, int]],
     search_span: int,
-    record,
+    record: Callable[[int, int, int, int], None],
 ) -> None:
-    def _impl():
+    def _impl() -> None:
         align_bytes = {0x00, 0x90, 0xCC}
         for gap_start, gap_end in gap_ranges:
             scan_end = min(gap_end, gap_start + search_span)
@@ -2148,16 +2341,16 @@ def _rank_prologue_scan_candidate_addrs(
     *,
     search_span: int = 0x2000,
 ) -> list[int]:
-    def _impl():
+    def _impl() -> list[int]:
         if project.arch.name != "86_16":
             return []
 
-        main_object = getattr(project.loader, "main_object", None)
+        main_object = _dynamic_attr(project.loader, "main_object", None)
         if main_object is None:
             return []
 
-        max_addr = getattr(main_object, "max_addr", None)
-        linked_base = getattr(main_object, "linked_base", None)
+        max_addr = _dynamic_attr(main_object, "max_addr", None)
+        linked_base = _dynamic_attr(main_object, "linked_base", None)
         if not isinstance(max_addr, int) or not isinstance(linked_base, int):
             return []
 
@@ -2200,9 +2393,9 @@ def _relocation_seed_targets(
     *,
     linked_base: int,
 ) -> tuple[set[int], set[int]]:
-    def _impl():
-        main_object = getattr(project.loader, "main_object", None)
-        relocation_entries = getattr(main_object, "mz_relocation_entries", ()) if main_object is not None else ()
+    def _impl() -> tuple[set[int], set[int]]:
+        main_object = _dynamic_attr(project.loader, "main_object", None)
+        relocation_entries = _dynamic_attr(main_object, "mz_relocation_entries", ()) if main_object is not None else ()
         if not relocation_entries:
             return set(), set()
 
@@ -2239,15 +2432,15 @@ class _SeedTrace16:
 
 
 def trace_16bit_seed_candidates(
-    project,
+    project: angr.Project,
     code: bytes,
     *,
     linked_base: int,
     windows: Sequence[tuple[int, int]],
 ) -> _SeedTrace16:
-    def _impl():
-        """Collect lightweight call/jump seed candidates from 16-bit code bytes."""
+    """Collect lightweight call/jump seed candidates from 16-bit code bytes."""
 
+    def _impl() -> _SeedTrace16:
         def _window_contains(addr: int) -> bool:
             return any(start <= addr < end for start, end in windows)
 
@@ -2299,21 +2492,24 @@ def trace_16bit_seed_candidates(
     return _impl()
 
 
-def _seed_ranking_metadata_context(project: angr.Project):
-    metadata = getattr(project, "_inertia_lst_metadata", None)
+def _seed_ranking_metadata_context(
+    project: angr.Project,
+) -> tuple[LSTMetadata | None, Mapping[int, str], frozenset[int], bool, dict[str, object] | None]:
+    """Read seed ranking context from dynamic angr project metadata."""
+    metadata = cast(LSTMetadata | None, _dynamic_attr(project, "_inertia_lst_metadata", None))
     recovery_labels = {}
     metadata_fingerprint = None
-    include_library_functions = bool(getattr(project, "_inertia_include_library_functions", False))
+    include_library_functions = bool(_dynamic_attr(project, "_inertia_include_library_functions", False))
     if metadata is not None:
         recovery_labels = _recovery_code_labels(metadata)
         signature_matched_addrs = _signature_matched_code_addrs(metadata)
-        signature_source = getattr(metadata, "source_format", "")
+        signature_source = _dynamic_attr(metadata, "source_format", "")
         allow_signature_seed = include_library_functions or (
             "signature_catalog" not in signature_source and "flair_sig" not in signature_source
         )
-        code_ranges = getattr(metadata, "code_ranges", None) or {}
+        code_ranges = _dynamic_attr(metadata, "code_ranges", None) or {}
         metadata_fingerprint = {
-            "source_format": getattr(metadata, "source_format", None),
+            "source_format": _dynamic_attr(metadata, "source_format", None),
             "recovery_code_addrs": sorted(recovery_labels),
             "signature_code_addrs": sorted(signature_matched_addrs),
             "bounded_code_range_count": sum(
@@ -2327,18 +2523,18 @@ def _seed_ranking_metadata_context(project: angr.Project):
 
 
 def _seed_ranking_cache_key(
-    binary_path,
-    project,
+    binary_path: object,
+    project: angr.Project,
     linked_base: int,
     max_addr: int,
-    metadata_fingerprint,
+    metadata_fingerprint: dict[str, object] | None,
     include_library_functions: bool,
-):
+) -> dict[str, object] | None:
     return _recovery_cache_key(
         binary_path=Path(binary_path) if isinstance(binary_path, (str, Path)) else None,
         kind="exe_seed_ranking",
         extra={
-            "entry": getattr(project, "entry", None),
+            "entry": _dynamic_attr(project, "entry", None),
             "linked_base": linked_base,
             "max_addr": max_addr,
             "ranking_policy": "strong-non-library-v2",
@@ -2348,7 +2544,7 @@ def _seed_ranking_cache_key(
     )
 
 
-def _load_seed_ranking_cache(cache_key: str | None):
+def _load_seed_ranking_cache(cache_key: dict[str, object] | None) -> list[int] | None:
     cached_ranking = _load_cache_json("recovery", cache_key) if cache_key is not None else None
     if isinstance(cached_ranking, dict):
         cached_addrs = cached_ranking.get("addrs")
@@ -2382,7 +2578,7 @@ def _scan_opcode_seed_targets_8616(
     code: bytes,
     *,
     linked_base: int,
-    consider,
+    consider: Callable[[int, int], None],
 ) -> tuple[set[int], set[int], set[int]]:
     near_call_targets: set[int] = set()
     far_call_targets: set[int] = set()
@@ -2416,7 +2612,12 @@ def _scan_opcode_seed_targets_8616(
     return near_call_targets, far_call_targets, prologue_targets
 
 
-def _collect_terminal_next_targets_8616(project: angr.Project, code: bytes, linked_base: int, consider) -> set[int]:
+def _collect_terminal_next_targets_8616(
+    project: angr.Project,
+    code: bytes,
+    linked_base: int,
+    consider: Callable[[int, int], None],
+) -> set[int]:
     try:
         insns = _linear_disassembly(project, linked_base, linked_base + len(code))
     except Exception:
@@ -2458,7 +2659,7 @@ def _final_seed_priority_8616(
     relocation_control_targets: set[int],
     relocation_pointer_targets: set[int],
 ) -> tuple[int, int, int] | None:
-    def _impl():
+    def _impl() -> tuple[int, int, int] | None:
         metadata_span_len = bounded_metadata_spans.get(addr)
         in_near_call = addr in near_call_targets
         in_far_call = addr in far_call_targets
@@ -2518,16 +2719,16 @@ def _rank_exe_function_seeds(
     project: angr.Project,
     include_library_functions: bool | None = None,
 ) -> list[int]:
-    def _impl():
-        main_object = getattr(project.loader, "main_object", None)
+    def _impl() -> list[int]:
+        main_object = _dynamic_attr(project.loader, "main_object", None)
         if main_object is None:
             return []
         lib_functions = include_library_functions
         if lib_functions is None:
-            lib_functions = bool(getattr(project, "_inertia_include_library_functions", False))
-        binary_path = getattr(main_object, "binary", None)
-        max_addr = getattr(main_object, "max_addr", None)
-        linked_base = getattr(main_object, "linked_base", None)
+            lib_functions = bool(_dynamic_attr(project, "_inertia_include_library_functions", False))
+        binary_path = _dynamic_attr(main_object, "binary", None)
+        max_addr = _dynamic_attr(main_object, "max_addr", None)
+        linked_base = _dynamic_attr(main_object, "linked_base", None)
         if not isinstance(max_addr, int) or not isinstance(linked_base, int):
             return []
         metadata, recovery_labels, signature_matched_addrs, allow_signature_seed, metadata_fingerprint = (
@@ -2660,10 +2861,13 @@ def _recover_fast_seed_functions(
     *,
     timeout: int,
     limit: int | None,
-):
+) -> list[_FunctionCfgPair]:
     if project.arch.name != "86_16":
         return []
-    recovered = _recover_seeded_exe_functions(project, timeout=timeout, limit=limit)
+    recovered = cast(
+        list[_FunctionCfgPair],
+        _recover_seeded_exe_functions(project, timeout=timeout, limit=limit),
+    )
     if recovered:
         print(
             "/* quick function-entry scan found likely functions using call/prologue/epilogue patterns without helper metadata. */"
@@ -2678,8 +2882,8 @@ def _recover_fast_exe_catalog(
     window: int,
     low_memory: bool,
     limit: int | None,
-) -> list[tuple[object, object]]:
-    recovered: list[tuple[object, object]] = []
+) -> list[_FunctionCfgPair]:
+    recovered: list[_FunctionCfgPair] = []
     seen_addrs: set[int] = set()
 
     entry_start = time.perf_counter()
@@ -2741,12 +2945,12 @@ def _recover_hidden_sidecar_display_pairs(
     window: int,
     low_memory: bool,
     limit: int,
-) -> list[tuple[object, object]]:
-    def _impl():
+) -> list[_FunctionCfgPair]:
+    def _impl() -> list[_FunctionCfgPair]:
         if limit <= 0 or not ranked_binary_offsets:
             return []
 
-        recovered: list[tuple[object, object]] = []
+        recovered: list[_FunctionCfgPair] = []
         seen_addrs: set[int] = set()
 
         try:
@@ -2783,7 +2987,7 @@ def _recover_hidden_sidecar_display_pairs(
             low_memory=low_memory,
         )
         for item in preview_items:
-            addr = getattr(item.function, "addr", None)
+            addr = _dynamic_attr(item.function, "addr", None)
             if item.function_cfg is None or not isinstance(addr, int) or addr in seen_addrs:
                 continue
             recovered.append((item.function_cfg, item.function))
@@ -2803,32 +3007,89 @@ def _recover_hidden_sidecar_display_pairs(
     return _impl()
 
 
+def _prepare_ranked_binary_preview_items(
+    project: angr.Project,
+    ranked_binary_offsets: Sequence[int],
+    *,
+    max_count: int,
+    timeout: int,
+    window: int,
+    low_memory: bool,
+) -> tuple[_RankedBinaryPreviewItem, ...]:
+    def _impl() -> tuple[_RankedBinaryPreviewItem, ...]:
+        """Preview ranked entries across a dynamic angr loader/project boundary."""
+        if max_count <= 0 or not ranked_binary_offsets:
+            return ()
+        main_object = _dynamic_attr(project.loader, "main_object", None)
+        linked_base = _dynamic_attr(main_object, "linked_base", None)
+        max_addr = _dynamic_attr(main_object, "max_addr", None)
+        binary_path = _dynamic_attr(main_object, "binary", None)
+        if not isinstance(linked_base, int) or not isinstance(max_addr, int) or binary_path is None:
+            return ()
+
+        image_end = linked_base + max_addr + 1
+        metadata = _dynamic_attr(project, "_inertia_lst_metadata", None)
+        project_entry = _dynamic_attr(project, "entry", linked_base)
+        region_span = max(0x120, int(window or 0x120))
+        per_candidate_timeout = max(1, min(int(timeout or 1), 4))
+        items: list[_RankedBinaryPreviewItem] = []
+        for addr in ranked_binary_offsets:
+            if len(items) >= max_count:
+                break
+            if not isinstance(addr, int):
+                continue
+            try:
+                function_cfg, function = _recover_candidate_with_timeout(
+                    project,
+                    candidate_addr=addr,
+                    image_end=image_end,
+                    metadata=metadata,
+                    project_entry=project_entry,
+                    region_span=region_span,
+                    timeout=per_candidate_timeout,
+                    binary_path=Path(binary_path),
+                    linked_base=linked_base,
+                )
+            except (_AnalysisTimeout, FuturesTimeoutError, KeyError):
+                continue
+            except Exception:
+                continue
+            if _function_skip_reason(function) is not None:
+                continue
+            items.append(_RankedBinaryPreviewItem(function_cfg=function_cfg, function=function))
+        return tuple(items)
+
+    return _impl()
+
+
 def _rank_hidden_sidecar_pairs_for_display_throughput(
     project: angr.Project,
-    function_cfg_pairs: list[tuple[object, object]],
+    function_cfg_pairs: list[_FunctionCfgPair],
     *,
     limit: int,
-) -> list[tuple[object, object]]:
-    def _impl():
+) -> list[_FunctionCfgPair]:
+    def _impl() -> list[_FunctionCfgPair]:
         if not function_cfg_pairs:
             return []
 
-        entry_addr = getattr(project, "entry", None)
+        entry_addr = _dynamic_attr(project, "entry", None)
         indexed_pairs = list(enumerate(function_cfg_pairs))
-        entry_pair: tuple[int, tuple[object, object]] | None = None
-        non_entry_pairs: list[tuple[int, tuple[object, object]]] = []
+        entry_pair: tuple[int, _FunctionCfgPair] | None = None
+        non_entry_pairs: list[tuple[int, _FunctionCfgPair]] = []
 
         for original_index, pair in indexed_pairs:
             _cfg, function = pair
-            addr = getattr(function, "addr", None)
+            addr = _dynamic_attr(function, "addr", None)
             if isinstance(entry_addr, int) and addr == entry_addr and entry_pair is None:
                 entry_pair = (original_index, pair)
                 continue
             non_entry_pairs.append((original_index, pair))
 
-        def _throughput_priority(indexed_pair: tuple[int, tuple[object, object]]) -> tuple[int, int, int, int, int]:
+        def _throughput_priority(
+            indexed_pair: tuple[int, _FunctionCfgPair],
+        ) -> tuple[int, int, int, int, int, int, int]:
             original_index, (_cfg, function) = indexed_pair
-            addr = getattr(function, "addr", None)
+            addr = _dynamic_attr(function, "addr", None)
             block_count, byte_count = _function_complexity(function)
             truncated = _function_recovery_truncated(function)
             far_pre_entry = int(
@@ -2869,21 +3130,21 @@ def _recover_cached_function_pairs(
     limit: int | None,
     region_span: int = 0x120,
     per_function_timeout: int = 1,
-) -> list[tuple[object, object]]:
-    def _impl():
-        main_object = getattr(project.loader, "main_object", None)
+) -> list[_FunctionCfgPair]:
+    def _impl() -> list[_FunctionCfgPair]:
+        main_object = _dynamic_attr(project.loader, "main_object", None)
         if main_object is None:
             return []
-        binary_path = getattr(main_object, "binary", None)
-        linked_base = getattr(main_object, "linked_base", None)
-        max_addr = getattr(main_object, "max_addr", None)
+        binary_path = _dynamic_attr(main_object, "binary", None)
+        linked_base = _dynamic_attr(main_object, "linked_base", None)
+        max_addr = _dynamic_attr(main_object, "max_addr", None)
         if binary_path is None or not isinstance(linked_base, int) or not isinstance(max_addr, int):
             return []
 
         deadline = time.monotonic() + max(1, timeout)
-        metadata = getattr(project, "_inertia_lst_metadata", None)
+        metadata = _dynamic_attr(project, "_inertia_lst_metadata", None)
         image_end = linked_base + max_addr + 1
-        recovered: list[tuple[object, object]] = []
+        recovered: list[_FunctionCfgPair] = []
         seen_addrs: set[int] = set()
 
         for addr in addrs:
@@ -2895,7 +3156,7 @@ def _recover_cached_function_pairs(
             if remaining <= 0:
                 break
             candidate_timeout = min(per_function_timeout, max(1, int(remaining)))
-            if isinstance(getattr(project, "entry", None), int) and addr < project.entry:
+            if isinstance(_dynamic_attr(project, "entry", None), int) and addr < project.entry:
                 candidate_timeout = min(max(2, per_function_timeout), max(1, int(remaining)))
 
             try:
@@ -2949,8 +3210,8 @@ def _lookup_candidate_recovery_cache(
     image_end: int,
     project_entry: int,
     region_span: int,
-):
-    cache = getattr(project, "_inertia_candidate_recovery_cache", None)
+) -> _CandidateRecoveryCacheValue | None:
+    cache = _dynamic_attr(project, "_inertia_candidate_recovery_cache", None)
     if not isinstance(cache, dict):
         return None
     return cache.get(
@@ -2970,12 +3231,12 @@ def _store_candidate_recovery_cache(
     image_end: int,
     project_entry: int,
     region_span: int,
-    value,
+    value: _CandidateRecoveryCacheValue,
 ) -> None:
-    cache = getattr(project, "_inertia_candidate_recovery_cache", None)
+    cache = _dynamic_attr(project, "_inertia_candidate_recovery_cache", None)
     if not isinstance(cache, dict):
         cache = {}
-        setattr(project, "_inertia_candidate_recovery_cache", cache)
+        typing.cast(typing.Any, project)._inertia_candidate_recovery_cache = cache
     cache[
         _candidate_recovery_cache_key(
             candidate_addr=candidate_addr,
@@ -3042,13 +3303,13 @@ def _recover_candidate_with_timeout(
     *,
     candidate_addr: int,
     image_end: int,
-    metadata,
+    metadata: LSTMetadata | None,
     project_entry: int,
     region_span: int,
     timeout: int,
     binary_path: Path,
     linked_base: int,
-):
+) -> _FunctionCfgPair:
     cached_result = _lookup_candidate_recovery_cache(
         project,
         candidate_addr=candidate_addr,
@@ -3059,11 +3320,11 @@ def _recover_candidate_with_timeout(
     if isinstance(cached_result, tuple):
         cache_status = cached_result[0]
         if cache_status == "ok":
-            return cached_result[1]
+            return cast(_FunctionCfgPair, cached_result[1])
         if cache_status == "keyerror":
             raise KeyError(cached_result[1])
 
-    def _recover_candidate(candidate_project):
+    def _recover_candidate(candidate_project: angr.Project) -> _FunctionCfgPair:
         return _recover_candidate_function_pair(
             candidate_project,
             candidate_addr=candidate_addr,
@@ -3073,7 +3334,7 @@ def _recover_candidate_with_timeout(
             region_span=region_span,
         )
 
-    def _recover_once():
+    def _recover_once() -> _FunctionCfgPair:
         try:
             recovered_pair = _recover_candidate(project)
             _store_candidate_recovery_cache(
@@ -3116,9 +3377,12 @@ def _recover_candidate_with_timeout(
     timeout = max(1, int(timeout))
     if os.name == "posix" and threading.current_thread() is threading.main_thread() and threading.active_count() == 1:
         try:
-            return _run_with_timeout_in_fork(
-                _recover_once,
-                timeout=timeout + 1,
+            return cast(
+                _FunctionCfgPair,
+                _run_with_timeout_in_fork(
+                    _recover_once,
+                    timeout=timeout + 1,
+                ),
             )
         except Exception:
             pass
@@ -3132,7 +3396,7 @@ def _recover_candidate_with_timeout(
     )
 
 
-def _seeded_recovery_empty_result(return_addrs: bool):
+def _seeded_recovery_empty_result(return_addrs: bool) -> _SeededRecoveryResult:
     return ([], []) if return_addrs else []
 
 
@@ -3144,16 +3408,17 @@ def _load_seeded_recovery_from_cache(
     region_span: int,
     per_function_timeout: int,
     return_addrs: bool,
-    cache_key: str | None,
-):
+    cache_key: dict[str, object] | None,
+) -> _SeededRecoveryResult | None:
     if cache_key is None:
         return None
     cached_payload = _load_cache_json("recovery", cache_key)
     if not isinstance(cached_payload, dict):
         return None
-    cached_addrs = cached_payload.get("addrs")
-    if not (isinstance(cached_addrs, list) and all(isinstance(addr, int) for addr in cached_addrs)):
+    raw_cached_addrs = cached_payload.get("addrs")
+    if not (isinstance(raw_cached_addrs, list) and all(isinstance(addr, int) for addr in raw_cached_addrs)):
         return None
+    cached_addrs = cast(list[int], raw_cached_addrs)
     cached_recovered = _recover_cached_function_pairs(
         project,
         addrs=cached_addrs,
@@ -3222,14 +3487,14 @@ def _recover_seeded_exe_functions(
     per_function_timeout: int = 1,
     return_addrs: bool = False,
     include_library_functions: bool | None = None,
-):
-    def _impl():
-        main_object = getattr(project.loader, "main_object", None)
+) -> _SeededRecoveryResult:
+    def _impl() -> _SeededRecoveryResult:
+        main_object = _dynamic_attr(project.loader, "main_object", None)
         if main_object is None:
             return _seeded_recovery_empty_result(return_addrs)
-        binary_path = getattr(main_object, "binary", None)
-        linked_base = getattr(main_object, "linked_base", None)
-        max_addr = getattr(main_object, "max_addr", None)
+        binary_path = _dynamic_attr(main_object, "binary", None)
+        linked_base = _dynamic_attr(main_object, "linked_base", None)
+        max_addr = _dynamic_attr(main_object, "max_addr", None)
         if binary_path is None or not isinstance(linked_base, int) or not isinstance(max_addr, int):
             return _seeded_recovery_empty_result(return_addrs)
 
@@ -3241,7 +3506,7 @@ def _recover_seeded_exe_functions(
             return _seeded_recovery_empty_result(return_addrs)
 
         deadline = time.monotonic() + max(1, timeout)
-        recovered: list[tuple[object, object]] = []
+        recovered: list[_FunctionCfgPair] = []
         recovered_addrs: list[int] = []
         seen_addrs: set[int] = {project.entry}
         queued_addrs: set[int] = set(ranked_seeds)
@@ -3249,13 +3514,13 @@ def _recover_seeded_exe_functions(
         pending_gap_addrs: list[int] = []
         pending_neighbor_addrs: list[int] = []
         covered_ranges: list[tuple[int, int]] = []
-        metadata = getattr(project, "_inertia_lst_metadata", None)
+        metadata = _dynamic_attr(project, "_inertia_lst_metadata", None)
         image_end = linked_base + max_addr + 1
         cache_key = _recovery_cache_key(
             binary_path=Path(binary_path),
             kind="seeded_function_catalog",
             extra={
-                "entry": getattr(project, "entry", None),
+                "entry": _dynamic_attr(project, "entry", None),
                 "linked_base": linked_base,
                 "max_addr": max_addr,
                 "region_span": region_span,
@@ -3324,16 +3589,13 @@ def _recover_seeded_exe_functions(
             if limit is None or len(recovered) < limit:
                 recovered.append((function_cfg, function))
             covered_ranges.extend(_function_covered_ranges(function))
-            function_score = _function_recovery_score(function)
-            function_truncated = _function_recovery_truncated(function)
 
             if limit is not None and not return_addrs and len(recovered) >= limit:
                 break
 
-            linear_targets = list(_linear_function_seed_targets(project, function.addr, include_jumps=False))
             neighbor_targets: list[int] = []
             for target in collect_neighbor_call_targets(function):
-                target_addr = getattr(target, "target_addr", None)
+                target_addr = _dynamic_attr(target, "target_addr", None)
                 if isinstance(target_addr, int):
                     neighbor_targets.append(target_addr)
             if _needs_pre_entry_body_supplement(function, project.entry):
@@ -3395,17 +3657,21 @@ def _fallback_entry_function(
     window: int,
     low_memory: bool = False,
     prefer_fast_recovery: bool = False,
-):
+) -> _FunctionCfgPair:
     # If whole-binary recovery already timed out, prefer a much smaller bounded
     # entry-only recovery window instead of retrying the same expensive search.
     # When memory pressure is high, keep the scan even narrower so the fallback
     # uses less memory and avoids the whole-binary CFG path entirely.
-    def _impl():
-        project._inertia_decompiler_stage = "recovery"
+    def _impl() -> _FunctionCfgPair:
+        dynamic_project = cast(_AngrObject, project)
+        dynamic_project._inertia_decompiler_stage = "recovery"
         candidate_windows = _x86_16_recovery_windows(window, low_memory=low_memory)
         recovery_timeout = max(1, timeout if prefer_fast_recovery else min(timeout, 10))
 
-        def _repair_recovered_entry_function(result, regions):
+        def _repair_recovered_entry_function(
+            result: _FunctionCfgPair,
+            regions: Sequence[tuple[int, int]],
+        ) -> _FunctionCfgPair:
             if project.arch.name != "86_16":
                 return result
             if not isinstance(result, tuple) or len(result) != 2:
@@ -3435,7 +3701,7 @@ def _fallback_entry_function(
 
         with _analysis_timeout(recovery_timeout):
             if prefer_fast_recovery:
-                project._inertia_decompiler_stage = "recovery:fast"
+                dynamic_project._inertia_decompiler_stage = "recovery:fast"
                 for fast_window in _x86_16_fast_recovery_windows(window, low_memory=low_memory):
                     try:
                         if project.arch.name == "86_16":
@@ -3464,7 +3730,7 @@ def _fallback_entry_function(
 
             for candidate_window in candidate_windows:
                 try:
-                    project._inertia_decompiler_stage = f"recovery:narrow:{candidate_window:#x}"
+                    dynamic_project._inertia_decompiler_stage = f"recovery:narrow:{candidate_window:#x}"
                     if project.arch.name == "86_16":
                         regions = [_infer_x86_16_linear_region(project, project.entry, window=candidate_window)]
                     else:
@@ -3507,7 +3773,7 @@ def _derive_lst_exact_region_8616(
     addr: int,
     name: str,
 ) -> tuple[int, int] | None:
-    def _impl():
+    def _impl() -> tuple[int, int] | None:
         exact_region = _lst_code_region(lst_metadata, addr)
         if exact_region is None and isinstance(name, str) and name:
             target_names = {name, name.lstrip("_")}
@@ -3569,7 +3835,10 @@ def _derive_lst_exact_region_8616(
                         f"{adjusted_start:#x}-{end:#x} (from sidecar padding)"
                     )
         if project.arch.name == "86_16" and exact_region is not None:
-            exact_region = _maybe_extend_x86_16_exact_region_terminator(project, exact_region)
+            extended_region = _maybe_extend_x86_16_exact_region_terminator(project, exact_region)
+            if extended_region is None:
+                return None
+            exact_region = extended_region
             exact_size = max(0, exact_region[1] - exact_region[0])
             if exact_size <= 0x20 and not _x86_16_exact_region_has_terminator(project, exact_region):
                 exact_region = None
@@ -3582,14 +3851,17 @@ def _try_rebased_exact_region_recovery_8616(
     project: angr.Project,
     *,
     exact_region: tuple[int, int] | None,
+    caller_target_addrs: tuple[int, ...] = (),
+    function_ranges: tuple[tuple[int, int], ...] = (),
     timeout: int,
     name: str,
-):
+) -> _FunctionCfgPair | None:
+    """Recover an adjusted exact slice while preserving its callable-entry evidence identity."""
     if project.arch.name != "86_16" or exact_region is None:
         return None
     exact_region_size = max(0, exact_region[1] - exact_region[0])
-    loader = getattr(project, "loader", None)
-    project_memory = getattr(loader, "memory", None)
+    loader = _dynamic_attr(project, "loader", None)
+    project_memory = _dynamic_attr(loader, "memory", None)
     if project_memory is None or not hasattr(project_memory, "load"):
         return None
     slice_plan = plan_x86_16_exact_slice(*exact_region)
@@ -3611,12 +3883,16 @@ def _try_rebased_exact_region_recovery_8616(
         base_addr=slice_plan.slice_base,
         entry_point=slice_plan.slice_start,
     )
-    slice_project._inertia_original_project = project
-    slice_project._inertia_original_linear_delta = exact_region[0] - slice_plan.slice_start
+    dynamic_slice_project = cast(_AngrObject, slice_project)
+    dynamic_slice_project._inertia_original_project = project
+    dynamic_slice_project._inertia_original_linear_delta = exact_region[0] - slice_plan.slice_start
+    c_target = _dynamic_attr(project, "_inertia_c_target", None)
+    if isinstance(c_target, str):
+        dynamic_slice_project._inertia_c_target = c_target
     tiny_rebased_core = exact_region_size <= 0x30
-    slice_project._inertia_disable_ail_narrowing = tiny_rebased_core
-    slice_project._inertia_disable_complex_expr_scan = tiny_rebased_core
-    slice_project._inertia_fast_block_peephole = tiny_rebased_core
+    dynamic_slice_project._inertia_disable_ail_narrowing = tiny_rebased_core
+    dynamic_slice_project._inertia_disable_complex_expr_scan = tiny_rebased_core
+    dynamic_slice_project._inertia_fast_block_peephole = tiny_rebased_core
     _inherit_tail_validation_runtime_policy(slice_project, project)
     slice_region = (slice_plan.slice_start, slice_plan.slice_end)
     with _analysis_timeout(max(1, timeout)):
@@ -3655,17 +3931,29 @@ def _try_rebased_exact_region_recovery_8616(
     func.name = name
     _commit_exact_region_function_to_kb_8616(slice_project, cfg, func, slice_region)
     mark_function_original_addr(func, exact_region[0])
+    caller_evidence_targets = tuple(dict.fromkeys((*caller_target_addrs, exact_region[0])))
+    caller_return_use = _collect_caller_return_use_for_entry_aliases_8616(
+        project,
+        caller_evidence_targets,
+        function_ranges,
+    )
+    if caller_return_use is not None:
+        _record_caller_return_use_evidence_8616(slice_project, slice_region[0], caller_return_use)
+        for caller_evidence_target in caller_evidence_targets:
+            _record_caller_return_use_evidence_8616(project, caller_evidence_target, caller_return_use)
+    direct_callee_return_use = _collect_direct_callee_return_use_evidence_8616(
+        project,
+        func,
+        function_ranges,
+    )
+    for target_addr, evidence in direct_callee_return_use.items():
+        _record_caller_return_use_evidence_8616(project, target_addr, evidence)
+        _record_caller_return_use_evidence_8616(slice_project, target_addr, evidence)
     with contextlib.suppress(Exception):
         source_func = project.kb.functions.function(addr=exact_region[0], create=False)
-        source_prototype = getattr(source_func, "prototype", None) if source_func is not None else None
-        if source_prototype is not None:
-            func.prototype = source_prototype
-        source_cc = getattr(source_func, "calling_convention", None) if source_func is not None else None
-        if source_cc is not None:
-            func.calling_convention = source_cc
-        source_info = getattr(source_func, "info", None) if source_func is not None else None
+        source_info = _dynamic_attr(source_func, "info", None) if source_func is not None else None
         if isinstance(source_info, dict):
-            func_info = getattr(func, "info", None)
+            func_info = _dynamic_attr(func, "info", None)
             if not isinstance(func_info, dict):
                 func_info = {}
                 func.info = func_info
@@ -3687,13 +3975,22 @@ def _recover_lst_function(
     timeout: int,
     window: int,
     low_memory: bool = False,
-):
-    def _impl():
-        addr = offset if getattr(lst_metadata, "absolute_addrs", False) else project.entry + offset
+) -> _FunctionCfgPair:
+    """Recover one metadata-bounded function, using its callable entry for cross-function evidence."""
+
+    def _impl() -> _FunctionCfgPair:
+        addr = offset if lst_metadata.absolute_addrs else project.entry + offset
         exact_region = _derive_lst_exact_region_8616(project, lst_metadata, addr=addr, name=name)
+        caller_target_addrs = _caller_target_aliases_for_lst_function_8616(
+            lst_metadata,
+            recovered_addr=addr,
+            name=name,
+        )
         rebased = _try_rebased_exact_region_recovery_8616(
             project,
             exact_region=exact_region,
+            caller_target_addrs=caller_target_addrs,
+            function_ranges=tuple(lst_metadata.code_ranges.values()),
             timeout=timeout,
             name=name,
         )
@@ -3737,17 +4034,18 @@ def _recover_lst_function(
                     func = None
 
                 if cfg is not None and func is not None:
-                    if _exact_region_recovery_looks_truncated(func, exact_region):
+                    if exact_region is not None and _exact_region_recovery_looks_truncated(func, exact_region):
+                        exact_region_for_recovery = exact_region
                         block_addrs = tuple(
-                            int(getattr(block, "addr"))
-                            for block in tuple(getattr(func, "blocks", ()) or ())
-                            if isinstance(getattr(block, "addr", None), int)
+                            int(_dynamic_attr(block, "addr"))
+                            for block in tuple(_dynamic_attr(func, "blocks", ()) or ())
+                            if isinstance(_dynamic_attr(block, "addr", None), int)
                         )
-                        cfg_functions = getattr(getattr(cfg, "kb", None), "functions", None)
+                        cfg_functions = _dynamic_attr(_dynamic_attr(cfg, "kb", None), "functions", None)
                         diagnostics = build_exact_region_diagnostics_8616(
                             name,
-                            requested_start=exact_region[0],
-                            requested_end=exact_region[1],
+                            requested_start=exact_region_for_recovery[0],
+                            requested_end=exact_region_for_recovery[1],
                             covered_block_addrs=block_addrs,
                             cfg_functions=cfg_functions,
                             proc_identity=name,
@@ -3761,12 +4059,11 @@ def _recover_lst_function(
                             )
                         best_cfg = cfg
                         best_func = func
-                        best_score = _function_recovery_score(func)
                         try:
                             stitched_func, stitched = _stitch_x86_16_exact_function_8616(
                                 project,
                                 best_func,
-                                exact_region,
+                                exact_region_for_recovery,
                             )
                         except Exception as ex:
                             logging.getLogger(__name__).debug(
@@ -3777,30 +4074,31 @@ def _recover_lst_function(
                             stitched_func, stitched = best_func, False
                         if stitched:
                             best_func = stitched_func
-                            best_score = _function_recovery_score(best_func)
                             _mark_x86_16_stitched_recovery_8616(best_func)
                         for data_refs in (False, True):
                             try:
                                 retried_cfg, retried_func = _pick_function(
                                     project,
                                     addr,
-                                    regions=[exact_region],
+                                    regions=[exact_region_for_recovery],
                                     data_references=data_refs,
                                     force_smart_scan=False,
                                 )
                             except KeyError:
                                 continue
-                            retried_score = _function_recovery_score(retried_func)
-                            if _should_replace_exact_region_candidate_8616(best_func, retried_func, exact_region):
+                            if _should_replace_exact_region_candidate_8616(
+                                best_func,
+                                retried_func,
+                                exact_region_for_recovery,
+                            ):
                                 best_cfg = retried_cfg
                                 best_func = retried_func
-                                best_score = retried_score
                         # Escalate through richer candidate-pair recovery when the
                         # exact-region target still looks truncated.
-                        if _exact_region_recovery_looks_truncated(best_func, exact_region):
-                            main_object = getattr(project.loader, "main_object", None)
-                            linked_base = getattr(main_object, "linked_base", None)
-                            max_addr = getattr(main_object, "max_addr", None)
+                        if _exact_region_recovery_looks_truncated(best_func, exact_region_for_recovery):
+                            main_object = _dynamic_attr(project.loader, "main_object", None)
+                            linked_base = _dynamic_attr(main_object, "linked_base", None)
+                            max_addr = _dynamic_attr(main_object, "max_addr", None)
                             if isinstance(linked_base, int) and isinstance(max_addr, int):
                                 try:
                                     cand_cfg, cand_func = _recover_candidate_function_pair(
@@ -3809,13 +4107,18 @@ def _recover_lst_function(
                                         image_end=linked_base + max_addr + 1,
                                         metadata=lst_metadata,
                                         project_entry=project.entry,
-                                        region_span=max(window, max(0x180, exact_region[1] - exact_region[0])),
+                                        region_span=max(
+                                            window,
+                                            max(0x180, exact_region_for_recovery[1] - exact_region_for_recovery[0]),
+                                        ),
                                     )
-                                    cand_score = _function_recovery_score(cand_func)
-                                    if _should_replace_exact_region_candidate_8616(best_func, cand_func, exact_region):
+                                    if _should_replace_exact_region_candidate_8616(
+                                        best_func,
+                                        cand_func,
+                                        exact_region_for_recovery,
+                                    ):
                                         best_cfg = cand_cfg
                                         best_func = cand_func
-                                        best_score = cand_score
                                 except Exception:
                                     pass
                         cfg, func = best_cfg, best_func
@@ -3880,8 +4183,8 @@ def _recover_ranked_binary_function(
     timeout: int,
     window: int,
     low_memory: bool = False,
-):
-    def _impl():
+) -> _FunctionCfgPair:
+    def _impl() -> _FunctionCfgPair:
         with _analysis_timeout(max(1, timeout)):
             if project.arch.name == "86_16":
                 fast_windows = _x86_16_fast_recovery_windows(window, low_memory=low_memory)
@@ -3928,7 +4231,7 @@ def _recover_ranked_binary_function(
     return _impl()
 
 
-def _make_placeholder_function(project: angr.Project, addr: int, name: str):
+def _make_placeholder_function(project: angr.Project, addr: int, name: str) -> SimpleNamespace:
     return SimpleNamespace(
         addr=addr,
         name=name,
@@ -3952,7 +4255,8 @@ def _is_plausible_code_seed(
     *,
     metadata: LSTMetadata | None = None,
 ) -> bool:
-    def _impl():
+    def _impl() -> bool:
+        """Probe dynamic angr block/capstone data for plausible code bytes."""
         region = _lst_code_region(metadata, addr)
         probe_size = 16
         if region is not None:
@@ -3977,13 +4281,15 @@ def _is_plausible_code_seed(
             if 0 < region_size <= 8:
                 try:
                     block = project.factory.block(addr, size=region_size, opt_level=0)
-                    insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+                    insns: tuple[_AngrObject, ...] = tuple(
+                        _dynamic_attr(_dynamic_attr(block, "capstone", None), "insns", ()) or ()
+                    )
                 except Exception:
                     insns = ()
                 if not insns:
                     return False
                 terminators = {"ret", "retn", "retf", "jmp", "ljmp", "call", "lcall", "int", "iret"}
-                if not any(getattr(insn, "mnemonic", "").lower() in terminators for insn in insns):
+                if not any(_dynamic_attr(insn, "mnemonic", "").lower() in terminators for insn in insns):
                     return False
         # If sidecar does not provide an exact code region and the seed begins with
         # a null-padded stream, treat it as data-like unless proven otherwise.
@@ -4013,7 +4319,9 @@ def _rank_labeled_function_entries(
     labeled_entries: list[tuple[int, str]],
     metadata: LSTMetadata | None = None,
 ) -> list[tuple[int, str]]:
-    entry_addr = getattr(project, "entry", None)
+    entry_addr = _dynamic_attr(project, "entry", None)
+    if not isinstance(entry_addr, int):
+        entry_addr = 0
     preferred_app_prefix_buckets = (
         ("init_", 1),
         ("draw_", 2),
@@ -4094,22 +4402,28 @@ def _sidecar_label_ranking_cache_key(
     labeled_entries: list[tuple[int, str]],
     metadata: LSTMetadata | None,
 ) -> dict[str, object] | None:
-    main_object = getattr(project.loader, "main_object", None)
-    binary_path = getattr(main_object, "binary", None)
+    """Build a sidecar label cache key from dynamic angr loader metadata."""
+    main_object = _dynamic_attr(project.loader, "main_object", None)
+    binary_path = _dynamic_attr(main_object, "binary", None)
     if not isinstance(binary_path, (str, Path)):
         return None
-    code_ranges = getattr(metadata, "code_ranges", None) or {}
+    code_ranges = cast(Mapping[int, Sequence[int] | None], _dynamic_attr(metadata, "code_ranges", None) or {})
+
+    def _code_range_tuple(addr: int) -> tuple[int, ...] | None:
+        span = code_ranges.get(addr)
+        return tuple(span) if span is not None else None
+
     cache_key = _recovery_cache_key(
         binary_path=Path(binary_path),
         kind="sidecar_label_ranking",
         extra={
-            "entry": getattr(project, "entry", None),
-            "source_format": getattr(metadata, "source_format", None),
+            "entry": _dynamic_attr(project, "entry", None),
+            "source_format": _dynamic_attr(metadata, "source_format", None),
             "entries": [
                 (
                     addr,
                     name,
-                    tuple(code_ranges.get(addr)) if code_ranges.get(addr) is not None else None,
+                    _code_range_tuple(addr),
                 )
                 for addr, name in labeled_entries
             ],
@@ -4123,7 +4437,7 @@ def _rank_labeled_function_entries_cached(
     labeled_entries: list[tuple[int, str]],
     metadata: LSTMetadata | None = None,
 ) -> tuple[list[tuple[int, str]], bool]:
-    def _impl():
+    def _impl() -> tuple[list[tuple[int, str]], bool]:
         filtered_entries = _filter_noncode_labeled_entries(project, labeled_entries, metadata)
         cache_key = _sidecar_label_ranking_cache_key(project, filtered_entries, metadata)
         cached = _load_cache_json("recovery", cache_key) if cache_key is not None else None
@@ -4154,7 +4468,7 @@ def _select_sidecar_showcase_entries(
     max_count: int,
     ranked_entries: list[tuple[int, str]] | None = None,
 ) -> list[tuple[int, str]]:
-    def _impl():
+    def _impl() -> list[tuple[int, str]]:
         ranked = (
             ranked_entries
             if ranked_entries is not None
@@ -4173,7 +4487,7 @@ def _select_sidecar_showcase_entries(
             selected.append((addr, by_addr[addr]))
             seen.add(addr)
 
-        entry_addr = getattr(project, "entry", None)
+        entry_addr = _dynamic_attr(project, "entry", None)
         _add(entry_addr)
 
         def _tiny_candidate_priority(item: tuple[int, str]) -> tuple[int, int, int]:
@@ -4189,7 +4503,7 @@ def _select_sidecar_showcase_entries(
                 bucket = 4
             else:
                 bucket = 2
-            return (bucket, size, abs(addr - getattr(project, "entry", 0)))
+            return (bucket, size, abs(addr - _dynamic_attr(project, "entry", 0)))
 
         tiny_candidates = [
             (addr, name)
@@ -4243,8 +4557,8 @@ def _format_sidecar_function_catalog(
     return "\n".join(lines)
 
 
-def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, timeout: int):
-    project._inertia_decompiler_stage = "recovery:full"
+def _recover_blob_entry_function(project: angr.Project, entry_addr: int, *, timeout: int) -> _FunctionCfgPair:
+    cast(_AngrObject, project)._inertia_decompiler_stage = "recovery:full"
     with _analysis_timeout(timeout):
         cfg = project.analyses.CFGFast(
             start_at_entry=False,
@@ -4289,8 +4603,8 @@ def _try_recover_direct_addr_from_sidecar_region(
     lst_metadata: LSTMetadata | None,
     function_label: str | None,
     strict_direct_addr: bool,
-):
-    def _impl():
+) -> _FunctionCfgPair | None:
+    def _impl() -> _FunctionCfgPair | None:
         if lst_metadata is None or project.arch.name != "86_16":
             return None
         sidecar_region_for_addr = _lst_code_region(lst_metadata, addr)
@@ -4340,8 +4654,8 @@ def _try_recover_direct_addr_from_sidecar_label(
     low_memory_path: bool,
     lst_metadata: LSTMetadata | None,
     function_label: str | None,
-):
-    def _impl():
+) -> _FunctionCfgPair | None:
+    def _impl() -> _FunctionCfgPair | None:
         if lst_metadata is None or project.arch.name != "86_16":
             return None
         effective_label = function_label or _lst_code_label(lst_metadata, addr, project.entry)
@@ -4390,8 +4704,8 @@ def _recover_direct_addr_function(
     lst_metadata: LSTMetadata | None,
     low_memory_path: bool,
     prefer_fast_recovery: bool,
-):
-    def _impl():
+) -> _FunctionCfgPair:
+    def _impl() -> _FunctionCfgPair:
         nonlocal addr
         use_sidecar_start_for_direct_addr = _env_flag_enabled_8616("INERTIA_DIRECT_ADDR_USE_SIDECAR_START")
         if project.arch.name == "86_16" and lst_metadata is not None and use_sidecar_start_for_direct_addr:
@@ -4446,9 +4760,9 @@ def _recover_direct_addr_function(
 
         with _analysis_timeout(timeout):
             if project.arch.name == "86_16":
-                main_object = getattr(project.loader, "main_object", None)
-                linked_base = getattr(main_object, "linked_base", None)
-                max_addr = getattr(main_object, "max_addr", None)
+                main_object = _dynamic_attr(project.loader, "main_object", None)
+                linked_base = _dynamic_attr(main_object, "linked_base", None)
+                max_addr = _dynamic_attr(main_object, "max_addr", None)
                 if isinstance(linked_base, int) and isinstance(max_addr, int):
                     return _recover_candidate_function_pair(
                         project,

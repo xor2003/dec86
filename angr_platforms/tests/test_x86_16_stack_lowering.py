@@ -2,12 +2,16 @@ from __future__ import annotations
 
 """Regression tests for stack variable binding and lowering.
 
-AGENTS rule: SS:BP-2 → local_*, SS:BP+4 → arg_*, no stack[x].
+AGENTS rule: SS:BP-offset becomes a named stack variable only from proven
+stack evidence. Unknown positive BP offsets remain locals unless the function
+argument list proves they are arguments.
 """
 
 from types import SimpleNamespace
 
-from angr.sim_type import SimTypeShort
+from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimTypeChar, SimTypeLong, SimTypeShort
+from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.alias.alias_model_impl import (
     AliasFailure,
     AliasStorageFacts,
@@ -15,16 +19,98 @@ from angr_platforms.X86_16.alias.alias_model_impl import (
     _StackSlotIdentity,
     alias_facts_for_ir_address_8616,
 )
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.core import (
     AddressStatus,
     IRAddress,
     MemSpace,
     SegmentOrigin,
 )
+from angr_platforms.X86_16.lowering.stack_lowering_from_facts import (
+    build_stack_variable_bindings_from_alias_facts_8616,
+)
+from angr_platforms.X86_16.lowering.stack_lowering_impl import (
+    _prefer_bound_stack_cvar_8616,
+    _resolve_stack_cvar_at_offset,
+)
+
+
+class _StackResolutionCodegen:
+    """Minimal angr codegen boundary for stack-object identity regressions."""
+
+    def __init__(self) -> None:
+        self.project = SimpleNamespace(arch=Arch86_16())
+        self.cstyle_null_cmp = False
+        self._idx = 0
+        self.cfunc = SimpleNamespace(arg_list=[], variables_in_use={})
+
+    def next_idx(self, _name: str) -> int:
+        """Return a stable synthetic structured-C node index."""
+        self._idx += 1
+        return self._idx
+
+
+def _stack_slot_identity(variable: object) -> tuple[object, object, object] | None:
+    """Return exact stack identity for direct resolver tests."""
+    if not isinstance(variable, SimStackVariable):
+        return None
+    return variable.base, variable.offset, variable.size
+
+
+def _stack_cvar(
+    codegen: _StackResolutionCodegen,
+    offset: int,
+    size: int,
+    name: str,
+    variable_type: object,
+) -> structured_c.CVariable:
+    """Build and register one stack C variable for resolver tests."""
+    variable = SimStackVariable(offset, size, base="bp", name=name, region=0x1000)
+    cvar = structured_c.CVariable(variable, variable_type=variable_type, codegen=codegen)
+    codegen.cfunc.variables_in_use[variable] = cvar
+    return cvar
+
+
+def test_stack_resolution_keeps_exact_byte_over_unproven_covering_dword() -> None:
+    """An overlapping object is not alias proof that an exact byte belongs to it."""
+    codegen = _StackResolutionCodegen()
+    exact = _stack_cvar(codegen, -82, 1, "local_52", SimTypeChar(False))
+    _stack_cvar(codegen, -85, 4, "local_55", SimTypeLong(False))
+
+    resolved = _resolve_stack_cvar_at_offset(
+        codegen,
+        -82,
+        stack_slot_identity_for_variable=_stack_slot_identity,
+        preferred_size=1,
+    )
+
+    assert resolved is exact
+
+
+def test_bound_stack_resolution_requires_matching_width() -> None:
+    """Same-offset scalar and wide views remain distinct without widening proof."""
+    codegen = _StackResolutionCodegen()
+    _stack_cvar(codegen, -2, 4, "iRow", SimTypeLong(False))
+    exact = _stack_cvar(codegen, -2, 2, "local_2", SimTypeShort(False))
+    detached_var = SimStackVariable(-2, 2, base="bp", name="local_2", region=0x1000)
+    detached = structured_c.CVariable(detached_var, variable_type=SimTypeShort(False), codegen=codegen)
+
+    resolved = _prefer_bound_stack_cvar_8616(
+        codegen,
+        detached,
+        lambda owner, offset: _resolve_stack_cvar_at_offset(
+            owner,
+            offset,
+            stack_slot_identity_for_variable=_stack_slot_identity,
+            preferred_size=detached_var.size,
+        ),
+    )
+
+    assert resolved is exact
 
 
 class TestStackObjectNaming:
-    """Stack variable names must follow the convention: local_N for negatives, arg_N for positives."""
+    """Stack variable names must not guess arguments from positive offsets alone."""
 
     def test_stack_object_name_negative(self):
         from angr_platforms.X86_16.lowering.stack_lowering_impl import _stack_object_name
@@ -37,15 +123,24 @@ class TestStackObjectNaming:
         from angr_platforms.X86_16.lowering.stack_lowering_impl import _stack_object_name
 
         name = _stack_object_name(4)
-        assert name.startswith("arg_"), f"Expected arg_ prefix, got {name}"
+        assert name.startswith("local_"), f"Expected local_ prefix without argument evidence, got {name}"
         assert "4" in name
 
     def test_stack_object_name_zero(self):
         from angr_platforms.X86_16.lowering.stack_lowering_impl import _stack_object_name
 
         name = _stack_object_name(0)
-        assert name.startswith("arg_"), f"Expected arg_ prefix for offset 0, got {name}"
+        assert name.startswith("local_"), f"Expected local_ prefix for offset 0 without argument evidence, got {name}"
         assert "0" in name
+
+    def test_stack_object_name_positive_with_argument_evidence(self):
+        from angr.sim_variable import SimStackVariable
+        from angr_platforms.X86_16.lowering.stack_lowering_impl import _stack_object_name
+
+        cfunc = SimpleNamespace(arg_list=[SimpleNamespace(variable=SimStackVariable(4, 2, base="bp"))])
+        codegen = SimpleNamespace(cfunc=cfunc)
+
+        assert _stack_object_name(4, codegen=codegen) == "arg_4"
 
     def test_unknown_positive_stack_slot_uses_local_name_in_codegen_context(self):
         from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -54,7 +149,7 @@ class TestStackObjectNaming:
 
         class _FakeCodegen:
             def __init__(self):
-                self.project = None
+                self.project = SimpleNamespace(arch=Arch86_16())
                 self.cstyle_null_cmp = False
                 self._idx = 0
                 self.cfunc = SimpleNamespace(
@@ -128,13 +223,13 @@ class TestStackSlotIdentity:
         slot_b = _StackSlotIdentity(base="bp", offset=-1, width=2)
         assert not slot_a.can_join(slot_b)
 
-    def test_sp_normalizes_to_bp(self):
+    def test_sp_remains_distinct_from_bp(self):
         slot = _StackSlotIdentity(base="sp", offset=-2, width=2)
-        assert slot.base == "bp"
+        assert slot.base == "sp"
 
-    def test_ss_normalizes_to_bp(self):
+    def test_ss_does_not_invent_a_bp_frame(self):
         slot = _StackSlotIdentity(base="ss", offset=-2, width=2)
-        assert slot.base == "bp"
+        assert slot.base == "ss"
 
 
 class TestStackStorageFactsForSegmentedAddress:
@@ -168,6 +263,16 @@ class TestStackStorageFactsForSegmentedAddress:
         facts = _stack_storage_facts_for_segmented_address_8616(None, -2, 2)
         assert facts is None
 
+    def test_stack_binding_builder_ignores_non_storage_fact_objects(self):
+        stack_fact = _stack_storage_facts_for_segmented_address_8616("ss", -2, 2)
+        assert stack_fact is not None
+
+        bindings = build_stack_variable_bindings_from_alias_facts_8616([object(), stack_fact])
+
+        assert len(bindings) == 1
+        assert bindings[0].bp_offset == -2
+        assert bindings[0].size == 2
+
 
 class TestAliasFactsForIRAddress:
     """alias_facts_for_ir_address_8616 must map IRAddress to AliasStorageFacts."""
@@ -184,6 +289,24 @@ class TestAliasFactsForIRAddress:
         facts = alias_facts_for_ir_address_8616(addr)
         assert facts is not None
         assert isinstance(facts, AliasStorageFacts)
+
+    def test_stable_sp_address_remains_sp_relative(self):
+        addr = IRAddress(
+            space=MemSpace.SS,
+            base=("sp",),
+            offset=-2,
+            size=2,
+            segment_origin=SegmentOrigin.PROVEN,
+            status=AddressStatus.STABLE,
+        )
+
+        facts = alias_facts_for_ir_address_8616(addr)
+
+        assert isinstance(facts, AliasStorageFacts)
+        assert facts.identity is not None
+        _, slot = facts.identity
+        assert isinstance(slot, _StackSlotIdentity)
+        assert slot.base == "sp"
 
     def test_ds_address_produces_memory_facts(self):
         addr = IRAddress(

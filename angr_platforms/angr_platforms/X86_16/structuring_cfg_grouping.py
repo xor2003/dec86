@@ -1,5 +1,9 @@
 """Grouped-entry and entry-fragment artifact over CFG ownership surfaces.
 
+Layer: Structuring.
+Responsibility: export conservative grouped-entry and entry-fragment candidates from CFG ownership facts.
+Forbidden: inferring dispatch semantics, rewriting control flow, or repairing generated C.
+
 This is a deterministic export layer for later cross-entry grouping work. It
 does not perform grouping yet; it only emits explicit candidates and refusals.
 """
@@ -7,7 +11,6 @@ does not perform grouping yet; it only emits explicit candidates and refusals.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from .structuring_cfg_indirect import CFGIndirectSiteArtifact, build_cfg_indirect_site_artifact
 
@@ -54,7 +57,7 @@ class CFGGroupingArtifact:
         }
 
 
-def build_cfg_grouping_artifact(codegen: Any) -> CFGGroupingArtifact | None:
+def build_cfg_grouping_artifact(codegen: object) -> CFGGroupingArtifact | None:
     """Build deterministic grouping/export candidates from CFG ownership artifacts."""
     indirect = build_cfg_indirect_site_artifact(codegen)
     if indirect is None:

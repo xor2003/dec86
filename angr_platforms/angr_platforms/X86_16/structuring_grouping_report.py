@@ -1,13 +1,20 @@
+"""Layer: Structuring.
+
+Responsibility: report CFG grouping kinds to validation and reporting consumers.
+Forbidden: creating proof, hiding grouping failures, or rewriting recovered C.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from .structuring_cfg_grouping import build_cfg_grouping_artifact
 
 
 @dataclass(frozen=True, slots=True)
 class StructuringGroupingReportRow:
+    """Summarize one CFG grouping kind for validation/report consumers."""
+
     grouping_kind: str
     count: int
     likely_layer: str
@@ -16,9 +23,12 @@ class StructuringGroupingReportRow:
 
 @dataclass(frozen=True, slots=True)
 class StructuringGroupingReport:
+    """Carry grouped-entry CFG report rows without changing verdicts."""
+
     rows: tuple[StructuringGroupingReportRow, ...]
 
     def to_dict(self) -> dict[str, object]:
+        """Return a stable serialization for validation reports."""
         return {
             "rows": [
                 {
@@ -32,7 +42,8 @@ class StructuringGroupingReport:
         }
 
 
-def build_x86_16_structuring_grouping_report(codegen: Any) -> StructuringGroupingReport | None:
+def build_x86_16_structuring_grouping_report(codegen: object) -> StructuringGroupingReport | None:
+    """Build a validation report from already-collected CFG grouping artifacts."""
     artifact = build_cfg_grouping_artifact(codegen)
     if artifact is None:
         return None
@@ -59,6 +70,7 @@ def build_x86_16_structuring_grouping_report(codegen: Any) -> StructuringGroupin
 
 
 def describe_x86_16_structuring_grouping_report_surface() -> dict[str, object]:
+    """Return the deterministic structuring-grouping report contract."""
     return {
         "consumer": "structuring_grouping_report",
         "producer": "build_cfg_grouping_artifact",

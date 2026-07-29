@@ -3681,6 +3681,38 @@ def test_dosunit_cli_compare_ssa_abi_handles_synthetic_watcom_register_manifest(
     assert "No failed or refused ABI functions." in report
 
 
+def test_dosunit_compare_ssa_abi_proves_stack_arg_branch_loop_rewrite():
+    oracle = _stack_arg_loop_abi_doc(
+        "original-asm.exe",
+        function_id="demo.exe:asm_apply_boost",
+        name="asm_apply_boost",
+        style="asm_loop",
+    )
+    candidate = _stack_arg_loop_abi_doc(
+        "rewritten-c.exe",
+        function_id="demo.exe:c_apply_boost",
+        name="c_apply_boost",
+        style="watcom_c_branch",
+    )
+
+    compared = compare_ssa_abi_documents(
+        oracle=oracle,
+        candidate=candidate,
+        abi_manifest=_stack_arg_loop_abi_manifest(),
+        mapping_document=_stack_arg_loop_abi_mapping(),
+        max_loop_unroll=2,
+    )
+
+    assert compared["summary"]["passed"] == 1
+    result = compared["results"][0]
+    assert result["function"]["stack_args"] == [{"name": "boost", "width": 16, "entry_sp_offset": "0x0002"}]
+    assert result["observables"]["regs"] == ["ax", "bp", "ds", "sp"]
+    assert result["observables"]["memory"][0]["name"] == "last_boosted_value"
+    assert result["oracle_summary"]["loop_cuts"] > 0
+    assert result["candidate_summary"]["loop_cuts"] == 0
+    assert result["reason"] in {None, "ssa_equal"}
+
+
 def test_dosunit_compare_ssa_matches_mapped_parts_by_entry_delta_before_index():
     oracle_function = _ssa_stub("oracle.exe:dispatch", "dispatch", ip="0x010b", linear="0x110b")
     oracle_function["id"] = "ssa-function:oracle-dispatch-delta-000b"
@@ -7142,6 +7174,209 @@ def _watcom_register_abi_mapping() -> dict[str, object]:
                 "candidate_id": "demo.exe:c_adlib_mix",
                 "candidate_name": "c_adlib_mix",
                 "candidate_entry": {"cs": "0x0000", "ip": "0x0200"},
+            }
+        ],
+    }
+
+
+def _stack_arg_loop_abi_doc(exe: str, *, function_id: str, name: str, style: str) -> dict[str, object]:
+    base = 0x2200 if style == "asm_loop" else 0x2300
+
+    def const(value: int, width: int = 16) -> dict[str, object]:
+        return {"op": "const", "value": f"0x{value & ((1 << width) - 1):0{max(1, width // 4)}x}", "width": width}
+
+    def inp(name: str, width: int = 16) -> dict[str, object]:
+        return {"op": "input", "name": name, "width": width}
+
+    def add(lhs: dict[str, object], rhs: dict[str, object], width: int = 16) -> dict[str, object]:
+        return {"op": "add", "width": width, "args": [lhs, rhs]}
+
+    def sub(lhs: dict[str, object], rhs: dict[str, object], width: int = 16) -> dict[str, object]:
+        return {"op": "sub", "width": width, "args": [lhs, rhs]}
+
+    def ne(lhs: dict[str, object], rhs: dict[str, object]) -> dict[str, object]:
+        return {"op": "ne", "width": 1, "args": [lhs, rhs]}
+
+    def ite(cond: dict[str, object], yes: int, no: int) -> dict[str, object]:
+        return {"op": "ite", "width": 16, "args": [cond, const(yes), const(no)]}
+
+    def stack_addr(offset: int) -> dict[str, object]:
+        return {
+            "op": "add",
+            "width": 32,
+            "args": [
+                {"op": "shl", "width": 32, "args": [{"op": "zext", "width": 32, "args": [inp("ss")]}, const(4, 8)]},
+                {"op": "zext", "width": 32, "args": [add(inp("sp"), const(offset))]},
+            ],
+        }
+
+    def data_addr(offset: int) -> dict[str, object]:
+        return {
+            "op": "add",
+            "width": 32,
+            "args": [
+                {"op": "shl", "width": 32, "args": [{"op": "zext", "width": 32, "args": [inp("ds")]}, const(4, 8)]},
+                const(offset, 32),
+            ],
+        }
+
+    def block(
+        *,
+        index: int,
+        delta: int,
+        jumpkind: str,
+        outputs: dict[str, object],
+        assignments: list[dict[str, object]] | None = None,
+        inputs: list[dict[str, object]] | None = None,
+        successors: list[int] | None = None,
+        text: str = "synthetic",
+    ) -> dict[str, object]:
+        linear = base + delta
+        source: dict[str, object] = {
+            "jumpkind": jumpkind,
+            "instruction_count": 1,
+            "instructions": [
+                {
+                    "address": {"ip": f"0x{linear & 0xFFFF:04x}", "linear": f"0x{linear:04x}"},
+                    "disassembly": text,
+                    "size": 1,
+                }
+            ],
+        }
+        if successors is not None:
+            source["transfer"] = {
+                "kind": "direct_successors",
+                "jumpkind": jumpkind,
+                "successors": [
+                    {"linear": f"0x{base + target:04x}", "low16": f"0x{(base + target) & 0xFFFF:04x}"}
+                    for target in successors
+                ],
+            }
+        return {
+            "id": f"ssa-function:{function_id}:part{index}",
+            "function": {"id": function_id, "name": name},
+            "part": {"kind": "block", "index": index, "entry_delta": f"0x{delta:04x}"},
+            "function_entry": {"cs": "0x0000", "ip": f"0x{base & 0xFFFF:04x}", "linear": f"0x{base:04x}"},
+            "entry": {"cs": "0x0000", "ip": f"0x{linear & 0xFFFF:04x}", "linear": f"0x{linear:04x}"},
+            "source": source,
+            "inputs": inputs or [],
+            "assignments": assignments or [],
+            "outputs": outputs,
+        }
+
+    entry_assignments = [
+        {"id": "boost", "op": "loadle", "width": 16, "args": [inp("memory", 0), stack_addr(2)]},
+        {"id": "has_cx", "op": "ne", "width": 1, "args": [inp("cx"), const(0)]},
+        {"id": "entry_ip", "op": "ite", "width": 16, "args": [{"ref": "has_cx"}, const(base + 0x0004), const(base + 0x0008)]},
+    ]
+    entry = block(
+        index=0,
+        delta=0x0000,
+        jumpkind="Ijk_Boring",
+        inputs=[
+            {"name": "memory", "kind": "memory"},
+            {"name": "cx", "width": 16},
+            {"name": "ss", "width": 16},
+            {"name": "sp", "width": 16},
+        ],
+        assignments=entry_assignments,
+        outputs={
+            "ax": {"ref": "boost"},
+            "bx": const(2),
+            "ip": {"ref": "entry_ip"},
+            "si": const(0x1111),
+            "di": const(0x2222),
+        },
+        successors=[0x0004, 0x0008],
+        text="load stack arg; branch on cx",
+    )
+    if style == "asm_loop":
+        loop_assignments = [
+            {"id": "next_ax", "op": "add", "width": 16, "args": [inp("ax"), const(1)]},
+            {"id": "next_bx", "op": "sub", "width": 16, "args": [inp("bx"), const(1)]},
+            {"id": "keep_looping", "op": "ne", "width": 1, "args": [{"ref": "next_bx"}, const(0)]},
+            {"id": "loop_ip", "op": "ite", "width": 16, "args": [{"ref": "keep_looping"}, const(base + 0x0004), const(base + 0x0008)]},
+        ]
+        middle = block(
+            index=1,
+            delta=0x0004,
+            jumpkind="Ijk_Boring",
+            inputs=[{"name": "ax", "width": 16}, {"name": "bx", "width": 16}],
+            assignments=loop_assignments,
+            outputs={"ax": {"ref": "next_ax"}, "bx": {"ref": "next_bx"}, "ip": {"ref": "loop_ip"}, "si": const(0x3333)},
+            successors=[0x0004, 0x0008],
+            text="asm counted loop",
+        )
+    elif style == "watcom_c_branch":
+        middle = block(
+            index=1,
+            delta=0x0004,
+            jumpkind="Ijk_Boring",
+            inputs=[{"name": "ax", "width": 16}],
+            outputs={"ax": add(inp("ax"), const(2)), "ip": const(base + 0x0008), "di": const(0x4444)},
+            successors=[0x0008],
+            text="c branch body adds two",
+        )
+    else:
+        raise AssertionError(f"unknown synthetic stack ABI style: {style}")
+    ret_assignments = [
+        {
+            "id": "stored",
+            "op": "storele",
+            "width": 0,
+            "args": [inp("memory", 0), data_addr(0x0450), inp("ax")],
+        }
+    ]
+    ret = block(
+        index=2,
+        delta=0x0008,
+        jumpkind="Ijk_Ret",
+        inputs=[
+            {"name": "memory", "kind": "memory"},
+            {"name": "ax", "width": 16},
+            {"name": "ds", "width": 16},
+        ],
+        assignments=ret_assignments,
+        outputs={"ax": inp("ax"), "memory": {"ref": "stored"}},
+        text="store abi-visible memory; ret",
+    )
+    return {"schema": "dosunit.ssa.v1", "exe": exe, "functions": [entry, middle, ret], "refusals": []}
+
+
+def _stack_arg_loop_abi_manifest() -> dict[str, object]:
+    return {
+        "schema": "test.stack_arg_loop_abi.v1",
+        "functions": [
+            {
+                "name": "apply_boost",
+                "oracle_id": "demo.exe:asm_apply_boost",
+                "oracle_name": "asm_apply_boost",
+                "kind": "near",
+                "calling_convention": "watcom_register_cx_stack",
+                "inputs": [{"location": "cx", "name": "enabled", "width": 16}],
+                "stack_args": [{"name": "boost", "width": 16, "entry_sp_offset": "0x0002"}],
+                "returns": [{"location": "ax", "name": "result", "width": 16}],
+                "preserved": ["bp", "ds"],
+                "clobbers": ["bx", "si", "di", "flags"],
+                "effects": [
+                    {"space": "DS", "segment": "ds", "offset": "0x0450", "size": 2, "name": "last_boosted_value"}
+                ],
+            }
+        ],
+    }
+
+
+def _stack_arg_loop_abi_mapping() -> dict[str, object]:
+    return {
+        "schema": "dosunit.mapping.v1",
+        "id": "mapping:synthetic-stack-loop",
+        "functions": [
+            {
+                "oracle_id": "demo.exe:asm_apply_boost",
+                "oracle_name": "asm_apply_boost",
+                "candidate_id": "demo.exe:c_apply_boost",
+                "candidate_name": "c_apply_boost",
+                "candidate_entry": {"cs": "0x0000", "ip": "0x2300"},
             }
         ],
     }

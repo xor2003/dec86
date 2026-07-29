@@ -1,3 +1,9 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
 import sys
@@ -12,13 +18,14 @@ def _default_recovery_timeout(configured_timeout: int, *, explicit_timeout: bool
 
 
 class _AdaptivePerByteTimeoutModel:
-    def __init__(self, configured_timeout: int, *, explicit_timeout: bool, margin: float = 1.5):
+    def __init__(self, configured_timeout: int, *, explicit_timeout: bool, margin: float = 1.5) -> None:
         self.configured_timeout = max(1, configured_timeout)
         self.explicit_timeout = explicit_timeout
         self.margin = max(1.0, float(margin))
         self._samples: list[tuple[int, float]] = []
 
     def observe_success(self, byte_count: int, elapsed: float) -> None:
+        """Record one successful recovery timing sample."""
         if byte_count <= 0 or elapsed <= 0:
             return
         self._samples.append((byte_count, float(elapsed)))
@@ -37,6 +44,7 @@ class _AdaptivePerByteTimeoutModel:
         return max(0.005, rate), max(0.0, overhead)
 
     def timeout_for_byte_count(self, byte_count: int) -> int:
+        """Return the timeout budget for a function with the given byte count."""
         base = max(1, int(self.configured_timeout))
         if self.explicit_timeout:
             return base
@@ -53,7 +61,7 @@ class _AdaptivePerByteTimeoutModel:
 
 
 def _stdout_is_interactive() -> bool:
-    stream = getattr(sys, "stdout", None)
+    stream = sys.stdout
     try:
         return bool(stream is not None and hasattr(stream, "isatty") and stream.isatty())
     except Exception:

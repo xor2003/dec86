@@ -1,5 +1,8 @@
 """Custom Textual widgets for the GDB debugger TUI.
 
+Layer: CLI/fallback/reporting.
+Responsibility: render debugger UI state without owning decompiler semantics.
+
 Each widget is a focused, single-responsibility component:
 - RegisterWidget: CPU register display with change highlighting
 - DisasmWidget: Disassembly listing with current-IP marker
@@ -12,7 +15,9 @@ Each widget is a focused, single-responsibility component:
 
 from __future__ import annotations
 
-from textual.reactive import reactive
+from typing import ClassVar
+
+from textual.reactive import Reactive, reactive
 from textual.widgets import Static
 
 # ---------------------------------------------------------------------------
@@ -23,10 +28,10 @@ from textual.widgets import Static
 class RegisterWidget(Static):
     """Display CPU registers with change highlighting."""
 
-    registers = reactive({})
-    _previous = reactive({})
+    registers: ClassVar[Reactive[dict[str, int]]] = reactive({})
+    _previous: ClassVar[Reactive[dict[str, int]]] = reactive({})
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     RegisterWidget {
         width: 100%;
         height: auto;
@@ -41,6 +46,7 @@ class RegisterWidget(Static):
     """
 
     def render(self) -> str:
+        """Render the register pane."""
         if not self.registers:
             return "[b]Registers[/b]\n  (no data)"
 
@@ -68,7 +74,9 @@ class RegisterWidget(Static):
 
         return "\n".join(lines)
 
-    def watch_registers(self, new_regs: dict) -> None:
+    def watch_registers(self, new_regs: dict[str, int]) -> None:
+        """Track prior registers before Textual updates the reactive value."""
+        del new_regs
         self._previous = dict(self.registers)
         self.refresh()
 
@@ -130,12 +138,12 @@ class RegisterWidget(Static):
 class DisasmWidget(Static):
     """Disassembly listing with current-IP highlight."""
 
-    lines = reactive([])  # list of (addr, mnemonic, operands)
-    current_ip = reactive(0)
-    cs = reactive(0)  # CS segment for display
-    addr_size = reactive(2)  # 2 for 16-bit, 4 for 32/64-bit
+    lines: ClassVar[Reactive[list[tuple[int, str, str]]]] = reactive([])
+    current_ip: ClassVar[Reactive[int]] = reactive(0)
+    cs: ClassVar[Reactive[int]] = reactive(0)
+    addr_size: ClassVar[Reactive[int]] = reactive(2)
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     DisasmWidget {
         width: 100%;
         height: 100%;
@@ -146,6 +154,7 @@ class DisasmWidget(Static):
     """
 
     def render(self) -> str:
+        """Render disassembly lines with the current instruction highlighted."""
         if not self.lines:
             return "[b]Disassembly[/b]\n  (no code)"
 
@@ -176,11 +185,11 @@ class DisasmWidget(Static):
 class MemoryWidget(Static):
     """Hex memory dump viewer."""
 
-    address = reactive(0)
-    length = reactive(64)
-    dump = reactive("")
+    address: ClassVar[Reactive[int]] = reactive(0)
+    length: ClassVar[Reactive[int]] = reactive(64)
+    dump: ClassVar[Reactive[str]] = reactive("")
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     MemoryWidget {
         width: 100%;
         height: auto;
@@ -191,6 +200,7 @@ class MemoryWidget(Static):
     """
 
     def render(self) -> str:
+        """Render the current memory dump."""
         lines = [f"[b]Memory  0x{self.address:08x}  ({self.length} bytes)[/b]"]
         if not self.dump:
             lines.append("  (empty)")
@@ -207,10 +217,10 @@ class MemoryWidget(Static):
 class StackWidget(Static):
     """Stack memory viewer."""
 
-    esp = reactive(0)
-    dump = reactive("")
+    esp: ClassVar[Reactive[int]] = reactive(0)
+    dump: ClassVar[Reactive[str]] = reactive("")
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     StackWidget {
         width: 100%;
         height: auto;
@@ -221,6 +231,7 @@ class StackWidget(Static):
     """
 
     def render(self) -> str:
+        """Render the current stack dump."""
         lines = [f"[b]Stack  ESP=0x{self.esp:08x}[/b]"]
         if not self.dump:
             lines.append("  (empty)")
@@ -237,9 +248,9 @@ class StackWidget(Static):
 class BreakpointWidget(Static):
     """Breakpoint list."""
 
-    breakpoints = reactive({})  # addr -> {"enabled": bool, "hits": int}
+    breakpoints: ClassVar[Reactive[dict[int, dict[str, bool | int]]]] = reactive({})
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     BreakpointWidget {
         width: 100%;
         height: auto;
@@ -250,6 +261,7 @@ class BreakpointWidget(Static):
     """
 
     def render(self) -> str:
+        """Render the active breakpoint list."""
         lines = ["[b]Breakpoints[/b]"]
         if not self.breakpoints:
             lines.append("  (none)")
@@ -270,9 +282,9 @@ class BreakpointWidget(Static):
 class HelperWidget(Static):
     """Current helper/signature metadata."""
 
-    helper_info = reactive({})
+    helper_info: ClassVar[Reactive[dict[str, object]]] = reactive({})
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     HelperWidget {
         width: 100%;
         height: auto;
@@ -283,6 +295,7 @@ class HelperWidget(Static):
     """
 
     def render(self) -> str:
+        """Render helper metadata for the current instruction."""
         lines = ["[b]Helpers[/b]"]
         if not self.helper_info:
             lines.append("  (no metadata)")
@@ -296,7 +309,8 @@ class HelperWidget(Static):
         address = self.helper_info.get("address")
         symbol = self.helper_info.get("symbol") or "(unknown)"
         signature = self.helper_info.get("signature")
-        notes = self.helper_info.get("notes") or ()
+        notes_raw = self.helper_info.get("notes")
+        notes = notes_raw if isinstance(notes_raw, tuple | list) else ()
 
         if isinstance(address, int):
             lines.append(f"  addr: 0x{address:08x}")
@@ -317,9 +331,9 @@ class HelperWidget(Static):
 class ConsoleWidget(Static):
     """GDB console output log."""
 
-    output = reactive("")
+    output: ClassVar[Reactive[str]] = reactive("")
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     ConsoleWidget {
         width: 100%;
         height: auto;
@@ -330,6 +344,7 @@ class ConsoleWidget(Static):
     """
 
     def render(self) -> str:
+        """Render the debugger console output."""
         return f"[b]Console[/b]\n{self.output}" if self.output else "[b]Console[/b]\n  (quiet)"
 
 

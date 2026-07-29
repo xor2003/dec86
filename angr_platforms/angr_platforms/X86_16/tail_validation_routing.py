@@ -1,7 +1,13 @@
+"""Layer: Tail Validation.
+
+Responsibility: route validation delta families to likely owning layers for diagnosis.
+Forbidden: treating routing as proof, recovery, or validation success.
+"""
+
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 __all__ = [
     "TailValidationFamilyRoute",
@@ -11,6 +17,8 @@ __all__ = [
 
 @dataclass(frozen=True)
 class TailValidationFamilyRoute:
+    """Diagnostic route from a tail-validation delta family to its likely owner."""
+
     family: str
     count: int
     function_count: int
@@ -75,10 +83,22 @@ _FAMILY_ROUTING_TABLE: dict[str, tuple[str, str, str]] = {
 }
 
 
+def _count(value: object) -> int:
+    return value if isinstance(value, int) else 0
+
+
+def _stage_names(value: object) -> tuple[str, ...]:
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        return ()
+    return tuple(item for item in value if isinstance(item, str))
+
+
 def build_tail_validation_family_routing(
     changed_families: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:
-    def _impl():
+    """Build stable owner-layer routing rows for changed validation families."""
+
+    def _impl() -> list[dict[str, object]]:
         rows: list[TailValidationFamilyRoute] = []
         for row in changed_families:
             if not isinstance(row, Mapping):
@@ -86,10 +106,9 @@ def build_tail_validation_family_routing(
             family = row.get("family")
             if not isinstance(family, str) or not family:
                 continue
-            count = int(row.get("count", 0) or 0)
-            function_count = int(row.get("function_count", 0) or 0)
-            stages_raw = row.get("stages", ()) or ()
-            stages = tuple(str(item) for item in stages_raw if isinstance(item, str))
+            count = _count(row.get("count", 0))
+            function_count = _count(row.get("function_count", 0))
+            stages = _stage_names(row.get("stages", ()))
             route = _FAMILY_ROUTING_TABLE.get(family)
             if route is None:
                 layer = _DEFAULT_ROUTE.likely_layer

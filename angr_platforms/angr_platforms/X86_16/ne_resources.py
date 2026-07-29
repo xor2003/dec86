@@ -1,3 +1,9 @@
+"""Layer: Optional evidence/reporting.
+
+Responsibility: parse NE resource tables for reporting and artifact extraction.
+Forbidden: deriving code semantics, types, or validation success from resource names.
+"""
+
 from __future__ import annotations
 
 import struct
@@ -38,6 +44,8 @@ _OS2_RESOURCE_TYPES: dict[int, tuple[str, str]] = {
 
 @dataclass(frozen=True)
 class NEResourceEntry:
+    """One NE resource table entry and its optional extracted payload bytes."""
+
     type_id: int
     type_name: str
     name: str
@@ -52,6 +60,8 @@ class NEResourceEntry:
 
 @dataclass(frozen=True)
 class NEResourceGroup:
+    """NE resources grouped by their resource type id."""
+
     type_id: int
     name: str
     entries: tuple[NEResourceEntry, ...] = ()
@@ -59,20 +69,25 @@ class NEResourceGroup:
 
 @dataclass(frozen=True)
 class NEResourceTable:
+    """Parsed NE resource metadata for reporting and artifact extraction."""
+
     kind: str
     alignment_shift: int
     groups: tuple[NEResourceGroup, ...] = ()
 
     @property
     def flat_entries(self) -> tuple[NEResourceEntry, ...]:
+        """Return every parsed resource entry in table order."""
         return tuple(entry for group in self.groups for entry in group.entries)
 
 
 def parse_ne_resources(path: Path) -> NEResourceTable | None:
+    """Parse an NE resource table from an executable path, if present."""
     return parse_ne_resources_bytes(path.read_bytes())
 
 
 def parse_ne_resources_bytes(data: bytes) -> NEResourceTable | None:
+    """Parse Win16 or OS/2 NE resource metadata from executable bytes."""
     if len(data) < 0x40 or data[:2] != b"MZ":
         return None
     ne_offset = int.from_bytes(data[0x3C:0x40], "little")

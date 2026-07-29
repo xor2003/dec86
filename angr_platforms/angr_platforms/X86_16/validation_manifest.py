@@ -1,3 +1,9 @@
+"""Layer: Validation.
+
+Responsibility: declare validation lanes and families that keep checks explicit and repeatable.
+Forbidden: hiding failures, fallback identities, uncollected results, or timeouts.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,21 +13,25 @@ from .structuring_grouping_report import describe_x86_16_structuring_grouping_re
 from .validation_helper_report import describe_x86_16_validation_helper_report_surface
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ValidationLayerSpec:
+    """Describe one validation tier and the checks that normally cover it."""
+
     name: str
     purpose: str
     default_checks: tuple[str, ...]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ValidationFamilySpec:
+    """Describe one validation family and its default regression checks."""
+
     name: str
     purpose: str
     default_checks: tuple[str, ...]
 
 
-VALIDATION_LAYERS = (
+VALIDATION_LAYERS: tuple[ValidationLayerSpec, ...] = (
     ValidationLayerSpec(
         name="unit",
         purpose="Keep alias, widening, and low-level recovery helpers individually safe.",
@@ -57,7 +67,7 @@ VALIDATION_LAYERS = (
 )
 
 
-VALIDATION_FAMILIES = (
+VALIDATION_FAMILIES: tuple[ValidationFamilySpec, ...] = (
     ValidationFamilySpec(
         name="addressing",
         purpose="Keep effective-address, far-pointer, and width-matrix behavior explicit.",
@@ -115,6 +125,9 @@ VALIDATION_FAMILIES = (
         purpose="Keep changed, unknown, and uncollected PROC identities attributable in summaries and artifacts.",
         default_checks=(
             "tests/test_x86_16_tail_validation.py",
+            "tests/test_x86_16_validation_calls.py",
+            "tests/test_x86_16_validation_dataflow.py",
+            "tests/test_x86_16_validation_storage.py",
             "tests/test_x86_16_milestone_report.py",
             "tests/test_x86_16_corpus_scan.py",
             "tests/test_decompile_cod_dir_parallelism.py",
@@ -146,6 +159,7 @@ VALIDATION_FAMILIES = (
             "tests/test_x86_16_segmented_memory.py",
             "tests/test_x86_16_storage_domain_alias.py",
             "tests/test_x86_16_tail_validation.py",
+            "tests/test_x86_16_validation_storage.py",
         ),
     ),
     ValidationFamilySpec(
@@ -154,6 +168,7 @@ VALIDATION_FAMILIES = (
         default_checks=(
             "tests/test_x86_16_type_equivalence_classes.py",
             "tests/test_x86_16_stack_prototype_promotion.py",
+            "tests/test_x86_16_callsite_prototype_declarations.py",
         ),
     ),
     ValidationFamilySpec(
@@ -169,14 +184,17 @@ VALIDATION_FAMILIES = (
 
 
 def describe_x86_16_validation_layers() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Return validation layer names with their default check surfaces."""
     return tuple((layer.name, layer.default_checks) for layer in VALIDATION_LAYERS)
 
 
 def describe_x86_16_validation_families() -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Return validation family names with their default check surfaces."""
     return tuple((family.name, family.default_checks) for family in VALIDATION_FAMILIES)
 
 
 def describe_x86_16_validation_triage() -> dict[str, object]:
+    """Return the validation triage contract used by reports and tests."""
     return {
         "reference_role": "secondary semantic reference",
         "target_families": (

@@ -1,9 +1,10 @@
-from __future__ import annotations
-
-"""Layer: Quality measurement (cross-cutting diagnostics).
+"""Layer: Recovery/reporting.
 
 Responsibility: measure decompilation quality with VEX/tmp leakage metrics.
-Forbidden: semantic recovery, postprocess cleanup ownership."""
+Forbidden: semantic recovery, postprocess cleanup ownership, or validation acceptance.
+"""
+
+from __future__ import annotations
 
 import re
 from collections.abc import Mapping
@@ -44,6 +45,7 @@ class X86_16QualityMetrics:
         typed_condition_count: int = 0,
         named_local_count: int = 0,
     ) -> None:
+        """Initialize a deterministic quality metric row for one function."""
         self.function_name = function_name
         self.function_addr = function_addr
         self.tmp_condition_count = tmp_condition_count
@@ -55,6 +57,7 @@ class X86_16QualityMetrics:
         self.named_local_count = named_local_count
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-compatible metric payload."""
         return {
             "function_name": self.function_name,
             "function_addr": self.function_addr,
@@ -69,6 +72,7 @@ class X86_16QualityMetrics:
 
     @property
     def total_bad_patterns(self) -> int:
+        """Return the total count of emitted-C patterns that lower quality."""
         return (
             self.tmp_condition_count
             + self.raw_flag_condition_count
@@ -78,6 +82,7 @@ class X86_16QualityMetrics:
 
     @property
     def quality_score(self) -> float:
+        """Return the bounded quality score derived from bad-pattern counters."""
         penalty = self.total_bad_patterns * 0.1 + self.validation_uncollected_count * 0.5
         penalty = min(penalty, 0.95)
         return round(1.0 - penalty, 3)
@@ -88,6 +93,16 @@ _RAW_FLAG_RE = re.compile(r"\b(flags|eflags)\b", re.IGNORECASE)
 _RAW_SS_EXPR_RE = re.compile(r"\(\(ss\s*<<\s*4\)\s*\+", re.IGNORECASE)
 _CMP_NE_RE = re.compile(r"CmpNE\(", re.IGNORECASE)
 _CMP_EQ_RE = re.compile(r"CmpEQ\(", re.IGNORECASE)
+
+
+def _int_field(aggregate: Mapping[str, object], name: str) -> int:
+    value = aggregate.get(name, 0)
+    return value if isinstance(value, int) else 0
+
+
+def _float_field(aggregate: Mapping[str, object], name: str) -> float:
+    value = aggregate.get(name, 0.0)
+    return value if isinstance(value, float) else 0.0
 
 
 def measure_x86_16_codegen_quality_8616(
@@ -151,17 +166,17 @@ def measure_x86_16_function_quality_8616(
 
 def format_x86_16_quality_report_8616(aggregate: Mapping[str, object]) -> str:
     """Format an aggregate quality report as a human-readable string."""
-    total = int(aggregate.get("function_count", 0))
+    total = _int_field(aggregate, "function_count")
     lines: list[str] = [
         f"Quality Report ({total} functions)",
         "=" * 40,
-        f"  tmp conditions:          {aggregate.get('total_tmp_conditions', 0)}",
-        f"  raw flag conditions:     {aggregate.get('total_raw_flag_conditions', 0)}",
-        f"  raw ss linear exprs:     {aggregate.get('total_raw_ss_linear_exprs', 0)}",
-        f"  asm fallbacks:           {aggregate.get('total_asm_fallbacks', 0)}",
-        f"  validation uncollected:  {aggregate.get('total_validation_uncollected', 0)}",
-        f"  typed conditions:        {aggregate.get('total_typed_conditions', 0)}",
-        f"  named locals:            {aggregate.get('total_named_locals', 0)}",
-        f"  avg quality score:       {aggregate.get('avg_quality_score', 0.0)}",
+        f"  tmp conditions:          {_int_field(aggregate, 'total_tmp_conditions')}",
+        f"  raw flag conditions:     {_int_field(aggregate, 'total_raw_flag_conditions')}",
+        f"  raw ss linear exprs:     {_int_field(aggregate, 'total_raw_ss_linear_exprs')}",
+        f"  asm fallbacks:           {_int_field(aggregate, 'total_asm_fallbacks')}",
+        f"  validation uncollected:  {_int_field(aggregate, 'total_validation_uncollected')}",
+        f"  typed conditions:        {_int_field(aggregate, 'total_typed_conditions')}",
+        f"  named locals:            {_int_field(aggregate, 'total_named_locals')}",
+        f"  avg quality score:       {_float_field(aggregate, 'avg_quality_score')}",
     ]
     return "\n".join(lines)

@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Build compiler/library signature catalogs as optional decompiler evidence.
+
+Layer: Tooling/gates.
+Responsibility: build optional signature catalogs without making signatures semantic proof.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -9,8 +15,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from inertia_decompiler.flair_paths import flair_signature_root
-from signature_catalog import build_signature_catalog
+from inertia_decompiler.flair_paths import flair_signature_root  # noqa: E402
+from signature_catalog import build_signature_catalog  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

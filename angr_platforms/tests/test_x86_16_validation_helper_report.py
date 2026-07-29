@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 from angr_platforms.X86_16.validation_helper_report import (
     build_x86_16_validation_helper_report,
     describe_x86_16_validation_helper_report_surface,
 )
 
 
-def test_validation_helper_report_reuses_recovery_confidence_rows():
+def test_validation_helper_report_reuses_recovery_confidence_rows() -> None:
     report = build_x86_16_validation_helper_report(
         [
             {
@@ -40,7 +42,7 @@ def test_validation_helper_report_reuses_recovery_confidence_rows():
     )
 
 
-def test_validation_helper_report_surface_is_deterministic():
+def test_validation_helper_report_surface_is_deterministic() -> None:
     assert describe_x86_16_validation_helper_report_surface() == {
         "consumer": "validation_helper_report",
         "producer": "summarize_recovery_confidence",

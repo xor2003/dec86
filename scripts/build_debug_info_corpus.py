@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Build debug-info corpus fixtures for decompiler evidence validation.
+
+Layer: Tooling/gates.
+Responsibility: build optional debug-info fixtures for validation without changing recovery semantics.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -18,9 +24,9 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "angr_platforms"))
 logging.getLogger("angr.state_plugins.unicorn_engine").disabled = True
 
-from angr_platforms.X86_16.codeview_nb00 import parse_codeview_nb00
-from angr_platforms.X86_16.codeview_nb02_nb04 import parse_codeview_nb0204
-from angr_platforms.X86_16.turbo_debug_tdinfo import parse_tdinfo_exe
+from angr_platforms.X86_16.codeview_nb00 import parse_codeview_nb00  # noqa: E402
+from angr_platforms.X86_16.codeview_nb02_nb04 import parse_codeview_nb0204  # noqa: E402
+from angr_platforms.X86_16.turbo_debug_tdinfo import parse_tdinfo_exe  # noqa: E402
 
 DEFAULT_KVIKDOS = Path("/home/xor/kvikdos/kvikdos")
 DEFAULT_DOSBOX = Path("/usr/bin/dosbox") if Path("/usr/bin/dosbox").exists() else Path("/opt/dosbox-staging/dosbox")

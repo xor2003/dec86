@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Run the legacy plan-3 check bundle as a developer convenience.
+
+Layer: Tooling/gates.
+Responsibility: preserve the legacy plan-3 developer check bundle outside the regular fast gate.
+"""
+
 from __future__ import annotations
 
 import argparse

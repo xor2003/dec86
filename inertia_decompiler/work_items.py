@@ -1,3 +1,9 @@
+"""Define queued decompilation work items and per-item reporting state.
+
+Layer: CLI/fallback/reporting.
+Responsibility: carry decompiler work-item status and reporting snapshots without owning semantic recovery.
+"""
+
 from __future__ import annotations
 
 import os
@@ -17,7 +23,10 @@ from inertia_decompiler.tail_validation import (
 
 
 class WorkItemStatus(StrEnum):
+    """Typed status for a single decompiler work item."""
+
     OK = "ok"
+    ERROR = "error"
     VALIDATION_FAILED = "validation_failed"
     UNKNOWN = "unknown"
     UNCOLLECTED = "uncollected"
@@ -26,6 +35,8 @@ class WorkItemStatus(StrEnum):
 
 
 class TailValidationDisplayOutcome(StrEnum):
+    """Typed display status normalized from tail-validation snapshots."""
+
     PASSED = "passed"
     FAILED = "failed"
     CHANGED = "changed"
@@ -86,6 +97,8 @@ def _visible_source_format(source_format: str | None) -> str:
 
 @dataclass(frozen=True)
 class FunctionDecompileTask:
+    """Inputs needed to decompile one discovered function."""
+
     index: int
     cfg: object
     function: object
@@ -93,6 +106,8 @@ class FunctionDecompileTask:
 
 @dataclass(frozen=True)
 class FunctionDecompileResult:
+    """Raw result produced by one function decompilation attempt."""
+
     index: int
     status: str
     payload: str
@@ -102,13 +117,22 @@ class FunctionDecompileResult:
 
 @dataclass(frozen=True)
 class FunctionWorkItem:
+    """Queue entry used by CLI recovery, decompilation, and fallback reporting.
+
+    ``recovery_addr`` preserves the requested binary/catalog boundary when an
+    angr function canonicalizes its active address past padding or a prefix.
+    """
+
     index: int
     function_cfg: object
     function: object
+    recovery_addr: int | None = None
 
 
 @dataclass(frozen=True)
 class FunctionWorkResult:
+    """Reported result for a function work item."""
+
     index: int
     status: str
     payload: str
@@ -130,13 +154,14 @@ class FunctionWorkResult:
 
 
 def emit_tail_validation_for_function_run_or_uncollected(
-    project,
-    function_cfg,
-    function,
+    project: object,
+    function_cfg: object,
+    function: object,
     *,
     allow_project_fallback: bool = True,
     binary_path: Path | None = None,
 ) -> None:
+    """Emit a tail-validation line or an explicit uncollected result for one function."""
     if not tail_validation_runtime_enabled(project):
         return
     snapshot = tail_validation_snapshot_for_fallback(
@@ -163,12 +188,14 @@ def emit_tail_validation_for_function_run_or_uncollected(
 
 
 def emit_tail_validation_snapshot_or_uncollected(
-    function_cfg,
-    function,
+    function_cfg: object,
+    function: object,
     snapshot: Mapping[str, object] | None,
     *,
     binary_path: Path | None = None,
 ) -> None:
+    """Emit an existing tail-validation snapshot or an uncollected placeholder."""
+    # Dynamic angr boundary: Function objects expose project through angr-managed attributes.
     project = getattr(function, "project", None)
     if project is not None and not tail_validation_runtime_enabled(project):
         return
@@ -192,6 +219,7 @@ def emit_tail_validation_snapshot_or_uncollected(
 
 
 def function_attempt_display_status(result: FunctionWorkResult) -> str:
+    """Return the compact display status for one work result."""
     result_status = _work_item_status_display(result.status)
     if result_status == WorkItemStatus.OK:
         return "decompiled"
@@ -205,26 +233,34 @@ def function_attempt_display_status(result: FunctionWorkResult) -> str:
 
 
 def print_function_attempt_status(
-    function,
+    function: object,
     *,
     attempt: str,
     validation_snapshot: Mapping[str, object] | None,
 ) -> None:
+    """Print one diagnostic line for a function attempt."""
+    # Dynamic angr boundary: Function exposes project/addr/name through angr-managed attributes.
     project = getattr(function, "project", None)
     validation_status = (
         TailValidationDisplayOutcome.UNCOLLECTED.value
         if project is not None and not tail_validation_runtime_enabled(project)
         else tail_validation_display_status(validation_snapshot)
     )
+    # Dynamic angr boundary: Function exposes addr/name through angr-managed attributes.
+    function_addr = getattr(function, "addr", 0)
+    # Dynamic angr boundary: Function exposes addr/name through angr-managed attributes.
+    function_name = getattr(function, "name", "sub")
     _diagnostic_print(
-        f"/* info: function {getattr(function, 'addr', 0):#x} {getattr(function, 'name', 'sub')} "
+        f"/* info: function {function_addr:#x} {function_name} "
         f"attempt={attempt} validation={validation_status} */"
     )
 
 
-def recovery_evidence_line(binary_path: Path, metadata) -> str:
+def recovery_evidence_line(binary_path: Path, metadata: object) -> str:
+    """Return the CLI evidence banner for sidecar/debug metadata availability."""
     if metadata is None:
         return "/* info: recovery evidence: pure binary recovery mode (no helper metadata/debug info found) */"
+    # Dynamic sidecar compatibility boundary: callers may pass legacy metadata carriers.
     source_format = _visible_source_format(getattr(metadata, "source_format", None))
     source_parts = tuple(part for part in source_format.split("+") if part)
     debug_markers = ("codeview", "turbo_debug", "tdinfo", "debug")

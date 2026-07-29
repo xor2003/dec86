@@ -1,5 +1,8 @@
 """Structuring diagnostics and failure classification.
 
+Layer: Structuring.
+Responsibility: classify structuring failures and attach diagnostic metadata without changing output.
+
 Tracks structuring failures with detailed root-cause classification
 and provides recovery hints for debugging.
 
@@ -15,9 +18,10 @@ Failure Reasons:
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Optional, Protocol, runtime_checkable
 
 from .codegen_metadata import get_codegen_side_metadata
 from .structuring_cfg_grouping import CFGGroupingArtifact, build_cfg_grouping_artifact
@@ -47,6 +51,30 @@ class StructuringFailureReason(Enum):
     UNSUPPORTED_PATTERN = "unsupported_pattern"
     RESOURCE_LIMIT = "resource_limit"
     UNKNOWN = "unknown"
+
+
+@runtime_checkable
+class _StructuringFailureStatsLike8616(Protocol):
+    """Structural view of fields needed to classify structuring failure."""
+
+    iterations: int
+    regions_reduced: int
+    max_iterations_reached: bool
+
+
+@runtime_checkable
+class _StructuringHintStatsLike8616(_StructuringFailureStatsLike8616, Protocol):
+    """Structural view of fields needed to emit structuring recovery hints."""
+
+    cycles_resolved: int
+    had_unstructured_gotos: bool
+
+
+@runtime_checkable
+class _CodegenWithCfuncLike8616(Protocol):
+    """Structural codegen surface for optional structuring diagnostics."""
+
+    cfunc: object
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,13 +210,14 @@ class StructuringDiagnosticsReport:
 
     def to_dict(self) -> dict[str, object]:
         """Convert to dictionary representation."""
+        failure_reason = self.last_failure_reason()
         return {
             "func_addr": hex(self.func_addr),
             "func_name": self.func_name,
             "succeeded": self.succeeded,
             "final_iteration": self.final_iteration,
             "max_iterations": self.max_iterations,
-            "failure_reason": self.last_failure_reason().value if self.last_failure_reason() else None,
+            "failure_reason": failure_reason.value if failure_reason is not None else None,
             "diagnostics": self.diagnostics_collector.to_dict(),
             "recovery_hints": self.recovery_hints,
             "cfg_snapshot": self.cfg_snapshot.to_dict() if self.cfg_snapshot else None,
@@ -208,18 +237,14 @@ def build_failure_reason_from_stats(stats: object) -> Optional[StructuringFailur
     Returns:
         Classified failure reason, or None if no failure
     """
-    if not hasattr(stats, "max_iterations_reached"):
+    if not isinstance(stats, _StructuringFailureStatsLike8616):
         return None
 
-    max_iter_reached = getattr(stats, "max_iterations_reached", False)
-    iterations = getattr(stats, "iterations", 0)
-
-    if max_iter_reached:
+    if stats.max_iterations_reached:
         return StructuringFailureReason.MAX_ITERATIONS
 
     # Check if we made progress
-    reduced = getattr(stats, "regions_reduced", 0)
-    if iterations > 100 and reduced == 0:
+    if stats.iterations > 100 and stats.regions_reduced == 0:
         return StructuringFailureReason.NO_PROGRESS
 
     return None
@@ -237,23 +262,22 @@ def suggest_recovery_hints(stats: object, region_ids: tuple[int, ...] = ()) -> l
     """
     hints = []
 
-    iterations = getattr(stats, "iterations", 0)
-    reduced = getattr(stats, "regions_reduced", 0)
-    cycles = getattr(stats, "cycles_resolved", 0)
+    if not isinstance(stats, _StructuringHintStatsLike8616):
+        return ["Unknown reason for failure: check decompiler logs for details"]
 
-    if getattr(stats, "max_iterations_reached", False):
-        hints.append(f"Reached iteration limit ({iterations}): CFG is complex or contains unsupported patterns")
+    if stats.max_iterations_reached:
+        hints.append(f"Reached iteration limit ({stats.iterations}): CFG is complex or contains unsupported patterns")
         hints.append("Try: checking for indirect jumps, tail calls, or exception handling not yet supported")
 
-    if iterations > 100 and reduced < 5:
-        hints.append(f"Very slow progress: only {reduced} regions reduced in {iterations} iterations")
+    if stats.iterations > 100 and stats.regions_reduced < 5:
+        hints.append(f"Very slow progress: only {stats.regions_reduced} regions reduced in {stats.iterations} iterations")
         hints.append("Try: looking for cyclic patterns with mixed entry/exit points")
 
-    if cycles == 0 and iterations > 50:
+    if stats.cycles_resolved == 0 and stats.iterations > 50:
         hints.append("No cyclic patterns found despite many iterations: loops may use uncommon patterns")
         hints.append("Try: checking for breaks/continues as separate regions")
 
-    if getattr(stats, "had_unstructured_gotos", False):
+    if stats.had_unstructured_gotos:
         hints.append("Result contains unstructured gotos: some regions could not be matched to patterns")
         hints.append("Try: adding support for fallback structuring or emitting diagnostic markers in output")
 
@@ -266,29 +290,19 @@ def suggest_recovery_hints(stats: object, region_ids: tuple[int, ...] = ()) -> l
     return hints
 
 
-def apply_x86_16_structuring_diagnostics(codegen) -> bool:
-    def _impl():
-        """Decompiler pass: Attach structuring diagnostics to functions.
+def apply_x86_16_structuring_diagnostics(codegen: object) -> bool:
+    """Attach diagnostics metadata at the angr/codegen dynamic boundary without changing structuring."""
 
-        This pass:
-        1. Collects diagnostics from structuring analysis
-        2. Classifies failure reasons (if any)
-        3. Generates recovery hints for diagnostics output
-        4. Attaches metadata to decompiled functions
-
-        Args:
-            codegen: Decompiler code generator
-
-        Returns:
-            True if pass succeeded (even if structuring itself failed)
-        """
+    def _impl() -> bool:
         try:
             # Handle missing or empty cfunc gracefully
-            if not hasattr(codegen, "cfunc") or not codegen.cfunc:
-                return True
+            if not isinstance(codegen, _CodegenWithCfuncLike8616) or not codegen.cfunc:
+                return False
 
             cfunc = codegen.cfunc
+            # Dynamic codegen boundary: angr cfunc objects expose addresses without an owned protocol.
             func_addr = getattr(cfunc, "addr", 0)
+            # Dynamic codegen boundary: angr cfunc objects expose optional display names.
             func_name = getattr(cfunc, "name", f"func_{hex(func_addr)}")
 
             # Check if structuring info is available
@@ -296,11 +310,11 @@ def apply_x86_16_structuring_diagnostics(codegen) -> bool:
             final_iteration = 0
             structuring_stats = None
 
-            if hasattr(cfunc, "_structuring_stats"):
-                structuring_stats = cfunc._structuring_stats
-                final_iteration = getattr(structuring_stats, "iterations", 0)
-                max_iter_reached = getattr(structuring_stats, "max_iterations_reached", False)
-                succeeded = not max_iter_reached
+            # Dynamic codegen boundary: angr cfunc metadata may carry this optional compatibility field.
+            structuring_stats = getattr(cfunc, "_structuring_stats", None)
+            if isinstance(structuring_stats, _StructuringFailureStatsLike8616):
+                final_iteration = structuring_stats.iterations
+                succeeded = not structuring_stats.max_iterations_reached
 
             # Build diagnostics collector
             collector = DiagnosticsCollector(max_iterations=1000)
@@ -364,15 +378,17 @@ def apply_x86_16_structuring_diagnostics(codegen) -> bool:
             metadata = get_codegen_side_metadata(codegen)
             metadata["structuring_diagnostics"] = report
             try:
+                # Dynamic codegen boundary: read optional recovery metadata from an angr cfunc object.
                 cfunc_metadata = getattr(cfunc, "_recovery_metadata", None)
                 if not isinstance(cfunc_metadata, dict):
                     cfunc_metadata = {}
-                    cfunc._recovery_metadata = cfunc_metadata
+                    # Dynamic codegen boundary: attach optional recovery metadata to an angr cfunc object.
+                    typing.cast(typing.Any, cfunc)._recovery_metadata = cfunc_metadata
                 cfunc_metadata["structuring_diagnostics"] = report
             except Exception:
                 pass
 
-            return True
+            return False
 
         except Exception:
             pass

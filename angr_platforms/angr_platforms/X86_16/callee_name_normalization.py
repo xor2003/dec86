@@ -1,3 +1,9 @@
+"""Layer: Recovery metadata.
+
+Responsibility: normalize recovered callee labels for comparison and reporting.
+Forbidden: treating names as semantic proof or synthesizing missing callees.
+"""
+
 from __future__ import annotations
 
 import re
@@ -9,6 +15,7 @@ _CALLEE_NAMESPACE_RE_8616 = re.compile(r"^::0x[0-9a-fA-F]+::(?P<name>[A-Za-z_]\w
 
 
 def normalize_callee_name_8616(name: str | None) -> str | None:
+    """Return a comparison/reporting label without treating it as proof."""
     if not isinstance(name, str):
         return None
     normalized = name.strip()

@@ -1,3 +1,9 @@
+"""Load angr projects and binary bytes for CLI orchestration.
+
+Layer: CLI/fallback/reporting.
+Responsibility: construct angr project objects and binary byte views without owning semantic recovery.
+"""
+
 from __future__ import annotations
 
 import io
@@ -8,6 +14,7 @@ import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import Protocol, cast
 
 import angr
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -41,9 +48,30 @@ def _finalize_x86_16_project(project: angr.Project) -> angr.Project:
     return project
 
 
+def _find_sidecar_file(binary: Path, suffix: str) -> Path | None:
+    direct = binary.with_suffix(suffix)
+    if direct.exists():
+        return direct
+    direct_appended = binary.with_name(f"{binary.name}{suffix}")
+    if direct_appended.exists():
+        return direct_appended
+    try:
+        siblings = binary.parent.iterdir()
+    except OSError:
+        return None
+    wanted = binary.name.lower() + suffix.lower()
+    for sibling in siblings:
+        if sibling.name.lower() == wanted:
+            return sibling
+    return None
+
+
 def _probe_ida_base_linear(binary: Path, fallback_linear: int) -> int:
     try:
-        with binary.with_suffix(".lst").open("r", encoding="utf-8", errors="ignore") as fp:
+        lst_path = _find_sidecar_file(binary, ".lst")
+        if lst_path is None:
+            return fallback_linear
+        with lst_path.open("r", encoding="utf-8", errors="ignore") as fp:
             for _ in range(64):
                 line = fp.readline()
                 if not line:
@@ -99,8 +127,12 @@ class _UnpackedLZEXEImage:
     entry_point: int
 
 
+class _PackedProjectMarker(Protocol):
+    _inertia_packed_exe: str
+
+
 class _LZEXEBitStream:
-    def __init__(self, data: bytes, offset: int):
+    def __init__(self, data: bytes, offset: int) -> None:
         self._data = data
         self._pos = offset
         self._count = 0
@@ -113,6 +145,7 @@ class _LZEXEBitStream:
         self._pos += 2
 
     def bit(self) -> int:
+        """Read one low-order bit from the packed LZEXE stream."""
         value = self._buffer & 1
         self._buffer >>= 1
         self._count -= 1
@@ -121,13 +154,14 @@ class _LZEXEBitStream:
         return value
 
     def byte(self) -> int:
+        """Read one literal byte from the packed LZEXE stream."""
         value = self._data[self._pos]
         self._pos += 1
         return value
 
 
 def _unpack_lzexe_image(data: bytes, *, base_addr: int) -> _UnpackedLZEXEImage:
-    def _impl():
+    def _impl() -> _UnpackedLZEXEImage:
         if len(data) < 0x40 or data[:2] != b"MZ":
             raise ValueError("Not a DOS MZ executable.")
         signature = data[0x1C:0x20]
@@ -207,7 +241,7 @@ def _unpack_lzexe_image(data: bytes, *, base_addr: int) -> _UnpackedLZEXEImage:
 
 @trace_function(name="project.build")
 def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point: int) -> angr.Project:
-    def _impl():
+    def _impl() -> angr.Project:
         suffix = path.suffix.lower()
 
         _debug_print(f"[dbg] build_project: path={path} suffix={suffix} force_blob={force_blob}")
@@ -254,7 +288,8 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
                 },
                 simos="DOS",
             )
-            project._inertia_packed_exe = packed_exe
+            packed_project = cast(_PackedProjectMarker, project)
+            packed_project._inertia_packed_exe = packed_exe
             _debug_print(f"[dbg] unpacked {packed_exe}: entry={hex(unpacked.entry_point)} size={len(unpacked.code)}")
             return _finalize_x86_16_project(project)
 

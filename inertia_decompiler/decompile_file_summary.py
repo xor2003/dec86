@@ -1,3 +1,9 @@
+"""Emit file-level decompilation summaries for diagnostics and reporting.
+
+Layer: CLI/fallback/reporting.
+Responsibility: print reporting-only file summaries without changing decompiler semantics.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path, PureWindowsPath
@@ -9,8 +15,8 @@ def _summary_comment(text: str) -> str:
 
 
 def emit_file_decompilation_summary(
-    project,
-    metadata,
+    project: object,
+    metadata: object | None,
     *,
     shown_total: int,
     decompiled: int,
@@ -23,12 +29,14 @@ def emit_file_decompilation_summary(
     dead_setup_refused: int = 0,
     dead_setup_escaped: int = 0,
 ) -> None:
+    """Print one reporting-only summary block for a decompilation run."""
     compiler_versions = _compiler_versions(project)
     if compiler_versions:
         print(_summary_comment(f"probable compiler versions: {', '.join(compiler_versions[:4])}"))
     signature_sources = _signature_sources(project)
     if signature_sources:
         print(_summary_comment(f"probable library/signature sources: {', '.join(signature_sources[:4])}"))
+    # dynamic compatibility boundary: sidecar metadata may expose optional legacy fields.
     signature_code_addrs = len(getattr(metadata, "signature_code_addrs", ())) if metadata is not None else 0
     if signature_code_addrs:
         print(_summary_comment(f"signature-matched library functions: {signature_code_addrs}"))
@@ -50,7 +58,8 @@ def emit_file_decompilation_summary(
     print(_summary_comment(f"shown={shown_total} decompiled={decompiled} asm_or_detail_fallback={failed}"))
 
 
-def _compiler_versions(project) -> list[str]:
+def _compiler_versions(project: object) -> list[str]:
+    # dynamic compatibility boundary: project carries optional reporting attributes.
     raw = getattr(project, "_inertia_signature_compiler_names", ())
     filtered: list[str] = []
     for name in raw:
@@ -61,8 +70,9 @@ def _compiler_versions(project) -> list[str]:
     return _stable_unique_sorted(filtered)
 
 
-def _signature_sources(project) -> list[str]:
+def _signature_sources(project: object) -> list[str]:
     values: list[str] = []
+    # dynamic compatibility boundary: project carries optional reporting attributes.
     values.extend(_normalize_source_names(getattr(project, "_inertia_flair_sig_titles", ())))
     return _stable_unique_sorted(values)
 

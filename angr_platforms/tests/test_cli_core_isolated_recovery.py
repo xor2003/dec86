@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 from angr_platforms.X86_16.lst_extract import LSTMetadata
@@ -42,53 +43,6 @@ def test_isolated_project_recovery_target_handles_relative_image_size():
     assert image_end == 0x14001
 
 
-def test_call_order_gate_ignores_inactive_selftest_source_branch():
-    emitted = """
-/// int main(void)
-/// {
-/// #if defined(SORTDEMO_FUNCTION_SELFTEST)
-///     return sortdemo_function_selftest();
-/// #else
-///     InitBars();
-///     InitMenu();
-///     RunMenu();
-/// #endif
-/// }
-int main(void)
-{
-    InitBars();
-    InitMenu();
-    RunMenu();
-    return 0;
-}
-"""
-
-    assert cli_core._expected_call_order_from_original_8616(emitted) == ["InitBars", "InitMenu", "RunMenu"]
-    assert cli_core._call_order_gate_violations_8616(emitted) == []
-
-
-def test_call_order_gate_ignores_inactive_os2_source_branch_for_dos_target():
-    emitted = """
-/// void Beep(int frequency, int duration)
-/// {
-/// #if defined( OS2 )
-///     DosBeep( frequency, duration );
-/// #else
-///     outp( 0x43, 0xb6 );
-///     Sleep( (clock_t)duration );
-/// #endif
-/// }
-void Beep(int frequency, int duration)
-{
-    outp(0x43, 0xb6);
-    Sleep(duration);
-}
-"""
-
-    assert cli_core._expected_call_order_from_original_8616(emitted) == ["outp", "Sleep"]
-    assert cli_core._call_order_gate_violations_8616(emitted) == []
-
-
 def test_preserve_source_label_uses_original_addr_for_rebased_slice():
     source = SimpleNamespace(addr=0x1000, name="main", info={})
     recovered = SimpleNamespace(addr=0x10010, name="sub_10010", info={})
@@ -114,3 +68,35 @@ def test_attach_lst_metadata_to_project_populates_fresh_project_labels():
     assert project.kb.labels[0x10010] == "main"
     assert project.kb.labels[0x12A29] == "settextrows"
     assert project.kb.labels[0x1BA2] == "cRow"
+
+
+def test_sidecar_slice_tail_validation_summary_uses_slice_snapshot(monkeypatch):
+    captured = {}
+
+    def fake_emit(function_cfg, function, snapshot, *, binary_path):
+        captured["function_cfg"] = function_cfg
+        captured["function"] = function
+        captured["snapshot"] = snapshot
+        captured["binary_path"] = binary_path
+
+    monkeypatch.setattr(cli_core, "_emit_tail_validation_snapshot_or_uncollected", fake_emit)
+    cfg = SimpleNamespace(name="cfg")
+    function = SimpleNamespace(name="BubbleSort")
+    snapshot = {
+        "structuring": {"status": "passed"},
+        "postprocess": {"status": "passed"},
+    }
+
+    cli_core._emit_sidecar_slice_tail_validation_snapshot_8616(
+        cfg,
+        function,
+        snapshot,
+        binary_path=Path("SORTDEMO.EXE"),
+    )
+
+    assert captured == {
+        "function_cfg": cfg,
+        "function": function,
+        "snapshot": snapshot,
+        "binary_path": Path("SORTDEMO.EXE"),
+    }

@@ -1,3 +1,9 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: cache recovery artifacts by validation-style content descriptors.
+Forbidden: treating cache hits as semantic proof or validation success.
+"""
+
 from __future__ import annotations
 
 import json
@@ -18,6 +24,7 @@ def cache_x86_16_recovery_artifact(
     *,
     cache_path: str | Path | None,
 ) -> dict[str, object]:
+    """Return a stable cache entry for a recovery artifact payload."""
     descriptor = build_x86_16_validation_cache_descriptor(namespace, artifact)
     payload = {
         "cache_key": descriptor.cache_key,
@@ -59,6 +66,7 @@ def cache_x86_16_recovery_artifact(
 
 
 def describe_x86_16_recovery_artifact_cache_surface() -> dict[str, object]:
+    """Describe the deterministic recovery-artifact cache contract."""
     return {
         "namespace_family": "recovery_artifact.*",
         "artifact_fields": (

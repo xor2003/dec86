@@ -1,3 +1,9 @@
+"""Classify library-like function names for reporting and filtering policy.
+
+Layer: CLI/fallback/reporting.
+Responsibility: classify optional library labels for reporting without proving function semantics.
+"""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -5,8 +11,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Mapping
 
+from angr_platforms.X86_16.lst_extract import LSTMetadata
+
 
 class LibraryFunctionClass(Enum):
+    """Reporting-only classification for labels that may be hidden as library code."""
+
     USER_SOURCE_PROC = "user_source_proc"
     USER_UNCLASSIFIED = "user_unclassified"
     IMPORT_STUB = "import_stub"
@@ -29,12 +39,15 @@ _LIBRARY_CLASSES = frozenset(
 
 @dataclass(frozen=True)
 class LibraryLabelFilterResult:
+    """Filtered labels plus per-label reporting decisions."""
+
     labels: dict[int, str]
     decisions: dict[int, LibraryFunctionClass]
     skipped_by_class: Mapping[LibraryFunctionClass, int]
 
     @property
     def skipped_count(self) -> int:
+        """Return the number of labels hidden by library-filter policy."""
         return sum(self.skipped_by_class.values())
 
 
@@ -167,10 +180,12 @@ _MS_HELPER_PREFIXES = (
 
 
 def normalize_library_symbol_name(name: str) -> str:
+    """Normalize a symbol name for library-label comparison."""
     return (name or "").strip().lstrip("_").lower()
 
 
 def classify_library_function_name(name: str) -> LibraryFunctionClass:
+    """Classify one function name using reporting-only library heuristics."""
     raw = (name or "").strip()
     lowered = raw.lower()
     if (
@@ -196,30 +211,34 @@ def classify_library_function_name(name: str) -> LibraryFunctionClass:
 
 
 def is_library_like_function_name(name: str) -> bool:
+    """Return whether a name belongs to a library-like reporting class."""
     return classify_library_function_name(name) in _LIBRARY_CLASSES
 
 
 def classify_sidecar_function_label(
     addr: int,
     name: str,
-    metadata: object | None,
+    metadata: LSTMetadata | None,
 ) -> LibraryFunctionClass:
-    proc_addrs = set((getattr(metadata, "cod_proc_kinds", None) or {}).keys())
+    """Classify one sidecar label without using it as semantic proof."""
+    if metadata is None:
+        return classify_library_function_name(name)
+
+    proc_addrs = metadata.cod_proc_kinds.keys()
     if addr in proc_addrs:
         return LibraryFunctionClass.USER_SOURCE_PROC
-    signature_addrs = set(getattr(metadata, "signature_code_addrs", frozenset()) or frozenset())
-    if addr in signature_addrs:
+    if addr in metadata.signature_code_addrs:
         return LibraryFunctionClass.SIGNATURE_MATCH
-    source_format = str(getattr(metadata, "source_format", "") or "")
-    if proc_addrs and "cod_listing" in source_format:
+    if proc_addrs and "cod_listing" in metadata.source_format:
         return LibraryFunctionClass.NON_SOURCE_SIDECAR_LABEL
     return classify_library_function_name(name)
 
 
 def filter_code_labels_for_library_policy(
-    metadata: object | None,
+    metadata: LSTMetadata | None,
     labels: Mapping[int, str],
 ) -> LibraryLabelFilterResult:
+    """Filter sidecar labels using reporting-only library policy."""
     kept: dict[int, str] = {}
     decisions: dict[int, LibraryFunctionClass] = {}
     skipped: Counter[LibraryFunctionClass] = Counter()

@@ -1,3 +1,13 @@
+"""Layer: Frontend/runtime.
+
+Responsibility: model processor registers and segment state for lifting/emulation.
+Forbidden: decompiler alias/type ownership, source-backed recovery, or rendered-C cleanup.
+"""
+
+from __future__ import annotations
+
+from typing import Any, TypeAlias, cast
+
 from pyvex.expr import Binop, Const, Get, Load, Unop
 from pyvex.lifting.util.syntax_wrapper import VexValue
 from pyvex.lifting.util.vex_helper import Type
@@ -14,37 +24,54 @@ from .regs import dtreg_t, reg8_t, reg16_t, reg32_t, register_name_8616, sgreg_t
 # Constants for descriptor table registers
 
 
-TYPES = {reg8_t: Type.int_8, reg16_t: Type.int_16, reg32_t: Type.int_32, sgreg_t: Type.int_16}
+RegisterName: TypeAlias = reg8_t | reg16_t | reg32_t | sgreg_t
+RegisterValue: TypeAlias = int | VexValue
+
+TYPES: dict[type[RegisterName], object] = {
+    reg8_t: Type.int_8,
+    reg16_t: Type.int_16,
+    reg32_t: Type.int_32,
+    sgreg_t: Type.int_16,
+}
 
 # General-purpose register structure
 
 
 class GPRegister:
-    def __init__(self):
-        self.reg32 = 0  # 32-bit register value
+    """Concrete general-purpose register storage."""
+
+    def __init__(self) -> None:
+        """Initialize the register with a zero concrete value."""
+        self.reg32: int = 0  # 32-bit register value
 
     @property
-    def reg16(self):
+    def reg16(self) -> int:
+        """Return the low 16-bit view."""
         return self.reg32 & 0xFFFF
 
     @reg16.setter
-    def reg16(self, value):
+    def reg16(self, value: int) -> None:
+        """Set the low 16-bit view."""
         self.reg32 = (self.reg32 & 0xFFFF0000) | (value & 0xFFFF)
 
     @property
-    def reg8_l(self):
+    def reg8_l(self) -> int:
+        """Return the low 8-bit view."""
         return self.reg32 & 0xFF
 
     @reg8_l.setter
-    def reg8_l(self, value):
+    def reg8_l(self, value: int) -> None:
+        """Set the low 8-bit view."""
         self.reg32 = (self.reg32 & 0xFFFFFF00) | (value & 0xFF)
 
     @property
-    def reg8_h(self):
+    def reg8_h(self) -> int:
+        """Return the high byte of the low 16-bit view."""
         return (self.reg32 >> 8) & 0xFF
 
     @reg8_h.setter
-    def reg8_h(self, value):
+    def reg8_h(self, value: int) -> None:
+        """Set the high byte of the low 16-bit view."""
         self.reg32 = (self.reg32 & 0xFFFF00FF) | ((value & 0xFF) << 8)
 
 
@@ -52,129 +79,168 @@ class GPRegister:
 
 
 class SGRegCache:
-    def __init__(self):
-        self.base = 0  # Base address of the segment
-        self.limit = 0  # Limit of the segment
-        self.flags = SegDescFlags()  # Flags for the segment descriptor
+    """Cached descriptor state for a segment register."""
+
+    def __init__(self) -> None:
+        """Initialize the cached descriptor with a flat zero base."""
+        self.base: int = 0  # Base address of the segment
+        self.limit: int = 0  # Limit of the segment
+        self.flags: SegDescFlags = SegDescFlags()  # Flags for the segment descriptor
 
 
 # Segment descriptor flags structure
 
 
 class SegDescFlags:
-    def __init__(self):
-        self.raw = 0  # Raw flags value
+    """Packed segment descriptor flags."""
+
+    def __init__(self) -> None:
+        """Initialize all descriptor flags to zero."""
+        self.raw: int = 0  # Raw flags value
 
     @property
-    def type(self):
+    def type(self) -> int:
+        """Return the descriptor type field."""
         return self.raw & 0xF
 
     @type.setter
-    def type(self, value):
+    def type(self, value: int) -> None:
+        """Set the descriptor type field."""
         self.raw = (self.raw & 0xFFF0) | (value & 0xF)
 
     @property
-    def S(self):
+    def S(self) -> bool:
+        """Return the descriptor kind flag."""
         return bool(self.raw & (1 << 4))
 
     @S.setter
-    def S(self, value):
-        self.raw = (self.raw & ~(1 << 4)) | (value << 4)
+    def S(self, value: bool | int) -> None:
+        """Set the descriptor kind flag."""
+        self.raw = (self.raw & ~(1 << 4)) | (int(value) << 4)
 
     @property
-    def DPL(self):
+    def DPL(self) -> int:
+        """Return the descriptor privilege level."""
         return (self.raw >> 5) & 3
 
     @DPL.setter
-    def DPL(self, value):
+    def DPL(self, value: int) -> None:
+        """Set the descriptor privilege level."""
         self.raw = (self.raw & ~(3 << 5)) | (value << 5)
 
     @property
-    def P(self):
+    def P(self) -> bool:
+        """Return whether the descriptor is present."""
         return bool(self.raw & (1 << 7))
 
     @P.setter
-    def P(self, value):
-        self.raw = (self.raw & ~(1 << 7)) | (value << 7)
+    def P(self, value: bool | int) -> None:
+        """Set whether the descriptor is present."""
+        self.raw = (self.raw & ~(1 << 7)) | (int(value) << 7)
 
     @property
-    def AVL(self):
+    def AVL(self) -> bool:
+        """Return the available-for-system-software flag."""
         return bool(self.raw & (1 << 8))
 
     @AVL.setter
-    def AVL(self, value):
-        self.raw = (self.raw & ~(1 << 8)) | (value << 8)
+    def AVL(self, value: bool | int) -> None:
+        """Set the available-for-system-software flag."""
+        self.raw = (self.raw & ~(1 << 8)) | (int(value) << 8)
 
     @property
-    def DB(self):
+    def DB(self) -> bool:
+        """Return the default operand-size flag."""
         return bool(self.raw & (1 << 10))
 
     @DB.setter
-    def DB(self, value):
-        self.raw = (self.raw & ~(1 << 10)) | (value << 10)
+    def DB(self, value: bool | int) -> None:
+        """Set the default operand-size flag."""
+        self.raw = (self.raw & ~(1 << 10)) | (int(value) << 10)
 
     @property
-    def G(self):
+    def G(self) -> bool:
+        """Return the descriptor granularity flag."""
         return bool(self.raw & (1 << 11))
 
     @G.setter
-    def G(self, value):
-        self.raw = (self.raw & ~(1 << 11)) | (value << 11)
+    def G(self, value: bool | int) -> None:
+        """Set the descriptor granularity flag."""
+        self.raw = (self.raw & ~(1 << 11)) | (int(value) << 11)
 
 
 # Segment register structure
 class SGRegister:
-    def __init__(self):
-        self.raw = 0  # Raw segment selector value
-        self.cache = SGRegCache()  # Cached segment descriptor information
+    """Segment selector and cached descriptor state."""
+
+    def __init__(self) -> None:
+        """Initialize a zero segment selector."""
+        self.raw: int = 0  # Raw segment selector value
+        self.cache: SGRegCache = SGRegCache()  # Cached segment descriptor information
 
     @property
-    def RPL(self):
+    def RPL(self) -> int:
+        """Return the selector requested privilege level."""
         return self.raw & 3
 
     @RPL.setter
-    def RPL(self, value):
+    def RPL(self, value: int) -> None:
+        """Set the selector requested privilege level."""
         self.raw = (self.raw & ~3) | (value & 3)
 
     @property
-    def TI(self):
+    def TI(self) -> bool:
+        """Return whether the selector targets the LDT."""
         return bool(self.raw & (1 << 2))
 
     @TI.setter
-    def TI(self, value):
-        self.raw = (self.raw & ~(1 << 2)) | (value << 2)
+    def TI(self, value: bool | int) -> None:
+        """Set whether the selector targets the LDT."""
+        self.raw = (self.raw & ~(1 << 2)) | (int(value) << 2)
 
     @property
-    def index(self):
+    def index(self) -> int:
+        """Return the selector table index."""
         return (self.raw >> 3) & 0x1FFF
 
     @index.setter
-    def index(self, value):
+    def index(self, value: int) -> None:
+        """Set the selector table index."""
         self.raw = (self.raw & 0x7) | ((value & 0x1FFF) << 3)
 
 
 # Descriptor table register structure
 class DTRegister:
-    def __init__(self):
-        self.selector = 0  # Selector for LDTR and TR
-        self.base = 0  # Base address of the descriptor table
-        self.limit = 0  # Limit of the descriptor table
+    """Descriptor table register storage."""
+
+    def __init__(self) -> None:
+        """Initialize an empty descriptor table register."""
+        self.selector: int = 0  # Selector for LDTR and TR
+        self.base: int = 0  # Base address of the descriptor table
+        self.limit: int = 0  # Limit of the descriptor table
 
 
 # Processor class
 class Processor(Eflags, CR):
-    def __init__(self):
-        super().__init__()
-        self.lifter_instruction = None
-        self.vex_offsets = None
-        self._last_condition = None
-        self.flags = 0
-        self.eip = 0  # X86Instruction pointer
-        self.gpregs = [GPRegister() for _ in range(reg32_t.GPREGS_COUNT.value)]  # General-purpose registers
-        self.sgregs = [SGRegister() for _ in range(sgreg_t.SGREGS_COUNT.value)]  # Segment registers
-        self.dtregs = [DTRegister() for _ in range(dtreg_t.DTREGS_COUNT.value)]  # Descriptor table registers
+    """Concrete/VEX processor register model used by the X86_16 frontend."""
 
-        self.halt = False
+    def __init__(self) -> None:
+        """Initialize reset-state processor registers and descriptor caches."""
+        super().__init__()
+        self.lifter_instruction: Any | None = None
+        self.vex_offsets: dict[str, int] | None = None
+        self._last_condition: object | None = None
+        self.flags: int = 0
+        self.eip: int = 0  # X86Instruction pointer
+        self.gpregs: list[GPRegister] = [
+            GPRegister() for _ in range(reg32_t.GPREGS_COUNT.value)
+        ]  # General-purpose registers
+        self.sgregs: list[SGRegister] = [SGRegister() for _ in range(sgreg_t.SGREGS_COUNT.value)]  # Segment registers
+        self.dtregs: list[DTRegister] = [
+            DTRegister() for _ in range(dtreg_t.DTREGS_COUNT.value)
+        ]  # Descriptor table registers
+
+        self.halt: bool = False
 
         self.set_eip(0xFFFF0)
         self.set_crn(0, 0x60000010)
@@ -196,16 +262,20 @@ class Processor(Eflags, CR):
         self.dtregs[dtreg_t.LDTR.value].base = 0
         self.dtregs[dtreg_t.LDTR.value].limit = 0xFFFF
 
-    def set_last_condition(self, condition) -> None:
+    def set_last_condition(self, condition: object) -> None:
+        """Remember the most recent frontend condition expression."""
         self._last_condition = condition
 
-    def get_last_condition(self):
+    def get_last_condition(self) -> object | None:
+        """Return the most recent frontend condition expression, if any."""
         return self._last_condition
 
     def clear_last_condition(self) -> None:
+        """Clear the remembered frontend condition expression."""
         self._last_condition = None
 
-    def dump_regs(self):
+    def dump_regs(self) -> None:
+        """Print a human-readable register dump for debugging."""
         gpreg_name = ["EAX", "ECX", "EDX", "EBX", "ESP", "EBP", "ESI", "EDI"]
         sgreg_name = ["ES", "CS", "SS", "DS", "FS", "GS"]
         dtreg_name = ["GDTR", "IDTR", "LDTR", " TR "]
@@ -236,7 +306,8 @@ class Processor(Eflags, CR):
             print(f"CR{i}=0x{self.get_crn(i):08x} ", end="")
         print()
 
-    def get_eip(self):
+    def get_eip(self) -> int:
+        """Return the concrete 32-bit instruction pointer."""
         return self.eip
 
     @staticmethod
@@ -247,14 +318,19 @@ class Processor(Eflags, CR):
     def _reg8_is_high(reg: reg8_t) -> bool:
         return reg.value >= 4
 
-    def get_ip(self):
+    def get_ip(self) -> RegisterValue:
+        """Return the 16-bit instruction pointer view."""
         if self.lifter_instruction is None:
             return self.eip & 0xFFFF
+        if self.vex_offsets is None:
+            raise ValueError("vex_offsets not initialized for lifting mode")
         offset = self.vex_offsets.get("ip", 0)
         return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, Type.int_16))
 
-    def get_gpreg(self, n):
-        def _impl():
+    def get_gpreg(self, n: reg8_t | reg16_t | reg32_t | VexValue) -> RegisterValue:
+        """Return a general-purpose register in concrete or VEX lifting mode."""
+
+        def _impl() -> RegisterValue:
             if isinstance(n, VexValue):
                 if self.lifter_instruction is not None:
                     return n
@@ -262,16 +338,22 @@ class Processor(Eflags, CR):
             name = register_name_8616(n)
             if isinstance(n, reg8_t):
                 base = self.get_gpreg(self._reg8_base(n))
+                if self.lifter_instruction is not None:
+                    if not isinstance(base, VexValue):
+                        raise TypeError("Lifting mode register reads must return VexValue")
+                    if self._reg8_is_high(n):
+                        return cast(RegisterValue, (base >> 8).cast_to(Type.int_8))
+                    return cast(RegisterValue, base.cast_to(Type.int_8))
+                if not isinstance(base, int):
+                    raise TypeError("Concrete register reads must return integers")
                 if self._reg8_is_high(n):
-                    return (
-                        (base >> 8).cast_to(Type.int_8) if self.lifter_instruction is not None else (base >> 8) & 0xFF
-                    )
-                return base.cast_to(Type.int_8) if self.lifter_instruction is not None else base & 0xFF
+                    return (base >> 8) & 0xFF
+                return base & 0xFF
             if self.lifter_instruction is not None:
                 if self.vex_offsets is None:
                     raise ValueError("vex_offsets not initialized for lifting mode")
                 offset = self.vex_offsets.get(name, 0)
-                return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, TYPES[type(n)]))
+                return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, TYPES[cast(type[RegisterName], type(n))]))
             # concrete mode
             if isinstance(n, reg32_t):
                 idx = n.value
@@ -293,12 +375,14 @@ class Processor(Eflags, CR):
 
         return _impl()
 
-    def constant(self, n, type_=Type.int_8):
+    def constant(self, n: int, type_: object = Type.int_8) -> RegisterValue:
+        """Return a concrete integer or matching VEX constant for the current mode."""
         if self.lifter_instruction is not None:
             return VexValue(self.lifter_instruction, self.lifter_instruction.mkconst(n, type_))
         return n
 
-    def get_sgreg(self, n):
+    def get_sgreg(self, n: sgreg_t | VexValue) -> RegisterValue:
+        """Return a segment register in concrete or VEX lifting mode."""
         if isinstance(n, VexValue):
             if self.lifter_instruction is not None:
                 return n
@@ -311,49 +395,61 @@ class Processor(Eflags, CR):
             return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, Type.int_16))
         return self.sgregs[n.value].raw
 
-    def get_segment(self, n):
+    def get_segment(self, n: sgreg_t | VexValue) -> RegisterValue:
+        """Return a segment register alias."""
         return self.get_sgreg(n)
 
-    def get_carry(self):
-        # Get the carry flag (bit 0 of FLAGS register)
+    def get_carry(self) -> RegisterValue:
+        """Return the carry flag value from FLAGS bit 0."""
         flags = self.get_gpreg(reg16_t.FLAGS)
-        return flags[0]
+        if isinstance(flags, int):
+            return flags & 1
+        return cast(RegisterValue, flags[0])
 
-    def set_carry_flag(self, flags, carry):
-        # Set the carry flag (bit 0 of FLAGS register)
+    def set_carry_flag(self, flags: object, carry: object) -> object:
+        """Set the carry flag and return the updated FLAGS value."""
         flags = super().set_carry(flags, carry)
         self.set_gpreg(reg16_t.FLAGS, flags)
         return flags
 
-    def set_overflow_flag(self, flags, overflow):
-        # Set the overflow flag (bit 11 of FLAGS register)
+    def set_overflow_flag(self, flags: object, overflow: object) -> object:
+        """Set the overflow flag and return the updated FLAGS value."""
         flags = super().set_overflow(flags, overflow)
         self.set_gpreg(reg16_t.FLAGS, flags)
         return flags
 
-    def get_dtreg_selector(self, n):
+    def get_dtreg_selector(self, n: int) -> int:
+        """Return a descriptor table register selector."""
         # assert n < dtreg_t.DTREGS_COUNT.value
         return self.dtregs[n].selector
 
-    def get_dtreg_base(self, n):
+    def get_dtreg_base(self, n: int) -> int:
+        """Return a descriptor table base address."""
         assert n < dtreg_t.DTREGS_COUNT.value
         return self.dtregs[n].base
 
-    def get_dtreg_limit(self, n):
+    def get_dtreg_limit(self, n: int) -> int:
+        """Return a descriptor table limit."""
         assert n < dtreg_t.DTREGS_COUNT.value
         return self.dtregs[n].limit
 
-    def set_eip(self, value):
+    def set_eip(self, value: object) -> None:
+        """Set the 32-bit instruction pointer."""
         self.set_gpreg(reg32_t.EIP, value)
 
-    def set_ip(self, value):
+    def set_ip(self, value: object) -> None:
+        """Set the 16-bit instruction pointer view."""
         if self.lifter_instruction is None:
+            if not isinstance(value, int):
+                raise TypeError(f"Cannot set IP from non-concrete value of type {type(value)} in concrete mode")
             self.eip = (self.eip & 0xFFFF0000) | (value & 0xFFFF)
             return
         self.set_gpreg(reg16_t.IP, value)
 
-    def set_gpreg(self, n, value):
-        def _impl():
+    def set_gpreg(self, n: reg8_t | reg16_t | reg32_t, value: object) -> None:
+        """Set a general-purpose register in concrete or VEX lifting mode."""
+
+        def _impl() -> None:
             nonlocal value
             name = register_name_8616(n)
             if isinstance(n, reg8_t):
@@ -362,19 +458,22 @@ class Processor(Eflags, CR):
                 base_reg = self._reg8_base(n)
                 if self.lifter_instruction is not None:
                     base = self.get_gpreg(base_reg)
-                    if isinstance(base, VexValue):
-                        base = VexValue(self.lifter_instruction, base.rdt)
+                    if not isinstance(base, VexValue):
+                        base = VexValue(self.lifter_instruction, self.lifter_instruction._settmp(base))
+                    base_v = VexValue(self.lifter_instruction, base.rdt)
                     if isinstance(value, VexValue):
                         value_v = VexValue(self.lifter_instruction, value.rdt)
                     else:
                         value_v = VexValue(self.lifter_instruction, self.lifter_instruction._settmp(value))
                     if self._reg8_is_high(n):
-                        new_base = (value_v.cast_to(Type.int_16) << 8) | (base & 0x00FF)
+                        new_base = cast(VexValue, (cast(VexValue, value_v.cast_to(Type.int_16)) << 8) | (base_v & 0x00FF))
                     else:
-                        new_base = (base & 0xFF00) | value_v.cast_to(Type.int_16)
+                        new_base = cast(VexValue, (base_v & 0xFF00) | cast(VexValue, value_v.cast_to(Type.int_16)))
                     self.set_gpreg(base_reg, new_base)
                     return
 
+                if not isinstance(value, int):
+                    raise TypeError(f"Cannot set {n} from non-concrete value of type {type(value)} in concrete mode")
                 idx = base_reg.value
                 if self._reg8_is_high(n):
                     self.gpregs[idx].reg8_h = value
@@ -386,10 +485,10 @@ class Processor(Eflags, CR):
                     raise ValueError("vex_offsets not initialized for lifting mode")
                 offset = self.vex_offsets.get(name, 0)
                 if isinstance(value, int):
-                    value = self.constant(value, TYPES[type(n)])
+                    value = self.constant(value, TYPES[cast(type[RegisterName], type(n))])
                 if isinstance(value, VexValue):
                     value = value.rdt
-                self.lifter_instruction._append_stmt(Put(value, offset))
+                self.lifter_instruction._append_stmt(Put(cast(Any, value), offset))
                 return
             # concrete mode
             if isinstance(value, int):
@@ -415,7 +514,8 @@ class Processor(Eflags, CR):
 
         return _impl()
 
-    def set_sgreg(self, n, reg):
+    def set_sgreg(self, n: sgreg_t, reg: object) -> None:
+        """Set a segment register in concrete or VEX lifting mode."""
         name = register_name_8616(n)
         if self.lifter_instruction is not None:
             if self.vex_offsets is None:
@@ -425,49 +525,61 @@ class Processor(Eflags, CR):
                 reg = self.constant(reg, Type.int_16)
             if isinstance(reg, VexValue):
                 reg = reg.rdt
-            self.lifter_instruction._append_stmt(Put(reg, offset))
+            self.lifter_instruction._append_stmt(Put(cast(Any, reg), offset))
             return
         if isinstance(reg, (Get, Const, Binop, Load, Unop)):
             return
+        if not isinstance(reg, int):
+            raise TypeError(f"Cannot set segment {n} from non-concrete value of type {type(reg)}")
         self.sgregs[n.value].raw = reg
 
-    def set_segment(self, n, value):
+    def set_segment(self, n: sgreg_t, value: object) -> None:
+        """Set a segment register alias."""
         self.set_sgreg(n, value)
 
-    def set_dtreg(self, n, sel, base, limit):
+    def set_dtreg(self, n: int, sel: int, base: int, limit: int) -> None:
+        """Set a descriptor table register."""
         assert n < dtreg_t.DTREGS_COUNT.value
         self.dtregs[n].selector = sel
         self.dtregs[n].base = base
         self.dtregs[n].limit = limit
 
-    def update_eip(self, value):
+    def update_eip(self, value: object) -> RegisterValue:
+        """Add a value to EIP and return the updated value."""
         return self.update_gpreg(reg32_t.EIP, value)
 
-    def update_ip(self, value):
+    def update_ip(self, value: object) -> RegisterValue:
+        """Add a value to IP and return the updated value."""
         return self.update_gpreg(reg16_t.IP, value)
 
-    def update_gpreg(self, n, value):
+    def update_gpreg(self, n: reg16_t | reg32_t, value: object) -> RegisterValue:
+        """Add a value to a general-purpose register and store the result."""
         result = self.get_gpreg(n)
         if self.lifter_instruction is not None:
             if isinstance(value, int):
-                value = self.constant(value, TYPES[type(n)])
+                value = self.constant(value, TYPES[cast(type[RegisterName], type(n))])
             elif not isinstance(value, VexValue):
                 value = VexValue(self.lifter_instruction, self.lifter_instruction._settmp(value))
             result = result + value
         else:
+            if not isinstance(result, int) or not isinstance(value, int):
+                raise TypeError("Concrete register update requires concrete integer values")
             result = result + value
         self.set_gpreg(n, result)
         return result
 
-    def is_halt(self):
+    def is_halt(self) -> bool:
+        """Return whether the processor is halted."""
         return self.halt
 
-    def do_halt(self, h):
+    def do_halt(self, h: bool) -> None:
+        """Set the processor halt state."""
         self.halt = h
 
-    def is_mode32(self):
+    def is_mode32(self) -> bool:
+        """Return whether the frontend currently executes 32-bit code."""
         return False
-        return self.sgregs[sgreg_t.CS.value].cache.flags.DB
 
-    def set_lifter_instruction(self, lifter_instruction):
-        self.lifter_instruction = lifter_instruction
+    def set_lifter_instruction(self, lifter_instruction: object | None) -> None:
+        """Set the active PyVEX lifter instruction context."""
+        self.lifter_instruction = cast(Any | None, lifter_instruction)

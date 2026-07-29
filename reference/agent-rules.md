@@ -2,79 +2,17 @@
 
 This file holds internal guidance that should not live in the user-facing README.
 
-## Mission
+## Canonical Architecture Contract
 
-Correctness first. Evidence-driven C. No guessing. Readable only when proven.
+AGENTS.md contains the mandatory agent rules and canonical architecture
+contract. Keep mission, priority, pipeline order, layer ownership, hard rules,
+execution discipline, and function-fix acceptance criteria there so agents have
+one source of truth without making this supplemental reference compete with it.
 
-Priority order:
-
-1. All functions must decompile to generated C with no crashes and no silent disappearance.
-2. Tail validation must pass: `validation=passed` means semantic equivalence.
-3. Generated C must be recompilable where practical: portable-flat gcc first, MS C DOS after that.
-
-Readability, names, structs, and arrays are secondary unless they are required for correctness.
-
-## Core Pipeline
-
-```text
-IR -> Alias -> Widening -> Types -> Structuring -> Rewrite
-```
-
-Semantics must be introduced as early as possible. Rewrite is cleanup-only.
-
-Core model:
-
-- `Value`: data.
-- `Address`: segmented memory identity.
-- `Condition`: branch meaning.
-
-Layer ownership:
-
-- `frontend`: `angr_platforms/angr_platforms/X86_16/`
-- `IR`: `X86_16/ir/`
-- `semantics`: `X86_16/semantics/`
-- `alias`: `X86_16/alias/`
-- `widening`: `X86_16/widening/`
-- `traits/summaries/confidence`: `X86_16/*.py`
-- `types/lowering/object recovery`: `X86_16/lowering/` and `type_*.py`
-- `structuring`: `X86_16/structuring/` and `decompiler_structuring_stage.py`
-- `rewrite/cleanup`: `X86_16/postprocess/` and `decompiler_postprocess_stage.py`
-- `tail validation`: `X86_16/tail_validation*.py`, `validation_*.py`
-- `CLI/fallback/reporting`: `inertia_decompiler/`
-
-Semantic recovery belongs in `X86_16/`. Cleanup-only work belongs in `postprocess/`. Do not add new semantic work to root compatibility files such as `alias_model.py` or `alias_domains.py`.
-
-## Hard Rules
-
-1. Solve at the correct layer: alias in alias, types in types, never in rewrite.
-2. Alias first: storage identity comes from alias evidence only; widening follows alias proof.
-3. Segmented memory: SS, DS, and ES are distinct spaces. Use `Address(space=SS, offset=...)`, not flattened `(seg << 4) + offset`.
-4. Stack to variable: `SS:BP+offset` becomes `local_*` or `arg_*`, not `stack[x]` or raw pointer arithmetic.
-5. Explicit conditions: emit `if (x < y)`, not `if (tmp_14)` or `if (flags & ...)`.
-6. No text-based recovery: use IR, CFG, alias, typed structures, and structured metadata. Do not recover semantics with regex over asm or rendered C.
-7. Rewrite boundary: formatting, simplification, and cleanup only. No alias, type, call-argument, signature, or body repair.
-8. Validation is truth: compare register effects, memory writes, return values, and control flow. Do not hide `changed` or `uncollected`.
-9. No guessing: insufficient evidence means honest ugly output.
-10. Determinism: same input produces same output.
-11. Typed status/state: new work should use enums or structured fields instead of string parsing.
-
-If a fix makes output prettier without improving underlying semantics, it is wrong.
-
-## Execution Discipline
-
-Every semantic improvement needs a closed evidence loop:
-
-- `raw_fact_count`
-- `normalized_fact_count`
-- `classified_fact_count`
-- `materialized_count`
-- `failure_count`
-
-If `classified > 0` and `materialized == 0`, the pipeline must fail.
-
-DCE is allowed only when evidence is collected and consumed. Unknown classification means `UNKNOWN_REFUSE` and the code must be kept. Passing gcc by deleting semantically live code is a hard failure.
-
-For each function being fixed, run a focused function regression before and after changes. If original C or COD source exists, compare output shape and call semantics against source. Do not mark a function fixed unless validation passes, semantic calls survive with correct argument classes, and output is closer to the original C than the previous baseline.
+This file intentionally does not restate those rules. It adds internal glossary,
+diagnostic, and long-running-agent guidance that would make `AGENTS.md` too
+large. If a rule here seems to conflict with `AGENTS.md`, fix this file instead
+of creating a second contract.
 
 ## Glossary
 

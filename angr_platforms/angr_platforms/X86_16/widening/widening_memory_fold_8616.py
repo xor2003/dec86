@@ -1,17 +1,26 @@
+"""Store-to-load forwarding within proven alias storage domains.
+
+Layer: Widening.
+Responsibility: owns store-to-load forwarding within proven alias storage domains.
+Consumes alias-proven storage identity to forward values only when no
+intervening write invalidates the storage domain.
+Do not join values from rendered text, cosmetic shape, postprocess, or
+CLI/reporting evidence.
+"""
+
 from __future__ import annotations
 
-# Layer: Widening
-# Responsibility: store-to-load forwarding (GVN-like) using alias storage domains.
-# Equivalent to LLVM: Mem2Reg + GVN for store-to-load chains within blocks.
-# Forbidden: cross-block value numbering, type-promotion, C text generation.
-from ..decompiler_postprocess_utils import _unwrap_statements_8616
+from typing import cast
+
+from ..alias.alias_model_impl import AliasStorageFacts
+from ..c_ast_utils import _unwrap_statements_8616
 from ..semantics.alias_query import describe_alias_storage
 from ..semantics.expression_analysis import _unwrap_c_casts
 
 __all__ = ["_widening_store_to_load_forwarding_8616"]
 
 
-def _widening_store_to_load_forwarding_8616(codegen) -> bool:
+def _widening_store_to_load_forwarding_8616(codegen: object) -> bool:
     """Forward stored values to subsequent loads within the same block.
 
     Pattern:
@@ -23,6 +32,7 @@ def _widening_store_to_load_forwarding_8616(codegen) -> bool:
     domains and there is no intervening side-effecting operation.
 
     Returns True if any load was forwarded.
+    The codegen and C AST nodes cross a dynamic third-party angr boundary.
     """
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
@@ -30,8 +40,23 @@ def _widening_store_to_load_forwarding_8616(codegen) -> bool:
 
     changed = False
 
-    def _addr_expr_from_deref(expr):
-        """Extract the address expression from a pointer-like expr: *((ds<<4)+bx) → (ds<<4)+bx."""
+    def _iter_switch_case_bodies_8616(cases: object) -> tuple[object, ...]:
+        """Read switch cases through the dynamic third-party angr C AST boundary."""
+        if cases is None:
+            return ()
+        if isinstance(cases, dict):
+            return tuple(cases.values())
+        bodies: list[object] = []
+        if isinstance(cases, (list, tuple)):
+            for case in cases:
+                if isinstance(case, (list, tuple)) and len(case) >= 2:
+                    bodies.append(case[1])
+                else:
+                    bodies.append(case)
+        return tuple(bodies)
+
+    def _addr_expr_from_deref(expr: object) -> object:
+        """Extract address expressions through the dynamic third-party angr C AST boundary."""
         from angr.analyses.decompiler.structured_codegen import c as structured_c
 
         # Pattern: CBinaryOp('Mul', CVariable(seg), CConstant(16)) → seg reg
@@ -42,8 +67,8 @@ def _widening_store_to_load_forwarding_8616(codegen) -> bool:
             return _addr_expr_from_deref(expr.operand)
         return expr
 
-    def _is_deref_write(stmt) -> bool:
-        """Check if stmt is a memory store through a pointer expression."""
+    def _is_deref_write(stmt: object) -> bool:
+        """Check pointer stores through the dynamic third-party angr C AST boundary."""
         from angr.analyses.decompiler.structured_codegen import c as structured_c
 
         if not isinstance(stmt, structured_c.CAssignment):
@@ -54,19 +79,19 @@ def _widening_store_to_load_forwarding_8616(codegen) -> bool:
             return True
         return False
 
-    def _is_deref_read(rhs) -> bool:
-        """Check if rhs is a memory load through a pointer expression."""
+    def _is_deref_read(rhs: object) -> bool:
+        """Check pointer loads through the dynamic third-party angr C AST boundary."""
         from angr.analyses.decompiler.structured_codegen import c as structured_c
 
         if isinstance(rhs, structured_c.CUnaryOp):
             return True
         return False
 
-    def _addr_key(addr_expr) -> str | None:
-        """Create a deterministic key for alias comparison of address expressions."""
-        facts = describe_alias_storage(addr_expr)
-        domain = getattr(facts, "domain", None)
-        identity = getattr(facts, "identity", None)
+    def _addr_key(addr_expr: object) -> str | None:
+        """Create an alias key across a dynamic compatibility boundary."""
+        facts: AliasStorageFacts = describe_alias_storage(addr_expr)
+        domain = facts.domain
+        identity = facts.identity
         if domain is None:
             return None
         domain_repr = getattr(domain, "_repr", None) or str(domain)
@@ -75,8 +100,8 @@ def _widening_store_to_load_forwarding_8616(codegen) -> bool:
         structural = _structural_hash(addr_expr)
         return f"{domain_repr}:{identity_repr}:{structural}"
 
-    def _structural_hash(expr) -> str:
-        """Create a structural hash for expression equivalence."""
+    def _structural_hash(expr: object) -> str:
+        """Create a structural hash across the dynamic third-party angr C AST boundary."""
         from angr.analyses.decompiler.structured_codegen import c as structured_c
 
         if isinstance(expr, structured_c.CVariable):
@@ -91,7 +116,8 @@ def _widening_store_to_load_forwarding_8616(codegen) -> bool:
             return f"u:{expr.op}:{_structural_hash(expr.operand)}"
         return str(id(expr))
 
-    def _walk_statements(statements_obj):
+    def _walk_statements(statements_obj: object) -> None:
+        """Walk statements through the dynamic third-party angr C AST boundary."""
         nonlocal changed
         from angr.analyses.decompiler.structured_codegen import c as structured_c
 
@@ -127,7 +153,8 @@ def _widening_store_to_load_forwarding_8616(codegen) -> bool:
 
             _walk_node(stmt)
 
-    def _walk_node(node):
+    def _walk_node(node: object) -> None:
+        """Walk nested nodes through the dynamic third-party angr C AST boundary."""
         if node is None:
             return
         if hasattr(node, "statements"):
@@ -153,7 +180,7 @@ def _widening_store_to_load_forwarding_8616(codegen) -> bool:
                 _walk_node(cond)
                 _walk_node(body)
         if hasattr(node, "cases"):
-            for case_body in getattr(node, "cases", {}).values():
+            for case_body in _iter_switch_case_bodies_8616(getattr(node, "cases", None)):
                 _walk_node(case_body)
         if hasattr(node, "default"):
             _walk_node(getattr(node, "default", None))
@@ -162,7 +189,7 @@ def _widening_store_to_load_forwarding_8616(codegen) -> bool:
     return changed
 
 
-def _has_side_effects_stmt(stmt) -> bool:
+def _has_side_effects_stmt(stmt: object) -> bool:
     """Check if a statement has side effects that invalidate memory forwarding."""
     from angr.analyses.decompiler.structured_codegen import c as structured_c
 
@@ -173,8 +200,8 @@ def _has_side_effects_stmt(stmt) -> bool:
     return False
 
 
-def _is_same_expr(a, b) -> bool:
-    """Check if two expressions are structurally identical."""
+def _is_same_expr(a: object, b: object) -> bool:
+    """Check if two expressions are structurally identical across the dynamic third-party angr boundary."""
     from angr.analyses.decompiler.structured_codegen import c as structured_c
 
     if type(a) is not type(b):
@@ -186,7 +213,15 @@ def _is_same_expr(a, b) -> bool:
     if isinstance(a, structured_c.CConstant):
         return getattr(a, "value", None) == getattr(b, "value", None)
     if isinstance(a, structured_c.CBinaryOp):
-        return a.op == b.op and _is_same_expr(a.lhs, b.lhs) and _is_same_expr(a.rhs, b.rhs)
+        rhs_binary = cast(object, b)
+        return (
+            a.op == getattr(rhs_binary, "op", None)
+            and _is_same_expr(a.lhs, getattr(rhs_binary, "lhs", None))
+            and _is_same_expr(a.rhs, getattr(rhs_binary, "rhs", None))
+        )
     if isinstance(a, structured_c.CUnaryOp):
-        return a.op == b.op and _is_same_expr(a.operand, b.operand)
+        rhs_unary = cast(object, b)
+        return a.op == getattr(rhs_unary, "op", None) and _is_same_expr(
+            a.operand, getattr(rhs_unary, "operand", None)
+        )
     return a is b

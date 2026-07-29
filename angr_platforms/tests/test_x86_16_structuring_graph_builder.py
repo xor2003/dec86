@@ -6,8 +6,16 @@ from angr_platforms.X86_16.structuring_graph_builder import (
 
 
 class _Node:
-    def __init__(self, addr):
+    def __init__(self, addr, statements=None):
         self.addr = addr
+        self.statements = tuple(statements or ())
+
+
+class _Stmt:
+    def __init__(self, ins_addr=None, addr=None, tags=None):
+        self.ins_addr = ins_addr
+        self.addr = addr
+        self.tags = dict(tags or {})
 
 
 class _Clinic:
@@ -70,6 +78,52 @@ def test_build_region_graph_uses_direct_clinic():
     assert result.entry is not None
     assert result.entry.region_id == 0x1000
     assert len(result.graph.nodes) == 3
+
+
+def test_build_region_graph_records_clinic_statement_address_set():
+    graph = nx.DiGraph()
+    a = _Node(
+        0x1000,
+        statements=(
+            _Stmt(ins_addr=0x1000),
+            _Stmt(tags={"ins_addr": 0x1002}),
+            _Stmt(addr=0x1004),
+            _Stmt(),
+        ),
+    )
+    graph.add_node(a)
+    codegen = _Codegen(0x1000, clinic=_Clinic(graph))
+
+    result = build_region_graph(codegen)
+
+    assert result.graph is not None
+    [region] = list(result.graph.nodes)
+    assert region.metadata["region_statement_ins_addrs"] == (0x1000, 0x1002, 0x1004)
+    assert region.metadata["region_statement_span_source"] == "clinic_node_statements"
+
+
+def test_build_region_graph_records_clinic_statement_provenance_keys():
+    graph = nx.DiGraph()
+    a = _Node(
+        0x1000,
+        statements=(
+            _Stmt(tags={"ins_addr": 0x1000, "vex_block_addr": 0x1000, "vex_stmt_idx": 1}),
+            _Stmt(tags={"ins_addr": 0x1000, "vex_block_addr": 0x1000, "vex_stmt_idx": 2}),
+            _Stmt(tags={"ins_addr": 0x1000, "vex_block_addr": 0x1000, "vex_stmt_idx": 1}),
+        ),
+    )
+    graph.add_node(a)
+    codegen = _Codegen(0x1000, clinic=_Clinic(graph))
+
+    result = build_region_graph(codegen)
+
+    assert result.graph is not None
+    [region] = list(result.graph.nodes)
+    assert region.metadata["region_statement_provenance_keys"] == (
+        ("vex", 0x1000, 1),
+        ("vex", 0x1000, 2),
+    )
+    assert region.metadata["region_statement_span_source"] == "clinic_node_statements"
 
 
 def test_resolve_clinic_from_project_fallback():

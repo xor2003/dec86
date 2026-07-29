@@ -189,6 +189,11 @@ def compare_instructions_impact(instruction: str):
             setattr(current_state32.regs, reg.name, val16)
         except Exception as ex:
             print(f"Register {reg.name} failed to set %s", ex)
+    # Conditional-jump equivalence requires the same concrete starting flags;
+    # x86 otherwise retains independent lazy flag state behind eflags.
+    current_state16.regs.flags = 0
+    current_state16.regs.d = 0
+    current_state32.regs.eflags = 0
     print("~~will step 32~~")
     stage32 = step(simgr32, bytes32)
     print("~~will step 16~")

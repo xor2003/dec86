@@ -1,8 +1,11 @@
+"""Layer: IR.
+
+Responsibility: typed address artifacts bridged from resolved operands.
+Forbidden: object/type guessing and rewrite ownership.
+"""
+
 from __future__ import annotations
 
-# Layer: IR
-# Responsibility: typed address artifacts bridged from resolved operands.
-# Forbidden: object/type guessing and rewrite ownership.
 from dataclasses import dataclass
 
 from .addressing_helpers import ResolvedMemoryOperand
@@ -17,6 +20,8 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class AddressIR8616:
+    """Root compatibility Address wrapper for proven segmented IR addresses."""
+
     space: MemSpace
     base: tuple[str, ...]
     offset: int
@@ -25,6 +30,7 @@ class AddressIR8616:
     segment_origin: SegmentOrigin
 
     def to_ir_address(self) -> IRAddress:
+        """Convert the compatibility wrapper into the canonical IR address."""
         return IRAddress(
             space=self.space,
             base=self.base,
@@ -44,6 +50,7 @@ def build_address_ir_8616(
     status: AddressStatus = AddressStatus.UNKNOWN,
     segment_origin: SegmentOrigin = SegmentOrigin.UNKNOWN,
 ) -> AddressIR8616:
+    """Build a typed segmented address wrapper from explicit IR fields."""
     return AddressIR8616(
         space=space,
         base=base,
@@ -55,4 +62,5 @@ def build_address_ir_8616(
 
 
 def resolved_operand_to_address_ir_8616(operand: ResolvedMemoryOperand) -> IRAddress:
+    """Convert a resolved frontend memory operand to the canonical IR address."""
     return operand.typed_address()

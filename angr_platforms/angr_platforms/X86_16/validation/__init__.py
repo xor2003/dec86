@@ -1,4 +1,8 @@
-from __future__ import annotations
+"""Validation-layer package exports.
 
-# Layer: Validation (cross-cutting governance)
-# Responsibility: canonicalization and equivalence checking for validation.
+Layer: Validation.
+Responsibility: owns canonical equivalence checking and validation diagnostics.
+Do not mutate IR, rewrite emitted C, recover semantics, or accept source/COD-backed proof.
+"""
+
+from __future__ import annotations

@@ -1,6 +1,16 @@
+"""Layer: Helper boundary.
+
+Responsibility: render narrow, decoded helper-family stubs from explicit instruction evidence.
+Forbidden: using helper names, source text, or corpus-specific bodies as semantic proof.
+Dynamic boundary: consumes capstone and angr project/function objects through
+small explicit protocols while keeping helper rendering evidence instruction-based.
+"""
+
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Protocol
 
 from capstone import CsInsn
 from capstone.x86_const import (
@@ -13,8 +23,8 @@ from capstone.x86_const import (
     X86_INS_OR,
     X86_INS_POP,
     X86_INS_PUSH,
-    X86_INS_REPE_SCASB,
     X86_INS_RET,
+    X86_INS_SCASB,
     X86_INS_XCHG,
     X86_INS_XOR,
     X86_OP_IMM,
@@ -27,23 +37,73 @@ from capstone.x86_const import (
     X86_REG_CX,
     X86_REG_DI,
     X86_REG_DX,
+    X86_REG_SP,
 )
 
 from .analysis_helpers import INT21_SERVICE_SPECS, normalize_api_style
 
-__all__ = ["StructuredHelperRender", "try_render_x86_16_structured_helper_c"]
+__all__ = ("StructuredHelperRender", "try_render_x86_16_structured_helper_c")
+
+
+class _HelperMemory(Protocol):
+    def load(self, start: int, size: int) -> bytes:
+        """Read bytes for helper-family instruction decoding."""
+        ...
+
+
+class _HelperLoader(Protocol):
+    memory: _HelperMemory
+
+
+class _HelperCapstone(Protocol):
+    detail: bool
+
+    def disasm(self, code: bytes, start: int) -> Iterable[CsInsn]:
+        """Decode helper-family bytes into capstone instructions."""
+        ...
+
+
+class _HelperArch(Protocol):
+    name: str
+    capstone: _HelperCapstone
+
+
+class _NamedFunction(Protocol):
+    name: str
+
+
+class _HelperFunction(_NamedFunction, Protocol):
+    addr: int
+
+
+class _FunctionManager(Protocol):
+    def function(self, *, addr: int, create: bool = False) -> _NamedFunction | None:
+        """Look up an angr function object by address."""
+        ...
+
+
+class _KnowledgeBase(Protocol):
+    functions: _FunctionManager
+
+
+class _HelperProject(Protocol):
+    loader: _HelperLoader
+    arch: _HelperArch
+    kb: _KnowledgeBase
 
 
 @dataclass(frozen=True, slots=True)
 class StructuredHelperRender:
+    """Rendered helper-family C text with the matched evidence family."""
+
     c_text: str
     family: str
 
 
-def _decode_linear_insns(project, start: int, limit: int = 0x40) -> list[CsInsn]:
+def _decode_linear_insns(project: _HelperProject, start: int, limit: int = 0x40) -> list[CsInsn]:
     code = bytes(project.loader.memory.load(start, limit))
     capstone = project.arch.capstone
-    previous_detail = getattr(capstone, "detail", False)
+    previous_detail = capstone.detail
     try:
         capstone.detail = True
         return list(capstone.disasm(code, start))
@@ -96,9 +156,9 @@ def _is_ret_imm(insn: CsInsn, imm: int) -> bool:
     return insn.id == X86_INS_RET and _op_imm(insn, 0) == imm
 
 
-def _resolved_helper_name(project, addr: int) -> str:
+def _resolved_helper_name(project: _HelperProject, addr: int) -> str:
     func = project.kb.functions.function(addr=addr, create=False)
-    if func is None or not getattr(func, "name", None):
+    if func is None or not func.name:
         return f"sub_{addr:x}"
     return str(func.name)
 
@@ -122,7 +182,7 @@ def _write_decl_and_name(api_style: str) -> tuple[str, str, str]:
 
 
 def _matches_lookup_then_stderr_window_8616(window: list[CsInsn]) -> bool:
-    def _impl():
+    def _impl() -> bool:
         return (
             _is_push_reg(window[0], X86_REG_BP)
             and _is_mov_reg_reg(window[1], X86_REG_BP, X86_REG_SP)
@@ -140,7 +200,7 @@ def _matches_lookup_then_stderr_window_8616(window: list[CsInsn]) -> bool:
             and _op_reg(window[9], 0) == X86_REG_AX
             and _op_reg(window[9], 1) == X86_REG_AX
             and _is_mov_reg_imm(window[10], X86_REG_CX, 0xFFFF)
-            and window[11].id == X86_INS_REPE_SCASB
+            and window[11].id == X86_INS_SCASB
             and window[12].id == X86_INS_NOT
             and _op_reg(window[12], 0) == X86_REG_CX
             and window[13].id == X86_INS_DEC
@@ -180,7 +240,9 @@ def _render_lookup_then_stderr_c_text_8616(function_name: str, helper_name: str)
     )
 
 
-def _match_lookup_then_stderr_write(project, function) -> StructuredHelperRender | None:
+def _match_lookup_then_stderr_write(
+    project: _HelperProject, function: _HelperFunction
+) -> StructuredHelperRender | None:
     insns = _decode_linear_insns(project, function.addr)
     if len(insns) < 21:
         return None
@@ -193,7 +255,7 @@ def _match_lookup_then_stderr_write(project, function) -> StructuredHelperRender
     if call_target is None:
         return None
     helper_name = _resolved_helper_name(project, call_target)
-    func_name = getattr(function, "name", None) or f"sub_{function.addr:x}"
+    func_name = function.name or f"sub_{function.addr:x}"
     c_text = _render_lookup_then_stderr_c_text_8616(func_name, helper_name)
     if c_text is None:
         return None
@@ -201,9 +263,10 @@ def _match_lookup_then_stderr_write(project, function) -> StructuredHelperRender
 
 
 def try_render_x86_16_structured_helper_c(
-    project, function, *, api_style: str = "modern"
+    project: _HelperProject, function: _HelperFunction, *, api_style: str = "modern"
 ) -> StructuredHelperRender | None:
-    if getattr(project.arch, "name", None) != "86_16":
+    """Render a known helper-family stub only from decoded instruction evidence."""
+    if project.arch.name != "86_16":
         return None
     api_style = normalize_api_style(api_style)
     if api_style == "raw":

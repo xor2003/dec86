@@ -1,19 +1,19 @@
-from __future__ import annotations
+"""Layer: Rewrite/Postprocess cleanup.
 
-"""Layer: Optimization (mid-level, pre-rewrite).
-
-Typed dead setup/staging carrier pruning.
-
-This pass removes setup/carrier assignments only when they are proven dead:
-- no semantic uses
-- not referenced by surviving emitted AST
-- not tied to observable alias/widening-relevant storage
+Responsibility: prune setup/carrier assignments only when typed evidence proves they are dead.
+Consumes already-proven IR, alias, widening, typed, and structuring facts.
+Do not recover new semantics, storage identity, types, call signatures, control flow, or facts from rendered text, COD, source, or CLI/reporting evidence here.
 """
+
+from __future__ import annotations
 
 import enum
 import os
 import re
+import typing
+from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Protocol, TypeGuard
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -50,7 +50,20 @@ class _Candidate:
     rhs: object
 
 
+class _StatementBlockLike8616(Protocol):
+    """Structural view of a dynamic angr/codegen statement block."""
+
+    statements: list[object]
+
+
+def _is_statement_block_like_8616(node: object) -> TypeGuard[_StatementBlockLike8616]:
+    """Return whether a dynamic angr/codegen boundary node has mutable statements."""
+    return isinstance(getattr(node, "statements", None), list)
+
+
 class DeadSetupDecision8616(enum.Enum):
+    """Structured pruning decision for a setup/carrier candidate."""
+
     DEFINITELY_DEAD = "definitely_dead"
     LIVE_CALL_ARG_SETUP = "live_call_arg_setup"
     LIVE_MEMORY_WRITE = "live_memory_write"
@@ -61,13 +74,18 @@ class DeadSetupDecision8616(enum.Enum):
 
 
 class DeadSetupMode8616(enum.Enum):
+    """Execution mode for dead setup pruning."""
+
     DISABLED = "disabled"
     DIAGNOSTIC = "diagnostic"
     PRODUCTION = "production"
 
 
-def _resolve_dead_setup_mode_8616(codegen) -> DeadSetupMode8616:
-    def _impl():
+def _resolve_dead_setup_mode_8616(codegen: object) -> DeadSetupMode8616:
+    """Resolve pruning mode from environment and dynamic codegen compatibility boundary flags."""
+
+    def _impl() -> DeadSetupMode8616:
+        """Read mode from dynamic codegen compatibility boundary flags."""
         env_mode = os.environ.get("INERTIA_DEAD_SETUP_PRUNE_MODE", "").strip().lower()
         if env_mode in {"diag", "diagnostic"}:
             return DeadSetupMode8616.DIAGNOSTIC
@@ -103,7 +121,8 @@ def _resolve_dead_setup_mode_8616(codegen) -> DeadSetupMode8616:
     return _impl()
 
 
-def _setup_counter_defaults(codegen) -> None:
+def _setup_counter_defaults(codegen: object) -> None:
+    """Initialize dynamic codegen compatibility boundary diagnostic counters."""
     for name in (
         "dead_setup_candidates",
         "dead_setup_pruned",
@@ -126,6 +145,7 @@ def _setup_counter_defaults(codegen) -> None:
 
 
 def _var_name(node: CVariable) -> str:
+    """Return a variable name from dynamic angr/codegen boundary CVariable metadata."""
     var = getattr(node, "variable", None)
     name = getattr(var, "name", None)
     if isinstance(name, str) and name:
@@ -137,6 +157,7 @@ def _var_name(node: CVariable) -> str:
 
 
 def _var_key(node: CVariable) -> tuple[str, int | str]:
+    """Return a stable key from dynamic angr/codegen boundary CVariable metadata."""
     var = getattr(node, "variable", None)
     if var is not None:
         ident = getattr(var, "ident", None)
@@ -147,6 +168,7 @@ def _var_key(node: CVariable) -> tuple[str, int | str]:
 
 
 def _is_observable_storage(lhs: CVariable) -> bool:
+    """Return whether dynamic angr/codegen boundary metadata names observable storage."""
     var = getattr(lhs, "variable", None)
     region = getattr(var, "region", None)
     # Local stack/register carriers are removable when def-use proves dead.
@@ -156,7 +178,7 @@ def _is_observable_storage(lhs: CVariable) -> bool:
     return False
 
 
-def _is_candidate_lhs(lhs: object) -> bool:
+def _is_candidate_lhs(lhs: object) -> TypeGuard[CVariable]:
     if not isinstance(lhs, CVariable):
         return False
     name = _var_name(lhs)
@@ -164,16 +186,19 @@ def _is_candidate_lhs(lhs: object) -> bool:
 
 
 def _is_setup_rhs(rhs: object) -> bool:
-    def _impl():
+    """Classify setup expressions across a dynamic angr/codegen C AST boundary."""
+
+    def _impl() -> bool:
+        """Inspect setup expressions across a dynamic angr/codegen C AST boundary."""
         if rhs is None:
             return False
         if isinstance(rhs, CUnaryOp) and getattr(rhs, "op", None) in {"Reference", "AddressOf"}:
             return True
         if isinstance(rhs, CBinaryOp):
-            op = getattr(rhs, "op", None)
+            op = rhs.op
             if op in {"Add", "Sub"}:
-                lhs = getattr(rhs, "lhs", None)
-                r = getattr(rhs, "rhs", None)
+                lhs = rhs.lhs
+                r = rhs.rhs
                 if isinstance(lhs, CConstant) or isinstance(r, CConstant):
                     return True
                 if isinstance(lhs, CVariable) or isinstance(r, CVariable):
@@ -183,8 +208,8 @@ def _is_setup_rhs(rhs: object) -> bool:
             if isinstance(node, CUnaryOp) and getattr(node, "op", None) in {"Reference", "AddressOf"}:
                 return True
             if isinstance(node, CBinaryOp) and getattr(node, "op", None) in {"Add", "Sub"}:
-                lhs = getattr(node, "lhs", None)
-                r = getattr(node, "rhs", None)
+                lhs = node.lhs
+                r = node.rhs
                 if isinstance(lhs, CConstant) or isinstance(r, CConstant):
                     return True
         return False
@@ -201,16 +226,19 @@ def _rhs_has_side_effects(rhs: object) -> bool:
     return False
 
 
-def _collect_read_counts(root) -> dict[tuple[str, int | str], int]:
-    def _impl():
+def _collect_read_counts(root: object) -> dict[tuple[str, int | str], int]:
+    """Count CVariable reads across dynamic angr/codegen boundary statement blocks."""
+
+    def _impl() -> dict[tuple[str, int | str], int]:
+        """Traverse dynamic angr/codegen boundary statement blocks for reads."""
         reads: dict[tuple[str, int | str], int] = {}
         # Traverse by statement blocks to avoid double-counting that occurs when
         # walking the full tree and then re-walking each nested node.
         for block in _iter_statement_blocks(root):
             for stmt in list(getattr(block, "statements", ()) or ()):
                 if isinstance(stmt, CAssignment):
-                    lhs = getattr(stmt, "lhs", None)
-                    rhs = getattr(stmt, "rhs", None)
+                    lhs = stmt.lhs
+                    rhs = stmt.rhs
                     if isinstance(rhs, CVariable):
                         key = _var_key(rhs)
                         reads[key] = reads.get(key, 0) + 1
@@ -235,8 +263,11 @@ def _collect_read_counts(root) -> dict[tuple[str, int | str], int]:
     return _impl()
 
 
-def _iter_statement_blocks(root):
-    def _impl():
+def _iter_statement_blocks(root: object) -> Iterator[object]:
+    """Yield nested statement blocks from a dynamic angr/codegen C AST boundary."""
+
+    def _impl() -> Iterator[object]:
+        """Walk nested dynamic angr/codegen C AST boundary nodes."""
         seen: set[int] = set()
         stack = [root]
         while stack:
@@ -282,14 +313,15 @@ def _iter_statement_blocks(root):
     return _impl()
 
 
-def _gather_candidates(statements) -> list[_Candidate]:
-    stmts = list(getattr(statements, "statements", ()) or ())
+def _gather_candidates(statements: object) -> list[_Candidate]:
+    """Collect setup candidates from a dynamic angr/codegen boundary statement block."""
+    stmts: list[object] = list(getattr(statements, "statements", ()) or ())
     out: list[_Candidate] = []
     for idx, stmt in enumerate(stmts):
         if not isinstance(stmt, CAssignment):
             continue
-        lhs = getattr(stmt, "lhs", None)
-        rhs = getattr(stmt, "rhs", None)
+        lhs = stmt.lhs
+        rhs = stmt.rhs
         if not _is_candidate_lhs(lhs):
             continue
         if not _is_setup_rhs(rhs):
@@ -309,6 +341,7 @@ def _rhs_mentions_flag_like_state(rhs: object) -> bool:
 
 
 def _rhs_looks_like_stack_carrier(rhs: object) -> bool:
+    """Return whether a dynamic angr/codegen boundary RHS looks like a stack carrier."""
     for node in _iter_c_nodes_deep_8616(rhs):
         if not isinstance(node, CVariable):
             continue
@@ -343,33 +376,30 @@ def _classify_candidate_8616(
     return DeadSetupDecision8616.DEFINITELY_DEAD
 
 
-def _bump_counter_8616(codegen, name: str, inc: int = 1) -> None:
+def _bump_counter_8616(codegen: object, name: str, inc: int = 1) -> None:
+    """Increment a dynamic codegen compatibility boundary diagnostic counter."""
     setattr(codegen, name, int(getattr(codegen, name, 0)) + int(inc))
 
 
-def _record_decision_counter_8616(codegen, decision: DeadSetupDecision8616) -> None:
+def _record_decision_counter_8616(codegen: object, decision: DeadSetupDecision8616) -> None:
+    """Record a pruning decision into dynamic codegen compatibility boundary counters."""
     if decision == DeadSetupDecision8616.LIVE_CALL_ARG_SETUP:
-        setattr(codegen, "dead_setup_live_call_arg", int(getattr(codegen, "dead_setup_live_call_arg", 0)) + 1)
+        typing.cast(typing.Any, codegen).dead_setup_live_call_arg = int(getattr(codegen, "dead_setup_live_call_arg", 0)) + 1
     elif decision == DeadSetupDecision8616.LIVE_STACK_CARRIER:
-        setattr(codegen, "dead_setup_live_stack_carrier", int(getattr(codegen, "dead_setup_live_stack_carrier", 0)) + 1)
+        typing.cast(typing.Any, codegen).dead_setup_live_stack_carrier = int(getattr(codegen, "dead_setup_live_stack_carrier", 0)) + 1
     elif decision == DeadSetupDecision8616.LIVE_WIDENING_CARRIER:
-        setattr(
-            codegen,
-            "dead_setup_live_widening_carrier",
-            int(getattr(codegen, "dead_setup_live_widening_carrier", 0)) + 1,
-        )
+        typing.cast(typing.Any, codegen).dead_setup_live_widening_carrier = int(getattr(codegen, "dead_setup_live_widening_carrier", 0)) + 1
     elif decision == DeadSetupDecision8616.LIVE_CONDITION_SOURCE:
-        setattr(
-            codegen,
-            "dead_setup_live_condition_source",
-            int(getattr(codegen, "dead_setup_live_condition_source", 0)) + 1,
-        )
+        typing.cast(typing.Any, codegen).dead_setup_live_condition_source = int(getattr(codegen, "dead_setup_live_condition_source", 0)) + 1
     elif decision == DeadSetupDecision8616.UNKNOWN_REFUSE:
-        setattr(codegen, "dead_setup_unknown_refuse", int(getattr(codegen, "dead_setup_unknown_refuse", 0)) + 1)
+        typing.cast(typing.Any, codegen).dead_setup_unknown_refuse = int(getattr(codegen, "dead_setup_unknown_refuse", 0)) + 1
 
 
-def _prune_dead_setup_carriers_8616(codegen) -> bool:
-    def _impl():
+def _prune_dead_setup_carriers_8616(codegen: object) -> bool:
+    """Prune dead setup carriers across a dynamic angr/codegen C AST boundary."""
+
+    def _impl() -> bool:
+        """Mutate dynamic angr/codegen C AST boundary statement blocks."""
         cfunc = getattr(codegen, "cfunc", None)
         if cfunc is None:
             return False
@@ -380,7 +410,7 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
         _setup_counter_defaults(codegen)
         mode = _resolve_dead_setup_mode_8616(codegen)
         if mode == DeadSetupMode8616.DISABLED:
-            setattr(codegen, "dead_setup_prune_disabled", int(getattr(codegen, "dead_setup_prune_disabled", 0)) + 1)
+            typing.cast(typing.Any, codegen).dead_setup_prune_disabled = int(getattr(codegen, "dead_setup_prune_disabled", 0)) + 1
             return False
 
         # Evidence gate: never prune until callsite argument materialization is complete
@@ -388,8 +418,8 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
         if hasattr(codegen, "_inertia_callsite_materialization_stats") and not _callsite_materialization_complete_8616(
             codegen
         ):
-            setattr(codegen, "dead_setup_refused", int(getattr(codegen, "dead_setup_refused", 0)) + 1)
-            setattr(codegen, "dead_setup_live_call_arg", int(getattr(codegen, "dead_setup_live_call_arg", 0)) + 1)
+            typing.cast(typing.Any, codegen).dead_setup_refused = int(getattr(codegen, "dead_setup_refused", 0)) + 1
+            typing.cast(typing.Any, codegen).dead_setup_live_call_arg = int(getattr(codegen, "dead_setup_live_call_arg", 0)) + 1
             return False
 
         if mode == DeadSetupMode8616.DIAGNOSTIC:
@@ -434,7 +464,8 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
             total_candidates = 0
             total_pruned = 0
             for block in _iter_statement_blocks(statements):
-                stmts = list(getattr(block, "statements", ()) or ())
+                # Dynamic angr/codegen statement-block boundary.
+                stmts: list[object] = list(getattr(block, "statements", ()) or ())
                 if not stmts:
                     continue
                 call_indices = {
@@ -471,21 +502,17 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
                         del stmts[idx]
                         pruned += 1
                         _bump_counter_8616(codegen, "dead_setup_materialized_count")
-                if pruned:
+                if pruned and _is_statement_block_like_8616(block):
                     block.statements = stmts
                     total_pruned += pruned
                     pass_changed = True
 
             if total_candidates:
-                setattr(
-                    codegen,
-                    "dead_setup_candidates",
-                    int(getattr(codegen, "dead_setup_candidates", 0)) + total_candidates,
-                )
+                typing.cast(typing.Any, codegen).dead_setup_candidates = int(getattr(codegen, "dead_setup_candidates", 0)) + total_candidates
             if total_refused:
-                setattr(codegen, "dead_setup_refused", int(getattr(codegen, "dead_setup_refused", 0)) + total_refused)
+                typing.cast(typing.Any, codegen).dead_setup_refused = int(getattr(codegen, "dead_setup_refused", 0)) + total_refused
             if total_pruned:
-                setattr(codegen, "dead_setup_pruned", int(getattr(codegen, "dead_setup_pruned", 0)) + total_pruned)
+                typing.cast(typing.Any, codegen).dead_setup_pruned = int(getattr(codegen, "dead_setup_pruned", 0)) + total_pruned
                 changed = True
             if not pass_changed:
                 break
@@ -495,8 +522,11 @@ def _prune_dead_setup_carriers_8616(codegen) -> bool:
     return _impl()
 
 
-def _count_dead_setup_escaped_8616(codegen) -> int:
-    def _impl():
+def _count_dead_setup_escaped_8616(codegen: object) -> int:
+    """Count escaped setup carriers across a dynamic angr/codegen C AST boundary."""
+
+    def _impl() -> int:
+        """Inspect dynamic angr/codegen C AST boundary statement blocks."""
         mode = _resolve_dead_setup_mode_8616(codegen)
         if mode != DeadSetupMode8616.PRODUCTION:
             return 0

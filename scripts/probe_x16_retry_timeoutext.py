@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""
-Retry previously timed-out EXE samples with a longer timeout and reclassify
-COM 'no_bytes_available' fallbacks as expected (status 'ok').
+"""Retry x16 sample timeouts and reclassify expected COM no-byte fallbacks.
+
+Layer: Tooling/gates.
+Responsibility: rerun bounded sample probes and report fallback diagnostics without semantic repair.
 
 Reads `reports/x16_decompile_report.json` and writes `reports/x16_decompile_retry.json`.
 """
+
+from __future__ import annotations
 
 import json
 import subprocess
@@ -61,7 +64,7 @@ for r in prev:
         r.update(
             {
                 "status": status,
-                "summary": fallback_reasons or [l for l in out.splitlines()[:6]],
+                "summary": fallback_reasons or [line for line in out.splitlines()[:6]],
                 "snippet": "\n".join(out.splitlines()[:200]),
             }
         )

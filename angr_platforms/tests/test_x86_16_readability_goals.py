@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from angr_platforms.X86_16.readability_goals import (
     classify_readability_cluster,
     describe_x86_16_readability_goals,
@@ -7,7 +9,7 @@ from angr_platforms.X86_16.readability_goals import (
 )
 
 
-def test_x86_16_readability_goal_surface_is_deterministic():
+def test_x86_16_readability_goal_surface_is_deterministic() -> None:
     goals = describe_x86_16_readability_goals()
 
     assert [goal[0] for goal in goals] == ["4.1", "4.2", "4.3"]
@@ -16,7 +18,7 @@ def test_x86_16_readability_goal_surface_is_deterministic():
     assert "trait evidence" in goals[2][2].lower()
 
 
-def test_x86_16_readability_cluster_classifier_matches_known_patterns():
+def test_x86_16_readability_cluster_classifier_matches_known_patterns() -> None:
     assert classify_readability_cluster("return (low << 8) | high;") == (
         "byte_pair_arithmetic",
         "Byte-pair arithmetic still survives in the text instead of widening earlier.",
@@ -31,7 +33,7 @@ def test_x86_16_readability_cluster_classifier_matches_known_patterns():
     )
 
 
-def test_x86_16_readability_goal_summary_counts_targets():
+def test_x86_16_readability_goal_summary_counts_targets() -> None:
     summary = summarize_readability_goals(
         [{"cluster": "byte_pair_arithmetic", "count": 1}],
         [
@@ -48,7 +50,7 @@ def test_x86_16_readability_goal_summary_counts_targets():
     assert summary[2]["observed_cluster_count"] == 4
 
 
-def test_x86_16_readability_goal_queue_prioritizes_hot_clusters():
+def test_x86_16_readability_goal_queue_prioritizes_hot_clusters() -> None:
     summary = summarize_readability_goals(
         [{"cluster": "byte_pair_arithmetic", "count": 1}],
         [
@@ -67,7 +69,7 @@ def test_x86_16_readability_goal_queue_prioritizes_hot_clusters():
     assert queue[1]["observed_cluster_count"] == 7
 
 
-def test_x86_16_readability_focus_surface_keeps_queue_and_clusters():
+def test_x86_16_readability_focus_surface_keeps_queue_and_clusters() -> None:
     focus = summarize_readability_focus(
         [{"cluster": "byte_pair_arithmetic", "count": 1}],
         [{"cluster": "boolean_noise", "count": 2}],

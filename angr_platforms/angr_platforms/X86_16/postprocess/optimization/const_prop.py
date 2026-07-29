@@ -1,4 +1,15 @@
+"""Layer: Rewrite/Postprocess cleanup.
+
+Responsibility: fold constant expressions after semantics are already proven.
+Consumes already-proven IR, alias, widening, typed, and structuring facts.
+Do not recover new semantics, storage identity, types, call signatures, control flow, or facts from rendered text, COD, source, or CLI/reporting evidence here.
+The codegen and C AST objects cross a dynamic third-party angr boundary; keep
+dynamic attribute access limited to preserving existing C AST codegen metadata.
+"""
+
 from __future__ import annotations
+
+from collections.abc import Callable, Iterator
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
@@ -11,15 +22,11 @@ from angr.sim_type import SimTypeInt
 from ...decompiler_postprocess_utils import _c_constant_value_8616
 
 
-def _iter_c_statements_safe_8616(node):
+def _iter_c_statements_safe_8616(node: object) -> Iterator[object]:
     """Yield individual CStatements, descending into CStatements containers."""
     if isinstance(node, CStatements):
         for stmt in node.statements:
             yield from _iter_c_statements_safe_8616(stmt)
-        return
-    if isinstance(node, CStatements):
-        for stmt in node.statements:
-            yield stmt
         return
     if isinstance(node, (list, tuple)):
         for item in node:
@@ -31,7 +38,7 @@ def _iter_c_statements_safe_8616(node):
 # Default type for 86_16 constant folding: unsigned 16-bit int
 _CONST_DEFAULT_TYPE = SimTypeInt(signed=False)
 
-_CONST_PROP_BINARY_OPS = {
+_CONST_PROP_BINARY_OPS: dict[str, Callable[[int, int], int | None]] = {
     "Add": lambda a, b: a + b,
     "Sub": lambda a, b: a - b,
     "Mul": lambda a, b: a * b,
@@ -44,11 +51,13 @@ _CONST_PROP_BINARY_OPS = {
 }
 
 
-def _folded_constant_8616(value: int, *, codegen=None) -> CConstant:
+def _folded_constant_8616(value: int, *, codegen: object | None = None) -> CConstant:
+    """Build the 16-bit default typed constant used by cleanup folding."""
     return CConstant(int(value), _CONST_DEFAULT_TYPE, codegen=codegen)
 
 
-def _is_const_expr(node) -> bool:
+def _is_const_expr(node: object) -> bool:
+    """Return whether an already-recovered C AST expression is constant-only."""
     if isinstance(node, CConstant):
         return True
     if isinstance(node, CBinaryOp):
@@ -58,8 +67,10 @@ def _is_const_expr(node) -> bool:
     return False
 
 
-def _eval_const_expr(node) -> int | None:
-    def _impl():
+def _eval_const_expr(node: object) -> int | None:
+    """Evaluate a constant-only C AST expression without inferring new facts."""
+
+    def _impl() -> int | None:
         if isinstance(node, CConstant):
             return _c_constant_value_8616(node)
         if isinstance(node, CBinaryOp):
@@ -84,9 +95,11 @@ def _eval_const_expr(node) -> int | None:
     return _impl()
 
 
-def _fold_constants_in_node(node, *, codegen=None) -> bool:
-    def _impl():
-        """Fold constant sub-expressions in-place. Returns True if any folding occurred."""
+def _fold_constants_in_node(node: object, *, codegen: object | None = None) -> bool:
+    """Fold constant sub-expressions in one C AST node."""
+
+    def _impl() -> bool:
+        """Fold across the dynamic third-party angr C AST boundary."""
         changed = False
         node_codegen = getattr(node, "codegen", None) or codegen
 
@@ -130,7 +143,7 @@ def _fold_constants_in_node(node, *, codegen=None) -> bool:
     return _impl()
 
 
-def _constant_propagation_8616(stmts, codegen=None):
+def _constant_propagation_8616(stmts: object, codegen: object | None = None) -> bool:
     """Fold constant sub-expressions in C statements."""
     changed = False
     for stmt in _iter_c_statements_safe_8616(stmts):

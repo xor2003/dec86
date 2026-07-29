@@ -1,36 +1,61 @@
+"""Lower stable object and array accesses from typed address evidence.
+
+Layer: Types/Lowering.
+Responsibility: consumes alias, widening, and typed facts to remove segment-scale
+carriers and materialize object-shaped accesses.
+Do not recover semantics from COD, source, assembly, or rendered C text.
+"""
+
 from __future__ import annotations
 
-# Layer: Lowering
-# Responsibility: stable object/array lowering and segment-scale removal helpers from typed address evidence.
-# Forbidden: rendered-text pattern recovery and CLI formatting ownership.
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from typing import Any, Callable, TypeAlias
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimRegisterVariable
 
+ClassifySegmentedDereference: TypeAlias = Callable[[object, object], object | None]
+FlattenCAddTerms: TypeAlias = Callable[[object], list[object]]
+UnwrapCCasts: TypeAlias = Callable[[object], object]
+CConstantValue: TypeAlias = Callable[[object], int | None]
+SegmentRegName: TypeAlias = Callable[[object, object], str | None]
+ProjectRewriteCache: TypeAlias = Callable[[object], MutableMapping[str, MutableMapping[int, object]]]
+
+
+def _dynamic_attr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
+    """Dynamic angr/codegen boundary: read optional third-party C-AST metadata."""
+    return getattr(obj, name, default)
+
 
 def _match_segment_register_based_dereference(
-    node,
-    project,
+    node: object,
+    project: object,
     *,
-    classify_segmented_dereference,
-    flatten_c_add_terms,
-    unwrap_c_casts,
-    c_constant_value,
-    segment_reg_name,
-):
-    def _impl():
+    classify_segmented_dereference: ClassifySegmentedDereference,
+    flatten_c_add_terms: FlattenCAddTerms,
+    unwrap_c_casts: UnwrapCCasts,
+    c_constant_value: CConstantValue,
+    segment_reg_name: SegmentRegName,
+) -> tuple[object, object] | None:
+    """Match a DS/ES dereference that can be lowered to an object base."""
+
+    def _impl() -> tuple[object, object] | None:
         classified = classify_segmented_dereference(node, project)
-        if classified is None or classified.addr_expr is None or classified.seg_name not in {"ds", "es"}:
+        if (
+            classified is None
+            or _dynamic_attr_8616(classified, "addr_expr", None) is None
+            or _dynamic_attr_8616(classified, "seg_name", None) not in {"ds", "es"}
+        ):
             return None
-        if not classified.allows_object_rewrite():
+        allows_object_rewrite = _dynamic_attr_8616(classified, "allows_object_rewrite", None)
+        if not callable(allows_object_rewrite) or not allows_object_rewrite():
             return None
 
-        addr_expr = classified.addr_expr
-        base_terms = []
+        addr_expr = _dynamic_attr_8616(classified, "addr_expr", None)
+        base_terms: list[object] = []
 
-        def _is_segment_scale(term) -> bool:
+        def _is_segment_scale(term: object) -> bool:
             if not isinstance(term, structured_c.CBinaryOp):
                 return False
             if term.op == "Mul":
@@ -57,7 +82,7 @@ def _match_segment_register_based_dereference(
                 continue
 
             if isinstance(inner, structured_c.CVariable) and isinstance(
-                getattr(inner, "variable", None), SimRegisterVariable
+                _dynamic_attr_8616(inner, "variable", None), SimRegisterVariable
             ):
                 base_terms.append(inner)
                 continue
@@ -72,17 +97,18 @@ def _match_segment_register_based_dereference(
 
 
 def _strip_segment_scale_from_addr_expr(
-    addr_expr,
-    project,
+    addr_expr: object,
+    project: object,
     *,
-    flatten_c_add_terms,
-    unwrap_c_casts,
-    c_constant_value,
-    segment_reg_name,
-):
-    kept_terms = []
+    flatten_c_add_terms: FlattenCAddTerms,
+    unwrap_c_casts: UnwrapCCasts,
+    c_constant_value: CConstantValue,
+    segment_reg_name: SegmentRegName,
+) -> object | None:
+    """Return an address expression with DS/ES segment scaling removed."""
+    kept_terms: list[object] = []
 
-    def _is_segment_scale(term) -> bool:
+    def _is_segment_scale(term: object) -> bool:
         if not isinstance(term, structured_c.CBinaryOp):
             return False
         if term.op == "Mul":
@@ -110,11 +136,18 @@ def _strip_segment_scale_from_addr_expr(
         return None
     result = kept_terms[0]
     for term in kept_terms[1:]:
-        result = structured_c.CBinaryOp("Add", result, term, codegen=getattr(term, "codegen", None))
+        result = structured_c.CBinaryOp("Add", result, term, codegen=_dynamic_attr_8616(term, "codegen", None))
     return result
 
 
-def _match_ss_stack_reference(node, project, *, project_rewrite_cache, classify_segmented_dereference):
+def _match_ss_stack_reference(
+    node: object,
+    project: object,
+    *,
+    project_rewrite_cache: ProjectRewriteCache,
+    classify_segmented_dereference: ClassifySegmentedDereference,
+) -> object | None:
+    """Return a cached stack reference tuple when a classified SS access is proven."""
     cache = project_rewrite_cache(project).setdefault("ss_stack_reference", {})
     key = id(node)
     if key in cache:
@@ -123,11 +156,15 @@ def _match_ss_stack_reference(node, project, *, project_rewrite_cache, classify_
     classified = classify_segmented_dereference(node, project)
     if (
         classified is not None
-        and classified.kind == "stack"
-        and classified.stack_var is not None
-        and classified.cvar is not None
+        and _dynamic_attr_8616(classified, "kind", None) == "stack"
+        and _dynamic_attr_8616(classified, "stack_var", None) is not None
+        and _dynamic_attr_8616(classified, "cvar", None) is not None
     ):
-        result = (classified.stack_var, classified.cvar, classified.extra_offset)
+        result = (
+            _dynamic_attr_8616(classified, "stack_var", None),
+            _dynamic_attr_8616(classified, "cvar", None),
+            _dynamic_attr_8616(classified, "extra_offset", None),
+        )
         cache[key] = result
         return result
 
@@ -144,14 +181,18 @@ AccessTraitFieldName: TypeAlias = Callable[[int, int], str]
 
 @dataclass(frozen=True)
 class AccessTraitObjectHint:
+    """Stable object-shape naming hint derived from typed access traits."""
+
     base_key: BaseKey
     kind: str
     candidates: tuple[NamingCandidate, ...]
 
     def should_rename_stack(self) -> bool:
+        """Return whether this hint is strong enough to rename stack objects."""
         return self.kind in {"member", "array", "stack"}
 
     def candidate_field_names(self, *, access_trait_field_name: AccessTraitFieldName) -> tuple[str, ...]:
+        """Return deterministic field names for all unique candidate offsets."""
         names: list[str] = []
         seen: set[str] = set()
         for offset, _size, _count in self.candidates:
@@ -163,11 +204,15 @@ class AccessTraitObjectHint:
         return tuple(names)
 
 
-def _stable_hint_kind(profile: Any, base_key: BaseKey) -> str | None:
-    def _impl():
-        structured_kinds = set()
-        for evidence in getattr(profile, "induction_evidence", ()) + getattr(profile, "stride_evidence", ()):
-            kind = getattr(evidence, "kind", None)
+def _stable_hint_kind(profile: object, base_key: BaseKey) -> str | None:
+    """Return the single stable object-hint kind proven by an access profile."""
+
+    def _impl() -> str | None:
+        structured_kinds: set[str] = set()
+        induction_evidence = _dynamic_attr_8616(profile, "induction_evidence", ())
+        stride_evidence = _dynamic_attr_8616(profile, "stride_evidence", ())
+        for evidence in tuple(induction_evidence) + tuple(stride_evidence):
+            kind = _dynamic_attr_8616(evidence, "kind", None)
             if kind == "member_like":
                 structured_kinds.add("member")
             elif kind == "array_like":
@@ -179,23 +224,23 @@ def _stable_hint_kind(profile: Any, base_key: BaseKey) -> str | None:
         if (
             base_key
             and base_key[0] == "stack"
-            and getattr(profile, "stack_like", ())
-            and not getattr(profile, "array_like", ())
-            and not getattr(profile, "induction_like", ())
+            and _dynamic_attr_8616(profile, "stack_like", ())
+            and not _dynamic_attr_8616(profile, "array_like", ())
+            and not _dynamic_attr_8616(profile, "induction_like", ())
         ):
             return "stack"
-        simple_kinds = set()
-        if getattr(profile, "member_like", ()):
+        simple_kinds: set[str] = set()
+        if _dynamic_attr_8616(profile, "member_like", ()):
             simple_kinds.add("member")
-        if getattr(profile, "array_like", ()):
+        if _dynamic_attr_8616(profile, "array_like", ()):
             simple_kinds.add("array")
-        if getattr(profile, "induction_like", ()):
+        if _dynamic_attr_8616(profile, "induction_like", ()):
             simple_kinds.add("induction")
         if len(simple_kinds) == 1:
             return next(iter(simple_kinds))
         if simple_kinds:
             return None
-        if base_key and base_key[0] == "stack" and getattr(profile, "stack_like", ()):
+        if base_key and base_key[0] == "stack" and _dynamic_attr_8616(profile, "stack_like", ()):
             return "stack"
         return None
 
@@ -239,20 +284,21 @@ def _stable_access_object_hint_for_key(
 
 
 def _has_stable_access_object_hints(
-    codegen: Any,
+    codegen: object,
     *,
     build_access_trait_evidence_profiles: BuildAccessTraitEvidenceProfiles,
 ) -> bool:
-    cfunc = getattr(codegen, "cfunc", None)
+    """Return whether codegen has any stable access-object hints available."""
+    cfunc = _dynamic_attr_8616(codegen, "cfunc", None)
     if cfunc is None:
         return False
-    project = getattr(codegen, "project", None)
+    project = _dynamic_attr_8616(codegen, "project", None)
     if project is None:
         return False
-    cache = getattr(project, "_inertia_access_traits", None)
+    cache = _dynamic_attr_8616(project, "_inertia_access_traits", None)
     if not isinstance(cache, dict):
         return False
-    traits = cache.get(getattr(cfunc, "addr", None))
+    traits = cache.get(_dynamic_attr_8616(cfunc, "addr", None))
     if not isinstance(traits, dict):
         return False
     return bool(

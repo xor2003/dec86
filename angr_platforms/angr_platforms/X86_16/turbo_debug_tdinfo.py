@@ -1,3 +1,9 @@
+"""Layer: Optional evidence/reporting.
+
+Responsibility: parse Turbo Debugger TDINFO records into optional labels and diagnostics.
+Forbidden: requiring debug symbols for arguments, types, control flow, or validation success.
+"""
+
 from __future__ import annotations
 
 import struct
@@ -66,6 +72,8 @@ _OLD_FORMAT_NO_TDS = {(1, 0), (1, 1)}
 
 
 class TDInfoSymbolClass(IntEnum):
+    """Turbo Debugger symbol storage classes used as optional debug metadata."""
+
     STATIC = 0
     ABSOLUTE = 1
     AUTO = 2
@@ -77,6 +85,8 @@ class TDInfoSymbolClass(IntEnum):
 
 
 class TDInfoNameKind(IntEnum):
+    """Classification for entries recovered from the TDINFO name pool."""
+
     UNKNOWN = 0
     SOURCE_FILE = 1
     PUBLIC_SYMBOL = 2
@@ -84,6 +94,8 @@ class TDInfoNameKind(IntEnum):
 
 
 class TDInfoTypeKind(IntEnum):
+    """TDINFO type descriptor tags preserved for debug-schema reporting."""
+
     NEAR_POINTER = 0x15
     FAR_POINTER = 0x16
     SEGMENT = 0x17
@@ -103,6 +115,8 @@ class TDInfoTypeKind(IntEnum):
 
 @dataclass(frozen=True)
 class TDInfoHeader:
+    """Decoded TDINFO header counters and version fields."""
+
     major_version: int
     minor_version: int
     names_pool_size_in_bytes: int
@@ -116,6 +130,8 @@ class TDInfoHeader:
 
 @dataclass(frozen=True)
 class TDInfoSymbolRecord:
+    """Raw TDINFO symbol record with segmented address metadata."""
+
     index: int
     type_index: int
     offset: int
@@ -123,21 +139,27 @@ class TDInfoSymbolRecord:
     symbol_class: TDInfoSymbolClass
 
     def linear_addr(self, *, load_base_linear: int) -> int:
+        """Return a display-only linear address for optional symbol labels."""
         return load_base_linear + (self.segment << 4) + self.offset
 
     @property
     def signed_offset(self) -> int:
+        """Interpret the 16-bit record offset as a signed stack displacement."""
         return self.offset - 0x10000 if self.offset & 0x8000 else self.offset
 
 
 @dataclass(frozen=True)
 class TDInfoNamedSymbol:
+    """TDINFO symbol paired with its decoded name pool entry."""
+
     name: str
     record: TDInfoSymbolRecord
 
 
 @dataclass(frozen=True)
 class TDInfoTypeMember:
+    """Member entry decoded from a TDINFO structure, union, or array payload."""
+
     name: str
     offset: int
     type_index: int
@@ -148,6 +170,8 @@ class TDInfoTypeMember:
 
 @dataclass(frozen=True)
 class TDInfoEnumMember:
+    """Enum value decoded from a TDINFO enum payload."""
+
     name: str
     value: int
     attributes: int
@@ -157,6 +181,8 @@ class TDInfoEnumMember:
 
 @dataclass(frozen=True)
 class TDInfoTypeDescriptor:
+    """TDINFO type descriptor retained as optional debug type evidence."""
+
     type_index: int
     kind: TDInfoTypeKind
     name: str
@@ -174,6 +200,8 @@ class TDInfoTypeDescriptor:
 
 @dataclass(frozen=True)
 class TDInfoTypeReference:
+    """Reference from a named TDINFO symbol to a type descriptor index."""
+
     name: str
     type_index: int
     symbol_class: TDInfoSymbolClass
@@ -181,6 +209,8 @@ class TDInfoTypeReference:
 
 @dataclass(frozen=True)
 class TDInfoNamePoolEntry:
+    """Classified TDINFO name-pool string."""
+
     index: int
     name: str
     kind: TDInfoNameKind
@@ -188,6 +218,8 @@ class TDInfoNamePoolEntry:
 
 @dataclass(frozen=True)
 class TDInfoRawTableSpan:
+    """Byte span for a TDINFO table retained for diagnostics and schema dumps."""
+
     name: str
     offset: int
     size: int
@@ -197,6 +229,8 @@ class TDInfoRawTableSpan:
 
 @dataclass(frozen=True)
 class TDInfoEXEInfo:
+    """Parsed TDINFO payload exposed as optional labels and debug diagnostics."""
+
     header: TDInfoHeader
     debug_info_offset: int
     symbols: tuple[TDInfoSymbolRecord, ...]
@@ -228,11 +262,14 @@ class TDInfoEXEInfo:
 
 
 def parse_tdinfo_exe(path: Path, *, load_base_linear: int = 0) -> TDInfoEXEInfo | None:
+    """Parse TDINFO debug metadata from an MZ executable when present."""
     return parse_tdinfo_exe_bytes(path.read_bytes(), load_base_linear=load_base_linear)
 
 
 def parse_tdinfo_exe_bytes(data: bytes, *, load_base_linear: int = 0) -> TDInfoEXEInfo | None:
-    def _impl():
+    """Parse TDINFO debug metadata from executable bytes when present."""
+
+    def _impl() -> TDInfoEXEInfo | None:
         if len(data) < 0x40 or data[:2] != b"MZ":
             return None
 

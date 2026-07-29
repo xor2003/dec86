@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Corpus validation script: Test Item 5 (BYTEOPS byte-register correctness)"""
+"""Corpus validation script: Test Item 5 (BYTEOPS byte-register correctness).
+
+Layer: Tooling/gates.
+"""
 
 import sys
 from pathlib import Path

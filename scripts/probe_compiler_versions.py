@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Probe DOS compiler versions for fixture and signature-catalog metadata.
+
+Layer: Tooling/gates.
+Responsibility: collect optional compiler-version metadata for fixture and signature reporting.
+"""
 
 from __future__ import annotations
 
@@ -42,7 +47,7 @@ def _run_banner(root: Path, exe: Path) -> str:
 
 
 def _canonical(root_name: str, banner: str) -> str | None:
-    def _impl():
+    def _impl() -> str | None:
         first = banner.splitlines()[0].strip().lower() if banner.splitlines() else ""
         m = VERSION_RE.search(banner)
         if "microsoft" in first and "c" in first and m:

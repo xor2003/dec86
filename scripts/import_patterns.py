@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Import external compiler pattern files into local signature catalogs.
+
+Layer: Tooling/gates.
+Responsibility: import optional compiler patterns without making signatures semantic proof.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from signature_catalog import build_signature_catalog
+from signature_catalog import build_signature_catalog  # noqa: E402
 
 DEFAULT_COMPILERS_ROOT = Path("/home/xor/inertia_player/dos_compilers")
 

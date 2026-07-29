@@ -1,14 +1,26 @@
+"""Layer: Frontend/runtime.
+
+Responsibility: load DOS NE executables and resource metadata into the frontend model.
+Forbidden: decompiler recovery, type inference, or source/COD-backed repair.
+Dynamic boundary: CLE backend constructors pass binary streams and loader
+keyword arguments through a third-party plugin API.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import BinaryIO, cast
 
 from archinfo import arch_from_id
 from cle.backends import Blob, register_backend
 
 from angr_platforms.X86_16.ne_resources import NEResourceTable, parse_ne_resources_bytes
 
+__all__ = ("DOSNE", "DOSNEHeader", "NESegmentMapping", "NESegmentRecord")
 
-def _read_mz_new_header_offset(stream) -> int | None:
+
+def _read_mz_new_header_offset(stream: BinaryIO) -> int | None:
+    """Read the NE header offset from an MZ-compatible binary stream."""
     stream.seek(0)
     header = stream.read(0x40)
     if len(header) < 0x40 or header[:2] != b"MZ":
@@ -18,6 +30,8 @@ def _read_mz_new_header_offset(stream) -> int | None:
 
 @dataclass(frozen=True)
 class DOSNEHeader:
+    """Parsed NE header fields that seed frontend segment and entry state."""
+
     ne_header_offset: int
     entry_ip: int
     entry_segment: int
@@ -29,7 +43,8 @@ class DOSNEHeader:
     target_os: int
 
     @classmethod
-    def from_stream(cls, stream) -> "DOSNEHeader":
+    def from_stream(cls, stream: BinaryIO) -> DOSNEHeader:
+        """Parse the core DOS NE header fields from a binary stream."""
         ne_header_offset = _read_mz_new_header_offset(stream)
         if ne_header_offset is None:
             raise ValueError("Not an MZ executable")
@@ -53,6 +68,8 @@ class DOSNEHeader:
 
 @dataclass(frozen=True)
 class NESegmentRecord:
+    """Raw NE segment-table record before frontend selector assignment."""
+
     segment_number: int
     file_offset: int
     length: int
@@ -62,6 +79,8 @@ class NESegmentRecord:
 
 @dataclass(frozen=True)
 class NESegmentMapping:
+    """Frontend memory mapping for one NE segment selector."""
+
     segment_number: int
     selector: int
     mem_addr: int
@@ -80,19 +99,21 @@ class DOSNE(Blob):
     addresses without flattening the executable into one guessed object.
     """
 
-    is_default = True
+    is_default: bool = True
 
-    DEFAULT_LOAD_BASE = 0x1000
+    DEFAULT_LOAD_BASE: int = 0x1000
+    initial_register_values: dict[str, int]
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Initialize a CLE blob backend from the third-party loader API."""
         if len(args) < 2:
             raise ValueError("DOSNE expects binary path and binary stream")
 
-        stream = args[1]
+        stream = cast(BinaryIO, args[1])
         header = DOSNEHeader.from_stream(stream)
         stream.seek(0)
         raw_data = stream.read()
-        load_base = kwargs.pop("base_addr", self.DEFAULT_LOAD_BASE)
+        load_base = cast(int, kwargs.pop("base_addr", self.DEFAULT_LOAD_BASE))
         arch = arch_from_id("86_16")
         arch.bits = max(arch.bits, 32)
 
@@ -138,7 +159,8 @@ class DOSNE(Blob):
         }
 
     @staticmethod
-    def _read_segment_records(stream, header: DOSNEHeader) -> tuple[NESegmentRecord, ...]:
+    def _read_segment_records(stream: BinaryIO, header: DOSNEHeader) -> tuple[NESegmentRecord, ...]:
+        """Read NE segment-table records from the binary stream."""
         records: list[NESegmentRecord] = []
         table_offset = header.ne_header_offset + header.segment_table_offset
         for segment_index in range(header.segment_count):
@@ -167,6 +189,7 @@ class DOSNE(Blob):
         records: tuple[NESegmentRecord, ...],
         load_base: int,
     ) -> tuple[NESegmentMapping, ...]:
+        """Map NE segment records to paragraph-aligned frontend selectors."""
         mappings: list[NESegmentMapping] = []
         current_addr = load_base
         for record in records:
@@ -187,7 +210,8 @@ class DOSNE(Blob):
         return tuple(mappings)
 
     @staticmethod
-    def is_compatible(stream):
+    def is_compatible(stream: BinaryIO) -> bool:
+        """Return whether the binary stream contains a DOS NE executable."""
         ne_header_offset = _read_mz_new_header_offset(stream)
         if ne_header_offset is None:
             return False

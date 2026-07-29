@@ -145,6 +145,7 @@ class TestEquivalenceClassBuilder:
         classes = builder.build(expressions)
 
         # Each expression should map to a class
+        assert len(classes) == len(expressions)
         for expr in expressions:
             assert expr in builder.expr_to_class
             class_id = builder.expr_to_class[expr]

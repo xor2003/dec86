@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from types import SimpleNamespace
 
 from angr_platforms.X86_16.recompilable_cli_bridge import _storage_object_meta
@@ -8,7 +10,7 @@ from angr_platforms.X86_16.recompilable_storage_objects import (
 )
 
 
-def test_recompilable_storage_object_summary_collects_records_and_refusals():
+def test_recompilable_storage_object_summary_collects_records_and_refusals() -> None:
     project = SimpleNamespace(
         _inertia_access_traits={
             0x4010: {
@@ -33,7 +35,7 @@ def test_recompilable_storage_object_summary_collects_records_and_refusals():
     assert summary.refusal_reasons == ("mixed_or_unstable_evidence",)
 
 
-def test_recompilable_storage_fallback_uses_storage_object_backed_source_when_present():
+def test_recompilable_storage_fallback_refuses_storage_object_backed_source_when_present() -> None:
     decision = decide_recompilable_storage_fallback(
         live_shape_ok=False,
         fallback_shape_ok=True,
@@ -43,13 +45,13 @@ def test_recompilable_storage_fallback_uses_storage_object_backed_source_when_pr
         storage_object_refusal_count=0,
     )
 
-    assert decision.use_fallback is True
-    assert decision.c_text_source == "storage_object_shape_ok_evidence"
-    assert decision.bounded_live_decompile_outcome == "storage_object_shape_ok_evidence_fallback"
-    assert decision.selected_text == "shape-ok"
+    assert decision.use_fallback is False
+    assert decision.c_text_source is None
+    assert decision.bounded_live_decompile_outcome is None
+    assert decision.selected_text is None
 
 
-def test_recompilable_storage_fallback_prefers_refusal_outcome_when_only_refusal_signal_exists():
+def test_recompilable_storage_fallback_refuses_source_when_only_refusal_signal_exists() -> None:
     decision = decide_recompilable_storage_fallback(
         live_shape_ok=False,
         fallback_shape_ok=True,
@@ -59,13 +61,13 @@ def test_recompilable_storage_fallback_prefers_refusal_outcome_when_only_refusal
         storage_object_refusal_count=1,
     )
 
-    assert decision.use_fallback is True
-    assert decision.c_text_source == "shape_ok_evidence"
-    assert decision.bounded_live_decompile_outcome == "storage_object_refusal_shape_ok_evidence_fallback"
-    assert decision.selected_text == "fallback"
+    assert decision.use_fallback is False
+    assert decision.c_text_source is None
+    assert decision.bounded_live_decompile_outcome is None
+    assert decision.selected_text is None
 
 
-def test_recompilable_cli_bridge_storage_meta_defaults_without_traits():
+def test_recompilable_cli_bridge_storage_meta_defaults_without_traits() -> None:
     meta = _storage_object_meta(SimpleNamespace(), 0x4010)
 
     assert meta == {

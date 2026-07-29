@@ -1,13 +1,42 @@
+"""Layer: Structuring.
+
+Responsibility: derive cross-entry grouped units from CFG ownership artifacts.
+Forbidden: alias ownership, type/materialization recovery, or source/COD/text-backed grouping.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Protocol
 
 from .structuring_cfg_grouping import CFGGroupingArtifact, build_cfg_grouping_artifact
+
+__all__ = (
+    "CrossEntryGroupedUnit",
+    "CrossEntryGroupedUnitRefusal",
+    "CrossEntryGroupedUnitArtifact",
+    "apply_x86_16_cross_entry_grouped_units",
+    "build_x86_16_cross_entry_grouped_units",
+    "describe_x86_16_cross_entry_grouped_unit_surface",
+)
+
+
+class _CrossEntryGroupedUnitCodegen(Protocol):
+    _inertia_cross_entry_grouped_units: CrossEntryGroupedUnitArtifact | None
+    _inertia_cross_entry_unit_members: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _SnapshotNodeFallback:
+    """Fallback snapshot node used only when grouped ownership data is incomplete."""
+
+    predecessor_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class CrossEntryGroupedUnit:
+    """Accepted grouped multi-entry CFG unit derived from ownership artifacts."""
+
     anchor_shared_region_id: int
     primary_entry_region_ids: tuple[int, ...]
     entry_fragment_region_ids: tuple[int, ...]
@@ -18,6 +47,8 @@ class CrossEntryGroupedUnit:
 
 @dataclass(frozen=True, slots=True)
 class CrossEntryGroupedUnitRefusal:
+    """Reason a candidate grouped CFG unit must remain unmaterialized."""
+
     anchor_shared_region_id: int
     shared_region_ids: tuple[int, ...]
     external_predecessor_region_ids: tuple[int, ...]
@@ -27,16 +58,21 @@ class CrossEntryGroupedUnitRefusal:
 
 @dataclass(frozen=True, slots=True)
 class CrossEntryGroupedUnitArtifact:
+    """Cross-entry grouping result plus honest refusal diagnostics."""
+
     grouping: CFGGroupingArtifact
     units: tuple[CrossEntryGroupedUnit, ...]
     refusals: tuple[CrossEntryGroupedUnitRefusal, ...]
     refused_anchor_region_ids: tuple[int, ...]
 
     def summary_line(self) -> str:
+        """Return a compact deterministic status line for reports."""
         return f"cross_entry_grouped_units units={len(self.units)} refused={len(self.refused_anchor_region_ids)}"
 
     def to_dict(self) -> dict[str, object]:
-        def _impl():
+        """Serialize grouped-unit evidence for diagnostics and tests."""
+
+        def _impl() -> dict[str, object]:
             return {
                 "grouping": self.grouping.to_dict(),
                 "refused_anchor_region_ids": [hex(region_id) for region_id in self.refused_anchor_region_ids],
@@ -70,8 +106,10 @@ class CrossEntryGroupedUnitArtifact:
         return _impl()
 
 
-def build_x86_16_cross_entry_grouped_units(codegen: Any) -> CrossEntryGroupedUnitArtifact | None:
-    def _impl():
+def build_x86_16_cross_entry_grouped_units(codegen: object) -> CrossEntryGroupedUnitArtifact | None:
+    """Build grouped CFG units from existing structuring ownership artifacts."""
+
+    def _impl() -> CrossEntryGroupedUnitArtifact | None:
         grouping = build_cfg_grouping_artifact(codegen)
         if grouping is None:
             return None
@@ -123,9 +161,7 @@ def build_x86_16_cross_entry_grouped_units(codegen: Any) -> CrossEntryGroupedUni
                 {
                     predecessor_region_id
                     for component_region_id in component_shared_region_ids_tuple
-                    for predecessor_region_id in snapshot_nodes.get(
-                        component_region_id, type("_N", (), {"predecessor_ids": ()})()
-                    ).predecessor_ids
+                    for predecessor_region_id in snapshot_nodes.get(component_region_id, _SnapshotNodeFallback()).predecessor_ids
                     if predecessor_region_id not in component_shared_region_ids
                     and predecessor_region_id in record_by_region_id
                 }
@@ -190,31 +226,23 @@ def build_x86_16_cross_entry_grouped_units(codegen: Any) -> CrossEntryGroupedUni
     return _impl()
 
 
-def apply_x86_16_cross_entry_grouped_units(codegen: Any) -> bool:
+def apply_x86_16_cross_entry_grouped_units(codegen: _CrossEntryGroupedUnitCodegen) -> bool:
+    """Attach grouped-unit artifacts to the codegen structuring boundary."""
     artifact = build_x86_16_cross_entry_grouped_units(codegen)
-    setattr(codegen, "_inertia_cross_entry_grouped_units", artifact)
+    codegen._inertia_cross_entry_grouped_units = artifact
     if artifact is None:
-        setattr(codegen, "_inertia_cross_entry_unit_members", ())
+        codegen._inertia_cross_entry_unit_members = ()
         return False
     member_region_ids = tuple(sorted({region_id for unit in artifact.units for region_id in unit.member_region_ids}))
-    setattr(codegen, "_inertia_cross_entry_unit_members", member_region_ids)
+    codegen._inertia_cross_entry_unit_members = member_region_ids
     return bool(artifact.units)
 
 
 def describe_x86_16_cross_entry_grouped_unit_surface() -> dict[str, object]:
+    """Describe the grouped-unit integration attributes for architecture tests."""
     return {
         "producer": "build_x86_16_cross_entry_grouped_units",
         "artifact_attr": "_inertia_cross_entry_grouped_units",
         "member_attr": "_inertia_cross_entry_unit_members",
         "purpose": "Materialize grouped multi-entry CFG units before region structuring.",
     }
-
-
-__all__ = [
-    "CrossEntryGroupedUnit",
-    "CrossEntryGroupedUnitRefusal",
-    "CrossEntryGroupedUnitArtifact",
-    "apply_x86_16_cross_entry_grouped_units",
-    "build_x86_16_cross_entry_grouped_units",
-    "describe_x86_16_cross_entry_grouped_unit_surface",
-]

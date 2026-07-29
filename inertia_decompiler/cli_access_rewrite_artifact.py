@@ -1,5 +1,12 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
 from typing import Callable
 
@@ -20,6 +27,8 @@ __all__ = [
 
 @dataclass(frozen=True)
 class AccessRewriteArtifact:
+    """Stable object-hint rewrite data derived from typed access evidence."""
+
     object_hints: StableHints
     refusal_reasons: dict[BaseKey, str]
 
@@ -42,13 +51,16 @@ def load_access_rewrite_artifact(
     build_access_trait_evidence_profiles: Callable[[dict[str, dict[BaseKey, object]]], EvidenceProfiles],
     build_stable_access_object_hints: Callable[[dict[str, dict[BaseKey, object]]], StableHints],
 ) -> AccessRewriteArtifact | None:
+    """Load or build the access rewrite artifact cached on an angr project."""
     if function_addr is None:
         return None
+    # dynamic angr boundary: Inertia attaches optional analysis caches to Project.
     cache = getattr(project, "_inertia_access_rewrite_artifact_cache", None)
     if isinstance(cache, dict):
         cached = cache.get(function_addr)
         if isinstance(cached, AccessRewriteArtifact):
             return cached
+    # dynamic angr boundary: access traits are populated by earlier CLI analysis passes.
     traits_cache = getattr(project, "_inertia_access_traits", None)
     if not isinstance(traits_cache, dict):
         return None
@@ -70,7 +82,8 @@ def load_access_rewrite_artifact(
     )
     if not isinstance(cache, dict):
         cache = {}
-        setattr(project, "_inertia_access_rewrite_artifact_cache", cache)
+        # dynamic angr boundary: persist the derived artifact cache on Project.
+        typing.cast(typing.Any, project)._inertia_access_rewrite_artifact_cache = cache
     cache[function_addr] = artifact
     return artifact
 
@@ -82,6 +95,7 @@ def has_access_rewrite_artifact(
     build_access_trait_evidence_profiles: Callable[[dict[str, dict[BaseKey, object]]], EvidenceProfiles],
     build_stable_access_object_hints: Callable[[dict[str, dict[BaseKey, object]]], StableHints],
 ) -> bool:
+    """Return whether a function has stable access rewrite object hints."""
     artifact = load_access_rewrite_artifact(
         project,
         function_addr,

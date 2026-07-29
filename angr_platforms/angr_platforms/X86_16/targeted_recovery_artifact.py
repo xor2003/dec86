@@ -1,6 +1,12 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: build targeted recovery artifacts for one bounded COD procedure.
+Forbidden: replacing scan failures with source-backed or guessed recovery output.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .corpus_scan import extract_cod_functions, scan_function
@@ -14,6 +20,8 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class TargetedRecoveryArtifactResult:
+    """Result metadata for one targeted bounded COD recovery artifact."""
+
     cod_path: Path
     proc_name: str
     proc_kind: str
@@ -22,6 +30,7 @@ class TargetedRecoveryArtifactResult:
     fallback_kind: str | None
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-compatible result payload."""
         return {
             "cod_path": str(self.cod_path),
             "proc_name": self.proc_name,
@@ -45,6 +54,7 @@ def write_x86_16_targeted_cod_recovery_artifact(
     max_decompile_bytes: int = 384,
     max_loop_bytes: int = 128,
 ) -> TargetedRecoveryArtifactResult:
+    """Scan one COD procedure and write its bounded recovery artifact."""
     source_path = Path(cod_path)
     entries = {name: (kind, code) for name, kind, code in extract_cod_functions(source_path)}
     if proc_name not in entries:
@@ -63,7 +73,7 @@ def write_x86_16_targeted_cod_recovery_artifact(
         max_decompile_bytes=max_decompile_bytes,
         max_loop_bytes=max_loop_bytes,
     )
-    write_result = write_x86_16_function_recovery_artifact(scan_result, output_path)
+    write_result = write_x86_16_function_recovery_artifact(asdict(scan_result), output_path)
     return TargetedRecoveryArtifactResult(
         cod_path=source_path,
         proc_name=proc_name,

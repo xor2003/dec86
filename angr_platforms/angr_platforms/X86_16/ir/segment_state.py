@@ -1,8 +1,18 @@
+"""Track proven segment-register state across IR blocks.
+
+Layer: IR.
+Responsibility: owns typed Value, Address, Condition, instruction facts, and lossless
+normalization.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol, cast
 
-from .core import IRFunctionArtifact, IRInstr, IRValue, MemSpace, SegmentOrigin
+from .core import IRBlock, IRFunctionArtifact, IRInstr, IRValue, MemSpace, SegmentOrigin
 from .ssa_function import SSAFunctionArtifact
 
 __all__ = [
@@ -15,14 +25,25 @@ __all__ = [
 _SEGMENT_REGS = ("cs", "ds", "es", "ss", "fs", "gs")
 
 
+class _SegmentStateCodegenBoundary(Protocol):
+    """Dynamic codegen attributes consumed and produced by this IR attachment."""
+
+    _inertia_vex_ir_artifact: object
+    _inertia_vex_ir_function_ssa: object
+    _inertia_segment_state_artifact: SegmentStateArtifact
+
+
 @dataclass(frozen=True, slots=True)
 class SegmentRegisterState:
+    """Proven state for one segment register at a block boundary."""
+
     register: str
     value_kind: str
     source: str | None
     origin: SegmentOrigin
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
         return {
             "register": self.register,
             "value_kind": self.value_kind,
@@ -33,11 +54,14 @@ class SegmentRegisterState:
 
 @dataclass(frozen=True, slots=True)
 class SegmentStateArtifact:
+    """Entry/exit segment-register state for a function's IR blocks."""
+
     entry_states: dict[int, dict[str, SegmentRegisterState]]
     exit_states: dict[int, dict[str, SegmentRegisterState]]
     summary: dict[str, object]
 
     def state_for_register(self, register: str) -> SegmentRegisterState | None:
+        """Return a proven state for `register` if any exit state proves it."""
         for state_map in self.exit_states.values():
             state = state_map.get(register)
             if state is not None and state.origin == SegmentOrigin.PROVEN:
@@ -45,6 +69,7 @@ class SegmentStateArtifact:
         return None
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
         return {
             "entry_states": {
                 hex(addr): {name: state.to_dict() for name, state in sorted(states.items())}
@@ -104,12 +129,12 @@ def _written_segment_state(dst_name: str, src: IRValue, state: dict[str, Segment
     return SegmentRegisterState(dst_name, "unknown_write", None, SegmentOrigin.UNKNOWN)
 
 
-def _transfer_block(block, entry_state: dict[str, SegmentRegisterState]) -> dict[str, SegmentRegisterState]:
+def _transfer_block(block: IRBlock, entry_state: dict[str, SegmentRegisterState]) -> dict[str, SegmentRegisterState]:
     state = dict(entry_state)
-    for instr in tuple(getattr(block, "instrs", ()) or ()):
+    for instr in tuple(block.instrs or ()):
         if not isinstance(instr, IRInstr):
             continue
-        dst = getattr(instr, "dst", None)
+        dst = instr.dst
         if not isinstance(dst, IRValue) or dst.space != MemSpace.REG or dst.name not in _SEGMENT_REGS:
             continue
         src = instr.args[0] if instr.args else None
@@ -124,10 +149,12 @@ def build_x86_16_segment_state_artifact(
     artifact: IRFunctionArtifact,
     function_ssa: SSAFunctionArtifact | None = None,
 ) -> SegmentStateArtifact:
-    def _impl():
+    """Build forward segment-register state from typed IR and SSA predecessors."""
+
+    def _impl() -> SegmentStateArtifact:
         blocks_by_addr = {block.addr: block for block in artifact.blocks}
         predecessor_map = (
-            dict(getattr(function_ssa, "predecessor_map", {}) or {})
+            dict(function_ssa.predecessor_map or {})
             if function_ssa is not None
             else {block.addr: () for block in artifact.blocks}
         )
@@ -157,7 +184,7 @@ def build_x86_16_segment_state_artifact(
             for state in states.values()
             if state.value_kind in {"const_write", "register_write", "segment_copy"}
         )
-        summary = {
+        summary: dict[str, object] = {
             "block_count": len(blocks_by_addr),
             "explicit_write_count": explicit_write_count,
             "proven_register_count": sum(
@@ -178,11 +205,20 @@ def build_x86_16_segment_state_artifact(
     return _impl()
 
 
-def apply_x86_16_segment_state_artifact(project, codegen) -> bool:  # noqa: ARG001
-    artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
+def apply_x86_16_segment_state_artifact(project: object, codegen: object) -> bool:  # noqa: ARG001
+    """Attach the segment-state artifact to codegen for later IR consumers."""
+    boundary = cast(_SegmentStateCodegenBoundary, codegen)
+    try:
+        artifact = boundary._inertia_vex_ir_artifact
+    except AttributeError:
+        return False
     if not isinstance(artifact, IRFunctionArtifact):
         return False
-    function_ssa = getattr(codegen, "_inertia_vex_ir_function_ssa", None)
+    try:
+        candidate_function_ssa = boundary._inertia_vex_ir_function_ssa
+    except AttributeError:
+        candidate_function_ssa = None
+    function_ssa = candidate_function_ssa if isinstance(candidate_function_ssa, SSAFunctionArtifact) else None
     segment_artifact = build_x86_16_segment_state_artifact(artifact, function_ssa=function_ssa)
-    setattr(codegen, "_inertia_segment_state_artifact", segment_artifact)
+    boundary._inertia_segment_state_artifact = segment_artifact
     return False

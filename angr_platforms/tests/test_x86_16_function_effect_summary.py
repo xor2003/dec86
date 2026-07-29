@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 from angr_platforms.X86_16.function_effect_summary import summarize_x86_16_function_effects
 from angr_platforms.X86_16.recovery_confidence import classify_x86_16_recovery_confidence
 
 
-def test_function_effect_summary_is_deterministic_and_sorted():
+def test_function_effect_summary_is_deterministic_and_sorted() -> None:
     summary = summarize_x86_16_function_effects(
         {
             "register_inputs": {"dx", "ax"},
@@ -38,7 +40,7 @@ def test_function_effect_summary_is_deterministic_and_sorted():
     assert summary.has_indirect_control() is True
 
 
-def test_recovery_confidence_consumes_function_effect_summary():
+def test_recovery_confidence_consumes_function_effect_summary() -> None:
     summary = classify_x86_16_recovery_confidence(
         {
             "ok": True,

@@ -6,7 +6,6 @@ import keystone as ks
 from angr import options as o
 from angr.analyses.decompiler.structured_codegen.c import CVariable
 from angr.sim_type import (
-    SimTypeBottom,
     SimTypeChar,
     SimTypeFunction,
     SimTypeInt,
@@ -44,7 +43,7 @@ def _project_from_asm(asm: str):
 def _assert_word_signature(func, arg_count: int):
     assert func.prototype is not None
     assert len(func.prototype.args) == arg_count
-    assert all(isinstance(arg, SimTypeShort) and arg.size == 16 for arg in func.prototype.args)
+    assert all(isinstance(arg, SimTypeInt) and arg.size == 16 for arg in func.prototype.args)
     assert isinstance(func.prototype.returnty, SimTypeInt)
     assert func.prototype.returnty.size == 16
 
@@ -140,7 +139,8 @@ def test_enter_local_stack_smoke():
     dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
     assert dec.codegen is not None
     assert " = 1;" in dec.codegen.text
-    assert any(anchor in dec.codegen.text for anchor in ("return flag;", "return s_4;", "return 1;"))
+    assert "return local_2;" in dec.codegen.text
+    assert "return Load(" not in dec.codegen.text
     assert "*((char **)(ir_0 * 16 + (unsigned int)&s_2)) = &s_0;" not in dec.codegen.text
 
 
@@ -357,25 +357,31 @@ def test_msvc_emulated_x87_wait_is_not_an_interrupt_call():
     assert "Ijk_Call" not in vex_text
 
 
-def test_rep_movsb_decompiles_without_double_negation():
+def test_rep_movsb_decompiles_to_typed_string_intrinsic_without_double_negation():
     project = _project_from_bytes(bytes.fromhex("b90200f3a4c3"))  # mov cx,2; rep movsb; ret
 
     cfg = project.analyses.CFGFast(normalize=True)
     dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
     assert dec.codegen is not None
     text = dec.codegen.text
-    assert "*((char *)" in text
+    assert "void __x86_16_movs(unsigned short width);" in text
+    assert "__x86_16_movs(1);" in text
+    assert "memcpy_class" not in text
+    assert "goto " not in text
     assert "!(!(" not in text
 
 
-def test_rep_movsw_decompiles_to_direct_byte_copy():
+def test_rep_movsw_decompiles_to_typed_string_intrinsic():
     project = _project_from_bytes(bytes.fromhex("b90200f3a5c3"))  # mov cx,2; rep movsw; ret
 
     cfg = project.analyses.CFGFast(normalize=True)
     dec = project.analyses.Decompiler(cfg.functions[0x1000], cfg=cfg)
     assert dec.codegen is not None
     text = dec.codegen.text
-    assert "*((char *)(v1 * 16 + v2)) = *((char *)(v3 * 16 + v4));" in text
+    assert "void __x86_16_movs(unsigned short width);" in text
+    assert "__x86_16_movs(2);" in text
+    assert "memcpy_class" not in text
+    assert "goto " not in text
 
 
 def test_movsb_lifts_and_updates_indices():
@@ -559,11 +565,8 @@ def test_single_word_arg_signature_and_return_type():
 
     assert dec.codegen is not None
     _assert_word_signature(func, 1)
-    assert (
-        "return a0 + 1;" in dec.codegen.text
-        or "return v0 + 1;" in dec.codegen.text
-        or "return v2 + 1;" in dec.codegen.text
-    )
+    assert "return arg + 1;" in dec.codegen.text
+    assert "return (Load(" not in dec.codegen.text
 
 
 def test_no_arg_frame_function_does_not_gain_phantom_arg():
@@ -601,7 +604,9 @@ def test_compiler_conditional_decomp_simplifies_bool_ite():
 
     assert dec.codegen is not None
     assert "? 0 : 1" not in dec.codegen.text
-    assert "if (!(" in dec.codegen.text
+    assert "if (arg > 2)" in dec.codegen.text
+    assert "return 0;" in dec.codegen.text
+    assert "return 1;" in dec.codegen.text
 
 
 def test_conditional_two_word_args_signature():
@@ -686,7 +691,7 @@ def test_explicit_far_pointer_like_prototype():
 
     assert dec.codegen is not None
     assert "long _start" in dec.codegen.text
-    assert "return v3 << 16 | v2;" in dec.codegen.text
+    assert "return a0;" in dec.codegen.text
 
 
 def test_c_decl_annotation_applies_function_and_argument_names():
@@ -801,14 +806,14 @@ def test_metadata_annotations_apply_before_decompilation():
 
     assert changed is True
     assert project.kb.labels[0x1234] == "data_label"
+    assert project.kb.labels[0x2000] == "rin"
     assert project.kb.functions[0x1000].name == "entry_label"
-    assert project.kb.functions[0x1000].info["x86_16_annotations"]["stack_vars"][2]["name"] == "lhs"
-    assert project.kb.functions[0x1000].info["x86_16_annotations"]["stack_vars"][4]["name"] == "rhs"
-    annotations = project.kb.functions[0x1000].info["x86_16_annotations"]["global_vars"]
-    assert annotations[0x2000]["name"] == "rin"
+    annotations = project.kb.functions[0x1000].info.get("x86_16_annotations", {})
+    assert not annotations.get("stack_vars")
+    assert not annotations.get("global_vars")
 
 
-def test_known_helper_signatures_are_applied_before_decompilation():
+def test_cod_call_names_do_not_apply_helper_signatures_before_decompilation():
     project = _project_from_asm("ret")
     helper = project.kb.functions.function(addr=0x2000, create=True)
     helper.name = "joyOrKey"
@@ -818,17 +823,19 @@ def test_known_helper_signatures_are_applied_before_decompilation():
         cod_metadata=SimpleNamespace(call_names=("joyOrKey",)),
     )
 
-    assert changed is True
-    assert project.kb.functions.function(addr=0x2000, create=False).prototype is not None
+    assert changed is False
+    assert project.kb.functions.function(addr=0x2000, create=False).prototype is None
 
 
-def test_source_decl_updates_return_type_while_preserving_recovered_arg_widths():
+def test_cod_source_decl_is_not_recorded_as_recovered_prototype_evidence():
     project = _project_from_asm("ret")
     func = project.kb.functions.function(addr=0x1000, create=True)
     func.name = "Demo"
     func.prototype = SimTypeFunction([SimTypeShort(False)], SimTypeShort(False), arg_names=("value",)).with_arch(
         project.arch
     )
+    original_prototype = func.prototype
+    original_cc = func.calling_convention
     changed = apply_x86_16_metadata_annotations(
         project,
         func_addr=0x1000,
@@ -843,17 +850,19 @@ def test_source_decl_updates_return_type_while_preserving_recovered_arg_widths()
         ),
     )
 
-    assert changed is True
-    updated = project.kb.functions.function(addr=0x1000, create=False).prototype
+    assert changed is False
+    updated_func = project.kb.functions.function(addr=0x1000, create=False)
+    updated = updated_func.prototype
     updated_cc = project.kb.functions.function(addr=0x1000, create=False).calling_convention
-    assert updated is not None
-    assert isinstance(updated_cc, SimCC8616MSCsmall)
-    assert isinstance(updated.returnty, SimTypeBottom)
+    assert updated is original_prototype
+    assert updated_cc is original_cc
+    assert isinstance(updated.returnty, SimTypeShort)
     assert len(updated.args) == 1
     assert isinstance(updated.args[0], SimTypeShort)
+    assert not updated_func.info.get("x86_16_annotations", {}).get("source_lines")
 
 
-def test_synthetic_global_annotation_preserves_known_object_metadata():
+def test_synthetic_global_annotation_preserves_name_only():
     project = _project_from_asm("mov ax, [0x1234]; ret")
 
     dec = decompile_function(
@@ -863,11 +872,9 @@ def test_synthetic_global_annotation_preserves_known_object_metadata():
     )
 
     assert dec.codegen is not None
-    annotations = project.kb.functions[0x1000].info["x86_16_annotations"]["global_vars"]
-    assert annotations[0x1234]["name"] == "rin"
-    assert annotations[0x1234]["type_name"] == "union REGS"
-    assert annotations[0x1234]["allowed_views"] == ("x", "h")
-    assert annotations[0x1234]["segment_domain"] == "register"
+    assert project.kb.labels[0x1234] == "rin"
+    annotations = project.kb.functions[0x1000].info.get("x86_16_annotations", {})
+    assert not annotations.get("global_vars")
 
 
 def test_c_decl_annotation_applies_pointer_signature():

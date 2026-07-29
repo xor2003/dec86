@@ -1,49 +1,92 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
+
+from collections.abc import Callable, Iterable
+from typing import Protocol
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 
 
+class _CFunctionLike(Protocol):
+    """Structured C function surface needed by segmented load coalescing."""
+
+    statements: object
+
+
+class _CodegenLike(Protocol):
+    """Codegen surface needed by segmented load coalescing."""
+
+    cfunc: _CFunctionLike | None
+
+
+class _AliasStorageLike(Protocol):
+    """Alias-storage summary needed for adjacent byte-load proof."""
+
+    identity: tuple[object, ...] | None
+
+    def can_join(self, other: object) -> bool:
+        """Return whether two byte-load storage facts prove one joined word."""
+        ...
+
+
+class _SegmentedAddrClassLike(Protocol):
+    """Segmented-address classification surface used by this CLI helper."""
+
+    kind: str
+
+
 def _coalesce_segmented_word_load_expressions(
-    project,
-    codegen,
+    project: object,
+    codegen: _CodegenLike,
     *,
-    unwrap_c_casts,
-    iter_c_nodes_deep,
-    replace_c_children,
-    structured_codegen_node,
-    match_byte_load_addr_expr,
-    match_shifted_high_byte_addr_expr,
-    addr_exprs_are_byte_pair,
-    classify_segmented_addr_expr,
-    resolve_stack_cvar_from_addr_expr,
-    make_word_dereference_from_addr_expr,
-    describe_alias_storage,
-):
-    if getattr(codegen, "cfunc", None) is None:
+    unwrap_c_casts: Callable[[object], object],
+    iter_c_nodes_deep: Callable[[object], Iterable[object]],
+    replace_c_children: Callable[[object, Callable[[object], object]], bool],
+    structured_codegen_node: Callable[[object], bool],
+    match_byte_load_addr_expr: Callable[[object], object | None],
+    match_shifted_high_byte_addr_expr: Callable[[object], object | None],
+    addr_exprs_are_byte_pair: Callable[[object, object, object], bool],
+    classify_segmented_addr_expr: Callable[[object, object], _SegmentedAddrClassLike | None],
+    resolve_stack_cvar_from_addr_expr: Callable[[object, _CodegenLike, object], object | None],
+    make_word_dereference_from_addr_expr: Callable[[_CodegenLike, object, object], object],
+    describe_alias_storage: Callable[[object], _AliasStorageLike],
+) -> bool:
+    cfunc = codegen.cfunc
+    if cfunc is None:
         return False
 
     dereferenced_variable_ids: set[int] = set()
 
-    def _collect_variable_ids(expr, ids: set[int]) -> None:
+    def _collect_variable_ids(expr: object, ids: set[int]) -> None:
         expr = unwrap_c_casts(expr)
         if isinstance(expr, structured_c.CVariable):
+            # Dynamic codegen boundary: angr structured C variable nodes expose optional payloads.
             variable = getattr(expr, "variable", None)
             if variable is not None:
                 ids.add(id(variable))
             return
         for attr in ("lhs", "rhs", "operand", "expr"):
+            # Dynamic codegen boundary: angr C AST node shapes vary by expression class.
             if not hasattr(expr, attr):
                 continue
             try:
+                # Dynamic codegen boundary: child access is guarded by the C AST node shape.
                 value = getattr(expr, attr)
             except Exception:
                 continue
             if structured_codegen_node(value):
                 _collect_variable_ids(value, ids)
         for attr in ("args", "operands", "statements"):
+            # Dynamic codegen boundary: statement containers are node-specific in angr C ASTs.
             if not hasattr(expr, attr):
                 continue
             try:
+                # Dynamic codegen boundary: sequence payloads are guarded by the C AST node shape.
                 items = getattr(expr, attr)
             except Exception:
                 continue
@@ -51,11 +94,12 @@ def _coalesce_segmented_word_load_expressions(
                 if structured_codegen_node(item):
                     _collect_variable_ids(item, ids)
 
-    for walk_node in iter_c_nodes_deep(codegen.cfunc.statements):
+    for walk_node in iter_c_nodes_deep(cfunc.statements):
         if isinstance(walk_node, structured_c.CUnaryOp) and walk_node.op == "Dereference":
+            # Dynamic codegen boundary: CUnaryOp operand is supplied by angr structured codegen.
             _collect_variable_ids(getattr(walk_node, "operand", None), dereferenced_variable_ids)
 
-    def transform(node):
+    def transform(node: object) -> object:
         if not isinstance(node, structured_c.CBinaryOp) or node.op not in {"Or", "Add"}:
             return node
 
@@ -91,10 +135,10 @@ def _coalesce_segmented_word_load_expressions(
 
         return node
 
-    root = codegen.cfunc.statements
+    root = cfunc.statements
     new_root = transform(root)
     if new_root is not root:
-        codegen.cfunc.statements = new_root
+        cfunc.statements = new_root
         root = new_root
         changed = True
     else:

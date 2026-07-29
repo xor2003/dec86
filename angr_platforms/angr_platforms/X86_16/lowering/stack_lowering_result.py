@@ -1,21 +1,35 @@
-from __future__ import annotations
+"""Typed stack lowering result objects with hard-fail enforcement.
 
-"""Layer: Lowering.
-
-Responsibility: typed stack lowering result with hard-fail enforcement.
+Layer: Types/Lowering.
+Responsibility: owns typed stack materialization result contracts.
+Consumes alias, widening, and typed facts by reporting whether proven stack
+slots were actually materialized.
+Do not recover semantics from COD, source, assembly, or rendered C text.
 
 AGENTS rule: SS:BP+offset → stack slot → variable.
 If a proven SS stack slot cannot be materialized as a named variable,
 the function is marked invalid rather than silently continuing.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+from enum import Enum
 
 __all__ = [
     "StackLoweringResult",
+    "StackLoweringStatus",
     "StackSlotFailure",
     "materialization_diagnostics_8616",
 ]
+
+
+class StackLoweringStatus(str, Enum):
+    """Typed verdict for stack slot materialization."""
+
+    OK = "ok"
+    FAILED = "failed"
+    PARTIAL = "partial"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,26 +50,30 @@ class StackLoweringResult:
     honest partial output with diagnostic information.
     """
 
-    status: str = "ok"  # "ok" | "failed" | "partial"
+    status: StackLoweringStatus = StackLoweringStatus.OK
     failures: list[StackSlotFailure] = field(default_factory=list)
     materialized: list[tuple[int, str]] = field(default_factory=list)
     diagnostics: list[str] = field(default_factory=list)
 
     @property
     def is_ok(self) -> bool:
-        return self.status == "ok"
+        """Return whether all proven stack slots were materialized."""
+        return self.status is StackLoweringStatus.OK
 
     @property
     def is_failed(self) -> bool:
-        return self.status == "failed"
+        """Return whether stack lowering found a hard materialization failure."""
+        return self.status is StackLoweringStatus.FAILED
 
     @property
     def failure_count(self) -> int:
+        """Return the number of refused stack-slot materializations."""
         return len(self.failures)
 
     def to_dict(self) -> dict[str, object]:
+        """Return a stable diagnostic representation for reporting gates."""
         return {
-            "status": self.status,
+            "status": self.status.value,
             "failure_count": self.failure_count,
             "materialized_count": len(self.materialized),
             "failures": [
@@ -73,7 +91,7 @@ class StackLoweringResult:
 
 def materialization_diagnostics_8616(result: StackLoweringResult) -> str:
     """Format a readable diagnostic summary for stack lowering failure."""
-    lines: list[str] = [f"Stack lowering: {result.status}"]
+    lines: list[str] = [f"Stack lowering: {result.status.value}"]
     if result.materialized:
         lines.append(f"  Materialized: {len(result.materialized)} slots")
     if result.failures:

@@ -108,3 +108,34 @@ def test_materialize_callsite_prototypes_uses_long_return_for_dx_ax_shape():
     assert changed is True
     assert callee.prototype is not None
     assert isinstance(callee.prototype.returnty, SimTypeLong)
+
+
+def test_materialize_callsite_prototypes_prefers_validated_logical_arg_widths():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen(project)
+    callee = SimpleNamespace(name="Sleep", prototype=None, is_prototype_guessed=False)
+    call = CFunctionCall("Sleep", callee, [], codegen=codegen)
+    root = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1544,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=2,
+            arg_widths=(2, 2),
+            stack_cleanup=4,
+            return_register=None,
+            return_used=False,
+            push_arg_sources=(("bp", 6), ("bp", 4)),
+            logical_arg_widths=(4,),
+        )
+    }
+
+    changed = _materialize_callsite_prototypes_8616(project, codegen)
+
+    assert changed is True
+    assert len(callee.prototype.args) == 1
+    assert isinstance(callee.prototype.args[0], SimTypeLong)
+    assert codegen._inertia_callsite_prototype_decls == ("int Sleep(unsigned long a0);",)

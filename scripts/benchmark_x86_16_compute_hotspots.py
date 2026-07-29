@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""
-Micro-benchmarks for x86-16 lifting compute hotspots.
+"""Micro-benchmarks for x86-16 lifting compute hotspots.
+
+Layer: Tooling/gates.
+Responsibility: benchmark x86-16 lifting hotspots without changing decompiler semantics.
 
 Run:
   PYTHONPATH=. ./.venv/bin/python scripts/benchmark_x86_16_compute_hotspots.py
@@ -17,15 +19,20 @@ from angr_platforms.X86_16.instruction import CHK_MODRM, MAX_OPCODE, SIB, InstrD
 
 
 class _DummyEmu:
+    """Minimal emulator placeholder for constructor benchmarks."""
+
     pass
 
 
 class _TableHost:
+    """Minimal opcode-table host used by registration benchmarks."""
+
     def __init__(self) -> None:
         self.instrfuncs = [None] * MAX_OPCODE
         self.chk = [0] * MAX_OPCODE
 
-    def set_funcflag(self, opcode, func, flags):
+    def set_funcflag(self, opcode: int, func: object, flags: int) -> None:
+        """Delegate opcode registration to the canonical instruction helper."""
         return InstrBase.set_funcflag(self, opcode, func, flags)
 
 
@@ -69,21 +76,27 @@ def _bench_instr32_ctor(iterations: int) -> float:
 
 
 class _PlainModRM:
-    def __init__(self):
+    """Plain class baseline for ModRM allocation benchmarks."""
+
+    def __init__(self) -> None:
         self.rm = 0
         self.reg = 0
         self.mod = 0
 
 
 class _PlainSIB:
-    def __init__(self):
+    """Plain class baseline for SIB allocation benchmarks."""
+
+    def __init__(self) -> None:
         self.base = 0
         self.index = 0
         self.scale = 0
 
 
 class _PlainInstrData:
-    def __init__(self):
+    """Plain class baseline for instruction-data allocation benchmarks."""
+
+    def __init__(self) -> None:
         self.prefix = 0
         self.pre_segment = None
         self.pre_repeat = 0
@@ -124,6 +137,7 @@ def _bench_instrdata_plain(iterations: int) -> float:
 
 
 def main() -> None:
+    """Run local hotspot benchmarks and print plain-text timing summaries."""
     reg_iters = 50000
     ctor_iters = 3000
     data_iters = 200000

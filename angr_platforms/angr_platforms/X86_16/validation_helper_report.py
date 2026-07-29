@@ -1,13 +1,21 @@
+"""Layer: Validation.
+
+Responsibility: present typed helper-family validation summaries without changing verdicts.
+Forbidden: semantic recovery from source, COD, assembly, or rendered C text.
+"""
+
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 from .recovery_confidence import summarize_recovery_confidence
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ValidationHelperFamilyRow:
+    """Describe one helper-family validation signal for report consumers."""
+
     family: str
     count: int
     likely_layer: str
@@ -15,11 +23,14 @@ class ValidationHelperFamilyRow:
     signal: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ValidationHelperReport:
+    """Carry typed helper-family rows without changing validation verdicts."""
+
     rows: tuple[ValidationHelperFamilyRow, ...]
 
     def as_rows(self) -> tuple[dict[str, object], ...]:
+        """Return serializable helper-family rows for milestone reports."""
         return tuple(
             {
                 "family": row.family,
@@ -32,11 +43,31 @@ class ValidationHelperReport:
         )
 
 
+def _row_count(item: Mapping[str, object]) -> int:
+    count = item.get("count", 0)
+    if isinstance(count, bool):
+        return int(count)
+    if isinstance(count, int):
+        return count
+    if isinstance(count, str) and count.isdecimal():
+        return int(count)
+    return 0
+
+
+def _helper_family_rows(summary: Mapping[str, object]) -> tuple[Mapping[str, object], ...]:
+    rows = summary.get("helper_family_rows", ())
+    if not isinstance(rows, list | tuple):
+        return ()
+    return tuple(item for item in rows if isinstance(item, Mapping))
+
+
 def build_x86_16_validation_helper_report(results: Sequence[Mapping[str, object]]) -> ValidationHelperReport:
-    def _impl():
-        summary = summarize_recovery_confidence(results)
+    """Build the typed helper-family validation report from confidence rows."""
+
+    def _impl() -> ValidationHelperReport:
+        summary = summarize_recovery_confidence(list(results))
         rows: list[ValidationHelperFamilyRow] = []
-        for item in summary.get("helper_family_rows", ()) or ():
+        for item in _helper_family_rows(summary):
             family = item.get("family")
             likely_layer = item.get("likely_layer")
             next_root_cause_file = item.get("next_root_cause_file")
@@ -52,7 +83,7 @@ def build_x86_16_validation_helper_report(results: Sequence[Mapping[str, object]
             rows.append(
                 ValidationHelperFamilyRow(
                     family=family,
-                    count=int(item.get("count", 0) or 0),
+                    count=_row_count(item),
                     likely_layer=likely_layer,
                     next_root_cause_file=next_root_cause_file,
                     signal=signal,
@@ -64,6 +95,7 @@ def build_x86_16_validation_helper_report(results: Sequence[Mapping[str, object]
 
 
 def describe_x86_16_validation_helper_report_surface() -> dict[str, object]:
+    """Return the deterministic validation-helper report surface contract."""
     return {
         "consumer": "validation_helper_report",
         "producer": "summarize_recovery_confidence",

@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from inertia_decompiler import tail_validation as _tail_validation
+from inertia_decompiler.work_items import WorkItemStatus
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "decompile_cod_dir.py"
@@ -24,6 +25,14 @@ def _tail_validation_metadata_payload(stderr_text: str) -> dict[str, object]:
     raise AssertionError(f"missing tail-validation metadata line in {stderr_text!r}")
 
 
+def _reported_tail_validation_detail_path(stderr_text: str) -> Path:
+    prefix = "[tail-validation] detail artifact "
+    for line in stderr_text.splitlines():
+        if line.startswith(prefix):
+            return Path(line[len(prefix) :])
+    raise AssertionError(f"missing tail-validation detail artifact line in {stderr_text!r}")
+
+
 def test_choose_parallelism_caps_to_a_small_multi_core_pool(monkeypatch):
     monkeypatch.setattr(_script.os, "cpu_count", lambda: 12)
     monkeypatch.setattr(_script, "_mem_available_mb", lambda: 128_000)
@@ -36,6 +45,22 @@ def test_choose_parallelism_stays_single_worker_for_tight_memory(monkeypatch):
     monkeypatch.setattr(_script, "_mem_available_mb", lambda: 1_800)
 
     assert _script._choose_parallelism(100, 16_000, 8) == 1
+
+
+def test_thread_bound_text_io_ignores_closed_fallback_flush():
+    class ClosedFallback:
+        encoding = "utf-8"
+        errors = "strict"
+
+        def write(self, data: str) -> int:
+            return len(data)
+
+        def flush(self) -> None:
+            raise ValueError("I/O operation on closed file.")
+
+    wrapped = _script._ThreadBoundTextIO(ClosedFallback())
+
+    wrapped.flush()
 
 
 def test_worker_failure_formatting_is_deterministic_for_broken_pools():
@@ -651,13 +676,12 @@ def test_main_emits_changed_tail_validation_detail_summary_to_stderr(tmp_path, m
     assert _script.main() == 0
     captured = capsys.readouterr()
     detail_path = _script._default_tail_validation_detail_path(
-        cod_dir, timeout=20, cod_files=[cod_path], proc_names=None
+        cod_dir, timeout=60, cod_files=[cod_path], proc_names=None
     )
-    detail_files = sorted(detail_path.parent.glob("COCKPIT.timeout20.tail_validation_surface.*.json"))
 
     assert "[tail-validation] whole-tail validation failed across 1 functions" in captured.err
-    assert detail_files
-    assert f"[tail-validation] detail artifact {detail_files[0]}" in captured.err
+    assert detail_path.exists()
+    assert _reported_tail_validation_detail_path(captured.err).exists()
     assert "[tail-validation]" not in captured.out
 
 
@@ -698,13 +722,12 @@ def test_main_emits_uncollected_tail_validation_detail_summary_to_stderr(tmp_pat
     assert _script.main() == 1
     captured = capsys.readouterr()
     detail_path = _script._default_tail_validation_detail_path(
-        cod_dir, timeout=20, cod_files=[cod_path], proc_names=None
+        cod_dir, timeout=60, cod_files=[cod_path], proc_names=None
     )
-    detail_files = sorted(detail_path.parent.glob("COCKPIT.timeout20.tail_validation_surface.*.json"))
 
     assert "[tail-validation] whole-tail validation not collected across 1 functions" in captured.err
-    assert detail_files
-    assert f"[tail-validation] detail artifact {detail_files[0]}" in captured.err
+    assert detail_path.exists()
+    assert _reported_tail_validation_detail_path(captured.err).exists()
     assert "[tail-validation]" not in captured.out
 
 
@@ -836,7 +859,7 @@ def test_wrapper_and_direct_tail_validation_detail_cache_path_contract_match(tmp
     project = SimpleNamespace(_inertia_tail_validation_enabled=True)
     function = SimpleNamespace(addr=0x10010, name="_DisplayMaster", project=project)
     direct_item = SimpleNamespace(index=1, function_cfg=SimpleNamespace(), function=function)
-    direct_result = SimpleNamespace(tail_validation=snapshot, function=function)
+    direct_result = SimpleNamespace(status=WorkItemStatus.OK, tail_validation=snapshot, function=function)
 
     _tail_validation.emit_tail_validation_console_summary([direct_item], {1: direct_result}, binary_path=cod_path)
     direct_metadata = _tail_validation_metadata_payload(capsys.readouterr().err)
@@ -847,6 +870,87 @@ def test_wrapper_and_direct_tail_validation_detail_cache_path_contract_match(tmp
     assert direct_metadata["detail_cache_path"] is not None
     assert wrapper_metadata["console_cache_path"] is not None
     assert direct_metadata["console_cache_path"] is not None
+
+
+def test_tail_validation_summary_uses_typed_result_status(tmp_path, monkeypatch, capsys):
+    cod_path = tmp_path / "COCKPIT.COD"
+    cod_path.write_bytes(b"")
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+    monkeypatch.setattr(_tail_validation, "TAIL_VALIDATION_CONSOLE_CACHE_DIR", tmp_path / ".cache" / "direct-console")
+    monkeypatch.setattr(_tail_validation, "TAIL_VALIDATION_DETAIL_CACHE_DIR", tmp_path / ".cache" / "direct-detail")
+    monkeypatch.setattr(
+        _tail_validation,
+        "build_x86_16_tail_validation_aggregate",
+        lambda _records, *, scanned: {
+            "summary": {},
+            "surface": {
+                "severity": "clean",
+                "merge_gate": "pass",
+                "headline": "whole-tail validation clean",
+            },
+        },
+    )
+
+    project = SimpleNamespace(_inertia_tail_validation_enabled=True, filename=str(cod_path))
+    function = SimpleNamespace(addr=0x10010, name="_DisplayMaster", project=project)
+    direct_item = SimpleNamespace(index=1, function_cfg=SimpleNamespace(), function=function)
+    direct_result = SimpleNamespace(
+        status=WorkItemStatus.VALIDATION_FAILED,
+        payload="",
+        debug_output="",
+        tail_validation={},
+        function=function,
+    )
+
+    _tail_validation.emit_tail_validation_console_summary([direct_item], {1: direct_result}, binary_path=cod_path)
+    direct_metadata = _tail_validation_metadata_payload(capsys.readouterr().err)
+
+    assert direct_metadata["surface"]["severity"] == "changed"
+    assert direct_metadata["surface"]["merge_gate"] == "hold"
+    assert direct_metadata["surface"]["headline"] == "whole-tail validation failed across 1 functions"
+
+
+def test_tail_validation_summary_does_not_let_stale_failed_status_poison_passed_snapshot(
+    tmp_path, monkeypatch, capsys
+):
+    cod_path = tmp_path / "COCKPIT.COD"
+    cod_path.write_bytes(b"")
+    monkeypatch.setenv("INERTIA_TAIL_VALIDATION_STDERR_JSON", "1")
+    monkeypatch.setattr(_tail_validation, "TAIL_VALIDATION_CONSOLE_CACHE_DIR", tmp_path / ".cache" / "direct-console")
+    monkeypatch.setattr(_tail_validation, "TAIL_VALIDATION_DETAIL_CACHE_DIR", tmp_path / ".cache" / "direct-detail")
+    monkeypatch.setattr(
+        _tail_validation,
+        "build_x86_16_tail_validation_aggregate",
+        lambda _records, *, scanned: {
+            "summary": {},
+            "surface": {
+                "severity": "clean",
+                "merge_gate": "pass",
+                "headline": "whole-tail validation clean",
+            },
+        },
+    )
+
+    project = SimpleNamespace(_inertia_tail_validation_enabled=True, filename=str(cod_path))
+    function = SimpleNamespace(addr=0x10010, name="_DisplayMaster", project=project)
+    direct_item = SimpleNamespace(index=1, function_cfg=SimpleNamespace(), function=function)
+    direct_result = SimpleNamespace(
+        status=WorkItemStatus.VALIDATION_FAILED,
+        payload="",
+        debug_output="",
+        tail_validation={
+            "structuring": {"status": "stable", "changed": False},
+            "postprocess": {"status": "stable", "changed": False},
+        },
+        function=function,
+    )
+
+    _tail_validation.emit_tail_validation_console_summary([direct_item], {1: direct_result}, binary_path=cod_path)
+    direct_metadata = _tail_validation_metadata_payload(capsys.readouterr().err)
+
+    assert direct_metadata["surface"]["severity"] == "clean"
+    assert direct_metadata["surface"]["merge_gate"] == "pass"
+    assert direct_metadata["surface"]["headline"] == "whole-tail validation clean"
 
 
 def test_tail_validation_baseline_helpers_round_trip(tmp_path, monkeypatch):

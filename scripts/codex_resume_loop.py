@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Resume Codex repair loops with explicit status and goal commands.
+
+Layer: Tooling/gates.
+Responsibility: automate bounded Codex resume loops without owning decompiler semantics.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +18,8 @@ from pathlib import Path
 
 
 class StopReason(enum.Enum):
+    """Structured reason why the resume loop stopped."""
+
     GOAL_CMD_TRUE = "goal_cmd_true"
     GOAL_MARKER_EXISTS = "goal_marker_exists"
     STAGNATED = "stagnated"
@@ -23,6 +30,8 @@ class StopReason(enum.Enum):
 
 @dataclasses.dataclass(frozen=True)
 class LoopConfig:
+    """Configuration for one bounded Codex resume loop."""
+
     prompt: str
     max_iterations: int
     stagnation_limit: int
@@ -44,6 +53,8 @@ class LoopConfig:
 
 @dataclasses.dataclass(frozen=True)
 class IterationResult:
+    """Observed output and status for one Codex loop iteration."""
+
     iteration: int
     elapsed_sec: float
     codex_returncode: int
@@ -159,7 +170,9 @@ def _write_marker(
 
 
 def run_loop(cfg: LoopConfig) -> StopReason:
-    def _impl():
+    """Run Codex resume iterations until an explicit stop condition is met."""
+
+    def _impl() -> StopReason:
         best: IterationResult | None = None
         last: IterationResult | None = None
         stagnation = 0
@@ -281,6 +294,7 @@ def _parse_args() -> LoopConfig:
 
 
 def main() -> int:
+    """Run the Codex resume loop from command-line arguments."""
     cfg = _parse_args()
     reason = run_loop(cfg)
     print(f"[codex-loop] stop_reason={reason.value} marker={cfg.marker_file}")

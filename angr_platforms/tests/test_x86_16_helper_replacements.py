@@ -15,7 +15,7 @@ def test_int21_call_replacements_render_each_recovered_call(monkeypatch) -> None
     assert replacements == ["modern:a", "modern:b"]
 
 
-def test_known_helper_declarations_dedupes_and_skips_unknown() -> None:
+def test_known_helper_declarations_ignores_cod_call_names() -> None:
     cod_metadata = SimpleNamespace(call_names=["foo", "bar", "foo", "baz"])
     original = decompile.preferred_known_helper_signature_decl
     try:
@@ -28,4 +28,4 @@ def test_known_helper_declarations_dedupes_and_skips_unknown() -> None:
     finally:
         decompile.preferred_known_helper_signature_decl = original
 
-    assert declarations == ["int foo(void);", "void baz(int x);"]
+    assert declarations == []

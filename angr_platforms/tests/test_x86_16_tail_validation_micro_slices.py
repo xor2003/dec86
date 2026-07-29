@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import angr_platforms.X86_16.tail_validation as tail_validation_module
+import angr_platforms.X86_16.tail_validation_fingerprint as tail_validation_fingerprint_module
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -284,7 +285,7 @@ def test_tail_validation_micro_slice_detects_stack_slot_to_segmented_ss_regressi
     )
 
     assert diff["changed"] is True
-    assert diff["delta"]["stack_writes"]["removed"] == ("stack:-0x2",)
+    assert diff["delta"]["stack_writes"]["removed"] == ("stack_slot:SS:BP-0x2:size2",)
     assert diff["delta"]["segmented_writes"]["added"] == ("deref:Add(Mul(reg:ss,const:16),reg:ax)",)
 
 
@@ -410,6 +411,63 @@ def test_tail_validation_micro_slice_preserves_helper_call_identity():
     assert diff["changed"] is False
 
 
+def test_contextual_call_fingerprints_match_targets_not_structured_order(monkeypatch):
+    project = _project()
+    codegen = _DummyCodegen()
+    target_a = SimpleNamespace(addr=0x5100, name="helper_a")
+    target_b = SimpleNamespace(addr=0x5200, name="helper_b")
+    call_b = CFunctionCall("helper_b", target_b, [], codegen=codegen)
+    call_a = CFunctionCall("helper_a", target_a, [], codegen=codegen)
+    wrapped = _codegen(
+        [
+            CExpressionStatement(call_b, codegen=codegen),
+            CExpressionStatement(call_a, codegen=codegen),
+            CReturn(None, codegen=codegen),
+        ],
+        codegen,
+    )
+    function = SimpleNamespace(get_call_sites=lambda: (0x4012, 0x4018))
+    wrapped.cfunc.get_call_sites = function.get_call_sites
+    summaries = {
+        0x4012: SimpleNamespace(target_addr=0x5100),
+        0x4018: SimpleNamespace(target_addr=0x5200),
+    }
+    monkeypatch.setattr(
+        tail_validation_fingerprint_module,
+        "_function_for_call_context_8616",
+        lambda _root, _project: function,
+    )
+    monkeypatch.setattr(
+        tail_validation_fingerprint_module,
+        "_summarize_x86_16_callsite_for_fingerprint_8616",
+        lambda _function, callsite_addr: summaries[callsite_addr],
+    )
+
+    fingerprints = tail_validation_fingerprint_module.build_x86_16_contextual_call_fingerprints(
+        wrapped.cfunc.body,
+        project,
+    )
+
+    assert fingerprints[id(call_a)] == "addr:0x5100"
+    assert fingerprints[id(call_b)] == "addr:0x5200"
+
+
+def test_call_target_fingerprint_prefers_resolved_name_over_stale_callee_func():
+    class Functions:
+        def function(self, *, name=None, create=False, **_kwargs):
+            if not create and name in {"helper_a", "_helper_a"}:
+                return SimpleNamespace(addr=0x5100, name="helper_a")
+            return None
+
+    project = _project()
+    project.kb = SimpleNamespace(functions=Functions(), labels={})
+    codegen = _DummyCodegen()
+    stale_callee = SimpleNamespace(addr=0x5200, name="helper_b")
+    call = CFunctionCall("helper_a", stale_callee, [], codegen=codegen)
+
+    assert tail_validation_fingerprint_module._call_target_name(call, project) == "addr:0x5100"
+
+
 def test_tail_validation_micro_slice_detects_helper_call_identity_regression():
     project = _project()
     before_codegen = _DummyCodegen()
@@ -437,8 +495,8 @@ def test_tail_validation_micro_slice_detects_helper_call_identity_regression():
     )
 
     assert diff["changed"] is True
-    assert diff["delta"]["helper_calls"]["added"] == ("helper_pong",)
-    assert diff["delta"]["helper_calls"]["removed"] == ("helper_ping",)
+    assert diff["delta"]["helper_calls"]["added"] == ("name:helper_pong",)
+    assert diff["delta"]["helper_calls"]["removed"] == ("name:helper_ping",)
 
 
 def test_tail_validation_micro_slice_detects_return_value_regression():
@@ -503,7 +561,7 @@ def test_tail_validation_micro_slice_detects_control_flow_effect_regression():
     assert diff["delta"]["control_flow_effects"]["removed"]
 
 
-def test_tail_validation_micro_slice_live_out_ignores_register_write_used_only_by_condition():
+def test_tail_validation_micro_slice_live_out_records_register_write_used_by_condition():
     project = _project()
     before_codegen = _DummyCodegen()
     after_codegen = _DummyCodegen()
@@ -550,7 +608,7 @@ def test_tail_validation_micro_slice_live_out_ignores_register_write_used_only_b
     )
 
     assert diff["changed"] is True
-    assert diff["delta"]["register_writes"] == {"added": (), "removed": ()}
+    assert diff["delta"]["register_writes"] == {"added": ("reg:ax",), "removed": ()}
 
 
 def test_tail_validation_micro_slice_preserves_if_else_and_while_control_flow_surface():

@@ -1,3 +1,9 @@
+"""Layer: Optional evidence/reporting.
+
+Responsibility: parse COD listings into labels, bounds, source lines, and diagnostic metadata.
+Forbidden: using COD text as required proof for arguments, types, control flow, or validation success.
+"""
+
 from __future__ import annotations
 
 import re
@@ -8,17 +14,47 @@ from .cod_known_objects import canonical_known_cod_object_name
 
 
 @dataclass(frozen=True)
+class CODGlobalRef:
+    """Optional COD evidence for a global memory reference in one instruction."""
+
+    offset: int
+    name: str
+    relative_disp: int
+    width: int
+    indexed: bool
+    instruction_bytes: bytes
+
+
+@dataclass(frozen=True)
+class CODGlobalAddressRef:
+    """Optional COD evidence for an immediate global-address reference."""
+
+    offset: int
+    name: str
+    relative_disp: int
+    width: int
+    instruction_bytes: bytes
+    string_literal: str | None = None
+
+
+@dataclass(frozen=True)
 class CODProcMetadata:
+    """Optional COD procedure metadata used as labels and diagnostics only."""
+
     stack_aliases: dict[int, str]
     call_names: tuple[str, ...]
     call_sources: tuple[tuple[str, str], ...]
     global_names: tuple[str, ...]
     source_lines: tuple[str, ...]
     source_line_set: frozenset[str]
+    global_refs: tuple[CODGlobalRef, ...] = ()
+    global_address_refs: tuple[CODGlobalAddressRef, ...] = ()
+    instruction_offsets: tuple[int, ...] = ()
     cod_raw_entries: tuple[dict[str, object], ...] = ()
     cod_path: str | None = None
 
     def has_source_lines(self, required_lines: tuple[str, ...]) -> bool:
+        """Return whether this COD procedure includes all required source lines."""
         if not required_lines:
             return True
         return set(required_lines).issubset(self.source_line_set)
@@ -26,12 +62,15 @@ class CODProcMetadata:
 
 @dataclass(frozen=True)
 class CODListingMetadata:
+    """Procedure labels and ranges parsed from one COD listing."""
+
     code_labels: dict[int, str]
     code_ranges: dict[int, tuple[int, int]]
     proc_kinds: dict[int, str]
 
 
 def extract_cod_function_entries(cod_path: Path, proc_name: str, proc_kind: str = "NEAR") -> list[dict[str, object]]:
+    """Extract instruction rows for a named COD procedure."""
     lines = cod_path.read_text(errors="ignore").splitlines()
     start_marker = f"{proc_name}\tPROC {proc_kind}"
     end_marker = f"{proc_name}\tENDP"
@@ -65,6 +104,7 @@ def extract_cod_function_entries(cod_path: Path, proc_name: str, proc_kind: str 
 
 
 def extract_cod_listing_metadata(cod_path: Path) -> CODListingMetadata:
+    """Extract procedure names, ranges, and kinds from a COD listing."""
     lines = cod_path.read_text(errors="ignore").splitlines()
     proc_re = re.compile(r"^\s*(?P<name>[A-Za-z_$?@][\w$?@]*)\s+PROC\s+(?P<kind>[A-Za-z]+)\b", re.IGNORECASE)
     endp_re = re.compile(r"^\s*(?P<name>[A-Za-z_$?@][\w$?@]*)\s+ENDP\b", re.IGNORECASE)
@@ -123,7 +163,9 @@ def extract_cod_listing_metadata(cod_path: Path) -> CODListingMetadata:
 
 
 def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "NEAR") -> CODProcMetadata:
-    def _impl():
+    """Extract optional COD labels and source comments for one procedure."""
+
+    def _impl() -> CODProcMetadata:
         def _marker_indices_or_raise(lines: list[str]) -> tuple[int, int]:
             start_marker = f"{proc_name}\tPROC {proc_kind}"
             end_marker = f"{proc_name}\tENDP"
@@ -152,7 +194,7 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
 
         asm_call_operand_markers = {"BYTE", "WORD", "DWORD", "QWORD", "FWORD", "PTR", "NEAR", "FAR"}
 
-        def _remember_asm_calls(asm_text: str, call_re, call_names: list[str]) -> None:
+        def _remember_asm_calls(asm_text: str, call_re: re.Pattern[str], call_names: list[str]) -> None:
             for call_match in call_re.finditer(asm_text):
                 callee = call_match.group(1)
                 if callee == "__chkstk" or callee.startswith("$") or callee.upper() in asm_call_operand_markers:
@@ -161,7 +203,11 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
                 call_names.append(canonical_callee)
 
         def _remember_asm_globals(
-            asm_text: str, pattern, global_names: list[str], seen_globals: set[str], segment_registers: set[str]
+            asm_text: str,
+            pattern: re.Pattern[str],
+            global_names: list[str],
+            seen_globals: set[str],
+            segment_registers: set[str],
         ) -> None:
             for match in pattern.finditer(asm_text):
                 global_name = match.group(1)
@@ -240,6 +286,9 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
             raw_entries = extract_cod_function_entries(cod_path, proc_name, proc_kind)
         except Exception:
             pass
+        string_literals = _extract_cod_data_string_literals(lines)
+        global_refs = _extract_cod_global_refs_from_entries(raw_entries, tuple(source_lines))
+        global_address_refs = _extract_cod_global_address_refs_from_entries(raw_entries, string_literals)
 
         return CODProcMetadata(
             stack_aliases=stack_aliases,
@@ -248,11 +297,209 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
             global_names=tuple(global_names),
             source_lines=tuple(source_lines),
             source_line_set=frozenset(source_lines),
+            global_refs=tuple(global_refs),
+            global_address_refs=tuple(global_address_refs),
+            instruction_offsets=tuple(
+                offset for entry in raw_entries if (offset := _cod_entry_offset_8616(entry)) is not None
+            ),
             cod_raw_entries=tuple(raw_entries),
             cod_path=str(cod_path),
         )
 
     return _impl()
+
+
+_COD_GLOBAL_DISP_RE = re.compile(r"(?P<disp>[+-](?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|\d+))", re.IGNORECASE)
+_COD_DIRECT_GLOBAL_REF_RE = re.compile(
+    r"\b(?P<width>BYTE|WORD|DWORD)\s+PTR\s+_?(?P<name>[A-Za-z_$?@][\w$?@]*)"
+    r"(?P<disp>[+-](?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|\d+))?(?!\[)",
+    re.IGNORECASE,
+)
+_COD_INDEXED_GLOBAL_REF_RE = re.compile(
+    r"\b(?P<width>BYTE|WORD|DWORD)\s+PTR\s+_?(?P<name>[A-Za-z_$?@][\w$?@]*)"
+    r"\[(?P<bracket>[^\]]*)\]",
+    re.IGNORECASE,
+)
+_COD_OFFSET_GLOBAL_REF_RE = re.compile(
+    r"\bOFFSET\s+(?:[A-Za-z_$?@][\w$?@]*:)?_?(?P<name>[A-Za-z_$?@][\w$?@]*)"
+    r"(?P<disp>[+-](?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|\d+))?",
+    re.IGNORECASE,
+)
+
+
+def _cod_entry_offset_8616(entry: dict[str, object]) -> int | None:
+    """Return a typed COD row offset when the parsed row carries one."""
+    offset = entry.get("offset")
+    return offset if isinstance(offset, int) else None
+
+
+def _cod_entry_bytes_8616(entry: dict[str, object]) -> bytes | None:
+    """Return typed COD row instruction bytes when the parsed row carries them."""
+    data = entry.get("bytes")
+    return data if isinstance(data, bytes) else None
+
+
+def _parse_cod_global_disp(text: str | None) -> int:
+    if not text:
+        return 0
+    sign = -1 if text[0] == "-" else 1
+    body = text[1:]
+    if body.lower().startswith("0x"):
+        value = int(body, 16)
+    elif body.upper().endswith("H"):
+        value = int(body[:-1], 16)
+    else:
+        value = int(body, 10)
+    return sign * value
+
+
+def _source_local_static_names(source_lines: tuple[str, ...]) -> frozenset[str]:
+    names: set[str] = set()
+    static_decl_re = re.compile(
+        r"^\s*static\s+(?:unsigned\s+|signed\s+)?(?:char|short|int|long)\s+(?P<name>[A-Za-z_]\w*)\b"
+    )
+    for line in source_lines:
+        match = static_decl_re.match(line)
+        if match is not None:
+            names.add(match.group("name"))
+    return frozenset(names)
+
+
+def _canonical_cod_global_ref_name(raw_name: str | None, source_local_statics: frozenset[str]) -> str | None:
+    if not isinstance(raw_name, str) or not raw_name:
+        return None
+    raw = raw_name.lstrip("_")
+    static_match = re.match(r"^\$[A-Za-z]+\d+_(?P<name>[A-Za-z_]\w*)$", raw)
+    if static_match is not None and static_match.group("name") in source_local_statics:
+        name = f"_{raw.removeprefix('$')}"
+        return name if re.fullmatch(r"[A-Za-z_]\w*", name) is not None else None
+    else:
+        name = static_match.group("name") if static_match is not None else canonical_known_cod_object_name(raw_name) or raw
+    name = name.lstrip("_")
+    return name if re.fullmatch(r"[A-Za-z_]\w*", name) is not None else None
+
+
+def _canonical_cod_address_ref_name(raw_name: str | None) -> str | None:
+    if not isinstance(raw_name, str) or not raw_name:
+        return None
+    raw = raw_name.lstrip("_").lstrip("$")
+    name = canonical_known_cod_object_name(raw_name)
+    if name is None or not re.fullmatch(r"[A-Za-z_]\w*", name):
+        name = raw
+    return name if re.fullmatch(r"[A-Za-z_]\w*", name) is not None else None
+
+
+def _extract_cod_global_refs_from_entries(
+    entries: list[dict[str, object]], source_lines: tuple[str, ...] = ()
+) -> tuple[CODGlobalRef, ...]:
+    width_by_name = {"BYTE": 1, "WORD": 2, "DWORD": 4}
+    source_local_statics = _source_local_static_names(source_lines)
+    refs: list[CODGlobalRef] = []
+    for entry in entries:
+        offset = entry.get("offset")
+        instruction_bytes = entry.get("bytes")
+        text = str(entry.get("text", ""))
+        if not isinstance(offset, int) or not isinstance(instruction_bytes, bytes):
+            continue
+        indexed_match = _COD_INDEXED_GLOBAL_REF_RE.search(text)
+        direct_match = _COD_DIRECT_GLOBAL_REF_RE.search(text) if indexed_match is None else None
+        match = indexed_match if indexed_match is not None else direct_match
+        if match is None:
+            continue
+        name = _canonical_cod_global_ref_name(match.group("name"), source_local_statics)
+        width = width_by_name.get(str(match.group("width")).upper())
+        if name is None or width is None:
+            continue
+        if indexed_match is not None:
+            disp_match = _COD_GLOBAL_DISP_RE.search(indexed_match.group("bracket") or "")
+            relative_disp = _parse_cod_global_disp(disp_match.group("disp")) if disp_match is not None else 0
+        else:
+            relative_disp = _parse_cod_global_disp(match.group("disp"))
+        refs.append(
+            CODGlobalRef(
+                offset=offset,
+                name=name,
+                relative_disp=relative_disp,
+                width=width,
+                indexed=indexed_match is not None,
+                instruction_bytes=instruction_bytes,
+            )
+        )
+    return tuple(refs)
+
+
+def _extract_cod_global_address_refs_from_entries(
+    entries: list[dict[str, object]], string_literals: dict[str, str] | None = None
+) -> tuple[CODGlobalAddressRef, ...]:
+    refs: list[CODGlobalAddressRef] = []
+    literals = string_literals or {}
+    for entry in entries:
+        offset = entry.get("offset")
+        instruction_bytes = entry.get("bytes")
+        text = str(entry.get("text", ""))
+        if not isinstance(offset, int) or not isinstance(instruction_bytes, bytes):
+            continue
+        match = _COD_OFFSET_GLOBAL_REF_RE.search(text)
+        if match is None:
+            continue
+        name = _canonical_cod_address_ref_name(match.group("name"))
+        if name is None:
+            continue
+        refs.append(
+            CODGlobalAddressRef(
+                offset=offset,
+                name=name,
+                relative_disp=_parse_cod_global_disp(match.group("disp")),
+                width=2,
+                instruction_bytes=instruction_bytes,
+                string_literal=literals.get(name),
+            )
+        )
+    return tuple(refs)
+
+
+def _extract_cod_data_string_literals(lines: list[str]) -> dict[str, str]:
+    literals: dict[str, str] = {}
+    data_re = re.compile(r"^\s*(?P<label>[A-Za-z_$?@][\w$?@]*)\s+DB\s+(?P<body>.*)$", re.IGNORECASE)
+    for line in lines:
+        match = data_re.match(line)
+        if match is None:
+            continue
+        name = _canonical_cod_address_ref_name(match.group("label"))
+        if name is None:
+            continue
+        parsed = _parse_cod_db_string_literal(match.group("body"))
+        if parsed is not None:
+            literals[name] = parsed
+    return literals
+
+
+def _parse_cod_db_string_literal(body: str) -> str | None:
+    text = body.strip()
+    if not text.startswith("'"):
+        return None
+    chars: list[str] = []
+    idx = 1
+    while idx < len(text):
+        char = text[idx]
+        if char == "'":
+            if idx + 1 < len(text) and text[idx + 1] == "'":
+                chars.append("'")
+                idx += 2
+                continue
+            idx += 1
+            break
+        chars.append(char)
+        idx += 1
+    else:
+        return None
+    suffix = text[idx:].strip()
+    if suffix.startswith(","):
+        suffix = suffix[1:].strip()
+    first_token = suffix.split(",", 1)[0].strip().upper()
+    if first_token not in {"0", "00H", "0H"}:
+        return None
+    return "".join(chars)
 
 
 def _extract_source_call_expressions(source_text: str) -> list[tuple[str, str]]:
@@ -294,11 +541,14 @@ def join_cod_entries(
     start_offset: int | None = None,
     end_offset: int | None = None,
 ) -> bytes:
+    """Join COD instruction bytes for rows inside an optional offset range."""
     return b"".join(
-        entry["bytes"]
+        data
         for entry in entries
-        if (start_offset is None or start_offset <= int(entry["offset"]))
-        and (end_offset is None or int(entry["offset"]) < end_offset)
+        if (offset := _cod_entry_offset_8616(entry)) is not None
+        and (data := _cod_entry_bytes_8616(entry)) is not None
+        and (start_offset is None or start_offset <= offset)
+        and (end_offset is None or offset < end_offset)
     )
 
 
@@ -309,7 +559,9 @@ def join_cod_entries_with_synthetic_globals(
     end_offset: int | None = None,
     symbol_base: int = 0x7000,
 ) -> tuple[bytes, dict[int, tuple[str, int]]]:
-    def _impl():
+    """Patch COD bytes with synthetic addresses for optional global references."""
+
+    def _impl() -> tuple[bytes, dict[int, tuple[str, int]]]:
         displacement_re = r"(?P<disp>[+-](?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|\d+))?"
         global_re = re.compile(
             rf"\b(?P<width>BYTE|WORD|DWORD)\s+PTR\s+(?P<symbol>[A-Za-z_$?@][\w$?@]*){displacement_re}",
@@ -371,7 +623,9 @@ def join_cod_entries_with_synthetic_globals(
 
         selected_entries: list[dict[str, object]] = []
         for entry in entries:
-            offset = int(entry["offset"])
+            offset = _cod_entry_offset_8616(entry)
+            if offset is None:
+                continue
             if start_offset is not None and offset < start_offset:
                 continue
             if end_offset is not None and offset >= end_offset:
@@ -435,7 +689,10 @@ def join_cod_entries_with_synthetic_globals(
             return False
 
         for entry in selected_entries:
-            chunk = bytearray(entry["bytes"])
+            entry_bytes = _cod_entry_bytes_8616(entry)
+            if entry_bytes is None:
+                continue
+            chunk = bytearray(entry_bytes)
             text = str(entry.get("text", ""))
             patched = False
 
@@ -444,7 +701,7 @@ def join_cod_entries_with_synthetic_globals(
             if global_match is not None:
                 symbol = global_match.group("symbol")
                 if should_ignore_symbol(symbol):
-                    patched_chunks.append(entry["bytes"])
+                    patched_chunks.append(entry_bytes)
                     continue
 
                 symbol = canonical_symbol_name(symbol)
@@ -454,13 +711,13 @@ def join_cod_entries_with_synthetic_globals(
             elif offset_match is not None:
                 symbol = canonical_symbol_name(offset_match.group("symbol"))
                 if should_ignore_symbol(symbol):
-                    patched_chunks.append(entry["bytes"])
+                    patched_chunks.append(entry_bytes)
                     continue
 
                 target_addr = symbol_addrs[symbol] + parse_disp(offset_match.group("disp"))
                 patched = patch_offset_immediate_reference(chunk, target_addr)
 
-            patched_chunks.append(bytes(chunk) if patched else entry["bytes"])
+            patched_chunks.append(bytes(chunk) if patched else entry_bytes)
 
         return b"".join(patched_chunks), addr_to_name
 
@@ -468,9 +725,10 @@ def join_cod_entries_with_synthetic_globals(
 
 
 def infer_cod_logic_start(entries: list[dict[str, object]]) -> int | None:
-    """For small MSC-style procedures extracted from .COD, skip a leading
-    ``__chkstk`` call when it appears in the entry prologue so the decompiler
-    can focus on the actual function body.
+    """Return the first likely logic instruction in a small MSC procedure.
+
+    Skip a leading ``__chkstk`` call when it appears in the entry prologue so
+    the decompiler can focus on the actual function body.
     """
     call_re = re.compile(r"\bcall\b", re.IGNORECASE)
     chkstk_re = re.compile(r"\b(?:__)?(?:aN?|a)?chkstk\b", re.IGNORECASE)
@@ -487,12 +745,14 @@ def infer_cod_logic_start(entries: list[dict[str, object]]) -> int | None:
                 if "chkstk" not in later_text:
                     return None
         if idx + 1 < len(entries):
-            return int(entries[idx + 1]["offset"])
+            return _cod_entry_offset_8616(entries[idx + 1])
     return None
 
 
 def extract_simple_cod_logic_entries(entries: list[dict[str, object]]) -> list[dict[str, object]] | None:
-    def _impl():
+    """Return simple COD procedure body rows with frame scaffolding removed."""
+
+    def _impl() -> list[dict[str, object]] | None:
         """Normalize simple MSC-style framed procedures for decompilation.
 
         For straight-line helpers like ``_mset_pos`` the standard ``push bp`` /
@@ -539,14 +799,17 @@ def extract_simple_cod_logic_entries(entries: list[dict[str, object]]) -> list[d
 
 
 def extract_simple_cod_logic_bytes(entries: list[dict[str, object]]) -> bytes | None:
+    """Return simple COD procedure body bytes with frame scaffolding removed."""
     selected = extract_simple_cod_logic_entries(entries)
     if selected is None:
         return None
-    return b"".join(entry["bytes"] for entry in selected)
+    return b"".join(data for entry in selected if (data := _cod_entry_bytes_8616(entry)) is not None)
 
 
 def extract_small_two_arg_cod_logic_entries(entries: list[dict[str, object]]) -> list[dict[str, object]] | None:
-    def _impl():
+    """Return tiny two-argument COD body rows with frame scaffolding removed."""
+
+    def _impl() -> list[dict[str, object]] | None:
         """Normalize tiny ``bp``-framed two-argument helpers.
 
         This keeps the body bytes for small helpers that only reference
@@ -598,7 +861,8 @@ def extract_small_two_arg_cod_logic_entries(entries: list[dict[str, object]]) ->
 
 
 def extract_small_two_arg_cod_logic_bytes(entries: list[dict[str, object]]) -> bytes | None:
+    """Return tiny two-argument COD body bytes with frame scaffolding removed."""
     selected = extract_small_two_arg_cod_logic_entries(entries)
     if selected is None:
         return None
-    return b"".join(entry["bytes"] for entry in selected)
+    return b"".join(data for entry in selected if (data := _cod_entry_bytes_8616(entry)) is not None)

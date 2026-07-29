@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from angr_platforms.X86_16.helper_effect_summary import (
     HelperEligibilityRefusal,
     HelperEligibilitySummary,
@@ -5,7 +7,7 @@ from angr_platforms.X86_16.helper_effect_summary import (
 from angr_platforms.X86_16.helper_family_routing import summarize_x86_16_helper_family_routes
 
 
-def test_helper_family_routing_builds_deterministic_rows():
+def test_helper_family_routing_builds_deterministic_rows() -> None:
     rows = summarize_x86_16_helper_family_routes(
         (
             HelperEligibilitySummary(status="eligible", candidate_kind="single_direct_call_wrapper"),
@@ -32,7 +34,7 @@ def test_helper_family_routing_builds_deterministic_rows():
     assert rows[0].likely_layer == "function_effect_summary"
 
 
-def test_helper_family_routing_keeps_no_signal_as_explicit_family():
+def test_helper_family_routing_keeps_no_signal_as_explicit_family() -> None:
     rows = summarize_x86_16_helper_family_routes((HelperEligibilitySummary(status="no_signal"),))
 
     assert len(rows) == 1

@@ -1,5 +1,11 @@
 """Guard that blocks linearized segment expressions from leaking into semantic layers.
 
+Layer: Pipeline governance.
+Responsibility: owns runtime ordering, invariant checks, hard failures, and final emission gates.
+Do not recover semantic facts or perform IR, alias, widening,
+lowering/materialization, structuring, rewrite, postprocess, or CLI/reporting
+work here.
+
 AGENTS rule #3: `(seg << 4) + offset` is forbidden as IR.
 Linear addresses are allowed ONLY for execution/debugging.
 
@@ -40,7 +46,7 @@ def assert_no_linearized_segment_expr_8616(expr: object, *, layer: str, function
     treat as semantic.
 
     Args:
-        expr: Any expression whose text representation is checked.
+        expr: Expression whose text representation is checked.
         layer: Semantic layer name for the error message.
         function_addr: Optional address for diagnostics.
     """

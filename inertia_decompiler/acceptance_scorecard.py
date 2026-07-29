@@ -1,3 +1,9 @@
+"""Report generated-C acceptance markers without defining semantic truth.
+
+Layer: CLI/fallback/reporting.
+Responsibility: summarize generated-output quality markers without deciding semantic correctness.
+"""
+
 from __future__ import annotations
 
 import json
@@ -20,6 +26,8 @@ _SS_LINEAR_RE = re.compile(r"\bss\s*\*\s*16\b")
 
 @dataclass(frozen=True, slots=True)
 class AcceptanceScorecard:
+    """Generated-output quality counters for one recovered function."""
+
     function_name: str
     raw_flags_count: int
     raw_ss_linear_count: int
@@ -31,6 +39,7 @@ class AcceptanceScorecard:
     source_present: bool
 
     def to_row(self) -> dict[str, object]:
+        """Return a stable JSON-serializable scorecard row."""
         return {
             "function_name": self.function_name,
             "raw_flags_count": self.raw_flags_count,
@@ -56,7 +65,7 @@ def _recovery_mode_from_output(output: str) -> str:
 
 
 def _validation_verdict_from_output(output: str) -> str:
-    def _impl():
+    def _impl() -> str:
         lowered = output.lower()
         metadata_match = _TAIL_VALIDATION_METADATA_RE.search(output)
         if metadata_match is not None:
@@ -98,6 +107,7 @@ def build_acceptance_scorecard(
     *,
     source_text: str | None = None,
 ) -> AcceptanceScorecard:
+    """Build reporting-only quality counters for one recovered output."""
     recovery_mode = _recovery_mode_from_output(recovered_output)
     validation_verdict = _validation_verdict_from_output(recovered_output)
     if recovery_mode == "asm_fallback" and validation_verdict == "failed":

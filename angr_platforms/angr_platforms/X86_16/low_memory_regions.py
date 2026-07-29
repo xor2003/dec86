@@ -1,3 +1,9 @@
+"""Layer: Frontend/runtime.
+
+Responsibility: classify real-mode low-memory segment:offset accesses for diagnostics.
+Forbidden: treating low-memory labels as recovered decompiler semantics or validation proof.
+"""
+
 from __future__ import annotations
 
 import re
@@ -13,6 +19,8 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class LowMemoryAccess:
+    """Classified real-mode low-memory diagnostic access."""
+
     access_kind: str
     raw_access: str
     region: str
@@ -23,9 +31,11 @@ class LowMemoryAccess:
     size: int | None = None
 
     def brief(self) -> str:
+        """Render a compact diagnostic label for reports."""
         return f"{self.label} ({self.segment:#x}:{self.offset:#x} -> {self.linear:#x})"
 
     def to_dict(self) -> dict[str, object]:
+        """Return a stable JSON-ready representation of this diagnostic access."""
         return {
             "access_kind": self.access_kind,
             "raw_access": self.raw_access,
@@ -84,6 +94,7 @@ _FIELD_SPECS: tuple[_FieldSpec, ...] = (
 
 
 def linearize_x86_16_segment_offset(segment: int, offset: int) -> int:
+    """Convert a real-mode segment:offset pair to its linear address."""
     return ((segment & 0xFFFF) << 4) + (offset & 0xFFFF)
 
 
@@ -133,6 +144,7 @@ def classify_x86_16_low_memory_access(
     access_kind: str = "access",
     size: int | None = None,
 ) -> LowMemoryAccess | None:
+    """Classify a textual low-memory access for diagnostics only."""
     parsed = _parse_access(access)
     if parsed is None:
         return None
@@ -171,6 +183,7 @@ def classify_x86_16_low_memory_access(
 
 
 def format_x86_16_low_memory_access(access: str, *, size: int | None = None) -> str:
+    """Format a low-memory access if it is classifiable, otherwise return it unchanged."""
     classified = classify_x86_16_low_memory_access(access, size=size)
     if classified is None:
         return access

@@ -1,7 +1,13 @@
+"""Layer: Recovery metadata.
+
+Responsibility: summarize recovered function effects from existing structured artifacts.
+Forbidden: creating proof, hiding unknowns, or changing recovered output.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Mapping, TypeAlias
 
 __all__ = [
     "FunctionEffectSummary",
@@ -11,6 +17,8 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class FunctionEffectSummary:
+    """Deterministic summary of recovered function-level effects."""
+
     register_inputs: tuple[str, ...] = ()
     register_outputs: tuple[str, ...] = ()
     register_clobbers: tuple[str, ...] = ()
@@ -29,12 +37,15 @@ class FunctionEffectSummary:
     helper_return_address_kind: str = "none"
 
     def frame_only_stack(self) -> bool:
+        """Return whether memory effects are limited to frame stack slots."""
         return bool(self.frame_stack_reads or self.frame_stack_writes) and not (self.memory_reads or self.memory_writes)
 
     def has_indirect_control(self) -> bool:
+        """Return whether recovered effects include indirect calls or branches."""
         return self.indirect_call_count > 0 or self.indirect_branch_count > 0
 
     def brief(self) -> str:
+        """Return a compact stable diagnostic string for reports."""
         return (
             f"regs_in={len(self.register_inputs)} "
             f"regs_out={len(self.register_outputs)} "
@@ -53,6 +64,7 @@ class FunctionEffectSummary:
         )
 
     def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible representation of the effect summary."""
         return {
             "register_inputs": list(self.register_inputs),
             "register_outputs": list(self.register_outputs),
@@ -74,33 +86,33 @@ class FunctionEffectSummary:
         }
 
 
-def _value(source: Any, name: str, default: Any) -> Any:
-    if isinstance(source, Mapping):
-        return source.get(name, default)
-    return getattr(source, name, default)
+FunctionEffectSource: TypeAlias = Mapping[str, object]
 
 
-def _sorted_str_tuple(value: Any) -> tuple[str, ...]:
+def _value(source: FunctionEffectSource, name: str, default: object) -> object:
+    return source.get(name, default)
+
+
+def _sorted_str_tuple(value: object) -> tuple[str, ...]:
     if not isinstance(value, (tuple, list, set)):
         return ()
     return tuple(sorted(str(item) for item in value))
 
 
-def _sorted_int_tuple(value: Any) -> tuple[int, ...]:
+def _sorted_int_tuple(value: object) -> tuple[int, ...]:
     if not isinstance(value, (tuple, list, set)):
         return ()
     ints = [item for item in value if isinstance(item, int)]
     return tuple(sorted(ints))
 
 
-def _count(source: Any, name: str) -> int:
+def _count(source: FunctionEffectSource, name: str) -> int:
     value = _value(source, name, 0)
-    if value is None:
-        return 0
-    return int(value)
+    return value if isinstance(value, int) else 0
 
 
-def summarize_x86_16_function_effects(source: Any) -> FunctionEffectSummary:
+def summarize_x86_16_function_effects(source: FunctionEffectSource) -> FunctionEffectSummary:
+    """Summarize recovered function effects from an existing structured mapping."""
     helper_return_space = _value(source, "helper_return_space", None)
     helper_return_space_str = (
         str(helper_return_space).strip()

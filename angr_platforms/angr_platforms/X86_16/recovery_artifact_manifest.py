@@ -1,3 +1,9 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: describe recovery artifact output surfaces and persistence formats.
+Forbidden: writing artifacts, changing recovery behavior, or hiding missing outputs.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,12 +21,15 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class RecoveryArtifactOutputSpec:
+    """Persistence contract for one recovery artifact output surface."""
+
     kind: str
     producer: str
     payload: str
     persistence: str
 
     def to_dict(self) -> dict[str, str]:
+        """Return a deterministic JSON-compatible output specification."""
         return {
             "kind": self.kind,
             "producer": self.producer,
@@ -58,12 +67,14 @@ _RECOVERY_ARTIFACT_OUTPUTS: tuple[RecoveryArtifactOutputSpec, ...] = (
 
 
 def describe_x86_16_recovery_artifact_outputs() -> tuple[dict[str, str], ...]:
+    """Describe all recovery artifact output surfaces in stable order."""
     return tuple(item.to_dict() for item in _RECOVERY_ARTIFACT_OUTPUTS)
 
 
 def build_x86_16_recovery_artifact_report(
     writes: Iterable[RecoveryArtifactWriteResult],
 ) -> dict[str, object]:
+    """Build a deterministic report for recovery artifact outputs and writes."""
     write_rows = tuple(
         sorted(
             (item.to_dict() for item in writes),

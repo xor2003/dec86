@@ -1,3 +1,12 @@
+"""Typed flag and condition semantic helpers.
+
+Layer: Semantics.
+Responsibility: owns instruction effects, flags, branch meaning, and expression interpretation.
+This module exposes flag condition helpers without owning cleanup or lowering.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
 
 from ..ir.condition_ir import (
@@ -7,10 +16,6 @@ from ..ir.condition_ir import (
     is_signed_condition_8616,
     is_unsigned_condition_8616,
 )
-
-# Layer: Semantics
-# Responsibility: typed flag/condition semantics helpers
-# Forbidden: CLI formatting and postprocess cleanup ownership
 from .alu_semantics import build_compare_condition_8616
 
 __all__ = [

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import networkx as nx
 from angr_platforms.X86_16.structuring_grouping_report import (
     build_x86_16_structuring_grouping_report,
@@ -6,29 +8,29 @@ from angr_platforms.X86_16.structuring_grouping_report import (
 
 
 class _Node:
-    def __init__(self, addr):
+    def __init__(self, addr: int) -> None:
         self.addr = addr
 
 
 class _Clinic:
-    def __init__(self, graph):
+    def __init__(self, graph: nx.DiGraph) -> None:
         self.graph = graph
 
 
 class _CFunc:
-    def __init__(self, addr):
+    def __init__(self, addr: int) -> None:
         self.addr = addr
         self.name = "func"
 
 
 class _Codegen:
-    def __init__(self, addr, clinic):
+    def __init__(self, addr: int, clinic: _Clinic) -> None:
         self.cfunc = _CFunc(addr)
         self._clinic = clinic
         self.project = None
 
 
-def test_structuring_grouping_report_summarizes_cfg_grouping_rows():
+def test_structuring_grouping_report_summarizes_cfg_grouping_rows() -> None:
     graph = nx.DiGraph()
     a = _Node(0x1000)
     b = _Node(0x1001)
@@ -64,7 +66,7 @@ def test_structuring_grouping_report_summarizes_cfg_grouping_rows():
     }
 
 
-def test_structuring_grouping_report_surface_is_deterministic():
+def test_structuring_grouping_report_surface_is_deterministic() -> None:
     assert describe_x86_16_structuring_grouping_report_surface() == {
         "consumer": "structuring_grouping_report",
         "producer": "build_cfg_grouping_artifact",

@@ -1,30 +1,74 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from typing import Protocol, TypeAlias, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
+CExpr: TypeAlias = object
+LinearDelta: TypeAlias = tuple[CExpr | None, int]
+
+
+class _CFunctionLike(Protocol):
+    """Structured C function surface needed by linear recurrence state."""
+
+    statements: object
+
+
+class _CodegenLike(Protocol):
+    """Codegen surface needed by linear recurrence state."""
+
+    cfunc: _CFunctionLike | None
+    _inertia_stack_lowering_debug: dict[str, object]
+    _inertia_stack_variable_bindings: object
+    _inertia_has_rebound_materialized_recurrence: bool
+
+
+class _AliasStorageLike(Protocol):
+    """Alias-storage summary used to avoid recursive copy aliases."""
+
+    identity: object
+
+
+class _WideningAnalysisLike(Protocol):
+    """Widening analysis fields consumed by linear recurrence rebuilding."""
+
+    kind: str
+    base_expr: CExpr
+    delta: int
+
 
 @dataclass
 class LinearRecurrenceState:
+    """Carry state and callback contracts for CLI linear-recurrence cleanup."""
+
     project: object
-    codegen: object
-    unwrap_c_casts: object
-    structured_codegen_node: object
-    iter_c_nodes_deep: object
-    same_c_expression: object
-    c_constant_value: object
-    canonicalize_stack_cvar_expr: object
-    seed_adjacent_byte_pair_aliases: object
-    describe_alias_storage: object
-    analyze_widening_expr: object
-    match_high_byte_projection_base: object
-    match_duplicate_word_base_expr: object
-    match_duplicate_word_increment_shift_expr: object
-    same_stack_slot_identity_var: object
+    codegen: _CodegenLike
+    unwrap_c_casts: Callable[[CExpr], CExpr]
+    structured_codegen_node: Callable[[CExpr], bool]
+    iter_c_nodes_deep: Callable[[CExpr], Iterable[CExpr]]
+    same_c_expression: Callable[[CExpr, CExpr], bool]
+    c_constant_value: Callable[[CExpr], object | None]
+    canonicalize_stack_cvar_expr: Callable[[CExpr, _CodegenLike], CExpr]
+    seed_adjacent_byte_pair_aliases: Callable[[object, _CodegenLike], dict[object, CExpr]]
+    describe_alias_storage: Callable[[CExpr], _AliasStorageLike | None]
+    analyze_widening_expr: Callable[
+        [CExpr, Callable[..., CExpr], Callable[..., CExpr | None]], _WideningAnalysisLike | None
+    ]
+    match_high_byte_projection_base: Callable[..., CExpr | None]
+    match_duplicate_word_base_expr: Callable[..., CExpr | None]
+    match_duplicate_word_increment_shift_expr: Callable[..., CExpr | None]
+    same_stack_slot_identity_var: Callable[..., bool]
     changed: bool = False
     linear_defs: dict[object, tuple[object, int]] = field(default_factory=dict)
     protected_linear_defs: set[int] = field(default_factory=set)
@@ -39,7 +83,10 @@ class LinearRecurrenceState:
     recurrence_reasons: dict[str, int] = field(default_factory=dict)
 
     def prepare(self) -> None:
-        def _impl():
+        """Seed recurrence bookkeeping from codegen C-AST statements."""
+
+        def _impl() -> None:
+            # Dynamic codegen boundary: CLI codegen metadata may be attached lazily.
             debug_stats = getattr(self.codegen, "_inertia_stack_lowering_debug", None)
             if not isinstance(debug_stats, dict):
                 debug_stats = {}
@@ -49,21 +96,31 @@ class LinearRecurrenceState:
             debug_stats.setdefault("recurrence_failed_to_bind", 0)
             debug_stats.setdefault("recurrence_reasons", {})
             self.expr_aliases.update(self.seed_adjacent_byte_pair_aliases(self.project, self.codegen))
-            for walk_node in self.iter_c_nodes_deep(self.codegen.cfunc.statements):
+            cfunc = self.codegen.cfunc
+            if cfunc is None:
+                return
+            for walk_node in self.iter_c_nodes_deep(cfunc.statements):
                 if isinstance(walk_node, structured_c.CUnaryOp) and walk_node.op == "Dereference":
+                    # Dynamic codegen boundary: CUnaryOp operand is supplied by angr structured codegen.
                     self.collect_variable_ids(getattr(walk_node, "operand", None), self.dereferenced_variable_ids)
                 if isinstance(walk_node, structured_c.CVariable):
+                    # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
                     variable = getattr(walk_node, "variable", None)
                     if variable is not None:
                         key = id(variable)
                         self.variable_use_counts[key] = self.variable_use_counts.get(key, 0) + 1
             for alias_var_id, alias_expr in self.expr_aliases.items():
+                if not isinstance(alias_var_id, int):
+                    continue
                 alias_expr = self.unwrap_c_casts(alias_expr)
                 if not isinstance(alias_expr, structured_c.CUnaryOp) or alias_expr.op != "Dereference":
                     continue
                 self.protected_linear_alias_ids.add(alias_var_id)
+                # Dynamic codegen boundary: CUnaryOp operand is supplied by angr structured codegen.
                 self.collect_variable_ids(getattr(alias_expr, "operand", None), self.protected_linear_alias_ids)
             for alias_var_id, alias_expr in list(self.expr_aliases.items()):
+                if not isinstance(alias_var_id, int):
+                    continue
                 resolved_alias = self.resolve_known_copy_alias_expr(alias_expr)
                 if self.expr_contains_dereference(resolved_alias):
                     self.protected_linear_alias_ids.add(alias_var_id)
@@ -71,11 +128,14 @@ class LinearRecurrenceState:
 
         return _impl()
 
-    def collect_variable_ids(self, expr, ids: set[int]) -> None:
-        def _impl():
+    def collect_variable_ids(self, expr: CExpr, ids: set[int]) -> None:
+        """Collect underlying variable identities referenced by a C expression."""
+
+        def _impl() -> None:
             nonlocal expr
             expr = self.unwrap_c_casts(expr)
             if isinstance(expr, structured_c.CVariable):
+                # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
                 variable = getattr(expr, "variable", None)
                 if variable is not None:
                     ids.add(id(variable))
@@ -84,6 +144,7 @@ class LinearRecurrenceState:
                 if not hasattr(expr, attr):
                     continue
                 try:
+                    # Dynamic codegen boundary: child field names vary across angr C AST nodes.
                     value = getattr(expr, attr)
                 except Exception:
                     continue
@@ -93,6 +154,7 @@ class LinearRecurrenceState:
                 if not hasattr(expr, attr):
                     continue
                 try:
+                    # Dynamic codegen boundary: child sequence fields vary across angr C AST nodes.
                     items = getattr(expr, attr)
                 except Exception:
                     continue
@@ -102,22 +164,28 @@ class LinearRecurrenceState:
 
         return _impl()
 
-    def is_linear_register_temp(self, cvar) -> bool:
+    def is_linear_register_temp(self, cvar: CExpr) -> bool:
+        """Return whether a C variable is a synthetic linear-register temp."""
         if not isinstance(cvar, structured_c.CVariable):
             return False
+        # Dynamic codegen boundary: generated CVariable names may be absent.
         name = getattr(cvar, "name", None)
         if not isinstance(name, str):
             return False
         if re.fullmatch(r"(?:v\d+|vvar_\d+|ir_\d+)", name) is not None:
             return True
+        # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
         variable = getattr(cvar, "variable", None)
         return isinstance(variable, SimRegisterVariable) and re.fullmatch(r"[A-Za-z]{1,3}_\d+", name) is not None
 
-    def is_copy_alias_candidate(self, expr) -> bool:
+    def is_copy_alias_candidate(self, expr: CExpr) -> bool:
+        """Return whether an expression can seed a copy-alias candidate."""
         return isinstance(self.unwrap_c_casts(expr), structured_c.CVariable)
 
-    def expr_contains_stack_base_carrier(self, expr, active_expr_ids: set[int] | None = None) -> bool:
-        def _impl():
+    def expr_contains_stack_base_carrier(self, expr: CExpr, active_expr_ids: set[int] | None = None) -> bool:
+        """Return whether an expression recursively references the stack-base carrier."""
+
+        def _impl() -> bool:
             nonlocal expr, active_expr_ids
             expr = self.unwrap_c_casts(expr)
             active_expr_ids = set() if active_expr_ids is None else active_expr_ids
@@ -125,6 +193,7 @@ class LinearRecurrenceState:
             if expr_id in active_expr_ids:
                 return False
             active_expr_ids.add(expr_id)
+            # Dynamic codegen boundary: CFakeVariable names come from angr structured C.
             if isinstance(expr, structured_c.CFakeVariable) and getattr(expr, "name", None) == "stack_base":
                 active_expr_ids.discard(expr_id)
                 return True
@@ -132,6 +201,7 @@ class LinearRecurrenceState:
                 if not hasattr(expr, attr):
                     continue
                 try:
+                    # Dynamic codegen boundary: child field names vary across angr C AST nodes.
                     value = getattr(expr, attr)
                 except Exception:
                     continue
@@ -142,6 +212,7 @@ class LinearRecurrenceState:
                 if not hasattr(expr, attr):
                     continue
                 try:
+                    # Dynamic codegen boundary: child sequence fields vary across angr C AST nodes.
                     items = getattr(expr, attr)
                 except Exception:
                     continue
@@ -154,8 +225,10 @@ class LinearRecurrenceState:
 
         return _impl()
 
-    def extract_linear_delta(self, expr):
-        def _impl():
+    def extract_linear_delta(self, expr: CExpr) -> LinearDelta:
+        """Split a linear expression into a base expression and integer delta."""
+
+        def _impl() -> LinearDelta:
             nonlocal expr
             expr = self.unwrap_c_casts(expr)
             if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
@@ -182,7 +255,8 @@ class LinearRecurrenceState:
 
         return _impl()
 
-    def build_binary_op_or_none(self, op: str, lhs, rhs, *, codegen=None):
+    def build_binary_op_or_none(self, op: str, lhs: CExpr, rhs: CExpr, *, codegen: _CodegenLike | None = None) -> CExpr | None:
+        """Build a binary C expression, refusing known unarched-type rebuild failures."""
         try:
             return structured_c.CBinaryOp(op, lhs, rhs, codegen=codegen or self.codegen)
         except ValueError as ex:
@@ -191,7 +265,8 @@ class LinearRecurrenceState:
                 return None
             raise
 
-    def build_linear_expr(self, base_expr, delta):
+    def build_linear_expr(self, base_expr: CExpr, delta: int) -> CExpr:
+        """Build `base_expr +/- delta`, preserving the original expression on rebuild failure."""
         if delta == 0:
             return base_expr
         op = "Add" if delta > 0 else "Sub"
@@ -203,7 +278,8 @@ class LinearRecurrenceState:
         )
         return rebuilt if rebuilt is not None else base_expr
 
-    def build_shift_expr(self, base_expr, count):
+    def build_shift_expr(self, base_expr: CExpr, count: int) -> CExpr:
+        """Build `base_expr >> count`, preserving the original expression on rebuild failure."""
         if count == 0:
             return base_expr
         rebuilt = self.build_binary_op_or_none(
@@ -214,9 +290,11 @@ class LinearRecurrenceState:
         return rebuilt if rebuilt is not None else base_expr
 
     def inline_known_linear_defs(
-        self, expr, seen_vars: set[int] | None = None, seen_exprs: set[int] | None = None, depth: int = 0
-    ):
-        def _impl():
+        self, expr: CExpr, seen_vars: set[int] | None = None, seen_exprs: set[int] | None = None, depth: int = 0
+    ) -> CExpr:
+        """Inline already-proven linear definitions into a C expression."""
+
+        def _impl() -> CExpr:
             nonlocal expr, seen_vars, seen_exprs
             expr = self.unwrap_c_casts(expr)
             if depth > 64:
@@ -231,6 +309,7 @@ class LinearRecurrenceState:
                 if self.is_materialized_stack_local(expr):
                     return expr
                 linear = None
+                # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
                 variable = getattr(expr, "variable", None)
                 if variable is not None:
                     var_id = id(variable)
@@ -279,12 +358,13 @@ class LinearRecurrenceState:
                     return expr
                 operand = self.inline_known_linear_defs(expr.operand, seen_vars, seen_exprs, depth + 1)
                 if operand is not expr.operand:
-                    return structured_c.CUnaryOp(expr.op, operand, codegen=self.codegen)
+                    return structured_c.CUnaryOp(expr.op, cast(structured_c.CExpression, operand), codegen=self.codegen)
             return expr
 
         return _impl()
 
-    def extract_shift_delta(self, expr):
+    def extract_shift_delta(self, expr: CExpr) -> LinearDelta:
+        """Split a shift expression into a base expression and shift count."""
         expr = self.unwrap_c_casts(expr)
         if isinstance(expr, structured_c.CConstant) and isinstance(expr.value, int):
             return None, int(expr.value)
@@ -295,6 +375,7 @@ class LinearRecurrenceState:
             return expr, 0
         base = self.unwrap_c_casts(expr.lhs)
         if isinstance(base, structured_c.CVariable):
+            # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
             variable = getattr(base, "variable", None)
             if variable is not None:
                 alias = self.shift_defs.get(id(variable))
@@ -303,18 +384,22 @@ class LinearRecurrenceState:
                     return alias_base, alias_shift + shift
         return base, shift
 
-    def alias_storage_key(self, expr):
-        return self.describe_alias_storage(expr).identity
+    def alias_storage_key(self, expr: CExpr) -> object:
+        """Return alias-storage identity for an expression when one is available."""
+        storage = self.describe_alias_storage(expr)
+        return None if storage is None else storage.identity
 
     def resolve_known_copy_alias_expr(
         self,
-        expr,
+        expr: CExpr,
         active_expr_ids: set[int] | None = None,
         seen_var_ids: set[int] | None = None,
         seen_storage: set[object] | None = None,
         depth: int = 0,
-    ):
-        def _impl():
+    ) -> CExpr:
+        """Resolve copy-alias chains while preserving materialized stack locals."""
+
+        def _impl() -> CExpr:
             nonlocal expr, active_expr_ids, seen_var_ids, seen_storage
             expr = self.unwrap_c_casts(expr)
             if isinstance(expr, structured_c.CVariable) and self.is_materialized_stack_local(expr):
@@ -329,6 +414,7 @@ class LinearRecurrenceState:
             seen_var_ids = set() if seen_var_ids is None else seen_var_ids
             seen_storage = set() if seen_storage is None else seen_storage
             while isinstance(expr, structured_c.CVariable):
+                # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
                 variable = getattr(expr, "variable", None)
                 if variable is None:
                     break
@@ -361,7 +447,14 @@ class LinearRecurrenceState:
                 )
                 active_expr_ids.discard(expr_id)
                 if inner is not expr.expr:
-                    return structured_c.CTypeCast(None, expr.type, inner, codegen=getattr(expr, "codegen", None))
+                    # Dynamic codegen boundary: rebuilt nodes reuse optional angr codegen metadata.
+                    codegen_metadata = getattr(expr, "codegen", None)
+                    return structured_c.CTypeCast(
+                        None,
+                        expr.type,
+                        cast(structured_c.CExpression, inner),
+                        codegen=codegen_metadata,
+                    )
                 return self.canonicalize_stack_cvar_expr(expr, self.codegen)
             if isinstance(expr, structured_c.CUnaryOp):
                 operand = self.resolve_known_copy_alias_expr(
@@ -369,7 +462,13 @@ class LinearRecurrenceState:
                 )
                 active_expr_ids.discard(expr_id)
                 if operand is not expr.operand:
-                    return structured_c.CUnaryOp(expr.op, operand, codegen=getattr(expr, "codegen", None))
+                    # Dynamic codegen boundary: rebuilt nodes reuse optional angr codegen metadata.
+                    codegen_metadata = getattr(expr, "codegen", None)
+                    return structured_c.CUnaryOp(
+                        expr.op,
+                        cast(structured_c.CExpression, operand),
+                        codegen=codegen_metadata,
+                    )
                 return self.canonicalize_stack_cvar_expr(expr, self.codegen)
             if isinstance(expr, structured_c.CBinaryOp):
                 lhs = self.resolve_known_copy_alias_expr(
@@ -380,6 +479,7 @@ class LinearRecurrenceState:
                 )
                 active_expr_ids.discard(expr_id)
                 if lhs is not expr.lhs or rhs is not expr.rhs:
+                    # Dynamic codegen boundary: rebuilt nodes reuse optional angr codegen metadata.
                     rebuilt = self.build_binary_op_or_none(expr.op, lhs, rhs, codegen=getattr(expr, "codegen", None))
                     if rebuilt is not None:
                         return rebuilt
@@ -389,8 +489,10 @@ class LinearRecurrenceState:
 
         return _impl()
 
-    def expr_contains_dereference(self, expr, active_expr_ids: set[int] | None = None) -> bool:
-        def _impl():
+    def expr_contains_dereference(self, expr: CExpr, active_expr_ids: set[int] | None = None) -> bool:
+        """Return whether an expression recursively contains a dereference."""
+
+        def _impl() -> bool:
             nonlocal expr, active_expr_ids
             expr = self.unwrap_c_casts(expr)
             active_expr_ids = set() if active_expr_ids is None else active_expr_ids
@@ -417,6 +519,7 @@ class LinearRecurrenceState:
                 return result
             if isinstance(expr, structured_c.CFunctionCall):
                 result = any(
+                    # Dynamic codegen boundary: function-call args are an optional angr C AST sequence.
                     self.expr_contains_dereference(arg, active_expr_ids) for arg in getattr(expr, "args", ()) or ()
                 )
                 active_expr_ids.discard(expr_id)
@@ -426,7 +529,8 @@ class LinearRecurrenceState:
 
         return _impl()
 
-    def match_linear_word_delta_expr(self, expr):
+    def match_linear_word_delta_expr(self, expr: CExpr) -> CExpr | None:
+        """Return a rebuilt linear word expression when widening analysis proves one."""
         analysis = self.analyze_widening_expr(
             expr, self.resolve_known_copy_alias_expr, self.match_high_byte_projection_base
         )
@@ -442,34 +546,42 @@ class LinearRecurrenceState:
     def _record_recurrence_reason(self, reason: str) -> None:
         self.recurrence_failed_to_bind += 1
         self.recurrence_reasons[reason] = self.recurrence_reasons.get(reason, 0) + 1
+        # Dynamic codegen boundary: CLI codegen metadata may be attached lazily.
         debug_stats = getattr(self.codegen, "_inertia_stack_lowering_debug", None)
         if isinstance(debug_stats, dict):
             debug_stats["recurrence_failed_to_bind"] = int(debug_stats.get("recurrence_failed_to_bind", 0) or 0) + 1
             reasons = debug_stats.setdefault("recurrence_reasons", {})
-            reasons[reason] = int(reasons.get(reason, 0) or 0) + 1
+            if isinstance(reasons, dict):
+                reasons[reason] = int(reasons.get(reason, 0) or 0) + 1
 
     def _record_recurrence_candidate(self) -> None:
         self.recurrence_candidates += 1
+        # Dynamic codegen boundary: CLI codegen metadata may be attached lazily.
         debug_stats = getattr(self.codegen, "_inertia_stack_lowering_debug", None)
         if isinstance(debug_stats, dict):
             debug_stats["recurrence_candidates"] = int(debug_stats.get("recurrence_candidates", 0) or 0) + 1
 
     def _record_recurrence_success(self) -> None:
         self.recurrence_bound_to_materialized_local += 1
+        # Dynamic codegen boundary: CLI codegen metadata may be attached lazily.
         debug_stats = getattr(self.codegen, "_inertia_stack_lowering_debug", None)
         if isinstance(debug_stats, dict):
             debug_stats["recurrence_bound_to_materialized_local"] = (
                 int(debug_stats.get("recurrence_bound_to_materialized_local", 0) or 0) + 1
             )
-        setattr(self.codegen, "_inertia_has_rebound_materialized_recurrence", True)
+        self.codegen._inertia_has_rebound_materialized_recurrence = True
 
-    def is_materialized_stack_local(self, cvar) -> bool:
-        def _impl():
+    def is_materialized_stack_local(self, cvar: CExpr) -> bool:
+        """Return whether a variable already represents a materialized stack local."""
+
+        def _impl() -> bool:
             if not isinstance(cvar, structured_c.CVariable):
                 return False
+            # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
             variable = getattr(cvar, "variable", None)
             if not isinstance(variable, SimStackVariable):
                 return False
+            # Dynamic codegen boundary: generated CVariable names may be absent.
             name = getattr(cvar, "name", None) or getattr(variable, "name", None)
             if not isinstance(name, str):
                 return False
@@ -477,15 +589,19 @@ class LinearRecurrenceState:
             # they still carry generic names. Reject only synthetic carriers/temps.
             if not re.fullmatch(r"(?:s_[0-9a-fA-F]+|v\d+|vvar_\d+|ir_\d+)", name):
                 return True
+            # Dynamic codegen boundary: stack-variable binding metadata is attached by prior CLI passes.
             bindings = getattr(self.codegen, "_inertia_stack_variable_bindings", None)
-            offset = getattr(variable, "offset", None)
-            size = getattr(variable, "size", None)
+            offset = variable.offset
+            size = variable.size
             if not isinstance(bindings, tuple | list) or not isinstance(offset, int) or not isinstance(size, int):
                 return False
             for binding in bindings:
+                # Dynamic codegen boundary: legacy stack binding records used both offset names.
                 binding_offset = getattr(binding, "bp_offset", None)
                 if binding_offset is None:
+                    # Dynamic codegen boundary: legacy stack binding records used both offset names.
                     binding_offset = getattr(binding, "offset", None)
+                # Dynamic codegen boundary: stack binding records may be external dataclasses.
                 binding_size = getattr(binding, "size", None)
                 if (
                     isinstance(binding_offset, int)

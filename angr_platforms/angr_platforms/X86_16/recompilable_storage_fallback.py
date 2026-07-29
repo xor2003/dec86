@@ -1,3 +1,9 @@
+"""Layer: Recompilable output.
+
+Responsibility: keep storage fallback decisions explicit and currently disabled.
+Forbidden: selecting source-evidence fallback C or hiding live decompile failures.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,12 +14,20 @@ __all__ = [
 ]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RecompilableStorageFallbackDecision:
+    """Explicit result of the currently disabled storage fallback selector."""
+
     use_fallback: bool
     c_text_source: str | None
     bounded_live_decompile_outcome: str | None
     selected_text: str | None
+    live_shape_ok: bool
+    fallback_shape_ok: bool
+    shape_ok_evidence_present: bool
+    fallback_evidence_present: bool
+    storage_object_record_count: int
+    storage_object_refusal_count: int
 
 
 def decide_recompilable_storage_fallback(
@@ -25,44 +39,16 @@ def decide_recompilable_storage_fallback(
     storage_object_record_count: int,
     storage_object_refusal_count: int,
 ) -> RecompilableStorageFallbackDecision:
-    if live_shape_ok or not fallback_shape_ok:
-        return RecompilableStorageFallbackDecision(
-            use_fallback=False,
-            c_text_source=None,
-            bounded_live_decompile_outcome=None,
-            selected_text=None,
-        )
-
-    has_storage_signal = storage_object_record_count > 0 or storage_object_refusal_count > 0
-    if has_storage_signal and shape_ok_evidence_text is not None:
-        outcome = (
-            "storage_object_refusal_shape_ok_evidence_fallback"
-            if storage_object_refusal_count > 0
-            else "storage_object_shape_ok_evidence_fallback"
-        )
-        return RecompilableStorageFallbackDecision(
-            use_fallback=True,
-            c_text_source="storage_object_shape_ok_evidence",
-            bounded_live_decompile_outcome=outcome,
-            selected_text=shape_ok_evidence_text,
-        )
-
-    selected_text = shape_ok_evidence_text or fallback_evidence_text
-    if selected_text is None:
-        return RecompilableStorageFallbackDecision(
-            use_fallback=False,
-            c_text_source=None,
-            bounded_live_decompile_outcome=None,
-            selected_text=None,
-        )
-    outcome = (
-        "storage_object_refusal_shape_ok_evidence_fallback"
-        if storage_object_refusal_count > 0
-        else "shape_ok_evidence_fallback"
-    )
+    """Refuse storage fallback C while preserving live/fallback evidence inputs."""
     return RecompilableStorageFallbackDecision(
-        use_fallback=True,
-        c_text_source="shape_ok_evidence",
-        bounded_live_decompile_outcome=outcome,
-        selected_text=selected_text,
+        use_fallback=False,
+        c_text_source=None,
+        bounded_live_decompile_outcome=None,
+        selected_text=None,
+        live_shape_ok=live_shape_ok,
+        fallback_shape_ok=fallback_shape_ok,
+        shape_ok_evidence_present=shape_ok_evidence_text is not None,
+        fallback_evidence_present=fallback_evidence_text is not None,
+        storage_object_record_count=storage_object_record_count,
+        storage_object_refusal_count=storage_object_refusal_count,
     )

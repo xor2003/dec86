@@ -1,7 +1,15 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, TypeAlias
+import typing
+from collections.abc import Callable
+from typing import Protocol, TypeAlias
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -10,34 +18,49 @@ from .cli_access_object_hints import AccessTraitObjectHint, BaseKey
 from .cli_access_rewrite_artifact import AccessRewriteArtifact
 
 StableHints: TypeAlias = dict[BaseKey, AccessTraitObjectHint]
-ReplaceCChildren: TypeAlias = Callable[[Any, Callable[[Any], Any]], bool]
+ReplaceCChildren: TypeAlias = Callable[[object, Callable[[object], object]], bool]
+
+
+class _CFunctionLike(Protocol):
+    """Structured C function surface needed by access-trait renaming."""
+
+    addr: int
+    statements: object
+    variables_in_use: object
+
+
+class _CodegenLike(Protocol):
+    """Codegen surface needed by access-trait renaming."""
+
+    cfunc: _CFunctionLike | None
 
 
 def _should_attach_access_trait_names(
-    codegen: Any,
+    codegen: object,
     *,
-    has_access_rewrite_artifact: Callable[[Any], bool],
+    has_access_rewrite_artifact: Callable[[object], bool],
 ) -> bool:
     return has_access_rewrite_artifact(codegen)
 
 
 def _attach_access_trait_field_names(
-    project: Any,
-    codegen: Any,
+    project: object,
+    codegen: _CodegenLike,
     *,
-    should_attach_access_trait_names: Callable[[Any], bool],
-    load_access_rewrite_artifact: Callable[[Any, Any], AccessRewriteArtifact | None],
+    should_attach_access_trait_names: Callable[[object], bool],
+    load_access_rewrite_artifact: Callable[[object, object], AccessRewriteArtifact | None],
     stable_access_object_hint_for_key: Callable[[StableHints, BaseKey | None], AccessTraitObjectHint | None],
-    access_trait_variable_key: Callable[[Any], BaseKey | None],
+    access_trait_variable_key: Callable[[object], BaseKey | None],
     stack_object_name: Callable[[int], str],
     access_trait_field_name: Callable[[int, int], str],
     replace_c_children: ReplaceCChildren,
 ) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
+    cfunc = codegen.cfunc
+    if cfunc is None:
         return False
     if not should_attach_access_trait_names(codegen):
         return False
-    artifact = load_access_rewrite_artifact(project, getattr(codegen.cfunc, "addr", None))
+    artifact = load_access_rewrite_artifact(project, cfunc.addr)
     if artifact is None or not artifact.object_hints:
         return False
     object_hints = artifact.object_hints
@@ -45,7 +68,7 @@ def _attach_access_trait_field_names(
     def is_generic_stack_name(name: object) -> bool:
         return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", name) is not None
 
-    def stack_rewrite_decision(variable: Any) -> AccessTraitObjectHint | None:
+    def stack_rewrite_decision(variable: object) -> AccessTraitObjectHint | None:
         base_key = access_trait_variable_key(variable)
         if base_key is None:
             return None
@@ -55,44 +78,47 @@ def _attach_access_trait_field_names(
 
     changed = False
 
-    def rename_stack_variable(cvar: Any, *, suffix: int = 0) -> Any:
+    def rename_stack_variable(cvar: structured_c.CVariable, *, suffix: int = 0) -> object | None:
         nonlocal changed
+        # Dynamic codegen boundary: angr CVariable payloads are optional.
         variable = getattr(cvar, "variable", None)
         if not isinstance(variable, SimStackVariable):
             return None
         decision = stack_rewrite_decision(variable)
         if decision is None or not decision.should_rename_stack():
             return None
-        name = getattr(variable, "name", None)
+        name = variable.name
         if not is_generic_stack_name(name) and not (isinstance(name, str) and name.startswith("field_")):
             return None
         if decision.kind == "stack":
-            field_name = stack_object_name(getattr(variable, "offset", suffix))
+            field_name = stack_object_name(variable.offset)
         else:
-            field_name = access_trait_field_name(suffix, getattr(variable, "size", 1))
-        if getattr(variable, "name", None) != field_name:
+            field_name = access_trait_field_name(suffix, variable.size)
+        if variable.name != field_name:
             variable.name = field_name
             changed = True
+        # Dynamic codegen boundary: structured C variables may expose a rendered name.
         if getattr(cvar, "name", None) != field_name:
             try:
-                cvar.name = field_name
+                # Dynamic codegen boundary: angr CVariable.name is runtime-mutable despite a read-only stub.
+                typing.cast(typing.Any, cvar).name = field_name
             except Exception:
                 pass
             else:
                 changed = True
         return cvar
 
-    def transform(node: Any) -> Any:
+    def transform(node: object) -> object:
         if isinstance(node, structured_c.CVariable):
             renamed = rename_stack_variable(node, suffix=0)
             if renamed is not None:
                 return renamed
         return node
 
-    root = codegen.cfunc.statements
+    root = cfunc.statements
     new_root = transform(root)
     if new_root is not root:
-        codegen.cfunc.statements = new_root
+        cfunc.statements = new_root
         root = new_root
         changed = True
     if replace_c_children(root, transform):
@@ -101,22 +127,23 @@ def _attach_access_trait_field_names(
 
 
 def _attach_pointer_member_names(
-    project: Any,
-    codegen: Any,
+    project: object,
+    codegen: _CodegenLike,
     *,
-    should_attach_access_trait_names: Callable[[Any], bool],
-    load_access_rewrite_artifact: Callable[[Any, Any], AccessRewriteArtifact | None],
+    should_attach_access_trait_names: Callable[[object], bool],
+    load_access_rewrite_artifact: Callable[[object, object], AccessRewriteArtifact | None],
     stable_access_object_hint_for_key: Callable[[StableHints, BaseKey | None], AccessTraitObjectHint | None],
-    access_trait_variable_key: Callable[[Any], BaseKey | None],
+    access_trait_variable_key: Callable[[object], BaseKey | None],
     access_trait_field_name: Callable[[int, int], str],
     replace_c_children: ReplaceCChildren,
 ) -> bool:
-    def _impl():
-        if getattr(codegen, "cfunc", None) is None:
+    def _impl() -> bool:
+        cfunc = codegen.cfunc
+        if cfunc is None:
             return False
         if not should_attach_access_trait_names(codegen):
             return False
-        artifact = load_access_rewrite_artifact(project, getattr(codegen.cfunc, "addr", None))
+        artifact = load_access_rewrite_artifact(project, cfunc.addr)
         if artifact is None or not artifact.object_hints:
             return False
         object_hints = artifact.object_hints
@@ -151,14 +178,13 @@ def _attach_pointer_member_names(
                 return field_name
             return names[-1]
 
-        variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
+        variables_in_use = cfunc.variables_in_use
         if isinstance(variables_in_use, dict):
             for variable, cvar in list(variables_in_use.items()):
                 if not isinstance(variable, (SimRegisterVariable, SimStackVariable, SimMemoryVariable)):
                     continue
-                if not is_generic_name(getattr(variable, "name", None)) and not is_generic_name(
-                    getattr(cvar, "name", None)
-                ):
+                # Dynamic codegen boundary: CVariable rendered names are optional.
+                if not is_generic_name(variable.name) and not is_generic_name(getattr(cvar, "name", None)):
                     continue
                 base_key = access_trait_variable_key(variable)
                 if base_key is None:
@@ -166,28 +192,31 @@ def _attach_pointer_member_names(
                 field_name = assign_member_name(base_key)
                 if field_name is None:
                     continue
+                # Dynamic codegen boundary: CVariable may carry a unified variable payload.
                 target = getattr(cvar, "unified_variable", None) or getattr(cvar, "variable", None)
+                # Dynamic codegen boundary: target variable names are optional codegen metadata.
                 if target is not None and getattr(target, "name", None) != field_name:
                     target.name = field_name
                     changed = True
-                if getattr(variable, "name", None) != field_name:
+                if variable.name != field_name:
                     variable.name = field_name
                     changed = True
+                # Dynamic codegen boundary: CVariable rendered names are optional.
                 if getattr(cvar, "name", None) != field_name:
-                    setattr(cvar, "name", field_name)
+                    cvar.name = field_name
                     changed = True
                 assigned_names[id(variable)] = field_name
 
-        def rename_member_variable(cvar: Any) -> Any:
+        def rename_member_variable(cvar: object) -> object | None:
             nonlocal changed
             if not isinstance(cvar, structured_c.CVariable):
                 return None
+            # Dynamic codegen boundary: angr CVariable payloads are optional.
             variable = getattr(cvar, "variable", None)
             if not isinstance(variable, (SimRegisterVariable, SimStackVariable, SimMemoryVariable)):
                 return None
-            if not is_generic_name(getattr(variable, "name", None)) and not is_generic_name(
-                getattr(cvar, "name", None)
-            ):
+            # Dynamic codegen boundary: CVariable rendered names are optional.
+            if not is_generic_name(variable.name) and not is_generic_name(getattr(cvar, "name", None)):
                 return None
             base_key = access_trait_variable_key(variable)
             if base_key is None:
@@ -197,29 +226,31 @@ def _attach_pointer_member_names(
                 field_name = assign_member_name(base_key)
             if field_name is None:
                 return None
-            if getattr(variable, "name", None) != field_name:
+            if variable.name != field_name:
                 variable.name = field_name
                 changed = True
+            # Dynamic codegen boundary: CVariable rendered names are optional.
             if getattr(cvar, "name", None) != field_name:
                 try:
-                    setattr(cvar, "name", field_name)
+                    # Dynamic codegen boundary: angr CVariable.name is runtime-mutable despite a read-only stub.
+                    typing.cast(typing.Any, cvar).name = field_name
                 except Exception:
                     pass
                 else:
                     changed = True
             return cvar
 
-        def transform(node: Any) -> Any:
+        def transform(node: object) -> object:
             if isinstance(node, structured_c.CVariable):
                 renamed = rename_member_variable(node)
                 if renamed is not None:
                     return renamed
             return node
 
-        root = codegen.cfunc.statements
+        root = cfunc.statements
         new_root = transform(root)
         if new_root is not root:
-            codegen.cfunc.statements = new_root
+            cfunc.statements = new_root
             root = new_root
             changed = True
         if replace_c_children(root, transform):

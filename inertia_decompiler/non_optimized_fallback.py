@@ -1,3 +1,9 @@
+"""Select bounded non-optimized fallback policy without creating semantic proof.
+
+Layer: CLI/fallback/reporting.
+Responsibility: decide when bounded non-optimized fallback lanes are allowed.
+"""
+
 from __future__ import annotations
 
 from inertia_decompiler.slice_recovery import BoundedSliceVerdict

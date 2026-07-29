@@ -1,6 +1,19 @@
+"""Layer: Frontend/runtime.
+
+Responsibility: lift 16-bit x86 bytes into VEX/typed IR facts without later-stage repair.
+Forbidden: postprocess cleanup, source/COD-backed recovery, or validation acceptance.
+Dynamic attribute access here is a third-party pyvex/Gymrat, Capstone, and
+emulator telemetry boundary; owned Inertia facts must be explicit typed IR.
+"""
+
+from __future__ import annotations
+
 import contextlib
 import logging
-from typing import Any
+import os
+from abc import update_abstractmethods
+from dataclasses import dataclass, replace
+from typing import Any, cast
 
 import bitstring
 from pyvex.lifting import register
@@ -33,12 +46,26 @@ from .ir.condition_ir import (
     build_condition_from_cmp_8616,
     build_condition_from_test_8616,
 )
-from .ir.core import AddressStatus, IRAddress, IRCondition, IRValue, MemSpace, SegmentOrigin
+from .ir.core import AddressStatus, IRAddress, IRBinaryValue, IRCondition, IRValue, MemSpace, SegmentOrigin
 from .jcc_condition import _direct_jcc_condition_from_last_condition_8616
 from .parse import CHSZ_AD, CHSZ_OP
 from .regs import reg16_t
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
+
+_BPMemorySpec8616 = tuple[str, int, int]
+
+
+@dataclass(frozen=True)
+class _ConditionRegisterValueState8616:
+    """Carry one exact register value only to the immediately next instruction."""
+
+    value: IRValue
+    next_addr: int
+
+
+def _affine_switch_conditions_enabled_8616() -> bool:
+    return os.environ.get("INERTIA_ENABLE_AFFINE_SWITCH_CONDITIONS") == "1"
 
 
 def _bitstream_is_empty(bitstrm: bitstring.ConstBitStream) -> bool:
@@ -67,8 +94,31 @@ class _LifterInstructionFacade:
 
 
 class Instruction_ANY(Instruction):
+    """Dynamic pyvex instruction bridge for 16-bit x86 instruction lifting."""
+
+    bitstrm: Any
+    arch: Any
+    addr: int
+    start: int
+    cs: Any
+    emu: Emulator
+    irsb_c: Any
+    instr: InstrData
+    instr16: Instr16
+    instr32: Instr32 | None
+    simple_semantics: tuple[Any, ...] | None
+    _past_instructions: list[Any] | tuple[Any, ...]
+    _future_instructions: list[Any] | tuple[Any, ...]
+    _inertia_consumed_last_condition_8616: IRCondition
+    _inertia_consumed_last_condition_addr_8616: int | None
+    bitwidth: int
+    is_mode32: bool
+    chsz_op: int | bool
+    reg_offsets: dict[int, int]
+
     _REG8_NAMES = {"al", "ah", "bl", "bh", "cl", "ch", "dl", "dh"}
     _REG16_NAMES = {"ax", "bx", "cx", "dx", "sp", "bp", "si", "di", "ip", "flags"}
+    _LOW8_PARENT_REGS = {"al": "ax", "bl": "bx", "cl": "cx", "dl": "dx"}
     _SIMPLE_JCC_8616: frozenset[str] = frozenset(
         JCC_EQ_MNEMONICS_8616
         | JCC_NE_MNEMONICS_8616
@@ -109,11 +159,9 @@ class Instruction_ANY(Instruction):
         reg16_t.SP: 8,
     }
 
-    # Convert everything that's not an instruction into a No-op to meet the BF spec
-    bin_format = "xxxxxxxx"  # We don't care, match it all
-    name = "nop"
+    def lift(self, irsb_c: Any, past_instructions: list[Any], future_instructions: list[Any]) -> None:
+        """Lift one decoded pyvex instruction into the active IRSB customizer."""
 
-    def lift(self, irsb_c, past_instructions, future_instructions):
         self.irsb_c = irsb_c
         self.mark_instruction_start()
         self.emu.irsb = irsb_c
@@ -122,7 +170,7 @@ class Instruction_ANY(Instruction):
         # Fall back to self.addr (instruction address).
         actual_irsb = getattr(self.emu.irsb, "irsb", self.emu.irsb)
         block_addr = getattr(actual_irsb, "addr", self.addr)
-        self.emu._inertia_current_block_addr = block_addr
+        cast(Any, self.emu)._inertia_current_block_addr = block_addr
         self.emu.set_lifter_instruction(_LifterInstructionFacade(irsb_c, self))
         self._past_instructions = past_instructions
         self._future_instructions = future_instructions
@@ -131,7 +179,7 @@ class Instruction_ANY(Instruction):
             return
         self.compute_result()
 
-    def __init__(self, bitstrm, arch, addr):
+    def __init__(self, bitstrm: Any, arch: Any, addr: int) -> None:
         self.bitstrm = bitstrm
         self.arch = arch
         self.addr = addr
@@ -139,8 +187,9 @@ class Instruction_ANY(Instruction):
         self.emu = Emulator(arch, None)
         # Set block address and function address on emulator so _record_semantic_memory_access
         # can key facts into _inertia_module_alias_fact_cache and evidence_cache
-        self.emu._inertia_current_block_addr = addr
-        self.emu._inertia_current_function_addr = addr
+        emu_dynamic = cast(Any, self.emu)
+        emu_dynamic._inertia_current_block_addr = addr
+        emu_dynamic._inertia_current_function_addr = addr
         self.instr16 = Instr16(self.emu, self.instr)
         self.instr32 = None
         self.emu.set_lifter_instruction(None)
@@ -150,13 +199,15 @@ class Instruction_ANY(Instruction):
 
         self.reg_offsets = self._REG_OFFSETS
 
-    def _ensure_instr32(self):
+    def _ensure_instr32(self) -> Instr32:
         if self.instr32 is None:
             self.instr32 = Instr32(self.emu, self.instr)
         return self.instr32
 
-    def parse(self, bitstrm):
-        def _impl():
+    def parse(self, bitstrm: Any) -> dict[str, str]:
+        """Parse one 16-bit instruction and prepare either simple or full semantics."""
+
+        def _impl() -> dict[str, str]:
             try:
                 self.start = bitstrm.bytepos
                 raw = bytes(bitstrm[self.start * 8 : self.start * 8 + 15 * 8])
@@ -182,7 +233,7 @@ class Instruction_ANY(Instruction):
                     raise ParseError("Couldn't disassemble instruction")
                 self.cs = instr[0]
                 logger.debug("cs dis: %s %s", self.cs.mnemonic, self.cs.op_str)
-                self.name = self.cs.insn_name()
+                cast(Any, self).name = self.cs.insn_name()
                 self.simple_semantics = self._match_simple_semantics()
                 if self.simple_semantics is not None:
                     bitstrm.bytepos = self.start + cs_prefix_len + self.cs.size
@@ -192,7 +243,7 @@ class Instruction_ANY(Instruction):
                     return {"x": "00000000"}
 
                 self.is_mode32 = False  # emu.is_mode32()
-                prefix = self.instr32.parse_prefix() if self.is_mode32 else self.instr16.parse_prefix()
+                prefix = self._ensure_instr32().parse_prefix() if self.is_mode32 else self.instr16.parse_prefix()
                 self.chsz_op = prefix & CHSZ_OP
                 chsz_ad = prefix & CHSZ_AD
 
@@ -210,7 +261,7 @@ class Instruction_ANY(Instruction):
 
         return _impl()
 
-    def _match_simple_semantics(self):
+    def _match_simple_semantics(self) -> tuple[Any, ...] | None:
         ops = getattr(self.cs, "operands", ())
         unary = self._match_simple_unary_semantics_8616(ops)
         if unary is not None:
@@ -219,8 +270,8 @@ class Instruction_ANY(Instruction):
             return None
         return self._match_simple_binary_semantics_8616(ops)
 
-    def _match_simple_unary_semantics_8616(self, ops):
-        def _impl():
+    def _match_simple_unary_semantics_8616(self, ops: Any) -> tuple[Any, ...] | None:
+        def _impl() -> tuple[Any, ...] | None:
             if self.cs.mnemonic == "nop":
                 return ("nop",)
             if self.cs.mnemonic == "ret":
@@ -229,6 +280,8 @@ class Instruction_ANY(Instruction):
                 return ("ret",)
             if self.cs.mnemonic == "leave":
                 return ("leave",)
+            if self.cs.mnemonic in {"cbw", "cwde"} and not ops:
+                return ("sign_extend_al_ax",)
             if self.cs.mnemonic == "enter" and len(ops) == 2 and all(op.type == 2 for op in ops):
                 return ("enter", ops[0].imm & 0xFFFF, ops[1].imm & 0xFF)
             if self.cs.mnemonic in {"push", "pop"} and len(ops) == 1:
@@ -246,6 +299,22 @@ class Instruction_ANY(Instruction):
                 mem = self._bp_mem(ops[0])
                 if mem:
                     return ("call_mem16", mem)
+            if self.cs.mnemonic == "inc" and len(ops) == 1 and _affine_switch_conditions_enabled_8616():
+                reg_name = self._reg16_name(ops[0])
+                if reg_name and reg_name not in {"sp", "bp"}:
+                    return ("inc_reg16", reg_name)
+            if (
+                self.cs.mnemonic == "dec"
+                and len(ops) == 1
+                and (
+                    _affine_switch_conditions_enabled_8616()
+                    or self._next_instruction_is_simple_jcc_from_bytes_8616()
+                    or self._next_instruction_is_incdec_reg16_from_bytes_8616()
+                )
+            ):
+                reg_name = self._reg16_name(ops[0])
+                if reg_name and reg_name not in {"sp", "bp"}:
+                    return ("dec_reg16", reg_name)
             if self.cs.mnemonic in {"jmp", *self._SIMPLE_JCC_8616} and len(ops) == 1 and ops[0].type == 2:
                 return (self.cs.mnemonic, ops[0].imm)
             return None
@@ -253,7 +322,7 @@ class Instruction_ANY(Instruction):
         return _impl()
 
     def _next_instruction_is_simple_jcc_from_bytes_8616(self) -> bool:
-        def _impl():
+        def _impl() -> bool:
             next_bytepos = self.start + self.cs.size
             raw = bytes(self.bitstrm[next_bytepos * 8 : next_bytepos * 8 + 2 * 8])
             if not raw:
@@ -265,7 +334,45 @@ class Instruction_ANY(Instruction):
 
         return _impl()
 
-    def _match_simple_binary_semantics_8616(self, ops):
+    def _next_instruction_is_incdec_reg16_from_bytes_8616(self) -> bool:
+        def _impl() -> bool:
+            next_bytepos = self.start + self.cs.size
+            raw = bytes(self.bitstrm[next_bytepos * 8 : next_bytepos * 8 + 8])
+            if not raw:
+                return False
+            return 0x40 <= raw[0] <= 0x4F
+
+        return _impl()
+
+    def _same_preceding_incdec_reg16_count_8616(self, reg_name: str, *, mnemonic: str) -> int:
+        if mnemonic not in {"inc", "dec"}:
+            return 1
+        try:
+            current_byte = bytes(self.bitstrm[self.start * 8 : self.start * 8 + 8])[0]
+        except Exception:
+            return 1
+        base_opcode = 0x40 if mnemonic == "inc" else 0x48
+        try:
+            reg_index = int(reg16_t[reg_name.upper()].value)
+        except Exception:
+            return 1
+        expected_opcode = base_opcode + reg_index
+        if current_byte != expected_opcode:
+            return 1
+        count = 1
+        bytepos = self.start - 1
+        while bytepos >= 0:
+            try:
+                prev_byte = bytes(self.bitstrm[bytepos * 8 : bytepos * 8 + 8])[0]
+            except Exception:
+                break
+            if prev_byte != expected_opcode:
+                break
+            count += 1
+            bytepos -= 1
+        return count
+
+    def _match_simple_binary_semantics_8616(self, ops: Any) -> tuple[Any, ...] | None:
         dst, src = ops
         mnemonic = self.cs.mnemonic
         dst_reg = self._reg16_name(dst)
@@ -277,10 +384,18 @@ class Instruction_ANY(Instruction):
         dst_abs_mem = self._direct_mem16(dst)
         src_abs_mem = self._direct_mem16(src)
         dst_abs_mem8 = self._direct_mem8(dst)
+        src_abs_mem8 = self._direct_mem8(src)
+        dst_indexed_mem8 = self._indexed_mem8(dst)
+        src_indexed_mem8 = self._indexed_mem8(src)
         src_reg8 = self._reg8_name(src)
         dst_reg8 = self._reg8_name(dst)
 
-        mov_sem = self._match_mov_lea_binary_semantics_8616(dst_reg, src_imm, src_reg, src_mem, dst_mem)
+        if mnemonic == "mov" and dst_reg8:
+            if src_indexed_mem8 is not None:
+                return ("mov_reg_indexed_abs8", dst_reg8, src_indexed_mem8)
+            if src_abs_mem8 is not None:
+                return ("mov_reg_abs8", dst_reg8, src_abs_mem8)
+        mov_sem = self._match_mov_lea_binary_semantics_8616(dst_reg, src_imm, src_reg, src_mem, src_abs_mem, dst_mem)
         if mov_sem is not None:
             return mov_sem
         cmp_sem = self._match_cmp_binary_semantics_8616(
@@ -295,21 +410,26 @@ class Instruction_ANY(Instruction):
             src_imm8,
             src_reg8,
             dst_reg8,
+            dst_indexed_mem8,
             src,
         )
         if cmp_sem is not None:
             return cmp_sem
+        if mnemonic in {"shl", "sal"} and dst_reg and src_imm is not None and src_imm == 1:
+            return ("shl_reg_imm16", dst_reg, src_imm)
         if mnemonic in {"add", "sub", "xor", "and", "or"}:
             if (
                 dst_reg
                 and dst_reg not in {"sp", "bp"}
-                and mnemonic == "sub"
+                and mnemonic in {"sub", "xor", "and", "or"}
                 and self._next_instruction_is_simple_jcc_from_bytes_8616()
             ):
                 if src_reg:
                     return (f"{mnemonic}_reg_reg16", dst_reg, src_reg)
                 if src_mem:
                     return (f"{mnemonic}_reg_mem16", dst_reg, src_mem)
+                if src_abs_mem is not None and mnemonic in {"xor", "and", "or"}:
+                    return (f"{mnemonic}_reg_abs16", dst_reg, src_abs_mem)
                 if src_imm is not None:
                     return (f"{mnemonic}_reg_imm16", dst_reg, src_imm)
             if dst_abs_mem is not None and src_imm is not None:
@@ -318,14 +438,24 @@ class Instruction_ANY(Instruction):
                 return (f"{mnemonic}_abs_reg16", dst_abs_mem, src_reg)
         return None
 
-    def _match_mov_lea_binary_semantics_8616(self, dst_reg, src_imm, src_reg, src_mem, dst_mem):
-        def _impl():
+    def _match_mov_lea_binary_semantics_8616(
+        self,
+        dst_reg: Any,
+        src_imm: Any,
+        src_reg: Any,
+        src_mem: Any,
+        src_abs_mem: Any,
+        dst_mem: Any,
+    ) -> tuple[Any, ...] | None:
+        def _impl() -> tuple[Any, ...] | None:
             if self.cs.mnemonic == "mov" and dst_reg and src_imm is not None:
                 return ("mov_reg_imm16", dst_reg, src_imm)
             if self.cs.mnemonic == "mov" and dst_reg and src_reg:
                 return ("mov_reg_reg16", dst_reg, src_reg)
             if self.cs.mnemonic == "mov" and dst_reg and src_mem:
                 return ("mov_reg_mem16", dst_reg, src_mem)
+            if self.cs.mnemonic == "mov" and dst_reg and src_abs_mem is not None:
+                return ("mov_reg_abs16", dst_reg, src_abs_mem)
             if self.cs.mnemonic == "mov" and dst_mem and src_reg:
                 return ("mov_mem_reg16", dst_mem, src_reg)
             if self.cs.mnemonic == "mov" and dst_mem and src_imm is not None:
@@ -338,20 +468,21 @@ class Instruction_ANY(Instruction):
 
     def _match_cmp_binary_semantics_8616(
         self,
-        dst_reg,
-        src_reg,
-        src_mem,
-        src_imm,
-        dst_mem,
-        dst_abs_mem,
-        src_abs_mem,
-        dst_abs_mem8,
-        src_imm8,
-        src_reg8,
-        dst_reg8,
-        src,
-    ):
-        def _impl():
+        dst_reg: Any,
+        src_reg: Any,
+        src_mem: Any,
+        src_imm: Any,
+        dst_mem: Any,
+        dst_abs_mem: Any,
+        src_abs_mem: Any,
+        dst_abs_mem8: Any,
+        src_imm8: Any,
+        src_reg8: Any,
+        dst_reg8: Any,
+        dst_indexed_mem8: Any,
+        src: Any,
+    ) -> tuple[Any, ...] | None:
+        def _impl() -> tuple[Any, ...] | None:
             if self.cs.mnemonic != "cmp":
                 return None
             if dst_reg:
@@ -378,6 +509,8 @@ class Instruction_ANY(Instruction):
                     return ("cmp_abs_imm8", dst_abs_mem8, src_imm8)
                 if src_reg8:
                     return ("cmp_abs_reg8", dst_abs_mem8, src_reg8)
+            if dst_indexed_mem8 is not None and src_reg8:
+                return ("cmp_indexed_abs_reg8", dst_indexed_mem8, src_reg8)
             if dst_reg8 and dst_reg8 in self._REG8_NAMES:
                 src_abs_mem8 = self._direct_mem8(src)
                 if src_abs_mem8 is not None:
@@ -386,10 +519,11 @@ class Instruction_ANY(Instruction):
 
         return _impl()
 
-    def _lift_simple_cmp_8616(self, kind: str):
-        def _impl():
+    def _lift_simple_cmp_8616(self, kind: str) -> bool:
+        def _impl() -> bool:
+            semantics = cast(tuple[Any, ...], self.simple_semantics)
             if kind == "cmp_mem_reg16":
-                _, mem_spec, src_reg = self.simple_semantics
+                _, mem_spec, src_reg = semantics
                 lhs_val = self._load_mem16(mem_spec)
                 rhs_val = self._get_reg16(src_reg)
                 self._record_cmp_condition_source(lhs_val, rhs_val)
@@ -397,7 +531,7 @@ class Instruction_ANY(Instruction):
                     self._update_cmp_flags(lhs_val, rhs_val)
                 return True
             if kind == "cmp_mem_imm16":
-                _, mem_spec, imm = self.simple_semantics
+                _, mem_spec, imm = semantics
                 lhs_val = self._load_mem16(mem_spec)
                 rhs_val = self._const16(imm)
                 self._record_cmp_condition_source(lhs_val, rhs_val)
@@ -405,7 +539,7 @@ class Instruction_ANY(Instruction):
                     self._update_cmp_flags(lhs_val, rhs_val)
                 return True
             if kind == "cmp_abs_reg16":
-                _, offset, src_reg = self.simple_semantics
+                _, offset, src_reg = semantics
                 lhs_val = self._load_abs16(offset)
                 rhs_val = self._get_reg16(src_reg)
                 self._record_cmp_condition_source(lhs_val, rhs_val)
@@ -413,7 +547,7 @@ class Instruction_ANY(Instruction):
                     self._update_cmp_flags(lhs_val, rhs_val)
                 return True
             if kind == "cmp_abs_imm16":
-                _, offset, imm = self.simple_semantics
+                _, offset, imm = semantics
                 lhs_val = self._load_abs16(offset)
                 rhs_val = self._const16(imm)
                 self._record_cmp_condition_source(lhs_val, rhs_val)
@@ -421,7 +555,7 @@ class Instruction_ANY(Instruction):
                     self._update_cmp_flags(lhs_val, rhs_val)
                 return True
             if kind == "cmp_reg_abs16":
-                _, lhs_reg, offset = self.simple_semantics
+                _, lhs_reg, offset = semantics
                 lhs_val = self._get_reg16(lhs_reg)
                 rhs_val = self._load_abs16(offset)
                 self._record_cmp_condition_source(lhs_val, rhs_val)
@@ -430,17 +564,25 @@ class Instruction_ANY(Instruction):
                 return True
             if kind in {"cmp_reg_abs8", "cmp_abs_reg8", "cmp_abs_imm8"}:
                 if kind == "cmp_reg_abs8":
-                    _, dst_reg, offset = self.simple_semantics
+                    _, dst_reg, offset = semantics
                     lhs_val = self.get(dst_reg, Type.int_8)
                     rhs_val = self._load_abs8(offset)
                 elif kind == "cmp_abs_reg8":
-                    _, offset, src_reg = self.simple_semantics
+                    _, offset, src_reg = semantics
                     lhs_val = self._load_abs8(offset)
                     rhs_val = self.get(src_reg, Type.int_8)
                 else:
-                    _, offset, imm = self.simple_semantics
+                    _, offset, imm = semantics
                     lhs_val = self._load_abs8(offset)
                     rhs_val = self.constant(imm, Type.int_8)
+                self._record_cmp_condition_source(lhs_val, rhs_val, width_bits=8)
+                if not self._next_instruction_is_simple_jcc():
+                    self._update_cmp_flags8(lhs_val, rhs_val)
+                return True
+            if kind == "cmp_indexed_abs_reg8":
+                _, mem_spec, src_reg = semantics
+                lhs_val = self._load_indexed_abs8(mem_spec)
+                rhs_val = self.get(src_reg, Type.int_8)
                 self._record_cmp_condition_source(lhs_val, rhs_val, width_bits=8)
                 if not self._next_instruction_is_simple_jcc():
                     self._update_cmp_flags8(lhs_val, rhs_val)
@@ -450,10 +592,11 @@ class Instruction_ANY(Instruction):
         return _impl()
 
     def _lift_simple_jcc_8616(self, kind: str) -> bool:
-        def _impl():
+        def _impl() -> bool:
             if kind not in (self._SIMPLE_JCC_8616 | {"jmp"}):
                 return False
-            _, abs_target = self.simple_semantics
+            semantics = cast(tuple[Any, ...], self.simple_semantics)
+            _, abs_target = semantics
             target = self._const16(abs_target)
             if kind == "jmp":
                 if (abs_target & 0xFFFF) == ((self.addr + self.cs.size) & 0xFFFF):
@@ -510,41 +653,41 @@ class Instruction_ANY(Instruction):
 
         return _impl()
 
-    def _reg8_name(self, operand):
-        if operand.type != 1 or getattr(operand, "size", None) != 1:
+    def _reg8_name(self, operand: Any) -> str | None:
+        if operand.type != 1 or operand.size != 1:
             return None
         reg_name = self.cs.reg_name(operand.reg).lower()
         return reg_name if reg_name in self._REG8_NAMES else None
 
-    def _reg16_name(self, operand):
-        if operand.type != 1 or getattr(operand, "size", None) != 2:
+    def _reg16_name(self, operand: Any) -> str | None:
+        if operand.type != 1 or operand.size != 2:
             return None
         reg_name = self.cs.reg_name(operand.reg).lower()
         return reg_name if reg_name in self._REG16_NAMES else None
 
     @staticmethod
-    def _imm8_value(operand):
+    def _imm8_value(operand: Any) -> int | None:
         if operand.type != 2:
             return None
         return operand.imm & 0xFF
 
     @staticmethod
-    def _imm16_value(operand):
+    def _imm16_value(operand: Any) -> int | None:
         if operand.type != 2:
             return None
         return operand.imm & 0xFFFF
 
-    def _get_reg16(self, reg_name):
+    def _get_reg16(self, reg_name: str) -> Any:
         return self.get(reg_name, Type.int_16)
 
-    def _const16(self, value):
+    def _const16(self, value: int) -> Any:
         return self.constant(value & 0xFFFF, Type.int_16)
 
-    def _const32(self, value):
+    def _const32(self, value: int) -> Any:
         return self.constant(value & 0xFFFFFFFF, Type.int_32)
 
-    def _bp_mem(self, operand):
-        if operand.type != 3 or getattr(operand, "size", None) != 2:
+    def _bp_mem(self, operand: Any) -> _BPMemorySpec8616 | None:
+        if operand.type != 3 or operand.size != 2:
             return None
         mem = operand.mem
         base = self.cs.reg_name(mem.base).lower() if mem.base else None
@@ -555,33 +698,45 @@ class Instruction_ANY(Instruction):
             return None
         return (base, mem.disp & 0xFFFF, mem.disp)
 
-    def _direct_mem16(self, operand):
-        if operand.type != 3 or getattr(operand, "size", None) != 2:
+    def _direct_mem16(self, operand: Any) -> int | None:
+        if operand.type != 3 or operand.size != 2:
             return None
         mem = operand.mem
         if mem.base or mem.index:
             return None
         return mem.disp & 0xFFFF
 
-    def _direct_mem8(self, operand):
-        if operand.type != 3 or getattr(operand, "size", None) != 1:
+    def _direct_mem8(self, operand: Any) -> int | None:
+        if operand.type != 3 or operand.size != 1:
             return None
         mem = operand.mem
         if mem.base or mem.index:
             return None
         return mem.disp & 0xFFFF
 
-    def _addr_from_bp_mem(self, mem_spec):
+    def _indexed_mem8(self, operand: Any) -> tuple[Any, ...] | None:
+        if operand.type != 3 or operand.size != 1:
+            return None
+        mem = operand.mem
+        base = self.cs.reg_name(mem.base).lower() if mem.base else None
+        index = self.cs.reg_name(mem.index).lower() if mem.index else None
+        if index is not None:
+            return None
+        if base not in self._REG16_NAMES or base in {"sp", "bp", "ip", "flags"}:
+            return None
+        return (base, mem.disp & 0xFFFF, mem.disp)
+
+    def _addr_from_bp_mem(self, mem_spec: _BPMemorySpec8616) -> Any:
         base, _, signed_disp = mem_spec
         addr = self._get_reg16(base)
         if signed_disp == 0:
             return addr
         return addr + self._const16(signed_disp)
 
-    def _ss_addr_from_bp_mem(self, mem_spec):
+    def _ss_addr_from_bp_mem(self, mem_spec: _BPMemorySpec8616) -> Any:
         return self._real_mode_linear("ss", self._addr_from_bp_mem(mem_spec))
 
-    def _record_bp_mem_access(self, mem_spec, mode: int, *, size: int = 2) -> None:
+    def _record_bp_mem_access(self, mem_spec: _BPMemorySpec8616, mode: int, *, size: int = 2) -> None:
         base, _, signed_disp = mem_spec
         self._record_mem_access(
             "ss",
@@ -593,11 +748,11 @@ class Instruction_ANY(Instruction):
             status=AddressStatus.STABLE,
         )
 
-    def _load_mem16(self, mem_spec):
+    def _load_mem16(self, mem_spec: _BPMemorySpec8616) -> Any:
         self._record_bp_mem_access(mem_spec, 0, size=2)
         return self.load(self._ss_addr_from_bp_mem(mem_spec), Type.int_16)
 
-    def _store_mem16(self, mem_spec, value):
+    def _store_mem16(self, mem_spec: _BPMemorySpec8616, value: Any) -> None:
         self._record_bp_mem_access(mem_spec, 1, size=2)
         self.store(value, self._ss_addr_from_bp_mem(mem_spec))
 
@@ -609,14 +764,13 @@ class Instruction_ANY(Instruction):
         *,
         base: tuple[str, ...] = (),
         size: int = 2,
-        segment_origin=None,
-        status=None,
+        segment_origin: SegmentOrigin | None = None,
+        status: AddressStatus | None = None,
     ) -> None:
         try:
             from .semantics.evidence_cache import (
                 get_current_function_addr,
                 record_access,
-                record_access_by_block,
             )
 
             space = getattr(MemSpace, seg.upper())
@@ -632,52 +786,67 @@ class Instruction_ANY(Instruction):
             func_addr = get_current_function_addr()
             if isinstance(func_addr, int):
                 record_access(func_addr, mode, addr)
-            else:
-                block_addr = getattr(self.emu, "_inertia_current_block_addr", None)
-                if isinstance(block_addr, int):
-                    record_access_by_block(block_addr, mode, addr)
         except Exception:
             pass
 
-    def _load_abs16(self, offset):
+    def _load_abs16(self, offset: int) -> Any:
         self._record_mem_access("ds", offset, 0)
         return self.load(self._real_mode_linear("ds", self._const16(offset)), Type.int_16)
 
-    def _store_abs16(self, offset, value):
+    def _store_abs16(self, offset: int, value: Any) -> None:
         self._record_mem_access("ds", offset, 1)
         self.store(value, self._real_mode_linear("ds", self._const16(offset)))
 
-    def _load_abs8(self, offset):
+    def _load_abs8(self, offset: int) -> Any:
         self._record_mem_access("ds", offset, 0)
         return self.load(self._real_mode_linear("ds", self._const16(offset)), Type.int_8)
 
-    def _real_mode_linear(self, seg_reg, off16):
+    def _addr_from_indexed_mem(self, mem_spec: Any) -> Any:
+        base, _, signed_disp = mem_spec
+        addr = self._get_reg16(base)
+        if signed_disp == 0:
+            return addr
+        return addr + self._const16(signed_disp)
+
+    def _load_indexed_abs8(self, mem_spec: Any) -> Any:
+        base, offset, _signed_disp = mem_spec
+        self._record_mem_access(
+            "ds",
+            int(offset),
+            0,
+            base=(str(base),),
+            size=1,
+            status=AddressStatus.PROVISIONAL,
+        )
+        return self.load(self._real_mode_linear("ds", self._addr_from_indexed_mem(mem_spec)), Type.int_8)
+
+    def _real_mode_linear(self, seg_reg: str, off16: Any) -> Any:
         seg = self._get_reg16(seg_reg).cast_to(Type.int_32)
         off32 = off16.cast_to(Type.int_32)
         return (seg << self.constant(4, Type.int_8)) + off32
 
-    def _stack_load16(self, off16):
+    def _stack_load16(self, off16: Any) -> Any:
         off_val = getattr(off16, "constant", None)
         if isinstance(off_val, int):
             self._record_mem_access("ss", off_val, 0, base=("sp",), size=2)
         return self.load(self._real_mode_linear("ss", off16), Type.int_16)
 
-    def _stack_store16(self, off16, value):
+    def _stack_store16(self, off16: Any, value: Any) -> None:
         off_val = getattr(off16, "constant", None)
         if isinstance(off_val, int):
             self._record_mem_access("ss", off_val, 1, base=("sp",), size=2)
         self.store(value, self._real_mode_linear("ss", off16))
 
-    def _set_zf_from_cond(self, cond):
+    def _set_zf_from_cond(self, cond: Any) -> None:
         self._set_flag_bit(6, cond)
 
-    def _set_flag_bit(self, bit, cond):
+    def _set_flag_bit(self, bit: int, cond: Any) -> None:
         flags = self._get_reg16("flags")
         mask = self._const16(1 << bit)
         value = cond.ite(mask, self._const16(0))
         self.put((flags & ~mask) | value, "flags")
 
-    def _update_cmp_flags(self, lhs, rhs):
+    def _update_cmp_flags(self, lhs: Any, rhs: Any) -> None:
         result = lhs - rhs
         lhs_sign = lhs[15]
         rhs_sign = rhs[15]
@@ -696,7 +865,7 @@ class Instruction_ANY(Instruction):
         overflow = (lhs_sign != rhs_sign) & (res_sign != lhs_sign)
         self._set_flag_bit(11, overflow)
 
-    def _update_cmp_flags8(self, lhs, rhs):
+    def _update_cmp_flags8(self, lhs: Any, rhs: Any) -> None:
         result = lhs - rhs
         lhs_sign = lhs[7]
         rhs_sign = rhs[7]
@@ -715,7 +884,7 @@ class Instruction_ANY(Instruction):
         overflow = (lhs_sign != rhs_sign) & (res_sign != lhs_sign)
         self._set_flag_bit(11, overflow)
 
-    def _update_result_flags16(self, result):
+    def _update_result_flags16(self, result: Any) -> None:
         low8 = result.cast_to(Type.int_8)
         parity = low8 ^ (low8 >> self.constant(4, Type.int_8))
         parity = parity ^ (parity >> self.constant(2, Type.int_8))
@@ -724,7 +893,7 @@ class Instruction_ANY(Instruction):
         self._set_flag_bit(6, result == self._const16(0))
         self._set_flag_bit(7, result[15] != self._const16(0))
 
-    def _update_binop_flags16(self, op_name, lhs, rhs, result):
+    def _update_binop_flags16(self, op_name: str, lhs: Any, rhs: Any, result: Any) -> None:
         if op_name == "add":
             self._set_flag_bit(0, result < lhs)
             self._set_flag_bit(4, (((lhs ^ rhs) ^ result) & self._const16(0x0010)) != self._const16(0))
@@ -746,13 +915,13 @@ class Instruction_ANY(Instruction):
             raise NotImplementedError(op_name)
         self._update_result_flags16(result)
 
-    def _flag_is_set(self, bit):
+    def _flag_is_set(self, bit: int) -> Any:
         return (self._get_reg16("flags") & self._const16(1 << bit)) != self._const16(0)
 
-    def _flag_is_clear(self, bit):
+    def _flag_is_clear(self, bit: int) -> Any:
         return (self._get_reg16("flags") & self._const16(1 << bit)) == self._const16(0)
 
-    def _binop_reg_reg(self, op_name, dst_reg, src_reg):
+    def _binop_reg_reg(self, op_name: str, dst_reg: str, src_reg: str) -> None:
         dst = self._get_reg16(dst_reg)
         src = self._get_reg16(src_reg)
         if op_name == "add":
@@ -775,10 +944,15 @@ class Instruction_ANY(Instruction):
         else:
             raise NotImplementedError(op_name)
         self.put(result, dst_reg)
-        if op_name != "sub" and not self._next_instruction_is_simple_jcc():
+        logical_condition_recorded = self._record_logical_result_condition_source_8616(
+            op_name,
+            dst_reg,
+            result,
+        )
+        if op_name != "sub" and not logical_condition_recorded:
             self._update_binop_flags16(op_name, dst, src, result)
 
-    def _binop_reg_imm(self, op_name, dst_reg, imm):
+    def _binop_reg_imm(self, op_name: str, dst_reg: str, imm: Any) -> None:
         dst = self._get_reg16(dst_reg)
         src = self._const16(imm)
         if op_name == "add":
@@ -786,7 +960,21 @@ class Instruction_ANY(Instruction):
         elif op_name == "sub":
             result = dst - src
             if self._next_instruction_is_simple_jcc():
-                self._record_cmp_condition_source(dst, src)
+                normalized_operands = (
+                    self._normalized_reg_imm_condition_operands_8616(
+                        dst_reg,
+                        int(imm),
+                        width_bits=16,
+                    )
+                    if _affine_switch_conditions_enabled_8616()
+                    else None
+                )
+                self._record_cmp_condition_source(
+                    dst,
+                    src,
+                    normalized_lhs=normalized_operands[0] if normalized_operands is not None else None,
+                    normalized_rhs=normalized_operands[1] if normalized_operands is not None else None,
+                )
         elif op_name == "xor":
             result = dst ^ src
         elif op_name == "and":
@@ -801,10 +989,17 @@ class Instruction_ANY(Instruction):
         else:
             raise NotImplementedError(op_name)
         self.put(result, dst_reg)
-        if op_name != "sub" and not self._next_instruction_is_simple_jcc():
+        if op_name == "sub" and _affine_switch_conditions_enabled_8616():
+            self._update_condition_reg_affine_offset_8616(dst_reg, int(imm), width_bits=16)
+        logical_condition_recorded = self._record_logical_result_condition_source_8616(
+            op_name,
+            dst_reg,
+            result,
+        )
+        if op_name != "sub" and not logical_condition_recorded:
             self._update_binop_flags16(op_name, dst, src, result)
 
-    def _binop_reg_mem(self, op_name, dst_reg, mem_spec):
+    def _binop_reg_mem(self, op_name: str, dst_reg: str, mem_spec: _BPMemorySpec8616) -> None:
         dst = self._get_reg16(dst_reg)
         src = self._load_mem16(mem_spec)
         if op_name == "add":
@@ -827,10 +1022,29 @@ class Instruction_ANY(Instruction):
         else:
             raise NotImplementedError(op_name)
         self.put(result, dst_reg)
-        if op_name != "sub" and not self._next_instruction_is_simple_jcc():
+        logical_condition_recorded = self._record_logical_result_condition_source_8616(
+            op_name,
+            dst_reg,
+            result,
+        )
+        if op_name != "sub" and not logical_condition_recorded:
             self._update_binop_flags16(op_name, dst, src, result)
 
-    def _binop_abs_imm(self, op_name, offset, imm):
+    def _binop_reg_abs(self, op_name: str, dst_reg: str, offset: int) -> None:
+        """Lift a register/direct-memory ALU operation with typed JCC evidence."""
+        dst = self._get_reg16(dst_reg)
+        src = self._load_abs16(offset)
+        result = self._binop_result16(op_name, dst, src)
+        self.put(result, dst_reg)
+        logical_condition_recorded = self._record_logical_result_condition_source_8616(
+            op_name,
+            dst_reg,
+            result,
+        )
+        if op_name != "sub" and not logical_condition_recorded:
+            self._update_binop_flags16(op_name, dst, src, result)
+
+    def _binop_abs_imm(self, op_name: str, offset: int, imm: int) -> None:
         dst = self._load_abs16(offset)
         src = self._const16(imm)
         result = self._binop_result16(op_name, dst, src)
@@ -838,7 +1052,7 @@ class Instruction_ANY(Instruction):
         if self._next_instruction_is_simple_jcc():
             self._update_binop_flags16(op_name, dst, src, result)
 
-    def _binop_abs_reg(self, op_name, offset, src_reg):
+    def _binop_abs_reg(self, op_name: str, offset: int, src_reg: str) -> None:
         dst = self._load_abs16(offset)
         src = self._get_reg16(src_reg)
         result = self._binop_result16(op_name, dst, src)
@@ -846,7 +1060,7 @@ class Instruction_ANY(Instruction):
         if self._next_instruction_is_simple_jcc():
             self._update_binop_flags16(op_name, dst, src, result)
 
-    def _binop_result16(self, op_name, dst, src):
+    def _binop_result16(self, op_name: str, dst: Any, src: Any) -> Any:
         if op_name == "add":
             return dst + src
         if op_name == "sub":
@@ -859,8 +1073,8 @@ class Instruction_ANY(Instruction):
             return dst | src
         raise NotImplementedError(op_name)
 
-    def _cmp_operands_from_semantics(self, semantics):
-        def _impl():
+    def _cmp_operands_from_semantics(self, semantics: tuple[Any, ...]) -> tuple[Any, Any] | None:
+        def _impl() -> tuple[Any, Any] | None:
             kind = semantics[0]
             if kind == "cmp_reg_reg16":
                 _, lhs_reg, rhs_reg = semantics
@@ -895,11 +1109,14 @@ class Instruction_ANY(Instruction):
             if kind == "cmp_abs_imm8":
                 _, offset, imm = semantics
                 return self._load_abs8(offset), self.constant(imm, Type.int_8)
+            if kind == "cmp_indexed_abs_reg8":
+                _, mem_spec, rhs_reg = semantics
+                return self._load_indexed_abs8(mem_spec), self.get(rhs_reg, Type.int_8)
             return None
 
         return _impl()
 
-    def _next_instruction_is_simple_jcc(self):
+    def _next_instruction_is_simple_jcc(self) -> bool:
         if not getattr(self, "_future_instructions", None):
             return False
         nxt = self._future_instructions[0]
@@ -908,18 +1125,18 @@ class Instruction_ANY(Instruction):
             return False
         return nxt_semantics[0] in self._SIMPLE_JCC_8616
 
-    def _direct_jcc_condition(self, kind):
-        def _impl():
+    def _direct_jcc_condition(self, kind: str) -> Any | None:
+        def _impl() -> Any | None:
             if not getattr(self, "_past_instructions", None):
                 return None
             prev = self._past_instructions[-1]
             prev_emu = getattr(prev, "emu", None)
             last_condition = getattr(prev_emu, "get_last_condition", lambda: None)()
 
-            def _finish(result):
+            def _finish(result: Any) -> Any:
                 if isinstance(last_condition, IRCondition) and prev_emu is not None:
-                    self._inertia_consumed_last_condition_8616 = last_condition
-                    self._inertia_consumed_last_condition_addr_8616 = getattr(prev, "addr", None)
+                    cast(Any, self)._inertia_consumed_last_condition_8616 = last_condition
+                    cast(Any, self)._inertia_consumed_last_condition_addr_8616 = getattr(prev, "addr", None)
                     if self._next_instruction_is_simple_jcc():
                         with contextlib.suppress(Exception):
                             self.emu.set_last_condition(last_condition)
@@ -929,7 +1146,7 @@ class Instruction_ANY(Instruction):
                 return result
 
             if isinstance(last_condition, IRCondition):
-                branch_cond = _direct_jcc_condition_from_last_condition_8616(self, kind, last_condition)
+                branch_cond = _direct_jcc_condition_from_last_condition_8616(cast(Any, self), kind, last_condition)
                 if branch_cond is not None:
                     return _finish(branch_cond)
             prev_semantics = getattr(prev, "simple_semantics", None)
@@ -977,6 +1194,51 @@ class Instruction_ANY(Instruction):
         )
 
     @staticmethod
+    def _condition_unshifted_index_reg_value_8616(reg_name: str, *, width_bits: int = 16) -> IRValue | None:
+        state = Instruction_ANY._inertia_condition_index_reg_state_8616.get(str(reg_name).lower())
+        if not (isinstance(state, tuple) and len(state) == 2 and isinstance(state[0], IRValue)):
+            return None
+        value, shift = state
+        if int(shift) != 0 or value.space not in {MemSpace.SS, MemSpace.DS}:
+            return None
+        if value.size != max(1, int(width_bits) // 8):
+            return None
+        return value
+
+    def _condition_proven_reg_value_8616(
+        self,
+        reg_name: str,
+        *,
+        width_bits: int = 16,
+    ) -> IRValue | None:
+        """Return exact value provenance retained for one register."""
+        block_addr = getattr(
+            self.emu,
+            "_inertia_current_block_addr",
+            self.addr,
+        )
+        if not isinstance(block_addr, int):
+            return None
+        state = Instruction_ANY._inertia_condition_reg_value_state_8616.get(
+            (int(block_addr), str(reg_name).lower())
+        )
+        if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+            logger.warning(
+                "[condition-provenance] lookup block=%#x reg=%s state=%r",
+                int(block_addr),
+                str(reg_name).lower(),
+                state,
+            )
+        if (
+            not isinstance(state, _ConditionRegisterValueState8616)
+            or state.next_addr != int(self.addr)
+        ):
+            return None
+        value = state.value
+        target_size = max(1, int(width_bits) // 8)
+        return value if value.size == target_size else None
+
+    @staticmethod
     def _condition_const_value_8616(value: int, *, width_bits: int = 16) -> IRValue:
         return IRValue(
             MemSpace.CONST,
@@ -995,7 +1257,11 @@ class Instruction_ANY(Instruction):
         )
 
     @staticmethod
-    def _condition_stack_value_8616(mem_spec, *, width_bits: int = 16) -> IRValue | None:
+    def _condition_stack_value_8616(
+        mem_spec: _BPMemorySpec8616,
+        *,
+        width_bits: int = 16,
+    ) -> IRValue | None:
         if not (isinstance(mem_spec, tuple) and len(mem_spec) >= 3):
             return None
         base, _offset, signed_disp = mem_spec
@@ -1009,23 +1275,72 @@ class Instruction_ANY(Instruction):
             expr=("cmp-stack", str(base)),
         )
 
-    def _condition_operands_from_cmp_semantics_8616(self, semantics) -> tuple[IRValue, IRValue] | None:
+    @staticmethod
+    def _condition_indexed_ds_value_8616(
+        mem_spec: Any,
+        index_state: Any,
+        *,
+        width_bits: int = 8,
+    ) -> IRValue | None:
+        if not (isinstance(mem_spec, tuple) and len(mem_spec) >= 3):
+            return None
+        _base_reg, offset, _signed_disp = mem_spec
+        if not (
+            isinstance(index_state, tuple)
+            and len(index_state) == 2
+            and isinstance(index_state[0], IRValue)
+            and isinstance(index_state[1], int)
+        ):
+            return None
+        index_value, shift = index_state
+        if index_value.space != MemSpace.SS or index_value.name not in {"bp", "sp"}:
+            return None
+        return IRValue(
+            MemSpace.DS,
+            offset=int(offset) & 0xFFFF,
+            size=max(1, int(width_bits) // 8),
+            expr=(
+                "cmp-ds-indexed",
+                str(index_value.name),
+                str(int(index_value.offset)),
+                str(int(index_value.size or 2)),
+                str(int(shift)),
+                str(max(1, int(width_bits) // 8)),
+            ),
+        )
+
+    def _condition_operands_from_cmp_semantics_8616(
+        self,
+        semantics: tuple[Any, ...] | None,
+    ) -> tuple[IRValue, IRValue] | None:
         if not isinstance(semantics, tuple) or not semantics:
             return None
         kind = semantics[0]
         if kind == "cmp_reg_reg16":
             _, lhs_reg, rhs_reg = semantics
-            lhs = self._condition_reg_value_8616(lhs_reg, width_bits=16)
-            rhs = self._condition_reg_value_8616(rhs_reg, width_bits=16)
+            lhs = self._condition_proven_reg_value_8616(
+                lhs_reg, width_bits=16
+            ) or self._condition_unshifted_index_reg_value_8616(
+                lhs_reg, width_bits=16
+            ) or self._condition_reg_value_8616(lhs_reg, width_bits=16)
+            rhs = self._condition_proven_reg_value_8616(
+                rhs_reg, width_bits=16
+            ) or self._condition_unshifted_index_reg_value_8616(
+                rhs_reg, width_bits=16
+            ) or self._condition_reg_value_8616(rhs_reg, width_bits=16)
             return (lhs, rhs) if lhs is not None and rhs is not None else None
         if kind == "cmp_reg_imm16":
             _, lhs_reg, imm = semantics
-            lhs = self._condition_reg_value_8616(lhs_reg, width_bits=16)
+            lhs = self._condition_proven_reg_value_8616(
+                lhs_reg, width_bits=16
+            ) or self._condition_reg_value_8616(lhs_reg, width_bits=16)
             rhs = self._condition_const_value_8616(imm, width_bits=16)
             return (lhs, rhs) if lhs is not None else None
         if kind == "cmp_reg_mem16":
             _, lhs_reg, mem_spec = semantics
-            lhs = self._condition_reg_value_8616(lhs_reg, width_bits=16)
+            lhs = self._condition_proven_reg_value_8616(
+                lhs_reg, width_bits=16
+            ) or self._condition_reg_value_8616(lhs_reg, width_bits=16)
             rhs = self._condition_stack_value_8616(mem_spec, width_bits=16)
             return (lhs, rhs) if lhs is not None and rhs is not None else None
         if kind == "cmp_reg_abs16":
@@ -1036,7 +1351,9 @@ class Instruction_ANY(Instruction):
         if kind == "cmp_mem_reg16":
             _, mem_spec, rhs_reg = semantics
             lhs = self._condition_stack_value_8616(mem_spec, width_bits=16)
-            rhs = self._condition_reg_value_8616(rhs_reg, width_bits=16)
+            rhs = self._condition_unshifted_index_reg_value_8616(
+                rhs_reg, width_bits=16
+            ) or self._condition_reg_value_8616(rhs_reg, width_bits=16)
             return (lhs, rhs) if lhs is not None and rhs is not None else None
         if kind == "cmp_mem_imm16":
             _, mem_spec, imm = semantics
@@ -1046,7 +1363,9 @@ class Instruction_ANY(Instruction):
         if kind == "cmp_abs_reg16":
             _, offset, rhs_reg = semantics
             lhs = self._condition_direct_ds_value_8616(offset, width_bits=16)
-            rhs = self._condition_reg_value_8616(rhs_reg, width_bits=16)
+            rhs = self._condition_unshifted_index_reg_value_8616(
+                rhs_reg, width_bits=16
+            ) or self._condition_reg_value_8616(rhs_reg, width_bits=16)
             return (lhs, rhs) if rhs is not None else None
         if kind == "cmp_abs_imm16":
             _, offset, imm = semantics
@@ -1070,6 +1389,16 @@ class Instruction_ANY(Instruction):
                 self._condition_direct_ds_value_8616(offset, width_bits=8),
                 self._condition_const_value_8616(imm, width_bits=8),
             )
+        if kind == "cmp_indexed_abs_reg8":
+            _, mem_spec, rhs_reg = semantics
+            base_reg = str(mem_spec[0]).lower() if isinstance(mem_spec, tuple) and mem_spec else ""
+            lhs = Instruction_ANY._condition_indexed_ds_value_8616(
+                mem_spec,
+                Instruction_ANY._inertia_condition_index_reg_state_8616.get(base_reg),
+                width_bits=8,
+            )
+            rhs = self._condition_reg_value_8616(rhs_reg, width_bits=8)
+            return (lhs, rhs) if lhs is not None and rhs is not None else None
         if kind == "sub_reg_reg16":
             _, lhs_reg, rhs_reg = semantics
             lhs = self._condition_reg_value_8616(lhs_reg, width_bits=16)
@@ -1087,32 +1416,420 @@ class Instruction_ANY(Instruction):
             return (lhs, rhs) if lhs is not None else None
         return None
 
-    def _record_cmp_condition_source(self, lhs, rhs, *, width_bits: int = 16) -> None:
+    def _condition_reg_affine_state_8616(
+        self,
+        reg_name: str,
+        *,
+        width_bits: int = 16,
+    ) -> tuple[IRValue, int] | None:
+        reg_name = reg_name.lower()
+        state = Instruction_ANY._inertia_condition_reg_affine_state_8616
+        if not isinstance(state, dict):
+            state = {}
+            Instruction_ANY._inertia_condition_reg_affine_state_8616 = state
+        current = state.get(reg_name)
+        if (
+            isinstance(current, tuple)
+            and len(current) == 2
+            and isinstance(current[0], IRValue)
+            and isinstance(current[1], int)
+        ):
+            return current
+        base = self._condition_reg_value_8616(reg_name, width_bits=width_bits)
+        if base is None:
+            return None
+        current = (base, 0)
+        state[reg_name] = current
+        return current
+
+    def _update_condition_reg_affine_offset_8616(
+        self,
+        reg_name: str,
+        delta: int,
+        *,
+        width_bits: int = 16,
+    ) -> None:
+        state = Instruction_ANY._inertia_condition_reg_affine_state_8616
+        current = self._condition_reg_affine_state_8616(reg_name, width_bits=width_bits)
+        if current is None or not isinstance(state, dict):
+            return
+        base, offset = current
+        mask = (1 << int(width_bits)) - 1
+        state[reg_name.lower()] = (base, (int(offset) + int(delta)) & mask)
+
+    def _restore_condition_reg_affine_snapshot_8616(self) -> None:
+        if not _affine_switch_conditions_enabled_8616():
+            return
+        snapshot = Instruction_ANY._inertia_condition_reg_affine_state_snapshots_8616.get(int(self.addr))
+        if isinstance(snapshot, dict):
+            Instruction_ANY._inertia_condition_reg_affine_state_8616 = dict(snapshot)
+
+    @staticmethod
+    def _condition_target_addr_8616(target: object) -> int | None:
+        if isinstance(target, int):
+            return int(target)
+        value = getattr(target, "value", None)
+        if isinstance(value, int):
+            return int(value)
+        con = getattr(target, "con", None)
+        con_value = getattr(con, "value", None)
+        if isinstance(con_value, int):
+            return int(con_value)
+        args = getattr(target, "args", None)
+        if isinstance(args, tuple) and args and isinstance(args[0], int):
+            return int(args[0])
+        return None
+
+    @staticmethod
+    def _snapshot_condition_reg_affine_state_8616(target: object) -> None:
+        if not _affine_switch_conditions_enabled_8616():
+            return
+        target_addr = Instruction_ANY._condition_target_addr_8616(target)
+        if target_addr is None:
+            return
+        state = Instruction_ANY._inertia_condition_reg_affine_state_8616
+        if isinstance(state, dict):
+            Instruction_ANY._inertia_condition_reg_affine_state_snapshots_8616[target_addr] = dict(state)
+
+    def _clear_condition_index_reg_state_8616(self, reg_name: str) -> None:
+        state = Instruction_ANY._inertia_condition_index_reg_state_8616
+        if isinstance(state, dict):
+            state.pop(str(reg_name).lower(), None)
+
+    def _clear_condition_reg_value_state_8616(self, reg_name: str) -> None:
+        """Forget transient exact-value provenance after a register write."""
+        state = Instruction_ANY._inertia_condition_reg_value_state_8616
+        if not isinstance(state, dict):
+            return
+        block_addr = getattr(
+            self.emu,
+            "_inertia_current_block_addr",
+            self.addr,
+        )
+        if not isinstance(block_addr, int):
+            return
+        normalized = str(reg_name).lower()
+        parent = self._LOW8_PARENT_REGS.get(normalized, normalized)
+        state.pop((int(block_addr), parent), None)
+
+    def _copy_condition_reg_value_state_8616(
+        self,
+        dst_reg: str,
+        src_reg: str,
+    ) -> None:
+        """Copy exact-value provenance for a whole-register move."""
+        state = Instruction_ANY._inertia_condition_reg_value_state_8616
+        if not isinstance(state, dict):
+            return
+        block_addr = getattr(
+            self.emu,
+            "_inertia_current_block_addr",
+            self.addr,
+        )
+        if not isinstance(block_addr, int):
+            return
+        source = state.get((int(block_addr), str(src_reg).lower()))
+        if (
+            isinstance(source, _ConditionRegisterValueState8616)
+            and source.next_addr == int(self.addr)
+        ):
+            state[(int(block_addr), str(dst_reg).lower())] = (
+                _ConditionRegisterValueState8616(
+                    value=source.value,
+                    next_addr=int(self.addr) + int(self.cs.size),
+                )
+            )
+        else:
+            state.pop((int(block_addr), str(dst_reg).lower()), None)
+
+    def _widen_condition_reg_value_state_8616(self, reg_name: str) -> None:
+        """Carry a contiguous low-byte provenance through CBW/CWDE."""
+        state = Instruction_ANY._inertia_condition_reg_value_state_8616
+        if not isinstance(state, dict):
+            return
+        block_addr = getattr(
+            self.emu,
+            "_inertia_current_block_addr",
+            self.addr,
+        )
+        if not isinstance(block_addr, int):
+            return
+        key = (int(block_addr), str(reg_name).lower())
+        source = state.get(key)
+        if (
+            not isinstance(source, _ConditionRegisterValueState8616)
+            or source.next_addr != int(self.addr)
+            or source.value.size != 1
+        ):
+            state.pop(key, None)
+            return
+        state[key] = _ConditionRegisterValueState8616(
+            value=replace(source.value, size=2),
+            next_addr=int(self.addr) + int(self.cs.size),
+        )
+
+    def _set_condition_reg_indexed_byte_value_8616(
+        self,
+        reg_name: str,
+        mem_spec: Any,
+    ) -> None:
+        """Record a byte load whose DS address is proven from stack index state."""
+        normalized = str(reg_name).lower()
+        parent = self._LOW8_PARENT_REGS.get(normalized)
+        state = Instruction_ANY._inertia_condition_reg_value_state_8616
+        if parent is None or not isinstance(state, dict):
+            return
+        block_addr = getattr(
+            self.emu,
+            "_inertia_current_block_addr",
+            self.addr,
+        )
+        if not isinstance(block_addr, int):
+            return
+        state_key = (int(block_addr), parent)
+        base_reg = (
+            str(mem_spec[0]).lower()
+            if isinstance(mem_spec, tuple) and mem_spec
+            else ""
+        )
+        value = self._condition_indexed_ds_value_8616(
+            mem_spec,
+            Instruction_ANY._inertia_condition_index_reg_state_8616.get(
+                base_reg
+            ),
+            width_bits=8,
+        )
+        if value is None:
+            state.pop(state_key, None)
+            if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+                logger.warning(
+                    "[condition-provenance] refuse indexed-byte block=%#x reg=%s "
+                    "base_reg=%s mem_spec=%r index_state=%r",
+                    int(block_addr),
+                    parent,
+                    base_reg,
+                    mem_spec,
+                    Instruction_ANY._inertia_condition_index_reg_state_8616.get(
+                        base_reg
+                    ),
+                )
+            return
+        state[state_key] = _ConditionRegisterValueState8616(
+            value=value,
+            next_addr=int(self.addr) + int(self.cs.size),
+        )
+        if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+            logger.warning(
+                "[condition-provenance] record indexed-byte block=%#x reg=%s value=%r",
+                int(block_addr),
+                parent,
+                value,
+            )
+
+    def _set_condition_reg_direct_byte_value_8616(
+        self,
+        reg_name: str,
+        offset: int,
+    ) -> None:
+        """Record a byte load from one exact DS offset."""
+        normalized = str(reg_name).lower()
+        parent = self._LOW8_PARENT_REGS.get(normalized)
+        state = Instruction_ANY._inertia_condition_reg_value_state_8616
+        if parent is None or not isinstance(state, dict):
+            return
+        block_addr = getattr(
+            self.emu,
+            "_inertia_current_block_addr",
+            self.addr,
+        )
+        if not isinstance(block_addr, int):
+            return
+        state[(int(block_addr), parent)] = _ConditionRegisterValueState8616(
+            value=self._condition_direct_ds_value_8616(
+                offset,
+                width_bits=8,
+            ),
+            next_addr=int(self.addr) + int(self.cs.size),
+        )
+
+    def _copy_condition_index_reg_state_8616(self, dst_reg: str, src_reg: str) -> None:
+        state = Instruction_ANY._inertia_condition_index_reg_state_8616
+        if not isinstance(state, dict):
+            return
+        src_state = state.get(str(src_reg).lower())
+        if src_state is None:
+            state.pop(str(dst_reg).lower(), None)
+            return
+        state[str(dst_reg).lower()] = src_state
+
+    def _set_condition_index_reg_stack_state_8616(self, reg_name: str, mem_spec: Any) -> None:
+        state = Instruction_ANY._inertia_condition_index_reg_state_8616
+        stack_value = self._condition_stack_value_8616(mem_spec, width_bits=16)
+        if not isinstance(state, dict) or stack_value is None:
+            return
+        state[str(reg_name).lower()] = (stack_value, 0)
+
+    def _set_condition_index_reg_direct_state_8616(self, reg_name: str, offset: int) -> None:
+        state = Instruction_ANY._inertia_condition_index_reg_state_8616
+        if not isinstance(state, dict):
+            return
+        state[str(reg_name).lower()] = (self._condition_direct_ds_value_8616(offset, width_bits=16), 0)
+
+    def _shift_condition_index_reg_state_8616(self, reg_name: str, shift: int) -> None:
+        state = Instruction_ANY._inertia_condition_index_reg_state_8616
+        current = state.get(str(reg_name).lower()) if isinstance(state, dict) else None
+        if (
+            not isinstance(state, dict)
+            or not isinstance(current, tuple)
+            or len(current) != 2
+            or not isinstance(current[0], IRValue)
+            or not isinstance(current[1], int)
+        ):
+            return
+        state[str(reg_name).lower()] = (current[0], int(current[1]) + int(shift))
+
+    def _normalized_reg_imm_condition_operands_8616(
+        self,
+        reg_name: str,
+        imm: int,
+        *,
+        width_bits: int = 16,
+    ) -> tuple[IRValue, IRValue] | None:
+        current = self._condition_reg_affine_state_8616(reg_name, width_bits=width_bits)
+        if current is None:
+            return None
+        base, offset = current
+        return (
+            base,
+            self._condition_const_value_8616(int(offset) + int(imm), width_bits=width_bits),
+        )
+
+    def _record_cmp_condition_source(
+        self,
+        lhs: Any,
+        rhs: Any,
+        *,
+        width_bits: int = 16,
+        normalized_lhs: Any | None = None,
+        normalized_rhs: Any | None = None,
+        producer_semantics: tuple[Any, ...] | None = None,
+    ) -> None:
         """Record CMP operands on the emulator for downstream JCC consumption."""
+        semantics = producer_semantics if producer_semantics is not None else getattr(self, "simple_semantics", None)
+        if (
+            normalized_lhs is None
+            and normalized_rhs is None
+            and isinstance(semantics, tuple)
+        ):
+            typed_operands = self._condition_operands_from_cmp_semantics_8616(
+                semantics
+            )
+            if typed_operands is not None:
+                normalized_lhs, normalized_rhs = typed_operands
+        if (
+            _affine_switch_conditions_enabled_8616()
+            and isinstance(semantics, tuple)
+            and len(semantics) >= 3
+            and semantics[0] == "cmp_reg_imm16"
+        ):
+            reg_name = str(semantics[1]).lower()
+            base = self._condition_reg_value_8616(reg_name, width_bits=width_bits)
+            if base is not None:
+                Instruction_ANY._inertia_condition_reg_affine_state_8616[reg_name] = (base, 0)
         block_addr = getattr(self.emu, "_inertia_current_block_addr", self.addr)
         source = ConditionSource(
             kind="cmp",
             lhs=lhs,
             rhs=rhs,
-            semantics=getattr(self, "simple_semantics", None),
+            normalized_lhs=normalized_lhs,
+            normalized_rhs=normalized_rhs,
+            semantics=semantics,
             width_bits=width_bits,
             addr=self.addr,
             block_addr=block_addr if isinstance(block_addr, int) else None,
         )
-        self.emu._inertia_last_condition_source = source
+        cast(Any, self.emu)._inertia_last_condition_source = source
 
-    def _record_test_condition_source(self, value, *, width_bits: int = 16) -> None:
+    def _record_test_condition_source(
+        self,
+        value: Any,
+        *,
+        width_bits: int = 16,
+        normalized_value: IRValue | IRBinaryValue | None = None,
+        bind_operand_at_jcc: bool = False,
+        producer_semantics: tuple[Any, ...] | None = None,
+    ) -> None:
         """Record TEST/self-test operands for downstream JCC consumption."""
         block_addr = getattr(self.emu, "_inertia_current_block_addr", self.addr)
         source = ConditionSource(
             kind="test",
             lhs=value,
             rhs=None,
+            normalized_lhs=normalized_value,
+            semantics=producer_semantics,
             width_bits=width_bits,
             addr=self.addr,
             block_addr=block_addr if isinstance(block_addr, int) else None,
+            bind_operand_at_jcc=bind_operand_at_jcc,
         )
-        self.emu._inertia_last_condition_source = source
+        cast(Any, self.emu)._inertia_last_condition_source = source
+
+    def _logical_result_value_from_semantics_8616(
+        self,
+        op_name: str,
+        dst_reg: str,
+    ) -> IRBinaryValue | None:
+        """Build the typed value computed by a logical register ALU instruction."""
+        semantics = self.simple_semantics
+        if not isinstance(semantics, tuple) or len(semantics) < 3:
+            return None
+        kind = str(semantics[0])
+        expected_prefix = f"{op_name}_reg_"
+        if not kind.startswith(expected_prefix):
+            return None
+        lhs = self._condition_unshifted_index_reg_value_8616(
+            dst_reg,
+            width_bits=16,
+        ) or self._condition_reg_value_8616(dst_reg, width_bits=16)
+        if lhs is None:
+            return None
+        rhs: IRValue | None = None
+        operand = semantics[2]
+        if kind.endswith("_reg16") and isinstance(operand, str):
+            rhs = self._condition_unshifted_index_reg_value_8616(
+                operand,
+                width_bits=16,
+            ) or self._condition_reg_value_8616(operand, width_bits=16)
+        elif kind.endswith("_mem16"):
+            rhs = self._condition_stack_value_8616(operand, width_bits=16)
+        elif kind.endswith("_abs16") and isinstance(operand, int):
+            rhs = self._condition_direct_ds_value_8616(operand, width_bits=16)
+        elif kind.endswith("_imm16") and isinstance(operand, int):
+            rhs = self._condition_const_value_8616(operand, width_bits=16)
+        if rhs is None:
+            return None
+        return IRBinaryValue(op=op_name, lhs=lhs, rhs=rhs, size=2)
+
+    def _record_logical_result_condition_source_8616(
+        self,
+        op_name: str,
+        dst_reg: str,
+        result: Any,
+    ) -> bool:
+        """Record a logical ALU result consumed immediately by a JCC."""
+        if op_name not in {"xor", "and", "or"} or not self._next_instruction_is_simple_jcc():
+            return False
+        result_value = self._logical_result_value_from_semantics_8616(op_name, dst_reg)
+        if result_value is None:
+            return False
+        semantics = self.simple_semantics if isinstance(self.simple_semantics, tuple) else None
+        self._record_test_condition_source(
+            result,
+            normalized_value=result_value,
+            producer_semantics=semantics,
+        )
+        self.emu.set_last_condition(IRCondition(op="zero", args=(result_value,), expr=("logical-result", op_name)))
+        return True
 
     def _typed_condition_from_consumed_ir_condition_8616(
         self,
@@ -1120,9 +1837,11 @@ class Instruction_ANY(Instruction):
         jcc_mnemonic: str,
         *,
         block_addr: int | None,
+        taken_target: int | None,
+        fallthrough_target: int | None,
     ) -> ConditionIR | ConditionFailure | None:
-        args = tuple(getattr(condition, "args", ()) or ())
-        op = str(getattr(condition, "op", ""))
+        args = tuple(condition.args or ())
+        op = str(condition.op)
         producer_insn = getattr(self, "_inertia_consumed_last_condition_addr_8616", None)
         if op in {"compare", "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge"} and len(args) == 2:
             return build_condition_from_cmp_8616(
@@ -1133,20 +1852,34 @@ class Instruction_ANY(Instruction):
                 src_insn=self.addr,
                 block_addr=block_addr,
                 producer_insn=producer_insn if isinstance(producer_insn, int) else None,
+                taken_target=taken_target,
+                fallthrough_target=fallthrough_target,
             )
         if op in {"zero", "nonzero", "masked_zero", "masked_nonzero"} and args:
+            value = args[0]
+            value_size = value.size if isinstance(value, (IRValue, IRBinaryValue)) else 2
             return build_condition_from_test_8616(
-                args[0],
+                value,
                 jcc_mnemonic,
-                width_bits=max(1, int(getattr(args[0], "size", 0) or 2)) * 8,
+                width_bits=max(1, int(value_size or 2)) * 8,
                 src_insn=self.addr,
                 block_addr=block_addr,
                 producer_insn=producer_insn if isinstance(producer_insn, int) else None,
+                taken_target=taken_target,
+                fallthrough_target=fallthrough_target,
             )
         return None
 
-    def _emit_simple_jcc(self, taken_cond, target):
+    def _emit_simple_jcc(self, taken_cond: Any, target: Any) -> None:
         # Before emitting, record the typed ConditionIR if source available
+        Instruction_ANY._snapshot_condition_reg_affine_state_8616(target)
+        target_addr = Instruction_ANY._condition_target_addr_8616(target)
+        fallthrough_addr: int | None = None
+        with contextlib.suppress(Exception):
+            fallthrough_size = int(getattr(getattr(self, "cs", None), "size", 0) or 2)
+            candidate_fallthrough = int(self.addr) + fallthrough_size
+            if candidate_fallthrough != int(self.addr):
+                fallthrough_addr = candidate_fallthrough
         source = getattr(self.emu, "_inertia_last_condition_source", None)
         if not isinstance(source, ConditionSource) and getattr(self, "_past_instructions", None):
             prev_emu = getattr(self._past_instructions[-1], "emu", None)
@@ -1156,30 +1889,63 @@ class Instruction_ANY(Instruction):
         jcc_mnemonic = self.simple_semantics[0] if self.simple_semantics else ""
         block_addr = getattr(self.emu, "_inertia_current_block_addr", None)
         if isinstance(source, ConditionSource):
+            if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+                logger.warning(
+                    "[condition-provenance] consume jcc=%#x block=%r semantics=%r "
+                    "state_keys=%r",
+                    int(self.addr),
+                    block_addr,
+                    source.semantics,
+                    tuple(
+                        sorted(
+                            Instruction_ANY._inertia_condition_reg_value_state_8616
+                        )
+                    ),
+                )
             if not isinstance(block_addr, int):
                 block_addr = source.block_addr
             with contextlib.suppress(Exception):
-                self.emu._inertia_last_condition_source = source
+                cast(Any, self.emu)._inertia_last_condition_source = source
             typed_cmp_operands = self._condition_operands_from_cmp_semantics_8616(source.semantics)
             lhs = source.lhs
             rhs = source.rhs
             if source.kind == "cmp" and typed_cmp_operands is not None:
                 lhs, rhs = typed_cmp_operands
+            if source.kind == "cmp" and source.normalized_lhs is not None and source.normalized_rhs is not None:
+                lhs = source.normalized_lhs
+                rhs = source.normalized_rhs
                 source.lhs = lhs
                 source.rhs = rhs
+            if source.kind == "test" and source.normalized_lhs is not None:
+                lhs = source.normalized_lhs
+                source.lhs = lhs
             with contextlib.suppress(Exception):
-                fallthrough_size = int(getattr(getattr(self, "cs", None), "size", 0) or 2)
-                fallthrough_addr = int(self.addr) + fallthrough_size
-                if fallthrough_addr != int(self.addr):
+                if fallthrough_addr is not None:
                     Instruction_ANY._inertia_pending_condition_sources_by_addr[fallthrough_addr] = ConditionSource(
                         kind=source.kind,
                         lhs=lhs,
                         rhs=rhs,
+                        normalized_lhs=source.normalized_lhs,
+                        normalized_rhs=source.normalized_rhs,
                         semantics=source.semantics,
                         fallthrough_from_jcc=jcc_mnemonic,
                         width_bits=source.width_bits,
                         addr=source.addr,
                         block_addr=source.block_addr,
+                        bind_operand_at_jcc=source.bind_operand_at_jcc,
+                    )
+                if isinstance(target_addr, int) and target_addr not in {int(self.addr), fallthrough_addr}:
+                    Instruction_ANY._inertia_pending_condition_sources_by_addr[target_addr] = ConditionSource(
+                        kind=source.kind,
+                        lhs=lhs,
+                        rhs=rhs,
+                        normalized_lhs=source.normalized_lhs,
+                        normalized_rhs=source.normalized_rhs,
+                        semantics=source.semantics,
+                        width_bits=source.width_bits,
+                        addr=source.addr,
+                        block_addr=source.block_addr,
+                        bind_operand_at_jcc=source.bind_operand_at_jcc,
                     )
             if source.kind == "cmp":
                 cond_ir = build_condition_from_cmp_8616(
@@ -1190,15 +1956,20 @@ class Instruction_ANY(Instruction):
                     src_insn=self.addr,
                     block_addr=block_addr if isinstance(block_addr, int) else None,
                     producer_insn=source.addr,
+                    taken_target=target_addr,
+                    fallthrough_target=fallthrough_addr,
                 )
             elif source.kind == "test":
                 cond_ir = build_condition_from_test_8616(
-                    source.lhs,
+                    lhs,
                     jcc_mnemonic,
                     width_bits=source.width_bits,
                     src_insn=self.addr,
                     block_addr=block_addr if isinstance(block_addr, int) else None,
                     producer_insn=source.addr,
+                    taken_target=target_addr,
+                    fallthrough_target=fallthrough_addr,
+                    operand_bind_insn=self.addr if source.bind_operand_at_jcc else None,
                 )
             else:
                 cond_ir = ConditionFailure(
@@ -1214,6 +1985,8 @@ class Instruction_ANY(Instruction):
                     consumed_condition,
                     jcc_mnemonic,
                     block_addr=block_addr if isinstance(block_addr, int) else None,
+                    taken_target=target_addr,
+                    fallthrough_target=fallthrough_addr,
                 )
                 if cond_ir is not None:
                     self._record_typed_condition_8616(cond_ir)
@@ -1223,32 +1996,49 @@ class Instruction_ANY(Instruction):
     # Keyed by block address → list[ConditionIR | ConditionFailure].
     _inertia_module_condition_cache: dict[int, list[ConditionIR | ConditionFailure]] = {}
     _inertia_pending_condition_sources_by_addr: dict[int, ConditionSource] = {}
+    _inertia_condition_reg_affine_state_8616: dict[str, tuple[IRValue, int]] = {}
+    _inertia_condition_reg_affine_state_snapshots_8616: dict[int, dict[str, tuple[IRValue, int]]] = {}
+    _inertia_condition_index_reg_state_8616: dict[str, tuple[IRValue, int]] = {}
+    _inertia_condition_reg_value_state_8616: dict[
+        tuple[int, str],
+        _ConditionRegisterValueState8616,
+    ] = {}
 
     def _record_typed_condition_8616(self, cond: ConditionIR | ConditionFailure) -> None:
         """Record a typed condition on the emulator AND module cache for function-level transfer."""
         log = getattr(self.emu, "_inertia_typed_conditions", None)
         if not isinstance(log, list):
             log = []
-            self.emu._inertia_typed_conditions = log
+            cast(Any, self.emu)._inertia_typed_conditions = log
         log.append(cond)
         # Also write into module-level cache (keyed by block address)
         block_addr = getattr(self.emu, "_inertia_current_block_addr", self.addr)
         cache = Instruction_ANY._inertia_module_condition_cache
         if block_addr not in cache:
             cache[block_addr] = []
-        cache[block_addr].append(cond)
+        if cond not in cache[block_addr]:
+            cache[block_addr].append(cond)
 
-    def _lift_simple(self):
-        def _impl():
-            kind = self.simple_semantics[0]
+    def _lift_simple(self) -> None:
+        def _impl() -> None:
+            self._restore_condition_reg_affine_snapshot_8616()
+            semantics = cast(tuple[Any, ...], self.simple_semantics)
+            kind = semantics[0]
             if self._lift_simple_cmp_8616(kind):
                 return
             if self._lift_simple_jcc_8616(kind):
                 return
             if kind == "nop":
                 return
+            if kind == "sign_extend_al_ax":
+                self.put(
+                    self.get("al", Type.int_8).widen_signed(Type.int_16),
+                    "ax",
+                )
+                self._widen_condition_reg_value_state_8616("ax")
+                return
             if kind == "push_reg16":
-                _, reg_name = self.simple_semantics
+                _, reg_name = semantics
                 value = self._get_reg16(reg_name)
                 sp = self._get_reg16("sp") - self._const16(2)
                 self.put(sp, "sp")
@@ -1257,19 +2047,19 @@ class Instruction_ANY(Instruction):
                 self._stack_store16(sp, value)
                 return
             if kind == "push_imm16":
-                _, imm = self.simple_semantics
+                _, imm = semantics
                 sp = self._get_reg16("sp") - self._const16(2)
                 self.put(sp, "sp")
                 self._stack_store16(sp, self._const16(imm))
                 return
             if kind == "push_mem16":
-                _, mem_spec = self.simple_semantics
+                _, mem_spec = semantics
                 sp = self._get_reg16("sp") - self._const16(2)
                 self.put(sp, "sp")
                 self._stack_store16(sp, self._load_mem16(mem_spec))
                 return
             if kind == "pop_reg16":
-                _, reg_name = self.simple_semantics
+                _, reg_name = semantics
                 sp = self._get_reg16("sp")
                 value = self._stack_load16(sp)
                 next_sp = sp + self._const16(2)
@@ -1278,13 +2068,39 @@ class Instruction_ANY(Instruction):
                 else:
                     self.put(value, reg_name)
                     self.put(next_sp, "sp")
+                self._clear_condition_reg_value_state_8616(reg_name)
                 return
             if kind == "inc_reg16":
-                _, reg_name = self.simple_semantics
+                _, reg_name = semantics
                 self.put(self._get_reg16(reg_name) + self._const16(1), reg_name)
+                self._update_condition_reg_affine_offset_8616(reg_name, -1, width_bits=16)
+                self._clear_condition_index_reg_state_8616(reg_name)
+                self._clear_condition_reg_value_state_8616(reg_name)
+                return
+            if kind == "dec_reg16":
+                _, reg_name = semantics
+                value = self._get_reg16(reg_name)
+                if self._next_instruction_is_simple_jcc():
+                    dec_count = self._same_preceding_incdec_reg16_count_8616(reg_name, mnemonic="dec")
+                    normalized_operands = self._normalized_reg_imm_condition_operands_8616(
+                        reg_name,
+                        dec_count,
+                        width_bits=16,
+                    )
+                    self._record_cmp_condition_source(
+                        value,
+                        self._const16(dec_count),
+                        normalized_lhs=normalized_operands[0] if normalized_operands is not None else None,
+                        normalized_rhs=normalized_operands[1] if normalized_operands is not None else None,
+                        producer_semantics=("dec_reg16", reg_name, dec_count),
+                    )
+                self.put(value - self._const16(1), reg_name)
+                self._update_condition_reg_affine_offset_8616(reg_name, 1, width_bits=16)
+                self._clear_condition_index_reg_state_8616(reg_name)
+                self._clear_condition_reg_value_state_8616(reg_name)
                 return
             if kind == "call":
-                _, target = self.simple_semantics
+                _, target = semantics
                 ret_addr = self._const16(self.addr + self.cs.size)
                 if is_x86_16_registered_stack_probe_target_8616(self.arch, target):
                     next_sp = self._get_reg16("sp") - self._get_reg16("ax")
@@ -1298,7 +2114,7 @@ class Instruction_ANY(Instruction):
                 self.jump(None, self._const16(target), JumpKind.Call)
                 return
             if kind == "call_mem16":
-                _, mem_spec = self.simple_semantics
+                _, mem_spec = semantics
                 target = self._load_mem16(mem_spec)
                 ret_addr = self._const16(self.addr + self.cs.size)
                 sp = self._get_reg16("sp") - self._const16(2)
@@ -1307,7 +2123,7 @@ class Instruction_ANY(Instruction):
                 self.jump(None, target, JumpKind.Call)
                 return
             if kind == "enter":
-                _, frame_size, nesting = self.simple_semantics
+                _, frame_size, nesting = semantics
                 nesting &= 0x1F
                 old_bp = self._get_reg16("bp")
                 sp = self._get_reg16("sp") - self._const16(2)
@@ -1332,51 +2148,101 @@ class Instruction_ANY(Instruction):
                 self.put(bp + self._const16(2), "sp")
                 return
             if kind == "mov_reg_imm16":
-                _, reg_name, imm = self.simple_semantics
+                _, reg_name, imm = semantics
                 self.put(self._const16(imm), reg_name)
+                self._clear_condition_index_reg_state_8616(reg_name)
+                self._clear_condition_reg_value_state_8616(reg_name)
                 return
             if kind == "mov_reg_reg16":
-                _, dst_reg, src_reg = self.simple_semantics
+                _, dst_reg, src_reg = semantics
                 self.put(self._get_reg16(src_reg), dst_reg)
+                self._copy_condition_index_reg_state_8616(dst_reg, src_reg)
+                self._copy_condition_reg_value_state_8616(dst_reg, src_reg)
                 return
             if kind == "mov_reg_mem16":
-                _, dst_reg, mem_spec = self.simple_semantics
+                _, dst_reg, mem_spec = semantics
                 self.put(self._load_mem16(mem_spec), dst_reg)
+                self._set_condition_index_reg_stack_state_8616(dst_reg, mem_spec)
+                self._clear_condition_reg_value_state_8616(dst_reg)
+                return
+            if kind == "mov_reg_abs16":
+                _, dst_reg, offset = semantics
+                self.put(self._load_abs16(offset), dst_reg)
+                self._set_condition_index_reg_direct_state_8616(dst_reg, offset)
+                self._clear_condition_reg_value_state_8616(dst_reg)
+                return
+            if kind == "mov_reg_indexed_abs8":
+                _, dst_reg, mem_spec = semantics
+                self.put(self._load_indexed_abs8(mem_spec), dst_reg)
+                self._set_condition_reg_indexed_byte_value_8616(
+                    dst_reg,
+                    mem_spec,
+                )
+                return
+            if kind == "mov_reg_abs8":
+                _, dst_reg, offset = semantics
+                self.put(self._load_abs8(offset), dst_reg)
+                self._set_condition_reg_direct_byte_value_8616(
+                    dst_reg,
+                    offset,
+                )
                 return
             if kind == "mov_mem_reg16":
-                _, mem_spec, src_reg = self.simple_semantics
+                _, mem_spec, src_reg = semantics
                 self._store_mem16(mem_spec, self._get_reg16(src_reg))
                 return
             if kind == "mov_mem_imm16":
-                _, mem_spec, imm = self.simple_semantics
+                _, mem_spec, imm = semantics
                 self._store_mem16(mem_spec, self._const16(imm))
                 return
             if kind == "lea_reg_bpdisp16":
-                _, dst_reg, mem_spec = self.simple_semantics
+                _, dst_reg, mem_spec = semantics
                 self.put(self._addr_from_bp_mem(mem_spec), dst_reg)
+                self._clear_condition_index_reg_state_8616(dst_reg)
+                self._clear_condition_reg_value_state_8616(dst_reg)
+                return
+            if kind == "shl_reg_imm16":
+                _, reg_name, imm = semantics
+                self.put(self._get_reg16(reg_name) << self.constant(int(imm), Type.int_8), reg_name)
+                self._shift_condition_index_reg_state_8616(reg_name, int(imm))
+                self._clear_condition_reg_value_state_8616(reg_name)
                 return
             if kind == "add_reg_imm16":
-                _, reg_name, imm = self.simple_semantics
+                _, reg_name, imm = semantics
                 self._binop_reg_imm("add", reg_name, imm)
+                self._clear_condition_index_reg_state_8616(reg_name)
+                self._clear_condition_reg_value_state_8616(reg_name)
                 return
             if kind.endswith("_reg_reg16"):
-                op_name, dst_reg, src_reg = self.simple_semantics
+                op_name, dst_reg, src_reg = semantics
                 self._binop_reg_reg(op_name[:-10], dst_reg, src_reg)
+                self._clear_condition_index_reg_state_8616(dst_reg)
+                self._clear_condition_reg_value_state_8616(dst_reg)
                 return
             if kind.endswith("_reg_mem16"):
-                op_name, dst_reg, mem_spec = self.simple_semantics
+                op_name, dst_reg, mem_spec = semantics
                 self._binop_reg_mem(op_name[:-10], dst_reg, mem_spec)
+                self._clear_condition_index_reg_state_8616(dst_reg)
+                self._clear_condition_reg_value_state_8616(dst_reg)
+                return
+            if kind.endswith("_reg_abs16"):
+                op_name, dst_reg, offset = semantics
+                self._binop_reg_abs(op_name[:-10], dst_reg, offset)
+                self._clear_condition_index_reg_state_8616(dst_reg)
+                self._clear_condition_reg_value_state_8616(dst_reg)
                 return
             if kind.endswith("_reg_imm16"):
-                op_name, dst_reg, imm = self.simple_semantics
+                op_name, dst_reg, imm = semantics
                 self._binop_reg_imm(op_name[:-10], dst_reg, imm)
+                self._clear_condition_index_reg_state_8616(dst_reg)
+                self._clear_condition_reg_value_state_8616(dst_reg)
                 return
             if kind.endswith("_abs_imm16"):
-                op_name, offset, imm = self.simple_semantics
+                op_name, offset, imm = semantics
                 self._binop_abs_imm(op_name[:-10], offset, imm)
                 return
             if kind.endswith("_abs_reg16"):
-                op_name, offset, src_reg = self.simple_semantics
+                op_name, offset, src_reg = semantics
                 self._binop_abs_reg(op_name[:-10], offset, src_reg)
                 return
             if kind == "ret":
@@ -1386,7 +2252,7 @@ class Instruction_ANY(Instruction):
                 self.jump(None, ret_addr, JumpKind.Ret)
                 return
             if kind == "ret_imm16":
-                _, imm = self.simple_semantics
+                _, imm = semantics
                 sp = self._get_reg16("sp")
                 ret_addr = self._stack_load16(sp)
                 self.put(sp + self._const16(2 + imm), "sp")
@@ -1396,14 +2262,18 @@ class Instruction_ANY(Instruction):
 
         return _impl()
 
-    def compute_result(self):
-        def _impl():
+    def compute_result(self) -> None:
+        """Execute the parsed instruction against the emulator-backed lifter facade."""
+
+        def _impl() -> None:
             try:
                 debug_enabled = logger.isEnabledFor(logging.DEBUG)
                 if debug_enabled:
                     logger.debug("Lifting instruction at %04x: %s %s", self.addr, self.cs.mnemonic, self.cs.op_str)
                 instr32 = self.instr32
                 if self.is_mode32 ^ bool(self.chsz_op):
+                    if instr32 is None:
+                        instr32 = self._ensure_instr32()
                     instr32.exec()
                 else:
                     self.instr16.exec()
@@ -1411,9 +2281,10 @@ class Instruction_ANY(Instruction):
                 if debug_enabled:
                     if hasattr(self.emu, "irsb") and self.emu.irsb:
                         logger.debug("IRSB at %04x: %s", self.addr, self.emu.irsb)
-                        irsb_obj = self.emu.irsb.irsb if hasattr(self.emu.irsb, "irsb") else self.emu.irsb
+                        irsb_dynamic = cast(Any, self.emu.irsb)
+                        irsb_obj = irsb_dynamic.irsb if hasattr(irsb_dynamic, "irsb") else irsb_dynamic
                         if hasattr(irsb_obj, "statements"):
-                            for stmt in irsb_obj.statements:
+                            for stmt in cast(Any, irsb_obj).statements:
                                 logger.debug("Statement: %s (type: %s)", type(stmt).__name__, type(stmt))
 
                     logger.debug("IRSB generated successfully for %04x", self.addr)
@@ -1432,24 +2303,38 @@ class Instruction_ANY(Instruction):
 
         return _impl()
 
-    def disassemble(self):
+    def disassemble(self) -> tuple[int, str, list[str]]:
+        """Return the pyvex disassembly tuple for the current instruction."""
+
         return self.start, self.cs.insn_name(), [str(i) for i in self.cs.operands]
 
-    def ends_block(self):
+    def ends_block(self) -> bool:
+        """Return whether this instruction terminates the current lifted block."""
+
         if self.cs.mnemonic == "int":
             return getattr(self.instr, "control_flow_class", "interrupt") == "interrupt"
         return self.cs.mnemonic in self._BLOCK_TERMINATORS
 
 
-class Lifter86_16(GymratLifter):
-    instrs = {Instruction_ANY}
+# Dynamic pyvex/gymrat boundary: instruction metadata is discovered at runtime.
+cast(Any, Instruction_ANY).bin_format = "xxxxxxxx"
+cast(Any, Instruction_ANY).name = "nop"
+update_abstractmethods(Instruction_ANY)
 
-    def decode(self):
+
+class Lifter86_16(GymratLifter):
+    """Gymrat lifter entry point for the 16-bit x86 frontend."""
+
+    instrs: list[type[Instruction_ANY]] = [Instruction_ANY]
+
+    def decode(self) -> list[Any]:
+        """Decode a pyvex block into 16-bit instruction objects."""
+
         try:
             self.create_bitstrm()
             instructions = []
             addr = self.irsb.addr
-            bitstrm = self.bitstrm
+            bitstrm = cast(bitstring.ConstBitStream, self.bitstrm)
             decode_next = self._decode_next_instruction
             bytepos = bitstrm.bytepos
 
@@ -1461,7 +2346,7 @@ class Lifter86_16(GymratLifter):
                 curr_bytepos = bitstrm.bytepos
                 addr += curr_bytepos - bytepos
                 bytepos = curr_bytepos
-                if instr.ends_block():
+                if cast(Any, instr).ends_block():
                     break
             return instructions
         except Exception as exc:
@@ -1473,7 +2358,9 @@ class Lifter86_16(GymratLifter):
 register(Lifter86_16, "86_16")
 
 
-def main():
+def main() -> None:
+    """Run a local manual smoke test for the 16-bit lifter."""
+
     logging.basicConfig()
     logging.getLogger().setLevel(logging.DEBUG)
     tests = [
@@ -1487,18 +2374,18 @@ def main():
     print("Decoder test:")
     for num, test in enumerate(tests):
         print(num)
-        lifter = Lifter86_16(Arch86_16(), 0)
+        lifter = Lifter86_16(cast(Any, Arch86_16()), 0)
         lifter.lift(data=test)
 
     print("Lifter test:")
     for test in tests:
-        lifter = Lifter86_16(Arch86_16(), 0)
+        lifter = Lifter86_16(cast(Any, Arch86_16()), 0)
         lifter.lift(data=test)
         lifter.irsb.pp()
 
     print("Full tests:")
     fulltest = b"".join(tests)
-    lifter = Lifter86_16(Arch86_16(), 0)
+    lifter = Lifter86_16(cast(Any, Arch86_16()), 0)
     lifter.lift(data=fulltest)
     lifter.irsb.pp()
 

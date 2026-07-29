@@ -1,4 +1,8 @@
-"""CodeView NB02/NB04/NB08/NB09 Parser
+"""CodeView NB02/NB04/NB08/NB09 parser.
+
+Layer: Optional evidence/reporting.
+Responsibility: parse CodeView debug records into optional labels and diagnostics.
+Forbidden: requiring debug symbols for arguments, types, control flow, or validation success.
 
 Minimal implementation focused on 80/20 value:
 - Function names (from SST_PUBLIC and S_GPROC16)
@@ -23,7 +27,7 @@ from . import codeview_nb00 as _nb00
 
 
 class CodeViewSymbolType(IntEnum):
-    """CodeView symbol record types (16-bit values)"""
+    """CodeView symbol record types used by optional debug metadata."""
 
     S_BPREL16 = 0x0100  # Stack-relative variable (BP-relative) 16-bit
     S_LDATA16 = 0x0101  # Local data
@@ -41,7 +45,7 @@ _DATA16_TYPES = {CodeViewSymbolType.S_GDATA16, CodeViewSymbolType.S_LDATA16}
 
 
 class CodeViewSubsectionType(IntEnum):
-    """CodeView subsection types (from directory entries)"""
+    """CodeView subsection types found in NB02/NB04 directory entries."""
 
     SST_MODULE = 0x0120
     SST_TYPES = 0x0121
@@ -77,7 +81,7 @@ _CV4_LF_MEMBER = 0x0406
 
 @dataclass(frozen=True)
 class CodeViewSymbol:
-    """Parsed symbol record"""
+    """Parsed CodeView symbol retained as optional label or debug evidence."""
 
     type_code: int
     name: str
@@ -88,18 +92,21 @@ class CodeViewSymbol:
     extra: dict = field(default_factory=dict)
 
     def is_procedure(self) -> bool:
+        """Return whether this symbol describes a 16-bit procedure."""
         return self.type_code in _PROC16_TYPES
 
     def is_stack_var(self) -> bool:
+        """Return whether this symbol describes a BP-relative stack variable."""
         return self.type_code == CodeViewSymbolType.S_BPREL16
 
     def is_data_symbol(self) -> bool:
+        """Return whether this symbol describes a local or global data object."""
         return self.type_code in {CodeViewSymbolType.S_GDATA16, CodeViewSymbolType.S_LDATA16}
 
 
 @dataclass(frozen=True)
 class CodeViewNB0204Info:
-    """Parsed CodeView NB02/NB04/NB08/NB09 debug information"""
+    """Parsed CodeView NB02/NB04/NB08/NB09 debug metadata."""
 
     version: str  # "NB02", "NB04", "NB05", "NB08", or "NB09"
     debug_base: int
@@ -161,8 +168,9 @@ def parse_codeview_nb0204(binary_path: Path, *, load_base_linear: int = 0) -> Co
 
 
 def parse_codeview_nb0204_bytes(data: bytes, *, load_base_linear: int = 0) -> CodeViewNB0204Info | None:
-    def _impl():
-        """Parse CodeView NB02/NB04 from binary data."""
+    """Parse optional NB02/NB04 CodeView debug metadata from executable bytes."""
+
+    def _impl() -> CodeViewNB0204Info | None:
         located = find_codeview_nb0204(data)
         if located is None:
             return None
@@ -388,7 +396,7 @@ def _parse_symbol_records(blob: bytes) -> list[CodeViewSymbol]:
 
 
 def _parse_symbol_records_from_offset(blob: bytes, initial_offset: int) -> list[CodeViewSymbol]:
-    def _impl():
+    def _impl() -> list[CodeViewSymbol]:
         """Parse symbol records from SST_SYMBOLS subsection."""
         symbols: list[CodeViewSymbol] = []
         offset = initial_offset

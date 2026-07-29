@@ -70,6 +70,64 @@ def test_prune_dead_local_assignments_drops_unread_generated_memory_helper_rhs()
     assert codegen.cfunc.statements.statements == []
 
 
+def test_prune_dead_local_assignments_keeps_direct_stack_move_evidence_destination() -> None:
+    codegen = _FakeCodegen()
+    source_var = SimStackVariable(-8, 2, base="bp", name="barTemp", region=0x1000)
+    dst_var = SimStackVariable(-6, 2, base="bp", name="iLength", region=0x1000)
+    source_cvar = structured_c.CVariable(source_var, variable_type=SimTypeShort(False), codegen=codegen)
+    dst_cvar = structured_c.CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    assignment = structured_c.CAssignment(dst_cvar, source_cvar, codegen=codegen)
+    returned_dst = structured_c.CReturn(
+        structured_c.CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen._inertia_direct_stack_move_evidence_8616 = (
+        (
+            ("dst_offset", -6),
+            ("width", 2),
+            ("source_offset", -8),
+            ("ins_addr", 0x1032),
+        ),
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=structured_c.CStatements([assignment, returned_dst], codegen=codegen),
+        variables_in_use={source_var: source_cvar, dst_var: dst_cvar},
+    )
+
+    changed = decompile._prune_dead_local_assignments(codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [assignment, returned_dst]
+    assert codegen._inertia_dead_local_prune_protected_direct_stack_move_count_8616 == 1
+
+
+def test_prune_dead_local_assignments_drops_unread_direct_stack_move_evidence_destination() -> None:
+    codegen = _FakeCodegen()
+    source_var = SimStackVariable(-8, 2, base="bp", name="barTemp", region=0x1000)
+    dst_var = SimStackVariable(-6, 2, base="bp", name="setup", region=0x1000)
+    source_cvar = structured_c.CVariable(source_var, variable_type=SimTypeShort(False), codegen=codegen)
+    dst_cvar = structured_c.CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
+    assignment = structured_c.CAssignment(dst_cvar, source_cvar, codegen=codegen)
+    codegen._inertia_direct_stack_move_evidence_8616 = (
+        (
+            ("dst_offset", -6),
+            ("width", 2),
+            ("source_offset", -8),
+            ("ins_addr", 0x1032),
+        ),
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=structured_c.CStatements([assignment], codegen=codegen),
+        variables_in_use={source_var: source_cvar, dst_var: dst_cvar},
+    )
+
+    changed = decompile._prune_dead_local_assignments(codegen)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
+    assert not hasattr(codegen, "_inertia_dead_local_prune_protected_direct_stack_move_count_8616")
+
+
 def test_prune_dead_local_assignments_drops_duplicate_call_before_return() -> None:
     codegen = _FakeCodegen()
     arg_var = SimRegisterVariable(0, 2, name="arg")

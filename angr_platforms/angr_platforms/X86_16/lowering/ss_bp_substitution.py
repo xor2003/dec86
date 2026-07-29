@@ -1,12 +1,25 @@
 """Substitute `(ss << 4) ± BP ± offset` patterns with named stack variables in C output.
 
+Layer: Types/Lowering.
+Responsibility: consumes alias, widening, and typed facts to apply already-proven
+stack bindings.
+Do not recover semantics from COD, source, assembly, or rendered C text.
+
 AGENTS rule: rewrite must NOT do semantic recovery.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Sequence
+import typing
+from typing import Any, Sequence
+
+from .stack_variable_binding import StackVariableBinding
+
+
+def _dynamic_codegen_attr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
+    """Dynamic codegen boundary: read optional stack-binding metadata."""
+    return getattr(obj, name, default)
 
 
 def _signed16(value: int) -> int:
@@ -18,18 +31,15 @@ def _signed16(value: int) -> int:
 
 def substitute_ss_bp_dereferences_with_variables(
     c_text: str,
-    bindings: Sequence[object],
+    bindings: Sequence[StackVariableBinding],
 ) -> str:
     """Replace all `(ss << 4) + BP ± offset` patterns with named variables."""
     if not bindings:
         return c_text
 
     offset_map: dict[int, str] = {}
-    for b in bindings:
-        off = getattr(b, "offset", None)
-        name = getattr(b, "name", None)
-        if isinstance(off, int) and isinstance(name, str):
-            offset_map[off] = name
+    for binding in bindings:
+        offset_map[binding.bp_offset] = binding.var_name
 
     if not offset_map:
         return c_text
@@ -51,8 +61,9 @@ def substitute_ss_bp_dereferences_with_variables(
         if signed_val in offset_map:
             name = offset_map[signed_val]
             full_match = m.group(0)
+            leading_space = full_match[: len(full_match) - len(full_match.lstrip())]
             is_deref = full_match.lstrip().startswith("*")
-            return name if is_deref else f"&{name}"
+            return f"{leading_space}{name}" if is_deref else f"{leading_space}&{name}"
         return m.group(0)
 
     result = pattern.sub(replacer, c_text)
@@ -72,15 +83,15 @@ def apply_stack_variable_bindings_to_c_text(
     codegen: object,
 ) -> str:
     """Apply fact-based stack variable bindings to C text."""
-    bindings = getattr(codegen, "_inertia_stack_variable_bindings", None)
+    bindings = _dynamic_codegen_attr_8616(codegen, "_inertia_stack_variable_bindings", None)
     if not bindings:
-        facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
+        facts = _dynamic_codegen_attr_8616(codegen, "_inertia_semantic_alias_facts", None)
         if facts:
             # Lazy import to avoid bootstrap dependency
-            from .stack_variable_binding import build_stack_variable_bindings_from_alias_facts_8616
+            from .stack_lowering_from_facts import build_stack_variable_bindings_from_alias_facts_8616
 
             bindings = build_stack_variable_bindings_from_alias_facts_8616(facts)
-            codegen._inertia_stack_variable_bindings = bindings
+            typing.cast(typing.Any, codegen)._inertia_stack_variable_bindings = bindings
         else:
             return c_text
     if not bindings:

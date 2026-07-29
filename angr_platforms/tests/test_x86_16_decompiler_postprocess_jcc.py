@@ -19,7 +19,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CWhileLoop,
 )
-from angr.sim_type import SimTypePointer, SimTypeShort
+from angr.sim_type import SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -33,13 +33,19 @@ from angr_platforms.X86_16.decompiler_postprocess_jcc import (
     _DecodedCmpGuard8616,
     _ensure_c_expr_type_has_arch_8616,
     _rewrite_decoded_jcc_conditions_8616,
+    _sync_stack_arg_expr_name_from_prototype_8616,
     _translate_cmp_jcc_guard_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
+    _apply_typed_conditions_to_codegen_pass_8616,
+    _fix_interval_guard_conditions_pass_8616,
     _is_combined_jcc_callsite_stack_validation_delta_8616,
     _is_jcc_condition_materialization_validation_delta_8616,
     _materialize_unconsumed_loop_break_jcc_8616,
     _repair_loop_exit_return_guards_8616,
+    _rewrite_decoded_jcc_conditions_pass_8616,
+    _rewrite_flag_bit_value_uses_pass_8616,
+    _rewrite_flag_condition_pairs_pass_8616,
 )
 from angr_platforms.X86_16.decompiler_structuring_stage import (
     _try_accept_structuring_validation_delta_from_evidence_8616,
@@ -78,6 +84,91 @@ def _const(value: int, codegen):
 def _reg(project, name: str, codegen, *, var_name: str | None = None):
     reg_offset, reg_size = project.arch.registers[name]
     return CVariable(SimRegisterVariable(reg_offset, reg_size, name=var_name or name), codegen=codegen)
+
+
+def test_stack_condition_name_uses_exact_typed_arg_not_ambiguous_normalized_alias():
+    codegen = _DummyCodegen()
+    word = SimTypeShort(False).with_arch(codegen.project.arch)
+    prototype = SimTypeFunction((word, word), word, arg_names=("which", "value")).with_arch(codegen.project.arch)
+    which_var = SimStackVariable(4, 2, base="bp", name="arg_4")
+    value_var = SimStackVariable(6, 2, base="bp", name="arg_6")
+    which_arg = CVariable(which_var, variable_type=word, codegen=codegen)
+    value_arg = CVariable(value_var, variable_type=word, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        arg_list=[which_arg, value_arg],
+        functy=prototype,
+        prototype=prototype,
+    )
+    metadata_function = SimpleNamespace(
+        prototype=prototype,
+        info={ANNOTATION_KEY: {"stack_vars": {2: {"name": "which"}, 4: {"name": "value"}}}},
+    )
+    project = SimpleNamespace(
+        arch=codegen.project.arch,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(
+                function=lambda addr, create=False: metadata_function if addr == 0x4010 else None
+            )
+        ),
+    )
+    expr_var = SimStackVariable(4, 2, base="bp", name="value")
+    expr = CVariable(expr_var, variable_type=word, codegen=codegen)
+
+    result = _sync_stack_arg_expr_name_from_prototype_8616(codegen, expr, 4, project=project)
+
+    assert result is expr
+    assert expr.variable.name == "which"
+
+
+def test_condition_materialization_postprocess_fallbacks_refuse_after_structuring(monkeypatch):
+    calls: list[str] = []
+
+    def _typed(_project, _codegen):
+        calls.append("typed")
+        return True
+
+    def _jcc(_project, _codegen):
+        calls.append("jcc")
+        return True
+
+    import angr_platforms.X86_16.decompiler_postprocess_stage as post_stage
+
+    monkeypatch.setattr(post_stage, "_apply_typed_conditions_to_codegen_8616", _typed)
+    monkeypatch.setattr(post_stage._jcc, "_rewrite_decoded_jcc_conditions_8616", _jcc)
+    codegen = SimpleNamespace(_inertia_condition_materialization_structuring_pass_ran_8616=True)
+
+    assert _apply_typed_conditions_to_codegen_pass_8616(object(), codegen) is False
+    assert _rewrite_decoded_jcc_conditions_pass_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_flag_cleanup_postprocess_fallbacks_refuse_after_structuring(monkeypatch):
+    calls: list[str] = []
+
+    def _flag_pairs(_codegen):
+        calls.append("pairs")
+        return True
+
+    def _flag_bits(_codegen):
+        calls.append("bits")
+        return True
+
+    def _interval(_codegen):
+        calls.append("interval")
+        return True
+
+    import angr_platforms.X86_16.decompiler_postprocess_stage as post_stage
+
+    monkeypatch.setattr(post_stage._flags, "_rewrite_flag_condition_pairs_8616", _flag_pairs)
+    monkeypatch.setattr(post_stage._flags, "_rewrite_flag_bit_value_uses_8616", _flag_bits)
+    monkeypatch.setattr(post_stage._flags, "_fix_interval_guard_conditions_8616", _interval)
+    codegen = SimpleNamespace(_inertia_condition_cleanup_structuring_pass_ran_8616=True)
+
+    assert _rewrite_flag_condition_pairs_pass_8616(codegen) is False
+    assert _rewrite_flag_bit_value_uses_pass_8616(codegen) is False
+    assert _fix_interval_guard_conditions_pass_8616(codegen) is False
+    assert calls == []
 
 
 class _FakeMem:
@@ -189,6 +280,32 @@ def test_rewrite_decoded_jcc_conditions_refuses_self_compare(monkeypatch):
             rhs=same_expr,
             op="CmpGT",
         ),
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is False
+    assert if_stmt.condition_and_nodes[0][0] is cond
+
+
+def test_rewrite_decoded_jcc_conditions_accepts_direct_cifelse_statement_root(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    cond = CBinaryOp(
+        "CmpEQ",
+        CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(cond, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc.statements = if_stmt
+    codegen.cfunc.body = if_stmt
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda *_args, **_kwargs: None,
     )
 
     changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
@@ -508,6 +625,49 @@ def test_jcc_materialization_validation_accepts_evidenced_condition_delta():
                 "added": ("if:CmpGT(reg:ax,reg:bx)",),
                 "removed": ("if:And(CmpEQ(And(reg:eflags,const:64),const:0),CmpEQ(reg:ax,reg:bx))",),
             },
+        }
+    }
+
+    assert _is_jcc_condition_materialization_validation_delta_8616(project, codegen, validation) is True
+
+
+def test_jcc_materialization_validation_accepts_empty_void_return_removal_with_evidence():
+    project = _project()
+    codegen = SimpleNamespace(
+        _inertia_semantic_condition_materialized_count=1,
+        _inertia_structuring_pretest_loop_guard_stats_8616=SimpleNamespace(
+            call_return_carriers_removed_count=1,
+        ),
+        _inertia_jcc_condition_validation_evidence_8616=(
+            {
+                "removed": "CmpLE(call:addr:0x1446(),stack_slot:SS:BP-0x4:size4)",
+                "added": "CmpGT(call:addr:0x1446(),stack_slot:SS:BP-0x4:size4)",
+            },
+        ),
+    )
+    validation = {
+        "delta": {
+            "conditions": {
+                "added": ("CmpGT(call:addr:0x1446(),stack_slot:SS:BP-0x4:size4)",),
+                "removed": ("CmpLE(call:addr:0x1446(),stack_slot:SS:BP-0x4:size4)", "const:True"),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "while:CmpGT(call:addr:0x1446(),stack_slot:SS:BP-0x4:size4)",
+                    "while-body-calls:CmpGT(call:addr:0x1446(),stack_slot:SS:BP-0x4:size4):addr:0x1137e",
+                ),
+                "removed": (
+                    "if:CmpLE(call:addr:0x1446(),stack_slot:SS:BP-0x4:size4)",
+                    "return",
+                    "while:const:True",
+                    "while-body-calls:const:True:addr:0x1137e",
+                ),
+            },
+            "helper_calls": {
+                "added": (),
+                "removed": ("addr:0x1137e",),
+            },
+            "returns": {"added": (), "removed": ("none",)},
         }
     }
 
@@ -901,6 +1061,36 @@ def test_loop_exit_return_repair_preserves_decoded_exit_condition_polarity():
     assert codegen._inertia_loop_exit_guard_stats_8616["preserved_exit_polarity"] == 1
 
 
+def test_loop_exit_return_repair_postprocess_refuses_after_structuring_pass():
+    project = _project()
+    codegen = _codegen([])
+    exit_cond = CBinaryOp(
+        "CmpGT",
+        CFunctionCall("clock", SimpleNamespace(name="clock", prototype=None), [], codegen=codegen),
+        CVariable(SimStackVariable(-4, 4, base="bp", name="goal", region=0x4010), codegen=codegen),
+        codegen=codegen,
+    )
+    if_stmt = CIfElse(
+        [(exit_cond, CStatements([CReturn(None, codegen=codegen)], codegen=codegen))],
+        codegen=codegen,
+    )
+    loop = CWhileLoop(
+        _const(1, codegen),
+        CStatements([if_stmt, CFunctionCall("tick", None, [], codegen=codegen)], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([loop, CReturn(None, codegen=codegen)], codegen=codegen)
+    codegen.project = project
+    codegen.cfunc.statements = root
+    codegen.cfunc.body = root
+    codegen._inertia_loop_exit_guard_structuring_pass_ran_8616 = True
+
+    changed = _repair_loop_exit_return_guards_8616(codegen)
+
+    assert changed is False
+    assert loop.body.statements[0] is if_stmt
+
+
 def test_materialize_unconsumed_loop_break_jcc_inserts_guard_before_taken_body(monkeypatch):
     project = _project()
     codegen = _codegen([])
@@ -935,6 +1125,7 @@ def test_materialize_unconsumed_loop_break_jcc_inserts_guard_before_taken_body(m
             self.address = address
             self.mnemonic = mnemonic
             self.operands = operands
+            self.size = 2
 
     jcc = _Insn(0x4005, "jg", (_Operand(2, imm=0x4010),))
     jmp = _Insn(0x4007, "jmp", (_Operand(2, imm=0x4020),))
@@ -975,6 +1166,25 @@ def test_materialize_unconsumed_loop_break_jcc_inserts_guard_before_taken_body(m
     assert codegen._inertia_semantic_condition_materialized_count == 1
 
 
+def test_materialize_unconsumed_loop_break_jcc_refuses_postprocess_replay(
+    monkeypatch,
+):
+    project = _project()
+    codegen = _codegen([])
+    codegen._inertia_unconsumed_loop_break_jcc_structuring_pass_ran_8616 = True
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_stage."
+        "_structuring_materialize_unconsumed_loop_break_jcc_8616",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("Structuring-owned loop-JCC recovery was replayed")
+        ),
+    )
+
+    changed = _materialize_unconsumed_loop_break_jcc_8616(project, codegen)
+
+    assert changed is False
+
+
 def test_materialize_unconsumed_loop_break_jcc_inverts_existing_continuation_ifbreak(monkeypatch):
     project = _project()
     codegen = _codegen([])
@@ -989,6 +1199,7 @@ def test_materialize_unconsumed_loop_break_jcc_inverts_existing_continuation_ifb
             self.address = address
             self.mnemonic = mnemonic
             self.operands = operands
+            self.size = 2
 
     jcc = _Insn(0x4005, "jne", (_Operand(2, imm=0x4010),))
     jmp = _Insn(0x4007, "jmp", (_Operand(2, imm=0x4020),))
@@ -1062,6 +1273,91 @@ def test_materialize_unconsumed_loop_break_jcc_inverts_existing_continuation_ifb
                     "removed": (f"ifbreak:{_expr_fingerprint(continuation_cond, project)}",),
                 },
             }
+        },
+    )
+
+
+def test_materialize_unconsumed_loop_break_jcc_inverts_existing_single_break_ifelse(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+
+    class _Operand:
+        def __init__(self, type_, *, imm=0):
+            self.type = type_
+            self.imm = imm
+
+    class _Insn:
+        def __init__(self, address, mnemonic, operands=()):
+            self.address = address
+            self.mnemonic = mnemonic
+            self.operands = operands
+            self.size = 2
+
+    jcc = _Insn(0x4005, "jg", (_Operand(2, imm=0x4010),))
+    jmp = _Insn(0x4007, "jmp", (_Operand(2, imm=0x4020),))
+    decoded_lhs = _stack(-2, codegen, name="iDown")
+    decoded_rhs = _stack(-6, codegen, name="iUp")
+    body_edge_cond = CBinaryOp(
+        "CmpGT",
+        decoded_lhs,
+        decoded_rhs,
+        codegen=codegen,
+        tags={"ins_addr": 0x4005, "vex_block_addr": 0x4000},
+    )
+    existing_break_if = CIfElse(
+        [(body_edge_cond, CStatements([CBreak(codegen=codegen)], codegen=codegen))],
+        else_node=None,
+        cstyle_ifs=True,
+        codegen=codegen,
+    )
+    taken_stmt = CAssignment(
+        _reg(project, "bx", codegen),
+        _const(2, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    loop = CWhileLoop(
+        _const(1, codegen),
+        CStatements([existing_break_if, taken_stmt], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([loop], codegen=codegen)
+    codegen.cfunc.statements = root
+    codegen.cfunc.body = root
+    project.factory = SimpleNamespace(
+        block=lambda _addr, opt_level=0, **_kwargs: SimpleNamespace(
+            capstone=SimpleNamespace(insns=(_Insn(0x4000, "cmp"), jcc, jmp))
+        )
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_stage._linear_jcc_block_starts_8616",
+        lambda _project, _codegen: ((0x4000, jcc),),
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_stage._linear_function_insns_for_codegen_8616",
+        lambda _project, _codegen: (_Insn(0x4000, "cmp"), jcc, jmp),
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda _project, _codegen, _block_addr, _jcc_addr: _DecodedCmpGuard8616(
+            lhs=decoded_lhs,
+            rhs=decoded_rhs,
+            op="CmpGT",
+        ),
+    )
+
+    changed = _materialize_unconsumed_loop_break_jcc_8616(project, codegen)
+
+    assert changed is True
+    rewritten_cond = existing_break_if.condition_and_nodes[0][0]
+    assert rewritten_cond is not body_edge_cond
+    assert isinstance(rewritten_cond, CBinaryOp)
+    assert rewritten_cond.op == "CmpLE"
+    evidence = tuple(codegen._inertia_jcc_condition_validation_evidence_8616)
+    assert evidence == (
+        {
+            "removed": _expr_fingerprint(body_edge_cond, project),
+            "added": _expr_fingerprint(rewritten_cond, project),
         },
     )
 
@@ -1520,7 +1816,7 @@ def test_rewrite_decoded_jcc_conditions_keeps_raw_ifbreak_with_different_jcc_key
     assert getattr(codegen, "_inertia_jcc_duplicate_raw_guard_pruned_8616", 0) == 0
 
 
-def test_rewrite_decoded_jcc_conditions_refuses_target_body_inverted_cite(monkeypatch):
+def test_rewrite_decoded_jcc_conditions_uses_target_body_polarity_for_inverted_cite(monkeypatch):
     project = _project()
     codegen = _codegen([])
     flags = _reg(project, "flags", codegen, var_name="flags_tmp")
@@ -1568,10 +1864,67 @@ def test_rewrite_decoded_jcc_conditions_refuses_target_body_inverted_cite(monkey
 
     changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
 
-    assert changed is False
-    assert if_stmt.condition_and_nodes[0][0] is carrier
-    assert codegen._inertia_jcc_rewrite_refused_target_body_inverted_cite_8616 == 1
-    assert not getattr(codegen, "_inertia_jcc_decoded_condition_fingerprints_8616", ())
+    assert changed is True
+    rewritten = if_stmt.condition_and_nodes[0][0]
+    assert isinstance(rewritten, CBinaryOp)
+    assert rewritten.op == "CmpNE"
+    assert getattr(codegen, "_inertia_jcc_decoded_condition_fingerprints_8616", ())
+
+
+def test_rewrite_decoded_jcc_conditions_uses_following_target_as_early_guard_polarity(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    carrier = CITE(
+        CBinaryOp(
+            "CmpEQ",
+            CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+            _const(0, codegen),
+            codegen=codegen,
+        ),
+        _const(0, codegen),
+        _const(1, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    early_return = CReturn(_const(0, codegen), codegen=codegen, tags={"ins_addr": 0x4030})
+    target_stmt = CAssignment(
+        _reg(project, "ax", codegen),
+        _const(1, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4050},
+    )
+    if_stmt = CIfElse([(carrier, CStatements([early_return], codegen=codegen))], codegen=codegen)
+    if_stmt.condition_and_nodes = tuple(if_stmt.condition_and_nodes)
+    if_stmt.condition = carrier
+    codegen.cfunc.statements = CStatements([if_stmt, target_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda _project, _codegen, _block_addr, _jcc_addr: _DecodedCmpGuard8616(
+            lhs=_reg(project, "ax", codegen),
+            rhs=_reg(project, "bx", codegen),
+            op="CmpNE",
+        ),
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._decode_block_and_jcc_index_8616",
+        lambda *_args, **_kwargs: ((object(),), 0),
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._branch_target_imm_8616",
+        lambda _insn: 0x4050,
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is True
+    rewritten = if_stmt.condition_and_nodes[0][0]
+    assert isinstance(rewritten, CBinaryOp)
+    assert rewritten.op == "CmpEQ"
+    assert if_stmt.condition is rewritten
+    assert getattr(codegen, "_inertia_jcc_decoded_condition_fingerprints_8616", ())
 
 
 def test_rewrite_decoded_jcc_conditions_inverts_ifbreak_cite(monkeypatch):
@@ -1687,6 +2040,67 @@ def test_rewrite_decoded_jcc_conditions_inverts_break_only_condition_pair(monkey
     assert getattr(codegen, "_inertia_jcc_rewrite_refused_unknown_polarity_8616", 0) == 0
 
 
+def test_rewrite_decoded_jcc_keeps_following_sibling_break_polarity(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    carrier = CITE(
+        CBinaryOp(
+            "CmpEQ",
+            CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+            _const(0, codegen),
+            codegen=codegen,
+        ),
+        _const(0, codegen),
+        _const(1, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    if_stmt = CIfElse([(carrier, CStatements([CBreak(codegen=codegen)], codegen=codegen))], codegen=codegen)
+    if_stmt.condition_and_nodes = tuple(if_stmt.condition_and_nodes)
+    following_target = CAssignment(
+        _reg(project, "ax", codegen),
+        _const(1, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4050},
+    )
+    codegen.cfunc.statements = CStatements([if_stmt, following_target], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    class _Operand:
+        def __init__(self, type_, *, imm=0):
+            self.type = type_
+            self.imm = imm
+
+    class _Insn:
+        def __init__(self, address, mnemonic, operands=()):
+            self.address = address
+            self.mnemonic = mnemonic
+            self.operands = operands
+
+    jcc = _Insn(0x4020, "jbe", (_Operand(2, imm=0x4050),))
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._decode_block_and_jcc_index_8616",
+        lambda _project, _block_addr, _jcc_addr, _debug: ((jcc,), 0),
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda _project, _codegen, _block_addr, _jcc_addr: _DecodedCmpGuard8616(
+            lhs=_reg(project, "ax", codegen),
+            rhs=_reg(project, "bx", codegen),
+            op="CmpLE",
+        ),
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is True
+    rewritten = if_stmt.condition_and_nodes[0][0]
+    assert isinstance(rewritten, CBinaryOp)
+    assert rewritten.op == "CmpGT"
+    assert rewritten.tags["inertia_jcc_materialized_8616"] is True
+
+
 def test_rewrite_decoded_jcc_conditions_inverts_return_only_condition_pair(monkeypatch):
     project = _project()
     codegen = _codegen([])
@@ -1724,6 +2138,49 @@ def test_rewrite_decoded_jcc_conditions_inverts_return_only_condition_pair(monke
     assert isinstance(rewritten, CBinaryOp)
     assert rewritten.op == "CmpLE"
     assert getattr(codegen, "_inertia_jcc_rewrite_refused_unknown_polarity_8616", 0) == 0
+
+
+def test_rewrite_decoded_jcc_preserves_nested_condition_provenance(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    flags = _reg(project, "flags", codegen, var_name="flags_tmp")
+    tagged_carrier = CITE(
+        CBinaryOp(
+            "CmpEQ",
+            CBinaryOp("And", flags, _const(0x40, codegen), codegen=codegen),
+            _const(0, codegen),
+            codegen=codegen,
+        ),
+        _const(0, codegen),
+        _const(1, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    wrapped_carrier = CUnaryOp("Not", tagged_carrier, codegen=codegen, tags={})
+    if_stmt = CIfElse(
+        [(wrapped_carrier, CStatements([CReturn(None, codegen=codegen)], codegen=codegen))],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda _project, _codegen, _block_addr, _jcc_addr: _DecodedCmpGuard8616(
+            lhs=_reg(project, "ax", codegen),
+            rhs=_reg(project, "bx", codegen),
+            op="CmpGT",
+        ),
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is True
+    rewritten = if_stmt.condition_and_nodes[0][0]
+    assert isinstance(rewritten, CBinaryOp)
+    assert rewritten.tags["ins_addr"] == 0x4020
+    assert rewritten.tags["vex_block_addr"] == 0x4000
+    assert rewritten.tags["inertia_jcc_materialized_8616"] is True
 
 
 def test_rewrite_decoded_jcc_conditions_preserves_call_cmp_under_not(monkeypatch):
@@ -1768,6 +2225,43 @@ def test_rewrite_decoded_jcc_conditions_preserves_call_cmp_under_not(monkeypatch
     assert rewritten.op == "Not"
     assert isinstance(rewritten.operand, CBinaryOp)
     assert rewritten.operand.op == "CmpLE"
+
+
+def test_rewrite_decoded_jcc_conditions_inverts_explicit_call_cmp_break_pair(monkeypatch):
+    project = _project()
+    codegen = _codegen([])
+    call = CFunctionCall("clock", SimpleNamespace(name="clock", prototype=None), [], codegen=codegen)
+    goal = CVariable(SimStackVariable(-4, 4, base="bp", name="goal", region=0x4010), codegen=codegen)
+    explicit_branch_cond = CBinaryOp(
+        "CmpLE",
+        call,
+        goal,
+        codegen=codegen,
+        tags={"ins_addr": 0x4020, "vex_block_addr": 0x4000},
+    )
+    body = CStatements([CBreak(codegen=codegen)], codegen=codegen)
+    if_stmt = CIfElse([(explicit_branch_cond, body)], codegen=codegen)
+    if_stmt.condition_and_nodes = tuple(if_stmt.condition_and_nodes)
+    if_stmt.condition = explicit_branch_cond
+    codegen.cfunc.statements = CStatements([if_stmt], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.decompiler_postprocess_jcc._translate_cmp_jcc_guard_8616",
+        lambda _project, _codegen, _block_addr, _jcc_addr: _DecodedCmpGuard8616(
+            lhs=call,
+            rhs=goal,
+            op="CmpLE",
+        ),
+    )
+
+    changed = _rewrite_decoded_jcc_conditions_8616(project, codegen)
+
+    assert changed is False
+    rewritten = if_stmt.condition_and_nodes[0][0]
+    assert rewritten is explicit_branch_cond
+    assert if_stmt.condition is explicit_branch_cond
+    assert getattr(codegen, "_inertia_jcc_rewrite_kept_explicit_cmp_with_decoded_evidence_8616", 0) >= 1
 
 
 def test_rewrite_decoded_jcc_records_raw_decoded_fingerprint_for_validation(monkeypatch):

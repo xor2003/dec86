@@ -1,8 +1,14 @@
+"""Legacy import bridge for stack-lowering helpers.
+
+Layer: Alias.
+Responsibility: owns storage identity only; this module exists to preserve old import paths
+while forwarding to the canonical lowering implementation.
+Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting
+work here.
+"""
+
 from __future__ import annotations
 
-# Layer: Compatibility shim
-# Responsibility: preserve legacy alias.stack_lowering imports during migration.
-# Forbidden: semantic ownership; import lowering canonical path only.
 from ..lowering.stack_lowering import (
     _canonicalize_stack_cvar_expr,
     _canonicalize_stack_cvars,

@@ -45,7 +45,7 @@ def test_cross_entry_grouping_surface_and_attrs_are_stable():
     codegen = _Codegen(0x1000, _Clinic(graph))
     changed = apply_x86_16_cross_entry_grouping(codegen)
 
-    assert changed is True
+    assert changed is False
     assert codegen._inertia_grouped_entry_candidate_ids == (0x1002,)
     assert codegen._inertia_entry_fragment_ids == (0x1001,)
     assert codegen._inertia_cross_entry_unit_members == (0x1000, 0x1001, 0x1002)
@@ -78,5 +78,5 @@ def test_cross_entry_grouping_aggregates_members_across_multiple_units():
     codegen = _Codegen(0x1000, _Clinic(graph))
     changed = apply_x86_16_cross_entry_grouping(codegen)
 
-    assert changed is True
+    assert changed is False
     assert codegen._inertia_cross_entry_unit_members == (0x1000, 0x1001, 0x1002, 0x1003, 0x1004)

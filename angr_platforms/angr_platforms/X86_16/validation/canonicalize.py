@@ -1,17 +1,19 @@
-from __future__ import annotations
-
 """Layer: Validation.
 
-Responsibility: canonicalization for equivalence checking — NEVER for IR mutation.
+Responsibility: owns canonical equivalence checking and validation diagnostics.
+Scope: canonicalization for equivalence checking only.
+Do not mutate IR, rewrite emitted C, recover semantics, or accept source/COD-backed proof.
 
 Rules:
 - Allowed: x+0→x, x−x→0, (a+b)+c normalization, commutativity for +,&,|
 - Forbidden: modifying IR, modifying C output, creating new variables, guessing structs/arrays.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Protocol, cast, runtime_checkable
 
 __all__ = [
     "EquivalenceResult",
@@ -22,6 +24,8 @@ __all__ = [
 
 
 class EquivalenceResult(Enum):
+    """Structured result for validation-only expression equivalence checks."""
+
     EQUIVALENT = "equivalent"
     DIFFERENT = "different"
     UNCERTAIN = "uncertain"
@@ -30,6 +34,8 @@ class EquivalenceResult(Enum):
 
 @dataclass(frozen=True, slots=True)
 class CanonicalDiagnostic:
+    """Diagnostic record for validation canonicalization visibility."""
+
     path: str = ""
     changed: bool = False
     note: str = ""
@@ -37,51 +43,126 @@ class CanonicalDiagnostic:
     after: str = ""
 
 
-def canonicalize_expr_for_validation_8616(expr: Any, *, max_depth: int = 8) -> Any:
-    def _impl():
-        """Apply identity-preserving algebraic normalization to a single expression.
+class _ExpressionConstructor(Protocol):
+    def __call__(self, *_args: object, **_kwargs: object) -> object: ...
 
-        Returns a normalized copy — NEVER mutates the original IR.
 
-        Normalizations:
-          - x + 0 → x
-          - 0 + x → x
-          - x - x → 0
-          - x - 0 → x
-          - Commutative reordering for +, &, | (left-associative)
-          - (a + b) + c → a + b + c (flatten)
-        """
+@runtime_checkable
+class _BinaryExpr(Protocol):
+    op: object
+    lhs: object
+    rhs: object
+
+
+@runtime_checkable
+class _UnaryExpr(Protocol):
+    op: object
+    operand: object
+
+
+@runtime_checkable
+class _HasCodegen(Protocol):
+    codegen: object
+
+
+@runtime_checkable
+class _HasValue(Protocol):
+    value: object
+
+
+@runtime_checkable
+class _HasReg(Protocol):
+    reg: object
+
+
+@runtime_checkable
+class _HasVariable(Protocol):
+    variable: object
+
+
+@runtime_checkable
+class _HasStackIdentity(Protocol):
+    base: object
+    offset: object
+
+
+@runtime_checkable
+class _HasSize(Protocol):
+    size: object
+
+
+@runtime_checkable
+class _HasName(Protocol):
+    name: object
+
+
+@runtime_checkable
+class _HasKind(Protocol):
+    kind: object
+
+
+@runtime_checkable
+class _HasTypeAttr(Protocol):
+    type: object
+
+
+@runtime_checkable
+class _HasExpr(Protocol):
+    expr: object
+
+
+@runtime_checkable
+class _HasIndex(Protocol):
+    index: object
+
+
+class _Z3ArithmeticExpr(Protocol):
+    def __add__(self, _other: object) -> object: ...
+
+    def __sub__(self, _other: object) -> object: ...
+
+    def __mul__(self, _other: object) -> object: ...
+
+
+class _ExpressionAttributeAccessor(Protocol):
+    def __call__(self, expr: object) -> object: ...
+
+
+def canonicalize_expr_for_validation_8616(expr: object, *, max_depth: int = 8) -> object:
+    """Apply identity-preserving algebraic normalization to one expression."""
+
+    def _impl() -> object:
         if max_depth <= 0:
             return expr
 
-        # Primitive types pass through
-        if not isinstance(expr, (int, float, str, bool, type(None))):
+        # Primitive types pass through.
+        if isinstance(expr, (int, float, str, bool, type(None))):
             return expr
 
-        # Handle common expression types if they have lhs/rhs shape
-        if hasattr(expr, "lhs") and hasattr(expr, "rhs"):
-            lhs = canonicalize_expr_for_validation_8616(getattr(expr, "lhs"), max_depth=max_depth - 1)
-            rhs = canonicalize_expr_for_validation_8616(getattr(expr, "rhs"), max_depth=max_depth - 1)
+        # Handle common expression types if they have lhs/rhs shape.
+        if isinstance(expr, _BinaryExpr):
+            lhs = canonicalize_expr_for_validation_8616(expr.lhs, max_depth=max_depth - 1)
+            rhs = canonicalize_expr_for_validation_8616(expr.rhs, max_depth=max_depth - 1)
 
             # x + 0 → x
-            if _is_zero_value(rhs) and getattr(expr, "op", "") in {"Add", "+"}:
+            if _is_zero_value(rhs) and expr.op in {"Add", "+"}:
                 return lhs
             # 0 + x → x
-            if _is_zero_value(lhs) and getattr(expr, "op", "") in {"Add", "+"}:
+            if _is_zero_value(lhs) and expr.op in {"Add", "+"}:
                 return rhs
             # x - 0 → x
-            if _is_zero_value(rhs) and getattr(expr, "op", "") in {"Sub", "-"}:
+            if _is_zero_value(rhs) and expr.op in {"Sub", "-"}:
                 return lhs
             # x - x → 0
-            if _same_value(lhs, rhs) and getattr(expr, "op", "") in {"Sub", "-"}:
+            if _same_value(lhs, rhs) and expr.op in {"Sub", "-"}:
                 return _zero_for_expr(lhs)
 
             return _rebuild_binary(expr, lhs, rhs)
 
-        # Handle unary ops
-        if hasattr(expr, "operand"):
-            operand = canonicalize_expr_for_validation_8616(getattr(expr, "operand"), max_depth=max_depth - 1)
-            if operand is not getattr(expr, "operand"):
+        # Handle unary ops.
+        if isinstance(expr, _UnaryExpr):
+            operand = canonicalize_expr_for_validation_8616(expr.operand, max_depth=max_depth - 1)
+            if operand is not expr.operand:
                 return _rebuild_unary(expr, operand)
 
         return expr
@@ -89,7 +170,7 @@ def canonicalize_expr_for_validation_8616(expr: Any, *, max_depth: int = 8) -> A
     return _impl()
 
 
-def equivalent_expr_8616(lhs: Any, rhs: Any, *, timeout_ms: int = 500) -> EquivalenceResult:
+def equivalent_expr_8616(lhs: object, rhs: object, *, timeout_ms: int = 500) -> EquivalenceResult:
     """Check if two expressions are semantically equivalent after canonicalization.
 
     Uses:
@@ -120,7 +201,7 @@ def equivalent_expr_8616(lhs: Any, rhs: Any, *, timeout_ms: int = 500) -> Equiva
     return EquivalenceResult.DIFFERENT
 
 
-def canonical_diagnostic_8616(expr: Any) -> CanonicalDiagnostic:
+def canonical_diagnostic_8616(expr: object) -> CanonicalDiagnostic:
     """Return a diagnostic describing what canonicalization changed."""
     before = str(expr) if not isinstance(expr, str) else expr
     after_expr = canonicalize_expr_for_validation_8616(expr)
@@ -128,7 +209,7 @@ def canonical_diagnostic_8616(expr: Any) -> CanonicalDiagnostic:
     changed = before != after
     note = "canonicalized" if changed else "unchanged"
     return CanonicalDiagnostic(
-        path=getattr(expr, "__class__", type(expr)).__name__,
+        path=type(expr).__name__,
         changed=changed,
         note=note,
         before=before,
@@ -139,66 +220,71 @@ def canonical_diagnostic_8616(expr: Any) -> CanonicalDiagnostic:
 # ── internal helpers ──
 
 
-def _is_zero_value(expr: Any) -> bool:
+def _is_zero_value(expr: object) -> bool:
     """Check if an expression represents the value 0."""
     if isinstance(expr, int):
         return expr == 0
     if isinstance(expr, float):
         return expr == 0.0
-    const_val = getattr(expr, "value", None)
-    if isinstance(const_val, int):
-        return const_val == 0
-    if isinstance(const_val, float):
-        return const_val == 0.0
+    if isinstance(expr, _HasValue):
+        const_val = expr.value
+        if isinstance(const_val, int):
+            return const_val == 0
+        if isinstance(const_val, float):
+            return const_val == 0.0
     return False
 
 
-def _is_one_value(expr: Any) -> bool:
+def _is_one_value(expr: object) -> bool:
     """Check if an expression represents the value 1."""
     if isinstance(expr, int):
         return expr == 1
-    const_val = getattr(expr, "value", None)
-    if isinstance(const_val, int):
-        return const_val == 1
+    if isinstance(expr, _HasValue):
+        const_val = expr.value
+        if isinstance(const_val, int):
+            return const_val == 1
     return False
 
 
-def _same_value(lhs: Any, rhs: Any) -> bool:
-    def _impl():
+def _same_value(lhs: object, rhs: object) -> bool:
+    def _impl() -> bool:
         """Check if two expressions represent the same value."""
         if type(lhs) is not type(rhs):
             return False
-        lhs_value = getattr(lhs, "value", lhs)
-        rhs_value = getattr(rhs, "value", rhs)
+        lhs_value = lhs.value if isinstance(lhs, _HasValue) else lhs
+        rhs_value = rhs.value if isinstance(rhs, _HasValue) else rhs
         if isinstance(lhs_value, int) and isinstance(rhs_value, int):
             return lhs_value == rhs_value
 
         # Register-check: same reg offset
-        lhs_reg = getattr(lhs, "reg", None) or getattr(getattr(lhs, "variable", None), "reg", None)
-        rhs_reg = getattr(rhs, "reg", None) or getattr(getattr(rhs, "variable", None), "reg", None)
+        lhs_reg = _reg_for_expr(lhs)
+        rhs_reg = _reg_for_expr(rhs)
         if isinstance(lhs_reg, int) and isinstance(rhs_reg, int):
             return lhs_reg == rhs_reg
 
         # Stack slot: same base + offset
-        lhs_var = getattr(lhs, "variable", None)
-        rhs_var = getattr(rhs, "variable", None)
+        lhs_var = lhs.variable if isinstance(lhs, _HasVariable) else None
+        rhs_var = rhs.variable if isinstance(rhs, _HasVariable) else None
         if lhs_var is not None and rhs_var is not None:
-            return getattr(lhs_var, "offset", object()) == getattr(rhs_var, "offset", None) and getattr(
-                lhs_var, "base", object()
-            ) == getattr(rhs_var, "base", None)
+            return (
+                isinstance(lhs_var, _HasStackIdentity)
+                and isinstance(rhs_var, _HasStackIdentity)
+                and lhs_var.offset == rhs_var.offset
+                and lhs_var.base == rhs_var.base
+            )
 
         return False
 
     return _impl()
 
 
-def _zero_for_expr(expr: Any) -> Any:
+def _zero_for_expr(expr: object) -> object:
     """Produce a zero constant matching the type of expr."""
-    width = getattr(expr, "size", 4)
+    width = expr.size if isinstance(expr, _HasSize) and isinstance(expr.size, int) else 4
     return _make_constant(0, width)
 
 
-def _make_constant(value: int, size: int = 4) -> Any:
+def _make_constant(value: int, size: int = 4) -> object:
     """Create a constant node matching the given value and size."""
     try:
         from angr.analyses.decompiler.structured_codegen.c import CConstant
@@ -209,30 +295,34 @@ def _make_constant(value: int, size: int = 4) -> Any:
         if size <= 2:
             return CConstant(value, SimTypeShort(signed=False), codegen=None)
         return CConstant(value, SimTypeInt(signed=False), codegen=None)
-    except ImportError:
+    except (AttributeError, ImportError, TypeError):
         return value
 
 
-def _rebuild_binary(original: Any, lhs: Any, rhs: Any) -> Any:
+def _rebuild_binary(original: object, lhs: object, rhs: object) -> object:
     """Rebuild a binary expression with canonicalized children."""
-    cls = type(original)
+    if not isinstance(original, _BinaryExpr):
+        return original
+    constructor = cast(_ExpressionConstructor, type(original))
     try:
-        return cls(getattr(original, "op"), lhs, rhs, codegen=getattr(original, "codegen", None))
+        return constructor(original.op, lhs, rhs, codegen=_codegen_for_expr(original))
     except (TypeError, ValueError):
         return original
 
 
-def _rebuild_unary(original: Any, operand: Any) -> Any:
+def _rebuild_unary(original: object, operand: object) -> object:
     """Rebuild a unary expression with a canonicalized operand."""
-    cls = type(original)
+    if not isinstance(original, _UnaryExpr):
+        return original
+    constructor = cast(_ExpressionConstructor, type(original))
     try:
-        return cls(getattr(original, "op"), operand, codegen=getattr(original, "codegen", None))
+        return constructor(original.op, operand, codegen=_codegen_for_expr(original))
     except (TypeError, ValueError):
         return original
 
 
-def _structural_equal(lhs: Any, rhs: Any, depth: int = 0, max_depth: int = 16) -> bool:
-    def _impl():
+def _structural_equal(lhs: object, rhs: object, depth: int = 0, max_depth: int = 16) -> bool:
+    def _impl() -> bool:
         """Structural equality check with cycle detection."""
         if depth > max_depth:
             return True  # conservative: treat too-deep as equal
@@ -243,23 +333,37 @@ def _structural_equal(lhs: Any, rhs: Any, depth: int = 0, max_depth: int = 16) -
         if isinstance(lhs, (int, float, str, bool, type(None))):
             return lhs == rhs
 
-        # Compare key structural attributes
-        for attr in ("op", "value", "name", "kind", "type"):
-            lhs_val = getattr(lhs, attr, _sentinel)
-            rhs_val = getattr(rhs, attr, _sentinel)
-            if lhs_val is not _sentinel and rhs_val is not _sentinel:
-                if not _structural_equal(lhs_val, rhs_val, depth + 1, max_depth):
-                    return False
+        if not _compare_optional_attr(lhs, rhs, _value_for_expr, depth, max_depth):
+            return False
+        if not _compare_optional_attr(lhs, rhs, _name_for_expr, depth, max_depth):
+            return False
+        if not _compare_optional_attr(lhs, rhs, _kind_for_expr, depth, max_depth):
+            return False
+        if not _compare_optional_attr(lhs, rhs, _type_for_expr, depth, max_depth):
+            return False
+        if not _compare_optional_attr(lhs, rhs, _variable_for_expr, depth, max_depth):
+            return False
+        if not _compare_optional_attr(lhs, rhs, _expr_for_expr, depth, max_depth):
+            return False
+        if not _compare_optional_attr(lhs, rhs, _index_for_expr, depth, max_depth):
+            return False
 
-        # Compare child nodes
-        for child_attr in ("lhs", "rhs", "operand", "expr", "variable", "index"):
-            lhs_child = getattr(lhs, child_attr, _sentinel)
-            rhs_child = getattr(rhs, child_attr, _sentinel)
-            if lhs_child is _sentinel or rhs_child is _sentinel:
-                if lhs_child is not _sentinel or rhs_child is not _sentinel:
-                    return False
-                continue
-            if not _structural_equal(lhs_child, rhs_child, depth + 1, max_depth):
+        if isinstance(lhs, _BinaryExpr) or isinstance(rhs, _BinaryExpr):
+            if not isinstance(lhs, _BinaryExpr) or not isinstance(rhs, _BinaryExpr):
+                return False
+            if not _structural_equal(lhs.op, rhs.op, depth + 1, max_depth):
+                return False
+            if not _structural_equal(lhs.lhs, rhs.lhs, depth + 1, max_depth):
+                return False
+            if not _structural_equal(lhs.rhs, rhs.rhs, depth + 1, max_depth):
+                return False
+
+        if isinstance(lhs, _UnaryExpr) or isinstance(rhs, _UnaryExpr):
+            if not isinstance(lhs, _UnaryExpr) or not isinstance(rhs, _UnaryExpr):
+                return False
+            if not _structural_equal(lhs.op, rhs.op, depth + 1, max_depth):
+                return False
+            if not _structural_equal(lhs.operand, rhs.operand, depth + 1, max_depth):
                 return False
 
         return True
@@ -270,7 +374,73 @@ def _structural_equal(lhs: Any, rhs: Any, depth: int = 0, max_depth: int = 16) -
 _sentinel = object()
 
 
-def _fingerprint_equal(lhs: Any, rhs: Any) -> bool:
+def _codegen_for_expr(expr: object) -> object | None:
+    """Return optional codegen metadata from a dynamic codegen expression."""
+    return expr.codegen if isinstance(expr, _HasCodegen) else None
+
+
+def _value_for_expr(expr: object) -> object:
+    """Return value metadata when a dynamic expression exposes it."""
+    return expr.value if isinstance(expr, _HasValue) else _sentinel
+
+
+def _name_for_expr(expr: object) -> object:
+    """Return name metadata when a dynamic expression exposes it."""
+    return expr.name if isinstance(expr, _HasName) else _sentinel
+
+
+def _kind_for_expr(expr: object) -> object:
+    """Return kind metadata when a dynamic expression exposes it."""
+    return expr.kind if isinstance(expr, _HasKind) else _sentinel
+
+
+def _type_for_expr(expr: object) -> object:
+    """Return type metadata when a dynamic expression exposes it."""
+    return expr.type if isinstance(expr, _HasTypeAttr) else _sentinel
+
+
+def _variable_for_expr(expr: object) -> object:
+    """Return variable metadata when a dynamic expression exposes it."""
+    return expr.variable if isinstance(expr, _HasVariable) else _sentinel
+
+
+def _expr_for_expr(expr: object) -> object:
+    """Return nested expression metadata when a dynamic expression exposes it."""
+    return expr.expr if isinstance(expr, _HasExpr) else _sentinel
+
+
+def _index_for_expr(expr: object) -> object:
+    """Return index metadata when a dynamic expression exposes it."""
+    return expr.index if isinstance(expr, _HasIndex) else _sentinel
+
+
+def _reg_for_expr(expr: object) -> object | None:
+    """Return register metadata from an expression or its variable."""
+    if isinstance(expr, _HasReg):
+        return expr.reg
+    if isinstance(expr, _HasVariable) and isinstance(expr.variable, _HasReg):
+        return expr.variable.reg
+    return None
+
+
+def _compare_optional_attr(
+    lhs: object,
+    rhs: object,
+    accessor: _ExpressionAttributeAccessor,
+    depth: int,
+    max_depth: int,
+) -> bool:
+    """Compare a dynamic expression attribute only when either side exposes it."""
+    lhs_value = accessor(lhs)
+    rhs_value = accessor(rhs)
+    if lhs_value is _sentinel and rhs_value is _sentinel:
+        return True
+    if lhs_value is _sentinel or rhs_value is _sentinel:
+        return False
+    return _structural_equal(lhs_value, rhs_value, depth + 1, max_depth)
+
+
+def _fingerprint_equal(lhs: object, rhs: object) -> bool:
     """String-based fingerprint comparison using condition IR normalization."""
     from ..ir.condition_ir import (
         normalize_condition_fingerprint_algebraic_8616,
@@ -296,7 +466,7 @@ def _fingerprint_equal(lhs: Any, rhs: Any) -> bool:
     return lhs_compact == rhs_compact
 
 
-def _smt_equivalent(lhs: Any, rhs: Any, *, timeout_ms: int = 500) -> bool:
+def _smt_equivalent(lhs: object, rhs: object, *, timeout_ms: int = 500) -> bool:
     """Try SMT (Z3) equivalence as fallback.  Returns False if Z3 unavailable."""
     try:
         import z3
@@ -318,8 +488,8 @@ def _smt_equivalent(lhs: Any, rhs: Any, *, timeout_ms: int = 500) -> bool:
         return False
 
 
-def _to_z3_expr(expr: Any, _depth: int = 0) -> Any | None:
-    def _impl():
+def _to_z3_expr(expr: object, _depth: int = 0) -> object | None:
+    def _impl() -> object | None:
         """Best-effort conversion of an expression to Z3."""
         if _depth > 16:
             return None
@@ -333,33 +503,31 @@ def _to_z3_expr(expr: Any, _depth: int = 0) -> Any | None:
         if isinstance(expr, bool):
             return z3.BoolVal(expr)
 
-        const_val = getattr(expr, "value", None)
-        if isinstance(const_val, int):
-            return z3.IntVal(const_val)
+        if isinstance(expr, _HasValue) and isinstance(expr.value, int):
+            return z3.IntVal(expr.value)
 
         # Named variable
-        name = getattr(expr, "name", None)
-        if isinstance(name, str) and name:
-            return z3.Int(name)
+        if isinstance(expr, _HasName) and isinstance(expr.name, str) and expr.name:
+            return z3.Int(expr.name)
 
         # Register-like
-        reg = getattr(expr, "reg", None) or getattr(getattr(expr, "variable", None), "reg", None)
+        reg = _reg_for_expr(expr)
         if isinstance(reg, int):
             return z3.Int(f"reg_{reg}")
 
         # Binary op
-        if hasattr(expr, "op") and hasattr(expr, "lhs") and hasattr(expr, "rhs"):
-            lhs_z3 = _to_z3_expr(getattr(expr, "lhs"), _depth + 1)
-            rhs_z3 = _to_z3_expr(getattr(expr, "rhs"), _depth + 1)
+        if isinstance(expr, _BinaryExpr):
+            lhs_z3 = _to_z3_expr(expr.lhs, _depth + 1)
+            rhs_z3 = _to_z3_expr(expr.rhs, _depth + 1)
             if lhs_z3 is None or rhs_z3 is None:
                 return None
-            op = getattr(expr, "op", "")
+            op = expr.op
             if op in {"Add", "+"}:
-                return lhs_z3 + rhs_z3
+                return cast(_Z3ArithmeticExpr, lhs_z3) + rhs_z3
             if op in {"Sub", "-"}:
-                return lhs_z3 - rhs_z3
+                return cast(_Z3ArithmeticExpr, lhs_z3) - rhs_z3
             if op in {"Mul", "*"}:
-                return lhs_z3 * rhs_z3
+                return cast(_Z3ArithmeticExpr, lhs_z3) * rhs_z3
             if op in {"CmpEQ", "==", "eq"}:
                 return lhs_z3 == rhs_z3
             if op in {"CmpNE", "!=", "ne"}:

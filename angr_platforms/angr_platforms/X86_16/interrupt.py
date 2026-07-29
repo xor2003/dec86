@@ -1,51 +1,43 @@
-from collections import deque
+"""Layer: Frontend/runtime.
+
+Responsibility: model interrupt dispatch state for the 16-bit emulator surface.
+Forbidden: DOS API semantic recovery, helper signature repair, or postprocess cleanup.
+"""
+
+from __future__ import annotations
+
+from typing import Never
 
 from .access import DataAccess
-from .debug import INFO
-from .exception import EXCEPTION, EXP_GP
-from .regs import sgreg_t
 
 # Constants for descriptor table registers
-IDTR = 1
-TR = 3
+IDTR: int = 1
+TR: int = 3
+
+__all__ = ("IDTR", "TR", "Interrupt")
 
 
 class Interrupt(DataAccess):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        return
-        self.intr_q = deque()  # Interrupt queue
-        self.pic_m = None  # Master PIC
-        self.pic_s = None  # Slave PIC
+    """Provide the interrupt-related frontend runtime surface."""
 
-    def set_pic(self, pic, master):
+    def __init__(self, size: int = 0) -> None:
+        """Initialize the interrupt bridge without enabling dispatch support."""
+        super().__init__(size)
+
+    def set_pic(self, _pic: object, _master: bool) -> Never:
+        """Reject PIC installation until interrupt dispatch is implemented."""
         raise NotImplementedError
 
-    def handle_interrupt(self):
-        raise NotImplementedError
-        if not self.intr_q:
-            return
-
-        n, hard = self.intr_q.popleft()
-
-        idt_base = self.get_dtreg_base(IDTR)
-        idt_limit = self.get_dtreg_limit(IDTR)
-        idt_offset = n << 2
-
-        EXCEPTION(EXP_GP, idt_offset > idt_limit)
-        ivt = self.read_mem32(idt_base + idt_offset)
-
-        cs = self.get_segment(sgreg_t.CS.name)
-        self.set_segment(sgreg_t.CS.name, ivt >> 16)
-        self.save_regs(False, cs)
-        self.set_ip(ivt & 0xFFFF)
-
-        INFO(4, "int 0x%02x (IP : 0x%04x, sgreg_t.CS.name : 0x%04x)", n, ivt & 0xFFFF, ivt >> 16)
-
-    def chk_irq(self):
+    def handle_interrupt(self) -> Never:
+        """Reject interrupt dispatch until the frontend model implements it."""
         raise NotImplementedError
 
-    def save_regs(self, chpl, cs):
+    def chk_irq(self) -> Never:
+        """Reject IRQ polling until interrupt dispatch is implemented."""
+        raise NotImplementedError
+
+    def save_regs(self, _chpl: object, cs: object) -> None:
+        """Push flags, CS, and IP for an interrupt-like control transfer."""
         self.push16(self.get_flags())
         self.push16(cs)
         self.push16(self.get_ip())

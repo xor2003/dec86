@@ -1,19 +1,27 @@
+"""Layer: Optional evidence/reporting.
+
+Responsibility: carry source/COD annotation metadata as optional labels and comments.
+Forbidden: materializing prototypes, arguments, stack aliases, or types as recovered semantics.
+
+Dynamic boundary: third-party angr project/function/COD/capstone metadata is
+inspected dynamically and may be absent depending on loader and analysis mode.
+"""
+
 from __future__ import annotations
 
-import contextlib
 import functools
 import re
 from collections.abc import MutableMapping
-from typing import Tuple
+from typing import Protocol, cast
 
-from angr.sim_type import SimTypeFunction, SimTypePointer
+from angr.sim_type import SimTypeFunction
 from angr.utils.library import convert_cproto_to_py
 
-from .analysis_helpers import preferred_known_helper_signature_decl, seed_calling_conventions
-from .cod_known_objects import known_cod_object_spec
+from .analysis_helpers import seed_calling_conventions
+from .arch_86_16 import Arch86_16
 from .simos_86_16 import SimCC8616MSCsmall
 
-ANNOTATION_KEY = "x86_16_annotations"
+ANNOTATION_KEY: str = "x86_16_annotations"
 
 _PROTO_EMIT_TYPEDEFS_8616 = (
     "typedef unsigned long clock_t;",
@@ -23,11 +31,78 @@ _PROTO_EMIT_TYPEDEFS_8616 = (
 )
 
 
-def _source_prototype_calling_convention_8616(project):
+class _AnnotatedFunction(Protocol):
+    """angr function record subset used by optional annotations."""
+
+    name: str
+    prototype: SimTypeFunction | None
+    is_prototype_guessed: bool
+    calling_convention: object
+    info: MutableMapping[str, object]
+
+
+class _FunctionInfoCarrier(Protocol):
+    """angr function subset carrying mutable annotation info."""
+
+    info: MutableMapping[str, object]
+
+
+class _FunctionManager(Protocol):
+    """angr function manager subset used by optional annotations."""
+
+    def function(self, *, addr: int, **_kwargs: object) -> object | None:
+        """Return or create a function record."""
+        ...
+
+    def __getitem__(self, addr: int) -> object:
+        """Return a function record by address."""
+        ...
+
+
+class _CfgFastResult(Protocol):
+    """angr CFGFast result subset used by annotation-assisted decompilation."""
+
+    functions: _FunctionManager
+
+
+class _KnowledgeBase(Protocol):
+    """angr knowledge-base subset used by optional annotations."""
+
+    labels: MutableMapping[int, str]
+    functions: _FunctionManager
+
+
+class _AnnotationProject(Protocol):
+    """angr project subset used by optional metadata annotations."""
+
+    kb: _KnowledgeBase
+    arch: object
+
+
+class _AnalysisFactory(Protocol):
+    """angr analysis factory subset used by annotation-assisted decompilation."""
+
+    def CFGFast(self, **_kwargs: object) -> _CfgFastResult:
+        """Build a CFGFast analysis."""
+        ...
+
+    def Decompiler(self, func: object, *, cfg: object) -> object:
+        """Build a decompiler analysis."""
+        ...
+
+
+class _DecompileProject(_AnnotationProject, Protocol):
+    """angr project subset used by the annotation decompile convenience helper."""
+
+    analyses: _AnalysisFactory
+
+
+def _source_prototype_calling_convention_8616(project: object) -> SimCC8616MSCsmall | None:
+    """Return the source-prototype calling convention for a third-party angr project dynamic boundary."""
     arch = getattr(project, "arch", None)
-    if getattr(arch, "name", None) != "86_16":
+    if not isinstance(arch, Arch86_16):
         return None
-    return SimCC8616MSCsmall(arch)
+    return SimCC8616MSCsmall(cast(Arch86_16, arch))
 
 
 _C_TYPE_KEYWORDS_8616 = {
@@ -83,7 +158,7 @@ def _opaque_typedef_headers_for_c_decl_8616(c_decl: str) -> tuple[str, ...]:
     return tuple(f"typedef unsigned short {name};" for name in sorted(candidate_type_names))
 
 
-def _converted_c_prototype_or_none_8616(source: str):
+def _converted_c_prototype_or_none_8616(source: str) -> tuple[str, SimTypeFunction, str] | None:
     converted = convert_cproto_to_py(source)
     if len(converted) >= 2 and converted[1] is not None:
         return converted
@@ -106,7 +181,7 @@ def _c_decl_requires_opaque_typedefs_8616(c_decl: str) -> bool:
     return bool(_opaque_typedef_headers_for_c_decl_8616(normalized_decl))
 
 
-def _parse_c_prototype_8616(c_decl: str) -> Tuple[str, SimTypeFunction, str]:
+def _parse_c_prototype_8616(c_decl: str) -> tuple[str, SimTypeFunction, str]:
     normalized_decl = _normalize_c_decl_text(c_decl)
     try:
         converted = _converted_c_prototype_or_none_8616(normalized_decl)
@@ -135,19 +210,24 @@ def _parse_c_prototype_8616(c_decl: str) -> Tuple[str, SimTypeFunction, str]:
     raise
 
 
-def _annotation_dict(function):
+def _annotation_dict(function: object) -> MutableMapping[str, object]:
+    """Return the optional annotation dict on a third-party angr function dynamic boundary."""
     info = getattr(function, "info", None)
+    carrier = cast(_FunctionInfoCarrier, function)
     if not isinstance(info, MutableMapping):
-        function.info = {}
-        info = function.info
-    return info.setdefault(
-        ANNOTATION_KEY,
-        {
-            "stack_vars": {},
-            "global_vars": {},
-            "source_lines": (),
-            "source_return_lines": (),
-        },
+        carrier.info = {}
+        info = carrier.info
+    return cast(
+        MutableMapping[str, object],
+        info.setdefault(
+            ANNOTATION_KEY,
+            {
+                "stack_vars": {},
+                "global_vars": {},
+                "source_lines": (),
+                "source_return_lines": (),
+            },
+        ),
     )
 
 
@@ -194,110 +274,50 @@ def _normalize_c_decl_text(c_decl: str) -> str:
     return normalized
 
 
-def _source_decl_from_cod_source_lines(source_lines: tuple[str, ...], function_name: str | None = None) -> str | None:
-    normalized_lines = tuple(str(line) for line in (source_lines or ()))
-    normalized_name = function_name if isinstance(function_name, str) and function_name else None
-    return _source_decl_from_cod_source_lines_cached_8616(normalized_lines, normalized_name)
+def _source_decl_from_cod_source_lines(
+    _source_lines: tuple[str, ...], function_name: str | None = None
+) -> str | None:
+    return None
 
 
 @functools.lru_cache(maxsize=4096)
 def _source_decl_from_cod_source_lines_cached_8616(
-    source_lines: tuple[str, ...],
+    _source_lines: tuple[str, ...],
     function_name: str | None = None,
 ) -> str | None:
-    target_name = function_name.lstrip("_") if isinstance(function_name, str) and function_name else None
-    first_decl: str | None = None
-    for line in source_lines:
-        stripped = line.strip()
-        if not stripped or stripped == "}":
-            continue
-        if stripped.startswith(("if ", "while ", "for ", "switch ", "return ", "case ", "default ")):
-            continue
-        if "(" not in stripped or ")" not in stripped:
-            continue
-        header = stripped[:-1].rstrip() if stripped.endswith("{") else stripped
-        match = _SOURCE_DECL_RE_8616.match(header)
-        if match is None:
-            continue
-        if not header.endswith(";"):
-            header = f"{header};"
-        if first_decl is None:
-            first_decl = header
-        if target_name is not None and match.group("name").lstrip("_") == target_name:
-            return header
-        if target_name is None:
-            return header
-    return first_decl if target_name is None else None
+    return None
 
 
-def _source_args_from_cod_source_lines(source_lines: tuple[str, ...], func_name: str | None) -> str | None:
-    def _impl():
-        if not isinstance(func_name, str) or not func_name:
-            return None
-
-        candidate_names = {func_name}
-        stripped_name = func_name.lstrip("_")
-        if stripped_name and stripped_name != func_name:
-            candidate_names.add(stripped_name)
-
-        decl_re = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*\((?P<args>[^()]*)\)\s*(?:\{|;)?\s*$")
-        for line in source_lines:
-            stripped = line.strip()
-            if not stripped or stripped in {"{", "}"}:
-                continue
-            if stripped.startswith(("if ", "while ", "for ", "switch ", "return ", "case ", "default ")):
-                continue
-            decl_match = decl_re.match(stripped)
-            if decl_match is None or decl_match.group("name") not in candidate_names:
-                continue
-            return decl_match.group("args")
-        return None
-
-    return _impl()
+def _source_args_from_cod_source_lines(_source_lines: tuple[str, ...], _func_name: str | None) -> str | None:
+    return None
 
 
-def _source_function_pointer_local_types_8616(project, source_lines: tuple[str, ...]) -> dict[str, SimTypePointer]:
-    def _impl():
-        local_types: dict[str, SimTypePointer] = {}
-        fp_decl_re = re.compile(r"^\s*(?P<ret>.+?)\(\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*\)\s*\((?P<args>[^;]*)\)\s*;\s*$")
-        for raw_line in tuple(source_lines or ()):
-            stripped = raw_line.strip()
-            if not stripped or stripped.startswith((";", "//")):
-                continue
-            match = fp_decl_re.match(stripped)
-            if match is None:
-                continue
-            name = match.group("name")
-            fake_decl = f"{match.group('ret').strip()} __inertia_fp({match.group('args').strip()});"
-            try:
-                _parsed_name, function_type, _ = _parse_c_prototype_8616(fake_decl)
-            except Exception:
-                continue
-            if function_type is None:
-                continue
-            function_type = function_type.with_arch(project.arch)
-            pointer_type = SimTypePointer(function_type).with_arch(project.arch)
-            local_types[name] = pointer_type
-        return local_types
-
-    return _impl()
+def _source_function_pointer_local_types_8616(_project: object, _source_lines: tuple[str, ...]) -> dict[str, object]:
+    return {}
 
 
 def annotate_function(
-    project,
+    project: object,
     func_addr: int,
     *,
     name: str | None = None,
     c_decl: str | None = None,
     prototype: SimTypeFunction | None = None,
-    calling_convention=None,
+    calling_convention: object | None = None,
     arg_names: list[str] | tuple[str, ...] | None = None,
     stack_vars: dict[int, str | dict] | None = None,
     bp_stack_vars: dict[int, str | dict] | None = None,
     global_vars: dict[int, str | dict] | None = None,
-):
-    def _impl():
-        func = project.kb.functions.function(addr=func_addr, create=True)
+) -> object:
+    """Attach optional annotation labels, prototypes, and names to a function."""
+
+    def _impl() -> object:
+        annotation_project = cast(_AnnotationProject, project)
+        arch = cast(Arch86_16, annotation_project.arch)
+        func = cast(
+            _AnnotatedFunction | None,
+            annotation_project.kb.functions.function(addr=func_addr, create=True),
+        )
         if func is None:
             raise KeyError(func_addr)
         annotations = _annotation_dict(func)
@@ -308,16 +328,17 @@ def annotate_function(
             parsed_name, parsed_proto, _ = _parse_c_prototype_8616(c_decl)
             if parsed_proto is None:
                 raise ValueError(f"Failed to parse C declaration: {c_decl}")
-            parsed_proto = parsed_proto.with_arch(project.arch)
+            parsed_proto = parsed_proto.with_arch(arch)
 
         final_name = name if name is not None else parsed_name
         if final_name is not None:
             func.name = final_name
 
-        final_proto = prototype.with_arch(project.arch) if prototype is not None else parsed_proto
+        final_proto = prototype.with_arch(arch) if prototype is not None else parsed_proto
         if final_proto is not None:
             func.prototype = final_proto
             func.is_prototype_guessed = False
+            annotations["prototype"] = final_proto
 
         if calling_convention is not None:
             func.calling_convention = calling_convention
@@ -331,12 +352,13 @@ def annotate_function(
                 func.prototype.returnty,
                 arg_names=tuple(normalized_names),
                 variadic=func.prototype.variadic,
-            ).with_arch(project.arch)
+            ).with_arch(arch)
             func.is_prototype_guessed = False
 
         if stack_vars:
+            stack_annotations = cast(MutableMapping[int, MutableMapping[str, object]], annotations["stack_vars"])
             for offset, spec in stack_vars.items():
-                entry = annotations["stack_vars"].setdefault(offset, {})
+                entry = stack_annotations.setdefault(offset, {})
                 if isinstance(spec, str):
                     entry["name"] = spec
                 else:
@@ -349,89 +371,59 @@ def annotate_function(
             annotate_function(project, func_addr, stack_vars=translated)
 
         if global_vars:
+            global_annotations = cast(MutableMapping[int, dict[str, object]], annotations["global_vars"])
             for addr, spec in global_vars.items():
+                global_entry: dict[str, object]
                 if isinstance(spec, str):
-                    entry = {"name": spec}
+                    global_entry = {"name": spec}
                     label = spec
                 elif isinstance(spec, dict):
-                    entry = dict(spec)
-                    label = entry.get("name")
+                    global_entry = dict(spec)
+                    label = global_entry.get("name")
                     if not isinstance(label, str):
                         raise ValueError(f"Global annotation for {addr:#x} must include a string name.")
                 else:
                     raise TypeError(f"Unsupported global annotation spec for {addr:#x}: {type(spec).__name__}")
-                annotations["global_vars"][addr] = entry
-                project.kb.labels[addr] = label
+                global_annotations[addr] = global_entry
+                annotation_project.kb.labels[addr] = label
 
         return func
 
     return _impl()
 
 
-def annotate_stack_variable(project, func_addr: int, offset: int, name: str, type_=None):
-    spec = {"name": name}
+def annotate_stack_variable(
+    project: object, func_addr: int, offset: int, name: str, type_: object | None = None
+) -> object:
+    """Attach an optional stack-variable label to a function annotation record."""
+    spec: dict[str, object] = {"name": name}
     if type_ is not None:
         spec["type"] = type_
     return annotate_function(project, func_addr, stack_vars={offset: spec})
 
 
-def annotate_bp_stack_variable(project, func_addr: int, bp_disp: int, name: str, type_=None):
-    spec = {"name": name}
+def annotate_bp_stack_variable(
+    project: object, func_addr: int, bp_disp: int, name: str, type_: object | None = None
+) -> object:
+    """Attach an optional BP-relative stack-variable label to a function record."""
+    spec: dict[str, object] = {"name": name}
     if type_ is not None:
         spec["type"] = type_
     return annotate_function(project, func_addr, bp_stack_vars={bp_disp: spec})
 
 
-def annotate_global_variable(project, addr: int, name: str):
-    project.kb.labels[addr] = name
+def annotate_global_variable(project: object, addr: int, name: str) -> str:
+    """Attach an optional global label without treating it as recovered semantics."""
+    cast(_AnnotationProject, project).kb.labels[addr] = name
     return name
 
 
-def _apply_known_helper_signatures(project, cod_metadata=None) -> bool:
-    if cod_metadata is None:
-        return False
-
-    changed = False
-    seen_decls: set[str] = set()
-    for call_name in getattr(cod_metadata, "call_names", ()) or ():
-        decl = preferred_known_helper_signature_decl(call_name)
-        if decl is None or decl in seen_decls:
-            continue
-        seen_decls.add(decl)
-
-        helper_func = project.kb.functions.function(name=call_name, create=False)
-        if helper_func is None and call_name.startswith("_"):
-            helper_func = project.kb.functions.function(name=call_name.lstrip("_"), create=False)
-        if helper_func is None:
-            continue
-
-        annotate_function(
-            project,
-            helper_func.addr,
-            name=getattr(helper_func, "name", call_name),
-            c_decl=decl,
-        )
-        changed = True
-
-    return changed
-
-
-def _typed_cod_spec_dict_8616(spec) -> dict[str, object]:
-    return {
-        "name": spec.name,
-        "type": spec.type,
-        "type_name": spec.type_name,
-        "field_names": spec.field_names,
-        "field_offsets": spec.field_offsets,
-        "field_widths": spec.field_widths,
-        "packed": spec.packed,
-        "allowed_views": spec.allowed_views,
-        "segment_domain": spec.segment_domain,
-    }
+def _apply_known_helper_signatures(_project: object, _cod_metadata: object | None = None) -> bool:
+    return False
 
 
 def _split_source_arg_names_8616(source_arg_text: str | None) -> list[str]:
-    def _impl():
+    def _impl() -> list[str]:
         if not source_arg_text:
             return []
         source_arg_names: list[str] = []
@@ -470,134 +462,46 @@ def _split_source_arg_names_8616(source_arg_text: str | None) -> list[str]:
     return _impl()
 
 
-def _apply_source_prototype_annotations_8616(project, func_addr: int, func, source_lines: tuple[str, ...]) -> bool:
-    def _impl():
-        changed = False
-        annotations = _annotation_dict(func)
-        annotations["source_lines"] = source_lines
-        annotations["source_return_lines"] = tuple(
-            line.strip() for line in source_lines if re.match(r"^return\s+[^;]+;\s*$", line.strip())
-        )
-        source_decl = _source_decl_from_cod_source_lines(source_lines, getattr(func, "name", None))
-        if source_decl is None:
-            return changed
-        current_proto = getattr(func, "prototype", None)
-        opaque_source_types = _c_decl_requires_opaque_typedefs_8616(source_decl)
-        try:
-            parsed_name, parsed_proto, _ = _parse_c_prototype_8616(source_decl)
-        except Exception:
-            parsed_name = None
-            parsed_proto = None
-        else:
-            if parsed_proto is not None:
-                parsed_proto = parsed_proto.with_arch(project.arch)
-        active_proto = current_proto
-        source_cc = _source_prototype_calling_convention_8616(project)
-        if current_proto is not None and parsed_proto is not None:
-            current_args = list(getattr(current_proto, "args", ()) or ())
-            parsed_args = list(getattr(parsed_proto, "args", ()) or ())
-            if len(current_args) == len(parsed_args):
-                merged_args = current_args if opaque_source_types else parsed_args
-                with contextlib.suppress(ValueError):
-                    active_proto = current_proto.__class__(
-                        merged_args,
-                        parsed_proto.returnty,
-                        arg_names=getattr(current_proto, "arg_names", None),
-                        variadic=getattr(current_proto, "variadic", False),
-                    ).with_arch(project.arch)
-                    annotate_function(
-                        project,
-                        func_addr,
-                        name=getattr(func, "name", None) or parsed_name,
-                        prototype=active_proto,
-                        calling_convention=source_cc,
-                    )
-                    changed = True
-        elif parsed_proto is not None and not opaque_source_types:
-            with contextlib.suppress(ValueError):
-                annotate_function(
-                    project,
-                    func_addr,
-                    name=getattr(func, "name", None) or parsed_name,
-                    c_decl=source_decl,
-                    calling_convention=source_cc,
-                )
-                changed = True
-                active_proto = getattr(func, "prototype", parsed_proto)
-        if active_proto is not None:
-            source_arg_names = _split_source_arg_names_8616(
-                _source_args_from_cod_source_lines(source_lines, getattr(func, "name", None))
-            )
-            if source_arg_names and len(source_arg_names) == len(getattr(active_proto, "args", ()) or ()):
-                with contextlib.suppress(ValueError):
-                    annotate_function(
-                        project,
-                        func_addr,
-                        name=getattr(func, "name", None),
-                        prototype=active_proto,
-                        calling_convention=source_cc,
-                        arg_names=source_arg_names,
-                    )
-                    changed = True
-        return changed
-
-    return _impl()
+def _apply_source_prototype_annotations_8616(
+    project: object, func_addr: int, func: object, _source_lines: tuple[str, ...]
+) -> bool:
+    return False
 
 
 def apply_x86_16_metadata_annotations(
-    project,
+    project: object,
     *,
     func_addr: int | None = None,
-    cod_metadata=None,
-    lst_metadata=None,
+    cod_metadata: object | None = None,
+    lst_metadata: object | None = None,
     synthetic_globals: dict[int, tuple[str, int]] | None = None,
 ) -> bool:
-    def _impl():
+    """Apply optional source/listing metadata as labels only, never as semantic proof."""
+
+    def _impl() -> bool:
+        """Apply metadata labels from third-party COD/LST dynamic-boundary objects."""
         changed = False
+        annotation_project = cast(_AnnotationProject, project)
 
         if lst_metadata is not None:
             for offset, name in getattr(lst_metadata, "data_labels", {}).items():
-                if project.kb.labels.get(offset) != name:
-                    project.kb.labels[offset] = name
+                if annotation_project.kb.labels.get(offset) != name:
+                    annotation_project.kb.labels[offset] = name
                     changed = True
 
             if func_addr is not None:
                 code_name = getattr(lst_metadata, "code_labels", {}).get(func_addr)
                 if isinstance(code_name, str) and code_name:
-                    func = project.kb.functions.function(addr=func_addr, create=True)
+                    func = cast(
+                        _AnnotatedFunction | None,
+                        annotation_project.kb.functions.function(addr=func_addr, create=True),
+                    )
                     if func is not None and getattr(func, "name", None) != code_name:
                         func.name = code_name
                         changed = True
 
-        if func_addr is not None and cod_metadata is not None:
-            stack_aliases = getattr(cod_metadata, "stack_aliases", None) or {}
-            source_lines = tuple(getattr(cod_metadata, "source_lines", ()) or ())
-            source_local_types = (
-                _source_function_pointer_local_types_8616(project, source_lines) if source_lines else {}
-            )
-            if stack_aliases:
-                typed_stack_aliases = {}
-                for bp_disp, alias in stack_aliases.items():
-                    spec = known_cod_object_spec(alias)
-                    source_type = source_local_types.get(alias) if isinstance(alias, str) else None
-                    if source_type is not None:
-                        typed_stack_aliases[bp_disp] = {"name": alias, "type": source_type}
-                    elif spec is None:
-                        typed_stack_aliases[bp_disp] = alias
-                        continue
-                    else:
-                        typed_stack_aliases[bp_disp] = _typed_cod_spec_dict_8616(spec)
-                annotate_function(project, func_addr, bp_stack_vars=typed_stack_aliases)
-                changed = True
-
         if cod_metadata is not None:
             changed |= _apply_known_helper_signatures(project, cod_metadata)
-            source_lines = tuple(getattr(cod_metadata, "source_lines", ()) or ())
-            if source_lines:
-                func = project.kb.functions.function(addr=func_addr, create=True)
-                if func is None:
-                    raise KeyError(func_addr)
-                changed |= _apply_source_prototype_annotations_8616(project, func_addr, func, source_lines)
 
         if func_addr is not None and synthetic_globals:
             seen_addrs: set[int] = set()
@@ -605,26 +509,22 @@ def apply_x86_16_metadata_annotations(
                 if addr in seen_addrs:
                     continue
                 seen_addrs.add(addr)
-                spec = known_cod_object_spec(raw_name)
-                if spec is None:
-                    continue
-                annotate_function(
-                    project,
-                    func_addr,
-                    global_vars={addr: _typed_cod_spec_dict_8616(spec)},
-                )
-                changed = True
+                if isinstance(raw_name, str) and raw_name and annotation_project.kb.labels.get(addr) != raw_name:
+                    annotation_project.kb.labels[addr] = raw_name
+                    changed = True
 
         return changed
 
     return _impl()
 
 
-def decompile_function(project, func_addr: int, **annotations):
-    cfg = project.analyses.CFGFast(normalize=True)
+def decompile_function(project: object, func_addr: int, **annotations: object) -> object:
+    """Run decompilation after applying optional annotation metadata."""
+    decompile_project = cast(_DecompileProject, project)
+    cfg = decompile_project.analyses.CFGFast(normalize=True)
     cod_metadata = annotations.get("cod_metadata")
     lst_metadata = annotations.get("lst_metadata")
-    synthetic_globals = annotations.get("synthetic_globals")
+    synthetic_globals = cast(dict[int, tuple[str, int]] | None, annotations.get("synthetic_globals"))
     if cod_metadata is not None or lst_metadata is not None or synthetic_globals is not None:
         apply_x86_16_metadata_annotations(
             project,
@@ -635,23 +535,30 @@ def decompile_function(project, func_addr: int, **annotations):
         )
     seed_calling_conventions(cfg)
     func = cfg.functions[func_addr]
-    direct_annotations = {
-        key: annotations[key]
-        for key in (
-            "name",
-            "c_decl",
-            "prototype",
-            "calling_convention",
-            "arg_names",
-            "stack_vars",
-            "bp_stack_vars",
-            "global_vars",
-        )
-        if key in annotations
+    direct_keys = {
+        "name",
+        "c_decl",
+        "prototype",
+        "calling_convention",
+        "arg_names",
+        "stack_vars",
+        "bp_stack_vars",
+        "global_vars",
     }
-    if direct_annotations:
-        annotate_function(project, func_addr, **direct_annotations)
-        func = project.kb.functions[func_addr]
+    if any(key in annotations for key in direct_keys):
+        annotate_function(
+            project,
+            func_addr,
+            name=cast(str | None, annotations.get("name")),
+            c_decl=cast(str | None, annotations.get("c_decl")),
+            prototype=cast(SimTypeFunction | None, annotations.get("prototype")),
+            calling_convention=annotations.get("calling_convention"),
+            arg_names=cast(list[str] | tuple[str, ...] | None, annotations.get("arg_names")),
+            stack_vars=cast(dict[int, str | dict] | None, annotations.get("stack_vars")),
+            bp_stack_vars=cast(dict[int, str | dict] | None, annotations.get("bp_stack_vars")),
+            global_vars=cast(dict[int, str | dict] | None, annotations.get("global_vars")),
+        )
+        func = decompile_project.kb.functions[func_addr]
     apply_x86_16_metadata_annotations(
         project,
         func_addr=func_addr,
@@ -659,4 +566,4 @@ def decompile_function(project, func_addr: int, **annotations):
         lst_metadata=lst_metadata,
         synthetic_globals=synthetic_globals,
     )
-    return project.analyses.Decompiler(func, cfg=cfg)
+    return decompile_project.analyses.Decompiler(func, cfg=cfg)

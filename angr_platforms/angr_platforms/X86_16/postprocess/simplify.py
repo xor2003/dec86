@@ -1,15 +1,13 @@
+"""Compatibility exports for final simplification cleanup.
+
+Layer: Rewrite/Postprocess cleanup.
+Responsibility: preserve package-level simplification imports while the root
+decompiler_postprocess_simplify module owns cleanup behavior and exports.
+Consumes already-proven IR, alias, widening, typed, and structuring facts.
+Do not recover new semantics, storage identity, types, call signatures, control
+flow, or facts from rendered text, COD, source, or CLI/reporting evidence here.
+"""
+
 from __future__ import annotations
 
-# Layer: Postprocess
-# Responsibility: final simplification cleanup only
-# Forbidden: alias/widening/type ownership
-from .. import decompiler_postprocess_simplify as _decompiler_postprocess_simplify
-
-globals().update(
-    {
-        name: getattr(_decompiler_postprocess_simplify, name)
-        for name in dir(_decompiler_postprocess_simplify)
-        if not name.startswith("__")
-    }
-)
-__all__ = [name for name in dir(_decompiler_postprocess_simplify) if not name.startswith("__")]
+from ..decompiler_postprocess_simplify import *  # noqa: F403

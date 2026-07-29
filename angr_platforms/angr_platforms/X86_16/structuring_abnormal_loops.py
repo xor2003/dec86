@@ -1,5 +1,10 @@
 """Abnormal loop-entry and loop-exit normalization for region structuring.
 
+Layer: Structuring.
+Responsibility: normalize abnormal loop-entry and loop-exit shapes as explicit
+CFG metadata before code generation.
+Forbidden: guessing prettier loop C without CFG loop-shape evidence.
+
 This keeps dedicated abnormal-loop policy out of the main structuring driver.
 The goal is not to guess prettier C late. The goal is to make loop-shape
 evidence explicit at the CFG layer so later codegen can stay honest.
@@ -16,10 +21,13 @@ from .structuring_region import DominatorInfo, Region, RegionGraph, RegionType
 
 @dataclass(frozen=True)
 class LoopEdgeRef:
+    """Stable metadata reference for an edge between two region ids."""
+
     source_region_id: int | None
     target_region_id: int | None
 
     def to_dict(self) -> dict[str, int | None]:
+        """Serialize this edge reference for structuring metadata."""
         return {
             "source_region_id": self.source_region_id,
             "target_region_id": self.target_region_id,
@@ -28,6 +36,8 @@ class LoopEdgeRef:
 
 @dataclass(frozen=True)
 class AbnormalLoopNormalizationPlan:
+    """Plan for preserving abnormal loop shape with explicit selector metadata."""
+
     header_region_id: int | None
     body_region_ids: tuple[int | None, ...]
     abnormal_entries: tuple[LoopEdgeRef, ...]
@@ -37,17 +47,21 @@ class AbnormalLoopNormalizationPlan:
 
     @property
     def needs_entry_variable(self) -> bool:
+        """Return whether abnormal entries require a selector variable."""
         return bool(self.abnormal_entries)
 
     @property
     def needs_exit_variable(self) -> bool:
+        """Return whether multiple exits require a selector variable."""
         return bool(self.abnormal_exits)
 
     @property
     def can_normalize(self) -> bool:
+        """Return whether the plan has enough metadata to normalize safely."""
         return bool(self.entry_variable_name or self.exit_variable_name)
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this plan for region metadata and diagnostics."""
         return {
             "header_region_id": self.header_region_id,
             "body_region_ids": list(self.body_region_ids),
@@ -74,8 +88,10 @@ def build_abnormal_loop_normalization_plan(
     dominators: DominatorInfo | None,
     loop_info: NaturalLoopInfo,
 ) -> AbnormalLoopNormalizationPlan:
-    def _impl():
-        del dominators
+    """Build a CFG-evidence-backed plan for abnormal loop normalization."""
+
+    def _impl() -> AbnormalLoopNormalizationPlan:
+        _ = dominators
 
         header = loop_info.header
         body_regions = set(loop_info.body_regions)
@@ -136,7 +152,9 @@ def apply_abnormal_loop_normalization(
     loop_info: NaturalLoopInfo,
     plan: AbnormalLoopNormalizationPlan,
 ) -> bool:
-    def _impl():
+    """Apply an abnormal loop normalization plan to the region graph."""
+
+    def _impl() -> bool:
         if not plan.can_normalize:
             return False
 

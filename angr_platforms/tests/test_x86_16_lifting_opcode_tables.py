@@ -1,11 +1,19 @@
+import inspect
 from types import SimpleNamespace
 
 from angr_platforms.X86_16.instr_base import InstrBase
 from angr_platforms.X86_16.instruction import CHK_IMM8, CHK_MODRM, MAX_OPCODE
+from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
 
 
 def _dummy_handler() -> None:
     return None
+
+
+def test_instruction_any_implements_gymrat_decoder_contract():
+    assert Instruction_ANY.bin_format == "xxxxxxxx"
+    assert Instruction_ANY.name == "nop"
+    assert not inspect.isabstract(Instruction_ANY)
 
 
 def _table_host():

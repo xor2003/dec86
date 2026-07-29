@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Run MonkeyType tracing commands for the docs/types ratchet.
+
+Layer: Tooling/gates.
+Responsibility: collect optional MonkeyType traces that inform, but do not replace, typed contracts.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -10,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from inertia_decompiler.monkeytype_tools import (
+from inertia_decompiler.monkeytype_tools import (  # noqa: E402
     DEFAULT_MONKEYTYPE_TEST_TARGETS,
     MONKEYTYPE_DB_PATH,
     ensure_monkeytype_dirs,
@@ -24,6 +30,7 @@ def _python() -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run selected pytest targets under MonkeyType tracing."""
     parser = argparse.ArgumentParser(description="Run pytest targets under MonkeyType tracing.")
     parser.add_argument(
         "--reset-db", action="store_true", help="Remove the existing MonkeyType sqlite DB before tracing."

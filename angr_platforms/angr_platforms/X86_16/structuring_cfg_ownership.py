@@ -1,5 +1,9 @@
 """Ownership/refusal layer over CFG snapshots.
 
+Layer: Structuring.
+Responsibility: derive explicit ownership and refusal records from structuring CFG snapshots.
+Forbidden: grouping unrelated entries, rewriting control flow, or repairing generated C.
+
 This module turns raw region connectivity into a typed ownership surface with
 explicit refusal reasons for shared or disconnected regions.
 """
@@ -7,7 +11,6 @@ explicit refusal reasons for shared or disconnected regions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from .structuring_cfg_snapshot import CFGSnapshot, build_cfg_snapshot
 
@@ -59,64 +62,61 @@ class CFGOwnershipArtifact:
         }
 
 
-def build_cfg_ownership_artifact(codegen: Any) -> CFGOwnershipArtifact | None:
-    def _impl():
-        """Build the ownership/refusal surface for structuring CFGs."""
-        snapshot = build_cfg_snapshot(codegen)
-        if snapshot is None:
-            return None
+def build_cfg_ownership_artifact(codegen: object) -> CFGOwnershipArtifact | None:
+    """Build the ownership/refusal surface for structuring CFGs."""
+    snapshot = build_cfg_snapshot(codegen)
+    if snapshot is None:
+        return None
 
-        records: list[CFGOwnershipRecord] = []
-        shared_region_ids: list[int] = []
-        entry_fragment_region_ids: list[int] = []
+    records: list[CFGOwnershipRecord] = []
+    shared_region_ids: list[int] = []
+    entry_fragment_region_ids: list[int] = []
+    reachable_by_id = {item.region_id: item.reachable_from_entry for item in snapshot.nodes}
 
-        for node in snapshot.nodes:
-            reachable_by_id = {item.region_id: item.reachable_from_entry for item in snapshot.nodes}
-            predecessor_count = len(node.predecessor_ids)
-            successor_count = len(node.successor_ids)
-            if node.region_id == snapshot.entry_region_id:
-                ownership_kind = "entry"
-                refusal_reason = None
-            elif not node.reachable_from_entry and predecessor_count == 0:
-                ownership_kind = "entry_fragment"
-                refusal_reason = "disconnected_from_entry"
-                entry_fragment_region_ids.append(node.region_id)
-            elif not node.reachable_from_entry:
-                ownership_kind = "shared_owner"
+    for node in snapshot.nodes:
+        predecessor_count = len(node.predecessor_ids)
+        successor_count = len(node.successor_ids)
+        if node.region_id == snapshot.entry_region_id:
+            ownership_kind = "entry"
+            refusal_reason = None
+        elif not node.reachable_from_entry and predecessor_count == 0:
+            ownership_kind = "entry_fragment"
+            refusal_reason = "disconnected_from_entry"
+            entry_fragment_region_ids.append(node.region_id)
+        elif not node.reachable_from_entry:
+            ownership_kind = "shared_owner"
+            refusal_reason = "mixed_reachability_predecessors"
+            shared_region_ids.append(node.region_id)
+        elif predecessor_count == 0:
+            ownership_kind = "entry_fragment"
+            refusal_reason = "disconnected_from_entry"
+            entry_fragment_region_ids.append(node.region_id)
+        elif predecessor_count == 1:
+            ownership_kind = "single_owner"
+            refusal_reason = None
+        else:
+            ownership_kind = "shared_owner"
+            predecessor_reachability = {reachable_by_id.get(region_id, False) for region_id in node.predecessor_ids}
+            if len(predecessor_reachability) > 1:
                 refusal_reason = "mixed_reachability_predecessors"
-                shared_region_ids.append(node.region_id)
-            elif predecessor_count == 0:
-                ownership_kind = "entry_fragment"
-                refusal_reason = "disconnected_from_entry"
-                entry_fragment_region_ids.append(node.region_id)
-            elif predecessor_count == 1:
-                ownership_kind = "single_owner"
-                refusal_reason = None
             else:
-                ownership_kind = "shared_owner"
-                predecessor_reachability = {reachable_by_id.get(region_id, False) for region_id in node.predecessor_ids}
-                if len(predecessor_reachability) > 1:
-                    refusal_reason = "mixed_reachability_predecessors"
-                else:
-                    refusal_reason = "multiple_predecessors"
-                shared_region_ids.append(node.region_id)
+                refusal_reason = "multiple_predecessors"
+            shared_region_ids.append(node.region_id)
 
-            records.append(
-                CFGOwnershipRecord(
-                    region_id=node.region_id,
-                    ownership_kind=ownership_kind,
-                    refusal_reason=refusal_reason,
-                    predecessor_count=predecessor_count,
-                    successor_count=successor_count,
-                    reachable_from_entry=node.reachable_from_entry,
-                )
+        records.append(
+            CFGOwnershipRecord(
+                region_id=node.region_id,
+                ownership_kind=ownership_kind,
+                refusal_reason=refusal_reason,
+                predecessor_count=predecessor_count,
+                successor_count=successor_count,
+                reachable_from_entry=node.reachable_from_entry,
             )
-
-        return CFGOwnershipArtifact(
-            snapshot=snapshot,
-            records=tuple(records),
-            shared_region_ids=tuple(shared_region_ids),
-            entry_fragment_region_ids=tuple(entry_fragment_region_ids),
         )
 
-    return _impl()
+    return CFGOwnershipArtifact(
+        snapshot=snapshot,
+        records=tuple(records),
+        shared_region_ids=tuple(shared_region_ids),
+        entry_fragment_region_ids=tuple(entry_fragment_region_ids),
+    )

@@ -1,9 +1,14 @@
+"""Layer: Recovery metadata.
+
+Responsibility: summarize helper/wrapper eligibility from recovered function effects.
+Forbidden: synthesizing helper signatures from names, source, COD, or rendered C.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
 
-from .function_effect_summary import FunctionEffectSummary, summarize_x86_16_function_effects
+from .function_effect_summary import FunctionEffectSource, FunctionEffectSummary, summarize_x86_16_function_effects
 
 __all__ = [
     "HelperEligibilityRefusal",
@@ -14,22 +19,28 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class HelperEligibilityRefusal:
+    """Reason that a function is not eligible for helper-wrapper treatment."""
+
     kind: str
     detail: str
 
 
 @dataclass(frozen=True, slots=True)
 class HelperEligibilitySummary:
+    """Decision summary for helper/wrapper eligibility from recovered effects."""
+
     status: str
     candidate_kind: str = "none"
     effect_summary: FunctionEffectSummary = FunctionEffectSummary()
     refusals: tuple[HelperEligibilityRefusal, ...] = ()
 
     def brief(self) -> str:
+        """Return a compact stable helper eligibility diagnostic string."""
         refusal_kinds = ",".join(item.kind for item in self.refusals) or "none"
         return f"status={self.status} candidate={self.candidate_kind} refusals={refusal_kinds}"
 
     def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible representation of helper eligibility."""
         return {
             "status": self.status,
             "candidate_kind": self.candidate_kind,
@@ -38,8 +49,10 @@ class HelperEligibilitySummary:
         }
 
 
-def summarize_x86_16_helper_eligibility(source: Any) -> HelperEligibilitySummary:
-    def _impl():
+def summarize_x86_16_helper_eligibility(source: FunctionEffectSource) -> HelperEligibilitySummary:
+    """Classify helper-wrapper eligibility from existing function-effect facts."""
+
+    def _impl() -> HelperEligibilitySummary:
         effect_summary = summarize_x86_16_function_effects(source)
         empty_summary = summarize_x86_16_function_effects({})
         if effect_summary == empty_summary:
@@ -98,11 +111,7 @@ def summarize_x86_16_helper_eligibility(source: Any) -> HelperEligibilitySummary
                     "helper-wrapper eligibility requires a settled return kind",
                 )
             )
-        stack_probe_helper = False
-        if isinstance(source, Mapping):
-            stack_probe_helper = bool(source.get("stack_probe_helper", False))
-        else:
-            stack_probe_helper = bool(getattr(source, "stack_probe_helper", False))
+        stack_probe_helper = bool(source.get("stack_probe_helper", False))
         if stack_probe_helper and effect_summary.helper_return_state == "unknown":
             refusals.append(
                 HelperEligibilityRefusal(

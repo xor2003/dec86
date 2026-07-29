@@ -68,6 +68,72 @@ def test_materialize_codegen_global_externs_inserts_used_scalar():
     assert updated.index("extern unsigned short cRow;") < updated.index("void ReInitBars()")
 
 
+def test_materialize_codegen_global_externs_ignores_struct_member_name_specs():
+    codegen = SimpleNamespace(
+        _inertia_global_declaration_specs_8616=(
+            ("unsigned short", "field_0", None),
+            ("struct { unsigned char field_0; unsigned char field_1; }", "abarWork", 1),
+        )
+    )
+    c_text = (
+        "short BubbleSort(void)\\n"
+        "{\\n"
+        "    if (abarWork[1].field_0 < abarWork[0].field_0) {\\n"
+        "        return 1;\\n"
+        "    }\\n"
+        "    return 0;\\n"
+        "}\\n"
+    )
+
+    updated = _materialize_codegen_global_externs_text_8616(c_text, codegen)
+
+    assert "extern unsigned short field_0;" not in updated
+    assert "extern struct { unsigned char field_0; unsigned char field_1; } abarWork[1];" in updated
+
+
+def test_materialize_codegen_global_externs_ignores_prototype_type_and_parameter_names():
+    codegen = SimpleNamespace(
+        _inertia_global_declaration_specs_8616=(
+            ("unsigned short", "abarWork_entry", None),
+            ("unsigned short", "a0", None),
+            ("unsigned short", "a1", None),
+        )
+    )
+    c_text = (
+        "int Swaps(struct abarWork_entry *a0, struct abarWork_entry *a1);\n\n"
+        "void BubbleSort(void)\n"
+        "{\n"
+        "    return;\n"
+        "}\n"
+    )
+
+    updated = _materialize_codegen_global_externs_text_8616(c_text, codegen)
+
+    assert updated == c_text
+
+
+def test_materialize_codegen_global_externs_orders_struct_definition_before_dependent_prototype():
+    codegen = SimpleNamespace(
+        _inertia_global_declaration_specs_8616=(
+            ("struct abarWork_entry { unsigned char field_0; unsigned char field_1; }", "abarWork", 1),
+        )
+    )
+    c_text = (
+        "int Swaps(struct abarWork_entry *a0, struct abarWork_entry *a1);\n\n"
+        "void BubbleSort(void)\n"
+        "{\n"
+        "    Swaps(&abarWork[0], &abarWork[1]);\n"
+        "}\n"
+    )
+
+    updated = _materialize_codegen_global_externs_text_8616(c_text, codegen)
+
+    struct_decl = (
+        "extern struct abarWork_entry { unsigned char field_0; unsigned char field_1; } abarWork[1];"
+    )
+    assert updated.index(struct_decl) < updated.index("int Swaps(")
+
+
 def test_dump_layer_state_uses_next_attempt_when_present(tmp_path):
     project = SimpleNamespace(
         _inertia_dump_layers=True,

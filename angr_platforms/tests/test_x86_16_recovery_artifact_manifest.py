@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 from angr_platforms.X86_16.recovery_artifact_manifest import (
@@ -7,7 +9,7 @@ from angr_platforms.X86_16.recovery_artifact_manifest import (
 from angr_platforms.X86_16.recovery_artifact_writer import RecoveryArtifactWriteResult
 
 
-def test_recovery_artifact_output_descriptor_is_deterministic():
+def test_recovery_artifact_output_descriptor_is_deterministic() -> None:
     assert describe_x86_16_recovery_artifact_outputs() == (
         {
             "kind": "function_recovery",
@@ -36,7 +38,7 @@ def test_recovery_artifact_output_descriptor_is_deterministic():
     )
 
 
-def test_recovery_artifact_report_sorts_write_rows():
+def test_recovery_artifact_report_sorts_write_rows() -> None:
     report = build_x86_16_recovery_artifact_report(
         (
             RecoveryArtifactWriteResult(Path("/tmp/z.json"), "function_recovery", 1),

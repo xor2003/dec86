@@ -1,6 +1,14 @@
+"""Layer: Helper boundary.
+
+Responsibility: lower proven string-instruction artifacts into typed intrinsic records.
+Forbidden: inventing string helper calls without artifact evidence and recorded refusals.
+"""
+
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
+from typing import Protocol
 
 from .string_instruction_artifact import StringInstructionArtifact, StringInstructionRecord
 
@@ -14,8 +22,29 @@ __all__ = [
 ]
 
 
+class _FunctionManagerLike(Protocol):
+    """Minimal angr function-manager surface used by this metadata hook."""
+
+    def function(self, *, addr: int, create: bool) -> object | None:
+        """Return an angr function object when one is already present."""
+
+
+class _KnowledgeBaseLike(Protocol):
+    """Minimal angr knowledge-base surface used by this metadata hook."""
+
+    functions: _FunctionManagerLike
+
+
+class _ProjectLike(Protocol):
+    """Minimal angr project surface used by this metadata hook."""
+
+    kb: _KnowledgeBaseLike
+
+
 @dataclass(frozen=True, slots=True)
 class StringIntrinsicRecord:
+    """Generic intrinsic classification proven from string-instruction artifacts."""
+
     index: int
     family: str
     record_indexes: tuple[int, ...]
@@ -26,6 +55,8 @@ class StringIntrinsicRecord:
 
 @dataclass(frozen=True, slots=True)
 class StringIntrinsicRefusal:
+    """Reason a string-instruction artifact could not be lowered generically."""
+
     kind: str
     detail: str
     record_indexes: tuple[int, ...] = ()
@@ -33,10 +64,13 @@ class StringIntrinsicRefusal:
 
 @dataclass(frozen=True, slots=True)
 class StringIntrinsicArtifact:
+    """Lowered intrinsic records plus explicit refusal evidence."""
+
     records: tuple[StringIntrinsicRecord, ...] = ()
     refusals: tuple[StringIntrinsicRefusal, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize intrinsic evidence for function metadata/reporting."""
         return {
             "records": [
                 {
@@ -61,9 +95,13 @@ class StringIntrinsicArtifact:
 
 
 def _single_record_family(record: StringInstructionRecord) -> str | None:
-    def _impl():
+    def _impl() -> str | None:
         if record.family == "movs" and record.repeat_kind != "none":
-            return "memmove_class" if record.direction_mode == "backward" else "memcpy_class"
+            if record.direction_mode == "forward":
+                return "memcpy_class"
+            if record.direction_mode == "backward":
+                return "memmove_class"
+            return "movs_class"
         if record.family == "stos" and record.repeat_kind != "none":
             return "memset_class"
         if (
@@ -81,7 +119,7 @@ def _single_record_family(record: StringInstructionRecord) -> str | None:
 
 
 def _mixed_movs_family(records: tuple[StringInstructionRecord, ...]) -> StringIntrinsicRecord | None:
-    def _impl():
+    def _impl() -> StringIntrinsicRecord | None:
         if not records:
             return None
         if not all(record.family == "movs" for record in records):
@@ -126,7 +164,9 @@ def _scan_tail_family(records: tuple[StringInstructionRecord, ...]) -> StringInt
 
 
 def build_x86_16_string_intrinsic_artifact(artifact: StringInstructionArtifact) -> StringIntrinsicArtifact:
-    def _impl():
+    """Lower proven string-instruction evidence into generic intrinsic classes."""
+
+    def _impl() -> StringIntrinsicArtifact:
         mixed_movs = _mixed_movs_family(artifact.records)
         if artifact.refusals and mixed_movs is None:
             return StringIntrinsicArtifact(
@@ -223,10 +263,11 @@ def _render_header() -> str:
 
 
 def _render_compact_intrinsic_c(name: str, artifact: StringIntrinsicArtifact) -> str | None:
-    def _impl():
+    def _impl() -> str | None:
         prototype_map = {
             "memcpy_class": "void __x86_16_movs(unsigned short width);",
             "memmove_class": "void __x86_16_movs(unsigned short width);",
+            "movs_class": "void __x86_16_movs(unsigned short width);",
             "memmove_overlap_class": "void __x86_16_movs_overlap_select(void);",
             "memset_class": "void __x86_16_stos(unsigned short width);",
             "strlen_class": "unsigned short __x86_16_scas_zterm_len(unsigned short width);",
@@ -251,7 +292,7 @@ def _render_compact_intrinsic_c(name: str, artifact: StringIntrinsicArtifact) ->
             if prototype not in declared_prototypes:
                 prototype_lines.append(prototype)
                 declared_prototypes.add(prototype)
-            if rec.family in {"memcpy_class", "memmove_class"}:
+            if rec.family in {"memcpy_class", "memmove_class", "movs_class"}:
                 lines.append(f"    /* {rec.family}, width={rec.width}, direction={rec.direction_mode} */")
                 lines.append(f"    __x86_16_movs({rec.width});")
                 continue
@@ -291,7 +332,9 @@ def _render_compact_intrinsic_c(name: str, artifact: StringIntrinsicArtifact) ->
 
 
 def render_x86_16_string_intrinsic_c(name: str, artifact: StringIntrinsicArtifact) -> str | None:
-    def _impl():
+    """Render diagnostic C for proven string intrinsic classes."""
+
+    def _impl() -> str | None:
         if not artifact.records:
             return None
         compact = _render_compact_intrinsic_c(name, artifact)
@@ -302,7 +345,7 @@ def render_x86_16_string_intrinsic_c(name: str, artifact: StringIntrinsicArtifac
         declared_length = False
         declared_compare = False
         for rec in artifact.records:
-            if rec.family in {"memcpy_class", "memmove_class"}:
+            if rec.family in {"memcpy_class", "memmove_class", "movs_class"}:
                 lines.append(f"    /* {rec.family}, width={rec.width}, direction={rec.direction_mode} */")
                 lines.append(f"    __x86_16_movs(&__x86_16_state, {rec.width});")
                 continue
@@ -350,7 +393,8 @@ def render_x86_16_string_intrinsic_c(name: str, artifact: StringIntrinsicArtifac
     return _impl()
 
 
-def apply_x86_16_string_instruction_lowering(project, codegen) -> bool:
+def apply_x86_16_string_instruction_lowering(project: _ProjectLike, codegen: object) -> bool:
+    """Attach lowered string-intrinsic metadata at the angr/codegen dynamic boundary."""
     cfunc = getattr(codegen, "cfunc", None)
     if cfunc is None:
         return False
@@ -364,7 +408,7 @@ def apply_x86_16_string_instruction_lowering(project, codegen) -> bool:
     if not isinstance(string_artifact, StringInstructionArtifact):
         return False
     intrinsic_artifact = build_x86_16_string_intrinsic_artifact(string_artifact)
-    setattr(codegen, "_inertia_string_intrinsic_artifact", intrinsic_artifact)
+    typing.cast(typing.Any, codegen)._inertia_string_intrinsic_artifact = intrinsic_artifact
     info = getattr(function, "info", None)
     if isinstance(info, dict):
         info["x86_16_string_intrinsic_artifact"] = intrinsic_artifact.to_dict()

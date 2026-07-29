@@ -4,10 +4,11 @@ from types import SimpleNamespace
 
 import archinfo
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeLong, SimTypeShort
+from angr.sim_type import SimStruct, SimTypeChar, SimTypeLong, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _dead_code_elimination_after_flag_prune_8616,
+    _postprocess_runtime_config_8616,
 )
 from angr_platforms.X86_16.postprocess.optimization.dce import (
     _dead_code_elimination_8616,
@@ -73,6 +74,22 @@ def test_dce_refuses_unread_temp_assignment_from_dereference():
     assert getattr(codegen, "dce_keep_unknown", 0) == 1
 
 
+def test_dce_refuses_cyclic_unread_expression_without_recursing():
+    codegen = _mk_codegen_with_statements([])
+    tmp = _mk_cvar(codegen, "tmp_1", 0)
+    rhs = structured_c.CBinaryOp("Add", _const(codegen, 1), _const(codegen, 2), codegen=codegen)
+    rhs.lhs = rhs
+    stmt = structured_c.CAssignment(tmp, rhs, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([stmt], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is False
+    assert list(codegen.cfunc.statements.statements) == [stmt]
+    assert getattr(codegen, "dce_deleted", 0) == 0
+    assert getattr(codegen, "dce_keep_unknown", 0) == 1
+
+
 def test_dce_deletes_unread_temp_assignment_from_indexed_global_read():
     codegen = _mk_codegen_with_statements([])
     tmp = _mk_cvar(codegen, "tmp_1", 0)
@@ -87,6 +104,34 @@ def test_dce_deletes_unread_temp_assignment_from_indexed_global_read():
         codegen=codegen,
     )
     rhs = structured_c.CIndexedVariable(base, index, variable_type=SimTypeShort(False), codegen=codegen)
+    stmt = structured_c.CAssignment(tmp, rhs, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([stmt], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == []
+    assert getattr(codegen, "dce_dead_memory_read_candidates", 0) == 1
+    assert getattr(codegen, "dce_dead_memory_read_deleted", 0) == 1
+
+
+def test_dce_deletes_unread_temp_assignment_from_indexed_global_field_read():
+    codegen = _mk_codegen_with_statements([])
+    tmp = _mk_cvar(codegen, "tmp_1", 0)
+    index = structured_c.CVariable(
+        SimStackVariable(-4, 2, base="bp", name="i", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    struct_type = SimStruct({"field_0": SimTypeChar(False)}, name="work_entry")
+    base = structured_c.CVariable(
+        SimMemoryVariable(0x44, 2, name="g_work"),
+        variable_type=struct_type,
+        codegen=codegen,
+    )
+    indexed = structured_c.CIndexedVariable(base, index, variable_type=struct_type, codegen=codegen)
+    field = structured_c.CStructField(struct_type, 0, "field_0", codegen=codegen)
+    rhs = structured_c.CVariableField(indexed, field, var_is_ptr=False, codegen=codegen)
     stmt = structured_c.CAssignment(tmp, rhs, codegen=codegen)
     codegen.cfunc.statements = structured_c.CStatements([stmt], codegen=codegen)
 
@@ -147,6 +192,29 @@ def test_dce_keeps_direct_global_memory_assignment_with_call_rhs():
     assert getattr(codegen, "dce_deleted", 0) == 0
 
 
+def test_dce_preserves_effectful_call_when_dropping_unused_temp_result_declaration():
+    codegen = _mk_codegen_with_statements([])
+    tmp_var = SimRegisterVariable(0, 2, name="vvar_21")
+    tmp = structured_c.CVariable(tmp_var, variable_type=SimTypeShort(False), codegen=codegen)
+    arg = _mk_cvar(codegen, "arg_1", 2)
+    call = structured_c.CFunctionCall("outtext", None, [arg], codegen=codegen)
+    stmt = structured_c.CAssignment(tmp, call, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([stmt], codegen=codegen)
+    codegen.cfunc.variables_in_use = {tmp_var: tmp}
+    codegen.cfunc.unified_local_vars = {tmp_var: {(tmp, SimTypeShort(False))}}
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    statements = list(codegen.cfunc.statements.statements)
+    assert len(statements) == 1
+    assert isinstance(statements[0], structured_c.CExpressionStatement)
+    assert statements[0].expr is call
+    assert getattr(codegen, "dce_deleted", 0) == 1
+    assert codegen.cfunc.variables_in_use == {}
+    assert codegen.cfunc.unified_local_vars == {}
+
+
 def test_dce_deletes_unread_local_assignment_from_pure_global_address():
     codegen = _mk_codegen_with_statements([])
     local = structured_c.CVariable(
@@ -168,6 +236,77 @@ def test_dce_deletes_unread_local_assignment_from_pure_global_address():
     assert changed is True
     assert list(codegen.cfunc.statements.statements) == []
     assert getattr(codegen, "dce_deleted", 0) == 1
+
+
+def test_dce_keeps_evidenced_direct_stack_update_but_deletes_later_dead_overwrite():
+    codegen = _mk_codegen_with_statements([])
+    local = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="i", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    update = structured_c.CAssignment(
+        local,
+        structured_c.CBinaryOp("Add", local, _const(codegen, 1), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4018},
+    )
+    dead_overwrite = structured_c.CAssignment(
+        local,
+        _const(codegen, 7),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020},
+    )
+    codegen._inertia_direct_stack_update_evidence_8616 = (
+        (
+            ("offset", -2),
+            ("width", 2),
+            ("delta", 1),
+            ("ins_addr", 0x4018),
+        ),
+    )
+    codegen.cfunc.statements = structured_c.CStatements([update, dead_overwrite], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == [update]
+    assert getattr(codegen, "dce_deleted", 0) == 1
+    assert getattr(codegen, "dce_keep_protected", 0) >= 1
+
+
+def test_dce_keeps_stack_local_read_only_by_nested_loop_body():
+    codegen = _mk_codegen_with_statements([])
+    local = structured_c.CVariable(
+        SimStackVariable(-6, 2, base="bp", name="iLength", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    global_value = structured_c.CVariable(
+        SimMemoryVariable(0xB4C, 2, name="abarWork"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    loop_guard = structured_c.CBinaryOp("CmpNE", _mk_cvar(codegen, "tmp_guard", 4), _const(codegen, 0), codegen=codegen)
+    nested_read = structured_c.CIfBreak(
+        structured_c.CBinaryOp("CmpLE", global_value, local, codegen=codegen),
+        codegen=codegen,
+    )
+    loop = structured_c.CForLoop(
+        None,
+        loop_guard,
+        None,
+        structured_c.CStatements([nested_read], codegen=codegen),
+        codegen=codegen,
+    )
+    stmt = structured_c.CAssignment(local, _const(codegen, 7), codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([stmt, loop], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is False
+    assert list(codegen.cfunc.statements.statements) == [stmt, loop]
+    assert getattr(codegen, "dce_deleted", 0) == 0
 
 
 def test_dce_deletes_standalone_pure_mkfp_dereference_expression():
@@ -209,6 +348,129 @@ def test_dce_deletes_wrapped_standalone_pure_mkfp_dereference_expression():
     assert list(codegen.cfunc.statements.statements) == []
     assert getattr(codegen, "dce_pure_expression_candidates", 0) == 1
     assert getattr(codegen, "dce_pure_expression_deleted", 0) == 1
+
+
+def test_dce_deletes_pure_mkfp_carrier_chain_to_fixed_point():
+    codegen = _mk_codegen_with_statements([])
+    seg_source = _mk_cvar(codegen, "vvar_55", 55)
+    off_left = _mk_cvar(codegen, "vvar_706", 706)
+    off_right = _mk_cvar(codegen, "vvar_707", 707)
+    seg_carrier = _mk_cvar(codegen, "vvar_714", 714)
+    off_carrier = _mk_cvar(codegen, "vvar_715", 715)
+    assign_seg = structured_c.CAssignment(seg_carrier, seg_source, codegen=codegen)
+    assign_off = structured_c.CAssignment(
+        off_carrier,
+        structured_c.CBinaryOp("Add", off_left, off_right, codegen=codegen),
+        codegen=codegen,
+    )
+    addr = structured_c.CFunctionCall("MK_FP", None, [seg_carrier, _const(codegen, 0)], codegen=codegen)
+    deref = structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CBinaryOp("Add", addr, off_carrier, codegen=codegen),
+        codegen=codegen,
+    )
+    stmt = structured_c.CExpressionStatement(deref, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([assign_seg, assign_off, stmt], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == []
+    assert getattr(codegen, "dce_pure_expression_candidates", 0) == 1
+    assert getattr(codegen, "dce_pure_expression_deleted", 0) == 1
+    assert getattr(codegen, "dce_deleted", 0) == 3
+
+
+def test_dce_deletes_standalone_pure_mkfp_call_expression():
+    codegen = _mk_codegen_with_statements([])
+    seg = _mk_cvar(codegen, "tmp_seg", 0)
+    off = _mk_cvar(codegen, "tmp_off", 2)
+    call = structured_c.CFunctionCall("MK_FP", None, [seg, off], codegen=codegen)
+    stmt = structured_c.CExpressionStatement(call, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([stmt], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == []
+    assert getattr(codegen, "dce_pure_expression_candidates", 0) == 1
+    assert getattr(codegen, "dce_pure_expression_deleted", 0) == 1
+
+
+def test_dce_deletes_pure_mkfp_call_carrier_chain_to_fixed_point():
+    codegen = _mk_codegen_with_statements([])
+    seg_source = _mk_cvar(codegen, "vvar_55", 55)
+    off_left = _mk_cvar(codegen, "vvar_706", 706)
+    off_right = _mk_cvar(codegen, "vvar_707", 707)
+    seg_carrier = _mk_cvar(codegen, "vvar_711", 711)
+    off_carrier = _mk_cvar(codegen, "vvar_708", 708)
+    assign_seg = structured_c.CAssignment(seg_carrier, seg_source, codegen=codegen)
+    assign_off = structured_c.CAssignment(
+        off_carrier,
+        structured_c.CBinaryOp("Add", off_left, off_right, codegen=codegen),
+        codegen=codegen,
+    )
+    call = structured_c.CFunctionCall("MK_FP", None, [seg_carrier, off_carrier], codegen=codegen)
+    stmt = structured_c.CExpressionStatement(call, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([assign_seg, assign_off, stmt], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == []
+    assert getattr(codegen, "dce_pure_expression_candidates", 0) == 1
+    assert getattr(codegen, "dce_pure_expression_deleted", 0) == 1
+    assert getattr(codegen, "dce_deleted", 0) == 3
+
+
+def test_dce_deletes_unused_dirty_address_helper_sink_to_fixed_point():
+    codegen = _mk_codegen_with_statements([])
+    codegen._inertia_dce_allow_storage_free_dirty_8616 = True
+    codegen._inertia_dce_allow_dirty_value_reads_8616 = True
+    seg_source = _mk_cvar(codegen, "vvar_55", 55)
+    off_left = _mk_cvar(codegen, "vvar_706", 706)
+    off_right = _mk_cvar(codegen, "vvar_707", 707)
+    seg_carrier = _mk_cvar(codegen, "vvar_714", 714)
+    off_carrier = _mk_cvar(codegen, "vvar_715", 715)
+    addr_carrier = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=716, idx=716, name="vvar_716", reg_offset=0, bits=16),
+        codegen=codegen,
+    )
+    value_carrier = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=717, idx=717, name="vvar_717", reg_offset=2, bits=16),
+        codegen=codegen,
+    )
+    assign_seg = structured_c.CAssignment(seg_carrier, seg_source, codegen=codegen)
+    assign_off = structured_c.CAssignment(
+        off_carrier,
+        structured_c.CBinaryOp("Add", off_left, off_right, codegen=codegen),
+        codegen=codegen,
+    )
+    assign_addr = structured_c.CAssignment(
+        addr_carrier,
+        structured_c.CFunctionCall("MK_FP", None, [seg_carrier, _const(codegen, 0)], codegen=codegen),
+        codegen=codegen,
+    )
+    assign_value = structured_c.CAssignment(
+        value_carrier,
+        structured_c.CUnaryOp(
+            "Dereference",
+            structured_c.CBinaryOp("Add", addr_carrier, off_carrier, codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = structured_c.CStatements(
+        [assign_seg, assign_off, assign_addr, assign_value],
+        codegen=codegen,
+    )
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == []
+    assert getattr(codegen, "dce_dirty_value_deleted", 0) >= 2
+    assert getattr(codegen, "dce_deleted", 0) == 4
 
 
 def test_dce_refuses_standalone_unknown_call_dereference_expression():
@@ -267,6 +529,266 @@ def test_dce_deletes_pure_named_local_self_assignment():
     assert changed is True
     assert list(codegen.cfunc.statements.statements) == []
     assert getattr(codegen, "dce_deleted", 0) == 1
+
+
+def test_dce_deletes_overwritten_local_dirty_setup_before_read():
+    codegen = _mk_codegen_with_statements([])
+    local = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="i", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    dirty = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=27, idx=27, name="vvar_27", reg_offset=0, bits=16),
+        codegen=codegen,
+    )
+    overwritten = structured_c.CAssignment(local, dirty, codegen=codegen)
+    initializer = structured_c.CAssignment(local, _const(codegen, 0), codegen=codegen)
+    ret = structured_c.CReturn(local, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([overwritten, initializer, ret], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == [initializer, ret]
+    assert getattr(codegen, "dce_overwritten_local_candidates", 0) == 1
+    assert getattr(codegen, "dce_overwritten_local_deleted", 0) == 1
+
+
+def test_dce_refuses_overwritten_local_side_effecting_rhs():
+    codegen = _mk_codegen_with_statements([])
+    local = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="i", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    side_effect = structured_c.CFunctionCall("helper", SimTypeShort(False), args=(), codegen=codegen)
+    overwritten = structured_c.CAssignment(local, side_effect, codegen=codegen)
+    initializer = structured_c.CAssignment(local, _const(codegen, 0), codegen=codegen)
+    ret = structured_c.CReturn(local, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([overwritten, initializer, ret], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is False
+    assert list(codegen.cfunc.statements.statements) == [overwritten, initializer, ret]
+    assert getattr(codegen, "dce_overwritten_local_candidates", 0) == 1
+    assert getattr(codegen, "dce_overwritten_local_refused", 0) == 1
+
+
+def test_dce_refuses_overwritten_function_argument_setup():
+    codegen = _mk_codegen_with_statements([])
+    arg = structured_c.CVariable(
+        SimStackVariable(4, 2, base="bp", name="arg", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [arg]
+    overwritten = structured_c.CAssignment(arg, _const(codegen, 1), codegen=codegen)
+    initializer = structured_c.CAssignment(arg, _const(codegen, 0), codegen=codegen)
+    ret = structured_c.CReturn(arg, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([overwritten, initializer, ret], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is False
+    assert list(codegen.cfunc.statements.statements) == [overwritten, initializer, ret]
+    assert getattr(codegen, "dce_overwritten_local_deleted", 0) == 0
+
+
+def test_dce_deletes_frame_anchor_assignment_even_when_dirty_carriers_read_it():
+    codegen = _mk_codegen_with_statements([])
+    frame_anchor = structured_c.CVariable(
+        SimStackVariable(0, 2, base="bp", name="local_0", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    source = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=17, idx=17, name="vvar_17", reg_offset=14, bits=16),
+        codegen=codegen,
+    )
+    dirty_sink = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=878, idx=878, name="vvar_878", reg_offset=18, bits=16),
+        codegen=codegen,
+    )
+    frame_setup = structured_c.CAssignment(frame_anchor, source, codegen=codegen, tags={"ins_addr": 0x1003})
+    carrier = structured_c.CAssignment(dirty_sink, frame_anchor, codegen=codegen, tags={"ins_addr": 0x1005})
+    codegen.cfunc.statements = structured_c.CStatements([frame_setup, carrier], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == [carrier]
+    assert getattr(codegen, "dce_frame_anchor_candidates", 0) == 1
+    assert getattr(codegen, "dce_frame_anchor_deleted", 0) == 1
+
+
+def test_dce_deletes_frame_anchor_assignment_read_by_dirty_carrier_in_other_block():
+    codegen = _mk_codegen_with_statements([])
+    frame_anchor = structured_c.CVariable(
+        SimStackVariable(0, 2, base="bp", name="local_0", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    source = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=17, idx=17, name="vvar_17", reg_offset=14, bits=16),
+        codegen=codegen,
+    )
+    dirty_sink = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=878, idx=878, name="vvar_878", reg_offset=18, bits=16),
+        codegen=codegen,
+    )
+    frame_setup = structured_c.CAssignment(frame_anchor, source, codegen=codegen, tags={"ins_addr": 0x1003})
+    carrier = structured_c.CAssignment(dirty_sink, frame_anchor, codegen=codegen, tags={"ins_addr": 0x1005})
+    first_block = structured_c.CStatements([frame_setup], codegen=codegen)
+    second_block = structured_c.CStatements([carrier], codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([first_block, second_block], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(first_block.statements) == []
+    assert list(second_block.statements) == [carrier]
+    assert getattr(codegen, "dce_frame_anchor_deleted", 0) == 1
+
+
+def test_dce_refuses_frame_anchor_assignment_with_side_effecting_rhs():
+    codegen = _mk_codegen_with_statements([])
+    frame_anchor = structured_c.CVariable(
+        SimStackVariable(0, 2, base="bp", name="local_0", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    side_effect = structured_c.CFunctionCall("helper", SimTypeShort(False), args=(), codegen=codegen)
+    frame_setup = structured_c.CAssignment(frame_anchor, side_effect, codegen=codegen, tags={"ins_addr": 0x1003})
+    codegen.cfunc.statements = structured_c.CStatements([frame_setup], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is False
+    assert list(codegen.cfunc.statements.statements) == [frame_setup]
+    assert getattr(codegen, "dce_frame_anchor_candidates", 0) == 1
+    assert getattr(codegen, "dce_frame_anchor_refused", 0) == 1
+
+
+def test_dce_refuses_frame_anchor_assignment_read_by_return():
+    codegen = _mk_codegen_with_statements([])
+    frame_anchor = structured_c.CVariable(
+        SimStackVariable(0, 2, base="bp", name="local_0", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    source = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=17, idx=17, name="vvar_17", reg_offset=14, bits=16),
+        codegen=codegen,
+    )
+    frame_setup = structured_c.CAssignment(frame_anchor, source, codegen=codegen, tags={"ins_addr": 0x1003})
+    ret = structured_c.CReturn(frame_anchor, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([frame_setup, ret], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is False
+    assert list(codegen.cfunc.statements.statements) == [frame_setup, ret]
+    assert getattr(codegen, "dce_frame_anchor_candidates", 0) == 1
+    assert getattr(codegen, "dce_frame_anchor_refused", 0) == 1
+    assert getattr(codegen, "dce_frame_anchor_deleted", 0) == 0
+
+
+def test_dce_deletes_untagged_unused_local_artifact_with_incomplete_calls():
+    codegen = _mk_codegen_with_statements([])
+    local = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_0", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    temp = _mk_cvar(codegen, "vvar_17", 0)
+    artifact = structured_c.CAssignment(local, temp, codegen=codegen)
+    call = structured_c.CExpressionStatement(
+        structured_c.CFunctionCall("helper", SimTypeShort(False), args=(), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = structured_c.CStatements([artifact, call], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == [call]
+    assert getattr(codegen, "dce_deleted", 0) == 1
+
+
+def test_dce_deletes_local_kept_alive_only_by_dirty_carrier_chain():
+    codegen = _mk_codegen_with_statements([])
+    codegen._inertia_dce_allow_storage_free_dirty_8616 = True
+    codegen._inertia_dce_allow_dirty_value_reads_8616 = True
+    local = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_0", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    temp = _mk_cvar(codegen, "vvar_17", 0)
+    dirty_a = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=27, idx=27, name="vvar_27", bits=16),
+        codegen=codegen,
+    )
+    dirty_b = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=28, idx=28, name="vvar_28", bits=16),
+        codegen=codegen,
+    )
+    artifact = structured_c.CAssignment(local, temp, codegen=codegen)
+    carrier_a = structured_c.CAssignment(dirty_a, local, codegen=codegen)
+    carrier_b = structured_c.CAssignment(dirty_b, dirty_a, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([artifact, carrier_a, carrier_b], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == []
+
+
+def test_dce_preserves_dirty_carrier_with_observable_read():
+    codegen = _mk_codegen_with_statements([])
+    codegen._inertia_dce_allow_storage_free_dirty_8616 = True
+    codegen._inertia_dce_allow_dirty_value_reads_8616 = True
+    local = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_0", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    dirty = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=27, idx=27, name="vvar_27", bits=16),
+        codegen=codegen,
+    )
+    carrier = structured_c.CAssignment(dirty, local, codegen=codegen)
+    ret = structured_c.CReturn(dirty, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([carrier, ret], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is False
+    assert list(codegen.cfunc.statements.statements) == [carrier, ret]
+
+
+def test_dce_preserves_tagged_unused_local_assignment_with_incomplete_calls():
+    codegen = _mk_codegen_with_statements([])
+    local = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_0", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    temp = _mk_cvar(codegen, "vvar_17", 0)
+    tagged = structured_c.CAssignment(local, temp, tags={"ins_addr": 0x1000}, codegen=codegen)
+    call = structured_c.CExpressionStatement(
+        structured_c.CFunctionCall("helper", SimTypeShort(False), args=(), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = structured_c.CStatements([tagged, call], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is False
+    assert list(codegen.cfunc.statements.statements) == [tagged, call]
+    assert getattr(codegen, "dce_deleted", 0) == 0
 
 
 def test_dce_deletes_unread_pure_named_local_copy_after_callsite_materialization():
@@ -348,7 +870,7 @@ def test_dce_deletes_unproven_dirty_register_overwrite_of_live_argument():
     assert getattr(codegen, "dce_arg_overwrite_artifact_deleted", 0) == 1
 
 
-def test_dce_deletes_unproven_dirty_register_overwrite_using_cod_stack_alias():
+def test_dce_refuses_unproven_dirty_register_overwrite_using_only_cod_stack_alias():
     codegen = _mk_codegen_with_statements([])
     codegen.cfunc.addr = 0x4010
     codegen.project._inertia_cod_metadata_by_func_addr_8616 = {
@@ -369,9 +891,9 @@ def test_dce_deletes_unproven_dirty_register_overwrite_using_cod_stack_alias():
 
     changed = _dead_code_elimination_8616(codegen)
 
-    assert changed is True
-    assert list(codegen.cfunc.statements.statements) == [ret]
-    assert getattr(codegen, "dce_arg_overwrite_artifact_deleted", 0) == 1
+    assert changed is False
+    assert list(codegen.cfunc.statements.statements) == [overwrite, ret]
+    assert getattr(codegen, "dce_arg_overwrite_artifact_deleted", 0) == 0
 
 
 def test_dce_deletes_tag_only_argument_overwrite_without_stack_store_evidence():
@@ -648,6 +1170,28 @@ def test_post_flag_dirty_dce_deletes_unread_structured_body_carrier():
     assert list(if_node.condition_and_nodes[0][1].statements) == []
 
 
+def test_post_flag_dirty_dce_deletes_unread_switch_case_carrier():
+    codegen = _mk_codegen_with_statements([])
+    dirty = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=225, idx=225, name="tmp_225", bits=16),
+        codegen=codegen,
+    )
+    stmt = structured_c.CAssignment(dirty, _const(codegen, 7), codegen=codegen)
+    case_body = structured_c.CStatements([stmt], codegen=codegen)
+    switch = structured_c.CSwitchCase(
+        _mk_cvar(codegen, "tmp_switch", 9),
+        [(69, case_body)],
+        None,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = structured_c.CStatements([switch], codegen=codegen)
+
+    changed = _dead_code_elimination_after_flag_prune_8616(codegen)
+
+    assert changed is True
+    assert list(case_body.statements) == []
+
+
 def test_post_flag_dirty_dce_refuses_very_large_function_without_local_proof():
     codegen = _mk_codegen_with_statements([])
     codegen._inertia_postprocess_function_complexity_8616 = {"blocks": 76, "bytes": 0x1AE}
@@ -669,6 +1213,81 @@ def test_post_flag_dirty_dce_refuses_very_large_function_without_local_proof():
             "reason": "very_large_function_local_validation_unavailable",
         },
     )
+
+
+def test_post_flag_dirty_dce_allows_very_large_function_after_seqnode_replacement_proof():
+    codegen = _mk_codegen_with_statements([])
+    codegen._inertia_postprocess_function_complexity_8616 = {"blocks": 76, "bytes": 0x1AE}
+    codegen._inertia_allow_large_function_flag_dce_after_seqnode_replacement_8616 = True
+    dirty = structured_c.CDirtyExpression(
+        SimpleNamespace(varid=225, idx=225, name="tmp_225", bits=16),
+        codegen=codegen,
+    )
+    stmt = structured_c.CAssignment(dirty, _const(codegen, 7), codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([stmt], codegen=codegen)
+
+    changed = _dead_code_elimination_after_flag_prune_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == []
+    assert getattr(codegen, "dce_deleted", 0) == 1
+    assert getattr(codegen, "_inertia_large_function_flag_dce_after_seqnode_replacement_8616", 0) == 1
+    assert getattr(codegen, "_inertia_postprocess_refused_passes_8616", ()) == ()
+
+
+def test_postprocess_runtime_config_enables_large_flag_dce_after_seqnode_replacement():
+    project = SimpleNamespace(
+        _inertia_tail_validation_enabled=False,
+        _inertia_typed_switch_seqnode_replacement_8616=[
+            {
+                "function_addr": 0x1000,
+                "changed": True,
+                "replaced_count": 1,
+            }
+        ],
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000))
+
+    _postprocess_runtime_config_8616(project, codegen, ())
+
+    assert codegen._inertia_allow_large_function_flag_dce_after_seqnode_replacement_8616 is True
+
+
+def test_postprocess_runtime_config_matches_rebased_seqnode_replacement_addr():
+    project = SimpleNamespace(
+        _inertia_tail_validation_enabled=False,
+        _inertia_original_linear_delta=0xF2E0,
+        _inertia_typed_switch_seqnode_replacement_8616=[
+            {
+                "function_addr": 0x1000,
+                "changed": True,
+                "replaced_count": 1,
+            }
+        ],
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x102E0))
+
+    _postprocess_runtime_config_8616(project, codegen, ())
+
+    assert codegen._inertia_allow_large_function_flag_dce_after_seqnode_replacement_8616 is True
+
+
+def test_postprocess_runtime_config_does_not_enable_large_flag_dce_without_replacement():
+    project = SimpleNamespace(
+        _inertia_tail_validation_enabled=False,
+        _inertia_typed_switch_seqnode_replacement_8616=[
+            {
+                "function_addr": 0x1000,
+                "changed": False,
+                "replaced_count": 0,
+            }
+        ],
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000))
+
+    _postprocess_runtime_config_8616(project, codegen, ())
+
+    assert codegen._inertia_allow_large_function_flag_dce_after_seqnode_replacement_8616 is False
 
 
 def test_post_flag_dirty_dce_keeps_condition_source():
@@ -750,6 +1369,92 @@ def test_dce_does_not_count_parent_structured_body_as_outside_read():
 
     assert changed is True
     assert list(body.statements) == []
+
+
+def test_dce_keeps_loop_carried_write_when_read_precedes_write_in_body():
+    codegen = _mk_codegen_with_statements([])
+    carried = structured_c.CVariable(
+        SimStackVariable(-1, 1, base="bp", name="high", region=0x4010),
+        variable_type=SimTypeChar(False),
+        codegen=codegen,
+    )
+    sink = structured_c.CVariable(
+        SimMemoryVariable(0x44, 1, name="g_sink"),
+        variable_type=SimTypeChar(False),
+        codegen=codegen,
+    )
+    consume_previous_iteration = structured_c.CAssignment(sink, carried, codegen=codegen)
+    produce_next_iteration = structured_c.CAssignment(carried, _const(codegen, 7), codegen=codegen)
+    body = structured_c.CStatements(
+        [consume_previous_iteration, produce_next_iteration],
+        codegen=codegen,
+    )
+    loop = structured_c.CWhileLoop(_const(codegen, 1), body, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([loop], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is False
+    assert list(body.statements) == [consume_previous_iteration, produce_next_iteration]
+    assert getattr(codegen, "dce_deleted", 0) == 0
+
+
+def test_dce_keeps_address_carrier_read_by_variable_field_lvalue():
+    codegen = _mk_codegen_with_statements([])
+    address = _mk_cvar(codegen, "tmp_address", 8)
+    define_address = structured_c.CAssignment(address, _const(codegen, 0x44), codegen=codegen)
+    struct_type = SimStruct({"byte": SimTypeChar(False)}, name="ByteView")
+    field = structured_c.CStructField(struct_type, 0, "byte", codegen=codegen)
+    field_lvalue = structured_c.CVariableField(address, field, var_is_ptr=True, codegen=codegen)
+    field_store = structured_c.CAssignment(field_lvalue, _const(codegen, 7), codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([define_address, field_store], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is False
+    assert list(codegen.cfunc.statements.statements) == [define_address, field_store]
+    assert getattr(codegen, "dce_deleted", 0) == 0
+
+
+def test_dce_keeps_unused_call_result_carrier_inside_loop():
+    codegen = _mk_codegen_with_statements([])
+    result = _mk_cvar(codegen, "ir_7", 8)
+    call = structured_c.CFunctionCall("GetRandom", None, [], codegen=codegen)
+    assignment = structured_c.CAssignment(result, call, codegen=codegen)
+    body = structured_c.CStatements([assignment], codegen=codegen)
+    loop = structured_c.CWhileLoop(_const(codegen, 1), body, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([loop], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is False
+    assert list(body.statements) == [assignment]
+    assert getattr(codegen, "dce_deleted", 0) == 0
+
+
+def test_dce_keeps_instruction_tagged_unread_temp_inside_loop():
+    codegen = _mk_codegen_with_statements([])
+    temp = _mk_cvar(codegen, "ir_8", 8)
+    assignment = structured_c.CAssignment(
+        temp,
+        structured_c.CBinaryOp(
+            "Shl",
+            _mk_cvar(codegen, "arg_74", 10),
+            _const(codegen, 1),
+            codegen=codegen,
+        ),
+        tags={"ins_addr": 0x4050},
+        codegen=codegen,
+    )
+    body = structured_c.CStatements([assignment], codegen=codegen)
+    loop = structured_c.CWhileLoop(_const(codegen, 1), body, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([loop], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is False
+    assert list(body.statements) == [assignment]
+    assert getattr(codegen, "dce_deleted", 0) == 0
 
 
 def test_dce_matches_c_variable_liveness_by_emitted_name():

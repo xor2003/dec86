@@ -1,4 +1,13 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Mapping
+from typing import Protocol
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -17,24 +26,47 @@ _PURE_GENERATED_HELPER_CALLEES = frozenset(
 )
 
 
-def _call_name(node) -> str | None:
-    target = getattr(node, "callee_target", None)
+class _CFunctionLike(Protocol):
+    """Structured C function surface needed by dead-local pruning."""
+
+    statements: object
+
+
+class _CodegenLike(Protocol):
+    """Codegen surface needed by dead-local pruning."""
+
+    cfunc: _CFunctionLike | None
+    _inertia_dead_local_prune_protected_direct_stack_move_count_8616: int
+    _inertia_dead_local_prune_walk_refused_complex_8616: int
+
+
+class _AliasStorageLike(Protocol):
+    """Alias-storage summary used to compare local assignment reads."""
+
+    identity: tuple[object, ...] | None
+
+
+def _call_name(node: structured_c.CFunctionCall) -> str | None:
+    target = node.callee_target
     if isinstance(target, str):
         return target
+    # Dynamic codegen boundary: callee targets may be function-like payloads.
     target_name = getattr(target, "name", None)
     if isinstance(target_name, str):
         return target_name
+    # Dynamic codegen boundary: older structured codegen call nodes expose callee directly.
     callee = getattr(node, "callee", None)
     if isinstance(callee, str):
         return callee
-    callee_func = getattr(node, "callee_func", None)
+    callee_func = node.callee_func
     if isinstance(callee_func, str):
         return callee_func
+    # Dynamic codegen boundary: callee_func may be a function-like object.
     name = getattr(callee_func, "name", None)
     return name if isinstance(name, str) else None
 
 
-def _expr_has_side_effects(node, *, iter_c_nodes_deep) -> bool:
+def _expr_has_side_effects(node: object, *, iter_c_nodes_deep: Callable[[object], Iterable[object]]) -> bool:
     for subnode in iter_c_nodes_deep(node):
         if not isinstance(subnode, structured_c.CFunctionCall):
             continue
@@ -45,21 +77,22 @@ def _expr_has_side_effects(node, *, iter_c_nodes_deep) -> bool:
 
 
 def _prune_dead_local_assignments(
-    codegen,
+    codegen: _CodegenLike,
     *,
-    structured_codegen_node,
-    iter_c_nodes_deep,
-    unwrap_c_casts,
-    describe_alias_storage,
+    structured_codegen_node: Callable[[object], bool],
+    iter_c_nodes_deep: Callable[[object], Iterable[object]],
+    unwrap_c_casts: Callable[[object], object],
+    describe_alias_storage: Callable[[object], _AliasStorageLike],
 ) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
+    cfunc = codegen.cfunc
+    if cfunc is None:
         return False
-    root = getattr(codegen.cfunc, "statements", None)
+    root = cfunc.statements
     if not structured_codegen_node(root):
         return False
 
     def collect_storage_read_keys(
-        node,
+        node: object,
         keys: set[tuple[object, ...]],
         seen: set[int] | None = None,
         *,
@@ -76,10 +109,10 @@ def _prune_dead_local_assignments(
         try:
             if isinstance(node, structured_c.CVariable):
                 if allow_variable_read:
-                    variable = getattr(node, "variable", None)
+                    variable = node.variable
                     if variable is not None:
                         keys.add(("var", id(variable)))
-                        unified = getattr(node, "unified_variable", None)
+                        unified = node.unified_variable
                         if unified is not None:
                             keys.add(("unified", id(unified)))
                         storage_key = describe_alias_storage(node).identity
@@ -96,11 +129,14 @@ def _prune_dead_local_assignments(
 
             if node.__class__.__name__ == "CDirtyExpression":
                 if allow_variable_read:
+                    # Dynamic codegen boundary: dirty expressions are external codegen nodes.
                     dirty = getattr(node, "dirty", None)
                     if dirty is not None:
+                        # Dynamic codegen boundary: dirty metadata fields vary by angr expression.
                         varid = getattr(dirty, "varid", None)
                         if isinstance(varid, int):
                             keys.add(("dirty_varid", varid))
+                        # Dynamic codegen boundary: dirty metadata fields vary by angr expression.
                         name = getattr(dirty, "name", None)
                         if isinstance(name, str) and name:
                             keys.add(("dirty_name", name))
@@ -122,6 +158,7 @@ def _prune_dead_local_assignments(
                 if not hasattr(node, attr):
                     continue
                 try:
+                    # Dynamic codegen boundary: child field names vary across angr C AST nodes.
                     value = getattr(node, attr)
                 except Exception:
                     continue
@@ -132,6 +169,7 @@ def _prune_dead_local_assignments(
                 if not hasattr(node, attr):
                     continue
                 try:
+                    # Dynamic codegen boundary: child sequence fields vary across angr C AST nodes.
                     items = getattr(node, attr)
                 except Exception:
                     continue
@@ -143,6 +181,7 @@ def _prune_dead_local_assignments(
 
             if hasattr(node, "condition_and_nodes"):
                 try:
+                    # Dynamic codegen boundary: CIfElse-like nodes may expose condition/body pairs.
                     pairs = getattr(node, "condition_and_nodes")
                 except Exception:
                     pairs = None
@@ -158,35 +197,82 @@ def _prune_dead_local_assignments(
     reads: set[tuple[object, ...]] = set()
     collect_storage_read_keys(root, reads)
 
-    def is_local_variable(variable) -> bool:
+    def _direct_stack_move_protected_offsets() -> frozenset[int]:
+        protected: set[int] = set()
+        # Dynamic codegen compatibility boundary: this counter is attached by the CLI orchestration pass.
+        for record in tuple(getattr(codegen, "_inertia_direct_stack_move_evidence_8616", ()) or ()):
+            if isinstance(record, Mapping):
+                values = record
+            else:
+                try:
+                    values = dict(record)
+                except (TypeError, ValueError):
+                    continue
+            offset = values.get("dst_offset")
+            if isinstance(offset, int):
+                protected.add(offset)
+        return frozenset(protected)
+
+    protected_stack_offsets = _direct_stack_move_protected_offsets()
+
+    def _stack_variable_offset(variable: object) -> int | None:
+        if not isinstance(variable, SimStackVariable):
+            return None
+        return variable.offset if isinstance(variable.offset, int) else None
+
+    def collect_direct_stack_move_protected_keys() -> set[tuple[object, ...]]:
+        if not protected_stack_offsets:
+            return set()
+        protected_keys: set[tuple[object, ...]] = set()
+        for node in iter_c_nodes_deep(root):
+            if not isinstance(node, structured_c.CVariable):
+                continue
+            variable = node.variable
+            if _stack_variable_offset(variable) not in protected_stack_offsets:
+                continue
+            protected_keys.add(("var", id(variable)))
+            unified = node.unified_variable
+            if unified is not None:
+                protected_keys.add(("unified", id(unified)))
+            storage_key = describe_alias_storage(node).identity
+            if storage_key is not None:
+                protected_keys.add(("storage", storage_key))
+        return {key for key in protected_keys if key in reads}
+
+    direct_stack_move_protected_keys = collect_direct_stack_move_protected_keys()
+
+    def is_local_variable(variable: object) -> bool:
         return isinstance(variable, (SimRegisterVariable, SimStackVariable))
 
-    def collect_stmt_reads(stmt) -> set[tuple[object, ...]]:
+    def collect_stmt_reads(stmt: object) -> set[tuple[object, ...]]:
         stmt_reads: set[tuple[object, ...]] = set()
         collect_storage_read_keys(stmt, stmt_reads)
         return stmt_reads
 
-    def call_callee_key(call_expr):
-        callee_target = getattr(call_expr, "callee_target", None)
+    def call_callee_key(call_expr: structured_c.CFunctionCall) -> tuple[str, object] | None:
+        callee_target = call_expr.callee_target
         if callee_target is not None:
             return ("target", callee_target)
 
-        callee_func = getattr(call_expr, "callee_func", None)
+        callee_func = call_expr.callee_func
         if callee_func is not None:
+            # Dynamic codegen boundary: function-like call targets may expose addr.
             callee_addr = getattr(callee_func, "addr", None)
             if callee_addr is not None:
                 return ("func_addr", callee_addr)
+            # Dynamic codegen boundary: function-like call targets may expose name.
             callee_name = getattr(callee_func, "name", None)
             if callee_name is not None:
                 return ("func_name", callee_name)
             return ("func_id", id(callee_func))
 
+        # Dynamic codegen boundary: older structured codegen call nodes expose callee directly.
         callee = getattr(call_expr, "callee", None)
         if isinstance(callee, str):
             return ("callee", callee)
         return None
 
-    def normalized_call_arg_key(expr):
+    def normalized_call_arg_key(expr: object) -> tuple[object, ...]:
         expr = unwrap_c_casts(expr)
         storage_key = describe_alias_storage(expr).identity
         if storage_key is not None:
@@ -194,18 +280,18 @@ def _prune_dead_local_assignments(
         if isinstance(expr, structured_c.CConstant):
             return ("const", expr.value)
         if isinstance(expr, structured_c.CVariable):
-            variable = getattr(expr, "variable", None)
+            variable = expr.variable
             if isinstance(variable, SimRegisterVariable):
-                return ("reg", getattr(variable, "reg", None), getattr(variable, "size", None))
+                return ("reg", variable.reg, variable.size)
             if isinstance(variable, SimStackVariable):
                 return (
                     "stack",
-                    getattr(variable, "base", None),
-                    getattr(variable, "offset", None),
-                    getattr(variable, "size", None),
+                    variable.base,
+                    variable.offset,
+                    variable.size,
                 )
             if isinstance(variable, SimMemoryVariable):
-                return ("mem", getattr(variable, "addr", None), getattr(variable, "size", None))
+                return ("mem", variable.addr, variable.size)
             return ("var", id(variable))
         if isinstance(expr, structured_c.CUnaryOp):
             return ("unary", expr.op, normalized_call_arg_key(expr.operand))
@@ -215,11 +301,11 @@ def _prune_dead_local_assignments(
             return (
                 "call",
                 call_callee_key(expr),
-                tuple(normalized_call_arg_key(arg) for arg in getattr(expr, "args", ()) or ()),
+                tuple(normalized_call_arg_key(arg) for arg in expr.args or ()),
             )
         return ("expr", type(expr).__name__)
 
-    def same_call_signature(lhs, rhs) -> bool:
+    def same_call_signature(lhs: object, rhs: object) -> bool:
         lhs_call = unwrap_c_casts(lhs)
         rhs_call = unwrap_c_casts(rhs)
         if not isinstance(lhs_call, structured_c.CFunctionCall) or not isinstance(rhs_call, structured_c.CFunctionCall):
@@ -228,11 +314,11 @@ def _prune_dead_local_assignments(
         rhs_key = call_callee_key(rhs_call)
         if lhs_key is None or rhs_key is None or lhs_key != rhs_key:
             return False
-        lhs_args = tuple(normalized_call_arg_key(arg) for arg in getattr(lhs_call, "args", ()) or ())
-        rhs_args = tuple(normalized_call_arg_key(arg) for arg in getattr(rhs_call, "args", ()) or ())
+        lhs_args = tuple(normalized_call_arg_key(arg) for arg in lhs_call.args or ())
+        rhs_args = tuple(normalized_call_arg_key(arg) for arg in rhs_call.args or ())
         return lhs_args == rhs_args
 
-    def statement_may_diverge_control_flow(stmt) -> bool:
+    def statement_may_diverge_control_flow(stmt: object) -> bool:
         control_flow_types = (
             structured_c.CBreak,
             structured_c.CContinue,
@@ -252,7 +338,7 @@ def _prune_dead_local_assignments(
     prune_visit_count = 0
     max_prune_visits = 20000
 
-    def prune(node) -> None:
+    def prune(node: object) -> None:
         nonlocal changed, dropped_unread_only, prune_visit_count
         if not structured_codegen_node(node):
             return
@@ -262,7 +348,9 @@ def _prune_dead_local_assignments(
         seen_prune_nodes.add(marker)
         prune_visit_count += 1
         if prune_visit_count > max_prune_visits:
+            # Dynamic codegen compatibility boundary: diagnostics are attached to the codegen object.
             codegen._inertia_dead_local_prune_walk_refused_complex_8616 = (
+                # Dynamic codegen compatibility boundary: diagnostics are attached to the codegen object.
                 int(getattr(codegen, "_inertia_dead_local_prune_walk_refused_complex_8616", 0) or 0) + 1
             )
             return
@@ -272,12 +360,13 @@ def _prune_dead_local_assignments(
             pending_assignment_indices: dict[tuple[object, ...], int] = {}
             statements = list(node.statements)
             for index, stmt in enumerate(statements):
+                # Dynamic codegen boundary: expression statements expose expr in angr structured C.
                 call_expr = stmt if isinstance(stmt, structured_c.CFunctionCall) else getattr(stmt, "expr", None)
                 if isinstance(call_expr, structured_c.CFunctionCall):
                     next_stmt = statements[index + 1] if index + 1 < len(statements) else None
                     if (
                         isinstance(next_stmt, structured_c.CReturn)
-                        and isinstance(getattr(next_stmt, "retval", None), structured_c.CFunctionCall)
+                        and isinstance(next_stmt.retval, structured_c.CFunctionCall)
                         and same_call_signature(call_expr, next_stmt.retval)
                     ):
                         changed = True
@@ -292,11 +381,11 @@ def _prune_dead_local_assignments(
                 if (
                     isinstance(stmt, structured_c.CAssignment)
                     and isinstance(stmt.lhs, structured_c.CVariable)
-                    and is_local_variable(getattr(stmt.lhs, "variable", None))
-                    and not _expr_has_side_effects(getattr(stmt, "rhs", None), iter_c_nodes_deep=iter_c_nodes_deep)
+                    and is_local_variable(stmt.lhs.variable)
+                    and not _expr_has_side_effects(stmt.rhs, iter_c_nodes_deep=iter_c_nodes_deep)
                 ):
-                    lhs_variable = getattr(stmt.lhs, "variable", None)
-                    lhs_unified = getattr(stmt.lhs, "unified_variable", None)
+                    lhs_variable = stmt.lhs.variable
+                    lhs_unified = stmt.lhs.unified_variable
                     lhs_exact_keys: set[tuple[object, ...]] = set()
                     if lhs_variable is not None:
                         lhs_exact_keys.add(("var", id(lhs_variable)))
@@ -304,15 +393,37 @@ def _prune_dead_local_assignments(
                         lhs_exact_keys.add(("unified", id(lhs_unified)))
                     lhs_keys = set(lhs_exact_keys)
                     rhs_reads: set[tuple[object, ...]] = set()
-                    if structured_codegen_node(getattr(stmt, "rhs", None)):
+                    if structured_codegen_node(stmt.rhs):
                         collect_storage_read_keys(stmt.rhs, rhs_reads)
                     storage_key = describe_alias_storage(stmt.lhs).identity
                     if storage_key is not None:
                         lhs_keys.add(("storage", storage_key))
+                    protected_direct_stack_move_lhs = bool(
+                        lhs_keys and not lhs_keys.isdisjoint(direct_stack_move_protected_keys)
+                    )
                     unread_register_local = isinstance(lhs_variable, SimRegisterVariable) and lhs_exact_keys.isdisjoint(
                         reads
                     )
                     self_referential_rhs = bool(lhs_keys) and not lhs_keys.isdisjoint(rhs_reads)
+                    if protected_direct_stack_move_lhs:
+                        # Dynamic codegen compatibility boundary: diagnostics are attached to the codegen object.
+                        codegen._inertia_dead_local_prune_protected_direct_stack_move_count_8616 = (
+                            int(
+                                # Dynamic codegen compatibility boundary: diagnostics are attached to the codegen object.
+                                getattr(
+                                    codegen,
+                                    "_inertia_dead_local_prune_protected_direct_stack_move_count_8616",
+                                    0,
+                                )
+                                or 0
+                            )
+                            + 1
+                        )
+                        for key in lhs_keys:
+                            pending_assignment_indices.pop(key, None)
+                        prune(stmt)
+                        new_statements.append(stmt)
+                        continue
                     if unread_register_local or (lhs_keys.isdisjoint(reads) and not self_referential_rhs):
                         dropped_unread_only = True
                         continue
@@ -324,10 +435,13 @@ def _prune_dead_local_assignments(
                 elif (
                     isinstance(stmt, structured_c.CAssignment)
                     and stmt.lhs.__class__.__name__ == "CDirtyExpression"
-                    and not _expr_has_side_effects(getattr(stmt, "rhs", None), iter_c_nodes_deep=iter_c_nodes_deep)
+                    and not _expr_has_side_effects(stmt.rhs, iter_c_nodes_deep=iter_c_nodes_deep)
                 ):
+                    # Dynamic codegen boundary: dirty expressions are external codegen nodes.
                     dirty = getattr(stmt.lhs, "dirty", None)
+                    # Dynamic codegen boundary: dirty metadata fields vary by angr expression.
                     dirty_varid = getattr(dirty, "varid", None) if dirty is not None else None
+                    # Dynamic codegen boundary: dirty metadata fields vary by angr expression.
                     dirty_name = getattr(dirty, "name", None) if dirty is not None else None
                     lhs_keys = set()
                     if isinstance(dirty_varid, int):
@@ -365,6 +479,7 @@ def _prune_dead_local_assignments(
             if not hasattr(node, attr):
                 continue
             try:
+                # Dynamic codegen boundary: child field names vary across angr C AST nodes.
                 value = getattr(node, attr)
             except Exception:
                 continue
@@ -375,6 +490,7 @@ def _prune_dead_local_assignments(
             if not hasattr(node, attr):
                 continue
             try:
+                # Dynamic codegen boundary: child sequence fields vary across angr C AST nodes.
                 items = getattr(node, attr)
             except Exception:
                 continue
@@ -386,6 +502,7 @@ def _prune_dead_local_assignments(
 
         if hasattr(node, "condition_and_nodes"):
             try:
+                # Dynamic codegen boundary: CIfElse-like nodes may expose condition/body pairs.
                 pairs = getattr(node, "condition_and_nodes")
             except Exception:
                 pairs = None

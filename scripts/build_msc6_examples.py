@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Build, decompile, rebuild, and run the MS C construct examples."""
+"""Build, decompile, rebuild, and run the MS C construct examples.
+
+Layer: Tooling/gates.
+Responsibility: owns MS C example build, decompile, rebuild, and run gates.
+"""
 
 from __future__ import annotations
 
@@ -16,23 +20,32 @@ import time
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
+from typing import cast
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from pycparser import c_ast, c_parser
+from pycparser.c_parser import ParseError
+
+REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from angr_platforms.X86_16.quality import measure_x86_16_codegen_quality_8616  # noqa: E402
 
+from inertia_decompiler.cli_c_text_postprocess import (  # noqa: E402
+    _materialize_missing_synthetic_global_declarations_text,
+    _normalize_function_signature_arg_names,
+)
 from inertia_decompiler.flair_paths import default_flair_startup_root  # noqa: E402
 from inertia_decompiler.project_loading import _build_project  # noqa: E402
 from inertia_decompiler.sidecar_metadata import _load_lst_metadata  # noqa: E402
 from signature_catalog import build_signature_catalog  # noqa: E402
 
-DEFAULT_EXAMPLES_DIR = REPO_ROOT / "examples" / "msc6_constructs"
-DEFAULT_OUT_DIR = REPO_ROOT / "examples" / "build_msc6"
-DEFAULT_KVIKDOS = Path("/home/xor/kvikdos/kvikdos")
-DEFAULT_MSC6_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v6ax")
-DEFAULT_DECOMPILE = REPO_ROOT / "decompile.py"
+DEFAULT_EXAMPLES_DIR: Path = REPO_ROOT / "examples" / "msc6_constructs"
+DEFAULT_OUT_DIR: Path = REPO_ROOT / "examples" / "build_msc6"
+DEFAULT_KVIKDOS: Path = Path("/home/xor/kvikdos/kvikdos")
+DEFAULT_MSC6_ROOT: Path = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v6ax")
+DEFAULT_DECOMPILE: Path = REPO_ROOT / "decompile.py"
+DEFAULT_BATCH_DECOMPILE_PROCS: Path = REPO_ROOT / "scripts" / "batch_decompile_procs.py"
 DEFAULT_DECOMPILE_SKIP: tuple[str, ...] = ()
 HARNESS_SUCCESS_EXIT_CODE = 255
 DECOMPILE_MAX_FUNCTIONS_DEFAULT = 0
@@ -42,22 +55,116 @@ DECOMPILE_MAIN_TIMEOUT_SECONDS_DEFAULT = 60
 DECOMPILE_MAIN_RUN_TIMEOUT_SECONDS_DEFAULT = 60
 DECOMPILE_SLOW_FUNCTION_SECONDS = 1.0
 DECOMPILE_SLOW_PASS_SECONDS = 1.0
-DECOMPILE_FUNCTION_PROCESS_SETUP_SECONDS = 30
+DECOMPILE_FUNCTION_PROCESS_SETUP_SECONDS: int = 120
 
 
 class HarnessAcceptanceReason(str, Enum):
     """Reason a harness decompilation result was accepted or stopped."""
 
+    ACCEPTANCE_GATE_FAILED = "acceptance_gate_failed"
+    ASM_FALLBACK = "asm_fallback"
+    SOURCE_EVIDENCE_FAILED = "source_evidence_failed"
+    TAIL_VALIDATION_CHANGED = "tail_validation_changed"
+    TAIL_VALIDATION_FAILED = "tail_validation_failed"
+    TAIL_VALIDATION_UNCOLLECTED = "tail_validation_uncollected"
     TIMEOUT = "timeout"
+    VALIDATION_CHANGED = "validation_changed"
+    VALIDATION_FAILED = "validation_failed"
+    VALIDATION_UNCOLLECTED = "validation_uncollected"
+
+
+class HarnessValidationState(str, Enum):
+    """Typed function-level validation state parsed from decompiler output."""
+
+    CHANGED = "changed"
+    FAILED = "failed"
+    PASSED = "passed"
+    UNCOLLECTED = "uncollected"
 
 
 class FocusedDecompileRetryReason(str, Enum):
     """Reason to retry focused decompilation with a different fallback mode."""
 
     ASM_FALLBACK = "asm_fallback"
+    MISSING_GENERATED_DEFINITION = "missing_generated_definition"
     NONZERO_EXIT = "nonzero_exit"
     TAIL_VALIDATION_FAILED = "tail_validation_failed"
     TIMEOUT = "timeout"
+
+
+class GeneratedFunctionSourceContractStatus(str, Enum):
+    """Typed result of checking one generated function definition."""
+
+    PASSED = "passed"
+    FUNCTION_MISSING = "function_missing"
+    FUNCTION_PARSE_FAILED = "function_parse_failed"
+    GLOBAL_SHADOWED_BY_LOCAL = "global_shadowed_by_local"
+    GLOBAL_WRITE_MISSING = "global_write_missing"
+    VALUE_RETURN_REQUIRED = "value_return_required"
+    VOID_RETURN_REQUIRED = "void_return_required"
+    RETURNED_CALL_MISSING = "returned_call_missing"
+
+
+class GeneratedFunctionReturnClass(str, Enum):
+    """Required return class for one generated-function gate contract."""
+
+    ANY = "any"
+    VALUE = "value"
+    VOID = "void"
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedFunctionSourceContract:
+    """Required source shape for a generated function in an MS C gate.
+
+    This is a test-pipeline assertion, not decompiler recovery. It consumes the
+    final generated C and refuses a known false-green shape before compilation.
+    """
+
+    function_name: str
+    required_return_class: GeneratedFunctionReturnClass = (
+        GeneratedFunctionReturnClass.ANY
+    )
+    required_returned_call: str | None = None
+    required_global_writes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedFunctionSourceContractResult:
+    """Evidence and verdict for one generated-function source contract."""
+
+    function_name: str
+    status: GeneratedFunctionSourceContractStatus
+    required_return_class: GeneratedFunctionReturnClass
+    required_returned_call: str | None
+    materialized_return_class: GeneratedFunctionReturnClass | None
+    returned_call_present: bool
+    required_global_writes: tuple[str, ...]
+    materialized_global_writes: tuple[str, ...]
+    shadowed_global_writes: tuple[str, ...]
+
+    @property
+    def passed(self) -> bool:
+        """Return whether all configured source requirements were proven."""
+        return self.status is GeneratedFunctionSourceContractStatus.PASSED
+
+    def to_dict(self) -> dict[str, object]:
+        """Return JSON-safe evidence for the fallback rebuild report."""
+        return {
+            "function_name": self.function_name,
+            "status": self.status.value,
+            "required_return_class": self.required_return_class.value,
+            "required_returned_call": self.required_returned_call,
+            "materialized_return_class": (
+                self.materialized_return_class.value
+                if self.materialized_return_class is not None
+                else None
+            ),
+            "returned_call_present": self.returned_call_present,
+            "required_global_writes": list(self.required_global_writes),
+            "materialized_global_writes": list(self.materialized_global_writes),
+            "shadowed_global_writes": list(self.shadowed_global_writes),
+        }
 
 
 def _decompile_python_executable() -> str:
@@ -65,6 +172,8 @@ def _decompile_python_executable() -> str:
 
 
 def _focused_decompile_process_timeout(decompile_timeout: int) -> int:
+    """Return subprocess budget separate from the inner decompiler analysis timeout."""
+
     return max(int(decompile_timeout), 30) + DECOMPILE_FUNCTION_PROCESS_SETUP_SECONDS
 
 
@@ -510,7 +619,7 @@ int main(void)
 }
 """
 
-FALLBACK_EXAMPLE_REBUILD = {
+FALLBACK_EXAMPLE_REBUILD: dict[str, dict[str, object]] = {
     "simple_control": {
         "functions": ("classify", "sum_to", "switch_fold"),
         "harness": SIMPLE_CONTROL_HARNESS_MAIN,
@@ -533,6 +642,13 @@ FALLBACK_EXAMPLE_REBUILD = {
     "function_pointers": {
         "functions": ("inc_one", "dec_one", "apply_twice", "select_and_apply"),
         "harness": FNPTR_HARNESS_MAIN,
+        "source_contracts": (
+            GeneratedFunctionSourceContract(
+                function_name="select_and_apply",
+                required_return_class=GeneratedFunctionReturnClass.VALUE,
+                required_returned_call="apply_twice",
+            ),
+        ),
     },
     "loops_jumps": {
         "functions": ("nested_loops", "goto_accumulate"),
@@ -541,6 +657,20 @@ FALLBACK_EXAMPLE_REBUILD = {
     "pointer_memory": {
         "functions": ("fill_bytes", "sum_words", "swap_ptrs"),
         "harness": POINTER_MEMORY_HARNESS_MAIN,
+        "source_contracts": (
+            GeneratedFunctionSourceContract(
+                function_name="fill_bytes",
+                required_return_class=GeneratedFunctionReturnClass.VOID,
+            ),
+            GeneratedFunctionSourceContract(
+                function_name="sum_words",
+                required_return_class=GeneratedFunctionReturnClass.VALUE,
+            ),
+            GeneratedFunctionSourceContract(
+                function_name="swap_ptrs",
+                required_return_class=GeneratedFunctionReturnClass.VOID,
+            ),
+        ),
     },
     "medium_structs": {
         "functions": ("accumulate_pairs", "rotate_triplet", "find_first_gt"),
@@ -565,6 +695,12 @@ FALLBACK_EXAMPLE_REBUILD = {
         "functions": ("_sum_globals", "bump_static"),
         "prefix": STORAGE_CLASSES_PREFIX,
         "harness": STORAGE_CLASSES_HARNESS_MAIN,
+        "source_contracts": (
+            GeneratedFunctionSourceContract(
+                function_name="bump_static",
+                required_global_writes=("_S104_seen",),
+            ),
+        ),
     },
     "sortdemo_patterns": {
         "functions": (
@@ -605,27 +741,35 @@ FALLBACK_EXAMPLE_REBUILD = {
 
 def _extract_decompiled_function_definition(c_text: str, function_name: str) -> str:
     emitted = c_text.split("/* == c == */", 1)[-1] if "/* == c == */" in c_text else c_text
-    signature_re = re.compile(
-        rf"(?m)^[ \t]*(?!/)(?P<signature>[A-Za-z_*][^\n]*\b{re.escape(function_name)}\s*\([^\n)]*\))\s*(\n|\r\n|\r)\s*\{{"
-    )
-    match = signature_re.search(emitted)
-    if match is None:
+    candidate_names = tuple(dict.fromkeys((function_name, function_name.lstrip("_"), f"_{function_name.lstrip('_')}")))
+    match = None
+    matched_name = function_name
+    for candidate_name in candidate_names:
+        signature_re = re.compile(
+            rf"(?m)^[ \t]*(?!/)(?P<signature>[A-Za-z_*][^\n]*\b{re.escape(candidate_name)}\s*\([^\n)]*\))\s*(\n|\r\n|\r)\s*\{{"
+        )
+        match = signature_re.search(emitted)
+        if match is not None:
+            matched_name = candidate_name
+            break
         fallback_line_re = re.compile(
-            rf"(?mi)^[ \t]*(?!/)(?P<signature>[A-Za-z_*][^\n]*\b{re.escape(function_name)}\s*\([^\n)]*\))"
+            rf"(?mi)^[ \t]*(?!/)(?P<signature>[A-Za-z_*][^\n]*\b{re.escape(candidate_name)}\s*\([^\n)]*\))"
         )
         for fallback_match in fallback_line_re.finditer(emitted):
             fallback_span_end = fallback_match.end("signature")
             fallback_brace_start = emitted.find("{", fallback_span_end)
-            if fallback_brace_start < 0:
-                continue
-            match = fallback_match
+            if fallback_brace_start >= 0:
+                match = fallback_match
+                matched_name = candidate_name
+                break
+        if match is not None:
             break
-        if match is None:
-            raise RuntimeError(f"missing generated definition for {function_name}")
+    if match is None:
+        raise RuntimeError(f"missing generated definition for {function_name}")
 
     brace_start = emitted.find("{", match.end("signature"))
     if brace_start < 0:
-        raise RuntimeError(f"missing opening brace for {function_name}")
+        raise RuntimeError(f"missing opening brace for {matched_name}")
 
     depth = 0
     for idx in range(brace_start, len(emitted)):
@@ -638,7 +782,183 @@ def _extract_decompiled_function_definition(c_text: str, function_name: str) -> 
                 return _normalize_extracted_function_arg_placeholders(
                     emitted[match.start("signature") : idx + 1].strip() + "\n"
                 )
-    raise RuntimeError(f"unterminated generated definition for {function_name}")
+    raise RuntimeError(f"unterminated generated definition for {matched_name}")
+
+
+def _written_storage_name_8616(node: c_ast.Node) -> str | None:
+    """Return the root identifier written by one parsed C lvalue."""
+    if isinstance(node, c_ast.ID):
+        return node.name
+    if isinstance(node, c_ast.ArrayRef):
+        return _written_storage_name_8616(node.name)
+    if isinstance(node, c_ast.StructRef):
+        return _written_storage_name_8616(node.name)
+    return None
+
+
+class _GeneratedFunctionStorageCollector8616(c_ast.NodeVisitor):
+    """Collect local declarations and direct storage writes from parsed C."""
+
+    def __init__(self) -> None:
+        """Initialize deterministic local-name and write-name sets."""
+        self.local_names: set[str] = set()
+        self.written_names: set[str] = set()
+
+    def visit_Decl(self, node: c_ast.Decl) -> None:
+        """Record one function-body declaration and visit its initializer."""
+        if isinstance(node.name, str):
+            self.local_names.add(node.name)
+        self.generic_visit(node)
+
+    def visit_Assignment(self, node: c_ast.Assignment) -> None:
+        """Record the root storage identifier written by an assignment."""
+        name = _written_storage_name_8616(node.lvalue)
+        if name is not None:
+            self.written_names.add(name)
+        self.generic_visit(node)
+
+    def visit_UnaryOp(self, node: c_ast.UnaryOp) -> None:
+        """Record increment/decrement writes while preserving nested traversal."""
+        if node.op in {"p++", "p--", "++", "--"}:
+            name = _written_storage_name_8616(node.expr)
+            if name is not None:
+                self.written_names.add(name)
+        self.generic_visit(node)
+
+
+def _parse_generated_function_definition_8616(
+    definition: str,
+) -> c_ast.FuncDef:
+    """Parse one extracted generated function for test-contract validation."""
+    without_block_comments = re.sub(r"/\*.*?\*/", "", definition, flags=re.DOTALL)
+    parse_text = "\n".join(
+        re.sub(r"//.*$", "", line)
+        for line in without_block_comments.splitlines()
+    )
+    translation_unit = c_parser.CParser().parse(parse_text)
+    function = next(
+        (
+            item
+            for item in translation_unit.ext
+            if isinstance(item, c_ast.FuncDef)
+        ),
+        None,
+    )
+    if function is None:
+        raise ParseError("generated definition did not parse as a function")
+    return function
+
+
+def _generated_function_return_class_8616(
+    function: c_ast.FuncDef,
+) -> GeneratedFunctionReturnClass:
+    """Classify the parsed function's top-level return type as void or value."""
+    function_type = function.decl.type
+    if not isinstance(function_type, c_ast.FuncDecl):
+        raise ParseError("generated definition has no function declaration")
+    return_type = function_type.type
+    if (
+        isinstance(return_type, c_ast.TypeDecl)
+        and isinstance(return_type.type, c_ast.IdentifierType)
+        and tuple(return_type.type.names) == ("void",)
+    ):
+        return GeneratedFunctionReturnClass.VOID
+    return GeneratedFunctionReturnClass.VALUE
+
+
+def _evaluate_generated_function_source_contract(
+    c_text: str,
+    contract: GeneratedFunctionSourceContract,
+) -> GeneratedFunctionSourceContractResult:
+    """Evaluate one contract against an extracted final C definition."""
+    try:
+        definition = _extract_decompiled_function_definition(c_text, contract.function_name)
+    except RuntimeError:
+        return GeneratedFunctionSourceContractResult(
+            function_name=contract.function_name,
+            status=GeneratedFunctionSourceContractStatus.FUNCTION_MISSING,
+            required_return_class=contract.required_return_class,
+            required_returned_call=contract.required_returned_call,
+            materialized_return_class=None,
+            returned_call_present=False,
+            required_global_writes=contract.required_global_writes,
+            materialized_global_writes=(),
+            shadowed_global_writes=(),
+        )
+
+    returned_call_present = contract.required_returned_call is None
+    if contract.required_returned_call is not None:
+        returned_call_present = (
+            re.search(
+                rf"\breturn\s+{re.escape(contract.required_returned_call)}\s*\(",
+                definition,
+            )
+            is not None
+        )
+
+    materialized_global_writes: tuple[str, ...] = ()
+    shadowed_global_writes: tuple[str, ...] = ()
+    materialized_return_class: GeneratedFunctionReturnClass | None = None
+    parse_failed = False
+    try:
+        function = _parse_generated_function_definition_8616(definition)
+        materialized_return_class = _generated_function_return_class_8616(function)
+    except ParseError:
+        parse_failed = True
+    else:
+        if contract.required_global_writes:
+            storage = _GeneratedFunctionStorageCollector8616()
+            storage.visit(function.body)
+            materialized_global_writes = tuple(
+                name
+                for name in contract.required_global_writes
+                if name in storage.written_names
+            )
+            shadowed_global_writes = tuple(
+                name
+                for name in contract.required_global_writes
+                if name in storage.local_names
+            )
+
+    if parse_failed:
+        status = GeneratedFunctionSourceContractStatus.FUNCTION_PARSE_FAILED
+    elif (
+        contract.required_return_class is GeneratedFunctionReturnClass.VALUE
+        and materialized_return_class is not GeneratedFunctionReturnClass.VALUE
+    ):
+        status = GeneratedFunctionSourceContractStatus.VALUE_RETURN_REQUIRED
+    elif (
+        contract.required_return_class is GeneratedFunctionReturnClass.VOID
+        and materialized_return_class is not GeneratedFunctionReturnClass.VOID
+    ):
+        status = GeneratedFunctionSourceContractStatus.VOID_RETURN_REQUIRED
+    elif not returned_call_present:
+        status = GeneratedFunctionSourceContractStatus.RETURNED_CALL_MISSING
+    elif shadowed_global_writes:
+        status = GeneratedFunctionSourceContractStatus.GLOBAL_SHADOWED_BY_LOCAL
+    elif materialized_global_writes != contract.required_global_writes:
+        status = GeneratedFunctionSourceContractStatus.GLOBAL_WRITE_MISSING
+    else:
+        status = GeneratedFunctionSourceContractStatus.PASSED
+    return GeneratedFunctionSourceContractResult(
+        function_name=contract.function_name,
+        status=status,
+        required_return_class=contract.required_return_class,
+        required_returned_call=contract.required_returned_call,
+        materialized_return_class=materialized_return_class,
+        returned_call_present=returned_call_present,
+        required_global_writes=contract.required_global_writes,
+        materialized_global_writes=materialized_global_writes,
+        shadowed_global_writes=shadowed_global_writes,
+    )
+
+
+def _evaluate_generated_function_source_contracts(
+    c_text: str,
+    contracts: tuple[GeneratedFunctionSourceContract, ...],
+) -> tuple[GeneratedFunctionSourceContractResult, ...]:
+    """Evaluate all configured generated-C contracts deterministically."""
+    return tuple(_evaluate_generated_function_source_contract(c_text, contract) for contract in contracts)
 
 
 def _normalize_extracted_function_arg_placeholders(function_body: str) -> str:
@@ -700,6 +1020,10 @@ def _build_fallback_source(function_bodies: list[str], harness_main: str, *, pre
         [
             "#include <stdbool.h>",
             "#include <stdint.h>",
+            "#include <dos.h>",
+            "#ifndef MK_FP",
+            "#define MK_FP(seg, off) ((void far *)((((unsigned long)(seg)) << 16) | (unsigned short)(off)))",
+            "#endif",
             "",
             *prefix_lines,
             *function_bodies,
@@ -783,6 +1107,8 @@ def _run(
     timeout: int = 60,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    """Run a command with captured output and explicit environment overrides."""
+
     runtime_env = os.environ.copy()
     if env is not None:
         runtime_env.update(env)
@@ -901,7 +1227,121 @@ def _prepare_decompiled_source_for_c89(raw_c_text: str) -> str:
     """
     sanitized = _sanitize_decompiled_source(raw_c_text)
     with_decls = _inject_ms_c89_forward_decls(sanitized)
-    return with_decls
+    with_decls = _normalize_function_signature_arg_names(with_decls)
+    with_decls = _alias_generic_globals_to_existing_harness_globals(with_decls)
+    with_decls = _drop_redundant_externs_for_defined_globals(with_decls)
+    return _materialize_missing_synthetic_global_declarations_text(
+        with_decls,
+        metadata=None,
+        synthetic_globals=None,
+    )
+
+
+def _alias_generic_globals_to_existing_harness_globals(c_text: str) -> str:
+    generic_offsets = _generic_global_offsets_from_text(c_text)
+    if not generic_offsets:
+        return c_text
+    globals_ = _simple_top_level_initialized_globals(c_text)
+    if not globals_:
+        return c_text
+    cursor = min(generic_offsets)
+    aliases: dict[str, str] = {}
+    for name, width, count in globals_:
+        start = cursor
+        size = width * count
+        end = start + size
+        for offset in sorted(generic_offsets):
+            if not (start <= offset < end):
+                continue
+            generic_names = (f"g_{offset:04x}", f"g_{offset:x}", f"global_word_{offset:04x}", f"global_u8_{offset:04x}")
+            if count > 1 and width == 1:
+                replacement = name
+            elif offset == start:
+                replacement = name
+            else:
+                continue
+            for generic_name in generic_names:
+                aliases[generic_name] = replacement
+        cursor = end
+    if not aliases:
+        return c_text
+
+    def _replace(match: re.Match[str]) -> str:
+        return aliases.get(match.group("name"), match.group("name"))
+
+    return re.sub(
+        r"(?<![A-Za-z_])(?P<name>(?:g|global_word|global_u8)_[0-9a-fA-F]{1,4})(?![A-Za-z0-9_])",
+        _replace,
+        c_text,
+    )
+
+
+def _drop_redundant_externs_for_defined_globals(c_text: str) -> str:
+    defined = {name for name, _width, _count in _simple_top_level_initialized_globals(c_text)}
+    if not defined:
+        return c_text
+    kept: list[str] = []
+    extern_re = re.compile(
+        r"^\s*extern\s+(?:unsigned\s+|signed\s+)?(?:char|short|int|long)\s+"
+        r"(?P<name>[A-Za-z_]\w*)\s*(?:\[[^\]]+\])?\s*;\s*$"
+    )
+    changed = False
+    for line in c_text.splitlines():
+        match = extern_re.match(line)
+        if match is not None and match.group("name") in defined:
+            changed = True
+            continue
+        kept.append(line)
+    if not changed:
+        return c_text
+    return "\n".join(kept) + ("\n" if c_text.endswith("\n") else "")
+
+
+def _generic_global_offsets_from_text(c_text: str) -> set[int]:
+    offsets: set[int] = set()
+    for match in re.finditer(
+        r"(?<![A-Za-z_])(?:g|global_word|global_u8)_(?P<offset>[0-9a-fA-F]{1,4})(?![A-Za-z0-9_])",
+        c_text,
+    ):
+        with contextlib.suppress(ValueError):
+            offsets.add(int(match.group("offset"), 16))
+    return offsets
+
+
+def _simple_top_level_initialized_globals(c_text: str) -> list[tuple[str, int, int]]:
+    width_by_type = {
+        "char": 1,
+        "signed char": 1,
+        "unsigned char": 1,
+        "short": 2,
+        "signed short": 2,
+        "unsigned short": 2,
+        "int": 2,
+        "signed int": 2,
+        "unsigned int": 2,
+        "long": 4,
+        "signed long": 4,
+        "unsigned long": 4,
+    }
+    decl_re = re.compile(
+        r"^\s*(?:static\s+)?(?P<ctype>(?:unsigned\s+|signed\s+)?(?:char|short|int|long))\s+"
+        r"(?P<name>[A-Za-z_]\w*)\s*(?:\[(?P<count>\d+)\])?\s*=",
+    )
+    globals_: list[tuple[str, int, int]] = []
+    for line in c_text.splitlines():
+        if re.match(r"^\s*[A-Za-z_][\w\s\*]*\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*;?\s*$", line):
+            break
+        match = decl_re.match(line)
+        if match is None:
+            continue
+        ctype = " ".join(match.group("ctype").split())
+        width = width_by_type.get(ctype)
+        if width is None:
+            continue
+        count_text = match.group("count")
+        count = int(count_text) if isinstance(count_text, str) and count_text.isdigit() else 1
+        globals_.append((match.group("name"), width, max(1, count)))
+    return globals_
 
 
 def _inject_ms_c89_forward_decls(raw_c_text: str) -> str:
@@ -914,7 +1354,7 @@ def _inject_ms_c89_forward_decls(raw_c_text: str) -> str:
     """
     signature_re = re.compile(r"(?m)^([A-Za-z_][\w\s\*]*?)\s+([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*\r?\n\s*\{")
     declarations: list[str] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     for match in signature_re.finditer(raw_c_text):
         function_name = match.group(2)
         if function_name in {"", "main", "main_"}:
@@ -953,7 +1393,7 @@ def _lookup_sidecar_code_labels(binary_path: Path) -> dict[str, int]:
         binary_path,
         force_blob=False,
         base_addr=0x10000,
-        entry_point=None,
+        entry_point=0,
     )
     metadata = _load_lst_metadata(binary_path, project, pat_backend=None, signature_catalog=None)
     labels: dict[str, int] = {}
@@ -1139,9 +1579,11 @@ def _pick_main_proc_candidates_from_cod(
     for candidate in DECOMPILE_MAIN_NAMES:
         if candidate in proc_kinds and (not public_names or candidate in public_names):
             kinds = sorted(proc_kinds[candidate])
-            return [(candidate, kinds[0], proc_addrs.get(candidate))] + [
+            selected: list[tuple[str, str | None, int | None]] = [(candidate, kinds[0], proc_addrs.get(candidate))]
+            selected.extend(
                 (candidate, kind, proc_addrs.get(candidate)) for kind in kinds[1:]
-            ]
+            )
+            return selected
     if proc_kinds:
         name, kinds = next(iter(sorted(proc_kinds.items())))
         first = next(iter(sorted(kinds)))
@@ -1197,6 +1639,7 @@ def _resolve_main_candidates_from_metadata(
                 )
             if mapped_addr is None:
                 continue
+            assert candidate_addr is not None
             key = ("cod", int(mapped_addr))
             if key in seen:
                 continue
@@ -1343,7 +1786,8 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
             continue
         time_match = time_re.search(line)
         if time_match is not None:
-            profile["function_times"].append(
+            function_times = cast(list[dict[str, object]], profile["function_times"])
+            function_times.append(
                 {
                     "addr": time_match.group(1),
                     "name": time_match.group(2).strip(),
@@ -1354,7 +1798,8 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
         pass_match = pass_re.search(line)
         if pass_match is not None:
             seconds = float(pass_match.group(2))
-            profile["stage_times"].append(
+            stage_times = cast(list[dict[str, object]], profile["stage_times"])
+            stage_times.append(
                 {
                     "scope": "post_or_struct",
                     "name": pass_match.group(1),
@@ -1362,14 +1807,16 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
                 }
             )
             if seconds > DECOMPILE_SLOW_PASS_SECONDS:
-                profile.setdefault("slow_passes", []).append(
+                slow_passes = cast(list[dict[str, object]], profile["slow_passes"])
+                slow_passes.append(
                     {"scope": "post_or_struct", "name": pass_match.group(1), "seconds": seconds}
                 )
             continue
         stage_match = stage_time_re.search(line)
         if stage_match is not None:
             seconds = float(stage_match.group(2))
-            profile["stage_times"].append(
+            stage_times = cast(list[dict[str, object]], profile["stage_times"])
+            stage_times.append(
                 {
                     "scope": "stage_time",
                     "name": stage_match.group(1),
@@ -1377,7 +1824,8 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
                 }
             )
             if seconds > DECOMPILE_SLOW_PASS_SECONDS:
-                profile.setdefault("slow_passes", []).append(
+                slow_passes = cast(list[dict[str, object]], profile["slow_passes"])
+                slow_passes.append(
                     {"scope": "stage_time", "name": stage_match.group(1), "seconds": seconds}
                 )
             continue
@@ -1424,7 +1872,8 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
                 if validation_state in {"failed", "changed", "uncollected"}:
                     family_failed = True
             if family_failed:
-                profile["tail_failures"] += 1
+                tail_failures = profile["tail_failures"]
+                profile["tail_failures"] = (tail_failures if isinstance(tail_failures, int) else 0) + 1
             continue
         attempt_validation_match = attempt_validation_re.search(line)
         if attempt_validation_match is not None and isinstance(profile.get("validation_state"), list):
@@ -1446,48 +1895,61 @@ def _decompile_profile_text(stdout_text: str, stderr_text: str) -> str:
     return f"{stderr_text}\n{stdout_text}"
 
 
+def _profile_validation_states(profile: dict[str, object]) -> frozenset[HarnessValidationState]:
+    """Return recognized typed function-level validation states."""
+    raw_states = profile.get("validation_state")
+    if not isinstance(raw_states, list):
+        return frozenset()
+    states: set[HarnessValidationState] = set()
+    for raw_state in raw_states:
+        if not isinstance(raw_state, str):
+            continue
+        try:
+            states.add(HarnessValidationState(raw_state))
+        except ValueError:
+            continue
+    return frozenset(states)
+
+
 def _is_decompile_output_acceptable(
     stdout_text: str,
     stderr_text: str,
     profile: dict[str, object],
-) -> tuple[bool, str | None]:
+) -> tuple[bool, HarnessAcceptanceReason | None]:
     if profile.get("timeout"):
-        return False, "timeout"
+        return False, HarnessAcceptanceReason.TIMEOUT
 
     tail_status = profile.get("tail_validation_status")
-    if tail_status in {"failed", "uncollected"}:
-        return False, f"tail_validation_{tail_status}"
+    if tail_status == "failed":
+        return False, HarnessAcceptanceReason.TAIL_VALIDATION_FAILED
+    if tail_status == "uncollected":
+        return False, HarnessAcceptanceReason.TAIL_VALIDATION_UNCOLLECTED
     if profile.get("tail_validation_changed"):
-        return False, "tail_validation_changed"
+        return False, HarnessAcceptanceReason.TAIL_VALIDATION_CHANGED
     if profile.get("asm_fallback"):
-        return False, "asm_fallback"
+        return False, HarnessAcceptanceReason.ASM_FALLBACK
 
-    validation_state = profile.get("validation_state")
-    if isinstance(validation_state, list):
-        final_tail_valid = tail_status in {"passed", "clean"}
-        if not final_tail_valid:
-            if "failed" in validation_state:
-                return False, "validation_failed"
-            if "changed" in validation_state:
-                return False, "validation_changed"
-            if "uncollected" in validation_state:
-                return False, "validation_uncollected"
+    validation_states = _profile_validation_states(profile)
+    if HarnessValidationState.FAILED in validation_states:
+        return False, HarnessAcceptanceReason.VALIDATION_FAILED
+    if HarnessValidationState.CHANGED in validation_states:
+        return False, HarnessAcceptanceReason.VALIDATION_CHANGED
+    if HarnessValidationState.UNCOLLECTED in validation_states:
+        return False, HarnessAcceptanceReason.VALIDATION_UNCOLLECTED
 
     combined = f"{stdout_text}\n{stderr_text}".lower()
     if "== asm fallback ==" in combined:
-        return False, "asm_fallback"
+        return False, HarnessAcceptanceReason.ASM_FALLBACK
     if "decompile timeout" in combined:
-        return False, "timeout"
-    if "decompilation validation_failed" in combined and not (
-        tail_status in {"passed", "clean"} and "== asm fallback ==" not in combined
-    ):
-        return False, "validation_failed"
+        return False, HarnessAcceptanceReason.TIMEOUT
+    if "decompilation validation_failed" in combined:
+        return False, HarnessAcceptanceReason.VALIDATION_FAILED
     if "acceptance-gate detail:" in combined:
-        return False, "acceptance_gate_failed"
+        return False, HarnessAcceptanceReason.ACCEPTANCE_GATE_FAILED
     if "missing source-evidenced" in combined:
-        return False, "source_evidence_failed"
+        return False, HarnessAcceptanceReason.SOURCE_EVIDENCE_FAILED
     if "whole-tail validation failed" in combined and tail_status not in {"passed", "clean"}:
-        return False, "tail_validation_failed"
+        return False, HarnessAcceptanceReason.TAIL_VALIDATION_FAILED
     return True, None
 
 
@@ -1505,6 +1967,7 @@ def _decompile_function_with_options(
     function_name: str,
     proc_kind: str = "NEAR",
 ) -> tuple[bool, str, str, dict[str, object], str, str]:
+    start = time.perf_counter()
     cmd = [
         _decompile_python_executable(),
         str(decompile_py),
@@ -1540,6 +2003,7 @@ def _decompile_function_with_options(
             ),
         )
     except subprocess.TimeoutExpired as ex:
+        elapsed = time.perf_counter() - start
         stdout_data = ex.stdout.decode("utf-8", errors="replace") if isinstance(ex.stdout, bytes) else (ex.stdout or "")
         stderr_data = ex.stderr.decode("utf-8", errors="replace") if isinstance(ex.stderr, bytes) else (ex.stderr or "")
         timeout_text = stderr_data + "\ndecompile timeout\n"
@@ -1549,6 +2013,7 @@ def _decompile_function_with_options(
         profile["command"] = " ".join(cmd)
         profile["process_timeout_seconds"] = process_timeout
         profile["analysis_timeout_seconds"] = decompile_timeout
+        profile["wall_seconds"] = elapsed
         _attach_decompile_quality_profile(profile, stdout_data, function_name=function_name)
         return (
             False,
@@ -1558,6 +2023,7 @@ def _decompile_function_with_options(
             " ".join(cmd),
             function_name,
         )
+    elapsed = time.perf_counter() - start
     profile = _parse_decompile_profile(_decompile_profile_text(proc.stdout, proc.stderr))
     acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, profile)
     if acceptable and proc.returncode != 0:
@@ -1566,6 +2032,7 @@ def _decompile_function_with_options(
     profile["acceptance_reason"] = None if acceptable else reason
     profile["process_timeout_seconds"] = process_timeout
     profile["analysis_timeout_seconds"] = decompile_timeout
+    profile["wall_seconds"] = elapsed
     _attach_decompile_quality_profile(profile, proc.stdout, function_name=function_name)
     return (
         acceptable and proc.returncode == 0,
@@ -1599,31 +2066,242 @@ def _build_from_function_decompiles(
     decompile_map_name: str,
     kvikdos: Path,
     msc6_root: Path,
+    source_contracts: tuple[GeneratedFunctionSourceContract, ...] = (),
+    fallback_debug: dict[str, object] | None = None,
 ) -> tuple[bool, bool, int | None, str, str, str, str, str, str]:
     function_bodies: list[str] = []
     function_debug: list[tuple[str, str, str, dict[str, object]]] = []
-    for function_name in fallback_functions:
-        ok, out_text, err_text, profile, _cmd, _name = _decompile_function_with_options(
-            exe_path,
-            decompile_py=decompile_py,
-            decompile_timeout=decompile_timeout,
-            decompile_function_discovery_backend=decompile_function_discovery_backend,
-            decompile_seed_engine=decompile_seed_engine,
-            decompile_rizin_timeout=decompile_rizin_timeout,
-            decompile_force_rizin_8616=decompile_force_rizin_8616,
-            decompile_pat_backend=decompile_pat_backend,
-            decompile_signature_catalog=decompile_signature_catalog,
-            function_name=function_name,
-        )
-        function_debug.append((function_name, _name, _cmd, profile))
-        if not ok:
-            if f"did not find {function_name}" in err_text:
-                skipped = dict(profile)
-                skipped["skipped_absent_proc"] = True
-                function_debug[-1] = (function_name, _name, _cmd, skipped)
+
+    def _extract_body_or_retry_reason(
+        out_text: str, function_name: str
+    ) -> tuple[str | None, FocusedDecompileRetryReason | None]:
+        try:
+            return _extract_decompiled_function_definition(out_text, function_name), None
+        except RuntimeError as ex:
+            if "missing generated definition" not in str(ex):
+                raise
+            return None, FocusedDecompileRetryReason.MISSING_GENERATED_DEFINITION
+
+    def _try_batch_function_decompiles() -> list[str] | None:
+        if os.environ.get("INERTIA_DISABLE_MSC6_BATCH_FALLBACK", "").strip().lower() in {"1", "true", "yes", "on"}:
+            return None
+        if not exe_path.exists():
+            return None
+        if not DEFAULT_BATCH_DECOMPILE_PROCS.exists():
+            return None
+        batch_dir = out_dir / f"{Path(decompile_c_name).stem}.batch"
+        cmd = [
+            _decompile_python_executable(),
+            str(DEFAULT_BATCH_DECOMPILE_PROCS),
+            str(exe_path),
+            "--out-dir",
+            str(batch_dir),
+            "--direct-in-process",
+            "--timeout",
+            str(decompile_timeout),
+            "--function-discovery-backend",
+            decompile_function_discovery_backend,
+            "--seed-engine",
+            decompile_seed_engine,
+            "--rizin-timeout",
+            str(decompile_rizin_timeout),
+        ]
+        for function_name in fallback_functions:
+            cmd.extend(["--proc", function_name])
+        if decompile_pat_backend is not None:
+            cmd.extend(["--pat-backend", decompile_pat_backend])
+        if decompile_signature_catalog is not None:
+            cmd.extend(["--signature-catalog", str(decompile_signature_catalog)])
+        timeout = _focused_decompile_process_timeout(decompile_timeout) * max(1, len(fallback_functions))
+        try:
+            proc = _run(
+                cmd,
+                cwd=REPO_ROOT,
+                timeout=timeout,
+                env=_make_decompile_env(decompile_force_rizin_8616, trace_label=f"{exe_path.stem}.batch"),
+            )
+        except subprocess.TimeoutExpired:
+            timeout_profile = {
+                "acceptance_reason": HarnessAcceptanceReason.TIMEOUT.value,
+                "timeout": True,
+                "process_timeout_seconds": timeout,
+            }
+            function_debug.append(("<batch>", "<batch>", " ".join(cmd), timeout_profile))
+            return None
+        report_path = batch_dir / "batch_report.json"
+        if not report_path.exists():
+            function_debug.append(
+                (
+                    "<batch>",
+                    "<batch>",
+                    " ".join(cmd),
+                    {
+                        "acceptance_reason": "batch_failed",
+                        "returncode": proc.returncode,
+                        "stdout": proc.stdout[-2000:],
+                        "stderr": proc.stderr[-2000:],
+                    },
+                )
+            )
+            return None
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as ex:
+            function_debug.append(
+                ("<batch>", "<batch>", " ".join(cmd), {"acceptance_reason": "batch_report_invalid", "error": str(ex)})
+            )
+            return None
+        raw_results = report.get("results") if isinstance(report, dict) else None
+        if not isinstance(raw_results, list):
+            function_debug.append(("<batch>", "<batch>", " ".join(cmd), {"acceptance_reason": "batch_report_missing"}))
+            return None
+        results_by_proc = {str(item.get("proc")): item for item in raw_results if isinstance(item, dict)}
+        batch_bodies: list[str] = []
+        for function_name in fallback_functions:
+            result = results_by_proc.get(function_name)
+            if not isinstance(result, dict):
+                function_debug.append(
+                    (function_name, function_name, " ".join(cmd), {"acceptance_reason": "batch_missing_proc"})
+                )
+                return None
+            stdout_path = Path(str(result.get("stdout_path", "")))
+            stderr_path = Path(str(result.get("stderr_path", "")))
+            out_text = stdout_path.read_text(encoding="utf-8") if stdout_path.exists() else ""
+            err_text = stderr_path.read_text(encoding="utf-8") if stderr_path.exists() else ""
+            profile = _parse_decompile_profile(_decompile_profile_text(out_text, err_text))
+            profile["batch_attempt"] = True
+            profile["returncode"] = result.get("returncode")
+            profile["wall_seconds"] = result.get("wall_seconds")
+            acceptable, reason = _is_decompile_output_acceptable(out_text, err_text, profile)
+            if acceptable and result.get("returncode") != 0:
+                acceptable = False
+                reason = FocusedDecompileRetryReason.NONZERO_EXIT.value
+            profile["acceptance_reason"] = None if acceptable else reason
+            function_debug.append((function_name, function_name, " ".join(cmd), profile))
+            if not acceptable:
+                retry_reason = _focused_decompile_retry_reason(profile)
+                if retry_reason is not FocusedDecompileRetryReason.NONZERO_EXIT:
+                    return None
+                body, extract_retry_reason = _extract_body_or_retry_reason(out_text, function_name)
+                if body is None:
+                    profile["acceptance_reason"] = (
+                        extract_retry_reason.value if extract_retry_reason is not None else "extract_failed"
+                    )
+                    return None
+                batch_bodies.append(body)
                 continue
-            retry_reason = _focused_decompile_retry_reason(profile)
-            if retry_reason is not None:
+            body, extract_retry_reason = _extract_body_or_retry_reason(out_text, function_name)
+            if body is None:
+                profile["acceptance_reason"] = (
+                    extract_retry_reason.value if extract_retry_reason is not None else "extract_failed"
+                )
+                return None
+            batch_bodies.append(body)
+        return batch_bodies
+
+    batch_bodies = _try_batch_function_decompiles()
+    if batch_bodies is not None:
+        function_bodies.extend(batch_bodies)
+        if fallback_debug is not None:
+            fallback_debug["batch_used"] = True
+    try:
+        for function_name in () if batch_bodies is not None else fallback_functions:
+            ok, out_text, err_text, profile, _cmd, _name = _decompile_function_with_options(
+                exe_path,
+                decompile_py=decompile_py,
+                decompile_timeout=decompile_timeout,
+                decompile_function_discovery_backend=decompile_function_discovery_backend,
+                decompile_seed_engine=decompile_seed_engine,
+                decompile_rizin_timeout=decompile_rizin_timeout,
+                decompile_force_rizin_8616=decompile_force_rizin_8616,
+                decompile_pat_backend=decompile_pat_backend,
+                decompile_signature_catalog=decompile_signature_catalog,
+                function_name=function_name,
+            )
+            function_debug.append((function_name, _name, _cmd, profile))
+            if not ok:
+                if f"did not find {function_name}" in err_text:
+                    skipped = dict(profile)
+                    skipped["skipped_absent_proc"] = True
+                    function_debug[-1] = (function_name, _name, _cmd, skipped)
+                    continue
+                retry_reason = _focused_decompile_retry_reason(profile)
+                if retry_reason is FocusedDecompileRetryReason.NONZERO_EXIT:
+                    body, extract_retry_reason = _extract_body_or_retry_reason(out_text, function_name)
+                    if body is not None:
+                        function_bodies.append(body)
+                        continue
+                    retry_reason = extract_retry_reason
+                if retry_reason is not None:
+                    ok, out_text, err_text, profile, _cmd, _name = _decompile_function_with_options(
+                        exe_path,
+                        decompile_py=decompile_py,
+                        decompile_timeout=decompile_timeout,
+                        decompile_function_discovery_backend=decompile_function_discovery_backend,
+                        decompile_seed_engine=decompile_seed_engine,
+                        decompile_rizin_timeout=decompile_rizin_timeout,
+                        decompile_force_rizin_8616=decompile_force_rizin_8616,
+                        decompile_pat_backend=decompile_pat_backend,
+                        decompile_signature_catalog=decompile_signature_catalog,
+                        function_name=function_name,
+                    )
+                    retry_profile = dict(profile)
+                    retry_profile["retry_attempt"] = 2
+                    retry_profile["retry_reason"] = retry_reason.value
+                    function_debug.append((function_name, _name, _cmd, retry_profile))
+                if ok:
+                    body, extract_retry_reason = _extract_body_or_retry_reason(out_text, function_name)
+                    if body is None:
+                        retry_profile = dict(profile)
+                        retry_profile["retry_attempt"] = 2
+                        retry_profile["retry_reason"] = extract_retry_reason.value if extract_retry_reason else "extract_failed"
+                        ok, out_text, err_text, profile, _cmd, _name = _decompile_function_with_options(
+                            exe_path,
+                            decompile_py=decompile_py,
+                            decompile_timeout=decompile_timeout,
+                            decompile_function_discovery_backend=decompile_function_discovery_backend,
+                            decompile_seed_engine=decompile_seed_engine,
+                            decompile_rizin_timeout=decompile_rizin_timeout,
+                            decompile_force_rizin_8616=decompile_force_rizin_8616,
+                            decompile_pat_backend=decompile_pat_backend,
+                            decompile_signature_catalog=decompile_signature_catalog,
+                            function_name=function_name,
+                        )
+                        function_debug.append((function_name, _name, _cmd, retry_profile))
+                        if ok:
+                            body, extract_retry_reason = _extract_body_or_retry_reason(out_text, function_name)
+                    if body is None:
+                        failed_profile = dict(profile)
+                        failed_profile["acceptance_reason"] = (
+                            extract_retry_reason.value if extract_retry_reason else "extract_failed"
+                        )
+                        function_debug.append((function_name, _name, _cmd, failed_profile))
+                        return (
+                            False,
+                            False,
+                            None,
+                            "",
+                            "",
+                            "",
+                            "",
+                            "",
+                            json.dumps(function_debug, sort_keys=True),
+                        )
+                    function_bodies.append(body)
+                    continue
+                return (
+                    False,
+                    False,
+                    None,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    json.dumps(function_debug, sort_keys=True),
+                )
+            body, extract_retry_reason = _extract_body_or_retry_reason(out_text, function_name)
+            if body is None:
                 ok, out_text, err_text, profile, _cmd, _name = _decompile_function_with_options(
                     exe_path,
                     decompile_py=decompile_py,
@@ -1638,29 +2316,52 @@ def _build_from_function_decompiles(
                 )
                 retry_profile = dict(profile)
                 retry_profile["retry_attempt"] = 2
-                retry_profile["retry_reason"] = retry_reason.value
+                retry_profile["retry_reason"] = extract_retry_reason.value if extract_retry_reason else "extract_failed"
                 function_debug.append((function_name, _name, _cmd, retry_profile))
-            if ok:
-                function_bodies.append(_extract_decompiled_function_definition(out_text, function_name))
-                continue
-            return (
-                False,
-                False,
-                None,
-                "",
-                "",
-                "",
-                "",
-                "",
-                json.dumps(function_debug, sort_keys=True),
-            )
-        function_bodies.append(_extract_decompiled_function_definition(out_text, function_name))
+                if ok:
+                    body, extract_retry_reason = _extract_body_or_retry_reason(out_text, function_name)
+            if body is None:
+                failed_profile = dict(profile)
+                failed_profile["acceptance_reason"] = extract_retry_reason.value if extract_retry_reason else "extract_failed"
+                function_debug.append((function_name, _name, _cmd, failed_profile))
+                return (
+                    False,
+                    False,
+                    None,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    json.dumps(function_debug, sort_keys=True),
+                )
+            function_bodies.append(body)
+    finally:
+        if fallback_debug is not None:
+            fallback_debug["function_debug"] = _json_safe_profile(function_debug)
 
     source_path = out_dir / decompile_c_name
     source_text = _prepare_decompiled_source_for_c89(
         _build_fallback_source(function_bodies, fallback_harness, prefix=fallback_prefix)
     )
     source_path.write_text(source_text, encoding="utf-8")
+    source_contract_results = _evaluate_generated_function_source_contracts(source_text, source_contracts)
+    source_contracts_passed = all(result.passed for result in source_contract_results)
+    if fallback_debug is not None:
+        fallback_debug["source_contracts"] = [result.to_dict() for result in source_contract_results]
+        fallback_debug["source_contracts_passed"] = source_contracts_passed
+    if not source_contracts_passed:
+        return (
+            False,
+            False,
+            None,
+            "",
+            "",
+            "",
+            "",
+            "",
+            json.dumps([result.to_dict() for result in source_contract_results], sort_keys=True),
+        )
 
     decompiled_exe_path = out_dir / decompile_exe_name
     recompiled_ok, rec_out, rec_err, rel_out, rel_err = _compile_and_link(
@@ -1940,14 +2641,13 @@ def _decompile(
             if decompile_mode != "main":
                 break
 
+        last_candidate = attempts[-1].get("candidate") if attempts else None
+        last_candidate_kind = last_candidate.get("kind") if isinstance(last_candidate, dict) else None
         if (
             decompile_mode == "main"
-            and (
-                all_selection_failures
-                or (saw_decompile_timeout and attempts and attempts[-1]["candidate"].get("kind") != "max-functions")
-            )
+            and (all_selection_failures or (saw_decompile_timeout and last_candidate_kind != "max-functions"))
             and attempts
-            and attempts[-1]["candidate"].get("kind") != "max-functions"
+            and last_candidate_kind != "max-functions"
         ):
             fallback_count = max(1, decompile_max_functions)
             fallback_candidate = {
@@ -2075,11 +2775,18 @@ def _decompile_and_validate(
         fallback_functions = decompile_fallback_rebuild.get("functions")
         fallback_harness = decompile_fallback_rebuild.get("harness")
         fallback_prefix = decompile_fallback_rebuild.get("prefix", "")
+        raw_source_contracts = decompile_fallback_rebuild.get("source_contracts", ())
         if not isinstance(fallback_functions, tuple) or not isinstance(fallback_harness, str):
             return None
         if not isinstance(fallback_prefix, str):
             return None
+        if not isinstance(raw_source_contracts, tuple) or not all(
+            isinstance(contract, GeneratedFunctionSourceContract) for contract in raw_source_contracts
+        ):
+            return None
+        source_contracts = cast(tuple[GeneratedFunctionSourceContract, ...], raw_source_contracts)
         decomp_name, obj_name, exe_name, map_name = _rebuild_names()
+        fallback_debug: dict[str, object] = {}
         result = _build_from_function_decompiles(
             exe_path,
             out_dir,
@@ -2101,6 +2808,8 @@ def _decompile_and_validate(
             decompile_map_name=map_name,
             kvikdos=kvikdos,
             msc6_root=msc6_root,
+            source_contracts=source_contracts,
+            fallback_debug=fallback_debug,
         )
         profile["fallback_rebuild"] = {
             "attempted": True,
@@ -2108,6 +2817,7 @@ def _decompile_and_validate(
             "decompile_ok": result[0],
             "recompile_ok": result[1],
             "run_exit_code": result[2],
+            **fallback_debug,
         }
         return result
 
@@ -2449,16 +3159,17 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    signature_inputs: list[Path] = list(args.signature_input)
-    if args.signature_catalog is not None:
-        signature_catalog = args.signature_catalog
+    signature_inputs: list[Path] = [path for path in args.signature_input if isinstance(path, Path)]
+    raw_signature_catalog = args.signature_catalog
+    if isinstance(raw_signature_catalog, Path):
+        signature_catalog: Path | None = raw_signature_catalog
         if not signature_catalog.is_absolute():
             signature_catalog = (REPO_ROOT / signature_catalog).resolve()
-        if args.signature_input:
-            signature_inputs = [signature_catalog] + [path for path in args.signature_input]
+        if signature_inputs:
+            signature_inputs = [signature_catalog, *signature_inputs]
             signature_catalog = None
     else:
-        signature_catalog: Path | None = None
+        signature_catalog = None
 
     if signature_inputs:
         prepared_catalog = _prepare_signature_catalog(

@@ -1,12 +1,24 @@
+"""Layer: Frontend/runtime.
+
+Responsibility: load DOS MZ executables into the 16-bit x86 frontend model.
+Forbidden: decompiler recovery, type inference, or source/COD-backed repair.
+Dynamic boundary: CLE backend constructors pass binary streams and loader
+keyword arguments through a third-party plugin API.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import BinaryIO, cast
 
 from archinfo import arch_from_id
 from cle.backends import Blob, register_backend
 
+__all__ = ("DOSMZ", "DOSMZHeader", "MZSegmentSpan")
 
-def _read_mz_extended_signature(stream) -> bytes | None:
+
+def _read_mz_extended_signature(stream: BinaryIO) -> bytes | None:
+    """Read the optional extended executable signature from an MZ stream."""
     stream.seek(0)
     header = stream.read(0x40)
     if len(header) < 0x40 or header[:2] != b"MZ":
@@ -23,6 +35,8 @@ def _read_mz_extended_signature(stream) -> bytes | None:
 
 @dataclass(frozen=True)
 class DOSMZHeader:
+    """Parsed DOS MZ fields that seed frontend entry, stack, and relocation state."""
+
     header_paragraphs: int
     relocation_count: int
     relocation_offset: int
@@ -32,7 +46,8 @@ class DOSMZHeader:
     initial_ss: int
 
     @classmethod
-    def from_stream(cls, stream) -> "DOSMZHeader":
+    def from_stream(cls, stream: BinaryIO) -> DOSMZHeader:
+        """Parse the core MZ header fields from a binary stream."""
         stream.seek(0)
         header = stream.read(0x40)
         if len(header) < 0x1C or header[:2] != b"MZ":
@@ -51,6 +66,8 @@ class DOSMZHeader:
 
 @dataclass(frozen=True)
 class MZSegmentSpan:
+    """Evidence-backed linear span for a DOS real-mode segment."""
+
     segment: int
     start_linear: int
     end_linear: int
@@ -64,17 +81,19 @@ class DOSMZ(Blob):
     references inside the executable line up with the relocated program image.
     """
 
-    is_default = True
+    is_default: bool = True
 
-    DEFAULT_LOAD_BASE = 0x1000
+    DEFAULT_LOAD_BASE: int = 0x1000
+    initial_register_values: dict[str, int]
 
-    def __init__(self, *args, offset=None, **kwargs):
+    def __init__(self, *args: object, offset: int | None = None, **kwargs: object) -> None:
+        """Initialize a CLE blob backend from the third-party loader API."""
         if len(args) < 2:
             raise ValueError("DOSMZ expects binary path and binary stream")
-        stream = args[1]
+        stream = cast(BinaryIO, args[1])
         header = DOSMZHeader.from_stream(stream)
         image_offset = header.header_paragraphs * 0x10 if offset is None else offset
-        load_base = kwargs.pop("base_addr", self.DEFAULT_LOAD_BASE)
+        load_base = cast(int, kwargs.pop("base_addr", self.DEFAULT_LOAD_BASE))
         image_end = self._image_end_linear(stream, image_offset, load_base)
         load_segment = load_base >> 4
         entry_point = load_base + (header.initial_cs << 4) + header.initial_ip
@@ -115,12 +134,14 @@ class DOSMZ(Blob):
         )
 
     @staticmethod
-    def _image_end_linear(stream, image_offset: int, load_base: int) -> int:
+    def _image_end_linear(stream: BinaryIO, image_offset: int, load_base: int) -> int:
+        """Return the loaded-image end address for the MZ payload."""
         stream.seek(0, 2)
         return load_base + max(0, stream.tell() - image_offset)
 
     @staticmethod
-    def _read_relocation_entries(stream, header: DOSMZHeader) -> list[tuple[int, int]]:
+    def _read_relocation_entries(stream: BinaryIO, header: DOSMZHeader) -> list[tuple[int, int]]:
+        """Read MZ relocation entries as offset/segment pairs."""
         entries: list[tuple[int, int]] = []
         for idx in range(header.relocation_count):
             entry_off = header.relocation_offset + idx * 4
@@ -141,6 +162,7 @@ class DOSMZ(Blob):
         load_base: int,
         image_end: int,
     ) -> tuple[MZSegmentSpan, ...]:
+        """Infer segment spans from entry, stack, and relocation evidence only."""
         evidence_by_segment: dict[int, set[str]] = {
             header.initial_cs: {"entry_cs:ip"},
             header.initial_ss: {"stack_ss:sp"},
@@ -170,6 +192,7 @@ class DOSMZ(Blob):
         return tuple(spans)
 
     def _apply_relocations(self, relocation_entries: list[tuple[int, int]], load_base: int, load_segment: int) -> None:
+        """Apply load-segment relocation fixups to the mapped MZ image."""
         for reloc_offset, reloc_segment in relocation_entries:
             reloc_addr = load_base + (reloc_segment << 4) + reloc_offset
             relative_addr = reloc_addr - self.linked_base
@@ -184,7 +207,8 @@ class DOSMZ(Blob):
             self.memory.store(relative_addr, patched.to_bytes(2, "little"))
 
     @staticmethod
-    def is_compatible(stream):
+    def is_compatible(stream: BinaryIO) -> bool:
+        """Return whether the binary stream should be handled as a plain DOS MZ image."""
         stream.seek(0)
         magic = stream.read(2)
         if magic != b"MZ":

@@ -3,24 +3,49 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import angr_platforms.X86_16.decompiler_postprocess_stage as post_stage
+from angr.ailment.statement import Return as AILReturn
 from angr.analyses.decompiler.structured_codegen.c import (
     CConstant,
+    CDirtyExpression,
     CExpressionStatement,
     CFunctionCall,
     CIfElse,
     CReturn,
     CStatements,
+    CUnsupportedStatement,
     CVariable,
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.decompiler_postprocess_calls import CallsiteMaterializationDecision8616
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
+    _collapse_unsupported_ail_return_before_materialized_return_8616,
+    _flatten_conditional_return_chain_8616,
     _is_cfg_return_chain_callsite_materialization_delta_8616,
     _is_cfg_return_expr_chain_materialization_delta_8616,
+    _materialize_cfg_mask_accumulator_8616,
+    _materialize_cfg_selector_return_branches_pass_8616,
+    _materialize_empty_if_return_branches_pass_8616,
+    _materialize_missing_terminal_ax_return_8616,
+    _materialize_void_tail_call_guard_from_cfg_pass_8616,
     _prune_duplicate_empty_return_guard_before_cfg_suffix_8616,
 )
-from angr_platforms.X86_16.decompiler_postprocess_calls import CallsiteMaterializationDecision8616
+
+
+def test_materialized_terminal_return_supersedes_adjacent_unsupported_ail_return():
+    codegen = _DummyCodegen()
+    unsupported = CUnsupportedStatement(AILReturn(1, []), codegen=codegen)
+    materialized = CReturn(_const(7, codegen), codegen=codegen)
+    root = CStatements([unsupported, materialized], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+    codegen._inertia_missing_terminal_ax_return_materialized_8616 = 1
+
+    changed = _collapse_unsupported_ail_return_before_materialized_return_8616(codegen)
+
+    assert changed is True
+    assert root.statements == [materialized]
+    assert codegen._inertia_unsupported_ail_returns_superseded_8616 == 1
 
 
 class _DummyCodegen:
@@ -44,6 +69,325 @@ def _if_return(cond_value: int, return_value: int, codegen):
         codegen=codegen,
     )
     return CIfElse([(_const(cond_value, codegen), body)], else_node=None, cstyle_ifs=True, codegen=codegen)
+
+
+def test_direct_stack_postprocess_fallbacks_refuse_after_structuring_pass(monkeypatch):
+    codegen = SimpleNamespace(_inertia_direct_stack_materialization_structuring_pass_ran_8616=True)
+    calls: list[str] = []
+
+    def stack_mov(_codegen, *, project=None, function=None, allow_stack_slot_fallback=True, source_kinds=None):
+        del project, function, allow_stack_slot_fallback, source_kinds
+        calls.append("mov")
+        return True
+
+    def stack_incdec(_codegen, *, project=None, function=None):
+        del project, function
+        calls.append("incdec")
+        return True
+
+    monkeypatch.setattr(post_stage, "materialize_direct_stack_mov_instructions_8616", stack_mov)
+    monkeypatch.setattr(post_stage, "materialize_direct_stack_incdec_instructions_8616", stack_incdec)
+
+    assert post_stage._materialize_direct_stack_mov_instructions_postprocess_8616(object(), codegen) is False
+    assert post_stage._materialize_direct_stack_incdec_instructions_postprocess_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_stable_stack_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    codegen = SimpleNamespace(_inertia_stable_stack_semantics_structuring_pass_ran_8616=True)
+    calls: list[str] = []
+
+    def transfer(_project, _codegen):
+        calls.append("transfer")
+        return 1
+
+    monkeypatch.setattr(post_stage, "transfer_semantic_alias_facts_to_codegen_8616", transfer)
+
+    assert post_stage._materialize_stable_stack_semantics_postprocess_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_pointer_arg_indirect_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    codegen = SimpleNamespace(_inertia_pointer_arg_indirect_structuring_pass_ran_8616=True)
+    calls: list[str] = []
+
+    def materialize(_project, _codegen, _func):
+        calls.append("pointer")
+        return True
+
+    monkeypatch.setattr(post_stage._post, "_materialize_pointer_arg_indirect_loads_8616", materialize)
+
+    assert post_stage._materialize_pointer_arg_indirect_loads_postprocess_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_pointer_arg_indirect_postprocess_slot_never_recovers_semantics(monkeypatch):
+    codegen = SimpleNamespace()
+    calls: list[str] = []
+
+    def materialize(_project, _codegen, _func):
+        calls.append("pointer")
+        return True
+
+    monkeypatch.setattr(post_stage._post, "_materialize_pointer_arg_indirect_loads_8616", materialize)
+
+    assert post_stage._materialize_pointer_arg_indirect_loads_postprocess_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_pointer_memory_idiom_postprocess_fallback_refuses_after_lowering_pass(monkeypatch):
+    codegen = SimpleNamespace(_inertia_pointer_memory_idiom_lowering_pass_ran_8616=True)
+    calls: list[str] = []
+
+    def materialize(_project, _codegen):
+        calls.append("pointer-memory")
+        return True
+
+    monkeypatch.setattr(post_stage, "_materialize_pointer_memory_idioms_8616", materialize)
+
+    assert post_stage._materialize_pointer_memory_idioms_postprocess_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_callsite_prototypes_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    codegen = SimpleNamespace(_inertia_callsite_prototypes_structuring_pass_ran_8616=True)
+    calls: list[str] = []
+
+    def prototypes(_project, _codegen):
+        calls.append("prototypes")
+        return True
+
+    monkeypatch.setattr(post_stage._calls, "_materialize_callsite_prototypes_8616", prototypes)
+
+    assert post_stage._materialize_callsite_prototypes_postprocess_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_callsite_stack_argument_postprocess_fallbacks_refuse_after_structuring_pass(monkeypatch):
+    codegen = SimpleNamespace(_inertia_callsite_stack_arguments_structuring_pass_ran_8616=True)
+    calls: list[str] = []
+
+    def recover(_project, _codegen):
+        calls.append("recover")
+        return True
+
+    def stack_args(_project, _codegen):
+        calls.append("stack-args")
+        return True
+
+    monkeypatch.setattr(post_stage._calls, "_recover_missing_direct_calls_from_evidence_8616", recover)
+    monkeypatch.setattr(post_stage, "_materialize_callsite_stack_arguments_preserve_setup_8616", stack_args)
+
+    assert post_stage._recover_missing_direct_calls_from_evidence_early_postprocess_8616(object(), codegen) is False
+    assert post_stage._recover_missing_direct_calls_final_postprocess_8616(object(), codegen) is False
+    assert post_stage._materialize_callsite_stack_arguments_postprocess_8616(object(), codegen) is False
+    assert post_stage._materialize_callsite_stack_arguments_final_postprocess_8616(object(), codegen) is False
+    assert post_stage._materialize_callsite_stack_arguments_after_ss_lowering_8616(object(), codegen) is False
+    assert post_stage._materialize_recovered_callsite_stack_arguments_postprocess_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_stdlib_call_chains_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    codegen = SimpleNamespace(_inertia_stdlib_call_chains_structuring_pass_ran_8616=True)
+    calls: list[str] = []
+
+    def stdlib(_project, _codegen):
+        calls.append("stdlib")
+        return True
+
+    monkeypatch.setattr(post_stage._calls, "_materialize_stdlib_call_chains_8616", stdlib)
+
+    assert post_stage._materialize_stdlib_call_chains_postprocess_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_stack_byte_pair_return_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    codegen = SimpleNamespace(_inertia_stack_byte_pair_return_structuring_pass_ran_8616=True)
+    calls: list[str] = []
+
+    def materialize(_project, _codegen):
+        calls.append("stack-byte")
+        return True
+
+    monkeypatch.setattr(post_stage, "_materialize_stack_byte_pair_return_8616", materialize)
+
+    assert post_stage._materialize_stack_byte_pair_return_pass_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_loop_idiom_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    codegen = SimpleNamespace(_inertia_loop_idiom_structuring_pass_ran_8616=True)
+    calls: list[str] = []
+
+    def global_byte_sum(_project, _codegen):
+        calls.append("global")
+        return True
+
+    def nested_stack_counter(_project, _codegen):
+        calls.append("nested")
+        return True
+
+    def stack_arg(_project, _codegen):
+        calls.append("stack-arg")
+        return True
+
+    monkeypatch.setattr(post_stage, "_materialize_global_byte_index_sum_loop_8616", global_byte_sum)
+    monkeypatch.setattr(post_stage, "_materialize_nested_stack_counter_accumulator_loop_8616", nested_stack_counter)
+    monkeypatch.setattr(post_stage, "_materialize_stack_arg_accumulator_loop_8616", stack_arg)
+
+    assert post_stage._materialize_global_byte_index_sum_loop_postprocess_8616(object(), codegen) is False
+    assert post_stage._materialize_nested_stack_counter_accumulator_loop_postprocess_8616(object(), codegen) is False
+    assert post_stage._materialize_stack_arg_accumulator_loop_postprocess_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_direct_global_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    codegen = SimpleNamespace(_inertia_direct_global_incdec_materialization_structuring_pass_ran_8616=True)
+    calls: list[str] = []
+
+    def global_incdec(_codegen, *, project=None, function=None):
+        del project, function
+        calls.append("global")
+        return True
+
+    monkeypatch.setattr(post_stage, "materialize_direct_global_incdec_instructions_8616", global_incdec)
+
+    assert post_stage._materialize_direct_global_incdec_instructions_postprocess_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_unresolved_exit_goto_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    codegen = SimpleNamespace(_inertia_unresolved_exit_goto_structuring_pass_ran_8616=True)
+    calls: list[str] = []
+
+    def repair(_project, _codegen):
+        calls.append("repair")
+        return True
+
+    monkeypatch.setattr(post_stage._post, "_repair_unresolved_function_exit_gotos_8616", repair)
+
+    assert post_stage._repair_unresolved_function_exit_gotos_pass_8616(object(), codegen) is False
+    assert calls == []
+
+
+def test_selector_return_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    codegen._inertia_selector_return_structuring_pass_ran_8616 = True
+
+    def fail_materialization(*_args, **_kwargs):
+        raise AssertionError("postprocess fallback should not materialize selector returns after structuring ran")
+
+    monkeypatch.setattr(post_stage, "_structuring_materialize_cfg_selector_return_branches_8616", fail_materialization)
+
+    changed = _materialize_cfg_selector_return_branches_pass_8616(project, codegen)
+
+    assert changed is False
+
+
+def test_empty_if_return_chain_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    codegen._inertia_return_chains_structuring_pass_ran_8616 = True
+
+    def fail_materialization(*_args, **_kwargs):
+        raise AssertionError("postprocess fallback should not materialize return chains after structuring ran")
+
+    monkeypatch.setattr(post_stage, "_structuring_materialize_empty_if_return_branches_8616", fail_materialization)
+
+    changed = _materialize_empty_if_return_branches_pass_8616(project, codegen)
+
+    assert changed is False
+
+
+def test_cfg_mask_accumulator_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    codegen._inertia_cfg_mask_accumulator_structuring_pass_ran_8616 = True
+
+    def fail_materialization(*_args, **_kwargs):
+        raise AssertionError("postprocess fallback should not materialize CFG masks after structuring ran")
+
+    monkeypatch.setattr(post_stage, "_structuring_materialize_cfg_mask_accumulator_8616", fail_materialization)
+
+    changed = _materialize_cfg_mask_accumulator_8616(project, codegen)
+
+    assert changed is False
+
+
+def test_missing_terminal_ax_return_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    codegen._inertia_missing_terminal_ax_return_structuring_pass_ran_8616 = True
+
+    def fail_return_scan(*_args, **_kwargs):
+        raise AssertionError("postprocess fallback should not scan terminal AX after structuring ran")
+
+    monkeypatch.setattr(post_stage, "_linear_terminal_ax_return_expr_8616", fail_return_scan)
+
+    changed = _materialize_missing_terminal_ax_return_8616(project, codegen)
+
+    assert changed is False
+
+
+def test_void_tail_call_guard_postprocess_fallback_refuses_after_structuring_pass(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    codegen._inertia_void_tail_call_guard_structuring_pass_ran_8616 = True
+
+    def fail_materialization(*_args, **_kwargs):
+        raise AssertionError("postprocess fallback should not materialize void tail-call guards after structuring ran")
+
+    monkeypatch.setattr(post_stage, "_materialize_void_tail_call_guard_from_cfg_8616", fail_materialization)
+
+    changed = _materialize_void_tail_call_guard_from_cfg_pass_8616(project, codegen)
+
+    assert changed is False
+
+
+def test_flatten_conditional_return_chain_is_idempotent(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    cond_one = _const(1, codegen)
+    cond_two = _const(2, codegen)
+    root = CStatements(
+        statements=[
+            CIfElse(
+                [
+                    (
+                        cond_one,
+                        CStatements(statements=[CReturn(_const(7, codegen), codegen=codegen)], codegen=codegen),
+                    )
+                ],
+                else_node=None,
+                cstyle_ifs=True,
+                codegen=codegen,
+            ),
+            CIfElse(
+                [
+                    (
+                        cond_two,
+                        CStatements(statements=[CReturn(_const(9, codegen), codegen=codegen)], codegen=codegen),
+                    )
+                ],
+                else_node=None,
+                cstyle_ifs=True,
+                codegen=codegen,
+            ),
+            CReturn(_const(11, codegen), codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    monkeypatch.setattr(post_stage, "_last_ax_return_value_8616", lambda _project, _codegen: 11)
+
+    changed = _flatten_conditional_return_chain_8616(project, codegen, [(cond_one, 7), (cond_two, 9)])
+
+    assert changed is False
+    assert codegen.cfunc.statements is root
+    assert codegen._inertia_return_chain_flattened_8616 is True
+    assert codegen._inertia_return_chain_materialized_values_8616 == (7, 9)
+    assert codegen._inertia_return_chain_final_value_8616 == 11
 
 
 def test_prune_duplicate_empty_return_accepts_single_statement_wrapper_before_cfg_suffix():
@@ -163,6 +507,88 @@ def test_empty_if_return_materialization_refuses_unsafe_effect_function(monkeypa
     assert codegen._inertia_empty_return_branch_stats_8616["materialized"] == 0
     assert codegen._inertia_empty_return_branch_stats_8616["refused"] >= 1
     assert codegen._inertia_empty_return_branch_refused_unsafe_effects_8616 == 1
+
+
+def test_cfg_selector_return_scans_explicit_return_ast(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    cond = _const(1, codegen)
+    true_body = CStatements(statements=[CReturn(_const(7, codegen), codegen=codegen)], codegen=codegen)
+    root = CStatements(
+        statements=[
+            CIfElse([(cond, true_body)], else_node=None, cstyle_ifs=True, codegen=codegen),
+            CReturn(_const(3, codegen), codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    calls = {"decrement_switch": 0}
+
+    def fake_decrement_switch(_project, _codegen):
+        calls["decrement_switch"] += 1
+        return False
+
+    monkeypatch.setattr(post_stage, "_materialize_decrement_switch_return_chain_8616", fake_decrement_switch)
+    monkeypatch.setattr(post_stage, "_ordered_32bit_selector_return_expr_pairs_from_cfg_8616", lambda *_args: [])
+    monkeypatch.setattr(post_stage, "_ordered_conditional_return_expr_pairs_from_cfg_8616", lambda *_args: [])
+
+    changed = post_stage._materialize_cfg_selector_return_branches_8616(project, codegen)
+
+    assert changed is False
+    assert calls["decrement_switch"] == 1
+    assert not hasattr(codegen, "_inertia_cfg_selector_return_skipped_explicit_return_ast_8616")
+
+
+def test_cfg_selector_return_scans_dirty_return_artifact(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    dirty_return = CReturn(CDirtyExpression("vvar_10", codegen=codegen), codegen=codegen)
+    root = CStatements(statements=[dirty_return], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    calls = {"decrement_switch": 0}
+
+    def fake_decrement_switch(_project, _codegen):
+        calls["decrement_switch"] += 1
+        return False
+
+    monkeypatch.setattr(post_stage, "_materialize_decrement_switch_return_chain_8616", fake_decrement_switch)
+    monkeypatch.setattr(post_stage, "_ordered_32bit_selector_return_expr_pairs_from_cfg_8616", lambda *_args: [])
+    monkeypatch.setattr(post_stage, "_ordered_conditional_return_expr_pairs_from_cfg_8616", lambda *_args: [])
+
+    changed = post_stage._materialize_cfg_selector_return_branches_8616(project, codegen)
+
+    assert changed is False
+    assert calls["decrement_switch"] == 1
+    assert not hasattr(codegen, "_inertia_cfg_selector_return_skipped_explicit_return_ast_8616")
+
+
+def test_cfg_selector_return_allows_calls_consumed_as_condition_evidence(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    root = CStatements(statements=[], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    condition_call = CFunctionCall("cmp_i16", None, [_const(1, codegen), _const(2, codegen)], codegen=codegen)
+    condition_call.tags = {"condition_call_ins_addr": 0x1013}
+    captured: dict[str, frozenset[int]] = {}
+
+    def fake_has_unsafe_effects(_project, _codegen, *, allowed_call_addrs=frozenset()):
+        captured["allowed_call_addrs"] = allowed_call_addrs
+        return False
+
+    monkeypatch.setattr(post_stage, "_materialize_decrement_switch_return_chain_8616", lambda *_args: False)
+    monkeypatch.setattr(post_stage, "_ordered_32bit_selector_return_expr_pairs_from_cfg_8616", lambda *_args: [])
+    monkeypatch.setattr(
+        post_stage,
+        "_ordered_conditional_return_expr_pairs_from_cfg_8616",
+        lambda *_args: [(condition_call, _const(1, codegen), _const(255, codegen))],
+    )
+    monkeypatch.setattr(post_stage, "_selector_function_has_unsafe_effects_8616", fake_has_unsafe_effects)
+
+    changed = post_stage._materialize_cfg_selector_return_branches_8616(project, codegen)
+
+    assert changed is True
+    assert captured["allowed_call_addrs"] == frozenset({0x1013})
+    assert codegen._inertia_return_expr_chain_materialized_8616 is True
 
 
 def test_void_tail_call_guard_repair_moves_cfg_proven_call_into_if_body(monkeypatch):
@@ -406,6 +832,42 @@ def test_void_tail_call_guard_repair_inverts_cfg_proven_suffix_diamond(monkeypat
     assert repaired_if.else_node is false_body
 
 
+def test_void_tail_call_guard_suffix_diamond_refuses_non_void_return(monkeypatch):
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    cond = _const(1, codegen)
+    false_body = CStatements(statements=[CReturn(_const(0, codegen), codegen=codegen)], codegen=codegen)
+    true_call = CFunctionCall("outp", None, [_const(97, codegen)], codegen=codegen)
+    true_return = CReturn(true_call, codegen=codegen)
+    root = CStatements(
+        statements=[
+            CIfElse([(cond, false_body)], else_node=None, cstyle_ifs=True, codegen=codegen),
+            true_return,
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    monkeypatch.setattr(post_stage, "_codegen_has_explicit_void_return_8616", lambda _project, _codegen: False)
+    monkeypatch.setattr(
+        post_stage,
+        "_ordered_conditional_void_tail_call_proofs_from_cfg_8616",
+        lambda _project, _codegen: [(cond, _const(97, codegen))],
+    )
+
+    changed = post_stage._materialize_void_tail_call_guard_from_cfg_8616(project, codegen)
+
+    assert changed is False
+    assert root.statements[0].condition_and_nodes[0][1] is false_body
+    assert root.statements[1] is true_return
+    assert codegen._inertia_void_tail_call_guard_decision_8616 == "keep_not_void"
+    assert codegen._inertia_void_tail_call_guard_stats_8616 == {
+        "candidates": 1,
+        "materialized": 0,
+        "refused": 1,
+    }
+
+
 def test_cfg_selector_return_delta_accepts_proven_stack_probe_helper_cleanup():
     cond_fp = "CmpGE(stack_slot:SS:BP+0x6:size2,stack_slot:SS:BP+0x4:size2)"
     codegen = SimpleNamespace(
@@ -425,6 +887,70 @@ def test_cfg_selector_return_delta_accepts_proven_stack_probe_helper_cleanup():
             "returns": {"added": ("stack_slot:SS:BP+0x4:size2",), "removed": ("CDirtyExpression",)},
             "conditions": {"added": (cond_fp,), "removed": ()},
             "control_flow_effects": {"added": (f"if:{cond_fp}",), "removed": ()},
+        }
+    }
+
+    assert _is_cfg_return_expr_chain_materialization_delta_8616(
+        SimpleNamespace(arch=Arch86_16()),
+        SimpleNamespace(),
+        codegen,
+        validation,
+    )
+
+
+def test_cfg_selector_return_delta_accepts_condition_only_selector_materialization():
+    cond_fp = "CmpNE(call:addr:0xe69(const:65534,const:5),const:-1)"
+    codegen = SimpleNamespace(
+        _inertia_return_expr_chain_materialized_8616=True,
+        _inertia_return_selector_materialized_8616=True,
+        _inertia_return_expr_chain_materialized_return_fingerprints_8616=("const:1", "const:255"),
+        _inertia_return_chain_materialized_condition_fingerprints_8616=(cond_fp,),
+        _inertia_stack_probe_helper_target_fingerprints_8616=(),
+        _inertia_stack_probe_fact_stats={},
+    )
+    validation = {
+        "delta": {
+            "conditions": {"added": (cond_fp,), "removed": ()},
+            "control_flow_effects": {"added": (f"if:{cond_fp}",), "removed": ()},
+        }
+    }
+
+    assert _is_cfg_return_expr_chain_materialization_delta_8616(
+        SimpleNamespace(arch=Arch86_16()),
+        SimpleNamespace(),
+        codegen,
+        validation,
+    )
+
+
+def test_cfg_selector_return_delta_accepts_structuring_push_store_removal():
+    returns = ("const:1", "const:2", "const:255")
+    codegen = SimpleNamespace(
+        _inertia_return_expr_chain_materialized_8616=True,
+        _inertia_return_selector_materialized_8616=True,
+        _inertia_return_expr_chain_materialized_return_fingerprints_8616=returns,
+        _inertia_return_chain_materialized_condition_fingerprints_8616=(
+            "CmpNE(call:addr:0xe69(const:65534,const:5),const:-1)",
+            "CmpNE(call:addr:0xe69(const:9,const:3),const:1)",
+        ),
+        _inertia_stack_probe_helper_target_fingerprints_8616=(),
+        _inertia_stack_probe_fact_stats={},
+    )
+    validation = {
+        "delta": {
+            "segmented_writes": {
+                "added": (),
+                "removed": (
+                    "deref:Add(Mul(reg:ss,const:16),reg:sp,const:-2)",
+                    "deref:Add(Mul(reg:ss,const:16),reg:sp,const:-4)",
+                ),
+            },
+            "returns": {"added": returns, "removed": ("reg:ax",)},
+            "conditions": {"added": ("CmpNE(call:addr:0xe69(const:65534,const:5),const:1)",), "removed": ()},
+            "control_flow_effects": {
+                "added": ("if:CmpNE(call:addr:0xe69(const:65534,const:5),const:1)",),
+                "removed": ("if-else-body-calls:else:addr:0x10010", "if:else"),
+            },
         }
     }
 
@@ -589,6 +1115,63 @@ def test_after_call_stack_lowering_rerun_is_single_round(monkeypatch):
     assert not hasattr(codegen, "_inertia_stack_lowering_canonicalize_max_depth_8616")
 
 
+def test_pre_validation_stack_prime_refuses_materialized_pointer_memory(monkeypatch):
+    def unexpected_alias_transfer(*_args, **_kwargs):
+        raise AssertionError("postprocess priming must not reverse typed pointer lowering")
+
+    monkeypatch.setattr(post_stage, "transfer_semantic_alias_facts_to_codegen_8616", unexpected_alias_transfer)
+    monkeypatch.setattr(post_stage, "_invalidate_tail_validation_derived_caches_8616", lambda _codegen: None)
+    codegen = SimpleNamespace(_inertia_pointer_memory_materialized_8616="pointer_swap")
+
+    changed = post_stage._prime_stack_semantics_before_validation_baseline_8616(SimpleNamespace(), codegen)
+
+    assert changed is False
+    assert codegen._inertia_pre_validation_stack_semantics_refused_pointer_memory_8616 == 1
+    assert codegen._inertia_pre_validation_stack_semantics_primed is True
+
+
+def test_pre_validation_segmented_memory_replay_runs_after_pointer_memory_regeneration(monkeypatch):
+    calls: list[tuple[object, str]] = []
+    invalidated: list[object] = []
+
+    def replay(codegen: object, *, target: str) -> bool:
+        calls.append((codegen, target))
+        return True
+
+    monkeypatch.setattr(post_stage, "apply_runtime_segment_lowering_8616", replay)
+    monkeypatch.setattr(
+        post_stage,
+        "_invalidate_tail_validation_derived_caches_8616",
+        invalidated.append,
+    )
+    codegen = SimpleNamespace(_inertia_pointer_memory_materialized_8616="pointer_swap")
+    project = SimpleNamespace(_inertia_c_target="msc-dos")
+
+    changed = post_stage._replay_segmented_memory_lowering_before_validation_baseline_8616(project, codegen)
+
+    assert changed is True
+    assert calls == [(codegen, "msc-dos")]
+    assert invalidated == [codegen]
+    assert codegen._inertia_pre_validation_segmented_memory_lowering_replayed_8616 is True
+
+
+def test_pre_validation_segmented_memory_replay_is_single_round(monkeypatch):
+    calls: list[object] = []
+
+    def replay(codegen: object, *, target: str) -> bool:
+        del target
+        calls.append(codegen)
+        return False
+
+    monkeypatch.setattr(post_stage, "apply_runtime_segment_lowering_8616", replay)
+    codegen = SimpleNamespace()
+    project = SimpleNamespace()
+
+    assert post_stage._replay_segmented_memory_lowering_before_validation_baseline_8616(project, codegen) is False
+    assert post_stage._replay_segmented_memory_lowering_before_validation_baseline_8616(project, codegen) is False
+    assert calls == [codegen]
+
+
 def test_after_call_stack_lowering_rerun_large_function_uses_byte_only_path(monkeypatch):
     import inertia_decompiler.cli_c_ast_rewrites as ast_rewrites
 
@@ -612,6 +1195,36 @@ def test_after_call_stack_lowering_rerun_large_function_uses_byte_only_path(monk
     assert codegen._inertia_stack_lowering_large_function_byte_only_8616 == 1
 
 
+def test_after_call_stack_lowering_rerun_large_ast_uses_byte_only_path(monkeypatch):
+    import inertia_decompiler.cli_c_ast_rewrites as ast_rewrites
+
+    def fake_run_stack_lowering_pass_8616(**_kwargs):
+        raise AssertionError("large AST must not run broad stack lowering rerun")
+
+    calls: list[str] = []
+
+    def fake_rewrite_ss_stack_byte_offsets(_project, _codegen):
+        calls.append("byte-only")
+        return True
+
+    monkeypatch.setattr(post_stage, "run_stack_lowering_pass_8616", fake_run_stack_lowering_pass_8616)
+    monkeypatch.setattr(ast_rewrites, "_rewrite_ss_stack_byte_offsets", fake_rewrite_ss_stack_byte_offsets)
+
+    codegen = _DummyCodegen()
+    root = CStatements(
+        [CExpressionStatement(_const(index, codegen), codegen=codegen) for index in range(1301)],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+
+    changed = post_stage._rerun_stack_lowering_consumers_after_calls_8616(SimpleNamespace(), codegen)
+
+    assert changed is True
+    assert calls == ["byte-only"]
+    assert codegen._inertia_stack_lowering_rerun_ast_large_byte_only_8616 == 1
+    assert codegen._inertia_stack_lowering_rerun_ast_node_count_8616 > 1200
+
+
 def test_after_call_stack_lowering_rerun_refuses_selector_return_contract(monkeypatch):
     def fake_run_stack_lowering_pass_8616(**_kwargs):
         raise AssertionError("stack lowering rerun must not run after selector-return materialization")
@@ -626,6 +1239,19 @@ def test_after_call_stack_lowering_rerun_refuses_selector_return_contract(monkey
 
     assert changed is False
     assert codegen._inertia_stack_lowering_rerun_refused_selector_return_8616 == 1
+
+
+def test_after_call_stack_lowering_rerun_refuses_materialized_pointer_memory(monkeypatch):
+    def fake_run_stack_lowering_pass_8616(**_kwargs):
+        raise AssertionError("late stack lowering must not rewrite typed pointer memory")
+
+    monkeypatch.setattr(post_stage, "run_stack_lowering_pass_8616", fake_run_stack_lowering_pass_8616)
+    codegen = SimpleNamespace(_inertia_pointer_memory_materialized_8616="pointer_swap")
+
+    changed = post_stage._rerun_stack_lowering_consumers_after_calls_8616(SimpleNamespace(), codegen)
+
+    assert changed is False
+    assert codegen._inertia_stack_lowering_rerun_refused_pointer_memory_8616 == 1
 
 
 def test_after_call_stack_lowering_rerun_refuses_callsite_cache_hit():
@@ -647,6 +1273,46 @@ def test_after_call_stack_lowering_rerun_refuses_callsite_cache_hit():
         post_stage.run_stack_lowering_pass_8616 = original
 
 
+def test_after_call_stack_lowering_rerun_skips_processed_no_change_without_gaps(monkeypatch):
+    def fake_run_stack_lowering_pass_8616(**_kwargs):
+        raise AssertionError("completed no-change callsite materialization should skip stack-lowering rerun")
+
+    monkeypatch.setattr(post_stage, "run_stack_lowering_pass_8616", fake_run_stack_lowering_pass_8616)
+    codegen = SimpleNamespace(
+        _inertia_callsite_materialization_complete_8616=True,
+        _inertia_callsite_materialization_last_decision_8616=CallsiteMaterializationDecision8616.PROCESSED_NO_CHANGE,
+        _inertia_callsite_materialization_last_changed_8616=False,
+        _inertia_callsite_unmaterialized_arg_gaps_8616=(),
+    )
+
+    changed = post_stage._rerun_stack_lowering_consumers_after_calls_8616(SimpleNamespace(), codegen)
+
+    assert changed is False
+    assert codegen._inertia_stack_lowering_rerun_skipped_callsite_no_input_8616 == 1
+
+
+def test_after_call_stack_lowering_rerun_keeps_gapped_processed_no_change(monkeypatch):
+    captured = {}
+
+    def fake_run_stack_lowering_pass_8616(**kwargs):
+        captured.update(kwargs)
+        return False
+
+    monkeypatch.setattr(post_stage, "run_stack_lowering_pass_8616", fake_run_stack_lowering_pass_8616)
+    codegen = SimpleNamespace(
+        _inertia_callsite_materialization_complete_8616=True,
+        _inertia_callsite_materialization_last_decision_8616=CallsiteMaterializationDecision8616.PROCESSED_NO_CHANGE,
+        _inertia_callsite_materialization_last_changed_8616=False,
+        _inertia_callsite_unmaterialized_arg_gaps_8616=({"kind": "summary_arg_proof_unconsumed"},),
+    )
+
+    changed = post_stage._rerun_stack_lowering_consumers_after_calls_8616(SimpleNamespace(), codegen)
+
+    assert changed is False
+    assert captured["max_rounds"] == 1
+    assert not hasattr(codegen, "_inertia_stack_lowering_rerun_skipped_callsite_no_input_8616")
+
+
 def test_postprocess_scheduler_skips_stack_identity_passes_after_selector_return():
     calls = []
     project = SimpleNamespace()
@@ -663,6 +1329,11 @@ def test_postprocess_scheduler_skips_stack_identity_passes_after_selector_return
         post_stage.DecompilerPostprocessPassSpec(
             "_promote_stack_prototype_from_bp_loads_8616",
             lambda _project, _codegen: calls.append("bad_stack_identity_pass") or True,
+            True,
+        ),
+        post_stage.DecompilerPostprocessPassSpec(
+            "_materialize_callsite_stack_arguments_8616",
+            lambda _project, _codegen: calls.append("bad_callsite_pass") or True,
             True,
         ),
         post_stage.DecompilerPostprocessPassSpec(
@@ -694,4 +1365,37 @@ def test_postprocess_scheduler_skips_stack_identity_passes_after_selector_return
     assert codegen._inertia_postprocess_selector_return_skipped_passes_8616 == (
         "_apply_annotations_8616",
         "_promote_stack_prototype_from_bp_loads_8616",
+        "_materialize_callsite_stack_arguments_8616",
     )
+
+
+def test_postprocess_scheduler_disables_direct_call_floor_recovery_by_default(monkeypatch):
+    monkeypatch.delenv("INERTIA_ENABLE_DIRECT_CALL_FLOOR_RECOVERY", raising=False)
+
+    pass_names = {
+        spec.name
+        for spec in post_stage._decompiler_postprocess_passes_for_function(
+            SimpleNamespace(),
+            SimpleNamespace(),
+        )
+    }
+
+    assert "_recover_missing_direct_calls_from_evidence_early_8616" not in pass_names
+    assert "_recover_missing_direct_calls_from_evidence_8616" not in pass_names
+    assert "_recover_missing_direct_calls_final_8616" not in pass_names
+
+
+def test_postprocess_scheduler_allows_explicit_direct_call_floor_rescue(monkeypatch):
+    monkeypatch.setenv("INERTIA_ENABLE_DIRECT_CALL_FLOOR_RECOVERY", "1")
+
+    pass_names = {
+        spec.name
+        for spec in post_stage._decompiler_postprocess_passes_for_function(
+            SimpleNamespace(),
+            SimpleNamespace(),
+        )
+    }
+
+    assert "_recover_missing_direct_calls_from_evidence_early_8616" in pass_names
+    assert "_recover_missing_direct_calls_from_evidence_8616" in pass_names
+    assert "_recover_missing_direct_calls_final_8616" in pass_names

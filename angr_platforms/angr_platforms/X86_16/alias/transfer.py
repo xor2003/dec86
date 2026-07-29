@@ -1,27 +1,38 @@
+"""Alias transfer functions for register reads and writes.
+
+Layer: Alias.
+Responsibility: owns storage identity updates and register slice synthesis.
+Owns storage identity updates and register slice synthesis.
+Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting
+work here.
+"""
+
 from __future__ import annotations
 
-# Layer: Alias
-# Responsibility: canonical alias transfer functions.
-# Forbidden: lowering and rewrite ownership.
 from dataclasses import dataclass
 
 from .domains import FULL16, HIGH8, LOW8, register_domain_for_name, register_pair_name, register_view_for_name
 from .state import AliasCell, AliasState
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RegisterSliceExpr:
+    """Represent a derived low/high-byte view of a full register expression."""
+
     expr: object
     view: object
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RegisterConcatExpr:
+    """Represent a synthesized full register from high and low byte cells."""
+
     high: object
     low: object
 
 
 def write_register(alias: AliasState, reg_name: str, expr: object) -> AliasCell | None:
+    """Write a register expression into alias state and update dependent views."""
     domain = register_domain_for_name(reg_name)
     view = register_view_for_name(reg_name)
     if domain is None or view is None:
@@ -44,6 +55,7 @@ def write_register(alias: AliasState, reg_name: str, expr: object) -> AliasCell 
 
 
 def synthesize_full_register(alias: AliasState, reg_name: str) -> RegisterConcatExpr | object | None:
+    """Build a full-register expression from byte cells when evidence exists."""
     pair_name = register_pair_name(reg_name)
     if pair_name is None:
         return None
@@ -61,6 +73,7 @@ def synthesize_full_register(alias: AliasState, reg_name: str) -> RegisterConcat
 
 
 def read_register(alias: AliasState, reg_name: str) -> object | None:
+    """Read a register expression, synthesizing compatible views when needed."""
     domain = register_domain_for_name(reg_name)
     view = register_view_for_name(reg_name)
     if domain is None or view is None:

@@ -1,3 +1,9 @@
+"""Layer: Optional evidence/reporting.
+
+Responsibility: read optional FLAIR signature metadata for startup and library reporting.
+Forbidden: using signature names as semantic proof for decompiler recovery.
+"""
+
 from __future__ import annotations
 
 import re
@@ -11,6 +17,8 @@ from inertia_decompiler.signature_matching_policy import signature_matching_disa
 
 @dataclass(frozen=True)
 class FlairStartupPattern:
+    """Optional FLAIR startup pattern match reported as non-semantic evidence."""
+
     pat_path: str
     public_names: tuple[tuple[int, str], ...]
     compiler_tag: str | None
@@ -19,6 +27,8 @@ class FlairStartupPattern:
 
 @dataclass(frozen=True)
 class FlairSigLibrary:
+    """Optional FLAIR signature-library metadata reported for diagnostics."""
+
     sig_path: str
     title: str
     os_types: str
@@ -36,6 +46,7 @@ def match_flair_startup_entry(
     *,
     limit: int = 8,
 ) -> tuple[FlairStartupPattern, ...]:
+    """Return optional startup-pattern matches without treating names as semantic proof."""
     if signature_matching_disabled():
         return ()
     matches: list[FlairStartupPattern] = []
@@ -64,6 +75,7 @@ def match_flair_startup_entry(
 
 
 def list_flair_sig_libraries(flair_root: Path) -> tuple[FlairSigLibrary, ...]:
+    """List optional FLAIR signature libraries for reporting only."""
     if signature_matching_disabled():
         return ()
     return _list_flair_sig_libraries_cached(str(flair_root))
@@ -71,53 +83,50 @@ def list_flair_sig_libraries(flair_root: Path) -> tuple[FlairSigLibrary, ...]:
 
 @lru_cache(maxsize=2)
 def _list_flair_sig_libraries_cached(flair_root: str) -> tuple[FlairSigLibrary, ...]:
-    def _impl():
-        root = Path(flair_root)
-        dumpsig = root / "bin" / "linux" / "dumpsig"
-        if not dumpsig.exists():
-            return ()
-        libraries: list[FlairSigLibrary] = []
-        for sig_path in sorted(root.rglob("*.sig")):
-            try:
-                proc = subprocess.run(
-                    [str(dumpsig), str(sig_path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=False,
+    root = Path(flair_root)
+    dumpsig = root / "bin" / "linux" / "dumpsig"
+    if not dumpsig.exists():
+        return ()
+    libraries: list[FlairSigLibrary] = []
+    for sig_path in sorted(root.rglob("*.sig")):
+        try:
+            proc = subprocess.run(
+                [str(dumpsig), str(sig_path)],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if proc.returncode != 0:
+            continue
+        title = ""
+        os_types = ""
+        app_types = ""
+        file_types = ""
+        for line in proc.stdout.splitlines():
+            if line.startswith("Signature     : "):
+                title = line.split(":", 1)[1].strip()
+            elif line.startswith("OS types      : "):
+                os_types = line.split(":", 1)[1].strip()
+            elif line.startswith("App types     : "):
+                app_types = line.split(":", 1)[1].strip()
+            elif line.startswith("File types    : "):
+                file_types = line.split(":", 1)[1].strip()
+            if title and os_types and app_types and file_types:
+                break
+        if title:
+            libraries.append(
+                FlairSigLibrary(
+                    sig_path=str(sig_path),
+                    title=title,
+                    os_types=os_types,
+                    app_types=app_types,
+                    file_types=file_types,
                 )
-            except (OSError, subprocess.TimeoutExpired):
-                continue
-            if proc.returncode != 0:
-                continue
-            title = ""
-            os_types = ""
-            app_types = ""
-            file_types = ""
-            for line in proc.stdout.splitlines():
-                if line.startswith("Signature     : "):
-                    title = line.split(":", 1)[1].strip()
-                elif line.startswith("OS types      : "):
-                    os_types = line.split(":", 1)[1].strip()
-                elif line.startswith("App types     : "):
-                    app_types = line.split(":", 1)[1].strip()
-                elif line.startswith("File types    : "):
-                    file_types = line.split(":", 1)[1].strip()
-                if title and os_types and app_types and file_types:
-                    break
-            if title:
-                libraries.append(
-                    FlairSigLibrary(
-                        sig_path=str(sig_path),
-                        title=title,
-                        os_types=os_types,
-                        app_types=app_types,
-                        file_types=file_types,
-                    )
-                )
-        return tuple(libraries)
-
-    return _impl()
+            )
+    return tuple(libraries)
 
 
 def _parse_pat_line(

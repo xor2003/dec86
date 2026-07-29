@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Collect MonkeyType traces from curated pytest targets.
+
+Layer: Tooling/gates.
+Responsibility: owns pytest-driven MonkeyType trace collection.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -6,7 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -40,6 +46,8 @@ def _run_target(pytest_target: str, extra_pytest_args: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Collect MonkeyType traces from configured pytest targets."""
+
     parser = argparse.ArgumentParser(description="Collect MonkeyType traces by running pytest targets.")
     parser.add_argument(
         "--target",

@@ -33,8 +33,12 @@ def test_dos_pseudo_callee_attachment_accepts_partial_callnode_matches(monkeypat
     )
     function = SimpleNamespace(get_call_target=lambda _addr: 0x2000)
 
-    monkeypatch.setattr(_decompile, "collect_dos_int21_calls", lambda _function: [SimpleNamespace(insn_addr=0x1234)])
-    monkeypatch.setattr(_decompile, "_iter_c_nodes", lambda _node: [first, second])
+    monkeypatch.setitem(
+        _decompile._attach_dos_pseudo_callees.__globals__,
+        "collect_dos_int21_calls",
+        lambda _function: [SimpleNamespace(insn_addr=0x1234)],
+    )
+    monkeypatch.setitem(_decompile._attach_dos_pseudo_callees.__globals__, "_iter_c_nodes", lambda _node: [first, second])
 
     changed = _decompile._attach_dos_pseudo_callees(project, function, codegen, "pseudo")
 

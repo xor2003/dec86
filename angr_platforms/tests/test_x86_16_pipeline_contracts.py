@@ -5,10 +5,25 @@ from __future__ import annotations
 import pytest
 
 from angr_platforms.angr_platforms.X86_16.pipeline.contracts import (
+    CORE_DECOMPILER_PIPELINE_ORDER_8616,
     SemanticLaneState,
     assert_pipeline_contracts_8616,
 )
 from angr_platforms.angr_platforms.X86_16.pipeline.errors import PipelineHardError
+
+
+def test_core_decompiler_pipeline_order_matches_agents_contract():
+    assert CORE_DECOMPILER_PIPELINE_ORDER_8616 == (
+        "IR",
+        "Alias",
+        "Widening",
+        "Types",
+        "Structuring",
+        "Rewrite",
+    )
+    assert CORE_DECOMPILER_PIPELINE_ORDER_8616.index("Rewrite") > CORE_DECOMPILER_PIPELINE_ORDER_8616.index(
+        "Structuring"
+    )
 
 
 class TestSemanticLaneState:
@@ -73,6 +88,27 @@ class TestSemanticLaneState:
         assert d["name"] == "stack"
         assert d["raw"] == 10
         assert d["materialized"] == 5
+        assert d["raw_fact_count"] == 10
+        assert d["normalized_fact_count"] == 8
+        assert d["classified_fact_count"] == 5
+        assert d["materialized_count"] == 5
+        assert d["failure_count"] == 1
+
+    def test_recorded_failure_is_not_closed_after_partial_materialization(self):
+        lane = SemanticLaneState(
+            name="storage",
+            raw=4,
+            normalized=4,
+            classified=4,
+            materialized=3,
+            verified=3,
+            failures=1,
+        )
+
+        assert not lane.is_closed
+        assert "BROKEN" in lane.summary_line()
+        with pytest.raises(PipelineHardError, match="storage: 1 evidence failures recorded"):
+            lane.assert_closed_loop(layer="validation:storage")
 
     def test_summary_line(self):
         lane = SemanticLaneState(
@@ -165,4 +201,36 @@ class TestAssertPipelineContracts:
             materialized=0,
         )
         with pytest.raises(PipelineHardError, match="classified but 0 materialized"):
+            assert_pipeline_contracts_8616(codegen)
+
+    def test_broken_extra_semantic_lane_raises(self):
+        """Additional semantic lanes obey the same closed-loop rule."""
+        codegen = type("Codegen", (), {})()
+        codegen._inertia_semantic_lanes_8616 = (
+            SemanticLaneState(
+                name="pointer_arg_indirect",
+                raw=1,
+                normalized=1,
+                classified=1,
+                materialized=0,
+                failures=1,
+            ),
+        )
+        with pytest.raises(PipelineHardError, match="pointer_arg_indirect: 1 facts classified but 0 materialized"):
+            assert_pipeline_contracts_8616(codegen)
+
+    def test_invalid_stack_lane_type_raises(self):
+        """Owned lane contracts must use SemanticLaneState, not dynamic duck types."""
+        codegen = type("Codegen", (), {})()
+        codegen._inertia_stack_lane = {"raw": 1}
+
+        with pytest.raises(PipelineHardError, match="stack lane has invalid contract type"):
+            assert_pipeline_contracts_8616(codegen)
+
+    def test_invalid_extra_semantic_lane_type_raises(self):
+        """Additional semantic lanes must also use the owned SemanticLaneState contract."""
+        codegen = type("Codegen", (), {})()
+        codegen._inertia_semantic_lanes_8616 = ({"name": "bad"},)
+
+        with pytest.raises(PipelineHardError, match="semantic lane has invalid contract type"):
             assert_pipeline_contracts_8616(codegen)

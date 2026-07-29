@@ -1,11 +1,19 @@
+"""Cleanup-only condition expression canonicalization patterns.
+
+Layer: Rewrite/Postprocess cleanup.
+Responsibility: normalize already-recovered condition expression shapes only.
+Consumes already-proven IR, alias, widening, typed, and structuring facts.
+This module may canonicalize already-recovered comparison expressions.
+Do not recover new semantics, storage identity, types, call signatures, control
+flow, or facts from rendered text, COD, source, or CLI/reporting evidence here.
+Condition nodes cross a dynamic third-party angr/decompiler boundary; dynamic
+attribute access here must stay limited to already-recovered condition fields.
+"""
+
 from __future__ import annotations
 
-"""Layer: Semantics (condition/flag reasoning).
-
-Condition strengthening: canonicalize comparison expressions.
-Extends the canonicalizations from condition_ir.py with loop-specific patterns.
-
-Forbidden: text matching, asm/C regex, postprocess ownership."""
+from collections.abc import Callable
+from typing import cast
 
 __all__ = [
     "_strengthen_condition_8616",
@@ -14,20 +22,25 @@ __all__ = [
 
 
 def _is_const_expr(expr: object) -> bool:
-    """Check if expression is a constant."""
+    """Check whether a dynamic third-party angr boundary node is constant."""
     return hasattr(expr, "value") and isinstance(getattr(expr, "value"), int)
 
 
 def _get_const_val(expr: object) -> int | None:
-    """Extract constant int value or None."""
+    """Extract a constant int from a dynamic third-party angr boundary node."""
     if _is_const_expr(expr):
         return int(getattr(expr, "value"))
     return None
 
 
 def _canonicalize_cmp_sub_8616(cond: object) -> object | None:
-    def _impl():
+    """Canonicalize an already-recovered CMP-SUB condition shape."""
+
+    def _impl() -> object | None:
         """Canonicalize CMP-SUB patterns to direct comparisons.
+
+        Conditions cross a dynamic third-party angr/decompiler boundary, so this
+        helper accepts both left/right and lhs/rhs field spellings.
 
         CmpLT(Sub(x, N), 0)  → CmpLT(x, N)
         CmpGE(Sub(x, N), 0)  → CmpGE(x, N)
@@ -69,9 +82,8 @@ def _canonicalize_cmp_sub_8616(cond: object) -> object | None:
             return None
 
         # Build strengthened comparison: CmpOP(x, N) or CmpOP(x, y)
-        cn = type(left) if hasattr(type(left), "left") else type(cond)
-
-        return type(cond)(
+        cond_factory = cast(Callable[..., object], type(cond))
+        return cond_factory(
             left=sub_left,
             right=sub_right,
             op=op_str,

@@ -1,20 +1,67 @@
-from typing import Optional
+"""Layer: Frontend/runtime.
+
+Responsibility: model emulator memory reads and writes for the 16-bit runtime surface.
+Forbidden: decompiler storage recovery, alias ownership, or segment-flattening shortcuts.
+"""
+
+from __future__ import annotations
+
+from typing import Protocol, cast
 
 from bitstring import ConstBitStream
-from pyvex.expr import Binop
+from pyvex.expr import Binop, Const, RdTmp
 from pyvex.lifting.util.syntax_wrapper import VexValue
-from pyvex.lifting.util.vex_helper import Type
+from pyvex.lifting.util.vex_helper import IRSBCustomizer, Type
 
-DEFAULT_MEMORY_SIZE = 1024  # 1 KB
+DEFAULT_MEMORY_SIZE: int = 1024  # 1 KB
+
+__all__ = ("DEFAULT_MEMORY_SIZE", "Memory")
+
+
+class _MemoryCustomizer(Protocol):
+    """Subset of the VEX customizer needed by frontend memory operations."""
+
+    def load(self, addr: object, _type: object) -> RdTmp | Const:
+        """Load a typed value from frontend memory."""
+        ...
+
+    def store(self, addr: object, value: object) -> None:
+        """Store a typed value to frontend memory."""
+        ...
+
+
+class _LifterInstruction(Protocol):
+    """Active lifter instruction operations used by memory helpers."""
+
+    _irsb_c: _MemoryCustomizer
+
+    def constant(self, value: int, _type: object = Type.int_8) -> VexValue:
+        """Create a typed VEX constant."""
+        ...
+
+    def _settmp(self, value: object) -> RdTmp | Const:
+        """Materialize a temporary VEX expression."""
+        ...
+
+
+def _dirty_input_value(value: object) -> bool:
+    """Return whether a VEX value wraps an input dirty helper."""
+    return isinstance(value, VexValue) and "IN_" in repr(value.rdt)
 
 
 class Memory:
-    def __init__(self, size: int = DEFAULT_MEMORY_SIZE):
-        self.mem_size = size
-        self.memory = bytearray(size)
-        self.a20gate = False
+    """Provide byte storage and VEX memory operations for frontend execution."""
 
-    def __del__(self):
+    lifter_instruction: _LifterInstruction
+
+    def __init__(self, size: int = DEFAULT_MEMORY_SIZE) -> None:
+        """Initialize concrete backing storage used by runtime surfaces."""
+        self.mem_size: int = size
+        self.memory: bytearray = bytearray(size)
+        self.a20gate: bool = False
+
+    def __del__(self) -> None:
+        """Best-effort cleanup during interpreter shutdown or timeout unwinding."""
         try:
             del self.memory
             self.mem_size = 0
@@ -23,7 +70,8 @@ class Memory:
             # Keep cleanup best-effort and never let finalization emit noise.
             pass
 
-    def dump_mem(self, addr: int, size: int):
+    def dump_mem(self, addr: int, size: int) -> None:
+        """Print a hex dump of the concrete memory backing store."""
         addr &= ~(0x10 - 1)
 
         for i in range(0, size, 0x10):
@@ -35,46 +83,54 @@ class Memory:
                 )
             print()
 
-    def read_data(self, addr: int, size: int) -> Optional[bytearray]:
+    def read_data(self, addr: int, size: int) -> bytearray | None:
+        """Read concrete bytes when the requested range is inside memory."""
         if not self.in_range(addr, size):
             return None
         return self.memory[addr : addr + size]
 
     def write_data(self, addr: int, data: bytearray) -> bool:
+        """Write concrete bytes when the requested range is inside memory."""
         if not self.in_range(addr, len(data)):
             return False
         self.memory[addr : addr + len(data)] = data
         return True
 
-    def read_mem32(self, addr: int) -> int:
+    def read_mem32(self, addr: int | VexValue) -> object:
+        """Read a 32-bit value through active VEX frontend memory."""
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
         rdt = self.lifter_instruction._irsb_c.load(addr.rdt, Type.int_32)
-        return VexValue(self.lifter_instruction, rdt)
+        return VexValue(cast(IRSBCustomizer, self.lifter_instruction), rdt)
 
-    def read_mem16(self, addr: int) -> int:
+    def read_mem16(self, addr: object) -> object:
+        """Read a 16-bit value through active VEX frontend memory."""
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
         elif not isinstance(addr, VexValue):
-            addr = VexValue(self.lifter_instruction, addr)
+            addr = VexValue(cast(IRSBCustomizer, self.lifter_instruction), cast(RdTmp | Const, addr))
         else:
-            addr = VexValue(self.lifter_instruction, addr.rdt)
-        low = VexValue(self.lifter_instruction, self.lifter_instruction._irsb_c.load(addr.rdt, Type.int_8))
+            addr = VexValue(cast(IRSBCustomizer, self.lifter_instruction), addr.rdt)
+        low = VexValue(cast(IRSBCustomizer, self.lifter_instruction), self.lifter_instruction._irsb_c.load(addr.rdt, Type.int_8))
         one = self.lifter_instruction.constant(1, Type.int_32)
         high_addr = VexValue(
-            self.lifter_instruction,
+            cast(IRSBCustomizer, self.lifter_instruction),
             self.lifter_instruction._settmp(Binop("Iop_Add32", [addr.rdt, one.rdt])),
         )
-        high = VexValue(self.lifter_instruction, self.lifter_instruction._irsb_c.load(high_addr.rdt, Type.int_8))
-        return low.cast_to(Type.int_16) | (high.cast_to(Type.int_16) << 8)
+        high = VexValue(cast(IRSBCustomizer, self.lifter_instruction), self.lifter_instruction._irsb_c.load(high_addr.rdt, Type.int_8))
+        low16 = cast(VexValue, low.cast_to(Type.int_16))
+        high16 = cast(VexValue, high.cast_to(Type.int_16))
+        return low16 | (high16 << 8)
 
-    def read_mem8(self, addr: int) -> int:
+    def read_mem8(self, addr: int | VexValue) -> object:
+        """Read an 8-bit value through active VEX frontend memory."""
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
         rdt = self.lifter_instruction._irsb_c.load(addr.rdt, Type.int_8)
-        return VexValue(self.lifter_instruction, rdt)
+        return VexValue(cast(IRSBCustomizer, self.lifter_instruction), rdt)
 
-    def write_mem32(self, addr: int, value: int):
+    def write_mem32(self, addr: int | VexValue, value: int | VexValue) -> None:
+        """Write a 32-bit value through active VEX frontend memory."""
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
         if isinstance(value, int):
@@ -82,66 +138,61 @@ class Memory:
         # If value is a VexValue wrapping a dirty/input helper (e.g. IN_...)
         # and no device was registered, synthesise a deterministic default
         # concrete value so tests expecting 0xFF/0xFFFF succeed.
-        try:
-            sval = getattr(value, "rdt", None)
-            if sval is not None and "IN_" in repr(sval):
-                value = self.lifter_instruction.constant(0xFFFFFFFF & ((1 << 32) - 1), Type.int_32)
-        except Exception:
-            pass
+        if _dirty_input_value(value):
+            value = self.lifter_instruction.constant(0xFFFFFFFF & ((1 << 32) - 1), Type.int_32)
         self.lifter_instruction._irsb_c.store(addr.rdt, value.rdt)
 
-    def write_mem16(self, addr: int, value: int):
+    def write_mem16(self, addr: object, value: object) -> None:
+        """Write a 16-bit value through active VEX frontend memory."""
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
         elif not isinstance(addr, VexValue):
-            addr = VexValue(self.lifter_instruction, addr)
+            addr = VexValue(cast(IRSBCustomizer, self.lifter_instruction), cast(RdTmp | Const, addr))
         else:
-            addr = VexValue(self.lifter_instruction, addr.rdt)
+            addr = VexValue(cast(IRSBCustomizer, self.lifter_instruction), addr.rdt)
         if isinstance(value, int):
             value = self.lifter_instruction.constant(value, Type.int_16)
         elif not isinstance(value, VexValue):
-            value = VexValue(self.lifter_instruction, value)
+            value = VexValue(cast(IRSBCustomizer, self.lifter_instruction), cast(RdTmp | Const, value))
         else:
-            value = VexValue(self.lifter_instruction, value.rdt)
+            value = VexValue(cast(IRSBCustomizer, self.lifter_instruction), value.rdt)
         # Replace dirty/input helper values with a concrete default when seen.
-        try:
-            sval = getattr(value, "rdt", None)
-            if sval is not None and "IN_" in repr(sval):
-                value = self.lifter_instruction.constant(0xFFFF & ((1 << 16) - 1), Type.int_16)
-        except Exception:
-            pass
+        if _dirty_input_value(value):
+            value = self.lifter_instruction.constant(0xFFFF & ((1 << 16) - 1), Type.int_16)
 
-        low = value.cast_to(Type.int_8)
+        low = cast(VexValue, value.cast_to(Type.int_8))
         one = self.lifter_instruction.constant(1, Type.int_32)
         high_addr = VexValue(
-            self.lifter_instruction,
+            cast(IRSBCustomizer, self.lifter_instruction),
             self.lifter_instruction._settmp(Binop("Iop_Add32", [addr.rdt, one.rdt])),
         )
-        high = (value >> 8).cast_to(Type.int_8)
+        high_source = cast(VexValue, value >> 8)
+        high = cast(VexValue, high_source.cast_to(Type.int_8))
         self.lifter_instruction._irsb_c.store(addr.rdt, low.rdt)
         self.lifter_instruction._irsb_c.store(high_addr.rdt, high.rdt)
 
-    def write_mem8(self, addr: int, value: int):
+    def write_mem8(self, addr: int | VexValue, value: int | VexValue) -> None:
+        """Write an 8-bit value through active VEX frontend memory."""
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
         if isinstance(value, int):
             value = self.lifter_instruction.constant(value, Type.int_8)
-        try:
-            sval = getattr(value, "rdt", None)
-            if sval is not None and "IN_" in repr(sval):
-                value = self.lifter_instruction.constant(0xFF & ((1 << 8) - 1), Type.int_8)
-        except Exception:
-            pass
+        if _dirty_input_value(value):
+            value = self.lifter_instruction.constant(0xFF & ((1 << 8) - 1), Type.int_8)
         self.lifter_instruction._irsb_c.store(addr.rdt, value.rdt)
 
     def is_ena_a20gate(self) -> bool:
+        """Return whether the A20 gate is enabled in the frontend model."""
         return self.a20gate
 
-    def set_a20gate(self, ena: bool):
+    def set_a20gate(self, ena: bool) -> None:
+        """Set the A20 gate state in the frontend model."""
         self.a20gate = ena
 
     def in_range(self, addr: int, length: int) -> bool:
+        """Return whether a concrete byte range fits in the backing store."""
         return addr + length - 1 < self.mem_size
 
-    def set_bitstream(self, bitstream):
-        self.bitstream: ConstBitStream = bitstream
+    def set_bitstream(self, bitstream: ConstBitStream) -> None:
+        """Attach the source bitstream used by frontend loaders."""
+        self.bitstream = bitstream

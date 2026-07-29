@@ -1,5 +1,8 @@
 """Sequence-merge eligibility helpers for region structuring.
 
+Layer: Structuring.
+Responsibility: owns sequence merge eligibility policy for region structuring.
+
 This keeps loop-preservation policy outside the main structuring driver.
 """
 
@@ -45,7 +48,9 @@ def sequence_merge_is_safe(
     region: Region,
     succ: Region,
 ) -> bool:
-    def _impl():
+    """Return True when a successor can be merged without hiding typed control flow."""
+
+    def _impl() -> bool:
         """Return True when `region -> succ` is safe to collapse as a sequence.
 
         The key guard is loop preservation: do not consume a successor that feeds a
@@ -60,11 +65,11 @@ def sequence_merge_is_safe(
             return False
         if region.condition_expr is not None:
             return False
-        if bool(getattr(region, "metadata", {}).get("typed_ir_has_condition", False)):
+        if bool(region.metadata.get("typed_ir_has_condition", False)):
             return False
-        if bool(getattr(succ, "metadata", {}).get("typed_ir_has_condition", False)):
+        if bool(succ.metadata.get("typed_ir_has_condition", False)):
             return False
-        if bool(getattr(succ, "metadata", {}).get("typed_ir_has_phi", False)):
+        if bool(succ.metadata.get("typed_ir_has_phi", False)):
             return False
         if len(graph.predecessors(succ)) != 1:
             return False

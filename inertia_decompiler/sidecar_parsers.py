@@ -1,10 +1,19 @@
+"""Parse sidecar formats into structured optional evidence records.
+
+Layer: CLI/fallback/reporting.
+Responsibility: translate optional sidecar/debug formats into structured evidence records.
+Dynamic angr boundary: sidecar probing reads loader/project/memory attributes supplied by angr backends.
+"""
+
 from __future__ import annotations
 
 import re
 import struct
 import tempfile
+import typing
 from functools import lru_cache
 from pathlib import Path
+from typing import Protocol, cast
 
 import angr
 from angr_platforms.X86_16.cod_extract import (
@@ -24,6 +33,15 @@ from omf_pat import (
     match_pat_modules,
 )
 from signature_catalog import match_signature_catalog
+
+
+class _AngrMemoryLoader8616(Protocol):
+    """Dynamic angr loader-memory surface used for sidecar byte probes."""
+
+    def load(self, addr: int, size: int) -> bytes | bytearray | memoryview:
+        """Return bytes from an angr loader memory object."""
+        ...
+
 
 _IDA_MAP_SEGMENT_RE = re.compile(
     r"^\s*([0-9A-Fa-f]+)H\s+[0-9A-Fa-f]+H\s+[0-9A-Fa-f]+H\s+([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*$"
@@ -197,7 +215,7 @@ def _parse_codeview_nb0204_metadata(
     *,
     load_base_linear: int,
 ) -> tuple[dict[int, str], dict[int, str], dict[int, tuple[int, int]]]:
-    def _impl():
+    def _impl() -> tuple[dict[int, str], dict[int, str], dict[int, tuple[int, int]]]:
         """Parse CodeView NB02/NB04 debug information.
 
         Extracts:
@@ -275,7 +293,7 @@ def _parse_cod_sidecar_metadata(
     existing_code_labels: dict[int, str] | None = None,
     project: angr.Project | None = None,
 ) -> CODListingMetadata:
-    def _impl():
+    def _impl() -> CODListingMetadata:
         metadata = extract_cod_listing_metadata(cod_path)
         existing = existing_code_labels or {}
         base_candidates: dict[int, int] = {}
@@ -303,9 +321,9 @@ def _parse_cod_sidecar_metadata(
                     break
             return tuple(pattern) if len(pattern) >= 12 and concrete >= 8 else ()
 
-        def _memory_matches_cod_pattern(memory_obj, candidate: int, pattern: tuple[int | None, ...]) -> bool:
+        def _memory_matches_cod_pattern(memory_obj: object, candidate: int, pattern: tuple[int | None, ...]) -> bool:
             try:
-                observed = bytes(memory_obj.load(candidate, len(pattern)))
+                observed = bytes(cast(_AngrMemoryLoader8616, memory_obj).load(candidate, len(pattern)))
             except Exception:
                 return False
             return all(expected is None or observed[idx] == expected for idx, expected in enumerate(pattern))
@@ -317,6 +335,7 @@ def _parse_cod_sidecar_metadata(
             base = existing_addr - offset
             base_candidates[base] = base_candidates.get(base, 0) + 1
         if project is not None:
+            # Dynamic angr boundary: project loader memory is supplied by angr backends.
             memory = getattr(getattr(project, "loader", None), "memory", None)
             if memory is not None:
                 for offset, name in metadata.code_labels.items():
@@ -364,7 +383,9 @@ def _reconcile_cod_listing_with_codeview(
     codeview_code: dict[int, str],
     codeview_ranges: dict[int, tuple[int, int]],
 ) -> CODListingMetadata:
-    def _impl():
+    """Re-key matching COD evidence to the authoritative CodeView entry."""
+
+    def _impl() -> CODListingMetadata:
         if not cod_listing.code_labels or not codeview_code:
             return cod_listing
         codeview_by_name: dict[str, list[tuple[int, tuple[int, int] | None]]] = {}
@@ -383,6 +404,9 @@ def _reconcile_cod_listing_with_codeview(
                     break
             proc_kind = cod_listing.proc_kinds.get(addr)
             if matched_codeview_addr is not None:
+                filtered_labels.setdefault(matched_codeview_addr, name)
+                if cod_range is not None:
+                    filtered_ranges.setdefault(matched_codeview_addr, cod_range)
                 if proc_kind is not None:
                     filtered_proc_kinds.setdefault(matched_codeview_addr, proc_kind)
                 continue
@@ -405,10 +429,11 @@ def _detect_flair_metadata(
     pat_backend: str | None = None,
     signature_catalog: Path | None = None,
 ) -> tuple[dict[int, str], dict[int, tuple[int, int]], tuple[str, ...]]:
-    def _impl():
+    def _impl() -> tuple[dict[int, str], dict[int, tuple[int, int]], tuple[str, ...]]:
         flair_root = flair_signature_root()
         if not flair_root.exists():
             return {}, {}, ()
+        # Dynamic angr boundary: loader objects expose backend-specific main object metadata.
         main_object = getattr(project.loader, "main_object", None)
         if main_object is None:
             return {}, {}, ()
@@ -434,11 +459,7 @@ def _detect_flair_metadata(
             flair_root,
             backend=pat_backend,
         )
-        if len(startup_pat_result) == 2:
-            startup_pat_labels, startup_pat_ranges = startup_pat_result
-            startup_pat_compiler_names: tuple[str, ...] = ()
-        else:
-            startup_pat_labels, startup_pat_ranges, startup_pat_compiler_names = startup_pat_result
+        startup_pat_labels, startup_pat_ranges, startup_pat_compiler_names = startup_pat_result
         if startup_pat_labels or startup_pat_ranges:
             source_parts.append("startup_flair_pat")
             for compiler_name in startup_pat_compiler_names:
@@ -459,7 +480,8 @@ def _detect_flair_metadata(
                 start = project.entry + first_offset
                 code_ranges.setdefault(start, (start, start + 0x100))
         if startup_matches:
-            setattr(project, "_inertia_flair_startup_matches", tuple(match.pat_path for match in startup_matches))
+            # Dynamic angr boundary: project metadata is attached to the live angr project.
+            typing.cast(typing.Any, project)._inertia_flair_startup_matches = tuple(match.pat_path for match in startup_matches)
             for match in startup_matches:
                 _remember_compiler(match.compiler_tag)
         if signature_catalog is not None:
@@ -476,10 +498,12 @@ def _detect_flair_metadata(
                 for addr, span in catalog_matches.code_ranges.items():
                     code_ranges.setdefault(addr, span)
                 source_parts.extend(catalog_matches.source_formats)
+            # Dynamic compatibility boundary: catalog match objects may come from older helpers.
             for compiler_name in getattr(catalog_matches, "matched_compiler_names", ()):
                 _remember_compiler(compiler_name)
         if matched_compiler_names:
-            setattr(project, "_inertia_signature_compiler_names", tuple(matched_compiler_names))
+            # Dynamic angr boundary: project metadata is attached to the live angr project.
+            typing.cast(typing.Any, project)._inertia_signature_compiler_names = tuple(matched_compiler_names)
         return code_labels, code_ranges, tuple(source_parts)
 
     return _impl()
@@ -518,11 +542,15 @@ def _match_flair_startup_pat_functions(
     *,
     backend: str | None = None,
 ) -> tuple[dict[int, str], dict[int, tuple[int, int]], tuple[str, ...]]:
+    # Dynamic angr boundary: loader objects expose backend-specific main object metadata.
     main_object = getattr(project.loader, "main_object", None)
+    # Dynamic angr boundary: project loader memory is supplied by angr backends.
     memory = getattr(project.loader, "memory", None)
     if main_object is None or memory is None:
         return {}, {}, ()
+    # Dynamic angr boundary: backend main objects expose image address bounds.
     min_addr = getattr(main_object, "min_addr", None)
+    # Dynamic angr boundary: backend main objects expose image address bounds.
     max_addr = getattr(main_object, "max_addr", None)
     if not isinstance(min_addr, int) or not isinstance(max_addr, int) or max_addr < min_addr:
         return {}, {}, ()
@@ -539,11 +567,7 @@ def _match_flair_startup_pat_functions(
         modules,
         backend=backend,
     )
-    if len(pat_result) == 2:
-        code_labels, code_ranges = pat_result
-        matched_compiler_names: tuple[str, ...] = ()
-    else:
-        code_labels, code_ranges, matched_compiler_names = pat_result
+    code_labels, code_ranges, matched_compiler_names = pat_result
     return code_labels, code_ranges, matched_compiler_names
 
 

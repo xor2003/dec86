@@ -1,7 +1,13 @@
+"""Layer: Recovery metadata.
+
+Responsibility: summarize recovered register, flag, stack, and memory state effects.
+Forbidden: manufacturing state facts, hiding unknowns, or changing validation verdicts.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Mapping, TypeAlias
 
 from .low_memory_regions import LowMemoryAccess, classify_x86_16_low_memory_access
 
@@ -16,6 +22,8 @@ _FLAG_NAMES = frozenset({"cf", "pf", "af", "zf", "sf", "tf", "if", "df", "of"})
 
 @dataclass(frozen=True, slots=True)
 class FunctionStateSummary:
+    """Deterministic summary of recovered function register, flag, and memory state."""
+
     gp_register_inputs: tuple[str, ...] = ()
     gp_register_outputs: tuple[str, ...] = ()
     segment_register_inputs: tuple[str, ...] = ()
@@ -35,15 +43,19 @@ class FunctionStateSummary:
     return_kind: str = "unknown"
 
     def touches_segments(self) -> bool:
+        """Return whether recovered state touches segment registers."""
         return bool(self.segment_register_inputs or self.segment_register_outputs)
 
     def touches_flags(self) -> bool:
+        """Return whether recovered state touches flags."""
         return bool(self.flag_inputs or self.flag_outputs)
 
     def has_memory_effects(self) -> bool:
+        """Return whether recovered state includes stack or memory effects."""
         return bool(self.frame_stack_reads or self.frame_stack_writes or self.memory_reads or self.memory_writes)
 
     def brief(self) -> str:
+        """Return a compact stable diagnostic string for reports."""
         return (
             f"gp_in={len(self.gp_register_inputs)} "
             f"gp_out={len(self.gp_register_outputs)} "
@@ -61,6 +73,7 @@ class FunctionStateSummary:
         )
 
     def to_dict(self) -> dict[str, object]:
+        """Return a JSON-compatible representation of recovered state."""
         return {
             "gp_register_inputs": list(self.gp_register_inputs),
             "gp_register_outputs": list(self.gp_register_outputs),
@@ -82,37 +95,36 @@ class FunctionStateSummary:
         }
 
 
-def _value(source: Any, name: str, default: Any) -> Any:
-    if isinstance(source, Mapping):
-        return source.get(name, default)
-    return getattr(source, name, default)
+FunctionStateSource: TypeAlias = Mapping[str, object]
 
 
-def _sorted_str_tuple(value: Any) -> tuple[str, ...]:
+def _value(source: FunctionStateSource, name: str, default: object) -> object:
+    return source.get(name, default)
+
+
+def _sorted_str_tuple(value: object) -> tuple[str, ...]:
     if not isinstance(value, (tuple, list, set)):
         return ()
     return tuple(sorted(str(item).lower() for item in value))
 
 
-def _sorted_raw_str_tuple(value: Any) -> tuple[str, ...]:
+def _sorted_raw_str_tuple(value: object) -> tuple[str, ...]:
     if not isinstance(value, (tuple, list, set)):
         return ()
     items = [str(item) for item in value]
     return tuple(sorted(items, key=str.lower))
 
 
-def _sorted_int_tuple(value: Any) -> tuple[int, ...]:
+def _sorted_int_tuple(value: object) -> tuple[int, ...]:
     if not isinstance(value, (tuple, list, set)):
         return ()
     ints = [item for item in value if isinstance(item, int)]
     return tuple(sorted(ints))
 
 
-def _count(source: Any, name: str) -> int:
+def _count(source: FunctionStateSource, name: str) -> int:
     value = _value(source, name, 0)
-    if value is None:
-        return 0
-    return int(value)
+    return value if isinstance(value, int) else 0
 
 
 def _partition_registers(registers: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
@@ -129,7 +141,7 @@ def _partition_registers(registers: tuple[str, ...]) -> tuple[tuple[str, ...], t
     return tuple(gp), tuple(seg), tuple(flags)
 
 
-def _low_memory_access_sort_key(item: LowMemoryAccess) -> tuple[int, int, int, str, str, str]:
+def _low_memory_access_sort_key(item: LowMemoryAccess) -> tuple[int, int, int, int, str, str]:
     exact_hit = 0 if "+" not in item.label else 1
     return (item.linear, exact_hit, item.segment, item.offset, item.label, item.raw_access)
 
@@ -144,7 +156,8 @@ def _collect_low_memory_accesses(raw_accesses: tuple[str, ...], *, access_kind: 
     return tuple(sorted(accesses, key=_low_memory_access_sort_key))
 
 
-def summarize_x86_16_function_state(source: Any) -> FunctionStateSummary:
+def summarize_x86_16_function_state(source: FunctionStateSource) -> FunctionStateSummary:
+    """Summarize recovered function state from an existing structured mapping."""
     raw_inputs = _sorted_str_tuple(_value(source, "register_inputs", ()))
     raw_outputs = _sorted_str_tuple(_value(source, "register_outputs", ()))
     explicit_seg_inputs = _sorted_str_tuple(_value(source, "segment_register_inputs", ()))

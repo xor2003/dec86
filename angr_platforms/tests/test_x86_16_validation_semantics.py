@@ -28,3 +28,30 @@ def test_final_semantics_gate_rejects_raw_stack_placeholders():
 
     with pytest.raises(PipelineHardError, match="unresolved stack locals"):
         assert_known_call_semantics_8616(c_text, function_addr=0x1000)
+
+
+def test_final_semantics_gate_rejects_vvar_used_as_unresolved_ss_base():
+    c_text = """
+    void f(void)
+    {
+        unsigned short vvar_0;
+        SEG_U16(ss, vvar_0 - 2) = 3;
+        return;
+    }
+    """
+
+    with pytest.raises(PipelineHardError, match="unresolved stack locals"):
+        assert_known_call_semantics_8616(c_text, function_addr=0x1000)
+
+
+def test_final_semantics_gate_ignores_forbidden_tokens_inside_comments():
+    c_text = """
+    void f(void)
+    {
+        /* previous bad output shape: ds << 4 and stack[0xfffc] */
+        // previous bad output shape: es << 4
+        return;
+    }
+    """
+
+    assert_known_call_semantics_8616(c_text, function_addr=0x1000)

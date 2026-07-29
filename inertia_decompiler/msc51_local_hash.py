@@ -1,5 +1,8 @@
 """MSC 5.1 local variable name hash diagnostics.
 
+Layer: CLI/fallback/reporting.
+Responsibility: report optional MSC 5.1 local-name hash diagnostics without proving stack semantics.
+
 MSC 5.1 uses a 16-bucket hash table for local variable symbols.
 hash(name) = sum(ord(c.upper()) for c in name) % 16
 Collision resolution: backward linear probing (probe to bucket-1).
@@ -10,6 +13,17 @@ with MSC 5.1's hashing mechanism.
 """
 
 from __future__ import annotations
+
+from typing import Protocol, cast
+
+
+class _CodegenFunctionLike(Protocol):
+    variables_in_use: dict[object, object]
+    addr: int | None
+
+
+class _CodegenLike(Protocol):
+    cfunc: _CodegenFunctionLike | None
 
 
 def msc51_hash(name: str) -> int:
@@ -48,7 +62,7 @@ def msc51_bp_offset_for_bucket(bucket_idx: int, slot_size: int = 2) -> int:
     return (bucket_idx + 1) * slot_size
 
 
-def _collect_named_stack_locals(codegen) -> list[tuple[str, int, object]]:
+def _collect_named_stack_locals(codegen: object) -> list[tuple[str, int, object]]:
     """Collect named local stack variables with their BP offsets.
 
     Returns:
@@ -58,7 +72,13 @@ def _collect_named_stack_locals(codegen) -> list[tuple[str, int, object]]:
     """
     import re
 
-    variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
+    try:
+        cfunc = cast(_CodegenLike, codegen).cfunc
+    except AttributeError:
+        return []
+    if cfunc is None:
+        return []
+    variables_in_use = cfunc.variables_in_use
     if not isinstance(variables_in_use, dict):
         return []
 
@@ -73,13 +93,13 @@ def _collect_named_stack_locals(codegen) -> list[tuple[str, int, object]]:
     for variable, cvar in variables_in_use.items():
         if not isinstance(variable, SimStackVariable):
             continue
-        base = getattr(variable, "base", None)
+        base = variable.base
         if base != "bp":
             continue
-        offset = getattr(variable, "offset", None)
+        offset = variable.offset
         if not isinstance(offset, int) or offset >= 0:
             continue  # skip args (positive BP offsets) for now
-        name = getattr(variable, "name", None)
+        name = variable.name
         if not isinstance(name, str) or not name:
             continue
         if synthetic_name_re.match(name):
@@ -93,7 +113,7 @@ def _collect_named_stack_locals(codegen) -> list[tuple[str, int, object]]:
 
 
 def _check_declaration_order_feasible(names: list[str], bucket_assignments: dict[str, int]) -> bool:
-    def _impl():
+    def _impl() -> bool:
         """Check whether any declaration order could produce the observed bucket assignments.
 
         For a variable to end up at bucket b:
@@ -156,7 +176,7 @@ def _check_declaration_order_feasible(names: list[str], bucket_assignments: dict
     return _impl()
 
 
-def diagnose_msc51_locals(codegen) -> list[str]:
+def diagnose_msc51_locals(codegen: object) -> list[str]:
     """Diagnose whether recovered local variable names match MSC 5.1 hash allocation.
 
     Returns one-line summary per function:
@@ -166,7 +186,11 @@ def diagnose_msc51_locals(codegen) -> list[str]:
     if not named_locals:
         return []
 
-    func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+    try:
+        cfunc = cast(_CodegenLike, codegen).cfunc
+    except AttributeError:
+        cfunc = None
+    func_addr = cfunc.addr if cfunc is not None else None
     func_label = f"func_{func_addr:#x}" if func_addr is not None else "???"
 
     matching: list[str] = []
@@ -188,7 +212,7 @@ def diagnose_msc51_locals(codegen) -> list[str]:
     return [msg]
 
 
-def emit_msc51_diagnostic(codegen) -> None:
+def emit_msc51_diagnostic(codegen: object) -> None:
     """Emit MSC 5.1 hash diagnostic messages to stderr.
 
     Args:

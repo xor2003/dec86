@@ -1,27 +1,52 @@
+"""Layer: Structuring.
+
+Responsibility: expose IR-readiness hints that explain structuring limits.
+Forbidden: semantic recovery, alias recovery, or changing structuring verdicts.
+"""
+
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .ir_readiness import IRReadinessSummary, summarize_x86_16_ir_readiness
+from .ir_recovery_summary import IRRecoverySource
 
 __all__ = ["StructuringIRHintArtifact", "build_structuring_ir_hint_artifact"]
 
 
+def _ir_recovery_source_from_codegen(codegen: object) -> IRRecoverySource:
+    summary = vars(codegen).get("_inertia_vex_ir_summary", {})
+    if not isinstance(summary, Mapping) or not summary:
+        for codegen_type in type(codegen).mro():
+            summary = vars(codegen_type).get("_inertia_vex_ir_summary", {})
+            if isinstance(summary, Mapping):
+                break
+    return {"_inertia_vex_ir_summary": summary if isinstance(summary, Mapping) else {}}
+
+
 @dataclass(frozen=True, slots=True)
 class StructuringIRHintArtifact:
+    """IR-readiness hints that explain structuring limits without changing verdicts."""
+
     readiness: IRReadinessSummary
     hints: tuple[str, ...]
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-compatible structuring hint payload."""
         return {
             "readiness": self.readiness.to_dict(),
             "hints": list(self.hints),
         }
 
 
-def build_structuring_ir_hint_artifact(codegen, *, succeeded: bool, iterations: int) -> StructuringIRHintArtifact:
-    def _impl():
-        readiness = summarize_x86_16_ir_readiness(codegen)
+def build_structuring_ir_hint_artifact(
+    codegen: object, *, succeeded: bool, iterations: int
+) -> StructuringIRHintArtifact:
+    """Build structuring diagnostics from already-collected IR readiness facts."""
+
+    def _impl() -> StructuringIRHintArtifact:
+        readiness = summarize_x86_16_ir_readiness(_ir_recovery_source_from_codegen(codegen))
         hints: list[str] = []
 
         if readiness.level == "missing":

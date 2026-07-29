@@ -1,5 +1,8 @@
 """Textual-based debugger for angr x86-16 simulation.
 
+Layer: CLI/fallback/reporting.
+Responsibility: expose an RSP debugger server for simulation without owning decompiler semantics.
+
 Architecture:
 - GDB server: Remote Serial Protocol (RSP) backend, wraps angr SimState
 - TUI client: textual-based frontend with panels for:
@@ -28,15 +31,37 @@ import struct
 import threading
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional, cast
 
 import angr
 import claripy
 from angr_platforms.X86_16.analysis_helpers import preferred_known_helper_signature_decl
 
 
+def _dynamic_angr_attr(obj: object, name: str, default: Any = None) -> Any:  # noqa: ANN401
+    """Read a dynamic angr/plugin attribute at the debugger boundary."""
+    # Dynamic angr boundary: project, helper, and register objects expose version-dependent fields.
+    return getattr(obj, name, default)
+
+
+def _dynamic_angr_setattr(obj: object, name: str, value: object) -> None:
+    """Write a dynamic angr register attribute at the debugger boundary."""
+    # Dynamic angr boundary: RSP register numbers map to angr register attributes.
+    setattr(obj, name, value)
+
+
+def _state_int(state: angr.SimState, expr: object) -> int:
+    """Concretize an angr/claripy expression to an integer."""
+    return int(cast(Any, state.solver).eval(expr))
+
+
+def _state_bytes(state: angr.SimState, expr: object) -> bytes:
+    """Concretize an angr/claripy expression to bytes."""
+    return bytes(cast(Any, state.solver).eval(expr, cast_to=bytes))
+
+
 class GDBStopReason(Enum):
-    """Why the debuggee stopped"""
+    """Why the debuggee stopped."""
 
     TRAP = "S05"  # SIGTRAP (breakpoint/step)
     SEGFAULT = "S11"  # SIGSEGV
@@ -46,13 +71,14 @@ class GDBStopReason(Enum):
 
 @dataclass
 class Breakpoint:
-    """Debugger breakpoint"""
+    """Debugger breakpoint."""
 
     address: int
     enabled: bool = True
     hit_count: int = 0
 
     def __repr__(self) -> str:
+        """Render a compact breakpoint label."""
         return f"BP@0x{self.address:05x} (hits={self.hit_count})"
 
 
@@ -84,7 +110,8 @@ class GDBServer:
     MCB_TYPE_NORMAL = 0x4D  # Normal MCB (more follow)
     MCB_FREE = 0x0000  # Free block
 
-    def __init__(self, project: angr.Project, port: int = 1234, host: str = "127.0.0.1"):
+    def __init__(self, project: angr.Project, port: int = 1234, host: str = "127.0.0.1") -> None:
+        """Initialize an RSP server around an angr project."""
         self.project = project
         self.port = port
         self.host = host
@@ -106,24 +133,24 @@ class GDBServer:
         self.dos_mem_start = self.DOS_MEM_START
 
     def _helper_name_for_addr(self, addr: int) -> str | None:
-        def _impl():
+        def _impl() -> str | None:
             """Return a best-effort helper name for a concrete address."""
             if self.project.is_hooked(addr):
                 proc = self.project.hooked_by(addr)
                 if proc is not None:
-                    name = getattr(proc, "INT_NAME", None)
+                    name = _dynamic_angr_attr(proc, "INT_NAME", None)
                     if isinstance(name, str) and name:
                         return name
-                    name = getattr(proc, "display_name", None)
+                    name = _dynamic_angr_attr(proc, "display_name", None)
                     if isinstance(name, str) and name:
                         return name
                     return proc.__class__.__name__
 
-            kb = getattr(self.project, "kb", None)
-            functions = getattr(kb, "functions", None)
+            kb = _dynamic_angr_attr(self.project, "kb", None)
+            functions = _dynamic_angr_attr(kb, "functions", None)
             func = functions.function(addr=addr) if functions is not None else None
             if func is not None:
-                name = getattr(func, "name", None)
+                name = _dynamic_angr_attr(func, "name", None)
                 if isinstance(name, str) and name:
                     return name
             return None
@@ -142,7 +169,7 @@ class GDBServer:
         if not self.state:
             return info
 
-        addr = self.state.solver.eval(self.state.regs.ip)
+        addr = _state_int(self.state, self.state.regs.ip)
         info["address"] = addr
         helper_name = self._helper_name_for_addr(addr)
         if helper_name is None:
@@ -192,13 +219,13 @@ class GDBServer:
         m = state.memory
 
         # Helper: create concrete bitvectors
-        def bv8(val: int) -> claripy.Bits:
+        def bv8(val: int) -> Any:  # noqa: ANN401
             return claripy.BVV(val, 8)
 
-        def bv16(val: int) -> claripy.Bits:
+        def bv16(val: int) -> Any:  # noqa: ANN401
             return claripy.BVV(val, 16)
 
-        def bv32(val: int) -> claripy.Bits:
+        def bv32(val: int) -> Any:  # noqa: ANN401
             return claripy.BVV(val, 32)
 
         # 1. IVT at 0x0000 (256 vectors, each 4 bytes: offset + segment)
@@ -277,7 +304,7 @@ class GDBServer:
         state.regs.bp = 0
 
     def _accept_and_serve(self) -> None:
-        def _impl():
+        def _impl() -> None:
             """Accept client connections and serve GDB protocol."""
             self._initialize_state_if_needed()
             while self.running and self.socket is not None:
@@ -324,23 +351,24 @@ class GDBServer:
             entry = 0x100
 
         phys_entry = entry
-        self.state = self.project.factory.blank_state(addr=phys_entry)
-        self._setup_dos_environment(self.state)
+        state = self.project.factory.blank_state(addr=phys_entry)
+        self._setup_dos_environment(state)
 
-        self.state.regs.cs = self.psp_segment
-        self.state.regs.ip = entry & 0xFFFF
-        self.state.regs.ss = self.psp_segment
-        self.state.regs.sp = 0xFFFE
-        self.state.regs.ds = self.psp_segment
-        self.state.regs.es = self.psp_segment
-        self.state.regs.ax = 0
-        self.state.regs.bx = 0
-        self.state.regs.cx = 0xFF
-        self.state.regs.dx = self.psp_segment
-        self.state.regs.si = 0
-        self.state.regs.di = 0
-        self.state.regs.bp = 0
-        self.state.regs.flags = 0x0200
+        state.regs.cs = self.psp_segment
+        state.regs.ip = entry & 0xFFFF
+        state.regs.ss = self.psp_segment
+        state.regs.sp = 0xFFFE
+        state.regs.ds = self.psp_segment
+        state.regs.es = self.psp_segment
+        state.regs.ax = 0
+        state.regs.bx = 0
+        state.regs.cx = 0xFF
+        state.regs.dx = self.psp_segment
+        state.regs.si = 0
+        state.regs.di = 0
+        state.regs.bp = 0
+        state.regs.flags = 0x0200
+        self.state = state
 
         print(
             f"[GDB] DOS environment setup: PSP=0x{self.psp_segment:04x}, "
@@ -359,7 +387,7 @@ class GDBServer:
         self.client.sendall(packet.encode())
 
     def _handle_q_command(self, cmd: str) -> bool:
-        def _impl():
+        def _impl() -> bool:
             if cmd.startswith("qSupported"):
                 self._send_packet(
                     "PacketSize=3fff;qXfer:memory-map:read+;"
@@ -479,30 +507,31 @@ class GDBServer:
         return False
 
     def _handle_command(self, cmd: str) -> None:
-        def _impl():
+        def _impl() -> None:
             """Dispatch GDB RSP command."""
-            print(f"[GDB] Received raw command: {repr(cmd)}")
-            if not cmd or cmd.startswith("+"):
+            current_cmd = cmd
+            print(f"[GDB] Received raw command: {repr(current_cmd)}")
+            if not current_cmd or current_cmd.startswith("+"):
                 return
 
-            if cmd.startswith("$"):
-                cmd = cmd[1:].split("#")[0]
-            print(f"[GDB] Parsed command: {repr(cmd)}")
-            if self._handle_q_command(cmd):
+            if current_cmd.startswith("$"):
+                current_cmd = current_cmd[1:].split("#")[0]
+            print(f"[GDB] Parsed command: {repr(current_cmd)}")
+            if self._handle_q_command(current_cmd):
                 return
-            if self._handle_vcont_command(cmd):
+            if self._handle_vcont_command(current_cmd):
                 return
-            if self._handle_thread_command(cmd):
+            if self._handle_thread_command(current_cmd):
                 return
-            if self._handle_register_command(cmd):
+            if self._handle_register_command(current_cmd):
                 return
-            if self._handle_memory_command(cmd):
+            if self._handle_memory_command(current_cmd):
                 return
-            if self._handle_execution_command(cmd):
+            if self._handle_execution_command(current_cmd):
                 return
-            if self._handle_breakpoint_command(cmd):
+            if self._handle_breakpoint_command(current_cmd):
                 return
-            if cmd == "QStartNoAckMode":
+            if current_cmd == "QStartNoAckMode":
                 self._send_packet("OK")
                 return
             self._send_packet("")
@@ -515,26 +544,25 @@ class GDBServer:
             return
 
         s = self.state
-        ev = s.solver.eval
 
         # x86-16 registers (16-bit names used by 86_16 arch)
         registers = [
-            ev(s.regs.ax) & 0xFFFF,  # ax
-            ev(s.regs.cx) & 0xFFFF,  # cx
-            ev(s.regs.dx) & 0xFFFF,  # dx
-            ev(s.regs.bx) & 0xFFFF,  # bx
-            ev(s.regs.sp) & 0xFFFF,  # sp
-            ev(s.regs.bp) & 0xFFFF,  # bp
-            ev(s.regs.si) & 0xFFFF,  # si
-            ev(s.regs.di) & 0xFFFF,  # di
-            ev(s.regs.ip) & 0xFFFF,  # ip (PC)
-            ev(s.regs.flags) & 0xFFFF,  # flags
-            ev(s.regs.cs) & 0xFFFF,  # cs
-            ev(s.regs.ss) & 0xFFFF,  # ss
-            ev(s.regs.ds) & 0xFFFF,  # ds
-            ev(s.regs.es) & 0xFFFF,  # es
-            ev(s.regs.fs) & 0xFFFF,  # fs
-            ev(s.regs.gs) & 0xFFFF,  # gs
+            _state_int(s, s.regs.ax) & 0xFFFF,  # ax
+            _state_int(s, s.regs.cx) & 0xFFFF,  # cx
+            _state_int(s, s.regs.dx) & 0xFFFF,  # dx
+            _state_int(s, s.regs.bx) & 0xFFFF,  # bx
+            _state_int(s, s.regs.sp) & 0xFFFF,  # sp
+            _state_int(s, s.regs.bp) & 0xFFFF,  # bp
+            _state_int(s, s.regs.si) & 0xFFFF,  # si
+            _state_int(s, s.regs.di) & 0xFFFF,  # di
+            _state_int(s, s.regs.ip) & 0xFFFF,  # ip (PC)
+            _state_int(s, s.regs.flags) & 0xFFFF,  # flags
+            _state_int(s, s.regs.cs) & 0xFFFF,  # cs
+            _state_int(s, s.regs.ss) & 0xFFFF,  # ss
+            _state_int(s, s.regs.ds) & 0xFFFF,  # ds
+            _state_int(s, s.regs.es) & 0xFFFF,  # es
+            _state_int(s, s.regs.fs) & 0xFFFF,  # fs
+            _state_int(s, s.regs.gs) & 0xFFFF,  # gs
         ]
 
         # GDB RSP uses little-endian byte order
@@ -570,7 +598,7 @@ class GDBServer:
             ]
 
             if 0 <= reg_num < len(reg_names):
-                val = self.state.solver.eval(getattr(self.state.regs, reg_names[reg_num])) & 0xFFFF
+                val = _state_int(self.state, _dynamic_angr_attr(self.state.regs, reg_names[reg_num])) & 0xFFFF
                 # Little-endian byte order
                 self._send_packet(struct.pack("<H", val).hex())
             else:
@@ -579,7 +607,7 @@ class GDBServer:
             self._send_packet("ffffffff")
 
     def _handle_read_memory(self, cmd: str) -> None:
-        """Read memory: m<addr>,<len>"""
+        """Read memory: m<addr>,<len>."""
         try:
             parts = cmd[1:].split(",")
             addr = int(parts[0], 16)
@@ -591,20 +619,23 @@ class GDBServer:
 
             data = self.state.memory.load(addr, length)
             # Resolve to concrete bytes
-            concrete = self.state.solver.eval(data, cast_to=bytes)
+            concrete = _state_bytes(self.state, data)
             hex_str = concrete.hex()
             self._send_packet(hex_str)
         except (ValueError, IndexError, Exception):
             self._send_packet("")
 
     def _handle_write_memory(self, cmd: str) -> None:
-        """Write memory: M<addr>,<len>:<data>"""
+        """Write memory: M<addr>,<len>:<data>."""
         try:
             parts = cmd[1:].split(":")
             header = parts[0].split(",")
             addr = int(header[0], 16)
             length = int(header[1], 16)
             data = bytes.fromhex(parts[1])
+            if len(data) != length:
+                self._send_packet("E01")
+                return
 
             if self.state:
                 self.state.memory.store(addr, data)
@@ -618,18 +649,19 @@ class GDBServer:
             return
 
         try:
+            state = self.state
             # Execute until breakpoint or max steps
             for _ in range(10000):
-                ip = self.state.solver.eval(self.state.regs.ip)
+                ip = _state_int(state, state.regs.ip)
                 if ip in self.breakpoints:
                     self.breakpoints[ip].hit_count += 1
                     self._send_packet("S05")  # Breakpoint
                     return
 
-                succ = self.project.factory.successors(self.state)
+                succ = self.project.factory.successors(state)
                 if succ.successors:
-                    self.state = succ.successors[0]
-                    ip = self.state.solver.eval(self.state.regs.ip)
+                    state = succ.successors[0]
+                    self.state = state
                 else:
                     break
 
@@ -652,18 +684,18 @@ class GDBServer:
             self._send_packet("S05")
 
     def _handle_step_over(self) -> None:
-        def _impl():
+        def _impl() -> None:
             """Step over instruction (execute calls without stepping into)."""
             if not self.state:
                 return
 
             try:
                 # Get current IP
-                ip = self.state.solver.eval(self.state.regs.ip)
+                ip = _state_int(self.state, self.state.regs.ip)
 
                 # Read instruction at current IP
                 mem = self.state.memory.load(ip, 15)
-                concrete = self.state.solver.eval(mem, cast_to=bytes)
+                concrete = _state_bytes(self.state, mem)
 
                 # Check if it's a call instruction (0xE8 = call rel32, 0xFF/2 = call r/m)
                 is_call = False
@@ -719,7 +751,7 @@ class GDBServer:
         return _impl()
 
     def _handle_set_breakpoint(self, cmd: str) -> None:
-        """Set breakpoint: Z0,<addr>,<kind>"""
+        """Set breakpoint: Z0,<addr>,<kind>."""
         try:
             parts = cmd[2:].split(",")
             addr = int(parts[0], 16)
@@ -730,7 +762,7 @@ class GDBServer:
             self._send_packet("E00")
 
     def _handle_remove_breakpoint(self, cmd: str) -> None:
-        """Remove breakpoint: z0,<addr>,<kind>"""
+        """Remove breakpoint: z0,<addr>,<kind>."""
         try:
             parts = cmd[2:].split(",")
             addr = int(parts[0], 16)
@@ -741,7 +773,7 @@ class GDBServer:
             self._send_packet("E00")
 
     def _handle_write_register(self, cmd: str) -> None:
-        """Write single register: P<regnum>=<value>"""
+        """Write single register: P<regnum>=<value>."""
         try:
             eq_pos = cmd.index("=")
             reg_num = int(cmd[1:eq_pos], 16)
@@ -768,7 +800,7 @@ class GDBServer:
                     "gs",
                 ]
                 if 0 <= reg_num < len(reg_names):
-                    setattr(self.state.regs, reg_names[reg_num], value)
+                    _dynamic_angr_setattr(self.state.regs, reg_names[reg_num], value)
                     self._send_packet("OK")
                     return
             self._send_packet("E00")
@@ -776,7 +808,7 @@ class GDBServer:
             self._send_packet("E00")
 
     def _handle_write_memory_binary(self, cmd: str) -> None:
-        """Write memory binary: X<addr>,<len>:<data>"""
+        """Write memory binary: X<addr>,<len>:<data>."""
         try:
             colon_pos = cmd.index(":")
             header = cmd[1:colon_pos]

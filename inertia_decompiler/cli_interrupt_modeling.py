@@ -1,7 +1,16 @@
 # AUTO-GENERATED split from cli_runtime_shared.py
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
+import typing
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from typing import Any, Protocol, TypeAlias, cast
 
 import angr
 from angr.analyses.decompiler import structured_codegen
@@ -14,9 +23,33 @@ from inertia_decompiler.cli_output import (
 
 from .cli_c_ast_rewrites import _c_constant_value, _same_c_expression, _unwrap_c_casts
 
-structured_c = structured_codegen.c
+structured_c: Any = structured_codegen.c
 
-print = _timestamped_print
+print: Callable[..., None] = _timestamped_print
+
+RegisterState: TypeAlias = dict[str, dict[tuple[str, ...], int]]
+
+
+class _CFunctionLike(Protocol):
+    """Structured C function surface consumed from angr codegen."""
+
+    addr: int
+    statements: object
+
+
+class _CodegenLike(Protocol):
+    """Structured codegen surface consumed from angr decompiler output."""
+
+    cfunc: _CFunctionLike | None
+
+
+class _FunctionLike(Protocol):
+    """Function surface used to attach pseudo callees for DOS interrupt calls."""
+
+    def get_call_target(self, insn_addr: int) -> int | None:
+        """Return a resolved call target for an instruction address."""
+
+
 __all__ = [
     "InterruptWrapperCall",
     "InterruptWrapperFieldAccess",
@@ -42,7 +75,7 @@ __all__ = [
 ]
 
 
-def _iter_c_nodes(node, *, max_nodes: int = 10000):
+def _iter_c_nodes(node: object, *, max_nodes: int = 10000) -> Iterator[object]:
     stack = [node]
     seen: set[int] = set()
     visited = 0
@@ -71,6 +104,7 @@ def _iter_c_nodes(node, *, max_nodes: int = 10000):
             "expr",
             "variable",
         ):
+            # Dynamic codegen boundary: angr structured-C node children vary by node class.
             child = getattr(current, attr, None)
             if child is None:
                 continue
@@ -84,6 +118,8 @@ def _iter_c_nodes(node, *, max_nodes: int = 10000):
 
 @dataclass(frozen=True)
 class InterruptWrapperCall:
+    """Normalized DOS interrupt wrapper call observed in structured C."""
+
     callee_name: str
     canonical_name: str
     kind: str
@@ -96,6 +132,8 @@ class InterruptWrapperCall:
 
 @dataclass(frozen=True)
 class InterruptWrapperFieldAccess:
+    """Structured-C field access into DOS interrupt wrapper register structs."""
+
     base_name: str
     field_path: tuple[str, ...]
     expr: object
@@ -122,15 +160,20 @@ def _interrupt_wrapper_call_kind(name: str | None, args: tuple[object, ...] | No
     return canonical
 
 
-def _interrupt_wrapper_call_signature(node: structured_c.CFunctionCall) -> InterruptWrapperCall | None:
-    def _impl():
-        callee_name = None
+def _interrupt_wrapper_call_signature(node: object) -> InterruptWrapperCall | None:
+    def _impl() -> InterruptWrapperCall | None:
+        callee_name: str | None = None
+        # Dynamic codegen boundary: CFunctionCall may carry either callee_func or callee_target.
         callee_func = getattr(node, "callee_func", None)
         if callee_func is not None:
+            # Dynamic codegen boundary: angr callee function names are optional.
             callee_name = getattr(callee_func, "name", None)
+        # Dynamic codegen boundary: CFunctionCall may carry a string callee_target.
         elif isinstance(getattr(node, "callee_target", None), str):
+            # Dynamic codegen boundary: CFunctionCall may carry a string callee_target.
             callee_name = getattr(node, "callee_target")
 
+        # Dynamic codegen boundary: CFunctionCall args may be absent on synthetic nodes.
         args = tuple(getattr(node, "args", ()) or ())
         kind = _interrupt_wrapper_call_kind(callee_name, args)
         if kind is None:
@@ -160,21 +203,25 @@ def _interrupt_wrapper_call_signature(node: structured_c.CFunctionCall) -> Inter
     return _impl()
 
 
-def _interrupt_wrapper_field_path(expr) -> InterruptWrapperFieldAccess | None:
+def _interrupt_wrapper_field_path(expr: object) -> InterruptWrapperFieldAccess | None:
     path: list[str] = []
     current = expr
     while isinstance(current, structured_c.CVariableField):
+        # Dynamic codegen boundary: CVariableField field wrappers vary by angr version.
         field = getattr(current, "field", None)
+        # Dynamic codegen boundary: field wrapper payload is optional.
         field_name = getattr(field, "field", None)
         if not isinstance(field_name, str) or not field_name:
             return None
         path.append(field_name)
+        # Dynamic codegen boundary: nested field access base is supplied by structured C.
         current = getattr(current, "variable", None)
 
     if not isinstance(current, structured_c.CVariable):
         return None
 
-    base_name = getattr(current, "name", None)
+    current_cvar = cast(Any, current)
+    base_name = current_cvar.name
     if not isinstance(base_name, str) or not base_name:
         return None
     if not path:
@@ -213,12 +260,14 @@ def _interrupt_wrapper_call_text(sig: InterruptWrapperCall) -> str:
     return f"{sig.canonical_name}({', '.join(args)})"
 
 
-def collect_interrupt_wrapper_calls(codegen) -> list[InterruptWrapperCall]:
-    if getattr(codegen, "cfunc", None) is None:
+def collect_interrupt_wrapper_calls(codegen: _CodegenLike) -> list[InterruptWrapperCall]:
+    """Return normalized interrupt-wrapper calls from structured C codegen."""
+    cfunc = codegen.cfunc
+    if cfunc is None:
         return []
 
     calls: list[InterruptWrapperCall] = []
-    for node in _iter_c_nodes(codegen.cfunc.statements):
+    for node in _iter_c_nodes(cfunc.statements):
         if not isinstance(node, structured_c.CFunctionCall):
             continue
         sig = _interrupt_wrapper_call_signature(node)
@@ -227,12 +276,14 @@ def collect_interrupt_wrapper_calls(codegen) -> list[InterruptWrapperCall]:
     return calls
 
 
-def collect_interrupt_wrapper_field_accesses(codegen) -> list[InterruptWrapperFieldAccess]:
-    if getattr(codegen, "cfunc", None) is None:
+def collect_interrupt_wrapper_field_accesses(codegen: _CodegenLike) -> list[InterruptWrapperFieldAccess]:
+    """Return register-struct field accesses from structured C codegen."""
+    cfunc = codegen.cfunc
+    if cfunc is None:
         return []
 
     accesses: list[InterruptWrapperFieldAccess] = []
-    for node in _iter_c_nodes(codegen.cfunc.statements):
+    for node in _iter_c_nodes(cfunc.statements):
         if not isinstance(node, structured_c.CVariableField):
             continue
         access = _interrupt_wrapper_field_path(node)
@@ -241,8 +292,9 @@ def collect_interrupt_wrapper_field_accesses(codegen) -> list[InterruptWrapperFi
     return accesses
 
 
-def _attach_interrupt_wrapper_callees(project: angr.Project, codegen, api_style: str) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
+def _attach_interrupt_wrapper_callees(project: angr.Project, codegen: _CodegenLike, api_style: str) -> bool:
+    cfunc = codegen.cfunc
+    if cfunc is None:
         return False
 
     wrapper_calls = collect_interrupt_wrapper_calls(codegen)
@@ -250,12 +302,14 @@ def _attach_interrupt_wrapper_callees(project: angr.Project, codegen, api_style:
     if not wrapper_calls and not wrapper_field_accesses:
         return False
 
+    # Dynamic compatibility boundary: interrupt wrapper cache is attached to the third-party angr Project.
     cache = getattr(project, "_inertia_interrupt_wrappers", None)
     if not isinstance(cache, dict):
         cache = {}
-        setattr(project, "_inertia_interrupt_wrappers", cache)
+        # Dynamic compatibility boundary: interrupt wrapper cache is attached to the third-party angr Project.
+        typing.cast(typing.Any, project)._inertia_interrupt_wrappers = cache
 
-    cache[getattr(codegen.cfunc, "addr", 0)] = {
+    cache[cfunc.addr] = {
         "api_style": api_style,
         "calls": wrapper_calls,
         "field_accesses": wrapper_field_accesses,
@@ -263,15 +317,17 @@ def _attach_interrupt_wrapper_callees(project: angr.Project, codegen, api_style:
     }
 
     changed = False
-    for node in _iter_c_nodes(codegen.cfunc.statements):
+    for node in _iter_c_nodes(cfunc.statements):
         if not isinstance(node, structured_c.CFunctionCall):
             continue
         sig = _interrupt_wrapper_call_signature(node)
         if sig is None:
             continue
+        # Dynamic codegen boundary: CFunctionCall may omit callee_func.
         callee_func = getattr(node, "callee_func", None)
         if callee_func is None:
             continue
+        # Dynamic codegen boundary: angr callee function names are optional.
         if getattr(callee_func, "name", None) != sig.canonical_name:
             callee_func.name = sig.canonical_name
             changed = True
@@ -280,7 +336,7 @@ def _attach_interrupt_wrapper_callees(project: angr.Project, codegen, api_style:
 
 
 def _interrupt_wrapper_register_state_value(
-    state: dict[str, dict[tuple[str, ...], int]],
+    state: RegisterState,
     base_name: str,
     field_path: tuple[str, ...],
 ) -> int | None:
@@ -288,12 +344,12 @@ def _interrupt_wrapper_register_state_value(
 
 
 def _interrupt_wrapper_record_register_write(
-    state: dict[str, dict[tuple[str, ...], int]],
+    state: RegisterState,
     base_name: str,
     field_path: tuple[str, ...],
     value: int | None,
 ) -> None:
-    def _impl():
+    def _impl() -> None:
         if value is None:
             return
 
@@ -346,11 +402,11 @@ def _interrupt_wrapper_record_register_write(
 
 def _interrupt_wrapper_helper_call_expr(
     sig: InterruptWrapperCall,
-    input_state: dict[str, dict[tuple[str, ...], int]],
+    input_state: RegisterState,
     api_style: str,
-    codegen,
-):
-    def _impl():
+    codegen: _CodegenLike,
+) -> object | None:
+    def _impl() -> object | None:
         vector = _c_constant_value(_unwrap_c_casts(sig.vector_arg)) if sig.vector_arg is not None else None
         if vector is None and sig.kind in {"intdos", "intdosx"}:
             vector = 0x21
@@ -428,27 +484,36 @@ def _interrupt_wrapper_helper_call_expr(
     return _impl()
 
 
-def _interrupt_wrapper_result_helper_expr(helper_expr, codegen):
+def _interrupt_wrapper_result_helper_expr(helper_expr: object, codegen: _CodegenLike) -> object | None:
+    # Dynamic codegen boundary: helper calls may carry either callee_target or callee_func.
     helper_name = getattr(helper_expr, "callee_target", None)
     if not isinstance(helper_name, str):
+        # Dynamic codegen boundary: helper calls may carry either callee_target or callee_func.
         helper_func = getattr(helper_expr, "callee_func", None)
+        # Dynamic codegen boundary: angr callee function names are optional.
         helper_name = getattr(helper_func, "name", None)
     if not isinstance(helper_name, str) or not helper_name:
         return None
 
+    # Dynamic codegen boundary: CFunctionCall args may be absent on synthetic nodes.
     helper_args = list(getattr(helper_expr, "args", ()) or ())
     return structured_c.CFunctionCall(helper_name, None, helper_args, codegen=codegen)
 
 
-def _interrupt_wrapper_result_extract_expr(access: InterruptWrapperFieldAccess, helper_expr, codegen):
-    def _impl():
+def _interrupt_wrapper_result_extract_expr(
+    access: InterruptWrapperFieldAccess, helper_expr: object, codegen: _CodegenLike
+) -> object | None:
+    def _impl() -> object | None:
         helper_call = _interrupt_wrapper_result_helper_expr(helper_expr, codegen)
         if helper_call is None:
             return None
 
+        # Dynamic codegen boundary: helper calls may carry either callee_target or callee_func.
         helper_name = getattr(helper_call, "callee_target", None)
         if not isinstance(helper_name, str):
+            # Dynamic codegen boundary: helper calls may carry either callee_target or callee_func.
             helper_func = getattr(helper_call, "callee_func", None)
+            # Dynamic codegen boundary: angr callee function names are optional.
             helper_name = getattr(helper_func, "name", None)
 
         if access.base_name == "outregs" and access.field_path == ("x", "ax"):
@@ -504,21 +569,24 @@ def _interrupt_wrapper_result_extract_expr(access: InterruptWrapperFieldAccess, 
 
 def _interrupt_wrapper_result_replacement(
     access: InterruptWrapperFieldAccess,
-    helper_expr,
+    helper_expr: object | None,
     api_style: str,
-    codegen,
-):
+    codegen: _CodegenLike,
+) -> object | None:
     if helper_expr is None:
         return None
     return _interrupt_wrapper_result_extract_expr(access, helper_expr, codegen)
 
 
-def _interrupt_wrapper_result_expr_replacement(expr, helper_expr, api_style: str, codegen):
-    def _impl():
+def _interrupt_wrapper_result_expr_replacement(
+    expr: object, helper_expr: object | None, api_style: str, codegen: _CodegenLike
+) -> object | None:
+    def _impl() -> object | None:
         if helper_expr is None:
             return None
 
         replacement = None
+        # Dynamic codegen boundary: CVariable names are supplied by structured C.
         if isinstance(expr, structured_c.CVariable) and getattr(expr, "name", None) == "outregs":
             return _interrupt_wrapper_result_helper_expr(helper_expr, codegen)
 
@@ -528,20 +596,23 @@ def _interrupt_wrapper_result_expr_replacement(expr, helper_expr, api_style: str
             if replacement is not None:
                 return replacement
 
+        # Dynamic codegen boundary: helper calls may carry either callee_target or callee_func.
         helper_name = getattr(helper_expr, "callee_target", None)
         if not isinstance(helper_name, str):
+            # Dynamic codegen boundary: helper calls may carry either callee_target or callee_func.
             helper_func = getattr(helper_expr, "callee_func", None)
+            # Dynamic codegen boundary: angr callee function names are optional.
             helper_name = getattr(helper_func, "name", None)
         if not isinstance(helper_name, str) or not helper_name:
             return None
 
         if helper_name in {"get_dos_version", "_dos_get_version", "dos_get_version"}:
-            expr = _unwrap_c_casts(expr)
-            if not isinstance(expr, structured_c.CBinaryOp) or expr.op not in {"Or", "Add"}:
+            current_expr = cast(Any, _unwrap_c_casts(expr))
+            if not isinstance(current_expr, structured_c.CBinaryOp) or current_expr.op not in {"Or", "Add"}:
                 return None
 
-            for high_expr, low_expr in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
-                high_expr = _unwrap_c_casts(high_expr)
+            for high_expr, low_expr in ((current_expr.lhs, current_expr.rhs), (current_expr.rhs, current_expr.lhs)):
+                high_expr = cast(Any, _unwrap_c_casts(high_expr))
                 low_expr = _unwrap_c_casts(low_expr)
                 if not isinstance(high_expr, structured_c.CBinaryOp) or high_expr.op not in {"Shl", "Mul"}:
                     continue
@@ -561,7 +632,9 @@ def _interrupt_wrapper_result_expr_replacement(expr, helper_expr, api_style: str
                 ):
                     return structured_c.CFunctionCall(
                         helper_name,
+                        # Dynamic codegen boundary: helper calls may carry callee_func.
                         getattr(helper_expr, "callee_func", None),
+                        # Dynamic codegen boundary: CFunctionCall args may be absent on synthetic nodes.
                         list(getattr(helper_expr, "args", ()) or ()),
                         codegen=codegen,
                     )
@@ -571,21 +644,23 @@ def _interrupt_wrapper_result_expr_replacement(expr, helper_expr, api_style: str
     return _impl()
 
 
-def _lower_interrupt_wrapper_result_reads(project: angr.Project, codegen, api_style: str) -> bool:
-    if getattr(codegen, "cfunc", None) is None:
+def _lower_interrupt_wrapper_result_reads(project: angr.Project, codegen: _CodegenLike, api_style: str) -> bool:
+    cfunc = codegen.cfunc
+    if cfunc is None:
         return False
 
     changed = False
 
-    def visit(node, state: dict[str, dict[tuple[str, ...], int]], active_helper) -> None:
+    def visit(node: object, state: RegisterState, active_helper: object | None) -> None:
         nonlocal changed
 
         if isinstance(node, structured_c.CStatements):
+            node_statements = cast(Any, node)
             local_state = {base_name: dict(values) for base_name, values in state.items()}
             current_helper = active_helper
             new_statements = []
 
-            for stmt in node.statements:
+            for stmt in node_statements.statements:
                 if isinstance(stmt, structured_c.CAssignment):
                     lhs_access = _interrupt_wrapper_field_path(stmt.lhs)
                     if lhs_access is not None and lhs_access.base_name in {"inregs", "outregs", "sregs"}:
@@ -623,6 +698,7 @@ def _lower_interrupt_wrapper_result_reads(project: angr.Project, codegen, api_st
                             current_helper = stmt
 
                 elif isinstance(stmt, structured_c.CExpressionStatement):
+                    # Dynamic codegen boundary: expression statements can omit expr in synthetic nodes.
                     expr = getattr(stmt, "expr", None)
                     if isinstance(expr, structured_c.CFunctionCall):
                         sig = _interrupt_wrapper_call_signature(expr)
@@ -631,7 +707,9 @@ def _lower_interrupt_wrapper_result_reads(project: angr.Project, codegen, api_st
                             if helper is not None:
                                 current_helper = helper
                                 if not _same_c_expression(expr, helper):
-                                    stmt = structured_c.CExpressionStatement(helper, codegen=codegen)
+                                    stmt = structured_c.CExpressionStatement(
+                                        cast(Any, helper), codegen=codegen
+                                    )
                                     changed = True
                             else:
                                 current_helper = expr
@@ -639,23 +717,31 @@ def _lower_interrupt_wrapper_result_reads(project: angr.Project, codegen, api_st
                 visit(stmt, local_state, current_helper)
                 new_statements.append(stmt)
 
-            if new_statements != list(node.statements):
-                node.statements = new_statements
+            if new_statements != list(node_statements.statements):
+                node_statements.statements = new_statements
             return
 
         if isinstance(node, structured_c.CIfElse):
-            for _cond, body in node.condition_and_nodes:
+            node_ifelse = cast(Any, node)
+            for _cond, body in node_ifelse.condition_and_nodes:
                 visit(body, {base_name: dict(values) for base_name, values in state.items()}, active_helper)
-            if node.else_node is not None:
-                visit(node.else_node, {base_name: dict(values) for base_name, values in state.items()}, active_helper)
+            if node_ifelse.else_node is not None:
+                visit(
+                    node_ifelse.else_node,
+                    {base_name: dict(values) for base_name, values in state.items()},
+                    active_helper,
+                )
 
-    visit(codegen.cfunc.statements, {}, None)
+    visit(cfunc.statements, {}, None)
     return changed
 
 
-def _attach_dos_pseudo_callees(project: angr.Project, function, codegen, api_style: str) -> bool:
-    def _impl():
-        if api_style != "pseudo" or getattr(codegen, "cfunc", None) is None:
+def _attach_dos_pseudo_callees(
+    project: angr.Project, function: _FunctionLike, codegen: _CodegenLike, api_style: str
+) -> bool:
+    def _impl() -> bool:
+        cfunc = codegen.cfunc
+        if api_style != "pseudo" or cfunc is None:
             return False
 
         dos_calls = collect_dos_int21_calls(function)
@@ -672,11 +758,13 @@ def _attach_dos_pseudo_callees(project: angr.Project, function, codegen, api_sty
         if not pseudo_funcs:
             return False
 
-        call_nodes = [
-            node
-            for node in _iter_c_nodes(codegen.cfunc.statements)
-            if isinstance(node, structured_c.CFunctionCall) and node.callee_func is None
-        ]
+        call_nodes = []
+        for node in _iter_c_nodes(cfunc.statements):
+            if not isinstance(node, structured_c.CFunctionCall):
+                continue
+            node_call = cast(Any, node)
+            if node_call.callee_func is None:
+                call_nodes.append(node_call)
 
         for node, pseudo_func in zip(call_nodes, pseudo_funcs):
             if pseudo_func is not None:

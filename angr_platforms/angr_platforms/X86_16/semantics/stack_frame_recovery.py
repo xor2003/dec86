@@ -1,4 +1,11 @@
-"""Stack frame recovery — detects BP-frame usage and normalizes stack accesses.
+"""Stack frame recovery for BP/SP-based stack access semantics.
+
+Layer: Semantics.
+Responsibility: owns instruction effects, flags, branch meaning, and expression interpretation.
+This module classifies frame evidence before alias consumes normalized stack
+addresses.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
 
 AGENTS rule: SS:BP+offset → stack slot → variable (REQUIRED).
 This must happen BEFORE alias sees the IR addresses.
@@ -28,6 +35,8 @@ from ..pipeline.errors import PipelineHardError
 
 @dataclass(frozen=True)
 class StackFrameInfo8616:
+    """Recovered stack-frame shape before alias consumes stack addresses."""
+
     function_addr: int | None
     uses_bp_frame: bool = False
     uses_sp_frame: bool = False
@@ -38,83 +47,121 @@ class StackFrameInfo8616:
     evidence: tuple[str, ...] = ()
 
 
+def _dynamic_angr_attr_8616(obj: object | None, name: str, default: object | None = None) -> object | None:
+    """Dynamic angr/VEX/Capstone boundary: read optional external object attributes."""
+    if obj is None:
+        return default
+    return getattr(obj, name, default)
+
+
+def _tuple_dynamic_attr_8616(obj: object | None, name: str) -> tuple[object, ...]:
+    """Return a tuple from an optional dynamic angr/VEX/Capstone sequence attribute."""
+    value = _dynamic_angr_attr_8616(obj, name)
+    if isinstance(value, (list, tuple)):
+        return tuple(value)
+    return ()
+
+
+def _semantic_access_addr_8616(access: object) -> IRAddress | None:
+    """Extract an owned IRAddress from a semantic access object or tuple."""
+    if isinstance(access, tuple) and len(access) >= 2 and isinstance(access[1], IRAddress):
+        return access[1]
+    addr = _dynamic_angr_attr_8616(access, "addr")
+    return addr if isinstance(addr, IRAddress) else None
+
+
+def _semantic_access_mode_8616(access: object) -> int:
+    """Extract the access mode from a semantic access object or tuple."""
+    if isinstance(access, tuple) and len(access) >= 1 and isinstance(access[0], int):
+        return access[0]
+    mode = _dynamic_angr_attr_8616(access, "mode", 0)
+    return mode if isinstance(mode, int) else 0
+
+
 def _is_ss(addr: object) -> bool:
     return isinstance(addr, IRAddress) and addr.space == MemSpace.SS
 
 
-def _is_bp_stable(addr: IRAddress) -> bool:
+def _is_bp_stable(addr: object) -> bool:
     return (
-        addr.space == MemSpace.SS
+        isinstance(addr, IRAddress)
+        and addr.space == MemSpace.SS
         and addr.base == ("bp",)
         and isinstance(addr.offset, int)
         and addr.status == AddressStatus.STABLE
     )
 
 
-def _is_sp_stable(addr: IRAddress) -> bool:
+def _is_sp_stable(addr: object) -> bool:
     """SP+known_delta must be proven upstream — not guessed here."""
     return (
-        addr.space == MemSpace.SS
+        isinstance(addr, IRAddress)
+        and addr.space == MemSpace.SS
         and addr.base == ("sp",)
         and isinstance(addr.offset, int)
         and addr.status == AddressStatus.STABLE
     )
 
 
-def _count_ss_accesses(semantic_accesses: Iterable) -> int:
+def _count_ss_accesses(semantic_accesses: Iterable[object]) -> int:
     n = 0
     for acc in semantic_accesses:
-        addr = getattr(acc, "addr", None)
+        addr = _semantic_access_addr_8616(acc)
         if _is_ss(addr):
             n += 1
     return n
 
 
-def _count_sp_provisional(semantic_accesses: Iterable) -> int:
+def _count_sp_provisional(semantic_accesses: Iterable[object]) -> int:
     n = 0
     for acc in semantic_accesses:
-        addr = getattr(acc, "addr", None)
-        if _is_ss(addr) and addr.status == AddressStatus.PROVISIONAL and addr.base != ("bp",):
+        addr = _semantic_access_addr_8616(acc)
+        if (
+            isinstance(addr, IRAddress)
+            and addr.space == MemSpace.SS
+            and addr.status == AddressStatus.PROVISIONAL
+            and addr.base != ("bp",)
+        ):
             n += 1
     return n
 
 
-def _count_sp_stable(semantic_accesses: Iterable) -> int:
+def _count_sp_stable(semantic_accesses: Iterable[object]) -> int:
     n = 0
     for acc in semantic_accesses:
-        addr = getattr(acc, "addr", None)
+        addr = _semantic_access_addr_8616(acc)
         if _is_sp_stable(addr):
             n += 1
     return n
 
 
-def _count_bp_stable(semantic_accesses: Iterable) -> int:
+def _count_bp_stable(semantic_accesses: Iterable[object]) -> int:
     n = 0
     for acc in semantic_accesses:
-        addr = getattr(acc, "addr", None)
+        addr = _semantic_access_addr_8616(acc)
         if _is_bp_stable(addr):
             n += 1
     return n
 
 
-def _has_any_bp_base(semantic_accesses: Iterable) -> bool:
+def _has_any_bp_base(semantic_accesses: Iterable[object]) -> bool:
     for acc in semantic_accesses:
-        addr = getattr(acc, "addr", None)
-        if _is_ss(addr) and addr.base == ("bp",):
+        addr = _semantic_access_addr_8616(acc)
+        if isinstance(addr, IRAddress) and addr.space == MemSpace.SS and addr.base == ("bp",):
             return True
     return False
 
 
-def _has_any_sp_stable(semantic_accesses: Iterable) -> bool:
+def _has_any_sp_stable(semantic_accesses: Iterable[object]) -> bool:
     for acc in semantic_accesses:
-        addr = getattr(acc, "addr", None)
+        addr = _semantic_access_addr_8616(acc)
         if _is_sp_stable(addr):
             return True
     return False
 
 
 def _looks_like_frame_evidence(obj: object) -> bool:
-    def _impl():
+    def _impl() -> bool:
         """Check for BP frame evidence using structured IR artifacts, NOT text parsing.
 
         Accepts CapstoneInsn objects (already-parsed structured disassembly)
@@ -125,37 +172,37 @@ def _looks_like_frame_evidence(obj: object) -> bool:
         sys.stderr.flush()
 
         # ── Capstone instruction (structured, NOT text) ──
-        mnemonic = getattr(obj, "mnemonic", None)
+        mnemonic = _dynamic_angr_attr_8616(obj, "mnemonic")
         if mnemonic is not None:
             mnem_str = str(mnemonic).lower()
-            operands = getattr(obj, "operands", None) or []
+            operands = _tuple_dynamic_attr_8616(obj, "operands")
 
             # push bp — register-based detection using capstone reg IDs
             if mnem_str == "push":
                 for op in operands:
-                    reg_val = getattr(op, "reg", None)
+                    reg_val = _dynamic_angr_attr_8616(op, "reg")
                     if isinstance(reg_val, int) and reg_val == 6:  # X86_REG_BP = 6
                         return True
 
             # mov bp, sp
             elif mnem_str == "mov":
                 if len(operands) >= 2:
-                    dst_reg = getattr(operands[0], "reg", None)
-                    src_reg = getattr(operands[1], "reg", None)
+                    dst_reg = _dynamic_angr_attr_8616(operands[0], "reg")
+                    src_reg = _dynamic_angr_attr_8616(operands[1], "reg")
                     if isinstance(dst_reg, int) and dst_reg == 6 and isinstance(src_reg, int) and src_reg == 47:
                         return True
 
             return False
 
         # ── VEX IRSB (direct) — check statement tags for push-bp / mov-bp-sp ──
-        statements = getattr(obj, "statements", None)
+        statements = _dynamic_angr_attr_8616(obj, "statements")
         if statements is not None:
             return _vex_irsb_has_bp_frame(obj)
 
         # ── angr Block — iterate capstone instructions for frame patterns ──
-        capstone = getattr(obj, "capstone", None)
+        capstone = _dynamic_angr_attr_8616(obj, "capstone")
         if capstone is not None:
-            insns = getattr(capstone, "insns", None)
+            insns = _tuple_dynamic_attr_8616(capstone, "insns")
             if insns is not None:
                 for insn in insns:
                     if _looks_like_frame_evidence(insn):
@@ -170,8 +217,8 @@ def _looks_like_frame_evidence(obj: object) -> bool:
     return _impl()
 
 
-def _vex_irsb_has_bp_frame(irsb) -> bool:
-    def _impl():
+def _vex_irsb_has_bp_frame(irsb: object) -> bool:
+    def _impl() -> bool:
         """Inspect VEX IRSB statements for BP frame setup patterns.
 
         push bp  → Ist_Store(base=SS*16+SP-2, data=GET(BP))  after  Ist_Put(SP)=SUB(GET(SP), 2)
@@ -181,21 +228,21 @@ def _vex_irsb_has_bp_frame(irsb) -> bool:
         has_mov_bp_sp = False
 
         try:
-            arch = getattr(irsb, "arch", None)
+            arch = _dynamic_angr_attr_8616(irsb, "arch")
             if arch is None:
                 return False
-            sp_off = getattr(arch, "sp_offset", None)
-            bp_off = getattr(arch, "bp_offset", None)
+            sp_off = _dynamic_angr_attr_8616(arch, "sp_offset")
+            bp_off = _dynamic_angr_attr_8616(arch, "bp_offset")
             if sp_off is None or bp_off is None:
                 return False
         except Exception:
             return False
 
-        for stmt in getattr(irsb, "statements", ()) or ():
-            tag = getattr(stmt, "tag", "")
+        for stmt in _tuple_dynamic_attr_8616(irsb, "statements"):
+            tag = _dynamic_angr_attr_8616(stmt, "tag", "")
             if tag == "Ist_Put":
-                put_off = getattr(stmt, "offset", None)
-                data = getattr(stmt, "data", None)
+                put_off = _dynamic_angr_attr_8616(stmt, "offset")
+                data = _dynamic_angr_attr_8616(stmt, "data")
                 if put_off == bp_off and data is not None:
                     # PUT(BP) = GET(SP)  →  mov bp, sp
                     if _is_reg_get(data, sp_off):
@@ -210,51 +257,53 @@ def _vex_irsb_has_bp_frame(irsb) -> bool:
     return _impl()
 
 
-def _is_reg_get(vex_expr, reg_offset: int) -> bool:
+def _is_reg_get(vex_expr: object, reg_offset: object) -> bool:
     """True when vex_expr is a pure GET(reg_offset)."""
-    if getattr(vex_expr, "tag", "") != "Iex_Get":
+    if _dynamic_angr_attr_8616(vex_expr, "tag", "") != "Iex_Get":
         return False
-    return getattr(vex_expr, "offset", None) == reg_offset
+    return _dynamic_angr_attr_8616(vex_expr, "offset") == reg_offset
 
 
-def _is_sub_constant(vex_expr, constant: int) -> bool:
+def _is_sub_constant(vex_expr: object, constant: int) -> bool:
     """True when vex_expr is Binop(Sub, Iex_Get(...), Iex_Const(constant))."""
-    if getattr(vex_expr, "tag", "") != "Iex_Binop":
+    if _dynamic_angr_attr_8616(vex_expr, "tag", "") != "Iex_Binop":
         return False
-    if str(getattr(vex_expr, "op", "")) not in ("Iop_Sub32", "Iop_Sub16"):
+    if str(_dynamic_angr_attr_8616(vex_expr, "op", "")) not in ("Iop_Sub32", "Iop_Sub16"):
         return False
-    rhs = getattr(vex_expr, "child_expressions", None)
+    rhs = _tuple_dynamic_attr_8616(vex_expr, "child_expressions")
     if rhs is None:
         return False
     try:
-        const_expr = rhs[1]  # type: ignore[index]
+        const_expr = rhs[1]
     except (IndexError, TypeError):
         return False
-    if getattr(const_expr, "tag", "") != "Iex_Const":
+    if _dynamic_angr_attr_8616(const_expr, "tag", "") != "Iex_Const":
         return False
-    const_val = getattr(const_expr, "con", None)
-    return const_val is not None and getattr(const_val, "value", None) == constant
+    const_val = _dynamic_angr_attr_8616(const_expr, "con")
+    return const_val is not None and _dynamic_angr_attr_8616(const_val, "value") == constant
 
 
-def _gather_ir_artifacts_from_function_blocks(project, function_addr: int) -> list[object]:
+def _gather_ir_artifacts_from_function_blocks(project: object | None, function_addr: int) -> list[object]:
     """Collect angr Block objects for IR-based frame detection.
 
     Returns empty list if project/kb/function is unavailable.
     """
-    kb = getattr(project, "kb", None) if project is not None else None
+    kb = _dynamic_angr_attr_8616(project, "kb")
     if kb is None:
         return []
-    func = kb.functions.function(addr=function_addr, create=False)
+    functions = _dynamic_angr_attr_8616(kb, "functions")
+    function_lookup = _dynamic_angr_attr_8616(functions, "function")
+    func = function_lookup(addr=function_addr, create=False) if callable(function_lookup) else None
     if func is None:
         return []
     artifacts: list[object] = []
-    for blk in func.blocks:
+    for blk in _tuple_dynamic_attr_8616(func, "blocks"):
         artifacts.append(blk)
     return artifacts
 
 
-def _detect_sp_proven_delta_from_blocks(project, function_addr: int) -> int | None:
-    def _impl():
+def _detect_sp_proven_delta_from_blocks(project: object | None, function_addr: int) -> int | None:
+    def _impl() -> int | None:
         """Detect proven SP delta from IR/VEX block analysis.
 
         Returns the SP delta (e.g. -8, -12) if proven, or None if not determinable.
@@ -262,17 +311,19 @@ def _detect_sp_proven_delta_from_blocks(project, function_addr: int) -> int | No
 
         Uses VEX IRSB statement analysis, NOT text parsing.
         """
-        kb = getattr(project, "kb", None) if project is not None else None
+        kb = _dynamic_angr_attr_8616(project, "kb")
         if kb is None:
             return None
-        func = kb.functions.function(addr=function_addr, create=False)
+        functions = _dynamic_angr_attr_8616(kb, "functions")
+        function_lookup = _dynamic_angr_attr_8616(functions, "function")
+        func = function_lookup(addr=function_addr, create=False) if callable(function_lookup) else None
         if func is None:
             return None
 
         # Gather all IRSBs for this function
-        irsbs = []
-        for blk in func.blocks:
-            irsb = getattr(blk, "vex", None) or getattr(blk, "irsb", None)
+        irsbs: list[object] = []
+        for blk in _tuple_dynamic_attr_8616(func, "blocks"):
+            irsb = _dynamic_angr_attr_8616(blk, "vex") or _dynamic_angr_attr_8616(blk, "irsb")
             if irsb is not None:
                 irsbs.append(irsb)
 
@@ -284,23 +335,23 @@ def _detect_sp_proven_delta_from_blocks(project, function_addr: int) -> int | No
 
         for irsb in irsbs:
             try:
-                arch = getattr(irsb, "arch", None)
+                arch = _dynamic_angr_attr_8616(irsb, "arch")
                 if arch is None:
                     continue
-                sp_off = getattr(arch, "sp_offset", None)
-                bp_off = getattr(arch, "bp_offset", None)
+                sp_off = _dynamic_angr_attr_8616(arch, "sp_offset")
+                bp_off = _dynamic_angr_attr_8616(arch, "bp_offset")
                 if sp_off is None or bp_off is None:
                     continue
             except Exception:
                 continue
 
-            for stmt in getattr(irsb, "statements", ()) or ():
-                tag = getattr(stmt, "tag", "")
+            for stmt in _tuple_dynamic_attr_8616(irsb, "statements"):
+                tag = _dynamic_angr_attr_8616(stmt, "tag", "")
                 if tag != "Ist_Put":
                     continue
 
-                put_off = getattr(stmt, "offset", None)
-                data = getattr(stmt, "data", None)
+                put_off = _dynamic_angr_attr_8616(stmt, "offset")
+                data = _dynamic_angr_attr_8616(stmt, "data")
                 if put_off is None or data is None:
                     continue
 
@@ -321,19 +372,19 @@ def _detect_sp_proven_delta_from_blocks(project, function_addr: int) -> int | No
     return _impl()
 
 
-def _extract_sub_constant(vex_expr) -> int | None:
+def _extract_sub_constant(vex_expr: object) -> int | None:
     """Extract the constant operand from SUB(GET(reg), Const(N)), returning N.
 
     Returns None if expression doesn't match SUB(binop) pattern.
     """
-    if getattr(vex_expr, "tag", "") != "Iex_Binop":
+    if _dynamic_angr_attr_8616(vex_expr, "tag", "") != "Iex_Binop":
         return None
-    op_name = str(getattr(vex_expr, "op", ""))
+    op_name = str(_dynamic_angr_attr_8616(vex_expr, "op", ""))
     if "Sub" not in op_name:
         return None
     # Look for GET(reg) on left, Const on right
     try:
-        args = getattr(vex_expr, "child_expressions", None)
+        args = _tuple_dynamic_attr_8616(vex_expr, "child_expressions")
         if args is None or len(args) < 2:
             return None
         lhs = args[0]
@@ -341,14 +392,14 @@ def _extract_sub_constant(vex_expr) -> int | None:
     except (IndexError, TypeError):
         return None
 
-    if getattr(lhs, "tag", "") != "Iex_Get":
+    if _dynamic_angr_attr_8616(lhs, "tag", "") != "Iex_Get":
         return None
-    if getattr(rhs, "tag", "") != "Iex_Const":
+    if _dynamic_angr_attr_8616(rhs, "tag", "") != "Iex_Const":
         return None
-    const_val = getattr(rhs, "con", None)
+    const_val = _dynamic_angr_attr_8616(rhs, "con")
     if const_val is None:
         return None
-    value = getattr(const_val, "value", None)
+    value = _dynamic_angr_attr_8616(const_val, "value")
     if isinstance(value, int):
         return -value  # SUB(X, N) → delta = -N
     return None
@@ -360,6 +411,7 @@ def detect_stack_frame_8616(
     ir_artifacts: Iterable[object] = (),
     semantic_accesses: Iterable[tuple[int, IRAddress]] = (),
 ) -> StackFrameInfo8616:
+    """Classify the function stack-frame model from structured IR evidence."""
     evidence: list[str] = []
 
     if _has_any_bp_base(semantic_accesses):
@@ -416,6 +468,7 @@ def detect_stack_frame_8616(
 
 
 def compute_bp_offset(addr: IRAddress, frame: StackFrameInfo8616) -> int | None:
+    """Return the stable BP-relative offset for an SS address when proven."""
     if not isinstance(addr, IRAddress) or addr.space != MemSpace.SS:
         return None
 
@@ -436,6 +489,7 @@ def compute_bp_offset(addr: IRAddress, frame: StackFrameInfo8616) -> int | None:
 
 
 def normalize_stack_address_8616(addr: IRAddress, frame: StackFrameInfo8616) -> IRAddress:
+    """Normalize proven SS stack addresses to stable BP-relative form."""
     if not isinstance(addr, IRAddress):
         return addr
 
@@ -465,24 +519,26 @@ def normalize_stack_address_8616(addr: IRAddress, frame: StackFrameInfo8616) -> 
 
 
 def normalize_semantic_accesses_8616(
-    semantic_accesses: Iterable,
+    semantic_accesses: Iterable[object],
     frame: StackFrameInfo8616,
 ) -> list[tuple[int, IRAddress]]:
+    """Normalize semantic access addresses before alias fact production."""
     normalized: list[tuple[int, IRAddress]] = []
     for acc in semantic_accesses:
-        mode = getattr(acc, "mode", 0)
-        addr = getattr(acc, "addr", None)
+        mode = _semantic_access_mode_8616(acc)
+        addr = _semantic_access_addr_8616(acc)
         if isinstance(addr, IRAddress):
             addr = normalize_stack_address_8616(addr, frame)
-        normalized.append((mode, addr))
+            normalized.append((mode, addr))
     return normalized
 
 
 def assert_no_unresolved_stable_ss_before_alias_8616(
-    semantic_accesses: Iterable,
+    semantic_accesses: Iterable[object],
 ) -> None:
+    """Fail when stable SS addresses reach alias without BP/SP identity."""
     for acc in semantic_accesses:
-        addr = getattr(acc, "addr", acc[1] if isinstance(acc, tuple) and len(acc) >= 2 else None)
+        addr = _semantic_access_addr_8616(acc)
         if not isinstance(addr, IRAddress) or addr.space != MemSpace.SS:
             continue
 

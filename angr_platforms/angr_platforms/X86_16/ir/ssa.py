@@ -1,3 +1,12 @@
+"""Build block-local SSA over typed IR values.
+
+Layer: IR.
+Responsibility: owns typed Value, Address, Condition, instruction facts, and lossless
+normalization.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,11 +18,14 @@ __all__ = ["SSABinding", "SSABlock", "build_x86_16_block_local_ssa"]
 
 @dataclass(frozen=True, slots=True)
 class SSABinding:
+    """Version assigned to one typed IR value definition inside a block."""
+
     target: IRValue
     version: int
     instr_index: int
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
         return {
             "target": self.target.to_dict(),
             "version": self.version,
@@ -23,12 +35,15 @@ class SSABinding:
 
 @dataclass(frozen=True, slots=True)
 class SSABlock:
+    """Block-local SSA view of typed IR instructions and definitions."""
+
     addr: int
     instrs: tuple[IRInstr, ...]
     bindings: tuple[SSABinding, ...]
     refusals: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
         return {
             "addr": self.addr,
             "instrs": [item.to_dict() for item in self.instrs],
@@ -74,6 +89,7 @@ def _rewrite_atom(atom: IRAtom, versions: dict[tuple[str, str | None, int], int]
 
 
 def build_x86_16_block_local_ssa(block: IRBlock) -> SSABlock:
+    """Rewrite a typed IR block into deterministic block-local SSA form."""
     versions: dict[tuple[str, str | None, int], int] = {}
     rewritten: list[IRInstr] = []
     bindings: list[SSABinding] = []

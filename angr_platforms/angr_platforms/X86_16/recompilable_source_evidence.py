@@ -1,14 +1,17 @@
+"""Layer: Recompilable output.
+
+Responsibility: preserve legacy evidence helpers as inert compatibility surfaces.
+Forbidden: source-backed generated-C fallback, validation, persistence, or repair.
+"""
+
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
-from .cod_extract import extract_cod_proc_metadata
 from .recompilable_cases import RecompilableSubsetCase
-from .recompilable_checks import check_recompilable_c_text_shape
 
 __all__ = [
-    "build_recompilable_source_evidence_text",
     "load_or_build_recompilable_source_evidence",
 ]
 
@@ -89,62 +92,7 @@ def _normalize_source_evidence_text(text: str, *, proc_name: str | None = None) 
     return normalized
 
 
-def build_recompilable_source_evidence_text(case: RecompilableSubsetCase) -> str | None:
-    def _impl():
-        if case.cod_path is None or case.proc_name is None:
-            return None
-
-        metadata = extract_cod_proc_metadata(case.cod_path, case.proc_name, case.proc_kind)
-        function_lines = _extract_source_function_lines(metadata.source_lines, case.proc_name)
-        if not function_lines:
-            return None
-
-        prelude_lines: list[str] = []
-        if any("exeLoadParams" in line for line in metadata.source_lines):
-            prelude_lines.append("static ExeLoadParams exeLoadParams;")
-        if any("ovlLoadParams" in line for line in metadata.source_lines):
-            prelude_lines.append("static OvlLoadParams ovlLoadParams;")
-        if any(re.search(r"\brin\b", line) for line in function_lines) or any(
-            re.search(r"\brout\b", line) for line in function_lines
-        ):
-            prelude_lines.append("static REGS rin, rout;")
-
-        pieces = []
-        if prelude_lines:
-            pieces.append("\n".join(prelude_lines))
-        pieces.append("\n".join(function_lines))
-        normalized = _normalize_source_evidence_text("\n\n".join(pieces).strip() + "\n", proc_name=case.proc_name)
-        signature_anchor = next((anchor for anchor in case.expected_c_anchors if "(" in anchor and ")" in anchor), None)
-        if signature_anchor is not None:
-            normalized = re.sub(
-                r"(?m)^(?:static\s+)?(?:(?:unsigned short|int|void)\s+)?[A-Za-z_]\w*\([^)]*\)\s*\{",
-                signature_anchor + " {",
-                normalized,
-                count=1,
-            )
-            normalized = re.sub(
-                r"(?m)^(?:static\s+)?(?:(?:unsigned short|int|void)\s+)?[A-Za-z_]\w*\([^)]*\)\s*$",
-                signature_anchor,
-                normalized,
-                count=1,
-            )
-        return normalized
-
-    return _impl()
-
-
 def load_or_build_recompilable_source_evidence(case: RecompilableSubsetCase) -> tuple[str | None, Path | None]:
+    """Return the legacy evidence path while refusing to load or persist source text."""
     evidence_path = _evidence_dec_path(case)
-    if evidence_path is not None and evidence_path.exists():
-        existing = evidence_path.read_text(encoding="utf-8", errors="replace")
-        if check_recompilable_c_text_shape(existing, case)["shape_ok"]:
-            return existing, evidence_path
-
-    synthesized = build_recompilable_source_evidence_text(case)
-    if synthesized is None:
-        return None, evidence_path
-
-    if evidence_path is not None:
-        evidence_path.parent.mkdir(parents=True, exist_ok=True)
-        evidence_path.write_text(synthesized, encoding="utf-8")
-    return synthesized, evidence_path
+    return None, evidence_path

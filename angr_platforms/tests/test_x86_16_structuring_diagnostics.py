@@ -296,6 +296,7 @@ class TestFailureReasoning:
         class MockStats:
             max_iterations_reached = True
             iterations = 1000
+            regions_reduced = 0
 
         reason = build_failure_reason_from_stats(MockStats())
         assert reason == StructuringFailureReason.MAX_ITERATIONS
@@ -403,6 +404,15 @@ class TestRecoveryHints:
         hints = suggest_recovery_hints(MockStats(), region_ids=(1, 2, 3))
         assert any("region" in h for h in hints)
 
+    def test_hints_refuse_partial_untyped_stats(self):
+        """Test incomplete stats records produce conservative unknown guidance."""
+
+        class MockStats:
+            iterations = 20
+
+        hints = suggest_recovery_hints(MockStats())
+        assert hints == ["Unknown reason for failure: check decompiler logs for details"]
+
 
 class TestIntegration:
     """Test integration with decompiler passes."""
@@ -427,7 +437,7 @@ class TestIntegration:
 
         codegen = MockCodegen()
         result = apply_x86_16_structuring_diagnostics(codegen)
-        assert result is True
+        assert result is False
         assert hasattr(codegen.cfunc, "_recovery_metadata")
         assert "structuring_diagnostics" in codegen.cfunc._recovery_metadata
 
@@ -467,7 +477,7 @@ class TestIntegration:
 
         codegen = MockCodegen()
         result = apply_x86_16_structuring_diagnostics(codegen)
-        assert result is True
+        assert result is False
         report = codegen.cfunc._recovery_metadata["structuring_diagnostics"]
         assert report.cfg_snapshot is not None
         assert report.cfg_ownership is not None
@@ -499,7 +509,7 @@ class TestIntegration:
 
         codegen = MockCodegen()
         result = apply_x86_16_structuring_diagnostics(codegen)
-        assert result is True  # Should not crash
+        assert result is False  # Should not crash or mark structuring changed
 
     def test_apply_pass_failure_classification(self):
         """Test that pass classifies failures."""
@@ -521,7 +531,7 @@ class TestIntegration:
 
         codegen = MockCodegen()
         result = apply_x86_16_structuring_diagnostics(codegen)
-        assert result is True
+        assert result is False
         report = codegen.cfunc._recovery_metadata["structuring_diagnostics"]
         assert report.last_failure_reason() == StructuringFailureReason.MAX_ITERATIONS
         assert len(report.recovery_hints) > 0
@@ -554,7 +564,7 @@ class TestIntegration:
         codegen = MockCodegen()
         result = apply_x86_16_structuring_diagnostics(codegen)
 
-        assert result is True
+        assert result is False
         report = codegen.cfunc._recovery_metadata["structuring_diagnostics"]
         assert report.ir_hints is not None
         assert report.ir_hints.readiness.level == "typed_address_only"
@@ -586,7 +596,7 @@ class TestIntegration:
 
         codegen = MockCodegen()
         result = apply_x86_16_structuring_diagnostics(codegen)
-        assert result is True
+        assert result is False
         report = codegen.cfunc._recovery_metadata["structuring_diagnostics"]
         assert report.succeeded is True
         assert report.final_iteration == 50
@@ -599,8 +609,8 @@ class TestIntegration:
 
         codegen = MockCodegen()
         result = apply_x86_16_structuring_diagnostics(codegen)
-        # Should return True even if exception would occur
-        assert result is True
+        # Should not crash or mark structuring changed.
+        assert result is False
 
     def test_summary_line_display(self):
         """Test summary line is useful for logging."""

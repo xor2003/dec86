@@ -1,3 +1,9 @@
+"""Build and query compiler/library signatures as optional evidence.
+
+Layer: Optional evidence/reporting.
+Responsibility: provide optional compiler signature evidence without owning semantic recovery.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +17,7 @@ from inertia_decompiler.cache import (
 )
 from inertia_decompiler.signature_matching_policy import signature_matching_disabled
 from omf_pat import (
+    CachedPatRegexSpec,
     LocalPatMatchResult,
     PatModule,
     PatPublicName,
@@ -30,6 +37,8 @@ _SIGNATURE_MATCH_CACHE_COMPONENTS = (
 
 @dataclass(frozen=True)
 class SignatureCatalogBuildResult:
+    """Summary of inputs imported into an optional signature catalog."""
+
     output_path: Path
     input_count: int
     imported_module_count: int
@@ -43,7 +52,9 @@ def discover_signature_inputs(
     *,
     recursive: bool = True,
 ) -> tuple[Path, ...]:
-    def _impl():
+    """Return PAT/OBJ/LIB inputs selected for optional signature catalog import."""
+
+    def _impl() -> tuple[Path, ...]:
         inputs: list[Path] = []
         seen: set[Path] = set()
         suffixes = {".pat", ".obj", ".lib"}
@@ -82,7 +93,9 @@ def build_signature_catalog(
     flair_root: Path | None = None,
     cache_dir: Path | None = None,
 ) -> SignatureCatalogBuildResult:
-    def _impl():
+    """Build a deterministic optional signature catalog from supported inputs."""
+
+    def _impl() -> SignatureCatalogBuildResult:
         discovered = discover_signature_inputs(roots, recursive=recursive)
         resolved_output = output_path.resolve()
         selected_inputs = tuple(path for path in discovered if path.resolve() != resolved_output)
@@ -168,13 +181,15 @@ def _merge_provenance_values(left: str, right: str) -> str:
 def match_signature_catalog(
     catalog_path: Path,
     binary_path: Path,
-    project,
+    project: object,
     *,
     backend: str | None = None,
     cache_dir: Path | None = None,
     compiler_names: tuple[str, ...] = (),
 ) -> LocalPatMatchResult:
-    def _impl():
+    """Match an optional signature catalog against a loaded angr project image."""
+
+    def _impl() -> LocalPatMatchResult:
         if signature_matching_disabled():
             return LocalPatMatchResult({}, {}, ())
         if not catalog_path.exists():
@@ -258,7 +273,7 @@ def _encode_signature_catalog_match(result: LocalPatMatchResult) -> dict[str, ob
 
 
 def _decode_signature_catalog_match(payload: dict[str, object] | None) -> LocalPatMatchResult | None:
-    def _impl():
+    def _impl() -> LocalPatMatchResult | None:
         if not isinstance(payload, dict):
             return None
         raw_labels = payload.get("code_labels")
@@ -291,7 +306,7 @@ def _filter_specs_by_compiler_names(
     specs: tuple[CachedPatRegexSpec, ...],
     compiler_names: tuple[str, ...],
 ) -> tuple[CachedPatRegexSpec, ...]:
-    def _impl():
+    def _impl() -> tuple[CachedPatRegexSpec, ...]:
         ignored_filters = {"ida flair", "flair", "unknown"}
         normalized_filters = tuple(
             name.strip().lower()

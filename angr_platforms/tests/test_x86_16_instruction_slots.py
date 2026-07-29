@@ -12,3 +12,10 @@ def test_x86_instruction_base_uses_slots():
     holder = X86Instruction(emu=object(), instr=InstrData(), mode32=False)
     assert not hasattr(holder, "__dict__")
     assert holder.mode32 is False
+
+
+def test_nested_package_instruction_mixins_share_one_slotted_base():
+    from angr_platforms.angr_platforms.X86_16.instr_base import InstrBase
+    from angr_platforms.angr_platforms.X86_16.instruction import X86Instruction as NestedX86Instruction
+
+    assert InstrBase.__mro__.count(NestedX86Instruction) == 1

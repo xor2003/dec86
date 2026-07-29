@@ -1,13 +1,20 @@
+"""Layer: Structuring.
+
+Responsibility: report explicit grouped-entry refusal reasons to validation consumers.
+Forbidden: treating refusals as success, recovery proof, or rewrite-stage repair.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from .structuring_grouped_units import build_x86_16_cross_entry_grouped_units
 
 
 @dataclass(frozen=True, slots=True)
 class StructuringGroupedRefusalReportRow:
+    """Summarize one explicit cross-entry grouping refusal reason."""
+
     refusal_reason: str
     count: int
     likely_layer: str
@@ -16,9 +23,12 @@ class StructuringGroupedRefusalReportRow:
 
 @dataclass(frozen=True, slots=True)
 class StructuringGroupedRefusalReport:
+    """Carry cross-entry grouping refusal rows without treating them as success."""
+
     rows: tuple[StructuringGroupedRefusalReportRow, ...]
 
     def to_dict(self) -> dict[str, object]:
+        """Return a stable serialization for validation reports."""
         return {
             "rows": [
                 {
@@ -32,7 +42,8 @@ class StructuringGroupedRefusalReport:
         }
 
 
-def build_x86_16_structuring_grouped_refusal_report(codegen: Any) -> StructuringGroupedRefusalReport | None:
+def build_x86_16_structuring_grouped_refusal_report(codegen: object) -> StructuringGroupedRefusalReport | None:
+    """Build a validation report from already-collected grouped-unit refusals."""
     artifact = build_x86_16_cross_entry_grouped_units(codegen)
     if artifact is None:
         return None
@@ -52,6 +63,7 @@ def build_x86_16_structuring_grouped_refusal_report(codegen: Any) -> Structuring
 
 
 def describe_x86_16_structuring_grouped_refusal_report_surface() -> dict[str, object]:
+    """Return the deterministic grouped-refusal report contract."""
     return {
         "consumer": "structuring_grouped_refusal_report",
         "producer": "build_x86_16_cross_entry_grouped_units",

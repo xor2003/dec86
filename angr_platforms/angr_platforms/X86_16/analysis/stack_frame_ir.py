@@ -1,3 +1,9 @@
+"""Layer: Analysis.
+
+Responsibility: summarize SS frame accesses from typed IR artifacts.
+Forbidden: inventing locals/args without segmented SS:BP/SP evidence.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,12 +19,15 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class StackFrameSlot:
+    """Evidence-backed SS:BP/SP stack-frame access."""
+
     base: str
     offset: int
     role: str
     size: int
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this stack-frame slot for diagnostics and artifacts."""
         return {
             "base": self.base,
             "offset": self.offset,
@@ -29,10 +38,13 @@ class StackFrameSlot:
 
 @dataclass(frozen=True, slots=True)
 class FrameAccessArtifact:
+    """Summary of stack-frame accesses recovered from typed IR."""
+
     slots: tuple[StackFrameSlot, ...] = ()
     refusals: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize the frame-access artifact for diagnostics and artifacts."""
         return {
             "slots": [item.to_dict() for item in self.slots],
             "refusals": list(self.refusals),
@@ -50,7 +62,9 @@ def _slot_role(base: str, offset: int) -> str:
 
 
 def build_x86_16_ir_frame_access_artifact(artifact: IRFunctionArtifact) -> FrameAccessArtifact:
-    def _impl():
+    """Build stack-frame access evidence from SS addresses in typed IR."""
+
+    def _impl() -> FrameAccessArtifact:
         slots: dict[tuple[str, int, int], StackFrameSlot] = {}
         refusals: list[str] = []
         for block in artifact.blocks:

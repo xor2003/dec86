@@ -9,7 +9,8 @@ from angr_platforms.X86_16.structuring_analysis import (
     RegionType,
     StructureAnalysis,
 )
-from angr_platforms.X86_16.structuring_region import Region, RegionGraph
+from angr_platforms.X86_16.structuring_loops import compute_loop_body
+from angr_platforms.X86_16.structuring_region import Region, RegionGraph, compute_dominators
 
 
 class TestNaturalLoopDetection:
@@ -171,7 +172,7 @@ class TestNaturalLoopDetection:
         graph.add_edge(body3, header)  # Back-edge
 
         analysis = StructureAnalysis(graph)
-        result_graph = analysis.structure()
+        analysis.structure()
 
         # Should reduce sequences and loop
         assert analysis.stats.cycles_resolved >= 1, "Should resolve loop"
@@ -314,19 +315,15 @@ class TestNaturalLoopDetection:
         graph.add_edge(body2, exit2)
         graph.add_edge(body2, header)  # Back-edge
 
-        analysis = StructureAnalysis(graph)
-        # Run structuring which computes dominators
-        result = analysis.structure()
-
-        # Now check loop body computation
-        back_edges = [body2]
-        body = analysis._compute_loop_body(header, back_edges)
+        dominators = compute_dominators(graph)
+        body = compute_loop_body(graph, dominators, header, [body2])
 
         # Should include header and body regions but not exits
-        assert header in body or len(body) > 0, "Loop body should be computed"
-        if body2 in body:
-            # If body2 is included, other body regions should be too
-            assert body1 in body, "Body1 should be in loop body if Body2 is"
+        assert header in body, "Loop body should include the header"
+        assert body1 in body, "Loop body should include predecessor body regions"
+        assert body2 in body, "Loop body should include the back-edge source"
+        assert exit1 not in body, "Loop body should exclude exit regions"
+        assert exit2 not in body, "Loop body should exclude exit regions"
 
 
 class TestLoopExitClassification:

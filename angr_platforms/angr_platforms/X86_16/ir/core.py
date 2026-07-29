@@ -1,3 +1,12 @@
+"""Core typed IR objects for values, addresses, conditions, and instructions.
+
+Layer: IR.
+Responsibility: owns typed Value, Address, Condition, instruction facts, and lossless
+normalization.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -8,6 +17,7 @@ __all__ = [
     "AddressStatus",
     "SegmentOrigin",
     "IRAddress",
+    "IRBinaryValue",
     "is_stack_address_8616",
     "IRAtom",
     "IRBlock",
@@ -21,6 +31,8 @@ __all__ = [
 
 
 class MemSpace(Enum):
+    """Segmented storage space for typed IR values and addresses."""
+
     REG = "reg"
     DS = "ds"
     ES = "es"
@@ -31,12 +43,16 @@ class MemSpace(Enum):
 
 
 class AddressStatus(Enum):
+    """Confidence status for a recovered typed IR address."""
+
     STABLE = "stable"
     PROVISIONAL = "provisional"
     UNKNOWN = "unknown"
 
 
 class SegmentOrigin(Enum):
+    """Evidence source for an address segment choice."""
+
     PROVEN = "proven"
     DEFAULTED = "defaulted"
     UNKNOWN = "unknown"
@@ -44,6 +60,8 @@ class SegmentOrigin(Enum):
 
 @dataclass(frozen=True, slots=True)
 class IRValue:
+    """Typed scalar value or storage value in the IR layer."""
+
     space: MemSpace
     name: str | None = None
     offset: int = 0
@@ -53,6 +71,7 @@ class IRValue:
     expr: tuple[str, ...] | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this typed IR value for diagnostics and artifacts."""
         return {
             "kind": "value",
             "space": self.space.value,
@@ -66,7 +85,29 @@ class IRValue:
 
 
 @dataclass(frozen=True, slots=True)
+class IRBinaryValue:
+    """Typed binary value expression whose operands retain storage identity."""
+
+    op: str
+    lhs: IRValue
+    rhs: IRValue
+    size: int = 0
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize this typed value expression for diagnostics and artifacts."""
+        return {
+            "kind": "binary_value",
+            "op": self.op,
+            "lhs": self.lhs.to_dict(),
+            "rhs": self.rhs.to_dict(),
+            "size": self.size,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class IRAddress:
+    """Typed segmented memory address recovered from instruction evidence."""
+
     space: MemSpace
     base: tuple[str, ...] = ()
     offset: int = 0
@@ -76,6 +117,7 @@ class IRAddress:
     expr: tuple[str, ...] | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this typed IR address for diagnostics and artifacts."""
         return {
             "kind": "address",
             "space": self.space.value,
@@ -89,8 +131,10 @@ class IRAddress:
 
 
 def is_stack_address_8616(addr: IRAddress) -> bool:
-    def _impl():
-        """Return True if addr is a proven or likely SS:BP/SP stack slot.
+    """Return whether an address is a proven or likely SS:BP/SP stack slot."""
+
+    def _impl() -> bool:
+        """Classify stack addresses without lowering them.
 
         AGENTS rule: SS:BP+offset MUST become a stack slot, never fallback to memory.
         """
@@ -118,11 +162,14 @@ def is_stack_address_8616(addr: IRAddress) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class IRCondition:
+    """Typed branch or predicate condition in the IR layer."""
+
     op: str
     args: tuple["IRAtom", ...]
     expr: tuple[str, ...] | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this typed IR condition for diagnostics and artifacts."""
         return {
             "kind": "condition",
             "op": self.op,
@@ -131,7 +178,7 @@ class IRCondition:
         }
 
 
-IRAtom: TypeAlias = IRValue | IRAddress | IRCondition
+IRAtom: TypeAlias = IRValue | IRBinaryValue | IRAddress | IRCondition
 
 
 def _atom_to_dict(atom: IRAtom) -> dict[str, object]:
@@ -140,6 +187,8 @@ def _atom_to_dict(atom: IRAtom) -> dict[str, object]:
 
 @dataclass(frozen=True, slots=True)
 class IRInstr:
+    """Typed instruction fact with destination, arguments, size, and address."""
+
     op: str
     dst: IRValue | None
     args: tuple[IRAtom, ...]
@@ -147,6 +196,7 @@ class IRInstr:
     addr: int | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this typed IR instruction for diagnostics and artifacts."""
         return {
             "op": self.op,
             "dst": None if self.dst is None else self.dst.to_dict(),
@@ -158,11 +208,14 @@ class IRInstr:
 
 @dataclass(frozen=True, slots=True)
 class IRRefusal:
+    """Structured reason why an IR fact could not be recovered."""
+
     kind: str
     detail: str
     block_addr: int | None = None
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this IR refusal for diagnostics and artifacts."""
         return {
             "kind": self.kind,
             "detail": self.detail,
@@ -172,12 +225,15 @@ class IRRefusal:
 
 @dataclass(frozen=True, slots=True)
 class IRBlock:
+    """Typed IR block with instructions, refusals, and successor addresses."""
+
     addr: int
     instrs: tuple[IRInstr, ...] = ()
     refusals: tuple[IRRefusal, ...] = ()
     successor_addrs: tuple[int, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this typed IR block for diagnostics and artifacts."""
         return {
             "addr": self.addr,
             "instrs": [instr.to_dict() for instr in self.instrs],
@@ -188,12 +244,15 @@ class IRBlock:
 
 @dataclass(frozen=True, slots=True)
 class IRFunctionArtifact:
+    """Typed IR artifact for one recovered function."""
+
     function_addr: int
     blocks: tuple[IRBlock, ...] = ()
     refusals: tuple[IRRefusal, ...] = ()
     summary: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this function-level typed IR artifact."""
         return {
             "function_addr": self.function_addr,
             "blocks": [block.to_dict() for block in self.blocks],

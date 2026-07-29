@@ -1,5 +1,8 @@
 """Textual-based TUI debugger client for angr GDB server.
 
+Layer: CLI/fallback/reporting.
+Responsibility: present debugger state in a Textual UI without owning decompiler semantics.
+
 Similar to insight.124/src and Spice86 debuggers.
 Uses textual library for UI components:
 - Code/disassembly pane (top-left)
@@ -10,9 +13,12 @@ Uses textual library for UI components:
 
 from __future__ import annotations
 
+from typing import ClassVar
+
+import angr
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
-from textual.reactive import reactive
+from textual.reactive import Reactive, reactive
 from textual.widgets import (
     Input,
     Label,
@@ -23,7 +29,7 @@ from textual.widgets import (
 class RegisterPane(Static):
     """Display CPU registers (general purpose, segment, flags)."""
 
-    registers = reactive({})
+    registers: ClassVar[Reactive[dict[str, int]]] = reactive({})
 
     def render(self) -> str:
         """Render register display."""
@@ -56,7 +62,7 @@ class RegisterPane(Static):
 class BreakpointPane(Static):
     """Display active breakpoints."""
 
-    breakpoints = reactive([])
+    breakpoints: ClassVar[Reactive[list[dict[str, int | bool]]]] = reactive([])
 
     def render(self) -> str:
         """Render breakpoint list."""
@@ -75,7 +81,7 @@ class BreakpointPane(Static):
 class MemoryPane(Static):
     """Display memory/stack contents."""
 
-    memory_dump = reactive("")
+    memory_dump: ClassVar[Reactive[str]] = reactive("")
 
     def render(self) -> str:
         """Render memory dump."""
@@ -88,7 +94,7 @@ class MemoryPane(Static):
 class StackPane(Static):
     """Display stack contents."""
 
-    stack_data = reactive([])
+    stack_data: ClassVar[Reactive[list[tuple[int, int]]]] = reactive([])
 
     def render(self) -> str:
         """Render stack."""
@@ -106,8 +112,8 @@ class StackPane(Static):
 class DisassemblyPane(Static):
     """Display disassembled code."""
 
-    disassembly = reactive("")
-    current_ip = reactive(0)
+    disassembly: ClassVar[Reactive[str]] = reactive("")
+    current_ip: ClassVar[Reactive[int]] = reactive(0)
 
     def render(self) -> str:
         """Render disassembly with current instruction highlighted."""
@@ -152,7 +158,7 @@ class DebuggerApp:
         app.run()
     """
 
-    def __init__(self, project=None, gdb_port: int = 1234, gdb_host: str = "127.0.0.1"):
+    def __init__(self, project: angr.Project | None = None, gdb_port: int = 1234, gdb_host: str = "127.0.0.1") -> None:
         """Initialize debugger.
 
         Args:

@@ -1,17 +1,185 @@
+"""Layer: Recovery metadata.
+
+Responsibility: provide helper metadata and interrupt surfaces consumed by recovery/reporting.
+Forbidden: source/COD-backed semantic proof, validation acceptance, or emitted-C repair.
+"""
+
 from __future__ import annotations
 
+import builtins
 import contextlib
 import logging
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Protocol, TypeAlias, cast
 
 import claripy
 from angr import SimProcedure
 
-INTERRUPT_CORE_VECTOR_BASE = 0xFF000
-INTERRUPT_CORE_VECTOR_COUNT = 0x100
+INTERRUPT_CORE_VECTOR_BASE: int = 0xFF000
+INTERRUPT_CORE_VECTOR_COUNT: int = 0x100
+
+__all__ = (
+    "CallTargetSeed",
+    "DOSInt21Call",
+    "DOS_SERVICE_BASE_ADDR",
+    "DirectCallsiteSanitizationEvidence",
+    "EntryScore",
+    "FarCallTarget",
+    "INTERRUPT_CORE_VECTOR_BASE",
+    "INTERRUPT_CORE_VECTOR_COUNT",
+    "INTERRUPT_SERVICE_BASE_ADDR",
+    "InterruptCall",
+    "InterruptServiceSpec",
+    "collect_direct_far_call_targets",
+    "collect_dos_int21_calls",
+    "collect_interrupt_calls",
+    "collect_interrupt_service_calls",
+    "collect_neighbor_call_targets",
+    "decode_com_c_string",
+    "decode_com_dollar_string",
+    "describe_x86_16_interrupt_api_surface",
+    "describe_x86_16_interrupt_core_surface",
+    "describe_x86_16_interrupt_lowering_boundary",
+    "describe_x86_16_known_helper_signatures",
+    "dos_helper_declarations",
+    "dos_service_addr",
+    "dos_service_name",
+    "ensure_dos_service_hook",
+    "ensure_interrupt_service_hook",
+    "extend_cfg_for_far_calls",
+    "extend_cfg_for_neighbor_calls",
+    "infer_com_region",
+    "interrupt_service_addr",
+    "interrupt_service_declarations",
+    "interrupt_service_name",
+    "interrupt_service_spec",
+    "known_helper_signature_decl",
+    "normalize_api_style",
+    "patch_direct_call_sites",
+    "patch_dos_int21_call_sites",
+    "patch_far_call_sites",
+    "patch_interrupt_service_call_sites",
+    "preferred_known_helper_signature_decl",
+    "rank_entry_addresses_8616",
+    "render_dos_int21_call",
+    "render_interrupt_call",
+    "resolve_direct_call_target_from_block",
+    "resolve_direct_jump_target_from_block",
+    "resolve_stored_near_call_target_from_function",
+    "resolve_stored_near_jump_target_from_function",
+    "sanitize_direct_call_sites_8616",
+    "score_entry_address_8616",
+    "seed_calling_conventions",
+    "seed_wide_stack_prototype_from_binary_address_8616",
+)
+
+
+def _dynamic_analysis_getattr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
+    """Read an attribute across the dynamic angr/project/Capstone boundary."""
+    return builtins.getattr(obj, name, default)
+
+
+def _dynamic_analysis_tuple_attr_8616(obj: object, name: str) -> tuple[object, ...]:
+    """Read tuple-like metadata from the dynamic angr/project/Capstone boundary."""
+    value = _dynamic_analysis_getattr_8616(obj, name, ())
+    if value is None:
+        return ()
+    try:
+        return tuple(cast(Any, value))
+    except TypeError:
+        return ()
+
+
+def _dynamic_analysis_int_attr_8616(obj: object, name: str) -> int | None:
+    """Read an integer attribute from the dynamic angr/project/Capstone boundary."""
+    value = _dynamic_analysis_getattr_8616(obj, name, None)
+    return value if isinstance(value, int) else None
+
+
+def _analysis_project_block_8616(project: object, block_addr: int) -> Any:  # noqa: ANN401
+    """Build a block through angr's dynamic project factory boundary."""
+    return cast(Any, project).factory.block(block_addr, opt_level=0)
+
+
+def _analysis_function_addr_8616(function: object) -> int | None:
+    """Read a function address from angr's dynamic Function boundary."""
+    return _dynamic_analysis_int_attr_8616(function, "addr")
+
+
+class _PrototypeFunctionBoundary8616(Protocol):
+    """Typed angr function fields used to transfer inferred ABI evidence."""
+
+    prototype: object | None
+    calling_convention: object | None
+    is_prototype_guessed: bool
+
+
+def seed_wide_stack_prototype_from_binary_address_8616(
+    project: object,
+    source_function: object,
+    target_function: object,
+    address: int,
+) -> bool:
+    """Infer a wide stack ABI from binary facts and copy its typed contract."""
+    from .calling_convention_compat import apply_x86_16_wide_stack_prototype_evidence_at_address
+
+    if not apply_x86_16_wide_stack_prototype_evidence_at_address(project, source_function, address):
+        return False
+    typed_source = cast(_PrototypeFunctionBoundary8616, source_function)
+    if typed_source.prototype is None:
+        return False
+    typed_target = cast(_PrototypeFunctionBoundary8616, target_function)
+    typed_target.prototype = typed_source.prototype
+    typed_target.calling_convention = typed_source.calling_convention
+    typed_target.is_prototype_guessed = typed_source.is_prototype_guessed
+    return True
+
+
+def _analysis_function_block_addrs_8616(function: object) -> tuple[int, ...]:
+    """Read sorted block addresses from angr's dynamic Function boundary."""
+    return tuple(
+        sorted(
+            addr
+            for addr in _dynamic_analysis_tuple_attr_8616(function, "block_addrs_set")
+            if isinstance(addr, int)
+        )
+    )
+
+
+def _analysis_function_call_sites_8616(function: object) -> tuple[int, ...]:
+    """Read sorted callsite addresses from angr's dynamic Function boundary."""
+    get_call_sites = _dynamic_analysis_getattr_8616(function, "get_call_sites", None)
+    if not callable(get_call_sites):
+        return ()
+    with contextlib.suppress(Exception):
+        return tuple(sorted(addr for addr in cast(Any, get_call_sites)() if isinstance(addr, int)))
+    return ()
+
+
+def _analysis_function_call_target_8616(function: object, callsite_addr: int) -> int | None:
+    """Read a call target from angr's dynamic Function boundary."""
+    get_call_target = _dynamic_analysis_getattr_8616(function, "get_call_target", None)
+    if not callable(get_call_target):
+        return None
+    with contextlib.suppress(Exception):
+        target_addr = cast(Any, get_call_target)(callsite_addr)
+        return target_addr if isinstance(target_addr, int) else None
+    return None
+
+
+def _analysis_function_call_return_8616(function: object, callsite_addr: int) -> int | None:
+    """Read a call return address from angr's dynamic Function boundary."""
+    get_call_return = _dynamic_analysis_getattr_8616(function, "get_call_return", None)
+    if not callable(get_call_return):
+        return None
+    with contextlib.suppress(Exception):
+        return_addr = cast(Any, get_call_return)(callsite_addr)
+        return return_addr if isinstance(return_addr, int) else None
+    return None
 
 
 KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
@@ -45,6 +213,7 @@ KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
     "outtext": "int outtext(const char *text);",
     "sprintf": "int sprintf(char *buf, const char *fmt, ...);",
     "_sprintf": "int _sprintf(char *buf, const char *fmt, ...);",
+    "strcpy": "char *strcpy(char *dst, const char *src);",
     "exit": "void exit(int status);",
     "memset": "void *memset(void *dst, int ch, unsigned long count);",
     "inp": "unsigned char inp(unsigned short port);",
@@ -62,6 +231,8 @@ KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
 
 @dataclass(frozen=True)
 class FarCallTarget:
+    """Recovered far-call target evidence from an x86-16 callsite."""
+
     callsite_addr: int
     target_addr: int
     return_addr: int | None
@@ -69,6 +240,8 @@ class FarCallTarget:
 
 @dataclass(frozen=True)
 class CallTargetSeed:
+    """Recovered neighboring call target used to seed bounded CFG recovery."""
+
     callsite_addr: int
     target_addr: int
     return_addr: int | None
@@ -77,6 +250,8 @@ class CallTargetSeed:
 
 @dataclass(frozen=True)
 class DirectCallsiteSanitizationEvidence:
+    """Evidence counters for direct-callsite pruning and materialization."""
+
     raw_fact_count: int = 0
     normalized_fact_count: int = 0
     classified_fact_count: int = 0
@@ -87,6 +262,8 @@ class DirectCallsiteSanitizationEvidence:
 
 @dataclass(frozen=True)
 class InterruptCall:
+    """Recovered interrupt instruction with register values and display expressions."""
+
     insn_addr: int
     vector: int = 0x21
     ah: int | None = None
@@ -128,11 +305,13 @@ class InterruptCall:
     string_literal: str | None = None
 
 
-DOSInt21Call = InterruptCall
+DOSInt21Call: TypeAlias = InterruptCall
 
 
 @dataclass(frozen=True)
 class InterruptServiceSpec:
+    """Stable naming and rendering metadata for a DOS or BIOS interrupt service."""
+
     vector: int
     pseudo_name: str
     dos_name: str
@@ -422,8 +601,8 @@ INTERRUPT_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
 }
 
 
-INTERRUPT_SERVICE_BASE_ADDR = 0xFE000
-DOS_SERVICE_BASE_ADDR = INTERRUPT_SERVICE_BASE_ADDR
+INTERRUPT_SERVICE_BASE_ADDR: int = 0xFE000
+DOS_SERVICE_BASE_ADDR: int = INTERRUPT_SERVICE_BASE_ADDR
 
 
 def _interrupt_service_key(call: InterruptCall) -> int:
@@ -433,11 +612,14 @@ def _interrupt_service_key(call: InterruptCall) -> int:
 
 
 def interrupt_service_addr(call: InterruptCall) -> int:
+    """Return the synthetic hook address for a recovered interrupt service."""
     return INTERRUPT_SERVICE_BASE_ADDR + _interrupt_service_key(call)
 
 
 def interrupt_service_name(call: InterruptCall, api_style: str = "pseudo") -> str:
-    def _impl():
+    """Return the service helper name for the selected API style."""
+
+    def _impl() -> str:
         spec = _interrupt_service_spec_for_call(call)
         if spec is not None:
             if api_style == "pseudo":
@@ -480,6 +662,7 @@ def interrupt_service_name(call: InterruptCall, api_style: str = "pseudo") -> st
 
 
 def dos_service_name(call: InterruptCall) -> str:
+    """Return the pseudo DOS service helper name for a DOS interrupt call."""
     return interrupt_service_name(call, "pseudo")
 
 
@@ -490,6 +673,7 @@ def _interrupt_service_name_for_helper(call: InterruptCall, api_style: str) -> s
 
 
 def interrupt_service_spec(call: InterruptCall) -> InterruptServiceSpec | None:
+    """Return metadata for non-DOS interrupt services."""
     if call.vector == 0x21:
         return None
     return INTERRUPT_SERVICE_SPECS.get(call.vector)
@@ -502,19 +686,22 @@ def _interrupt_service_spec_for_call(call: InterruptCall) -> InterruptServiceSpe
 
 
 def dos_service_addr(call: InterruptCall) -> int:
+    """Return the synthetic hook address for a DOS service call."""
     return interrupt_service_addr(call)
 
 
-def ensure_interrupt_service_hook(project, call: InterruptCall) -> tuple[int, str]:
+def ensure_interrupt_service_hook(project: object, call: InterruptCall) -> tuple[int, str]:
+    """Install the pseudo interrupt service hook for a recovered interrupt call."""
     addr = interrupt_service_addr(call)
     name = _interrupt_service_name_for_helper(call, "pseudo")
 
-    if not project.is_hooked(addr):
+    project_any = cast(Any, project)
+    if not project_any.is_hooked(addr):
         no_ret = call.vector == 0x21 and call.ah == 0x4C
 
-        def _run(self):  # pylint:disable=unused-argument
+        def _run(self: SimProcedure) -> object:  # pylint:disable=unused-argument
             if no_ret:
-                code = getattr(self.state.regs, "al", claripy.BVV(0, 8))
+                code = _dynamic_analysis_getattr_8616(self.state.regs, "al", claripy.BVV(0, 8))
                 self.exit(claripy.ZeroExt(8, code))
             return claripy.BVS(f"{name}_ax", 16, explicit_name=True)
 
@@ -527,17 +714,18 @@ def ensure_interrupt_service_hook(project, call: InterruptCall) -> tuple[int, st
                 "run": _run,
             },
         )
-        project.hook(addr, proc_cls(), replace=True)
+        project_any.hook(addr, proc_cls(), replace=True)
 
     return addr, name
 
 
-def ensure_dos_service_hook(project, call: InterruptCall) -> tuple[int, str]:
+def ensure_dos_service_hook(project: object, call: InterruptCall) -> tuple[int, str]:
+    """Install the pseudo DOS service hook for a recovered DOS call."""
     return ensure_interrupt_service_hook(project, call)
 
 
 def patch_interrupt_service_call_sites(
-    function,
+    function: object,
     binary_path: Path | str | None = None,
     *,
     vectors: set[int] | None = None,
@@ -548,20 +736,21 @@ def patch_interrupt_service_call_sites(
     be rendered with the service-specific helper names recovered from the
     interrupt vector and register state.
     """
-    project = function.project
+    project = _dynamic_analysis_getattr_8616(function, "project", None)
     if project is None:
         return False
 
     changed = False
+    function_any = cast(Any, function)
     for call in collect_interrupt_service_calls(function, binary_path, vectors=vectors):
         target_addr, name = ensure_interrupt_service_hook(project, call)
-        return_addr = function.get_call_return(call.insn_addr)
+        return_addr = _analysis_function_call_return_8616(function, call.insn_addr)
         new = (target_addr, return_addr)
-        old = function._call_sites.get(call.insn_addr)
+        old = function_any._call_sites.get(call.insn_addr)
         if old != new:
-            function._call_sites[call.insn_addr] = new
+            function_any._call_sites[call.insn_addr] = new
             changed = True
-        callee = project.kb.functions.function(addr=target_addr, create=True)
+        callee = cast(Any, project).kb.functions.function(addr=target_addr, create=True)
         if callee is not None:
             callee.name = name
             callee._init_prototype_and_calling_convention()
@@ -570,6 +759,7 @@ def patch_interrupt_service_call_sites(
 
 
 def normalize_api_style(api_style: str) -> str:
+    """Normalize user-facing API style aliases to renderer modes."""
     if api_style in {"pseudo", "service"}:
         return "pseudo"
     if api_style in {"dos", "msc", "compiler"}:
@@ -578,6 +768,7 @@ def normalize_api_style(api_style: str) -> str:
 
 
 def describe_x86_16_interrupt_api_surface() -> dict[str, object]:
+    """Describe the public interrupt helper API surface."""
     return {
         "dos": {
             "service_count": len(INT21_SERVICE_SPECS),
@@ -607,6 +798,7 @@ def describe_x86_16_interrupt_api_surface() -> dict[str, object]:
 
 
 def describe_x86_16_interrupt_core_surface() -> dict[str, object]:
+    """Describe the low-level interrupt hook surface."""
     return {
         "vector_base": INTERRUPT_CORE_VECTOR_BASE,
         "vector_count": INTERRUPT_CORE_VECTOR_COUNT,
@@ -625,6 +817,7 @@ def describe_x86_16_interrupt_core_surface() -> dict[str, object]:
 
 
 def describe_x86_16_interrupt_lowering_boundary() -> dict[str, object]:
+    """Describe the interrupt analysis/lowering ownership boundary."""
     return {
         "boundary_rule": "interrupt instruction semantics stay low-level; DOS/BIOS/MS-C lowering stays in analysis and rewrite helpers",
         "core_surface": describe_x86_16_interrupt_core_surface(),
@@ -638,10 +831,12 @@ def describe_x86_16_interrupt_lowering_boundary() -> dict[str, object]:
 
 
 def known_helper_signature_decl(name: str) -> str | None:
+    """Return a known helper declaration by exact helper name."""
     return KNOWN_HELPER_SIGNATURE_DECLS.get(name)
 
 
 def preferred_known_helper_signature_decl(name: str) -> str | None:
+    """Return the preferred declaration for a helper name or underscore variant."""
     if not isinstance(name, str) or not name:
         return None
     stripped = name.lstrip("_")
@@ -660,6 +855,7 @@ def preferred_known_helper_signature_decl(name: str) -> str | None:
 
 
 def describe_x86_16_known_helper_signatures() -> dict[str, object]:
+    """Describe the known helper signature catalog."""
     return {
         "signature_count": len(KNOWN_HELPER_SIGNATURE_DECLS),
         "helper_names": tuple(sorted(KNOWN_HELPER_SIGNATURE_DECLS)),
@@ -667,12 +863,13 @@ def describe_x86_16_known_helper_signatures() -> dict[str, object]:
     }
 
 
-def infer_com_region(path: Path, *, base_addr: int, window: int, arch) -> tuple[int, int]:
-    def _impl():
-        """Infer a bounded `.COM` code region by scanning until a likely terminator.
+def infer_com_region(path: Path, *, base_addr: int, window: int, arch: object) -> tuple[int, int]:
+    """Infer a bounded `.COM` code region by scanning until a likely terminator.
 
-        This keeps tiny DOS stubs from decompiling their trailing strings as code.
-        """
+    This keeps tiny DOS stubs from decompiling their trailing strings as code.
+    """
+
+    def _impl() -> tuple[int, int]:
         data = path.read_bytes()
         end_limit = min(len(data), window)
         current = 0
@@ -680,7 +877,7 @@ def infer_com_region(path: Path, *, base_addr: int, window: int, arch) -> tuple[
 
         while current < end_limit:
             chunk = data[current : current + 16]
-            insn = next(arch.capstone.disasm(chunk, base_addr + current, 1), None)
+            insn = next(cast(Any, arch).capstone.disasm(chunk, base_addr + current, 1), None)
             if insn is None:
                 break
 
@@ -709,7 +906,7 @@ def infer_com_region(path: Path, *, base_addr: int, window: int, arch) -> tuple[
 
 
 def _decode_com_ascii_string(binary_path: Path | None, dx: int | None, *, terminator: int) -> str | None:
-    def _impl():
+    def _impl() -> str | None:
         if binary_path is None or binary_path.suffix.lower() != ".com" or dx is None or dx < 0x100:
             return None
         try:
@@ -741,11 +938,13 @@ def _coerce_path(binary_path: Path | str | None) -> Path | None:
 
 
 def decode_com_dollar_string(binary_path: Path | str | None, dx: int | None) -> str | None:
+    """Decode a DOS dollar-terminated string from a COM binary image."""
     binary_path = _coerce_path(binary_path)
     return _decode_com_ascii_string(binary_path, dx, terminator=ord("$"))
 
 
 def decode_com_c_string(binary_path: Path | str | None, dx: int | None) -> str | None:
+    """Decode a NUL-terminated string from a COM binary image."""
     binary_path = _coerce_path(binary_path)
     return _decode_com_ascii_string(binary_path, dx, terminator=0)
 
@@ -756,19 +955,19 @@ def _format_imm(value: int) -> str:
     return f"0x{value:x}"
 
 
-def _format_mem_operand(ins, operand) -> str:
-    mem = getattr(operand, "mem", None)
+def _format_mem_operand(ins: object, operand: object) -> str:
+    mem = _dynamic_analysis_getattr_8616(operand, "mem", None)
     if mem is None:
         return "<mem>"
 
     pieces: list[str] = []
-    base = getattr(mem, "base", 0)
-    index = getattr(mem, "index", 0)
-    disp = getattr(mem, "disp", 0)
+    base = _dynamic_analysis_getattr_8616(mem, "base", 0)
+    index = _dynamic_analysis_getattr_8616(mem, "index", 0)
+    disp = _dynamic_analysis_getattr_8616(mem, "disp", 0)
     if base:
-        pieces.append(ins.reg_name(base).lower())
+        pieces.append(cast(Any, ins).reg_name(base).lower())
     if index:
-        pieces.append(ins.reg_name(index).lower())
+        pieces.append(cast(Any, ins).reg_name(index).lower())
     if disp:
         disp_text = hex(abs(disp)) if abs(disp) > 9 else str(abs(disp))
         if pieces:
@@ -780,28 +979,31 @@ def _format_mem_operand(ins, operand) -> str:
     return "[" + "".join(pieces) + "]"
 
 
-def _operand_expr(ins, operand) -> tuple[int | None, str | None]:
-    if operand.type == 1:
-        reg_name = ins.reg_name(operand.reg).lower()
+def _operand_expr(ins: object, operand: object) -> tuple[int | None, str | None]:
+    operand_any = cast(Any, operand)
+    if operand_any.type == 1:
+        reg_name = cast(Any, ins).reg_name(operand_any.reg).lower()
         return None, reg_name
-    if operand.type == 2:
-        imm = operand.imm & 0xFFFF
+    if operand_any.type == 2:
+        imm = operand_any.imm & 0xFFFF
         return imm, _format_imm(imm)
-    if operand.type == 3:
+    if operand_any.type == 3:
         return None, _format_mem_operand(ins, operand)
     return None, None
 
 
 def collect_interrupt_calls(
-    function,
+    function: object,
     binary_path: Path | str | None = None,
     *,
     vectors: set[int] | None = None,
 ) -> list[InterruptCall]:
-    def _impl():
+    """Collect recoverable interrupt calls from a dynamic angr Function boundary."""
+
+    def _impl() -> list[InterruptCall]:
         nonlocal binary_path
         binary_path = _coerce_path(binary_path)
-        project = function.project
+        project = _dynamic_analysis_getattr_8616(function, "project", None)
         if project is None:
             return []
 
@@ -868,10 +1070,10 @@ def collect_interrupt_calls(
                 else:
                     regs["dx"] = (None, None)
 
-        for block_addr in sorted(getattr(function, "block_addrs_set", ())):
+        for block_addr in sorted(_dynamic_analysis_getattr_8616(function, "block_addrs_set", ())):
             block = project.factory.block(block_addr, opt_level=0)
             for ins in block.capstone.insns:
-                operands = getattr(ins, "operands", ())
+                operands = _dynamic_analysis_getattr_8616(ins, "operands", ())
                 if ins.mnemonic == "mov" and len(operands) == 2:
                     dst, src = operands
                     if dst.type == 1:
@@ -967,16 +1169,18 @@ def collect_interrupt_calls(
     return _impl()
 
 
-def collect_dos_int21_calls(function, binary_path: Path | str | None = None) -> list[DOSInt21Call]:
+def collect_dos_int21_calls(function: object, binary_path: Path | str | None = None) -> list[DOSInt21Call]:
+    """Collect recovered DOS int 21h service calls from an angr Function."""
     return [call for call in collect_interrupt_calls(function, binary_path, vectors={0x21}) if call.vector == 0x21]
 
 
 def collect_interrupt_service_calls(
-    function,
+    function: object,
     binary_path: Path | str | None = None,
     *,
     vectors: set[int] | None = None,
 ) -> list[InterruptCall]:
+    """Collect recovered DOS/BIOS interrupt service calls from an angr Function."""
     return collect_interrupt_calls(function, binary_path, vectors=vectors)
 
 
@@ -1111,7 +1315,7 @@ def _render_getvect_call_8616(call: DOSInt21Call, api_style: str, name: str) -> 
 
 
 def _render_dos_int21_by_kind_8616(call: DOSInt21Call, api_style: str, name: str, render_kind: str) -> str:
-    def _impl():
+    def _impl() -> str:
         if render_kind == "string_dollar":
             return _render_string_dollar_call_8616(call, api_style, name)
         if render_kind == "drive":
@@ -1157,6 +1361,7 @@ def _render_dos_int21_by_kind_8616(call: DOSInt21Call, api_style: str, name: str
 
 
 def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
+    """Render a recovered DOS int 21h call as a helper call expression."""
     api_style = normalize_api_style(api_style)
 
     if api_style == "raw":
@@ -1171,7 +1376,7 @@ def render_dos_int21_call(call: DOSInt21Call, api_style: str) -> str:
 
 
 def _render_simple_interrupt_call(call: InterruptCall, api_style: str) -> str:
-    def _impl():
+    def _impl() -> str:
         nonlocal api_style
         api_style = normalize_api_style(api_style)
         spec = interrupt_service_spec(call)
@@ -1205,6 +1410,7 @@ def _render_simple_interrupt_call(call: InterruptCall, api_style: str) -> str:
 
 
 def render_interrupt_call(call: InterruptCall, api_style: str) -> str:
+    """Render a recovered DOS or BIOS interrupt call as a helper call expression."""
     spec = interrupt_service_spec(call)
     if spec is None:
         return render_dos_int21_call(call, api_style)
@@ -1212,6 +1418,7 @@ def render_interrupt_call(call: InterruptCall, api_style: str) -> str:
 
 
 def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[str]:
+    """Return declarations required by rendered DOS helper calls."""
     api_style = normalize_api_style(api_style)
     if api_style == "raw":
         return []
@@ -1235,7 +1442,9 @@ def dos_helper_declarations(calls: list[DOSInt21Call], api_style: str) -> list[s
 
 
 def interrupt_service_declarations(calls: list[InterruptCall], api_style: str) -> list[str]:
-    def _impl():
+    """Return declarations required by rendered interrupt service helper calls."""
+
+    def _impl() -> list[str]:
         nonlocal api_style
         api_style = normalize_api_style(api_style)
         if api_style == "raw":
@@ -1267,18 +1476,19 @@ def interrupt_service_declarations(calls: list[InterruptCall], api_style: str) -
     return _impl()
 
 
-def _absolute_mem_disp(operand) -> int | None:
-    mem = getattr(operand, "mem", None)
+def _absolute_mem_disp(operand: object) -> int | None:
+    mem = _dynamic_analysis_getattr_8616(operand, "mem", None)
     if mem is None:
         return None
-    if getattr(mem, "base", 0) != 0 or getattr(mem, "index", 0) != 0:
+    if _dynamic_analysis_getattr_8616(mem, "base", 0) != 0 or _dynamic_analysis_getattr_8616(mem, "index", 0) != 0:
         return None
-    return getattr(mem, "disp", 0) & 0xFFFF
+    return _dynamic_analysis_getattr_8616(mem, "disp", 0) & 0xFFFF
 
 
-def _initial_cs_linear_base(project) -> int | None:
-    initial_regs = getattr(project.loader.main_object, "initial_register_values", None)
-    if not initial_regs:
+def _initial_cs_linear_base(project: object) -> int | None:
+    main_object = _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(project, "loader", None), "main_object", None)
+    initial_regs = _dynamic_analysis_getattr_8616(main_object, "initial_register_values", None)
+    if not isinstance(initial_regs, Mapping):
         return None
     cs = initial_regs.get("cs")
     if cs is None:
@@ -1286,21 +1496,28 @@ def _initial_cs_linear_base(project) -> int | None:
     return (cs & 0xFFFF) << 4
 
 
-def _canonical_code_linear_addr(project, addr: int | None) -> int | None:
+def _x86_16_project_for_function_8616(function: object) -> object | None:
+    project = _dynamic_analysis_getattr_8616(function, "project", None)
+    if _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(project, "arch", None), "name", None) == "86_16":
+        return project
+    return None
+
+
+def _canonical_code_linear_addr(project: object, addr: int | None) -> int | None:
     if not isinstance(addr, int):
         return None
-    original_project = getattr(project, "_inertia_original_project", None)
-    original_delta = getattr(project, "_inertia_original_linear_delta", None)
+    original_project = _dynamic_analysis_getattr_8616(project, "_inertia_original_project", None)
+    original_delta = _dynamic_analysis_getattr_8616(project, "_inertia_original_linear_delta", None)
     if original_project is not None and isinstance(original_delta, int):
-        original_main = getattr(getattr(original_project, "loader", None), "main_object", None)
-        original_base = getattr(original_main, "linked_base", None)
+        original_main = _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(original_project, "loader", None), "main_object", None)
+        original_base = _dynamic_analysis_getattr_8616(original_main, "linked_base", None)
         if isinstance(original_base, int) and addr < original_base:
             return addr + original_delta
         return addr
 
-    main_object = getattr(getattr(project, "loader", None), "main_object", None)
-    linked_base = getattr(main_object, "linked_base", None)
-    max_addr = getattr(main_object, "max_addr", None)
+    main_object = _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(project, "loader", None), "main_object", None)
+    linked_base = _dynamic_analysis_getattr_8616(main_object, "linked_base", None)
+    max_addr = _dynamic_analysis_getattr_8616(main_object, "max_addr", None)
     if isinstance(linked_base, int) and isinstance(max_addr, int) and addr < linked_base:
         rebased = linked_base + addr
         image_end = linked_base + max_addr + 1
@@ -1309,53 +1526,101 @@ def _canonical_code_linear_addr(project, addr: int | None) -> int | None:
     return addr
 
 
-def _neighbor_image_bounds(project) -> tuple[int | None, int | None]:
-    candidate_projects = [getattr(project, "_inertia_original_project", None), project]
+def _project_memory_load_8616(project: object, addr: int, size: int) -> bytes | None:
+    memory = _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(project, "loader", None), "memory", None)
+    load = _dynamic_analysis_getattr_8616(memory, "load", None)
+    if not callable(load):
+        return None
+    with contextlib.suppress(Exception):
+        loaded = cast(Any, load)(addr, size)
+        return bytes(cast(Any, loaded))
+    return None
+
+
+def _looks_like_x86_16_frame_prologue_8616(code: bytes, offset: int) -> bool:
+    return 0 <= offset <= len(code) - 3 and code[offset : offset + 3] in {b"\x55\x8b\xec", b"\x55\x89\xe5"}
+
+
+def _canonicalize_x86_16_padding_call_target_8616(project: object, addr: int | None) -> int | None:
+    if not isinstance(addr, int):
+        return None
+    if _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(project, "arch", None), "name", None) != "86_16":
+        return addr
+
+    padding_bytes = {0x00, 0x90, 0xCC}
+    scan_limit = 0x20
+    for candidate_project, candidate_addr in (
+        (project, addr),
+        (_dynamic_analysis_getattr_8616(project, "_inertia_original_project", None), addr),
+    ):
+        if candidate_project is None:
+            continue
+        code = _project_memory_load_8616(candidate_project, candidate_addr, scan_limit + 4)
+        if not code:
+            continue
+        if _looks_like_x86_16_frame_prologue_8616(code, 0):
+            return addr
+        cursor = 0
+        while cursor < min(scan_limit, len(code)) and code[cursor] in padding_bytes:
+            cursor += 1
+        if cursor > 0 and _looks_like_x86_16_frame_prologue_8616(code, cursor):
+            return addr + cursor
+    return addr
+
+
+def _neighbor_image_bounds(project: object) -> tuple[int | None, int | None]:
+    candidate_projects = [_dynamic_analysis_getattr_8616(project, "_inertia_original_project", None), project]
     for candidate_project in candidate_projects:
-        main_object = getattr(getattr(candidate_project, "loader", None), "main_object", None)
-        linked_base = getattr(main_object, "linked_base", None)
-        max_addr = getattr(main_object, "max_addr", None)
+        main_object = _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(candidate_project, "loader", None), "main_object", None)
+        linked_base = _dynamic_analysis_getattr_8616(main_object, "linked_base", None)
+        max_addr = _dynamic_analysis_getattr_8616(main_object, "max_addr", None)
         if isinstance(linked_base, int) and isinstance(max_addr, int):
             return linked_base, linked_base + max_addr + 1
     return None, None
 
 
-def _direct_call_insn_from_block(project, block_addr: int):
-    block = project.factory.block(block_addr, opt_level=0)
-    insns = getattr(getattr(block, "capstone", None), "insns", ()) or ()
+def _direct_call_insn_from_block(project: object, block_addr: int) -> object | None:
+    block = _analysis_project_block_8616(project, block_addr)
+    insns = _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(block, "capstone", None), "insns", ()) or ()
     if not insns:
         return None
 
     for insn in insns:
-        if getattr(insn, "address", None) != block_addr:
+        if _dynamic_analysis_getattr_8616(insn, "address", None) != block_addr:
             continue
-        mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+        mnemonic = str(_dynamic_analysis_getattr_8616(insn, "mnemonic", "") or "").lower()
         if mnemonic in {"call", "lcall"}:
             return insn
 
     last = insns[-1]
-    mnemonic = str(getattr(last, "mnemonic", "") or "").lower()
+    mnemonic = str(_dynamic_analysis_getattr_8616(last, "mnemonic", "") or "").lower()
     if mnemonic in {"call", "lcall"}:
         return last
     return None
 
 
-def _resolve_direct_call_target_from_insn(project, insn) -> int | None:
-    operands = getattr(getattr(insn, "insn", None), "operands", ()) or ()
-    mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+def _resolve_direct_call_target_from_insn(project: object, insn: object) -> int | None:
+    operands = _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(insn, "insn", None), "operands", ()) or ()
+    mnemonic = str(_dynamic_analysis_getattr_8616(insn, "mnemonic", "") or "").lower()
 
-    if mnemonic == "lcall" and len(operands) == 2 and all(getattr(op, "type", None) == 2 for op in operands):
+    if mnemonic == "lcall" and len(operands) == 2 and all(_dynamic_analysis_getattr_8616(op, "type", None) == 2 for op in operands):
         seg = operands[0].imm & 0xFFFF
         off = operands[1].imm & 0xFFFF
-        return _canonical_code_linear_addr(project, (seg << 4) + off)
+        return _canonicalize_x86_16_padding_call_target_8616(
+            project,
+            _canonical_code_linear_addr(project, (seg << 4) + off),
+        )
 
-    if mnemonic == "call" and len(operands) == 1 and getattr(operands[0], "type", None) == 2:
-        return _canonical_code_linear_addr(project, operands[0].imm)
+    if mnemonic == "call" and len(operands) == 1 and _dynamic_analysis_getattr_8616(operands[0], "type", None) == 2:
+        return _canonicalize_x86_16_padding_call_target_8616(
+            project,
+            _canonical_code_linear_addr(project, operands[0].imm),
+        )
 
     return None
 
 
-def resolve_direct_call_target_from_block(project, block_addr: int) -> int | None:
+def resolve_direct_call_target_from_block(project: object, block_addr: int) -> int | None:
     """Recover a direct call target from a block-end call or a callsite inside a block.
 
     This is intentionally narrow and only handles the direct near/far forms
@@ -1367,28 +1632,30 @@ def resolve_direct_call_target_from_block(project, block_addr: int) -> int | Non
     return _resolve_direct_call_target_from_insn(project, insn)
 
 
-def _callsite_addr_decodes_to_direct_call_8616(project, callsite_addr: int) -> bool | None:
+def _callsite_addr_decodes_to_direct_call_8616(project: object, callsite_addr: int) -> bool | None:
     try:
-        block = project.factory.block(callsite_addr, opt_level=0)
+        block = _analysis_project_block_8616(project, callsite_addr)
     except Exception:
         return None
 
-    insns = getattr(getattr(block, "capstone", None), "insns", ()) or ()
+    insns = _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(block, "capstone", None), "insns", ()) or ()
     for insn in insns:
-        if getattr(insn, "address", None) != callsite_addr:
+        if _dynamic_analysis_getattr_8616(insn, "address", None) != callsite_addr:
             continue
-        mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+        mnemonic = str(_dynamic_analysis_getattr_8616(insn, "mnemonic", "") or "").lower()
         return mnemonic in {"call", "lcall"}
     return None
 
 
-def sanitize_direct_call_sites_8616(function) -> DirectCallsiteSanitizationEvidence:
-    def _impl():
-        project = getattr(function, "project", None)
-        if project is None or getattr(getattr(project, "arch", None), "name", None) != "86_16":
+def sanitize_direct_call_sites_8616(function: object) -> DirectCallsiteSanitizationEvidence:
+    """Prune impossible direct-call entries from a recovered x86-16 function."""
+
+    def _impl() -> DirectCallsiteSanitizationEvidence:
+        project = _x86_16_project_for_function_8616(function)
+        if project is None:
             return DirectCallsiteSanitizationEvidence()
 
-        call_sites = getattr(function, "_call_sites", None)
+        call_sites = _dynamic_analysis_getattr_8616(function, "_call_sites", None)
         if not isinstance(call_sites, dict):
             return DirectCallsiteSanitizationEvidence()
 
@@ -1423,21 +1690,22 @@ def sanitize_direct_call_sites_8616(function) -> DirectCallsiteSanitizationEvide
     return _impl()
 
 
-def resolve_direct_jump_target_from_block(project, block_addr: int) -> int | None:
-    def _impl():
-        """Recover a direct jump target from the last instruction in a block.
+def resolve_direct_jump_target_from_block(project: object, block_addr: int) -> int | None:
+    """Recover a direct jump target from the last instruction in a block.
 
-        This is used for tail-jump thunks that should seed neighbor recovery even
-        when no explicit call edge exists.
-        """
-        block = project.factory.block(block_addr, opt_level=0)
-        insns = getattr(block.capstone, "insns", ())
+    This is used for tail-jump thunks that should seed neighbor recovery even
+    when no explicit call edge exists.
+    """
+
+    def _impl() -> int | None:
+        block = _analysis_project_block_8616(project, block_addr)
+        insns = _dynamic_analysis_getattr_8616(block.capstone, "insns", ())
         if not insns:
             return None
 
         last = insns[-1]
-        capstone_insn = getattr(last, "insn", None)
-        operands = getattr(capstone_insn, "operands", ()) if capstone_insn is not None else ()
+        capstone_insn = _dynamic_analysis_getattr_8616(last, "insn", None)
+        operands = _dynamic_analysis_getattr_8616(capstone_insn, "operands", ()) if capstone_insn is not None else ()
 
         if last.mnemonic == "ljmp" and len(operands) == 2 and all(op.type == 2 for op in operands):
             seg = operands[0].imm & 0xFFFF
@@ -1447,7 +1715,7 @@ def resolve_direct_jump_target_from_block(project, block_addr: int) -> int | Non
         if last.mnemonic == "jmp" and len(operands) == 1 and operands[0].type == 2:
             return _canonical_code_linear_addr(project, operands[0].imm & 0xFFFF)
 
-        op_str = str(getattr(last, "op_str", "") or "").strip().lower()
+        op_str = str(_dynamic_analysis_getattr_8616(last, "op_str", "") or "").strip().lower()
         if last.mnemonic == "jmp" and op_str and "[" not in op_str:
             for token in op_str.replace(":", " ").split():
                 try:
@@ -1460,38 +1728,41 @@ def resolve_direct_jump_target_from_block(project, block_addr: int) -> int | Non
     return _impl()
 
 
-def patch_direct_call_sites(function) -> bool:
-    def _impl():
-        """Recover direct near/far callsites from block ends when CFG left `_call_sites` empty.
+def patch_direct_call_sites(function: object) -> bool:
+    """Recover direct near/far callsites from block ends when CFG left `_call_sites` empty.
 
-        Rebased exact-region recovery for small 16-bit functions sometimes keeps the
-        block boundaries but loses the function callsite inventory. Downstream
-        callsite summaries and argument recovery consume `Function.get_call_sites()`,
-        so patch the direct block-end calls back into `_call_sites` before later
-        passes give up on call reasoning.
-        """
-        project = getattr(function, "project", None)
-        if project is None or getattr(getattr(project, "arch", None), "name", None) != "86_16":
+    Rebased exact-region recovery for small 16-bit functions sometimes keeps the
+    block boundaries but loses the function callsite inventory. Downstream
+    callsite summaries and argument recovery consume `Function.get_call_sites()`,
+    so patch the direct block-end calls back into `_call_sites` before later
+    passes give up on call reasoning.
+    """
+
+    def _impl() -> bool:
+        project = _x86_16_project_for_function_8616(function)
+        if project is None:
             return False
 
-        call_sites = getattr(function, "_call_sites", None)
+        call_sites = _dynamic_analysis_getattr_8616(function, "_call_sites", None)
         if not isinstance(call_sites, dict):
             return False
         sanitization = sanitize_direct_call_sites_8616(function)
         changed = sanitization.pruned_count > 0
-        for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
+        for block_addr in _analysis_function_block_addrs_8616(function):
             try:
-                block = project.factory.block(block_addr, opt_level=0)
+                block = _analysis_project_block_8616(project, block_addr)
             except Exception:
                 continue
-            insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+            insns = _dynamic_analysis_tuple_attr_8616(
+                _dynamic_analysis_getattr_8616(block, "capstone", None), "insns"
+            )
             if not insns:
                 continue
             for insn in insns:
-                mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+                mnemonic = str(_dynamic_analysis_getattr_8616(insn, "mnemonic", "") or "").lower()
                 if mnemonic not in {"call", "lcall"}:
                     continue
-                callsite_addr = getattr(insn, "address", None)
+                callsite_addr = _dynamic_analysis_getattr_8616(insn, "address", None)
                 if not isinstance(callsite_addr, int):
                     continue
                 target_addr = _resolve_direct_call_target_from_insn(project, insn)
@@ -1499,9 +1770,9 @@ def patch_direct_call_sites(function) -> bool:
                     target_addr = resolve_stored_near_call_target_from_function(function, callsite_addr)
                 if target_addr is None:
                     continue
-                size = getattr(insn, "size", None)
+                size = _dynamic_analysis_getattr_8616(insn, "size", None)
                 if not isinstance(size, int) or size <= 0:
-                    size = getattr(getattr(insn, "insn", None), "size", None)
+                    size = _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(insn, "insn", None), "size", None)
                 return_addr = None
                 if isinstance(size, int) and size > 0:
                     return_addr = callsite_addr + size
@@ -1515,29 +1786,30 @@ def patch_direct_call_sites(function) -> bool:
     return _impl()
 
 
-def resolve_stored_near_call_target_from_function(function, callsite_addr: int) -> int | None:
-    def _impl():
-        """Recover a near call target from a startup-built absolute pointer slot.
+def resolve_stored_near_call_target_from_function(function: object, callsite_addr: int) -> int | None:
+    """Recover a near call target from a startup-built absolute pointer slot.
 
-        This is intentionally narrow. It only handles patterns like:
+    This is intentionally narrow. It only handles patterns like:
 
-            mov word ptr ss:[0x60], 0x01a2
-            ...
-            call word ptr [0x60]
+        mov word ptr ss:[0x60], 0x01a2
+        ...
+        call word ptr [0x60]
 
-        which appear in MSC startup code for real-mode DOS.
-        """
-        project = function.project
+    which appear in MSC startup code for real-mode DOS.
+    """
+
+    def _impl() -> int | None:
+        project = _x86_16_project_for_function_8616(function)
         if project is None:
             return None
 
-        block = project.factory.block(callsite_addr, opt_level=0)
-        insns = getattr(block.capstone, "insns", ())
+        block = _analysis_project_block_8616(project, callsite_addr)
+        insns = _dynamic_analysis_getattr_8616(block.capstone, "insns", ())
         if not insns:
             return None
         last = insns[-1]
-        capstone_insn = getattr(last, "insn", None)
-        operands = getattr(capstone_insn, "operands", ()) if capstone_insn is not None else ()
+        capstone_insn = _dynamic_analysis_getattr_8616(last, "insn", None)
+        operands = _dynamic_analysis_getattr_8616(capstone_insn, "operands", ()) if capstone_insn is not None else ()
         if last.mnemonic != "call" or len(operands) != 1 or operands[0].type != 3:
             return None
 
@@ -1549,18 +1821,19 @@ def resolve_stored_near_call_target_from_function(function, callsite_addr: int) 
         if cs_base is None:
             return None
 
-        prior_insns = []
-        for addr in sorted(function.block_addrs_set):
+        prior_insns: list[object] = []
+        for addr in _analysis_function_block_addrs_8616(function):
             if addr >= callsite_addr:
                 continue
-            prior_block = project.factory.block(addr, opt_level=0)
-            prior_insns.extend(getattr(prior_block.capstone, "insns", ()))
+            prior_block = _analysis_project_block_8616(project, addr)
+            prior_insns.extend(_dynamic_analysis_getattr_8616(prior_block.capstone, "insns", ()))
 
         for ins in reversed(prior_insns):
-            if ins.address >= callsite_addr:
+            ins_any = cast(Any, ins)
+            if ins_any.address >= callsite_addr:
                 continue
-            opers = getattr(ins.insn, "operands", ())
-            if ins.mnemonic != "mov" or len(opers) != 2:
+            opers = _dynamic_analysis_getattr_8616(ins_any.insn, "operands", ())
+            if ins_any.mnemonic != "mov" or len(opers) != 2:
                 continue
             dst, src = opers
             if dst.type != 3 or src.type != 2:
@@ -1575,24 +1848,25 @@ def resolve_stored_near_call_target_from_function(function, callsite_addr: int) 
     return _impl()
 
 
-def resolve_stored_near_jump_target_from_function(function, jump_addr: int) -> int | None:
-    def _impl():
-        """Recover a near jump target from a startup-built absolute pointer slot.
+def resolve_stored_near_jump_target_from_function(function: object, jump_addr: int) -> int | None:
+    """Recover a near jump target from a startup-built absolute pointer slot.
 
-        This mirrors ``resolve_stored_near_call_target_from_function`` for tail-jump
-        thunks that end in ``jmp word ptr [slot]``.
-        """
-        project = function.project
+    This mirrors ``resolve_stored_near_call_target_from_function`` for tail-jump
+    thunks that end in ``jmp word ptr [slot]``.
+    """
+
+    def _impl() -> int | None:
+        project = _x86_16_project_for_function_8616(function)
         if project is None:
             return None
 
-        block = project.factory.block(jump_addr, opt_level=0)
-        insns = getattr(block.capstone, "insns", ())
+        block = _analysis_project_block_8616(project, jump_addr)
+        insns = _dynamic_analysis_getattr_8616(block.capstone, "insns", ())
         if not insns:
             return None
         last = insns[-1]
-        capstone_insn = getattr(last, "insn", None)
-        operands = getattr(capstone_insn, "operands", ()) if capstone_insn is not None else ()
+        capstone_insn = _dynamic_analysis_getattr_8616(last, "insn", None)
+        operands = _dynamic_analysis_getattr_8616(capstone_insn, "operands", ()) if capstone_insn is not None else ()
         if last.mnemonic != "jmp" or len(operands) != 1 or operands[0].type != 3:
             return None
 
@@ -1604,18 +1878,19 @@ def resolve_stored_near_jump_target_from_function(function, jump_addr: int) -> i
         if cs_base is None:
             return None
 
-        prior_insns = []
-        for addr in sorted(function.block_addrs_set):
+        prior_insns: list[object] = []
+        for addr in _analysis_function_block_addrs_8616(function):
             if addr >= jump_addr:
                 continue
-            prior_block = project.factory.block(addr, opt_level=0)
-            prior_insns.extend(getattr(prior_block.capstone, "insns", ()))
+            prior_block = _analysis_project_block_8616(project, addr)
+            prior_insns.extend(_dynamic_analysis_getattr_8616(prior_block.capstone, "insns", ()))
 
         for ins in reversed(prior_insns):
-            if ins.address >= jump_addr:
+            ins_any = cast(Any, ins)
+            if ins_any.address >= jump_addr:
                 continue
-            opers = getattr(ins.insn, "operands", ())
-            if ins.mnemonic != "mov" or len(opers) != 2:
+            opers = _dynamic_analysis_getattr_8616(ins_any.insn, "operands", ())
+            if ins_any.mnemonic != "mov" or len(opers) != 2:
                 continue
             dst, src = opers
             if dst.type != 3 or src.type != 2:
@@ -1630,7 +1905,7 @@ def resolve_stored_near_jump_target_from_function(function, jump_addr: int) -> i
     return _impl()
 
 
-def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
+def collect_direct_far_call_targets(function: object) -> list[FarCallTarget]:
     """Recover direct or startup-recoverable call targets directly from lifted blocks.
 
     angr's stock call-target recovery does not currently understand the x86-16
@@ -1639,13 +1914,12 @@ def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
     is fully understood. This helper keeps the workaround small, explicit, and
     reusable for CLI tooling and tests.
     """
-    if function.project is None or function.project.arch.name != "86_16":
+    project = _x86_16_project_for_function_8616(function)
+    if project is None:
         return []
-
-    project = function.project
     recovered: list[FarCallTarget] = []
 
-    for callsite_addr in sorted(function.get_call_sites()):
+    for callsite_addr in _analysis_function_call_sites_8616(function):
         target_addr = resolve_direct_call_target_from_block(project, callsite_addr)
         if target_addr is None:
             target_addr = resolve_stored_near_call_target_from_function(function, callsite_addr)
@@ -1659,23 +1933,24 @@ def collect_direct_far_call_targets(function) -> list[FarCallTarget]:
             FarCallTarget(
                 callsite_addr=callsite_addr,
                 target_addr=target_addr,
-                return_addr=function.get_call_return(callsite_addr),
+                return_addr=_analysis_function_call_return_8616(function, callsite_addr),
             )
         )
 
     return recovered
 
 
-def collect_neighbor_call_targets(function) -> list[CallTargetSeed]:
-    def _impl():
-        """Recover direct x86-16 call neighbors from a function's traced call sites.
+def collect_neighbor_call_targets(function: object) -> list[CallTargetSeed]:
+    """Recover direct x86-16 call neighbors from a function's traced call sites.
 
-        We prefer targets already recorded by CFG when they stay inside the loaded
-        image, then fall back to block-level decoding for direct near/far calls and
-        the narrow startup pointer-slot recovery used by MSC-style startup code.
-        """
-        project = getattr(function, "project", None)
-        if project is None or project.arch.name != "86_16":
+    We prefer targets already recorded by CFG when they stay inside the loaded
+    image, then fall back to block-level decoding for direct near/far calls and
+    the narrow startup pointer-slot recovery used by MSC-style startup code.
+    """
+
+    def _impl() -> list[CallTargetSeed]:
+        project = _x86_16_project_for_function_8616(function)
+        if project is None:
             return []
 
         patch_direct_call_sites(function)
@@ -1688,16 +1963,13 @@ def collect_neighbor_call_targets(function) -> list[CallTargetSeed]:
             (target.callsite_addr, target.target_addr): target for target in collect_direct_far_call_targets(function)
         }
 
-        for callsite_addr in sorted(function.get_call_sites()):
+        for callsite_addr in _analysis_function_call_sites_8616(function):
             target_addr = None
             kind = "existing"
-            try:
-                target_addr = function.get_call_target(callsite_addr)
-            except Exception:
-                target_addr = None
-            if not isinstance(target_addr, int):
-                target_addr = None
-            if target_addr is not None and image_end is not None and not (linked_base <= target_addr < image_end):
+            target_addr = _analysis_function_call_target_8616(function, callsite_addr)
+            if target_addr is not None and linked_base is not None and image_end is not None and not (
+                linked_base <= target_addr < image_end
+            ):
                 target_addr = None
 
             far_target = far_targets.get((callsite_addr, target_addr)) if target_addr is not None else None
@@ -1715,7 +1987,7 @@ def collect_neighbor_call_targets(function) -> list[CallTargetSeed]:
                         kind = "stored_near"
             if target_addr is None:
                 continue
-            if image_end is not None and not (linked_base <= target_addr < image_end):
+            if linked_base is not None and image_end is not None and not (linked_base <= target_addr < image_end):
                 continue
             key = (callsite_addr, target_addr)
             if key in seen:
@@ -1725,12 +1997,12 @@ def collect_neighbor_call_targets(function) -> list[CallTargetSeed]:
                 CallTargetSeed(
                     callsite_addr=callsite_addr,
                     target_addr=target_addr,
-                    return_addr=function.get_call_return(callsite_addr),
+                    return_addr=_analysis_function_call_return_8616(function, callsite_addr),
                     kind=kind,
                 )
             )
 
-        block_addrs = sorted(getattr(function, "block_addrs_set", ()))
+        block_addrs = sorted(_dynamic_analysis_getattr_8616(function, "block_addrs_set", ()))
         block_addr_set = set(block_addrs)
         for block_addr in block_addrs:
             jump_target = resolve_direct_jump_target_from_block(project, block_addr)
@@ -1741,9 +2013,10 @@ def collect_neighbor_call_targets(function) -> list[CallTargetSeed]:
                     kind = "stored_tail_jump"
             if jump_target is None:
                 continue
-            if jump_target in block_addr_set or jump_target == function.addr:
+            function_addr = _analysis_function_addr_8616(function)
+            if jump_target in block_addr_set or jump_target == function_addr:
                 continue
-            if image_end is not None and not (linked_base <= jump_target < image_end):
+            if linked_base is not None and image_end is not None and not (linked_base <= jump_target < image_end):
                 continue
             key = (block_addr, jump_target)
             if key in seen:
@@ -1763,7 +2036,7 @@ def collect_neighbor_call_targets(function) -> list[CallTargetSeed]:
     return _impl()
 
 
-def patch_far_call_sites(function, far_targets: list[FarCallTarget]) -> bool:
+def patch_far_call_sites(function: object, far_targets: list[FarCallTarget]) -> bool:
     """Rewrite Function._call_sites for immediate far calls recovered from blocks.
 
     CFGFast currently leaves some x86-16 far callsites pointing at a bogus short
@@ -1773,18 +2046,19 @@ def patch_far_call_sites(function, far_targets: list[FarCallTarget]) -> bool:
     much better callee address without needing to modify site-packages angr.
     """
     changed = False
+    function_any = cast(Any, function)
 
     for target in far_targets:
-        old = function._call_sites.get(target.callsite_addr)
+        old = function_any._call_sites.get(target.callsite_addr)
         new = (target.target_addr, target.return_addr)
         if old != new:
-            function._call_sites[target.callsite_addr] = new
+            function_any._call_sites[target.callsite_addr] = new
             changed = True
 
     return changed
 
 
-def patch_dos_int21_call_sites(function, binary_path: Path | str | None = None) -> bool:
+def patch_dos_int21_call_sites(function: object, binary_path: Path | str | None = None) -> bool:
     """Rewrite Function._call_sites for recoverable int 21h services.
 
     This gives the decompiler service-specific pseudo-callees instead of a
@@ -1793,10 +2067,15 @@ def patch_dos_int21_call_sites(function, binary_path: Path | str | None = None) 
     return patch_interrupt_service_call_sites(function, binary_path, vectors={0x21})
 
 
-def seed_calling_conventions(cfg) -> None:
+def seed_calling_conventions(cfg: object) -> None:
+    """Initialize and refine x86-16 calling conventions for CFG functions."""
     try:
-        from .calling_convention_compat import apply_x86_16_wide_stack_prototype_evidence
+        from .calling_convention_compat import (
+            apply_x86_16_stack_byte_prototype_evidence,
+            apply_x86_16_wide_stack_prototype_evidence,
+        )
     except Exception:  # pragma: no cover - compatibility fallback during partial imports
+        apply_x86_16_stack_byte_prototype_evidence = None
         apply_x86_16_wide_stack_prototype_evidence = None
 
     def _is_stack_probe_helper_name(name: str | None) -> bool:
@@ -1810,27 +2089,31 @@ def seed_calling_conventions(cfg) -> None:
     success_count = 0
     error_count = 0
     stack_probe_count = 0
+    stack_byte_count = 0
     wide_stack_count = 0
-    total_functions = len(getattr(cfg, "functions", {}))
-    project = getattr(cfg, "project", None) or getattr(cfg, "_project", None)
+    total_functions = len(_dynamic_analysis_getattr_8616(cfg, "functions", {}))
+    project = _dynamic_analysis_getattr_8616(cfg, "project", None) or _dynamic_analysis_getattr_8616(cfg, "_project", None)
     if track:
         start = time.perf_counter()
-    for function in getattr(cfg, "functions", {}).values():
+    for function in _dynamic_analysis_getattr_8616(cfg, "functions", {}).values():
         candidate_count += 1
         try:
             function._init_prototype_and_calling_convention()
+            if project is not None and apply_x86_16_stack_byte_prototype_evidence is not None:
+                if apply_x86_16_stack_byte_prototype_evidence(project, function):
+                    stack_byte_count += 1
             if project is not None and apply_x86_16_wide_stack_prototype_evidence is not None:
                 if apply_x86_16_wide_stack_prototype_evidence(project, function):
                     wide_stack_count += 1
             success_count += 1
-            if _is_stack_probe_helper_name(getattr(function, "name", None)):
+            if _is_stack_probe_helper_name(_dynamic_analysis_getattr_8616(function, "name", None)):
                 stack_probe_count += 1
         except Exception as ex:
             logging.getLogger(__name__).debug("prototype init skipped: %s", ex)
             error_count += 1
             continue
 
-        if _is_stack_probe_helper_name(getattr(function, "name", None)):
+        if _is_stack_probe_helper_name(_dynamic_analysis_getattr_8616(function, "name", None)):
             with contextlib.suppress(Exception):
                 function.returning = True
 
@@ -1839,13 +2122,20 @@ def seed_calling_conventions(cfg) -> None:
         print(
             f"[metric] seed_calling_conventions cfg_functions={total_functions} "
             f"candidates={candidate_count} initialized={success_count} errors={error_count} "
-            f"stack_probes={stack_probe_count} wide_stack={wide_stack_count} elapsed_ms={elapsed_ms}",
+            f"stack_probes={stack_probe_count} stack_byte={stack_byte_count} "
+            f"wide_stack={wide_stack_count} elapsed_ms={elapsed_ms}",
             file=sys.stderr,
             flush=True,
         )
 
 
-def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_window: int = 0x80):
+def extend_cfg_for_far_calls(
+    project: object,
+    function: object,
+    *,
+    entry_window: int,
+    callee_window: int = 0x80,
+) -> object | None:
     """Re-run CFG with direct far callees seeded as extra function starts.
 
     This keeps bounded DOS startup recovery focused on the functions actually
@@ -1858,11 +2148,14 @@ def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_win
 
     patch_far_call_sites(function, far_targets)
 
-    function_starts = [function.addr, *(target.target_addr for target in far_targets)]
-    regions = [(function.addr, function.addr + entry_window)]
+    function_addr = _analysis_function_addr_8616(function)
+    if function_addr is None:
+        return None
+    function_starts = [function_addr, *(target.target_addr for target in far_targets)]
+    regions = [(function_addr, function_addr + entry_window)]
     regions.extend((target.target_addr, target.target_addr + callee_window) for target in far_targets)
 
-    cfg = project.analyses.CFGFast(
+    cfg = cast(Any, project).analyses.CFGFast(
         start_at_entry=False,
         function_starts=sorted(set(function_starts)),
         regions=regions,
@@ -1871,8 +2164,8 @@ def extend_cfg_for_far_calls(project, function, *, entry_window: int, callee_win
     )
     seed_calling_conventions(cfg)
     all_targets = list(far_targets)
-    if function.addr in cfg.functions:
-        recovered_function = cfg.functions[function.addr]
+    if function_addr in cfg.functions:
+        recovered_function = cfg.functions[function_addr]
         recovered_targets = collect_direct_far_call_targets(recovered_function)
         merged: dict[tuple[int, int], FarCallTarget] = {
             (target.callsite_addr, target.target_addr): target for target in far_targets
@@ -1974,20 +2267,21 @@ def rank_entry_addresses_8616(
 
 
 def extend_cfg_for_neighbor_calls(
-    project,
-    function,
+    project: object,
+    function: object,
     *,
     entry_window: int,
     callee_window: int = 0x80,
     max_targets: int = 8,
-):
-    def _impl():
-        """Re-run bounded CFG with nearby traced callees seeded as extra starts.
+) -> object | None:
+    """Re-run bounded CFG with nearby traced callees seeded as extra starts.
 
-        This keeps 16-bit function recovery local: once we recover one function we
-        immediately reuse its traced call neighbors instead of widening into a
-        broader scan of unrelated code bytes.
-        """
+    This keeps 16-bit function recovery local: once we recover one function we
+    immediately reuse its traced call neighbors instead of widening into a
+    broader scan of unrelated code bytes.
+    """
+
+    def _impl() -> object | None:
         neighbor_targets = collect_neighbor_call_targets(function)
         if not neighbor_targets:
             return None
@@ -1997,10 +2291,13 @@ def extend_cfg_for_neighbor_calls(
             patch_far_call_sites(function, far_targets)
 
         unique_targets: list[CallTargetSeed] = []
-        seen_targets: set[int] = {function.addr}
+        function_addr = _analysis_function_addr_8616(function)
+        if function_addr is None:
+            return None
+        seen_targets: set[int] = {function_addr}
         for target in sorted(
             neighbor_targets,
-            key=lambda item: (abs(item.target_addr - function.addr), item.callsite_addr, item.target_addr),
+            key=lambda item: (abs(item.target_addr - function_addr), item.callsite_addr, item.target_addr),
         ):
             if target.target_addr in seen_targets:
                 continue
@@ -2011,11 +2308,11 @@ def extend_cfg_for_neighbor_calls(
         if not unique_targets:
             return None
 
-        function_starts = [function.addr, *(target.target_addr for target in unique_targets)]
-        regions = [(function.addr, function.addr + entry_window)]
+        function_starts = [function_addr, *(target.target_addr for target in unique_targets)]
+        regions = [(function_addr, function_addr + entry_window)]
         regions.extend((target.target_addr, target.target_addr + callee_window) for target in unique_targets)
 
-        cfg = project.analyses.CFGFast(
+        cfg = cast(Any, project).analyses.CFGFast(
             start_at_entry=False,
             function_starts=sorted(set(function_starts)),
             regions=regions,
@@ -2024,8 +2321,8 @@ def extend_cfg_for_neighbor_calls(
         )
         seed_calling_conventions(cfg)
 
-        if function.addr in cfg.functions:
-            recovered_function = cfg.functions[function.addr]
+        if function_addr in cfg.functions:
+            recovered_function = cfg.functions[function_addr]
             recovered_far_targets = collect_direct_far_call_targets(recovered_function)
             if recovered_far_targets:
                 patch_far_call_sites(recovered_function, recovered_far_targets)

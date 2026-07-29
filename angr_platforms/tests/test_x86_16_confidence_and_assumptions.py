@@ -416,7 +416,7 @@ class TestIntegration:
 
         codegen = MockCodegen()
         result = apply_x86_16_confidence_and_assumptions(codegen)
-        assert result is True
+        assert result is False
         assert hasattr(codegen.cfunc, "_recovery_metadata")
 
     def test_apply_pass_with_none_cfunc(self):
@@ -427,7 +427,7 @@ class TestIntegration:
 
         codegen = MockCodegen()
         result = apply_x86_16_confidence_and_assumptions(codegen)
-        assert result is True  # Should not crash
+        assert result is False  # Should not crash or mark structuring changed
 
     def test_build_function_with_markers(self):
         """Test building function with markers."""

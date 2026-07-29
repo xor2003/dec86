@@ -15,6 +15,7 @@ dependencies = [
     "claripy==9.2.205",
     "pyvex==9.2.205",
     "capstone==5.0.6",
+    "pycparser>=3,<4",
     "textual==8.2.1",
     "z3-solver==4.13.0.0",
 ]
@@ -80,6 +81,32 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "angr_platforms/tests/*.py" = ["ANN", "D", "E402"]
+"angr_platforms/angr_platforms/X86_16/analysis_helpers.py" = ["D"]
+"angr_platforms/angr_platforms/X86_16/annotations.py" = ["D"]
+"angr_platforms/angr_platforms/X86_16/ir/condition_ir.py" = ["ANN", "D"]
+"angr_platforms/angr_platforms/X86_16/lift_86_16.py" = ["ANN", "D"]
+"angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py" = ["D"]
+"angr_platforms/angr_platforms/X86_16/lowering/segmented_global_loads.py" = ["D"]
+"angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_impl.py" = ["ANN", "D"]
+"angr_platforms/angr_platforms/X86_16/pipeline/contracts.py" = ["D"]
+"angr_platforms/angr_platforms/X86_16/segmented_memory_reasoning.py" = ["D"]
+"angr_platforms/angr_platforms/X86_16/widening/widening_copyprop_8616.py" = ["D"]
+"angr_platforms/angr_platforms/X86_16/widening/widening_memory_fold_8616.py" = ["D"]
+"angr_platforms/angr_platforms/X86_16/tail_validation_fingerprint.py" = ["ANN", "D"]
+"angr_platforms/angr_platforms/X86_16/callsite_summary.py" = ["D"]
+"angr_platforms/angr_platforms/X86_16/decompiler_postprocess.py" = ["ANN", "D"]
+"angr_platforms/angr_platforms/X86_16/decompiler_postprocess_jcc.py" = ["ANN", "D"]
+"angr_platforms/angr_platforms/X86_16/decompiler_postprocess_utils.py" = ["ANN", "D"]
+"angr_platforms/angr_platforms/X86_16/decompiler_return_compat.py" = ["ANN", "D"]
+"angr_platforms/angr_platforms/X86_16/render_compat.py" = ["D"]
+"angr_platforms/angr_platforms/X86_16/type_array_matching.py" = ["D"]
+"angr_platforms/angr_platforms/X86_16/stack_probe_fact_trace.py" = ["ANN", "D"]
+"inertia_decompiler/cli.py" = ["D"]
+"inertia_decompiler/cli_c_text_postprocess.py" = ["ANN", "D"]
+"inertia_decompiler/cli_decompilation.py" = ["ANN", "D"]
+"inertia_decompiler/runtime_support.py" = ["ANN", "D"]
+"omf_pat.py" = ["ANN", "D"]
+"scripts/decompile_cod_dir.py" = ["ANN", "D", "E402"]
 "scripts/*.py" = ["D"]
 
 [tool.mypy]
@@ -115,6 +142,9 @@ include = [
     "angr_platforms/angr_platforms/X86_16",
     "angr_platforms/tests",
     "inertia_decompiler",
+]
+extraPaths = [
+    "angr_platforms",
 ]
 exclude = [
     "**/__pycache__",

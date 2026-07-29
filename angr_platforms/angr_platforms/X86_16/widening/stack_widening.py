@@ -1,10 +1,17 @@
+"""Stack and storage widening proofs built from alias facts.
+
+Layer: Widening.
+Responsibility: owns stack and storage widening proofs after alias recovery.
+Consumes alias-proven storage identity before deciding whether adjacent stack
+or register slices may become one semantic value.
+Do not join values from rendered text, cosmetic shape, postprocess, or
+CLI/reporting evidence.
+"""
+
 from __future__ import annotations
 
-# Layer: Widening
-# Responsibility: alias-proven widening compatibility and slice-join proofs.
-# Forbidden: rendered-text joins, CLI ownership, and postprocess semantics.
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from ..alias.alias_model import (
     AliasStorageFacts,
@@ -25,15 +32,19 @@ from .register_widening import RegisterWideningCandidate, can_join_adjacent_regi
 
 @dataclass(frozen=True)
 class WideningCandidate:
+    """Alias-described storage slice that may participate in a widening join."""
+
     domain: _StorageDomainSignature
     view: _StorageView
     expr: object
 
     def is_joinable_with(self, other: "WideningCandidate") -> bool:
+        """Return whether this candidate's domain and view can join another."""
         return self.domain.can_join(other.domain) and self.view.can_join(other.view)
 
     @classmethod
     def from_expr(cls, expr: object) -> "WideningCandidate":
+        """Build a candidate from an expression with concrete alias storage."""
         domain = _storage_domain_for_expr(expr)
         if domain.view is None:
             raise ValueError("cannot build widening candidate without a concrete storage view")
@@ -42,6 +53,8 @@ class WideningCandidate:
 
 @dataclass(frozen=True)
 class WideningProof:
+    """Result of proving whether two adjacent storage slices may be widened."""
+
     ok: bool
     reason: str
     left: AliasStorageFacts
@@ -52,45 +65,58 @@ class WideningProof:
     right_version: int | None = None
 
     def is_safe(self) -> bool:
+        """Return whether this proof allows widening."""
         return self.ok
 
 
 @dataclass(frozen=True)
 class StorageJoinAnalysis:
+    """Convenience view over a widening proof for layer-boundary consumers."""
+
     proof: WideningProof
 
     @property
     def ok(self) -> bool:
+        """Whether the underlying proof allows widening."""
         return self.proof.ok
 
     @property
     def reason(self) -> str:
+        """Short deterministic reason for the proof result."""
         return self.proof.reason
 
     @property
     def left(self) -> AliasStorageFacts:
+        """Alias facts for the low/left slice."""
         return self.proof.left
 
     @property
     def right(self) -> AliasStorageFacts:
+        """Alias facts for the high/right slice."""
         return self.proof.right
 
     @property
     def merged_domain(self) -> _StorageDomainSignature | None:
+        """Merged storage domain when proof succeeded."""
         return self.proof.merged_domain
 
     def same_domain(self) -> bool:
+        """Return whether both slices describe the same storage domain."""
         return self.left.same_domain(self.right)
 
     def compatible_view(self) -> bool:
+        """Return whether both slices have join-compatible storage views."""
         return self.left.compatible_view(self.right)
 
     def needs_synthesis(self) -> bool:
+        """Return whether either side lacks concrete storage evidence."""
         return self.left.needs_synthesis() or self.right.needs_synthesis()
 
 
 @dataclass(frozen=True)
 class WideningPipelineSpec:
+    """Documented widening pipeline step and its owning helper functions."""
+
     name: str
     purpose: str
     helpers: tuple[str, ...]
@@ -112,17 +138,19 @@ def _register_version_for_expr(expr: object, state: AliasState | None) -> int | 
 
 
 def prove_adjacent_storage_slices(
-    low_expr,
-    high_expr,
+    low_expr: object,
+    high_expr: object,
     *,
     alias_state: AliasState | None = None,
-    register_version_for_expr=None,
+    register_version_for_expr: Callable[[object, AliasState | None], int | None] | None = None,
 ) -> WideningProof:
-    def _impl():
+    """Prove whether two adjacent slices can be joined by the widening layer."""
+
+    def _impl() -> WideningProof:
         version_resolver = register_version_for_expr or _register_version_for_expr
         low_facts = describe_alias_storage(low_expr)
         high_facts = describe_alias_storage(high_expr)
-        register_pair = None
+        register_pair: str | None = None
         if low_facts.identity is not None and high_facts.identity is not None:
             low_kind, low_value = low_facts.identity
             high_kind, high_value = high_facts.identity
@@ -131,6 +159,7 @@ def prove_adjacent_storage_slices(
             if (
                 low_kind == high_kind == "register"
                 and low_value == high_value
+                and isinstance(low_value, str)
                 and low_view is not None
                 and high_view is not None
                 and low_view.bit_offset < high_view.bit_offset
@@ -202,12 +231,14 @@ def prove_adjacent_storage_slices(
 
 
 def analyze_adjacent_storage_slices(
-    low_expr, high_expr, *, alias_state: AliasState | None = None
+    low_expr: object, high_expr: object, *, alias_state: AliasState | None = None
 ) -> StorageJoinAnalysis:
+    """Return a convenience analysis object for adjacent storage slices."""
     return StorageJoinAnalysis(prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state))
 
 
 def collect_widening_candidates(exprs: Iterable[object]) -> list[WideningCandidate]:
+    """Collect expressions that have concrete widening candidate evidence."""
     candidates: list[WideningCandidate] = []
     for expr in exprs:
         try:
@@ -218,6 +249,7 @@ def collect_widening_candidates(exprs: Iterable[object]) -> list[WideningCandida
 
 
 def describe_widening_candidates(exprs: Iterable[object]) -> tuple[dict[str, object], ...]:
+    """Return deterministic descriptions of joinable widening candidates."""
     descriptions: list[dict[str, object]] = []
     for candidate in collect_widening_candidates(exprs):
         descriptions.append(
@@ -252,11 +284,16 @@ WIDENING_PIPELINE: tuple[WideningPipelineSpec, ...] = (
 
 
 def describe_x86_16_widening_pipeline() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    """Describe the widening pipeline order for architecture checks and tests."""
     return tuple((spec.name, spec.purpose, spec.helpers) for spec in WIDENING_PIPELINE)
 
 
-def can_join_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasState | None = None) -> bool:
-    def _impl():
+def can_join_adjacent_storage_slices(
+    low_expr: object, high_expr: object, *, alias_state: AliasState | None = None
+) -> bool:
+    """Return whether adjacent storage slices are proven safe to join."""
+
+    def _impl() -> bool:
         proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
         if not proof.ok:
             return False
@@ -288,8 +325,9 @@ def can_join_adjacent_storage_slices(low_expr, high_expr, *, alias_state: AliasS
 
 
 def merge_storage_slice_domains(
-    low_expr, high_expr, *, alias_state: AliasState | None = None
+    low_expr: object, high_expr: object, *, alias_state: AliasState | None = None
 ) -> _StorageDomainSignature:
+    """Return the merged storage domain for proven adjacent slices."""
     proof = prove_adjacent_storage_slices(low_expr, high_expr, alias_state=alias_state)
     if not proof.ok or proof.merged_domain is None:
         return _StorageDomainSignature("mixed")

@@ -52,7 +52,7 @@ def test_ir_confidence_markers_feed_existing_confidence_pass():
     apply_x86_16_ir_confidence_markers(codegen)
     result = apply_x86_16_confidence_and_assumptions(codegen)
 
-    assert result is True
+    assert result is False
     report = codegen.cfunc._recovery_metadata["confidence_report"]
     assert report.overall_confidence() == ConfidenceLevel.LOW
     assert "typed IR still has unknown segment identity" in report.critical_unknowns

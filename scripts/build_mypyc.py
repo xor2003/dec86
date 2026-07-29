@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""Build optional mypyc acceleration artifacts for local developer runs.
+
+Layer: Tooling/gates.
+Responsibility: run optional local mypyc builds without owning decompiler semantics.
+"""
+
 from __future__ import annotations
 
 import argparse

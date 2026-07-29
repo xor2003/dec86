@@ -1,3 +1,9 @@
+"""Read signature-matching runtime policy from the environment.
+
+Layer: CLI/fallback/reporting.
+Responsibility: expose signature-matching policy without making signatures required semantic evidence.
+"""
+
 from __future__ import annotations
 
 import os

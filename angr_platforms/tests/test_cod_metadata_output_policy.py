@@ -8,7 +8,7 @@ from angr_platforms.X86_16.cod_extract import CODProcMetadata
 from inertia_decompiler import cli
 
 
-def test_annotate_cod_proc_output_keeps_names_but_not_source_backed_call_text() -> None:
+def test_annotate_cod_proc_output_keeps_cod_metadata_inert() -> None:
     metadata = CODProcMetadata(
         stack_aliases={4: "arg0", -2: "local0"},
         call_names=("DosBeep",),
@@ -19,10 +19,11 @@ def test_annotate_cod_proc_output_keeps_names_but_not_source_backed_call_text() 
     )
     c_text = "short Beep(unsigned short a0)\n{\n    CallReturn();\n    DosBeep();\n    return ax;\n}\n"
     rendered = cli._annotate_cod_proc_output(c_text, SimpleNamespace(name="Beep"), metadata)
+    assert rendered == c_text
     assert "defined( OS2 )" not in rendered
     assert "speaker (with bits 0 and 1)" not in rendered
     assert "DosBeep();" in rendered
-    assert "[bp+0x4] = arg0" in rendered
+    assert "[bp+0x4] = arg0" not in rendered
 
 
 def test_format_cod_comment_block_escapes_trailing_macro_backslash_for_c_comments() -> None:

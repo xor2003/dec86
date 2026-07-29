@@ -168,7 +168,10 @@ def test_dos_mz_project_hooks_int21_target_as_dos_helper():
 
 
 def test_medium_model_far_call_block_lifts():
-    project = angr.Project(Path(__file__).resolve().parents[1] / "x16_samples" / "IMOD.EXE")
+    sample_path = Path(__file__).resolve().parents[1] / "x16_samples" / "IMOD.EXE"
+    if not sample_path.exists():
+        pytest.skip(f"{sample_path.name} fixture is not available")
+    project = angr.Project(sample_path)
 
     block = project.factory.block(0x1180, size=8, opt_level=0)
 

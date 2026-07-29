@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 from angr_platforms.X86_16.helper_effect_summary import (
     summarize_x86_16_helper_eligibility,
 )
 
 
-def test_helper_effect_summary_accepts_single_direct_call_wrapper_shape():
+def test_helper_effect_summary_accepts_single_direct_call_wrapper_shape() -> None:
     summary = summarize_x86_16_helper_eligibility(
         {
             "direct_call_count": 1,
@@ -18,7 +20,7 @@ def test_helper_effect_summary_accepts_single_direct_call_wrapper_shape():
     assert summary.refusals == ()
 
 
-def test_helper_effect_summary_refuses_indirect_control_and_memory_effects():
+def test_helper_effect_summary_refuses_indirect_control_and_memory_effects() -> None:
     summary = summarize_x86_16_helper_eligibility(
         {
             "direct_call_count": 1,
@@ -36,7 +38,7 @@ def test_helper_effect_summary_refuses_indirect_control_and_memory_effects():
     )
 
 
-def test_helper_effect_summary_refuses_stack_probe_helper_when_return_state_is_unknown():
+def test_helper_effect_summary_refuses_stack_probe_helper_when_return_state_is_unknown() -> None:
     summary = summarize_x86_16_helper_eligibility(
         {
             "stack_probe_helper": True,
@@ -50,7 +52,7 @@ def test_helper_effect_summary_refuses_stack_probe_helper_when_return_state_is_u
     assert "helper_return_state_unknown" in tuple(item.kind for item in summary.refusals)
 
 
-def test_helper_effect_summary_refuses_stack_probe_helper_when_return_width_is_unknown():
+def test_helper_effect_summary_refuses_stack_probe_helper_when_return_width_is_unknown() -> None:
     summary = summarize_x86_16_helper_eligibility(
         {
             "stack_probe_helper": True,

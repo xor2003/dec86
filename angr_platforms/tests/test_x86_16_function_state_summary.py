@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 from angr_platforms.X86_16.function_state_summary import summarize_x86_16_function_state
 from angr_platforms.X86_16.recovery_confidence import classify_x86_16_recovery_confidence
 
 
-def test_function_state_summary_partitions_gp_segment_and_flags():
+def test_function_state_summary_partitions_gp_segment_and_flags() -> None:
     summary = summarize_x86_16_function_state(
         {
             "register_inputs": {"ax", "ds", "zf", "es"},
@@ -32,7 +34,7 @@ def test_function_state_summary_partitions_gp_segment_and_flags():
     assert summary.to_dict()["low_memory_reads"][0]["raw_access"] == "0x40:0x17/1"
 
 
-def test_recovery_confidence_consumes_function_state_summary():
+def test_recovery_confidence_consumes_function_state_summary() -> None:
     summary = classify_x86_16_recovery_confidence(
         {
             "ok": True,

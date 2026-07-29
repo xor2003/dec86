@@ -22,7 +22,11 @@ from angr_platforms.X86_16.lowering.stack_probe_return_facts import (
     TypedStackProbeReturnFact8616,
     build_typed_stack_probe_return_facts_8616,
 )
-from angr_platforms.X86_16.stack_probe_fact_trace import format_stack_probe_fact_stats_8616
+from angr_platforms.X86_16.stack_probe_fact_trace import (
+    callsite_stack_probe_evidence_8616,
+    format_stack_probe_fact_stats_8616,
+    record_callsite_summary_map_facts_8616,
+)
 
 
 def _args_match(args: list, expected: list) -> bool:
@@ -166,6 +170,13 @@ def test_stack_probe_typed_return_state_refuses_partial_recovery_when_summary_ar
         "consumed_outgoing_stack_placeholder_count": 0,
         "stale_target_rejected_count": 0,
         "known_prototype_arg_mismatch_count": 0,
+        "has_push_arg_evidence_count": 0,
+        "no_push_arg_evidence_count": 0,
+        "source_proven_stack_probe_count": 0,
+        "byte_merge_raw_fact_count": 0,
+        "byte_merge_classified_fact_count": 0,
+        "byte_merge_materialized_count": 0,
+        "byte_merge_refused_count": 0,
         "failure_count": 0,
     }
     for key, value in expected_stats.items():
@@ -198,6 +209,8 @@ def test_stack_probe_fact_stats_split_arg_pickup_from_later_lowering_refusal():
         "summaries_attached": 0,
         "stack_probe_summaries": 1,
         "ss_stack_address_returns": 1,
+        "stack_probe_calls_pruned": 0,
+        "stack_probe_calls_refused": 0,
         "stack_arg_materializations": 3,
         "stable_ss_lowering_replacements": 0,
         "stable_ss_lowering_refusals": 0,
@@ -216,10 +229,16 @@ def test_stack_probe_fact_stats_split_arg_pickup_from_later_lowering_refusal():
         "summaries_attached": 0,
         "stack_probe_summaries": 1,
         "ss_stack_address_returns": 1,
+        "stack_probe_calls_pruned": 0,
+        "stack_probe_calls_refused": 0,
         "stack_arg_materializations": 3,
         "stable_ss_lowering_replacements": 0,
         "stable_ss_lowering_refusals": 1,
         "callsite_count": 0,
+        "raw_fact_count": 0,
+        "normalized_fact_count": 0,
+        "classified_fact_count": 0,
+        "materialized_count": 0,
         "call_target_fact_count": 0,
         "call_target_materialized_count": 0,
         "call_arg_fact_count": 0,
@@ -230,17 +249,75 @@ def test_stack_probe_fact_stats_split_arg_pickup_from_later_lowering_refusal():
         "consumed_outgoing_stack_placeholder_count": 0,
         "stale_target_rejected_count": 0,
         "known_prototype_arg_mismatch_count": 0,
+        "has_push_arg_evidence_count": 0,
+        "no_push_arg_evidence_count": 0,
+        "source_proven_stack_probe_count": 0,
+        "byte_merge_raw_fact_count": 0,
+        "byte_merge_classified_fact_count": 0,
+        "byte_merge_materialized_count": 0,
+        "byte_merge_refused_count": 0,
         "failure_count": 0,
     }
     assert (
         format_stack_probe_fact_stats_8616(codegen)
         == "summaries_attached=0 stack_probe_summaries=1 ss_stack_address_returns=1 "
+        "stack_probe_calls_pruned=0 stack_probe_calls_refused=0 "
         "stack_arg_materializations=3 stable_ss_lowering_replacements=0 stable_ss_lowering_refusals=1 "
-        "callsite_count=0 call_target_fact_count=0 call_target_materialized_count=0 "
+        "callsite_count=0 raw_fact_count=0 normalized_fact_count=0 classified_fact_count=0 materialized_count=0 "
+        "call_target_fact_count=0 call_target_materialized_count=0 "
         "call_arg_fact_count=0 call_arg_materialized_count=0 "
         "bp_slot_arg_value_normalized_count=0 pointer_arg_materialized_count=0 "
         "push_order_reversed_count=0 consumed_outgoing_stack_placeholder_count=0 "
-        "stale_target_rejected_count=0 known_prototype_arg_mismatch_count=0 failure_count=0"
+        "stale_target_rejected_count=0 known_prototype_arg_mismatch_count=0 "
+        "has_push_arg_evidence_count=0 no_push_arg_evidence_count=0 source_proven_stack_probe_count=0 "
+        "byte_merge_raw_fact_count=0 byte_merge_classified_fact_count=0 byte_merge_materialized_count=0 "
+        "byte_merge_refused_count=0 failure_count=0"
+    )
+
+
+def test_stack_probe_fact_trace_counts_typed_summaries_once():
+    codegen = SimpleNamespace()
+    summary = CallsiteSummary8616(
+        callsite_addr=0x1000,
+        target_addr=0x2000,
+        return_addr=0x1003,
+        kind="direct_near",
+        arg_count=0,
+        arg_widths=(),
+        stack_cleanup=None,
+        return_register=None,
+        return_used=False,
+        stack_probe_helper=True,
+        helper_return_state="stack_address",
+        helper_return_space="ss",
+    )
+
+    record_callsite_summary_map_facts_8616(codegen, {7: summary, "untyped": object()})
+    record_callsite_summary_map_facts_8616(codegen, {7: summary})
+
+    assert codegen._inertia_stack_probe_fact_stats["stack_probe_summaries"] == 1
+    assert codegen._inertia_stack_probe_fact_stats["ss_stack_address_returns"] == 1
+    assert codegen._inertia_stack_probe_fact_stats["summaries_attached"] == 0
+
+
+def test_callsite_stack_probe_evidence_requires_typed_summary():
+    summary = CallsiteSummary8616(
+        callsite_addr=0x1000,
+        target_addr=0x2000,
+        return_addr=0x1003,
+        kind="direct_near",
+        arg_count=0,
+        arg_widths=(),
+        stack_cleanup=None,
+        return_register=None,
+        return_used=False,
+        stack_probe_helper=True,
+    )
+
+    assert callsite_stack_probe_evidence_8616(summary) == (True, 0x2000)
+    assert callsite_stack_probe_evidence_8616(SimpleNamespace(stack_probe_helper=True, target_addr=0x3000)) == (
+        False,
+        None,
     )
 
 

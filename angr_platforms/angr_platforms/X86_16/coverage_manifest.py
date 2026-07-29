@@ -1,9 +1,17 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: record coverage manifests that steer diagnostic sweeps.
+Forbidden: changing instruction semantics, verifier verdicts, or recovery behavior.
+"""
+
 from __future__ import annotations
+
+__all__ = ["COMPARE_VERIFIED_MOO_OPCODES"]
 
 # Opcode files whose semantics already have direct upstream-x86 compare coverage in
 # tests/test_x86_16_compare_semantics.py. Skipping them in large MOO sweeps keeps the
 # hardware-backed verifier focused on areas where the 286 corpus adds unique value.
-COMPARE_VERIFIED_MOO_OPCODES = frozenset(
+COMPARE_VERIFIED_MOO_OPCODES: frozenset[str] = frozenset(
     {
         "15",
         "1A",

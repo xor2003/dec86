@@ -1,28 +1,72 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable
+from typing import Protocol
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
+from .cli_access_object_hints import BaseKey
 from .cli_storage_objects import (
+    EvidenceProfiles,
+    StableHints,
     build_storage_object_artifact,
     storage_object_record_for_key,
 )
 
 
+class _CFunctionLike(Protocol):
+    """Structured C function surface needed by far-pointer stack coalescing."""
+
+    addr: int
+    statements: object
+
+
+class _CodegenLike(Protocol):
+    """Codegen surface needed by far-pointer stack coalescing."""
+
+    cfunc: _CFunctionLike | None
+
+
+class _ProjectLike(Protocol):
+    """Project surface used by far-pointer stack coalescing."""
+
+    _inertia_access_traits: object
+
+
+class _AliasStorageLike(Protocol):
+    """Alias-storage summary needed to prove far-pointer stack pieces join."""
+
+    identity: tuple[object, ...] | None
+
+    def needs_synthesis(self) -> bool:
+        """Return whether storage identity is too synthetic for this rewrite."""
+        ...
+
+    def can_join(self, other: object) -> bool:
+        """Return whether two storage identities are adjacent compatible pieces."""
+        ...
+
+
 def _build_copy_aliases(
-    statements,
+    statements: object,
     *,
-    iter_c_nodes_deep,
-    unwrap_c_casts,
-    expr_is_safe_inline_candidate,
-    expr_is_bare_storage_alias,
-    member_offset_for_variable,
-    stack_variable_is_promoted,
+    iter_c_nodes_deep: Callable[[object], Iterable[object]],
+    unwrap_c_casts: Callable[[object], object],
+    expr_is_safe_inline_candidate: Callable[[object], bool],
+    expr_is_bare_storage_alias: Callable[[object], bool],
+    member_offset_for_variable: Callable[[object], int | None],
+    stack_variable_is_promoted: Callable[[object], bool],
 ) -> dict[int, object]:
-    def _impl():
+    def _impl() -> dict[int, object]:
         copy_aliases: dict[int, object] = {}
         for _ in range(3):
             changed_alias = False
@@ -31,17 +75,20 @@ def _build_copy_aliases(
                     walk_node.lhs, structured_c.CVariable
                 ):
                     continue
+                # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
                 lhs_var = getattr(walk_node.lhs, "variable", None)
                 if lhs_var is None:
                     continue
                 rhs = unwrap_c_casts(walk_node.rhs)
                 resolved_rhs = None
                 if isinstance(rhs, structured_c.CVariable):
+                    # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
                     rhs_var = getattr(rhs, "variable", None)
                     if rhs_var is not None:
                         resolved_rhs = copy_aliases.get(id(rhs_var))
                         if resolved_rhs is None:
                             resolved_rhs = rhs
+                # Dynamic codegen boundary: constant-like values may be carried by generated AST nodes.
                 elif getattr(rhs, "value", None) is not None and isinstance(getattr(rhs, "value", None), int):
                     resolved_rhs = rhs
                 elif expr_is_safe_inline_candidate(rhs):
@@ -63,50 +110,53 @@ def _build_copy_aliases(
     return _impl()
 
 
-def _source_score(_cvar, expr) -> tuple[int, int, int]:
-    def _impl():
-        expr = _unwrap_expr_identity(expr)
-        variable = getattr(expr, "variable", None)
-        name = getattr(variable, "name", None) or getattr(expr, "name", None)
+def _source_score(_cvar: object, expr: object) -> tuple[int, int, int]:
+    def _impl() -> tuple[int, int, int]:
+        current_expr = _unwrap_expr_identity(expr)
+        # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
+        variable = getattr(current_expr, "variable", None)
+        # Dynamic codegen boundary: names may live on either CVariable or SimVariable payloads.
+        name = getattr(variable, "name", None) or getattr(current_expr, "name", None)
         generic_name = isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", name) is not None
         if isinstance(variable, SimStackVariable):
-            return (0 if not generic_name else 2, getattr(variable, "offset", 0), getattr(variable, "size", 0))
+            return (0 if not generic_name else 2, variable.offset, variable.size)
         if isinstance(variable, SimMemoryVariable):
-            return (0 if not generic_name else 2, getattr(variable, "addr", 0), getattr(variable, "size", 0))
+            return (0 if not generic_name else 2, variable.addr, variable.size)
         if isinstance(variable, SimRegisterVariable):
-            return (3 if generic_name else 1, getattr(variable, "reg", 0), getattr(variable, "size", 0))
-        if isinstance(expr, structured_c.CConstant):
-            return (4, int(expr.value) if isinstance(expr.value, int) else 0, 0)
+            return (3 if generic_name else 1, variable.reg, variable.size)
+        if isinstance(current_expr, structured_c.CConstant):
+            return (4, int(current_expr.value) if isinstance(current_expr.value, int) else 0, 0)
         return (4, 0, 0)
 
     return _impl()
 
 
-def _unwrap_expr_identity(expr):
+def _unwrap_expr_identity(expr: object) -> object:
     return expr
 
 
 def _build_far_pointer_aliases(
-    statements,
+    statements: object,
     *,
-    iter_c_nodes_deep,
-    unwrap_c_casts,
-    describe_alias_storage,
-    expr_is_safe_inline_candidate,
-    resolve_alias_expr,
-    member_offset_for_variable,
-    stack_variable_is_promoted,
-    expr_uses_promoted_stack_storage,
-    make_mk_fp,
-    codegen,
+    iter_c_nodes_deep: Callable[[object], Iterable[object]],
+    unwrap_c_casts: Callable[[object], object],
+    describe_alias_storage: Callable[[object], _AliasStorageLike],
+    expr_is_safe_inline_candidate: Callable[[object], bool],
+    resolve_alias_expr: Callable[[object], object],
+    member_offset_for_variable: Callable[[object], int | None],
+    stack_variable_is_promoted: Callable[[object], bool],
+    expr_uses_promoted_stack_storage: Callable[[object], bool],
+    make_mk_fp: Callable[[object, object], object],
+    codegen: _CodegenLike,
 ) -> dict[int, object]:
-    def _impl():
+    def _impl() -> dict[int, object]:
         groups: dict[object, dict[str, list[tuple[structured_c.CVariable, object]]]] = {}
         for walk_node in iter_c_nodes_deep(statements):
             if not isinstance(walk_node, structured_c.CAssignment) or not isinstance(
                 walk_node.lhs, structured_c.CVariable
             ):
                 continue
+            # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
             lhs_var = getattr(walk_node.lhs, "variable", None)
             if not isinstance(lhs_var, SimStackVariable):
                 continue
@@ -114,9 +164,11 @@ def _build_far_pointer_aliases(
             if lhs_facts.identity is None or lhs_facts.needs_synthesis():
                 continue
             rhs = unwrap_c_casts(walk_node.rhs)
+            # Dynamic codegen boundary: constant-like values may be carried by generated AST nodes.
             if getattr(rhs, "value", None) is None and not expr_is_safe_inline_candidate(rhs):
                 continue
             bucket = groups.setdefault(lhs_facts.identity, {"zero": [], "source": []})
+            # Dynamic codegen boundary: constant-like values may be carried by generated AST nodes.
             if getattr(rhs, "value", None) == 0:
                 bucket["zero"].append((walk_node.lhs, rhs))
             else:
@@ -140,6 +192,7 @@ def _build_far_pointer_aliases(
                 continue
             source_expr = None
             for cvar, rhs in sorted(parts["source"], key=lambda item: _source_score(item[0], item[1])):
+                # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
                 variable = getattr(cvar, "variable", None)
                 if not isinstance(variable, SimStackVariable):
                     continue
@@ -158,6 +211,7 @@ def _build_far_pointer_aliases(
             if source_expr is None:
                 continue
             for cvar, _rhs in parts["source"] + parts["zero"]:
+                # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
                 variable = getattr(cvar, "variable", None)
                 if isinstance(variable, SimStackVariable):
                     far_pointer_aliases[id(variable)] = source_expr
@@ -167,20 +221,21 @@ def _build_far_pointer_aliases(
 
 
 def _coalesce_far_pointer_stack_expressions(
-    project,
-    codegen,
+    project: _ProjectLike,
+    codegen: _CodegenLike,
     *,
-    unwrap_c_casts,
-    segment_reg_name,
-    iter_c_nodes_deep,
-    resolve_stack_cvar_at_offset,
-    build_access_trait_evidence_profiles,
-    build_stable_access_object_hints,
-    access_trait_variable_key,
-    replace_c_children,
-    describe_alias_storage,
-):
-    if getattr(codegen, "cfunc", None) is None:
+    unwrap_c_casts: Callable[[object], object],
+    segment_reg_name: Callable[[object, _ProjectLike], str | None],
+    iter_c_nodes_deep: Callable[[object], Iterable[object]],
+    resolve_stack_cvar_at_offset: Callable[[_CodegenLike, int], object],
+    build_access_trait_evidence_profiles: Callable[[dict[str, dict[BaseKey, object]]], EvidenceProfiles],
+    build_stable_access_object_hints: Callable[[dict[str, dict[BaseKey, object]]], StableHints],
+    access_trait_variable_key: Callable[[object], BaseKey | None],
+    replace_c_children: Callable[[object, Callable[[object], object]], bool],
+    describe_alias_storage: Callable[[object], _AliasStorageLike],
+) -> bool:
+    cfunc = codegen.cfunc
+    if cfunc is None:
         return False
 
     # Ownership boundary:
@@ -189,10 +244,11 @@ def _coalesce_far_pointer_stack_expressions(
     # generic carrier chains. If a far-pointer expression still depends on raw
     # vvar_/ir_/tmp_ SS/BP carriers, fix that earlier in stack lowering.
 
-    def expr_is_safe_inline_candidate(expr):
+    def expr_is_safe_inline_candidate(expr: object) -> bool:
         expr = unwrap_c_casts(expr)
         if isinstance(expr, (structured_c.CConstant, structured_c.CVariable)):
             if isinstance(expr, structured_c.CVariable):
+                # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
                 variable = getattr(expr, "variable", None)
                 if isinstance(variable, SimStackVariable):
                     return False
@@ -209,59 +265,57 @@ def _coalesce_far_pointer_stack_expressions(
             return expr_is_safe_inline_candidate(expr.lhs) and expr_is_safe_inline_candidate(expr.rhs)
         return False
 
-    def make_mk_fp(segment_expr, offset_expr):
+    def make_mk_fp(segment_expr: object, offset_expr: object) -> structured_c.CFunctionCall:
         return structured_c.CFunctionCall("MK_FP", None, [segment_expr, offset_expr], codegen=codegen)
 
-    def expr_is_bare_storage_alias(expr) -> bool:
+    def expr_is_bare_storage_alias(expr: object) -> bool:
         expr = unwrap_c_casts(expr)
         if not isinstance(expr, structured_c.CVariable):
             return False
+        # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
         variable = getattr(expr, "variable", None)
         if isinstance(variable, SimStackVariable):
             return True
         return segment_reg_name(expr, project) is not None
 
-    def expr_uses_promoted_stack_storage(expr, minimum_size: int = 4) -> bool:
+    def expr_uses_promoted_stack_storage(expr: object, minimum_size: int = 4) -> bool:
         for walk_node in iter_c_nodes_deep(expr):
             if not isinstance(walk_node, structured_c.CVariable):
                 continue
+            # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
             variable = getattr(walk_node, "variable", None)
             if not isinstance(variable, SimStackVariable):
                 continue
-            if getattr(variable, "size", 0) >= minimum_size:
+            if variable.size >= minimum_size:
                 continue
-            offset = getattr(variable, "offset", None)
+            offset = variable.offset
             if isinstance(offset, int):
                 resolved = resolve_stack_cvar_at_offset(codegen, offset)
+                # Dynamic codegen boundary: resolved CVariable payloads are supplied by angr codegen.
                 resolved_variable = getattr(resolved, "variable", None)
-                if (
-                    isinstance(resolved_variable, SimStackVariable)
-                    and getattr(resolved_variable, "size", 0) >= minimum_size
-                ):
+                if isinstance(resolved_variable, SimStackVariable) and resolved_variable.size >= minimum_size:
                     continue
             return False
         return True
 
-    def stack_variable_is_promoted(variable, minimum_size: int = 4) -> bool:
+    def stack_variable_is_promoted(variable: object, minimum_size: int = 4) -> bool:
         if not isinstance(variable, SimStackVariable):
             return False
-        if getattr(variable, "size", 0) >= minimum_size:
+        if variable.size >= minimum_size:
             return True
-        offset = getattr(variable, "offset", None)
+        offset = variable.offset
         if isinstance(offset, int):
             resolved = resolve_stack_cvar_at_offset(codegen, offset)
+            # Dynamic codegen boundary: resolved CVariable payloads are supplied by angr codegen.
             resolved_variable = getattr(resolved, "variable", None)
-            if (
-                isinstance(resolved_variable, SimStackVariable)
-                and getattr(resolved_variable, "size", 0) >= minimum_size
-            ):
+            if isinstance(resolved_variable, SimStackVariable) and resolved_variable.size >= minimum_size:
                 return True
         return False
 
-    traits_cache = getattr(project, "_inertia_access_traits", None)
+    traits_cache = project._inertia_access_traits
     storage_object_artifact = None
     if isinstance(traits_cache, dict):
-        traits = traits_cache.get(getattr(codegen.cfunc, "addr", None))
+        traits = traits_cache.get(cfunc.addr)
         if isinstance(traits, dict):
             storage_object_artifact = build_storage_object_artifact(
                 traits,
@@ -271,7 +325,7 @@ def _coalesce_far_pointer_stack_expressions(
     if not storage_object_artifact or not storage_object_artifact.records:
         return False
 
-    def member_offset_for_variable(variable) -> int | None:
+    def member_offset_for_variable(variable: object) -> int | None:
         base_key = access_trait_variable_key(variable)
         if base_key is None:
             return None
@@ -281,7 +335,7 @@ def _coalesce_far_pointer_stack_expressions(
         return record.primary_member_offset()
 
     copy_aliases = _build_copy_aliases(
-        codegen.cfunc.statements,
+        cfunc.statements,
         iter_c_nodes_deep=iter_c_nodes_deep,
         unwrap_c_casts=unwrap_c_casts,
         expr_is_safe_inline_candidate=expr_is_safe_inline_candidate,
@@ -292,10 +346,11 @@ def _coalesce_far_pointer_stack_expressions(
 
     far_pointer_aliases: dict[int, object] = {}
 
-    def resolve_alias_expr(expr):
+    def resolve_alias_expr(expr: object) -> object:
         expr = unwrap_c_casts(expr)
         seen: set[int] = set()
         while isinstance(expr, structured_c.CVariable):
+            # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
             variable = getattr(expr, "variable", None)
             if variable is None:
                 break
@@ -314,7 +369,7 @@ def _coalesce_far_pointer_stack_expressions(
 
     far_pointer_aliases.update(
         _build_far_pointer_aliases(
-            codegen.cfunc.statements,
+            cfunc.statements,
             iter_c_nodes_deep=iter_c_nodes_deep,
             unwrap_c_casts=unwrap_c_casts,
             describe_alias_storage=describe_alias_storage,
@@ -333,7 +388,7 @@ def _coalesce_far_pointer_stack_expressions(
 
     changed = False
 
-    def transform(node):
+    def transform(node: object) -> object:
         nonlocal changed
         if not isinstance(node, structured_c.CBinaryOp) or node.op != "Add":
             return node
@@ -360,10 +415,10 @@ def _coalesce_far_pointer_stack_expressions(
                 return make_mk_fp(rhs_unwrapped, lhs)
         return node
 
-    root = codegen.cfunc.statements
+    root = cfunc.statements
     new_root = transform(root)
     if new_root is not root:
-        codegen.cfunc.statements = new_root
+        cfunc.statements = new_root
         root = new_root
         changed = True
     if replace_c_children(root, transform):

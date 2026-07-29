@@ -1,10 +1,11 @@
-from __future__ import annotations
-
 """Layer: Validation (cross-cutting governance).
 
 Responsibility: ensure validation attribution remains honest — uncollected,
 fallback, and timeout identities must stay visible in aggregate.
-Forbidden: collapsing uncollected into success, hiding fallback identities."""
+Forbidden: collapsing uncollected into success, hiding fallback identities.
+"""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
@@ -44,6 +45,7 @@ class ValidationRecord:
     note: str = ""
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize this record for reports and JSON snapshots."""
         return {
             "function_name": self.function_name,
             "function_addr": self.function_addr,
@@ -56,10 +58,12 @@ class ValidationRecord:
 
     @property
     def is_clean(self) -> bool:
+        """Return true when every tracked validation layer passed."""
         return self.structuring_state == ValidationState.PASSED and self.postprocess_state == ValidationState.PASSED
 
     @property
     def has_uncollected(self) -> bool:
+        """Return true when any validation layer lacks collected evidence."""
         return (
             self.structuring_state == ValidationState.UNCOLLECTED
             or self.postprocess_state == ValidationState.UNCOLLECTED
@@ -81,6 +85,7 @@ class ValidationAggregate:
     crash: int = 0
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize aggregate counts and records for artifact reports."""
         return {
             "total_functions": self.total_functions,
             "passed": self.passed,
@@ -169,7 +174,7 @@ def _parse_validation_state_8616(v: str | None) -> ValidationState:
 
 
 def _count_record_into_aggregate_8616(agg: ValidationAggregate, r: ValidationRecord) -> None:
-    def _impl():
+    def _impl() -> None:
         """Count the worst state for a record into the aggregate.
 
         A record contributes to the worst category it falls into:

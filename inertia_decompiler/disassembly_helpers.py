@@ -1,8 +1,32 @@
+"""Format disassembly diagnostics without recovering decompiler semantics.
+
+Layer: CLI/fallback/reporting.
+Responsibility: format disassembly diagnostics without recovering or changing semantics.
+"""
+
 from __future__ import annotations
+
+from typing import Protocol, cast
 
 import angr
 
 from inertia_decompiler.project_loading import _describe_exception
+
+
+class _CapstoneInstructionLike(Protocol):
+    address: int
+    mnemonic: str
+    op_str: str
+    size: int
+
+
+class _LoaderMainObjectLike(Protocol):
+    linked_base: int | None
+    max_addr: int | None
+
+
+class _ProjectLoaderLike(Protocol):
+    main_object: _LoaderMainObjectLike | None
 
 
 def _format_first_block_asm(project: angr.Project, addr: int) -> str:
@@ -10,15 +34,16 @@ def _format_first_block_asm(project: angr.Project, addr: int) -> str:
         block = project.factory.block(addr, opt_level=0)
     except Exception as ex:
         return f"<assembly unavailable: {ex}>"
-    lines = [f"{insn.address:#06x}: {insn.mnemonic} {insn.op_str}".rstrip() for insn in block.capstone.insns[:16]]
+    insns = cast(list[_CapstoneInstructionLike], block.capstone.insns[:16])
+    lines = [f"{insn.address:#06x}: {insn.mnemonic} {insn.op_str}".rstrip() for insn in insns]
     return "\n".join(lines) if lines else "<no instructions>"
 
 
-def _linear_disassembly(project: angr.Project, start: int, end: int):
+def _linear_disassembly(project: angr.Project, start: int, end: int) -> list[_CapstoneInstructionLike]:
     if end <= start:
         return []
     code = bytes(project.loader.memory.load(start, end - start))
-    return list(project.arch.capstone.disasm(code, start))
+    return cast(list[_CapstoneInstructionLike], list(project.arch.capstone.disasm(code, start)))
 
 
 def _format_asm_range(project: angr.Project, start: int, end: int, *, max_instructions: int = 128) -> str:
@@ -42,9 +67,14 @@ def _infer_linear_disassembly_window(
     *,
     max_window: int = 0x180,
 ) -> tuple[int, int]:
-    main_object = getattr(project.loader, "main_object", None)
-    linked_base = getattr(main_object, "linked_base", None)
-    max_addr = getattr(main_object, "max_addr", None)
+    try:
+        main_object = cast(_ProjectLoaderLike, project.loader).main_object
+    except AttributeError:
+        main_object = None
+    if main_object is None:
+        return addr, addr + max_window
+    linked_base = main_object.linked_base
+    max_addr = main_object.max_addr
     if not isinstance(linked_base, int) or not isinstance(max_addr, int):
         return addr, addr + max_window
     end = min(addr + max_window, max_addr + 1)

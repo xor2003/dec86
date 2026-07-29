@@ -1,4 +1,10 @@
-from angr_platforms.X86_16.emulator import Emulator
+"""Layer: Frontend/runtime.
+
+Responsibility: define decoded instruction data and operand metadata for the lifter.
+Forbidden: decompiler structuring, alias/type recovery, or rendered-C cleanup.
+"""
+
+from __future__ import annotations
 
 from .addressing_helpers import (
     WidthProfile,
@@ -11,43 +17,51 @@ from .emulator import Emulator
 from .regs import sgreg_t
 
 # Constants for repeat prefixes
-NONE = 0
-REPZ = 1
-REPNZ = 2
+NONE: int = 0
+REPZ: int = 1
+REPNZ: int = 2
 
 # Constants for instruction flags
-CHK_MODRM = 1 << 0
-CHK_IMM32 = 1 << 1
-CHK_IMM16 = 1 << 2
-CHK_IMM8 = 1 << 3
-CHK_PTR16 = 1 << 4
-CHK_MOFFS = 1 << 5
+CHK_MODRM: int = 1 << 0
+CHK_IMM32: int = 1 << 1
+CHK_IMM16: int = 1 << 2
+CHK_IMM8: int = 1 << 3
+CHK_PTR16: int = 1 << 4
+CHK_MOFFS: int = 1 << 5
 
-MAX_OPCODE = 0x200
+MAX_OPCODE: int = 0x200
 
 
 # ModR/M byte structure
 class ModRM:
+    """Decoded ModR/M byte fields used by frontend parsing and execution."""
+
     __slots__ = ("rm", "reg", "mod")
 
     def __init__(self) -> None:
-        self.rm = 0  # Register/memory operand
-        self.reg = 0  # Register operand or opcode extension
-        self.mod = 0  # Addressing mode
+        """Initialize an empty ModR/M operand descriptor."""
+        self.rm: int = 0  # Register/memory operand
+        self.reg: int = 0  # Register operand or opcode extension
+        self.mod: int = 0  # Addressing mode
 
 
 # SIB byte structure
 class SIB:
+    """Decoded scale-index-base byte fields used by 32-bit addressing forms."""
+
     __slots__ = ("base", "index", "scale")
 
     def __init__(self) -> None:
-        self.base = 0  # Base register
-        self.index = 0  # Index register
-        self.scale = 0  # Scaling factor
+        """Initialize an empty SIB operand descriptor."""
+        self.base: int = 0  # Base register
+        self.index: int = 0  # Index register
+        self.scale: int = 0  # Scaling factor
 
 
 # X86Instruction data structure
 class InstrData:
+    """Mutable decoded instruction record shared by parse, exec, and emulation layers."""
+
     __slots__ = (
         "prefix",
         "pre_segment",
@@ -69,39 +83,43 @@ class InstrData:
         "operand_bits",
         "address_bits",
         "displacement_bits",
+        "mode32",
         "repeat_class",
         "control_flow_class",
         "width_case",
     )
 
     def __init__(self) -> None:
-        self.prefix = 0  # X86Instruction prefix
-        self.pre_segment = None  # Segment override prefix
-        self.pre_repeat = NONE  # Repeat prefix
+        """Initialize a decoded instruction record with neutral frontend defaults."""
+        self.prefix: int = 0  # X86Instruction prefix
+        self.pre_segment: sgreg_t | None = None  # Segment override prefix
+        self.pre_repeat: int = NONE  # Repeat prefix
 
         self.segment: int = 0  # Default segment register
-        self.opcode = 0  # Opcode
-        self.modrm = ModRM()  # ModR/M byte
-        self.sib = SIB()  # SIB byte
-        self.disp8 = 0  # 8-bit displacement
-        self.disp16 = 0  # 16-bit displacement
-        self.disp32 = 0  # 32-bit displacement
-        self.imm8 = 0  # 8-bit immediate value
-        self.imm16 = 0  # 16-bit immediate value
-        self.imm32 = 0  # 32-bit immediate value
-        self.ptr16 = 0  # 16-bit far pointer
-        self.moffs = 0  # Memory offset
-        self.prefix_len = 0  # number of prefix bytes consumed
-        self.size = 0  # total instruction size in bytes including prefixes
-        self.operand_bits = 0  # normalized effective operand width
-        self.address_bits = 0  # normalized effective address width
-        self.displacement_bits = 0  # normalized displacement width, if any
-        self.repeat_class = "none"  # normalized repeat prefix class
-        self.control_flow_class = "none"  # normalized control-transfer family
-        self.width_case = ""  # normalized decode matrix case label
+        self.opcode: int = 0  # Opcode
+        self.modrm: ModRM = ModRM()  # ModR/M byte
+        self.sib: SIB = SIB()  # SIB byte
+        self.disp8: int = 0  # 8-bit displacement
+        self.disp16: int = 0  # 16-bit displacement
+        self.disp32: int = 0  # 32-bit displacement
+        self.imm8: int = 0  # 8-bit immediate value
+        self.imm16: int = 0  # 16-bit immediate value
+        self.imm32: int = 0  # 32-bit immediate value
+        self.ptr16: int = 0  # 16-bit far pointer
+        self.moffs: int = 0  # Memory offset
+        self.prefix_len: int = 0  # number of prefix bytes consumed
+        self.size: int = 0  # total instruction size in bytes including prefixes
+        self.operand_bits: int = 0  # normalized effective operand width
+        self.address_bits: int = 0  # normalized effective address width
+        self.displacement_bits: int = 0  # normalized displacement width, if any
+        self.mode32: bool = False  # active processor width mode for string/repeat helpers
+        self.repeat_class: str = "none"  # normalized repeat prefix class
+        self.control_flow_class: str = "none"  # normalized control-transfer family
+        self.width_case: str = ""  # normalized decode matrix case label
 
 
 def describe_x86_16_instruction_metadata_surface() -> dict[str, object]:
+    """Describe normalized decode metadata exposed to architecture checks."""
     return {
         "normalized_fields": (
             "width_case",
@@ -129,37 +147,48 @@ def describe_x86_16_instruction_metadata_surface() -> dict[str, object]:
 
 # Base class for instruction handlers
 class X86Instruction:
+    """Shared decoded-instruction view for parser, executor, and emulator handlers."""
+
     __slots__ = ("emu", "instr", "mode32", "chsz_ad")
 
     def __init__(self, emu: Emulator, instr: InstrData, mode32: bool) -> None:
+        """Bind emulator state and decoded instruction metadata."""
         self.emu = emu
         self.instr = instr
         self.mode32 = mode32
+        self.instr.mode32 = mode32
         self.chsz_ad = False
 
-    def select_segment(self):
+    def select_segment(self) -> sgreg_t:
+        """Return the active segment override or decoded default segment."""
         seg = self.instr.pre_segment if self.instr.pre_segment is not None else self.instr.segment
         return sgreg_t(seg)
 
     def effective_operand_bits(self) -> int:
+        """Return the normalized operand width for this instruction."""
         return self.instr.operand_bits or operand_width_bits(self.mode32, False)
 
     def effective_address_bits(self) -> int:
+        """Return the normalized address width for this instruction."""
         return self.instr.address_bits or address_width_bits(self.mode32, self.chsz_ad)
 
     def repeat_kind(self) -> str:
+        """Return the normalized repeat-prefix class."""
         return self.instr.repeat_class or "none"
 
     def control_flow_kind(self) -> str:
+        """Return the normalized control-flow class."""
         return self.instr.control_flow_class or "none"
 
     def width_profile(self) -> WidthProfile:
+        """Return the combined operand/address width profile."""
         return WidthProfile(
             operand_bits=self.effective_operand_bits(),
             address_bits=self.effective_address_bits(),
         )
 
     def width_case_name(self) -> str:
+        """Return the decode matrix case name for the effective widths."""
         if self.instr.width_case:
             return self.instr.width_case
         try:
@@ -172,9 +201,12 @@ class X86Instruction:
 
 
 class InstrFlags:
+    """Opcode operand-presence flags consumed by parser and opcode tables."""
+
     __slots__ = ("modrm", "imm32", "imm16", "imm8", "ptr16", "moffs", "moffs8")
 
     def __init__(self) -> None:
+        """Initialize an opcode flag record with no operands required."""
         self.modrm = False
         self.imm32 = False
         self.imm16 = False
@@ -184,7 +216,7 @@ class InstrFlags:
         self.moffs8 = False
 
     @property
-    def flags(self):
+    def flags(self) -> int:
         """Returns a byte representation of the flags."""
         return (
             (self.modrm << 0)
@@ -197,7 +229,7 @@ class InstrFlags:
         )
 
     @flags.setter
-    def flags(self, value):
+    def flags(self, value: int) -> None:
         """Sets the flags from a byte representation."""
         self.modrm = bool(value & 1)
         self.imm32 = bool(value & (1 << 1))

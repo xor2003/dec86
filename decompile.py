@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Entrypoint for the x86-16 decompiler CLI.
+
+Layer: CLI/fallback/reporting.
+Responsibility: enter the CLI only after the runtime architecture guard.
+"""
 
 from __future__ import annotations
 
@@ -89,22 +94,32 @@ def _configure_python_recursion_limit() -> None:
 # Tests import this module for helper access and must not exec-replace the process.
 if __name__ == "__main__":
     _ensure_project_venv()
-    os.environ.setdefault("INERTIA_ENABLE_FORCED_CORPUS_TEMPLATES", "1")
 _install_early_log_levels()
 _enable_line_buffered_stdio()
 _configure_python_recursion_limit()
 
-from inertia_decompiler import cli as _cli
-from inertia_decompiler.telemetry import emit_compact_summary
+from inertia_decompiler.architecture_runtime_guard import (  # noqa: E402
+    DecompilerArchitectureGuardError,
+    assert_decompiler_architecture_clean,
+)
+
+try:
+    assert_decompiler_architecture_clean()
+except DecompilerArchitectureGuardError as ex:
+    print(str(ex), file=sys.stderr)
+    raise SystemExit(3) from ex
+
+from inertia_decompiler import cli as _cli  # noqa: E402
+from inertia_decompiler.telemetry import emit_compact_summary  # noqa: E402
 
 _THIS_MODULE = sys.modules[__name__]
 
 
 class _CliProxyModule(ModuleType):
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> object:
         return getattr(_cli, name)
 
-    def __setattr__(self, name: str, value):
+    def __setattr__(self, name: str, value: object) -> None:
         ModuleType.__setattr__(self, name, value)
         if name not in {"__class__", "__dict__"}:
             setattr(_cli, name, value)

@@ -1,5 +1,8 @@
 """GDB Client TUI – Textual-based debugger frontend.
 
+Layer: CLI/fallback/reporting.
+Responsibility: present RSP debugger state in a Textual UI without owning decompiler semantics.
+
 Connects to a gdbserver / QEMU GDB stub via RSP.
 
 Key bindings (adapted):
@@ -30,7 +33,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from typing import Optional
+from collections.abc import Iterable
+from typing import Optional, Protocol, cast
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -58,15 +62,41 @@ except ModuleNotFoundError:
     CS_ARCH_X86 = CS_MODE_32 = CS_MODE_64 = CS_MODE_16 = None
 
 
-def _make_cs(arch: str) -> Cs:
+class _CapstoneInsn(Protocol):
+    """Instruction fields consumed from Capstone disassembly results."""
+
+    address: int
+    mnemonic: str
+    op_str: str
+
+
+class _CapstoneHandle(Protocol):
+    """Small Capstone handle surface used by the debugger UI."""
+
+    @property
+    def detail(self) -> bool:
+        """Return whether detailed Capstone decoding is enabled."""
+        ...
+
+    @detail.setter
+    def detail(self, value: bool) -> None:
+        """Set whether detailed Capstone decoding is enabled."""
+        ...
+
+    def disasm(self, code: bytes, offset: int, count: int) -> Iterable[_CapstoneInsn]:
+        """Yield decoded instructions for a byte span."""
+        ...
+
+
+def _make_cs(arch: str) -> _CapstoneHandle:
     """Create a Capstone Cs handle for the given architecture."""
     if Cs is None:
         raise RuntimeError("capstone is not installed")
     if arch == "x86_64":
-        return Cs(CS_ARCH_X86, CS_MODE_64)
+        return cast(_CapstoneHandle, Cs(CS_ARCH_X86, CS_MODE_64))
     if arch == "x86_16":
-        return Cs(CS_ARCH_X86, CS_MODE_16)
-    return Cs(CS_ARCH_X86, CS_MODE_32)
+        return cast(_CapstoneHandle, Cs(CS_ARCH_X86, CS_MODE_16))
+    return cast(_CapstoneHandle, Cs(CS_ARCH_X86, CS_MODE_32))
 
 
 def disasm_x86(data: bytes, addr: int, count: int = 20, arch: str = "x86") -> list[tuple[int, str, str]]:
@@ -174,7 +204,8 @@ class GDBTUIApp(App):
         ("escape", "quit", "Esc Quit"),
     ]
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 1234, arch: str = "x86"):
+    def __init__(self, host: str = "127.0.0.1", port: int = 1234, arch: str = "x86") -> None:
+        """Initialize the TUI connection settings and local display state."""
         super().__init__()
         self._host = host
         self._port = port
@@ -191,6 +222,7 @@ class GDBTUIApp(App):
     # -- compose -----------------------------------------------------------
 
     def compose(self) -> ComposeResult:
+        """Compose the debugger panes and command input."""
         yield Header(id="header")
         yield Label(f" GDB TUI  │  {self._host}:{self._port}  │  {self._arch}", id="top-bar")
 
@@ -214,6 +246,7 @@ class GDBTUIApp(App):
     # -- lifecycle ---------------------------------------------------------
 
     async def on_mount(self) -> None:
+        """Connect to the RSP server and populate initial debugger state."""
         self.title = "GDB TUI"
         self.sub_title = f"{self._host}:{self._port}"
         self._update_key_hints()
@@ -250,47 +283,61 @@ class GDBTUIApp(App):
     # -- key bindings (insight.124 style) ----------------------------------
 
     def action_step(self) -> None:
+        """Step one instruction."""
         self._action("step", count=1)
 
     def action_step_over(self) -> None:
+        """Step over the current instruction."""
         self._action("step_over", count=1)
 
     def action_go_to_cursor(self) -> None:
+        """Refresh around the current instruction pointer."""
         if self._current_ip:
             self._action("refresh", count=1)
 
     def action_refresh(self) -> None:
+        """Refresh all debugger panes."""
         self._action("refresh", count=1)
 
     def action_skip(self) -> None:
+        """Skip the current instruction."""
         self._action("skip", count=1)
 
     def action_toggle_bp(self) -> None:
+        """Toggle a breakpoint at the current instruction pointer."""
         if self._current_ip:
             self._toggle_breakpoint(self._current_ip)
 
     def action_restart(self) -> None:
+        """Request a restart action."""
         self._action("restart", count=1)
 
     def action_run(self) -> None:
+        """Continue target execution."""
         self._action("continue", count=1)
 
     def action_reset(self) -> None:
+        """Request a reset action."""
         self._action("reset", count=1)
 
     def action_go_to_addr(self) -> None:
+        """Show command-line guidance for jumping to an address."""
         self._append_console("Go to address: use 'g <addr>' in command line")
 
     def action_search(self) -> None:
+        """Show command-line guidance for memory search/examination."""
         self._append_console("Search: use 'm <addr> <len>' to examine memory")
 
     def action_quit(self) -> None:
+        """Exit the TUI."""
         self.exit()
 
     # -- command input -----------------------------------------------------
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
-        async def _impl():
+        """Handle a submitted debugger command."""
+
+        async def _impl() -> None:
             cmd = event.value.strip()
             event.input.clear()
             if not cmd:
@@ -334,6 +381,9 @@ class GDBTUIApp(App):
                     self._append_console(f"{parts[1]} = 0x{val:x}")
             elif action in ("p", "print", "?"):
                 if len(parts) >= 2:
+                    if self._client is None:
+                        self._append_console("Cannot evaluate: disconnected")
+                        return
                     expr = " ".join(parts[1:])
                     try:
                         val = await self._client.read_register(int(expr, 0))
@@ -358,7 +408,7 @@ class GDBTUIApp(App):
         asyncio.create_task(self._do_action(name, count=max(1, count)))
 
     async def _do_action(self, name: str, count: int = 1) -> None:
-        async def _impl():
+        async def _impl() -> None:
             if not self._client:
                 return
             try:
@@ -383,9 +433,9 @@ class GDBTUIApp(App):
                     await self._client.disconnect()
                     await self._client.connect(self._host, self._port)
                 elif name == "reset":
-                    self._append_console("Reset: kill inferior")
+                    self._append_console("Reset: disconnect")
                     try:
-                        await self._client.kill()
+                        await self._client.disconnect()
                     except Exception:
                         pass
 
@@ -406,11 +456,6 @@ class GDBTUIApp(App):
             mem = await self._client.read_memory(self._current_ip, 15)
             lines = disasm_x86(mem.data, self._current_ip, 1, self._arch)
             if lines:
-                next_ip = lines[0][0] + len(mem.data)  # rough estimate
-                # Better: decode actual length
-                ip_name = "rip" if self._arch == "x86_64" else "eip"
-                reg_num = self._client._reg_defs.index(next(r for r in self._client._reg_defs if r.name == ip_name))
-                # Just step and let the user handle it
                 self._append_console("Skip: use F7 step instead for now")
         except GDBClientError:
             pass
@@ -464,7 +509,7 @@ class GDBTUIApp(App):
 
     @staticmethod
     def _instruction_fallthrough(addr: int, raw: bytes, mnemonic: str, arch: str) -> int | None:
-        def _impl():
+        def _impl() -> int | None:
             if not raw:
                 return None
             op = mnemonic.lower()
@@ -666,6 +711,7 @@ class GDBTUIApp(App):
 
 
 def main() -> None:
+    """Run the GDB debugger TUI."""
     parser = argparse.ArgumentParser(description="GDB Client TUI (insight.124 inspired)")
     parser.add_argument("--host", default="127.0.0.1", help="GDB server host")
     parser.add_argument("--port", type=int, default=1234, help="GDB server port")

@@ -1,6 +1,17 @@
+"""Layer: Frontend/runtime.
+
+Responsibility: provide shared opcode handlers for instruction lifting/emulation.
+Forbidden: decompiler semantic repair, source/COD-backed behavior, or rewrite cleanup.
+
+Dynamic value boundary: PyVEX expressions overload Python operators at runtime;
+``VexExpr`` is confined to those third-party expression values and active lifter hooks.
+"""
+
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, Sequence, cast
+import logging
+from types import MethodType
+from typing import TYPE_CHECKING, Any, Callable, Sequence, TypeAlias, cast
 
 from pyvex.lifting.util import JumpKind
 from pyvex.lifting.util.vex_helper import Type
@@ -22,11 +33,13 @@ from .alu_helpers import (
     unary_operation,
 )
 from .emu import EmuInstr
-from .exec import ExecInstr
-from .instruction import *
+from .exception import EXP_GP
+from .exec import ExecInstr, OpcodeExecHandler
+from .instruction import CHK_IMM8, CHK_IMM16, CHK_MODRM, CHK_MOFFS, MAX_OPCODE, InstrData, InstrFlags
 from .parse import ParseInstr
-from .regs import coerce_reg8_t, reg8_t, reg16_t
-from .stack_helpers import branch_rel8, return_far16, return_interrupt16
+from .regs import coerce_reg8_t, coerce_reg32_t, reg8_t, reg16_t
+from .stack_helpers import StackEmulator, branch_rel8, return_far16, return_interrupt16
+from .string_helpers import StringEmulator
 
 if TYPE_CHECKING:
     from .emulator import Emulator
@@ -36,29 +49,33 @@ CHSZ_OP: int = 1
 CHSZ_AD: int = 2
 
 
-import logging
+logger: logging.Logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
+BoundOpcodeHandler: TypeAlias = Callable[[], None]
+OpcodeRegistrationHandler: TypeAlias = OpcodeExecHandler | BoundOpcodeHandler
+VexExpr: TypeAlias = Any
 
-OpcodeHandler = Callable[..., None]
 
-GROUP2_BYTE_SHIFT_ROTATE_HANDLERS: dict[int, str] = {
-    0: "rol_rm8",
-    1: "ror_rm8",
-    2: "rcl_rm8",
-    3: "rcr_rm8",
-    4: "shl_rm8",  # SHL
-    5: "shr_rm8",
-    6: "shl_rm8",  # SAL aliases SHL on x86
-    7: "sar_rm8",
-}
+def _vex_expr(value: object) -> VexExpr:
+    """Expose one concrete-or-PyVEX runtime value at the third-party boundary."""
+    return cast(VexExpr, value)
+
+
+def _unbound_opcode_handler(func: OpcodeRegistrationHandler) -> OpcodeExecHandler:
+    """Normalize a bound or unbound owned opcode handler for table storage."""
+    if isinstance(func, MethodType):
+        return cast(OpcodeExecHandler, func.__func__)
+    return cast(OpcodeExecHandler, func)
 
 
 class InstrBase(ExecInstr, ParseInstr, EmuInstr):
-    _base_opcode_template_instrfuncs: list[OpcodeHandler] | None = None
-    _base_opcode_template_chk: list[int] | None = None
+    """Provide shared byte-width opcode semantics for the x86 frontend runtime."""
+
+    _base_opcode_template_instrfuncs: list[OpcodeExecHandler | None] | None = None
+    _base_opcode_template_chk: list[int | InstrFlags] | None = None
 
     def __init__(self, emu: Emulator, instr: InstrData, mode32: bool) -> None:
+        """Initialize shared opcode tables for one decoded-instruction runtime."""
         super().__init__(emu)
         super(ExecInstr, self).__init__(emu, instr, mode32)  # ParseInstr
         super(ParseInstr, self).__init__(emu, instr, mode32)  # EmuInstr
@@ -192,17 +209,32 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         cls._base_opcode_template_instrfuncs = self.instrfuncs.copy()
         cls._base_opcode_template_chk = self.chk.copy()
 
-    def _ite_value(self, cond, when_true, when_false):
-        expr = self.emu.lifter_instruction.irsb_c.ite(
+    def _ite_value(self, cond: VexExpr, when_true: VexExpr, when_false: VexExpr) -> VexExpr:
+        lifter_instruction = self.emu.lifter_instruction
+        if lifter_instruction is None:
+            raise RuntimeError("conditional VEX values require an active lifter instruction")
+        expr = lifter_instruction.irsb_c.ite(
             cond.cast_to(Type.int_1).rdt,
             when_true.rdt,
             when_false.rdt,
         )
         return self.emu._vv(expr)
 
+    def _active_stack_emulator(self) -> StackEmulator:
+        """Return the runtime stack surface after checking active lift state."""
+        if self.emu.irsb is None or self.emu.lifter_instruction is None:
+            raise RuntimeError("stack control-flow effects require an active lifter instruction")
+        return cast(StackEmulator, self.emu)
+
+    def _active_string_emulator(self) -> StringEmulator:
+        """Return the string-helper surface after checking active lift state."""
+        if self.emu.lifter_instruction is None:
+            raise RuntimeError("string instruction effects require an active lifter instruction")
+        return cast(StringEmulator, self.emu)
+
     def _dispatch_modrm_reg(
         self,
-        handlers: Sequence[OpcodeHandler | None],
+        handlers: Sequence[BoundOpcodeHandler | None],
         opcode: str,
         on_missing: Callable[[int], None] | None = None,
     ) -> None:
@@ -217,10 +249,16 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
             return
         raise RuntimeError(f"not implemented: {opcode} /{reg}")
 
-    def _register_opcode_range(self, start: int, end: int, func: OpcodeHandler, flags: int) -> None:
+    def _register_opcode_range(
+        self,
+        start: int,
+        end: int,
+        func: OpcodeRegistrationHandler,
+        flags: int,
+    ) -> None:
         instrfuncs = self.instrfuncs
         chk = self.chk
-        handler = getattr(func, "__func__", func)
+        handler = _unbound_opcode_handler(func)
         for opcode in range(start, end + 1):
             instrfuncs[opcode] = handler
             chk[opcode] = flags
@@ -232,27 +270,31 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         a real sample trips over one of the rarely used `/digit` encodings.
         """
         reg = self.instr.modrm.reg
-        handler_name = GROUP2_BYTE_SHIFT_ROTATE_HANDLERS.get(reg)
-        if handler_name is None:
+        handler = GROUP2_BYTE_SHIFT_ROTATE_HANDLERS.get(reg)
+        if handler is None:
             raise RuntimeError(f"not implemented: 0xd0_d2 /{reg}")
-        cast(OpcodeHandler, getattr(self, handler_name))()
+        handler(self)
 
-    def set_funcflag(self, opcode: int, func: OpcodeHandler, flags: int) -> None:
+    def set_funcflag(self, opcode: int, func: OpcodeRegistrationHandler, flags: int) -> None:
+        """Register one decoded opcode handler and its operand-presence flags."""
         if opcode >> 8 == 0x0F:
             opcode = (opcode & 0xFF) | 0x0100
         assert opcode < 0x200
-        self.instrfuncs[opcode] = getattr(func, "__func__", func)
+        self.instrfuncs[opcode] = _unbound_opcode_handler(func)
         self.chk[opcode] = flags
 
-    def imm8_value(self):
+    def imm8_value(self) -> VexExpr:
+        """Return the immediate byte as a typed frontend runtime value."""
         return self.emu.constant(self.instr.imm8, Type.int_8)
 
     def add_rm8_r8(self) -> None:
+        """Execute decoded ``ADD_RM8_R8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu, self.get_rm8, self.get_r8, self.set_rm8, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs
         )
 
     def adc_rm8_r8(self) -> None:
+        """Execute decoded ``ADC_RM8_R8`` semantics through frontend emulator effects."""
         binary_operation_with_carry(
             self.emu,
             self.get_rm8,
@@ -264,11 +306,13 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def add_r8_rm8(self) -> None:
+        """Execute decoded ``ADD_R8_RM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu, self.get_r8, self.get_rm8, self.set_r8, self.emu.update_eflags_add, lambda lhs, rhs: lhs + rhs
         )
 
     def adc_r8_rm8(self) -> None:
+        """Execute decoded ``ADC_R8_RM8`` semantics through frontend emulator effects."""
         binary_operation_with_carry(
             self.emu,
             self.get_r8,
@@ -280,9 +324,10 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def adc_al_imm8(self) -> None:
+        """Execute decoded ``ADC_AL_IMM8`` semantics through frontend emulator effects."""
         binary_operation_with_carry(
             self.emu,
-            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: _vex_expr(self.emu.get_gpreg(reg8_t.AL)),
             self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_adc,
@@ -291,9 +336,10 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def add_al_imm8(self) -> None:
+        """Execute decoded ``ADD_AL_IMM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu,
-            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: _vex_expr(self.emu.get_gpreg(reg8_t.AL)),
             self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_add,
@@ -301,19 +347,22 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def or_rm8_r8(self) -> None:
+        """Execute decoded ``OR_RM8_R8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu, self.get_rm8, self.get_r8, self.set_rm8, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs
         )
 
     def or_r8_rm8(self) -> None:
+        """Execute decoded ``OR_R8_RM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu, self.get_r8, self.get_rm8, self.set_r8, self.emu.update_eflags_or, lambda lhs, rhs: lhs | rhs
         )
 
     def or_al_imm8(self) -> None:
+        """Execute decoded ``OR_AL_IMM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu,
-            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: _vex_expr(self.emu.get_gpreg(reg8_t.AL)),
             self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_or,
@@ -321,19 +370,22 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def and_rm8_r8(self) -> None:
+        """Execute decoded ``AND_RM8_R8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu, self.get_rm8, self.get_r8, self.set_rm8, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs
         )
 
     def and_r8_rm8(self) -> None:
+        """Execute decoded ``AND_R8_RM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu, self.get_r8, self.get_rm8, self.set_r8, self.emu.update_eflags_and, lambda lhs, rhs: lhs & rhs
         )
 
     def and_al_imm8(self) -> None:
+        """Execute decoded ``AND_AL_IMM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu,
-            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: _vex_expr(self.emu.get_gpreg(reg8_t.AL)),
             self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_and,
@@ -341,19 +393,22 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def sub_rm8_r8(self) -> None:
+        """Execute decoded ``SUB_RM8_R8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu, self.get_rm8, self.get_r8, self.set_rm8, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs
         )
 
     def sub_r8_rm8(self) -> None:
+        """Execute decoded ``SUB_R8_RM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu, self.get_r8, self.get_rm8, self.set_r8, self.emu.update_eflags_sub, lambda lhs, rhs: lhs - rhs
         )
 
     def sub_al_imm8(self) -> None:
+        """Execute decoded ``SUB_AL_IMM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu,
-            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: _vex_expr(self.emu.get_gpreg(reg8_t.AL)),
             self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_sub,
@@ -361,6 +416,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def sbb_rm8_r8(self) -> None:
+        """Execute decoded ``SBB_RM8_R8`` semantics through frontend emulator effects."""
         binary_operation_with_carry(
             self.emu,
             self.get_rm8,
@@ -372,6 +428,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def sbb_r8_rm8(self) -> None:
+        """Execute decoded ``SBB_R8_RM8`` semantics through frontend emulator effects."""
         binary_operation_with_carry(
             self.emu,
             self.get_r8,
@@ -383,9 +440,10 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def sbb_al_imm8(self) -> None:
+        """Execute decoded ``SBB_AL_IMM8`` semantics through frontend emulator effects."""
         binary_operation_with_carry(
             self.emu,
-            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: _vex_expr(self.emu.get_gpreg(reg8_t.AL)),
             self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_sbb,
@@ -394,19 +452,22 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def xor_rm8_r8(self) -> None:
+        """Execute decoded ``XOR_RM8_R8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu, self.get_rm8, self.get_r8, self.set_rm8, self.emu.update_eflags_xor, lambda lhs, rhs: lhs ^ rhs
         )
 
     def xor_r8_rm8(self) -> None:
+        """Execute decoded ``XOR_R8_RM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu, self.get_r8, self.get_rm8, self.set_r8, self.emu.update_eflags_xor, lambda lhs, rhs: lhs ^ rhs
         )
 
     def xor_al_imm8(self) -> None:
+        """Execute decoded ``XOR_AL_IMM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu,
-            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: _vex_expr(self.emu.get_gpreg(reg8_t.AL)),
             self.imm8_value,
             lambda value: self.emu.set_gpreg(reg8_t.AL, value),
             self.emu.update_eflags_xor,
@@ -414,70 +475,99 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def cmp_rm8_r8(self) -> None:
+        """Execute decoded ``CMP_RM8_R8`` semantics through frontend emulator effects."""
         compare_operation(self.get_rm8, self.get_r8, self.emu.update_eflags_sub)
 
     def cmp_r8_rm8(self) -> None:
+        """Execute decoded ``CMP_R8_RM8`` semantics through frontend emulator effects."""
         compare_operation(self.get_r8, self.get_rm8, self.emu.update_eflags_sub)
 
     def cmp_al_imm8(self) -> None:
+        """Execute decoded ``CMP_AL_IMM8`` semantics through frontend emulator effects."""
         compare_operation(
-            lambda: self.emu.get_gpreg(reg8_t.AL),
+            lambda: _vex_expr(self.emu.get_gpreg(reg8_t.AL)),
             self.imm8_value,
             self.emu.update_eflags_sub,
         )
 
     def jo_rel8(self) -> None:
-        branch_rel8(self.emu, self.emu.is_overflow(), self.instr.imm8)
+        """Emit the decoded ``JO`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), self.emu.is_overflow(), self.instr.imm8)
 
     def jno_rel8(self) -> None:
-        branch_rel8(self.emu, ~self.emu.is_overflow(), self.instr.imm8)
+        """Emit the decoded ``JNO`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), ~self.emu.is_overflow(), self.instr.imm8)
 
     def jb_rel8(self) -> None:
-        branch_rel8(self.emu, self.emu.is_carry(), self.instr.imm8)
+        """Emit the decoded ``JB`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), self.emu.is_carry(), self.instr.imm8)
 
     def jnb_rel8(self) -> None:  # jae
-        branch_rel8(self.emu, ~self.emu.is_carry(), self.instr.imm8)
+        """Emit the decoded ``JNB`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), ~self.emu.is_carry(), self.instr.imm8)
 
     def jz_rel8(self) -> None:
-        branch_rel8(self.emu, self.emu.is_zero(), self.instr.imm8)
+        """Emit the decoded ``JZ`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), self.emu.is_zero(), self.instr.imm8)
 
     def jnz_rel8(self) -> None:
-        branch_rel8(self.emu, ~self.emu.is_zero(), self.instr.imm8)
+        """Emit the decoded ``JNZ`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), ~self.emu.is_zero(), self.instr.imm8)
 
     def jbe_rel8(self) -> None:
-        branch_rel8(self.emu, self.emu.is_carry() | self.emu.is_zero(), self.instr.imm8)
+        """Emit the decoded ``JBE`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), self.emu.is_carry() | self.emu.is_zero(), self.instr.imm8)
 
     def ja_rel8(self) -> None:
-        branch_rel8(self.emu, ~(self.emu.is_carry() | self.emu.is_zero()), self.instr.imm8)
+        """Emit the decoded ``JA`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), ~(self.emu.is_carry() | self.emu.is_zero()), self.instr.imm8)
 
     def js_rel8(self) -> None:
-        branch_rel8(self.emu, self.emu.is_sign(), self.instr.imm8)
+        """Emit the decoded ``JS`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), self.emu.is_sign(), self.instr.imm8)
 
     def jns_rel8(self) -> None:
-        branch_rel8(self.emu, ~self.emu.is_sign(), self.instr.imm8)
+        """Emit the decoded ``JNS`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), ~self.emu.is_sign(), self.instr.imm8)
 
     def jp_rel8(self) -> None:
-        branch_rel8(self.emu, self.emu.is_parity(), self.instr.imm8)
+        """Emit the decoded ``JP`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), self.emu.is_parity(), self.instr.imm8)
 
     def jnp_rel8(self) -> None:
-        branch_rel8(self.emu, ~self.emu.is_parity(), self.instr.imm8)
+        """Emit the decoded ``JNP`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), ~self.emu.is_parity(), self.instr.imm8)
 
     def jl_rel8(self) -> None:
-        branch_rel8(self.emu, self.emu.is_sign() != self.emu.is_overflow(), self.instr.imm8)
+        """Emit the decoded ``JL`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), self.emu.is_sign() != self.emu.is_overflow(), self.instr.imm8)
 
     def jnl_rel8(self) -> None:  # jge
-        branch_rel8(self.emu, ~(self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm8)
+        """Emit the decoded ``JNL`` short conditional branch."""
+        branch_rel8(self._active_stack_emulator(), ~(self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm8)
 
     def jle_rel8(self) -> None:
-        branch_rel8(self.emu, self.emu.is_zero() | (self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm8)
+        """Emit the decoded ``JLE`` short conditional branch."""
+        branch_rel8(
+            self._active_stack_emulator(),
+            self.emu.is_zero() | (self.emu.is_sign() != self.emu.is_overflow()),
+            self.instr.imm8,
+        )
 
     def jnle_rel8(self) -> None:
-        branch_rel8(self.emu, ~self.emu.is_zero() & (self.emu.is_sign() == self.emu.is_overflow()), self.instr.imm8)
+        """Emit the decoded ``JNLE`` short conditional branch."""
+        branch_rel8(
+            self._active_stack_emulator(),
+            ~self.emu.is_zero() & (self.emu.is_sign() == self.emu.is_overflow()),
+            self.instr.imm8,
+        )
 
     def test_rm8_r8(self) -> None:
+        """Execute decoded ``TEST_RM8_R8`` semantics through frontend emulator effects."""
         compare_operation(self.get_rm8, self.get_r8, self.emu.update_eflags_and)
 
     def xchg_r8_rm8(self) -> None:
+        """Execute decoded ``XCHG_R8_RM8`` semantics through frontend emulator effects."""
         r8 = self.get_r8()
         rm8 = self.get_rm8()
         if self.instr.modrm.mod == 3:
@@ -490,50 +580,64 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         store_resolved_operand(self.emu, operand, r8)
 
     def mov_rm8_r8(self) -> None:
+        """Execute decoded ``MOV_RM8_R8`` semantics through frontend emulator effects."""
         r8 = self.get_r8()
         self.set_rm8(r8)
 
     def mov_r8_rm8(self) -> None:
+        """Execute decoded ``MOV_R8_RM8`` semantics through frontend emulator effects."""
         rm8 = self.get_rm8()
         self.set_r8(rm8)
 
     def mov_sreg_rm16(self) -> None:
+        """Execute decoded ``MOV_SREG_RM16`` semantics through frontend emulator effects."""
         rm16 = self.get_rm16()
         self.set_sreg(rm16)
 
     def nop(self) -> None:
+        """Execute decoded ``NOP`` semantics through frontend emulator effects."""
         pass
 
     def wait(self) -> None:
+        """Execute decoded ``WAIT`` semantics through frontend emulator effects."""
         # WAIT only stalls until TEST is asserted; architecturally it is a no-op
         # for the real-mode concrete verifier we are using here.
         self.nop()
 
     def lahf(self) -> None:
-        flags = self.emu.get_gpreg(reg16_t.FLAGS).cast_to(Type.int_8)
+        """Execute decoded ``LAHF`` semantics through frontend emulator effects."""
+        flags = _vex_expr(self.emu.get_gpreg(reg16_t.FLAGS)).cast_to(Type.int_8)
         flags_low = flags & self.emu.constant(0xD5, Type.int_8)
         self.emu.set_gpreg(reg8_t.AH, flags_low | self.emu.constant(0x02, Type.int_8))
 
     def lohf(self) -> None:
+        """Execute decoded ``LOHF`` semantics through frontend emulator effects."""
         self.lahf()
 
     def sahf(self) -> None:
-        flags = self.emu.get_gpreg(reg16_t.FLAGS)
-        ah = self.emu.get_gpreg(reg8_t.AH).cast_to(Type.int_16)
+        """Execute decoded ``SAHF`` semantics through frontend emulator effects."""
+        flags = _vex_expr(self.emu.get_gpreg(reg16_t.FLAGS))
+        ah = _vex_expr(self.emu.get_gpreg(reg8_t.AH)).cast_to(Type.int_16)
         preserved = flags & self.emu.constant(0xFF2A, Type.int_16)
         new_bits = ah & self.emu.constant(0x00D5, Type.int_16)
         self.emu.set_gpreg(reg16_t.FLAGS, preserved | new_bits | self.emu.constant(0x0002, Type.int_16))
 
     def mov_al_moffs8(self) -> None:
+        """Execute decoded ``MOV_AL_MOFFS8`` semantics through frontend emulator effects."""
         self.emu.set_gpreg(reg8_t.AL, self.get_moffs8())
 
     def mov_moffs8_al(self) -> None:
-        self.set_moffs8(self.emu.get_gpreg(reg8_t.AL))
+        """Execute decoded ``MOV_MOFFS8_AL`` semantics through frontend emulator effects."""
+        self.set_moffs8(_vex_expr(self.emu.get_gpreg(reg8_t.AL)))
 
     def test_al_imm8(self) -> None:
-        compare_operation(lambda: self.emu.get_gpreg(reg8_t.AL), lambda: self.instr.imm8, self.emu.update_eflags_and)
+        """Execute decoded ``TEST_AL_IMM8`` semantics through frontend emulator effects."""
+        compare_operation(
+            lambda: _vex_expr(self.emu.get_gpreg(reg8_t.AL)), lambda: self.instr.imm8, self.emu.update_eflags_and
+        )
 
     def salc(self) -> None:
+        """Execute decoded ``SALC`` semantics through frontend emulator effects."""
         value = self._ite_value(
             self.emu.is_carry().cast_to(Type.int_1),
             self.emu.constant(0xFF, Type.int_8),
@@ -542,19 +646,29 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.set_gpreg(reg8_t.AL, value)
 
     def esc(self) -> None:
+        """Execute decoded ``ESC`` semantics through frontend emulator effects."""
         if self.instr.modrm.mod != 3:
             operand = self._resolved_rm_operand(8)
             load_resolved_operand(self.emu, operand)
 
     def mov_r8_imm8(self) -> None:
+        """Execute decoded ``MOV_R8_IMM8`` semantics through frontend emulator effects."""
         reg = self.instr.opcode & 0b111
         self.emu.set_gpreg(coerce_reg8_t(reg), self.instr.imm8)
 
     def mov_rm8_imm8(self) -> None:
-        self.set_rm8(self.emu.lifter_instruction.constant(self.instr.imm8, Type.int_8))
+        """Execute decoded ``MOV_RM8_IMM8`` semantics through frontend emulator effects."""
+        self.set_rm8(self.emu.constant(self.instr.imm8, Type.int_8))
 
-    def _update_adjust_flags(self, result, *, af=None, cf=None, of=None):
-        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+    def _update_adjust_flags(
+        self,
+        result: VexExpr,
+        *,
+        af: VexExpr | None = None,
+        cf: VexExpr | None = None,
+        of: VexExpr | None = None,
+    ) -> None:
+        flags = _vex_expr(self.emu.get_gpreg(reg16_t.FLAGS))
         low = result.cast_to(Type.int_8)
         if af is not None:
             flags = self.emu.set_flag(flags, 4, af)
@@ -568,7 +682,8 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def daa(self) -> None:
-        al = self.emu.get_gpreg(reg8_t.AL)
+        """Execute decoded ``DAA`` semantics through frontend emulator effects."""
+        al = _vex_expr(self.emu.get_gpreg(reg8_t.AL))
         af = self.emu.get_flag(4)
         cf = self.emu.is_carry()
         low_adjust = ((al & self.emu.constant(0x0F, Type.int_8)) > self.emu.constant(9, Type.int_8)).cast_to(
@@ -601,7 +716,8 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def das(self) -> None:
-        al = self.emu.get_gpreg(reg8_t.AL)
+        """Execute decoded ``DAS`` semantics through frontend emulator effects."""
+        al = _vex_expr(self.emu.get_gpreg(reg8_t.AL))
         af = self.emu.get_flag(4)
         cf = self.emu.is_carry()
         old_sign = al[7]
@@ -635,8 +751,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def aaa(self) -> None:
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        al = self.emu.get_gpreg(reg8_t.AL)
+        """Execute decoded ``AAA`` semantics through frontend emulator effects."""
+        ax = _vex_expr(self.emu.get_gpreg(reg16_t.AX))
+        al = _vex_expr(self.emu.get_gpreg(reg8_t.AL))
         af = self.emu.get_flag(4)
         low_adjust = ((al & self.emu.constant(0x0F, Type.int_8)) > self.emu.constant(9, Type.int_8)).cast_to(Type.int_1)
         adjust = low_adjust | af
@@ -654,7 +771,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
             Type.int_1
         )
         zero = (new_al == self.emu.constant(0, Type.int_8)).cast_to(Type.int_1)
-        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        flags = _vex_expr(self.emu.get_gpreg(reg16_t.FLAGS))
         flags = self.emu.set_flag(flags, 4, adjust)
         flags = self.emu.set_carry(flags, adjust)
         flags = self.emu.set_overflow(flags, overflow)
@@ -664,8 +781,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def aas(self) -> None:
-        ax = self.emu.get_gpreg(reg16_t.AX)
-        al = self.emu.get_gpreg(reg8_t.AL)
+        """Execute decoded ``AAS`` semantics through frontend emulator effects."""
+        ax = _vex_expr(self.emu.get_gpreg(reg16_t.AX))
+        al = _vex_expr(self.emu.get_gpreg(reg8_t.AL))
         af = self.emu.get_flag(4)
         low_adjust = ((al & self.emu.constant(0x0F, Type.int_8)) > self.emu.constant(9, Type.int_8)).cast_to(Type.int_1)
         adjust = low_adjust | af
@@ -698,7 +816,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
                 (al >= self.emu.constant(0x80, Type.int_8)).cast_to(Type.int_1),
             ),
         )
-        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        flags = _vex_expr(self.emu.get_gpreg(reg16_t.FLAGS))
         flags = self.emu.set_flag(flags, 4, adjust)
         flags = self.emu.set_carry(flags, adjust)
         flags = self.emu.set_overflow(flags, overflow)
@@ -708,8 +826,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def aam(self) -> None:
-        base = self.emu.constant(self.instr.imm8 & 0xFF, Type.int_8)
-        al = self.emu.get_gpreg(reg8_t.AL)
+        """Execute decoded ``AAM`` semantics through frontend emulator effects."""
+        base = _vex_expr(self.emu.constant(self.instr.imm8 & 0xFF, Type.int_8))
+        al = _vex_expr(self.emu.get_gpreg(reg8_t.AL))
         ah = al // base
         new_al = al % base
         self.emu.set_gpreg(reg8_t.AH, ah)
@@ -722,9 +841,10 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def aad(self) -> None:
-        base = self.emu.constant(self.instr.imm8 & 0xFF, Type.int_8)
-        ah = self.emu.get_gpreg(reg8_t.AH)
-        al = self.emu.get_gpreg(reg8_t.AL)
+        """Execute decoded ``AAD`` semantics through frontend emulator effects."""
+        base = _vex_expr(self.emu.constant(self.instr.imm8 & 0xFF, Type.int_8))
+        ah = _vex_expr(self.emu.get_gpreg(reg8_t.AH))
+        al = _vex_expr(self.emu.get_gpreg(reg8_t.AL))
         ax = ah.cast_to(Type.int_16) * base.cast_to(Type.int_16) + al.cast_to(Type.int_16)
         new_al = ax.cast_to(Type.int_8)
         self.emu.set_gpreg(reg8_t.AL, new_al)
@@ -737,16 +857,20 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def retf_imm16(self) -> None:
-        return_far16(self.emu, self.instr.imm16)
+        """Execute decoded ``RETF_IMM16`` semantics through frontend emulator effects."""
+        return_far16(self._active_stack_emulator(), self.instr.imm16)
 
     def retf(self) -> None:
-        return_far16(self.emu)
+        """Execute decoded ``RETF`` semantics through frontend emulator effects."""
+        return_far16(self._active_stack_emulator())
 
     def int3(self) -> None:
+        """Execute decoded ``INT3`` semantics through frontend emulator effects."""
         self.instr.imm8 = 3
         self.int_imm8()
 
     def int_imm8(self) -> None:
+        """Execute decoded ``INT_IMM8`` semantics through frontend emulator effects."""
         if self.instr.imm8 in (0x34, 0x35, 0x38, 0x39):
             # Microsoft C's x87 emulator replaces ESC opcodes with INT helpers:
             # 34h=D8, 35h=D9, 38h=DC, 39h=DD. The ModR/M payload still describes
@@ -757,129 +881,170 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         if self.instr.imm8 == 0x3D:
             self.wait()
             return
-        next_ip = self.emu.get_ip() + self.emu.constant(self.instr.size, Type.int_16)
-        self.emu.lifter_instruction.put(next_ip.cast_to(Type.int_32), "ip_at_syscall")
+        next_ip = _vex_expr(self.emu.get_ip()) + self.emu.constant(self.instr.size, Type.int_16)
+        lifter_instruction = self.emu.lifter_instruction
+        if lifter_instruction is None:
+            raise RuntimeError("interrupt lifting requires an active lifter instruction")
+        lifter_instruction.put(next_ip.cast_to(Type.int_32), "ip_at_syscall")
         # Model real-mode interrupts as synthetic call targets so CFG/decompilation
         # can treat them like normal helper functions.
         self.emu.set_gpreg(reg16_t.IP, self.emu.constant(self.instr.imm8, Type.int_16))
-        self.emu.lifter_instruction.jump(None, 0xFF000 + self.instr.imm8, JumpKind.Call)
+        lifter_instruction.jump(None, 0xFF000 + self.instr.imm8, JumpKind.Call)
 
     def iret(self) -> None:
-        return_interrupt16(self.emu)
+        """Execute decoded ``IRET`` semantics through frontend emulator effects."""
+        return_interrupt16(self._active_stack_emulator())
 
     def in_al_imm8(self) -> None:
+        """Execute decoded ``IN_AL_IMM8`` semantics through frontend emulator effects."""
         self.emu.set_gpreg(reg8_t.AL, self.emu.in_io8(self.instr.imm8))
 
     def out_imm8_al(self) -> None:
-        al = self.emu.get_gpreg(reg8_t.AL)
+        """Execute decoded ``OUT_IMM8_AL`` semantics through frontend emulator effects."""
+        al = _vex_expr(self.emu.get_gpreg(reg8_t.AL))
         self.emu.out_io8(self.instr.imm8, al)
 
     def jmp(self) -> None:
-        branch_rel8(self.emu, True, self.instr.imm8)
+        """Execute decoded ``JMP`` semantics through frontend emulator effects."""
+        branch_rel8(self._active_stack_emulator(), True, self.instr.imm8)
 
     def in_al_dx(self) -> None:
-        dx = self.emu.get_gpreg(reg16_t.DX)
+        """Execute decoded ``IN_AL_DX`` semantics through frontend emulator effects."""
+        dx = _vex_expr(self.emu.get_gpreg(reg16_t.DX))
         self.emu.set_gpreg(reg8_t.AL, self.emu.in_io8(dx))
 
     def out_dx_al(self) -> None:
-        dx = self.emu.get_gpreg(reg16_t.DX)
-        al = self.emu.get_gpreg(reg8_t.AL)
+        """Execute decoded ``OUT_DX_AL`` semantics through frontend emulator effects."""
+        dx = _vex_expr(self.emu.get_gpreg(reg16_t.DX))
+        al = _vex_expr(self.emu.get_gpreg(reg8_t.AL))
         self.emu.out_io8(dx, al)
 
     def cmc(self) -> None:
-        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        """Execute decoded ``CMC`` semantics through frontend emulator effects."""
+        flags = _vex_expr(self.emu.get_gpreg(reg16_t.FLAGS))
         self.emu.set_gpreg(reg16_t.FLAGS, flags ^ self.emu.constant(0x0001, Type.int_16))
 
     def clc(self) -> None:
-        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        """Execute decoded ``CLC`` semantics through frontend emulator effects."""
+        flags = _vex_expr(self.emu.get_gpreg(reg16_t.FLAGS))
         self.emu.set_gpreg(reg16_t.FLAGS, flags & self.emu.constant(0xFFFE, Type.int_16))
 
     def stc(self) -> None:
-        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        """Execute decoded ``STC`` semantics through frontend emulator effects."""
+        flags = _vex_expr(self.emu.get_gpreg(reg16_t.FLAGS))
         self.emu.set_gpreg(reg16_t.FLAGS, flags | self.emu.constant(0x0001, Type.int_16))
 
     def cli(self) -> None:
+        """Execute decoded ``CLI`` semantics through frontend emulator effects."""
         self.emu.set_interrupt(False)
 
     def sti(self) -> None:
+        """Execute decoded ``STI`` semantics through frontend emulator effects."""
         self.emu.set_interrupt(True)
 
     def cld(self) -> None:
+        """Execute decoded ``CLD`` semantics through frontend emulator effects."""
         self.emu.set_direction(False)
 
     def std(self) -> None:
+        """Execute decoded ``STD`` semantics through frontend emulator effects."""
         self.emu.set_direction(True)
 
     def hlt(self) -> None:
+        """Execute decoded ``HLT`` semantics through frontend emulator effects."""
         if not self.emu.chk_ring(0):
-            raise Exception(self.emu.EXP_GP)
+            raise Exception(EXP_GP)
         self.emu.do_halt(True)
 
     def ltr_rm16(self) -> None:
+        """Execute decoded ``LTR_RM16`` semantics through frontend emulator effects."""
         if not self.emu.chk_ring(0):
-            raise Exception(self.emu.EXP_GP)
+            raise Exception(EXP_GP)
         rm16 = self.get_rm16()
-        self.emu.set_tr(rm16)
+        if not isinstance(rm16, int):
+            raise TypeError("LTR requires a concrete selector")
+        self.set_tr(rm16)
 
     def mov_r32_crn(self) -> None:
+        """Execute decoded ``MOV_R32_CRN`` semantics through frontend emulator effects."""
         crn = self.get_crn()
-        self.emu.set_gpreg(self.instr.modrm.rm, crn)
+        self.emu.set_gpreg(coerce_reg32_t(self.instr.modrm.rm), crn)
 
     def mov_crn_r32(self) -> None:
+        """Execute decoded ``MOV_CRN_R32`` semantics through frontend emulator effects."""
         if not self.emu.chk_ring(0):
-            raise Exception(self.emu.EXP_GP)
-        r32 = self.emu.get_gpreg(self.instr.modrm.rm)
+            raise Exception(EXP_GP)
+        r32 = self.emu.get_gpreg(coerce_reg32_t(self.instr.modrm.rm))
+        if not isinstance(r32, int):
+            raise TypeError("MOV to a control register requires a concrete value")
         self.set_crn(r32)
 
     def seto_rm8(self) -> None:
+        """Store the decoded ``SETO`` condition result in the byte destination."""
         self.set_rm8(self.emu.is_overflow())
 
     def setno_rm8(self) -> None:
+        """Store the decoded ``SETNO`` condition result in the byte destination."""
         self.set_rm8(not self.emu.is_overflow())
 
     def setb_rm8(self) -> None:
+        """Store the decoded ``SETB`` condition result in the byte destination."""
         self.set_rm8(self.emu.is_carry())
 
     def setnb_rm8(self) -> None:
+        """Store the decoded ``SETNB`` condition result in the byte destination."""
         self.set_rm8(not self.emu.is_carry())
 
     def setz_rm8(self) -> None:
+        """Store the decoded ``SETZ`` condition result in the byte destination."""
         self.set_rm8(self.emu.is_zero())
 
     def setnz_rm8(self) -> None:
+        """Store the decoded ``SETNZ`` condition result in the byte destination."""
         self.set_rm8(not self.emu.is_zero())
 
     def setbe_rm8(self) -> None:
+        """Store the decoded ``SETBE`` condition result in the byte destination."""
         self.set_rm8(self.emu.is_carry() or self.emu.is_zero())
 
     def seta_rm8(self) -> None:
+        """Store the decoded ``SETA`` condition result in the byte destination."""
         self.set_rm8(not (self.emu.is_carry() or self.emu.is_zero()))
 
     def sets_rm8(self) -> None:
+        """Store the decoded ``SETS`` condition result in the byte destination."""
         self.set_rm8(self.emu.is_sign())
 
     def setns_rm8(self) -> None:
+        """Store the decoded ``SETNS`` condition result in the byte destination."""
         self.set_rm8(not self.emu.is_sign())
 
     def setp_rm8(self) -> None:
+        """Store the decoded ``SETP`` condition result in the byte destination."""
         self.set_rm8(self.emu.is_parity())
 
     def setnp_rm8(self) -> None:
+        """Store the decoded ``SETNP`` condition result in the byte destination."""
         self.set_rm8(not self.emu.is_parity())
 
     def setl_rm8(self) -> None:
+        """Store the decoded ``SETL`` condition result in the byte destination."""
         self.set_rm8(self.emu.is_sign() != self.emu.is_overflow())
 
     def setnl_rm8(self) -> None:
+        """Store the decoded ``SETNL`` condition result in the byte destination."""
         self.set_rm8(self.emu.is_sign() == self.emu.is_overflow())
 
     def setle_rm8(self) -> None:
+        """Store the decoded ``SETLE`` condition result in the byte destination."""
         self.set_rm8(self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow()))
 
     def setnle_rm8(self) -> None:
+        """Store the decoded ``SETNLE`` condition result in the byte destination."""
         self.set_rm8(not self.emu.is_zero() and (self.emu.is_sign() == self.emu.is_overflow()))
 
     def code_80(self) -> None:
+        """Dispatch opcode group ``80`` by its decoded ModR/M extension."""
         self._dispatch_modrm_reg(
             (
                 self.add_rm8_imm8,
@@ -895,9 +1060,11 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def code_82(self) -> None:
+        """Dispatch opcode group ``82`` by its decoded ModR/M extension."""
         self.code_80()
 
     def code_c0(self) -> None:
+        """Dispatch opcode group ``C0`` by its decoded ModR/M extension."""
         self._dispatch_modrm_reg(
             (
                 self.rol_rm8_imm8,
@@ -913,6 +1080,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def code_f6(self) -> None:
+        """Dispatch opcode group ``F6`` by its decoded ModR/M extension."""
         self._dispatch_modrm_reg(
             (
                 self.test_rm8_imm8,
@@ -928,24 +1096,26 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def code_fe(self) -> None:
+        """Dispatch opcode group ``FE`` by its decoded ModR/M extension."""
         self._dispatch_modrm_reg((self.inc_rm8, self.dec_rm8), "0xfe")
 
-    def _group2_rm8_count(self):
+    def _group2_rm8_count(self) -> VexExpr:
         """Resolve the implicit shift/rotate count for opcodes 0xD0 and 0xD2.
 
         0xD0 uses a fixed count of 1, while 0xD2 uses CL.
         """
         if self.instr.opcode == 0xD2:
-            return self.emu.get_gpreg(reg8_t.CL)
+            return _vex_expr(self.emu.get_gpreg(reg8_t.CL))
         return self.emu.constant(1, Type.int_8)
 
-    def _masked_shift_count8(self, count):
+    def _masked_shift_count8(self, count: VexExpr) -> VexExpr:
         return masked_shift_count(self.emu, count, 8)
 
-    def _rotate_count8(self, count, modulo):
+    def _rotate_count8(self, count: VexExpr, modulo: int) -> VexExpr:
         return rotate_count(self.emu, count, modulo, 8)
 
     def shl_rm8(self) -> None:
+        """Execute decoded ``SHL_RM8`` semantics through frontend emulator effects."""
         shift_left_operation(
             self.emu,
             self.get_rm8,
@@ -956,6 +1126,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def rol_rm8(self) -> None:
+        """Execute decoded ``ROL_RM8`` semantics through frontend emulator effects."""
         rotate_left_operation(
             self.emu,
             self.get_rm8,
@@ -966,6 +1137,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def ror_rm8(self) -> None:
+        """Execute decoded ``ROR_RM8`` semantics through frontend emulator effects."""
         rotate_right_operation(
             self.emu,
             self.get_rm8,
@@ -976,16 +1148,19 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def rcl_rm8(self) -> None:
+        """Execute decoded ``RCL_RM8`` semantics through frontend emulator effects."""
         rm8 = self.get_rm8()
         count = self._group2_rm8_count()
         self._rcl_rm8(rm8, count)
 
     def rcr_rm8(self) -> None:
+        """Execute decoded ``RCR_RM8`` semantics through frontend emulator effects."""
         rm8 = self.get_rm8()
         count = self._group2_rm8_count()
         self._rcr_rm8(rm8, count)
 
     def shr_rm8(self) -> None:
+        """Execute decoded ``SHR_RM8`` semantics through frontend emulator effects."""
         shift_right_operation(
             self.emu,
             self.get_rm8,
@@ -996,6 +1171,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def sar_rm8(self) -> None:
+        """Execute decoded ``SAR_RM8`` semantics through frontend emulator effects."""
         shift_right_arithmetic_operation(
             self.emu,
             self.get_rm8,
@@ -1006,12 +1182,15 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def inc_rm8(self) -> None:
+        """Execute decoded ``INC_RM8`` semantics through frontend emulator effects."""
         unary_operation(self.get_rm8, self.set_rm8, self.emu.update_eflags_inc, lambda value: value + 1)
 
     def dec_rm8(self) -> None:
+        """Execute decoded ``DEC_RM8`` semantics through frontend emulator effects."""
         unary_operation(self.get_rm8, self.set_rm8, self.emu.update_eflags_dec, lambda value: value - 1)
 
     def add_rm8_imm8(self) -> None:
+        """Execute decoded ``ADD_RM8_IMM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu,
             self.get_rm8,
@@ -1022,6 +1201,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def or_rm8_imm8(self) -> None:
+        """Execute decoded ``OR_RM8_IMM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu,
             self.get_rm8,
@@ -1032,6 +1212,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def adc_rm8_imm8(self) -> None:
+        """Execute decoded ``ADC_RM8_IMM8`` semantics through frontend emulator effects."""
         binary_operation_with_carry(
             self.emu,
             self.get_rm8,
@@ -1043,6 +1224,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def sbb_rm8_imm8(self) -> None:
+        """Execute decoded ``SBB_RM8_IMM8`` semantics through frontend emulator effects."""
         binary_operation_with_carry(
             self.emu,
             self.get_rm8,
@@ -1054,6 +1236,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def and_rm8_imm8(self) -> None:
+        """Execute decoded ``AND_RM8_IMM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu,
             self.get_rm8,
@@ -1064,6 +1247,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def sub_rm8_imm8(self) -> None:
+        """Execute decoded ``SUB_RM8_IMM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu,
             self.get_rm8,
@@ -1074,6 +1258,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def xor_rm8_imm8(self) -> None:
+        """Execute decoded ``XOR_RM8_IMM8`` semantics through frontend emulator effects."""
         binary_operation(
             self.emu,
             self.get_rm8,
@@ -1084,6 +1269,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def cmp_rm8_imm8(self) -> None:
+        """Execute decoded ``CMP_RM8_IMM8`` semantics through frontend emulator effects."""
         compare_operation(
             self.get_rm8,
             self.imm8_value,
@@ -1091,6 +1277,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def shl_rm8_imm8(self) -> None:
+        """Execute decoded ``SHL_RM8_IMM8`` semantics through frontend emulator effects."""
         shift_left_operation(
             self.emu,
             self.get_rm8,
@@ -1101,6 +1288,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def rol_rm8_imm8(self) -> None:
+        """Execute decoded ``ROL_RM8_IMM8`` semantics through frontend emulator effects."""
         rotate_left_operation(
             self.emu,
             self.get_rm8,
@@ -1111,6 +1299,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def ror_rm8_imm8(self) -> None:
+        """Execute decoded ``ROR_RM8_IMM8`` semantics through frontend emulator effects."""
         rotate_right_operation(
             self.emu,
             self.get_rm8,
@@ -1121,16 +1310,19 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def rcl_rm8_imm8(self) -> None:
+        """Execute decoded ``RCL_RM8_IMM8`` semantics through frontend emulator effects."""
         rm8 = self.get_rm8()
         count = self.emu.constant(self.instr.imm8, Type.int_8)
         self._rcl_rm8(rm8, count)
 
     def rcr_rm8_imm8(self) -> None:
+        """Execute decoded ``RCR_RM8_IMM8`` semantics through frontend emulator effects."""
         rm8 = self.get_rm8()
         count = self.emu.constant(self.instr.imm8, Type.int_8)
         self._rcr_rm8(rm8, count)
 
     def shr_rm8_imm8(self) -> None:
+        """Execute decoded ``SHR_RM8_IMM8`` semantics through frontend emulator effects."""
         shift_right_operation(
             self.emu,
             self.get_rm8,
@@ -1141,6 +1333,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def sal_rm8_imm8(self) -> None:
+        """Execute decoded ``SAL_RM8_IMM8`` semantics through frontend emulator effects."""
         shift_left_operation(
             self.emu,
             self.get_rm8,
@@ -1151,6 +1344,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def sar_rm8_imm8(self) -> None:
+        """Execute decoded ``SAR_RM8_IMM8`` semantics through frontend emulator effects."""
         shift_right_arithmetic_operation(
             self.emu,
             self.get_rm8,
@@ -1160,26 +1354,26 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
             8,
         )
 
-    def _rcl_rm8(self, value, count) -> None:
+    def _rcl_rm8(self, value: VexExpr, count: VexExpr) -> None:
         result, cf, overflow = rotate_through_carry_left_state(self.emu, value, count, 8, self._ite_value)
         if cf is None:
             self.set_rm8(value)
             return
         self.set_rm8(result)
-        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        flags = _vex_expr(self.emu.get_gpreg(reg16_t.FLAGS))
         flags = self.emu.set_carry(flags, cf)
         flags = self.emu.set_overflow(
             flags, self._ite_value(count == self.emu.constant(1, Type.int_8), overflow, self.emu.get_flag(11))
         )
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
-    def _rcr_rm8(self, value, count) -> None:
+    def _rcr_rm8(self, value: VexExpr, count: VexExpr) -> None:
         result, cf, overflow = rotate_through_carry_right_state(self.emu, value, count, 8, self._ite_value)
         if cf is None:
             self.set_rm8(value)
             return
         self.set_rm8(result)
-        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        flags = _vex_expr(self.emu.get_gpreg(reg16_t.FLAGS))
         flags = self.emu.set_carry(flags, cf)
         flags = self.emu.set_overflow(
             flags, self._ite_value(count == self.emu.constant(1, Type.int_8), overflow, self.emu.get_flag(11))
@@ -1187,13 +1381,16 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
     def test_rm8_imm8(self) -> None:
+        """Execute decoded ``TEST_RM8_IMM8`` semantics through frontend emulator effects."""
         compare_operation(self.get_rm8, lambda: self.instr.imm8, self.emu.update_eflags_and)
 
     def not_rm8(self) -> None:
-        rm8 = self.get_rm8()
+        """Execute decoded ``NOT_RM8`` semantics through frontend emulator effects."""
+        rm8 = _vex_expr(self.get_rm8())
         self.set_rm8(~rm8)
 
     def neg_rm8(self) -> None:
+        """Execute decoded ``NEG_RM8`` semantics through frontend emulator effects."""
         unary_operation(
             self.get_rm8,
             self.set_rm8,
@@ -1202,30 +1399,49 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         )
 
     def mul_ax_al_rm8(self) -> None:
-        rm8 = self.get_rm8()
-        al = self.emu.get_gpreg(reg8_t.AL)
+        """Execute decoded ``MUL_AX_AL_RM8`` semantics through frontend emulator effects."""
+        rm8 = _vex_expr(self.get_rm8())
+        al = _vex_expr(self.emu.get_gpreg(reg8_t.AL))
         val = al.cast_to(Type.int_16) * rm8.cast_to(Type.int_16)
         self.emu.set_gpreg(reg16_t.AX, val)
         self.emu.update_eflags_mul(al, rm8)
 
     def imul_ax_al_rm8(self) -> None:
-        rm8_s = self.get_rm8().signed
-        al_s = self.emu.get_gpreg(reg8_t.AL).signed
+        """Execute decoded ``IMUL_AX_AL_RM8`` semantics through frontend emulator effects."""
+        rm8_s = _vex_expr(self.get_rm8()).signed
+        al_s = _vex_expr(self.emu.get_gpreg(reg8_t.AL)).signed
         val_s = al_s * rm8_s
         self.emu.set_gpreg(reg16_t.AX, val_s)
         self.emu.update_eflags_imul(al_s, rm8_s)
 
     def div_al_ah_rm8(self) -> None:
-        rm8 = self.get_rm8().cast_to(Type.int_16)
-        ax = self.emu.get_gpreg(reg16_t.AX)
+        """Execute decoded ``DIV_AL_AH_RM8`` semantics through frontend emulator effects."""
+        rm8 = _vex_expr(self.get_rm8()).cast_to(Type.int_16)
+        ax = _vex_expr(self.emu.get_gpreg(reg16_t.AX))
         self.emu.set_gpreg(reg8_t.AL, ax // rm8)
         self.emu.set_gpreg(reg8_t.AH, ax % rm8)
 
     def idiv_al_ah_rm8(self) -> None:
-        rm8_s = self.get_rm8().cast_to(Type.int_16, signed=True)
-        ax_s = self.emu.get_gpreg(reg16_t.AX).signed
+        """Execute decoded ``IDIV_AL_AH_RM8`` semantics through frontend emulator effects."""
+        rm8_s = _vex_expr(self.get_rm8()).cast_to(Type.int_16, signed=True)
+        ax_s = _vex_expr(self.emu.get_gpreg(reg16_t.AX)).signed
         self.emu.set_gpreg(reg8_t.AL, ax_s // rm8_s)
         self.emu.set_gpreg(reg8_t.AH, ax_s % rm8_s)
 
-    def set_chsz_ad(self, ad):
+    def set_chsz_ad(self, ad: bool) -> None:
+        """Set whether address-size override semantics are active."""
         self.chsz_ad = ad
+
+
+# Keep executable handlers in the table so owned dispatch remains statically
+# checkable; entries 4 and 6 intentionally share SHL because SAL is its alias.
+GROUP2_BYTE_SHIFT_ROTATE_HANDLERS: dict[int, Callable[[InstrBase], None]] = {
+    0: InstrBase.rol_rm8,
+    1: InstrBase.ror_rm8,
+    2: InstrBase.rcl_rm8,
+    3: InstrBase.rcr_rm8,
+    4: InstrBase.shl_rm8,
+    5: InstrBase.shr_rm8,
+    6: InstrBase.shl_rm8,
+    7: InstrBase.sar_rm8,
+}

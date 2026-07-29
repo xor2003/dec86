@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from angr_platforms.X86_16.structuring_grouped_refusal_report import (
     describe_x86_16_structuring_grouped_refusal_report_surface,
 )
@@ -14,14 +16,14 @@ from angr_platforms.X86_16.validation_manifest import (
 )
 
 
-def test_x86_16_validation_layers_cover_three_tier_discipline():
+def test_x86_16_validation_layers_cover_three_tier_discipline() -> None:
     assert [layer.name for layer in VALIDATION_LAYERS] == ["unit", "focused_corpus", "whole_program"]
     assert describe_x86_16_validation_layers() == tuple(
         (layer.name, layer.default_checks) for layer in VALIDATION_LAYERS
     )
 
 
-def test_x86_16_validation_layers_pin_expected_focus_checks():
+def test_x86_16_validation_layers_pin_expected_focus_checks() -> None:
     unit, focused, whole_program = VALIDATION_LAYERS
 
     assert "tests/test_x86_16_alias_register_mvp.py" in unit.default_checks
@@ -31,7 +33,7 @@ def test_x86_16_validation_layers_pin_expected_focus_checks():
     assert "scripts/scan_cod_dir.py --mode scan-safe" in whole_program.default_checks
 
 
-def test_x86_16_validation_families_cover_key_instruction_core_slices():
+def test_x86_16_validation_families_cover_key_instruction_core_slices() -> None:
     assert [family.name for family in VALIDATION_FAMILIES] == [
         "addressing",
         "stack_control",
@@ -57,15 +59,18 @@ def test_x86_16_validation_families_cover_key_instruction_core_slices():
     assert "tests/test_x86_16_compare_semantics.py" in VALIDATION_FAMILIES[5].default_checks
     assert "tests/test_x86_16_80286_verifier.py" in VALIDATION_FAMILIES[5].default_checks
     assert "tests/test_x86_16_tail_validation.py" in VALIDATION_FAMILIES[6].default_checks
+    assert "tests/test_x86_16_validation_dataflow.py" in VALIDATION_FAMILIES[6].default_checks
+    assert "tests/test_x86_16_validation_storage.py" in VALIDATION_FAMILIES[6].default_checks
     assert "tests/test_decompile_cod_dir_parallelism.py" in VALIDATION_FAMILIES[6].default_checks
     assert "tests/test_x86_16_storage_domain_alias.py" in VALIDATION_FAMILIES[7].default_checks
     assert "tests/test_x86_16_widening_model.py" in VALIDATION_FAMILIES[8].default_checks
     assert "tests/test_x86_16_segmented_memory.py" in VALIDATION_FAMILIES[9].default_checks
+    assert "tests/test_x86_16_validation_storage.py" in VALIDATION_FAMILIES[9].default_checks
     assert "tests/test_x86_16_type_equivalence_classes.py" in VALIDATION_FAMILIES[10].default_checks
     assert "tests/test_x86_16_readability_set.py" in VALIDATION_FAMILIES[11].default_checks
 
 
-def test_x86_16_validation_triage_surface_spells_out_workflow():
+def test_x86_16_validation_triage_surface_spells_out_workflow() -> None:
     assert describe_x86_16_validation_triage() == {
         "reference_role": "secondary semantic reference",
         "target_families": ("string", "stack_control", "addressing", "interrupt_api", "alu"),

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Run bounded autonomous decompilation repair loops from explicit stop criteria.
+
+Layer: Tooling/gates.
+Responsibility: iterate decompilation quality gates and stop only from typed loop outcomes.
+"""
 
 from __future__ import annotations
 
@@ -91,7 +96,7 @@ _DEAD_SETUP_SUMMARY_RE = re.compile(
 
 
 def _parse_tail_stats(output: str) -> tuple[TailVerdict, int, int, int, int, int, int]:
-    def _impl():
+    def _impl() -> tuple[TailVerdict, int, int, int, int, int, int]:
         clean = 0
         failed = 0
         unknown = 0

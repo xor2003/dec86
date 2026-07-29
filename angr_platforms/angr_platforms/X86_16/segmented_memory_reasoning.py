@@ -1,4 +1,7 @@
-"""Segmented memory association reasoning for Inertia decompiler Phase 3.
+"""Layer: Types/Lowering.
+
+Responsibility: reason about segment-register evidence before conservative segmented-memory lowering.
+Forbidden: inventing segment bases, flattening SS/DS/ES, or using postprocess shape as semantic proof.
 
 Real-mode x86 uses segment:offset addressing. This module tracks:
 - Segment register assignments (CS, DS, ES, SS)
@@ -12,37 +15,50 @@ Evidence: register assignments, memory access patterns, consistency across funct
 from __future__ import annotations
 
 import logging
+import os
+import typing
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Optional, Set
+from typing import TYPE_CHECKING, Any, Optional, Set, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimStackVariable
 
 from .alias.alias_model import _stack_storage_facts_for_segmented_address_8616
-from .decompiler_postprocess_utils import _match_bp_stack_dereference_8616, _replace_c_children_8616
+from .c_ast_utils import _replace_c_children_8616
 from .lowering.real_mode_linear import (
     lower_stable_ds_es_linear_global_dereferences_8616,
 )
 from .lowering.segmented_memory_lowering import apply_runtime_segment_lowering_8616
+from .lowering.stack_c_ast_matching import _match_bp_stack_dereference_8616
 from .lowering.stack_lowering_from_facts import _canonical_stack_offset_8616, _stack_object_name
 
 if TYPE_CHECKING:
     pass
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
-def _publish_segmented_memory_evidence_8616(codegen, summary: dict, lowering: dict) -> None:
-    codegen._inertia_segmented_memory_summary = summary
-    codegen._inertia_segmented_memory_lowering = lowering
+def _publish_segmented_memory_evidence_8616(
+    codegen: object,
+    summary: dict[str, dict[str, dict[str, object]]],
+    lowering: dict[str, dict[str, object]],
+) -> None:
+    """Publish segment evidence across the dynamic third-party angr codegen/project boundary."""
+    # Dynamic codegen boundary: segmented-memory evidence is optional metadata on angr codegen.
+    typing.cast(typing.Any, codegen)._inertia_segmented_memory_summary = summary
+    # Dynamic codegen boundary: lowering policy is optional metadata on angr codegen.
+    typing.cast(typing.Any, codegen)._inertia_segmented_memory_lowering = lowering
     project = getattr(codegen, "project", None)
     if project is not None:
+        # Dynamic project boundary: mirror evidence for CLI/reporting consumers attached to angr project.
         project._inertia_segmented_memory_summary = summary
+        # Dynamic project boundary: mirror lowering policy for CLI/reporting consumers attached to angr project.
         project._inertia_segmented_memory_lowering = lowering
 
 
-def _typed_ir_address_spaces_8616(codegen) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _typed_ir_address_spaces_8616(codegen: object) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Read typed IR address-space summaries from the dynamic angr codegen boundary."""
     artifact = getattr(codegen, "_inertia_vex_ir_artifact", None)
     summary = getattr(artifact, "summary", None)
     if not isinstance(summary, dict):
@@ -153,6 +169,7 @@ class SegmentLoweringDecision:
     reason: str
 
     def requires_explicit_segmented_form(self) -> bool:
+        """Return whether lowering must keep an explicit segmented-memory form."""
         return not self.allow_linear_lowering
 
 
@@ -218,7 +235,8 @@ class SegmentAssociationAnalyzer:
     5. Score confidence based on consistency
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
+        """Initialize empty segment association state."""
         self.associations: dict[SegmentRegister, SegmentAssociation] = {
             seg: SegmentAssociation(segment_reg=seg, associated_space="unknown") for seg in SegmentRegister
         }
@@ -290,7 +308,8 @@ class SegmentAssociationAnalyzer:
             return 0.0
         return assoc.stability
 
-    def summarize(self) -> dict[str, object]:
+    def summarize(self) -> dict[str, dict[str, dict[str, object]]]:
+        """Summarize segment associations into stable, over-associated, and unknown buckets."""
         stable: dict[str, dict[str, object]] = {}
         over_associated: dict[str, dict[str, object]] = {}
         unknown: dict[str, dict[str, object]] = {}
@@ -319,6 +338,7 @@ class SegmentAssociationAnalyzer:
         }
 
     def lowering_decision(self, segment_reg: SegmentRegister) -> SegmentLoweringDecision:
+        """Return the conservative lowering policy for one segment register."""
         assoc = self.associations[segment_reg]
         classification = assoc.classification
         space = assoc.associated_space
@@ -379,6 +399,7 @@ class SegmentAssociationAnalyzer:
         )
 
     def lowering_summary(self) -> dict[str, dict[str, object]]:
+        """Summarize conservative lowering decisions for observed segment registers."""
         summary: dict[str, dict[str, object]] = {}
         for segment_reg, assoc in self.associations.items():
             if assoc.evidence_count == 0:
@@ -406,21 +427,30 @@ class SegmentAssociationAnalyzer:
         return max(0.1, min(0.35, base - 0.2))
 
 
-def _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer: SegmentAssociationAnalyzer | None) -> bool:
-    def _impl():
-        assignments = list(getattr(codegen, "_inertia_segment_assignments", ()) or ())
+def _can_lower_ss_address_to_stack_slot_8616(codegen: object, analyzer: SegmentAssociationAnalyzer | None) -> bool:
+    """Decide SS stack-slot lowering from dynamic third-party angr codegen metadata."""
+
+    def _impl() -> bool:
+        """Read optional segment assignments at the dynamic angr codegen boundary."""
+        assignments = list(
+            cast(tuple[SegmentAssignment, ...], getattr(codegen, "_inertia_segment_assignments", ()) or ())
+        )
         if not assignments or analyzer is None:
             typed_spaces, stable_spaces = _typed_ir_address_spaces_8616(codegen)
             if stable_spaces and "ss" not in stable_spaces and "ss" not in typed_spaces:
                 return False
-            codegen._inertia_typed_ir_address_spaces = typed_spaces
-            codegen._inertia_typed_ir_stable_address_spaces = stable_spaces
+            # Dynamic codegen boundary: typed IR address-space diagnostics are optional metadata on angr codegen.
+            typing.cast(typing.Any, codegen)._inertia_typed_ir_address_spaces = typed_spaces
+            # Dynamic codegen boundary: stable typed IR address-space diagnostics are optional metadata on angr codegen.
+            typing.cast(typing.Any, codegen)._inertia_typed_ir_stable_address_spaces = stable_spaces
             return True
 
         decision = analyzer.lowering_decision(SegmentRegister.SS)
         typed_spaces, stable_spaces = _typed_ir_address_spaces_8616(codegen)
-        codegen._inertia_typed_ir_address_spaces = typed_spaces
-        codegen._inertia_typed_ir_stable_address_spaces = stable_spaces
+        # Dynamic codegen boundary: typed IR address-space diagnostics are optional metadata on angr codegen.
+        typing.cast(typing.Any, codegen)._inertia_typed_ir_address_spaces = typed_spaces
+        # Dynamic codegen boundary: stable typed IR address-space diagnostics are optional metadata on angr codegen.
+        typing.cast(typing.Any, codegen)._inertia_typed_ir_stable_address_spaces = stable_spaces
         if stable_spaces and "ss" not in stable_spaces and "ss" not in typed_spaces:
             return False
         return decision.associated_space == "stack" and decision.classification in {"single", "const"}
@@ -428,7 +458,8 @@ def _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer: SegmentAssociati
     return _impl()
 
 
-def _existing_stack_cvar_for_offset_8616(codegen, offset: int):
+def _existing_stack_cvar_for_offset_8616(codegen: object, offset: int) -> object | None:
+    """Find an existing stack C variable through the dynamic third-party angr codegen boundary."""
     variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
     if not isinstance(variables_in_use, dict):
         return None
@@ -437,22 +468,26 @@ def _existing_stack_cvar_for_offset_8616(codegen, offset: int):
     for variable, cvar in variables_in_use.items():
         if not isinstance(variable, SimStackVariable):
             continue
-        if _canonical_stack_offset_8616(getattr(variable, "offset", None)) != _canonical_stack_offset_8616(offset):
+        if _canonical_stack_offset_8616(variable.offset) != _canonical_stack_offset_8616(offset):
             continue
-        variable_region = getattr(variable, "region", None)
+        variable_region = variable.region
         if isinstance(region, int) and isinstance(variable_region, int) and variable_region != region:
             continue
         return cvar
     return None
 
 
-def _recover_stack_slot_from_segmented_operand_8616(node, codegen):
-    def _impl():
+def _recover_stack_slot_from_segmented_operand_8616(node: object, codegen: object) -> object | None:
+    """Recover an SS:BP stack slot through the dynamic third-party angr C-AST/codegen boundary."""
+
+    def _impl() -> object | None:
+        """Inspect optional C-AST/codegen attributes at the dynamic angr boundary."""
+        codegen_dynamic = cast(Any, codegen)
         project = getattr(getattr(codegen, "project", None), "arch", None)
         if project is None:
             return None
 
-        displacement = _match_bp_stack_dereference_8616(node, codegen.project, codegen)
+        displacement = _match_bp_stack_dereference_8616(node, codegen_dynamic.project, codegen)
         if displacement is None:
             return None
 
@@ -490,9 +525,11 @@ def _recover_stack_slot_from_segmented_operand_8616(node, codegen):
     return _impl()
 
 
-def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
-    def _impl():
-        """Apply segmented memory association reasoning pass to codegen.
+def apply_x86_16_segmented_memory_reasoning(codegen: object) -> bool:
+    """Apply segmented memory association reasoning to an angr codegen object."""
+
+    def _impl() -> bool:
+        """Apply segmented memory association reasoning at the dynamic third-party angr codegen boundary.
 
         This is the entry point for Phase 3 decompiler framework integration.
 
@@ -510,22 +547,26 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
             return False
 
         try:
-            # Track that segmented memory pass ran
-            codegen._inertia_segmented_memory_applied = True
-            codegen._inertia_segmented_memory_stats = {
+            # Dynamic codegen boundary: pass status is optional metadata on angr codegen.
+            typing.cast(typing.Any, codegen)._inertia_segmented_memory_applied = True
+            # Dynamic codegen boundary: pass counters are optional metadata on angr codegen.
+            typing.cast(typing.Any, codegen)._inertia_segmented_memory_stats = {
                 "segment_assignments": 0,
                 "associations_built": 0,
                 "far_pointers_detected": 0,
             }
 
-            assignments = list(getattr(codegen, "_inertia_segment_assignments", ()) or ())
+            assignments = list(
+                cast(tuple[SegmentAssignment, ...], getattr(codegen, "_inertia_segment_assignments", ()) or ())
+            )
             analyzer = SegmentAssociationAnalyzer()
             if assignments:
                 analyzer.analyze(assignments)
                 summary = analyzer.summarize()
                 lowering = analyzer.lowering_summary()
                 _publish_segmented_memory_evidence_8616(codegen, summary, lowering)
-                codegen._inertia_segmented_memory_stats = {
+                # Dynamic codegen boundary: analyzed segment counters are optional metadata on angr codegen.
+                typing.cast(typing.Any, codegen)._inertia_segmented_memory_stats = {
                     "segment_assignments": len(assignments),
                     "associations_built": sum(
                         len(summary[bucket]) for bucket in ("stable", "over_associated", "unknown")
@@ -555,14 +596,9 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
                 return False
             if lower_stable_ds_es_linear_global_dereferences_8616(codegen, project=project):
                 changed = True
-            # Keep structuring-time tail validation stable: defer runtime segment
-            # helper call materialization outside structuring pass execution.
-            if not current_stage.startswith("structuring:"):
-                if apply_runtime_segment_lowering_8616(codegen, target=target):
-                    changed = True
             if _can_lower_ss_address_to_stack_slot_8616(codegen, analyzer):
 
-                def transform(node):
+                def transform(node: object) -> object:
                     nonlocal changed
                     if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
                         return node
@@ -572,27 +608,40 @@ def apply_x86_16_segmented_memory_reasoning(codegen) -> bool:
                         return replacement
                     return node
 
-                root = getattr(codegen.cfunc, "statements", None)
+                codegen_dynamic = cast(Any, codegen)
+                root = getattr(codegen_dynamic.cfunc, "statements", None)
                 if root is not None:
                     new_root = transform(root)
                     if new_root is not root:
-                        codegen.cfunc.statements = new_root
-                        if hasattr(codegen.cfunc, "body"):
-                            codegen.cfunc.body = new_root
-                    if _replace_c_children_8616(codegen.cfunc.statements, transform):
+                        codegen_dynamic.cfunc.statements = new_root
+                        if hasattr(codegen_dynamic.cfunc, "body"):
+                            codegen_dynamic.cfunc.body = new_root
+                    if _replace_c_children_8616(codegen_dynamic.cfunc.statements, transform):
                         changed = True
+
+            # Keep structuring-time tail validation stable: defer runtime segment
+            # helper call materialization outside structuring pass execution.  SS
+            # stack recovery must run first so stack slots materialize as
+            # variables instead of generic segmented runtime helper calls.
+            if not current_stage.startswith("structuring:"):
+                if apply_runtime_segment_lowering_8616(codegen, target=target):
+                    changed = True
 
             logger.debug("Segmented memory association reasoning pass completed")
             return changed
         except Exception as ex:
-            logger.warning("Segmented memory reasoning pass failed: %s", ex)
-            codegen._inertia_segmented_memory_error = str(ex)
+            if os.environ.get("INERTIA_DEBUG_SEGMENTED_MEMORY") == "1":
+                logger.exception("Segmented memory reasoning pass failed")
+            else:
+                logger.warning("Segmented memory reasoning pass failed: %s", ex)
+            # Dynamic codegen boundary: preserve diagnostic failure reason on angr codegen.
+            typing.cast(typing.Any, codegen)._inertia_segmented_memory_error = str(ex)
             return False
 
     return _impl()
 
 
-def _lower_stable_ss_stack_accesses_8616(codegen) -> bool:
+def _lower_stable_ss_stack_accesses_8616(codegen: object) -> bool:
     """Analysis-only postprocess pass: collect segment evidence, skip transformation.
 
     The actual SS stack lowering runs later in cli_decompilation.py rewrite passes
@@ -601,20 +650,24 @@ def _lower_stable_ss_stack_accesses_8616(codegen) -> bool:
     return _apply_segmented_memory_analysis_only_8616(codegen)
 
 
-def _apply_segmented_memory_analysis_only_8616(codegen) -> bool:
-    """Run segment association analysis without transforming codegen."""
+def _apply_segmented_memory_analysis_only_8616(codegen: object) -> bool:
+    """Run segment association analysis at the dynamic codegen boundary without transforming codegen."""
     if getattr(codegen, "cfunc", None) is None:
         return False
     try:
-        codegen._inertia_segmented_memory_applied = True
-        assignments = list(getattr(codegen, "_inertia_segment_assignments", ()) or ())
+        # Dynamic codegen boundary: pass status is optional metadata on angr codegen.
+        typing.cast(typing.Any, codegen)._inertia_segmented_memory_applied = True
+        assignments = list(
+            cast(tuple[SegmentAssignment, ...], getattr(codegen, "_inertia_segment_assignments", ()) or ())
+        )
         analyzer = SegmentAssociationAnalyzer()
         if assignments:
             analyzer.analyze(assignments)
             summary = analyzer.summarize()
             lowering = analyzer.lowering_summary()
             _publish_segmented_memory_evidence_8616(codegen, summary, lowering)
-            codegen._inertia_segmented_memory_stats = {
+            # Dynamic codegen boundary: analysis-only counters are optional metadata on angr codegen.
+            typing.cast(typing.Any, codegen)._inertia_segmented_memory_stats = {
                 "segment_assignments": len(assignments),
                 "associations_built": sum(
                     len(summary.get(bucket, ())) for bucket in ("stable", "over_associated", "unknown")
@@ -627,9 +680,11 @@ def _apply_segmented_memory_analysis_only_8616(codegen) -> bool:
         return False
     except Exception as ex:
         logger.warning("Segmented memory analysis-only pass failed: %s", ex)
-        codegen._inertia_segmented_memory_error = str(ex)
+        # Dynamic codegen boundary: preserve analysis-only failure reason on angr codegen.
+        typing.cast(typing.Any, codegen)._inertia_segmented_memory_error = str(ex)
         return False
 
 
-def _empty_segment_summary_8616():
+def _empty_segment_summary_8616() -> dict[str, dict[str, dict[str, object]]]:
+    """Return the empty segmented-memory evidence summary shape."""
     return {"stable": {}, "over_associated": {}, "unknown": {}}

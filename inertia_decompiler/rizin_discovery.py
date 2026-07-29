@@ -1,3 +1,9 @@
+"""Collect optional rizin function discovery candidates for CLI orchestration.
+
+Layer: CLI/fallback/reporting.
+Responsibility: collect optional rizin function seeds without making them semantic proof.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +13,6 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any
 
 from .cache import _load_cache_json, _recovery_cache_key, _store_cache_json
 
@@ -20,6 +25,8 @@ __all__ = [
 
 
 class RizinDiscoveryStatus(Enum):
+    """Typed outcomes for optional rizin discovery."""
+
     OK = "ok"
     UNAVAILABLE = "unavailable"
     TIMEOUT = "timeout"
@@ -29,6 +36,8 @@ class RizinDiscoveryStatus(Enum):
 
 @dataclass(frozen=True)
 class RizinDiscoveryResult:
+    """Rizin function-seed discovery result."""
+
     status: RizinDiscoveryStatus
     offsets: tuple[int, ...]
     elapsed_ms: float
@@ -39,14 +48,26 @@ def _rizin_available() -> bool:
     return shutil.which("rizin") is not None
 
 
+def _json_int(value: object, default: int = 0) -> int:
+    """Return an integer from a JSON scalar, or a fallback for non-scalars."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int | float | str):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+    return default
+
+
 def _score_aflj_entry(entry: dict[str, object]) -> tuple[int, int]:
     name = str(entry.get("name", "") or "")
-    size = int(entry.get("size", 0) or 0)
-    nbbs = int(entry.get("nbbs", 0) or 0)
-    ncallrefs = int(entry.get("ncallrefs", 0) or 0)
+    size = _json_int(entry.get("size"))
+    nbbs = _json_int(entry.get("nbbs"))
+    ncallrefs = _json_int(entry.get("ncallrefs"))
     imported_penalty = 1000 if name.startswith("sym.imp.") else 0
     score = (ncallrefs * 10) + (nbbs * 4) + min(size, 512) - imported_penalty
-    offset = int(entry.get("offset", 0) or 0)
+    offset = _json_int(entry.get("offset"))
     return score, -offset
 
 
@@ -58,7 +79,7 @@ def _cache_key(binary_path: Path, *, timeout_sec: int, max_count: int | None) ->
     )
 
 
-def _run_rizin_json(binary_path: Path, command: str, *, timeout_sec: int) -> Any:
+def _run_rizin_json(binary_path: Path, command: str, *, timeout_sec: int) -> object:
     cmd = ["rizin", "-2", "-q", "-c", command, str(binary_path)]
     completed = subprocess.run(
         cmd,
@@ -81,20 +102,45 @@ def _mz_linear_candidates_from_prologues(binary_path: Path) -> tuple[list[int], 
     segments = _run_rizin_json(binary_path, "iSj", timeout_sec=3)
     if not isinstance(segments, list):
         return [], "no_segment_map"
-    chosen = None
+    executable_segments: list[tuple[int, int, int]] = []
     for seg in segments:
         if not isinstance(seg, dict):
             continue
         paddr = int(seg.get("paddr", 0) or 0)
         vaddr = int(seg.get("vaddr", 0) or 0)
-        # Prefer the DOS code segment mapping near header end.
-        if paddr > 0 and vaddr >= 0:
-            if chosen is None or paddr < int(chosen.get("paddr", 0) or 0):
-                chosen = {"paddr": paddr, "vaddr": vaddr}
-    if chosen is None:
+        vsize = int(seg.get("vsize", 0) or 0)
+        perm = str(seg.get("perm", ""))
+        if paddr <= 0 or vaddr < 0:
+            continue
+        if not perm.startswith("-rwx") and "x" not in perm:
+            continue
+        executable_segments.append((paddr, vaddr, max(0, vsize)))
+    if not executable_segments:
+        # Fallback: keep prior behavior for binaries with sparse rizin segment metadata.
+        chosen = None
+        for seg in segments:
+            if not isinstance(seg, dict):
+                continue
+            paddr = int(seg.get("paddr", 0) or 0)
+            vaddr = int(seg.get("vaddr", 0) or 0)
+            if paddr > 0 and vaddr >= 0:
+                if chosen is None or paddr < int(chosen.get("paddr", 0) or 0):
+                    chosen = {"paddr": paddr, "vaddr": vaddr}
+        if chosen is None:
+            return [], "no_mappable_segment"
+        pbase = int(chosen["paddr"])
+        vbase = int(chosen["vaddr"])
+    else:
+        # Prefer largest executable segment with known code size, otherwise first encountered.
+        exec_vsize, pbase, vbase = max(
+            ((vsize, paddr, vaddr) for paddr, vaddr, vsize in executable_segments),
+            key=lambda item: (item[0], item[1]),
+        )
+        if exec_vsize <= 0:
+            pbase = executable_segments[0][0]
+            vbase = executable_segments[0][1]
+    if "pbase" not in locals() or "vbase" not in locals():
         return [], "no_mappable_segment"
-    pbase = int(chosen["paddr"])
-    vbase = int(chosen["vaddr"])
     patterns = (b"\x55\x8b\xec", b"\x55\x89\xe5")
     candidates: list[int] = []
     for pat in patterns:
@@ -137,6 +183,7 @@ def _mz_linear_candidates_from_prologues(binary_path: Path) -> tuple[list[int], 
 
 
 def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) -> RizinDiscoveryResult:
+    """Discover candidate function entry offsets with rizin."""
     started = time.perf_counter()
     if not _rizin_available():
         return RizinDiscoveryResult(RizinDiscoveryStatus.UNAVAILABLE, (), 0.0, "rizin not found")
@@ -147,16 +194,17 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
             cached_status_raw = str(cached.get("status", "") or "").strip().lower()
             cached_detail = str(cached.get("detail", "") or "")
             offsets_raw = cached.get("offsets")
+            cached_offsets: tuple[int, ...]
             if isinstance(offsets_raw, list):
-                offsets = tuple(int(x) for x in offsets_raw)
+                cached_offsets = tuple(_json_int(x) for x in offsets_raw)
             else:
-                offsets = ()
+                cached_offsets = ()
             if cached_status_raw:
                 for status in RizinDiscoveryStatus:
                     if status.value == cached_status_raw:
                         return RizinDiscoveryResult(
                             status,
-                            offsets,
+                            cached_offsets,
                             (time.perf_counter() - started) * 1000.0,
                             f"cache_hit:{cached_detail or cached_status_raw}",
                         )
@@ -268,7 +316,7 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
     dedup: set[int] = set()
     offsets: list[int] = []
     for item in ordered:
-        offset = int(item.get("offset", 0) or 0)
+        offset = _json_int(item.get("offset"))
         if offset <= 0 or offset in dedup:
             continue
         dedup.add(offset)
@@ -304,6 +352,7 @@ def discover_function_offsets_with_rizin(
     *,
     max_count: int | None = None,
 ) -> tuple[list[int], str]:
+    """Return optional rizin function offsets and a status/detail label."""
     result = discover_rizin_function_entries(binary_path, timeout_sec=8)
     if result.status is not RizinDiscoveryStatus.OK:
         return [], result.status.value

@@ -1,4 +1,14 @@
-from archinfo import ArchError, RegisterOffset
+"""Layer: Frontend/runtime.
+
+Responsibility: define the 16-bit x86 archinfo register and toolchain surface.
+Forbidden: decompiler semantic recovery, alias/type ownership, or rewrite cleanup.
+"""
+
+from __future__ import annotations
+
+from typing import Any, cast
+
+from archinfo import ArchError, Endness, RegisterOffset
 
 try:
     import capstone as _capstone
@@ -11,21 +21,27 @@ except ImportError:
     _keystone = None
 
 try:
-    import unicorn as _unicorn
+    import unicorn as _unicorn  # type: ignore[reportMissingImports]
 except ImportError:
     _unicorn = None
 
 import pyvex
-from archinfo.arch import Arch, Endness, Register, register_arch
+from archinfo.arch import Arch, Register, register_arch
+
+__all__ = ("Arch86_16",)
 
 
 class Arch86_16(Arch):
-    def __init__(self, endness=Endness.LE):
+    """16-bit x86 archinfo definition for real-mode DOS lifting and runtime setup."""
+
+    def __init__(self, endness: Endness = Endness.LE) -> None:
+        """Initialize register offsets and 16-bit architecture defaults."""
         import logging
 
         self.logger = logging.getLogger(__name__)
         super().__init__(endness)
-        self.endness = "Iend_LE"
+        self_any = cast(Any, self)
+        self_any.endness = "Iend_LE"
         self.reg_blacklist = []
         self.reg_blacklist_offsets = []
         self.vex_archinfo = None
@@ -38,7 +54,7 @@ class Arch86_16(Arch):
 
         offset = 0
         for reg in self.register_list:
-            reg.vex_offset = offset
+            cast(Any, reg).vex_offset = offset
             offset += reg.size // 8  # Bytes for VEX alignment
             if reg.name in [
                 "ax",
@@ -69,8 +85,8 @@ class Arch86_16(Arch):
     name = "86_16"
     bits = 16
     stack_change = -2
-    vex_arch = pyvex.ARCH_X86
-    vex_support = True
+    vex_arch: Any = cast(Any, pyvex.ARCH_X86)
+    vex_support: Any = cast(Any, True)
     vex_conditional_helpers = False
     sizeof = {"short": 16, "int": 16, "long": 32, "long long": 32}
     ld_linux_name = None
@@ -244,8 +260,8 @@ class Arch86_16(Arch):
     ]
 
     @property
-    def capstone_x86_syntax(self):
-        """Get the current syntax Capstone uses for x86. It can be 'intel' or 'at&t'
+    def capstone_x86_syntax(self) -> str | None:
+        """Get the current syntax Capstone uses for x86.
 
         :return: Capstone's current x86 syntax
         :rtype: str
@@ -253,7 +269,7 @@ class Arch86_16(Arch):
         return self._cs_x86_syntax
 
     @capstone_x86_syntax.setter
-    def capstone_x86_syntax(self, new_syntax):
+    def capstone_x86_syntax(self, new_syntax: str) -> None:
         """Set the syntax that Capstone outputs for x86."""
         if new_syntax not in ("intel", "at&t"):
             raise ArchError('Unsupported Capstone x86 syntax. It must be either "intel" or "at&t".')
@@ -262,15 +278,15 @@ class Arch86_16(Arch):
             self._cs = None
             self._cs_x86_syntax = new_syntax
 
-    def _configure_capstone(self):
-        self._cs.syntax = (
-            _capstone.CS_OPT_SYNTAX_ATT if self._cs_x86_syntax == "at&t" else _capstone.CS_OPT_SYNTAX_INTEL
+    def _configure_capstone(self) -> None:
+        capstone_mod = cast(Any, _capstone)
+        cast(Any, self._cs).syntax = (
+            capstone_mod.CS_OPT_SYNTAX_ATT if self._cs_x86_syntax == "at&t" else capstone_mod.CS_OPT_SYNTAX_INTEL
         )
 
     @property
-    def keystone_x86_syntax(self):
-        """Get the current syntax Keystone uses for x86. It can be 'intel',
-        'at&t', 'nasm', 'masm', 'gas' or 'radix16'
+    def keystone_x86_syntax(self) -> str | None:
+        """Get the current syntax Keystone uses for x86.
 
         :return: Keystone's current x86 syntax
         :rtype: str
@@ -278,7 +294,7 @@ class Arch86_16(Arch):
         return self._ks_x86_syntax
 
     @keystone_x86_syntax.setter
-    def keystone_x86_syntax(self, new_syntax):
+    def keystone_x86_syntax(self, new_syntax: str) -> None:
         """Set the syntax that Keystone uses for x86."""
         if new_syntax not in ("intel", "at&t", "nasm", "masm", "gas", "radix16"):
             raise ArchError(
@@ -290,19 +306,21 @@ class Arch86_16(Arch):
             self._ks = None
             self._ks_x86_syntax = new_syntax
 
-    def _configure_keystone(self):
+    def _configure_keystone(self) -> None:
+        keystone_mod = cast(Any, _keystone)
+        ks = cast(Any, self._ks)
         if self._ks_x86_syntax == "at&t":
-            self._ks.syntax = _keystone.KS_OPT_SYNTAX_ATT
+            ks.syntax = keystone_mod.KS_OPT_SYNTAX_ATT
         elif self._ks_x86_syntax == "nasm":
-            self._ks.syntax = _keystone.KS_OPT_SYNTAX_NASM
+            ks.syntax = keystone_mod.KS_OPT_SYNTAX_NASM
         elif self._ks_x86_syntax == "masm":
-            self._ks.syntax = _keystone.KS_OPT_SYNTAX_MASM
+            ks.syntax = keystone_mod.KS_OPT_SYNTAX_MASM
         elif self._ks_x86_syntax == "gas":
-            self._ks.syntax = _keystone.KS_OPT_SYNTAX_GAS
+            ks.syntax = keystone_mod.KS_OPT_SYNTAX_GAS
         elif self._ks_x86_syntax == "radix16":
-            self._ks.syntax = _keystone.KS_OPT_SYNTAX_RADIX16
+            ks.syntax = keystone_mod.KS_OPT_SYNTAX_RADIX16
         else:
-            self._ks.syntax = _keystone.KS_OPT_SYNTAX_INTEL
+            ks.syntax = keystone_mod.KS_OPT_SYNTAX_INTEL
 
 
-register_arch([r"86_16"], 16, "Iend_LE", Arch86_16)
+register_arch([r"86_16"], 16, cast(Any, "Iend_LE"), Arch86_16)

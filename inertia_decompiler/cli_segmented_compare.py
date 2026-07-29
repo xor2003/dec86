@@ -1,7 +1,26 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from typing import TypeAlias
 
-def _split_expr_const_offset(node, *, flatten_c_add_terms, unwrap_c_casts, c_constant_value):
+from angr_platforms.X86_16.lowering.segmented_lowering import _SegmentedAccess
+
+ClassifySegmentedAddrExpr: TypeAlias = Callable[[object, object], _SegmentedAccess | None]
+
+
+def _split_expr_const_offset(
+    node: object,
+    *,
+    flatten_c_add_terms: Callable[[object], Sequence[object]],
+    unwrap_c_casts: Callable[[object], object],
+    c_constant_value: Callable[[object], int | None],
+) -> tuple[list[object], int]:
     terms = flatten_c_add_terms(node)
     const_sum = 0
     others = []
@@ -14,7 +33,12 @@ def _split_expr_const_offset(node, *, flatten_c_add_terms, unwrap_c_casts, c_con
     return others, const_sum
 
 
-def _same_expression_list(lhs_terms, rhs_terms, *, same_c_expression) -> bool:
+def _same_expression_list(
+    lhs_terms: Sequence[object],
+    rhs_terms: Sequence[object],
+    *,
+    same_c_expression: Callable[[object, object], bool],
+) -> bool:
     if len(lhs_terms) != len(rhs_terms):
         return False
 
@@ -34,16 +58,16 @@ def _same_expression_list(lhs_terms, rhs_terms, *, same_c_expression) -> bool:
 
 
 def _addr_exprs_are_same(
-    low_addr_expr,
-    high_addr_expr,
-    project,
+    low_addr_expr: object,
+    high_addr_expr: object,
+    project: object,
     *,
-    classify_segmented_addr_expr,
-    same_c_expression,
-    split_expr_const_offset,
-    same_expression_list,
-):
-    def _impl():
+    classify_segmented_addr_expr: ClassifySegmentedAddrExpr,
+    same_c_expression: Callable[[object, object], bool],
+    split_expr_const_offset: Callable[[object], tuple[Sequence[object], int]],
+    same_expression_list: Callable[[Sequence[object], Sequence[object]], bool],
+) -> bool:
+    def _impl() -> bool:
         low_class = classify_segmented_addr_expr(low_addr_expr, project)
         high_class = classify_segmented_addr_expr(high_addr_expr, project)
 
@@ -63,17 +87,17 @@ def _addr_exprs_are_same(
 
 
 def _addr_exprs_are_byte_pair(
-    low_addr_expr,
-    high_addr_expr,
-    project=None,
+    low_addr_expr: object,
+    high_addr_expr: object,
+    project: object | None = None,
     *,
-    classify_segmented_addr_expr,
-    stack_slot_identity_can_join_var,
-    split_expr_const_offset,
-    same_expression_list,
-):
-    def _impl():
-        def _strip_zero_segment_scale_terms(terms):
+    classify_segmented_addr_expr: ClassifySegmentedAddrExpr,
+    stack_slot_identity_can_join_var: Callable[[object, object], bool],
+    split_expr_const_offset: Callable[[object], tuple[Sequence[object], int]],
+    same_expression_list: Callable[[Sequence[object], Sequence[object]], bool],
+) -> bool:
+    def _impl() -> bool:
+        def _strip_zero_segment_scale_terms(terms: Sequence[object]) -> Sequence[object]:
             if project is None:
                 return terms
             kept = []
@@ -88,6 +112,8 @@ def _addr_exprs_are_byte_pair(
             low_class = classify_segmented_addr_expr(low_addr_expr, project)
             high_class = classify_segmented_addr_expr(high_addr_expr, project)
             if low_class is not None and high_class is not None:
+                if low_class.kind != high_class.kind or low_class.seg_name != high_class.seg_name:
+                    return False
                 if low_class.kind == high_class.kind and low_class.seg_name == high_class.seg_name:
                     if (
                         low_class.kind == "stack"

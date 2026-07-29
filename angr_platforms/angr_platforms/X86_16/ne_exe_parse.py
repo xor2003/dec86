@@ -1,5 +1,8 @@
 """NE (New Executable) format parser for Windows/OS2 16-bit binaries.
 
+Layer: Frontend/runtime.
+Responsibility: Parse NE executable metadata and map exported entry points through loader segment evidence.
+
 This module works with the existing CLE DOSNE loader (load_dos_ne.py).
 It extracts symbol information (function names, entry points) and uses
 the loader's segment mappings to calculate correct linear addresses.
@@ -27,8 +30,21 @@ if TYPE_CHECKING:
     import angr
 
 
+def _dynamic_loader_ne_segment_selectors_8616(main_obj: object) -> dict[int, int] | None:
+    """Read optional CLE DOSNE segment selectors at the dynamic angr loader boundary."""
+    # Dynamic angr loader boundary: DOSNE backend adds this optional metadata.
+    selectors = getattr(main_obj, "ne_segment_selectors", None)
+    if not isinstance(selectors, dict):
+        return None
+    typed_selectors: dict[int, int] = {}
+    for segment, selector in selectors.items():
+        if isinstance(segment, int) and isinstance(selector, int):
+            typed_selectors[segment] = selector
+    return typed_selectors
+
+
 class NETargetOS(IntEnum):
-    """NE module target OS enum (offset 0x36)"""
+    """NE module target OS enum (offset 0x36)."""
 
     UNKNOWN = 0
     OS2 = 1
@@ -40,7 +56,7 @@ class NETargetOS(IntEnum):
 
 @dataclass
 class NESegment:
-    """NE segment table entry"""
+    """NE segment table entry."""
 
     offset: int  # Offset in file (or flags for moveable)
     length: int  # Segment length
@@ -50,7 +66,7 @@ class NESegment:
 
 @dataclass
 class NEEntryPoint:
-    """NE entry point (from entry table + names table)
+    """NE entry point from entry table and names table.
 
     Attributes:
         ordinal: Export ordinal number (1-based)
@@ -69,7 +85,7 @@ class NEEntryPoint:
 
 @dataclass
 class NEExeInfo:
-    """Parsed NE executable header"""
+    """Parsed NE executable header."""
 
     target_os: int  # Target OS (0x36)
     entry_points: dict[int, str] = field(default_factory=dict)  # ordinal -> name
@@ -226,7 +242,9 @@ def parse_ne_entry_table(
     ordinal_names: dict[int, str],
     segments: list[NESegment],
 ) -> dict[int, tuple[int, int]]:
-    def _impl():
+    """Parse named NE entry-table ordinals to their segment and offset."""
+
+    def _impl() -> dict[int, tuple[int, int]]:
         """Parse NE entry table to map ordinals to (segment, offset).
 
         NE entry table format (from Open Watcom exeos2.h):
@@ -275,8 +293,6 @@ def parse_ne_entry_table(
                     for _ in range(bundle_count):
                         if pos + 6 > len(data):
                             break
-                        info = data[pos]
-                        reserved = struct.unpack_from("<H", data, pos + 1)[0]
                         segment = data[pos + 3]
                         offset = struct.unpack_from("<H", data, pos + 4)[0]
 
@@ -294,7 +310,6 @@ def parse_ne_entry_table(
                     for _ in range(bundle_count):
                         if pos + 3 > len(data):
                             break
-                        info = data[pos]
                         offset = struct.unpack_from("<H", data, pos + 1)[0]
 
                         # Only add if we have a name for this ordinal
@@ -368,12 +383,11 @@ def parse_ne_exe(
 
     # Calculate linear addresses from segment:offset
     # Use loader's segment mappings if available (CLE DOSNE loader)
-    ne_segment_selectors = None
+    ne_segment_selectors: dict[int, int] | None = None
     if project is not None:
         try:
             main_obj = project.loader.main_object
-            if hasattr(main_obj, "ne_segment_selectors"):
-                ne_segment_selectors = main_obj.ne_segment_selectors
+            ne_segment_selectors = _dynamic_loader_ne_segment_selectors_8616(main_obj)
         except (AttributeError, TypeError):
             pass
 

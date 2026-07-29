@@ -1,10 +1,17 @@
+"""Layer: Recompilable output.
+
+Responsibility: export alias-proven storage identities into recompilation artifacts.
+Forbidden: alias ownership, source-backed naming, or text-derived storage recovery.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .alias.alias_model import AliasStorageFacts
+from .alias.alias_model_impl import AliasStorageFacts, _StackSlotIdentity
 from .recompilable_storage_map import RecompilableStorageMapArtifact
 from .recompilable_storage_map_producer import (
+    SegmentedCodegenStorageSurface,
     SegmentedStorageSeed,
     export_recompilable_storage_map_from_codegen,
 )
@@ -15,8 +22,10 @@ __all__ = [
 ]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AliasBackedStorageSeed:
+    """Alias-proven storage seed prepared for recompilable storage-map export."""
+
     alias_facts: AliasStorageFacts
     segment_reg: str | None = None
     stable_object_kind: str | None = None
@@ -35,6 +44,8 @@ def _segment_seed_from_alias_seed(seed: AliasBackedStorageSeed) -> SegmentedStor
     identity_kind, identity_value = identity
 
     if identity_kind == "stack":
+        if not isinstance(identity_value, _StackSlotIdentity):
+            return None
         return SegmentedStorageSeed(
             segment_reg="SS",
             offset=identity_value.offset,
@@ -47,9 +58,11 @@ def _segment_seed_from_alias_seed(seed: AliasBackedStorageSeed) -> SegmentedStor
     if identity_kind == "memory":
         if seed.segment_reg is None:
             return None
+        if not isinstance(identity_value, int):
+            return None
         return SegmentedStorageSeed(
             segment_reg=seed.segment_reg,
-            offset=int(identity_value),
+            offset=identity_value,
             width=width,
             identity_kind="global",
             stable_object_kind=seed.stable_object_kind,
@@ -60,9 +73,10 @@ def _segment_seed_from_alias_seed(seed: AliasBackedStorageSeed) -> SegmentedStor
 
 
 def export_recompilable_storage_map_from_alias_facts(
-    codegen,
+    codegen: SegmentedCodegenStorageSurface,
     seeds: tuple[AliasBackedStorageSeed, ...],
 ) -> RecompilableStorageMapArtifact:
+    """Export alias-proven storage facts into a recompilable segmented map."""
     mapped = tuple(
         segment_seed
         for seed in seeds

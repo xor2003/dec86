@@ -1,6 +1,15 @@
+"""Load sidecar metadata for names, bounds, and optional debug evidence.
+
+Layer: CLI/fallback/reporting.
+Responsibility: collect optional sidecar/debug metadata without making it required semantic proof.
+"""
+
 from __future__ import annotations
 
+import typing
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import cast
 
 import angr
 from angr_platforms.X86_16.codeview_nb00 import parse_codeview_nb00
@@ -19,6 +28,7 @@ from angr_platforms.X86_16.turbo_debug_tdinfo import parse_tdinfo_exe
 from inertia_decompiler.project_loading import _probe_ida_base_linear
 from inertia_decompiler.sidecar_cache import (
     _attach_debug_evidence_attrs,
+    _ProjectLike,
     apply_cached_sidecar_metadata,
     emit_sidecar_metadata_debug,
     load_cached_sidecar_metadata,
@@ -39,10 +49,31 @@ from inertia_decompiler.sidecar_parsers import (
 from inertia_decompiler.telemetry import trace_function
 
 
+def _dynamic_attr(obj: object, name: str, default: object = None) -> object:
+    """Read optional attributes from dynamic angr/debug-parser compatibility objects."""
+    # Dynamic angr/third-party compatibility boundary: optional backend attributes vary by format.
+    return getattr(obj, name, default)
+
+
+def _dynamic_int_attr(obj: object, name: str, default: int | None = None) -> int | None:
+    """Read an optional integer attribute from a dynamic compatibility object."""
+    value = _dynamic_attr(obj, name, default)
+    return value if isinstance(value, int) else default
+
+
+def _dynamic_mapping_attr(obj: object, name: str) -> dict[object, object]:
+    """Read an optional mapping attribute from a dynamic compatibility object."""
+    value = _dynamic_attr(obj, name, {})
+    return value if isinstance(value, dict) else {}
+
+
 def _find_sibling_sidecar(binary: Path, suffix: str) -> Path | None:
     direct = binary.with_suffix(suffix)
     if direct.exists():
         return direct
+    direct_appended = binary.with_name(f"{binary.name}{suffix}")
+    if direct_appended.exists():
+        return direct_appended
     try:
         siblings = sorted(binary.parent.iterdir(), key=lambda path: path.name.lower())
     except OSError:
@@ -50,6 +81,8 @@ def _find_sibling_sidecar(binary: Path, suffix: str) -> Path | None:
     wanted_stem = binary.stem.lower()
     wanted_suffix = suffix.lower()
     for sibling in siblings:
+        if sibling.name.lower() == f"{binary.name.lower()}{wanted_suffix}":
+            return sibling
         if sibling.stem.lower() == wanted_stem and sibling.suffix.lower() == wanted_suffix:
             return sibling
     return None
@@ -58,20 +91,20 @@ def _find_sibling_sidecar(binary: Path, suffix: str) -> Path | None:
 def _signature_matched_code_addrs(metadata: LSTMetadata | None) -> frozenset[int]:
     if metadata is None:
         return frozenset()
-    addrs = getattr(metadata, "signature_code_addrs", frozenset())
+    addrs = metadata.signature_code_addrs
     return addrs if isinstance(addrs, frozenset) else frozenset(addrs)
 
 
 def _visible_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
     if metadata is None:
         return {}
-    code_labels = getattr(metadata, "code_labels", None)
+    code_labels = metadata.code_labels
     if not isinstance(code_labels, dict):
         return {}
     skipped = _signature_matched_code_addrs(metadata)
     if not skipped:
         return dict(code_labels)
-    cod_proc_addrs = set((getattr(metadata, "cod_proc_kinds", None) or {}).keys())
+    cod_proc_addrs = set(metadata.cod_proc_kinds.keys())
     return {addr: name for addr, name in code_labels.items() if addr not in skipped or addr in cod_proc_addrs}
 
 
@@ -82,7 +115,7 @@ def _recovery_code_labels(metadata: LSTMetadata | None) -> dict[int, str]:
     signature_addrs = _signature_matched_code_addrs(metadata)
     if not signature_addrs:
         return labels
-    code_labels = getattr(metadata, "code_labels", None)
+    code_labels = metadata.code_labels
     if not isinstance(code_labels, dict):
         return labels
     for addr in sorted(signature_addrs):
@@ -129,7 +162,7 @@ def _load_lst_sidecar(
     code_ranges: dict[int, tuple[int, int]],
     source_formats: list[str],
 ) -> None:
-    def _impl():
+    def _impl() -> None:
         lst_path = _find_sibling_sidecar(binary, ".lst")
         if lst_path is None:
             return
@@ -206,12 +239,23 @@ def _load_codeview_or_ne_metadata(
     str | None,
     tuple[str, ...],
     tuple[str, ...],
-    tuple[str, ...],
     tuple[DebugSymbolEvidence, ...],
     tuple[DebugTypeMemberEvidence, ...],
+    tuple[str, ...],
     dict[int, tuple[int, int]],
 ]:
-    def _impl():
+    def _impl() -> tuple[
+        dict[int, str],
+        dict[int, str],
+        dict[int, tuple[int, int]],
+        str | None,
+        tuple[str, ...],
+        tuple[str, ...],
+        tuple[DebugSymbolEvidence, ...],
+        tuple[DebugTypeMemberEvidence, ...],
+        tuple[str, ...],
+        dict[int, tuple[int, int]],
+    ]:
         codeview_code: dict[int, str] = {}
         codeview_data: dict[int, str] = {}
         codeview_ranges: dict[int, tuple[int, int]] = {}
@@ -409,20 +453,23 @@ def _codeview_type_members_to_evidence(
 ) -> tuple[DebugTypeMemberEvidence, ...]:
     evidence: list[DebugTypeMemberEvidence] = []
     for member in members:
-        name = str(getattr(member, "name", "")).strip()
+        # Dynamic compatibility boundary: CodeView type-member wrappers expose optional fields.
+        name = str(_dynamic_attr(member, "name", "")).strip()
         if not name:
             continue
-        offset = getattr(member, "offset", None)
-        owner_type_index = getattr(member, "owner_type_index", None)
-        type_index = getattr(member, "type_index", None)
-        leaf_index = getattr(member, "leaf_index", None)
+        # Dynamic compatibility boundary: CodeView type-member wrappers expose optional fields.
+        offset = _dynamic_int_attr(member, "offset")
+        owner_type_index = _dynamic_int_attr(member, "owner_type_index")
+        # Dynamic compatibility boundary: CodeView type-member wrappers expose optional fields.
+        type_index = _dynamic_int_attr(member, "type_index")
+        leaf_index = _dynamic_int_attr(member, "leaf_index")
         evidence.append(
             DebugTypeMemberEvidence(
                 name=name,
-                offset=int(offset) if offset is not None else None,
-                owner_type_index=int(owner_type_index) if owner_type_index is not None else None,
-                type_index=int(type_index) if type_index is not None else None,
-                leaf_index=int(leaf_index) if leaf_index is not None else None,
+                offset=offset,
+                owner_type_index=owner_type_index,
+                type_index=type_index,
+                leaf_index=leaf_index,
                 source=source,
             )
         )
@@ -441,21 +488,28 @@ def _nb00_publics_to_symbol_evidence(
 ) -> tuple[DebugSymbolEvidence, ...]:
     evidence: list[DebugSymbolEvidence] = []
     for public in publics:
-        name = str(getattr(public, "name", "")).strip()
+        # Dynamic compatibility boundary: CodeView public-symbol wrappers expose optional fields.
+        name = str(_dynamic_attr(public, "name", "")).strip()
         if not name:
             continue
-        offset = getattr(public, "offset", None)
-        segment = getattr(public, "segment", None)
-        type_index = getattr(public, "type_index", None)
+        # Dynamic compatibility boundary: CodeView public-symbol wrappers expose optional fields.
+        offset = _dynamic_int_attr(public, "offset")
+        segment = _dynamic_int_attr(public, "segment")
+        # Dynamic compatibility boundary: CodeView public-symbol wrappers expose optional fields.
+        type_index = _dynamic_int_attr(public, "type_index")
+        # Dynamic compatibility boundary: CodeView public-symbol wrappers expose address helpers.
+        linear_addr_fn = _dynamic_attr(public, "linear_addr", None)
+        linear_addr_result = linear_addr_fn(load_base_linear=load_base_linear) if callable(linear_addr_fn) else None
+        linear_addr = linear_addr_result if isinstance(linear_addr_result, int) else None
         evidence.append(
             DebugSymbolEvidence(
                 name=name,
                 symbol_class="PUBLIC",
                 storage="public",
-                offset=int(offset) if offset is not None else None,
-                segment=int(segment) if segment is not None else None,
-                linear_addr=public.linear_addr(load_base_linear=load_base_linear),
-                type_index=int(type_index) if type_index is not None else None,
+                offset=offset,
+                segment=segment,
+                linear_addr=linear_addr,
+                type_index=type_index,
                 source=source,
             )
         )
@@ -464,52 +518,67 @@ def _nb00_publics_to_symbol_evidence(
 
 def _nb0204_symbols_to_evidence(
     procedures: tuple[object, ...],
-    stack_variables: dict[str, list[object]],
+    stack_variables: Mapping[str, Sequence[object]],
     *,
     load_base_linear: int,
     source: str,
 ) -> tuple[DebugSymbolEvidence, ...]:
     evidence: list[DebugSymbolEvidence] = []
     for symbol in procedures:
-        name = str(getattr(symbol, "name", "")).strip()
+        # Dynamic compatibility boundary: CodeView procedure-symbol wrappers expose optional fields.
+        name = str(_dynamic_attr(symbol, "name", "")).strip()
         if not name:
             continue
-        segment = getattr(symbol, "segment", None)
-        offset = getattr(symbol, "offset", None)
-        type_index = getattr(symbol, "data_type", None)
+        # Dynamic compatibility boundary: CodeView procedure-symbol wrappers expose optional fields.
+        segment = _dynamic_int_attr(symbol, "segment")
+        offset = _dynamic_int_attr(symbol, "offset")
+        # Dynamic compatibility boundary: CodeView procedure-symbol wrappers expose optional fields.
+        type_index = _dynamic_int_attr(symbol, "data_type")
+        # Dynamic compatibility boundary: CodeView procedure-symbol wrappers expose optional lengths.
+        length = _dynamic_int_attr(symbol, "length")
         evidence.append(
             DebugSymbolEvidence(
                 name=name,
-                symbol_class=f"0x{int(getattr(symbol, 'type_code', 0)):04x}",
+                # Dynamic compatibility boundary: CodeView procedure-symbol wrappers expose type codes.
+                symbol_class=f"0x{int(_dynamic_int_attr(symbol, 'type_code', 0) or 0):04x}",
                 storage="procedure",
-                offset=int(offset) if offset is not None else None,
-                segment=int(segment) if segment is not None else None,
-                linear_addr=load_base_linear + (int(segment) << 4) + int(offset)
+                offset=offset,
+                segment=segment,
+                linear_addr=load_base_linear + (segment << 4) + offset
                 if segment is not None and offset is not None
                 else None,
-                length=int(symbol.length) if getattr(symbol, "length", None) is not None else None,
-                type_index=int(type_index) if type_index is not None else None,
-                attributes=_attrs_from_mapping(getattr(symbol, "extra", {}) or {}),
+                length=length,
+                type_index=type_index,
+                # Dynamic compatibility boundary: CodeView procedure-symbol wrappers expose extra attributes.
+                attributes=_attrs_from_mapping(
+                    _dynamic_mapping_attr(symbol, "extra")
+                ),
                 source=source,
             )
         )
     for owner_name, symbols in stack_variables.items():
         for symbol in symbols:
-            name = str(getattr(symbol, "name", "")).strip()
+            # Dynamic compatibility boundary: CodeView stack-symbol wrappers expose optional fields.
+            name = str(_dynamic_attr(symbol, "name", "")).strip()
             if not name:
                 continue
-            offset = getattr(symbol, "offset", None)
-            type_index = getattr(symbol, "data_type", None)
+            # Dynamic compatibility boundary: CodeView stack-symbol wrappers expose optional fields.
+            offset = _dynamic_int_attr(symbol, "offset")
+            type_index = _dynamic_int_attr(symbol, "data_type")
             evidence.append(
                 DebugSymbolEvidence(
                     name=name,
-                    symbol_class=f"0x{int(getattr(symbol, 'type_code', 0)):04x}",
+                    # Dynamic compatibility boundary: CodeView stack-symbol wrappers expose type codes.
+                    symbol_class=f"0x{int(_dynamic_int_attr(symbol, 'type_code', 0) or 0):04x}",
                     storage="stack",
-                    offset=int(offset) if offset is not None else None,
-                    signed_offset=int(offset) if offset is not None else None,
-                    type_index=int(type_index) if type_index is not None else None,
+                    offset=offset,
+                    signed_offset=offset,
+                    type_index=type_index,
                     owner_name=str(owner_name),
-                    attributes=_attrs_from_mapping(getattr(symbol, "extra", {}) or {}),
+                    # Dynamic compatibility boundary: CodeView stack-symbol wrappers expose extra attributes.
+                    attributes=_attrs_from_mapping(
+                        _dynamic_mapping_attr(symbol, "extra")
+                    ),
                     source=source,
                 )
             )
@@ -523,13 +592,15 @@ def _nb0204_procedure_ranges(
 ) -> dict[int, tuple[int, int]]:
     ranges: dict[int, tuple[int, int]] = {}
     for symbol in procedures:
-        segment = getattr(symbol, "segment", None)
-        offset = getattr(symbol, "offset", None)
-        length = getattr(symbol, "length", None)
+        # Dynamic compatibility boundary: CodeView procedure-symbol wrappers expose optional ranges.
+        segment = _dynamic_int_attr(symbol, "segment")
+        offset = _dynamic_int_attr(symbol, "offset")
+        # Dynamic compatibility boundary: CodeView procedure-symbol wrappers expose optional ranges.
+        length = _dynamic_int_attr(symbol, "length")
         if segment is None or offset is None or length is None:
             continue
-        start = load_base_linear + (int(segment) << 4) + int(offset)
-        end = start + int(length)
+        start = load_base_linear + (segment << 4) + offset
+        end = start + length
         if end > start:
             ranges.setdefault(start, (start, end))
     return ranges
@@ -543,23 +614,33 @@ def _tdinfo_symbols_to_evidence(
 ) -> tuple[DebugSymbolEvidence, ...]:
     evidence: list[DebugSymbolEvidence] = []
     for named in named_symbols:
-        name = str(getattr(named, "name", "")).strip()
-        record = getattr(named, "record", None)
+        # Dynamic compatibility boundary: Turbo Debug symbol wrappers expose optional records.
+        name = str(_dynamic_attr(named, "name", "")).strip()
+        record = _dynamic_attr(named, "record", None)
         if not name or record is None:
             continue
-        symbol_class = getattr(record, "symbol_class", None)
-        symbol_class_name = getattr(symbol_class, "name", str(symbol_class))
+        # Dynamic compatibility boundary: Turbo Debug record wrappers expose optional symbol classes.
+        symbol_class = _dynamic_attr(record, "symbol_class", None)
+        symbol_class_name = str(_dynamic_attr(symbol_class, "name", str(symbol_class)))
+        offset = _dynamic_int_attr(record, "offset")
+        signed_offset = _dynamic_int_attr(record, "signed_offset")
+        segment = _dynamic_int_attr(record, "segment")
+        type_index = _dynamic_int_attr(record, "type_index")
+        record_index = _dynamic_int_attr(record, "index")
+        linear_addr_fn = _dynamic_attr(record, "linear_addr", None)
+        linear_addr_result = linear_addr_fn(load_base_linear=load_base_linear) if callable(linear_addr_fn) else None
+        linear_addr = linear_addr_result if isinstance(linear_addr_result, int) else None
         evidence.append(
             DebugSymbolEvidence(
                 name=name,
                 symbol_class=symbol_class_name,
                 storage=str(symbol_class_name).lower(),
-                offset=int(record.offset),
-                signed_offset=int(record.signed_offset),
-                segment=int(record.segment),
-                linear_addr=record.linear_addr(load_base_linear=load_base_linear),
-                type_index=int(record.type_index),
-                attributes=(("record_index", str(record.index)),),
+                offset=offset,
+                signed_offset=signed_offset,
+                segment=segment,
+                linear_addr=linear_addr,
+                type_index=type_index,
+                attributes=(("record_index", str(record_index)),),
                 source=source,
             )
         )
@@ -581,7 +662,7 @@ def _load_cod_mzre_flair_sidecars(
     signature_catalog: Path | None,
     cod_proc_kinds: dict[int, str],
 ) -> tuple[Path | None, set[int]]:
-    def _impl():
+    def _impl() -> tuple[Path | None, set[int]]:
         cod_path: Path | None = None
         signature_code_addrs: set[int] = set()
         sibling_cod_path = _find_sibling_sidecar(binary, ".cod")
@@ -688,17 +769,22 @@ def _load_lst_metadata(
     pat_backend: str | None = None,
     signature_catalog: Path | None = None,
 ) -> LSTMetadata | None:
-    def _impl():
+    def _impl() -> LSTMetadata | None:
         cached_sidecar, sidecar_cache_key = load_cached_sidecar_metadata(
             binary_path=binary,
             pat_backend=pat_backend,
             signature_catalog=signature_catalog,
         )
         if cached_sidecar is not None:
-            metadata = apply_cached_sidecar_metadata(project, cached_sidecar)
-            emit_sidecar_metadata_debug(project, metadata)
+            project_like = cast(_ProjectLike, project)
+            metadata = apply_cached_sidecar_metadata(project_like, cached_sidecar)
+            emit_sidecar_metadata_debug(project_like, metadata)
             return metadata
-        load_base_linear = _probe_ida_base_linear(binary, getattr(project.loader.main_object, "linked_base", 0))
+        # Dynamic angr boundary: loader main objects expose backend-specific linked bases.
+        load_base_linear = _probe_ida_base_linear(
+            binary,
+            _dynamic_int_attr(project.loader.main_object, "linked_base", 0) or 0,
+        )
         code_labels: dict[int, str] = {}
         data_labels: dict[int, str] = {}
         code_ranges: dict[int, tuple[int, int]] = {}
@@ -818,7 +904,8 @@ def _load_lst_metadata(
         for addr, name in code_labels.items():
             project.kb.labels[addr] = name
 
-        image_end = getattr(getattr(project.loader, "main_object", None), "max_addr", None)
+        # Dynamic angr boundary: loader main objects expose backend-specific image bounds.
+        image_end = _dynamic_int_attr(_dynamic_attr(project.loader, "main_object", None), "max_addr")
         if isinstance(image_end, int):
             image_end += 1
         code_ranges = _synthesize_code_ranges(code_labels, code_ranges, image_end=image_end)
@@ -843,10 +930,12 @@ def _load_lst_metadata(
             cod_path=str(cod_path) if cod_path is not None else None,
             cod_proc_kinds=cod_proc_kinds,
         )
-        project._inertia_lst_metadata = metadata
-        _attach_debug_evidence_attrs(project, metadata)
-        store_cached_sidecar_metadata(cache_key=sidecar_cache_key, metadata=metadata, project=project)
-        emit_sidecar_metadata_debug(project, metadata)
+        # Dynamic angr boundary: project stores sidecar metadata for downstream fallback/reporting passes.
+        typing.cast(typing.Any, project)._inertia_lst_metadata = metadata
+        project_like = cast(_ProjectLike, project)
+        _attach_debug_evidence_attrs(project_like, metadata)
+        store_cached_sidecar_metadata(cache_key=sidecar_cache_key, metadata=metadata, project=project_like)
+        emit_sidecar_metadata_debug(project_like, metadata)
         return metadata
 
     return _impl()
@@ -862,18 +951,22 @@ def attach_lst_metadata_to_project(project: angr.Project | None, metadata: LSTMe
     if project is None or metadata is None:
         return False
     changed = False
-    _attach_debug_evidence_attrs(project, metadata)
-    if getattr(project, "_inertia_lst_metadata", None) is not metadata:
-        project._inertia_lst_metadata = metadata
+    project_like = cast(_ProjectLike, project)
+    _attach_debug_evidence_attrs(project_like, metadata)
+    # Dynamic angr boundary: project stores sidecar metadata for downstream fallback/reporting passes.
+    if _dynamic_attr(project, "_inertia_lst_metadata", None) is not metadata:
+        # Dynamic angr boundary: project stores sidecar metadata for downstream fallback/reporting passes.
+        typing.cast(typing.Any, project)._inertia_lst_metadata = metadata
         changed = True
-    labels = getattr(getattr(project, "kb", None), "labels", None)
-    if labels is None:
+    # Dynamic angr boundary: project knowledge bases expose backend-owned label maps.
+    labels = _dynamic_attr(_dynamic_attr(project, "kb", None), "labels", None)
+    if not isinstance(labels, dict):
         return changed
-    for addr, name in getattr(metadata, "data_labels", {}).items():
+    for addr, name in metadata.data_labels.items():
         if labels.get(addr) != name:
             labels[addr] = name
             changed = True
-    for addr, name in getattr(metadata, "code_labels", {}).items():
+    for addr, name in metadata.code_labels.items():
         if labels.get(addr) != name:
             labels[addr] = name
             changed = True
@@ -889,11 +982,11 @@ def _lst_data_label(metadata: LSTMetadata | None, offset: int | None) -> str | N
 def _lst_code_label(metadata: LSTMetadata | None, addr: int | None, code_base: int | None) -> str | None:
     if metadata is None or addr is None:
         return None
-    absolute_addrs = getattr(metadata, "absolute_addrs", True)
+    absolute_addrs = metadata.absolute_addrs
     lookup_addr = addr if absolute_addrs else addr - code_base if code_base is not None else None
     if lookup_addr is None:
         return None
-    code_labels = getattr(metadata, "code_labels", None)
+    code_labels = metadata.code_labels
     if not isinstance(code_labels, dict):
         return None
     label = code_labels.get(lookup_addr)
@@ -906,10 +999,10 @@ def _lst_code_label(metadata: LSTMetadata | None, addr: int | None, code_base: i
 
 
 def _lst_code_region(metadata: LSTMetadata | None, addr: int | None) -> tuple[int, int] | None:
-    def _impl():
+    def _impl() -> tuple[int, int] | None:
         if metadata is None or addr is None:
             return None
-        code_ranges = getattr(metadata, "code_ranges", None) or {}
+        code_ranges = metadata.code_ranges
         span = code_ranges.get(addr)
         if span is not None:
             return span
@@ -918,7 +1011,7 @@ def _lst_code_region(metadata: LSTMetadata | None, addr: int | None) -> tuple[in
             return max(containing_spans, key=lambda item: item[0])[1]
         # Fallback: derive a bounded span from ordered code labels when explicit
         # code_ranges are unavailable/incomplete for this address.
-        code_labels = getattr(metadata, "code_labels", None) or {}
+        code_labels = metadata.code_labels
         if not isinstance(code_labels, dict) or not code_labels:
             return None
         ordered = sorted(int(k) for k in code_labels.keys() if isinstance(k, int))

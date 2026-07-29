@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Generate MS C 5.1 flag-profile fixtures for decompiler regression data.
+
+Layer: Tooling/gates.
+Responsibility: build optional compiler flag-profile diagnostics without proving semantics.
+"""
 
 from __future__ import annotations
 
@@ -41,6 +46,7 @@ ASM_PROMPT_RE = re.compile(r"Recover the function from this assembly:\s*(.*)", r
 
 
 def combo_from_name(path: Path) -> str:
+    """Return a canonical flag-combination label from an output filename."""
     stem = path.stem
     if stem.startswith("output_"):
         stem = stem[len("output_") :]
@@ -49,6 +55,7 @@ def combo_from_name(path: Path) -> str:
 
 
 def extract_tokens(text: str) -> Counter[str]:
+    """Extract runtime/helper-like symbol tokens from text."""
     c: Counter[str] = Counter()
     for m in TOKEN_RE.finditer(text):
         t = m.group(0)
@@ -61,7 +68,9 @@ def extract_tokens(text: str) -> Counter[str]:
 
 
 def extract_instruction_tokens(text: str) -> Counter[str]:
-    def _impl():
+    """Extract opcode and operand-shape tokens from assembly text."""
+
+    def _impl() -> Counter[str]:
         out: Counter[str] = Counter()
         for line in text.splitlines():
             s = line.strip()
@@ -92,6 +101,7 @@ def extract_instruction_tokens(text: str) -> Counter[str]:
 
 
 def extract_byte_ngram_tokens(blob: bytes, n: int = 4, step: int = 3, limit: int = 20000) -> Counter[str]:
+    """Extract bounded byte n-gram tokens from compiler artifacts."""
     out: Counter[str] = Counter()
     if len(blob) < n:
         return out
@@ -103,6 +113,7 @@ def extract_byte_ngram_tokens(blob: bytes, n: int = 4, step: int = 3, limit: int
 
 
 def canonical_combo_from_flags(flags: str) -> str:
+    """Normalize a compiler flag string into a canonical combo label."""
     parts: list[str] = []
     for tok in flags.split():
         t = tok.strip()
@@ -119,6 +130,7 @@ def canonical_combo_from_flags(flags: str) -> str:
 
 
 def maybe_extract_asm_from_dataset_user_msg(text: str) -> str:
+    """Extract the assembly prompt payload from one dataset user message."""
     m = ASM_PROMPT_RE.search(text)
     if not m:
         return ""
@@ -126,7 +138,9 @@ def maybe_extract_asm_from_dataset_user_msg(text: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    def _impl():
+    """Build MS C 5.1 flag-combo profiles from COD and optional dataset inputs."""
+
+    def _impl() -> int:
         ap = argparse.ArgumentParser(description="Build MS C 5.1 flag-combo token profiles from deep/*.COD")
         ap.add_argument(
             "--cod-dir",
@@ -263,7 +277,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {args.output} combos={len(payload['combos'])} files={used_files}")
         return 0
 
-    if __name__ == "__main__":
-        raise SystemExit(main())
-
     return _impl()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

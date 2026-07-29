@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 from angr_platforms.X86_16.recovery_confidence import (
     classify_x86_16_recovery_confidence,
     summarize_recovery_confidence,
 )
 
 
-def test_recovery_confidence_attaches_helper_summary_and_refusal_assumption():
+def test_recovery_confidence_attaches_helper_summary_and_refusal_assumption() -> None:
     summary = classify_x86_16_recovery_confidence(
         {
             "ok": True,
@@ -23,7 +25,7 @@ def test_recovery_confidence_attaches_helper_summary_and_refusal_assumption():
     assert any(item.startswith("helper_summary=") for item in summary.diagnostics)
 
 
-def test_recovery_confidence_refuses_helper_eligibility_for_segment_clobbers():
+def test_recovery_confidence_refuses_helper_eligibility_for_segment_clobbers() -> None:
     summary = classify_x86_16_recovery_confidence(
         {
             "ok": True,
@@ -39,7 +41,7 @@ def test_recovery_confidence_refuses_helper_eligibility_for_segment_clobbers():
     assert any(item.kind == "helper_shape_refused" for item in summary.assumptions) is False
 
 
-def test_recovery_confidence_summary_accumulates_helper_counts():
+def test_recovery_confidence_summary_accumulates_helper_counts() -> None:
     counts = summarize_recovery_confidence(
         [
             {
@@ -78,7 +80,7 @@ def test_recovery_confidence_summary_accumulates_helper_counts():
     ]
 
 
-def test_recovery_confidence_surfaces_typed_ir_readiness_assumptions():
+def test_recovery_confidence_surfaces_typed_ir_readiness_assumptions() -> None:
     summary = classify_x86_16_recovery_confidence(
         {
             "ok": True,

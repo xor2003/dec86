@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from angr_platforms.X86_16.alias_model import (
     AliasStorageFacts,
     _StackSlotIdentity,
@@ -18,7 +20,7 @@ from angr_platforms.X86_16.recompilable_storage_map_producer import (
 )
 
 
-def test_recompilable_storage_map_preserves_segment_space_order_and_offsets():
+def test_recompilable_storage_map_preserves_segment_space_order_and_offsets() -> None:
     artifact = build_recompilable_storage_map(
         [
             RecompilableStorageMapCandidate(
@@ -64,7 +66,7 @@ def test_recompilable_storage_map_preserves_segment_space_order_and_offsets():
     ]
 
 
-def test_recompilable_storage_map_refuses_ambiguous_segment_storage():
+def test_recompilable_storage_map_refuses_ambiguous_segment_storage() -> None:
     artifact = build_recompilable_storage_map(
         [
             RecompilableStorageMapCandidate(
@@ -87,7 +89,7 @@ def test_recompilable_storage_map_refuses_ambiguous_segment_storage():
     assert refusal.reason == "multiple incompatible segment bases"
 
 
-def test_recompilable_storage_map_keeps_same_offset_in_distinct_segments_distinct():
+def test_recompilable_storage_map_keeps_same_offset_in_distinct_segments_distinct() -> None:
     artifact = build_recompilable_storage_map(
         [
             RecompilableStorageMapCandidate(
@@ -121,7 +123,7 @@ def test_recompilable_storage_map_keeps_same_offset_in_distinct_segments_distinc
     ]
 
 
-def test_recompilable_storage_map_producer_uses_codegen_segment_summary_and_lowering():
+def test_recompilable_storage_map_producer_uses_codegen_segment_summary_and_lowering() -> None:
     class MockCodegen:
         _inertia_segmented_memory_summary = {
             "stable": {
@@ -163,7 +165,7 @@ def test_recompilable_storage_map_producer_uses_codegen_segment_summary_and_lowe
     assert artifact.refusals[0].classification == "over_associated"
 
 
-def test_recompilable_storage_map_producer_refuses_segment_without_lowering_surface():
+def test_recompilable_storage_map_producer_refuses_segment_without_lowering_surface() -> None:
     class MockCodegen:
         _inertia_segmented_memory_summary = {"stable": {}, "over_associated": {}, "unknown": {}}
         _inertia_segmented_memory_lowering = {}
@@ -179,7 +181,7 @@ def test_recompilable_storage_map_producer_refuses_segment_without_lowering_surf
     assert artifact.refusals[0].classification == "unknown"
 
 
-def test_recompilable_storage_map_alias_export_maps_stack_slot_to_ss():
+def test_recompilable_storage_map_alias_export_maps_stack_slot_to_ss() -> None:
     class MockCodegen:
         _inertia_segmented_memory_summary = {
             "stable": {"SS": {"classification": "const", "known_values": (0x3000,)}},
@@ -215,7 +217,7 @@ def test_recompilable_storage_map_alias_export_maps_stack_slot_to_ss():
     assert artifact.refusals == ()
 
 
-def test_recompilable_storage_map_alias_export_requires_explicit_segment_for_memory():
+def test_recompilable_storage_map_alias_export_requires_explicit_segment_for_memory() -> None:
     class MockCodegen:
         _inertia_segmented_memory_summary = {
             "stable": {"DS": {"classification": "const", "known_values": (0x2000,)}},

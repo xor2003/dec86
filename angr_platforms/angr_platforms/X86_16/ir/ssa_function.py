@@ -1,3 +1,12 @@
+"""Build function-level SSA artifacts and phi nodes over typed IR.
+
+Layer: IR.
+Responsibility: owns typed Value, Address, Condition, instruction facts, and lossless
+normalization.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -15,10 +24,13 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class SSAIncomingValue:
+    """Incoming SSA value from one predecessor block."""
+
     source_block_addr: int
     value: IRValue
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
         return {
             "source_block_addr": self.source_block_addr,
             "value": self.value.to_dict(),
@@ -27,12 +39,15 @@ class SSAIncomingValue:
 
 @dataclass(frozen=True, slots=True)
 class SSAPhiNode:
+    """Phi node for a typed IR value with multiple predecessor definitions."""
+
     block_addr: int
     key: tuple[str, str | None, int]
     target: IRValue
     incoming: tuple[SSAIncomingValue, ...]
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
         return {
             "block_addr": self.block_addr,
             "key": list(self.key),
@@ -43,6 +58,8 @@ class SSAPhiNode:
 
 @dataclass(frozen=True, slots=True)
 class SSAFunctionArtifact:
+    """Function-level SSA artifact over typed IR blocks and phi nodes."""
+
     function_addr: int
     blocks: tuple[SSABlock, ...]
     phi_nodes: tuple[SSAPhiNode, ...] = ()
@@ -50,6 +67,7 @@ class SSAFunctionArtifact:
     summary: dict[str, object] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
         return {
             "function_addr": self.function_addr,
             "blocks": [block.to_dict() for block in self.blocks],
@@ -117,7 +135,9 @@ def _make_phi_target(
 
 
 def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifact:
-    def _impl():
+    """Build function-level SSA and phi-node facts from typed IR CFG edges."""
+
+    def _impl() -> SSAFunctionArtifact:
         local_blocks = tuple(build_x86_16_block_local_ssa(block) for block in artifact.blocks)
         local_by_addr = {block.addr: block for block in local_blocks}
         pred_map = _predecessor_map(artifact)
@@ -145,7 +165,7 @@ def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifa
                     )
                 )
 
-        summary = {
+        summary: dict[str, object] = {
             "block_count": len(local_blocks),
             "phi_node_count": len(phi_nodes),
             "join_block_count": sum(1 for preds in pred_map.values() if len(preds) > 1),

@@ -1,3 +1,12 @@
+"""Layer: Frontend/angr compatibility.
+
+Responsibility: adapt angr return rendering for proven 16-bit x86 return facts.
+Forbidden: source/COD/text-backed return recovery or whole-body rewrite repair.
+Dynamic boundary: this module patches and reads third-party angr ReturnMaker,
+AIL, codegen, C AST, Function, and SimType compatibility objects. Owned
+Inertia contracts must use typed fields and dot access.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -5,15 +14,24 @@ import logging
 import os
 import struct
 import sys
+import typing
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any, Protocol, cast
 
 from angr import ailment
 from angr.ailment.expression import BasePointerOffset
 from angr.analyses.decompiler.return_maker import ReturnMaker
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CVariable, MakeTypecastsImplicit
 from angr.calling_conventions import SimComboArg, SimRegArg
-from angr.sim_type import SimTypeBottom, SimTypeDouble, SimTypeFloat, SimTypeLong, SimTypePointer, SimTypeShort
+from angr.sim_type import SimType, SimTypeBottom, SimTypeDouble, SimTypeFloat, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
+
+from .calling_convention_compat import _terminal_word_return_evidence_8616
+from .callsite_summary import (
+    CallerReturnUseVerdict8616,
+    caller_return_use_evidence_by_addr_8616,
+)
 
 __all__ = [
     "apply_x86_16_decompiler_return_compatibility",
@@ -21,10 +39,67 @@ __all__ = [
     "x86_16_msvc_x87_scalar_stack_args",
 ]
 
-l = logging.getLogger(__name__)
+log: logging.Logger = logging.getLogger(__name__)
 
 
-def _describe_c_expr_8616(expr, *, depth: int = 0) -> str:
+class _ReturnCompatProjectContract8616(Protocol):
+    """Inertia context carried by a third-party angr project."""
+
+    _inertia_original_linear_delta: int
+    _inertia_original_project: object
+
+
+class _ReturnCompatFunctionContract8616(Protocol):
+    """Legacy Inertia return-use override carried by an angr function."""
+
+    _inertia_return_compat_caller_uses_return_8616: bool
+
+
+def _return_compat_original_linear_delta_8616(project: object | None) -> int | None:
+    """Read the owned exact-slice address delta with direct contract access."""
+    if project is None:
+        return None
+    try:
+        value = cast(_ReturnCompatProjectContract8616, project)._inertia_original_linear_delta
+    except AttributeError:
+        return None
+    return value if isinstance(value, int) else None
+
+
+def _return_compat_original_project_8616(project: object | None) -> object | None:
+    """Read the owned source-project link with direct contract access."""
+    if project is None:
+        return None
+    try:
+        return cast(_ReturnCompatProjectContract8616, project)._inertia_original_project
+    except AttributeError:
+        return None
+
+
+def _return_compat_caller_use_override_8616(function: object) -> bool | None:
+    """Read the legacy owned caller-use override with direct contract access."""
+    try:
+        value = cast(_ReturnCompatFunctionContract8616, function)._inertia_return_compat_caller_uses_return_8616
+    except AttributeError:
+        return None
+    return value if isinstance(value, bool) else None
+
+
+def _dynamic_int_counter_8616(owner: object, name: str) -> int:
+    """Read a runtime compatibility counter from a third-party angr object."""
+    return int(getattr(cast(Any, owner), name, 0) or 0)
+
+
+def _object_tuple_8616(value: object) -> tuple[object, ...]:
+    """Return a tuple for dynamic angr sequence payloads."""
+    if isinstance(value, tuple):
+        return value
+    if isinstance(value, list):
+        return tuple(value)
+    return ()
+
+
+def _describe_c_expr_8616(expr: object, *, depth: int = 0) -> str:
     if expr is None:
         return "None"
     if depth >= 3:
@@ -51,19 +126,22 @@ def _is_stack_base_return_register_8616(reg_arg: SimRegArg) -> bool:
     return reg_arg.reg_name.lower() in {"sp", "bp", "ebp", "esp", "rbp", "rsp"}
 
 
-def _is_void_return_type_8616(return_type) -> bool:
+def _is_void_return_type_8616(return_type: object) -> bool:
+    """Return whether an angr SimType is explicitly the C ``void`` return type."""
     return type(return_type) is SimTypeBottom and getattr(return_type, "label", None) == "void"
 
 
-def _is_x86_16_near_pointer_return_8616(arch, return_type) -> bool:
+def _is_x86_16_near_pointer_return_8616(arch: object, return_type: object) -> bool:
     return isinstance(return_type, SimTypePointer) and getattr(arch, "name", None) == "86_16"
 
 
-def _prototype_has_return_type_8616(prototype) -> bool:
+def _prototype_has_return_type_8616(prototype: object) -> bool:
+    """Return whether a dynamic angr prototype carries a return type."""
     return prototype is not None and getattr(prototype, "returnty", None) is not None
 
 
-def _resolve_codegen_prototype_8616(codegen):
+def _resolve_codegen_prototype_8616(codegen: object) -> tuple[object | None, object | None]:
+    """Resolve the best available function/prototype pair from dynamic codegen state."""
     if codegen is None:
         return None, None
 
@@ -118,58 +196,98 @@ def _resolve_codegen_prototype_8616(codegen):
             target.prototype = prototype
         with contextlib.suppress(Exception):
             target.functy = prototype
-    with contextlib.suppress(Exception):
-        kb_func._inertia_return_compat_codegen_prototype_resolved_count = (
-            int(getattr(kb_func, "_inertia_return_compat_codegen_prototype_resolved_count", 0) or 0) + 1
-        )
+    if kb_func is not None:
+        kb_func_dynamic = cast(Any, kb_func)
+        with contextlib.suppress(Exception):
+            kb_func_dynamic._inertia_return_compat_codegen_prototype_resolved_count = (
+                _dynamic_int_counter_8616(kb_func_dynamic, "_inertia_return_compat_codegen_prototype_resolved_count") + 1
+            )
     return codegen_func or kb_func, prototype
 
 
-def describe_x86_16_decompiler_return_compatibility():
+def codegen_has_explicit_void_return_8616(project: object, codegen: object) -> bool:
+    """Return whether dynamic codegen/function metadata proves an explicit void return."""
+
+    cfunc = getattr(codegen, "cfunc", None)
+    function = getattr(codegen, "_inertia_current_function_8616", None)
+    func_addr = getattr(cfunc, "addr", None)
+    if function is None and isinstance(func_addr, int):
+        functions = getattr(getattr(project, "kb", None), "functions", None)
+        if functions is not None:
+            with contextlib.suppress(Exception):
+                function = functions.function(addr=func_addr, create=False)
+
+    resolved_function, resolved_prototype = _resolve_codegen_prototype_8616(codegen)
+    if function is None:
+        function = resolved_function
+
+    for candidate in (
+        getattr(cfunc, "functy", None),
+        getattr(cfunc, "prototype", None),
+        getattr(getattr(codegen, "_func", None), "prototype", None),
+        resolved_prototype,
+        getattr(function, "prototype", None) if function is not None else None,
+    ):
+        return_type = getattr(candidate, "returnty", None)
+        if return_type is not None and _is_void_return_type_8616(return_type):
+            return True
+    return function is not None and getattr(function, "returning", None) is False
+
+
+def describe_x86_16_decompiler_return_compatibility() -> tuple[str, ...]:
+    """Describe the third-party angr return compatibility patches installed here."""
     return ("ReturnMaker._handle_Return: SimComboArg support",)
 
 
-def _make_return_register_expr_8616(self, stmt, reg_arg: SimRegArg):
-    reg = self.arch.registers[reg_arg.reg_name]
-    reg_name = self.arch.translate_register_name(reg[0], reg_arg.size)
+def _make_return_register_expr_8616(self: object, stmt: object, reg_arg: SimRegArg) -> object:
+    self_dynamic = cast(Any, self)
+    stmt_dynamic = cast(Any, stmt)
+    reg = self_dynamic.arch.registers[reg_arg.reg_name]
+    reg_name = self_dynamic.arch.translate_register_name(reg[0], reg_arg.size)
     if reg_name is None:
         reg_name = reg_arg.reg_name
     reg_expr = ailment.Expr.Register(
-        self._next_atom(),
+        self_dynamic._next_atom(),
         None,
         reg[0],
-        reg_arg.size * self.arch.byte_width,
+        reg_arg.size * self_dynamic.arch.byte_width,
         reg_name=reg_name,
-        ins_addr=stmt.tags["ins_addr"],
+        ins_addr=stmt_dynamic.tags["ins_addr"],
     )
     return reg_expr
 
 
-def _register_assignment_source_8616(stmt, *, reg_offset: int, reg_size: int):
+def _register_assignment_source_8616(stmt: object, *, reg_offset: int, reg_size: int) -> object | None:
     if not isinstance(stmt, ailment.Stmt.Assignment):
         return None
-    dst = getattr(stmt, "dst", None)
+    dst = stmt.dst
     if not isinstance(dst, ailment.Expr.Register):
         return None
-    if getattr(dst, "reg_offset", None) != reg_offset:
+    if dst.reg_offset != reg_offset:
         return None
-    if getattr(dst, "bits", None) != reg_size * 8:
+    if dst.bits != reg_size * 8:
         return None
-    return getattr(stmt, "src", None)
+    return stmt.src
 
 
-def _tmp_assignment_source_8616(stmt, *, tmp_idx: int):
+def _tmp_assignment_source_8616(stmt: object, *, tmp_idx: int) -> object | None:
     if not isinstance(stmt, ailment.Stmt.Assignment):
         return None
-    dst = getattr(stmt, "dst", None)
+    dst = stmt.dst
     if not isinstance(dst, ailment.Expr.Tmp):
         return None
-    if getattr(dst, "tmp_idx", None) != tmp_idx:
+    if dst.tmp_idx != tmp_idx:
         return None
-    return getattr(stmt, "src", None)
+    return stmt.src
 
 
-def _resolve_same_block_tmp_source_8616(expr, statements, *, before_index: int, depth: int = 0):
+def _resolve_same_block_tmp_source_8616(
+    expr: object,
+    statements: Sequence[object],
+    *,
+    before_index: int,
+    depth: int = 0,
+) -> object:
     if depth > 8 or not isinstance(expr, ailment.Expr.Tmp):
         return expr
     tmp_idx = getattr(expr, "tmp_idx", None)
@@ -185,7 +303,13 @@ def _resolve_same_block_tmp_source_8616(expr, statements, *, before_index: int, 
     return expr
 
 
-def _resolve_same_block_tmps_in_expr_8616(expr, statements, *, before_index: int, depth: int = 0):
+def _resolve_same_block_tmps_in_expr_8616(
+    expr: object,
+    statements: Sequence[object],
+    *,
+    before_index: int,
+    depth: int = 0,
+) -> object:
     if depth > 8 or expr is None:
         return expr
     if isinstance(expr, ailment.Expr.Tmp):
@@ -210,33 +334,29 @@ def _resolve_same_block_tmps_in_expr_8616(expr, statements, *, before_index: int
     if hasattr(copy, "operands"):
         try:
             operands = getattr(copy, "operands")
-            setattr(
-                copy,
-                "operands",
-                [
+            typing.cast(typing.Any, copy).operands = [
                     _resolve_same_block_tmps_in_expr_8616(child, statements, before_index=before_index, depth=depth + 1)
                     for child in operands
-                ],
-            )
+                ]
         except Exception:
             pass
     return copy
 
 
 def _resolve_same_block_register_reads_in_expr_8616(
-    self,
-    expr,
-    statements,
+    self: object,
+    expr: object,
+    statements: Sequence[object],
     *,
     before_index: int,
     reg_offset: int,
     reg_size: int,
     depth: int = 0,
-):
+) -> object:
     if depth > 8 or expr is None:
         return expr
     if isinstance(expr, ailment.Expr.Register):
-        if getattr(expr, "reg_offset", None) != reg_offset or getattr(expr, "bits", None) != reg_size * 8:
+        if expr.reg_offset != reg_offset or expr.bits != reg_size * 8:
             return expr
         for idx in range(before_index - 1, -1, -1):
             src = _register_assignment_source_8616(statements[idx], reg_offset=reg_offset, reg_size=reg_size)
@@ -279,10 +399,7 @@ def _resolve_same_block_register_reads_in_expr_8616(
     if hasattr(copy, "operands"):
         try:
             operands = getattr(copy, "operands")
-            setattr(
-                copy,
-                "operands",
-                [
+            typing.cast(typing.Any, copy).operands = [
                     _resolve_same_block_register_reads_in_expr_8616(
                         self,
                         child,
@@ -293,52 +410,52 @@ def _resolve_same_block_register_reads_in_expr_8616(
                         depth=depth + 1,
                     )
                     for child in operands
-                ],
-            )
+                ]
         except Exception:
             pass
     return copy
 
 
-def _copy_ail_expr_8616(expr):
+def _copy_ail_expr_8616(expr: object) -> object:
     copy = getattr(expr, "copy", None)
     if callable(copy):
         return copy()
     return expr
 
 
-def _ail_const_value_8616(expr) -> int | None:
+def _ail_const_value_8616(expr: object) -> int | None:
     if isinstance(expr, ailment.Expr.Const):
-        value = getattr(expr, "value", None)
+        value = expr.value
         return int(value) if isinstance(value, int) else None
     return None
 
 
-def _ail_register_name_8616(self, expr) -> str | None:
+def _ail_register_name_8616(self: object, expr: object) -> str | None:
+    self_dynamic = cast(Any, self)
     if not isinstance(expr, ailment.Expr.Register):
         return None
-    reg_offset = getattr(expr, "reg_offset", None)
-    size_bits = getattr(expr, "bits", None)
+    reg_offset = expr.reg_offset
+    size_bits = expr.bits
     if not isinstance(reg_offset, int) or not isinstance(size_bits, int):
         return None
-    size_bytes = max(size_bits // self.arch.byte_width, 1)
-    return self.arch.translate_register_name(reg_offset, size_bytes)
+    size_bytes = max(size_bits // self_dynamic.arch.byte_width, 1)
+    return self_dynamic.arch.translate_register_name(reg_offset, size_bytes)
 
 
-def _strip_ail_convert_8616(expr):
+def _strip_ail_convert_8616(expr: object) -> object:
     while isinstance(expr, ailment.Expr.Convert):
         expr = getattr(expr, "operand", expr)
     return expr
 
 
-def _bp_offset_expr_8616(self, expr) -> int | None:
+def _bp_offset_expr_8616(self: object, expr: object) -> int | None:
     expr = _strip_ail_convert_8616(expr)
     if _ail_register_name_8616(self, expr) == "bp":
         return 0
     if not isinstance(expr, ailment.Expr.BinaryOp):
         return None
-    op = getattr(expr, "op", None)
-    operands = tuple(getattr(expr, "operands", ()) or ())
+    op = expr.op
+    operands = _object_tuple_8616(expr.operands)
     if len(operands) != 2 or op not in {"Add", "Sub"}:
         return None
     lhs, rhs = operands
@@ -353,12 +470,12 @@ def _bp_offset_expr_8616(self, expr) -> int | None:
     return None
 
 
-def _is_ss_segment_scale_8616(self, expr) -> bool:
+def _is_ss_segment_scale_8616(self: object, expr: object) -> bool:
     expr = _strip_ail_convert_8616(expr)
     if not isinstance(expr, ailment.Expr.BinaryOp):
         return False
-    op = getattr(expr, "op", None)
-    operands = tuple(getattr(expr, "operands", ()) or ())
+    op = expr.op
+    operands = _object_tuple_8616(expr.operands)
     if len(operands) != 2 or op not in {"Shl", "Mul"}:
         return False
     scale = 4 if op == "Shl" else 16
@@ -370,14 +487,14 @@ def _is_ss_segment_scale_8616(self, expr) -> bool:
     return False
 
 
-def _bp_offset_from_linear_stack_addr_8616(self, addr_expr) -> int | None:
+def _bp_offset_from_linear_stack_addr_8616(self: object, addr_expr: object) -> int | None:
     addr_expr = _strip_ail_convert_8616(addr_expr)
     direct = _bp_offset_expr_8616(self, addr_expr)
     if direct is not None:
         return direct
     if not isinstance(addr_expr, ailment.Expr.BinaryOp) or getattr(addr_expr, "op", None) != "Add":
         return None
-    operands = tuple(getattr(addr_expr, "operands", ()) or ())
+    operands = _object_tuple_8616(getattr(addr_expr, "operands", ()))
     if len(operands) != 2:
         return None
     lhs, rhs = operands
@@ -388,31 +505,32 @@ def _bp_offset_from_linear_stack_addr_8616(self, addr_expr) -> int | None:
     return None
 
 
-def _materialize_return_stack_load_8616(self, expr):
+def _materialize_return_stack_load_8616(self: object, expr: object) -> object:
+    self_dynamic = cast(Any, self)
     if isinstance(expr, ailment.Expr.Load):
-        offset = _bp_offset_from_linear_stack_addr_8616(self, getattr(expr, "addr", None))
+        offset = _bp_offset_from_linear_stack_addr_8616(self, expr.addr)
         if not isinstance(offset, int):
             return expr
-        bits = getattr(expr, "bits", None)
-        size = max(bits // self.arch.byte_width, 1) if isinstance(bits, int) and bits > 0 else 2
+        bits = expr.bits
+        size = max(bits // self_dynamic.arch.byte_width, 1) if isinstance(bits, int) and bits > 0 else 2
         region = getattr(getattr(self, "function", None), "addr", None)
         variable = SimStackVariable(offset, size, base="bp", region=region)
         materialized_addr = BasePointerOffset(
-            self._next_atom(),
-            size * self.arch.byte_width,
+            self_dynamic._next_atom(),
+            size * self_dynamic.arch.byte_width,
             "bp",
             offset,
             variable=variable,
-            ins_addr=getattr(expr, "tags", {}).get("ins_addr", None),
+            ins_addr=expr.tags.get("ins_addr", None),
         )
-        result = _copy_ail_expr_8616(expr)
+        result = cast(Any, _copy_ail_expr_8616(expr))
         try:
             result.addr = materialized_addr
         except Exception:
             return expr
         return result
 
-    result = _copy_ail_expr_8616(expr)
+    result = cast(Any, _copy_ail_expr_8616(expr))
     for attr in ("addr", "operand", "expr"):
         if not hasattr(result, attr):
             continue
@@ -428,7 +546,15 @@ def _materialize_return_stack_load_8616(self, expr):
     return result
 
 
-def _find_terminal_register_source_8616(self, stmt, *, reg_offset: int, reg_size: int, max_insn_distance: int = 32):
+def _find_terminal_register_source_8616(
+    self: object,
+    stmt: object,
+    *,
+    block: object | None = None,
+    reg_offset: int,
+    reg_size: int,
+    max_insn_distance: int = 32,
+) -> object | None:
     graph = getattr(self, "graph", None)
     if graph is None:
         return None
@@ -438,7 +564,10 @@ def _find_terminal_register_source_8616(self, stmt, *, reg_offset: int, reg_size
 
     candidates: list[tuple[int, int, object]] = []
     tied = False
-    for graph_block in tuple(graph.nodes()):
+    graph_blocks = (block,) if block is not None else tuple(graph.nodes())
+    for graph_block in graph_blocks:
+        if graph_block is None:
+            continue
         statements = tuple(getattr(graph_block, "statements", ()) or ())
         for idx, graph_stmt in enumerate(statements):
             ins_addr = getattr(graph_stmt, "tags", {}).get("ins_addr", None)
@@ -464,14 +593,18 @@ def _find_terminal_register_source_8616(self, stmt, *, reg_offset: int, reg_size
                 tied = True
     if not candidates or tied:
         return None
-    block_ids = {candidate[1] for candidate in candidates}
-    if len(block_ids) != 1:
-        return None
     best = max(candidates, key=lambda candidate: candidate[0])
     return _materialize_return_stack_load_8616(self, _copy_ail_expr_8616(best[2]))
 
 
-def _find_reaching_register_source_8616(self, block, *, reg_offset: int, reg_size: int, max_depth: int = 8):
+def _find_reaching_register_source_8616(
+    self: object,
+    block: object,
+    *,
+    reg_offset: int,
+    reg_size: int,
+    max_depth: int = 8,
+) -> object | None:
     graph = getattr(self, "graph", None)
     if graph is None or block is None:
         return None
@@ -479,7 +612,7 @@ def _find_reaching_register_source_8616(self, block, *, reg_offset: int, reg_siz
     candidates = []
     seen_blocks: set[int] = set()
 
-    def scan_predecessors(node, depth: int) -> None:
+    def scan_predecessors(node: object, depth: int) -> None:
         if depth > max_depth:
             return
         try:
@@ -517,7 +650,7 @@ def _find_reaching_register_source_8616(self, block, *, reg_offset: int, reg_siz
     return _materialize_return_stack_load_8616(self, _copy_ail_expr_8616(candidates[0]))
 
 
-def _infer_x86_16_ax_return_expr_8616(self, stmt, block):
+def _infer_x86_16_ax_return_expr_8616(self: object, stmt: object, block: object | None) -> object | None:
     """Infer a 16-bit scalar return only from concrete AX producer evidence.
 
     This is deliberately narrower than prototype-driven ReturnMaker recovery: if
@@ -535,7 +668,13 @@ def _infer_x86_16_ax_return_expr_8616(self, stmt, block):
     if reg_size <= 0:
         reg_size = 2
 
-    ret_expr = _find_terminal_register_source_8616(self, stmt, reg_offset=reg_offset, reg_size=reg_size)
+    ret_expr = _find_terminal_register_source_8616(
+        self,
+        stmt,
+        block=block,
+        reg_offset=reg_offset,
+        reg_size=reg_size,
+    )
     if ret_expr is None:
         ret_expr = _find_reaching_register_source_8616(self, block, reg_offset=reg_offset, reg_size=reg_size)
     if ret_expr is None:
@@ -560,18 +699,436 @@ def _infer_x86_16_ax_return_expr_8616(self, stmt, block):
     return ret_expr
 
 
-def _iter_function_ail_blocks_8616(function, graph=None):
+def _return_compat_prototype_is_guessed_8616(function: object) -> bool:
+    # Dynamic angr Function compatibility boundary.
+    return bool(getattr(function, "is_prototype_guessed", False))
+
+
+def _return_compat_function_block_count_8616(self) -> int | None:
+    # Dynamic angr ReturnMaker compatibility boundary.
+    graph = getattr(self, "graph", None)
+    if graph is None:
+        return None
+    try:
+        return len(tuple(graph.nodes()))
+    except Exception:
+        return None
+
+
+def _return_compat_target_addrs_8616(function: object) -> tuple[int, ...]:
+    """Return addresses that may name ``function`` across exact-region slices."""
+    # Dynamic angr Function compatibility boundary.
+    target_addr = getattr(function, "addr", None)
+    if not isinstance(target_addr, int):
+        return ()
+    targets = [target_addr]
+    project = _return_compat_function_project_8616(function)
+    original_delta = _return_compat_original_linear_delta_8616(project)
+    if isinstance(original_delta, int):
+        targets.append(target_addr + original_delta)
+    return tuple(dict.fromkeys(targets))
+
+
+def _return_compat_candidate_projects_8616(function: object) -> tuple[object, ...]:
+    """Return projects that may contain callers for ``function``."""
+    project = _return_compat_function_project_8616(function)
+    projects: list[object] = []
+    for candidate in (project, _return_compat_original_project_8616(project)):
+        if candidate is not None and not any(candidate is existing for existing in projects):
+            projects.append(candidate)
+    return tuple(projects)
+
+
+def _return_compat_function_project_8616(function: object) -> object | None:
+    """Return the project attached to an angr Function-like object."""
+    for attr_name in ("project", "_project"):
+        # Dynamic angr Function compatibility boundary.
+        project = getattr(function, attr_name, None)
+        if project is not None:
+            return project
+    return None
+
+
+def _return_compat_attach_project_context_8616(function: object, owner: object) -> None:
+    """Attach ReturnMaker project context to a Function-like object when missing."""
+    if function is None:
+        return
+    current_project = _return_compat_function_project_8616(function)
+    for attr_name in ("project", "_project"):
+        # Dynamic angr ReturnMaker compatibility boundary.
+        candidate_project = getattr(owner, attr_name, None)
+        if candidate_project is None:
+            continue
+        if current_project is None or _return_compat_original_project_8616(current_project) is None:
+            with contextlib.suppress(Exception):
+                # Dynamic angr Function compatibility boundary.
+                typing.cast(typing.Any, function).project = candidate_project
+            return
+
+
+def _return_compat_function_caller_return_use_8616(function: object) -> bool | None:
+    project = _return_compat_function_project_8616(function)
+    evidence_by_addr = caller_return_use_evidence_by_addr_8616(project)
+    for target_addr in _return_compat_target_addrs_8616(function):
+        evidence = evidence_by_addr.get(target_addr)
+        if evidence is None:
+            continue
+        if evidence.verdict is CallerReturnUseVerdict8616.USED:
+            return True
+        if evidence.verdict is CallerReturnUseVerdict8616.UNUSED:
+            return False
+    override = _return_compat_caller_use_override_8616(function)
+    if override is not None:
+        return bool(override)
+    candidate_projects = _return_compat_candidate_projects_8616(function)
+    target_addrs = set(_return_compat_target_addrs_8616(function))
+    if not candidate_projects or not target_addrs:
+        return None
+    try:
+        from .analysis_helpers import collect_neighbor_call_targets
+        from .callsite_summary import CallsiteReturnUseKind8616, summarize_x86_16_callsite
+    except Exception:
+        return None
+    saw_call = False
+    for candidate_project in candidate_projects:
+        # Dynamic project compatibility boundary.
+        functions = getattr(getattr(candidate_project, "kb", None), "functions", None)
+        if functions is None:
+            continue
+        try:
+            function_values = tuple(functions.values())
+        except Exception:
+            continue
+        for caller in function_values:
+            try:
+                seeds = tuple(collect_neighbor_call_targets(caller))
+            except Exception:
+                continue
+            for seed in seeds:
+                # Dynamic callsite-summary compatibility boundary.
+                if getattr(seed, "target_addr", None) not in target_addrs:
+                    continue
+                saw_call = True
+                # Dynamic callsite-summary compatibility boundary.
+                callsite_addr = getattr(seed, "callsite_addr", None)
+                if not isinstance(callsite_addr, int):
+                    continue
+                summary = summarize_x86_16_callsite(caller, callsite_addr)
+                if (
+                    summary is not None
+                    and summary.return_used is True
+                    and summary.return_use_kind is not CallsiteReturnUseKind8616.FUNCTION_RETURN
+                ):
+                    return True
+    return False if saw_call else None
+
+
+def _return_compat_debug_caller_state_8616(function: object) -> dict[str, object]:
+    """Return opt-in diagnostics for caller return-use visibility."""
+
+    candidate_projects = _return_compat_candidate_projects_8616(function)
+    target_addrs = tuple(sorted(_return_compat_target_addrs_8616(function)))
+    project_rows: list[dict[str, object]] = []
+    try:
+        from .analysis_helpers import collect_neighbor_call_targets
+    except Exception as ex:
+        return {
+            "project_count": len(candidate_projects),
+            "target_addrs": target_addrs,
+            "import_error": f"{type(ex).__name__}: {ex}",
+        }
+    for index, candidate_project in enumerate(candidate_projects):
+        # Dynamic project compatibility boundary.
+        functions = getattr(getattr(candidate_project, "kb", None), "functions", None)
+        row: dict[str, object] = {"index": index, "has_functions": functions is not None}
+        if functions is None:
+            project_rows.append(row)
+            continue
+        try:
+            function_values = tuple(functions.values())
+        except Exception as ex:
+            row["function_values_error"] = f"{type(ex).__name__}: {ex}"
+            project_rows.append(row)
+            continue
+        row["function_count"] = len(function_values)
+        matching: list[dict[str, object]] = []
+        for caller in function_values:
+            try:
+                seeds = tuple(collect_neighbor_call_targets(caller))
+            except Exception:
+                continue
+            for seed in seeds:
+                # Dynamic callsite-summary compatibility boundary.
+                target_addr = getattr(seed, "target_addr", None)
+                if target_addr not in target_addrs:
+                    continue
+                matching.append(
+                    {
+                        # Dynamic angr Function compatibility boundary.
+                        "caller": getattr(caller, "addr", None),
+                        # Dynamic callsite-summary compatibility boundary.
+                        "callsite": getattr(seed, "callsite_addr", None),
+                        "target": target_addr,
+                    }
+                )
+        row["matching_calls"] = matching[:8]
+        row["matching_call_count"] = len(matching)
+        project_rows.append(row)
+    return {
+        "project_count": len(candidate_projects),
+        "target_addrs": target_addrs,
+        "projects": project_rows,
+    }
+
+
+def _return_compat_should_refuse_guessed_scalar_value_8616(_self: object, function: object) -> bool:
+    if not _return_compat_prototype_is_guessed_8616(function):
+        return False
+    return _return_compat_function_caller_return_use_8616(function) is False
+
+
+def _return_compat_c_expr_is_unresolved_carrier_8616(expr: object, *, depth: int = 0) -> bool:
+    """Return whether a C return expression is only an unresolved carrier."""
+    if expr is None or depth > 8:
+        return False
+    class_name = expr.__class__.__name__
+    if class_name in {"CTypeCast", "CUnaryOp"}:
+        # Dynamic angr C AST compatibility boundary: expression payload names vary by node class.
+        return _return_compat_c_expr_is_unresolved_carrier_8616(getattr(expr, "expr", None), depth=depth + 1)
+    if class_name == "CDirtyExpression":
+        # Dynamic angr C AST compatibility boundary: dirty expressions may wrap named external payloads.
+        text = str(getattr(getattr(expr, "dirty_expr", None), "name", "") or getattr(expr, "dirty_expr", "") or expr)
+        return any(marker in text for marker in ("vvar_", "tmp_", "ir_"))
+    if isinstance(expr, CVariable):
+        # Dynamic angr C AST compatibility boundary: CVariable names can live on several related objects.
+        variable = expr.variable
+        # Dynamic angr SimVariable compatibility boundary: variable names are optional.
+        variable_name = getattr(variable, "name", None)
+        # Dynamic angr C AST compatibility boundary: expression-level fallback names are optional.
+        expr_name = expr.name
+        # Dynamic angr C AST compatibility boundary: unified-variable metadata is optional.
+        unified_variable = expr.unified_variable
+        # Dynamic angr SimVariable compatibility boundary: unified variable names are optional.
+        unified_name = getattr(unified_variable, "name", None)
+        for candidate in (variable_name, expr_name, unified_name):
+            if isinstance(candidate, str) and candidate.startswith(("vvar_", "tmp_", "ir_")):
+                return True
+        # Dynamic angr SimVariable compatibility boundary: stack variable naming is optional.
+        if isinstance(variable, SimStackVariable) and not isinstance(getattr(variable, "name", None), str):
+            return True
+    return False
+
+
+def _return_compat_should_drop_unresolved_c_return_8616(function: object, retval: object) -> bool:
+    """Return whether C-level return compatibility must refuse an unresolved carrier."""
+    if not _return_compat_prototype_is_guessed_8616(function):
+        return False
+    caller_return_use = _return_compat_function_caller_return_use_8616(function)
+    if caller_return_use is not False:
+        return False
+    # Dynamic angr Function compatibility boundary: return-compat counters are attached to Function objects.
+    if int(getattr(function, "_inertia_return_compat_unknown_caller_reaching_ax_count", 0) or 0) > 0:
+        return False
+    return _return_compat_c_expr_is_unresolved_carrier_8616(retval)
+
+
+def _return_compat_unknown_caller_terminal_expr_8616(
+    self: object, stmt: object, block: object | None, ret_val: object
+) -> object | None:
+    if not isinstance(ret_val, SimRegArg):
+        return None
+    if ret_val.reg_name.lower() != "ax":
+        return None
+    self_dynamic = cast(Any, self)
+    try:
+        reg = self_dynamic.arch.registers[ret_val.reg_name]
+    except Exception:
+        return None
+    return _find_terminal_register_source_8616(
+        self,
+        stmt,
+        block=block,
+        reg_offset=reg[0],
+        reg_size=ret_val.size,
+        max_insn_distance=16,
+    )
+
+
+def _return_compat_unknown_caller_unconditional_predecessor_expr_8616(
+    self: object, block: object | None, ret_val: object
+) -> object | None:
+    if not isinstance(ret_val, SimRegArg) or ret_val.reg_name.lower() != "ax":
+        return None
+    self_dynamic = cast(Any, self)
+    # Dynamic angr ReturnMaker compatibility boundary.
+    graph = getattr(self, "graph", None)
+    if graph is None or block is None:
+        return None
+    try:
+        predecessors = tuple(graph.predecessors(block))
+    except Exception:
+        return None
+    if len(predecessors) != 1:
+        return None
+    predecessor = predecessors[0]
+    try:
+        reg = self_dynamic.arch.registers[ret_val.reg_name]
+    except Exception:
+        return None
+    # Dynamic angr AIL block compatibility boundary.
+    statements = tuple(getattr(predecessor, "statements", ()) or ())
+    for idx in range(len(statements) - 1, -1, -1):
+        pred_stmt = statements[idx]
+        src = _register_assignment_source_8616(pred_stmt, reg_offset=reg[0], reg_size=ret_val.size)
+        if src is None:
+            continue
+        following = statements[idx + 1 :]
+        if any(isinstance(stmt, ailment.Stmt.ConditionalJump) for stmt in following):
+            return None
+        src = _resolve_same_block_tmp_source_8616(src, statements, before_index=idx)
+        src = _resolve_same_block_tmps_in_expr_8616(src, statements, before_index=idx)
+        src = _resolve_same_block_register_reads_in_expr_8616(
+            self,
+            src,
+            statements,
+            before_index=idx,
+            reg_offset=reg[0],
+            reg_size=ret_val.size,
+        )
+        return _materialize_return_stack_load_8616(self, _copy_ail_expr_8616(src))
+    return None
+
+
+def _return_compat_unknown_caller_reaching_register_proven_8616(
+    self: object,
+    block: object | None,
+    ret_val: object,
+    *,
+    max_depth: int = 8,
+) -> bool:
+    """Return True when every predecessor path proves a reaching AX definition."""
+    if not isinstance(ret_val, SimRegArg) or ret_val.reg_name.lower() != "ax":
+        return False
+    self_dynamic = cast(Any, self)
+    # Dynamic angr ReturnMaker compatibility boundary.
+    graph = getattr(self, "graph", None)
+    if graph is None or block is None:
+        return False
+    try:
+        reg = self_dynamic.arch.registers[ret_val.reg_name]
+    except Exception:
+        return False
+
+    def _source_is_explicit_scalar_return(source: object) -> bool:
+        """Return whether a reaching AX source is explicit enough for unknown callers."""
+        if isinstance(source, ailment.Expr.Const):
+            return True
+        if isinstance(source, (ailment.Expr.Load, ailment.Expr.Register, ailment.Expr.Tmp)):
+            return False
+        if isinstance(source, ailment.Expr.BinaryOp):
+            # Dynamic AIL compatibility boundary: BinaryOp children are exposed as operands.
+            return all(_source_is_explicit_scalar_return(child) for child in _object_tuple_8616(source.operands))
+        # Dynamic AIL compatibility boundary: UnaryOp is version-dependent in ailment.
+        unary_op_type = getattr(ailment.Expr, "UnaryOp", None)
+        if unary_op_type is not None and isinstance(source, unary_op_type):
+            # Dynamic AIL compatibility boundary: unary expression payload is named operand.
+            return _source_is_explicit_scalar_return(cast(Any, source).operand)
+        if source.__class__.__name__ == "Convert":
+            # Dynamic AIL compatibility boundary: Convert payload is named operand.
+            return _source_is_explicit_scalar_return(getattr(source, "operand", None))
+        return False
+
+    seen: set[int] = set()
+
+    def _path_has_reaching_definition(node: object, depth: int) -> bool:
+        if depth > max_depth:
+            return False
+        try:
+            predecessors = tuple(graph.predecessors(node))
+        except Exception:
+            return False
+        if not predecessors:
+            return False
+        for predecessor in predecessors:
+            pred_id = id(predecessor)
+            if pred_id in seen:
+                return False
+            seen.add(pred_id)
+            # Dynamic angr AIL block compatibility boundary.
+            statements = tuple(getattr(predecessor, "statements", ()) or ())
+            for idx in range(len(statements) - 1, -1, -1):
+                pred_stmt = statements[idx]
+                src = _register_assignment_source_8616(pred_stmt, reg_offset=reg[0], reg_size=ret_val.size)
+                if src is None:
+                    continue
+                if not _source_is_explicit_scalar_return(
+                    _resolve_same_block_tmps_in_expr_8616(
+                        _resolve_same_block_tmp_source_8616(src, statements, before_index=idx),
+                        statements,
+                        before_index=idx,
+                    )
+                ):
+                    return False
+                break
+            else:
+                if not _path_has_reaching_definition(predecessor, depth + 1):
+                    return False
+        return True
+
+    return _path_has_reaching_definition(block, 0)
+
+
+def _return_compat_mark_guessed_return_void_8616(self: object, function: object) -> None:
+    # Dynamic angr Function compatibility boundary.
+    self_dynamic = cast(Any, self)
+    function_dynamic = cast(Any, function)
+    prototype = getattr(function_dynamic, "prototype", None)
+    if prototype is None:
+        return
+    # Dynamic angr SimTypeFunction compatibility boundary.
+    returnty = getattr(prototype, "returnty", None)
+    if returnty is None or type(returnty) is SimTypeBottom:
+        return
+    try:
+        void_type = SimTypeBottom(label="void").with_arch(self_dynamic.arch)
+        new_proto = prototype.__class__(
+            # Dynamic angr SimTypeFunction compatibility boundary.
+            list(getattr(prototype, "args", ()) or ()),
+            void_type,
+            # Dynamic angr SimTypeFunction compatibility boundary.
+            arg_names=getattr(prototype, "arg_names", None),
+            # Dynamic angr SimTypeFunction compatibility boundary.
+            variadic=getattr(prototype, "variadic", False),
+        ).with_arch(self_dynamic.arch)
+    except Exception:
+        try:
+            prototype.returnty = SimTypeBottom(label="void").with_arch(self_dynamic.arch)
+            new_proto = prototype
+        except Exception:
+            return
+    try:
+        function_dynamic.prototype = new_proto
+        function_dynamic.is_prototype_guessed = False
+        function_dynamic._inertia_return_compat_guessed_scalar_void_promoted_count = (
+            # Dynamic angr Function compatibility boundary.
+            _dynamic_int_counter_8616(function_dynamic, "_inertia_return_compat_guessed_scalar_void_promoted_count") + 1
+        )
+    except Exception:
+        return
+
+
+def _iter_function_ail_blocks_8616(function: object, graph: object | None = None) -> tuple[object, ...]:
     if graph is None:
         graph = getattr(function, "graph", None)
     if graph is None:
         return ()
     try:
-        return tuple(graph.nodes())
+        return tuple(cast(Any, graph).nodes())
     except Exception:
         return ()
 
 
-def _return_insn_addrs_8616(function, graph=None) -> tuple[int, ...]:
+def _return_insn_addrs_8616(function: object, graph: object | None = None) -> tuple[int, ...]:
     addrs: list[int] = []
     fallback_addrs: list[int] = []
     for block in _iter_function_ail_blocks_8616(function, graph=graph):
@@ -592,9 +1149,9 @@ def _return_insn_addrs_8616(function, graph=None) -> tuple[int, ...]:
 
 def _terminal_register_sources_for_function_8616(
     *,
-    arch,
-    function,
-    graph=None,
+    arch: object,
+    function: object,
+    graph: object | None = None,
     reg_offset: int,
     reg_size: int,
     max_insn_distance: int = 32,
@@ -637,7 +1194,7 @@ def _terminal_register_sources_for_function_8616(
     return tuple(sources)
 
 
-def _stack_annotation_name_for_bp_disp_8616(function, bp_disp: int) -> str | None:
+def _stack_annotation_name_for_bp_disp_8616(function: object, bp_disp: int) -> str | None:
     info = getattr(function, "info", None)
     annotations = info.get("x86_16_annotations") if isinstance(info, dict) else None
     stack_vars = annotations.get("stack_vars") if isinstance(annotations, dict) else None
@@ -654,7 +1211,7 @@ def _stack_annotation_name_for_bp_disp_8616(function, bp_disp: int) -> str | Non
     return None
 
 
-def _stack_name_preference_8616(cvar) -> int:
+def _stack_name_preference_8616(cvar: object) -> int:
     variable = getattr(cvar, "variable", None)
     name = getattr(variable, "name", None) or getattr(cvar, "name", None)
     if not isinstance(name, str) or not name:
@@ -666,7 +1223,7 @@ def _stack_name_preference_8616(cvar) -> int:
     return 3
 
 
-def _existing_stack_cvar_for_bp_disp_8616(codegen, bp_disp: int):
+def _existing_stack_cvar_for_bp_disp_8616(codegen: object, bp_disp: int) -> CVariable | None:
     cfunc = getattr(codegen, "cfunc", None)
     variables_in_use = getattr(cfunc, "variables_in_use", None)
     if not isinstance(variables_in_use, dict):
@@ -678,7 +1235,7 @@ def _existing_stack_cvar_for_bp_disp_8616(codegen, bp_disp: int):
         if not isinstance(variable, SimStackVariable) or not isinstance(cvar, CVariable):
             continue
         offset = getattr(variable, "offset", None)
-        if offset not in candidate_offsets:
+        if not isinstance(offset, int) or offset not in candidate_offsets:
             continue
         score = (_stack_name_preference_8616(cvar), int(getattr(variable, "size", 0) or 0), -abs(offset - bp_disp))
         if best_score is None or score > best_score:
@@ -687,11 +1244,11 @@ def _existing_stack_cvar_for_bp_disp_8616(codegen, bp_disp: int):
     return best
 
 
-def _make_c_stack_return_value_8616(codegen, *, bp_disp: int, size: int):
+def _make_c_stack_return_value_8616(codegen: object, *, bp_disp: int, size: int) -> CVariable:
     return _make_c_stack_value_8616(codegen, bp_disp=bp_disp, size=size, variable_type=SimTypeShort(False))
 
 
-def _update_cfunc_arg_type_for_bp_disp_8616(codegen, *, bp_disp: int, variable_type) -> None:
+def _update_cfunc_arg_type_for_bp_disp_8616(codegen: object, *, bp_disp: int, variable_type: object) -> None:
     cfunc = getattr(codegen, "cfunc", None)
     arg_list = getattr(cfunc, "arg_list", None)
     functy = getattr(cfunc, "functy", None)
@@ -701,12 +1258,12 @@ def _update_cfunc_arg_type_for_bp_disp_8616(codegen, *, bp_disp: int, variable_t
     if isinstance(arg_types, tuple):
         arg_types = list(arg_types)
         with contextlib.suppress(Exception):
-            functy.args = arg_types
+            cast(Any, functy).args = arg_types
     for idx, cvar in enumerate(arg_list):
         variable = getattr(cvar, "unified_variable", None) or getattr(cvar, "variable", None)
         if not isinstance(variable, SimStackVariable):
             continue
-        if getattr(variable, "offset", None) not in {bp_disp, bp_disp - 2}:
+        if variable.offset not in {bp_disp, bp_disp - 2}:
             continue
         with contextlib.suppress(Exception):
             cvar.variable_type = variable_type
@@ -719,7 +1276,13 @@ def _update_cfunc_arg_type_for_bp_disp_8616(codegen, *, bp_disp: int, variable_t
         return
 
 
-def _make_c_stack_value_8616(codegen, *, bp_disp: int, size: int, variable_type):
+def _make_c_stack_value_8616(
+    codegen: object,
+    *,
+    bp_disp: int,
+    size: int,
+    variable_type: SimType,
+) -> CVariable:
     existing = _existing_stack_cvar_for_bp_disp_8616(codegen, bp_disp)
     if existing is not None and getattr(existing, "type", None) is not None:
         return existing
@@ -760,7 +1323,7 @@ _MSVC_X87_INT_TO_OPCODE_8616 = {
 }
 
 
-def _return_scan_project_and_addr_8616(project, function):
+def _return_scan_project_and_addr_8616(project: object, function: object) -> tuple[object, int]:
     start = getattr(function, "addr", None)
     if not isinstance(start, int):
         return project, 0
@@ -771,8 +1334,9 @@ def _return_scan_project_and_addr_8616(project, function):
     return project, start
 
 
-def _function_bytes_for_return_scan_8616(project, function) -> tuple[object, int, bytes]:
+def _function_bytes_for_return_scan_8616(project: object, function: object) -> tuple[object, int, bytes]:
     scan_project, start = _return_scan_project_and_addr_8616(project, function)
+    scan_project_dynamic = cast(Any, scan_project)
     if not isinstance(start, int):
         return project, 0, b""
     size = getattr(function, "size", None)
@@ -784,7 +1348,7 @@ def _function_bytes_for_return_scan_8616(project, function) -> tuple[object, int
             if scan_project is not project and isinstance(original_delta, int):
                 scan_block_addr += original_delta
             try:
-                block = scan_project.factory.block(scan_block_addr, opt_level=0)
+                block = scan_project_dynamic.factory.block(scan_block_addr, opt_level=0)
             except Exception:
                 continue
             block_size = getattr(block, "size", 0)
@@ -794,7 +1358,7 @@ def _function_bytes_for_return_scan_8616(project, function) -> tuple[object, int
     if not isinstance(size, int) or size <= 0 or size > 0x1000:
         return scan_project, start, b""
     try:
-        return scan_project, start, bytes(scan_project.loader.memory.load(start, size))
+        return scan_project, start, bytes(scan_project_dynamic.loader.memory.load(start, size))
     except Exception:
         return scan_project, start, b""
 
@@ -837,7 +1401,7 @@ def _modrm16_operand_8616(data: bytes, index: int) -> tuple[dict[str, int] | Non
     return operand, index
 
 
-def _x87_scalar_type_for_size_8616(project, size: int):
+def _x87_scalar_type_for_size_8616(project: object, size: int) -> SimType:
     scalar_type = SimTypeFloat() if size == 4 else SimTypeDouble()
     arch = getattr(project, "arch", None)
     if arch is not None and hasattr(scalar_type, "with_arch"):
@@ -857,7 +1421,7 @@ def _x87_opcode_reads_memory_operand_8616(opcode: int, reg: int) -> bool:
     return False
 
 
-def x86_16_msvc_x87_scalar_stack_args(project, function) -> dict[int, object]:
+def x86_16_msvc_x87_scalar_stack_args(project: object, function: object) -> dict[int, object]:
     """Return BP-relative stack arguments that are proven scalar FP operands.
 
     Microsoft C's no-FPU runtime encodes x87 ESC instructions as INT 34h/35h/
@@ -907,7 +1471,7 @@ def x86_16_msvc_x87_scalar_stack_args(project, function) -> dict[int, object]:
     }
 
 
-def _peer_map_dgroup_base_8616(project) -> int | None:
+def _peer_map_dgroup_base_8616(project: object) -> int | None:
     obj = getattr(getattr(project, "loader", None), "main_object", None)
     binary = getattr(obj, "binary", None)
     if not isinstance(binary, str):
@@ -937,7 +1501,13 @@ def _peer_map_dgroup_base_8616(project) -> int | None:
     return None
 
 
-def _read_x87_constant_8616(codegen, *, project=None, offset: int, size: int) -> float | None:
+def _read_x87_constant_8616(
+    codegen: object,
+    *,
+    project: object | None = None,
+    offset: int,
+    size: int,
+) -> float | None:
     if project is None:
         project = getattr(codegen, "project", None)
     if project is None:
@@ -946,7 +1516,7 @@ def _read_x87_constant_8616(codegen, *, project=None, offset: int, size: int) ->
     if dgroup_base is None:
         return None
     try:
-        data = bytes(project.loader.memory.load(dgroup_base + offset, size))
+        data = bytes(cast(Any, project).loader.memory.load(dgroup_base + offset, size))
     except Exception:
         return None
     if len(data) != size:
@@ -961,7 +1531,13 @@ def _read_x87_constant_8616(codegen, *, project=None, offset: int, size: int) ->
     return None
 
 
-def _c_expr_from_x87_operand_8616(codegen, operand: dict[str, int], *, project=None, size: int):
+def _c_expr_from_x87_operand_8616(
+    codegen: object,
+    operand: dict[str, int],
+    *,
+    project: object | None = None,
+    size: int,
+) -> object | None:
     kind = operand.get("kind")
     value_type = SimTypeFloat() if size == 4 else SimTypeDouble()
     if kind == 1:
@@ -976,7 +1552,7 @@ def _c_expr_from_x87_operand_8616(codegen, operand: dict[str, int], *, project=N
     return None
 
 
-def _decode_msvc_x87_return_expr_8616(codegen):
+def _decode_msvc_x87_return_expr_8616(codegen: object) -> object | None:
     project = getattr(codegen, "project", None)
     function = getattr(codegen, "_func", None)
     if project is None or function is None:
@@ -1046,7 +1622,7 @@ def _decode_msvc_x87_return_expr_8616(codegen):
     return final_expr
 
 
-def _infer_x86_16_c_return_value_from_ax_8616(codegen):
+def _infer_x86_16_c_return_value_from_ax_8616(codegen: object) -> object | None:
     def _debug_refuse(reason: str) -> None:
         if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
             print(f"[dbg-return] CReturn compat-refused={reason}", file=sys.stderr, flush=True)
@@ -1105,10 +1681,10 @@ def _infer_x86_16_c_return_value_from_ax_8616(codegen):
     for source in sources:
         if not isinstance(source, ailment.Expr.Load):
             continue
-        bp_disp = _bp_offset_from_linear_stack_addr_8616(ctx, getattr(source, "addr", None))
+        bp_disp = _bp_offset_from_linear_stack_addr_8616(ctx, source.addr)
         if not isinstance(bp_disp, int):
             continue
-        bits = getattr(source, "bits", None)
+        bits = source.bits
         size = max(bits // getattr(arch, "byte_width", 8), 1) if isinstance(bits, int) and bits > 0 else reg_size
         offsets.add(bp_disp)
         sizes.add(size)
@@ -1133,7 +1709,9 @@ def _infer_x86_16_c_return_value_from_ax_8616(codegen):
     return retval
 
 
-def _make_return_combo_expr_8616(self, stmt, ret_val: SimComboArg):
+def _make_return_combo_expr_8616(self: object, stmt: object, ret_val: SimComboArg) -> object | None:
+    self_dynamic = cast(Any, self)
+    stmt_dynamic = cast(Any, stmt)
     parts = []
     for loc in reversed(ret_val.locations):
         if isinstance(loc, SimRegArg) and _is_stack_base_return_register_8616(loc):
@@ -1148,28 +1726,28 @@ def _make_return_combo_expr_8616(self, stmt, ret_val: SimComboArg):
     expr = parts[0]
     for part in parts[1:]:
         expr = ailment.Expr.BinaryOp(
-            self._next_atom(),
+            self_dynamic._next_atom(),
             "Concat",
             [expr, part],
             bits=getattr(expr, "bits", 0) + getattr(part, "bits", 0),
-            ins_addr=stmt.tags["ins_addr"],
+            ins_addr=stmt_dynamic.tags["ins_addr"],
         )
     return expr
 
 
-def _raw_capstone_insn_8616(insn):
+def _raw_capstone_insn_8616(insn: object) -> object:
     return getattr(insn, "insn", insn)
 
 
-def _capstone_reg_name_8616(insn, reg_id: int) -> str:
-    raw = _raw_capstone_insn_8616(insn)
+def _capstone_reg_name_8616(insn: object, reg_id: int) -> str:
+    raw = cast(Any, _raw_capstone_insn_8616(insn))
     try:
         return str(raw.reg_name(reg_id)).lower()
     except Exception:
         return ""
 
 
-def _mem_bp_disp_operand_8616(insn, operand_index: int) -> int | None:
+def _mem_bp_disp_operand_8616(insn: object, operand_index: int) -> int | None:
     raw = _raw_capstone_insn_8616(insn)
     operands = tuple(getattr(raw, "operands", ()) or ())
     if operand_index >= len(operands):
@@ -1190,7 +1768,7 @@ def _mem_bp_disp_operand_8616(insn, operand_index: int) -> int | None:
     return disp
 
 
-def _reg_operand_name_8616(insn, operand_index: int) -> str | None:
+def _reg_operand_name_8616(insn: object, operand_index: int) -> str | None:
     raw = _raw_capstone_insn_8616(insn)
     operands = tuple(getattr(raw, "operands", ()) or ())
     if operand_index >= len(operands):
@@ -1201,11 +1779,11 @@ def _reg_operand_name_8616(insn, operand_index: int) -> str | None:
     return _capstone_reg_name_8616(raw, int(getattr(operand, "reg", 0) or 0))
 
 
-def _insn_mnemonic_8616(insn) -> str:
+def _insn_mnemonic_8616(insn: object) -> str:
     return str(getattr(_raw_capstone_insn_8616(insn), "mnemonic", "") or "").lower()
 
 
-def _match_wide_stack_arith_sequence_8616(insns) -> tuple[str, int, int] | None:
+def _match_wide_stack_arith_sequence_8616(insns: Sequence[object]) -> tuple[str, int, int] | None:
     for index in range(0, max(0, len(insns) - 3)):
         first, second, third, fourth = insns[index : index + 4]
         if _insn_mnemonic_8616(first) != "mov" or _reg_operand_name_8616(first, 0) != "ax":
@@ -1248,20 +1826,21 @@ def _terminal_wide_stack_arith_return_8616(self) -> tuple[str, int, int] | None:
     return None
 
 
-def _make_bp_stack_load_expr_8616(self, stmt, *, bp_disp: int, size: int):
+def _make_bp_stack_load_expr_8616(self: object, stmt: object, *, bp_disp: int, size: int) -> object:
+    self_dynamic = cast(Any, self)
     function = getattr(self, "function", None)
     variable = SimStackVariable(bp_disp, size, base="bp", region=getattr(function, "addr", None))
     ins_addr = getattr(stmt, "tags", {}).get("ins_addr", None)
     addr = BasePointerOffset(
-        self._next_atom(),
-        size * self.arch.byte_width,
+        self_dynamic._next_atom(),
+        size * self_dynamic.arch.byte_width,
         "bp",
         bp_disp,
         variable=variable,
         ins_addr=ins_addr,
     )
     return ailment.Expr.Load(
-        self._next_atom(),
+        self_dynamic._next_atom(),
         addr,
         size,
         "Iend_LE",
@@ -1270,7 +1849,12 @@ def _make_bp_stack_load_expr_8616(self, stmt, *, bp_disp: int, size: int):
     )
 
 
-def _make_wide_stack_arith_return_expr_8616(self, stmt, prototype):
+def _make_wide_stack_arith_return_expr_8616(
+    self: object,
+    stmt: object,
+    prototype: object,
+) -> object | None:
+    self_dynamic = cast(Any, self)
     returnty = getattr(prototype, "returnty", None)
     if not isinstance(returnty, SimTypeLong):
         return None
@@ -1280,11 +1864,11 @@ def _make_wide_stack_arith_return_expr_8616(self, stmt, prototype):
     op, lhs_offset, rhs_offset = matched
     lhs = _make_bp_stack_load_expr_8616(self, stmt, bp_disp=lhs_offset, size=4)
     rhs = _make_bp_stack_load_expr_8616(self, stmt, bp_disp=rhs_offset, size=4)
-    signed = bool(getattr(returnty, "signed", True))
+    signed = bool(returnty.signed)
     return ailment.Expr.BinaryOp(
-        self._next_atom(),
+        self_dynamic._next_atom(),
         op,
-        [lhs, rhs],
+        [cast(Any, lhs), cast(Any, rhs)],
         signed=signed,
         bits=32,
         ins_addr=getattr(stmt, "tags", {}).get("ins_addr", None),
@@ -1292,31 +1876,39 @@ def _make_wide_stack_arith_return_expr_8616(self, stmt, prototype):
 
 
 def apply_x86_16_decompiler_return_compatibility() -> None:
+    """Install 16-bit x86 return handling hooks backed by structured evidence."""
     if os.environ.get("INERTIA_DISABLE_RETURN_COMPAT") == "1":
         return
 
     _orig_handle_return = ReturnMaker._handle_Return
 
-    def _handle_Return_8616(self, stmt_idx: int, stmt: ailment.Stmt.Return, block):  # pylint:disable=unused-argument
-        function = getattr(self, "function", None)
-        function_addr = getattr(function, "addr", 0)
-        prototype = getattr(function, "prototype", None)
-        calling_convention = getattr(function, "calling_convention", None)
+    def _handle_Return_8616(  # pylint:disable=unused-argument
+        self: object, stmt_idx: int, stmt: ailment.Stmt.Return, block: object | None
+    ) -> object | None:
+        self_dynamic = cast(Any, self)
+        block_dynamic = cast(Any, block)
+        stmt_dynamic = cast(Any, stmt)
+        function = getattr(self_dynamic, "function", None)
+        function_dynamic = cast(Any, function)
+        _return_compat_attach_project_context_8616(function_dynamic, self_dynamic)
+        function_addr = getattr(function_dynamic, "addr", 0)
+        prototype = getattr(function_dynamic, "prototype", None)
+        calling_convention = getattr(function_dynamic, "calling_convention", None)
         retty = getattr(prototype, "returnty", None)
         if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
             if block is not None and stmt_idx > 0:
                 window_start = max(0, stmt_idx - 20)
                 for i in range(window_start, stmt_idx + 1):
-                    if i >= len(block.statements):
+                    if i >= len(block_dynamic.statements):
                         continue
-                    window_stmt = block.statements[i]
+                    window_stmt = block_dynamic.statements[i]
                     print(
                         f"[dbg-return] stmt[{i}]={type(window_stmt).__name__} ins=0x{getattr(window_stmt, 'tags', {}).get('ins_addr', 0):x} "
                         f"repr={window_stmt}",
                         file=sys.stderr,
                         flush=True,
                     )
-                prev_stmt = block.statements[stmt_idx - 1] if stmt_idx - 1 < len(block.statements) else None
+                prev_stmt = block_dynamic.statements[stmt_idx - 1] if stmt_idx - 1 < len(block_dynamic.statements) else None
                 print(
                     f"[dbg-return] prev_stmt={type(prev_stmt).__name__ if prev_stmt is not None else None} "
                     f"ins_addr={getattr(prev_stmt, 'tags', {}).get('ins_addr', None)} "
@@ -1330,33 +1922,99 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                 f"[dbg-return] ReturnMaker.handle_Return_8616 addr=0x{function_addr:x} "
                 f"stmt_idx={stmt_idx} block={'none' if block is None else 'set'} "
                 f"retty={type(retty).__name__ if retty is not None else 'none'} "
-                f"ret_exprs={len(getattr(stmt, 'ret_exprs', ()) or ())}",
+                # Dynamic angr AIL Return compatibility boundary.
+                f"ret_exprs={len(getattr(stmt, 'ret_exprs', ()) or ())} "
+                # Dynamic angr Function compatibility boundary.
+                f"prototype_guessed={getattr(function, 'is_prototype_guessed', None)!r} "
+                f"caller_return_use={_return_compat_function_caller_return_use_8616(function)!r} "
+                f"caller_state={_return_compat_debug_caller_state_8616(function)!r}",
                 file=sys.stderr,
                 flush=True,
             )
-            l.debug(
+            log.debug(
                 "ReturnMaker.handle_Return_8616 addr=%#x stmt_idx=%d block=%s retty=%s ret_exprs=%d",
                 function_addr,
                 stmt_idx,
                 "set" if block is not None else "none",
                 type(retty).__name__ if retty is not None else "none",
+                # Dynamic angr AIL Return compatibility boundary.
                 len(getattr(stmt, "ret_exprs", ()) or ()),
             )
-        if not stmt.ret_exprs and block is not None:
+        if not stmt_dynamic.ret_exprs and block is not None:
             if _is_void_return_type_8616(retty):
                 try:
-                    function._inertia_return_compat_void_refused_count = (
-                        int(getattr(function, "_inertia_return_compat_void_refused_count", 0) or 0) + 1
+                    function_dynamic._inertia_return_compat_void_refused_count = (
+                        # Dynamic angr Function compatibility boundary.
+                        _dynamic_int_counter_8616(function_dynamic, "_inertia_return_compat_void_refused_count") + 1
                     )
                 except Exception:
                     pass
                 try:
-                    return _orig_handle_return(self, stmt_idx, stmt, block)
+                    return cast(Any, _orig_handle_return)(self_dynamic, stmt_idx, stmt_dynamic, block_dynamic)
                 except AttributeError as ex:
                     if "returnty" in str(ex):
-                        l.warning("ReturnMaker fallback skipped due to missing returnty: %s", ex)
+                        log.warning("ReturnMaker fallback skipped due to missing returnty: %s", ex)
                         return None
                     raise
+
+            guessed_caller_use = (
+                _return_compat_function_caller_return_use_8616(function)
+                if _return_compat_prototype_is_guessed_8616(function)
+                else True
+            )
+            if guessed_caller_use is None:
+                # Dynamic angr SimTypeFunction compatibility boundary.
+                returnty = getattr(prototype, "returnty", None)
+                ret_val = calling_convention.return_val(returnty) if calling_convention is not None else SimRegArg("ax", 2)
+                ret_expr = _return_compat_unknown_caller_terminal_expr_8616(self, stmt, block, ret_val)
+                if ret_expr is None:
+                    ret_expr = _return_compat_unknown_caller_unconditional_predecessor_expr_8616(self, block, ret_val)
+                if ret_expr is not None:
+                    new_stmt = cast(Any, stmt.copy())
+                    new_stmt.ret_exprs.append(cast(Any, ret_expr))
+                    return new_stmt
+                if _return_compat_unknown_caller_reaching_register_proven_8616(self, block, ret_val):
+                    ret_expr = _make_return_register_expr_8616(self, stmt, ret_val)
+                    if ret_expr is not None:
+                        try:
+                            function_dynamic._inertia_return_compat_unknown_caller_reaching_ax_count = (
+                                _dynamic_int_counter_8616(
+                                    function_dynamic, "_inertia_return_compat_unknown_caller_reaching_ax_count"
+                                )
+                                + 1
+                            )
+                        except Exception:
+                            pass
+                        new_stmt = cast(Any, stmt.copy())
+                        new_stmt.ret_exprs.append(cast(Any, ret_expr))
+                        return new_stmt
+                try:
+                    function_dynamic._inertia_return_compat_unknown_caller_no_terminal_ax_count = (
+                        # Dynamic angr Function compatibility boundary.
+                        _dynamic_int_counter_8616(
+                            function_dynamic, "_inertia_return_compat_unknown_caller_no_terminal_ax_count"
+                        )
+                        + 1
+                    )
+                except Exception:
+                    pass
+                guessed_caller_use = None
+
+            project = _return_compat_function_project_8616(function)
+            has_terminal_word_evidence = project is not None and _terminal_word_return_evidence_8616(project, function)
+            if (
+                guessed_caller_use is False or _return_compat_should_refuse_guessed_scalar_value_8616(self, function)
+            ) and not has_terminal_word_evidence:
+                try:
+                    function_dynamic._inertia_return_compat_guessed_scalar_refused_count = (
+                        # Dynamic angr Function compatibility boundary.
+                        _dynamic_int_counter_8616(function_dynamic, "_inertia_return_compat_guessed_scalar_refused_count")
+                        + 1
+                    )
+                except Exception:
+                    pass
+                _return_compat_mark_guessed_return_void_8616(self, function)
+                return stmt.copy()
 
             has_prototype_return = (
                 prototype is not None
@@ -1367,8 +2025,8 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
             if not has_prototype_return:
                 ret_expr = _infer_x86_16_ax_return_expr_8616(self, stmt, block)
                 if ret_expr is not None:
-                    new_stmt = stmt.copy()
-                    new_stmt.ret_exprs.append(ret_expr)
+                    new_stmt = cast(Any, stmt.copy())
+                    new_stmt.ret_exprs.append(cast(Any, ret_expr))
                     if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
                         print(
                             f"[dbg-return] compat-inferred-ax-ret-stmt-count={len(new_stmt.ret_exprs)} "
@@ -1378,18 +2036,18 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                         )
                     return new_stmt
                 try:
-                    return _orig_handle_return(self, stmt_idx, stmt, block)
+                    return cast(Any, _orig_handle_return)(self_dynamic, stmt_idx, stmt_dynamic, block_dynamic)
                 except AttributeError as ex:
                     if "returnty" in str(ex):
-                        l.warning("ReturnMaker fallback skipped due to missing returnty: %s", ex)
+                        log.warning("ReturnMaker fallback skipped due to missing returnty: %s", ex)
                         return None
                     raise
 
             returnty = getattr(prototype, "returnty", None)
-            if _is_x86_16_near_pointer_return_8616(getattr(self, "arch", None), returnty):
+            if _is_x86_16_near_pointer_return_8616(getattr(self_dynamic, "arch", None), returnty):
                 ret_val = SimRegArg("ax", 2)
             else:
-                ret_val = calling_convention.return_val(returnty)
+                ret_val = cast(Any, calling_convention).return_val(returnty)
             if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
                 print(
                     f"[dbg-return] ret_val={type(ret_val).__name__} value={getattr(ret_val, 'reg_name', None)} "
@@ -1406,26 +2064,27 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
             if isinstance(ret_val, SimRegArg) and _is_stack_base_return_register_8616(ret_val):
                 if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
                     print(
-                        f"[dbg-return] skip-sp-based-return-compat addr=0x{getattr(self.function, 'addr', 0):x} "
+                        f"[dbg-return] skip-sp-based-return-compat addr=0x{getattr(self_dynamic.function, 'addr', 0):x} "
                         f"return-reg={ret_val.reg_name}",
                         file=sys.stderr,
                         flush=True,
                     )
                 try:
-                    return _orig_handle_return(self, stmt_idx, stmt, block)
+                    return cast(Any, _orig_handle_return)(self_dynamic, stmt_idx, stmt_dynamic, block_dynamic)
                 except AttributeError as ex:
                     if "returnty" in str(ex):
-                        l.warning("ReturnMaker fallback skipped due to missing returnty: %s", ex)
+                        log.warning("ReturnMaker fallback skipped due to missing returnty: %s", ex)
                         return None
                     raise
 
             ret_expr = None
             if isinstance(ret_val, SimRegArg):
                 try:
-                    reg = self.arch.registers[ret_val.reg_name]
+                    reg = self_dynamic.arch.registers[ret_val.reg_name]
                     ret_expr = _find_terminal_register_source_8616(
                         self,
                         stmt,
+                        block=block,
                         reg_offset=reg[0],
                         reg_size=ret_val.size,
                     )
@@ -1467,19 +2126,19 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
 
             if ret_expr is None:
                 try:
-                    return _orig_handle_return(self, stmt_idx, stmt, block)
+                    return cast(Any, _orig_handle_return)(self_dynamic, stmt_idx, stmt_dynamic, block_dynamic)
                 except AttributeError as ex:
                     # Some tiny/irregular functions can reach ReturnMaker with a
                     # missing prototype return type in upstream angr internals.
                     # Keep decompilation alive by preserving the original
                     # statement when the failure is prototype-shape related.
                     if "returnty" in str(ex):
-                        l.warning("ReturnMaker fallback skipped due to missing returnty: %s", ex)
+                        log.warning("ReturnMaker fallback skipped due to missing returnty: %s", ex)
                         return None
                     raise
 
-            new_stmt = stmt.copy()
-            new_stmt.ret_exprs.append(ret_expr)
+            new_stmt = cast(Any, stmt.copy())
+            new_stmt.ret_exprs.append(cast(Any, ret_expr))
             if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
                 print(
                     f"[dbg-return] compat-ret-stmt-count={len(new_stmt.ret_exprs)} "
@@ -1487,32 +2146,53 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                     file=sys.stderr,
                     flush=True,
                 )
-            new_statements = block.statements[::]
+            new_statements = block_dynamic.statements[::]
             new_statements[stmt_idx] = new_stmt
             return new_stmt
 
         try:
-            return _orig_handle_return(self, stmt_idx, stmt, block)
+            return cast(Any, _orig_handle_return)(self_dynamic, stmt_idx, stmt_dynamic, block_dynamic)
         except AttributeError as ex:
             if "returnty" in str(ex):
-                l.warning("ReturnMaker skipped due to missing returnty: %s", ex)
+                log.warning("ReturnMaker skipped due to missing returnty: %s", ex)
                 return None
             raise
 
     if getattr(ReturnMaker._handle_Return, "__name__", "") != "_handle_Return_8616":
-        ReturnMaker._handle_Return = _handle_Return_8616
+        cast(Any, ReturnMaker)._handle_Return = _handle_Return_8616
 
     _orig_handle_c_return = MakeTypecastsImplicit.handle_CReturn
 
-    def _handle_CReturn_8616(self, obj):
-        codegen = getattr(self, "codegen", None)
+    def _handle_CReturn_8616(self: object, obj: object) -> object | None:
+        self_dynamic = cast(Any, self)
+        obj_dynamic = cast(Any, obj)
+        codegen = getattr(self_dynamic, "codegen", None)
         if codegen is None:
-            codegen = getattr(obj, "codegen", None)
+            codegen = getattr(obj_dynamic, "codegen", None)
         codegen_func, prototype = _resolve_codegen_prototype_8616(codegen)
+        codegen_func_dynamic = cast(Any, codegen_func)
         return_type = getattr(prototype, "returnty", None)
         return_type_size = getattr(return_type, "size", None)
+        if codegen_func is not None and _return_compat_should_drop_unresolved_c_return_8616(
+            # Dynamic angr CReturn compatibility boundary: retval may be synthesized by upstream passes.
+            codegen_func_dynamic, getattr(obj_dynamic, "retval", None)
+        ):
+            obj_dynamic.retval = None
+            _return_compat_mark_guessed_return_void_8616(self_dynamic, codegen_func_dynamic)
+            # Dynamic angr codegen pass compatibility boundary: self carries the active architecture.
+            return_type = SimTypeBottom(label="void").with_arch(getattr(self_dynamic, "arch", None))
+            # Dynamic angr SimType compatibility boundary: return type sizes are optional.
+            return_type_size = getattr(return_type, "size", None)
+            with contextlib.suppress(Exception):
+                codegen_func_dynamic._inertia_return_compat_c_ast_unresolved_carrier_void_count = (
+                    # Dynamic angr Function compatibility boundary: counters are attached to Function objects.
+                    _dynamic_int_counter_8616(
+                        codegen_func_dynamic, "_inertia_return_compat_c_ast_unresolved_carrier_void_count"
+                    )
+                    + 1
+                )
         if (
-            getattr(obj, "retval", None) is None
+            getattr(obj_dynamic, "retval", None) is None
             and codegen is not None
             and return_type is not None
             and not isinstance(return_type, SimTypeBottom)
@@ -1521,7 +2201,7 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
         ):
             retval = _infer_x86_16_c_return_value_from_ax_8616(codegen)
             if retval is not None:
-                obj.retval = retval
+                obj_dynamic.retval = retval
                 if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
                     print(
                         f"[dbg-return] CReturn compat-inferred-ax-retval={_describe_c_expr_8616(retval)}",
@@ -1531,11 +2211,11 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
         if (
             codegen is not None
             and not _is_void_return_type_8616(return_type)
-            and isinstance(getattr(obj, "retval", None), CConstant)
+            and isinstance(getattr(obj_dynamic, "retval", None), CConstant)
         ):
             x87_retval = _decode_msvc_x87_return_expr_8616(codegen)
             if x87_retval is not None:
-                obj.retval = x87_retval
+                obj_dynamic.retval = x87_retval
                 if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
                     print(
                         f"[dbg-return] CReturn msvc-x87-retval={_describe_c_expr_8616(x87_retval)}",
@@ -1544,8 +2224,8 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                     )
             else:
                 with contextlib.suppress(Exception):
-                    codegen_func._inertia_msvc_x87_return_refused_count = (
-                        int(getattr(codegen_func, "_inertia_msvc_x87_return_refused_count", 0) or 0) + 1
+                    codegen_func_dynamic._inertia_msvc_x87_return_refused_count = (
+                        _dynamic_int_counter_8616(codegen_func_dynamic, "_inertia_msvc_x87_return_refused_count") + 1
                     )
         if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
             if codegen is not None:
@@ -1558,18 +2238,18 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                 )
                 print(f"[dbg-return] CReturn codegen-graph-attrs={graph_attrs}", file=sys.stderr, flush=True)
             print(
-                f"[dbg-return] CReturn obj={type(obj).__name__} return_type={return_type_size}",
+                f"[dbg-return] CReturn obj={type(obj_dynamic).__name__} return_type={return_type_size}",
                 file=sys.stderr,
                 flush=True,
             )
             print(
-                f"[dbg-return] CReturn retval-before={type(getattr(obj, 'retval', None)).__name__} "
-                f"expr={_describe_c_expr_8616(getattr(obj, 'retval', None))}",
+                f"[dbg-return] CReturn retval-before={type(getattr(obj_dynamic, 'retval', None)).__name__} "
+                f"expr={_describe_c_expr_8616(getattr(obj_dynamic, 'retval', None))}",
                 file=sys.stderr,
                 flush=True,
             )
         try:
-            result = _orig_handle_c_return(self, obj)
+            result = cast(Any, _orig_handle_c_return)(self_dynamic, obj_dynamic)
             if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
                 print(
                     f"[dbg-return] CReturn result={type(result).__name__}",
@@ -1588,7 +2268,7 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                 # Some irregular functions can reach this pass without a resolved
                 # prototype. Keep return expression unchanged instead of aborting
                 # the entire decompilation.
-                l.warning("MakeTypecastsImplicit skipped CReturn collapse due to missing returnty: %s", ex)
+                log.warning("MakeTypecastsImplicit skipped CReturn collapse due to missing returnty: %s", ex)
                 return obj
             raise
 

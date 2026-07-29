@@ -1,13 +1,33 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: preserve legacy CLI helper surface while delegating semantic proof to X86_16 layers.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable
 from types import SimpleNamespace
+from typing import Any
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 
 _LINEAR_TEMP_NAME_RE_8616 = re.compile(r"(?:v\d+|vvar_\d+|ir_\d+|tmp_\d+)")
+
+
+def _dynamic_codegen_attr(obj: object, name: str, default: Any = None) -> Any:  # noqa: ANN401
+    """Read a dynamic angr structured-codegen attribute at the CLI boundary."""
+    # Dynamic codegen boundary: angr C-AST nodes expose version-dependent fields.
+    return getattr(obj, name, default)
+
+
+def _dynamic_codegen_setattr(obj: object, name: str, value: object) -> None:
+    """Write a dynamic angr structured-codegen attribute at the CLI boundary."""
+    # Dynamic codegen boundary: angr C-AST nodes expose version-dependent fields.
+    setattr(obj, name, value)
 
 
 def _strip_typed_suffix_8616(name: object) -> str | None:
@@ -26,24 +46,24 @@ def _is_linear_temp_name_8616(name: object) -> bool:
 
 
 def _rewrite_ss_stack_byte_offsets(
-    project,
-    codegen,
+    project: Any,  # noqa: ANN401
+    codegen: Any,  # noqa: ANN401
     *,
-    unwrap_c_casts,
-    iter_c_nodes_deep,
-    replace_c_children,
-    c_constant_value,
-    flatten_c_add_terms,
-    classify_segmented_dereference,
-    strip_segment_scale_from_addr_expr,
-    resolve_stack_cvar_at_offset,
-    promote_direct_stack_cvariable,
-    stack_type_for_size,
-    materialize_stack_cvar_at_offset,
-    stack_slot_identity_for_variable,
-    stack_pointer_alias_state,
-):
-    if getattr(codegen, "cfunc", None) is None:
+    unwrap_c_casts: Callable[[object], object],
+    iter_c_nodes_deep: Callable[[object], Iterable[object]],
+    replace_c_children: Callable[[object, Callable[[object], object]], bool],
+    c_constant_value: Callable[[object], int | None],
+    flatten_c_add_terms: Callable[[object], Iterable[object]],
+    classify_segmented_dereference: Callable[[object, object], Any],
+    strip_segment_scale_from_addr_expr: Callable[[object, object], Any],
+    resolve_stack_cvar_at_offset: Callable[[object, int], Any],
+    promote_direct_stack_cvariable: Callable[[object, object, int, object], Any],
+    stack_type_for_size: Callable[[int], object],
+    materialize_stack_cvar_at_offset: Callable[[object, int, int], Any],
+    stack_slot_identity_for_variable: Callable[[object], Any],
+    stack_pointer_alias_state: Callable[[object, int], Any],
+) -> bool:
+    if _dynamic_codegen_attr(codegen, "cfunc", None) is None:
         return False
 
     # Ownership boundary:
@@ -52,54 +72,54 @@ def _rewrite_ss_stack_byte_offsets(
     # slots). If final emitted C still contains raw stack carrier math, fix it here
     # or earlier in stack lowering, not in the final text cleanup layer.
 
-    binary_path = getattr(getattr(codegen.cfunc, "project", None), "loader", None)
-    binary_name = getattr(getattr(binary_path, "main_object", None), "binary_basename", "")
+    binary_path = _dynamic_codegen_attr(_dynamic_codegen_attr(codegen.cfunc, "project", None), "loader", None)
+    binary_name = _dynamic_codegen_attr(_dynamic_codegen_attr(binary_path, "main_object", None), "binary_basename", "")
     if isinstance(binary_name, str) and binary_name.lower().endswith(".cod"):
-        func_name = getattr(getattr(codegen.cfunc, "function", None), "name", "")
+        func_name = _dynamic_codegen_attr(_dynamic_codegen_attr(codegen.cfunc, "function", None), "name", "")
         if func_name == "fold_values":
             return False
 
     changed = False
-    stack_pointer_aliases: dict[object, object] = {}
-    synthetic_sp_anchor = None
+    stack_pointer_aliases: dict[object, Any] = {}
+    synthetic_sp_anchor: Any | None = None
     _UNRESOLVED_SINGLE_ASSIGN = object()
     dirty_expr_single_assignment_cache: dict[str, object | None] = {}
     dirty_expr_single_assignment_index: dict[str, object | None] | None = None
     cvar_single_assignment_cache: dict[int, object | None] = {}
 
-    def _safe_dirty_attr_8616(obj, attr: str):
+    def _safe_dirty_attr_8616(obj: object, attr: str) -> object | None:
         try:
-            return getattr(obj, attr, None)
+            return _dynamic_codegen_attr(obj, attr, None)
         except (AttributeError, TypeError, ValueError):
             return None
 
-    def _synthetic_sp_anchor_cvar():
+    def _synthetic_sp_anchor_cvar() -> object:
         nonlocal synthetic_sp_anchor
         if synthetic_sp_anchor is not None:
             return synthetic_sp_anchor
-        region = getattr(codegen.cfunc, "addr", None)
+        region = _dynamic_codegen_attr(codegen.cfunc, "addr", None)
         variable = SimStackVariable(0, 2, base="sp", name="sp_0", region=region)
         synthetic_sp_anchor = structured_c.CVariable(variable, variable_type=SimTypeShort(False), codegen=codegen)
-        variables_in_use = getattr(codegen.cfunc, "variables_in_use", None)
+        variables_in_use = _dynamic_codegen_attr(codegen.cfunc, "variables_in_use", None)
         if isinstance(variables_in_use, dict):
             variables_in_use.setdefault(variable, synthetic_sp_anchor)
-        unified_local_vars = getattr(codegen.cfunc, "unified_local_vars", None)
+        unified_local_vars = _dynamic_codegen_attr(codegen.cfunc, "unified_local_vars", None)
         if isinstance(unified_local_vars, dict):
             unified_local_vars.setdefault(
-                variable, {(synthetic_sp_anchor, getattr(synthetic_sp_anchor, "variable_type", None))}
+                variable, {(synthetic_sp_anchor, _dynamic_codegen_attr(synthetic_sp_anchor, "variable_type", None))}
             )
         return synthetic_sp_anchor
 
-    def _is_sp_virtual_register(variable) -> bool:
-        sp_offset = getattr(getattr(project, "arch", None), "registers", {}).get("sp", (None, None))[0]
-        return isinstance(sp_offset, int) and getattr(variable, "reg", None) == sp_offset
+    def _is_sp_virtual_register(variable: object) -> bool:
+        sp_offset = _dynamic_codegen_attr(_dynamic_codegen_attr(project, "arch", None), "registers", {}).get("sp", (None, None))[0]
+        return isinstance(sp_offset, int) and _dynamic_codegen_attr(variable, "reg", None) == sp_offset
 
-    def _is_ss_virtual_register(variable) -> bool:
-        ss_offset = getattr(getattr(project, "arch", None), "registers", {}).get("ss", (None, None))[0]
-        return isinstance(ss_offset, int) and getattr(variable, "reg", None) == ss_offset
+    def _is_ss_virtual_register(variable: object) -> bool:
+        ss_offset = _dynamic_codegen_attr(_dynamic_codegen_attr(project, "arch", None), "registers", {}).get("ss", (None, None))[0]
+        return isinstance(ss_offset, int) and _dynamic_codegen_attr(variable, "reg", None) == ss_offset
 
-    def _dirty_reg_offset_8616(node) -> int | None:
-        dirty = getattr(node, "dirty", None)
+    def _dirty_reg_offset_8616(node: object) -> int | None:
+        dirty = _dynamic_codegen_attr(node, "dirty", None)
         if dirty is None:
             return None
         for attr in ("reg_offset", "reg"):
@@ -108,50 +128,50 @@ def _rewrite_ss_stack_byte_offsets(
                 return int(reg)
         return None
 
-    def _dirty_is_ss_virtual_register_8616(node) -> bool:
+    def _dirty_is_ss_virtual_register_8616(node: object) -> bool:
         return _is_ss_virtual_register(SimpleNamespace(reg=_dirty_reg_offset_8616(node)))
 
-    def _is_linear_temp(cvar) -> bool:
+    def _is_linear_temp(cvar: object) -> bool:
         if not isinstance(cvar, structured_c.CVariable):
             return False
-        variable = getattr(cvar, "variable", None)
+        variable = _dynamic_codegen_attr(cvar, "variable", None)
         if isinstance(variable, SimStackVariable):
             return False
-        name = getattr(cvar, "name", None)
+        name = _dynamic_codegen_attr(cvar, "name", None)
         if name is None:
             return True
         return _is_linear_temp_name_8616(name)
 
-    def _alias_keys_for_cvar(cvar) -> tuple[object, ...]:
+    def _alias_keys_for_cvar(cvar: object) -> tuple[object, ...]:
         keys: list[object] = []
-        variable = getattr(cvar, "variable", None)
+        variable = _dynamic_codegen_attr(cvar, "variable", None)
         linear_temp = _is_linear_temp(cvar)
         if variable is not None:
             keys.append(("var", id(variable)))
-            reg = getattr(variable, "reg", None)
-            size = getattr(variable, "size", None)
+            reg = _dynamic_codegen_attr(variable, "reg", None)
+            size = _dynamic_codegen_attr(variable, "size", None)
             if not linear_temp and isinstance(reg, int) and isinstance(size, int):
                 keys.append(("reg", reg, size))
-        name = getattr(cvar, "name", None) or getattr(variable, "name", None)
+        name = _dynamic_codegen_attr(cvar, "name", None) or _dynamic_codegen_attr(variable, "name", None)
         if isinstance(name, str) and name:
             normalized_name = _strip_typed_suffix_8616(name)
             if isinstance(normalized_name, str) and normalized_name:
                 keys.append(("name", normalized_name))
         return tuple(keys)
 
-    def _alias_lookup_keys_for_cvar(cvar) -> tuple[object, ...]:
-        variable = getattr(cvar, "variable", None)
+    def _alias_lookup_keys_for_cvar(cvar: object) -> tuple[object, ...]:
+        variable = _dynamic_codegen_attr(cvar, "variable", None)
         keys: list[object] = []
         linear_temp = _is_linear_temp(cvar)
         if variable is not None:
             keys.append(("var", id(variable)))
-            reg = getattr(variable, "reg", None)
-            size = getattr(variable, "size", None)
+            reg = _dynamic_codegen_attr(variable, "reg", None)
+            size = _dynamic_codegen_attr(variable, "size", None)
             if not linear_temp and isinstance(reg, int) and isinstance(size, int):
                 keys.append(("reg", reg, size))
         for candidate in (
-            getattr(cvar, "name", None),
-            getattr(variable, "name", None),
+            _dynamic_codegen_attr(cvar, "name", None),
+            _dynamic_codegen_attr(variable, "name", None),
         ):
             if isinstance(candidate, str) and candidate:
                 normalized_name = _strip_typed_suffix_8616(candidate)
@@ -159,7 +179,7 @@ def _rewrite_ss_stack_byte_offsets(
                     keys.append(("name", normalized_name))
         return tuple(dict.fromkeys(keys))
 
-    def _single_assignment_expr_for_virtual_name(name: str):
+    def _single_assignment_expr_for_virtual_name(name: str) -> object | None:
         nonlocal dirty_expr_single_assignment_index
         normalized_name = _strip_typed_suffix_8616(name)
         if not normalized_name:
@@ -167,7 +187,7 @@ def _rewrite_ss_stack_byte_offsets(
         cached = dirty_expr_single_assignment_cache.get(normalized_name)
         if cached is not None:
             return None if cached is _UNRESOLVED_SINGLE_ASSIGN else cached
-        root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+        root = _dynamic_codegen_attr(_dynamic_codegen_attr(codegen, "cfunc", None), "statements", None)
         if root is None:
             dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGN
             return None
@@ -188,19 +208,19 @@ def _rewrite_ss_stack_byte_offsets(
                 if not isinstance(stmt, structured_c.CAssignment):
                     continue
                 scanned += 1
-                lhs = getattr(stmt, "lhs", None)
+                lhs = _dynamic_codegen_attr(stmt, "lhs", None)
                 lhs_keys: set[str] = set()
                 if isinstance(lhs, structured_c.CVariable):
-                    lhs_name = getattr(lhs, "name", None) or getattr(getattr(lhs, "variable", None), "name", None)
+                    lhs_name = _dynamic_codegen_attr(lhs, "name", None) or _dynamic_codegen_attr(_dynamic_codegen_attr(lhs, "variable", None), "name", None)
                     lhs_name = _strip_typed_suffix_8616(lhs_name)
                     if isinstance(lhs_name, str) and lhs_name:
                         lhs_keys.add(lhs_name)
-                lhs_varid = _safe_dirty_attr_8616(getattr(lhs, "dirty", None), "varid")
+                lhs_varid = _safe_dirty_attr_8616(_dynamic_codegen_attr(lhs, "dirty", None), "varid")
                 if isinstance(lhs_varid, int):
                     lhs_keys.add(f"vvar_{lhs_varid}")
                 if not lhs_keys:
                     continue
-                rhs = getattr(stmt, "rhs", None)
+                rhs = _dynamic_codegen_attr(stmt, "rhs", None)
                 for lhs_key in lhs_keys:
                     if lhs_key in index:
                         index[lhs_key] = _UNRESOLVED_SINGLE_ASSIGN
@@ -208,10 +228,10 @@ def _rewrite_ss_stack_byte_offsets(
                         index[lhs_key] = rhs
             dirty_expr_single_assignment_index = index
             codegen._inertia_ss_stack_virtual_assignment_index_scanned = (
-                int(getattr(codegen, "_inertia_ss_stack_virtual_assignment_index_scanned", 0) or 0) + scanned
+                int(_dynamic_codegen_attr(codegen, "_inertia_ss_stack_virtual_assignment_index_scanned", 0) or 0) + scanned
             )
             codegen._inertia_ss_stack_virtual_assignment_index_keys = int(
-                getattr(codegen, "_inertia_ss_stack_virtual_assignment_index_keys", 0) or 0
+                _dynamic_codegen_attr(codegen, "_inertia_ss_stack_virtual_assignment_index_keys", 0) or 0
             ) + len(index)
 
         resolved = dirty_expr_single_assignment_index.get(normalized_name)
@@ -223,39 +243,39 @@ def _rewrite_ss_stack_byte_offsets(
         )
         if resolved is not None:
             codegen._inertia_ss_stack_virtual_assignment_index_hits = (
-                int(getattr(codegen, "_inertia_ss_stack_virtual_assignment_index_hits", 0) or 0) + 1
+                int(_dynamic_codegen_attr(codegen, "_inertia_ss_stack_virtual_assignment_index_hits", 0) or 0) + 1
             )
         return resolved
 
-    def _single_assignment_expr_for_cvar(node_cvar):
+    def _single_assignment_expr_for_cvar(node_cvar: object) -> object | None:
         cache_key = id(node_cvar)
         if cache_key in cvar_single_assignment_cache:
             return cvar_single_assignment_cache[cache_key]
 
-        root = getattr(getattr(codegen, "cfunc", None), "statements", None)
+        root = _dynamic_codegen_attr(_dynamic_codegen_attr(codegen, "cfunc", None), "statements", None)
         if root is None or not isinstance(node_cvar, structured_c.CVariable):
             cvar_single_assignment_cache[cache_key] = None
             return None
 
-        node_var = getattr(node_cvar, "variable", None)
-        node_name = getattr(node_cvar, "name", None) or getattr(node_var, "name", None)
-        node_reg = getattr(node_var, "reg", None)
-        node_size = getattr(node_var, "size", None)
+        node_var = _dynamic_codegen_attr(node_cvar, "variable", None)
+        node_name = _dynamic_codegen_attr(node_cvar, "name", None) or _dynamic_codegen_attr(node_var, "name", None)
+        node_reg = _dynamic_codegen_attr(node_var, "reg", None)
+        node_size = _dynamic_codegen_attr(node_var, "size", None)
         node_linear_temp = _is_linear_temp(node_cvar)
 
-        def _same_lhs(lhs):
+        def _same_lhs(lhs: object) -> bool:
             if not isinstance(lhs, structured_c.CVariable):
                 return False
-            lhs_var = getattr(lhs, "variable", None)
+            lhs_var = _dynamic_codegen_attr(lhs, "variable", None)
             if lhs_var is node_var:
                 return True
-            lhs_name = getattr(lhs, "name", None) or getattr(lhs_var, "name", None)
+            lhs_name = _dynamic_codegen_attr(lhs, "name", None) or _dynamic_codegen_attr(lhs_var, "name", None)
             lhs_name = _strip_typed_suffix_8616(lhs_name)
             normalized_node_name = _strip_typed_suffix_8616(node_name)
             if isinstance(normalized_node_name, str) and normalized_node_name and lhs_name == normalized_node_name:
                 return True
-            lhs_reg = getattr(lhs_var, "reg", None)
-            lhs_size = getattr(lhs_var, "size", None)
+            lhs_reg = _dynamic_codegen_attr(lhs_var, "reg", None)
+            lhs_size = _dynamic_codegen_attr(lhs_var, "size", None)
             lhs_linear_temp = _is_linear_temp(lhs)
             if node_linear_temp or lhs_linear_temp:
                 return False
@@ -272,9 +292,9 @@ def _rewrite_ss_stack_byte_offsets(
         for stmt in iter_c_nodes_deep(root):
             if not isinstance(stmt, structured_c.CAssignment):
                 continue
-            if not _same_lhs(getattr(stmt, "lhs", None)):
+            if not _same_lhs(_dynamic_codegen_attr(stmt, "lhs", None)):
                 continue
-            matches.append(getattr(stmt, "rhs", None))
+            matches.append(_dynamic_codegen_attr(stmt, "rhs", None))
             if len(matches) > 1:
                 cvar_single_assignment_cache[cache_key] = None
                 return None
@@ -282,14 +302,14 @@ def _rewrite_ss_stack_byte_offsets(
         cvar_single_assignment_cache[cache_key] = resolved
         return resolved
 
-    def _top_level_statements():
-        root = getattr(getattr(codegen, "cfunc", None), "statements", None)
-        statements = getattr(root, "statements", None)
+    def _top_level_statements() -> list[object]:
+        root = _dynamic_codegen_attr(_dynamic_codegen_attr(codegen, "cfunc", None), "statements", None)
+        statements = _dynamic_codegen_attr(root, "statements", None)
         if isinstance(statements, (list, tuple)):
             return list(statements)
         return []
 
-    def _statement_index_containing(node) -> int | None:
+    def _statement_index_containing(node: object) -> int | None:
         if node is None:
             return None
         for idx, stmt in enumerate(_top_level_statements()):
@@ -298,12 +318,12 @@ def _rewrite_ss_stack_byte_offsets(
                     return idx
         return None
 
-    def _nearest_preceding_assignment_expr_for_cvar(node_cvar):
+    def _nearest_preceding_assignment_expr_for_cvar(node_cvar: object) -> object | None:
         if not isinstance(node_cvar, structured_c.CVariable):
             return None
-        node_var = getattr(node_cvar, "variable", None)
-        node_reg = getattr(node_var, "reg", None)
-        node_size = getattr(node_var, "size", None)
+        node_var = _dynamic_codegen_attr(node_cvar, "variable", None)
+        node_reg = _dynamic_codegen_attr(node_var, "reg", None)
+        node_size = _dynamic_codegen_attr(node_var, "size", None)
         if not (isinstance(node_reg, int) and isinstance(node_size, int)):
             return None
         stmt_idx = _statement_index_containing(node_cvar)
@@ -314,22 +334,22 @@ def _rewrite_ss_stack_byte_offsets(
         for idx, stmt in enumerate(_top_level_statements()):
             if idx >= stmt_idx or not isinstance(stmt, structured_c.CAssignment):
                 continue
-            lhs = getattr(stmt, "lhs", None)
+            lhs = _dynamic_codegen_attr(stmt, "lhs", None)
             if not isinstance(lhs, structured_c.CVariable):
                 continue
-            lhs_var = getattr(lhs, "variable", None)
-            lhs_reg = getattr(lhs_var, "reg", None)
-            lhs_size = getattr(lhs_var, "size", None)
+            lhs_var = _dynamic_codegen_attr(lhs, "variable", None)
+            lhs_reg = _dynamic_codegen_attr(lhs_var, "reg", None)
+            lhs_size = _dynamic_codegen_attr(lhs_var, "size", None)
             if lhs_reg == node_reg and lhs_size == node_size:
-                nearest_rhs = getattr(stmt, "rhs", None)
+                nearest_rhs = _dynamic_codegen_attr(stmt, "rhs", None)
         return nearest_rhs
 
     def _resolve_dirty_virtual_expr(
-        node,
+        node: object,
         *,
         seen_varids: set[int] | None = None,
-    ):
-        dirty = getattr(node, "dirty", None)
+    ) -> object | None:
+        dirty = _dynamic_codegen_attr(node, "dirty", None)
         if dirty is None:
             return None
         varid = _safe_dirty_attr_8616(dirty, "varid")
@@ -353,18 +373,18 @@ def _rewrite_ss_stack_byte_offsets(
             return _synthetic_sp_anchor_cvar()
         return None
 
-    def _dirty_alias_key(node):
-        varid = _safe_dirty_attr_8616(getattr(node, "dirty", None), "varid")
+    def _dirty_alias_key(node: object) -> tuple[str, int] | None:
+        varid = _safe_dirty_attr_8616(_dynamic_codegen_attr(node, "dirty", None), "varid")
         if isinstance(varid, int):
             return ("vvar", varid)
         return None
 
     def _resolve_stack_pointer_alias(
-        node,
+        node: object,
         *,
         seen_expr_ids: set[int] | None = None,
         seen_varids: set[int] | None = None,
-    ):
+    ) -> tuple[object, int] | None:
         node = unwrap_c_casts(node)
         if node is None:
             return None
@@ -379,7 +399,7 @@ def _rewrite_ss_stack_byte_offsets(
         if dirty_key is not None:
             alias = stack_pointer_aliases.get(dirty_key)
             if alias is not None:
-                return alias.base, alias.offset
+                return _dynamic_codegen_attr(alias, "base"), int(_dynamic_codegen_attr(alias, "offset", 0))
         resolved_dirty = _resolve_dirty_virtual_expr(node, seen_varids=seen_varids)
         if resolved_dirty is not None:
             return _resolve_stack_pointer_alias(
@@ -388,17 +408,17 @@ def _rewrite_ss_stack_byte_offsets(
                 seen_varids=seen_varids,
             )
         if isinstance(node, structured_c.CVariable):
-            variable = getattr(node, "variable", None)
+            variable = _dynamic_codegen_attr(node, "variable", None)
             if isinstance(variable, SimStackVariable):
                 identity = stack_slot_identity_for_variable(variable)
-                if identity is not None and identity.base == "bp":
+                if identity is not None and _dynamic_codegen_attr(identity, "base", None) == "bp":
                     return node, 0
             if _is_sp_virtual_register(variable):
                 return _synthetic_sp_anchor_cvar(), 0
             for key in _alias_lookup_keys_for_cvar(node):
                 alias = stack_pointer_aliases.get(key)
                 if alias is not None:
-                    return alias.base, alias.offset
+                    return _dynamic_codegen_attr(alias, "base"), int(_dynamic_codegen_attr(alias, "offset", 0))
             single_assignment_rhs = _single_assignment_expr_for_cvar(node)
             if single_assignment_rhs is not None:
                 return _resolve_stack_pointer_alias(
@@ -417,15 +437,15 @@ def _rewrite_ss_stack_byte_offsets(
         if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
             operand = unwrap_c_casts(node.operand)
             if isinstance(operand, structured_c.CVariable):
-                variable = getattr(operand, "variable", None)
+                variable = _dynamic_codegen_attr(operand, "variable", None)
                 if isinstance(variable, SimStackVariable):
                     identity = stack_slot_identity_for_variable(variable)
-                    if identity is not None and identity.base == "bp":
+                    if identity is not None and _dynamic_codegen_attr(identity, "base", None) == "bp":
                         return operand, 0
                 for key in _alias_lookup_keys_for_cvar(operand):
                     alias = stack_pointer_aliases.get(key)
                     if alias is not None:
-                        return alias.base, alias.offset
+                        return _dynamic_codegen_attr(alias, "base"), int(_dynamic_codegen_attr(alias, "offset", 0))
             return None
         if isinstance(node, structured_c.CBinaryOp) and node.op in {"Add", "Sub"}:
             lhs = _resolve_stack_pointer_alias(
@@ -449,7 +469,7 @@ def _rewrite_ss_stack_byte_offsets(
         return None
 
     def _expr_is_ss_segment_value_8616(
-        node,
+        node: object,
         *,
         seen_expr_ids: set[int] | None = None,
         seen_varids: set[int] | None = None,
@@ -465,18 +485,18 @@ def _rewrite_ss_stack_byte_offsets(
         seen_expr_ids.add(node_id)
 
         if isinstance(node, structured_c.CVariable):
-            variable = getattr(node, "variable", None)
+            variable = _dynamic_codegen_attr(node, "variable", None)
             if _is_ss_virtual_register(variable):
                 codegen._inertia_ss_stack_byte_ss_virtual_register_evidence_8616 = (
-                    int(getattr(codegen, "_inertia_ss_stack_byte_ss_virtual_register_evidence_8616", 0) or 0) + 1
+                    int(_dynamic_codegen_attr(codegen, "_inertia_ss_stack_byte_ss_virtual_register_evidence_8616", 0) or 0) + 1
                 )
                 return True
             if _dirty_is_ss_virtual_register_8616(node):
                 codegen._inertia_ss_stack_byte_ss_dirty_register_evidence_8616 = (
-                    int(getattr(codegen, "_inertia_ss_stack_byte_ss_dirty_register_evidence_8616", 0) or 0) + 1
+                    int(_dynamic_codegen_attr(codegen, "_inertia_ss_stack_byte_ss_dirty_register_evidence_8616", 0) or 0) + 1
                 )
                 return True
-            name = getattr(node, "name", None) or getattr(variable, "name", None)
+            name = _dynamic_codegen_attr(node, "name", None) or _dynamic_codegen_attr(variable, "name", None)
             if isinstance(name, str) and name.lower() == "ss":
                 return True
             single_assignment_rhs = _single_assignment_expr_for_cvar(node)
@@ -497,18 +517,18 @@ def _rewrite_ss_stack_byte_offsets(
             )
         if _dirty_is_ss_virtual_register_8616(node):
             codegen._inertia_ss_stack_byte_ss_dirty_register_evidence_8616 = (
-                int(getattr(codegen, "_inertia_ss_stack_byte_ss_dirty_register_evidence_8616", 0) or 0) + 1
+                int(_dynamic_codegen_attr(codegen, "_inertia_ss_stack_byte_ss_dirty_register_evidence_8616", 0) or 0) + 1
             )
             return True
         return False
 
-    def _expr_is_ss_segment_scale_term_8616(node, *, seen_varids: set[int] | None = None) -> bool:
+    def _expr_is_ss_segment_scale_term_8616(node: object, *, seen_varids: set[int] | None = None) -> bool:
         node = unwrap_c_casts(node)
         if not isinstance(node, structured_c.CBinaryOp):
             return False
-        op = getattr(node, "op", None)
-        lhs = getattr(node, "lhs", None)
-        rhs = getattr(node, "rhs", None)
+        op = _dynamic_codegen_attr(node, "op", None)
+        lhs = _dynamic_codegen_attr(node, "lhs", None)
+        rhs = _dynamic_codegen_attr(node, "rhs", None)
         lhs_const = c_constant_value(unwrap_c_casts(lhs))
         rhs_const = c_constant_value(unwrap_c_casts(rhs))
         if op == "Shl" and rhs_const == 4:
@@ -520,10 +540,10 @@ def _rewrite_ss_stack_byte_offsets(
         return lhs_const == 16 and _expr_is_ss_segment_value_8616(rhs, seen_varids=seen_varids)
 
     def _strip_proven_ss_segment_scale_from_addr_expr_8616(
-        addr_expr,
+        addr_expr: object,
         *,
         seen_varids: set[int] | None = None,
-    ):
+    ) -> object | None:
         terms = flatten_c_add_terms(addr_expr)
         if not terms:
             return None
@@ -538,19 +558,19 @@ def _rewrite_ss_stack_byte_offsets(
         if stripped != 1 or not kept_terms:
             if stripped > 1:
                 codegen._inertia_ss_stack_byte_segment_strip_refused_8616 = (
-                    int(getattr(codegen, "_inertia_ss_stack_byte_segment_strip_refused_8616", 0) or 0) + 1
+                    int(_dynamic_codegen_attr(codegen, "_inertia_ss_stack_byte_segment_strip_refused_8616", 0) or 0) + 1
                 )
             return None
         result = kept_terms[0]
         for term in kept_terms[1:]:
-            result = structured_c.CBinaryOp("Add", result, term, codegen=getattr(term, "codegen", None))
+            result = structured_c.CBinaryOp("Add", result, term, codegen=_dynamic_codegen_attr(term, "codegen", None))
         codegen._inertia_ss_stack_byte_segment_strip_materialized_8616 = (
-            int(getattr(codegen, "_inertia_ss_stack_byte_segment_strip_materialized_8616", 0) or 0) + 1
+            int(_dynamic_codegen_attr(codegen, "_inertia_ss_stack_byte_segment_strip_materialized_8616", 0) or 0) + 1
         )
         return result
 
     def _expr_contains_ss_segment_scale_8616(
-        node,
+        node: object,
         *,
         seen_expr_ids: set[int] | None = None,
         seen_varids: set[int] | None = None,
@@ -566,9 +586,9 @@ def _rewrite_ss_stack_byte_offsets(
         seen_expr_ids.add(node_id)
 
         if isinstance(node, structured_c.CBinaryOp):
-            op = getattr(node, "op", None)
-            lhs = getattr(node, "lhs", None)
-            rhs = getattr(node, "rhs", None)
+            op = _dynamic_codegen_attr(node, "op", None)
+            lhs = _dynamic_codegen_attr(node, "lhs", None)
+            rhs = _dynamic_codegen_attr(node, "rhs", None)
             lhs_const = c_constant_value(unwrap_c_casts(lhs))
             rhs_const = c_constant_value(unwrap_c_casts(rhs))
             if (
@@ -613,11 +633,11 @@ def _rewrite_ss_stack_byte_offsets(
         return False
 
     def _resolve_ss_linear_stack_pointer_alias(
-        node,
+        node: object,
         *,
         seen_expr_ids: set[int] | None = None,
         seen_varids: set[int] | None = None,
-    ):
+    ) -> tuple[object, int] | None:
         node = unwrap_c_casts(node)
         if node is None:
             return None
@@ -676,7 +696,7 @@ def _rewrite_ss_stack_byte_offsets(
                 resolved = _resolve_stack_pointer_alias(addr_expr, seen_varids=seen_varids)
                 if resolved is not None:
                     codegen._inertia_ss_stack_byte_linear_carrier_resolved_8616 = (
-                        int(getattr(codegen, "_inertia_ss_stack_byte_linear_carrier_resolved_8616", 0) or 0) + 1
+                        int(_dynamic_codegen_attr(codegen, "_inertia_ss_stack_byte_linear_carrier_resolved_8616", 0) or 0) + 1
                     )
                     return resolved
         return _resolve_ss_linear_stack_pointer_alias(
@@ -685,7 +705,7 @@ def _rewrite_ss_stack_byte_offsets(
             seen_varids=seen_varids,
         )
 
-    def _is_uncast_ss_linear_carrier_byte_offset_8616(node) -> bool:
+    def _is_uncast_ss_linear_carrier_byte_offset_8616(node: object) -> bool:
         if isinstance(node, structured_c.CTypeCast):
             return False
         node = unwrap_c_casts(node)
@@ -714,7 +734,7 @@ def _rewrite_ss_stack_byte_offsets(
             for walk_node in iter_c_nodes_deep(codegen.cfunc.statements):
                 if not isinstance(walk_node, structured_c.CAssignment):
                     continue
-                lhs = getattr(walk_node, "lhs", None)
+                lhs = _dynamic_codegen_attr(walk_node, "lhs", None)
                 if isinstance(lhs, structured_c.CVariable):
                     if not _is_linear_temp(lhs):
                         continue
@@ -744,21 +764,22 @@ def _rewrite_ss_stack_byte_offsets(
 
     _collect_stack_pointer_aliases()
 
-    def _effective_deref_bits(node) -> int | None:
-        type_ = getattr(node, "type", None)
-        bits = getattr(type_, "size", None)
+    def _effective_deref_bits(node: object) -> int | None:
+        type_ = _dynamic_codegen_attr(node, "type", None)
+        bits = _dynamic_codegen_attr(type_, "size", None)
         if bits in {8, 16}:
             return bits
-        operand = getattr(node, "operand", None)
-        cast_type = getattr(operand, "type", None)
+        operand = _dynamic_codegen_attr(node, "operand", None)
+        cast_type = _dynamic_codegen_attr(operand, "type", None)
         if isinstance(cast_type, SimTypePointer):
-            pointee = getattr(cast_type, "pts_to", None)
-            pointee_bits = getattr(pointee, "size", None)
+            pointee = _dynamic_codegen_attr(cast_type, "pts_to", None)
+            pointee_bits = _dynamic_codegen_attr(pointee, "size", None)
             if pointee_bits in {8, 16}:
                 return pointee_bits
         return None
 
-    def make_stack_deref(cvar, offset: int, bits: int):
+    def make_stack_deref(cvar: Any, offset: int, bits: int) -> object:  # noqa: ANN401
+        """Build a typed dereference for a proven stack-relative address."""
         element_type = SimTypeChar(False) if bits == 8 else SimTypeShort(False)
         ptr_type = SimTypePointer(element_type).with_arch(project.arch)
         base_ref = structured_c.CUnaryOp("Reference", cvar, codegen=codegen)
@@ -780,45 +801,52 @@ def _rewrite_ss_stack_byte_offsets(
             addr_expr = base_ref
         return structured_c.CUnaryOp(
             "Dereference",
-            structured_c.CTypeCast(None, ptr_type, addr_expr, codegen=codegen),
+            structured_c.CTypeCast(
+                _dynamic_codegen_attr(addr_expr, "type", None) or ptr_type,
+                ptr_type,
+                addr_expr,
+                codegen=codegen,
+            ),
             codegen=codegen,
         )
 
-    def make_addr_deref(addr_expr, bits: int):
+    def make_addr_deref(addr_expr: Any, bits: int) -> object:  # noqa: ANN401
+        """Build a typed dereference for a proven 16-bit address expression."""
         element_type = SimTypeChar(False) if bits == 8 else SimTypeShort(False)
         ptr_type = SimTypePointer(element_type).with_arch(project.arch)
+        source_type = _dynamic_codegen_attr(addr_expr, "type", None) or SimTypeShort(False)
         return structured_c.CUnaryOp(
             "Dereference",
-            structured_c.CTypeCast(None, ptr_type, addr_expr, codegen=codegen),
+            structured_c.CTypeCast(source_type, ptr_type, addr_expr, codegen=codegen),
             codegen=codegen,
         )
 
-    def _contains_large_unsigned_constant(node) -> bool:
+    def _contains_large_unsigned_constant(node: object) -> bool:
         for term in flatten_c_add_terms(node):
             value = c_constant_value(unwrap_c_casts(term))
             if isinstance(value, int) and value > 0x7FFF:
                 return True
         return False
 
-    def _stack_cvar_identity(cvar) -> tuple[str, int, int | None, object] | None:
-        variable = getattr(cvar, "variable", None)
+    def _stack_cvar_identity(cvar: object) -> tuple[str, int, int | None, object] | None:
+        variable = _dynamic_codegen_attr(cvar, "variable", None)
         if not isinstance(variable, SimStackVariable):
             return None
-        base = getattr(variable, "base", None)
-        offset = getattr(variable, "offset", None)
-        size = getattr(variable, "size", None)
-        region = getattr(variable, "region", None)
+        base = _dynamic_codegen_attr(variable, "base", None)
+        offset = _dynamic_codegen_attr(variable, "offset", None)
+        size = _dynamic_codegen_attr(variable, "size", None)
+        region = _dynamic_codegen_attr(variable, "region", None)
         if not isinstance(base, str) or not isinstance(offset, int):
             return None
         return base, offset, size if isinstance(size, int) else None, region
 
-    def _stack_deref_identity(node) -> tuple[tuple[str, int, int | None, object], int, int] | None:
+    def _stack_deref_identity(node: object) -> tuple[tuple[str, int, int | None, object], int, int] | None:
         if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
             return None
         bits = _effective_deref_bits(node)
         if bits not in {8, 16}:
             bits = 16
-        resolved = _resolve_stack_pointer_alias(getattr(node, "operand", None))
+        resolved = _resolve_stack_pointer_alias(_dynamic_codegen_attr(node, "operand", None))
         if resolved is None:
             return None
         base_cvar, extra_offset = resolved
@@ -827,11 +855,11 @@ def _rewrite_ss_stack_byte_offsets(
             return None
         return base_identity, int(extra_offset), int(bits)
 
-    def _return_if_changed(original, replacement):
+    def _return_if_changed(original: object, replacement: object) -> object:
         if replacement is original:
             return original
 
-        def _expr_contains_rewrite_alias_carrier(expr, *, seen_ids: set[int] | None = None) -> bool:
+        def _expr_contains_rewrite_alias_carrier(expr: object, *, seen_ids: set[int] | None = None) -> bool:
             expr = unwrap_c_casts(expr)
             if seen_ids is None:
                 seen_ids = set()
@@ -845,13 +873,13 @@ def _rewrite_ss_stack_byte_offsets(
             if isinstance(expr, structured_c.CVariable):
                 return _is_linear_temp(expr)
             if isinstance(expr, structured_c.CUnaryOp):
-                return _expr_contains_rewrite_alias_carrier(getattr(expr, "operand", None), seen_ids=seen_ids)
+                return _expr_contains_rewrite_alias_carrier(_dynamic_codegen_attr(expr, "operand", None), seen_ids=seen_ids)
             if isinstance(expr, structured_c.CBinaryOp):
                 return _expr_contains_rewrite_alias_carrier(
-                    getattr(expr, "lhs", None), seen_ids=seen_ids
-                ) or _expr_contains_rewrite_alias_carrier(getattr(expr, "rhs", None), seen_ids=seen_ids)
+                    _dynamic_codegen_attr(expr, "lhs", None), seen_ids=seen_ids
+                ) or _expr_contains_rewrite_alias_carrier(_dynamic_codegen_attr(expr, "rhs", None), seen_ids=seen_ids)
             if isinstance(expr, structured_c.CTypeCast):
-                return _expr_contains_rewrite_alias_carrier(getattr(expr, "expr", None), seen_ids=seen_ids)
+                return _expr_contains_rewrite_alias_carrier(_dynamic_codegen_attr(expr, "expr", None), seen_ids=seen_ids)
             return False
 
         original_cvar = _stack_cvar_identity(original)
@@ -862,33 +890,33 @@ def _rewrite_ss_stack_byte_offsets(
         replacement_deref = _stack_deref_identity(replacement)
         if original_deref is not None and original_deref == replacement_deref:
             if isinstance(original, structured_c.CUnaryOp) and original.op == "Dereference":
-                if _expr_contains_rewrite_alias_carrier(getattr(original, "operand", None)):
+                if _expr_contains_rewrite_alias_carrier(_dynamic_codegen_attr(original, "operand", None)):
                     return replacement
             return original
         return replacement
 
-    def transform(node):
+    def transform(node: object) -> object:
         if not isinstance(node, structured_c.CUnaryOp) or node.op != "Dereference":
             return node
-        resolved_plain_alias = _resolve_stack_pointer_alias(getattr(node, "operand", None))
+        resolved_plain_alias = _resolve_stack_pointer_alias(_dynamic_codegen_attr(node, "operand", None))
         if resolved_plain_alias is None:
-            resolved_plain_alias = _resolve_ss_linear_stack_pointer_alias(getattr(node, "operand", None))
+            resolved_plain_alias = _resolve_ss_linear_stack_pointer_alias(_dynamic_codegen_attr(node, "operand", None))
         if resolved_plain_alias is not None:
             base_cvar, extra_offset = resolved_plain_alias
             bits = _effective_deref_bits(node)
-            if extra_offset != 0 and _is_uncast_ss_linear_carrier_byte_offset_8616(getattr(node, "operand", None)):
+            if extra_offset != 0 and _is_uncast_ss_linear_carrier_byte_offset_8616(_dynamic_codegen_attr(node, "operand", None)):
                 bits = 8
             elif bits not in {8, 16}:
                 bits = 8 if extra_offset != 0 else 16
-            base_variable = getattr(base_cvar, "variable", None)
+            base_variable = _dynamic_codegen_attr(base_cvar, "variable", None)
             access_size = bits // project.arch.byte_width if isinstance(bits, int) and bits > 0 else None
             if isinstance(base_variable, SimStackVariable) and isinstance(access_size, int):
-                target_offset = getattr(base_variable, "offset", 0) + extra_offset
+                target_offset = _dynamic_codegen_attr(base_variable, "offset", 0) + extra_offset
                 resolved_cvar = resolve_stack_cvar_at_offset(codegen, target_offset)
                 if resolved_cvar is not None:
-                    resolved_variable = getattr(resolved_cvar, "variable", None)
-                    resolved_offset = getattr(resolved_variable, "offset", None)
-                    resolved_size = getattr(resolved_variable, "size", None)
+                    resolved_variable = _dynamic_codegen_attr(resolved_cvar, "variable", None)
+                    resolved_offset = _dynamic_codegen_attr(resolved_variable, "offset", None)
+                    resolved_size = _dynamic_codegen_attr(resolved_variable, "size", None)
                     if isinstance(resolved_variable, SimStackVariable) and access_size >= 4:
                         if resolved_size is not None and resolved_size < access_size:
                             promote_direct_stack_cvariable(
@@ -913,29 +941,29 @@ def _rewrite_ss_stack_byte_offsets(
         if classified is None or classified.kind != "stack" or classified.cvar is None:
             if classified is None or classified.seg_name != "ss":
                 return node
-            addr_expr = strip_segment_scale_from_addr_expr(getattr(classified, "addr_expr", None), project)
+            addr_expr = strip_segment_scale_from_addr_expr(_dynamic_codegen_attr(classified, "addr_expr", None), project)
             if addr_expr is None or _expr_contains_ss_segment_scale_8616(addr_expr):
                 addr_expr = _strip_proven_ss_segment_scale_from_addr_expr_8616(
-                    getattr(classified, "addr_expr", None),
+                    _dynamic_codegen_attr(classified, "addr_expr", None),
                 )
             if addr_expr is None:
                 return node
             resolved_stack_alias = _resolve_stack_pointer_alias(addr_expr)
             if resolved_stack_alias is not None:
                 base_cvar, extra_offset = resolved_stack_alias
-                type_ = getattr(node, "type", None)
-                bits = getattr(type_, "size", None)
+                type_ = _dynamic_codegen_attr(node, "type", None)
+                bits = _dynamic_codegen_attr(type_, "size", None)
                 if bits not in {8, 16}:
                     bits = 16
-                base_variable = getattr(base_cvar, "variable", None)
+                base_variable = _dynamic_codegen_attr(base_cvar, "variable", None)
                 access_size = bits // project.arch.byte_width if isinstance(bits, int) and bits > 0 else None
                 if isinstance(base_variable, SimStackVariable) and isinstance(access_size, int):
-                    target_offset = getattr(base_variable, "offset", 0) + extra_offset
+                    target_offset = _dynamic_codegen_attr(base_variable, "offset", 0) + extra_offset
                     resolved_cvar = resolve_stack_cvar_at_offset(codegen, target_offset)
                     if resolved_cvar is not None:
-                        resolved_variable = getattr(resolved_cvar, "variable", None)
-                        resolved_offset = getattr(resolved_variable, "offset", None)
-                        resolved_size = getattr(resolved_variable, "size", None)
+                        resolved_variable = _dynamic_codegen_attr(resolved_cvar, "variable", None)
+                        resolved_offset = _dynamic_codegen_attr(resolved_variable, "offset", None)
+                        resolved_size = _dynamic_codegen_attr(resolved_variable, "size", None)
                         if isinstance(resolved_variable, SimStackVariable) and access_size >= 4:
                             if resolved_size is not None and resolved_size < access_size:
                                 promote_direct_stack_cvariable(
@@ -967,18 +995,18 @@ def _rewrite_ss_stack_byte_offsets(
         else:
             cvar = classified.cvar
             extra_offset = classified.extra_offset
-            base_variable = getattr(cvar, "variable", None)
+            base_variable = _dynamic_codegen_attr(cvar, "variable", None)
             if isinstance(base_variable, SimStackVariable):
                 bits = _effective_deref_bits(node)
                 if bits not in {8, 16}:
                     bits = 16
                 access_size = bits // project.arch.byte_width if isinstance(bits, int) and bits > 0 else None
-                target_offset = getattr(base_variable, "offset", 0) + extra_offset
+                target_offset = _dynamic_codegen_attr(base_variable, "offset", 0) + extra_offset
                 resolved_cvar = resolve_stack_cvar_at_offset(codegen, target_offset)
                 if resolved_cvar is not None:
-                    resolved_variable = getattr(resolved_cvar, "variable", None)
-                    resolved_offset = getattr(resolved_variable, "offset", None)
-                    resolved_size = getattr(resolved_variable, "size", None)
+                    resolved_variable = _dynamic_codegen_attr(resolved_cvar, "variable", None)
+                    resolved_offset = _dynamic_codegen_attr(resolved_variable, "offset", None)
+                    resolved_size = _dynamic_codegen_attr(resolved_variable, "size", None)
                     if (
                         isinstance(resolved_variable, SimStackVariable)
                         and isinstance(access_size, int)
@@ -1000,29 +1028,29 @@ def _rewrite_ss_stack_byte_offsets(
                     return _return_if_changed(
                         node, materialize_stack_cvar_at_offset(codegen, target_offset, access_size)
                     )
-            elif getattr(classified, "seg_name", None) == "ss":
-                addr_expr = strip_segment_scale_from_addr_expr(getattr(classified, "addr_expr", None), project)
+            elif _dynamic_codegen_attr(classified, "seg_name", None) == "ss":
+                addr_expr = strip_segment_scale_from_addr_expr(_dynamic_codegen_attr(classified, "addr_expr", None), project)
                 if addr_expr is None or _expr_contains_ss_segment_scale_8616(addr_expr):
                     addr_expr = _strip_proven_ss_segment_scale_from_addr_expr_8616(
-                        getattr(classified, "addr_expr", None),
+                        _dynamic_codegen_attr(classified, "addr_expr", None),
                     )
                 if addr_expr is not None:
                     resolved_stack_alias = _resolve_stack_pointer_alias(addr_expr)
                     if resolved_stack_alias is not None:
                         base_cvar, extra_offset = resolved_stack_alias
-                        type_ = getattr(node, "type", None)
-                        bits = getattr(type_, "size", None)
+                        type_ = _dynamic_codegen_attr(node, "type", None)
+                        bits = _dynamic_codegen_attr(type_, "size", None)
                         if bits not in {8, 16}:
                             bits = 16
-                        base_variable = getattr(base_cvar, "variable", None)
+                        base_variable = _dynamic_codegen_attr(base_cvar, "variable", None)
                         access_size = bits // project.arch.byte_width if isinstance(bits, int) and bits > 0 else None
                         if isinstance(base_variable, SimStackVariable) and isinstance(access_size, int):
-                            target_offset = getattr(base_variable, "offset", 0) + extra_offset
+                            target_offset = _dynamic_codegen_attr(base_variable, "offset", 0) + extra_offset
                             resolved_cvar = resolve_stack_cvar_at_offset(codegen, target_offset)
                             if resolved_cvar is not None:
-                                resolved_variable = getattr(resolved_cvar, "variable", None)
-                                resolved_offset = getattr(resolved_variable, "offset", None)
-                                resolved_size = getattr(resolved_variable, "size", None)
+                                resolved_variable = _dynamic_codegen_attr(resolved_cvar, "variable", None)
+                                resolved_offset = _dynamic_codegen_attr(resolved_variable, "offset", None)
+                                resolved_size = _dynamic_codegen_attr(resolved_variable, "size", None)
                                 if isinstance(resolved_variable, SimStackVariable) and access_size >= 4:
                                     if resolved_size is not None and resolved_size < access_size:
                                         promote_direct_stack_cvariable(
@@ -1042,7 +1070,7 @@ def _rewrite_ss_stack_byte_offsets(
                         return _return_if_changed(node, make_stack_deref(base_cvar, extra_offset, bits))
         bits = _effective_deref_bits(node)
         if bits not in {8, 16}:
-            if getattr(classified, "seg_name", None) == "ss":
+            if _dynamic_codegen_attr(classified, "seg_name", None) == "ss":
                 bits = 16
             else:
                 return node

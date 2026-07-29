@@ -1,26 +1,40 @@
+"""Layer: Helper boundary.
+
+Responsibility: define typed device and memory I/O interfaces used by frontend execution.
+Forbidden: recovering decompiler semantics from device side effects or host I/O names.
+"""
+
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Optional
 
 from .memory import Memory
 
+__all__ = ("MemoryIO", "PortIO")
+
 
 class PortIO(ABC):
+    """Define byte-wide port I/O operations for frontend devices."""
+
     @abstractmethod
     def in8(self, addr: int) -> int:
         """Reads an 8-bit value from the specified port address."""
 
     @abstractmethod
-    def out8(self, addr: int, value: int):
+    def out8(self, addr: int, value: int) -> None:
         """Writes an 8-bit value to the specified port address."""
 
 
 class MemoryIO(ABC):
-    def __init__(self):
-        self.memory: Optional[Memory] = None
-        self.paddr = 0
-        self.size = 0
+    """Define memory-mapped I/O helpers for frontend devices."""
 
-    def set_mem(self, mem: Memory, addr: int, length: int):
+    def __init__(self) -> None:
+        """Initialize an unattached memory-mapped device view."""
+        self.memory: Memory | None = None
+        self.paddr: int = 0
+        self.size: int = 0
+
+    def set_mem(self, mem: Memory, addr: int, length: int) -> None:
         """Sets the memory object, base address, and size for the device."""
         self.memory = mem
         self.paddr = addr
@@ -44,16 +58,16 @@ class MemoryIO(ABC):
     def read8(self, offset: int) -> int:
         """Reads an 8-bit value from the specified offset."""
 
-    def write32(self, offset: int, value: int):
+    def write32(self, offset: int, value: int) -> None:
         """Writes a 32-bit value to the specified offset."""
         for i in range(4):
             self.write8(offset + i, (value >> (8 * i)) & 0xFF)
 
-    def write16(self, offset: int, value: int):
+    def write16(self, offset: int, value: int) -> None:
         """Writes a 16-bit value to the specified offset."""
         for i in range(2):
             self.write8(offset + i, (value >> (8 * i)) & 0xFF)
 
     @abstractmethod
-    def write8(self, offset: int, value: int):
+    def write8(self, offset: int, value: int) -> None:
         """Writes an 8-bit value to the specified offset."""

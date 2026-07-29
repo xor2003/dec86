@@ -1,0 +1,91 @@
+from __future__ import annotations
+
+from angr_platforms.X86_16.lowering.c_runtime_header import (
+    LOWERED_RUNTIME_HELPER_DECLARATIONS_8616,
+    LOWERED_ZERO_ARG_RUNTIME_HELPER_DECLARATIONS_8616,
+    render_c_runtime_header_8616,
+    runtime_helper_declaration_8616,
+)
+
+
+def test_x86_16_c_runtime_header_renders_portable_flat_helpers() -> None:
+    header = render_c_runtime_header_8616("portable-flat")
+
+    assert "#include <stdint.h>" in header
+    assert "extern uint8_t inertia_memory[];" in header
+    assert "#define SEG_LINEAR(seg, off)" in header
+    assert "#define MK_FP(seg, off)" in header
+    assert "#define SEG_U8(seg, off)" in header
+    assert "#define MEM_U16(ptr)" in header
+
+
+def test_x86_16_c_runtime_header_renders_msc_dos_helpers() -> None:
+    header = render_c_runtime_header_8616("msc-dos")
+
+    assert "#include <DOS.H>" in header
+    assert "typedef unsigned char  uint8_t;" in header
+    assert "typedef long clock_t;" in header
+    assert "#define MK_FP(seg, off)" in header
+    assert "#define SEG_PTR(seg, off)" in header
+    assert "#define SEG_U32(seg, off)" in header
+    assert "inertia_memory" not in header
+
+
+def test_x86_16_c_runtime_header_is_case_and_space_tolerant() -> None:
+    assert render_c_runtime_header_8616("  PORTABLE-FLAT  ") == render_c_runtime_header_8616("portable-flat")
+    assert render_c_runtime_header_8616("  MSC-DOS  ") == render_c_runtime_header_8616("msc-dos")
+
+
+def test_x86_16_c_runtime_header_uses_signed_microsoft_clock_type() -> None:
+    assert "typedef long clock_t;" in render_c_runtime_header_8616("portable-flat")
+    assert "typedef unsigned long clock_t;" not in render_c_runtime_header_8616("portable-flat")
+    assert "typedef long clock_t;" in render_c_runtime_header_8616("msc-dos")
+
+
+def test_x86_16_c_runtime_header_declares_every_lowered_zero_arg_runtime_call() -> None:
+    for target in ("portable-flat", "msc-dos"):
+        header = render_c_runtime_header_8616(target)
+        for declaration in LOWERED_ZERO_ARG_RUNTIME_HELPER_DECLARATIONS_8616.values():
+            assert declaration in header
+
+
+def test_x86_16_c_runtime_header_declares_typed_runtime_abi() -> None:
+    for target in ("portable-flat", "msc-dos"):
+        header = render_c_runtime_header_8616(target)
+        for declaration in LOWERED_RUNTIME_HELPER_DECLARATIONS_8616.values():
+            assert declaration in header
+
+
+def test_x86_16_c_runtime_header_declares_target_width_signed_division_helper() -> None:
+    portable = render_c_runtime_header_8616("portable-flat")
+    msc = render_c_runtime_header_8616("msc-dos")
+
+    assert "int32_t aNldiv(int32_t dividend, int32_t divisor);" in portable
+    assert "long aNldiv(long dividend, long divisor);" in msc
+    assert "long aNldiv(" not in portable
+
+
+def test_x86_16_c_runtime_header_exposes_exact_memset_abi() -> None:
+    declaration = "void * memset(void *dst, int value, unsigned short count);"
+
+    assert runtime_helper_declaration_8616("memset", "portable-flat") == declaration
+    assert runtime_helper_declaration_8616("memset", "msc-dos") == declaration
+
+
+def test_x86_16_c_runtime_header_exposes_target_width_external_abis() -> None:
+    assert runtime_helper_declaration_8616("setbkcolor", "portable-flat") == (
+        "int32_t setbkcolor(int32_t color);"
+    )
+    assert runtime_helper_declaration_8616("setbkcolor", "msc-dos") == (
+        "long setbkcolor(long color);"
+    )
+    for target in ("portable-flat", "msc-dos"):
+        assert runtime_helper_declaration_8616("sprintf", target) == (
+            "int sprintf(char *buf, const char *fmt, ...);"
+        )
+
+
+def test_x86_16_c_runtime_header_refuses_unknown_target() -> None:
+    assert render_c_runtime_header_8616(None) == ""
+    assert render_c_runtime_header_8616("") == ""
+    assert render_c_runtime_header_8616("unknown") == ""

@@ -1,5 +1,8 @@
 """Syntactic load matchers for legacy postprocess consumers.
 
+Layer: Rewrite/Postprocess cleanup.
+Responsibility: owns cleanup-only load shape queries over existing C AST nodes.
+
 This module identifies rendered C shapes for global and segmented loads so late
 cleanup passes can consume them. It is a temporary compatibility layer, not an
 owner of memory semantics.
@@ -31,13 +34,13 @@ __all__ = [
 ]
 
 
-def _global_load_addr_8616(node) -> int | None:
+def _global_load_addr_8616(node: object) -> int | None:
     while isinstance(node, CTypeCast):
         node = node.expr
     return _global_memory_addr_8616(node)
 
 
-def _segmented_load_addr_8616(node, project) -> tuple[str | None, int | None]:
+def _segmented_load_addr_8616(node: object, project: object) -> tuple[str | None, int | None]:
     while isinstance(node, CTypeCast):
         node = node.expr
     seg_name, linear = _match_segmented_dereference_8616(node, project)
@@ -46,7 +49,7 @@ def _segmented_load_addr_8616(node, project) -> tuple[str | None, int | None]:
     return seg_name, linear
 
 
-def _match_global_scaled_high_byte_8616(node) -> int | None:
+def _match_global_scaled_high_byte_8616(node: object) -> int | None:
     if not isinstance(node, CBinaryOp):
         return None
 

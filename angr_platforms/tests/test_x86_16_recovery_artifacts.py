@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 from angr_platforms.X86_16.recovery_artifacts import (
     build_x86_16_corpus_recovery_artifact,
     build_x86_16_function_recovery_artifact,
 )
 
 
-def test_function_recovery_artifact_embeds_effect_helper_and_confidence():
+def test_function_recovery_artifact_embeds_effect_helper_and_confidence() -> None:
     artifact = build_x86_16_function_recovery_artifact(
         {
             "cod_file": "DOSFUNC.COD",
@@ -60,7 +62,7 @@ def test_function_recovery_artifact_embeds_effect_helper_and_confidence():
     assert artifact.confidence.status == "target_recovered_strong"
 
 
-def test_corpus_recovery_artifact_keeps_helper_family_rows_deterministic():
+def test_corpus_recovery_artifact_keeps_helper_family_rows_deterministic() -> None:
     artifact = build_x86_16_corpus_recovery_artifact(
         [
             {

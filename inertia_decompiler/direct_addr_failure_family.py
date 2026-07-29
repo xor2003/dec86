@@ -1,5 +1,8 @@
 """Normalize repeated direct-address failure attempts into one stable family key.
 
+Layer: CLI/fallback/reporting.
+Responsibility: classify repeated direct-address fallback attempts without recovering semantics.
+
 The x86-16 lane uses this to stop the same retry or fallback family from
 running again when it has not gained a new artifact path or a new validator
 verdict.
@@ -31,6 +34,7 @@ class FailureFamilySnapshot:
 
     @property
     def key(self) -> tuple[str, str, str, str, str, str]:
+        """Return the stable family identity, excluding proof freshness."""
         return (
             self.status,
             self.failure_stage,
@@ -42,9 +46,11 @@ class FailureFamilySnapshot:
 
     @property
     def proof_token(self) -> tuple[str, str]:
+        """Return the fields that show whether this attempt produced new proof."""
         return (self.artifact_path, self.tail_validation_verdict)
 
     def label(self) -> str:
+        """Return a compact diagnostic label for this failure family."""
         status, stage, sidecar, nonopt, fallback, validation = self.key
         return (
             f"status={status} stage={stage} sidecar={sidecar} "

@@ -94,6 +94,39 @@ def test_register_alias_state_marks_full_value_needs_synthesis_after_partial_ove
     assert synthesized.high is not None
 
 
+def test_register_alias_state_synthesizes_full_after_high_byte_overwrite():
+    state = AliasState()
+    seed = object()
+
+    write_register(state, "ax", seed)
+    write_register(state, "ah", 0x12)
+
+    synthesized = read_register(state, "ax")
+    assert isinstance(synthesized, RegisterConcatExpr)
+    assert synthesized.high == 0x12
+    assert isinstance(synthesized.low, RegisterSliceExpr)
+    assert synthesized.low.expr is seed
+    assert synthesized.low.view == LOW8
+
+
+def test_register_alias_state_synthesizes_full_from_low_and_high_byte_writes():
+    state = AliasState()
+
+    write_register(state, "al", 0x34)
+    write_register(state, "ah", 0x12)
+
+    synthesized = read_register(state, "ax")
+    assert synthesized == RegisterConcatExpr(high=0x12, low=0x34)
+
+
+def test_register_alias_state_refuses_full_synthesis_from_partial_byte_write():
+    state = AliasState()
+
+    write_register(state, "ah", 0x12)
+
+    assert read_register(state, "ax") is None
+
+
 def test_register_widening_candidate_requires_same_domain_and_adjacent_views():
     low = _make_reg_var("al", 0)
     high = _make_reg_var("ah", 1)
@@ -179,7 +212,7 @@ def test_adjacent_register_pair_proof_and_join_succeed_for_the_proved_low_high_p
     assert widened.variable.name == "ax"
 
 
-def test_register_pair_cleanup_helper_rejects_missing_version_proof():
+def test_register_pair_cleanup_helper_rejects_missing_version_direct_proof():
     codegen = _make_codegen()
     codegen._inertia_alias_state = AliasState()
     low = _decompile.structured_c.CVariable(_decompile.SimRegisterVariable(0, 1, name="al"), codegen=codegen)

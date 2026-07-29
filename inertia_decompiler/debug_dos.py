@@ -1,5 +1,8 @@
 """Debug a DOS MZ executable via angr + GDB RSP + Textual TUI.
 
+Layer: CLI/fallback/reporting.
+Responsibility: launch an interactive DOS debugging session without owning decompiler semantics.
+
 Usage:
     python -m inertia_decompiler.debug_dos LIFE.EXE [--port 1234]
 """
@@ -13,6 +16,7 @@ from pathlib import Path
 
 
 def main() -> None:
+    """Start a GDB RSP server for one DOS executable."""
     try:
         import angr
     except ModuleNotFoundError as exc:

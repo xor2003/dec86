@@ -1,12 +1,27 @@
+"""Layer: Frontend/runtime.
+
+Responsibility: model control-register state needed by the emulator surface.
+Forbidden: protected-mode recovery shortcuts, decompiler semantics, or rewrite cleanup.
+"""
+
+from __future__ import annotations
+
+__all__ = ["CR"]
+
+
 class CR:
-    def __init__(self):
-        self.cr0 = 0
-        self.cr1 = 0
-        self.cr2 = 0
-        self.cr3 = 0
-        self.cr4 = 0
+    """Frontend control-register state used by emulator and lifter code."""
+
+    def __init__(self) -> None:
+        """Initialize the real-mode control-register surface."""
+        self.cr0: int = 0
+        self.cr1: int = 0
+        self.cr2: int = 0
+        self.cr3: int = 0
+        self.cr4: int = 0
 
     def get_crn(self, n: int) -> int:
+        """Return the selected control-register value."""
         if n == 0:
             return self.cr0
         elif n == 1:
@@ -20,14 +35,19 @@ class CR:
         else:
             raise ValueError(f"Invalid CR index: {n}")
 
-    def set_crn(self, n: int, value: int):
+    def set_crn(self, n: int, value: int) -> None:
+        """Accept a control-register write without enabling protected-mode recovery."""
+        del n, value
         pass
 
     def is_protected(self) -> bool:
+        """Return whether protected mode is modeled by this real-mode frontend."""
         return False
 
     def is_ena_paging(self) -> bool:
+        """Return whether the paging bit is set in the modeled CR0 value."""
         return bool(self.cr0 & (1 << 31))  # PG bit
 
     def get_pdir_base(self) -> int:
+        """Return the page-directory base represented by the modeled CR3 value."""
         return (self.cr3 >> 12) & 0xFFFFF000  # Page Directory Base

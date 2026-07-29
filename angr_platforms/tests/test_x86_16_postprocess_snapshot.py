@@ -7,30 +7,47 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
     CDirtyExpression,
+    CExpressionStatement,
+    CFunctionCall,
     CIfElse,
     CStatements,
     CTypeCast,
     CUnaryOp,
     CVariable,
 )
-from angr.sim_type import SimTypePointer, SimTypeShort
+from angr.sim_type import SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.cod_extract import CODGlobalRef
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
+    _canonical_cod_global_name_8616,
     _classify_postprocess_validation_delta_8616,
+    _clear_proven_destructive_rejection_8616,
+    _clear_proven_rejected_pass_restore_8616,
+    _cod_global_name_refs_by_address_8616,
+    _codegen_instruction_window_addrs_8616,
     _direct_stack_move_validation_delta_kind_8616,
+    _has_recovered_source_calls_in_codegen_8616,
     _is_callsite_stack_argument_materialization_delta_8616,
     _is_cfg_mask_accumulator_materialization_delta_8616,
     _is_direct_global_update_materialization_delta_8616,
     _is_direct_stack_move_idiv_remainder_materialization_delta_8616,
     _is_direct_stack_move_materialization_delta_8616,
     _is_direct_stack_update_materialization_delta_8616,
+    _is_global_byte_sum_loop_materialization_delta_8616,
     _is_jcc_call_return_condition_rebinding_delta_8616,
     _is_jcc_condition_materialization_validation_delta_8616,
     _is_segmented_global_symbol_materialization_delta_8616,
+    _is_stack_prototype_width_reconciliation_delta_8616,
+    _mark_destructive_postprocess_validation_failure_8616,
+    _postprocess_restored_step_matches_baseline_8616,
     _postprocess_run_bootstrap_steps_8616,
     _postprocess_run_optimization_step_8616,
+    _postprocess_validation_blocking_reasons_8616,
+    _PostprocessValidationBlockingReason8616,
     _PostprocessValidationDeltaKind8616,
+    _record_postprocess_validation_blocking_reason_8616,
+    _record_unchanged_postprocess_validation_skip_8616,
     _repair_missing_cnode_codegen_metadata_8616,
     _restore_codegen_inertia_metadata_8616,
     _snapshot_codegen_cfunc,
@@ -53,7 +70,43 @@ class _FakeCFunc:
         self.body = statements
 
 
-def test_bootstrap_omits_stack_materialization_passes():
+class _SlottedFunction:
+    __slots__ = ()
+
+
+def test_codegen_instruction_window_addresses_follow_explicit_rebase_delta() -> None:
+    insns = tuple(SimpleNamespace(address=addr) for addr in (0x107B8, 0x107BA, 0x107BD))
+
+    rebased = _codegen_instruction_window_addrs_8616(
+        SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000)), insns, 1, 3
+    )
+    identity = _codegen_instruction_window_addrs_8616(
+        SimpleNamespace(cfunc=SimpleNamespace(addr=0x107B8)), insns, 1, 3
+    )
+
+    assert rebased == frozenset({0x1002, 0x1005})
+    assert identity == frozenset({0x107BA, 0x107BD})
+
+
+def test_authoritative_signature_marker_does_not_mutate_angr_function() -> None:
+    slotted_function = _SlottedFunction()
+    codegen = SimpleNamespace(
+        _func=slotted_function,
+        function=slotted_function,
+        cfunc=SimpleNamespace(addr=0x1000, function=slotted_function),
+    )
+    project = SimpleNamespace(
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda **_kwargs: slotted_function),
+        )
+    )
+
+    post_stage._mark_codegen_signature_authoritative_8616(project, codegen, "pointer_swap")
+
+    assert codegen._inertia_codegen_signature_authoritative_8616 == "pointer_swap"
+
+
+def test_bootstrap_runs_direct_stack_mov_and_update_as_separate_validated_steps():
     seen: list[str] = []
     codegen = SimpleNamespace(_inertia_postprocess_validation_failed=False)
 
@@ -63,8 +116,175 @@ def test_bootstrap_omits_stack_materialization_passes():
 
     assert _postprocess_run_bootstrap_steps_8616(SimpleNamespace(), codegen, set(), apply_step) is True
     assert seen[0] == "_normalize_fact_backed_stack_accesses_8616"
-    assert "_materialize_direct_stack_incdec_instructions_8616" not in seen
+    assert "_materialize_direct_stack_mov_incdec_instructions_bootstrap_8616" not in seen
+    assert "_materialize_direct_stack_mov_instructions_8616" in seen
+    assert "_materialize_direct_stack_incdec_instructions_8616" in seen
     assert "_materialize_stable_stack_semantics_bootstrap_8616" not in seen
+
+
+def test_cod_global_name_refs_ignore_listing_text():
+    metadata = SimpleNamespace(
+        cod_raw_entries=(
+            {"offset": 39, "text": "mov\tax,WORD PTR $S100_g_counter"},
+            {"offset": 68, "text": "mov\tal,BYTE PTR $S101_g_table[bx]"},
+        )
+    )
+    insns = (
+        SimpleNamespace(address=0x1027),
+        SimpleNamespace(address=0x1044),
+    )
+
+    direct_refs = _cod_global_name_refs_by_address_8616(metadata, insns, indexed=False)
+    indexed_refs = _cod_global_name_refs_by_address_8616(metadata, insns, indexed=True)
+
+    assert _canonical_cod_global_name_8616("$S100_g_counter") == "g_counter"
+    assert direct_refs == {}
+    assert indexed_refs == {}
+
+
+def test_cod_global_name_refs_require_byte_matched_structured_refs():
+    metadata = SimpleNamespace(
+        global_refs=(
+            CODGlobalRef(
+                offset=39,
+                name="g_counter",
+                relative_disp=0,
+                width=2,
+                indexed=False,
+                instruction_bytes=bytes.fromhex("a10000"),
+            ),
+            CODGlobalRef(
+                offset=68,
+                name="g_table",
+                relative_disp=0,
+                width=1,
+                indexed=True,
+                instruction_bytes=bytes.fromhex("8a870200"),
+            ),
+        )
+    )
+    insns = (
+        SimpleNamespace(address=0x1027),
+        SimpleNamespace(address=0x1044),
+    )
+    bytes_by_address = {
+        0x1027: bytes.fromhex("a14200"),
+        0x1044: bytes.fromhex("8a874400"),
+    }
+
+    direct_refs = _cod_global_name_refs_by_address_8616(
+        metadata, insns, indexed=False, bytes_by_address=bytes_by_address
+    )
+    indexed_refs = _cod_global_name_refs_by_address_8616(
+        metadata, insns, indexed=True, bytes_by_address=bytes_by_address
+    )
+
+    assert direct_refs[0x1027].name == "g_counter"
+    assert indexed_refs[0x1044].name == "g_table"
+
+
+def test_positive_bp_arg_unifier_is_validated_and_locally_rejectable():
+    pass_names = {
+        "_unify_positive_bp_arg_stack_variables_8616",
+        "_unify_positive_bp_arg_stack_variables_final_8616",
+    }
+
+    assert pass_names <= post_stage._LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616
+    assert pass_names <= post_stage._MANDATORY_VALIDATION_PASS_NAMES_8616
+    assert pass_names <= post_stage._PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616
+
+
+def test_after_ss_callsite_materialization_disables_consumed_store_prune(monkeypatch):
+    observed: list[bool] = []
+
+    def fake_materialize(_project, codegen):
+        observed.append(codegen._inertia_callsite_disable_consumed_arg_store_prune_8616)
+        return True
+
+    monkeypatch.setattr(post_stage._calls, "_materialize_callsite_stack_arguments_8616", fake_materialize)
+    codegen = SimpleNamespace()
+
+    assert post_stage._materialize_callsite_stack_arguments_after_ss_lowering_8616(SimpleNamespace(), codegen) is True
+    assert observed == [True]
+    assert codegen._inertia_callsite_disable_consumed_arg_store_prune_8616 is False
+    assert codegen._inertia_callsite_disable_stack_probe_setup_prune_8616 is False
+
+
+def test_after_ss_callsite_dce_is_validated_and_locally_rejectable():
+    pass_name = "_dead_code_elimination_after_ss_callsite_stack_arguments_8616"
+
+    assert pass_name in post_stage._LOCAL_PROOF_REQUIRED_POSTPROCESS_PASS_NAMES_8616
+    assert pass_name in post_stage._MANDATORY_VALIDATION_PASS_NAMES_8616
+    assert pass_name in post_stage._PASS_LOCAL_REJECT_CONTINUE_PASS_NAMES_8616
+
+
+def test_pre_validation_callsite_prime_materializes_arguments_before_baseline(monkeypatch):
+    calls: list[str] = []
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000))
+
+    monkeypatch.setattr(post_stage._calls, "_attach_callsite_summaries_8616", lambda *_args: calls.append("attach") or True)
+    monkeypatch.setattr(
+        post_stage._calls,
+        "_materialize_callsite_stack_arguments_8616",
+        lambda *_args: calls.append("materialize") or True,
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "_invalidate_tail_validation_derived_caches_8616",
+        lambda _codegen: calls.append("invalidate"),
+    )
+
+    assert post_stage._prime_callsite_summaries_before_validation_baseline_8616(SimpleNamespace(), codegen) is True
+    assert codegen._inertia_pre_validation_callsite_summaries_primed is True
+    assert calls == ["attach", "materialize", "invalidate"]
+
+
+def test_pre_validation_typed_condition_prime_runs_before_baseline(monkeypatch):
+    calls: list[str] = []
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000))
+
+    monkeypatch.setattr(
+        post_stage,
+        "transfer_typed_conditions_to_codegen_8616",
+        lambda *_args: calls.append("transfer") or 1,
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "_apply_typed_conditions_to_codegen_8616",
+        lambda *_args: calls.append("conditions") or True,
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "_apply_typed_condition_stack_arg_signedness_8616",
+        lambda *_args: calls.append("signedness") or True,
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "reconcile_callsite_interface_declarations_8616",
+        lambda *_args: calls.append("interface") or True,
+    )
+    monkeypatch.setattr(
+        post_stage._jcc,
+        "_rewrite_decoded_jcc_conditions_8616",
+        lambda *_args: calls.append("jcc") or True,
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "_invalidate_tail_validation_derived_caches_8616",
+        lambda _codegen: calls.append("invalidate"),
+    )
+
+    assert post_stage._prime_typed_conditions_before_validation_baseline_8616(SimpleNamespace(), codegen) is True
+    assert codegen._inertia_pre_validation_typed_conditions_primed is True
+    assert codegen._inertia_typed_conditions_transferred is True
+    assert calls == [
+        "transfer",
+        "conditions",
+        "jcc",
+        "signedness",
+        "interface",
+        "invalidate",
+    ]
 
 
 def test_optimization_runner_applies_validation_step_per_subpass(monkeypatch):
@@ -90,6 +310,363 @@ def test_optimization_runner_applies_validation_step_per_subpass(monkeypatch):
 
     assert _postprocess_run_optimization_step_8616(SimpleNamespace(), codegen, False, apply_step) is True
     assert seen == ["normalize", "optimization:const_like", "optimization:stable_like"]
+
+
+def test_unchanged_postprocess_pass_skips_validation_summary_collection(monkeypatch):
+    baseline_summary = object()
+    collected_summaries: list[object] = []
+    compared_summaries: list[tuple[object, object]] = []
+    regenerated_contexts: list[str] = []
+    project = SimpleNamespace()
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            addr=0x1234,
+            functy=SimTypeFunction([], SimTypeShort(False)),
+            statements=SimpleNamespace(),
+        ),
+        project=project,
+        _inertia_postprocess_validation_failed=False,
+    )
+    pass_specs = (
+        post_stage.DecompilerPostprocessPassSpec("stable_pass", lambda _project, _codegen: False, True),
+        post_stage.DecompilerPostprocessPassSpec("changed_pass", lambda _project, _codegen: True, True),
+    )
+
+    monkeypatch.setattr(post_stage, "_decompiler_postprocess_passes_for_function", lambda _project, _codegen: pass_specs)
+    monkeypatch.setattr(
+        post_stage,
+        "_postprocess_runtime_config_8616",
+        lambda _project, _codegen, _pass_specs: (None, True, True, set(), baseline_summary),
+    )
+    monkeypatch.setattr(post_stage, "_postprocess_run_bootstrap_steps_8616", lambda *_args: True)
+    monkeypatch.setattr(post_stage, "_postprocess_run_optimization_step_8616", lambda *_args: True)
+    monkeypatch.setattr(post_stage, "_repair_cfunc_statements_wrapper", lambda _codegen: None)
+    monkeypatch.setattr(post_stage, "_snapshot_codegen_cfunc", lambda _codegen: object())
+    monkeypatch.setattr(post_stage, "_snapshot_codegen_inertia_metadata_8616", lambda _codegen: {})
+    monkeypatch.setattr(post_stage, "_snapshot_codegen_text_state_8616", lambda _codegen: {})
+    monkeypatch.setattr(post_stage, "_snapshot_project_function_metadata_8616", lambda *_args: {})
+    monkeypatch.setattr(post_stage, "_return_chain_expected_counts_8616", lambda _codegen: None)
+    monkeypatch.setattr(post_stage, "_invalidate_tail_validation_derived_caches_8616", lambda _codegen: None)
+    monkeypatch.setattr(post_stage, "_debug_condition_progress_8616", lambda *_args, **_kwargs: None)
+
+    def collect_summary(_project, _codegen, *, mode):
+        collected = object()
+        collected_summaries.append(collected)
+        assert mode == "live_out"
+        return collected
+
+    def compare_summary(before, after):
+        compared_summaries.append((before, after))
+        return {"changed": False, "status": "stable"}
+
+    def regenerate(_codegen, *, context):
+        regenerated_contexts.append(context)
+        return True
+
+    monkeypatch.setattr(post_stage, "collect_x86_16_tail_validation_summary", collect_summary)
+    monkeypatch.setattr(post_stage, "compare_x86_16_tail_validation_summaries", compare_summary)
+    monkeypatch.setattr(post_stage, "x86_16_tail_validation_result_passed", lambda _validation: True)
+    monkeypatch.setattr(post_stage, "_regenerate_text_safely", regenerate)
+    monkeypatch.setattr(post_stage, "_dump_postprocess_trace_text_8616", lambda *_args, **_kwargs: None)
+
+    assert post_stage._postprocess_codegen_8616(project, codegen) is True
+
+    assert codegen._inertia_postprocess_unchanged_validation_skipped_passes_8616 == ("stable_pass",)
+    assert codegen._inertia_postprocess_unchanged_validation_skip_count_8616 == 1
+    assert len(collected_summaries) == 1
+    assert compared_summaries == [(baseline_summary, collected_summaries[0])]
+    assert any("changed_pass:validation" in context for context in regenerated_contexts)
+
+
+def test_records_unchanged_postprocess_validation_skip():
+    codegen = SimpleNamespace()
+
+    _record_unchanged_postprocess_validation_skip_8616(codegen, "stable_pass")
+    _record_unchanged_postprocess_validation_skip_8616(codegen, "other_stable_pass")
+
+    assert codegen._inertia_postprocess_unchanged_validation_skipped_passes_8616 == (
+        "stable_pass",
+        "other_stable_pass",
+    )
+    assert codegen._inertia_postprocess_unchanged_validation_skip_count_8616 == 2
+
+
+def test_destructive_postprocess_failure_forces_changed_snapshot():
+    project = SimpleNamespace()
+    codegen = SimpleNamespace()
+    validation = {"changed": False, "status": "stable", "summary_text": "no observable whole-tail changes"}
+    function_info: dict[str, object] = {}
+
+    _mark_destructive_postprocess_validation_failure_8616(
+        project,
+        codegen,
+        validation,
+        pass_name="_materialize_direct_stack_mov_instructions_8616",
+        summary_text="stack_writes removed BP-0x2",
+        function_info=function_info,
+    )
+
+    assert validation["changed"] is True
+    assert validation["status"] == "changed"
+    assert validation["destructive_postprocess_validation_failure"] is True
+    assert _postprocess_validation_blocking_reasons_8616(validation) == (
+        _PostprocessValidationBlockingReason8616.DESTRUCTIVE_POSTPROCESS_VALIDATION_DELTA,
+    )
+    assert codegen._inertia_postprocess_validation_failed is True
+    assert codegen._inertia_tail_validation_snapshot["postprocess"]["status"] == "changed"
+    assert project._inertia_last_tail_validation_snapshot["postprocess"]["changed"] is True
+    assert function_info["x86_16_tail_validation"]["postprocess"]["status"] == "changed"
+
+
+def test_postprocess_validation_blocking_reasons_are_typed():
+    validation: dict[str, object] = {
+        "postprocess_validation_blocking_reasons": ("missing_source_evidenced_calls", "unknown")
+    }
+
+    _record_postprocess_validation_blocking_reason_8616(
+        validation,
+        _PostprocessValidationBlockingReason8616.MISSING_SOURCE_EVIDENCED_CALLS,
+    )
+    _record_postprocess_validation_blocking_reason_8616(
+        validation,
+        _PostprocessValidationBlockingReason8616.SOURCE_EVIDENCED_CALL_ORDER_MISMATCH,
+    )
+
+    assert _postprocess_validation_blocking_reasons_8616(validation) == (
+        _PostprocessValidationBlockingReason8616.MISSING_SOURCE_EVIDENCED_CALLS,
+        _PostprocessValidationBlockingReason8616.SOURCE_EVIDENCED_CALL_ORDER_MISMATCH,
+    )
+
+
+def test_restored_destructive_step_identity_proof_accepts_clean_baseline(monkeypatch):
+    project = SimpleNamespace()
+    codegen = SimpleNamespace()
+    baseline = object()
+    restored = object()
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        post_stage,
+        "_invalidate_tail_validation_derived_caches_8616",
+        lambda _codegen: calls.append("invalidate"),
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "collect_x86_16_tail_validation_summary",
+        lambda got_project, got_codegen, *, mode: restored
+        if got_project is project and got_codegen is codegen and mode == "live_out"
+        else None,
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "compare_x86_16_tail_validation_summaries",
+        lambda before, after: {"changed": before is not baseline or after is not restored},
+    )
+
+    assert _postprocess_restored_step_matches_baseline_8616(project, codegen, baseline) is True
+    assert calls == ["invalidate"]
+
+
+def test_restored_destructive_step_identity_proof_accepts_exact_restored_snapshot(monkeypatch):
+    project = SimpleNamespace()
+    restored = object()
+    codegen = SimpleNamespace(cfunc=restored)
+
+    monkeypatch.setattr(
+        post_stage,
+        "collect_x86_16_tail_validation_summary",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("summary should not be collected")),
+    )
+
+    assert (
+        _postprocess_restored_step_matches_baseline_8616(
+            project,
+            codegen,
+            object(),
+            restored_cfunc_snapshot=restored,
+        )
+        is True
+    )
+    assert codegen._inertia_postprocess_restored_snapshot_identity_proven_8616 == 1
+
+
+def test_restored_destructive_step_identity_proof_refuses_changed_baseline(monkeypatch):
+    project = SimpleNamespace()
+    codegen = SimpleNamespace()
+    baseline = object()
+
+    monkeypatch.setattr(post_stage, "_invalidate_tail_validation_derived_caches_8616", lambda _codegen: None)
+    monkeypatch.setattr(
+        post_stage,
+        "collect_x86_16_tail_validation_summary",
+        lambda _project, _codegen, *, mode: object(),
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "compare_x86_16_tail_validation_summaries",
+        lambda _before, _after: {"changed": True, "status": "changed"},
+    )
+
+    assert _postprocess_restored_step_matches_baseline_8616(project, codegen, baseline) is False
+
+
+def test_proven_destructive_rejection_clears_only_transient_failure_state() -> None:
+    codegen = SimpleNamespace(
+        _inertia_postprocess_validation_failed=True,
+        _inertia_postprocess_validation_failure_pass="_dead_code_elimination_final_cleanup_8616",
+        _inertia_postprocess_validation_failure_error="changed",
+        _inertia_postprocess_rejected_passes=("_dead_code_elimination_final_cleanup_8616",),
+    )
+
+    _clear_proven_destructive_rejection_8616(codegen)
+    _clear_proven_destructive_rejection_8616(codegen)
+
+    assert codegen._inertia_postprocess_validation_failed is False
+    assert codegen._inertia_postprocess_validation_failure_pass is None
+    assert codegen._inertia_postprocess_validation_failure_error is None
+    assert codegen._inertia_postprocess_destructive_rejected_restore_proven_8616 == 2
+    assert codegen._inertia_postprocess_rejected_restore_proven_8616 == 2
+    assert codegen._inertia_postprocess_rejected_passes == ("_dead_code_elimination_final_cleanup_8616",)
+
+
+def test_proven_nondestructive_rejection_clears_failure_without_destructive_marker() -> None:
+    codegen = SimpleNamespace(
+        _inertia_postprocess_validation_failed=True,
+        _inertia_postprocess_validation_failure_pass="_dead_code_elimination_final_cleanup_8616",
+        _inertia_postprocess_validation_failure_error="changed",
+    )
+
+    _clear_proven_rejected_pass_restore_8616(codegen)
+
+    assert codegen._inertia_postprocess_validation_failed is False
+    assert codegen._inertia_postprocess_validation_failure_pass is None
+    assert codegen._inertia_postprocess_validation_failure_error is None
+    assert codegen._inertia_postprocess_rejected_restore_proven_8616 == 1
+    assert not hasattr(codegen, "_inertia_postprocess_destructive_rejected_restore_proven_8616")
+
+
+def test_destructive_discard_runs_evidenced_salvage_and_stable_dce_before_identity_proof(monkeypatch):
+    project = SimpleNamespace()
+    restored_cfunc = SimpleNamespace(addr=0x1000, statements=[])
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, statements=[]))
+    stage = SimpleNamespace(project=project, codegen=codegen)
+    calls: list[str] = []
+
+    def forbidden_unsafe_salvage(*_args, **_kwargs):
+        raise AssertionError("destructive rollback must not run unsafe post-restore salvage")
+
+    def stable_dce_salvage(*_args, **_kwargs):
+        calls.append("dce")
+        return True
+
+    monkeypatch.setattr(post_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: calls.append("regenerate"))
+    monkeypatch.setattr(post_stage, "_invalidate_tail_validation_derived_caches_8616", lambda _codegen: None)
+    monkeypatch.setattr(
+        post_stage,
+        "_collect_tail_validation_summary_with_baseline_canonicalization_8616",
+        lambda *_args, **_kwargs: {"stack_writes": ["changed"]},
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "compare_x86_16_tail_validation_summaries",
+        lambda _before, _after: {"changed": True, "status": "changed", "delta": {"stack_writes": {"removed": ["x"]}}},
+    )
+    monkeypatch.setattr(post_stage, "build_x86_16_tail_validation_verdict", lambda _stage, validation: validation["summary_text"])
+    monkeypatch.setattr(post_stage, "persist_x86_16_tail_validation_snapshot", lambda **_kwargs: None)
+    monkeypatch.setattr(post_stage, "_salvage_direct_stack_update_after_discard_8616", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(post_stage, "_salvage_direct_global_update_after_discard_8616", forbidden_unsafe_salvage)
+    monkeypatch.setattr(post_stage, "_salvage_signed_idiv_stack_move_after_discard_8616", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(post_stage, "_salvage_direct_stack_move_after_discard_8616", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(post_stage, "_salvage_segmented_global_materialization_after_discard_8616", forbidden_unsafe_salvage)
+    monkeypatch.setattr(post_stage, "_salvage_flag_cleanup_after_discard_8616", forbidden_unsafe_salvage)
+    monkeypatch.setattr(post_stage, "_salvage_dce_after_discard_8616", stable_dce_salvage)
+
+    post_stage._discard_failed_postprocess_result_8616(
+        stage,
+        validation={
+            "verdict": "changed",
+            "delta": {"stack_writes": {"removed": ["stack_slot:SS:BP-0x2:size2"]}},
+        },
+        validation_verdict_text="changed",
+        validation_mode="live_out",
+        snapshot_function_info={},
+        before_fingerprint="before",
+        before_summary={"stack_writes": ["baseline"]},
+        pre_postprocess_cfunc_snapshot=restored_cfunc,
+        pre_postprocess_metadata_snapshot={},
+        validation_timings={},
+        function=SimpleNamespace(addr=0x1000),
+        log=SimpleNamespace(warning=lambda *_args, **_kwargs: None, info=lambda *_args, **_kwargs: None),
+    )
+
+    assert codegen.cfunc is restored_cfunc
+    assert not getattr(codegen, "_inertia_postprocess_final_c_identity_proven_8616", False)
+    assert calls == ["regenerate", "dce"]
+
+
+def test_destructive_callsite_discard_skips_unrelated_direct_stack_salvage(monkeypatch):
+    project = SimpleNamespace()
+    restored_cfunc = SimpleNamespace(addr=0x1000, statements=[])
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1000, statements=[]),
+        _inertia_postprocess_validation_failure_pass="_materialize_callsite_stack_arguments_8616",
+    )
+    stage = SimpleNamespace(project=project, codegen=codegen)
+    calls: list[str] = []
+
+    monkeypatch.setattr(post_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: calls.append("regenerate"))
+    monkeypatch.setattr(post_stage, "_invalidate_tail_validation_derived_caches_8616", lambda _codegen: None)
+    monkeypatch.setattr(
+        post_stage,
+        "_collect_tail_validation_summary_with_baseline_canonicalization_8616",
+        lambda *_args, **_kwargs: {"stack_writes": ["changed"]},
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "compare_x86_16_tail_validation_summaries",
+        lambda _before, _after: {"changed": True, "status": "changed", "delta": {"stack_writes": {"removed": ["x"]}}},
+    )
+    monkeypatch.setattr(post_stage, "build_x86_16_tail_validation_verdict", lambda _stage, validation: validation["summary_text"])
+    monkeypatch.setattr(post_stage, "persist_x86_16_tail_validation_snapshot", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        post_stage,
+        "_salvage_direct_stack_update_after_discard_8616",
+        lambda *_args, **_kwargs: calls.append("stack-update"),
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "_salvage_signed_idiv_stack_move_after_discard_8616",
+        lambda *_args, **_kwargs: calls.append("signed-idiv"),
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "_salvage_direct_stack_move_after_discard_8616",
+        lambda *_args, **_kwargs: calls.append("stack-move"),
+    )
+    monkeypatch.setattr(post_stage, "_salvage_dce_after_discard_8616", lambda *_args, **_kwargs: calls.append("dce"))
+
+    post_stage._discard_failed_postprocess_result_8616(
+        stage,
+        validation={
+            "verdict": "changed",
+            "delta": {"stack_writes": {"removed": ["stack_slot:SS:BP-0x2:size2"]}},
+        },
+        validation_verdict_text="changed",
+        validation_mode="live_out",
+        snapshot_function_info={},
+        before_fingerprint="before",
+        before_summary={"stack_writes": ["baseline"]},
+        pre_postprocess_cfunc_snapshot=restored_cfunc,
+        pre_postprocess_metadata_snapshot={
+            "_inertia_postprocess_validation_failure_pass": "_materialize_callsite_stack_arguments_8616",
+        },
+        validation_timings={},
+        function=SimpleNamespace(addr=0x1000),
+        log=SimpleNamespace(warning=lambda *_args, **_kwargs: None, info=lambda *_args, **_kwargs: None),
+    )
+
+    assert codegen.cfunc is restored_cfunc
+    assert calls == ["regenerate", "dce"]
 
 
 def test_generic_return_artifact_detects_unified_vvar_dereference():
@@ -374,6 +951,54 @@ def test_direct_global_update_materialization_delta_accepts_evidenced_ds_write_p
     assert _is_direct_global_update_materialization_delta_8616(_direct_global_update_codegen(), validation) is True
 
 
+def test_global_byte_sum_loop_materialization_delta_accepts_evidenced_loop_writes():
+    codegen = SimpleNamespace(
+        _inertia_global_byte_sum_loop_stats_8616={"materialized_count": 1},
+        _inertia_global_byte_sum_loop_evidence_8616={"index_disp": -4, "total_disp": -2, "limit": 4},
+    )
+    validation = {
+        "delta": {
+            "helper_calls": {"added": (), "removed": ()},
+            "register_writes": {"added": (), "removed": ()},
+            "stack_writes": {"added": ("stack_slot:SS:BP-0x4:size2",), "removed": ()},
+            "global_writes": {"added": (), "removed": ()},
+            "segmented_writes": {"added": (), "removed": ()},
+            "returns": {"added": (), "removed": ()},
+            "conditions": {"added": (), "removed": ()},
+            "control_flow_effects": {
+                "added": (
+                    "for-body-writes:CmpLT(stack_slot:SS:BP-0x4:size2,const:4):"
+                    "stack_slot:SS:BP-0x2:size2",
+                ),
+                "removed": (),
+            },
+        }
+    }
+
+    assert _is_global_byte_sum_loop_materialization_delta_8616(codegen, validation) is True
+
+
+def test_global_byte_sum_loop_materialization_delta_refuses_unrelated_stack_write():
+    codegen = SimpleNamespace(
+        _inertia_global_byte_sum_loop_stats_8616={"materialized_count": 1},
+        _inertia_global_byte_sum_loop_evidence_8616={"index_disp": -4, "total_disp": -2, "limit": 4},
+    )
+    validation = {
+        "delta": {
+            "stack_writes": {"added": ("stack_slot:SS:BP-0x6:size2",), "removed": ()},
+            "control_flow_effects": {
+                "added": (
+                    "for-body-writes:CmpLT(stack_slot:SS:BP-0x4:size2,const:4):"
+                    "stack_slot:SS:BP-0x2:size2",
+                ),
+                "removed": (),
+            },
+        }
+    }
+
+    assert _is_global_byte_sum_loop_materialization_delta_8616(codegen, validation) is False
+
+
 def test_direct_global_update_materialization_delta_accepts_word_high_byte_write():
     validation = {
         "delta": {
@@ -414,6 +1039,46 @@ def test_direct_global_update_materialization_delta_accepts_word_high_byte_loop_
         )
         is True
     )
+
+
+def test_direct_global_update_materialization_delta_accepts_evidence_covered_loop_write_repair():
+    codegen = _direct_global_update_codegen(displacement=0xBAA, width=2)
+    codegen._inertia_direct_global_update_evidence_8616 = (
+        (
+            ("displacement", 0xBAA),
+            ("width", 2),
+            ("delta", 1),
+            ("ins_addr", 0x104A),
+            ("name", "iCompares"),
+        ),
+        (
+            ("displacement", 0xBA4),
+            ("width", 2),
+            ("delta", 1),
+            ("ins_addr", 0x1060),
+            ("name", "iSwaps"),
+        ),
+    )
+    validation = {
+        "delta": {
+            "global_writes": {
+                "added": ("global:0xbaa",),
+                "removed": ("global:0xba5",),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "for-body-writes:CmpNE(stack_slot:SS:BP-0x4:size2,const:0):"
+                    "global:0xba4,global:0xbaa",
+                ),
+                "removed": (
+                    "for-body-writes:CmpNE(stack_slot:SS:BP-0x4:size2,const:0):"
+                    "global:0xba4,global:0xba5",
+                ),
+            },
+        }
+    }
+
+    assert _is_direct_global_update_materialization_delta_8616(codegen, validation) is True
 
 
 def test_segmented_global_symbol_materialization_delta_accepts_word_high_byte_loop_fingerprint():
@@ -854,6 +1519,236 @@ def test_callsite_materialization_delta_accepts_stack_arg_size_precision_with_pu
     assert codegen._inertia_callsite_stack_arg_size_precision_delta_accepts_8616 == 1
 
 
+def test_stack_prototype_width_delta_requires_materialized_push_source_evidence():
+    validation = {
+        "delta": {
+            "returns": {
+                "added": ("call:addr:0xfd1(stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP+0x6:size2)",),
+                "removed": ("call:addr:0xfd1(stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP+0x6:size4)",),
+            },
+        },
+    }
+    codegen = SimpleNamespace(
+        _inertia_stack_prototype_width_stats_8616=SimpleNamespace(materialized_count=1),
+        _inertia_callsite_summaries={
+            0x1027: SimpleNamespace(push_arg_sources=(("bp", 6), ("bp", -2))),
+        },
+    )
+
+    assert _is_stack_prototype_width_reconciliation_delta_8616(codegen, validation) is True
+    assert codegen._inertia_stack_prototype_width_validation_accepts_8616 == 1
+
+
+def test_callsite_materialization_delta_accepts_mixed_helper_stack_control_delta():
+    codegen = _callsite_materialization_codegen()
+    codegen._inertia_callsite_summaries = {
+        0x100: SimpleNamespace(target_addr=0x1075B),
+        0x102: SimpleNamespace(target_addr=0x10CE0),
+    }
+    codegen._inertia_callsite_pruned_stack_write_tokens_8616 = ("stack_slot:SS:BP-0x2:size2",)
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("addr:0x1075b", "addr:0x10ce0"),
+                "removed": ("addr:0x11cd4", "name:<indirect>"),
+            },
+            "stack_writes": {
+                "added": (),
+                "removed": ("stack_slot:SS:BP-0x2:size2",),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "if-body-calls:CmpGT(stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x6:size2):name:addr:0x1075b",
+                ),
+                "removed": (
+                    "if-body-calls:CmpGT(stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x6:size2):name:<indirect>",
+                ),
+            },
+        }
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is True
+    assert codegen._inertia_callsite_mixed_helper_stack_control_delta_accepts_8616 == 1
+
+
+def test_callsite_materialization_delta_refuses_unrecorded_mixed_stack_write_removal():
+    codegen = _callsite_materialization_codegen()
+    codegen._inertia_callsite_summaries = {
+        0x100: SimpleNamespace(target_addr=0x1075B),
+    }
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("addr:0x1075b",),
+                "removed": ("name:<indirect>",),
+            },
+            "stack_writes": {
+                "added": (),
+                "removed": ("stack_slot:SS:BP-0x6:size2",),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "if-body-calls:CmpGT(stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x6:size2):name:addr:0x1075b",
+                ),
+                "removed": (
+                    "if-body-calls:CmpGT(stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x6:size2):name:<indirect>",
+                ),
+            },
+        }
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is False
+
+
+def test_callsite_materialization_delta_refuses_mixed_stack_body_write_removal():
+    codegen = _callsite_materialization_codegen()
+    codegen._inertia_callsite_summaries = {
+        0x100: SimpleNamespace(target_addr=0x10768),
+        0x102: SimpleNamespace(target_addr=0x10794),
+    }
+    codegen._inertia_callsite_pruned_stack_write_tokens_8616 = ("stack_slot:SS:BP-0x6:size2",)
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("addr:0x10768", "addr:0x10794"),
+                "removed": ("addr:0x10ce0", "addr:0x11cd4"),
+            },
+            "stack_writes": {
+                "added": (),
+                "removed": ("stack_slot:SS:BP-0x6:size2",),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "dowhile-body-writes:CmpLE(stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x6:size2):"
+                    "global:0xbaa,global:0xbab,stack_slot:SS:BP-0x2:size2",
+                ),
+                "removed": (
+                    "dowhile-body-writes:CmpLE(stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x6:size2):"
+                    "global:0xbaa,global:0xbab,stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x6:size2",
+                ),
+            },
+        }
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is False
+
+
+def test_callsite_materialization_delta_accepts_mixed_direct_addr_target_correction():
+    codegen = _callsite_materialization_codegen()
+    codegen._inertia_callsite_summaries = {0x100: SimpleNamespace(target_addr=0x10CE0)}
+    codegen._inertia_callsite_pruned_stack_write_tokens_8616 = ("stack_slot:SS:BP-0x2:size2",)
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("addr:0x10ce0", "addr:0x10ce0"),
+                "removed": ("addr:0x11cd4", "addr:0x11cd4"),
+            },
+            "stack_writes": {
+                "added": (),
+                "removed": ("stack_slot:SS:BP-0x2:size2",),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "if-body-calls:CmpLT(stack_slot:SS:BP+0x4:size2,stack_slot:SS:BP+0x6:size2):name:addr:0x10ce0",
+                ),
+                "removed": (
+                    "if-body-calls:CmpLT(stack_slot:SS:BP+0x4:size2,stack_slot:SS:BP+0x6:size2):name:addr:0x11cd4",
+                ),
+            },
+        }
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is True
+
+
+def test_callsite_materialization_delta_accepts_helper_control_target_correction_without_stack_delta():
+    codegen = _callsite_materialization_codegen()
+    codegen._inertia_callsite_summaries = {
+        0x100: SimpleNamespace(target_addr=0x10768),
+        0x102: SimpleNamespace(target_addr=0x10794),
+    }
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("addr:0x10768", "addr:0x10794"),
+                "removed": ("addr:0x11cd4", "addr:0x10ce0"),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "if-body-calls:CmpLT(stack_slot:SS:BP+0x4:size2,stack_slot:SS:BP+0x6:size2):"
+                    "addr:0x10794,name:addr:0x10768",
+                ),
+                "removed": (
+                    "if-body-calls:CmpLT(stack_slot:SS:BP+0x4:size2,stack_slot:SS:BP+0x6:size2):"
+                    "addr:0x10ce0,name:addr:0x11cd4",
+                ),
+            },
+        }
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is True
+    assert codegen._inertia_callsite_helper_control_target_delta_accepts_8616 == 1
+
+
+def test_callsite_materialization_delta_refuses_mixed_delta_with_condition_change():
+    codegen = _callsite_materialization_codegen()
+    validation = {
+        "delta": {
+            "helper_calls": {"added": ("addr:0x1075b",), "removed": ("name:<indirect>",)},
+            "stack_writes": {"added": (), "removed": ("stack_slot:SS:BP-0x2:size2",)},
+            "conditions": {"added": ("CmpLT(global:0x1,const:2)",), "removed": ()},
+            "control_flow_effects": {
+                "added": ("if-body-calls:CmpGT(stack_slot:SS:BP-0x2:size2,const:0):name:addr:0x1075b",),
+                "removed": ("if-body-calls:CmpGT(stack_slot:SS:BP-0x2:size2,const:0):name:<indirect>",),
+            },
+        }
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is False
+
+
+def test_jcc_condition_materialization_accepts_evidenced_stack_write_delta():
+    condition = (
+        "CmpLE(Dereference(Add(Mul(reg:ds,const:16),Shl(stack_slot:SS:BP-0x4:size2,const:1),const:2890)),"
+        "stack_slot:SS:BP-0x6:size2)"
+    )
+    codegen = SimpleNamespace(
+        _inertia_semantic_condition_materialized_count=1,
+        _inertia_direct_stack_move_evidence_8616=(
+            (("dst_offset", -6), ("width", 2), ("source_kind", DirectStackMoveSourceKind8616.STACK_SLOT)),
+        ),
+        _inertia_structuring_jcc_condition_validation_deltas_8616=(
+            {
+                "conditions": {"added": (condition,), "removed": ()},
+                "control_flow_effects": {"added": (f"ifbreak:{condition}",), "removed": ()},
+            },
+        ),
+    )
+    validation = {
+        "delta": {
+            "stack_writes": {"added": ("stack_slot:SS:BP-0x6:size2",), "removed": ()},
+            "conditions": {"added": (condition,), "removed": ()},
+            "control_flow_effects": {
+                "added": (
+                    "for-body-writes:CmpGT(global:0xbaa,stack_slot:SS:BP-0x2:size2):"
+                    "global:0xba4,stack_slot:SS:BP-0x4:size2,stack_slot:SS:BP-0x6:size2",
+                    f"ifbreak:{condition}",
+                ),
+                "removed": (
+                    "for-body-writes:CmpGT(global:0xbaa,stack_slot:SS:BP-0x2:size2):"
+                    "global:0xba4,stack_slot:SS:BP-0x4:size2",
+                ),
+            },
+        }
+    }
+
+    assert _is_jcc_condition_materialization_validation_delta_8616(
+        SimpleNamespace(),
+        codegen,
+        validation,
+    )
+
+
 def test_cfg_mask_accumulator_delta_refuses_removed_materialized_condition():
     condition = "CmpEQ(stack_arg:b:size2,stack_arg:a:size2)"
     codegen = SimpleNamespace(
@@ -978,6 +1873,39 @@ def test_callsite_materialization_delta_accepts_resolved_helpers_with_outgoing_s
     assert codegen._inertia_callsite_resolved_indirect_helper_stack_delta_accepts_8616 == 1
 
 
+def test_callsite_materialization_delta_accepts_resolved_helpers_in_control_flow_calls():
+    codegen = _callsite_materialization_codegen()
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("name:addr:0x1123a", "name:addr:0x12756", "name:addr:0x128e4"),
+                "removed": ("name:<indirect>", "name:<indirect>", "name:<indirect>"),
+            },
+            "segmented_writes": {
+                "added": (),
+                "removed": (
+                    "deref:Add(Mul(reg:ss,const:16),reg:sp,const:-7)",
+                    "deref:Add(Mul(reg:ss,const:16),reg:sp,const:-8)",
+                ),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "if-body-calls:CmpEQ(global:0x132,const:900):name:addr:0x128e4,name:addr:0x12756",
+                    "if-else-body-calls:else:name:addr:0x1123a",
+                ),
+                "removed": (
+                    "control_flow_effects:sha256:35fe2b643a18d34e:len:1045",
+                    "if-body-calls:CmpEQ(global:0x132,const:900):name:<indirect>,name:<indirect>",
+                    "if-else-body-calls:else:name:<indirect>",
+                ),
+            },
+        },
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is True
+    assert codegen._inertia_callsite_resolved_indirect_helper_stack_delta_accepts_8616 == 1
+
+
 def test_callsite_materialization_delta_refuses_resolved_helper_delta_with_nonlocal_stack_write():
     codegen = _callsite_materialization_codegen()
     validation = {
@@ -1087,6 +2015,89 @@ def test_final_validation_accepts_proven_callsite_arg_size_precision_delta(monke
         is True
     )
     assert accepted == [True]
+
+
+def test_final_validation_source_call_override_rejects_structured_reason(monkeypatch):
+    monkeypatch.setenv("INERTIA_ALLOW_POSTPROCESS_VALIDATION_OVERRIDE", "1")
+    accepted = []
+    monkeypatch.setattr(
+        post_stage,
+        "_postprocess_stable_accept_8616",
+        lambda _self, _validation, _snapshot_function_info: accepted.append(True),
+    )
+    validation = {
+        "postprocess_validation_blocking_reasons": (
+            _PostprocessValidationBlockingReason8616.MISSING_SOURCE_EVIDENCED_CALLS.value,
+        )
+    }
+    owner = SimpleNamespace(
+        codegen=SimpleNamespace(_inertia_direct_call_floor_recovered_count=1),
+        project=SimpleNamespace(),
+    )
+
+    assert (
+        _try_accept_failed_postprocess_validation_8616(
+            owner,
+            validation=validation,
+            validation_verdict_text="changed",
+            function=None,
+            snapshot_function_info=SimpleNamespace(),
+            pre_postprocess_cfunc_snapshot=None,
+            func_addr=0x1000,
+            log=SimpleNamespace(warning=lambda *args, **kwargs: None),
+        )
+        is False
+    )
+    assert accepted == []
+
+
+def test_final_validation_source_call_override_ignores_verdict_text(monkeypatch):
+    monkeypatch.setenv("INERTIA_ALLOW_POSTPROCESS_VALIDATION_OVERRIDE", "1")
+    monkeypatch.setattr(
+        post_stage,
+        "_postprocess_stable_accept_8616",
+        lambda _self, _validation, _snapshot_function_info: None,
+    )
+    owner = SimpleNamespace(
+        codegen=SimpleNamespace(_inertia_direct_call_floor_recovered_count=1),
+        project=SimpleNamespace(),
+    )
+
+    assert (
+        _try_accept_failed_postprocess_validation_8616(
+            owner,
+            validation={},
+            validation_verdict_text="Missing source-evidenced calls",
+            function=None,
+            snapshot_function_info=SimpleNamespace(),
+            pre_postprocess_cfunc_snapshot=None,
+            func_addr=0x1000,
+            log=SimpleNamespace(warning=lambda *args, **kwargs: None),
+        )
+        is False
+    )
+
+
+def test_recovered_source_call_presence_ignores_structured_c_ast(monkeypatch):
+    codegen = _CodegenWithIndexes()
+    codegen._inertia_direct_call_floor_recovered_count = 1
+    call = CFunctionCall("DrawBar", SimpleNamespace(name="DrawBar"), [], codegen=codegen)
+    codegen.cfunc = _FakeCFunc(CStatements([CExpressionStatement(call, codegen=codegen)], codegen=codegen))
+    function = SimpleNamespace(addr=0x1000)
+    monkeypatch.setattr(post_stage._calls, "_cod_source_call_names_8616", lambda _project, _addr: ("DrawBar",))
+
+    assert _has_recovered_source_calls_in_codegen_8616(SimpleNamespace(), codegen, function) is False
+
+
+def test_recovered_source_call_presence_ignores_rendered_text(monkeypatch):
+    codegen = _CodegenWithIndexes()
+    codegen._inertia_direct_call_floor_recovered_count = 1
+    codegen.cfunc = _FakeCFunc(CStatements([], codegen=codegen))
+    codegen.render_text = lambda _cfunc: "void f(void) { DrawBar(); }"
+    function = SimpleNamespace(addr=0x1000)
+    monkeypatch.setattr(post_stage._calls, "_cod_source_call_names_8616", lambda _project, _addr: ("DrawBar",))
+
+    assert _has_recovered_source_calls_in_codegen_8616(SimpleNamespace(), codegen, function) is False
 
 
 def _direct_stack_update_codegen():
@@ -1349,6 +2360,48 @@ def test_direct_stack_update_materialization_delta_refuses_added_raw_flags_condi
     assert _is_direct_stack_update_materialization_delta_8616(_direct_stack_update_codegen(), validation) is False
 
 
+def test_direct_stack_update_materialization_delta_refuses_condition_polarity_change():
+    codegen = _direct_stack_update_codegen()
+    codegen._inertia_direct_stack_update_evidence_8616 = (
+        (("offset", -2), ("width", 2), ("delta", -1), ("ins_addr", 0x10C5)),
+        (("offset", -6), ("width", 2), ("delta", 1), ("ins_addr", 0x109E)),
+    )
+    validation = {
+        "delta": {
+            "conditions": {
+                "added": (
+                    "CmpGE(Dereference(Add(Mul(reg:ds,const:16),"
+                    "Shl(stack_slot:SS:BP-0x2:size2,const:1),const:2892)),stack_slot:SS:BP-0x4:size2)",
+                    "CmpLE(Dereference(Add(Mul(reg:ds,const:16),"
+                    "Shl(stack_slot:SS:BP-0x6:size2,const:1),const:2892)),stack_slot:SS:BP-0x4:size2)",
+                ),
+                "removed": (
+                    "CmpGT(Dereference(Add(Mul(reg:ds,const:16),"
+                    "Shl(stack_slot:SS:BP-0x6:size2,const:1),const:2892)),stack_slot:SS:BP-0x4:size2)",
+                    "CmpLT(Dereference(Add(Mul(reg:ds,const:16),"
+                    "Shl(stack_slot:SS:BP-0x2:size2,const:1),const:2892)),stack_slot:SS:BP-0x4:size2)",
+                ),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "if:CmpGE(Dereference(Add(Mul(reg:ds,const:16),"
+                    "Shl(stack_slot:SS:BP-0x2:size2,const:1),const:2892)),stack_slot:SS:BP-0x4:size2)",
+                    "if:CmpLE(Dereference(Add(Mul(reg:ds,const:16),"
+                    "Shl(stack_slot:SS:BP-0x6:size2,const:1),const:2892)),stack_slot:SS:BP-0x4:size2)",
+                ),
+                "removed": (
+                    "if:CmpGT(Dereference(Add(Mul(reg:ds,const:16),"
+                    "Shl(stack_slot:SS:BP-0x6:size2,const:1),const:2892)),stack_slot:SS:BP-0x4:size2)",
+                    "if:CmpLT(Dereference(Add(Mul(reg:ds,const:16),"
+                    "Shl(stack_slot:SS:BP-0x2:size2,const:1),const:2892)),stack_slot:SS:BP-0x4:size2)",
+                ),
+            },
+        }
+    }
+
+    assert _is_direct_stack_update_materialization_delta_8616(codegen, validation) is False
+
+
 def test_direct_stack_move_materialization_delta_accepts_evidenced_stack_slot_copy():
     validation = {
         "delta": {
@@ -1360,6 +2413,225 @@ def test_direct_stack_move_materialization_delta_accepts_evidenced_stack_slot_co
     }
 
     assert _is_direct_stack_move_materialization_delta_8616(_direct_stack_move_stack_slot_codegen(), validation) is True
+
+
+def test_callsite_stack_argument_delta_accepts_consumed_stack_store_prune():
+    codegen = SimpleNamespace(
+        _inertia_callsite_materialization_stats=SimpleNamespace(call_arg_materialized_count=1),
+        _inertia_consumed_segmented_stack_byte_arg_store_pruned_8616=1,
+    )
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": (),
+                "removed": ("stack_slot:SS:BP-0x2:size2",),
+            },
+            "control_flow_effects": {
+                "added": (),
+                "removed": ("while-body-writes:const:True:stack_slot:SS:BP-0x2:size2",),
+            },
+        }
+    }
+
+    assert _is_callsite_stack_argument_materialization_delta_8616(codegen, validation) is True
+
+
+def test_direct_stack_move_materialization_delta_accepts_function_pointer_overwrite_prune():
+    codegen = _direct_stack_move_stack_slot_codegen()
+    codegen._inertia_direct_stack_move_lowering_8616["unsupported_function_pointer_assignment_pruned_count"] = 1
+    codegen._inertia_direct_stack_move_evidence_8616 = (
+        (
+            ("dst_offset", -2),
+            ("width", 2),
+            ("source_kind", DirectStackMoveSourceKind8616.IMMEDIATE),
+            ("source_value", 0x10010),
+            ("ins_addr", 0x1014),
+        ),
+        (
+            ("dst_offset", -2),
+            ("width", 2),
+            ("source_kind", DirectStackMoveSourceKind8616.IMMEDIATE),
+            ("source_value", 0x10028),
+            ("ins_addr", 0x101C),
+        ),
+    )
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": (),
+                "removed": ("stack_slot:SS:BP-0x2:size2",),
+            }
+        }
+    }
+
+    assert _is_direct_stack_move_materialization_delta_8616(codegen, validation) is True
+
+
+def test_direct_stack_move_materialization_delta_rejects_function_pointer_prune_call_arg_loss():
+    codegen = _direct_stack_move_stack_slot_codegen()
+    codegen._inertia_direct_stack_move_lowering_8616["unsupported_function_pointer_assignment_pruned_count"] = 1
+    codegen._inertia_direct_stack_move_evidence_8616 = (
+        (
+            ("dst_offset", -2),
+            ("width", 2),
+            ("source_kind", DirectStackMoveSourceKind8616.IMMEDIATE),
+            ("source_value", 0x10010),
+            ("ins_addr", 0x1014),
+        ),
+    )
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": (),
+                "removed": ("stack_slot:SS:BP-0x2:size2",),
+            },
+            "returns": {
+                "added": ("call:addr:0xfd1()",),
+                "removed": ("call:addr:0xfd1(stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP+0x6:size2)",),
+            },
+        }
+    }
+
+    assert _is_direct_stack_move_materialization_delta_8616(codegen, validation) is False
+
+
+def test_direct_stack_move_materialization_delta_accepts_evidenced_loop_body_write_precision():
+    codegen = _direct_stack_move_stack_slot_codegen()
+    codegen._inertia_direct_stack_move_evidence_8616 = (
+        (("dst_offset", -8), ("width", 2), ("source_kind", DirectStackMoveSourceKind8616.IMMEDIATE)),
+        (("dst_offset", -6), ("width", 2), ("source_kind", DirectStackMoveSourceKind8616.STACK_SLOT)),
+        (("dst_offset", -4), ("width", 2), ("source_kind", DirectStackMoveSourceKind8616.IMMEDIATE)),
+        (("source_offset", -2), ("width", 2), ("source_kind", DirectStackMoveSourceKind8616.STACK_SLOT)),
+    )
+    validation = {
+        "delta": {
+            "stack_writes": {
+                "added": (),
+                "removed": (
+                    "stack_slot:SS:BP-0x4:size2",
+                    "stack_slot:SS:BP-0x6:size2",
+                    "stack_slot:SS:BP-0x8:size2",
+                ),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "for-body-writes:CmpLT(stack_slot:SS:BP-0x2:size2,expr_cycle):"
+                    "stack_slot:SS:BP-0x2:size2",
+                    "for-body-writes:CmpLT(stack_slot:SS:BP-0x8:size2,expr_cycle):"
+                    "stack_slot:SS:BP-0x2:size2",
+                ),
+                "removed": (
+                    "for-body-writes:CmpLT(stack_slot:SS:BP-0x2:size2,expr_cycle):"
+                    "stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x4:size2,stack_slot:SS:BP-0x6:size2",
+                    "for-body-writes:CmpLT(stack_slot:SS:BP-0x8:size2,expr_cycle):"
+                    "stack_slot:SS:BP-0x2:size2,stack_slot:SS:BP-0x4:size2,stack_slot:SS:BP-0x6:size2",
+                    "ifbreak:CmpLT(stack_slot:SS:BP-0x2:size2,expr_cycle)",
+                ),
+            },
+        }
+    }
+
+    assert _is_direct_stack_move_materialization_delta_8616(codegen, validation) is True
+
+
+def test_direct_stack_move_materialization_delta_accepts_for_body_global_high_byte_precision():
+    codegen = _direct_stack_move_stack_slot_codegen()
+    global_codegen = _direct_global_update_codegen(displacement=0xBAA, width=2)
+    codegen._inertia_direct_global_update_lowering_8616 = global_codegen._inertia_direct_global_update_lowering_8616
+    codegen._inertia_direct_global_update_evidence_8616 = global_codegen._inertia_direct_global_update_evidence_8616
+    validation = {
+        "delta": {
+            "global_writes": {
+                "added": ("global:0xbab",),
+                "removed": (),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "for-body-writes:CmpNE(stack_slot:SS:BP-0x4:size2,const:0):"
+                    "global:0xbaa,global:0xbab,stack_slot:SS:BP-0x2:size2",
+                ),
+                "removed": (
+                    "for-body-writes:CmpNE(stack_slot:SS:BP-0x4:size2,const:0):"
+                    "global:0xbaa,stack_slot:SS:BP-0x2:size2",
+                ),
+            },
+        }
+    }
+
+    assert _is_direct_stack_move_materialization_delta_8616(codegen, validation) is True
+
+
+def test_direct_stack_move_materialization_delta_accepts_stack_move_with_global_precision():
+    codegen = _direct_stack_move_stack_slot_codegen()
+    codegen._inertia_direct_stack_move_evidence_8616 = (
+        (("dst_offset", -8), ("width", 2), ("source_kind", DirectStackMoveSourceKind8616.SEGMENTED_MEMORY)),
+        (("dst_offset", -6), ("width", 2), ("source_kind", DirectStackMoveSourceKind8616.STACK_SLOT)),
+        (("dst_offset", -4), ("width", 2), ("source_kind", DirectStackMoveSourceKind8616.STACK_SLOT)),
+    )
+    global_a = _direct_global_update_codegen(displacement=0xBAA, width=2)
+    global_b = _direct_global_update_codegen(displacement=0xBA4, width=2)
+    codegen._inertia_direct_global_update_evidence_8616 = (
+        *global_a._inertia_direct_global_update_evidence_8616,
+        *global_b._inertia_direct_global_update_evidence_8616,
+    )
+    validation = {
+        "delta": {
+            "global_writes": {
+                "added": ("global:0xba5",),
+                "removed": ("global:0xbaa",),
+            },
+            "conditions": {
+                "added": (),
+                "removed": (
+                    "CmpLE(Dereference(Add(Mul(reg:ds,const:16),"
+                    "Shl(stack_slot:SS:BP-0x4:size2,const:1),const:2890)),"
+                    "stack_slot:SS:BP-0x6:size2)",
+                ),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "for-body-writes:CmpNE(stack_slot:SS:BP-0x4:size2,const:0):"
+                    "global:0xba4,global:0xba5",
+                ),
+                "removed": (
+                    "for-body-writes:CmpNE(stack_slot:SS:BP-0x4:size2,const:0):"
+                    "global:0xba4,global:0xbaa",
+                    "ifbreak:CmpLE(Dereference(Add(Mul(reg:ds,const:16),"
+                    "Shl(stack_slot:SS:BP-0x4:size2,const:1),const:2890)),"
+                    "stack_slot:SS:BP-0x6:size2)",
+                ),
+            },
+        }
+    }
+
+    assert _is_direct_stack_move_materialization_delta_8616(codegen, validation) is True
+
+
+def test_direct_stack_move_materialization_delta_refuses_unrelated_for_body_global_precision():
+    codegen = _direct_stack_move_stack_slot_codegen()
+    global_codegen = _direct_global_update_codegen(displacement=0xBAA, width=2)
+    codegen._inertia_direct_global_update_lowering_8616 = global_codegen._inertia_direct_global_update_lowering_8616
+    codegen._inertia_direct_global_update_evidence_8616 = global_codegen._inertia_direct_global_update_evidence_8616
+    validation = {
+        "delta": {
+            "global_writes": {
+                "added": ("global:0x222",),
+                "removed": (),
+            },
+            "control_flow_effects": {
+                "added": (
+                    "for-body-writes:CmpNE(stack_slot:SS:BP-0x4:size2,const:0):"
+                    "global:0xbaa,global:0x222,stack_slot:SS:BP-0x2:size2",
+                ),
+                "removed": (
+                    "for-body-writes:CmpNE(stack_slot:SS:BP-0x4:size2,const:0):"
+                    "global:0xbaa,stack_slot:SS:BP-0x2:size2",
+                ),
+            },
+        }
+    }
+
+    assert _is_direct_stack_move_materialization_delta_8616(codegen, validation) is False
 
 
 def test_direct_stack_move_materialization_delta_refuses_control_flow_changes():

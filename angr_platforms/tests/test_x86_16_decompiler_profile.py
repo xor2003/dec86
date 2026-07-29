@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 
@@ -30,12 +30,17 @@ from angr_platforms.X86_16.annotations import (
 )
 from angr_platforms.X86_16.decompiler_postprocess import (  # noqa: E402
     _apply_annotations_8616,
+    _apply_stack_arg_cvar_type_8616,
+    _classify_return_shape_8616,
     _normalize_arg_names_8616,
     _normalize_function_prototype_arg_names_8616,
+    _return_value_is_unresolved_synthetic_carrier_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_stage import (  # noqa: E402
     DECOMPILER_POSTPROCESS_PASSES,
     _decompiler_postprocess_passes_for_function,
+    _is_exposed_nonvoid_stack_arg_scalar_return_delta_8616,
+    _wrapper_passes_8616,
 )
 
 
@@ -58,12 +63,12 @@ def test_source_decl_from_cod_source_lines_is_cached_by_function_name():
         "}",
     )
 
-    assert _source_decl_from_cod_source_lines(source_lines, "HeapSort") == "void HeapSort(void);"
+    assert _source_decl_from_cod_source_lines(source_lines, "HeapSort") is None
     first_info = _source_decl_from_cod_source_lines_cached_8616.cache_info()
-    assert first_info.misses == 1
-    assert _source_decl_from_cod_source_lines(source_lines, "HeapSort") == "void HeapSort(void);"
+    assert first_info.misses == 0
+    assert _source_decl_from_cod_source_lines(source_lines, "HeapSort") is None
     second_info = _source_decl_from_cod_source_lines_cached_8616.cache_info()
-    assert second_info.hits == first_info.hits + 1
+    assert second_info.hits == first_info.hits
 
 
 class _FakeInsn:
@@ -178,29 +183,25 @@ def test_tiny_wrapper_like_postprocess_keeps_argument_normalization():
     codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=function.addr))
 
     pass_specs = _decompiler_postprocess_passes_for_function(project, codegen)
+    pass_names = tuple(spec.name for spec in pass_specs)
 
-    assert tuple(spec.name for spec in pass_specs) == (
+    assert pass_names == tuple(spec.name for spec in _wrapper_passes_8616())
+    assert pass_names[:6] == (
         "_apply_word_global_types_8616",
         "_apply_annotations_8616",
+        "_materialize_stable_stack_semantics_early_8616",
         "_promote_stack_prototype_from_bp_loads_8616",
         "_prune_return_address_stack_arguments_8616",
         "_prune_unused_unnamed_memory_declarations_8616",
-        "_rewrite_decoded_jcc_conditions_8616",
-        "_rewrite_flag_condition_pairs_8616",
-        "_rewrite_flag_bit_value_uses_8616",
-        "_prune_unused_flag_assignments_8616",
-        "_prune_overwritten_flag_assignments_8616",
-        "_dead_code_elimination_after_flag_prune_8616",
-        "_attach_callsite_summaries_8616",
-        "_lower_stable_ss_stack_accesses_8616",
-        "_materialize_callsite_stack_arguments_8616",
-        "_rewrite_decoded_jcc_conditions_after_calls_8616",
-        "_materialize_empty_if_return_branches_8616",
-        "_prune_duplicate_empty_return_guard_before_cfg_suffix_8616",
-        "_materialize_callsite_prototypes_8616",
-        "_normalize_call_target_names_8616",
-        "_prune_duplicate_empty_return_guard_before_cfg_suffix_final_8616",
     )
+    assert "_lower_stable_ss_stack_accesses_8616" in pass_names
+    assert (
+        "_attach_callsite_summaries_8616",
+        "_recover_missing_direct_calls_from_evidence_early_8616",
+        "_materialize_callsite_stack_arguments_8616",
+        "_materialize_callsite_prototypes_8616",
+        "_materialize_recovered_callsite_stack_arguments_8616",
+    ) == tuple(name for name in pass_names if "callsite" in name or "direct_calls" in name)
 
 
 def test_call_heavy_small_function_postprocess_keeps_full_pass_list():
@@ -216,8 +217,19 @@ def test_call_heavy_small_function_postprocess_keeps_full_pass_list():
     codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=function.addr))
 
     pass_specs = _decompiler_postprocess_passes_for_function(project, codegen)
+    pass_names = tuple(spec.name for spec in pass_specs)
+    expected_names = tuple(spec.name for spec in DECOMPILER_POSTPROCESS_PASSES)
 
-    assert tuple(spec.name for spec in pass_specs) == tuple(spec.name for spec in DECOMPILER_POSTPROCESS_PASSES)
+    default_disabled = {
+        "_normalize_fact_backed_stack_accesses_8616",
+        "_simplify_boolean_cites_8616",
+        "_simplify_structured_expressions_8616",
+    }
+
+    assert pass_names == tuple(name for name in expected_names if name not in default_disabled)
+    assert "_apply_annotations_8616" in pass_names
+    assert "_normalize_function_prototype_arg_names_8616" in pass_names
+    assert "_materialize_callsite_stack_arguments_final_8616" in pass_names
 
 
 def test_call_heavy_small_function_profile_is_not_marked_wrapper_like():
@@ -310,12 +322,12 @@ def test_attach_cod_variable_names_deduplicates_stack_aliases():
     changed = _decompile._attach_cod_variable_names(codegen, cod_metadata)
     changed_again = _decompile._attach_cod_variable_names(codegen, cod_metadata)
 
-    assert changed is True
+    assert changed is False
     assert changed_again is False
-    assert stack_a.name == "err"
-    assert stack_b.name == "err_2"
-    assert codegen.cfunc.variables_in_use[stack_a].unified_variable.name == "err"
-    assert codegen.cfunc.variables_in_use[stack_b].unified_variable.name == "err_2"
+    assert stack_a.name == "v0"
+    assert stack_b.name == "v1"
+    assert codegen.cfunc.variables_in_use[stack_a].unified_variable.name == "v0"
+    assert codegen.cfunc.variables_in_use[stack_b].unified_variable.name == "v1"
 
 
 def test_attach_cod_variable_names_uses_normalized_bp_displacements():
@@ -335,13 +347,39 @@ def test_attach_cod_variable_names_uses_normalized_bp_displacements():
 
     changed = _decompile._attach_cod_variable_names(codegen, cod_metadata)
 
-    assert changed is True
-    assert arg_lhs.name == "lhs"
-    assert arg_rhs.name == "rhs"
-    assert local_tmp.name == "tmp"
-    assert codegen.cfunc.variables_in_use[arg_lhs].unified_variable.name == "lhs"
-    assert codegen.cfunc.variables_in_use[arg_rhs].unified_variable.name == "rhs"
-    assert codegen.cfunc.variables_in_use[local_tmp].unified_variable.name == "tmp"
+    assert changed is False
+    assert arg_lhs.name == "arg_4"
+    assert arg_rhs.name == "arg_6"
+    assert local_tmp.name == "local_2"
+    assert codegen.cfunc.variables_in_use[arg_lhs].unified_variable.name == "arg_4"
+    assert codegen.cfunc.variables_in_use[arg_rhs].unified_variable.name == "arg_6"
+    assert codegen.cfunc.variables_in_use[local_tmp].unified_variable.name == "local_2"
+
+
+def test_attach_cod_variable_names_keeps_exact_source_backed_arg_offsets():
+    value_var = SimStackVariable(4, 2, base="bp", name="value", region=0x1000)
+    limit_var = SimStackVariable(6, 2, base="bp", name="limit", region=0x1000)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    value_cvar = structured_c.CVariable(value_var, variable_type=SimTypeShort(False), codegen=c_codegen)
+    limit_cvar = structured_c.CVariable(limit_var, variable_type=SimTypeShort(False), codegen=c_codegen)
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            variables_in_use={
+                value_var: value_cvar,
+                limit_var: limit_cvar,
+            },
+            arg_list=[value_cvar, limit_cvar],
+        )
+    )
+    cod_metadata = SimpleNamespace(stack_aliases={2: "value", 4: "limit"})
+
+    changed = _decompile._attach_cod_variable_names(codegen, cod_metadata)
+
+    assert changed is False
+    assert value_var.name == "value"
+    assert limit_var.name == "limit"
+    assert value_cvar.name == "value"
+    assert limit_cvar.name == "limit"
 
 
 def test_attach_cod_variable_names_prefers_exact_negative_bp_displacements():
@@ -359,11 +397,11 @@ def test_attach_cod_variable_names_prefers_exact_negative_bp_displacements():
 
     changed = _decompile._attach_cod_variable_names(codegen, cod_metadata)
 
-    assert changed is True
-    assert switch_slot.name == "iSwitch"
-    assert limit_slot.name == "iLimit"
-    assert codegen.cfunc.variables_in_use[switch_slot].unified_variable.name == "iSwitch"
-    assert codegen.cfunc.variables_in_use[limit_slot].unified_variable.name == "iLimit"
+    assert changed is False
+    assert switch_slot.name == "arg_6"
+    assert limit_slot.name == "local_6"
+    assert codegen.cfunc.variables_in_use[switch_slot].unified_variable.name == "arg_6"
+    assert codegen.cfunc.variables_in_use[limit_slot].unified_variable.name == "local_6"
 
 
 def test_attach_cod_variable_names_visits_stack_nodes_missing_from_variables_in_use():
@@ -378,12 +416,12 @@ def test_attach_cod_variable_names_visits_stack_nodes_missing_from_variables_in_
 
     changed = _decompile._attach_cod_variable_names(codegen, cod_metadata)
 
-    assert changed is True
-    assert stack_var.name == "iSwitch"
-    assert codegen.cfunc.variables_in_use[stack_var] is stack_node
+    assert changed is False
+    assert stack_var.name == "arg_6"
+    assert codegen.cfunc.variables_in_use == {}
 
 
-def test_attach_project_cod_source_annotations_merges_stack_aliases():
+def test_attach_project_cod_source_annotations_is_inert():
     functions = _FakeFunctionManager()
     func = functions.function(0x1000, create=True)
     project = SimpleNamespace(
@@ -398,15 +436,11 @@ def test_attach_project_cod_source_annotations_merges_stack_aliases():
 
     changed = postprocess._attach_project_cod_source_annotations_if_missing_8616(project, 0x1000, func)
 
-    assert changed is True
-    annotations = func.info[ANNOTATION_KEY]
-    assert annotations["stack_vars"][2]["name"] == "lhs"
-    assert annotations["stack_vars"][4]["name"] == "rhs"
-    assert annotations["stack_vars"][-4]["name"] == "tmp"
-    assert annotations["source_lines"] == ("void swap(int *lhs, int *rhs)", "{", "}")
+    assert changed is False
+    assert ANNOTATION_KEY not in func.info
 
 
-def test_attach_project_cod_source_annotations_preserves_mutable_mapping_info():
+def test_attach_project_cod_source_annotations_preserves_mutable_mapping_info_without_writing():
     functions = _FakeFunctionManager()
     func = functions.function(0x1000, create=True)
     func.info = UserDict()
@@ -422,10 +456,8 @@ def test_attach_project_cod_source_annotations_preserves_mutable_mapping_info():
 
     changed = postprocess._attach_project_cod_source_annotations_if_missing_8616(project, 0x1000, func)
 
-    assert changed is True
-    annotations = func.info[ANNOTATION_KEY]
-    assert annotations["stack_vars"][2]["name"] == "lhs"
-    assert annotations["source_lines"] == ("void swap(int *lhs)", "{", "}")
+    assert changed is False
+    assert ANNOTATION_KEY not in func.info
 
 
 def test_apply_annotations_deduplicates_stack_variable_names():
@@ -465,6 +497,64 @@ def test_apply_annotations_deduplicates_stack_variable_names():
     assert stack_b.name == "s_2"
     assert codegen.cfunc.variables_in_use[stack_a].unified_variable.name == "s"
     assert codegen.cfunc.variables_in_use[stack_b].unified_variable.name == "s_2"
+
+
+def test_apply_annotations_keeps_structurally_equal_codegen_prototype_unchanged():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    current_prototype = SimTypeFunction(
+        [SimTypeShort(False)],
+        SimTypeShort(False),
+        arg_names=("value",),
+        variadic=False,
+    )
+    metadata_prototype = SimTypeFunction(
+        [SimTypeShort(False)],
+        SimTypeShort(False),
+        arg_names=("value",),
+        variadic=False,
+    )
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            addr=0x1000,
+            statements=structured_c.CStatements([], codegen=_FakeCodegen()),
+            variables_in_use={},
+            arg_list=[],
+            functy=current_prototype,
+        )
+    )
+    func = SimpleNamespace(
+        prototype=metadata_prototype,
+        info={"x86_16_annotations": {"stack_vars": {}}},
+    )
+    project = SimpleNamespace(
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        )
+    )
+
+    changed = _apply_annotations_8616(project, codegen)
+
+    assert changed is False
+    assert codegen.cfunc.functy is current_prototype
+    assert not hasattr(codegen, "_inertia_codegen_prototype_sync_count_8616")
+
+
+def test_apply_stack_arg_cvar_type_ignores_structurally_equal_type():
+    arch = Arch86_16()
+    cvar = SimpleNamespace(variable_type=SimTypeShort(False).with_arch(arch))
+    requested_type = SimTypeShort(False).with_arch(arch)
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(variable_manager=None))
+
+    changed = _apply_stack_arg_cvar_type_8616(codegen, cvar, requested_type)
+
+    assert changed is False
 
 
 def test_materialize_missing_register_local_declarations_recovers_unified_locals():
@@ -582,7 +672,7 @@ def test_apply_annotations_resolves_direct_bp_stack_loads_to_annotated_slots(mon
     monkeypatch.setattr(
         postprocess,
         "_match_bp_stack_load_8616",
-        lambda node, _project: 5 if node is bp_stack_load else None,
+        lambda node, _project: 4 if node is bp_stack_load else None,
     )
 
     changed = _apply_annotations_8616(project, codegen)
@@ -611,6 +701,7 @@ def test_apply_annotations_materializes_stack_arguments_from_annotations():
             return self
 
     codegen = _FakeCodegen()
+    codegen.project = SimpleNamespace(arch=Arch86_16())
     prototype = _FakePrototype([], SimTypeShort(False))
     codegen.cfunc = SimpleNamespace(
         addr=0x1000,
@@ -619,10 +710,9 @@ def test_apply_annotations_materializes_stack_arguments_from_annotations():
         arg_list=[],
         functy=prototype,
     )
-    codegen.project = SimpleNamespace(arch=Arch86_16())
     func = SimpleNamespace(
         prototype=prototype,
-        info={"x86_16_annotations": {"stack_vars": {2: {"name": "segment"}}}},
+        info={"x86_16_annotations": {"stack_vars": {4: {"name": "segment"}}}},
     )
     project = SimpleNamespace(
         arch=Arch86_16(),
@@ -636,7 +726,7 @@ def test_apply_annotations_materializes_stack_arguments_from_annotations():
     assert changed is True
     assert [arg.name for arg in codegen.cfunc.arg_list] == ["segment"]
     assert isinstance(codegen.cfunc.arg_list[0], structured_c.CVariable)
-    assert codegen.cfunc.arg_list[0].variable.offset == 2
+    assert codegen.cfunc.arg_list[0].variable.offset == 4
     assert codegen.cfunc.functy.arg_names == ("segment",)
 
 
@@ -660,6 +750,7 @@ def test_apply_annotations_shrinks_overguessed_stack_arguments():
             return self
 
     codegen = _FakeCodegen()
+    codegen.project = SimpleNamespace(arch=Arch86_16())
     prototype = _FakePrototype([SimTypeShort(False), SimTypeShort(False)], SimTypeShort(False), arg_names=("a0", "a1"))
     codegen.cfunc = SimpleNamespace(
         addr=0x1000,
@@ -672,7 +763,7 @@ def test_apply_annotations_shrinks_overguessed_stack_arguments():
     codegen.project = SimpleNamespace(arch=Arch86_16())
     func = SimpleNamespace(
         prototype=prototype,
-        info={"x86_16_annotations": {"stack_vars": {2: {"name": "segment"}}}},
+        info={"x86_16_annotations": {"stack_vars": {4: {"name": "segment"}}}},
     )
     project = SimpleNamespace(
         arch=Arch86_16(),
@@ -687,6 +778,234 @@ def test_apply_annotations_shrinks_overguessed_stack_arguments():
     assert [arg.name for arg in codegen.cfunc.arg_list] == ["segment"]
     assert codegen.cfunc.functy.arg_names == ("segment",)
     assert len(codegen.cfunc.functy.args) == 1
+
+
+def test_return_shape_classify_ignores_cfg_proven_switch_loop_unreachable_tail_returns():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    class _FakePrototype:
+        def __init__(self, args, returnty, *, arg_names=None, variadic=False):
+            self.args = list(args)
+            self.returnty = returnty
+            self.arg_names = tuple(arg_names or ())
+            self.variadic = variadic
+
+        def with_arch(self, _arch):
+            return self
+
+    codegen = _FakeCodegen()
+    codegen.project = SimpleNamespace(arch=Arch86_16())
+    prototype = _FakePrototype([], SimTypeShort(False))
+    selector = structured_c.CVariable("ax", codegen=codegen)
+    switch = structured_c.CSwitchCase(
+        selector,
+        [(27, structured_c.CStatements([structured_c.CReturn(None, codegen=codegen)], codegen=codegen))],
+        None,
+        codegen=codegen,
+    )
+    loop = structured_c.CWhileLoop(
+        structured_c.CConstant(1, SimTypeShort(False), codegen=codegen),
+        structured_c.CStatements([switch], codegen=codegen),
+        codegen=codegen,
+    )
+    tail = structured_c.CStatements(
+        [
+            structured_c.CReturn(structured_c.CVariable("vvar_127", codegen=codegen), codegen=codegen),
+            structured_c.CReturn(selector, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    root = structured_c.CStatements([loop, tail], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=root,
+        variables_in_use={},
+        arg_list=[],
+        functy=prototype,
+        prototype=prototype,
+    )
+    codegen._inertia_switch_loop_exit_return_materialized_8616 = True
+    func = SimpleNamespace(prototype=prototype, is_prototype_guessed=True, info={})
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
+    )
+
+    changed = _classify_return_shape_8616(project, codegen)
+
+    assert changed is True
+    assert isinstance(func.prototype.returnty, SimTypeBottom)
+    assert func.prototype.returnty.label == "void"
+    assert isinstance(codegen.cfunc.functy.returnty, SimTypeBottom)
+    assert func.info["x86_16_return_shape"]["ignored_unreachable_returns"] == 2
+
+
+def test_return_shape_classify_drops_unobserved_default_scalar_synthetic_return():
+    class _FakeCodegen:
+        def __init__(self):
+            self._idx = 0
+            self.cstyle_null_cmp = False
+
+        def next_idx(self, _name):
+            self._idx += 1
+            return self._idx
+
+    codegen = _FakeCodegen()
+    codegen.project = SimpleNamespace(arch=Arch86_16())
+    prototype = SimTypeFunction([], SimTypeShort(False)).with_arch(Arch86_16())
+    synthetic_segment = structured_c.CVariable(
+        SimRegisterVariable(0, 2, name="v4"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    synthetic_linear = structured_c.CUnaryOp(
+        "Dereference",
+        structured_c.CBinaryOp(
+            "Mul",
+            structured_c.CConstant(16, SimTypeShort(False), codegen=codegen),
+            synthetic_segment,
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    synthetic_stack_local_return = structured_c.CBinaryOp(
+        "Sub",
+        structured_c.CVariable(
+            SimStackVariable(-2, 2, base="bp", name="local_2_2", region=0x1000),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(44, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    assert _return_value_is_unresolved_synthetic_carrier_8616(synthetic_stack_local_return) is True
+    top_level_stack_local_return = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2", region=0x1000),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    assert _return_value_is_unresolved_synthetic_carrier_8616(top_level_stack_local_return) is True
+    unnamed_stack_slot_return = structured_c.CBinaryOp(
+        "Sub",
+        structured_c.CVariable(
+            SimStackVariable(-2, 4, base="bp", region=0x1000),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(44, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    assert _return_value_is_unresolved_synthetic_carrier_8616(unnamed_stack_slot_return) is True
+    indexed_stack_segment_return = structured_c.CBinaryOp(
+        "Sub",
+        structured_c.CIndexedVariable(
+            structured_c.CUnaryOp(
+                "Reference",
+                structured_c.CVariable(
+                    SimStackVariable(-2, 2, base="bp", name="local_2", region=0x1000),
+                    variable_type=SimTypeShort(False),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            structured_c.CBinaryOp(
+                "Mul",
+                structured_c.CConstant(16, SimTypeShort(False), codegen=codegen),
+                structured_c.CVariable(
+                    SimRegisterVariable(0, 2, name="ss"),
+                    variable_type=SimTypeShort(False),
+                    codegen=codegen,
+                ),
+                codegen=codegen,
+            ),
+            variable_type=SimTypeShort(False),
+            codegen=codegen,
+        ),
+        structured_c.CConstant(44, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    assert _return_value_is_unresolved_synthetic_carrier_8616(indexed_stack_segment_return) is True
+    synthetic_return = structured_c.CReturn(
+        structured_c.CBinaryOp(
+            "Sub",
+            synthetic_linear,
+            structured_c.CConstant(44, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=structured_c.CStatements([synthetic_return], codegen=codegen),
+        variables_in_use={},
+        arg_list=[],
+        functy=prototype,
+        prototype=prototype,
+    )
+    func = SimpleNamespace(
+        addr=0x1000,
+        name="DrawBar",
+        prototype=prototype,
+        is_prototype_guessed=False,
+        _inertia_return_compat_caller_uses_return_8616=False,
+        info={},
+    )
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
+    )
+
+    changed = _classify_return_shape_8616(project, codegen)
+
+    assert changed is True
+    assert synthetic_return.retval is None
+    assert isinstance(func.prototype.returnty, SimTypeBottom)
+    assert func.prototype.returnty.label == "void"
+    assert isinstance(codegen.cfunc.functy.returnty, SimTypeBottom)
+    assert func.info["x86_16_return_shape"]["shape"] == "void"
+    assert func.info["x86_16_return_shape"]["value_returns"] == 0
+
+
+def test_validation_accepts_exposed_nonvoid_stack_arg_scalar_return():
+    function = SimpleNamespace(
+        prototype=SimTypeFunction((SimTypeShort(False),), SimTypeShort(False)),
+    )
+    validation = {
+        "delta": {
+            "returns": {
+                "added": ("Add(stack_slot:SS:BP+0x4:size2,const:1)",),
+                "removed": ("none",),
+            },
+        },
+    }
+
+    assert _is_exposed_nonvoid_stack_arg_scalar_return_delta_8616(function, validation)
+
+
+def test_validation_refuses_exposed_nonvoid_call_return_without_stack_arg_proof():
+    function = SimpleNamespace(
+        prototype=SimTypeFunction((SimTypeShort(False),), SimTypeShort(False)),
+    )
+    validation = {
+        "delta": {
+            "returns": {
+                "added": ("call:helper",),
+                "removed": ("none",),
+            },
+        },
+    }
+
+    assert not _is_exposed_nonvoid_stack_arg_scalar_return_delta_8616(function, validation)
 
 
 def test_simplify_structured_expressions_rewrites_far_pointer_stack_pairs_to_mk_fp():

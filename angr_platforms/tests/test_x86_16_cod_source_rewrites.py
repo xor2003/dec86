@@ -5,6 +5,10 @@ from angr_platforms.X86_16.cod_source_rewrites import (
     COD_SOURCE_REWRITE_REGISTRY,
     COD_SOURCE_REWRITE_SPECS,
     COD_SOURCE_REWRITE_SPECS_BY_NAME,
+    CODSourceRewriteRegistry,
+    CODSourceRewriteSpec,
+    CODSourceRewriteStatus,
+    CODSourceRewriteStatusKind,
     apply_cod_source_rewrites,
     cod_source_rewrite_description,
     cod_source_rewrite_names,
@@ -13,6 +17,8 @@ from angr_platforms.X86_16.cod_source_rewrites import (
     describe_x86_16_source_backed_rewrite_status,
     get_cod_source_rewrite_spec,
 )
+
+BUILTIN_SOURCE_REWRITE_NAMES = ()
 
 
 def test_cod_source_rewrite_registry_is_keyed_and_unique():
@@ -32,30 +38,72 @@ def test_cod_source_rewrite_registry_exposes_name_order():
 
 def test_cod_source_rewrite_summary_matches_registry_contents():
     summary = cod_source_rewrite_summary()
-    assert summary["count"] == len(COD_SOURCE_REWRITE_SPECS)
-    assert summary["names"] == tuple(COD_SOURCE_REWRITE_SPECS_BY_NAME)
+    assert summary["count"] == len(BUILTIN_SOURCE_REWRITE_NAMES) + len(COD_SOURCE_REWRITE_SPECS)
+    assert summary["names"] == (*BUILTIN_SOURCE_REWRITE_NAMES, *tuple(COD_SOURCE_REWRITE_SPECS_BY_NAME))
     assert summary["status_counts"] == {}
-    assert summary["active_count"] == 0
+    assert summary["active_count"] == len(BUILTIN_SOURCE_REWRITE_NAMES)
     assert summary["oracle_count"] == 0
     assert summary["subsumed_count"] == 0
 
 
+def test_cod_source_rewrite_status_rows_use_typed_statuses():
+    status = CODSourceRewriteStatus(name="sample", rewrite_status="temporary_rescue")
+
+    assert status.rewrite_status is CODSourceRewriteStatusKind.TEMPORARY_RESCUE
+    assert status.rewrite_status.is_active
+
+
+def test_cod_source_rewrite_registry_summarizes_typed_status_rows():
+    registry = CODSourceRewriteRegistry(
+        specs=(
+            CODSourceRewriteSpec(
+                name="oracle_case",
+                header_regex="oracle",
+                rewritten="",
+                rewrite_status=CODSourceRewriteStatusKind.PERMANENT_GUARDED_ORACLE,
+            ),
+            CODSourceRewriteSpec(
+                name="subsumed_case",
+                header_regex="subsumed",
+                rewritten="",
+                rewrite_status=CODSourceRewriteStatusKind.ALREADY_SUBSUMED_BY_GENERAL_RECOVERY,
+            ),
+        ),
+        by_name={},
+    )
+
+    summary = registry.summary()
+
+    assert summary["oracle_count"] == 1
+    assert summary["subsumed_count"] == 1
+    assert summary["active_count"] == 1
+    assert summary["status_counts"] == {
+        "already_subsumed_by_general_recovery": 1,
+        "permanent_guarded_oracle": 1,
+    }
+
+
 def test_cod_source_rewrite_description_matches_registry_contents():
     description = cod_source_rewrite_description()
-    assert description["count"] == len(COD_SOURCE_REWRITE_SPECS)
-    assert description["names"] == tuple(COD_SOURCE_REWRITE_SPECS_BY_NAME)
-    assert description["specs"] == ()
+    assert description["count"] == len(BUILTIN_SOURCE_REWRITE_NAMES) + len(COD_SOURCE_REWRITE_SPECS)
+    assert description["names"] == (*BUILTIN_SOURCE_REWRITE_NAMES, *tuple(COD_SOURCE_REWRITE_SPECS_BY_NAME))
+    assert tuple(item["name"] for item in description["specs"][: len(BUILTIN_SOURCE_REWRITE_NAMES)]) == (
+        BUILTIN_SOURCE_REWRITE_NAMES
+    )
     assert all("rewrite_status" in item for item in description["specs"])
+    assert all("owner" in item for item in description["specs"])
 
 
 def test_cod_source_rewrite_status_matches_registry_contents():
     status = describe_x86_16_source_backed_rewrite_status()
 
-    assert status["count"] == len(COD_SOURCE_REWRITE_SPECS)
-    assert status["names"] == tuple(COD_SOURCE_REWRITE_SPECS_BY_NAME)
-    assert status["specs"] == ()
+    assert status["count"] == len(BUILTIN_SOURCE_REWRITE_NAMES) + len(COD_SOURCE_REWRITE_SPECS)
+    assert status["names"] == (*BUILTIN_SOURCE_REWRITE_NAMES, *tuple(COD_SOURCE_REWRITE_SPECS_BY_NAME))
+    assert tuple(item["name"] for item in status["specs"][: len(BUILTIN_SOURCE_REWRITE_NAMES)]) == (
+        BUILTIN_SOURCE_REWRITE_NAMES
+    )
     assert status["status_counts"] == {}
-    assert status["active_count"] == 0
+    assert status["active_count"] == len(BUILTIN_SOURCE_REWRITE_NAMES)
     assert status["oracle_count"] == 0
     assert status["subsumed_count"] == 0
 
@@ -63,12 +111,12 @@ def test_cod_source_rewrite_status_matches_registry_contents():
 def test_cod_source_rewrite_debt_matches_registry_contents():
     debt = describe_x86_16_source_backed_rewrite_debt()
 
-    assert debt["count"] == len(COD_SOURCE_REWRITE_SPECS)
-    assert debt["active_count"] == 0
+    assert debt["count"] == len(BUILTIN_SOURCE_REWRITE_NAMES) + len(COD_SOURCE_REWRITE_SPECS)
+    assert debt["active_count"] == len(BUILTIN_SOURCE_REWRITE_NAMES)
     assert debt["oracle_count"] == 0
     assert debt["subsumed_count"] == 0
     assert debt["status_counts"] == {}
-    assert debt["active_names"] == ()
+    assert debt["active_names"] == BUILTIN_SOURCE_REWRITE_NAMES
     assert debt["oracle_names"] == ()
     assert debt["subsumed_names"] == ()
 
@@ -108,7 +156,7 @@ def test_cod_source_rewrite_spec_lookup_map_is_read_only():
     raise AssertionError("spec lookup map should be read-only")
 
 
-def test_apply_cod_source_rewrites_rebuilds_collapsed_straight_line_body_from_source():
+def test_apply_cod_source_rewrites_is_inert_for_source_backed_body_recovery():
     metadata = CODProcMetadata(
         stack_aliases={},
         call_names=("printf",),
@@ -147,247 +195,4 @@ def test_apply_cod_source_rewrites_rebuilds_collapsed_straight_line_body_from_so
 
     rewritten = apply_cod_source_rewrites(collapsed, metadata)
 
-    assert "char a;" in rewritten
-    assert "char b;" in rewritten
-    assert "a = 255;" in rewritten
-    assert "b = 143;" in rewritten
-    assert "b = a + b;" in rewritten
-    assert "a = a - b;" in rewritten
-    assert 'printf ("a = %d, b = %d\\n", a, b);' in rewritten
-
-
-def test_apply_cod_source_rewrites_repairs_split_source_backed_call_lines_in_live_body():
-    metadata = CODProcMetadata(
-        stack_aliases={},
-        call_names=("printf",),
-        call_sources=(("printf", 'printf ("a = %d, b = %d\\n", a, b)'),),
-        global_names=(),
-        source_lines=(
-            "main()",
-            "{",
-            "a = a - b;",
-            'printf ("a = %d, b = %d\\n", a, b);',
-            "}",
-        ),
-        source_line_set=frozenset(
-            {
-                "main()",
-                "{",
-                "a = a - b;",
-                'printf ("a = %d, b = %d\\n", a, b);',
-                "}",
-            }
-        ),
-    )
-    live_body = """void _main(void)
-{
-    a = a - b;
-    printf ("a = %d, b = %d
-", a, b);
-}"""
-
-    rewritten = apply_cod_source_rewrites(live_body, metadata)
-
-    assert 'printf ("a = %d, b = %d\\n", a, b);' in rewritten
-    assert 'printf ("a = %d, b = %d\n' not in rewritten
-
-
-def test_apply_cod_source_rewrites_keeps_multi_statement_live_body_while_repairing_split_calls():
-    metadata = CODProcMetadata(
-        stack_aliases={},
-        call_names=("printf",),
-        call_sources=(("printf", 'printf ("a = %d, b = %d\\n", a, b)'),),
-        global_names=(),
-        source_lines=(
-            "main()",
-            "{",
-            "a = 255;",
-            "b = 143;",
-            "b = a + b;",
-            "a = a - b;",
-            "a = a * b;",
-            'printf ("a = %d, b = %d\\n", a, b);',
-            "}",
-        ),
-        source_line_set=frozenset(
-            {
-                "main()",
-                "{",
-                "a = 255;",
-                "b = 143;",
-                "b = a + b;",
-                "a = a - b;",
-                "a = a * b;",
-                'printf ("a = %d, b = %d\\n", a, b);',
-                "}",
-            }
-        ),
-    )
-    live_body = """void _main(void)
-{
-    a = a - b;
-    a = a * b;
-    printf ("a = %d, b = %d
-", a, b);
-}"""
-
-    rewritten = apply_cod_source_rewrites(live_body, metadata)
-
-    assert "a = 255;" not in rewritten
-    assert "b = 143;" not in rewritten
-    assert "b = a + b;" not in rewritten
-    assert "a = a - b;" in rewritten
-    assert "a = a * b;" in rewritten
-    assert 'printf ("a = %d, b = %d\\n", a, b);' in rewritten
-    assert 'printf ("a = %d, b = %d\n' not in rewritten
-
-
-def test_apply_cod_source_rewrites_ignores_prelude_globals_when_rebuilding_function_body():
-    metadata = CODProcMetadata(
-        stack_aliases={},
-        call_names=("intdos",),
-        call_sources=(),
-        global_names=("exeLoadParams", "rin", "rout"),
-        source_lines=(
-            "#define DOS_LOAD_NOEXEC 1",
-            "struct ExeLoadParams {",
-            "unsigned short cs;",
-            "unsigned short ss;",
-            "} exeLoadParams;",
-            "static int loadprog(const char *file, unsigned short segment, unsigned short type, const char *cmdline) {",
-            "int err;",
-            "rin.x.dx = (unsigned int)file;",
-            "err = intdos(&rin, &rout);",
-            "if (rout.x.cflag != 0) {",
-            "return err;",
-            "}",
-            "return 0;",
-            "}",
-        ),
-        source_line_set=frozenset(
-            {
-                "#define DOS_LOAD_NOEXEC 1",
-                "struct ExeLoadParams {",
-                "unsigned short cs;",
-                "unsigned short ss;",
-                "} exeLoadParams;",
-                "static int loadprog(const char *file, unsigned short segment, unsigned short type, const char *cmdline) {",
-                "int err;",
-                "rin.x.dx = (unsigned int)file;",
-                "err = intdos(&rin, &rout);",
-                "if (rout.x.cflag != 0) {",
-                "return err;",
-                "}",
-                "return 0;",
-            }
-        ),
-    )
-    collapsed = """int loadprog(const char *file, unsigned short segment, unsigned short mode, const char *cmdline)
-{
-    return DOSERR_INVFUNC;
-}"""
-
-    rewritten = apply_cod_source_rewrites(collapsed, metadata)
-
-    assert "int err;" in rewritten
-    assert "rin.x.dx = (unsigned int)file;" in rewritten
-    assert "err = intdos(&rin, &rout);" in rewritten
-    assert "} exeLoadParams;" not in rewritten
-    assert "unsigned short cs;" not in rewritten
-
-
-def test_apply_cod_source_rewrites_skips_complex_switch_bodies():
-    metadata = CODProcMetadata(
-        stack_aliases={},
-        call_names=("DEBUG", "INFO"),
-        call_sources=(),
-        global_names=(),
-        source_lines=(
-            "static int loadprog(unsigned short mode) {",
-            "switch (mode) {",
-            "case 0:",
-            'DEBUG("exec");',
-            "break;",
-            "default:",
-            'INFO("other");',
-            "break;",
-            "}",
-            "return 0;",
-            "}",
-        ),
-        source_line_set=frozenset(
-            {
-                "static int loadprog(unsigned short mode) {",
-                "switch (mode) {",
-                "case 0:",
-                'DEBUG("exec");',
-                "break;",
-                "default:",
-                'INFO("other");',
-                "}",
-                "return 0;",
-            }
-        ),
-    )
-    collapsed = """int loadprog(unsigned short mode)
-{
-    return 1;
-}"""
-
-    rewritten = apply_cod_source_rewrites(collapsed, metadata)
-
     assert rewritten == collapsed
-
-
-def test_apply_cod_source_rewrites_preserves_multistatement_live_bodies_while_repairing_split_lines():
-    """Multi-statement live bodies should NOT be rebuilt—only split lines repaired."""
-    metadata = CODProcMetadata(
-        stack_aliases={},
-        call_names=("printf",),
-        call_sources=(("printf", 'printf ("a = %d, b = %d\\n", a, b)'),),
-        global_names=(),
-        source_lines=(
-            "main()",
-            "{ char a, b;",
-            "a = 255;",
-            "b = 143;",
-            "b = a + b;",
-            "a = a - b;",
-            'printf ("a = %d, b = %d\\n", a, b);',
-            "}",
-        ),
-        source_line_set=frozenset(
-            {
-                "main()",
-                "{ char a, b;",
-                "a = 255;",
-                "b = 143;",
-                "b = a + b;",
-                "a = a - b;",
-                'printf ("a = %d, b = %d\\n", a, b);',
-                "}",
-            }
-        ),
-    )
-    # Live body has 5 statements (good recovery) but split printf
-    live_body = """void _main(void)
-{
-    a = 255;
-    b = 143;
-    b = a + b;
-    a = a - b;
-    printf ("a = %d, b = %d
-", a, b);
-}"""
-
-    rewritten = apply_cod_source_rewrites(live_body, metadata)
-
-    # Should keep the 5 live statements
-    assert "a = 255;" in rewritten
-    assert "b = 143;" in rewritten
-    assert "b = a + b;" in rewritten
-    assert "a = a - b;" in rewritten
-
-    # Should repair the split printf
-    assert 'printf ("a = %d, b = %d\\n", a, b);' in rewritten
-    assert 'printf ("a = %d, b = %d\n' not in rewritten

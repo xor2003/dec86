@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 
 from angr_platforms.X86_16.recovery_artifact_writer import (
@@ -6,7 +8,7 @@ from angr_platforms.X86_16.recovery_artifact_writer import (
 )
 
 
-def test_write_function_recovery_artifact_emits_stable_json(tmp_path):
+def test_write_function_recovery_artifact_emits_stable_json(tmp_path) -> None:
     path = tmp_path / "function.json"
     result = write_x86_16_function_recovery_artifact(
         {
@@ -40,7 +42,7 @@ def test_write_function_recovery_artifact_emits_stable_json(tmp_path):
     assert payload["helper_summary"]["status"] == "refused"
 
 
-def test_write_corpus_recovery_artifact_emits_sorted_rows(tmp_path):
+def test_write_corpus_recovery_artifact_emits_sorted_rows(tmp_path) -> None:
     path = tmp_path / "corpus.json"
     result = write_x86_16_corpus_recovery_artifact(
         [

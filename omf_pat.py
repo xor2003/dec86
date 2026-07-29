@@ -1,3 +1,9 @@
+"""Parse and emit OMF pattern data for optional signature catalogs.
+
+Layer: Optional evidence/reporting.
+Responsibility: parse optional OMF/PAT signature evidence without controlling decompiler semantics.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -175,7 +181,9 @@ def parse_pat_file(pat_path: Path) -> tuple[PatModule, ...]:
 
 
 def parse_pat_line(line: str, *, source_path: str = "<memory>") -> PatModule | None:
-    def _impl():
+    """Parse one PAT line into a structured optional signature module."""
+
+    def _impl() -> PatModule | None:
         stripped = line.strip()
         if not stripped or stripped == "---":
             return None
@@ -287,7 +295,7 @@ def _parse_pat_comment_metadata(comment_text: str) -> tuple[str, str, str]:
 
 
 def _compiler_name_from_source_path(source_path: str) -> str:
-    def _impl():
+    def _impl() -> list[str]:
         probed = _compiler_version_from_source_path(source_path)
         if probed:
             return probed
@@ -920,7 +928,7 @@ def _parse_omf_blob(
     *,
     module_name_hint: str,
 ) -> tuple[str, list[_OMFSegment], list[_OMFPublic], list[_OMFFixupRef]]:
-    def _impl():
+    def _impl() -> tuple[str, list[_OMFSegment], list[_OMFPublic], list[_OMFFixupRef]]:
         lnames: list[str] = [""]
         segments: list[_OMFSegment] = []
         publics: list[_OMFPublic] = []
@@ -943,8 +951,10 @@ def _parse_omf_blob(
                 external_names.extend(_parse_extdef_names(payload))
             elif record_type in {0xB0, 0xB8}:
                 external_names.extend(_parse_comdef_names(payload))
-            elif record_type == 0xA0:
-                last_data_context = _apply_ledata(payload, segments)
+            elif record_type in {0xA0, 0xA1}:
+                last_data_context = _apply_ledata(payload, segments, use32=record_type == 0xA1)
+            elif record_type in {0xA2, 0xA3}:
+                last_data_context = _apply_lidata(payload, segments, use32=record_type == 0xA3)
             elif record_type == 0x9C and last_data_context is not None:
                 fixup_refs.extend(
                     _parse_fixupp_refs(
@@ -967,7 +977,7 @@ def _generate_pat_lines_from_omf_blob(
     provenance_source: str = "",
     provenance_compiler: str = "",
 ) -> list[str]:
-    def _impl():
+    def _impl() -> list[str]:
         module_name, segments, publics, fixup_refs = _parse_omf_blob(blob, module_name_hint=Path(source_name).stem)
         lines: list[str] = []
         publics_by_segment: dict[int, list[_OMFPublic]] = {}
@@ -982,8 +992,10 @@ def _generate_pat_lines_from_omf_blob(
             segment = segments[seg_index - 1]
             if not _segment_looks_like_code(segment):
                 continue
+            seg_limit = segment.max_written_end
+            if seg_limit <= 0:
+                continue
             seg_publics.sort(key=lambda item: item.offset)
-            seg_limit = segment.max_written_end or len(segment.data)
             segment_refs = sorted(refs_by_segment.get(seg_index, ()), key=lambda item: (item.offset, item.name))
             for index, public in enumerate(seg_publics):
                 start = public.offset
@@ -1455,13 +1467,38 @@ def _parse_pubdef(payload: bytes) -> list[_OMFPublic]:
     return publics
 
 
-def _apply_ledata(payload: bytes, segments: list[_OMFSegment]) -> _OMFDataRecordContext | None:
+def _apply_ledata(payload: bytes, segments: list[_OMFSegment], *, use32: bool = False) -> _OMFDataRecordContext | None:
     seg_index, offset = _read_omf_index(payload, 0)
-    if seg_index <= 0 or seg_index > len(segments) or offset + 2 > len(payload):
+    offset_size = 4 if use32 else 2
+    if seg_index <= 0 or seg_index > len(segments) or offset + offset_size > len(payload):
         return None
-    data_offset = int.from_bytes(payload[offset : offset + 2], "little")
-    offset += 2
+    data_offset = int.from_bytes(payload[offset : offset + offset_size], "little")
+    offset += offset_size
     data = payload[offset:]
+    return _apply_omf_data_record(seg_index, data_offset, data, segments)
+
+
+def _apply_lidata(payload: bytes, segments: list[_OMFSegment], *, use32: bool = False) -> _OMFDataRecordContext | None:
+    seg_index, offset = _read_omf_index(payload, 0)
+    offset_size = 4 if use32 else 2
+    if seg_index <= 0 or seg_index > len(segments) or offset + offset_size > len(payload):
+        return None
+    data_offset = int.from_bytes(payload[offset : offset + offset_size], "little")
+    offset += offset_size
+    data = _expand_lidata_blocks(payload[offset:], use32=use32)
+    if data is None:
+        return None
+    return _apply_omf_data_record(seg_index, data_offset, data, segments)
+
+
+def _apply_omf_data_record(
+    seg_index: int,
+    data_offset: int,
+    data: bytes,
+    segments: list[_OMFSegment],
+) -> _OMFDataRecordContext | None:
+    if seg_index <= 0 or seg_index > len(segments) or data_offset < 0:
+        return None
     segment = segments[seg_index - 1]
     end = data_offset + len(data)
     if end > len(segment.data):
@@ -1469,6 +1506,72 @@ def _apply_ledata(payload: bytes, segments: list[_OMFSegment]) -> _OMFDataRecord
     segment.data[data_offset:end] = data
     segment.max_written_end = max(segment.max_written_end, end)
     return _OMFDataRecordContext(seg_index=seg_index, data_offset=data_offset, data_length=len(data))
+
+
+def _expand_lidata_blocks(payload: bytes, *, use32: bool, max_output_size: int = 16 * 1024 * 1024) -> bytes | None:
+    offset = 0
+    chunks: list[bytes] = []
+    total = 0
+    while offset < len(payload):
+        expanded, offset = _expand_lidata_block(payload, offset, use32=use32, max_output_size=max_output_size - total)
+        if expanded is None:
+            return None
+        chunks.append(expanded)
+        total += len(expanded)
+        if total > max_output_size:
+            return None
+    return b"".join(chunks)
+
+
+def _expand_lidata_block(
+    payload: bytes,
+    offset: int,
+    *,
+    use32: bool,
+    max_output_size: int,
+) -> tuple[bytes | None, int]:
+    repeat_size = 4 if use32 else 2
+    if offset + repeat_size + 2 > len(payload):
+        return None, len(payload)
+    repeat_count = int.from_bytes(payload[offset : offset + repeat_size], "little")
+    offset += repeat_size
+    block_count = int.from_bytes(payload[offset : offset + 2], "little")
+    offset += 2
+    if repeat_count < 0:
+        return None, len(payload)
+
+    if block_count == 0:
+        if offset >= len(payload):
+            return None, len(payload)
+        byte_count = payload[offset]
+        offset += 1
+        if offset + byte_count > len(payload):
+            return None, len(payload)
+        chunk = payload[offset : offset + byte_count]
+        offset += byte_count
+        if byte_count and repeat_count > max_output_size // byte_count:
+            return None, len(payload)
+        return chunk * repeat_count, offset
+
+    nested_chunks: list[bytes] = []
+    nested_size = 0
+    for _ in range(block_count):
+        nested, offset = _expand_lidata_block(
+            payload,
+            offset,
+            use32=use32,
+            max_output_size=max_output_size - nested_size,
+        )
+        if nested is None:
+            return None, len(payload)
+        nested_chunks.append(nested)
+        nested_size += len(nested)
+        if nested_size > max_output_size:
+            return None, len(payload)
+    nested_data = b"".join(nested_chunks)
+    if nested_data and repeat_count > max_output_size // len(nested_data):
+        return None, len(payload)
+    return nested_data * repeat_count, offset
 
 
 def _parse_extdef_names(payload: bytes) -> list[str]:

@@ -113,7 +113,11 @@ def test_msc6_cmp16_rel_i16_keeps_recovered_signature_and_avoids_implicit_arg_pl
 
     emitted_body = _extract_emitted_function_8616(combined, "rel_i16")
     assert emitted_body, combined
-    assert "int rel_i16(int a, int b)" in emitted_body
+    assert re.search(r"\b(?:int|short)\s+rel_i16\((?:int|short)\s+a,\s+(?:int|short)\s+b\)", emitted_body), (
+        emitted_body
+    )
+    assert "unsigned short a" not in emitted_body
+    assert "unsigned short b" not in emitted_body
     assert not re.search(r"\barg_[0-9]+\b", emitted_body), emitted_body
     assert not re.search(r"\bs_[0-9A-Fa-f]+\b", emitted_body), emitted_body
     assert not re.search(r"\b(?:sp|bp)_0\b", emitted_body), emitted_body
@@ -123,13 +127,13 @@ def test_msc6_cmp16_rel_i16_keeps_recovered_signature_and_avoids_implicit_arg_pl
     assert ">> 8" not in emitted_body
     for fragment in (
         "if (b > a)",
-        "mask = mask | 1;",
+        "mask |= 1;",
         "if (b >= a)",
-        "mask = mask | 2;",
+        "mask |= 2;",
         "if (b < a)",
-        "mask = mask | 4;",
+        "mask |= 4;",
         "if (b <= a)",
-        "mask = mask | 8;",
+        "mask |= 8;",
     ):
         assert fragment in emitted_body, emitted_body
     assert "return mask;" in emitted_body
@@ -221,13 +225,13 @@ def test_msc6_scalar_sub_ulong_consumes_stack_probe_prologue_artifacts() -> None
             "rel_i16",
             (
                 "if (b > a)",
-                "mask = mask | 1;",
+                "mask |= 1;",
                 "if (b >= a)",
-                "mask = mask | 2;",
+                "mask |= 2;",
                 "if (b < a)",
-                "mask = mask | 4;",
+                "mask |= 4;",
                 "if (b <= a)",
-                "mask = mask | 8;",
+                "mask |= 8;",
                 "return mask;",
             ),
         ),
@@ -235,13 +239,13 @@ def test_msc6_scalar_sub_ulong_consumes_stack_probe_prologue_artifacts() -> None
             "rel_u16",
             (
                 "if (b > a)",
-                "mask = mask | 1;",
+                "mask |= 1;",
                 "if (b >= a)",
-                "mask = mask | 2;",
+                "mask |= 2;",
                 "if (b < a)",
-                "mask = mask | 4;",
+                "mask |= 4;",
                 "if (b <= a)",
-                "mask = mask | 8;",
+                "mask |= 8;",
                 "return mask;",
             ),
         ),
@@ -282,6 +286,7 @@ def test_msc6_fptr_select_and_apply_materializes_branch_function_pointer_targets
 
     emitted_body = _extract_emitted_function_8616(combined, "select_and_apply")
     assert emitted_body, combined
+    assert re.match(r"unsigned short\s+select_and_apply\s*\(", emitted_body), emitted_body
     assert "fn = inc_one;" in emitted_body
     assert "fn = dec_one;" in emitted_body
     assert "fn = which;" not in emitted_body
@@ -327,6 +332,7 @@ def test_msc6_fptr_apply_twice_consumes_stack_probe_call_artifacts() -> None:
     assert "value" in emitted_body
     assert emitted_body.count("fn(value)") == 2
     assert "return value;" in emitted_body
+    assert "chkstk" not in emitted_body.lower()
     assert "SEG_U" not in emitted_body
     assert "local_2 =" not in emitted_body
     assert "v2 = fn" not in emitted_body

@@ -1,3 +1,9 @@
+"""Layer: CLI/fallback/reporting.
+
+Responsibility: render timestamps, diagnostics, and fallback text to output streams.
+Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
+"""
+
 from __future__ import annotations
 
 import builtins as _builtins
@@ -5,6 +11,7 @@ import os
 import re
 import sys
 import time
+from typing import TextIO, cast
 
 _RAW_PRINT = _builtins.print
 
@@ -32,12 +39,12 @@ def _looks_like_diagnostic_line(line: str) -> bool:
     )
 
 
-def _timestamped_print(*args, **kwargs):
-    def _impl():
-        sep = kwargs.pop("sep", " ")
-        end = kwargs.pop("end", "\n")
-        file = kwargs.pop("file", None)
-        flush = kwargs.pop("flush", False)
+def _timestamped_print(*args: object, **kwargs: object) -> None:
+    def _impl() -> None:
+        sep = str(kwargs.pop("sep", " "))
+        end = str(kwargs.pop("end", "\n"))
+        file = cast(TextIO | None, kwargs.pop("file", None))
+        flush = bool(kwargs.pop("flush", False))
         text = sep.join(str(arg) for arg in args)
         pytest_mode = "PYTEST_CURRENT_TEST" in os.environ
         if pytest_mode or _brief_mode():

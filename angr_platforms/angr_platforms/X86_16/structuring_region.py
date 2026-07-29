@@ -1,5 +1,8 @@
 """Region-based control-flow graph representation for structuring.
 
+Layer: Structuring.
+Responsibility: Maintain region graph ownership, edge rewrites, and dominator facts for structuring.
+
 This module provides a region graph abstraction that wraps angr's control-flow graph.
 Regions represent groups of statements that are being progressively coalesced into
 structured control-flow patterns (sequence, if-then-else, loops, etc).
@@ -15,10 +18,28 @@ from __future__ import annotations
 import enum
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TypeAlias
 
-if TYPE_CHECKING:
-    from angr.analyses.decompiler.structured_codegen.c import CNode
+CNode: TypeAlias = object
+
+
+def _dynamic_codegen_attr_8616(obj: object, name: str, default: object = None) -> object:
+    """Read optional angr/codegen attributes at the dynamic compatibility boundary."""
+    return getattr(obj, name, default)
+
+
+def _metadata_tuple_8616(value: object) -> tuple[object, ...]:
+    """Normalize optional region metadata sequences to an immutable tuple."""
+    if isinstance(value, tuple):
+        return value
+    if isinstance(value, list | set | frozenset):
+        return tuple(value)
+    return ()
+
+
+def _metadata_int_tuple_8616(value: object) -> tuple[int, ...]:
+    """Normalize optional region metadata address sequences to integer tuples."""
+    return tuple(item for item in _metadata_tuple_8616(value) if isinstance(item, int))
 
 
 class RegionType(enum.Enum):
@@ -67,24 +88,24 @@ class Region:
     predecessors: set[Region] = field(default_factory=set)
     successors: set[Region] = field(default_factory=set)
     is_switch_pad: bool = False
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Ensure region_id defaults to block_addr if not set."""
         if self.region_id is None and self.block_addr is not None:
             self.region_id = self.block_addr
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         """Regions are hashable by their ID."""
         return hash(self.region_id)
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         """Regions are equal if they have the same ID."""
         if not isinstance(other, Region):
-            return NotImplemented
+            return False
         return self.region_id == other.region_id
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         """String representation of region."""
         type_str = self.region_type.value
         switch_marker = "_$sw" if self.is_switch_pad else ""
@@ -143,6 +164,7 @@ class Region:
 
     def redirect_edges_to(self, target: Region) -> None:
         """Redirect all successors and predecessors to point to target instead.
+
         Used when merging or replacing regions.
         """
         # Redirect predecessors
@@ -188,9 +210,15 @@ class RegionGraph:
         """Remove a region from the graph."""
         if region in self.nodes:
             self.nodes.discard(region)
-            # Redirect edges before removing
-            region.redirect_edges_to(None)
-            del self._adjacency[region]
+            for pred in list(region.predecessors):
+                pred.remove_successor(region)
+                if pred in self._adjacency:
+                    self._adjacency[pred].discard(region)
+            for succ in list(region.successors):
+                succ.remove_predecessor(region)
+            region.predecessors.clear()
+            region.successors.clear()
+            self._adjacency.pop(region, None)
 
     def add_edge(self, src: Region, dst: Region) -> None:
         """Add a directed edge from src to dst."""
@@ -216,8 +244,10 @@ class RegionGraph:
         return list(region.successors)
 
     def merge_regions(self, src: Region, dst: Region, transfer_edges: str = "both") -> None:
-        def _impl():
-            """Merge src into dst, combining their statements and updating edges.
+        """Merge src into dst, combining statements and selected graph edges."""
+
+        def _impl() -> None:
+            """Apply the merge after the public method records the contract.
 
             Args:
                 src: Source region to merge (will be removed)
@@ -239,6 +269,25 @@ class RegionGraph:
             if src.region_type != RegionType.Linear:
                 dst.region_type = src.region_type
             # Also merge metadata from src to dst
+            src_statement_addrs = _metadata_int_tuple_8616(src.metadata.get("region_statement_ins_addrs", ()))
+            dst_statement_addrs = _metadata_int_tuple_8616(dst.metadata.get("region_statement_ins_addrs", ()))
+            src_statement_keys = _metadata_tuple_8616(src.metadata.get("region_statement_provenance_keys", ()))
+            dst_statement_keys = _metadata_tuple_8616(dst.metadata.get("region_statement_provenance_keys", ()))
+            if src_statement_addrs or dst_statement_addrs:
+                dst.metadata["region_statement_ins_addrs"] = tuple(
+                    dict.fromkeys(
+                        [
+                            *dst_statement_addrs,
+                            *src_statement_addrs,
+                        ]
+                    )
+                )
+                dst.metadata["region_statement_span_source"] = "merged_region_statement_ins_addrs"
+            if src_statement_keys or dst_statement_keys:
+                dst.metadata["region_statement_provenance_keys"] = tuple(
+                    dict.fromkeys([*dst_statement_keys, *src_statement_keys])
+                )
+                dst.metadata["region_statement_span_source"] = "merged_region_statement_provenance"
             for key, value in src.metadata.items():
                 if key not in dst.metadata:
                     dst.metadata[key] = value
@@ -353,7 +402,7 @@ class DominatorInfo:
 class RegionGraphBuilder:
     """Builds a region graph from an angr CFG."""
 
-    def __init__(self, cfunc, logger: logging.Logger | None = None):
+    def __init__(self, cfunc: object, logger: logging.Logger | None = None) -> None:
         """Initialize the builder.
 
         Args:
@@ -396,8 +445,8 @@ class RegionGraphBuilder:
                 graph.add_edge(src_region, dst_region)
 
         # Determine entry region
-        entry_addr = getattr(self.cfunc, "addr", None)
-        if entry_addr is not None:
+        entry_addr = _dynamic_codegen_attr_8616(self.cfunc, "addr", None)
+        if isinstance(entry_addr, int):
             graph.entry = self.regions_by_addr.get(entry_addr)
 
         if graph.entry is None and graph.nodes:
@@ -414,13 +463,15 @@ class RegionGraphBuilder:
         """
         # This is a simplified version - in real implementation,
         # we'd extract from angr's CFG structure in codegen
-        blocks = []
+        blocks: list[int] = []
 
         # Try to get blocks from cfunc
-        if hasattr(self.cfunc, "blocks"):
-            for block in self.cfunc.blocks:
-                if hasattr(block, "addr"):
-                    blocks.append(block.addr)
+        blocks_attr = _dynamic_codegen_attr_8616(self.cfunc, "blocks", ())
+        if isinstance(blocks_attr, list | tuple | set | frozenset):
+            for block in blocks_attr:
+                block_addr = _dynamic_codegen_attr_8616(block, "addr", None)
+                if isinstance(block_addr, int):
+                    blocks.append(block_addr)
 
         return blocks
 
@@ -435,22 +486,27 @@ class RegionGraphBuilder:
         """
         # This is a simplified version - in real implementation,
         # we'd extract from angr's execution graph
-        edges = []
+        edges: list[tuple[int, int]] = []
 
         # Try to get successors from cfunc
-        if hasattr(self.cfunc, "successors"):
+        successors = _dynamic_codegen_attr_8616(self.cfunc, "successors", None)
+        if isinstance(successors, dict):
             for block_addr in blocks:
-                succs = self.cfunc.successors.get(block_addr, [])
+                succs = successors.get(block_addr, [])
+                if not isinstance(succs, list | tuple | set | frozenset):
+                    continue
                 for succ_addr in succs:
-                    if succ_addr in blocks:
+                    if isinstance(succ_addr, int) and succ_addr in blocks:
                         edges.append((block_addr, succ_addr))
 
         return edges
 
 
 def compute_dominators(graph: RegionGraph) -> DominatorInfo:
-    def _impl():
-        """Compute dominator relationships for all regions.
+    """Compute dominator relationships for all regions."""
+
+    def _impl() -> DominatorInfo:
+        """Run the iterative dominator and post-dominator fixpoint algorithms.
 
         Implements the iterative fixpoint algorithm:
         - dom(entry) = {entry}
@@ -518,13 +574,16 @@ def compute_dominators(graph: RegionGraph) -> DominatorInfo:
 
 
 def _compute_fixpoint_dominators(graph: RegionGraph, all_regions: list[Region]) -> dict[Region, set[Region]]:
+    entry = graph.entry
+    if entry is None:
+        return {}
     dominators: dict[Region, set[Region]] = {region: set(all_regions) for region in all_regions}
-    dominators[graph.entry] = {graph.entry}
+    dominators[entry] = {entry}
     changed = True
     while changed:
         changed = False
         for region in all_regions:
-            if region == graph.entry:
+            if region == entry:
                 continue
             preds = graph.predecessors(region)
             new_dom = (

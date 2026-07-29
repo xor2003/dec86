@@ -723,6 +723,10 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
             "purpose": "Convert zero comparisons into the underlying projection or flag source when the evidence is explicit.",
         },
         {
+            "name": "word_or_update_materialization",
+            "purpose": "Materialize proven in-place word OR updates on stable locals instead of leaking byte-carrier projections.",
+        },
+        {
             "name": "sub_self_zero",
             "purpose": "Collapse self-subtractions into typed zero constants once the low-level operands are proven identical.",
         },
@@ -735,6 +739,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "oracle_count": 0,
         "subsumed_count": 0,
         "status_counts": {},
+        "names": (),
         "active_names": (),
         "oracle_names": (),
         "subsumed_names": (),

@@ -1,3 +1,9 @@
+"""Layer: Frontend/runtime.
+
+Responsibility: install runtime compatibility patches needed before x86-16 decompilation.
+Forbidden: recovering alias, type, or validation semantics through compatibility hooks.
+"""
+
 from __future__ import annotations
 
 from .patch_dirty import apply_patch as _apply_dirty_patch
@@ -8,6 +14,7 @@ __all__ = ["apply_x86_16_compatibility"]
 
 
 def apply_x86_16_compatibility() -> None:
+    """Install all frontend/runtime compatibility patches for x86-16 support."""
     _apply_stack_compatibility()
     _apply_typehoon_compatibility()
     _apply_dirty_patch()

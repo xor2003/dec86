@@ -1,10 +1,18 @@
+"""Layer: Recovery/reporting.
+
+Responsibility: declare recovery layers and focus areas for documentation and diagnostics.
+Forbidden: admitting new recovery behavior or bypassing owning pipeline layers.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RecoveryLayerSpec:
+    """Declarative description of one evidence-owned recovery layer."""
+
     name: str
     purpose: str
     helpers: tuple[str, ...]
@@ -94,6 +102,7 @@ RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
         purpose="Unify stack args, returns, helper calls, and far/near class evidence.",
         helpers=(
             "seed_calling_conventions",
+            "materialize_annotated_stack_prototype_8616",
             "_promote_stack_prototype_from_bp_loads_8616",
             "apply_x86_16_decompiler_return_compatibility",
         ),
@@ -137,6 +146,7 @@ RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
 
 
 def describe_x86_16_recovery_layers() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    """Return the ordered recovery-layer manifest for reports and tests."""
     return tuple((layer.name, layer.purpose, layer.helpers) for layer in RECOVERY_LAYERS)
 
 
@@ -150,6 +160,7 @@ OBJECT_RECOVERY_FOCUS_ORDER: tuple[str, ...] = (
 
 
 def describe_x86_16_object_recovery_focus() -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    """Return object-recovery layers in their focused audit order."""
     by_name = {layer.name: layer for layer in RECOVERY_LAYERS}
     return tuple(
         (layer.name, layer.purpose, layer.helpers)

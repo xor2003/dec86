@@ -1,7 +1,11 @@
 import json
+import os
 import subprocess
 import sys
 
+import pytest
+
+from scripts import batch_decompile_procs
 from scripts import verify_msc_example_runtime_gate as runtime_gate
 from scripts.build_msc6_examples import (
     COMPARE16_HARNESS_MAIN,
@@ -11,17 +15,24 @@ from scripts.build_msc6_examples import (
     ENUM_UNION_HARNESS_MAIN,
     FALLBACK_EXAMPLE_REBUILD,
     HARNESS_SUCCESS_EXIT_CODE,
+    GeneratedFunctionReturnClass,
+    GeneratedFunctionSourceContract,
+    GeneratedFunctionSourceContractStatus,
+    _build_fallback_source,
     _build_from_function_decompiles,
     _child_trace_path,
     _decompile_and_validate,
     _decompile_function_with_options,
     _decompile_profile_text,
+    _evaluate_generated_function_source_contract,
     _extract_decompiled_function_definition,
     _focused_decompile_process_timeout,
     _is_decompile_output_acceptable,
     _make_decompile_env,
     _normalize_extracted_function_arg_placeholders,
     _parse_decompile_profile,
+    _prepare_decompiled_source_for_c89,
+    _run,
 )
 
 
@@ -43,6 +54,248 @@ int cmp_i16(int a, int b)
 
     assert body.startswith("int cmp_i16(int a, int b)")
     assert "return -1;" in body
+
+
+def test_build_fallback_source_includes_dos_header_for_mk_fp():
+    source = _build_fallback_source(["void f(void) { MK_FP(0, 0); }\n"], "int main(void) { return 255; }")
+
+    assert "#include <dos.h>" in source
+    assert "#define MK_FP(seg, off)" in source
+    assert "void f(void)" in source
+
+
+def test_prepare_decompiled_source_for_c89_normalizes_merged_signature_arg_collisions():
+    c_text = """\
+unsigned short select_and_apply(unsigned short local, unsigned long *local_2)
+{
+    unsigned short (*local_2)(unsigned short);
+    return apply_twice(local_2, local);
+}
+"""
+
+    prepared = _prepare_decompiled_source_for_c89(c_text)
+
+    assert "select_and_apply(unsigned short local, unsigned long *local_2_2)" in prepared
+    assert "unsigned long *local_2)" not in prepared
+    assert "unsigned short (*local_2)(unsigned short);" in prepared
+
+
+def test_extract_decompiled_function_definition_accepts_msvc_public_symbol_alias():
+    text = """
+int sum_globals(void)
+{
+    return 13;
+}
+"""
+
+    body = _extract_decompiled_function_definition(text, "_sum_globals")
+
+    assert body.startswith("int sum_globals(void)")
+    assert "return 13;" in body
+
+
+def test_generated_function_source_contract_accepts_value_returned_call():
+    contract = GeneratedFunctionSourceContract(
+        function_name="select_and_apply",
+        required_return_class=GeneratedFunctionReturnClass.VALUE,
+        required_returned_call="apply_twice",
+    )
+
+    result = _evaluate_generated_function_source_contract(
+        """
+unsigned short select_and_apply(unsigned short which, unsigned short value)
+{
+    return apply_twice(inc_one, value);
+}
+""",
+        contract,
+    )
+
+    assert result.passed is True
+    assert result.status is GeneratedFunctionSourceContractStatus.PASSED
+    assert result.materialized_return_class is GeneratedFunctionReturnClass.VALUE
+    assert result.returned_call_present is True
+
+
+def test_generated_function_source_contract_rejects_void_accidental_runtime_return():
+    contract = GeneratedFunctionSourceContract(
+        function_name="select_and_apply",
+        required_return_class=GeneratedFunctionReturnClass.VALUE,
+        required_returned_call="apply_twice",
+    )
+
+    result = _evaluate_generated_function_source_contract(
+        """
+void select_and_apply(unsigned short which, unsigned short value)
+{
+    apply_twice(inc_one, value);
+    return;
+}
+""",
+        contract,
+    )
+
+    assert result.passed is False
+    assert result.status is GeneratedFunctionSourceContractStatus.VALUE_RETURN_REQUIRED
+    assert result.materialized_return_class is GeneratedFunctionReturnClass.VOID
+    assert result.returned_call_present is False
+
+
+def test_generated_function_source_contract_rejects_unreturned_call():
+    contract = GeneratedFunctionSourceContract(
+        function_name="select_and_apply",
+        required_return_class=GeneratedFunctionReturnClass.VALUE,
+        required_returned_call="apply_twice",
+    )
+
+    result = _evaluate_generated_function_source_contract(
+        """
+unsigned short select_and_apply(unsigned short which, unsigned short value)
+{
+    apply_twice(inc_one, value);
+    return value;
+}
+""",
+        contract,
+    )
+
+    assert result.passed is False
+    assert result.status is GeneratedFunctionSourceContractStatus.RETURNED_CALL_MISSING
+    assert result.materialized_return_class is GeneratedFunctionReturnClass.VALUE
+    assert result.returned_call_present is False
+
+
+def test_generated_function_source_contract_accepts_void_return_class() -> None:
+    contract = GeneratedFunctionSourceContract(
+        function_name="swap_ptrs",
+        required_return_class=GeneratedFunctionReturnClass.VOID,
+    )
+
+    result = _evaluate_generated_function_source_contract(
+        """
+void swap_ptrs(unsigned short *left, unsigned short *right)
+{
+    unsigned short tmp; // recovered stack local
+    tmp = *left;
+    *left = *right;
+    *right = tmp;
+    return;
+}
+""",
+        contract,
+    )
+
+    assert result.passed
+    assert result.status is GeneratedFunctionSourceContractStatus.PASSED
+    assert result.materialized_return_class is GeneratedFunctionReturnClass.VOID
+
+
+def test_generated_function_source_contract_rejects_scalar_when_void_required() -> None:
+    contract = GeneratedFunctionSourceContract(
+        function_name="swap_ptrs",
+        required_return_class=GeneratedFunctionReturnClass.VOID,
+    )
+
+    result = _evaluate_generated_function_source_contract(
+        """
+short swap_ptrs(unsigned short *left, unsigned short *right)
+{
+    unsigned short tmp;
+    tmp = *left;
+    *left = *right;
+    *right = tmp;
+    return tmp;
+}
+""",
+        contract,
+    )
+
+    assert result.passed is False
+    assert result.status is GeneratedFunctionSourceContractStatus.VOID_RETURN_REQUIRED
+    assert result.materialized_return_class is GeneratedFunctionReturnClass.VALUE
+
+
+def test_generated_function_source_contract_accepts_proven_global_write() -> None:
+    contract = GeneratedFunctionSourceContract(
+        function_name="bump_static",
+        required_global_writes=("_S104_seen",),
+    )
+
+    result = _evaluate_generated_function_source_contract(
+        """
+short bump_static(void)
+{
+    _S104_seen += 2;
+    return _S104_seen;
+}
+""",
+        contract,
+    )
+
+    assert result.passed
+    assert result.status is GeneratedFunctionSourceContractStatus.PASSED
+    assert result.materialized_global_writes == ("_S104_seen",)
+    assert result.shadowed_global_writes == ()
+
+
+def test_generated_function_source_contract_rejects_local_global_shadow() -> None:
+    contract = GeneratedFunctionSourceContract(
+        function_name="bump_static",
+        required_global_writes=("_S104_seen",),
+    )
+
+    result = _evaluate_generated_function_source_contract(
+        """
+short bump_static(void)
+{
+    unsigned short _S104_seen;
+    _S104_seen += 2;
+    return _S104_seen;
+}
+""",
+        contract,
+    )
+
+    assert result.passed is False
+    assert (
+        result.status
+        is GeneratedFunctionSourceContractStatus.GLOBAL_SHADOWED_BY_LOCAL
+    )
+    assert result.materialized_global_writes == ("_S104_seen",)
+    assert result.shadowed_global_writes == ("_S104_seen",)
+
+
+def test_generated_function_source_contract_rejects_missing_global_write() -> None:
+    contract = GeneratedFunctionSourceContract(
+        function_name="bump_static",
+        required_global_writes=("_S104_seen",),
+    )
+
+    result = _evaluate_generated_function_source_contract(
+        """
+short bump_static(void)
+{
+    return _S104_seen;
+}
+""",
+        contract,
+    )
+
+    assert result.passed is False
+    assert result.status is GeneratedFunctionSourceContractStatus.GLOBAL_WRITE_MISSING
+    assert result.materialized_global_writes == ()
+    assert result.shadowed_global_writes == ()
+
+
+def test_storage_classes_gate_requires_nonshadowed_global_write() -> None:
+    contracts = FALLBACK_EXAMPLE_REBUILD["storage_classes"]["source_contracts"]
+
+    assert contracts == (
+        GeneratedFunctionSourceContract(
+            function_name="bump_static",
+            required_global_writes=("_S104_seen",),
+        ),
+    )
 
 
 def test_compare16_fallback_harness_checks_rel_i16_calls():
@@ -70,7 +323,7 @@ def test_decompile_env_derives_child_trace_file(monkeypatch, tmp_path):
     assert env["INERTIA_OTEL_SPAN_FILE"] == str(tmp_path / "msc.trace.CMP32.compare_unsigned.txt")
 
 
-def test_acceptance_uses_final_clean_tail_validation_over_rejected_lanes():
+def test_acceptance_rejects_function_validation_failure_despite_final_clean_tail():
     stderr = """
 [dbg] direct failure family: status=empty validation=failed
 [tail-validation] whole-tail validation clean across 1 functions
@@ -79,8 +332,8 @@ def test_acceptance_uses_final_clean_tail_validation_over_rejected_lanes():
 
     ok, reason = _is_decompile_output_acceptable("int f(void) { return 1; }", stderr, profile)
 
-    assert ok is True
-    assert reason is None
+    assert ok is False
+    assert reason == "validation_failed"
 
 
 def test_acceptance_uses_final_clean_tail_validation_over_changed_attempt():
@@ -130,7 +383,7 @@ def test_acceptance_rejects_validation_failed_fallback_even_with_clean_tail_summ
     assert reason == "validation_failed"
 
 
-def test_acceptance_allows_rejected_c_fallback_attempt_when_final_tail_is_clean():
+def test_acceptance_rejects_validation_failed_fallback_attempt_when_final_tail_is_clean():
     stderr = """
 [tail-validation] whole-tail validation failed across 1 functions
 /* Decompilation validation_failed: Tail validation failed (structuring=changed; postprocess=stable). */
@@ -141,8 +394,31 @@ def test_acceptance_allows_rejected_c_fallback_attempt_when_final_tail_is_clean(
 
     ok, reason = _is_decompile_output_acceptable("int f(void) { return 1; }", stderr, profile)
 
-    assert ok is True
-    assert reason is None
+    assert ok is False
+    assert reason == "validation_failed"
+
+
+@pytest.mark.parametrize(
+    ("validation_state", "expected_reason"),
+    (
+        ("changed", "validation_changed"),
+        ("uncollected", "validation_uncollected"),
+    ),
+)
+def test_acceptance_rejects_nonpassing_function_state_despite_final_clean_tail(
+    validation_state,
+    expected_reason,
+):
+    stderr = f"""
+[dbg] attempt=direct validation={validation_state}
+[tail-validation] whole-tail validation clean across 1 functions
+"""
+    profile = _parse_decompile_profile(stderr)
+
+    ok, reason = _is_decompile_output_acceptable("int f(void) {{ return 1; }}", stderr, profile)
+
+    assert ok is False
+    assert reason == expected_reason
 
 
 def test_enum_union_fallback_is_enabled_by_default():
@@ -180,6 +456,32 @@ def test_scalar_types_fallback_tracks_active_non_fpu_functions():
     )
 
 
+def test_pointer_memory_fallback_tracks_all_runtime_checked_functions():
+    config = FALLBACK_EXAMPLE_REBUILD["pointer_memory"]
+
+    assert config["functions"] == ("fill_bytes", "sum_words", "swap_ptrs")
+    harness = config["harness"]
+    assert "fill_bytes(bytes, 3, 8);" in harness
+    assert "sum_words(words, 4) != 100" in harness
+    assert "swap_ptrs(&a, &b);" in harness
+    assert "a != 9 || b != 5" in harness
+    assert "return 255;" in harness
+    assert config["source_contracts"] == (
+        GeneratedFunctionSourceContract(
+            function_name="fill_bytes",
+            required_return_class=GeneratedFunctionReturnClass.VOID,
+        ),
+        GeneratedFunctionSourceContract(
+            function_name="sum_words",
+            required_return_class=GeneratedFunctionReturnClass.VALUE,
+        ),
+        GeneratedFunctionSourceContract(
+            function_name="swap_ptrs",
+            required_return_class=GeneratedFunctionReturnClass.VOID,
+        ),
+    )
+
+
 def test_medium_structs_has_function_fallback_contract():
     assert "medium_structs" not in DEFAULT_DECOMPILE_SKIP
     assert FALLBACK_EXAMPLE_REBUILD["medium_structs"]["functions"] == (
@@ -189,6 +491,72 @@ def test_medium_structs_has_function_fallback_contract():
     )
     assert "struct Pair" in FALLBACK_EXAMPLE_REBUILD["medium_structs"]["prefix"]
     assert "return 255;" in FALLBACK_EXAMPLE_REBUILD["medium_structs"]["harness"]
+
+
+def test_function_pointer_fallback_source_contract_is_enforced_before_compile(monkeypatch, tmp_path):
+    contract = GeneratedFunctionSourceContract(
+        function_name="select_and_apply",
+        required_return_class=GeneratedFunctionReturnClass.VALUE,
+        required_returned_call="apply_twice",
+    )
+
+    def fake_decompile_function_with_options(*_args, function_name, **_kwargs):
+        return (
+            True,
+            """
+void select_and_apply(unsigned short which, unsigned short value)
+{
+    apply_twice(inc_one, value);
+    return;
+}
+""",
+            "",
+            {"acceptance_reason": None},
+            "decompile command",
+            function_name,
+        )
+
+    def fail_compile(*_args, **_kwargs):
+        raise AssertionError("source-contract failure must stop before compilation")
+
+    monkeypatch.setattr(
+        "scripts.build_msc6_examples._decompile_function_with_options",
+        fake_decompile_function_with_options,
+    )
+    monkeypatch.setattr("scripts.build_msc6_examples._compile_and_link", fail_compile)
+    fallback_debug: dict[str, object] = {}
+
+    result = _build_from_function_decompiles(
+        tmp_path / "FPTR.EXE",
+        tmp_path,
+        decompile_py=tmp_path / "decompile.py",
+        decompile_timeout=60,
+        decompile_run_timeout=60,
+        decompile_function_discovery_backend="auto",
+        decompile_seed_engine="auto",
+        decompile_rizin_timeout=8,
+        decompile_force_rizin_8616=False,
+        decompile_pat_backend=None,
+        decompile_signature_catalog=None,
+        fallback_functions=("select_and_apply",),
+        fallback_harness="int main(void) { return 255; }",
+        fallback_prefix="",
+        decompile_c_name="FPTR1.C",
+        decompile_obj_name="FPTR1.OBJ",
+        decompile_exe_name="FPTR1.EXE",
+        decompile_map_name="FPTR1.MAP",
+        kvikdos=tmp_path / "kvikdos",
+        msc6_root=tmp_path / "msc6",
+        source_contracts=(contract,),
+        fallback_debug=fallback_debug,
+    )
+
+    assert result[0] is False
+    assert result[1] is False
+    assert fallback_debug["source_contracts_passed"] is False
+    source_contract_results = fallback_debug["source_contracts"]
+    assert isinstance(source_contract_results, list)
+    assert source_contract_results[0]["status"] == "value_return_required"
 
 
 def test_function_fallback_decompile_timeout_is_structured_failure(monkeypatch, tmp_path):
@@ -228,6 +596,143 @@ def test_function_fallback_decompile_timeout_is_structured_failure(monkeypatch, 
     assert profile["quality"]["asm_fallback_count"] == 0
     assert "select_and_apply" in command
     assert function_name == "select_and_apply"
+
+
+def test_run_merges_environment_overrides(monkeypatch):
+    seen: dict[str, object] = {}
+
+    def fake_subprocess_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setenv("INERTIA_EXISTING_FLAG", "keep")
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+
+    result = _run(["tool"], env={"INERTIA_ENABLE_TAIL_VALIDATION": "1"})
+
+    assert result.returncode == 0
+    assert seen["cmd"] == ["tool"]
+    assert seen["env"]["INERTIA_EXISTING_FLAG"] == "keep"
+    assert seen["env"]["INERTIA_ENABLE_TAIL_VALIDATION"] == "1"
+
+
+def test_batch_decompile_procs_writes_per_proc_outputs_and_report(monkeypatch, tmp_path):
+    calls: list[list[str]] = []
+
+    def fake_main(argv):
+        calls.append(list(argv))
+        proc_name = argv[argv.index("--proc") + 1]
+        print(f"int {proc_name}(void) {{ return 1; }}")
+        print(f"[tail-validation] {proc_name} clean", file=sys.stderr)
+        return 1 if proc_name == "bad_proc" else 0
+
+    monkeypatch.setattr(batch_decompile_procs.cli_core, "main", fake_main)
+
+    rc = batch_decompile_procs.main(
+        [
+            str(tmp_path / "TEST.EXE"),
+            "--out-dir",
+            str(tmp_path / "batch"),
+            "--proc",
+            "good_proc",
+            "--proc",
+            "bad_proc",
+            "--timeout",
+            "7",
+        ]
+    )
+
+    assert rc == 1
+    assert len(calls) == 2
+    assert calls[0][calls[0].index("--proc") + 1] == "good_proc"
+    assert calls[1][calls[1].index("--proc") + 1] == "bad_proc"
+    assert "int good_proc(void)" in (tmp_path / "batch" / "good_proc.stdout.c").read_text(encoding="utf-8")
+    assert "[tail-validation] bad_proc clean" in (tmp_path / "batch" / "bad_proc.stderr.txt").read_text(encoding="utf-8")
+    report = json.loads((tmp_path / "batch" / "batch_report.json").read_text(encoding="utf-8"))
+    assert report["schema"] == "inertia.batch_decompile_procs.v1"
+    assert [item["proc"] for item in report["results"]] == ["good_proc", "bad_proc"]
+    assert [item["returncode"] for item in report["results"]] == [0, 1]
+    assert all(isinstance(item["wall_seconds"], float) for item in report["results"])
+
+
+def test_batch_decompile_procs_accepts_json_job_file(monkeypatch, tmp_path):
+    calls: list[list[str]] = []
+
+    def fake_main(argv):
+        calls.append(list(argv))
+        print("int sub_10010(void) { return 0; }")
+        return 0
+
+    job_file = tmp_path / "jobs.json"
+    job_file.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "name": "hello",
+                        "binary": str(tmp_path / "HELLO.EXE"),
+                        "addr": 0x10010,
+                        "max_functions": 1,
+                        "timeout": 9,
+                        "alternate_source_c": False,
+                        "brief": True,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(batch_decompile_procs.cli_core, "main", fake_main)
+
+    rc = batch_decompile_procs.main(["--out-dir", str(tmp_path / "batch"), "--job-file", str(job_file)])
+
+    assert rc == 0
+    assert calls == [
+        [
+            "--no-alternate-source-c",
+            "--brief",
+            "--timeout",
+            "9",
+            "--addr",
+            "0x10010",
+            "--max-functions",
+            "1",
+            str(tmp_path / "HELLO.EXE"),
+        ]
+    ]
+    report = json.loads((tmp_path / "batch" / "batch_report.json").read_text(encoding="utf-8"))
+    assert report["binary"] is None
+    assert report["results"][0]["proc"] == "hello"
+    assert "int sub_10010(void)" in (tmp_path / "batch" / "hello.stdout.c").read_text(encoding="utf-8")
+
+
+def test_batch_decompile_procs_direct_in_process_sets_and_restores_env(monkeypatch, tmp_path):
+    observed_values: list[str | None] = []
+    monkeypatch.setenv("INERTIA_OTEL_PROFILE_IN_PROCESS", "already-set")
+
+    def fake_main(argv):
+        observed_values.append(os.environ.get("INERTIA_OTEL_PROFILE_IN_PROCESS"))
+        proc_name = argv[argv.index("--proc") + 1]
+        print(f"int {proc_name}(void) {{ return 0; }}")
+        return 0
+
+    monkeypatch.setattr(batch_decompile_procs.cli_core, "main", fake_main)
+
+    rc = batch_decompile_procs.main(
+        [
+            str(tmp_path / "TEST.EXE"),
+            "--out-dir",
+            str(tmp_path / "batch"),
+            "--direct-in-process",
+            "--proc",
+            "f",
+        ]
+    )
+
+    assert rc == 0
+    assert observed_values == ["1"]
+    assert os.environ["INERTIA_OTEL_PROFILE_IN_PROCESS"] == "already-set"
 
 
 def test_function_fallback_profile_includes_quality_metrics(monkeypatch, tmp_path):
@@ -299,8 +804,8 @@ def test_function_fallback_retries_transient_asm_fallback(monkeypatch, tmp_path)
     def fake_decompile_function_with_options(*_args, function_name, **_kwargs):
         calls.append(function_name)
         if len(calls) == 1:
-            return False, "", "", {"acceptance_reason": "asm_fallback"}, "cmd1", function_name
-        return True, "int f(void) { return 1; }", "", {"acceptance_reason": None}, "cmd2", function_name
+            return False, "", "", {"acceptance_reason": "asm_fallback", "wall_seconds": 1.25}, "cmd1", function_name
+        return True, "int f(void) { return 1; }", "", {"acceptance_reason": None, "wall_seconds": 2.5}, "cmd2", function_name
 
     monkeypatch.setattr(
         "scripts.build_msc6_examples._decompile_function_with_options",
@@ -317,6 +822,7 @@ def test_function_fallback_retries_transient_asm_fallback(monkeypatch, tmp_path)
 
     monkeypatch.setattr("scripts.build_msc6_examples._compile_and_link", fake_compile_and_link)
     monkeypatch.setattr("scripts.build_msc6_examples._run_example", lambda *_args, **_kwargs: (True, 255, "", ""))
+    fallback_debug: dict[str, object] = {}
 
     ok, recompiled, run_exit, *_rest = _build_from_function_decompiles(
         tmp_path / "TEST.EXE",
@@ -339,12 +845,112 @@ def test_function_fallback_retries_transient_asm_fallback(monkeypatch, tmp_path)
         decompile_map_name="TEST1.MAP",
         kvikdos=tmp_path / "kvikdos",
         msc6_root=tmp_path / "msc6",
+        fallback_debug=fallback_debug,
     )
 
     assert ok is True
     assert recompiled is True
     assert run_exit == 255
     assert calls == ["f", "f"]
+    assert fallback_debug["function_debug"] == [
+        ["f", "f", "cmd1", {"acceptance_reason": "asm_fallback", "wall_seconds": 1.25}],
+        [
+            "f",
+            "f",
+            "cmd2",
+            {"acceptance_reason": None, "retry_attempt": 2, "retry_reason": "asm_fallback", "wall_seconds": 2.5},
+        ],
+    ]
+
+
+def test_function_fallback_uses_batch_report_when_proc_returns_nonzero_with_body(monkeypatch, tmp_path):
+    exe_path = tmp_path / "TEST.EXE"
+    exe_path.write_bytes(b"MZ")
+
+    def fake_run(cmd, **_kwargs):
+        assert "--direct-in-process" in cmd
+        batch_dir = tmp_path / "TEST1.batch"
+        batch_dir.mkdir()
+        stdout_path = batch_dir / "f.stdout.c"
+        stderr_path = batch_dir / "f.stderr.txt"
+        stdout_path.write_text("int f(void) { return 1; }\n", encoding="utf-8")
+        stderr_path.write_text("[tail-validation] whole-tail validation clean across 1 functions\n", encoding="utf-8")
+        (batch_dir / "batch_report.json").write_text(
+            json.dumps(
+                {
+                    "schema": "inertia.batch_decompile_procs.v1",
+                    "binary": str(exe_path),
+                    "results": [
+                        {
+                            "proc": "f",
+                            "returncode": 4,
+                            "stdout_path": str(stdout_path),
+                            "stderr_path": str(stderr_path),
+                            "wall_seconds": 1.5,
+                            "argv": ["--proc", "f"],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(cmd, 1, stdout='{"failed": 1, "selected": 1}\n', stderr="")
+
+    def fail_serial_focused_decompile(*_args, **_kwargs):
+        raise AssertionError("valid batch report should avoid serial focused fallback")
+
+    def fake_compile_and_link(_source_path, out_dir, **kwargs):
+        (out_dir / kwargs["exe_name"]).write_bytes(b"MZ")
+        return True, "", "", "", ""
+
+    monkeypatch.setattr("scripts.build_msc6_examples._run", fake_run)
+    monkeypatch.setattr(
+        "scripts.build_msc6_examples._decompile_function_with_options",
+        fail_serial_focused_decompile,
+    )
+    monkeypatch.setattr("scripts.build_msc6_examples._compile_and_link", fake_compile_and_link)
+    monkeypatch.setattr("scripts.build_msc6_examples._run_example", lambda *_args, **_kwargs: (True, 255, "", ""))
+
+    fallback_debug: dict[str, object] = {}
+    ok, recompiled, run_exit, *_rest = _build_from_function_decompiles(
+        exe_path,
+        tmp_path,
+        decompile_py=tmp_path / "decompile.py",
+        decompile_timeout=60,
+        decompile_run_timeout=60,
+        decompile_function_discovery_backend="auto",
+        decompile_seed_engine="auto",
+        decompile_rizin_timeout=8,
+        decompile_force_rizin_8616=False,
+        decompile_pat_backend=None,
+        decompile_signature_catalog=None,
+        fallback_functions=("f",),
+        fallback_harness="int main(void) { return 255; }",
+        fallback_prefix="",
+        decompile_c_name="TEST1.C",
+        decompile_obj_name="TEST1.OBJ",
+        decompile_exe_name="TEST1.EXE",
+        decompile_map_name="TEST1.MAP",
+        kvikdos=tmp_path / "kvikdos",
+        msc6_root=tmp_path / "msc6",
+        fallback_debug=fallback_debug,
+    )
+
+    assert ok is True
+    assert recompiled is True
+    assert run_exit == 255
+    assert fallback_debug["batch_used"] is True
+    function_debug = fallback_debug["function_debug"]
+    assert isinstance(function_debug, list)
+    assert len(function_debug) == 1
+    assert function_debug[0][0:2] == ["f", "f"]
+    assert str(batch_decompile_procs.REPO_ROOT / "scripts" / "batch_decompile_procs.py") in function_debug[0][2]
+    profile = function_debug[0][3]
+    assert profile["acceptance_reason"] == "nonzero_exit"
+    assert profile["batch_attempt"] is True
+    assert profile["returncode"] == 4
+    assert profile["tail_validation_status"] == "clean"
+    assert profile["wall_seconds"] == 1.5
 
 
 def test_function_fallback_retries_transient_tail_validation_failure(monkeypatch, tmp_path):
@@ -401,22 +1007,18 @@ def test_function_fallback_retries_transient_tail_validation_failure(monkeypatch
     assert calls == ["f", "f"]
 
 
-def test_function_fallback_retries_transient_nonzero_exit(monkeypatch, tmp_path):
+def test_function_fallback_retries_missing_generated_definition(monkeypatch, tmp_path):
     calls: list[str] = []
 
     def fake_decompile_function_with_options(*_args, function_name, **_kwargs):
         calls.append(function_name)
         if len(calls) == 1:
-            return False, "int f(void) { return 1; }", "", {"acceptance_reason": "nonzero_exit"}, "cmd1", function_name
+            return True, "/* no generated function here */", "", {"acceptance_reason": None}, "cmd1", function_name
         return True, "int f(void) { return 1; }", "", {"acceptance_reason": None}, "cmd2", function_name
 
     monkeypatch.setattr(
         "scripts.build_msc6_examples._decompile_function_with_options",
         fake_decompile_function_with_options,
-    )
-    monkeypatch.setattr(
-        "scripts.build_msc6_examples._extract_decompiled_function_definition",
-        lambda _text, _name: "int f(void) { return 1; }\n",
     )
 
     def fake_compile_and_link(_source_path, out_dir, **kwargs):
@@ -453,6 +1055,58 @@ def test_function_fallback_retries_transient_nonzero_exit(monkeypatch, tmp_path)
     assert recompiled is True
     assert run_exit == 255
     assert calls == ["f", "f"]
+
+
+def test_function_fallback_accepts_extractable_nonzero_function_exit(monkeypatch, tmp_path):
+    calls: list[str] = []
+
+    def fake_decompile_function_with_options(*_args, function_name, **_kwargs):
+        calls.append(function_name)
+        return False, "int f(void) { return 13; }", "", {"acceptance_reason": "nonzero_exit"}, "cmd1", function_name
+
+    monkeypatch.setattr(
+        "scripts.build_msc6_examples._decompile_function_with_options",
+        fake_decompile_function_with_options,
+    )
+    monkeypatch.setattr(
+        "scripts.build_msc6_examples._extract_decompiled_function_definition",
+        lambda _text, _name: "int f(void) { return 13; }\n",
+    )
+
+    def fake_compile_and_link(_source_path, out_dir, **kwargs):
+        (out_dir / kwargs["exe_name"]).write_bytes(b"MZ")
+        return True, "", "", "", ""
+
+    monkeypatch.setattr("scripts.build_msc6_examples._compile_and_link", fake_compile_and_link)
+    monkeypatch.setattr("scripts.build_msc6_examples._run_example", lambda *_args, **_kwargs: (True, 255, "", ""))
+
+    ok, recompiled, run_exit, *_rest = _build_from_function_decompiles(
+        tmp_path / "TEST.EXE",
+        tmp_path,
+        decompile_py=tmp_path / "decompile.py",
+        decompile_timeout=60,
+        decompile_run_timeout=60,
+        decompile_function_discovery_backend="auto",
+        decompile_seed_engine="auto",
+        decompile_rizin_timeout=8,
+        decompile_force_rizin_8616=False,
+        decompile_pat_backend=None,
+        decompile_signature_catalog=None,
+        fallback_functions=("f",),
+        fallback_harness="int main(void) { return 255; }",
+        fallback_prefix="",
+        decompile_c_name="TEST1.C",
+        decompile_obj_name="TEST1.OBJ",
+        decompile_exe_name="TEST1.EXE",
+        decompile_map_name="TEST1.MAP",
+        kvikdos=tmp_path / "kvikdos",
+        msc6_root=tmp_path / "msc6",
+    )
+
+    assert ok is True
+    assert recompiled is True
+    assert run_exit == 255
+    assert calls == ["f"]
 
 
 def test_extract_normalizes_undeclared_stack_arg_placeholders_to_signature_names():

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 
 from angr_platforms.X86_16.recovery_artifact_cache import (
@@ -6,7 +8,7 @@ from angr_platforms.X86_16.recovery_artifact_cache import (
 )
 
 
-def test_recovery_artifact_cache_persists_and_hits(tmp_path):
+def test_recovery_artifact_cache_persists_and_hits(tmp_path) -> None:
     path = tmp_path / "artifact.json"
     artifact = {
         "proc_name": "_helper",
@@ -24,7 +26,7 @@ def test_recovery_artifact_cache_persists_and_hits(tmp_path):
     assert payload["artifact"]["proc_name"] == "_helper"
 
 
-def test_recovery_artifact_cache_surface_is_deterministic():
+def test_recovery_artifact_cache_surface_is_deterministic() -> None:
     assert describe_x86_16_recovery_artifact_cache_surface() == {
         "namespace_family": "recovery_artifact.*",
         "artifact_fields": (

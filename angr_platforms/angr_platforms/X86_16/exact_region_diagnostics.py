@@ -1,12 +1,13 @@
-from __future__ import annotations
-
-"""Layer: Diagnostics (cross-cutting).
+"""Layer: Recovery/reporting.
 
 Responsibility: exact-region recovery coverage diagnostics and region_split classification.
-Forbidden: semantic recovery, postprocess ownership, text-pattern semantics."""
+Forbidden: semantic recovery, postprocess ownership, text-pattern semantics.
+"""
 
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 __all__ = [
     "ExactRegionDiagnostics",
@@ -36,6 +37,7 @@ class ExactRegionDiagnostics:
     split_detected: bool = False
 
     def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-compatible exact-region diagnostic row."""
         return {
             "function_name": self.function_name,
             "proc_identity": self.proc_identity,
@@ -64,6 +66,7 @@ class RegionSplitDiagnostics:
 
     @property
     def is_split(self) -> bool:
+        """Return whether this diagnostic represents a real multi-entry split."""
         return self.split_detected and self.cfg_entry_count > 1
 
 
@@ -101,7 +104,7 @@ def build_exact_region_diagnostics_8616(
     coverage_fraction = 1.0 if region_size <= 0 else min(covered_byte_count / region_size, 1.0)
 
     # Count CFG functions whose entries fall within the requested region
-    actual_entries: tuple[int, ...] = ()  # noqa: F841
+    actual_entries: tuple[int, ...] = ()
     cfg_function_count = 1
     if isinstance(cfg_functions, Mapping):
         entries: list[int] = []

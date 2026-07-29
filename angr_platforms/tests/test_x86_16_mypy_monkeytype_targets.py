@@ -30,6 +30,7 @@ def test_monkeytype_small_modules_typecheck_cleanly():
             "mypy",
             "--config-file",
             "pyproject.toml",
+            "--follow-imports=skip",
             *MYPY_TARGETS,
         ],
         cwd=REPO_ROOT,

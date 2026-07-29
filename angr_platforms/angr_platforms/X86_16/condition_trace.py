@@ -1,20 +1,28 @@
+"""Layer: Recovery metadata.
+
+Responsibility: record optional condition traces for diagnostics of recovered conditions.
+Forbidden: condition recovery, postprocess repair, or validation acceptance from traces.
+"""
+
 from __future__ import annotations
 
 import logging
 import os
-from typing import Iterable
+import typing
+from typing import Any, Iterable, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CForLoop, CIfBreak, CIfElse
 
-from .decompiler_postprocess_utils import _iter_c_nodes_deep_8616
+from .c_ast_utils import _iter_c_nodes_deep_8616
 from .ir.condition_ir import ConditionIR
 from .structuring.condition_rendering import render_condition_ir_8616, render_condition_ir_native_8616
 from .tail_validation_fingerprint import _expr_fingerprint
 
-log = logging.getLogger(__name__)
+log: logging.Logger = logging.getLogger(__name__)
 
 
-def _current_original_func_addr_8616(project, codegen) -> int | None:
+def _current_original_func_addr_8616(project: object, codegen: object) -> int | None:
+    """Resolve the current function address through the dynamic third-party angr metadata boundary."""
     cfunc = getattr(codegen, "cfunc", None)
     func_addr = getattr(cfunc, "addr", None) if cfunc is not None else None
     if not isinstance(func_addr, int):
@@ -25,7 +33,8 @@ def _current_original_func_addr_8616(project, codegen) -> int | None:
     return func_addr
 
 
-def _condition_trace_enabled_8616(project, codegen) -> bool:
+def _condition_trace_enabled_8616(project: object, codegen: object) -> bool:
+    """Return whether optional condition tracing is enabled for this dynamic codegen boundary."""
     if not os.environ.get("INERTIA_DEBUG_CONDITION_TRACE"):
         return False
     target_text = os.environ.get("INERTIA_DEBUG_CONDITION_TRACE_ADDR")
@@ -34,11 +43,13 @@ def _condition_trace_enabled_8616(project, codegen) -> bool:
     return not isinstance(target_addr, int) or current_addr == target_addr
 
 
-def _condition_trace_store_8616(codegen) -> dict[tuple[int, int], dict[str, object]]:
+def _condition_trace_store_8616(codegen: object) -> dict[tuple[int, int], dict[str, object]]:
+    """Return the mutable condition trace store attached at the dynamic codegen boundary."""
     store = getattr(codegen, "_inertia_condition_trace", None)
     if not isinstance(store, dict):
         store = {}
-        codegen._inertia_condition_trace = store
+        # Dynamic codegen boundary: condition traces are optional diagnostic metadata on angr codegen.
+        typing.cast(typing.Any, codegen)._inertia_condition_trace = store
     return store
 
 
@@ -46,7 +57,8 @@ def _condition_trace_key_8616(ins_addr: int, block_addr: int) -> tuple[int, int]
     return (int(ins_addr), int(block_addr))
 
 
-def _condition_id_for_key_8616(codegen, key: tuple[int, int]) -> int:
+def _condition_id_for_key_8616(codegen: object, key: tuple[int, int]) -> int:
+    """Return a stable diagnostic condition id for a trace key."""
     store = _condition_trace_store_8616(codegen)
     if key not in store:
         store[key] = {
@@ -54,19 +66,22 @@ def _condition_id_for_key_8616(codegen, key: tuple[int, int]) -> int:
             "origin_insn": key[0],
             "origin_block": key[1],
         }
-    return int(store[key]["condition_id"])
+    condition_id = store[key].get("condition_id")
+    return int(condition_id) if isinstance(condition_id, int) else 0
 
 
-def _render_c_expr_8616(expr) -> str | None:
+def _render_c_expr_8616(expr: object) -> str | None:
+    """Render a C expression for diagnostics without changing recovered semantics."""
     if expr is None:
         return None
     try:
-        return expr.c_repr(indent=0)
+        return cast(Any, expr).c_repr(indent=0)
     except Exception:  # noqa: BLE001
         return str(expr)
 
 
-def _node_condition_key_8616(node) -> tuple[int, int] | None:
+def _node_condition_key_8616(node: object) -> tuple[int, int] | None:
+    """Read condition origin tags from the dynamic third-party angr C-AST boundary."""
     tags = getattr(node, "tags", None)
     if not isinstance(tags, dict):
         return None
@@ -77,8 +92,11 @@ def _node_condition_key_8616(node) -> tuple[int, int] | None:
     return _condition_trace_key_8616(ins_addr, block_addr)
 
 
-def _iter_condition_nodes_8616(codegen) -> Iterable[tuple[tuple[int, int], object, str]]:
-    def _impl():
+def _iter_condition_nodes_8616(codegen: object) -> Iterable[tuple[tuple[int, int], object, str]]:
+    """Iterate condition-bearing nodes through the dynamic third-party angr C-AST boundary."""
+
+    def _impl() -> tuple[tuple[tuple[int, int], object, str], ...]:
+        """Traverse optional C-AST condition fields at the dynamic angr codegen boundary."""
         cfunc = getattr(codegen, "cfunc", None)
         root = None
         for attr in ("body", "statements", "stmt"):
@@ -93,17 +111,22 @@ def _iter_condition_nodes_8616(codegen) -> Iterable[tuple[tuple[int, int], objec
         rows: list[tuple[tuple[int, int], object, str]] = []
         for node in _iter_c_nodes_deep_8616(root):
             if isinstance(node, CIfElse):
-                for cond, _body in tuple(getattr(node, "condition_and_nodes", ()) or ()):
+                condition_pairs = cast(
+                    tuple[tuple[object, object], ...],
+                    # Dynamic angr boundary: CIfElse condition pairs are stored in a variant-specific C-AST field.
+                    tuple(getattr(node, "condition_and_nodes", ()) or ()),
+                )
+                for cond, _body in condition_pairs:
                     key = _node_condition_key_8616(cond)
                     if key is not None:
                         rows.append((key, cond, "if"))
             elif isinstance(node, CIfBreak):
-                cond = getattr(node, "condition", None)
+                cond = node.condition
                 key = _node_condition_key_8616(cond)
                 if key is not None:
                     rows.append((key, cond, "ifbreak"))
             elif isinstance(node, CForLoop):
-                cond = getattr(node, "condition", None)
+                cond = node.condition
                 key = _node_condition_key_8616(cond)
                 if key is not None:
                     rows.append((key, cond, "for"))
@@ -112,12 +135,13 @@ def _iter_condition_nodes_8616(codegen) -> Iterable[tuple[tuple[int, int], objec
                 key = _node_condition_key_8616(cond)
                 if key is not None:
                     rows.append((key, cond, type(node).__name__))
-        return rows
+        return tuple(rows)
 
     return _impl()
 
 
-def record_classified_conditions_trace_8616(project, codegen, conditions: list[ConditionIR]) -> None:
+def record_classified_conditions_trace_8616(project: object, codegen: object, conditions: list[ConditionIR]) -> None:
+    """Record classified condition IR in the optional diagnostic trace store."""
     if not _condition_trace_enabled_8616(project, codegen):
         return
     store = _condition_trace_store_8616(codegen)
@@ -137,7 +161,8 @@ def record_classified_conditions_trace_8616(project, codegen, conditions: list[C
         entry["condition_op"] = cond.op
 
 
-def record_materialized_condition_trace_8616(project, codegen, key: tuple[int, int], expr) -> None:
+def record_materialized_condition_trace_8616(project: object, codegen: object, key: tuple[int, int], expr: object) -> None:
+    """Record the C-AST expression materialized for a classified condition."""
     if not _condition_trace_enabled_8616(project, codegen):
         return
     store = _condition_trace_store_8616(codegen)
@@ -147,7 +172,8 @@ def record_materialized_condition_trace_8616(project, codegen, key: tuple[int, i
     entry["materialized_hash"] = _expr_fingerprint(expr, project)
 
 
-def record_ast_condition_trace_8616(project, codegen, *, stage: str) -> None:
+def record_ast_condition_trace_8616(project: object, codegen: object, *, stage: str) -> None:
+    """Record condition expressions currently present in the structured C-AST."""
     if not _condition_trace_enabled_8616(project, codegen):
         return
     store = _condition_trace_store_8616(codegen)
@@ -159,7 +185,10 @@ def record_ast_condition_trace_8616(project, codegen, *, stage: str) -> None:
         entry[f"{stage}_owner"] = owner
 
 
-def record_tail_validation_condition_trace_8616(project, codegen, validation: dict[str, object] | None) -> None:
+def record_tail_validation_condition_trace_8616(
+    project: object, codegen: object, validation: dict[str, object] | None
+) -> None:
+    """Record the tail-validation verdict seen by the optional condition trace."""
     if not _condition_trace_enabled_8616(project, codegen):
         return
     if not isinstance(validation, dict):
@@ -170,7 +199,8 @@ def record_tail_validation_condition_trace_8616(project, codegen, validation: di
         entry["validator_seen"] = summary
 
 
-def materialized_condition_drift_detected_8616(project, codegen) -> bool:
+def materialized_condition_drift_detected_8616(project: object, codegen: object) -> bool:
+    """Report whether materialized condition expressions drifted before emitted C."""
     if not _condition_trace_enabled_8616(project, codegen):
         return False
     store = _condition_trace_store_8616(codegen)
@@ -188,12 +218,15 @@ def materialized_condition_drift_detected_8616(project, codegen) -> bool:
                     "emitted_c": entry.get("emitted_c"),
                 }
             )
-    codegen._inertia_materialized_condition_drift = bool(drifted)
-    codegen._inertia_materialized_condition_drift_details = tuple(drifted)
+    # Dynamic codegen boundary: drift diagnostics are optional metadata on angr codegen.
+    typing.cast(typing.Any, codegen)._inertia_materialized_condition_drift = bool(drifted)
+    # Dynamic codegen boundary: drift detail rows are optional diagnostic metadata on angr codegen.
+    typing.cast(typing.Any, codegen)._inertia_materialized_condition_drift_details = tuple(drifted)
     return bool(drifted)
 
 
-def dump_condition_trace_8616(project, codegen, *, label: str) -> None:
+def dump_condition_trace_8616(project: object, codegen: object, *, label: str) -> None:
+    """Emit the optional condition trace to logs for diagnostics."""
     if not _condition_trace_enabled_8616(project, codegen):
         return
     store = _condition_trace_store_8616(codegen)

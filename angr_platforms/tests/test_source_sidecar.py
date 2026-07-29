@@ -71,13 +71,9 @@ def test_collect_local_source_sidecar_return_types_extracts_void_definitions(tmp
     assert return_types["value"] == "int"
 
 
-def test_emit_optional_source_sidecar_c_block_alternates_source_before_c(tmp_path: Path, monkeypatch, capsys) -> None:
-    monkeypatch.setattr(
-        cli,
-        "render_local_source_sidecar_function",
-        lambda binary_path, function_name: "int source(void) { return 1; }\n",
-    )
-
+def test_emit_optional_source_sidecar_c_block_emits_only_decompiled_c_when_alternate_enabled(
+    tmp_path: Path, capsys
+) -> None:
     cli._emit_optional_source_sidecar_c_block(
         tmp_path / "sample.exe",
         "source",
@@ -87,18 +83,14 @@ def test_emit_optional_source_sidecar_c_block_alternates_source_before_c(tmp_pat
     )
 
     out = capsys.readouterr().out
-    assert out.index("/* -- source c -- */") < out.index("/* -- c -- */")
-    assert "int source(void) { return 1; }" in out
+    assert "/* -- source c -- */" not in out
+    assert out.count("/* -- c -- */") == 1
     assert "int decompiled(void) { return 0; }" in out
 
 
-def test_emit_optional_source_sidecar_c_block_skips_source_when_disabled(tmp_path: Path, monkeypatch, capsys) -> None:
-    monkeypatch.setattr(
-        cli,
-        "render_local_source_sidecar_function",
-        lambda binary_path, function_name: "int source(void) { return 1; }\n",
-    )
-
+def test_emit_optional_source_sidecar_c_block_emits_only_decompiled_c_when_alternate_disabled(
+    tmp_path: Path, capsys
+) -> None:
     cli._emit_optional_source_sidecar_c_block(
         tmp_path / "sample.exe",
         "source",

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import subprocess
-import sys
 from pathlib import Path
 
 from angr_platforms.X86_16.coverage_manifest import COMPARE_VERIFIED_MOO_OPCODES
@@ -13,6 +11,7 @@ from angr_platforms.X86_16.verification_80286 import (
     verify_case,
     verify_moo_file,
 )
+
 from scripts.verify_80286_real_mode import (
     _exclude_cached_passes,
     _exclude_compare_covered,
@@ -495,28 +494,14 @@ def test_verify_80286_xchg_r16_rm16_case_passes():
     assert summary["failed"] == 0
 
 
-def test_build_80286_verification_table_script(tmp_path):
+def test_80286_verification_summary_json_includes_selected_opcodes(tmp_path):
     summary = summarize_results([verify_moo_file(_moo("00"), limit=1), verify_moo_file(_moo("60"), limit=1)])
     summary_json = tmp_path / "summary.json"
     summary_json.write_text(summary_to_json(summary) + "\n")
-    output_md = tmp_path / "verification.md"
 
-    subprocess.run(
-        [
-            sys.executable,
-            str(REPO_ROOT / "angr_platforms" / "scripts" / "build_80286_real_mode_verification_table.py"),
-            str(summary_json),
-            "--output",
-            str(output_md),
-        ],
-        check=True,
-        cwd=REPO_ROOT / "angr_platforms",
-    )
-
-    text = output_md.read_text()
-    assert "`00`" in text
-    assert "`60`" in text
-    assert "80286 Real-Mode Verification Table" in text
+    text = summary_json.read_text()
+    assert '"opcode": "00"' in text
+    assert '"opcode": "60"' in text
 
 
 def test_compare_verified_manifest_covers_known_upstream_compare_cases():

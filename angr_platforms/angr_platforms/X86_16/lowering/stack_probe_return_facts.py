@@ -1,8 +1,20 @@
+"""Build lowering-owned stack-probe return facts from callsite summaries.
+
+Layer: Types/Lowering.
+Responsibility: consumes alias, widening, and typed facts to identify helper
+returns that carry stable stack addresses.
+Do not recover semantics from COD, source, assembly, or rendered C text.
+"""
+
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
+from typing import Any, TypeAlias
 
-CarrierKey8616 = tuple[str, str | int]
+from ..callsite_summary import CallsiteSummary8616
+
+CarrierKey8616: TypeAlias = tuple[str, str | int]
 
 __all__ = [
     "CarrierKey8616",
@@ -13,36 +25,47 @@ __all__ = [
 
 @dataclass(frozen=True, slots=True)
 class TypedStackProbeReturnFact8616:
+    """Lowering-owned proof that a stack-probe call returns an SS stack address."""
+
     call_node_id: int
     segment_space: str
     width: int
     carrier_keys: tuple[CarrierKey8616, ...] = ()
 
 
-def build_typed_stack_probe_return_facts_8616(codegen) -> dict[int, TypedStackProbeReturnFact8616]:
-    def _impl():
+def _dynamic_codegen_attr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
+    """Dynamic codegen boundary: read optional metadata attached by angr codegen passes."""
+    return getattr(obj, name, default)
+
+
+def build_typed_stack_probe_return_facts_8616(codegen: object) -> dict[int, TypedStackProbeReturnFact8616]:
+    """Build lowering-owned stack-probe facts from typed callsite summaries."""
+
+    def _impl() -> dict[int, TypedStackProbeReturnFact8616]:
         """Build lowering-owned stack-probe facts from typed callsite summaries."""
-        summary_map = getattr(codegen, "_inertia_callsite_summaries", None)
+        summary_map = _dynamic_codegen_attr_8616(codegen, "_inertia_callsite_summaries", None)
         facts: dict[int, TypedStackProbeReturnFact8616] = {}
         if not isinstance(summary_map, dict):
-            codegen._inertia_typed_stack_probe_return_facts = facts
+            typing.cast(typing.Any, codegen)._inertia_typed_stack_probe_return_facts = facts
             return facts
 
         for call_node_id, summary in summary_map.items():
             if not isinstance(call_node_id, int):
                 continue
-            if not bool(getattr(summary, "stack_probe_helper", False)):
+            if not isinstance(summary, CallsiteSummary8616):
                 continue
-            if getattr(summary, "helper_return_state", None) != "stack_address":
+            if not summary.stack_probe_helper:
                 continue
-            address_kind = getattr(summary, "helper_return_address_kind", None)
+            if summary.helper_return_state != "stack_address":
+                continue
+            address_kind = summary.helper_return_address_kind
             if address_kind in {None, "none"}:
                 address_kind = "stack"
             if address_kind != "stack":
                 continue
-            if getattr(summary, "helper_return_space", None) != "ss":
+            if summary.helper_return_space != "ss":
                 continue
-            width = getattr(summary, "helper_return_width", None)
+            width = summary.helper_return_width
             if not isinstance(width, int) or width <= 0:
                 continue
             facts[call_node_id] = TypedStackProbeReturnFact8616(
@@ -52,7 +75,7 @@ def build_typed_stack_probe_return_facts_8616(codegen) -> dict[int, TypedStackPr
                 carrier_keys=(),
             )
 
-        codegen._inertia_typed_stack_probe_return_facts = facts
+        typing.cast(typing.Any, codegen)._inertia_typed_stack_probe_return_facts = facts
         return facts
 
     return _impl()

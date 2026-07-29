@@ -1,20 +1,106 @@
+"""Layer: Helper boundary.
+
+Responsibility: collect structured string-instruction facts and refusals from decoded instructions.
+Forbidden: using source listings or generated C text as proof for string-instruction semantics.
+"""
+
 from __future__ import annotations
 
+from collections.abc import Iterable, MutableMapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Protocol, cast
 
-__all__ = [
+__all__ = (
     "StringInstructionArtifact",
     "StringInstructionRecord",
     "StringInstructionRefusal",
     "apply_x86_16_string_instruction_artifact",
     "build_x86_16_string_instruction_artifact",
     "build_x86_16_string_instruction_artifact_from_linear_range",
-]
+)
+
+
+class _DecodedInstruction(Protocol):
+    mnemonic: str
+    op_str: str
+
+
+class _LinearMemory(Protocol):
+    def load(self, start: int, size: int) -> bytes:
+        """Read bytes from the project loader memory."""
+        ...
+
+
+class _ProjectLoader(Protocol):
+    memory: _LinearMemory
+
+
+class _CapstoneDisassembler(Protocol):
+    detail: bool
+
+    def disasm(self, code: bytes, start: int) -> Iterable[object]:
+        """Decode bytes into instruction objects."""
+        ...
+
+
+class _ProjectArch(Protocol):
+    capstone: _CapstoneDisassembler
+
+
+class _LinearDecodeProject(Protocol):
+    loader: _ProjectLoader
+    arch: _ProjectArch
+
+
+class _CapstoneBlock(Protocol):
+    insns: tuple[object, ...]
+
+
+class _ProjectBlock(Protocol):
+    capstone: _CapstoneBlock
+
+
+class _ProjectFactory(Protocol):
+    def block(self, addr: int, *, opt_level: int = 0) -> _ProjectBlock:
+        """Load a project block with decoded capstone instructions."""
+        del opt_level
+        raise NotImplementedError
+
+
+class _FunctionForStringArtifact(Protocol):
+    addr: int
+    block_addrs_set: set[int]
+    info: MutableMapping[str, object]
+
+
+class _FunctionManager(Protocol):
+    def function(self, *, addr: int, create: bool = False) -> object | None:
+        """Look up a function by address without requiring creation."""
+        ...
+
+
+class _KnowledgeBase(Protocol):
+    functions: _FunctionManager
+
+
+class _BlockDecodeProject(Protocol):
+    factory: _ProjectFactory
+    kb: _KnowledgeBase
+
+
+class _CodegenCFunction(Protocol):
+    addr: int
+
+
+class _StringArtifactCodegen(Protocol):
+    cfunc: _CodegenCFunction | None
+    _inertia_string_instruction_artifact: StringInstructionArtifact
 
 
 @dataclass(frozen=True, slots=True)
 class StringInstructionRecord:
+    """One proven x86 string-instruction fact collected from decoded instructions."""
+
     index: int
     family: str
     mnemonic: str
@@ -29,16 +115,21 @@ class StringInstructionRecord:
 
 @dataclass(frozen=True, slots=True)
 class StringInstructionRefusal:
+    """Reason a string-instruction artifact could not be fully trusted."""
+
     kind: str
     detail: str
 
 
 @dataclass(frozen=True, slots=True)
 class StringInstructionArtifact:
+    """Collected string-instruction facts plus honest refusals."""
+
     records: tuple[StringInstructionRecord, ...] = ()
     refusals: tuple[StringInstructionRefusal, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
+        """Serialize the artifact for function metadata and diagnostics."""
         return {
             "records": [
                 {
@@ -59,15 +150,13 @@ class StringInstructionArtifact:
         }
 
 
-def _decode_linear_insns(project, start: int, end: int) -> tuple[Any, ...]:
+def _decode_linear_insns(project: _LinearDecodeProject, start: int, end: int) -> tuple[object, ...]:
+    """Decode a linear byte range through the project capstone boundary."""
     if end <= start:
         return ()
-    memory = getattr(getattr(project, "loader", None), "memory", None)
-    if memory is None:
-        return ()
-    code = bytes(memory.load(start, end - start))
+    code = bytes(project.loader.memory.load(start, end - start))
     capstone = project.arch.capstone
-    previous_detail = getattr(capstone, "detail", False)
+    previous_detail = capstone.detail
     try:
         capstone.detail = True
         return tuple(capstone.disasm(code, start))
@@ -75,19 +164,18 @@ def _decode_linear_insns(project, start: int, end: int) -> tuple[Any, ...]:
         capstone.detail = previous_detail
 
 
-def _block_insns(project, function) -> tuple[Any, ...]:
-    block_addrs = tuple(sorted(getattr(function, "block_addrs_set", ()) or ()))
+def _block_insns(project: _BlockDecodeProject, function: _FunctionForStringArtifact) -> tuple[object, ...]:
+    """Collect decoded instructions from a function's known basic blocks."""
+    block_addrs = tuple(sorted(function.block_addrs_set))
     if not block_addrs:
         return ()
-    insns: list[Any] = []
+    insns: list[object] = []
     for block_addr in block_addrs:
         try:
             block = project.factory.block(block_addr, opt_level=0)
         except Exception:
             continue
-        capstone_block = getattr(block, "capstone", None)
-        block_insns = tuple(getattr(capstone_block, "insns", ()) or ())
-        insns.extend(block_insns)
+        insns.extend(block.capstone.insns)
     return tuple(insns)
 
 
@@ -130,9 +218,11 @@ def _width_for_base(base: str) -> int:
     return 0
 
 
-def _register_zero_seed(insn, al_zero: bool, ax_zero: bool) -> tuple[bool, bool]:
-    mnemonic = str(getattr(insn, "mnemonic", "")).strip().lower()
-    op_str = str(getattr(insn, "op_str", "")).strip().lower()
+def _register_zero_seed(insn: object, al_zero: bool, ax_zero: bool) -> tuple[bool, bool]:
+    """Update accumulator zero-seed state from one decoded instruction."""
+    decoded = cast(_DecodedInstruction, insn)
+    mnemonic = decoded.mnemonic.strip().lower()
+    op_str = decoded.op_str.strip().lower()
     text = f"{mnemonic} {op_str}".strip()
     if text in {"xor al, al", "mov al, 0", "mov al, 0x0"}:
         return True, ax_zero
@@ -145,8 +235,9 @@ def _register_zero_seed(insn, al_zero: bool, ax_zero: bool) -> tuple[bool, bool]
     return al_zero, ax_zero
 
 
-def _direction_state(insn, current: str) -> str:
-    mnemonic = str(getattr(insn, "mnemonic", "")).strip().lower()
+def _direction_state(insn: object, current: str) -> str:
+    """Update string direction state from one decoded instruction."""
+    mnemonic = cast(_DecodedInstruction, insn).mnemonic.strip().lower()
     if mnemonic == "cld":
         return "forward"
     if mnemonic == "std":
@@ -154,7 +245,8 @@ def _direction_state(insn, current: str) -> str:
     return current
 
 
-def _records_from_insns(insns: tuple[Any, ...]) -> StringInstructionArtifact:
+def _records_from_insns(insns: tuple[object, ...]) -> StringInstructionArtifact:
+    """Build a string-instruction artifact from decoded instruction objects."""
     if not insns:
         return StringInstructionArtifact(
             refusals=(StringInstructionRefusal("no_instruction_signal", "no instruction stream available"),)
@@ -167,7 +259,7 @@ def _records_from_insns(insns: tuple[Any, ...]) -> StringInstructionArtifact:
     for insn in insns:
         direction_mode = _direction_state(insn, direction_mode)
         al_zero, ax_zero = _register_zero_seed(insn, al_zero, ax_zero)
-        repeat_kind, base = _normalize_string_mnemonic(str(getattr(insn, "mnemonic", "")))
+        repeat_kind, base = _normalize_string_mnemonic(cast(_DecodedInstruction, insn).mnemonic)
         info = _string_family(base)
         if info is None:
             continue
@@ -208,32 +300,36 @@ def _records_from_insns(insns: tuple[Any, ...]) -> StringInstructionArtifact:
     return StringInstructionArtifact(records=tuple(records), refusals=tuple(refusals))
 
 
-def build_x86_16_string_instruction_artifact(project, function) -> StringInstructionArtifact:
-    return _records_from_insns(_block_insns(project, function))
+def build_x86_16_string_instruction_artifact(
+    project: object, function: object
+) -> StringInstructionArtifact:
+    """Collect string-instruction facts from a function's decoded blocks."""
+    return _records_from_insns(
+        _block_insns(cast(_BlockDecodeProject, project), cast(_FunctionForStringArtifact, function))
+    )
 
 
 def build_x86_16_string_instruction_artifact_from_linear_range(
-    project,
+    project: object,
     *,
     start: int,
     end: int,
 ) -> StringInstructionArtifact:
-    return _records_from_insns(_decode_linear_insns(project, start, end))
+    """Collect string-instruction facts from a linear decoded byte range."""
+    return _records_from_insns(_decode_linear_insns(cast(_LinearDecodeProject, project), start, end))
 
 
-def apply_x86_16_string_instruction_artifact(project, codegen) -> bool:
-    cfunc = getattr(codegen, "cfunc", None)
+def apply_x86_16_string_instruction_artifact(project: object, codegen: object) -> bool:
+    """Attach string-instruction facts at the third-party angr/codegen boundary."""
+    typed_project = cast(_BlockDecodeProject, project)
+    typed_codegen = cast(_StringArtifactCodegen, codegen)
+    cfunc = typed_codegen.cfunc
     if cfunc is None:
         return False
-    func_addr = getattr(cfunc, "addr", None)
-    if not isinstance(func_addr, int):
-        return False
-    function = project.kb.functions.function(addr=func_addr, create=False)
+    function = typed_project.kb.functions.function(addr=cfunc.addr, create=False)
     if function is None:
         return False
     artifact = build_x86_16_string_instruction_artifact(project, function)
-    setattr(codegen, "_inertia_string_instruction_artifact", artifact)
-    info = getattr(function, "info", None)
-    if isinstance(info, dict):
-        info["x86_16_string_instruction_artifact"] = artifact.to_dict()
+    typed_codegen._inertia_string_instruction_artifact = artifact
+    cast(_FunctionForStringArtifact, function).info["x86_16_string_instruction_artifact"] = artifact.to_dict()
     return False

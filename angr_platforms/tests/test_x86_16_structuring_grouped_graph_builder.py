@@ -140,6 +140,35 @@ def test_grouped_region_graph_builder_materializes_condition_ir_metadata_without
     assert metadata["typed_condition_ir_count"] == 1
 
 
+def test_grouped_region_graph_builder_materializes_condition_ir_metadata_at_source_insn_region():
+    graph = nx.DiGraph()
+    cmp_block = _Node(0x1153)
+    split_jcc = _Node(0x1158)
+    graph.add_nodes_from([cmp_block, split_jcc])
+    graph.add_edge(cmp_block, split_jcc)
+    condition = ConditionIR(
+        op="sle",
+        lhs=IRValue(MemSpace.REG, name="ax", size=2),
+        rhs=IRValue(MemSpace.CONST, const=69, size=2),
+        src_insn=0x1158,
+        block_addr=0x1153,
+        producer_insn=0x1153,
+        source=("cmp", "jle"),
+    )
+
+    result = build_grouped_region_graph(_Codegen(0x1153, _Clinic(graph), typed_conditions=(condition,)))
+
+    by_id = {region.region_id: region for region in result.graph_result.graph.nodes}
+    block_metadata = by_id[0x1153].metadata
+    split_metadata = by_id[0x1158].metadata
+    assert block_metadata["typed_condition_ir_has_condition"] is True
+    assert block_metadata["typed_condition_ir_hint"] == "ax <= 69"
+    assert split_metadata["typed_condition_ir_has_condition"] is True
+    assert split_metadata["typed_condition_ir_ops"] == ("sle",)
+    assert split_metadata["typed_condition_ir_hint"] == "ax <= 69"
+    assert split_metadata["typed_ir_allow_abnormal_loop_normalization"] is True
+
+
 def test_grouped_region_graph_builder_materializes_condition_edge_guard_metadata():
     graph = nx.DiGraph()
     a = _Node(0x1153)
@@ -161,6 +190,7 @@ def test_grouped_region_graph_builder_materializes_condition_edge_guard_metadata
         edge_kind="fallthrough_jmp",
         source_jcc="jne",
         producer_insn=0x1153,
+        producer_semantics=("cmp_reg_imm16", "ax", 69),
     )
 
     result = build_grouped_region_graph(_Codegen(0x1153, _Clinic(graph), edge_evidence=(edge,)))
@@ -176,6 +206,12 @@ def test_grouped_region_graph_builder_materializes_condition_edge_guard_metadata
     assert metadata["typed_condition_edge_guard_hints"] == ("ax == 69",)
     assert metadata["typed_condition_edge_guards"] == (condition,)
     assert metadata["typed_condition_edge_guard_count"] == 1
+    assert metadata["typed_condition_edge_producer_semantics"] == (("cmp_reg_imm16", "ax", 69),)
+    producer_metadata = by_id[0x1153].metadata
+    assert producer_metadata["typed_condition_edge_has_guard"] is False
+    assert producer_metadata["typed_condition_edge_guards"] == ()
+    assert producer_metadata["typed_condition_edge_guard_count"] == 0
+    assert producer_metadata["typed_condition_edge_producer_semantics"] == (("cmp_reg_imm16", "ax", 69),)
 
 
 def test_grouped_region_graph_builder_preserves_vex_hint_when_condition_ir_is_also_present():

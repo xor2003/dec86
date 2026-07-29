@@ -1,3 +1,9 @@
+"""Locate and build optional helper signature catalogs for CLI runs.
+
+Layer: CLI/fallback/reporting.
+Responsibility: prepare optional signature catalogs without making signatures required semantic evidence.
+"""
+
 from __future__ import annotations
 
 import os
@@ -62,8 +68,9 @@ def _write_manifest(manifest_path: Path, source_lines: tuple[str, ...]) -> None:
 
 @lru_cache(maxsize=2)
 def default_signature_catalog_path(repo_root: Path | None = None) -> Path | None:
-    def _impl():
-        """Return a cached repo-local signature catalog built from bundled and user-added PAT inputs."""
+    """Return a cached repo-local signature catalog built from bundled and user-added PAT inputs."""
+
+    def _impl() -> Path | None:
         if signature_matching_disabled():
             return None
         root = repo_root or Path(__file__).resolve().parents[1]

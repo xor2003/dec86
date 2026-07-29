@@ -1,15 +1,68 @@
+"""Typed condition-domain representation and constructors.
+
+Layer: IR.
+Responsibility: owns typed Condition representation and constructors.
+Owns typed Value, Address, Condition, instruction facts, and lossless
+normalization.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
 from __future__ import annotations
 
-# Layer: IR
-# Responsibility: typed condition domain representation.
-# Forbidden: late rewrite ownership and text-pattern semantics.
+import re
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from .core import IRCondition, IRValue
 
-ConditionOp = Literal[
+__all__ = (
+    "ConditionEdgeEvidence",
+    "ConditionFailure",
+    "ConditionIR",
+    "ConditionOp",
+    "ConditionResult",
+    "ConditionSource",
+    "JCC_EQ_MNEMONICS_8616",
+    "JCC_NE_MNEMONICS_8616",
+    "JCC_SGE_MNEMONICS_8616",
+    "JCC_SGT_MNEMONICS_8616",
+    "JCC_SLE_MNEMONICS_8616",
+    "JCC_SLT_MNEMONICS_8616",
+    "JCC_TO_COND_8616",
+    "JCC_UGE_MNEMONICS_8616",
+    "JCC_UGT_MNEMONICS_8616",
+    "JCC_ULE_MNEMONICS_8616",
+    "JCC_ULT_MNEMONICS_8616",
+    "build_condition_from_cmp_8616",
+    "build_condition_from_compare_8616",
+    "build_condition_from_test_8616",
+    "build_condition_ir_8616",
+    "canonicalize_condition_storage_fingerprint_8616",
+    "coerce_condition_value_size_8616",
+    "condition_compare_symbol_8616",
+    "condition_sort_key_8616",
+    "deduplicate_conditions_8616",
+    "harmonize_condition_args_8616",
+    "invert_condition_fingerprint_string_8616",
+    "inverted_comparison_op_8616",
+    "is_condition_compare_family_8616",
+    "is_condition_truth_test_8616",
+    "is_signed_condition_8616",
+    "is_unsigned_condition_8616",
+    "normalize_condition_fingerprint_algebraic_8616",
+    "normalize_condition_fingerprint_string_8616",
+    "normalize_condition_op_8616",
+)
+
+_STACK_ARG_STORAGE_FINGERPRINT_RE_8616 = re.compile(
+    r"stack_arg:[A-Za-z_][A-Za-z0-9_]*"
+    r"(?::size(?P<size>\d+))?:bp(?P<offset>[+-]0x[0-9a-fA-F]+)"
+)
+
+ConditionOp: TypeAlias = Literal[
     "and",
+    "carry_compare",
     "compare",
     "eq",
     "ne",
@@ -74,6 +127,28 @@ _SUPPORTED_JCC_MNEMONICS_8616: frozenset[str] = frozenset(JCC_TO_COND_8616.keys(
 # ── Condition builders from CMP/TEST sources ──
 
 
+def _condition_width_size_8616(width_bits: int) -> int:
+    if not isinstance(width_bits, int) or width_bits <= 0:
+        return 0
+    return max(1, (width_bits + 7) // 8)
+
+
+def _harmonize_condition_pair_8616(lhs: Any, rhs: Any, width_bits: int) -> tuple[Any, Any]:
+    """Normalize typed condition operand sizes in the IR layer.
+
+    Mixed-width condition operands are a semantic input issue, not a rewrite
+    concern.  Keep the proof on IRValue operands only; opaque AST/text objects
+    are left untouched for their owning layer.
+    """
+    if not isinstance(lhs, IRValue) or not isinstance(rhs, IRValue):
+        return lhs, rhs
+    target_size = max(_condition_width_size_8616(width_bits), int(lhs.size or 0), int(rhs.size or 0))
+    if target_size <= 0:
+        return lhs, rhs
+    normalized = harmonize_condition_args_8616(lhs, rhs, size=target_size)
+    return normalized[0], normalized[1]
+
+
 @dataclass(frozen=True, slots=True)
 class ConditionIR:
     """Typed condition IR object — the canonical form for branches.
@@ -90,9 +165,13 @@ class ConditionIR:
     src_insn: int | None = None
     block_addr: int | None = None
     producer_insn: int | None = None
+    taken_target: int | None = None
+    fallthrough_target: int | None = None
+    operand_bind_insn: int | None = None
 
     @property
     def is_comparison(self) -> bool:
+        """Return whether this condition has two comparison operands."""
         return self.op in {
             "eq",
             "ne",
@@ -108,30 +187,36 @@ class ConditionIR:
 
     @property
     def is_zero_test(self) -> bool:
+        """Return whether this condition tests one value against zero."""
         return self.op in {"zero", "nonzero"}
 
     @property
     def is_signed(self) -> bool:
+        """Return whether this condition uses signed ordering semantics."""
         return self.op in {"slt", "sle", "sgt", "sge"}
 
     @property
     def is_unsigned(self) -> bool:
+        """Return whether this condition uses unsigned ordering semantics."""
         return self.op in {"ult", "ule", "ugt", "uge"}
 
 
 @dataclass(frozen=True, slots=True)
 class ConditionFailure:
+    """Typed refusal for unsupported condition recovery in the IR layer."""
+
     reason: str
     source: tuple[str, ...] = ()
     detail: str = ""
 
     @property
     def is_failure(self) -> bool:
+        """Return True so callers can branch on condition/failure results."""
         return True
 
 
 # Type alias for condition-or-failure returns
-ConditionResult = ConditionIR | ConditionFailure
+ConditionResult: TypeAlias = ConditionIR | ConditionFailure
 
 
 def build_condition_from_cmp_8616(
@@ -143,6 +228,9 @@ def build_condition_from_cmp_8616(
     src_insn: int | None = None,
     block_addr: int | None = None,
     producer_insn: int | None = None,
+    taken_target: int | None = None,
+    fallthrough_target: int | None = None,
+    operand_bind_insn: int | None = None,
 ) -> ConditionResult:
     """Build a ConditionIR from CMP operands + JCC mnemonic.
 
@@ -156,6 +244,7 @@ def build_condition_from_cmp_8616(
             source=("cmp", jcc),
             detail=f"JCC mnemonic '{jcc}' not in JCC_TO_COND_8616",
         )
+    lhs, rhs = _harmonize_condition_pair_8616(lhs, rhs, width_bits)
     return ConditionIR(
         op=op,
         lhs=lhs,
@@ -165,6 +254,9 @@ def build_condition_from_cmp_8616(
         src_insn=src_insn,
         block_addr=block_addr,
         producer_insn=producer_insn,
+        taken_target=taken_target,
+        fallthrough_target=fallthrough_target,
+        operand_bind_insn=operand_bind_insn,
     )
 
 
@@ -176,6 +268,9 @@ def build_condition_from_test_8616(
     src_insn: int | None = None,
     block_addr: int | None = None,
     producer_insn: int | None = None,
+    taken_target: int | None = None,
+    fallthrough_target: int | None = None,
+    operand_bind_insn: int | None = None,
 ) -> ConditionResult:
     """Build a ConditionIR from TEST/OR/AND self-test + JCC mnemonic.
 
@@ -192,6 +287,9 @@ def build_condition_from_test_8616(
             src_insn=src_insn,
             block_addr=block_addr,
             producer_insn=producer_insn,
+            taken_target=taken_target,
+            fallthrough_target=fallthrough_target,
+            operand_bind_insn=operand_bind_insn,
         )
     if jcc in {"jne", "jnz"}:
         return ConditionIR(
@@ -202,6 +300,9 @@ def build_condition_from_test_8616(
             src_insn=src_insn,
             block_addr=block_addr,
             producer_insn=producer_insn,
+            taken_target=taken_target,
+            fallthrough_target=fallthrough_target,
+            operand_bind_insn=operand_bind_insn,
         )
     return ConditionFailure(
         "unsupported_test_jcc",
@@ -220,8 +321,12 @@ def build_condition_from_compare_8616(
     src_insn: int | None = None,
     block_addr: int | None = None,
     producer_insn: int | None = None,
+    taken_target: int | None = None,
+    fallthrough_target: int | None = None,
+    operand_bind_insn: int | None = None,
 ) -> ConditionIR:
     """Direct ConditionIR constructor from known op and operands."""
+    lhs, rhs = _harmonize_condition_pair_8616(lhs, rhs, width_bits)
     return ConditionIR(
         op=op,
         lhs=lhs,
@@ -231,6 +336,9 @@ def build_condition_from_compare_8616(
         src_insn=src_insn,
         block_addr=block_addr,
         producer_insn=producer_insn,
+        taken_target=taken_target,
+        fallthrough_target=fallthrough_target,
+        operand_bind_insn=operand_bind_insn,
     )
 
 
@@ -244,11 +352,14 @@ class ConditionSource:
     kind: str  # "cmp" or "test"
     lhs: Any | None = None
     rhs: Any | None = None
+    normalized_lhs: Any | None = None
+    normalized_rhs: Any | None = None
     semantics: tuple[Any, ...] | None = None
     fallthrough_from_jcc: str | None = None
     width_bits: int = 16
     addr: int | None = None
     block_addr: int | None = None
+    bind_operand_at_jcc: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +371,7 @@ class ConditionEdgeEvidence:
     edge_kind: str
     source_jcc: str
     producer_insn: int | None = None
+    producer_semantics: tuple[Any, ...] | None = None
 
 
 # ── Condition sorting/deduplication ──
@@ -271,6 +383,9 @@ def condition_sort_key_8616(cond: ConditionIR) -> tuple:
         cond.block_addr if isinstance(cond.block_addr, int) else -1,
         cond.src_insn if isinstance(cond.src_insn, int) else -1,
         cond.producer_insn if isinstance(cond.producer_insn, int) else -1,
+        cond.operand_bind_insn if isinstance(cond.operand_bind_insn, int) else -1,
+        cond.taken_target if isinstance(cond.taken_target, int) else -1,
+        cond.fallthrough_target if isinstance(cond.fallthrough_target, int) else -1,
         "".join(cond.source),
         cond.op,
         str(cond.lhs) if cond.lhs is not None else "",
@@ -308,12 +423,14 @@ def build_condition_ir_8616(
 
 
 def coerce_condition_value_size_8616(value: IRValue, size: int) -> IRValue:
+    """Return an IRValue with a proven condition width, preserving identity otherwise."""
     if size <= 0 or value.size == size:
         return value
     return replace(value, size=size)
 
 
 def harmonize_condition_args_8616(*args: IRValue, size: int = 0) -> tuple[IRValue, ...]:
+    """Coerce condition operands to a shared byte width before semantic use."""
     target_size = int(size or 0)
     if target_size <= 0:
         target_size = max((int(arg.size or 0) for arg in args), default=0)
@@ -323,6 +440,7 @@ def harmonize_condition_args_8616(*args: IRValue, size: int = 0) -> tuple[IRValu
 
 
 def normalize_condition_op_8616(op: str) -> ConditionOp:
+    """Normalize condition spellings into the IR condition operator vocabulary."""
     if op in {"and", "or", "not"}:
         return op  # type: ignore[return-value]
     if op in {"masked_nonzero", "nonzero"}:
@@ -351,10 +469,12 @@ def normalize_condition_op_8616(op: str) -> ConditionOp:
 
 
 def is_condition_truth_test_8616(op: str) -> bool:
+    """Return whether an operator is a truth/zero-style condition test."""
     return normalize_condition_op_8616(op) in {"zero", "nonzero", "and", "or", "not"}
 
 
 def is_condition_compare_family_8616(op: str) -> bool:
+    """Return whether an operator belongs to the explicit comparison family."""
     return normalize_condition_op_8616(op) in {
         "compare",
         "eq",
@@ -371,14 +491,17 @@ def is_condition_compare_family_8616(op: str) -> bool:
 
 
 def condition_compare_symbol_8616(op: str) -> str | None:
+    """Return the C comparison symbol for normalized compare operators."""
     return _COMPARE_SYMBOLS_8616.get(normalize_condition_op_8616(op))
 
 
 def is_signed_condition_8616(op: str) -> bool:
+    """Return whether an operator represents signed ordering."""
     return normalize_condition_op_8616(op) in {"slt", "sle", "sgt", "sge"}
 
 
 def is_unsigned_condition_8616(op: str) -> bool:
+    """Return whether an operator represents unsigned ordering."""
     return normalize_condition_op_8616(op) in {"ult", "ule", "ugt", "uge"}
 
 
@@ -400,6 +523,25 @@ def inverted_comparison_op_8616(op: str) -> str | None:
     late-rewrite or validation-string normalization.
     """
     return _INVERTED_COMPARISON_OPS_8616.get(op)
+
+
+def canonicalize_condition_storage_fingerprint_8616(value: str) -> str:
+    """Canonicalize explicitly proven named BP arguments to stack slots.
+
+    The input token already carries exact BP offset and optional byte size.
+    This is lossless Condition IR fingerprint normalization, not recovery from
+    rendered C or a variable name.
+    """
+
+    def _replace(match: re.Match[str]) -> str:
+        size = match.group("size")
+        size_text = f":size{size}" if size else ""
+        return (
+            f"stack_slot:SS:BP{match.group('offset')}"
+            f"{size_text}"
+        )
+
+    return _STACK_ARG_STORAGE_FINGERPRINT_RE_8616.sub(_replace, value)
 
 
 def normalize_condition_fingerprint_string_8616(
@@ -536,23 +678,24 @@ def _normalize_segmented_index_duplicate_displacement_8616(value: str) -> str:
 
 
 def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
-    def _impl():
-        """Apply algebraic normalization to a condition fingerprint string.
+    """Apply deterministic algebraic normalization to a condition fingerprint string.
 
-        Rules (validation-only, deterministic, side-effect-free):
+    Rules (validation-only, deterministic, side-effect-free):
 
-            CmpEQ(Sub(x,const:c),const:0) → CmpEQ(x,const:c)
-            CmpNE(Sub(x,const:c),const:0) → CmpNE(x,const:c)
-            CmpEQ(Sub(x,y),const:0) → CmpEQ(x,y)
-            CmpNE(Sub(x,y),const:0) → CmpNE(x,y)
+        CmpEQ(Sub(x,const:c),const:0) -> CmpEQ(x,const:c)
+        CmpNE(Sub(x,const:c),const:0) -> CmpNE(x,const:c)
+        CmpEQ(Sub(x,y),const:0) -> CmpEQ(x,y)
+        CmpNE(Sub(x,y),const:0) -> CmpNE(x,y)
 
-        Also handles doubled Sub nesting:
+    Also handles doubled Sub nesting:
 
-            CmpEQ(Sub(Sub(x,const:a),const:b),const:0) → CmpEQ(x,const:a+b)
+        CmpEQ(Sub(Sub(x,const:a),const:b),const:0) -> CmpEQ(x,const:a+b)
 
-        This is a pure string-level normalization that preserves the fingerprint
-        format.  It does not mutate IR or feed results back into recovery.
-        """
+    This is a pure string-level normalization that preserves the fingerprint
+    format. It does not mutate IR or feed results back into recovery.
+    """
+
+    def _impl() -> str:
         if not isinstance(value, str) or not value:
             return value
 

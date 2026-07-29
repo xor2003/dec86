@@ -1,12 +1,21 @@
+"""Layer: Validation.
+
+Responsibility: assert generic semantic invariants over recovered output and pipeline state.
+Forbidden: source-backed, COD-backed, or sample-specific semantic recovery.
+"""
+
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
+from enum import Enum
 
 from .pipeline.errors import PipelineHardError
 
 __all__ = [
     "KnownCallSemanticIssue8616",
+    "KnownCallArgKind8616",
     "ValidationSemanticsReport8616",
     "assert_known_call_semantics_8616",
     "check_segment_linearization_laundering_8616",
@@ -14,7 +23,23 @@ __all__ = [
 ]
 
 
-_KNOWN_CALL_ARG_KINDS_8616: dict[str, dict[int, str]] = {}
+class KnownCallArgKind8616(Enum):
+    """Expected semantic class for one known call argument."""
+
+    POINTER = "pointer"
+    VALUE = "value"
+
+
+_KNOWN_CALL_ARG_KINDS_8616: dict[str, dict[int, KnownCallArgKind8616]] = {
+    "PercolateUp": {0: KnownCallArgKind8616.VALUE},
+    "_PercolateUp": {0: KnownCallArgKind8616.VALUE},
+    "PercolateDown": {0: KnownCallArgKind8616.VALUE},
+    "_PercolateDown": {0: KnownCallArgKind8616.VALUE},
+    "SwapBars": {0: KnownCallArgKind8616.VALUE, 1: KnownCallArgKind8616.VALUE},
+    "_SwapBars": {0: KnownCallArgKind8616.VALUE, 1: KnownCallArgKind8616.VALUE},
+    "Swaps": {0: KnownCallArgKind8616.POINTER, 1: KnownCallArgKind8616.POINTER},
+    "_Swaps": {0: KnownCallArgKind8616.POINTER, 1: KnownCallArgKind8616.POINTER},
+}
 
 _CALL_STMT_RE_8616 = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*\((?P<args>.*)\)\s*;\s*$")
 _SIMPLE_ASSIGN_RE_8616 = re.compile(
@@ -22,16 +47,22 @@ _SIMPLE_ASSIGN_RE_8616 = re.compile(
 )
 _PLACEHOLDER_STACK_RE_8616 = re.compile(
     r"(?<![A-Za-z0-9_])(?:&\s*)?"
-    r"(?:s_[0-9a-f]+|arg_[0-9a-f]*[a-f][0-9a-f]*|stack_\w*)"
+    r"(?:s_[0-9a-f]+|arg_[0-9a-f]*[a-f][0-9a-f]*|stack_\w*|ir_[0-9a-f]+)"
     r"(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )
 _RAW_STACK_NAME_RE_8616 = re.compile(r"(?<![A-Za-z0-9_])s_[0-9a-f]+(?![A-Za-z0-9_])", re.IGNORECASE)
+_UNRESOLVED_STACK_BASE_ACCESS_RE_8616 = re.compile(
+    r"\bSEG_U(?:8|16|32)\s*\(\s*ss\s*,[^)]*\bvvar_[0-9a-f]+\b",
+    re.IGNORECASE,
+)
 _IDENT_RE_8616 = re.compile(r"\b[A-Za-z_]\w*\b")
 
 
 @dataclass(frozen=True, slots=True)
 class KnownCallSemanticIssue8616:
+    """Validation issue for one known call or segmented-memory invariant."""
+
     callee: str
     arg_index: int | None
     arg_text: str | None
@@ -40,6 +71,8 @@ class KnownCallSemanticIssue8616:
 
 @dataclass(slots=True)
 class ValidationSemanticsReport8616:
+    """Counters and issues produced by final semantic validation checks."""
+
     checked_call_count: int = 0
     checked_arg_count: int = 0
     pointer_arg_count: int = 0
@@ -50,7 +83,7 @@ class ValidationSemanticsReport8616:
 
 
 def _split_c_args_8616(arg_text: str) -> tuple[str, ...]:
-    def _impl():
+    def _impl() -> tuple[str, ...]:
         text = str(arg_text or "").strip()
         if not text or text == "void":
             return ()
@@ -77,7 +110,7 @@ def _split_c_args_8616(arg_text: str) -> tuple[str, ...]:
     return _impl()
 
 
-def _iter_statement_calls_8616(c_text: str):
+def _iter_statement_calls_8616(c_text: str) -> Iterator[tuple[str, tuple[str, ...], str]]:
     for raw_line in str(c_text or "").splitlines():
         stripped = raw_line.strip()
         if not stripped or not stripped.endswith(";"):
@@ -121,7 +154,8 @@ def _is_value_like_8616(arg_text: str) -> bool:
 
 def _normalized_non_preprocessor_lines_8616(c_text: str) -> tuple[str, ...]:
     lines: list[str] = []
-    for raw_line in str(c_text or "").splitlines():
+    text = re.sub(r"/\*.*?\*/", "", str(c_text or ""), flags=re.DOTALL)
+    for raw_line in text.splitlines():
         line = raw_line.split("//", 1)[0].strip()
         if not line or line.startswith("#"):
             continue
@@ -163,6 +197,7 @@ def _dangerous_segment_linearization_expr_8616(expr_text: str, tainted_names: se
 
 
 def check_segment_linearization_laundering_8616(c_text: str) -> str | None:
+    """Return a failure reason when segment registers leak into linear arithmetic."""
     tainted_names: set[str] = set()
     for line in _normalized_non_preprocessor_lines_8616(c_text):
         if _dangerous_segment_linearization_expr_8616(line, tainted_names):
@@ -229,7 +264,7 @@ def _validate_known_call_arg_kinds_8616(
             continue
         arg_text = args[arg_index]
         report.checked_arg_count += 1
-        if kind == "pointer":
+        if kind is KnownCallArgKind8616.POINTER:
             report.pointer_arg_count += 1
             if not _is_pointer_like_8616(arg_text) or _has_stack_placeholder_8616(arg_text):
                 _record_issue_8616(
@@ -239,7 +274,7 @@ def _validate_known_call_arg_kinds_8616(
                     arg_text=arg_text,
                     message=f"{callee} arg{arg_index} must stay pointer-like",
                 )
-        elif kind == "value":
+        elif kind is KnownCallArgKind8616.VALUE:
             report.value_arg_count += 1
             if not _is_value_like_8616(arg_text):
                 _record_issue_8616(
@@ -256,6 +291,8 @@ def validate_known_call_semantics_8616(
     *,
     function_addr: int | None = None,
 ) -> ValidationSemanticsReport8616:
+    """Validate final C text against generic known-call semantic contracts."""
+    _ = function_addr
     report = ValidationSemanticsReport8616()
     segment_laundering_issue = check_segment_linearization_laundering_8616(c_text)
     if segment_laundering_issue is not None:
@@ -272,11 +309,13 @@ def validate_known_call_semantics_8616(
 
 
 def assert_known_call_semantics_8616(c_text: str, *, function_addr: int | None = None) -> None:
+    """Raise a hard pipeline failure when final C violates semantic contracts."""
     report = validate_known_call_semantics_8616(c_text, function_addr=function_addr)
     semantic_text = _strip_comments_for_placeholder_scan_8616(c_text)
     if (
         _RAW_STACK_NAME_RE_8616.search(semantic_text) is not None
         or _PLACEHOLDER_STACK_RE_8616.search(semantic_text) is not None
+        or _UNRESOLVED_STACK_BASE_ACCESS_RE_8616.search(semantic_text) is not None
     ):
         raise PipelineHardError(
             "function leaked unresolved stack locals into final C",
@@ -284,11 +323,6 @@ def assert_known_call_semantics_8616(c_text: str, *, function_addr: int | None =
             function_addr=function_addr,
         )
     if report.failure_count <= 0:
-        return
-    # Segment-linearization laundering is tracked as a diagnostic counter and
-    # covered by tail-validation deltas. Do not hard-abort final emission when
-    # this is the only remaining issue class.
-    if report.segment_linearization_issue_count == report.failure_count:
         return
     first = report.issues[0]
     detail = first.message

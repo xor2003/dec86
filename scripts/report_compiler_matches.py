@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Report compiler signature matches as optional classification evidence.
+
+Layer: Tooling/gates.
+Responsibility: summarize optional compiler signature evidence without using it as semantic proof.
+"""
 
 from __future__ import annotations
 
@@ -24,7 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from omf_pat import _find_pat_matches, _hyperscan, load_cached_pat_regex_specs
+from omf_pat import _find_pat_matches, _hyperscan, load_cached_pat_regex_specs  # noqa: E402
 
 
 def _load_image(binary_path: Path, *, use_angr: bool = False) -> tuple[int, bytes]:
@@ -100,12 +105,20 @@ _MSVC_HELPER_PREFIXES = (
     "__cxtoa",
     "__cltoasub",
 )
-_LIB_NAME_PREFIXES = (
-    "__",
-    "_ci",
-    "_nci",
-    "$",
-)
+_LIBRARY_SOURCE_PREFIXES = ("dos_compilers", ".signature_catalog_cache")
+
+
+def _is_library_like_source_path(path: str) -> bool:
+    def _impl() -> bool:
+        if not path:
+            return False
+        lower = str(path).lower().replace("\\", "/")
+        if any(token in lower for token in _LIBRARY_SOURCE_PREFIXES):
+            return True
+        parts = lower.split("/")
+        return "dos_compilers" in parts
+
+    return _impl()
 
 
 def _detect_ms_runtime_libraries(image_bytes: bytes) -> list[str]:
@@ -134,7 +147,7 @@ def _load_aliases(path: Path) -> dict[str, str]:
 
 
 def _strip_json_comments(text: str) -> str:
-    def _impl():
+    def _impl() -> str:
         out: list[str] = []
         i = 0
         n = len(text)
@@ -215,7 +228,7 @@ def _load_rc_extract_functions(path: Path) -> list[tuple[int, str]]:
 
 
 def _canonical_compiler_label(name: str, aliases: dict[str, str]) -> str:
-    def _impl():
+    def _impl() -> str:
         raw = name.strip()
         if raw in aliases:
             return aliases[raw]
@@ -267,37 +280,13 @@ def _spec_weight(public_names: tuple[str, ...]) -> float:
     return score
 
 
-def _is_library_like_function_name(name: str) -> bool:
-    def _impl():
-        n = _normalize_symbol_name(name)
-        if not n:
-            return True
-        if n in _GENERIC_LIB_NAMES:
-            return True
-        if any(n.startswith(pfx) for pfx in _MSVC_HELPER_PREFIXES):
-            return True
-        lower_raw = name.lower().strip()
-        if any(lower_raw.startswith(pfx) for pfx in _LIB_NAME_PREFIXES):
-            return True
-        if lower_raw.startswith("_") and len(lower_raw) > 1 and lower_raw[1].isalpha():
-            return True
-        if lower_raw.startswith("b$"):
-            return True
-        return False
-
-    return _impl()
-
-
 def _is_non_library_function_entry(entry: dict[str, object]) -> bool:
-    name = str(entry.get("function", ""))
-    if _is_library_like_function_name(name):
-        return False
-    compilers = entry.get("compilers", [])
-    if isinstance(compilers, list) and compilers:
-        # For this matcher, "unknown" labels are the best proxy for non-library/user code.
-        lowers = {str(c).lower() for c in compilers}
-        if "unknown" not in lowers and "raw-candidate" not in lowers:
+    if isinstance(entry.get("source_paths", ()), (list, tuple, set)):
+        if any(_is_library_like_source_path(str(path)) for path in entry.get("source_paths", ())):
             return False
+    source_path = str(entry.get("source", ""))
+    if _is_library_like_source_path(source_path):
+        return False
     return True
 
 
@@ -354,7 +343,7 @@ def _load_flag_profiles(path: Path) -> dict[str, dict[str, float]]:
 def _score_flag_combos(
     function_match_counts: Counter[str], profiles: dict[str, dict[str, float]]
 ) -> list[tuple[str, float]]:
-    def _impl():
+    def _impl() -> list[tuple[str, float]]:
         if not profiles or not function_match_counts:
             return []
         obs = {name.lower(): float(cnt) for name, cnt in function_match_counts.items() if cnt > 0}
@@ -437,7 +426,7 @@ def _flag_marginals(flag_scores: list[tuple[str, float]], top_k: int = 32) -> li
 
 
 def _extract_capstone_features(image_bytes: bytes, code_offsets: list[int]) -> tuple[Counter[str], bool]:
-    def _impl():
+    def _impl() -> tuple[Counter[str], bool]:
         feats: Counter[str] = Counter()
         try:
             capstone = importlib.import_module("capstone")
@@ -582,7 +571,7 @@ def _aggregate_flag_support(function_flag_report: list[dict[str, object]]) -> li
 
 
 def _flag_presence_share(function_flag_report: list[dict[str, object]], flag: str, threshold: float = 0.55) -> float:
-    def _impl():
+    def _impl() -> float:
         total = 0.0
         present = 0.0
         for row in function_flag_report:
@@ -630,7 +619,7 @@ def _best_rc_shift(
     rc_entries: list[tuple[int, str]],
     raw_bytes: bytes | None = None,
 ) -> tuple[int | None, int]:
-    def _impl():
+    def _impl() -> tuple[int | None, int]:
         if not function_rows or not rc_entries:
             return None, 0
         rc_begins = {off for off, _ in rc_entries}
@@ -736,7 +725,7 @@ def _build_per_function_flag_report(
     flag_profiles: dict[str, dict[str, float]],
     limit: int,
 ) -> list[dict[str, object]]:
-    def _impl():
+    def _impl() -> list[dict[str, object]]:
         report: list[dict[str, object]] = []
         if not function_entries or not flag_profiles:
             return report
@@ -947,7 +936,7 @@ def _scan_hyperscan_chunk(image_bytes: bytes, specs_chunk: list, chunk_offset: i
         return _scan_fallback_chunk(image_bytes, specs_chunk, chunk_offset)
     hit_counts = [0] * len(specs_chunk)
 
-    def _on_match(expr_id, _from_offset, end_offset, _flags, _context):
+    def _on_match(expr_id: int, _from_offset: int, end_offset: int, _flags: int, _context: object) -> bool:
         if expr_id < 0 or expr_id >= len(specs_chunk):
             return False
         spec = specs_chunk[expr_id]
@@ -1036,7 +1025,9 @@ def _find_unique_matches_fallback_parallel(image_bytes: bytes, specs: list, chun
 
 
 def main(argv: list[str] | None = None) -> int:
-    def _impl():
+    """Report likely compiler signatures for one binary."""
+
+    def _impl() -> int:
         parser = argparse.ArgumentParser(
             description="Report likely compiler versions from PAT function matches in an EXE/COM."
         )
@@ -1222,21 +1213,23 @@ def main(argv: list[str] | None = None) -> int:
                                         "function": str(pub.name),
                                         "module_length": int(getattr(spec, "module_length", 0)),
                                         "compilers": list(compiler_names),
+                                        "source_paths": {str(getattr(spec, "source_path", ""))},
                                     }
                                     function_offset_records[entry_off] = rec
                                 else:
                                     cur_name = str(rec.get("function", ""))
                                     new_name = str(pub.name)
-                                    # Prefer non-library-like representative names for this offset.
-                                    if _is_library_like_function_name(cur_name) and not _is_library_like_function_name(
-                                        new_name
-                                    ):
+                                    if not cur_name and new_name:
                                         rec["function"] = new_name
                                     if int(getattr(spec, "module_length", 0)) > int(rec.get("module_length", 0)):
                                         rec["module_length"] = int(getattr(spec, "module_length", 0))
                                     existing = set(str(x) for x in rec.get("compilers", []))
                                     existing.update(str(x) for x in compiler_names)
                                     rec["compilers"] = sorted(existing)
+                                    existing_sources = set(str(x) for x in rec.get("source_paths", ()))
+                                    if src := str(getattr(spec, "source_path", "")):
+                                        existing_sources.add(src)
+                                    rec["source_paths"] = existing_sources
                         except Exception:
                             pass
 
@@ -1253,6 +1246,25 @@ def main(argv: list[str] | None = None) -> int:
                     raw_bytes,
                     limit=max(64, args.per_function_flags_top * 12),
                 )
+                for raw_entry in raw_entries:
+                    off = int(raw_entry.get("offset", -1))
+                    if off < 0:
+                        continue
+                    matched = function_offset_records.get(off)
+                    if not matched:
+                        continue
+                    if compilers := matched.get("compilers"):
+                        raw_entry["compilers"] = sorted(set(str(x) for x in raw_entry.get("compilers", ())) | set(compilers))
+                    if module_length := matched.get("module_length"):
+                        raw_entry["module_length"] = max(int(raw_entry.get("module_length", 0)), int(module_length))
+                    if source_paths := matched.get("source_paths"):
+                        raw_entry["source_paths"] = list(dict.fromkeys([str(x) for x in source_paths]))
+                    if function_name := str(matched.get("function", "")):
+                        if function_name:
+                            raw_entry["function"] = function_name
+                            raw_entry["source"] = str(matched.get("source", ""))
+                            if source_paths:
+                                raw_entry["source"] = str(next(iter(source_paths), ""))
                 function_flag_report = _build_per_function_flag_report(
                     image_bytes=image_bytes,
                     raw_bytes=raw_bytes,
@@ -1299,7 +1311,6 @@ def main(argv: list[str] | None = None) -> int:
             else (REPO_ROOT / args.compiler_aliases_json)
         )
         aliases = _load_aliases(alias_path)
-        merged_weighted = _merge_counter_by_canonical(Counter(weighted_compiler_scores), aliases)
         merged_counts = _merge_counter_by_canonical(compiler_match_counts, aliases)
         flag_scores = _score_flag_combos(function_match_counts, flag_profiles) if args.detect_flags_msc51 else []
 
