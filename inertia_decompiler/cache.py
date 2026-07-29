@@ -18,7 +18,9 @@ DECOMPILATION_CACHE_DIR: Path = _ROOT / ".inertia_decomp_cache"
 RECOVERY_CACHE_SOURCE_FILES: tuple[Path, ...] = (
     _ROOT / "decompile.py",
     _ROOT / "inertia_decompiler" / "cli.py",
+    _ROOT / "inertia_decompiler" / "cli_core.py",
     _ROOT / "inertia_decompiler" / "cli_decompilation.py",
+    _ROOT / "inertia_decompiler" / "cli_function_discovery.py",
     _ROOT / "inertia_decompiler" / "cache.py",
     _ROOT / "inertia_decompiler" / "decompilation_quality.py",
     _ROOT / "inertia_decompiler" / "disassembly_helpers.py",

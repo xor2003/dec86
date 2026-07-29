@@ -3090,6 +3090,12 @@ def _decompile_structuring_8616(self: AngrDecompilerSurface) -> None:
             )
             changed = bool(final_loop_break_jcc_changed) or changed
             annotate_current_span(changed=bool(final_loop_break_jcc_changed))
+        # Regeneration and the final return/loop closure passes above may
+        # replace condition nodes with stale angr expressions. Reconsume the
+        # transferred ConditionIR facts at the actual Structuring boundary.
+        with span("x86_16.structuring.final_condition_refresh", function=func_addr):
+            _refresh_structuring_condition_semantics_8616(self.project, self.codegen)
+            record_ast_condition_trace_8616(self.project, self.codegen, stage="structured-final")
         with span("x86_16.structuring.validation.after_fingerprint", function=func_addr):
             after_fingerprint = fingerprint_x86_16_tail_validation_boundary(
                 self.project, self.codegen, mode=validation_mode

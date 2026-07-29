@@ -22,7 +22,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, Self, TypeAlias, cast
 
 import angr
 from angr_platforms.X86_16.analysis_helpers import (
@@ -104,11 +104,154 @@ _AngrObject: TypeAlias = Any
 _FunctionCfgPair = tuple[_AngrCfg, _AngrFunction]
 _SeededRecoveryResult = list[_FunctionCfgPair] | tuple[list[_FunctionCfgPair], list[int]]
 _CandidateRecoveryCacheValue = tuple[Literal["ok"], _FunctionCfgPair] | tuple[Literal["keyerror"], str]
+_DISPLAY_CATALOG_CACHE_POLICY_SCHEMA_8616 = 2
+_BINARY_EXACT_REGION_INFO_KEY_8616 = "x86_16_binary_exact_region"
 
 
 def _dynamic_attr(obj: object, name: str, default: object = None) -> _AngrObject:
     """Read dynamic angr/third-party attributes at the CLI recovery boundary."""
     return builtins.getattr(obj, name, default)
+
+
+@dataclass(frozen=True, slots=True)
+class DisplayCatalogCachePolicy8616:
+    """Runtime inputs that may change sidecar-free function discovery results."""
+
+    ignore_local_sidecar_hints: bool
+    include_library_functions: bool
+    function_discovery_backend: str
+    pat_backend: str
+    max_functions: int
+    timeout: int
+    window: int
+    rizin_timeout: int
+    low_memory: bool
+    auto_rizin_policy: str
+    signature_catalog_path: str | None
+    signature_catalog_size: int | None
+    signature_catalog_mtime_ns: int | None
+
+    @classmethod
+    def from_runtime(
+        cls,
+        *,
+        ignore_local_sidecar_hints: bool,
+        include_library_functions: bool,
+        function_discovery_backend: str,
+        pat_backend: str,
+        max_functions: int,
+        timeout: int,
+        window: int,
+        rizin_timeout: int,
+        low_memory: bool,
+        auto_rizin_policy: str,
+        signature_catalog: Path | None,
+    ) -> Self:
+        """Build a stable cache policy from the effective CLI discovery inputs."""
+        catalog_path: str | None = None
+        catalog_size: int | None = None
+        catalog_mtime_ns: int | None = None
+        if signature_catalog is not None:
+            try:
+                resolved_catalog = signature_catalog.resolve()
+                catalog_stat = resolved_catalog.stat()
+            except OSError:
+                catalog_path = str(signature_catalog)
+            else:
+                catalog_path = str(resolved_catalog)
+                catalog_size = catalog_stat.st_size
+                catalog_mtime_ns = catalog_stat.st_mtime_ns
+        return cls(
+            ignore_local_sidecar_hints=bool(ignore_local_sidecar_hints),
+            include_library_functions=bool(include_library_functions),
+            function_discovery_backend=function_discovery_backend.strip().lower(),
+            pat_backend=pat_backend.strip().lower(),
+            max_functions=max(0, int(max_functions)),
+            timeout=max(1, int(timeout)),
+            window=max(1, int(window)),
+            rizin_timeout=max(1, int(rizin_timeout)),
+            low_memory=bool(low_memory),
+            auto_rizin_policy=auto_rizin_policy.strip().lower() or "default",
+            signature_catalog_path=catalog_path,
+            signature_catalog_size=catalog_size,
+            signature_catalog_mtime_ns=catalog_mtime_ns,
+        )
+
+    def cache_fields(self) -> dict[str, object]:
+        """Return JSON-safe fields included in the display-catalog cache key."""
+        return {
+            "schema": _DISPLAY_CATALOG_CACHE_POLICY_SCHEMA_8616,
+            "ignore_local_sidecar_hints": self.ignore_local_sidecar_hints,
+            "include_library_functions": self.include_library_functions,
+            "function_discovery_backend": self.function_discovery_backend,
+            "pat_backend": self.pat_backend,
+            "max_functions": self.max_functions,
+            "timeout": self.timeout,
+            "window": self.window,
+            "rizin_timeout": self.rizin_timeout,
+            "low_memory": self.low_memory,
+            "auto_rizin_policy": self.auto_rizin_policy,
+            "signature_catalog_path": self.signature_catalog_path,
+            "signature_catalog_size": self.signature_catalog_size,
+            "signature_catalog_mtime_ns": self.signature_catalog_mtime_ns,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRegionCatalogEvidence8616:
+    """Closed evidence counts for a startup-bounded application catalog."""
+
+    raw_fact_count: int
+    normalized_fact_count: int
+    classified_fact_count: int
+    materialized_count: int
+    failure_count: int
+    failed_addrs: tuple[int, ...]
+
+    @property
+    def complete(self) -> bool:
+        """Return whether every classified source entry was materialized."""
+        return (
+            self.classified_fact_count > 0
+            and self.materialized_count == self.classified_fact_count
+            and self.failure_count == 0
+        )
+
+
+def _configure_display_catalog_cache_policy_8616(
+    project: angr.Project,
+    policy: DisplayCatalogCachePolicy8616,
+) -> None:
+    """Attach typed CLI cache policy to the dynamic third-party angr project."""
+    cast(Any, project)._inertia_display_catalog_cache_policy = policy
+
+
+def _display_catalog_cache_policy_8616(project: angr.Project) -> DisplayCatalogCachePolicy8616:
+    """Return configured policy or a conservative legacy-compatible default."""
+    policy = _dynamic_attr(project, "_inertia_display_catalog_cache_policy", None)
+    if isinstance(policy, DisplayCatalogCachePolicy8616):
+        return policy
+    return DisplayCatalogCachePolicy8616.from_runtime(
+        ignore_local_sidecar_hints=False,
+        include_library_functions=bool(_dynamic_attr(project, "_inertia_include_library_functions", False)),
+        function_discovery_backend="auto",
+        pat_backend="auto",
+        max_functions=0,
+        timeout=8,
+        window=0x400,
+        rizin_timeout=8,
+        low_memory=False,
+        auto_rizin_policy="default",
+        signature_catalog=None,
+    )
+
+
+def _source_region_catalog_evidence_8616(
+    project: angr.Project,
+) -> SourceRegionCatalogEvidence8616 | None:
+    """Read typed source-region evidence from the dynamic angr project boundary."""
+    evidence = _dynamic_attr(project, "_inertia_source_region_catalog_evidence", None)
+    return evidence if isinstance(evidence, SourceRegionCatalogEvidence8616) else None
 
 
 def _record_caller_return_use_evidence_8616(
@@ -173,6 +316,93 @@ def _collect_caller_return_use_for_entry_aliases_8616(
     unused = tuple(item for item in evidence_items if item.verdict is CallerReturnUseVerdict8616.UNUSED)
     if unused:
         return max(unused, key=lambda item: item.classified_fact_count)
+    return None
+
+
+def _binary_padding_entry_aliases_8616(
+    project: object,
+    function_addr: int,
+    *,
+    max_padding: int | None = None,
+) -> tuple[int, ...]:
+    """Return callable addresses in the contiguous NOP run before a prologue.
+
+    MS C may expose a public entry at the beginning of alignment padding while
+    binary function recovery intentionally selects the framed prologue. Every
+    address in the contiguous NOP suffix reaches that prologue without side
+    effects, so each is a valid alias for caller-use evidence.
+    """
+    padding_limit = (
+        _X86_16_EXACT_REGION_PADDING_SCAN_LIMIT
+        if max_padding is None
+        else max_padding
+    )
+    loader = _dynamic_attr(project, "loader", None)
+    memory = _dynamic_attr(loader, "memory", None)
+    if memory is None or not hasattr(memory, "load") or padding_limit <= 0:
+        return (function_addr,)
+    scan_start = max(0, function_addr - padding_limit)
+    try:
+        prefix = bytes(memory.load(scan_start, function_addr - scan_start))
+    except Exception:
+        return (function_addr,)
+    suffix_length = 0
+    for byte in reversed(prefix):
+        if byte != 0x90:
+            break
+        suffix_length += 1
+    if suffix_length == 0:
+        return (function_addr,)
+    padding_start = function_addr - suffix_length
+    return tuple(range(padding_start, function_addr + 1))
+
+
+def _entry_linear_caller_range_8616(
+    project: object,
+    *,
+    target_addrs: tuple[int, ...] = (),
+    max_scan: int = 0x200,
+) -> tuple[int, int] | None:
+    """Return an entry range ending after a direct call into the source region."""
+    entry = _dynamic_attr(project, "entry", None)
+    loader = _dynamic_attr(project, "loader", None)
+    memory = _dynamic_attr(loader, "memory", None)
+    arch = _dynamic_attr(project, "arch", None)
+    disassembler = _dynamic_attr(arch, "capstone", None)
+    if (
+        not isinstance(entry, int)
+        or memory is None
+        or not hasattr(memory, "load")
+        or disassembler is None
+        or max_scan <= 0
+    ):
+        return None
+    try:
+        code = bytes(memory.load(entry, max_scan))
+        instructions = tuple(disassembler.disasm(code, entry))
+    except Exception:
+        return None
+    normalized_targets = {target_addr & 0xFFFF for target_addr in target_addrs}
+    saw_target_call = not normalized_targets
+    for instruction in instructions:
+        address = _dynamic_attr(instruction, "address", None)
+        size = _dynamic_attr(instruction, "size", None)
+        mnemonic = _dynamic_attr(instruction, "mnemonic", None)
+        instruction_bytes = _dynamic_attr(instruction, "bytes", b"")
+        encoded = bytes(instruction_bytes) if isinstance(instruction_bytes, (bytes, bytearray)) else b""
+        if isinstance(address, int) and encoded[:1] == b"\xe8" and len(encoded) >= 3:
+            relative = int.from_bytes(encoded[1:3], "little", signed=True)
+            saw_target_call = saw_target_call or ((address + 3 + relative) & 0xFFFF) in normalized_targets
+        if (
+            saw_target_call
+            and
+            isinstance(address, int)
+            and isinstance(size, int)
+            and size > 0
+            and isinstance(mnemonic, str)
+            and mnemonic.lower() in {"ret", "retf", "iret"}
+        ):
+            return entry, address + size
     return None
 
 
@@ -242,6 +472,7 @@ __all__ = [
     "_function_skip_reason",
     "_function_recovery_score",
     "_function_covered_ranges",
+    "_function_binary_exact_region_8616",
     "_addr_in_ranges",
     "_candidate_recovery_regions",
     "_richest_bounded_recovery_region",
@@ -257,6 +488,11 @@ __all__ = [
     "_rank_function_cfg_pairs_for_display",
     "_expanded_exe_discovery_limit",
     "_supplement_cached_seeded_recovery",
+    "DisplayCatalogCachePolicy8616",
+    "SourceRegionCatalogEvidence8616",
+    "_configure_display_catalog_cache_policy_8616",
+    "_catalog_address_cache_key_8616",
+    "_source_region_catalog_evidence_8616",
     "_store_catalog_address_cache",
     "_load_catalog_address_cache",
     "_supplement_functions_from_prologue_scan",
@@ -930,6 +1166,37 @@ def _function_covered_ranges(function: _AngrFunction) -> list[tuple[int, int]]:
         return merged
 
     return _impl()
+
+
+def _mark_function_binary_exact_region_8616(
+    function: _AngrFunction,
+    exact_region: tuple[int, int],
+) -> None:
+    """Attach binary-derived function bounds at the dynamic angr boundary."""
+    info = _dynamic_attr(function, "info", None)
+    if not isinstance(info, dict):
+        with contextlib.suppress(Exception):
+            function.info = {}
+        info = _dynamic_attr(function, "info", None)
+    if isinstance(info, dict):
+        info[_BINARY_EXACT_REGION_INFO_KEY_8616] = exact_region
+
+
+def _function_binary_exact_region_8616(function: object) -> tuple[int, int] | None:
+    """Return validated binary-derived bounds attached during discovery."""
+    info = _dynamic_attr(function, "info", None)
+    if not isinstance(info, dict):
+        return None
+    region = info.get(_BINARY_EXACT_REGION_INFO_KEY_8616)
+    if (
+        isinstance(region, tuple)
+        and len(region) == 2
+        and isinstance(region[0], int)
+        and isinstance(region[1], int)
+        and region[0] < region[1]
+    ):
+        return region
+    return None
 
 
 def _addr_in_ranges(addr: int, ranges: list[tuple[int, int]]) -> bool:
@@ -1711,19 +1978,24 @@ def _recover_candidate_function_pair(
     metadata: LSTMetadata | None,
     project_entry: int,
     region_span: int,
+    exact_region: tuple[int, int] | None = None,
 ) -> _FunctionCfgPair:
     def _impl() -> _FunctionCfgPair:
         block = candidate_project.factory.block(candidate_addr, size=8, opt_level=0)
         insns = block.capstone.insns
         if len(insns) < 1:
             raise KeyError(f"Function {candidate_addr:#x} does not have a valid first instruction.")
-        exact_region = _lst_code_region(metadata, candidate_addr)
-        candidate_regions = _candidate_recovery_regions(
-            metadata,
-            candidate_addr,
-            image_end=image_end,
-            region_span=region_span,
-            project_entry=project_entry,
+        bounded_exact_region = exact_region or _lst_code_region(metadata, candidate_addr)
+        candidate_regions = (
+            [bounded_exact_region]
+            if bounded_exact_region is not None
+            else _candidate_recovery_regions(
+                metadata,
+                candidate_addr,
+                image_end=image_end,
+                region_span=region_span,
+                project_entry=project_entry,
+            )
         )
         best_pair: _FunctionCfgPair | None = None
         best_score = (-1, -1)
@@ -1751,15 +2023,15 @@ def _recover_candidate_function_pair(
         truncated = False
         if (
             best_pair is not None
-            and exact_region is not None
-            and _exact_region_recovery_looks_truncated(best_pair[1], exact_region)
+            and bounded_exact_region is not None
+            and _exact_region_recovery_looks_truncated(best_pair[1], bounded_exact_region)
         ):
             truncated = True
             try:
                 stitched_func, stitched = _stitch_x86_16_exact_function_8616(
                     candidate_project,
                     best_pair[1],
-                    exact_region,
+                    bounded_exact_region,
                 )
                 if stitched:
                     best_pair = (best_pair[0], stitched_func)
@@ -1817,6 +2089,8 @@ def _recover_candidate_function_pair(
                 last_error = exc
         if best_pair is not None:
             _repair_x86_16_function_graph_8616(candidate_project, best_pair[1])
+            if bounded_exact_region is not None:
+                _mark_function_binary_exact_region_8616(best_pair[1], bounded_exact_region)
             _mark_function_recovery_truncated(best_pair[1], truncated)
             return best_pair
         if last_error is not None:
@@ -2025,19 +2299,29 @@ def _supplement_cached_seeded_recovery(
     return _impl()
 
 
-def _store_catalog_address_cache(
+def _catalog_address_cache_key_8616(
     project: angr.Project,
     binary_path: Path,
-    function_cfg_pairs: list[_FunctionCfgPair],
-) -> None:
-    cache_key = _recovery_cache_key(
+) -> dict[str, object] | None:
+    """Build a display-catalog key from binary identity and discovery policy."""
+    policy = _display_catalog_cache_policy_8616(project)
+    return _recovery_cache_key(
         binary_path=binary_path,
         kind="display_catalog_addrs",
         extra={
             "entry": _dynamic_attr(project, "entry", None),
             "arch": _dynamic_attr(_dynamic_attr(project, "arch", None), "name", None),
+            "display_catalog_policy": policy.cache_fields(),
         },
     )
+
+
+def _store_catalog_address_cache(
+    project: angr.Project,
+    binary_path: Path,
+    function_cfg_pairs: list[_FunctionCfgPair],
+) -> None:
+    cache_key = _catalog_address_cache_key_8616(project, binary_path)
     if cache_key is None:
         return
     addrs = [
@@ -2049,14 +2333,7 @@ def _store_catalog_address_cache(
 
 
 def _load_catalog_address_cache(project: angr.Project, binary_path: Path) -> list[int]:
-    cache_key = _recovery_cache_key(
-        binary_path=binary_path,
-        kind="display_catalog_addrs",
-        extra={
-            "entry": _dynamic_attr(project, "entry", None),
-            "arch": _dynamic_attr(_dynamic_attr(project, "arch", None), "name", None),
-        },
-    )
+    cache_key = _catalog_address_cache_key_8616(project, binary_path)
     cached = _load_cache_json("recovery", cache_key) if cache_key is not None else None
     if not isinstance(cached, dict):
         return []
@@ -2658,6 +2935,7 @@ def _final_seed_priority_8616(
     entry_window_targets: set[int],
     relocation_control_targets: set[int],
     relocation_pointer_targets: set[int],
+    source_region_start: int | None,
 ) -> tuple[int, int, int] | None:
     def _impl() -> tuple[int, int, int] | None:
         metadata_span_len = bounded_metadata_spans.get(addr)
@@ -2671,12 +2949,19 @@ def _final_seed_priority_8616(
         in_relocation_control = addr in relocation_control_targets
         in_relocation_pointer = addr in relocation_pointer_targets
         entry_descends_from_stub = in_entry_window and addr < project_entry
+        in_source_region = source_region_start is not None and source_region_start <= addr < project_entry
         if metadata_span_len is not None:
             final_priority = 0
         elif entry_descends_from_stub and (in_neighbor or in_near_call or in_far_call):
             final_priority = 0
         elif entry_descends_from_stub:
             final_priority = 1
+        elif in_source_region and in_prologue:
+            final_priority = 0
+        elif in_source_region and (in_neighbor or in_near_call or in_far_call or in_tracer_call):
+            final_priority = 1
+        elif in_source_region:
+            final_priority = 2
         elif in_entry_window and (in_neighbor or in_near_call or in_far_call):
             final_priority = 1
         elif in_relocation_control and (in_prologue or in_near_call or in_far_call):
@@ -2752,6 +3037,12 @@ def _rank_exe_function_seeds(
             return []
         seed_windows = _seed_scan_windows(project)
         entry_window_targets = _entry_window_seed_targets(project, code, linked_base=linked_base)
+        pre_entry_start_targets = tuple(
+            target
+            for target in entry_window_targets
+            if linked_base <= target < project.entry
+        )
+        source_region_start = min(pre_entry_start_targets) if pre_entry_start_targets else None
 
         def _window_contains(addr: int) -> bool:
             return any(start <= addr < end for start, end in seed_windows)
@@ -2844,6 +3135,7 @@ def _rank_exe_function_seeds(
                 entry_window_targets=entry_window_targets,
                 relocation_control_targets=relocation_control_targets,
                 relocation_pointer_targets=relocation_pointer_targets,
+                source_region_start=source_region_start,
             )
             if priority is not None:
                 reranked.append((priority, addr))
@@ -2854,6 +3146,191 @@ def _rank_exe_function_seeds(
         return ranked_addrs
 
     return _impl()
+
+
+def _rank_pre_entry_source_function_seeds_8616(project: angr.Project) -> list[int]:
+    """Return framed application entries bounded by a startup call to lower code."""
+    if project.arch.name != "86_16":
+        return []
+    main_object = _dynamic_attr(project.loader, "main_object", None)
+    if main_object is None:
+        return []
+    linked_base = _dynamic_attr(main_object, "linked_base", None)
+    max_addr = _dynamic_attr(main_object, "max_addr", None)
+    if not isinstance(linked_base, int) or not isinstance(max_addr, int):
+        return []
+    try:
+        code = bytes(main_object.memory.load(0, max_addr + 1))
+    except Exception:
+        return []
+
+    entry_targets = _entry_window_seed_targets(project, code, linked_base=linked_base)
+    framed_pre_entry_targets = tuple(
+        target
+        for target in entry_targets
+        if linked_base <= target < project.entry
+        and _looks_like_x86_16_function_prologue(code, target - linked_base)
+    )
+    if not framed_pre_entry_targets:
+        return []
+    source_region_start = min(framed_pre_entry_targets)
+    ranked_seeds = _rank_exe_function_seeds(project)
+    source_seeds = [
+        addr
+        for addr in ranked_seeds
+        if source_region_start <= addr < project.entry
+        and _looks_like_x86_16_function_prologue(code, addr - linked_base)
+    ]
+    if source_region_start not in source_seeds:
+        return []
+    return source_seeds
+
+
+def _recover_pre_entry_source_catalog_8616(
+    project: angr.Project,
+    *,
+    source_seeds: Sequence[int],
+    timeout: int,
+    per_function_timeout: int = 2,
+    region_span: int = 0x120,
+    raw_fact_count: int | None = None,
+) -> tuple[list[_FunctionCfgPair], SourceRegionCatalogEvidence8616]:
+    """Materialize each independently framed entry in a startup-bounded region."""
+    main_object = _dynamic_attr(project.loader, "main_object", None)
+    binary_path = _dynamic_attr(main_object, "binary", None)
+    linked_base = _dynamic_attr(main_object, "linked_base", None)
+    max_addr = _dynamic_attr(main_object, "max_addr", None)
+    normalized_seeds = tuple(dict.fromkeys(addr for addr in source_seeds if isinstance(addr, int)))
+    raw_count = len(source_seeds) if raw_fact_count is None else max(len(source_seeds), raw_fact_count)
+    if (
+        main_object is None
+        or binary_path is None
+        or not isinstance(linked_base, int)
+        or not isinstance(max_addr, int)
+    ):
+        evidence = SourceRegionCatalogEvidence8616(
+            raw_fact_count=raw_count,
+            normalized_fact_count=len(normalized_seeds),
+            classified_fact_count=len(normalized_seeds),
+            materialized_count=0,
+            failure_count=len(normalized_seeds),
+            failed_addrs=normalized_seeds,
+        )
+        return [], evidence
+
+    deadline = time.monotonic() + max(1, timeout)
+    image_end = linked_base + max_addr + 1
+    ordered_seeds = tuple(sorted(normalized_seeds))
+    exact_region_by_addr = {
+        addr: (addr, ordered_seeds[index + 1] if index + 1 < len(ordered_seeds) else min(project.entry, image_end))
+        for index, addr in enumerate(ordered_seeds)
+    }
+    metadata = cast(LSTMetadata | None, _dynamic_attr(project, "_inertia_lst_metadata", None))
+    recovered: list[_FunctionCfgPair] = []
+    recovered_addrs: set[int] = set()
+    failed_addrs: list[int] = []
+
+    def _recover_one(addr: int, candidate_timeout: int) -> _FunctionCfgPair | None:
+        try:
+            recovered_pair = _recover_candidate_with_timeout(
+                project,
+                candidate_addr=addr,
+                image_end=image_end,
+                metadata=metadata,
+                project_entry=project.entry,
+                region_span=region_span,
+                timeout=max(1, candidate_timeout),
+                binary_path=Path(binary_path),
+                linked_base=linked_base,
+            )
+            exact_region = exact_region_by_addr.get(addr)
+            if exact_region is not None:
+                _mark_function_binary_exact_region_8616(recovered_pair[1], exact_region)
+            return recovered_pair
+        except (_AnalysisTimeout, Exception):
+            return None
+
+    def _record_pair(recovered_pair: _FunctionCfgPair | None) -> bool:
+        if recovered_pair is None:
+            return False
+        function_cfg, function = recovered_pair
+        function_addr = _dynamic_attr(function, "addr", None)
+        if not isinstance(function_addr, int) or function_addr in recovered_addrs:
+            return False
+        if _function_skip_reason(function) is not None:
+            return False
+        recovered_addrs.add(function_addr)
+        recovered.append((function_cfg, function))
+        return True
+
+    for addr in normalized_seeds:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            failed_addrs.append(addr)
+            continue
+        candidate_timeout = min(max(1, per_function_timeout), max(1, int(remaining)))
+        if not _record_pair(_recover_one(addr, candidate_timeout)):
+            failed_addrs.append(addr)
+
+    retry_failures: list[int] = []
+    for addr in failed_addrs:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            retry_failures.append(addr)
+            continue
+        retry_timeout = min(max(4, per_function_timeout * 2), max(1, int(remaining)))
+        if not _record_pair(_recover_one(addr, retry_timeout)):
+            retry_failures.append(addr)
+    failed_addrs = retry_failures
+
+    evidence = SourceRegionCatalogEvidence8616(
+        raw_fact_count=raw_count,
+        normalized_fact_count=len(normalized_seeds),
+        classified_fact_count=len(normalized_seeds),
+        materialized_count=len(recovered),
+        failure_count=len(failed_addrs),
+        failed_addrs=tuple(failed_addrs),
+    )
+    function_ranges = tuple(
+        (
+            _binary_padding_entry_aliases_8616(project, start)[0],
+            end,
+        )
+        for start, end in (exact_region_by_addr[addr] for addr in ordered_seeds)
+    )
+    entry_caller_range = _entry_linear_caller_range_8616(
+        project,
+        target_addrs=ordered_seeds,
+    )
+    if entry_caller_range is not None:
+        function_ranges = (*function_ranges, entry_caller_range)
+    for _function_cfg, function in recovered:
+        function_addr = _dynamic_attr(function, "addr", None)
+        if not isinstance(function_addr, int):
+            continue
+        caller_return_use = _collect_caller_return_use_for_entry_aliases_8616(
+            project,
+            _binary_padding_entry_aliases_8616(project, function_addr),
+            function_ranges,
+        )
+        if caller_return_use is not None:
+            _record_caller_return_use_evidence_8616(
+                project,
+                function_addr,
+                replace(caller_return_use, target_addr=function_addr),
+            )
+    print(
+        "/* source-region discovery evidence: "
+        f"raw_fact_count={evidence.raw_fact_count} "
+        f"normalized_fact_count={evidence.normalized_fact_count} "
+        f"classified_fact_count={evidence.classified_fact_count} "
+        f"materialized_count={evidence.materialized_count} "
+        f"failure_count={evidence.failure_count} "
+        f"failed_addrs={','.join(hex(addr) for addr in evidence.failed_addrs) or 'none'} */"
+    )
+    if evidence.classified_fact_count > 0 and evidence.materialized_count == 0:
+        raise RuntimeError("source-region discovery classified entries but materialized none")
+    return recovered, evidence
 
 
 def _recover_fast_seed_functions(
@@ -2885,37 +3362,53 @@ def _recover_fast_exe_catalog(
 ) -> list[_FunctionCfgPair]:
     recovered: list[_FunctionCfgPair] = []
     seen_addrs: set[int] = set()
+    source_seeds = _rank_pre_entry_source_function_seeds_8616(project)
+    selected_source_seeds = source_seeds if limit is None else source_seeds[:limit]
+    include_library_functions = bool(_dynamic_attr(project, "_inertia_include_library_functions", False))
 
-    entry_start = time.perf_counter()
-    try:
-        entry_pair = _run_with_timeout_in_daemon_thread(
-            lambda: _fallback_entry_function(
-                project,
+    if not selected_source_seeds or include_library_functions:
+        entry_start = time.perf_counter()
+        try:
+            entry_pair = _run_with_timeout_in_daemon_thread(
+                lambda: _fallback_entry_function(
+                    project,
+                    timeout=max(1, min(timeout, 6)),
+                    window=window,
+                    low_memory=low_memory,
+                    prefer_fast_recovery=True,
+                ),
                 timeout=max(1, min(timeout, 6)),
-                window=window,
-                low_memory=low_memory,
-                prefer_fast_recovery=True,
-            ),
-            timeout=max(1, min(timeout, 6)),
-            thread_name_prefix="fast-entry",
-        )
-    except Exception:
-        entry_pair = None
-    print(f"[dbg] quick EXE function-list pass: entry-function recovery {time.perf_counter() - entry_start:.2f}s")
-    sys.stdout.flush()
-    if entry_pair is not None:
-        entry_cfg, entry_function = entry_pair
-        if _function_skip_reason(entry_function) is None:
-            recovered.append((entry_cfg, entry_function))
-            seen_addrs.add(entry_function.addr)
+                thread_name_prefix="fast-entry",
+            )
+        except Exception:
+            entry_pair = None
+        print(f"[dbg] quick EXE function-list pass: entry-function recovery {time.perf_counter() - entry_start:.2f}s")
+        sys.stdout.flush()
+        if entry_pair is not None:
+            entry_cfg, entry_function = entry_pair
+            if _function_skip_reason(entry_function) is None:
+                recovered.append((entry_cfg, entry_function))
+                seen_addrs.add(entry_function.addr)
 
-    seed_limit = None if limit is None else max(limit * 2, limit + 4)
     seed_start = time.perf_counter()
-    seeded = _recover_fast_seed_functions(
-        project,
-        timeout=max(1, min(timeout, 8)),
-        limit=seed_limit,
-    )
+    if selected_source_seeds:
+        source_budget = min(max(1, timeout), max(8, min(45, len(selected_source_seeds) * 2 + 5)))
+        seeded, source_evidence = _recover_pre_entry_source_catalog_8616(
+            project,
+            source_seeds=selected_source_seeds,
+            timeout=source_budget,
+            per_function_timeout=2,
+            raw_fact_count=len(source_seeds),
+        )
+        cast(Any, project)._inertia_source_region_catalog_evidence = source_evidence
+        seed_limit = len(selected_source_seeds)
+    else:
+        seed_limit = None if limit is None else max(limit * 2, limit + 4)
+        seeded = _recover_fast_seed_functions(
+            project,
+            timeout=max(1, min(timeout, 8)),
+            limit=seed_limit,
+        )
     print(
         f"[dbg] quick EXE function-list pass: candidate-function recovery {time.perf_counter() - seed_start:.2f}s "
         f"(seed limit {seed_limit if seed_limit is not None else 'all'})"
@@ -3199,8 +3692,9 @@ def _candidate_recovery_cache_key(
     image_end: int,
     project_entry: int,
     region_span: int,
-) -> tuple[int, int, int, int]:
-    return (candidate_addr, image_end, project_entry, region_span)
+    exact_region: tuple[int, int] | None = None,
+) -> tuple[int, int, int, int, tuple[int, int] | None]:
+    return (candidate_addr, image_end, project_entry, region_span, exact_region)
 
 
 def _lookup_candidate_recovery_cache(
@@ -3210,6 +3704,7 @@ def _lookup_candidate_recovery_cache(
     image_end: int,
     project_entry: int,
     region_span: int,
+    exact_region: tuple[int, int] | None = None,
 ) -> _CandidateRecoveryCacheValue | None:
     cache = _dynamic_attr(project, "_inertia_candidate_recovery_cache", None)
     if not isinstance(cache, dict):
@@ -3220,6 +3715,7 @@ def _lookup_candidate_recovery_cache(
             image_end=image_end,
             project_entry=project_entry,
             region_span=region_span,
+            exact_region=exact_region,
         )
     )
 
@@ -3231,6 +3727,7 @@ def _store_candidate_recovery_cache(
     image_end: int,
     project_entry: int,
     region_span: int,
+    exact_region: tuple[int, int] | None = None,
     value: _CandidateRecoveryCacheValue,
 ) -> None:
     cache = _dynamic_attr(project, "_inertia_candidate_recovery_cache", None)
@@ -3243,6 +3740,7 @@ def _store_candidate_recovery_cache(
             image_end=image_end,
             project_entry=project_entry,
             region_span=region_span,
+            exact_region=exact_region,
         )
     ] = value
 
@@ -3309,6 +3807,7 @@ def _recover_candidate_with_timeout(
     timeout: int,
     binary_path: Path,
     linked_base: int,
+    exact_region: tuple[int, int] | None = None,
 ) -> _FunctionCfgPair:
     cached_result = _lookup_candidate_recovery_cache(
         project,
@@ -3316,6 +3815,7 @@ def _recover_candidate_with_timeout(
         image_end=image_end,
         project_entry=project_entry,
         region_span=region_span,
+        exact_region=exact_region,
     )
     if isinstance(cached_result, tuple):
         cache_status = cached_result[0]
@@ -3332,6 +3832,7 @@ def _recover_candidate_with_timeout(
             metadata=metadata,
             project_entry=project_entry,
             region_span=region_span,
+            exact_region=exact_region,
         )
 
     def _recover_once() -> _FunctionCfgPair:
@@ -3343,6 +3844,7 @@ def _recover_candidate_with_timeout(
                 image_end=image_end,
                 project_entry=project_entry,
                 region_span=region_span,
+                exact_region=exact_region,
                 value=("ok", recovered_pair),
             )
             return recovered_pair
@@ -3353,6 +3855,7 @@ def _recover_candidate_with_timeout(
                 image_end=image_end,
                 project_entry=project_entry,
                 region_span=region_span,
+                exact_region=exact_region,
                 value=("keyerror", str(exc)),
             )
             raise
@@ -3370,6 +3873,7 @@ def _recover_candidate_with_timeout(
                 image_end=image_end,
                 project_entry=project_entry,
                 region_span=region_span,
+                exact_region=exact_region,
                 value=("ok", recovered_pair),
             )
             return recovered_pair
@@ -4704,6 +5208,7 @@ def _recover_direct_addr_function(
     lst_metadata: LSTMetadata | None,
     low_memory_path: bool,
     prefer_fast_recovery: bool,
+    exact_region: tuple[int, int] | None = None,
 ) -> _FunctionCfgPair:
     def _impl() -> _FunctionCfgPair:
         nonlocal addr
@@ -4771,6 +5276,7 @@ def _recover_direct_addr_function(
                         metadata=lst_metadata,
                         project_entry=project.entry,
                         region_span=max(window, 0x180),
+                        exact_region=exact_region,
                     )
                 regions = [_infer_x86_16_linear_region(project, addr, window=window)]
             else:

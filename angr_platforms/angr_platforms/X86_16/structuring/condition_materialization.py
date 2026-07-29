@@ -45,7 +45,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 
 from .. import decompiler_postprocess_jcc as _legacy_jcc
 from .. import decompiler_postprocess_typed_conditions as _legacy_typed_conditions
-from ..c_ast_utils import _iter_c_nodes_deep_8616
+from ..c_ast_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
 from ..ir.condition_ir import ConditionIR
 from ..lowering.call_output_stack_objects import (
     lower_call_output_stack_fields_in_condition_8616,
@@ -975,10 +975,6 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             failure_count += 1
             continue
         tags = _copied_condition_tags_8616(condition)
-        if tags.get("inertia_structuring_condition_cfg_materialized_8616") is True:
-            classified_count += 1
-            materialized_count += 1
-            continue
         if not successors:
             _debug_condition_chain_8616("no-successors", fact_src=root_fact.src_insn)
             failure_count += 1
@@ -1025,6 +1021,18 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             failure_count += 1
             continue
         classified_count += 1
+        if (
+            tags.get("inertia_structuring_condition_cfg_materialized_8616") is True
+            and _same_c_expression_8616(condition, replacement)
+        ):
+            materialized_count += 1
+            continue
+        if tags.get("inertia_structuring_condition_cfg_materialized_8616") is True:
+            _debug_condition_chain_8616(
+                "tagged-condition-drift-rematerialized",
+                fact_block=root_fact.block_addr,
+                fact_src=root_fact.src_insn,
+            )
         if isinstance(root_fact.src_insn, int):
             tags["ins_addr"] = root_fact.src_insn
         if isinstance(root_fact.block_addr, int):

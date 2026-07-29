@@ -647,6 +647,56 @@ def test_structuring_single_branch_uses_taken_condition_for_taken_owned_body(mon
     assert codegen._inertia_structuring_condition_chain_stats_8616.materialized_count == 1
 
 
+def test_structuring_single_branch_rematerializes_tagged_condition_drift(monkeypatch):
+    codegen = _Codegen()
+    condition = CConstant(0, SimTypeShort(False), codegen=codegen)
+    condition.tags = {"ins_addr": 0x1002, "vex_block_addr": 0x1000}
+    body = _tagged_statements(0x1012, codegen)
+    body.tags["vex_block_addr"] = 0x1010
+    branch = CIfElse([(condition, body)], else_node=None, cstyle_ifs=True, codegen=codegen)
+    root = CStatements([branch], codegen=codegen)
+    fact = _targeted_condition(0x1002, 0x1000, 0x1010, 0x1004)
+    graph = _Graph(((0x1004, 0x1020), (0x1010, 0x1018), (0x1018, 0x1020)))
+    function = SimpleNamespace(transition_graph=graph, block_addrs_set=set(graph.nodes) | {0x1000})
+    project = SimpleNamespace(kb=SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: function)))
+    codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root)
+    codegen._inertia_typed_conditions = (fact,)
+
+    def _materialize(*_args):
+        return CBinaryOp(
+            "CmpNE",
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            CConstant(0, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+
+    monkeypatch.setattr(
+        condition_materialization._legacy_typed_conditions,
+        "_build_c_condition_expr",
+        _materialize,
+    )
+
+    assert condition_materialization.materialize_structuring_condition_chains_8616(project, codegen) is True
+    materialized = branch.condition_and_nodes[0][0]
+    drifted = CBinaryOp(
+        "CmpEQ",
+        materialized.lhs,
+        materialized.rhs,
+        codegen=codegen,
+    )
+    drifted.tags = dict(materialized.tags)
+    branch.condition_and_nodes = [(drifted, body)]
+
+    assert condition_materialization.materialize_structuring_condition_chains_8616(project, codegen) is True
+    repaired = branch.condition_and_nodes[0][0]
+    assert repaired.op == "CmpNE"
+    assert repaired is not drifted
+    stats = codegen._inertia_structuring_condition_chain_stats_8616
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 0
+
+
 def test_structuring_single_branch_refuses_to_rebind_tagged_condition_by_body_shape(monkeypatch):
     codegen = _Codegen()
     condition = CConstant(0, SimTypeShort(False), codegen=codegen)

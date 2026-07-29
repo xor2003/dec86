@@ -117,6 +117,23 @@ def test_dos_mz_loader_allows_up_to_fifteen_bytes_of_overlap_between_neighbor_se
     assert spans[1].end_linear - spans[2].start_linear == 0x0F
 
 
+def test_dos_mz_jcc_preserves_relocated_linear_branch_destinations(tmp_path):
+    header = bytearray(0x40)
+    header[0:2] = b"MZ"
+    header[0x08:0x0A] = (4).to_bytes(2, "little")
+    code = bytes.fromhex("837e04007503eb0190c3")  # cmp [bp+4],0; jne +3; jmp +1; nop; ret
+    sample = tmp_path / "relocated-jcc.exe"
+    sample.write_bytes(bytes(header) + code)
+    project = angr.Project(sample, main_opts={"base_addr": 0x10000})
+
+    block = project.factory.block(project.entry, opt_level=0)
+    vex_text = block.vex._pp_str()
+
+    assert project.entry == 0x10000
+    assert "PUT(ip) = 0x10009" in vex_text
+    assert "PUT(ip) = 0x10006" in vex_text
+
+
 @pytest.mark.skipif(not T_EXE_PATH.exists(), reason="f15se2-re test executable is not available")
 def test_dos_mz_backend_loads_real_executable():
     header = _read_mz_header(T_EXE_PATH)

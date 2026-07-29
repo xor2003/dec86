@@ -217,6 +217,7 @@ from .structuring.return_chains import (
     TerminalAxReturnEffectKind8616,
     TerminalAxReturnOperandKind8616,
     TerminalAxScanCallbacks8616,
+    VoidTailCallGuardProof8616,
     VoidTailCallGuardStatus8616,
     VoidTailCallShapeCallbacks8616,
     VoidTailCallSuffixDiamondCallbacks8616,
@@ -5979,11 +5980,17 @@ def _materialize_void_tail_call_guard_from_cfg_8616(project: StructuredAstValue,
 
     has_explicit_void_return = _codegen_has_explicit_void_return_8616(project, codegen)
 
-    proofs: list[tuple[frozenset[StructuredAstValue], str]] = []
+    proofs: list[VoidTailCallGuardProof8616] = []
     cfg_pairs = _ordered_conditional_void_tail_call_proofs_from_cfg_8616(project, codegen)
     for cond, true_expr in cfg_pairs:
         true_fp = _expr_fingerprint(true_expr, project)
-        proofs.append((_condition_identity_keys_8616(project, cond), true_fp))
+        proofs.append(
+            VoidTailCallGuardProof8616(
+                condition=cond,
+                condition_keys=frozenset(_condition_identity_keys_8616(project, cond)),
+                true_fingerprint=true_fp,
+            )
+        )
     if debug:
         log.warning(
             "[void-tail-call-guard] scan pairs=%d proofs=%r explicit_void=%s",
@@ -6014,7 +6021,7 @@ def _materialize_void_tail_call_guard_from_cfg_8616(project: StructuredAstValue,
             cond=cond,
             false_body=false_body,
             cond_keys=cond_keys,
-            proofs=proofs,
+            proofs=((proof.condition_keys, proof.true_fingerprint) for proof in proofs),
             codegen=codegen,
             callbacks=_void_tail_call_suffix_diamond_callbacks_8616(project),
         )
@@ -6140,11 +6147,11 @@ def _materialize_void_tail_call_guard_from_cfg_8616(project: StructuredAstValue,
                     call_arg_fps,
                     proofs,
                 )
-            exact_matches = [true_fp for proof_keys, true_fp in proofs if cond_keys & proof_keys]
-            unique_arg_matches = [true_fp for _proof_keys, true_fp in proofs if true_fp in call_arg_fps]
-            if not exact_matches and len(unique_arg_matches) == 1:
-                exact_matches = unique_arg_matches
-            if not exact_matches:
+            exact_proofs = [proof for proof in proofs if cond_keys & proof.condition_keys]
+            argument_proofs = [proof for proof in proofs if proof.true_fingerprint in call_arg_fps]
+            if not exact_proofs and len(argument_proofs) == 1:
+                exact_proofs = argument_proofs
+            if not exact_proofs:
                 stats["refused"] += 1
                 codegen._inertia_void_tail_call_guard_decision_8616 = (
                     _VoidTailCallGuardDecision8616.KEEP_NO_BRANCH_MATCH.value
@@ -6153,21 +6160,28 @@ def _materialize_void_tail_call_guard_from_cfg_8616(project: StructuredAstValue,
                     log.warning("[void-tail-call-guard] refused no-branch-match")
                 index += 1
                 continue
-            if len(set(exact_matches)) != 1:
+            unique_proofs = {
+                (proof.condition_keys, proof.true_fingerprint): proof for proof in exact_proofs
+            }
+            if len(unique_proofs) != 1:
                 stats["refused"] += 1
                 codegen._inertia_void_tail_call_guard_decision_8616 = (
                     _VoidTailCallGuardDecision8616.KEEP_AMBIGUOUS_BRANCH_MATCH.value
                 )
                 if debug:
-                    log.warning("[void-tail-call-guard] refused ambiguous-match matches=%r", exact_matches)
+                    log.warning(
+                        "[void-tail-call-guard] refused ambiguous-match matches=%r",
+                        tuple(unique_proofs),
+                    )
                 index += 1
                 continue
+            matched_proof = next(iter(unique_proofs.values()))
 
             result = _structuring_materialize_void_tail_call_guard_8616(
                 stmt=stmt,
                 statements=statements,
                 index=index,
-                cond=cond,
+                proof=matched_proof,
                 tail_from_else=tail_from_else,
                 tail_payload=tail_payload,
                 codegen=codegen,
@@ -6193,7 +6207,12 @@ def _materialize_void_tail_call_guard_from_cfg_8616(project: StructuredAstValue,
                 int(getattr(codegen, "_inertia_void_tail_call_guard_materialized_8616", 0) or 0) + 1
             )
             if debug:
-                log.warning("[void-tail-call-guard] materialized index=%d matches=%r", index, exact_matches)
+                log.warning(
+                    "[void-tail-call-guard] materialized index=%d condition_keys=%r match=%r",
+                    index,
+                    matched_proof.condition_keys,
+                    matched_proof.true_fingerprint,
+                )
             changed = True
             index += 1
             continue

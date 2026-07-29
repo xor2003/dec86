@@ -9,6 +9,7 @@ from pathlib import Path
 
 from inertia_decompiler.acceptance_scorecard import build_acceptance_scorecard
 from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
+from scripts.check_sortd_sidecar_free import mz_executable_image
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
@@ -117,6 +118,34 @@ def _assert_clean_decompilation_output(combined_output: str) -> None:
     )
     for marker in forbidden_markers:
         assert marker not in combined_output, combined_output
+
+
+def test_sortd_sidecar_free_swapbars_recovers_binary_stack_arguments(tmp_path):
+    sortd_exe = tmp_path / "SORTD.EXE"
+    sortd_exe.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        sortd_exe,
+        0x10768,
+        analysis_timeout=60,
+        subprocess_timeout=120,
+        extra_args=(
+            "--no-alternate-source-c",
+            "--window",
+            "0x50",
+            "--c-target",
+            "portable-flat",
+        ),
+    )
+    output = _combined_output(result)
+
+    assert result.returncode == 0, output
+    assert "no helper metadata (.lst/.map/.cod/debug info) found" in output
+    assert "validation=passed" in output
+    assert re.search(r"void sub_10768\(unsigned short \w+, unsigned short \w+\)", result.stdout)
+    assert "local_4" not in result.stdout
+    assert "local_6" not in result.stdout
+    assert result.stdout.count("sub_106c8(") == 3
 
 
 def _typed_switch_replacement_safety_payloads(combined_output: str) -> tuple[dict[str, object], ...]:

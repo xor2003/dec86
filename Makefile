@@ -388,6 +388,7 @@ QA_TYPED_FILES := \
 	scripts/agent_context_check.py \
 	scripts/batch_decompile_procs.py \
 	scripts/build_msc6_examples.py \
+	scripts/check_sortd_sidecar_free.py \
 	scripts/check_decompiler_architecture.py \
 	scripts/import_ultra_quickc_fixtures.py \
 	scripts/test_pipeline.py \
@@ -848,6 +849,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_stack_aggregate_objects.py \
 	angr_platforms/tests/test_x86_16_stack_lowering_contracts.py \
 	angr_platforms/tests/test_x86_16_decompilation_cache_surface.py \
+	angr_platforms/tests/test_check_sortd_sidecar_free.py \
 	angr_platforms/tests/test_test_pipeline.py \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py \
 	angr_platforms/tests/test_x86_16_generated_c_acceptance.py \
@@ -911,6 +913,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_decompiler_architecture_check.py \
 	angr_platforms/tests/test_decompilation_quality.py \
 	angr_platforms/tests/test_cli_regeneration.py \
+	angr_platforms/tests/test_check_sortd_sidecar_free.py \
 	angr_platforms/tests/test_test_pipeline.py \
 	angr_platforms/tests/test_test_ownership_manifest.py \
 	angr_platforms/tests/test_x86_16_alias_register_mvp.py \

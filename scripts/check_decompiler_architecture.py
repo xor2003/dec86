@@ -1136,7 +1136,13 @@ _MAKEFILE_FORBIDDEN_MARKERS = (
 _PIPELINE_TIER_CONTRACT = {
     "fast": ("unit-focused",),
     "default": ("unit-focused", "ultra-quickc-fixtures", "msc6-tiny-full-pipeline"),
-    "expanded": ("unit-focused", "ultra-quickc-fixtures", "msc6-tiny-full-pipeline", "sortdemo-status"),
+    "expanded": (
+        "unit-focused",
+        "ultra-quickc-fixtures",
+        "msc6-tiny-full-pipeline",
+        "sortd-sidecar-free",
+        "sortdemo-status",
+    ),
 }
 
 _PROMOTED_TYPED_FILES = (

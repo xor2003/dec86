@@ -32,6 +32,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_omf_pat_lidata.py",
     "angr_platforms/tests/test_decompiler_architecture_check.py",
     "angr_platforms/tests/test_test_pipeline.py",
+    "angr_platforms/tests/test_check_sortd_sidecar_free.py",
     "angr_platforms/tests/test_test_ownership_manifest.py",
     "angr_platforms/tests/test_decompilation_quality.py",
     "angr_platforms/tests/test_cli_regeneration.py",
@@ -85,12 +86,19 @@ LANE_BUDGET_SECONDS: dict[str, float] = {
     "ultra-quickc-fixtures": 180.0,
     "sortdemo-status": 2100.0,
     "sortdemo-status-proc-diagnostic": 2100.0,
+    "sortd-sidecar-free": 1200.0,
 }
 
 PIPELINE_TIERS: dict[str, tuple[str, ...]] = {
     "fast": ("unit-focused",),
     "default": ("unit-focused", "ultra-quickc-fixtures", "msc6-tiny-full-pipeline"),
-    "expanded": ("unit-focused", "ultra-quickc-fixtures", "msc6-tiny-full-pipeline", "sortdemo-status"),
+    "expanded": (
+        "unit-focused",
+        "ultra-quickc-fixtures",
+        "msc6-tiny-full-pipeline",
+        "sortd-sidecar-free",
+        "sortdemo-status",
+    ),
 }
 
 
@@ -363,6 +371,32 @@ def _sortdemo_status_lane(
     return _run_command(name, cmd, env=env)
 
 
+def _sortd_sidecar_free_lane(args: argparse.Namespace) -> LaneResult:
+    """Run the executable-only whole-binary discovery and acceptance ratchet."""
+    cmd = [
+        sys.executable,
+        "scripts/check_sortd_sidecar_free.py",
+        "--source-binary",
+        str(args.sortdemo_binary),
+        "--decompile-timeout",
+        str(args.sortdemo_decompile_timeout),
+        "--run-timeout",
+        str(args.sortd_run_timeout),
+        "--transcript-out",
+        str(args.sortd_transcript_out),
+        "--report-out",
+        str(args.sortd_report_out),
+    ]
+    if not args.sortdemo_binary.is_file():
+        return _missing_external_lane(
+            "sortd-sidecar-free",
+            cmd,
+            reason=f"SORTDEMO source binary not found: {args.sortdemo_binary}",
+            require_external=bool(args.require_external),
+        )
+    return _run_command("sortd-sidecar-free", cmd)
+
+
 def _ultra_quickc_fixtures_command(args: argparse.Namespace) -> list[str]:
     return [
         sys.executable,
@@ -564,6 +598,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "msc6-tiny-full-pipeline",
             "sortdemo-status",
             "sortdemo-status-proc-diagnostic",
+            "sortd-sidecar-free",
         ),
     )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
@@ -583,6 +618,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sortdemo-max-functions", type=int, default=0)
     parser.add_argument("--sortdemo-decompile-timeout", type=int, default=60)
     parser.add_argument("--sortdemo-run-timeout", type=int, default=2000)
+    parser.add_argument("--sortd-run-timeout", type=int, default=1200)
     parser.add_argument(
         "--sortdemo-status-out",
         type=Path,
@@ -592,6 +628,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--sortdemo-transcript-out",
         type=Path,
         default=REPO_ROOT / "angr_platforms" / ".cache" / "test_pipeline" / "sortdemo_status.txt",
+    )
+    parser.add_argument(
+        "--sortd-report-out",
+        type=Path,
+        default=REPO_ROOT / "angr_platforms" / ".cache" / "test_pipeline" / "sortd_sidecar_free.json",
+    )
+    parser.add_argument(
+        "--sortd-transcript-out",
+        type=Path,
+        default=REPO_ROOT / "angr_platforms" / ".cache" / "test_pipeline" / "sortd_sidecar_free.txt",
     )
     parser.add_argument(
         "--msc6-workers",
@@ -621,6 +667,7 @@ def main(argv: list[str] | None = None) -> int:
             constructs=MSC6_TINY_CONSTRUCTS,
         ),
         "sortdemo-status": lambda: _sortdemo_status_lane(args),
+        "sortd-sidecar-free": lambda: _sortd_sidecar_free_lane(args),
         "sortdemo-status-proc-diagnostic": lambda: _sortdemo_status_lane(
             args, per_function_proc=True
         ),

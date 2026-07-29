@@ -46,6 +46,7 @@ from angr_platforms.X86_16.structuring.return_chains import (
     TerminalAxScanCallbacks8616,
     TerminalCallResultReturnCallbacks8616,
     TerminalCallResultReturnStatus8616,
+    VoidTailCallGuardProof8616,
     VoidTailCallGuardStatus8616,
     VoidTailCallShapeCallbacks8616,
     VoidTailCallSuffixDiamondCallbacks8616,
@@ -553,6 +554,44 @@ def test_tail_call_payload_from_statement_extracts_single_call_payload():
     assert tuple(payload.statements) == tuple(stmt.statements)
 
 
+def test_tail_call_payload_from_returned_call_builds_expression_statement():
+    codegen = _DummyCodegen()
+    call = CFunctionCall("sink", None, [], codegen=codegen)
+
+    result = tail_call_payload_from_statement_8616(
+        CReturn(call, codegen=codegen),
+        codegen,
+        _tail_shape_callbacks(),
+    )
+
+    assert result is not None
+    recovered_call, payload = result
+    assert recovered_call is call
+    assert isinstance(payload, CExpressionStatement)
+    assert payload.expr is call
+
+
+def test_tail_call_payload_from_wrapped_returned_call_builds_expression_statement():
+    codegen = _DummyCodegen()
+    call = CFunctionCall("sink", None, [], codegen=codegen)
+    wrapper = CStatements(
+        statements=[CReturn(call, codegen=codegen)],
+        codegen=codegen,
+    )
+
+    result = tail_call_payload_from_statement_8616(
+        wrapper,
+        codegen,
+        _tail_shape_callbacks(),
+    )
+
+    assert result is not None
+    recovered_call, payload = result
+    assert recovered_call is call
+    assert isinstance(payload, CExpressionStatement)
+    assert payload.expr is call
+
+
 def test_else_node_empty_accepts_absent_and_empty_statement_nodes():
     codegen = _DummyCodegen()
 
@@ -603,19 +642,24 @@ def test_calls_in_nodes_returns_empty_tuple_when_no_calls_exist():
 
 def test_materialize_void_tail_call_guard_moves_following_tail_into_true_body():
     codegen = _DummyCodegen()
-    cond = _const(1, codegen)
+    stale_cond = _const(0, codegen)
+    proven_cond = _const(1, codegen)
     empty_return = CReturn(None, codegen=codegen)
     empty_body = CStatements(statements=[empty_return], codegen=codegen)
     tail_call = CFunctionCall("tail", None, [], codegen=codegen)
     tail_stmt = CExpressionStatement(tail_call, codegen=codegen)
-    stmt = CIfElse([(cond, empty_body)], else_node=None, cstyle_ifs=True, codegen=codegen)
+    stmt = CIfElse([(stale_cond, empty_body)], else_node=None, cstyle_ifs=True, codegen=codegen)
     statements = [stmt, tail_stmt]
 
     result = materialize_void_tail_call_guard_8616(
         stmt=stmt,
         statements=statements,
         index=0,
-        cond=cond,
+        proof=VoidTailCallGuardProof8616(
+            condition=proven_cond,
+            condition_keys=frozenset({("fp", "CmpNE(arg,0)")}),
+            true_fingerprint="const:97",
+        ),
         tail_from_else=False,
         tail_payload=(tail_call, tail_stmt),
         codegen=codegen,
@@ -625,7 +669,8 @@ def test_materialize_void_tail_call_guard_moves_following_tail_into_true_body():
     assert result.removed_following_tail is True
     assert statements == [stmt]
     assert stmt.else_node is None
-    true_body = stmt.condition_and_nodes[0][1]
+    materialized_cond, true_body = stmt.condition_and_nodes[0]
+    assert materialized_cond is proven_cond
     assert isinstance(true_body, CStatements)
     assert tuple(true_body.statements) == (tail_stmt,)
 
@@ -646,7 +691,11 @@ def test_materialize_void_tail_call_guard_uses_existing_else_tail_payload():
         stmt=stmt,
         statements=statements,
         index=0,
-        cond=cond,
+        proof=VoidTailCallGuardProof8616(
+            condition=cond,
+            condition_keys=frozenset({("tag", 1)}),
+            true_fingerprint="tail",
+        ),
         tail_from_else=True,
         tail_payload=(tail_call, else_node),
         codegen=codegen,
@@ -672,7 +721,11 @@ def test_materialize_void_tail_call_guard_refuses_missing_following_tail_without
         stmt=stmt,
         statements=statements,
         index=0,
-        cond=cond,
+        proof=VoidTailCallGuardProof8616(
+            condition=cond,
+            condition_keys=frozenset({("tag", 1)}),
+            true_fingerprint="tail",
+        ),
         tail_from_else=False,
         tail_payload=(tail_call, tail_stmt),
         codegen=codegen,

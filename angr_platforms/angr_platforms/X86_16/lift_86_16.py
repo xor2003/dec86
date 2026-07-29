@@ -597,9 +597,10 @@ class Instruction_ANY(Instruction):
                 return False
             semantics = cast(tuple[Any, ...], self.simple_semantics)
             _, abs_target = semantics
-            target = self._const16(abs_target)
+            linear_target = self._linear_near_target_8616(int(abs_target))
+            target = self._code_address_constant_8616(linear_target)
             if kind == "jmp":
-                if (abs_target & 0xFFFF) == ((self.addr + self.cs.size) & 0xFFFF):
+                if linear_target == self.addr + self.cs.size:
                     return True
                 self.jump(None, target, JumpKind.Boring)
                 return True
@@ -685,6 +686,16 @@ class Instruction_ANY(Instruction):
 
     def _const32(self, value: int) -> Any:
         return self.constant(value & 0xFFFFFFFF, Type.int_32)
+
+    def _linear_near_target_8616(self, target: int) -> int:
+        """Project one 16-bit near target into the current linear code window."""
+        if target > 0xFFFF:
+            return target
+        return (int(self.addr) & ~0xFFFF) | (target & 0xFFFF)
+
+    def _code_address_constant_8616(self, value: int) -> Any:
+        """Build a VEX code-address constant without truncating the loader base."""
+        return self.constant(value, Type.int_16)
 
     def _bp_mem(self, operand: Any) -> _BPMemorySpec8616 | None:
         if operand.type != 3 or operand.size != 2:

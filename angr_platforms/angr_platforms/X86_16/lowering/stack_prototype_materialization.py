@@ -667,6 +667,7 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
     callsite_widths = _callsite_stack_arg_widths_8616(codegen)
     width_facts: list[FunctionParameterWidthFact8616] = []
     debug_rows: list[tuple[object, ...]] = []
+    changed = False
     for arg_type, cvar in zip(args, arg_cvars):
         variable = cvar.variable
         exact_width = _exact_typed_cvar_width_8616(cvar, arch)
@@ -694,10 +695,11 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
             arch=arch,
         )
         reconciled_args.append(reconciled)
-        classified_count += int(materialized)
+        classified_count += int(not failed)
         failure_count += int(failed)
         if materialized and cvar.variable_type != reconciled:
             typing.cast(typing.Any, cvar).variable_type = reconciled
+            changed = True
         debug_rows.append(
             (
                 variable.offset,
@@ -711,6 +713,7 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
         )
         if materialized and variable.size != exact_width:
             variable.size = exact_width
+            changed = True
         previous_end = variable.offset + exact_width
     parameter_width_facts = tuple(width_facts)
     typed_codegen._inertia_function_parameter_width_facts_8616 = parameter_width_facts
@@ -733,14 +736,21 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
         variadic=prototype.variadic,
     )
     new_prototype = cast(SimTypeFunction, _with_arch_8616(new_prototype, arch))
-    typed_cfunc.functy = new_prototype
+    if not _prototype_equivalent_8616(typed_cfunc.functy, new_prototype):
+        typed_cfunc.functy = new_prototype
+        changed = True
     func = _function_for_codegen_8616(project, codegen)
     if func is not None:
         typed_func = cast(_PrototypeFunction8616, func)
-        typed_func.prototype = new_prototype
-        typed_func.is_prototype_guessed = False
-    typed_codegen._inertia_codegen_decl_refresh_required_8616 = True
-    return True
+        if not _prototype_equivalent_8616(typed_func.prototype, new_prototype):
+            typed_func.prototype = new_prototype
+            changed = True
+        if typed_func.is_prototype_guessed:
+            typed_func.is_prototype_guessed = False
+            changed = True
+    if changed:
+        typed_codegen._inertia_codegen_decl_refresh_required_8616 = True
+    return changed
 
 
 def reconcile_callsite_interface_declarations_8616(project: object, codegen: object) -> bool:

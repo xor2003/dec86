@@ -194,6 +194,15 @@ class VoidTailCallGuardStatus8616(Enum):
     MISSING_FOLLOWING_TAIL = "missing_following_tail"
 
 
+@dataclass(frozen=True, slots=True)
+class VoidTailCallGuardProof8616:
+    """Bind one CFG-proven true branch condition to its tail-call fingerprint."""
+
+    condition: CExpression
+    condition_keys: frozenset[object]
+    true_fingerprint: str
+
+
 class DuplicateEmptyReturnGuardPruneReason8616(Enum):
     """Structured reason for pruning a duplicate empty return guard."""
 
@@ -491,11 +500,11 @@ def tail_call_payload_from_statement_8616(
     direct_call = tail_call_from_statement_8616(stmt, callbacks)
     if direct_call is not None:
         if isinstance(stmt, CReturn):
-            return direct_call, direct_call
+            return direct_call, CExpressionStatement(direct_call, codegen=codegen)
         if isinstance(stmt, CStatements):
             flat = flatten_straightline_c_statements_8616(stmt, callbacks)
             if flat is not None and len(flat) == 1 and isinstance(flat[0], CReturn):
-                return direct_call, direct_call
+                return direct_call, CExpressionStatement(direct_call, codegen=codegen)
         return direct_call, stmt
 
     flat = flatten_straightline_c_statements_8616(stmt, callbacks)
@@ -2998,12 +3007,12 @@ def materialize_void_tail_call_guard_8616(
     stmt: CIfElse,
     statements: list[object],
     index: int,
-    cond: object,
+    proof: VoidTailCallGuardProof8616,
     tail_from_else: bool,
     tail_payload: tuple[CFunctionCall, object],
     codegen: object,
 ) -> VoidTailCallGuardResult8616:
-    """Materialize ``if (cond) tail_call();`` from CFG-proven guard evidence."""
+    """Materialize a tail call under the CFG-proven true branch condition."""
     _call, payload_stmt = tail_payload
     if not tail_from_else and index + 1 >= len(statements):
         return VoidTailCallGuardResult8616(
@@ -3015,7 +3024,7 @@ def materialize_void_tail_call_guard_8616(
         if isinstance(payload_stmt, CStatements)
         else CStatements(statements=[payload_stmt], codegen=codegen)
     )
-    _set_if_true_body_compat_8616(stmt, cond, new_body)
+    _set_if_true_body_compat_8616(stmt, proof.condition, new_body)
     stmt.else_node = None
     removed_following_tail = False
     if not tail_from_else:

@@ -99,13 +99,14 @@ def test_unit_lane_excludes_broad_slow_corpus_pytest_targets():
     assert forbidden_targets.isdisjoint(test_pipeline.FOCUSED_PYTEST_TARGETS)
 
 
-def test_expanded_tier_adds_sortdemo_status_lane():
+def test_expanded_tier_adds_sidecar_free_and_sortdemo_status_lanes():
     args = test_pipeline._parse_args(["--tier", "expanded"])
 
     assert test_pipeline._selected_lanes(args) == (
         "unit-focused",
         "ultra-quickc-fixtures",
         "msc6-tiny-full-pipeline",
+        "sortd-sidecar-free",
         "sortdemo-status",
     )
 
@@ -723,6 +724,44 @@ def test_sortdemo_status_lane_uses_normal_whole_binary_harness(monkeypatch, tmp_
     assert cmd[cmd.index("--transcript-out") + 1] == str(tmp_path / "cache" / "status.txt")
     assert env["INERTIA_ENABLE_TAIL_VALIDATION"] == "1"
     assert env["INERTIA_DISABLE_TIMING"] == "1"
+
+
+def test_sortd_sidecar_free_lane_uses_executable_only_ratchet(monkeypatch, tmp_path):
+    binary = tmp_path / "SORTDEMO.EXE"
+    binary.write_bytes(b"MZ")
+    captured: list[list[str]] = []
+
+    def fake_run_command(name, cmd, *, env=None):
+        assert name == "sortd-sidecar-free"
+        assert env is None
+        captured.append(cmd)
+        return test_pipeline.LaneResult(name, test_pipeline.LaneStatus.PASSED, cmd, 0.1, returncode=0)
+
+    monkeypatch.setattr(test_pipeline, "_run_command", fake_run_command)
+    args = test_pipeline._parse_args(
+        [
+            "--sortdemo-binary",
+            str(binary),
+            "--sortdemo-decompile-timeout",
+            "9",
+            "--sortd-run-timeout",
+            "123",
+            "--sortd-report-out",
+            str(tmp_path / "sortd.json"),
+            "--sortd-transcript-out",
+            str(tmp_path / "sortd.txt"),
+        ]
+    )
+
+    result = test_pipeline._sortd_sidecar_free_lane(args)
+
+    assert result.status == test_pipeline.LaneStatus.PASSED
+    assert captured
+    cmd = captured[0]
+    assert cmd[:2] == [test_pipeline.sys.executable, "scripts/check_sortd_sidecar_free.py"]
+    assert cmd[cmd.index("--source-binary") + 1] == str(binary)
+    assert cmd[cmd.index("--decompile-timeout") + 1] == "9"
+    assert cmd[cmd.index("--run-timeout") + 1] == "123"
 
 
 def test_sortdemo_proc_status_lane_is_explicitly_diagnostic(monkeypatch, tmp_path):

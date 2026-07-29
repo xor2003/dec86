@@ -60,8 +60,11 @@ class ManifestViolation:
 TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     TestOwnershipRule(
         owner="test-pipeline",
-        paths=("scripts/test_pipeline.py",),
-        tests=("angr_platforms/tests/test_test_pipeline.py",),
+        paths=("scripts/check_sortd_sidecar_free.py", "scripts/test_pipeline.py"),
+        tests=(
+            "angr_platforms/tests/test_check_sortd_sidecar_free.py",
+            "angr_platforms/tests/test_test_pipeline.py",
+        ),
     ),
     TestOwnershipRule(
         owner="agent-context-check",

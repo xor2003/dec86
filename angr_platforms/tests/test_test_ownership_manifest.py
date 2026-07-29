@@ -8,7 +8,10 @@ EXISTING_SOURCE_PATH = "scripts/test_ownership_manifest.py"
 def test_selects_manifest_tests_for_implementation_file():
     selected = test_ownership_manifest.select_tests_for_files(("scripts/test_pipeline.py",))
 
-    assert selected == ("angr_platforms/tests/test_test_pipeline.py",)
+    assert selected == (
+        "angr_platforms/tests/test_check_sortd_sidecar_free.py",
+        "angr_platforms/tests/test_test_pipeline.py",
+    )
 
 
 def test_selects_agent_context_check_tests_for_implementation_file():
@@ -279,6 +282,7 @@ def test_manifest_cli_prints_space_separated_pytest_targets(capsys):
     captured = capsys.readouterr()
     assert rc == 0
     assert captured.out.strip() == (
+        "angr_platforms/tests/test_check_sortd_sidecar_free.py "
         "angr_platforms/tests/test_test_pipeline.py "
         "angr_platforms/tests/test_decompile_cod_dir_parallelism.py "
         "angr_platforms/tests/test_decompiler_architecture_check.py"

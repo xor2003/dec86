@@ -29,6 +29,8 @@ Rewrite and `decompiler_postprocess_*.py` are cleanup bridges only. Do not add a
 - Decompiler work: add `reference/decompiler-map.md` and `reference/agent-rules.md`.
 - DOS execution work: add `reference/dosunit-execution-spec.md` and the matching DoD file.
 - SORTDEMO work: read `SORTDEMO_HANDOFF.md` before touching ReInitBars, SwapBars, or HeapSort.
+- Executable-only SORTD work: follow `SORTD_PLAN.md`; its per-step DoD and
+  serial-memory rule are mandatory.
 - Telemetry/performance work: read `reference/telemetry.md`.
 
 ## Fallback Discovery Flow
@@ -65,7 +67,7 @@ closed:
 - `make quality-fast PYTHON=./.venv/bin/python` runs linters, the changed-file module/doc/type/dot-access ratchet, architecture/context checks, ownership-manifest validation, and the fast decompiler gate for regular local checks.
 - `make test-pipeline-fast PYTHON=./.venv/bin/python` runs the fast curated pipeline tier used by `quality-fast`; it must stay unit-focused so regular local checks do not depend on slow external compiler/decompiler lanes.
 - `make test-pipeline PYTHON=./.venv/bin/python` runs the curated pipeline and writes `angr_platforms/.cache/test_pipeline/summary.json`.
-- `make test-pipeline-expanded PYTHON=./.venv/bin/python` runs the expanded curated tier, including the long SORTDEMO status lane.
+- `make test-pipeline-expanded PYTHON=./.venv/bin/python` runs the expanded curated tier, including the executable-only sidecar-free SORTD ratchet and the long SORTDEMO status lane.
 - `make msc6-examples PYTHON=./.venv/bin/python` runs the MS C tiny compile, decompile, recompile, return-code, and exit-code lane.
 
 Run changed-file checks periodically while developing, `quality-fast` regularly, `test-pipeline` before claiming a decompiler improvement, and `test-pipeline-expanded` for broad status/audit work.

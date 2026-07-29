@@ -2262,7 +2262,11 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
 
         def _direct_cfunc_text_or_none(tag: str) -> str | None:
             """Render the C function after the final evidence-backed stack replay."""
-            if semantic_materialization_active and not _pointer_memory_materialized_by_lowering_8616():
+            if (
+                semantic_materialization_active
+                and not selector_return_contract_active
+                and not _pointer_memory_materialized_by_lowering_8616()
+            ):
                 with contextlib.suppress(Exception):
                     _finalize_callsite_arguments_after_noncall_regen_8616(codegen)
             _finalize_typed_call_interfaces_before_render_8616(codegen)
@@ -7016,8 +7020,8 @@ def _decompile_function_with_stats(
         )
     except PipelineHardError as ex:
         # Keep whole-binary sweeps alive: pipeline contract violations are
-        # per-function failures and must not abort the entire run.
-        status = "empty"
+        # per-function validation failures and must not abort the entire run.
+        status = "validation_failed"
         detail = str(ex)
         if detail.startswith("function leaked unresolved stack locals into final C"):
             detail = f"{function.name} leaked unresolved stack locals into final C"

@@ -573,7 +573,11 @@ def test_structuring_stage_transfers_typed_conditions_before_final_validation_ba
         "_materialize_structuring_void_tail_call_guard_8616",
         lambda *_args: calls.append("void_tail_guard") and False,
     )
-    monkeypatch.setattr(stage, "_refresh_structuring_condition_semantics_8616", lambda *_args: None)
+    monkeypatch.setattr(
+        stage,
+        "_refresh_structuring_condition_semantics_8616",
+        lambda *_args: calls.append("condition_refresh"),
+    )
     monkeypatch.setattr(stage, "_restore_not_shift_conditions_structuring_8616", lambda *_args: False)
     monkeypatch.setattr(stage, "record_ast_condition_trace_8616", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -616,6 +620,9 @@ def test_structuring_stage_transfers_typed_conditions_before_final_validation_ba
     assert calls.index("return_shape") < calls.index("void_tail_guard")
     assert calls.index("void_tail_guard") < calls.index("lowering_replay")
     assert calls.index("lowering_replay") < final_loop_guard
+    final_condition_refresh = len(calls) - 1 - calls[::-1].index("condition_refresh")
+    final_fingerprint = len(calls) - 1 - calls[::-1].index("fingerprint")
+    assert final_loop_guard < final_condition_refresh < final_fingerprint
     assert calls.count("unconsumed_loop_break_jcc") == 2
     assert codegen._inertia_typed_conditions_transferred is True
     assert codegen._inertia_structuring_validation_failed is False

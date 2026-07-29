@@ -861,6 +861,47 @@ def test_reconcile_retains_exact_width_fact_when_prototype_is_already_correct() 
     assert codegen._inertia_function_parameter_width_facts_8616 == (
         FunctionParameterWidthFact8616(stack_offset=4, width_bytes=2),
     )
+    assert codegen._inertia_stack_prototype_width_stats_8616.classified_fact_count == 1
+    assert codegen._inertia_stack_prototype_width_stats_8616.materialized_count == 1
+
+
+def test_reconcile_replaces_stale_zero_arg_function_metadata_from_exact_stack_args() -> None:
+    arch = Arch86_16()
+    short_type = SimTypeShort(False).with_arch(arch)
+    codegen_prototype = SimTypeFunction(
+        [short_type, short_type],
+        SimTypeBottom(label="void"),
+        arg_names=("left", "right"),
+    ).with_arch(arch)
+    stale_prototype = SimTypeFunction([], SimTypeBottom(label="void")).with_arch(arch)
+    func = SimpleNamespace(prototype=stale_prototype, is_prototype_guessed=True)
+    project = SimpleNamespace(
+        arch=arch,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
+    )
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    left_var = SimStackVariable(4, 2, base="bp", name="left", region=0x1000)
+    right_var = SimStackVariable(6, 2, base="bp", name="right", region=0x1000)
+    left = structured_c.CVariable(left_var, variable_type=short_type, codegen=c_codegen)
+    right = structured_c.CVariable(right_var, variable_type=short_type, codegen=c_codegen)
+    cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=[left, right],
+        functy=codegen_prototype,
+        unified_local_vars={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, _inertia_callsite_summaries={})
+
+    changed = reconcile_exact_stack_argument_prototype_8616(project, codegen)
+
+    assert changed is True
+    assert len(func.prototype.args) == 2
+    assert func.is_prototype_guessed is False
+    assert codegen._inertia_stack_prototype_width_stats_8616.classified_fact_count == 2
+    assert codegen._inertia_stack_prototype_width_stats_8616.materialized_count == 2
+    assert codegen._inertia_codegen_decl_refresh_required_8616 is True
 
 
 def test_materialize_uses_abi_word_for_vex_wide_simtype_int() -> None:
