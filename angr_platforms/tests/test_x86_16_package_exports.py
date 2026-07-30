@@ -296,6 +296,11 @@ def test_callsite_stack_fact_materialization_facade_sequences_consumers(monkeypa
         "_materialize_callsite_stack_arguments_8616",
         lambda _project, _codegen: calls.append("stack-args") or True,
     )
+    monkeypatch.setattr(
+        decompiler_postprocess_stage._calls,
+        "_replay_call_target_identity_consumer_8616",
+        lambda _project, _codegen: calls.append("target-identity") or False,
+    )
 
     runner_calls = []
 
@@ -315,7 +320,7 @@ def test_callsite_stack_fact_materialization_facade_sequences_consumers(monkeypa
     assert result.stack_probe_facts_changed is True
     assert result.prototypes_changed is False
     assert result.stack_arguments_changed is True
-    assert calls == ["attach", "stack-probe", "prototypes", "stack-args"]
+    assert calls == ["attach", "stack-probe", "prototypes", "stack-args", "target-identity"]
     assert runner_calls == [
         "_attach_callsite_summaries_8616",
         "build_typed_stack_probe_return_facts_8616",
@@ -330,6 +335,29 @@ def test_callsite_stack_fact_materialization_facade_sequences_consumers(monkeypa
         "changed": True,
         "owner": "postprocess.stage",
     }
+
+
+def test_callsite_stack_argument_rebuild_always_replays_owner_target_identity(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        decompiler_postprocess_stage._calls,
+        "_materialize_callsite_stack_arguments_8616",
+        lambda _project, _codegen: calls.append("stack-args") or False,
+    )
+    monkeypatch.setattr(
+        decompiler_postprocess_stage._calls,
+        "_replay_call_target_identity_consumer_8616",
+        lambda _project, _codegen: calls.append("target-identity") or True,
+    )
+
+    changed = decompiler_postprocess_stage._materialize_callsite_stack_arguments_with_target_identity_8616(
+        object(),
+        object(),
+    )
+
+    assert changed is True
+    assert calls == ["stack-args", "target-identity"]
 
 
 def test_callsite_stack_fact_materialization_facade_skips_completed_stack_arguments(monkeypatch):

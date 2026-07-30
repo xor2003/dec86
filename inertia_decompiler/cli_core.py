@@ -247,7 +247,6 @@ from .cli_c_text_postprocess import (
     _prune_standalone_memory_helper_reads_text,
     _prune_undefined_fragment_carrier_assignments_text,
     _prune_unused_local_declarations_text,
-    _prune_unused_staging_assignments,
     _prune_void_call_assignments_text,
     _strip_register_fragment_suffixes_text,
 )
@@ -300,6 +299,7 @@ from .cli_function_discovery import (
     _store_catalog_address_cache,
     _supplement_cached_seeded_recovery,
     _supplement_functions_from_prologue_scan,
+    record_direct_target_caller_return_use_evidence_8616,
 )
 
 print: Callable[..., object] = _timestamped_print
@@ -2267,7 +2267,8 @@ def _normalize_accepted_payload_8616(payload: str) -> str:
     accepted_payload = _prune_undefined_fragment_carrier_assignments_text(accepted_payload)
     accepted_payload = _coalesce_redundant_split_global_incdec_text(accepted_payload)
     accepted_payload = _prune_standalone_memory_helper_reads_text(accepted_payload)
-    accepted_payload = _prune_unused_staging_assignments(accepted_payload)
+    # Accepted payloads already passed typed AST liveness and validation.
+    # Text-based staging DCE must not reinterpret those semantics.
     accepted_payload = _prune_unused_local_declarations_text(accepted_payload)
     accepted_payload = _normalize_scalar_gb_array_declarations_text(accepted_payload)
     accepted_payload = _normalize_seg_offset_void_pointer_args_text(accepted_payload)
@@ -2570,6 +2571,53 @@ def _emit_failed_timeout_acceptance_hints_8616() -> None:
     # timeout/validation detail. Real acceptance failures are emitted by
     # _validated_generated_c_acceptance_8616 with payload-specific evidence.
     return
+
+
+@dataclass(frozen=True, slots=True)
+class _PartialResultReport8616:
+    """Describe CLI labels for an honest partial decompilation result."""
+
+    status: WorkItemStatus
+    heading: str
+    direct_c_header: str
+    sweep_c_header: str
+    fallback_detail: str
+    show_timeout_delay: bool
+
+
+def _partial_result_report_8616(raw_status: str) -> _PartialResultReport8616:
+    """Map a typed work-item status to non-semantic partial-output labels."""
+    try:
+        status = WorkItemStatus(raw_status)
+    except ValueError:
+        status = WorkItemStatus.UNKNOWN
+    if status is WorkItemStatus.TIMEOUT:
+        return _PartialResultReport8616(
+            status=status,
+            heading="Decompilation timeout",
+            direct_c_header="\n/* == c (partial timeout) == */",
+            sweep_c_header="/* -- c (partial timeout) -- */",
+            fallback_detail="unavailable after partial timeout",
+            show_timeout_delay=True,
+        )
+    if status is WorkItemStatus.VALIDATION_FAILED:
+        return _PartialResultReport8616(
+            status=status,
+            heading="Decompilation validation_failed",
+            direct_c_header="\n/* == c (partial validation failure) == */",
+            sweep_c_header="/* -- c (partial validation failure) -- */",
+            fallback_detail="unavailable after partial validation failure",
+            show_timeout_delay=False,
+        )
+    partial_label = status.value.replace("_", " ")
+    return _PartialResultReport8616(
+        status=status,
+        heading=f"Decompilation {status.value}",
+        direct_c_header=f"\n/* == c (partial {partial_label}) == */",
+        sweep_c_header=f"/* -- c (partial {partial_label}) -- */",
+        fallback_detail=f"unavailable after partial {partial_label}",
+        show_timeout_delay=False,
+    )
 
 
 _CALL_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
@@ -3197,6 +3245,7 @@ def _emit_function_result(
                     return decompiled_local, failed_local
 
         if result.partial_payload:
+            partial_report = _partial_result_report_8616(result.status)
             _print_function_attempt_status(
                 function,
                 attempt=_function_attempt_display_status(result),
@@ -3205,13 +3254,14 @@ def _emit_function_result(
             attempt_status_printed = True
             print(f"/* problem: {result.status} */")
             _print_diagnostic_text(result.payload)
-            _emit_timeout_delay_line()
+            if partial_report.show_timeout_delay:
+                _emit_timeout_delay_line()
             _emit_optional_source_sidecar_c_block(
                 args.binary,
                 function.name,
                 result.partial_payload,
                 alternate_source_c=bool(args.alternate_source_c),
-                c_header="/* -- c (partial timeout) -- */",
+                c_header=partial_report.sweep_c_header,
             )
             emitted_problem = True
 
@@ -4716,6 +4766,9 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         print(_format_asm_range(project, start, end))
         return 5
 
+    if project.arch.name == "86_16":
+        record_direct_target_caller_return_use_evidence_8616(project, direct_addr)
+
     if (
         precise_sidecar_regions
         and lst_metadata is not None
@@ -5987,20 +6040,26 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                 direct_result.tail_validation,
                 binary_path=args.binary,
             )
-            timeout_text = "timeout"
-            if isinstance(direct_result.payload, str):
-                m = re.search(r"Timed out after (\d+)s", direct_result.payload)
-                if m is not None:
-                    timeout_text = f"Timed out after {m.group(1)}s."
-            if timeout_text == "timeout":
-                timeout_text = f"Timed out after {args.timeout}s."
-            print(f"/* Decompilation timeout: {timeout_text} */")
-            direct_elapsed = direct_result.elapsed
-            if isinstance(direct_elapsed, (int, float)):
-                print(f"/* timeout delay: {float(direct_elapsed):.2f}s */")
-            print("/* direct validation=failed */")
+            partial_report = _partial_result_report_8616(direct_result.status)
+            payload_detail = direct_result.payload
+            if partial_report.status is WorkItemStatus.TIMEOUT:
+                timeout_text = "timeout"
+                if isinstance(direct_result.payload, str):
+                    m = re.search(r"Timed out after (\d+)s", direct_result.payload)
+                    if m is not None:
+                        timeout_text = f"Timed out after {m.group(1)}s."
+                payload_detail = (
+                    timeout_text if timeout_text != "timeout" else f"Timed out after {args.timeout}s."
+                )
+            print(f"/* {partial_report.heading}: {payload_detail} */")
+            if partial_report.show_timeout_delay:
+                direct_elapsed = direct_result.elapsed
+                if isinstance(direct_elapsed, (int, float)):
+                    print(f"/* timeout delay: {float(direct_elapsed):.2f}s */")
+            if partial_report.status is WorkItemStatus.VALIDATION_FAILED:
+                print("/* direct validation=failed */")
             _emit_failed_timeout_acceptance_hints_8616()
-            print("/* non-optimized fallback failed: unavailable after partial timeout */")
+            print(f"/* non-optimized fallback failed: {partial_report.fallback_detail} */")
             if "&sp_0" in current_partial_payload:
                 print("/* Source-evidenced loop call was hoisted outside loop in emitted C. */")
             _emit_optional_source_sidecar_c_block(
@@ -6008,7 +6067,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                 func.name,
                 current_partial_payload,
                 alternate_source_c=bool(args.alternate_source_c),
-                c_header="\n/* == c (partial timeout) == */",
+                c_header=partial_report.direct_c_header,
             )
             return 6 if direct_result.status == "error" else 4
         sidecar_region = None

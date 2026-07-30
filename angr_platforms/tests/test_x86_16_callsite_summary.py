@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypePointer
+from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
 from angr_platforms.X86_16.analysis_helpers import CallTargetSeed, resolve_direct_call_target_from_block
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import (
@@ -11,6 +11,7 @@ from angr_platforms.X86_16.callsite_summary import (
     CallsitePushExprOp8616,
     CallsiteReturnShape8616,
     CallsiteSummary8616,
+    StructuredCallKind8616,
     _logical_arg_interface_for_target_8616,
     _logical_arg_widths_for_target_8616,
     _return_shape_after_call,
@@ -20,12 +21,21 @@ from angr_platforms.X86_16.callsite_summary import (
     collect_caller_return_use_evidence_8616,
     logical_argument_widths_from_callsite_8616,
     rebind_cloned_structured_callsite_identity_8616,
+    structured_call_kind_8616,
     summarize_x86_16_callsite,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from capstone.x86_const import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
 
 MSC_ANCHKSTK_BYTES = bytes.fromhex("59 8b dc 2b d8 72 0a 3b 1e b6 00 72 04 8b e3 ff e1")
+
+
+def test_structured_call_kind_separates_codegen_insert_from_machine_calls() -> None:
+    intrinsic = SimpleNamespace(callee_target="_INSERT", callee_func=None)
+    machine_call = SimpleNamespace(callee_target="sub_1234", callee_func=None)
+
+    assert structured_call_kind_8616(intrinsic) is StructuredCallKind8616.CODEGEN_INSERT_INTRINSIC
+    assert structured_call_kind_8616(machine_call) is StructuredCallKind8616.MACHINE_CALL
 
 
 def _identity_summary(
@@ -129,6 +139,42 @@ def test_logical_arg_interface_refuses_classes_from_width_only_prototype() -> No
     widths, classes = _logical_arg_interface_for_target_8616(function, 0x5000)
 
     assert widths == (2, 4)
+    assert classes == ()
+
+
+def test_logical_arg_interface_prefers_binary_proven_rebased_prototype() -> None:
+    arch = Arch86_16()
+    guessed_words = SimpleNamespace(
+        prototype=SimTypeFunction(
+            [SimTypeShort(), SimTypeShort()],
+            SimTypeBottom(label="void"),
+        ).with_arch(arch),
+        is_prototype_guessed=True,
+    )
+    proven_wide = SimpleNamespace(
+        prototype=SimTypeFunction(
+            [SimTypeLong()],
+            SimTypeBottom(label="void"),
+        ).with_arch(arch),
+        is_prototype_guessed=False,
+    )
+
+    def lookup(*, addr: int, create: bool = False) -> object | None:
+        del create
+        return {
+            0x10F18: guessed_words,
+            0x10F38: proven_wide,
+        }.get(addr)
+
+    project = SimpleNamespace(
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lookup)),
+        _inertia_original_linear_delta=-0x20,
+    )
+    function = SimpleNamespace(project=project)
+
+    widths, classes = _logical_arg_interface_for_target_8616(function, 0x10F18)
+
+    assert widths == (4,)
     assert classes == ()
 
 
@@ -297,6 +343,7 @@ def test_callsite_summary_reports_push_args_cleanup_and_return_use(monkeypatch):
         return_shape=CallsiteReturnShape8616.AX.value,
         stack_probe_helper=False,
         return_use_kind="condition",
+        stack_cleanup_instruction_addr=0x1005,
     )
 
 
@@ -387,7 +434,67 @@ def test_callsite_summary_uses_containing_block_for_push_args_before_call(monkey
         return_register=None,
         return_used=False,
         stack_probe_helper=False,
+        stack_cleanup_instruction_addr=0x1011,
     )
+
+
+def test_callsite_summary_excludes_push_pop_proven_callee_saved_frame_registers(monkeypatch):
+    caller_insns = (
+        _Insn(0x1000, "push", [_Operand(reg=1, size=2)], reg_names={1: "bp"}),
+        _Insn(
+            0x1001,
+            "mov",
+            [_Operand(reg=2, size=2), _Operand(reg=1, size=2)],
+            reg_names={1: "bp", 2: "sp"},
+        ),
+        _Insn(0x1003, "mov", [_Operand(reg=3, size=2), _Operand(imm=4, size=2)], reg_names={3: "ax"}),
+        _Insn(0x1006, "call", [_Operand(imm=0x1800, size=2)]),
+        _Insn(0x1009, "push", [_Operand(reg=4, size=2)], reg_names={4: "di"}),
+        _Insn(0x100A, "push", [_Operand(reg=5, size=2)], reg_names={5: "si"}),
+        _Insn(0x100B, "call", [_Operand(imm=0x2000, size=2)]),
+        _Insn(0x100E, "add", [_Operand(reg=3, size=2), _Operand(reg=6, size=2)], reg_names={3: "ax", 6: "cx"}),
+        _Insn(0x1010, "pop", [_Operand(reg=5, size=2)], reg_names={5: "si"}),
+        _Insn(0x1011, "pop", [_Operand(reg=4, size=2)], reg_names={4: "di"}),
+        _Insn(
+            0x1012,
+            "mov",
+            [_Operand(reg=2, size=2), _Operand(reg=1, size=2)],
+            reg_names={1: "bp", 2: "sp"},
+        ),
+        _Insn(0x1014, "pop", [_Operand(reg=1, size=2)], reg_names={1: "bp"}),
+        _Insn(0x1015, "ret"),
+    )
+    caller_block = SimpleNamespace(capstone=SimpleNamespace(insns=caller_insns))
+    callee_block = SimpleNamespace(capstone=SimpleNamespace(insns=(_Insn(0x2000, "ret"),)))
+
+    def block_for_addr(addr, **_kwargs):
+        return callee_block if addr == 0x2000 else caller_block
+
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        factory=SimpleNamespace(block=block_for_addr),
+    )
+    function = SimpleNamespace(
+        project=project,
+        blocks=(caller_block,),
+        block_addrs_set={0x1000},
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [
+            CallTargetSeed(0x1006, 0x1800, 0x1009, "direct_near"),
+            CallTargetSeed(0x100B, 0x2000, 0x100E, "direct_near"),
+        ],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x100B)
+
+    assert summary is not None
+    assert summary.arg_count == 0
+    assert summary.arg_widths == ()
+    assert summary.push_arg_sources == ()
+    assert summary.push_arg_instruction_addrs == ()
+    assert summary.stack_cleanup == 0
 
 
 def test_callsite_summary_counts_pushes_separated_by_register_setup(monkeypatch):
@@ -418,6 +525,7 @@ def test_callsite_summary_counts_pushes_separated_by_register_setup(monkeypatch)
         return_register=None,
         return_used=False,
         stack_probe_helper=False,
+        stack_cleanup_instruction_addr=0x1008,
     )
 
 
@@ -454,7 +562,36 @@ def test_callsite_summary_counts_pushes_separated_by_register_arithmetic_chain(m
         return_register=None,
         return_used=False,
         stack_probe_helper=False,
+        stack_cleanup_instruction_addr=0x1015,
     )
+
+
+def test_callsite_summary_refuses_nonpositive_caller_cleanup_identity(
+    monkeypatch,
+) -> None:
+    function = _function_with_block(
+        [
+            _Insn(0x1002, "call"),
+            _Insn(
+                0x1005,
+                "add",
+                [_Operand(reg=1), _Operand(imm=0)],
+                reg_names={1: "sp"},
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [
+            CallTargetSeed(0x1002, 0x1544, 0x1005, "direct_near")
+        ],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1002)
+
+    assert summary is not None
+    assert summary.stack_cleanup is None
+    assert summary.stack_cleanup_instruction_addr is None
 
 
 def test_callsite_summary_recovers_zero_register_push_sources(monkeypatch):
@@ -1362,6 +1499,7 @@ def test_callsite_summary_uses_fallthrough_cleanup_block_after_call(monkeypatch)
         return_register=None,
         return_used=False,
         stack_probe_helper=False,
+        stack_cleanup_instruction_addr=0x1011,
     )
 
 
@@ -1916,6 +2054,27 @@ def test_callsite_summary_treats_post_call_ax_reload_as_clobber_not_value_use():
     assert return_register == "ax"
     assert return_used is False
     assert return_use_kind == "clobbered"
+
+
+def test_callsite_summary_treats_post_call_push_ax_as_value_forwarding():
+    reg_names = {1: "sp", 2: "ax"}
+    insns = (
+        _Insn(0x1002, "call", size=3),
+        _Insn(0x1005, "add", [_Operand(reg=1), _Operand(imm=2)], reg_names=reg_names),
+        _Insn(0x1008, "push", [_Operand(reg=2)], reg_names=reg_names),
+        _Insn(0x1009, "call", size=3),
+    )
+
+    return_register, return_used, return_use_kind = _return_use_after_call(
+        SimpleNamespace(),
+        insns,
+        0,
+        0x1002,
+    )
+
+    assert return_register == "ax"
+    assert return_used is True
+    assert return_use_kind == "value"
 
 
 def test_callsite_summary_tracks_ax_return_through_divisor_setup_to_cwd():

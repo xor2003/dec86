@@ -64,6 +64,7 @@ from capstone.x86_const import (
     X86_INS_RET,
     X86_INS_SAL,
     X86_INS_SAR,
+    X86_INS_SBB,
     X86_INS_SHL,
     X86_INS_SUB,
     X86_OP_IMM,
@@ -89,16 +90,19 @@ from capstone.x86_const import (
 
 from ..alias.alias_model import _stack_storage_facts_for_segmented_address_8616
 from ..alias.alias_model_impl import AliasStorageFacts, _StackSlotIdentity
+from ..analysis_helpers import _canonicalize_x86_16_padding_call_target_8616
 from ..annotations import ANNOTATION_KEY
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..callee_name_normalization import normalize_callee_name_8616
 from ..callsite_summary import (
+    CallsiteSummary8616,
     callsite_summary_inventory_8616,
     structured_callsite_addr_8616,
 )
 from ..ir.core import MemSpace
 from ..pipeline.contracts import SemanticLaneState
 from ..pipeline.errors import PipelineHardError
+from ..semantics.binary_call_contracts import binary_call_return_contract_8616
 from ..semantics.call_contracts import (
     RuntimeCallReturnContract8616,
     runtime_call_return_contract_8616,
@@ -110,6 +114,7 @@ from .global_declarations import (
     record_global_declaration_spec_8616,
     record_scalar_global_declaration_spec_8616,
 )
+from .segment_register_state import runtime_segment_name_for_variable_8616
 from .stack_aggregate_objects import StackAggregateObjectFact8616, materialize_stack_aggregate_objects_8616
 from .stack_lowering_from_facts import _canonical_stack_offset_8616, _stack_object_name
 from .stack_probe_return_facts import TypedStackProbeReturnFact8616
@@ -359,6 +364,18 @@ class MaterializedCallPushReplay8616:
 
 
 @dataclass(frozen=True, slots=True)
+class MaterializedCallCleanupReplay8616:
+    """Evidence census for caller cleanup effects consumed by structured calls."""
+
+    raw_fact_count: int
+    normalized_fact_count: int
+    classified_fact_count: int
+    materialized_count: int
+    failure_count: int
+    consumed_cleanup_instruction_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class CallReturnFrameCarrierPrune8616:
     """Evidence census for impossible BP-local assignments emitted for CALL return frames."""
 
@@ -581,6 +598,7 @@ class DirectStackMoveFact8616:
     dst_index_immediate: int | None = None
     dst_index_scale: int = 1
     dst_index_byte_scale: int = 1
+    source_register_offset: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -679,6 +697,24 @@ class DirectStackReloadFact8616:
     ins_addr: int
     source_store_ins_addr: int
     source_kind: DirectStackMoveSourceKind8616
+
+
+def _materialized_store_fact_for_reload_8616(
+    reload_fact: DirectStackReloadFact8616,
+    materialized_facts: tuple[DirectStackMoveFact8616, ...],
+) -> DirectStackMoveFact8616 | None:
+    """Return the unique materialized store fact that owns one exact reload."""
+    candidates = tuple(
+        dict.fromkeys(
+            fact
+            for fact in materialized_facts
+            if fact.ins_addr == reload_fact.source_store_ins_addr
+            and fact.dst_offset == reload_fact.source_offset
+            and fact.width == reload_fact.width
+            and fact.source_kind is reload_fact.source_kind
+        )
+    )
+    return candidates[0] if len(candidates) == 1 else None
 
 
 class StackCarrierDeltaSource8616(Enum):
@@ -1637,6 +1673,9 @@ def _segment_base_name_8616_impl(
                     return _segment_base_name_8616_impl(rhs, project, codegen, seen)
         if isinstance(node, structured_c.CVariable):
             variable = node.variable
+            runtime_segment_name = runtime_segment_name_for_variable_8616(variable)
+            if runtime_segment_name is not None:
+                return runtime_segment_name
             if isinstance(variable, SimRegisterVariable):
                 reg_name = getattr(project.arch, "register_names", {}).get(variable.reg)
                 if isinstance(reg_name, str) and reg_name in _SEGMENT_REGISTER_NAMES_8616:
@@ -3489,23 +3528,38 @@ def _callee_saved_push_insn_matches_8616(
     *,
     function: StructuredAstValue | None = None,
 ) -> bool:
-    """Return whether exact function evidence identifies a matching register PUSH."""
+    """Return whether exact function evidence identifies the register's frame PUSH.
+
+    A callee-saved register may also be pushed later as a call argument.  Only
+    the first push of a register restored by the epilogue is frame evidence.
+    """
     if not isinstance(ins_addr, int) or not isinstance(reg_name, str):
         return False
+    saved_regs = _callee_saved_register_names_from_frame_evidence_8616(
+        project,
+        function_addr,
+        function=function,
+    )
+    if reg_name.lower() not in saved_regs:
+        return False
+    first_push_addr: int | None = None
     for insn in _decode_function_insns_8616(
         project,
         function_addr,
         function=function,
     ):
-        if getattr(insn, "address", None) != ins_addr:
-            continue
         if getattr(insn, "id", None) != X86_INS_PUSH:
-            return False
+            continue
         reg_id = _op_reg_id_8616(insn, 0)
         if not isinstance(reg_id, int):
-            return False
-        return insn.reg_name(reg_id).lower() == reg_name.lower()
-    return False
+            continue
+        if insn.reg_name(reg_id).lower() != reg_name.lower():
+            continue
+        address = getattr(insn, "address", None)
+        if isinstance(address, int):
+            first_push_addr = address
+            break
+    return first_push_addr == ins_addr
 
 
 def _remove_callee_saved_stack_spills_8616(
@@ -3555,6 +3609,16 @@ def _remove_callee_saved_stack_spills_8616(
             rhs_reg,
             function=function,
         )
+        if not push_evidenced:
+            if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
+                log.warning(
+                    "[callee-save-prune] refuse non-frame-push ins_addr=%r "
+                    "rhs_reg=%s stmt=%s",
+                    _statement_ins_addr_8616(stmt),
+                    rhs_reg,
+                    _debug_c_repr_8616(stmt),
+                )
+            return False
         if isinstance(lhs, structured_c.CUnaryOp) and lhs.op == "Dereference":
             previous_allow_sp = getattr(codegen, "_inertia_allow_direct_sp_for_callee_save_spill", False)
             previous_offset_cache = getattr(codegen, "_inertia_stack_offset_cache", None)
@@ -3565,33 +3629,12 @@ def _remove_callee_saved_stack_spills_8616(
             finally:
                 codegen._inertia_allow_direct_sp_for_callee_save_spill = previous_allow_sp
                 codegen._inertia_stack_offset_cache = previous_offset_cache
-            if access is None:
-                if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
-                    log.warning("[callee-save-prune] refuse no-ss-access lhs=%s", _debug_c_repr_8616(lhs))
-                return False
-            displacement = getattr(access, "displacement", None)
-            if not isinstance(displacement, int) or displacement >= 0:
-                if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
-                    log.warning(
-                        "[callee-save-prune] refuse displacement=%r lhs=%s",
-                        displacement,
-                        _debug_c_repr_8616(lhs),
-                    )
-                return False
+            displacement = getattr(access, "displacement", None) if access is not None else None
         elif isinstance(lhs, structured_c.CVariable):
             variable = lhs.variable
             if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
                 return False
             displacement = getattr(variable, "offset", None)
-            if not push_evidenced:
-                if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
-                    log.warning(
-                        "[callee-save-prune] refuse cvar-no-push-evidence displacement=%r rhs_reg=%s stmt=%s",
-                        displacement,
-                        rhs_reg,
-                        _debug_c_repr_8616(stmt),
-                    )
-                return False
         else:
             return False
         stats["candidates"] = int(stats.get("candidates", 0) or 0) + 1
@@ -5484,8 +5527,12 @@ def _project_main_object_min_addr_8616(project: StructuredAstValue) -> int | Non
 
 
 def _direct_stack_move_call_target_candidates_8616(
-    project: StructuredAstValue, target: int
+    project: StructuredAstValue,
+    target: int,
+    *,
+    include_padding_aliases: bool = True,
 ) -> tuple[tuple[StructuredAstValue, int], ...]:
+    """Return coordinate-space candidates for a direct stack code offset."""
     target = int(target)
     candidates: list[tuple[StructuredAstValue, int]] = [(project, target)]
     delta = getattr(project, "_inertia_original_linear_delta", None)
@@ -5504,9 +5551,22 @@ def _direct_stack_move_call_target_candidates_8616(
             image_base = _project_main_object_min_addr_8616(candidate_project)
             if isinstance(image_base, int):
                 candidates.append((candidate_project, image_base + target))
+    canonicalized_candidates: list[tuple[StructuredAstValue, int]] = []
+    for candidate_project, candidate_target in candidates:
+        if include_padding_aliases:
+            canonical_target = _canonicalize_x86_16_padding_call_target_8616(
+                candidate_project,
+                candidate_target,
+            )
+            if (
+                isinstance(canonical_target, int)
+                and canonical_target != candidate_target
+            ):
+                canonicalized_candidates.append((candidate_project, canonical_target))
+        canonicalized_candidates.append((candidate_project, candidate_target))
     deduped: list[tuple[StructuredAstValue, int]] = []
     seen: set[tuple[int, int]] = set()
-    for candidate_project, candidate_target in candidates:
+    for candidate_project, candidate_target in canonicalized_candidates:
         key = (id(candidate_project), int(candidate_target))
         if key in seen:
             continue
@@ -5525,8 +5585,18 @@ def _normalize_direct_stack_function_name_8616(raw_name: str | None) -> str | No
     return normalized or stripped.lstrip("_")
 
 
-def _direct_stack_function_target_8616(project: AngrProjectValue, target: int) -> DirectStackFunctionTarget8616 | None:
-    for candidate_project, candidate_target in _direct_stack_move_call_target_candidates_8616(project, target):
+def _direct_stack_function_target_8616(
+    project: AngrProjectValue,
+    target: int,
+    *,
+    include_padding_aliases: bool = True,
+) -> DirectStackFunctionTarget8616 | None:
+    """Resolve a direct stack code offset to typed function identity evidence."""
+    for candidate_project, candidate_target in _direct_stack_move_call_target_candidates_8616(
+        project,
+        target,
+        include_padding_aliases=include_padding_aliases,
+    ):
         synthetic_globals = getattr(candidate_project, "_inertia_synthetic_globals", None)
         if isinstance(synthetic_globals, dict):
             synthetic = synthetic_globals.get(int(candidate_target))
@@ -5732,6 +5802,12 @@ def _signed_idiv_remainder_stack_store_fact_at_8616(
     ins_addr = getattr(store, "address", None)
     if not isinstance(ins_addr, int):
         return None
+    call_return_contract = runtime_call_return_contract_8616(call_name)
+    if call_return_contract is None:
+        call_return_contract = binary_call_return_contract_8616(
+            project,
+            call_target,
+        )
     return DirectStackMoveFact8616(
         dst_offset,
         2,
@@ -5743,7 +5819,7 @@ def _signed_idiv_remainder_stack_store_fact_at_8616(
         source_call_target=call_target,
         source_call_name=call_name,
         source_call_ins_addr=call_ins_addr,
-        source_call_return_contract=runtime_call_return_contract_8616(call_name),
+        source_call_return_contract=call_return_contract,
     )
 
 
@@ -5751,6 +5827,7 @@ def _wide_call_return_stack_arith_fact_at_8616(
     project: StructuredAstValue,
     insns: tuple[StructuredAstValue, ...],
     index: int,
+    callsite_inventory: Mapping[int, CallsiteSummary8616] | None = None,
 ) -> DirectStackMoveFact8616 | None:
     """Recover a stack-store fact for wide call-return arithmetic."""
     debug_stack_noise = bool(os.environ.get("INERTIA_DEBUG_STACK_NOISE"))
@@ -5790,7 +5867,21 @@ def _wide_call_return_stack_arith_fact_at_8616(
         _debug_reject("call_target")
         return None
     callee_name, callee, resolved_call_target = _callee_name_for_direct_stack_move_8616(project, call_target)
-    if not _callee_has_zero_args_8616(callee, callee_name):
+    call_ins_addr = getattr(call_insn, "address", None)
+    callsite_summary = (
+        callsite_inventory.get(call_ins_addr)
+        if isinstance(call_ins_addr, int) and callsite_inventory is not None
+        else None
+    )
+    summary_proves_zero_args = (
+        isinstance(callsite_summary, CallsiteSummary8616)
+        and callsite_summary.callsite_addr == call_ins_addr
+        and callsite_summary.target_addr == resolved_call_target
+        and callsite_summary.arg_count == 0
+        and not callsite_summary.arg_widths
+        and callsite_summary.stack_cleanup == 0
+    )
+    if not _callee_has_zero_args_8616(callee, callee_name) and not summary_proves_zero_args:
         _debug_reject(f"callee_not_zero_args:{callee_name}")
         return None
     if getattr(add_insn, "id", None) != X86_INS_ADD or getattr(adc_insn, "id", None) != X86_INS_ADC:
@@ -5842,7 +5933,6 @@ def _wide_call_return_stack_arith_fact_at_8616(
         _debug_reject("dst_not_wide_pair")
         return None
     ins_addr = getattr(mov_lo, "address", None)
-    call_ins_addr = getattr(call_insn, "address", None)
     add_ins_addr = getattr(add_insn, "address", None)
     adc_ins_addr = getattr(adc_insn, "address", None)
     dst_high_ins_addr = getattr(mov_hi, "address", None)
@@ -5873,10 +5963,11 @@ def _wide_call_return_stack_arith_fact_at_8616(
 def _direct_stack_move_instruction_facts_8616(
     project: StructuredAstValue,
     function: StructuredAstValue,
+    callsite_inventory: Mapping[int, CallsiteSummary8616] | None = None,
 ) -> tuple[DirectStackMoveFact8616, ...]:
     """Collect binary-proven BP-relative stack MOV facts."""
     cached = getattr(function, "_inertia_direct_stack_move_instruction_facts_8616", None)
-    if isinstance(cached, tuple):
+    if isinstance(cached, tuple) and not callsite_inventory:
         return cached
     facts: list[DirectStackMoveFact8616] = []
     blocks = tuple(_direct_global_update_blocks_8616(project, function))
@@ -5884,7 +5975,12 @@ def _direct_stack_move_instruction_facts_8616(
         wrapper for block in blocks for wrapper in _capstone_insns_for_direct_global_update_8616(project, block)
     )
     for index in range(len(merged_insns)):
-        wide_fact = _wide_call_return_stack_arith_fact_at_8616(project, merged_insns, index)
+        wide_fact = _wide_call_return_stack_arith_fact_at_8616(
+            project,
+            merged_insns,
+            index,
+            callsite_inventory,
+        )
         if wide_fact is not None:
             facts.append(wide_fact)
         idiv_remainder_fact = _signed_idiv_remainder_stack_store_fact_at_8616(project, merged_insns, index)
@@ -5937,11 +6033,14 @@ def _direct_stack_move_instruction_facts_8616(
             if not isinstance(ins_addr, int):
                 continue
 
+            source_register_offset: int | None = None
+
             def append_destination_fact(fact: DirectStackMoveFact8616) -> None:
                 """Attach the current MOV destination's typed index evidence."""
                 facts.append(
                     replace(
                         fact,
+                        source_register_offset=source_register_offset,
                         dst_index_global_displacement=dst_index_global_displacement,
                         dst_index_stack_offset=dst_index_stack_offset,
                         dst_index_immediate=dst_index_immediate,
@@ -5970,6 +6069,10 @@ def _direct_stack_move_instruction_facts_8616(
             reg_id = getattr(src, "reg", None)
             if not isinstance(reg_id, int):
                 continue
+            register_name = _direct_stack_move_register_name_8616(insn, reg_id)
+            register_info = project.arch.registers.get(register_name) if register_name is not None else None
+            if isinstance(register_info, tuple) and len(register_info) == 2 and isinstance(register_info[0], int):
+                source_register_offset = register_info[0]
             binary_stack_expr = _previous_binary_stack_expr_for_register_8616(insns, index, reg_id, width)
             if binary_stack_expr is not None:
                 source_offset, source_rhs_offset, source_op = binary_stack_expr
@@ -6149,8 +6252,9 @@ def _direct_stack_move_instruction_facts_8616(
                 )
             )
     result = tuple(dict.fromkeys(facts))
-    with contextlib.suppress(Exception):
-        function._inertia_direct_stack_move_instruction_facts_8616 = result
+    if not callsite_inventory:
+        with contextlib.suppress(Exception):
+            function._inertia_direct_stack_move_instruction_facts_8616 = result
     return result
 
 
@@ -6172,8 +6276,12 @@ def _direct_stack_move_instruction_facts_for_codegen_8616(
         _DirectStackWriteInventoryOwner8616,
         codegen,
     )._inertia_direct_stack_write_inventory_8616 = inventory
-    primary_facts = _direct_stack_move_instruction_facts_8616(project, function)
     callsite_inventory = callsite_summary_inventory_8616(codegen)
+    primary_facts = _direct_stack_move_instruction_facts_8616(
+        project,
+        function,
+        callsite_inventory,
+    )
     function_addr = getattr(function, "addr", None)
     function_size = getattr(function, "size", None)
     if not isinstance(function_addr, int):
@@ -6259,7 +6367,11 @@ def _direct_stack_move_instruction_facts_for_codegen_8616(
         _DirectStackWriteInventoryOwner8616,
         codegen,
     )._inertia_direct_stack_write_inventory_8616 = extended_inventory
-    extended_facts = _direct_stack_move_instruction_facts_8616(project, extended_function)
+    extended_facts = _direct_stack_move_instruction_facts_8616(
+        project,
+        extended_function,
+        callsite_inventory,
+    )
     merged_facts = tuple(dict.fromkeys((*primary_facts, *extended_facts)))
     recovered_fact_count = len(merged_facts) - len(primary_facts)
     evidence = DirectStackMoveExtentEvidence8616(
@@ -6517,6 +6629,38 @@ def _tree_has_global_update_assignment_for_insn_8616(
         if not _node_has_instruction_address_8616(node, project, ins_addr):
             continue
         if _is_same_global_update_assignment_8616(node, dst_cvar, delta):
+            return True
+    return False
+
+
+def _tree_has_covering_dword_update_assignment_for_insn_8616(
+    root: StructuredAstValue,
+    project: AngrProjectValue,
+    *,
+    addr: int,
+    delta: int,
+    ins_addr: int,
+) -> bool:
+    """Find an exact tagged dword update covering one proven low-word update."""
+    expected_op = "Add" if delta > 0 else "Sub"
+    for node in _iter_structured_c_nodes_8616(root):
+        if not isinstance(node, structured_c.CAssignment):
+            continue
+        if not _node_has_instruction_address_8616(node, project, ins_addr):
+            continue
+        lhs_identity = _global_cvar_identity_8616(node.lhs)
+        if lhs_identity != (addr & 0xFFFF, 4):
+            continue
+        rhs = _strip_casts_8616(node.rhs)
+        if not isinstance(rhs, structured_c.CBinaryOp) or rhs.op != expected_op:
+            continue
+        rhs_identity = _global_cvar_identity_8616(_strip_casts_8616(rhs.lhs))
+        rhs_delta = _strip_casts_8616(rhs.rhs)
+        if (
+            rhs_identity == lhs_identity
+            and isinstance(rhs_delta, structured_c.CConstant)
+            and rhs_delta.value == abs(int(delta))
+        ):
             return True
     return False
 
@@ -7001,9 +7145,11 @@ def _has_existing_stack_update_assignment_8616(
     fact: DirectStackUpdateFact8616,
     cvar: StructuredAstValue,
     source_expr: StructuredAstValue,
+    *,
+    expected_semantic_count: int,
 ) -> bool:
-    """Return whether structured C already contains the proven stack update."""
-    fallback_match = False
+    """Return whether structured C has an exact update or the proven group count."""
+    matching_assignment_ids: set[int] = set()
     for node in _iter_structured_c_nodes_8616(root):
         if not _is_same_stack_update_assignment_8616(
             node,
@@ -7015,10 +7161,18 @@ def _has_existing_stack_update_assignment_8616(
             continue
         if not _stack_update_assignment_has_rendered_owner_8616(root, node):
             continue
+        matching_assignment_ids.add(id(node))
         if _node_has_instruction_address_8616(node, project, fact.ins_addr):
             return True
-        fallback_match = True
-    return fallback_match
+    return len(matching_assignment_ids) == expected_semantic_count
+
+
+def _same_direct_stack_update_semantics_8616(
+    lhs: DirectStackUpdateFact8616,
+    rhs: DirectStackUpdateFact8616,
+) -> bool:
+    """Compare direct stack-update facts while excluding instruction identity."""
+    return replace(lhs, ins_addr=rhs.ins_addr) == rhs
 
 
 def _function_call_name_8616(expr: StructuredAstValue) -> str | None:
@@ -7162,6 +7316,8 @@ def _call_result_cvar_at_instruction_8616(
             "iterator",
             "body",
             "else_node",
+            "switch",
+            "default",
         ):
             if not hasattr(node, attr):
                 continue
@@ -7279,7 +7435,11 @@ def _direct_stack_near_function_pointer_expr_8616(
     target = fact.source_value & mask
     if target == 0:
         return None
-    resolved = _direct_stack_function_target_8616(project, target)
+    resolved = _direct_stack_function_target_8616(
+        project,
+        target,
+        include_padding_aliases=False,
+    )
     if resolved is None:
         return None
     pointer_type = _function_pointer_stack_slot_type_8616(dst_cvar)
@@ -7970,6 +8130,23 @@ def _replace_tagged_assignment_8616(
                         value = replacement
                     replace_children(value)
 
+        cases = getattr(node, "cases", None)
+        if isinstance(cases, (list, tuple)):
+            new_cases = []
+            cases_changed = False
+            for item in tuple(cases):
+                if not isinstance(item, tuple) or len(item) != 2:
+                    new_cases.append(item)
+                    continue
+                case_value, case_body = item
+                replacement_body = transform(case_body)
+                if replacement_body is not case_body:
+                    cases_changed = True
+                replace_children(replacement_body)
+                new_cases.append((case_value, replacement_body))
+            if cases_changed:
+                node.cases = new_cases
+
         condition_and_nodes = getattr(node, "condition_and_nodes", None)
         if condition_and_nodes:
             new_pairs = []
@@ -8097,6 +8274,72 @@ def _replace_tagged_statement_assignment_8616(
     return changed
 
 
+def _replace_unique_tagged_dirty_stack_update_8616(
+    root: StructuredAstValue,
+    project: AngrProjectValue,
+    fact: DirectStackUpdateFact8616,
+    cvar: StructuredAstValue,
+    replacement_factory: Callable[[StructuredAstValue], StructuredAstValue],
+) -> bool:
+    """Replace one rendered dirty RHS carrying an exact stack-update tag.
+
+    angr may preserve a direct BP-relative update as ``stack_slot = dirty``
+    while attaching the machine instruction address only to the dirty RHS.
+    The ordinary tagged-assignment path cannot see that nested tag.  Consume
+    it only when one rendered assignment has both the proven stack identity
+    and the exact instruction tag; duplicate candidates remain untouched.
+    """
+    candidates: list[
+        tuple[list[StructuredAstValue], int, structured_c.CAssignment, structured_c.CDirtyExpression]
+    ] = []
+    observed: list[tuple[object, object, object, object]] = []
+    for owner in _iter_structured_c_nodes_8616(root):
+        if not isinstance(owner, structured_c.CStatements):
+            continue
+        for index, statement in enumerate(tuple(owner.statements or ())):
+            if not isinstance(statement, structured_c.CAssignment):
+                continue
+            if not _same_stack_cvar_8616(statement.lhs, cvar):
+                continue
+            dirty_rhs = _strip_casts_8616(statement.rhs)
+            if not isinstance(dirty_rhs, structured_c.CDirtyExpression):
+                continue
+            # Diagnostic fields belong to angr's dynamic dirty-expression boundary.
+            dirty = dirty_rhs.dirty
+            observed.append(
+                (
+                    statement.tags,
+                    dirty_rhs.tags,
+                    getattr(dirty, "varid", None),
+                    getattr(dirty, "name", None),
+                )
+            )
+            if not (
+                _node_has_instruction_address_8616(statement, project, fact.ins_addr)
+                or _node_has_instruction_address_8616(dirty_rhs, project, fact.ins_addr)
+            ):
+                continue
+            candidates.append((owner.statements, index, statement, dirty_rhs))
+    if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
+        log.warning(
+            "[direct-stack-update-dirty] ins=%#x offset=%d observed=%r exact_candidates=%d",
+            fact.ins_addr,
+            fact.offset,
+            tuple(observed),
+            len(candidates),
+        )
+    if len(candidates) != 1:
+        return False
+    statements, index, statement, dirty_rhs = candidates[0]
+    tags = (
+        statement.tags
+        if _node_has_instruction_address_8616(statement, project, fact.ins_addr)
+        else dirty_rhs.tags
+    )
+    statements[index] = replacement_factory(tags)
+    return True
+
+
 def _replace_tagged_call_statement_with_stack_assignment_8616(
     root: StructuredAstValue,
     project: StructuredAstValue,
@@ -8121,20 +8364,18 @@ def _replace_tagged_call_statement_with_stack_assignment_8616(
 
     def call_statement_identity_8616(
         stmt: StructuredAstValue,
-    ) -> tuple[str | None, bool, bool]:
-        """Return name, target match, and instruction-tag state for a call statement."""
+    ) -> tuple[str | None, bool, bool, bool]:
+        """Return name, target match, tag state, and direct-call shape."""
         tagged = _node_has_instruction_address_8616(stmt, project, call_ins_addr)
         observed_name = _function_call_name_8616(stmt)
         call_expr: StructuredAstValue = None
         if isinstance(stmt, structured_c.CAssignment):
-            lhs = _strip_casts_8616(stmt.lhs)
-            if _cvar_register_name_8616(lhs) == "ax":
-                rhs = stmt.rhs
-                if (
-                    _function_call_name_8616(rhs) is not None
-                    or _function_call_target_addr_8616(rhs) is not None
-                ):
-                    call_expr = rhs
+            rhs = stmt.rhs
+            if (
+                _function_call_name_8616(rhs) is not None
+                or _function_call_target_addr_8616(rhs) is not None
+            ):
+                call_expr = rhs
         elif isinstance(stmt, structured_c.CExpressionStatement):
             call_expr = stmt.expr
         elif isinstance(stmt, structured_c.CReturn):
@@ -8150,22 +8391,28 @@ def _replace_tagged_call_statement_with_stack_assignment_8616(
             project,
             call_target,
         )
-        return observed_name, target_matches, tagged
+        return observed_name, target_matches, tagged, call_expr is not None
 
     def is_target_call_statement(stmt: StructuredAstValue) -> bool:
         """Check whether a tagged statement is the call being materialized."""
         if (
             isinstance(stmt, structured_c.CAssignment)
-            and _cvar_register_name_8616(_strip_casts_8616(stmt.lhs)) != "ax"
+            and isinstance(_c_expr_stack_offset_8616(stmt.lhs), int)
         ):
+            # A stack-local low-half assignment is a carrier, not the
+            # full-width destination. Materialize the wide assignment first,
+            # then consume the exact carrier below. SSA/register carriers are
+            # temporary identities and remain valid in-place replacements.
             return False
-        observed_name, target_matches, tagged = call_statement_identity_8616(stmt)
-        if not tagged:
+        observed_name, target_matches, tagged, has_direct_call = (
+            call_statement_identity_8616(stmt)
+        )
+        if not tagged or not has_direct_call:
             return False
         name_matches = observed_name is not None and (
             not accepted_call_names or observed_name in accepted_call_names
         )
-        return target_matches or name_matches
+        return target_matches or name_matches or isinstance(call_target, int)
 
     def is_unique_untagged_target_call_statement(stmt: StructuredAstValue) -> bool:
         """Check whether an untagged call statement uniquely matches the requested call."""
@@ -8174,8 +8421,10 @@ def _replace_tagged_call_statement_with_stack_assignment_8616(
             and _cvar_register_name_8616(_strip_casts_8616(stmt.lhs)) != "ax"
         ):
             return False
-        observed_name, target_matches, tagged = call_statement_identity_8616(stmt)
-        if tagged:
+        observed_name, target_matches, tagged, has_direct_call = (
+            call_statement_identity_8616(stmt)
+        )
+        if tagged or not has_direct_call:
             return False
         name_matches = observed_name is not None and (
             not accepted_call_names or observed_name in accepted_call_names
@@ -8518,6 +8767,125 @@ def _stack_update_falls_through_to_loop_guard_8616(
         _stack_mem_operand_offset_width_8616(operand) == (fact.offset, fact.width)
         for operand in operands
     )
+
+
+def _stack_update_fallthrough_guard_addr_8616(
+    project: AngrProjectValue,
+    function: StructuredAstValue,
+    fact: DirectStackUpdateFact8616,
+) -> int | None:
+    """Return the exact adjacent guard address proven for one stack update."""
+    fact_addrs = _candidate_ins_addrs_8616(project, fact.ins_addr)
+    for insn in _direct_global_update_ordered_insns_8616(project, function):
+        # Capstone instructions are a third-party dynamic boundary.
+        update_addr = getattr(insn, "address", None)
+        update_size = getattr(insn, "size", None)
+        if (
+            not isinstance(update_addr, int)
+            or update_addr not in fact_addrs
+            or not isinstance(update_size, int)
+            or update_size <= 0
+        ):
+            continue
+        guard_addr = update_addr + update_size
+        if _stack_update_falls_through_to_loop_guard_8616(
+            project,
+            function,
+            fact,
+            guard_addr,
+        ):
+            return guard_addr
+    return None
+
+
+def _node_contains_instruction_address_8616(
+    node: StructuredAstValue,
+    project: AngrProjectValue,
+    ins_addr: int,
+) -> bool:
+    """Return whether an exact instruction tag occurs within one C subtree."""
+    return any(
+        _node_has_instruction_address_8616(candidate, project, ins_addr)
+        for candidate in _iter_structured_c_nodes_8616(node)
+    )
+
+
+def _transparent_statement_slots_8616(
+    body: StructuredAstValue,
+) -> tuple[tuple[list[StructuredAstValue], int, StructuredAstValue], ...]:
+    """Flatten only sequencing containers while retaining replacement slots."""
+    if not isinstance(body, structured_c.CStatements):
+        return ()
+    slots: list[tuple[list[StructuredAstValue], int, StructuredAstValue]] = []
+    for index, statement in enumerate(tuple(body.statements or ())):
+        if isinstance(statement, structured_c.CStatements):
+            slots.extend(_transparent_statement_slots_8616(statement))
+        else:
+            slots.append((body.statements, index, statement))
+    return tuple(slots)
+
+
+def _replace_proven_while_stack_update_8616(
+    root: StructuredAstValue,
+    project: AngrProjectValue,
+    function: StructuredAstValue,
+    fact: DirectStackUpdateFact8616,
+    cvar: StructuredAstValue,
+    replacement_factory: Callable[[StructuredAstValue], StructuredAstValue],
+) -> bool:
+    """Replace one dirty while latch anchored by an adjacent binary guard."""
+    guard_addr = _stack_update_fallthrough_guard_addr_8616(
+        project,
+        function,
+        fact,
+    )
+    if not isinstance(guard_addr, int):
+        return False
+    candidates: list[
+        tuple[list[StructuredAstValue], int, structured_c.CAssignment]
+    ] = []
+    for loop in _iter_structured_c_nodes_8616(root):
+        if not isinstance(loop, structured_c.CWhileLoop):
+            continue
+        slots = _transparent_statement_slots_8616(loop.body)
+        guard_indexes = tuple(
+            index
+            for index, (_owner, _slot, statement) in enumerate(slots)
+            if _node_contains_instruction_address_8616(
+                statement,
+                project,
+                guard_addr,
+            )
+        )
+        if len(guard_indexes) != 1:
+            continue
+        guard_index = guard_indexes[0]
+        loop_candidates: list[
+            tuple[list[StructuredAstValue], int, structured_c.CAssignment]
+        ] = []
+        for index, (owner, slot, statement) in enumerate(slots):
+            if index <= guard_index or not isinstance(
+                statement,
+                structured_c.CAssignment,
+            ):
+                continue
+            if not _same_stack_cvar_8616(statement.lhs, cvar):
+                continue
+            if not isinstance(
+                _strip_casts_8616(statement.rhs),
+                structured_c.CDirtyExpression,
+            ):
+                continue
+            loop_candidates.append((owner, slot, statement))
+        if len(loop_candidates) == 1:
+            candidates.extend(loop_candidates)
+    if len(candidates) != 1:
+        return False
+    owner, slot, statement = candidates[0]
+    owner[slot] = replacement_factory(
+        statement.tags or {"ins_addr": fact.ins_addr},
+    )
+    return True
 
 
 def _materialize_proven_stack_update_loop_iterator_8616(
@@ -8898,6 +9266,34 @@ def _semantic_cvar_identity_8616(node: StructuredAstValue) -> tuple[str, Structu
 def _same_stack_move_rhs_8616(lhs: StructuredAstValue, rhs: StructuredAstValue) -> bool:
     lhs = _strip_casts_8616(lhs)
     rhs = _strip_casts_8616(rhs)
+    if isinstance(lhs, structured_c.CFunctionCall) and isinstance(
+        rhs,
+        structured_c.CFunctionCall,
+    ):
+        lhs_target = _function_call_target_addr_8616(lhs)
+        rhs_target = _function_call_target_addr_8616(rhs)
+        if lhs_target is not None or rhs_target is not None:
+            same_callee = (
+                lhs_target is not None
+                and rhs_target is not None
+                and lhs_target == rhs_target
+            )
+        else:
+            lhs_name = _function_call_name_8616(lhs)
+            rhs_name = _function_call_name_8616(rhs)
+            same_callee = (
+                lhs_name is not None
+                and rhs_name is not None
+                and lhs_name == rhs_name
+            )
+        return (
+            same_callee
+            and len(lhs.args) == len(rhs.args)
+            and all(
+                _same_stack_move_rhs_8616(lhs_arg, rhs_arg)
+                for lhs_arg, rhs_arg in zip(lhs.args, rhs.args, strict=True)
+            )
+        )
     if isinstance(lhs, structured_c.CIndexedVariable) and isinstance(rhs, structured_c.CIndexedVariable):
         return _same_stack_move_rhs_8616(lhs.variable, rhs.variable) and (
             _same_stack_move_rhs_8616(lhs.index, rhs.index)
@@ -9128,10 +9524,12 @@ def _prune_wide_call_return_decomposition_8616(
         return 0
     low_arith_addr = fact.source_low_arith_ins_addr
     high_arith_addr = fact.source_high_arith_ins_addr
+    low_store_addr = fact.ins_addr
     high_store_addr = fact.dst_high_ins_addr
     if (
         not isinstance(low_arith_addr, int)
         or not isinstance(high_arith_addr, int)
+        or not isinstance(low_store_addr, int)
         or not isinstance(high_store_addr, int)
     ):
         return 0
@@ -9157,7 +9555,10 @@ def _prune_wide_call_return_decomposition_8616(
                     )
                 ) or (
                     isinstance(lhs_variable, SimStackVariable)
-                    and _node_has_instruction_address_8616(stmt, project, high_store_addr)
+                    and any(
+                        _node_has_instruction_address_8616(stmt, project, address)
+                        for address in (low_store_addr, high_store_addr)
+                    )
                 )
             if remove_assignment:
                 removed += 1
@@ -9166,6 +9567,155 @@ def _prune_wide_call_return_decomposition_8616(
         if len(retained) != len(node.statements):
             node.statements[:] = retained
     return removed
+
+
+def _wide_call_return_direct_call_8616(node: StructuredAstValue) -> StructuredAstValue | None:
+    """Return the direct call carried by one expression or statement."""
+    current = _strip_casts_8616(node)
+    if isinstance(current, structured_c.CFunctionCall):
+        return current
+    if isinstance(current, structured_c.CExpressionStatement):
+        return _wide_call_return_direct_call_8616(current.expr)
+    if isinstance(current, structured_c.CAssignment):
+        return _wide_call_return_direct_call_8616(current.rhs)
+    return None
+
+
+def _wide_call_return_call_matches_fact_8616(
+    node: StructuredAstValue,
+    project: AngrProjectValue,
+    fact: DirectStackMoveFact8616,
+) -> bool:
+    """Match one call against the exact binary callsite and target evidence."""
+    if not isinstance(fact.source_call_ins_addr, int):
+        return False
+    call = _wide_call_return_direct_call_8616(node)
+    if call is None:
+        return False
+    if not (
+        _node_has_instruction_address_8616(node, project, fact.source_call_ins_addr)
+        or _node_has_instruction_address_8616(call, project, fact.source_call_ins_addr)
+    ):
+        return False
+    observed_name = _call_name_from_expr_8616(call)
+    expected_name = fact.source_call_name.lstrip("_") if isinstance(fact.source_call_name, str) else None
+    name_matches = (
+        isinstance(observed_name, str)
+        and isinstance(expected_name, str)
+        and observed_name == expected_name
+    )
+    target_matches = (
+        isinstance(fact.source_call_target, int)
+        and _function_call_target_matches_8616(call, project, fact.source_call_target)
+    )
+    return name_matches or target_matches
+
+
+def _wide_call_return_assignment_matches_fact_8616(
+    node: StructuredAstValue,
+    project: AngrProjectValue,
+    fact: DirectStackMoveFact8616,
+    dst_cvar: StructuredAstValue,
+) -> bool:
+    """Match one already-materialized wide assignment to its binary fact."""
+    if (
+        not isinstance(node, structured_c.CAssignment)
+        or not _same_stack_cvar_8616(node.lhs, dst_cvar)
+        or not isinstance(fact.source_offset, int)
+    ):
+        return False
+    rhs = _strip_casts_8616(node.rhs)
+    if not isinstance(rhs, structured_c.CBinaryOp) or rhs.op != DirectStackMoveExpressionOp8616.ADD.value:
+        return False
+    for call_candidate, stack_candidate in ((rhs.lhs, rhs.rhs), (rhs.rhs, rhs.lhs)):
+        if not _wide_call_return_call_matches_fact_8616(
+            call_candidate,
+            project,
+            fact,
+        ):
+            continue
+        stack_identity = _stack_cvar_identity_8616(_strip_casts_8616(stack_candidate))
+        if stack_identity is None:
+            continue
+        stack_offset, stack_size = stack_identity
+        if (
+            stack_offset == _canonical_stack_offset_8616(fact.source_offset)
+            and (not isinstance(stack_size, int) or stack_size >= fact.width)
+        ):
+            return True
+    return False
+
+
+def _reconcile_materialized_wide_call_return_assignment_8616(
+    root: StructuredAstValue,
+    project: AngrProjectValue,
+    fact: DirectStackMoveFact8616,
+    dst_cvar: StructuredAstValue,
+) -> tuple[bool, int]:
+    """Keep one proven wide assignment and remove exact replay artifacts."""
+    matching_assignment_ids = tuple(
+        dict.fromkeys(
+            id(node)
+            for node in _iter_structured_c_nodes_8616(root)
+            if _wide_call_return_assignment_matches_fact_8616(
+                node,
+                project,
+                fact,
+                dst_cvar,
+            )
+        )
+    )
+    if not matching_assignment_ids:
+        return False, 0
+    retained_assignment_id = matching_assignment_ids[0]
+    removed = 0
+    seen: set[int] = set()
+
+    def is_replayed_call_carrier(statement: StructuredAstValue) -> bool:
+        """Return whether one statement duplicates the consumed call result."""
+        if not _wide_call_return_call_matches_fact_8616(statement, project, fact):
+            return False
+        if isinstance(statement, structured_c.CAssignment):
+            lhs = _strip_casts_8616(statement.lhs)
+            return (
+                _cvar_register_name_8616(lhs) == "ax"
+                or _same_stack_cvar_8616(lhs, dst_cvar)
+                or _same_stack_low_half_cvar_8616(lhs, dst_cvar)
+            )
+        return isinstance(
+            statement,
+            (structured_c.CExpressionStatement, structured_c.CFunctionCall),
+        )
+
+    def visit(node: StructuredAstValue) -> None:
+        """Remove replay artifacts from mutable structured statement lists."""
+        nonlocal removed
+        if node is None or id(node) in seen:
+            return
+        seen.add(id(node))
+        statements = getattr(node, "statements", None)
+        if isinstance(statements, list):
+            retained: list[StructuredAstValue] = []
+            for statement in tuple(statements):
+                duplicate_assignment = (
+                    id(statement) in matching_assignment_ids
+                    and id(statement) != retained_assignment_id
+                )
+                if duplicate_assignment or is_replayed_call_carrier(statement):
+                    removed += 1
+                    continue
+                retained.append(statement)
+                visit(statement)
+            statements[:] = retained
+        for attr in ("body", "else_node"):
+            visit(getattr(node, attr, None))
+        pairs = getattr(node, "condition_and_nodes", None)
+        if pairs:
+            for _condition, body in tuple(pairs):
+                visit(body)
+
+    visit(root)
+    return True, removed
 
 
 def _direct_stack_move_materialized_ins_addrs_8616(codegen: StructuredCodegenValue) -> frozenset[int]:
@@ -9211,6 +9761,7 @@ def _direct_stack_move_fact_key_8616(fact: DirectStackMoveFact8616) -> tuple[Str
         fact.dst_offset,
         fact.width,
         fact.source_kind,
+        fact.source_register_offset,
         fact.source_value,
         fact.source_offset,
         fact.source_rhs_offset,
@@ -9255,6 +9806,7 @@ def _direct_stack_move_evidence_key_8616(record: StructuredAstValue) -> tuple[St
         values.get("dst_offset"),
         values.get("width"),
         values.get("source_kind"),
+        values.get("source_register_offset"),
         values.get("source_value"),
         values.get("source_offset"),
         values.get("source_rhs_offset"),
@@ -9419,7 +9971,13 @@ def _prune_signed_idiv_auxiliary_insert_8616(
     project: AngrProjectValue,
     fact: DirectStackMoveFact8616,
 ) -> int:
-    """Remove one unused INSERT artifact inside a proven signed-IDIV window."""
+    """Remove one unused INSERT artifact inside a proven signed-IDIV window.
+
+    AIL may emit the widened dividend setup either as an assignment to an
+    unread carrier or as a standalone expression whose result is discarded.
+    Both forms are removable only inside the exact call-to-remainder-store
+    instruction window and only after signed-remainder materialization.
+    """
     if not isinstance(fact.source_call_ins_addr, int):
         return 0
     candidates: list[tuple[list[StructuredAstValue], int]] = []
@@ -9427,11 +9985,31 @@ def _prune_signed_idiv_auxiliary_insert_8616(
         if not isinstance(node, structured_c.CStatements):
             continue
         for index, stmt in enumerate(node.statements):
-            if not isinstance(stmt, structured_c.CAssignment):
+            assignment = stmt if isinstance(stmt, structured_c.CAssignment) else None
+            if assignment is not None:
+                expression = assignment.rhs
+            elif isinstance(stmt, structured_c.CExpressionStatement):
+                expression = stmt.expr
+            elif isinstance(stmt, structured_c.CFunctionCall):
+                expression = stmt
+            else:
                 continue
-            if not _expr_has_structured_c_intrinsic_8616(stmt.rhs, StructuredCIntrinsic8616.INSERT):
+            if not _expr_has_structured_c_intrinsic_8616(
+                expression,
+                StructuredCIntrinsic8616.INSERT,
+            ):
                 continue
-            if _expr_has_binary_op_8616(stmt.rhs, DirectStackMoveExpressionOp8616.MOD):
+            if _expr_has_binary_op_8616(
+                expression,
+                DirectStackMoveExpressionOp8616.MOD,
+            ):
+                continue
+            if assignment is None and any(
+                isinstance(candidate, structured_c.CFunctionCall)
+                and _structured_c_intrinsic_8616(candidate)
+                is not StructuredCIntrinsic8616.INSERT
+                for candidate in _iter_structured_c_nodes_8616(expression)
+            ):
                 continue
             statement_addr = _statement_instruction_addr_8616(stmt, project, fact.ins_addr)
             call_addr = _comparable_instruction_addr_8616(
@@ -9439,12 +10017,27 @@ def _prune_signed_idiv_auxiliary_insert_8616(
                 fact.source_call_ins_addr,
                 fact.ins_addr,
             )
+            if not isinstance(statement_addr, int):
+                instruction_range = _instruction_addr_range_in_node_8616(
+                    stmt,
+                    project,
+                    fact.ins_addr,
+                )
+                if (
+                    instruction_range is not None
+                    and call_addr < instruction_range[0]
+                    and instruction_range[1] < fact.ins_addr
+                ):
+                    statement_addr = instruction_range[0]
             if (
                 not isinstance(statement_addr, int)
                 or not call_addr < statement_addr < fact.ins_addr
             ):
                 continue
-            lhs = _strip_casts_8616(stmt.lhs)
+            if assignment is None:
+                candidates.append((node.statements, index))
+                continue
+            lhs = _strip_casts_8616(assignment.lhs)
             lhs_key = _c_lvalue_key_8616(lhs)
             if lhs_key is None:
                 continue
@@ -9455,7 +10048,11 @@ def _prune_signed_idiv_auxiliary_insert_8616(
                     SimStackVariable,
                 ):
                     continue
-            if _c_node_reads_lvalue_key_8616(root, lhs_key, exclude_node_id=id(stmt)):
+            if _c_node_reads_lvalue_key_8616(
+                root,
+                lhs_key,
+                exclude_node_id=id(stmt),
+            ):
                 continue
             candidates.append((node.statements, index))
     if len(candidates) != 1:
@@ -9463,6 +10060,71 @@ def _prune_signed_idiv_auxiliary_insert_8616(
     statements, index = candidates[0]
     del statements[index]
     return 1
+
+
+def _reconcile_materialized_signed_idiv_call_order_8616(
+    root: StructuredAstValue,
+    project: AngrProjectValue,
+    codegen: StructuredCodegenValue,
+    fact: DirectStackMoveFact8616,
+    dst_cvar: StructuredAstValue,
+) -> tuple[bool, int]:
+    """Move a replayed remainder assignment back to its exact call carrier."""
+    if fact.source_kind is not DirectStackMoveSourceKind8616.SIGNED_IDIV_REMAINDER:
+        return False, 0
+    call_source_expr = _direct_stack_move_source_expr_8616(
+        codegen,
+        fact,
+        dst_cvar,
+        reuse_call_result=False,
+    )
+    if call_source_expr is None or not _expr_contains_function_call_8616(
+        call_source_expr,
+    ):
+        return False, 0
+
+    def replacement_factory(
+        tags: StructuredAstValue,
+        *,
+        _dst_cvar: StructuredAstValue = dst_cvar,
+        _source_expr: StructuredAstValue = call_source_expr,
+    ) -> StructuredAstValue:
+        """Build the exact remainder assignment at the binary call position."""
+        return _direct_stack_move_assignment_8616(
+            codegen,
+            _dst_cvar,
+            _source_expr,
+            tags=tags,
+        )
+
+    assignment = _replace_tagged_call_statement_with_stack_assignment_8616(
+        root,
+        project,
+        fact.source_call_ins_addr,
+        fact.source_call_name,
+        replacement_factory,
+        call_target=fact.source_call_target,
+    )
+    if assignment is None:
+        return False, 0
+    duplicate_count = _remove_duplicate_stack_move_assignments_8616(
+        root,
+        project,
+        fact.ins_addr,
+        dst_cvar,
+        call_source_expr,
+        assignment,
+    )
+    if isinstance(fact.source_call_ins_addr, int):
+        duplicate_count += _remove_duplicate_stack_move_assignments_8616(
+            root,
+            project,
+            fact.source_call_ins_addr,
+            dst_cvar,
+            call_source_expr,
+            assignment,
+        )
+    return True, duplicate_count
 
 
 def _comparable_instruction_addr_8616(project: AngrProjectValue, tagged_addr: int, ins_addr: int) -> int:
@@ -9759,6 +10421,11 @@ def _is_consumed_push_ss_store_lhs_8616(
     if len(args) != 2 or not isinstance(args[0], structured_c.CVariable):
         return False
     segment_variable = args[0].variable
+    runtime_segment_name = runtime_segment_name_for_variable_8616(
+        segment_variable,
+    )
+    if runtime_segment_name is not None:
+        return runtime_segment_name == "ss"
     if not isinstance(segment_variable, SimRegisterVariable):
         return False
     ss_register = project.arch.registers.get("ss")
@@ -9806,6 +10473,20 @@ def prune_materialized_call_push_stack_assignments_8616(
     cfunc = codegen.cfunc
     root = cfunc.statements
     inventory = callsite_summary_inventory_8616(codegen)
+    cleanup_summaries = {
+        callsite_addr: summary
+        for callsite_addr, summary in inventory.items()
+        if summary.stack_cleanup_instruction_addr is not None
+    }
+    normalized_cleanup_summaries = {
+        callsite_addr: summary
+        for callsite_addr, summary in cleanup_summaries.items()
+        if isinstance(summary.stack_cleanup_instruction_addr, int)
+        and not isinstance(summary.stack_cleanup_instruction_addr, bool)
+        and isinstance(summary.stack_cleanup, int)
+        and not isinstance(summary.stack_cleanup, bool)
+        and summary.stack_cleanup > 0
+    }
     push_summaries = {
         callsite_addr: summary
         for callsite_addr, summary in inventory.items()
@@ -9819,6 +10500,7 @@ def prune_materialized_call_push_stack_assignments_8616(
     }
     normalized_count = len(normalized_summaries)
     classified_callsite_addrs: set[int] = set()
+    classified_cleanup_callsite_addrs: set[int] = set()
     observed_calls: list[tuple[str | None, int | None, int]] = []
     for node in _iter_structured_c_nodes_8616(root):
         if not isinstance(node, structured_c.CFunctionCall):
@@ -9831,6 +10513,8 @@ def prune_materialized_call_push_stack_assignments_8616(
             continue
         if callsite_addr in normalized_summaries:
             classified_callsite_addrs.add(callsite_addr)
+        if callsite_addr in normalized_cleanup_summaries:
+            classified_cleanup_callsite_addrs.add(callsite_addr)
     if os.environ.get("INERTIA_DEBUG_CONSUMED_CALL_PUSH"):
         log.warning(
             "[materialized-call-push] observed_calls=%r classified_callsites=%r",
@@ -9843,6 +10527,56 @@ def prune_materialized_call_push_stack_assignments_8616(
         for callsite_addr in classified_callsite_addrs
         for address in normalized_summaries[callsite_addr].push_arg_instruction_addrs
     )
+    consumed_cleanup_instruction_addrs = frozenset(
+        cast(
+            int,
+            normalized_cleanup_summaries[
+                callsite_addr
+            ].stack_cleanup_instruction_addr,
+        )
+        for callsite_addr in classified_cleanup_callsite_addrs
+    )
+    cleanup_result = MaterializedCallCleanupReplay8616(
+        raw_fact_count=len(cleanup_summaries),
+        normalized_fact_count=len(normalized_cleanup_summaries),
+        classified_fact_count=len(classified_cleanup_callsite_addrs),
+        materialized_count=len(classified_cleanup_callsite_addrs)
+        if consumed_cleanup_instruction_addrs
+        else 0,
+        failure_count=max(
+            len(cleanup_summaries) - len(normalized_cleanup_summaries),
+            0,
+        ),
+        consumed_cleanup_instruction_count=len(
+            consumed_cleanup_instruction_addrs
+        ),
+    )
+    codegen._inertia_materialized_call_cleanup_replay_8616 = cleanup_result
+    codegen._inertia_consumed_call_cleanup_carrier_ins_addrs_8616 = (
+        consumed_cleanup_instruction_addrs
+    )
+    if os.environ.get("INERTIA_DEBUG_CONSUMED_CALL_PUSH"):
+        log.warning(
+            "[materialized-call-cleanup] consumed_addrs=%s raw=%d "
+            "normalized=%d classified=%d materialized=%d failures=%d",
+            tuple(
+                hex(address)
+                for address in sorted(consumed_cleanup_instruction_addrs)
+            ),
+            cleanup_result.raw_fact_count,
+            cleanup_result.normalized_fact_count,
+            cleanup_result.classified_fact_count,
+            cleanup_result.materialized_count,
+            cleanup_result.failure_count,
+        )
+    if (
+        cleanup_result.classified_fact_count > 0
+        and cleanup_result.materialized_count == 0
+    ):
+        raise PipelineHardError(
+            "materialized call cleanup replay classified callsites without "
+            "materializing exact consumed cleanup addresses"
+        )
     classified_count = len(classified_callsite_addrs)
     materialized_count = classified_count if consumed_push_instruction_addrs else 0
     result = MaterializedCallPushReplay8616(
@@ -9896,8 +10630,6 @@ def prune_consumed_call_push_stack_assignments_8616(
     raw_count = 0
     classified_count = 0
     materialized_count = 0
-    seen: set[int] = set()
-
     def is_false_push_carrier(statement: StructuredAstValue) -> bool:
         """Classify one assignment against exact consumed PUSH evidence."""
         nonlocal raw_count, classified_count
@@ -9942,48 +10674,17 @@ def prune_consumed_call_push_stack_assignments_8616(
         classified_count += 1
         return True
 
-    def visit(node: StructuredAstValue) -> None:
-        """Remove classified carriers from executable structured statement lists."""
-        nonlocal materialized_count
-        if node is None or id(node) in seen:
-            return
-        if not type(node).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
-            return
-        seen.add(id(node))
-        statements = getattr(node, "statements", None)
-        if isinstance(statements, list):
+    for node in _iter_c_nodes_deep_8616(root):
+        if isinstance(node, structured_c.CStatements):
+            statements = node.statements
             retained: list[StructuredAstValue] = []
             for statement in tuple(statements):
                 if is_false_push_carrier(statement):
                     materialized_count += 1
                     continue
                 retained.append(statement)
-                visit(statement)
             statements[:] = retained
-        # angr may embed call setup in CMultiStatementExpression.stmts inside
-        # branch conditions. Those lists are executable and must consume the
-        # same exact PUSH evidence as ordinary statement bodies before
-        # Widening observes their transient BP-relative carriers.
-        for attr in (
-            "body",
-            "else_node",
-            "condition",
-            "cond",
-            "expr",
-            "retval",
-            "initializer",
-            "iterator",
-            "switch",
-            "stmts",
-        ):
-            visit(getattr(node, attr, None))
-        pairs = getattr(node, "condition_and_nodes", None)
-        if pairs:
-            for condition, body in tuple(pairs):
-                visit(condition)
-                visit(body)
 
-    visit(root)
     result = ConsumedCallPushCarrierPrune8616(
         raw_fact_count=raw_count,
         normalized_fact_count=raw_count,
@@ -10086,8 +10787,6 @@ def prune_call_return_frame_stack_assignments_8616(
     normalized_count = 0
     classified_count = 0
     materialized_count = 0
-    seen: set[int] = set()
-
     def is_call_return_frame_carrier(statement: StructuredAstValue) -> bool:
         """Classify one assignment against exact callsite return-frame evidence."""
         nonlocal raw_count, normalized_count, classified_count
@@ -10190,32 +10889,17 @@ def prune_call_return_frame_stack_assignments_8616(
         classified_count += 1
         return True
 
-    def visit(node: StructuredAstValue) -> None:
-        """Remove classified return-frame carriers from structured statement lists."""
-        nonlocal materialized_count
-        if node is None or id(node) in seen:
-            return
-        if not type(node).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
-            return
-        seen.add(id(node))
-        statements = getattr(node, "statements", None)
-        if isinstance(statements, list):
+    for node in _iter_c_nodes_deep_8616(root):
+        if isinstance(node, structured_c.CStatements):
+            statements = node.statements
             retained: list[StructuredAstValue] = []
             for statement in tuple(statements):
                 if is_call_return_frame_carrier(statement):
                     materialized_count += 1
                     continue
                 retained.append(statement)
-                visit(statement)
             statements[:] = retained
-        for attr in ("body", "else_node"):
-            visit(getattr(node, attr, None))
-        pairs = getattr(node, "condition_and_nodes", None)
-        if pairs:
-            for _condition, body in tuple(pairs):
-                visit(body)
 
-    visit(root)
     result = CallReturnFrameCarrierPrune8616(
         raw_fact_count=raw_count,
         normalized_fact_count=normalized_count,
@@ -10879,6 +11563,76 @@ def _remove_duplicate_stack_move_assignments_8616(
                 kept.append(stmt)
                 visit(stmt)
             statements[:] = kept
+        for attr in ("body", "else_node"):
+            visit(getattr(node, attr, None))
+        pairs = getattr(node, "condition_and_nodes", None)
+        if pairs:
+            for _condition, body in tuple(pairs):
+                visit(body)
+
+    visit(root)
+    return removed
+
+
+def _remove_consumed_signed_idiv_store_assignments_8616(
+    root: StructuredAstValue,
+    project: AngrProjectValue,
+    fact: DirectStackMoveFact8616,
+    dst_cvar: StructuredAstValue,
+    preserved_assignment: StructuredAstValue,
+) -> int:
+    """Remove the exact remainder store consumed by a callsite assignment.
+
+    Lowering may first rewrite the binary remainder-store instruction through
+    an SSA call-result carrier, then replace the exact call statement with the
+    complete signed-remainder assignment.  The latter assignment consumes the
+    former store.  Only an exact machine-tagged write to the proven destination
+    with a modulo RHS is removable; untagged and independently tagged writes
+    remain executable evidence.
+    """
+    if (
+        fact.source_kind
+        is not DirectStackMoveSourceKind8616.SIGNED_IDIV_REMAINDER
+        or not isinstance(fact.ins_addr, int)
+    ):
+        return 0
+    removed = 0
+    seen: set[int] = set()
+
+    def visit(node: StructuredAstValue) -> None:
+        """Prune consumed stores from mutable structured statement lists."""
+        nonlocal removed
+        if node is None or id(node) in seen:
+            return
+        if not type(node).__module__.startswith(
+            "angr.analyses.decompiler.structured_codegen"
+        ):
+            return
+        seen.add(id(node))
+        statements = getattr(node, "statements", None)
+        if isinstance(statements, list):
+            retained: list[StructuredAstValue] = []
+            for statement in tuple(statements):
+                consumed_store = (
+                    statement is not preserved_assignment
+                    and isinstance(statement, structured_c.CAssignment)
+                    and _same_stack_cvar_8616(statement.lhs, dst_cvar)
+                    and _node_has_instruction_address_8616(
+                        statement,
+                        project,
+                        fact.ins_addr,
+                    )
+                    and _expr_has_binary_op_8616(
+                        statement.rhs,
+                        DirectStackMoveExpressionOp8616.MOD,
+                    )
+                )
+                if consumed_store:
+                    removed += 1
+                    continue
+                retained.append(statement)
+                visit(statement)
+            statements[:] = retained
         for attr in ("body", "else_node"):
             visit(getattr(node, attr, None))
         pairs = getattr(node, "condition_and_nodes", None)
@@ -13299,6 +14053,50 @@ def _direct_global_update_ordered_insns_8616(
     return _boundary_tuple_8616(by_address[address] for address in sorted(by_address))
 
 
+def _direct_global_update_has_adjacent_high_carry_8616(
+    project: AngrProjectValue,
+    function: StructuredAstValue,
+    fact: DirectGlobalUpdateFact8616,
+) -> bool:
+    """Prove that a low-word update continues into its adjacent high word."""
+    insns = _direct_global_update_ordered_insns_8616(project, function)
+    for index, low_insn in enumerate(insns[:-1]):
+        if getattr(low_insn, "address", None) != fact.ins_addr:
+            continue
+        low_id = getattr(low_insn, "id", None)
+        if not isinstance(low_id, int):
+            return False
+        expected_high_id = {
+            X86_INS_ADD: X86_INS_ADC,
+            X86_INS_SUB: X86_INS_SBB,
+        }.get(low_id)
+        if expected_high_id is None:
+            return False
+        high_insn = insns[index + 1]
+        low_size = getattr(low_insn, "size", None)
+        if (
+            not isinstance(low_size, int)
+            or low_size <= 0
+            or getattr(high_insn, "address", None) != fact.ins_addr + low_size
+            or getattr(high_insn, "id", None) != expected_high_id
+        ):
+            return False
+        high_operands = _boundary_tuple_8616(
+            getattr(high_insn, "operands", ()) or ()
+        )
+        if len(high_operands) != 2:
+            return False
+        high_slot = _direct_global_mem_operand_offset_width_8616(
+            high_operands[0]
+        )
+        return (
+            high_slot == (((fact.displacement & 0xFFFF) + 2) & 0xFFFF, 2)
+            and getattr(high_operands[1], "type", None) == X86_OP_IMM
+            and int(getattr(high_operands[1], "imm", 1) or 0) == 0
+        )
+    return False
+
+
 def _operand_is_stack_memory_8616(operand: StructuredAstValue) -> bool:
     if getattr(operand, "type", None) != X86_OP_MEM:
         return False
@@ -13492,6 +14290,29 @@ def materialize_direct_global_incdec_instructions_8616(
             consumed_facts = set()
             codegen._inertia_consumed_direct_global_update_facts_8616 = consumed_facts
         fact_key = DirectGlobalUpdateFact8616(addr, width, int(delta), int(fact.ins_addr))
+        if (
+            _direct_global_update_has_adjacent_high_carry_8616(
+                project,
+                function,
+                fact,
+            )
+            and _tree_has_covering_dword_update_assignment_for_insn_8616(
+                root,
+                project,
+                addr=addr,
+                delta=delta,
+                ins_addr=fact.ins_addr,
+            )
+        ):
+            consumed_facts.add(fact_key)
+            record_storage_identity()
+            stats["already_materialized_count"] = int(
+                stats.get("already_materialized_count", 0) or 0
+            ) + 1
+            stats["consumed_fact_count"] = int(
+                stats.get("consumed_fact_count", 0) or 0
+            ) + 1
+            continue
         if fact_key in consumed_facts and _tree_has_global_update_assignment_for_insn_8616(
             root, project, cvar, delta, fact.ins_addr
         ):
@@ -13768,6 +14589,13 @@ def materialize_direct_stack_incdec_instructions_8616(
         )
         materialized = loop_iterator_result.matched
         fact_changed = loop_iterator_result.changed
+        if debug_stack_noise:
+            log.warning(
+                "[direct-stack-update-path] ins=%#x loop_iterator matched=%s changed=%s",
+                fact.ins_addr,
+                loop_iterator_result.matched,
+                loop_iterator_result.changed,
+            )
         if loop_iterator_result.matched:
             removed_count = _remove_conflicting_tagged_stack_update_assignments_8616(
                 root,
@@ -13779,13 +14607,36 @@ def materialize_direct_stack_incdec_instructions_8616(
             ) + removed_count
             fact_changed = removed_count > 0 or fact_changed
         if not materialized:
+            materialized = _replace_proven_while_stack_update_8616(
+                root,
+                project,
+                function,
+                fact,
+                cvar,
+                replacement_factory,
+            )
+            fact_changed = materialized
+        if not materialized:
+            semantic_fact_count = sum(
+                1
+                for candidate in facts
+                if _same_direct_stack_update_semantics_8616(candidate, fact)
+            )
             materialized = _has_existing_stack_update_assignment_8616(
                 root,
                 project,
                 fact,
                 cvar,
                 source_expr,
+                expected_semantic_count=semantic_fact_count,
             )
+            if debug_stack_noise:
+                log.warning(
+                    "[direct-stack-update-path] ins=%#x existing=%s semantic_count=%d",
+                    fact.ins_addr,
+                    materialized,
+                    semantic_fact_count,
+                )
 
         def already_materialized_predicate(
             node: StructuredAstValue,
@@ -13825,6 +14676,15 @@ def materialize_direct_stack_incdec_instructions_8616(
                 candidate_position_predicate=lambda node: _stack_update_assignment_has_rendered_owner_8616(
                     root, node
                 ),
+            )
+            fact_changed = materialized
+        if not materialized:
+            materialized = _replace_unique_tagged_dirty_stack_update_8616(
+                root,
+                project,
+                fact,
+                cvar,
+                replacement_factory,
             )
             fact_changed = materialized
         if not materialized and root._inertia_stack_update_assignment_already_present_8616:
@@ -14040,6 +14900,59 @@ def materialize_direct_stack_mov_instructions_8616(
             )
             changed = True
         if fact_key in materialized_fact_keys:
+            if fact.source_kind is DirectStackMoveSourceKind8616.WIDE_CALL_RETURN_STACK_ARITH:
+                reconciled, replay_pruned = _reconcile_materialized_wide_call_return_assignment_8616(
+                    root,
+                    project,
+                    fact,
+                    dst_cvar,
+                )
+                if reconciled:
+                    stats["already_materialized_count"] = (
+                        int(stats.get("already_materialized_count", 0) or 0) + 1
+                    )
+                    if replay_pruned:
+                        stats["wide_call_replay_pruned_count"] = (
+                            int(stats.get("wide_call_replay_pruned_count", 0) or 0)
+                            + replay_pruned
+                        )
+                        changed = True
+                    materialized_facts.append(fact)
+                    source_expr_by_store_ins_addr[int(fact.ins_addr)] = source_expr
+                    continue
+            if fact.source_kind is DirectStackMoveSourceKind8616.SIGNED_IDIV_REMAINDER:
+                call_order_reconciled, replay_pruned = (
+                    _reconcile_materialized_signed_idiv_call_order_8616(
+                        root,
+                        project,
+                        codegen,
+                        fact,
+                        dst_cvar,
+                    )
+                )
+                if call_order_reconciled:
+                    stats["idiv_call_statement_materialized_count"] = (
+                        int(
+                            stats.get(
+                                "idiv_call_statement_materialized_count",
+                                0,
+                            )
+                            or 0
+                        )
+                        + 1
+                    )
+                    if replay_pruned:
+                        stats["idiv_duplicate_store_pruned_count"] = (
+                            int(
+                                stats.get(
+                                    "idiv_duplicate_store_pruned_count",
+                                    0,
+                                )
+                                or 0
+                            )
+                            + replay_pruned
+                        )
+                    changed = True
             signed_idiv_assignment_present = _tree_has_materialized_signed_idiv_remainder_8616(
                 root,
                 fact,
@@ -14064,6 +14977,29 @@ def materialize_direct_stack_mov_instructions_8616(
                 dst_expr,
                 source_expr,
             ) or signed_idiv_assignment_present:
+                if (
+                    fact.source_kind
+                    is DirectStackMoveSourceKind8616.SIGNED_IDIV_REMAINDER
+                ):
+                    auxiliary_insert_count = (
+                        _prune_signed_idiv_auxiliary_insert_8616(
+                            root,
+                            project,
+                            fact,
+                        )
+                    )
+                    if auxiliary_insert_count:
+                        stats["idiv_auxiliary_insert_pruned_count"] = (
+                            int(
+                                stats.get(
+                                    "idiv_auxiliary_insert_pruned_count",
+                                    0,
+                                )
+                                or 0
+                            )
+                            + auxiliary_insert_count
+                        )
+                        changed = True
                 if fact.source_kind is DirectStackMoveSourceKind8616.WIDE_CALL_RETURN_STACK_ARITH:
                     carrier_pruned = _prune_wide_call_return_carriers_8616(
                         root,
@@ -14188,7 +15124,20 @@ def materialize_direct_stack_mov_instructions_8616(
             # assignment that consumes the low-half call carrier. Generic tagged
             # replacement can append the wide assignment while leaving the
             # low-half call live, which adds a false helper call and stack write.
-            materialized = False
+            wide_call_assignment = _replace_tagged_call_statement_with_stack_assignment_8616(
+                root,
+                project,
+                fact.source_call_ins_addr,
+                fact.source_call_name,
+                replacement_factory,
+                call_target=fact.source_call_target,
+            )
+            materialized = wide_call_assignment is not None
+            if materialized:
+                stats["wide_call_statement_materialized_count"] = (
+                    int(stats.get("wide_call_statement_materialized_count", 0) or 0) + 1
+                )
+                changed = True
         else:
             tagged_materialized = _replace_tagged_statement_assignment_8616(
                 root,
@@ -14255,7 +15204,16 @@ def materialize_direct_stack_mov_instructions_8616(
                     stats["idiv_call_statement_materialized_count"] = (
                         int(stats.get("idiv_call_statement_materialized_count", 0) or 0) + 1
                     )
-                    duplicate_store_count = _remove_duplicate_stack_move_assignments_8616(
+                    duplicate_store_count = (
+                        _remove_consumed_signed_idiv_store_assignments_8616(
+                            root,
+                            project,
+                            fact,
+                            dst_cvar,
+                            idiv_call_assignment,
+                        )
+                    )
+                    duplicate_store_count += _remove_duplicate_stack_move_assignments_8616(
                         root,
                         project,
                         fact.ins_addr,
@@ -14741,6 +15699,7 @@ def materialize_direct_stack_mov_instructions_8616(
                             ("dst_offset", fact.dst_offset),
                             ("width", fact.width),
                             ("source_kind", fact.source_kind),
+                            ("source_register_offset", fact.source_register_offset),
                             ("source_value", fact.source_value),
                             ("source_offset", fact.source_offset),
                             ("source_rhs_offset", fact.source_rhs_offset),
@@ -14795,6 +15754,10 @@ def materialize_direct_stack_mov_instructions_8616(
     reload_register_use_missing: set[str] = set()
     for reload_fact in reload_facts:
         stats["reload_classified_fact_count"] = int(stats.get("reload_classified_fact_count", 0) or 0) + 1
+        source_fact = _materialized_store_fact_for_reload_8616(
+            reload_fact,
+            tuple(materialized_facts),
+        )
         source_cvar = _resolve_direct_stack_update_cvar_8616(codegen, reload_fact.source_offset, reload_fact.width)
         if source_cvar is None:
             stats["reload_failure_count"] = int(stats.get("reload_failure_count", 0) or 0) + 1
@@ -14840,7 +15803,19 @@ def materialize_direct_stack_mov_instructions_8616(
                     and not _expr_contains_function_call_8616(source_expr)
                     and isinstance(reload_fact.source_offset, int)
                 ):
-                    if _tree_has_stack_move_assignment_8616(root, source_cvar, source_expr):
+                    visible_guard_present = _tree_has_stack_move_assignment_8616(
+                        root,
+                        source_cvar,
+                        source_expr,
+                    ) or (
+                        source_fact is not None
+                        and _tree_has_materialized_signed_idiv_remainder_8616(
+                            root,
+                            source_fact,
+                            source_cvar,
+                        )
+                    )
+                    if visible_guard_present:
                         materialized_reload = True
                         stats["reload_stack_slot_visible_guard_already_present_count"] = (
                             int(stats.get("reload_stack_slot_visible_guard_already_present_count", 0) or 0) + 1

@@ -391,6 +391,59 @@ def test_records_unchanged_postprocess_validation_skip():
     assert codegen._inertia_postprocess_unchanged_validation_skip_count_8616 == 2
 
 
+def test_regeneration_replays_stack_aggregate_types_before_render(monkeypatch) -> None:
+    calls: list[str] = []
+    cfunc = SimpleNamespace(addr=0x1234)
+    codegen = SimpleNamespace(
+        cfunc=cfunc,
+        project=SimpleNamespace(arch=Arch86_16()),
+        _inertia_postprocess_regeneration_disabled=False,
+        _inertia_last_postprocess_pass=None,
+    )
+
+    monkeypatch.setattr(
+        post_stage,
+        "_repair_missing_cnode_codegen_metadata_8616",
+        lambda *_args: calls.append("repair_metadata"),
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "repair_cfunctioncall_render_targets_8616",
+        lambda *_args: calls.append("repair_calls"),
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "_normalize_stack_variable_identifiers_8616",
+        lambda *_args: calls.append("normalize_stack"),
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "reapply_stack_aggregate_object_facts_8616",
+        lambda *_args: calls.append("replay_aggregate") or True,
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "_bind_codegen_variable_types_to_arch_8616",
+        lambda *_args: calls.append("bind_types"),
+    )
+
+    def render_text(_cfunc):
+        calls.append("render")
+        return "void sub_1234(void) {\n}\n"
+
+    codegen.render_text = render_text
+
+    assert post_stage._regenerate_text_safely(codegen, context="test:final") is True
+    assert calls == [
+        "repair_metadata",
+        "repair_calls",
+        "normalize_stack",
+        "replay_aggregate",
+        "bind_types",
+        "render",
+    ]
+
+
 def test_destructive_postprocess_failure_forces_changed_snapshot():
     project = SimpleNamespace()
     codegen = SimpleNamespace()
@@ -549,6 +602,7 @@ def test_destructive_discard_runs_evidenced_salvage_and_stable_dce_before_identi
     project = SimpleNamespace()
     restored_cfunc = SimpleNamespace(addr=0x1000, statements=[])
     codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, statements=[]))
+    codegen._inertia_structuring_validation_failed = False
     stage = SimpleNamespace(project=project, codegen=codegen)
     calls: list[str] = []
 
@@ -593,7 +647,7 @@ def test_destructive_discard_runs_evidenced_salvage_and_stable_dce_before_identi
         before_fingerprint="before",
         before_summary={"stack_writes": ["baseline"]},
         pre_postprocess_cfunc_snapshot=restored_cfunc,
-        pre_postprocess_metadata_snapshot={},
+        pre_postprocess_metadata_snapshot={"_inertia_structuring_validation_failed": False},
         validation_timings={},
         function=SimpleNamespace(addr=0x1000),
         log=SimpleNamespace(warning=lambda *_args, **_kwargs: None, info=lambda *_args, **_kwargs: None),
@@ -609,6 +663,7 @@ def test_destructive_callsite_discard_skips_unrelated_direct_stack_salvage(monke
     restored_cfunc = SimpleNamespace(addr=0x1000, statements=[])
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(addr=0x1000, statements=[]),
+        _inertia_structuring_validation_failed=False,
         _inertia_postprocess_validation_failure_pass="_materialize_callsite_stack_arguments_8616",
     )
     stage = SimpleNamespace(project=project, codegen=codegen)
@@ -658,6 +713,7 @@ def test_destructive_callsite_discard_skips_unrelated_direct_stack_salvage(monke
         before_summary={"stack_writes": ["baseline"]},
         pre_postprocess_cfunc_snapshot=restored_cfunc,
         pre_postprocess_metadata_snapshot={
+            "_inertia_structuring_validation_failed": False,
             "_inertia_postprocess_validation_failure_pass": "_materialize_callsite_stack_arguments_8616",
         },
         validation_timings={},
@@ -667,6 +723,65 @@ def test_destructive_callsite_discard_skips_unrelated_direct_stack_salvage(monke
 
     assert codegen.cfunc is restored_cfunc
     assert calls == ["regenerate", "dce"]
+
+
+def test_failed_structuring_skips_all_postprocess_salvage_after_discard(monkeypatch):
+    project = SimpleNamespace()
+    restored_cfunc = SimpleNamespace(addr=0x1000, statements=[])
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1000, statements=[]),
+        _inertia_structuring_validation_failed=True,
+    )
+    stage = SimpleNamespace(project=project, codegen=codegen)
+    calls: list[str] = []
+
+    def forbidden_salvage(*_args, **_kwargs):
+        raise AssertionError("postprocess cannot salvage a failed Structuring baseline")
+
+    monkeypatch.setattr(post_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: calls.append("regenerate"))
+    monkeypatch.setattr(post_stage, "_invalidate_tail_validation_derived_caches_8616", lambda _codegen: None)
+    monkeypatch.setattr(
+        post_stage,
+        "_collect_tail_validation_summary_with_baseline_canonicalization_8616",
+        lambda *_args, **_kwargs: {"stack_writes": ["baseline"]},
+    )
+    monkeypatch.setattr(
+        post_stage,
+        "compare_x86_16_tail_validation_summaries",
+        lambda _before, _after: {"changed": False, "status": "stable"},
+    )
+    monkeypatch.setattr(post_stage, "build_x86_16_tail_validation_verdict", lambda _stage, _validation: "stable")
+    monkeypatch.setattr(post_stage, "persist_x86_16_tail_validation_snapshot", lambda **_kwargs: None)
+    for name in (
+        "_salvage_direct_stack_update_after_discard_8616",
+        "_salvage_direct_global_update_after_discard_8616",
+        "_salvage_signed_idiv_stack_move_after_discard_8616",
+        "_salvage_direct_stack_move_after_discard_8616",
+        "_salvage_segmented_global_materialization_after_discard_8616",
+        "_salvage_callsite_stack_args_after_discard_8616",
+        "_salvage_flag_cleanup_after_discard_8616",
+        "_salvage_dce_after_discard_8616",
+    ):
+        monkeypatch.setattr(post_stage, name, forbidden_salvage)
+
+    post_stage._discard_failed_postprocess_result_8616(
+        stage,
+        validation={"verdict": "changed", "delta": {}},
+        validation_verdict_text="changed",
+        validation_mode="live_out",
+        snapshot_function_info={},
+        before_fingerprint="before",
+        before_summary={"stack_writes": ["baseline"]},
+        pre_postprocess_cfunc_snapshot=restored_cfunc,
+        pre_postprocess_metadata_snapshot={"_inertia_structuring_validation_failed": True},
+        validation_timings={},
+        function=SimpleNamespace(addr=0x1000),
+        log=SimpleNamespace(warning=lambda *_args, **_kwargs: None, info=lambda *_args, **_kwargs: None),
+    )
+
+    assert codegen.cfunc is restored_cfunc
+    assert calls == ["regenerate"]
+    assert codegen._inertia_postprocess_discarded is True
 
 
 def test_generic_return_artifact_detects_unified_vvar_dereference():

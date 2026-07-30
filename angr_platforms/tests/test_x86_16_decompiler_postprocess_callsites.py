@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import angr_platforms.X86_16.decompiler_postprocess_calls as postprocess_calls
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -65,6 +67,65 @@ class _Memory:
     def load(self, addr: int, size: int) -> bytes:
         start = addr - self._base
         return self._data[start : start + size]
+
+
+def test_regeneration_replay_applies_bound_target_identity_after_arguments(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    codegen = SimpleNamespace(
+        project=project,
+        cfunc=object(),
+        _inertia_callsite_summaries={1: object()},
+    )
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        postprocess_calls,
+        "_attach_callsite_summaries_8616",
+        lambda _project, _codegen: calls.append("attach") or False,
+    )
+    monkeypatch.setattr(
+        postprocess_calls,
+        "_materialize_callsite_stack_arguments_8616",
+        lambda _project, _codegen: calls.append("stack-args") or True,
+    )
+    postprocess_calls._bind_call_target_identity_consumer_8616(
+        codegen,
+        lambda _project, _codegen: calls.append("target-identity") or False,
+    )
+
+    changed = postprocess_calls.replay_callsite_stack_arguments_after_regeneration_8616(
+        project,
+        codegen,
+    )
+
+    assert changed is True
+    assert calls == ["attach", "stack-args", "target-identity"]
+
+
+def test_regeneration_replay_refuses_missing_target_identity_binding(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    codegen = SimpleNamespace(
+        project=project,
+        cfunc=object(),
+        _inertia_callsite_summaries={1: object()},
+    )
+
+    monkeypatch.setattr(
+        postprocess_calls,
+        "_attach_callsite_summaries_8616",
+        lambda _project, _codegen: False,
+    )
+    monkeypatch.setattr(
+        postprocess_calls,
+        "_materialize_callsite_stack_arguments_8616",
+        lambda _project, _codegen: False,
+    )
+
+    with pytest.raises(PipelineHardError, match="Structuring-bound Types/Lowering consumer"):
+        postprocess_calls.replay_callsite_stack_arguments_after_regeneration_8616(
+            project,
+            codegen,
+        )
 
 
 def test_callsite_materialization_stats_expose_standard_evidence_counters():

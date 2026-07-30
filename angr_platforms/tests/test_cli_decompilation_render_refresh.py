@@ -108,7 +108,9 @@ def test_callsite_finalization_does_not_repeat_direct_stack_after_indexed_replay
     ]
 
 
-def test_regenerated_noncall_stabilization_runs_structuring_before_cleanup(monkeypatch) -> None:
+def test_regenerated_noncall_finalization_returns_lowering_ownership_after_cleanup(
+    monkeypatch,
+) -> None:
     project = object()
     codegen = SimpleNamespace(project=project)
     calls: list[str] = []
@@ -147,11 +149,51 @@ def test_regenerated_noncall_stabilization_runs_structuring_before_cleanup(monke
         shared_calls,
     )
     monkeypatch.setattr(cli_decompilation, "finalize_late_ast_cleanup_8616", cleanup)
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_replay_indexed_segmented_global_lowering_after_regen_8616",
+        lambda candidate_codegen: calls.append("indexed_global") or False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_simplify_structured_expressions_8616",
+        lambda candidate_codegen: calls.append("simplify") or False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_replay_call_return_selector_lowering_after_regen_8616",
+        lambda candidate_codegen: calls.append("call_return_selector") or False,
+    )
 
-    changed = cli_decompilation._stabilize_regenerated_noncall_ast_8616(codegen)
+    changed = cli_decompilation._finalize_regenerated_noncall_ast_8616(codegen)
 
     assert changed is True
-    assert calls == ["shared_calls", "widening", "structuring", "cleanup", "shared_calls"]
+    assert calls == [
+        "shared_calls",
+        "widening",
+        "structuring",
+        "cleanup",
+        "indexed_global",
+        "shared_calls",
+        "simplify",
+        "call_return_selector",
+        "indexed_global",
+    ]
+
+
+def test_call_return_selector_replay_uses_bound_lowering_owner() -> None:
+    calls: list[object] = []
+
+    def replayer(candidate_codegen: object) -> bool:
+        calls.append(candidate_codegen)
+        return True
+
+    codegen = SimpleNamespace(
+        _inertia_call_return_selector_replayer_8616=replayer,
+    )
+
+    assert cli_decompilation._replay_call_return_selector_lowering_after_regen_8616(codegen) is True
+    assert calls == [codegen]
 
 
 def test_regeneration_replays_stack_updates_through_structuring_stage(monkeypatch) -> None:

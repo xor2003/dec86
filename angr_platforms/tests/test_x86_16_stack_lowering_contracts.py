@@ -11,6 +11,7 @@ from angr_platforms.X86_16.analysis.stack_frame_ir import FrameAccessArtifact, S
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.ir.core import AddressStatus, MemSpace, SegmentOrigin
+from angr_platforms.X86_16.lowering import stack_lowering as stack_lowering_module
 from angr_platforms.X86_16.lowering.real_mode_linear import _known_bp_stack_offsets_8616, _ss_probe_enabled_8616
 from angr_platforms.X86_16.lowering.ss_bp_substitution import substitute_ss_bp_dereferences_with_variables
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
@@ -213,6 +214,51 @@ def test_stack_lowering_coordinator_runs_typed_lowering_before_rewrite_cleanup()
 
     assert changed is True
     assert calls == ["typed-ss", "rewrite", "canonicalize"]
+
+
+def test_stack_lowering_preserves_segment_provenance_before_global_projection(monkeypatch) -> None:
+    calls: list[str] = []
+    codegen = SimpleNamespace(cfunc=SimpleNamespace())
+    project = SimpleNamespace(_inertia_c_target="portable-flat")
+
+    monkeypatch.setattr(
+        stack_lowering_module,
+        "lower_stable_ss_linear_stack_dereferences_8616",
+        lambda *_args, **_kwargs: calls.append("stable-ss") or False,
+    )
+    monkeypatch.setattr(
+        stack_lowering_module,
+        "apply_runtime_segment_lowering_8616",
+        lambda *_args, **_kwargs: calls.append("runtime-segment") or False,
+    )
+    monkeypatch.setattr(
+        stack_lowering_module,
+        "lower_stable_ds_es_linear_global_dereferences_8616",
+        lambda *_args, **_kwargs: calls.append("global-dereference") or False,
+    )
+    monkeypatch.setattr(
+        stack_lowering_module,
+        "lower_stable_ds_es_linear_global_addresses_8616",
+        lambda *_args, **_kwargs: calls.append("global-address") or False,
+    )
+
+    changed = run_stack_lowering_pass_8616(
+        rewrite_ss_stack_byte_offsets=lambda: calls.append("rewrite") or False,
+        canonicalize_stack_cvars=lambda: calls.append("canonicalize") or False,
+        codegen=codegen,
+        project=project,
+        max_rounds=1,
+    )
+
+    assert changed is False
+    assert calls == [
+        "stable-ss",
+        "runtime-segment",
+        "global-dereference",
+        "global-address",
+        "rewrite",
+        "canonicalize",
+    ]
 
 
 def test_stack_probe_return_facts_use_typed_callsite_summary_fields() -> None:

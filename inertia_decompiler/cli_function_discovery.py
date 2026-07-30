@@ -58,6 +58,7 @@ from inertia_decompiler.cli_output import (
 from inertia_decompiler.disassembly_helpers import (
     _linear_disassembly,
 )
+from inertia_decompiler.discovery_evidence_project import isolated_discovery_evidence_project_8616
 from inertia_decompiler.project_loading import (
     _build_project_cached,
     _build_project_from_bytes,
@@ -341,7 +342,12 @@ def _binary_padding_entry_aliases_8616(
     memory = _dynamic_attr(loader, "memory", None)
     if memory is None or not hasattr(memory, "load") or padding_limit <= 0:
         return (function_addr,)
-    scan_start = max(0, function_addr - padding_limit)
+    main_object = _dynamic_attr(loader, "main_object", None)
+    mapped_start = _dynamic_attr(main_object, "min_addr", None)
+    if not isinstance(mapped_start, int):
+        mapped_start = _dynamic_attr(main_object, "linked_base", None)
+    scan_floor = mapped_start if isinstance(mapped_start, int) and mapped_start <= function_addr else 0
+    scan_start = max(scan_floor, function_addr - padding_limit)
     try:
         prefix = bytes(memory.load(scan_start, function_addr - scan_start))
     except Exception:
@@ -500,6 +506,7 @@ __all__ = [
     "_rank_prologue_scan_candidate_addrs",
     "_relocation_seed_targets",
     "_rank_exe_function_seeds",
+    "record_direct_target_caller_return_use_evidence_8616",
     "_recover_fast_seed_functions",
     "_recover_fast_exe_catalog",
     "_recover_hidden_sidecar_display_pairs",
@@ -3186,6 +3193,83 @@ def _rank_pre_entry_source_function_seeds_8616(project: angr.Project) -> list[in
     return source_seeds
 
 
+def _pre_entry_source_function_ranges_8616(
+    project: angr.Project,
+    source_seeds: Sequence[int],
+) -> tuple[tuple[int, int], ...]:
+    """Build independently framed caller ranges from the startup-bounded catalog."""
+    main_object = _dynamic_attr(project.loader, "main_object", None)
+    linked_base = _dynamic_attr(main_object, "linked_base", None)
+    max_addr = _dynamic_attr(main_object, "max_addr", None)
+    if not isinstance(linked_base, int) or not isinstance(max_addr, int):
+        return ()
+    ordered_seeds = tuple(sorted(dict.fromkeys(source_seeds)))
+    if not ordered_seeds:
+        return ()
+    image_end = linked_base + max_addr + 1
+    final_end = min(project.entry, image_end)
+    if ordered_seeds[-1] >= final_end:
+        return ()
+    function_ranges = tuple(
+        (
+            _binary_padding_entry_aliases_8616(project, start)[0],
+            ordered_seeds[index + 1] if index + 1 < len(ordered_seeds) else final_end,
+        )
+        for index, start in enumerate(ordered_seeds)
+    )
+    entry_caller_range = _entry_linear_caller_range_8616(
+        project,
+        target_addrs=ordered_seeds,
+    )
+    if entry_caller_range is not None:
+        return (*function_ranges, entry_caller_range)
+    return function_ranges
+
+
+def record_direct_target_caller_return_use_evidence_8616(
+    project: angr.Project,
+    target_addr: int,
+) -> CallerReturnUseEvidence8616 | None:
+    """Record closed caller-use evidence for one sidecar-free direct target.
+
+    Discovery is bounded to framed functions in the startup-proven application
+    region. Targets outside that catalog remain unknown.
+    """
+    existing = caller_return_use_evidence_by_addr_8616(project).get(target_addr)
+    if isinstance(existing, CallerReturnUseEvidence8616):
+        return existing
+    evidence_project = isolated_discovery_evidence_project_8616(project)
+    source_seeds = tuple(_rank_pre_entry_source_function_seeds_8616(evidence_project))
+    canonical_target = next(
+        (
+            seed
+            for seed in source_seeds
+            if target_addr in _binary_padding_entry_aliases_8616(evidence_project, seed)
+        ),
+        None,
+    )
+    if canonical_target is None:
+        return None
+    function_ranges = _pre_entry_source_function_ranges_8616(evidence_project, source_seeds)
+    if not function_ranges:
+        return None
+    target_aliases = _binary_padding_entry_aliases_8616(evidence_project, canonical_target)
+    evidence = _collect_caller_return_use_for_entry_aliases_8616(
+        evidence_project,
+        target_aliases,
+        function_ranges,
+    )
+    if evidence is None:
+        return None
+    for evidence_target in dict.fromkeys((*target_aliases, target_addr)):
+        _record_caller_return_use_evidence_8616(
+            project,
+            evidence_target,
+            replace(evidence, target_addr=evidence_target),
+        )
+    return replace(evidence, target_addr=target_addr)
+
+
 def _recover_pre_entry_source_catalog_8616(
     project: angr.Project,
     *,
@@ -3291,19 +3375,7 @@ def _recover_pre_entry_source_catalog_8616(
         failure_count=len(failed_addrs),
         failed_addrs=tuple(failed_addrs),
     )
-    function_ranges = tuple(
-        (
-            _binary_padding_entry_aliases_8616(project, start)[0],
-            end,
-        )
-        for start, end in (exact_region_by_addr[addr] for addr in ordered_seeds)
-    )
-    entry_caller_range = _entry_linear_caller_range_8616(
-        project,
-        target_addrs=ordered_seeds,
-    )
-    if entry_caller_range is not None:
-        function_ranges = (*function_ranges, entry_caller_range)
+    function_ranges = _pre_entry_source_function_ranges_8616(project, ordered_seeds)
     for _function_cfg, function in recovered:
         function_addr = _dynamic_attr(function, "addr", None)
         if not isinstance(function_addr, int):

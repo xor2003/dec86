@@ -33,6 +33,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CIndexedVariable,
     CStatements,
     CStructField,
+    CSwitchCase,
     CTypeCast,
     CUnaryOp,
     CVariable,
@@ -63,11 +64,17 @@ from capstone.x86_const import (
 from ..alias.domains import register_domain_for_name
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616, _same_c_expression_8616
 from ..callsite_summary import CallsiteSummary8616, build_callsite_summary_inventory_8616
+from ..ir.core import MemSpace
 from ..pipeline.errors import PipelineHardError
 from ..structuring.simple_loop_recovery import InsnSummary8616, _function_instruction_summaries_8616
+from ..widening.segmented_load_identity import (
+    SegmentedLoadIdentity8616,
+    segmented_load_tags_8616,
+)
 from .global_declarations import (
     NamedAggregateDeclarationCType8616,
     ctype_for_global_width_8616,
+    initialize_global_declaration_specs_8616,
     record_global_declaration_spec_8616,
 )
 from .real_mode_linear import (
@@ -79,6 +86,11 @@ from .real_mode_linear import (
     _direct_stack_move_segment_name_8616,
     _direct_zero_arg_call_before_8616,
     _stack_mem_operand_offset_width_8616,
+)
+from .segment_register_state import runtime_segment_name_for_variable_8616
+from .storage_identity_facts import (
+    StorageIdentityEvidenceKind8616,
+    global_storage_identity_facts_8616,
 )
 
 log: logging.Logger = logging.getLogger(__name__)
@@ -157,6 +169,12 @@ class _CapstoneWrapperBoundary8616(typing.Protocol):
     insn: object
 
 
+class _TaggedCNodeBoundary8616(typing.Protocol):
+    """Dynamic tags field exposed by third-party angr C AST nodes."""
+
+    tags: object
+
+
 class _TypeStoreBoundary8616(typing.Protocol):
     """Type registration surface exposed by angr's per-function type store."""
 
@@ -217,6 +235,7 @@ class _CodegenTypeBoundary8616(typing.Protocol):
 class _CodegenStackAggregateFactBoundary8616(typing.Protocol):
     """Owned Lowering metadata used to survive later CFunction rebuilds."""
 
+    _inertia_consumed_direct_global_boolean_carrier_ins_addrs_8616: frozenset[int]
     _inertia_global_declaration_specs_8616: tuple[tuple[str, str, int | None], ...]
     _inertia_named_global_aggregate_declaration_reconcile_stats_8616: NamedGlobalAggregateTypeReplayStats8616
     _inertia_named_global_aggregate_type_facts_8616: tuple[NamedGlobalAggregateTypeFact8616, ...]
@@ -724,6 +743,26 @@ class DirectGlobalSymbolRef8616:
 
 
 @dataclass(frozen=True, slots=True)
+class DirectSegmentedGlobalLoadEvidence8616:
+    """Binary-proven direct segmented-memory load without symbol evidence."""
+
+    offset: int
+    width: int
+    space: MemSpace
+    ins_addr: int
+
+
+@dataclass(frozen=True, slots=True)
+class DirectSegmentedGlobalStoreEvidence8616:
+    """Binary-proven direct segmented-memory store without symbol evidence."""
+
+    offset: int
+    width: int
+    space: MemSpace
+    ins_addr: int
+
+
+@dataclass(frozen=True, slots=True)
 class GlobalAddressLiteralEvidence8616:
     """Global address literal evidence for pointer materialization."""
 
@@ -761,6 +800,22 @@ class DirectGlobalBooleanStoreEvidence8616:
     dest_offset: int
     dest_width: int
     store_ins_addr: int | None = None
+    compare_ins_addr: int | None = None
+    sbb_ins_addr: int | None = None
+    neg_ins_addr: int | None = None
+
+    @property
+    def carrier_ins_addrs(self) -> tuple[int, ...]:
+        """Return exact non-store instructions consumed by boolean lowering."""
+        return tuple(
+            address
+            for address in (
+                self.compare_ins_addr,
+                self.sbb_ins_addr,
+                self.neg_ins_addr,
+            )
+            if isinstance(address, int)
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -782,6 +837,26 @@ class DirectGlobalCallReturnStoreEvidence8616:
         if self.high_store_ins_addr is None:
             return (self.low_store_ins_addr,)
         return (self.low_store_ins_addr, self.high_store_ins_addr)
+
+
+@dataclass(frozen=True, slots=True)
+class _StandaloneCallSite8616:
+    """One exact standalone structured-C call matched to binary evidence."""
+
+    statements: CStatements
+    index: int
+    statement: object
+    call: CFunctionCall
+
+
+@dataclass(frozen=True, slots=True)
+class _AnonymousDirectStoreMaterializationResult8616:
+    """Closed result counters for anonymous direct segmented stores."""
+
+    changed: bool
+    classified_count: int
+    materialized_count: int
+    failure_count: int
 
 
 @dataclass(slots=True)
@@ -812,6 +887,13 @@ class SegmentedGlobalLoadStats8616:
     indexed_store_materialized_count: int = 0
     indexed_store_lvalue_raw_fact_count: int = 0
     indexed_store_lvalue_materialized_count: int = 0
+    indexed_store_instruction_classified_count: int = 0
+    indexed_store_instruction_materialized_count: int = 0
+    indexed_store_instruction_failure_count: int = 0
+    indexed_store_affine_source_raw_fact_count: int = 0
+    indexed_store_affine_source_classified_count: int = 0
+    indexed_store_affine_source_materialized_count: int = 0
+    indexed_store_affine_source_failure_count: int = 0
     indexed_store_source_carrier_removed_count: int = 0
     indexed_stack_aggregate_type_promoted_count: int = 0
     indexed_stack_aggregate_byte_cast_projected_count: int = 0
@@ -832,6 +914,16 @@ class SegmentedGlobalLoadStats8616:
     indexed_refused_shape_mismatch: int = 0
     direct_symbol_raw_fact_count: int = 0
     direct_symbol_materialized_count: int = 0
+    anonymous_direct_raw_fact_count: int = 0
+    anonymous_direct_normalized_fact_count: int = 0
+    anonymous_direct_classified_fact_count: int = 0
+    anonymous_direct_materialized_count: int = 0
+    anonymous_direct_failure_count: int = 0
+    anonymous_direct_store_raw_fact_count: int = 0
+    anonymous_direct_store_normalized_fact_count: int = 0
+    anonymous_direct_store_classified_fact_count: int = 0
+    anonymous_direct_store_materialized_count: int = 0
+    anonymous_direct_store_failure_count: int = 0
 
     def record(self, decision: SegmentedGlobalLoadDecision8616) -> None:
         """Record a named/direct segmented-global materialization decision."""
@@ -894,22 +986,32 @@ def materialize_named_segmented_global_loads_8616(
     evidence = _collect_named_global_evidence_8616(project, codegen, synthetic_globals, cod_metadata=cod_metadata)
     function = _active_function_8616(project, codegen)
     summaries = _function_instruction_summaries_8616(project, function) if function is not None else []
+    direct_boolean_stores = _collect_direct_global_boolean_store_evidence_8616(
+        summaries
+    )
     direct_refs = _merge_direct_global_symbol_refs_8616(
         _collect_direct_global_symbol_refs_8616(cod_metadata, summaries),
         _collect_synthetic_direct_global_symbol_refs_8616(synthetic_globals, summaries),
+        _materialized_sidecar_free_dword_update_refs_8616(codegen, summaries),
+        _sidecar_free_boolean_store_refs_8616(direct_boolean_stores),
     )
+    anonymous_direct_loads = recover_direct_segmented_global_load_evidence_8616(project, function)
     zero_test_evidence = recover_dword_global_zero_test_evidence_8616(summaries)
-    stats.raw_fact_count = len(evidence)
+    stats.raw_fact_count = len(evidence) + len(anonymous_direct_loads)
     stats.normalized_fact_count = len(evidence)
     stats.classified_fact_count = len(evidence)
     stats.direct_symbol_raw_fact_count = len(direct_refs)
+    stats.anonymous_direct_raw_fact_count = len(anonymous_direct_loads)
+    anonymous_by_offset = _normalize_direct_segmented_global_load_evidence_8616(anonymous_direct_loads)
+    stats.anonymous_direct_normalized_fact_count = len(anonymous_by_offset)
+    stats.normalized_fact_count += len(anonymous_by_offset)
     if os.environ.get("INERTIA_DEBUG_SEGMENTED_GLOBAL_LOADS"):
         log.warning(
             "[seg-global-loads] evidence=%s direct_refs=%s",
             tuple((item.offset & 0xFFFF, item.name, item.width) for item in evidence),
             tuple((item.offset & 0xFFFF, item.name, item.relative_disp, item.width) for item in direct_refs),
         )
-    if not evidence and not direct_refs:
+    if not evidence and not direct_refs and not anonymous_by_offset:
         stats.record(SegmentedGlobalLoadDecision8616.REFUSED_NO_EVIDENCE)
         _store_stats_8616(codegen, stats)
         return False
@@ -925,6 +1027,8 @@ def materialize_named_segmented_global_loads_8616(
     created: dict[tuple[int, int], CVariable] = {}
     materialized_zero_test_evidence: set[DwordGlobalZeroTestEvidence8616] = set()
     zero_test_materialized_count = 0
+    anonymous_classified_nodes: set[int] = set()
+    anonymous_materialized_nodes: set[int] = set()
 
     def transform(node: object) -> object:
         nonlocal zero_test_materialized_count
@@ -973,6 +1077,21 @@ def materialize_named_segmented_global_loads_8616(
                 )
                 if expr is not None:
                     stats.direct_symbol_materialized_count += 1
+                    stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
+                    return expr
+            identity = _direct_memory_cvar_identity_8616(node)
+            anonymous_evidence = anonymous_by_offset.get(identity) if identity is not None else None
+            if anonymous_evidence is not None:
+                node_id = id(node)
+                if node_id not in anonymous_classified_nodes:
+                    anonymous_classified_nodes.add(node_id)
+                    stats.anonymous_direct_classified_fact_count += 1
+                    stats.classified_fact_count += 1
+                expr = _make_direct_segmented_global_load_expr_8616(project, codegen, anonymous_evidence)
+                if expr is not None:
+                    if node_id not in anonymous_materialized_nodes:
+                        anonymous_materialized_nodes.add(node_id)
+                        stats.anonymous_direct_materialized_count += 1
                     stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
                     return expr
             return node
@@ -1094,6 +1213,15 @@ def materialize_named_segmented_global_loads_8616(
                 failure_count=max(raw_fact_count - len(combined_evidence), 0),
             )
         )
+    stats.anonymous_direct_failure_count = max(
+        stats.anonymous_direct_classified_fact_count - stats.anonymous_direct_materialized_count,
+        0,
+    )
+    stats.failure_count += stats.anonymous_direct_failure_count
+    if stats.anonymous_direct_classified_fact_count > 0 and stats.anonymous_direct_materialized_count == 0:
+        raise PipelineHardError(
+            "classified anonymous direct segmented-global loads were not materialized"
+        )
     _debug_remaining_segmented_global_load_nodes_8616(cfunc)
     _store_stats_8616(codegen, stats)
     return changed
@@ -1110,21 +1238,30 @@ def materialize_direct_global_symbol_stores_8616(
     stats = SegmentedGlobalLoadStats8616()
     function = _active_function_8616(project, codegen)
     summaries = _function_instruction_summaries_8616(project, function) if function is not None else []
+    direct_boolean_stores = _collect_direct_global_boolean_store_evidence_8616(
+        summaries
+    )
     direct_refs = _merge_direct_global_symbol_refs_8616(
         _collect_direct_global_symbol_refs_8616(cod_metadata, summaries),
         _collect_synthetic_direct_global_symbol_refs_8616(synthetic_globals, summaries),
+        _materialized_sidecar_free_dword_update_refs_8616(codegen, summaries),
+        _sidecar_free_boolean_store_refs_8616(direct_boolean_stores),
     )
     codegen._inertia_direct_global_symbol_store_spans_8616 = tuple(
         (item.offset & 0xFFFF, max(1, int(item.width))) for item in direct_refs
     )
     direct_updates = _collect_direct_global_update_evidence_8616(summaries)
-    direct_boolean_stores = _collect_direct_global_boolean_store_evidence_8616(summaries)
     direct_call_return_stores = _collect_direct_global_call_return_store_evidence_8616(project, function)
+    anonymous_direct_stores = recover_direct_segmented_global_store_evidence_8616(project, function)
     if os.environ.get("INERTIA_DEBUG_SEGMENTED_GLOBAL_LOADS"):
         log.warning(
-            "[seg-global-stores] refs=%s updates=%s",
+            "[seg-global-stores] refs=%s updates=%s anonymous=%s",
             tuple((item.offset & 0xFFFF, item.name, item.relative_disp, item.width) for item in direct_refs),
             tuple((item.offset & 0xFFFF, item.width, item.delta) for item in direct_updates),
+            tuple(
+                (item.offset & 0xFFFF, item.width, item.space.value, item.ins_addr)
+                for item in anonymous_direct_stores
+            ),
         )
     stats.raw_fact_count = len(summaries)
     stats.direct_symbol_raw_fact_count = len(direct_refs)
@@ -1137,6 +1274,8 @@ def materialize_direct_global_symbol_stores_8616(
         direct_updates=direct_updates,
         direct_boolean_stores=direct_boolean_stores,
         direct_call_return_stores=direct_call_return_stores,
+        anonymous_direct_stores=anonymous_direct_stores,
+        project=project,
         stats=stats,
     )
     _store_stats_8616(codegen, stats)
@@ -1150,19 +1289,65 @@ def materialize_direct_global_symbol_stores_from_evidence_8616(
     direct_updates: tuple[DirectGlobalUpdateEvidence8616, ...] = (),
     direct_boolean_stores: tuple[DirectGlobalBooleanStoreEvidence8616, ...] = (),
     direct_call_return_stores: tuple[DirectGlobalCallReturnStoreEvidence8616, ...] = (),
+    anonymous_direct_stores: tuple[DirectSegmentedGlobalStoreEvidence8616, ...] = (),
+    project: ProjectBoundary8616 | None = None,
     stats: SegmentedGlobalLoadStats8616 | None = None,
 ) -> bool:
     """Materialize direct global stores from already-collected lowering evidence."""
 
     if stats is None:
         stats = SegmentedGlobalLoadStats8616()
-    if not direct_refs:
-        stats.record(SegmentedGlobalLoadDecision8616.REFUSED_NO_EVIDENCE)
-        return False
     cfunc = codegen.cfunc
     if cfunc is None:
         stats.record(SegmentedGlobalLoadDecision8616.REFUSED_NO_CFUNC)
         return False
+    normalized_anonymous_stores = tuple(
+        dict.fromkeys(
+            item
+            for item in anonymous_direct_stores
+            if item.width in {1, 2, 4}
+            and item.space in {MemSpace.DS, MemSpace.ES}
+        )
+    )
+    stats.anonymous_direct_store_raw_fact_count = len(anonymous_direct_stores)
+    stats.anonymous_direct_store_normalized_fact_count = len(normalized_anonymous_stores)
+    anonymous_result = _materialize_anonymous_direct_segmented_global_stores_8616(
+        tuple(_cfunc_roots_8616(cfunc)),
+        project,
+        codegen,
+        normalized_anonymous_stores,
+        dirty_assignments=_collect_unique_dirty_assignment_rhs_8616(cfunc),
+    )
+    stats.anonymous_direct_store_classified_fact_count = anonymous_result.classified_count
+    stats.anonymous_direct_store_materialized_count = anonymous_result.materialized_count
+    stats.anonymous_direct_store_failure_count = anonymous_result.failure_count
+    stats.classified_fact_count += anonymous_result.classified_count
+    stats.materialized_count += anonymous_result.materialized_count
+    stats.failure_count += anonymous_result.failure_count
+    if anonymous_result.classified_count > 0 and anonymous_result.materialized_count == 0:
+        raise PipelineHardError(
+            "classified anonymous direct segmented-global stores were not materialized"
+        )
+    direct_refs = _merge_direct_global_symbol_refs_8616(
+        direct_refs,
+        _sidecar_free_dword_call_return_refs_8616(direct_call_return_stores),
+    )
+    changed = anonymous_result.changed
+    for root in tuple(_cfunc_roots_8616(cfunc)):
+        if not isinstance(root, CStatements):
+            continue
+        if _materialize_scalar_direct_global_call_return_carriers_8616(
+            root,
+            codegen,
+            direct_call_return_stores,
+            stats,
+        ):
+            changed = True
+            _sync_cfunc_statement_roots_8616(cfunc, root)
+    if not direct_refs:
+        if not changed and not normalized_anonymous_stores:
+            stats.record(SegmentedGlobalLoadDecision8616.REFUSED_NO_EVIDENCE)
+        return changed
     direct_by_offset = {(item.offset & 0xFFFF, item.width): item for item in direct_refs}
     direct_update_by_offset: dict[tuple[int, int], list[DirectGlobalUpdateEvidence8616]] = {}
     for item in direct_updates:
@@ -1173,7 +1358,6 @@ def materialize_direct_global_symbol_stores_from_evidence_8616(
     direct_call_return_by_offset: dict[tuple[int, int], list[DirectGlobalCallReturnStoreEvidence8616]] = {}
     for item in direct_call_return_stores:
         direct_call_return_by_offset.setdefault((item.offset & 0xFFFF, item.width), []).append(item)
-    changed = False
     for root in tuple(_cfunc_roots_8616(cfunc)):
         root_changed = False
         if isinstance(root, CStatements) and _materialize_direct_global_dword_update_from_low_word_high_bytes_8616(
@@ -1341,6 +1525,591 @@ def materialize_direct_global_symbol_stores_from_evidence_8616(
     return changed
 
 
+def _materialize_anonymous_direct_segmented_global_stores_8616(
+    roots: tuple[object, ...],
+    project: ProjectBoundary8616 | None,
+    codegen: CodegenBoundary8616,
+    evidence_items: tuple[DirectSegmentedGlobalStoreEvidence8616, ...],
+    *,
+    dirty_assignments: dict[tuple[str, int | str], object],
+) -> _AnonymousDirectStoreMaterializationResult8616:
+    """Materialize exact anonymous direct stores without inventing symbols."""
+
+    if not evidence_items:
+        return _AnonymousDirectStoreMaterializationResult8616(False, 0, 0, 0)
+    by_ins_addr: dict[int, tuple[DirectSegmentedGlobalStoreEvidence8616, ...]] = {}
+    for ins_addr in sorted({item.ins_addr for item in evidence_items}):
+        by_ins_addr[ins_addr] = tuple(
+            item for item in evidence_items if item.ins_addr == ins_addr
+        )
+    classified: set[DirectSegmentedGlobalStoreEvidence8616] = set()
+    materialized: set[DirectSegmentedGlobalStoreEvidence8616] = set()
+    visited_groups: set[int] = set()
+    changed = False
+
+    def process_statements(node: object) -> None:
+        """Walk dynamic third-party C statement containers."""
+
+        nonlocal changed
+        if id(node) in visited_groups:
+            return
+        visited_groups.add(id(node))
+        dynamic_node = typing.cast(Any, node)
+        try:
+            statements = dynamic_node.statements
+        except AttributeError:
+            statements = None
+        if isinstance(statements, list):
+            index = 0
+            while index < len(statements):
+                statement = statements[index]
+                assignment = _assignment_statement_8616(statement)
+                ins_addr = _consistent_statement_ins_addr_8616(statement, assignment)
+                candidates = by_ins_addr.get(ins_addr, ()) if ins_addr is not None else ()
+                identity = (
+                    _direct_global_lvalue_identity_8616(assignment.lhs)
+                    if assignment is not None
+                    else None
+                )
+                exact_wide = tuple(
+                    item
+                    for item in candidates
+                    if identity == (item.offset & 0xFFFF, item.width)
+                )
+                if assignment is not None and len(exact_wide) == 1:
+                    evidence = exact_wide[0]
+                    classified.add(evidence)
+                    if _anonymous_direct_store_lvalue_matches_evidence_8616(
+                        project,
+                        assignment.lhs,
+                        evidence,
+                    ):
+                        materialized.add(evidence)
+                    elif project is not None:
+                        replacement = _make_direct_segmented_global_access_expr_8616(
+                            project,
+                            codegen,
+                            offset=evidence.offset,
+                            width=evidence.width,
+                            space=evidence.space,
+                        )
+                        if replacement is not None:
+                            assignment.lhs = replacement
+                            materialized.add(evidence)
+                            changed = True
+                    process_statements(statement)
+                    index += 1
+                    continue
+                if assignment is not None and index + 1 < len(statements):
+                    high_statement = statements[index + 1]
+                    high_assignment = _assignment_statement_8616(high_statement)
+                    high_ins_addr = _consistent_statement_ins_addr_8616(
+                        high_statement,
+                        high_assignment,
+                    )
+                    high_identity = (
+                        _direct_global_lvalue_identity_8616(high_assignment.lhs)
+                        if high_assignment is not None
+                        else None
+                    )
+                    pair_candidates = tuple(
+                        item
+                        for item in candidates
+                        if item.width == 2
+                        and identity == (item.offset & 0xFFFF, 1)
+                        and high_ins_addr == item.ins_addr
+                        and high_identity == (((item.offset + 1) & 0xFFFF), 1)
+                    )
+                    if high_assignment is not None and len(pair_candidates) == 1:
+                        evidence = pair_candidates[0]
+                        classified.add(evidence)
+                        low_rhs = _resolve_anonymous_direct_store_byte_source_8616(
+                            assignment.rhs,
+                            dirty_assignments,
+                            codegen,
+                        )
+                        high_rhs = _resolve_anonymous_direct_store_byte_source_8616(
+                            high_assignment.rhs,
+                            dirty_assignments,
+                            codegen,
+                        )
+                        word_source = _word_source_for_byte_pair_store_8616(
+                            high_rhs,
+                            low_rhs,
+                            {},
+                        )
+                        rhs = (
+                            word_source
+                            if word_source is not None
+                            and not _rhs_has_obvious_side_effect_8616(word_source)
+                            else _make_direct_global_word_store_rhs_from_byte_exprs_8616(
+                                codegen,
+                                low_rhs,
+                                high_rhs,
+                            )
+                        )
+                        replacement = (
+                            _make_direct_segmented_global_access_expr_8616(
+                                project,
+                                codegen,
+                                offset=evidence.offset,
+                                width=evidence.width,
+                                space=evidence.space,
+                            )
+                            if project is not None
+                            and _anonymous_direct_store_byte_source_is_safe_8616(
+                                low_rhs
+                            )
+                            and _anonymous_direct_store_byte_source_is_safe_8616(
+                                high_rhs
+                            )
+                            else None
+                        )
+                        if replacement is not None:
+                            statements[index] = CAssignment(
+                                replacement,
+                                rhs,
+                                codegen=codegen,
+                                tags=_merged_statement_tags_8616(
+                                    statement,
+                                    assignment,
+                                    high_statement,
+                                    high_assignment,
+                                ),
+                            )
+                            del statements[index + 1]
+                            materialized.add(evidence)
+                            changed = True
+                            index += 1
+                            continue
+                        if os.environ.get("INERTIA_DEBUG_SEGMENTED_GLOBAL_LOADS"):
+                            log.warning(
+                                "[seg-global-anonymous-store-refused] "
+                                "ins_addr=%#x offset=%#x width=%d project=%s "
+                                "low=%s low_op=%r low_safe=%s low_repr=%s "
+                                "high=%s high_op=%r high_safe=%s high_repr=%s",
+                                evidence.ins_addr,
+                                evidence.offset & 0xFFFF,
+                                evidence.width,
+                                project is not None,
+                                _debug_source_8616(low_rhs),
+                                low_rhs.op if isinstance(low_rhs, CBinaryOp) else None,
+                                _anonymous_direct_store_byte_source_is_safe_8616(
+                                    low_rhs
+                                ),
+                                _debug_c_repr_8616(low_rhs),
+                                _debug_source_8616(high_rhs),
+                                high_rhs.op if isinstance(high_rhs, CBinaryOp) else None,
+                                _anonymous_direct_store_byte_source_is_safe_8616(
+                                    high_rhs
+                                ),
+                                _debug_c_repr_8616(high_rhs),
+                            )
+                process_statements(statement)
+                index += 1
+        children: list[object] = []
+        with contextlib.suppress(AttributeError):
+            children.append(dynamic_node.body)
+        with contextlib.suppress(AttributeError):
+            children.append(dynamic_node.else_node)
+        with contextlib.suppress(AttributeError):
+            children.append(dynamic_node.initializer)
+        with contextlib.suppress(AttributeError):
+            children.append(dynamic_node.iterator)
+        with contextlib.suppress(AttributeError):
+            children.append(dynamic_node.iteration)
+        for child in children:
+            if child is not None:
+                process_statements(child)
+        try:
+            pairs = dynamic_node.condition_and_nodes
+        except AttributeError:
+            pairs = None
+        if pairs:
+            for _condition, body in tuple(pairs):
+                process_statements(body)
+        if type(node).__name__ == "CSwitchCase":
+            for body in _codegen_switch_case_bodies_8616(node):
+                process_statements(body)
+            try:
+                default = dynamic_node.default
+            except AttributeError:
+                default = None
+            if default is not None:
+                process_statements(default)
+
+    for root in roots:
+        process_statements(root)
+    failure_count = max(len(classified) - len(materialized), 0)
+    return _AnonymousDirectStoreMaterializationResult8616(
+        changed,
+        len(classified),
+        len(materialized),
+        failure_count,
+    )
+
+
+def _resolve_anonymous_direct_store_byte_source_8616(
+    node: object,
+    dirty_assignments: dict[tuple[str, int | str], object],
+    codegen: CodegenBoundary8616,
+) -> object:
+    """Resolve a unique dirty byte carrier without broad expression recovery."""
+
+    resolved = _resolve_dirty_global_carrier_8616(node, dirty_assignments)
+    if resolved is not node:
+        return resolved
+    if not isinstance(node, CBinaryOp) or node.op != "Shr":
+        return node
+    lhs = _resolve_dirty_global_carrier_8616(node.lhs, dirty_assignments)
+    if lhs is node.lhs:
+        return node
+    return CBinaryOp("Shr", lhs, node.rhs, codegen=codegen)
+
+
+def _anonymous_direct_store_byte_source_is_safe_8616(node: object) -> bool:
+    """Accept byte sources that can be joined without duplicating effects."""
+
+    if _constant_int_8616(node) is not None:
+        return True
+    return _word_store_source_is_safe_8616(node) and not _rhs_has_obvious_side_effect_8616(node)
+
+
+def _anonymous_direct_store_lvalue_matches_evidence_8616(
+    project: ProjectBoundary8616 | None,
+    node: object,
+    evidence: DirectSegmentedGlobalStoreEvidence8616,
+) -> bool:
+    """Return whether an existing helper lvalue exactly replays store evidence."""
+
+    if not isinstance(node, CFunctionCall):
+        return False
+    helper = _segment_load_helper_8616(node)
+    if helper is None or helper.width != evidence.width:
+        return False
+    args = tuple(node.args or ())
+    if len(args) != 2 or _constant_int_8616(args[1]) != (evidence.offset & 0xFFFF):
+        return False
+    segment = args[0]
+    if not isinstance(segment, CVariable):
+        return False
+    runtime_name = runtime_segment_name_for_variable_8616(segment.variable)
+    if runtime_name is not None:
+        return runtime_name == evidence.space.value
+    raw_name = segment.name or segment.variable.name
+    if isinstance(raw_name, str) and raw_name.lower() == evidence.space.value:
+        return True
+    if project is None or not isinstance(segment.variable, SimRegisterVariable):
+        return False
+    reg = segment.variable.reg
+    try:
+        register_names = typing.cast(Any, project.arch).register_names
+    except AttributeError:
+        return False
+    return isinstance(reg, int) and isinstance(register_names, dict) and register_names.get(reg) == evidence.space.value
+
+
+def _sidecar_free_dword_call_return_refs_8616(
+    evidence_items: tuple[DirectGlobalCallReturnStoreEvidence8616, ...],
+) -> tuple[DirectGlobalSymbolRef8616, ...]:
+    """Create honest generic globals for exact binary-proven dword return stores."""
+    return tuple(
+        DirectGlobalSymbolRef8616(
+            offset=evidence.offset & 0xFFFF,
+            name=f"g_{evidence.offset & 0xFFFF:04X}",
+            relative_disp=0,
+            width=4,
+            max_relative_disp=0,
+        )
+        for evidence in evidence_items
+        if evidence.width == 4
+    )
+
+
+def _sidecar_free_dword_update_refs_8616(
+    summaries: list[InsnSummary8616],
+) -> tuple[DirectGlobalSymbolRef8616, ...]:
+    """Recover generic dword identity from an exact low-word carry update."""
+    dword_offsets: set[int] = set()
+    for low, high in zip(summaries, summaries[1:], strict=False):
+        low_mnemonic = str(low.mnemonic or "").lower()
+        high_mnemonic = str(high.mnemonic or "").lower()
+        expected_high_mnemonic = {"add": "adc", "sub": "sbb"}.get(low_mnemonic)
+        if expected_high_mnemonic != high_mnemonic:
+            continue
+        if (
+            low.op0_kind != "direct_mem"
+            or not isinstance(low.op0_value, int)
+            or int(low.op0_size or 0) != 2
+            or low.op1_kind != "imm"
+            or not isinstance(low.op1_value, int)
+            or high.op0_kind != "direct_mem"
+            or not isinstance(high.op0_value, int)
+            or int(high.op0_size or 0) != 2
+            or high.op1_kind != "imm"
+            or high.op1_value != 0
+        ):
+            continue
+        low_offset = low.op0_value & 0xFFFF
+        if (high.op0_value & 0xFFFF) != ((low_offset + 2) & 0xFFFF):
+            continue
+        dword_offsets.add(low_offset)
+
+    refs: list[DirectGlobalSymbolRef8616] = []
+    for offset in sorted(dword_offsets):
+        name = f"g_{offset:04X}"
+        refs.extend(
+            (
+                DirectGlobalSymbolRef8616(offset, name, 0, 4, 0),
+                DirectGlobalSymbolRef8616(offset, name, 0, 2, 2),
+                DirectGlobalSymbolRef8616((offset + 2) & 0xFFFF, name, 2, 2, 2),
+            )
+        )
+    return tuple(refs)
+
+
+def _materialized_sidecar_free_dword_update_refs_8616(
+    codegen: CodegenBoundary8616,
+    summaries: list[InsnSummary8616],
+) -> tuple[DirectGlobalSymbolRef8616, ...]:
+    """Admit dword identity after update materialization and final structuring."""
+    cfunc = _codegen_cfunc_optional_8616(codegen)
+    roots = tuple(_cfunc_roots_8616(cfunc)) if cfunc is not None else ()
+    if not any(
+        isinstance(node, CSwitchCase)
+        for root in roots
+        for node in _iter_c_nodes_deep_8616(root)
+    ):
+        return ()
+    low_word_names = {
+        fact.offset: fact.name
+        for fact in global_storage_identity_facts_8616(codegen)
+        if (
+            fact.space is MemSpace.DS
+            and fact.width == 2
+            and fact.kind is StorageIdentityEvidenceKind8616.DIRECT_GLOBAL_UPDATE
+        )
+    }
+    refs: list[DirectGlobalSymbolRef8616] = []
+    for ref in _sidecar_free_dword_update_refs_8616(summaries):
+        base_offset = (ref.offset - ref.relative_disp) & 0xFFFF
+        name = low_word_names.get(base_offset)
+        if name is None:
+            continue
+        refs.append(
+            DirectGlobalSymbolRef8616(
+                offset=ref.offset,
+                name=name,
+                relative_disp=ref.relative_disp,
+                width=ref.width,
+                max_relative_disp=ref.max_relative_disp,
+            )
+        )
+    return tuple(refs)
+
+
+def _sidecar_free_boolean_store_refs_8616(
+    evidence_items: tuple[DirectGlobalBooleanStoreEvidence8616, ...],
+) -> tuple[DirectGlobalSymbolRef8616, ...]:
+    """Create generic scalar identities from exact binary boolean-store facts."""
+    identities = {
+        (evidence.source_offset & 0xFFFF, evidence.source_width)
+        for evidence in evidence_items
+    }
+    identities.update(
+        (evidence.dest_offset & 0xFFFF, evidence.dest_width)
+        for evidence in evidence_items
+    )
+    return tuple(
+        DirectGlobalSymbolRef8616(
+            offset=offset,
+            name=f"g_{offset:04X}",
+            relative_disp=0,
+            width=width,
+            max_relative_disp=0,
+        )
+        for offset, width in sorted(identities)
+        if width > 0
+    )
+
+
+def _materialize_scalar_direct_global_call_return_carriers_8616(
+    root: CStatements,
+    codegen: CodegenBoundary8616,
+    evidence_items: tuple[DirectGlobalCallReturnStoreEvidence8616, ...],
+    stats: SegmentedGlobalLoadStats8616,
+) -> bool:
+    """Reconnect standalone scalar calls to their binary-proven AX carriers.
+
+    This path intentionally does not require a global symbol name.  Exact call
+    and store instruction identities, destination storage, width, and register
+    provenance prove the def-use edge.  Ambiguous calls or store carriers are
+    refused without changing the structured C tree.
+    """
+
+    if not evidence_items:
+        return False
+    changed = False
+    for evidence in evidence_items:
+        if evidence.width not in {1, 2}:
+            continue
+        call_sites = _standalone_call_sites_for_evidence_8616(root, evidence)
+        carriers = _scalar_call_return_carriers_for_evidence_8616(root, codegen, evidence)
+        if len(call_sites) != 1 or len(carriers) != 1:
+            continue
+        call_site = call_sites[0]
+        call_site.statements.statements[call_site.index] = CAssignment(
+            carriers[0],
+            call_site.call,
+            codegen=codegen,
+            tags=_merged_statement_tags_8616(call_site.statement, call_site.call),
+        )
+        stats.direct_symbol_call_return_materialized_count += 1
+        stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
+        changed = True
+    return changed
+
+
+def _standalone_call_sites_for_evidence_8616(
+    root: CStatements,
+    evidence: DirectGlobalCallReturnStoreEvidence8616,
+) -> tuple[_StandaloneCallSite8616, ...]:
+    """Return exact standalone calls matching one binary callsite fact."""
+
+    groups = [root]
+    groups.extend(node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CStatements) and node is not root)
+    matches: list[_StandaloneCallSite8616] = []
+    for statements in groups:
+        for index, statement in enumerate(statements.statements):
+            call = _standalone_cfunction_call_8616(statement)
+            if call is None:
+                continue
+            ins_addr = _consistent_statement_ins_addr_8616(statement, call)
+            if ins_addr != evidence.source_call_ins_addr:
+                continue
+            if not _call_matches_direct_global_return_evidence_8616(call, evidence):
+                continue
+            matches.append(_StandaloneCallSite8616(statements, index, statement, call))
+    return tuple(matches)
+
+
+def _standalone_cfunction_call_8616(statement: object) -> CFunctionCall | None:
+    """Return a call only when it is a complete standalone C statement."""
+
+    if isinstance(statement, CFunctionCall):
+        return statement
+    if isinstance(statement, CExpressionStatement) and isinstance(statement.expr, CFunctionCall):
+        return statement.expr
+    return None
+
+
+def _call_matches_direct_global_return_evidence_8616(
+    call: CFunctionCall,
+    evidence: DirectGlobalCallReturnStoreEvidence8616,
+) -> bool:
+    """Match one call target without consulting symbols beyond typed evidence."""
+
+    raw_target = call.callee_target
+    if isinstance(raw_target, int):
+        return evidence.source_call_target is not None and raw_target == evidence.source_call_target
+    call_name = _cfunction_call_name_8616(call)
+    evidence_name = evidence.source_call_name.strip().lstrip("_")
+    return call_name == evidence_name
+
+
+def _scalar_call_return_carriers_for_evidence_8616(
+    root: CStatements,
+    codegen: CodegenBoundary8616,
+    evidence: DirectGlobalCallReturnStoreEvidence8616,
+) -> tuple[CVariable, ...]:
+    """Return uniquely shaped AX carriers consumed by the evidenced store."""
+
+    project = _codegen_project_optional_8616(codegen)
+    if project is None:
+        return ()
+    assignments: list[tuple[object, CAssignment]] = []
+    seen_assignments: set[int] = set()
+    for node in _iter_c_nodes_deep_8616(root):
+        assignment = _assignment_statement_8616(node)
+        if assignment is None or id(assignment) in seen_assignments:
+            continue
+        seen_assignments.add(id(assignment))
+        if _consistent_statement_ins_addr_8616(node, assignment) != evidence.low_store_ins_addr:
+            continue
+        assignments.append((node, assignment))
+
+    offset = evidence.offset & 0xFFFF
+    direct_candidates: list[CVariable] = []
+    low_byte_candidates: list[CVariable] = []
+    high_byte_candidates: list[object] = []
+    for _statement, assignment in assignments:
+        identity = _direct_global_lvalue_identity_8616(assignment.lhs)
+        if identity == (offset, evidence.width) and isinstance(assignment.rhs, CVariable):
+            register_name = _cvariable_register_name_8616(project, assignment.rhs)
+            allowed_registers = {"al", "ax", "eax"} if evidence.width == 1 else {"ax", "eax"}
+            if register_name in allowed_registers:
+                direct_candidates.append(assignment.rhs)
+            continue
+        if evidence.width != 2:
+            continue
+        if identity == (offset, 1) and isinstance(assignment.rhs, CVariable):
+            if _cvariable_register_name_8616(project, assignment.rhs) in {"ax", "eax"}:
+                low_byte_candidates.append(assignment.rhs)
+            continue
+        if identity == ((offset + 1) & 0xFFFF, 1):
+            high_byte_candidates.append(assignment.rhs)
+
+    split_candidates: list[CVariable] = []
+    for low_carrier in low_byte_candidates:
+        matching_high = tuple(
+            high_rhs
+            for high_rhs in high_byte_candidates
+            if _is_high_byte_of_scalar_carrier_8616(high_rhs, low_carrier)
+        )
+        if len(matching_high) == 1:
+            split_candidates.append(low_carrier)
+    candidates = direct_candidates + split_candidates
+    return tuple(candidates) if len(candidates) == 1 else ()
+
+
+def _is_high_byte_of_scalar_carrier_8616(node: object, carrier: CVariable) -> bool:
+    """Return whether one expression is the exact high byte of a word carrier."""
+
+    return (
+        isinstance(node, CBinaryOp)
+        and node.op in {"Shr", "RShift"}
+        and _constant_int_8616(node.rhs) == 8
+        and _same_c_expression_8616(node.lhs, carrier)
+    )
+
+
+def _consistent_statement_ins_addr_8616(*nodes: object) -> int | None:
+    """Return one instruction tag shared by dynamic angr statement nodes."""
+
+    addresses = {
+        ins_addr
+        for node in nodes
+        if (ins_addr := _statement_ins_addr_8616(node)) is not None
+    }
+    if len(addresses) != 1:
+        return None
+    return next(iter(addresses))
+
+
+def _merged_statement_tags_8616(*nodes: object) -> dict[str, object]:
+    """Merge tags exposed by dynamic angr C nodes without losing call metadata."""
+
+    merged: dict[str, object] = {}
+    for node in nodes:
+        try:
+            tags = typing.cast(_TaggedCNodeBoundary8616, node).tags
+        except AttributeError:
+            continue
+        if isinstance(tags, dict):
+            merged.update(tags)
+    return merged
+
+
 def _materialize_nested_direct_global_call_return_store_8616(
     root: CStatements,
     codegen: CodegenBoundary8616,
@@ -1365,62 +2134,108 @@ def _materialize_nested_direct_global_call_return_store_8616(
         dword_ref = direct_by_offset.get((evidence.offset & 0xFFFF, evidence.width))
         if dword_ref is None:
             continue
-        call_matches: list[tuple[CStatements, int, CAssignment]] = []
-        store_matches: list[CStatements] = []
+        call_matches: list[tuple[CStatements, int, object, CFunctionCall]] = []
+        store_matches: list[tuple[CStatements, int, int]] = []
         expected_store_addrs = set(evidence.store_ins_addrs)
+        expected_offsets = {
+            (evidence.offset + byte_index) & 0xFFFF
+            for byte_index in range(evidence.width)
+        }
         for group in groups:
             for index, stmt in enumerate(group.statements):
+                standalone_call = _standalone_cfunction_call_8616(stmt)
+                if (
+                    standalone_call is not None
+                    and _consistent_statement_ins_addr_8616(stmt, standalone_call)
+                    == evidence.source_call_ins_addr
+                    and _call_matches_direct_global_return_evidence_8616(
+                        standalone_call,
+                        evidence,
+                    )
+                ):
+                    call_matches.append((group, index, stmt, standalone_call))
+                    continue
                 assignment = _assignment_statement_8616(stmt)
                 if assignment is None:
                     continue
                 if (
-                    _cfunction_call_name_8616(assignment.rhs) == evidence.source_call_name
-                    and _statement_ins_addr_8616(stmt) == evidence.source_call_ins_addr
+                    isinstance(assignment.rhs, CFunctionCall)
+                    and _consistent_statement_ins_addr_8616(
+                        stmt,
+                        assignment,
+                        assignment.rhs,
+                    )
+                    == evidence.source_call_ins_addr
+                    and _call_matches_direct_global_return_evidence_8616(
+                        assignment.rhs,
+                        evidence,
+                    )
                 ):
-                    call_matches.append((group, index, assignment))
-            assignments = tuple(_assignment_statement_8616(stmt) for stmt in group.statements)
-            if not assignments or any(assignment is None for assignment in assignments):
-                continue
-            call_assignments = tuple(
-                assignment
-                for assignment in assignments
-                if assignment is not None and _cfunction_call_name_8616(assignment.rhs) is not None
-            )
-            if any(
-                _direct_global_lvalue_identity_8616(assignment.lhs)
-                != (evidence.offset & 0xFFFF, evidence.width)
-                or _cfunction_call_name_8616(assignment.rhs) != evidence.source_call_name
-                for assignment in call_assignments
-            ):
-                continue
-            tagged_addrs = {
-                ins_addr
-                for stmt in group.statements
-                if (ins_addr := _statement_ins_addr_8616(stmt)) is not None
-            }
-            if not tagged_addrs or not tagged_addrs.issubset(expected_store_addrs):
-                continue
+                    call_matches.append((group, index, stmt, assignment.rhs))
+            matched_indices: list[int] = []
+            matched_store_addrs: set[int] = set()
+            tagged_assignment_indices: list[int] = []
+            tagged_assignment_addrs: set[int] = set()
             covered_offsets: set[int] = set()
-            for stmt, assignment in zip(group.statements, assignments, strict=True):
-                if assignment is None or _statement_ins_addr_8616(stmt) not in expected_store_addrs:
+            for index, stmt in enumerate(group.statements):
+                assignment = _assignment_statement_8616(stmt)
+                ins_addr = _statement_ins_addr_8616(stmt)
+                if assignment is None or ins_addr not in expected_store_addrs:
                     continue
+                tagged_assignment_indices.append(index)
+                tagged_assignment_addrs.add(ins_addr)
                 identity = _direct_global_lvalue_identity_8616(assignment.lhs)
                 if identity is None:
                     continue
                 offset, width = identity
-                covered_offsets.update((offset + byte_index) & 0xFFFF for byte_index in range(width))
-            expected_offsets = {(evidence.offset + byte_index) & 0xFFFF for byte_index in range(evidence.width)}
+                assignment_offsets = {
+                    (offset + byte_index) & 0xFFFF
+                    for byte_index in range(width)
+                }
+                if not assignment_offsets or not assignment_offsets.issubset(expected_offsets):
+                    continue
+                matched_indices.append(index)
+                matched_store_addrs.add(ins_addr)
+                covered_offsets.update(assignment_offsets)
             if debug_enabled:
                 log.warning(
-                    "[seg-global-call-return-group] statements=%d tagged=%s covered=%s expected=%s",
+                    "[seg-global-call-return-group] statements=%d tagged=%s covered=%s expected=%s indices=%s",
                     len(group.statements),
-                    tuple(hex(item) for item in sorted(tagged_addrs)),
+                    tuple(hex(item) for item in sorted(matched_store_addrs)),
                     tuple(hex(item) for item in sorted(covered_offsets)),
                     tuple(hex(item) for item in sorted(expected_offsets)),
+                    tuple(matched_indices),
                 )
-            exact_store_tags_present = expected_store_addrs.issubset(tagged_addrs)
-            if exact_store_tags_present or expected_offsets.issubset(covered_offsets):
-                store_matches.append(group)
+            if (
+                matched_indices
+                and matched_indices == list(range(matched_indices[0], matched_indices[-1] + 1))
+                and matched_store_addrs == expected_store_addrs
+                and covered_offsets == expected_offsets
+            ):
+                store_indices = matched_indices
+            elif (
+                not matched_indices
+                and tagged_assignment_indices
+                and tagged_assignment_indices
+                == list(
+                    range(
+                        tagged_assignment_indices[0],
+                        tagged_assignment_indices[-1] + 1,
+                    )
+                )
+                and tagged_assignment_addrs == expected_store_addrs
+            ):
+                store_indices = tagged_assignment_indices
+            else:
+                store_indices = []
+            if store_indices:
+                replacement_start = _dead_register_prefix_start_8616(
+                    root,
+                    group,
+                    store_indices[0],
+                    store_indices[-1],
+                )
+                store_matches.append((group, replacement_start, store_indices[-1]))
         if debug_enabled:
             log.warning(
                 "[seg-global-call-return-match] call_matches=%d store_matches=%d evidence=%s",
@@ -1430,8 +2245,8 @@ def _materialize_nested_direct_global_call_return_store_8616(
             )
         if len(call_matches) != 1 or len(store_matches) != 1:
             continue
-        call_group, call_index, call_assignment = call_matches[0]
-        store_group = store_matches[0]
+        call_group, call_index, call_statement, call = call_matches[0]
+        store_group, store_start, store_end = store_matches[0]
         if call_group is store_group:
             continue
         lhs = _make_direct_global_symbol_expr_8616(codegen, dword_ref, evidence.width)
@@ -1439,18 +2254,60 @@ def _materialize_nested_direct_global_call_return_store_8616(
             continue
         canonical_assignment = CAssignment(
             lhs,
-            call_assignment.rhs,
+            call,
             codegen=codegen,
-            tags=call_assignment.tags,
+            tags=_merged_statement_tags_8616(call_statement, call),
         )
         del call_group.statements[call_index]
-        store_group.statements[:] = [canonical_assignment]
+        store_group.statements[store_start : store_end + 1] = [
+            canonical_assignment
+        ]
         stats.direct_symbol_materialized_count += 1
         stats.direct_symbol_store_materialized_count += 1
         stats.direct_symbol_call_return_materialized_count += 1
         stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
         changed = True
     return changed
+
+
+def _dead_register_prefix_start_8616(
+    root: CStatements,
+    group: CStatements,
+    store_start: int,
+    store_end: int,
+) -> int:
+    """Include only dead untagged register carriers preceding an exact store window."""
+    start = store_start
+    skipped_ids = {
+        id(node)
+        for stmt in group.statements[store_start : store_end + 1]
+        for node in (stmt, *_iter_c_nodes_deep_8616(stmt))
+    }
+    while start > 0:
+        candidate = group.statements[start - 1]
+        if _statement_ins_addr_8616(candidate) is not None:
+            break
+        assignment = _assignment_statement_8616(candidate)
+        if assignment is None or not isinstance(assignment.lhs, CVariable):
+            break
+        if not isinstance(assignment.lhs.variable, SimRegisterVariable):
+            break
+        lhs_key = _cvariable_key_8616(assignment.lhs)
+        if lhs_key is None:
+            break
+        candidate_ids = {
+            id(node)
+            for node in (candidate, *_iter_c_nodes_deep_8616(candidate))
+        }
+        if _cvariable_key_used_outside_ids_8616(
+            root,
+            skipped_ids | candidate_ids,
+            lhs_key,
+        ):
+            break
+        skipped_ids.update(candidate_ids)
+        start -= 1
+    return start
 
 
 def _materialize_direct_global_dword_update_from_low_word_high_bytes_8616(
@@ -1871,7 +2728,7 @@ def _scalar_preserves_low_word_8616(expr: object, scalar: object) -> bool:
 
 def _materialize_direct_global_boolean_stores_8616(
     root: CStatements,
-    codegen: object,
+    codegen: CodegenBoundary8616,
     direct_by_offset: dict[tuple[int, int], DirectGlobalSymbolRef8616],
     direct_boolean_by_offset: dict[tuple[int, int], list[DirectGlobalBooleanStoreEvidence8616]],
     stats: SegmentedGlobalLoadStats8616,
@@ -1910,6 +2767,18 @@ def _materialize_direct_global_boolean_stores_8616(
         )
         assignment.lhs = lhs
         assignment.rhs = rhs
+        carrier = typing.cast(_CodegenStackAggregateFactBoundary8616, codegen)
+        try:
+            existing_carrier_addrs = carrier._inertia_consumed_direct_global_boolean_carrier_ins_addrs_8616
+        except AttributeError:
+            existing_carrier_addrs = frozenset()
+        consumed_carrier_addrs: set[int] = {
+            address for address in existing_carrier_addrs if isinstance(address, int)
+        }
+        consumed_carrier_addrs.update(evidence.carrier_ins_addrs)
+        carrier._inertia_consumed_direct_global_boolean_carrier_ins_addrs_8616 = (
+            frozenset(consumed_carrier_addrs)
+        )
         consumed.add(evidence)
         stats.direct_symbol_materialized_count += 1
         stats.direct_symbol_store_materialized_count += 1
@@ -2535,11 +3404,10 @@ def _direct_global_dword_update_upper_word_window_8616(
 
 
 def _debug_direct_dword_update_refusal_8616(reason: str, stmt: object, **fields: object) -> None:
+    """Log an opt-in dword refusal without filtering by sample-specific names."""
     if not os.environ.get("INERTIA_DEBUG_SEGMENTED_GLOBAL_LOADS"):
         return
     rendered = _debug_c_repr_8616(stmt)
-    if "clPause" not in rendered and "mem_0132" not in rendered and "mem_0134" not in rendered:
-        return
     extras = " ".join(f"{key}={value}" for key, value in sorted(fields.items()))
     log.warning("[seg-global-dword-update] refused reason=%s %s stmt=%s", reason, extras, rendered)
 
@@ -4646,10 +5514,18 @@ def recover_indexed_segmented_global_evidence_8616(
             binary_refs.append((int(insn.op0_value) & 0xFFFF, int(insn.op0_size or 2)))
         if insn.op1_kind == "indexed_mem" and isinstance(insn.op1_value, int):
             binary_refs.append((int(insn.op1_value) & 0xFFFF, int(insn.op1_size or 2)))
-    if not cod_refs or len(cod_refs) != len(binary_refs):
+    if not cod_refs:
         if os.environ.get("INERTIA_DEBUG_SEGMENTED_GLOBAL_LOADS"):
             log.warning(
-                "[seg-global-indexed] refused sidecar_join cod_refs=%s binary_refs=%s",
+                "[seg-global-indexed] using generic binary identities cod_refs=%s binary_refs=%s",
+                cod_refs,
+                tuple(binary_refs),
+            )
+        return _sidecar_free_indexed_global_evidence_8616(binary_refs)
+    if len(cod_refs) != len(binary_refs):
+        if os.environ.get("INERTIA_DEBUG_SEGMENTED_GLOBAL_LOADS"):
+            log.warning(
+                "[seg-global-indexed] refused mismatched sidecar join cod_refs=%s binary_refs=%s",
                 cod_refs,
                 tuple(binary_refs),
             )
@@ -4662,6 +5538,28 @@ def recover_indexed_segmented_global_evidence_8616(
                 name=name,
                 relative_disp=relative_disp,
                 width=int(actual_width or cod_width or 2),
+            )
+        )
+    return tuple(recovered)
+
+
+def _sidecar_free_indexed_global_evidence_8616(
+    binary_refs: list[tuple[int, int]],
+) -> tuple[IndexedSegmentedGlobalEvidence8616, ...]:
+    """Name exact binary-proven indexed DS identities without guessing source metadata."""
+
+    recovered: list[IndexedSegmentedGlobalEvidence8616] = []
+    for base_offset, width in dict.fromkeys(binary_refs):
+        normalized_base = int(base_offset) & 0xFFFF
+        normalized_width = int(width or 2)
+        if normalized_width <= 0:
+            continue
+        recovered.append(
+            IndexedSegmentedGlobalEvidence8616(
+                base_offset=normalized_base,
+                name=f"g_{normalized_base:04X}",
+                relative_disp=0,
+                width=normalized_width,
             )
         )
     return tuple(recovered)
@@ -5023,6 +5921,14 @@ def materialize_indexed_segmented_global_loads_from_evidence_8616(
         stats.record_indexed(IndexedSegmentedGlobalDecision8616.REFUSED_NO_CFUNC)
         return False
     evidence_by_base = {(item.base_offset & 0xFFFF, item.width): item for item in evidence}
+    stats.indexed_store_affine_source_raw_fact_count += sum(
+        1
+        for fact in store_evidence
+        if isinstance(fact.source_base_offset, int)
+        and isinstance(fact.source_width, int)
+        and isinstance(fact.source_index_stack_offset, int)
+        and isinstance(fact.source_index_shift, int)
+    )
     load_sites_by_ins_addr = {item.ins_addr: item for item in load_site_evidence}
     literals_by_offset = {item.offset & 0xFFFF: item for item in address_literals}
     changed = False
@@ -5057,6 +5963,15 @@ def materialize_indexed_segmented_global_loads_from_evidence_8616(
         if _materialize_indexed_global_word_store_pairs_8616(
             root,
             project,
+            codegen,
+            evidence_by_base,
+            store_evidence,
+            stats,
+        ):
+            changed = True
+            root_changed = True
+        if _materialize_indexed_global_store_assignments_from_instruction_evidence_8616(
+            root,
             codegen,
             evidence_by_base,
             store_evidence,
@@ -5104,6 +6019,20 @@ def materialize_indexed_segmented_global_loads_from_evidence_8616(
             root_changed = True
         if root_changed:
             _sync_cfunc_statement_roots_8616(cfunc, root)
+    if (
+        stats.indexed_store_affine_source_classified_count > 0
+        and stats.indexed_store_affine_source_materialized_count == 0
+    ):
+        raise PipelineHardError(
+            "classified affine indexed-global store sources were not materialized"
+        )
+    if (
+        stats.indexed_store_instruction_classified_count > 0
+        and stats.indexed_store_instruction_materialized_count == 0
+    ):
+        raise PipelineHardError(
+            "classified instruction-backed indexed-global stores were not materialized"
+        )
     return changed
 
 
@@ -5748,7 +6677,12 @@ def _match_indexed_global_word_store_pair_from_store_evidence_8616(
         return None
     fact_index, fact = selected
     index_expr = _stack_cvar_for_offset_8616(codegen, fact.index_stack_offset)
-    source_expr = _indexed_global_store_source_expr_8616(codegen, evidence_by_base, fact)
+    source_expr = _indexed_global_store_source_expr_8616(
+        codegen,
+        evidence_by_base,
+        fact,
+        stats,
+    )
     if index_expr is None or source_expr is None:
         return None
     lhs = _make_indexed_global_expr_8616(codegen, item, index_expr)
@@ -5827,6 +6761,7 @@ def _materialize_indexed_global_byte_store_lvalues_8616(
                         matched_lvalue[0],
                         _statement_ins_addr_8616(stmt),
                         store_evidence,
+                        stats,
                     )
                     if source is not None and not _same_c_expression_8616(stmt.rhs, source):
                         stmt.rhs = source
@@ -5837,12 +6772,204 @@ def _materialize_indexed_global_byte_store_lvalues_8616(
     return changed
 
 
+def _materialize_indexed_global_store_assignments_from_instruction_evidence_8616(
+    root: object,
+    codegen: CodegenBoundary8616,
+    evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616],
+    store_evidence: tuple[IndexedSegmentedGlobalStoreEvidence8616, ...],
+    stats: SegmentedGlobalLoadStats8616,
+) -> bool:
+    """Materialize raw store assignments joined to one exact decoded instruction.
+
+    This handles late angr ASTs whose address is still a carrier chain around a
+    segmented pointer helper. Recognizable indexed lvalues remain owned by the
+    existing shape-based consumers. Ambiguous instruction joins are refused.
+    """
+
+    facts_by_ins_addr: dict[int, list[IndexedSegmentedGlobalStoreEvidence8616]] = {}
+    for fact in store_evidence:
+        if (fact.base_offset & 0xFFFF, fact.width) not in evidence_by_base:
+            continue
+        if fact.width not in {1, 2} or not 0 <= fact.index_shift <= 4:
+            continue
+        facts_by_ins_addr.setdefault(fact.ins_addr, []).append(fact)
+    if not facts_by_ins_addr:
+        return False
+
+    assignments_by_ins_addr: dict[int, list[CAssignment]] = {}
+    for node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(node, CAssignment):
+            continue
+        ins_addr = _statement_ins_addr_8616(node)
+        if ins_addr not in facts_by_ins_addr:
+            continue
+        if not _is_segmented_memory_store_lvalue_8616(node.lhs):
+            continue
+        if isinstance(node.lhs, CIndexedVariable):
+            continue
+        if _match_byte_store_lvalue_8616(
+            node.lhs,
+            evidence_by_base=evidence_by_base,
+        ) is not None:
+            continue
+        assignments_by_ins_addr.setdefault(ins_addr, []).append(node)
+
+    changed = False
+    for ins_addr, facts in facts_by_ins_addr.items():
+        assignments = assignments_by_ins_addr.get(ins_addr, ())
+        if not assignments:
+            continue
+        if len(facts) != 1 or len(assignments) != 1:
+            stats.indexed_store_instruction_failure_count += 1
+            stats.record_indexed(
+                IndexedSegmentedGlobalDecision8616.REFUSED_SHAPE_MISMATCH
+            )
+            continue
+        fact = facts[0]
+        assignment = assignments[0]
+        replacement_lhs = _indexed_global_store_lvalue_from_instruction_evidence_8616(
+            codegen,
+            evidence_by_base,
+            fact,
+        )
+        if replacement_lhs is None:
+            continue
+        stats.indexed_store_instruction_classified_count += 1
+        replacement_rhs: object | None = None
+        if _indexed_global_store_fact_has_source_8616(fact):
+            replacement_rhs = _indexed_global_store_source_expr_8616(
+                codegen,
+                evidence_by_base,
+                fact,
+                stats,
+            )
+            if replacement_rhs is None:
+                stats.indexed_store_instruction_failure_count += 1
+                stats.failure_count += 1
+                continue
+        lhs_changed = not _same_instruction_store_lvalue_8616(
+            assignment.lhs,
+            replacement_lhs,
+        )
+        rhs_changed = replacement_rhs is not None and not _same_c_expression_8616(
+            assignment.rhs,
+            replacement_rhs,
+        )
+        if lhs_changed:
+            assignment.lhs = replacement_lhs
+        if rhs_changed:
+            assignment.rhs = replacement_rhs
+        stats.indexed_store_instruction_materialized_count += 1
+        stats.record_indexed(IndexedSegmentedGlobalDecision8616.MATERIALIZED)
+        if lhs_changed or rhs_changed:
+            stats.indexed_store_lvalue_materialized_count += 1
+            changed = True
+    return changed
+
+
+def _same_instruction_store_lvalue_8616(
+    lhs: object,
+    rhs: object,
+) -> bool:
+    """Compare instruction-backed store lvalues including typed struct fields."""
+
+    if isinstance(lhs, CVariableField) and isinstance(rhs, CVariableField):
+        return (
+            lhs.field.field == rhs.field.field
+            and _same_c_expression_8616(lhs.variable, rhs.variable)
+        )
+    return _same_c_expression_8616(lhs, rhs)
+
+
+def _is_segmented_memory_store_lvalue_8616(node: object) -> bool:
+    """Return whether a C expression is an explicit segmented-memory lvalue."""
+
+    if isinstance(node, (CIndexedVariable, CVariableField)):
+        return True
+    if isinstance(node, CUnaryOp):
+        return node.op == "Dereference"
+    if not isinstance(node, CFunctionCall):
+        return False
+    return (
+        _memory_pointer_helper_8616(node) is not None
+        or _segment_load_helper_8616(node) is not None
+    )
+
+
+def _indexed_global_store_lvalue_from_instruction_evidence_8616(
+    codegen: CodegenBoundary8616,
+    evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616],
+    fact: IndexedSegmentedGlobalStoreEvidence8616,
+) -> object | None:
+    """Build one indexed global lvalue from exact destination and index facts."""
+
+    item = evidence_by_base.get((fact.base_offset & 0xFFFF, fact.width))
+    index_expr = _stack_cvar_for_offset_8616(
+        codegen,
+        fact.index_stack_offset,
+    )
+    if item is None or index_expr is None:
+        return None
+    stride = 1 << fact.index_shift
+    materialized = _make_indexed_global_value_from_stride_evidence_8616(
+        codegen,
+        evidence_by_base,
+        fact.base_offset,
+        stride,
+        index_expr,
+        fact.width,
+    )
+    if materialized is not None:
+        return materialized
+    if stride == fact.width:
+        return _make_indexed_global_value_expr_8616(
+            codegen,
+            item,
+            index_expr,
+            evidence_by_base,
+        )
+    scaled_index: object = CBinaryOp(
+        "Shl",
+        index_expr,
+        CConstant(
+            fact.index_shift,
+            SimTypeShort(False),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    return _make_indexed_global_value_expr_8616(
+        codegen,
+        item,
+        scaled_index,
+        evidence_by_base,
+    )
+
+
+def _indexed_global_store_fact_has_source_8616(
+    fact: IndexedSegmentedGlobalStoreEvidence8616,
+) -> bool:
+    """Return whether a decoded store fact proves its source expression."""
+
+    return (
+        isinstance(fact.source_stack_offset, int)
+        or fact.source_signed_remainder is not None
+        or (
+            isinstance(fact.source_base_offset, int)
+            and isinstance(fact.source_width, int)
+            and isinstance(fact.source_index_stack_offset, int)
+            and isinstance(fact.source_index_shift, int)
+        )
+    )
+
+
 def _evidenced_indexed_byte_store_source_expr_8616(
     codegen: CodegenBoundary8616,
     evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616],
     base_offset: int,
     statement_ins_addr: int | None,
     store_evidence: tuple[IndexedSegmentedGlobalStoreEvidence8616, ...],
+    stats: SegmentedGlobalLoadStats8616,
 ) -> object | None:
     """Recover one byte-store source from one exact decoded instruction fact."""
     if not isinstance(statement_ins_addr, int):
@@ -5865,6 +6992,7 @@ def _evidenced_indexed_byte_store_source_expr_8616(
         codegen,
         evidence_by_base,
         candidates[0],
+        stats,
     )
 
 
@@ -6025,7 +7153,12 @@ def _materialize_indexed_global_word_store_lvalues_8616(
             continue
         lhs_index = lhs.index
         for candidate_index, (item, fact) in statement_candidates:
-            source_replacement = _indexed_global_store_source_expr_8616(codegen, evidence_by_base, fact)
+            source_replacement = _indexed_global_store_source_expr_8616(
+                codegen,
+                evidence_by_base,
+                fact,
+                stats,
+            )
             if source_replacement is None:
                 source_replacement = _materialize_indexed_global_expr_node_8616(
                     None,
@@ -6246,6 +7379,7 @@ def _indexed_global_store_source_expr_8616(
     codegen: CodegenBoundary8616,
     evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616],
     fact: IndexedSegmentedGlobalStoreEvidence8616,
+    stats: SegmentedGlobalLoadStats8616,
 ) -> object | None:
     if isinstance(fact.source_stack_offset, int) and isinstance(fact.source_stack_width, int):
         if fact.source_stack_width != fact.width:
@@ -6293,17 +7427,100 @@ def _indexed_global_store_source_expr_8616(
         )
     ):
         return None
-    item = evidence_by_base.get((fact.source_base_offset & 0xFFFF, fact.source_width))
+    item = _sidecar_free_affine_store_source_evidence_8616(
+        evidence_by_base,
+        fact,
+    )
+    affine_source = item is not None
+    if item is None:
+        item = evidence_by_base.get(
+            (fact.source_base_offset & 0xFFFF, fact.source_width)
+        )
     if item is None:
         return None
+    if affine_source:
+        stats.indexed_store_affine_source_classified_count += 1
     index_expr = _stack_cvar_for_offset_8616(codegen, fact.source_index_stack_offset)
     if index_expr is None:
+        if affine_source:
+            stats.indexed_store_affine_source_failure_count += 1
+            stats.failure_count += 1
         return None
-    return _make_indexed_global_value_expr_8616(
+    source_expr = _make_indexed_global_value_expr_8616(
         codegen,
         item,
         index_expr,
         evidence_by_base,
+    )
+    if affine_source:
+        if source_expr is None:
+            stats.indexed_store_affine_source_failure_count += 1
+            stats.failure_count += 1
+        else:
+            stats.indexed_store_affine_source_materialized_count += 1
+    return source_expr
+
+
+def _sidecar_free_affine_store_source_evidence_8616(
+    evidence_by_base: dict[
+        tuple[int, int],
+        IndexedSegmentedGlobalEvidence8616,
+    ],
+    fact: IndexedSegmentedGlobalStoreEvidence8616,
+) -> IndexedSegmentedGlobalEvidence8616 | None:
+    """Select the exact sidecar-free source identity for one affine store.
+
+    A store of ``source_base + stride * i`` into
+    ``destination_base + stride * i`` proves both binary addresses. Canonicalize
+    only an immediately adjacent element through the destination array. Larger
+    separations keep the source base as its own deterministic global identity
+    instead of merging distinct storage objects.
+    """
+
+    if (
+        not isinstance(fact.source_base_offset, int)
+        or not isinstance(fact.source_width, int)
+        or not isinstance(fact.source_index_stack_offset, int)
+        or not isinstance(fact.source_index_shift, int)
+        or fact.source_width != fact.width
+        or fact.source_index_stack_offset != fact.index_stack_offset
+        or fact.source_index_shift != fact.index_shift
+        or fact.width <= 0
+    ):
+        return None
+    destination = evidence_by_base.get(
+        (fact.base_offset & 0xFFFF, fact.width)
+    )
+    source = evidence_by_base.get(
+        (fact.source_base_offset & 0xFFFF, fact.source_width)
+    )
+    if (
+        destination is None
+        or source is None
+        or not _is_sidecar_free_indexed_identity_8616(destination)
+        or not _is_sidecar_free_indexed_identity_8616(source)
+    ):
+        return None
+    relative_disp = int(fact.source_base_offset) - int(fact.base_offset)
+    if abs(relative_disp) != fact.width:
+        return source
+    return IndexedSegmentedGlobalEvidence8616(
+        base_offset=fact.source_base_offset & 0xFFFF,
+        name=destination.name,
+        relative_disp=relative_disp,
+        width=fact.source_width,
+    )
+
+
+def _is_sidecar_free_indexed_identity_8616(
+    evidence: IndexedSegmentedGlobalEvidence8616,
+) -> bool:
+    """Return whether evidence carries only its deterministic binary identity."""
+
+    normalized_base = evidence.base_offset & 0xFFFF
+    return (
+        evidence.relative_disp == 0
+        and evidence.name == f"g_{normalized_base:04X}"
     )
 
 
@@ -6928,6 +8145,7 @@ def reconcile_registered_named_global_aggregate_declarations_8616(codegen: objec
     it does not inspect rendered C.
     """
 
+    initialize_global_declaration_specs_8616(codegen)
     typed_codegen = typing.cast(_CodegenStackAggregateFactBoundary8616, codegen)
     try:
         raw_facts = typed_codegen._inertia_named_global_aggregate_type_facts_8616
@@ -7978,6 +9196,176 @@ def _collect_direct_global_symbol_refs_8616(
     return tuple(refs)
 
 
+def recover_direct_segmented_global_load_evidence_8616(
+    project: ProjectBoundary8616,
+    function: object | None,
+) -> tuple[DirectSegmentedGlobalLoadEvidence8616, ...]:
+    """Recover direct DS/ES loads from decoded MOV source operands.
+
+    This evidence intentionally does not assign a source-level symbol. It only
+    preserves the architectural segment, offset, width, and instruction
+    identity that are explicit in the binary.
+    """
+
+    if project is None or function is None:
+        return ()
+    recovered: dict[tuple[int, int, MemSpace, int], DirectSegmentedGlobalLoadEvidence8616] = {}
+    for block in _direct_global_update_blocks_8616(project, function):
+        for wrapper in _capstone_insns_for_direct_global_update_8616(project, block):
+            insn = _capstone_instruction_view_8616(wrapper)
+            if insn.instruction_id != X86_INS_MOV or len(insn.operands) != 2:
+                continue
+            source = insn.operands[1]
+            memory = source.memory
+            if source.kind != X86_OP_MEM or memory is None:
+                continue
+            if memory.base not in {None, 0, X86_REG_INVALID} or memory.index not in {
+                None,
+                0,
+                X86_REG_INVALID,
+            }:
+                continue
+            if source.size not in {1, 2, 4} or not isinstance(memory.displacement, int):
+                continue
+            if not isinstance(insn.address, int):
+                continue
+            segment_name = _direct_stack_move_segment_name_8616(insn.raw, memory.segment)
+            space = MemSpace.DS if segment_name == "ds" else MemSpace.ES if segment_name == "es" else None
+            if space is None:
+                continue
+            evidence = DirectSegmentedGlobalLoadEvidence8616(
+                offset=int(memory.displacement) & 0xFFFF,
+                width=int(source.size),
+                space=space,
+                ins_addr=int(insn.address),
+            )
+            recovered[(evidence.offset, evidence.width, evidence.space, evidence.ins_addr)] = evidence
+    return tuple(sorted(recovered.values(), key=lambda item: (item.ins_addr, item.offset, item.width, item.space.value)))
+
+
+def recover_direct_segmented_global_store_evidence_8616(
+    project: ProjectBoundary8616,
+    function: object | None,
+) -> tuple[DirectSegmentedGlobalStoreEvidence8616, ...]:
+    """Recover direct DS/ES stores from decoded MOV destination operands.
+
+    The fact deliberately carries no source-level symbol. The binary proves
+    only the architectural segment, offset, width, and instruction identity;
+    the structured-C assignment remains responsible for the source value.
+    """
+
+    if project is None or function is None:
+        return ()
+    recovered: dict[tuple[int, int, MemSpace, int], DirectSegmentedGlobalStoreEvidence8616] = {}
+    for block in _direct_global_update_blocks_8616(project, function):
+        for wrapper in _capstone_insns_for_direct_global_update_8616(project, block):
+            insn = _capstone_instruction_view_8616(wrapper)
+            if insn.instruction_id != X86_INS_MOV or len(insn.operands) != 2:
+                continue
+            destination = insn.operands[0]
+            memory = destination.memory
+            if destination.kind != X86_OP_MEM or memory is None:
+                continue
+            if memory.base not in {None, 0, X86_REG_INVALID} or memory.index not in {
+                None,
+                0,
+                X86_REG_INVALID,
+            }:
+                continue
+            if destination.size not in {1, 2, 4} or not isinstance(memory.displacement, int):
+                continue
+            if not isinstance(insn.address, int):
+                continue
+            segment_name = _direct_stack_move_segment_name_8616(insn.raw, memory.segment)
+            space = MemSpace.DS if segment_name == "ds" else MemSpace.ES if segment_name == "es" else None
+            if space is None:
+                continue
+            evidence = DirectSegmentedGlobalStoreEvidence8616(
+                offset=int(memory.displacement) & 0xFFFF,
+                width=int(destination.size),
+                space=space,
+                ins_addr=int(insn.address),
+            )
+            recovered[(evidence.offset, evidence.width, evidence.space, evidence.ins_addr)] = evidence
+    return tuple(
+        sorted(
+            recovered.values(),
+            key=lambda item: (item.ins_addr, item.offset, item.width, item.space.value),
+        )
+    )
+
+
+def _normalize_direct_segmented_global_load_evidence_8616(
+    evidence: Iterable[DirectSegmentedGlobalLoadEvidence8616],
+) -> dict[tuple[int, int], DirectSegmentedGlobalLoadEvidence8616]:
+    """Keep exact direct-load identities only when their segment is unambiguous."""
+
+    grouped: dict[tuple[int, int], list[DirectSegmentedGlobalLoadEvidence8616]] = {}
+    for item in evidence:
+        grouped.setdefault((item.offset & 0xFFFF, item.width), []).append(item)
+    normalized: dict[tuple[int, int], DirectSegmentedGlobalLoadEvidence8616] = {}
+    for identity, candidates in grouped.items():
+        spaces = {item.space for item in candidates}
+        if len(spaces) == 1:
+            normalized[identity] = min(candidates, key=lambda item: item.ins_addr)
+    return normalized
+
+
+def _make_direct_segmented_global_load_expr_8616(
+    project: ProjectBoundary8616,
+    codegen: CodegenBoundary8616,
+    evidence: DirectSegmentedGlobalLoadEvidence8616,
+) -> CFunctionCall | None:
+    """Materialize one anonymous direct load as an explicit segment helper."""
+
+    return _make_direct_segmented_global_access_expr_8616(
+        project,
+        codegen,
+        offset=evidence.offset,
+        width=evidence.width,
+        space=evidence.space,
+    )
+
+
+def _make_direct_segmented_global_access_expr_8616(
+    project: ProjectBoundary8616,
+    codegen: CodegenBoundary8616,
+    *,
+    offset: int,
+    width: int,
+    space: MemSpace,
+) -> CFunctionCall | None:
+    """Materialize one anonymous direct access as an explicit segment helper."""
+
+    helper = {
+        1: SegmentLoadHelper8616.SEG_U8,
+        2: SegmentLoadHelper8616.SEG_U16,
+        4: SegmentLoadHelper8616.SEG_U32,
+    }.get(width)
+    if helper is None or space not in {MemSpace.DS, MemSpace.ES}:
+        return None
+    segment_name = space.value
+    identity = SegmentedLoadIdentity8616(
+        space=space,
+        offset=offset & 0xFFFF,
+        width=width,
+        region=_codegen_function_addr_8616(codegen),
+    )
+    return CFunctionCall(
+        helper.helper_name,
+        None,
+        [
+            _make_segment_register_variable_8616(project, codegen, segment_name),
+            CConstant(offset & 0xFFFF, SimTypeShort(False), codegen=codegen),
+        ],
+        codegen=codegen,
+        tags=segmented_load_tags_8616(
+            identity,
+            existing={"inertia_x86_16_runtime_segment_helper": helper.helper_name},
+        ),
+    )
+
+
 def _collect_synthetic_direct_global_symbol_refs_8616(
     synthetic_globals: SyntheticGlobalsBoundary8616,
     summaries: list[InsnSummary8616],
@@ -8089,6 +9477,9 @@ def _collect_direct_global_boolean_store_evidence_8616(
                 dest_offset=mov_insn.op0_value & 0xFFFF,
                 dest_width=dest_width,
                 store_ins_addr=mov_insn.address if isinstance(mov_insn.address, int) else None,
+                compare_ins_addr=cmp_insn.address if isinstance(cmp_insn.address, int) else None,
+                sbb_ins_addr=sbb_insn.address if isinstance(sbb_insn.address, int) else None,
+                neg_ins_addr=neg_insn.address if isinstance(neg_insn.address, int) else None,
             )
         )
     return tuple(dict.fromkeys(evidence))
@@ -9121,7 +10512,7 @@ def _word_source_for_byte_pair_store_8616(
 def _word_store_source_is_safe_8616(node: object) -> bool:
     if isinstance(node, (CVariable, CFunctionCall, CIndexedVariable)):
         return True
-    return isinstance(node, CBinaryOp) and node.op in {"Add", "Sub", "Shl", "Shr", "And", "Or"}
+    return isinstance(node, CBinaryOp) and node.op in {"Add", "Sub", "Mul", "Mull", "Shl", "Shr", "And", "Or"}
 
 
 def _low_byte_source_is_artifact_8616(node: object, copies: dict[CopyKey8616, object]) -> bool:
@@ -9718,6 +11109,12 @@ def _make_global_value_expr_8616(
         if width == 4
         else SegmentLoadHelper8616.SEG_U16
     )
+    identity = SegmentedLoadIdentity8616(
+        space=MemSpace.DS,
+        offset=evidence.offset & 0xFFFF,
+        width=width,
+        region=_codegen_function_addr_8616(codegen),
+    )
     return CFunctionCall(
         helper.helper_name,
         None,
@@ -9726,6 +11123,7 @@ def _make_global_value_expr_8616(
             CConstant(evidence.offset & 0xFFFF, SimTypeShort(False), codegen=codegen),
         ],
         codegen=codegen,
+        tags=segmented_load_tags_8616(identity),
     )
 
 
@@ -9806,6 +11204,8 @@ def _memory_pointer_helper_8616(node: object) -> MemoryPointerHelper8616 | None:
 def _is_ds_segment_expr_8616(project: ProjectBoundary8616, node: object) -> bool:
     if isinstance(node, CVariable):
         variable = node.variable
+        if runtime_segment_name_for_variable_8616(variable) == "ds":
+            return True
         if isinstance(variable, SimRegisterVariable):
             reg = variable.reg
             if isinstance(reg, int):
@@ -9965,7 +11365,7 @@ def _store_stats_8616(codegen: CodegenBoundary8616, stats: SegmentedGlobalLoadSt
         codegen._inertia_segmented_global_load_stats_8616 = stats
     if os.environ.get("INERTIA_DEBUG_SEGMENTED_GLOBAL_LOADS"):
         log.warning(
-            "[seg-global-loads] raw=%d normalized=%d classified=%d materialized=%d failures=%d no_evidence=%d no_cfunc=%d helper=%d segment=%d offset=%d cmp_raw=%d cmp_classified=%d cmp_materialized=%d direct_raw=%d direct_materialized=%d direct_call_return_raw=%d direct_call_return_materialized=%d direct_call_return_carrier_removed=%d indexed_store_materialized=%d indexed_store_lvalue_raw=%d indexed_store_lvalue_materialized=%d indexed_store_source_carrier_removed=%d indexed_stack_aggregate_type_promoted=%d",
+            "[seg-global-loads] raw=%d normalized=%d classified=%d materialized=%d failures=%d no_evidence=%d no_cfunc=%d helper=%d segment=%d offset=%d cmp_raw=%d cmp_classified=%d cmp_materialized=%d direct_raw=%d direct_materialized=%d anonymous_store_raw=%d anonymous_store_normalized=%d anonymous_store_classified=%d anonymous_store_materialized=%d anonymous_store_failures=%d direct_call_return_raw=%d direct_call_return_materialized=%d direct_call_return_carrier_removed=%d indexed_store_materialized=%d indexed_store_lvalue_raw=%d indexed_store_lvalue_materialized=%d indexed_store_source_carrier_removed=%d indexed_stack_aggregate_type_promoted=%d",
             stats.raw_fact_count,
             stats.normalized_fact_count,
             stats.classified_fact_count,
@@ -9981,6 +11381,11 @@ def _store_stats_8616(codegen: CodegenBoundary8616, stats: SegmentedGlobalLoadSt
             stats.compare_register_materialized_count,
             stats.direct_symbol_raw_fact_count,
             stats.direct_symbol_materialized_count,
+            stats.anonymous_direct_store_raw_fact_count,
+            stats.anonymous_direct_store_normalized_fact_count,
+            stats.anonymous_direct_store_classified_fact_count,
+            stats.anonymous_direct_store_materialized_count,
+            stats.anonymous_direct_store_failure_count,
             stats.direct_symbol_call_return_raw_fact_count,
             stats.direct_symbol_call_return_materialized_count,
             stats.direct_symbol_call_return_carrier_removed_count,

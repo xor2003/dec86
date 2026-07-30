@@ -24,6 +24,7 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _attach_tail_validation_widened_carrier_provenance_8616,
     _deepcopy_cfunc_for_validation_8616,
 )
+from angr_platforms.X86_16.lowering.structured_intrinsics import lower_structured_insert_call_8616
 from angr_platforms.X86_16.tail_validation_fingerprint import (
     _canonical_or_unresolved_stack_fingerprint_8616,
     _expr_fingerprint,
@@ -943,6 +944,42 @@ def test_runtime_segment_helper_matches_raw_dereference_fingerprint():
 
     assert _expr_fingerprint(raw, project) == _expr_fingerprint(helper, project)
     assert _location_fingerprint(raw, project) == _location_fingerprint(helper, project)
+
+
+def test_runtime_segment_state_global_preserves_segment_register_fingerprint():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    raw_ds = _reg(project, "ds", codegen)
+    runtime_ds = CVariable(
+        SimMemoryVariable(0x1_0002, 2, name="inertia_ds", category="inertia_segment_state"),
+        codegen=codegen,
+    )
+    offset = _const(0xB4C, codegen)
+    raw_helper = CFunctionCall("SEG_U8", None, [raw_ds, offset], codegen=codegen)
+    lowered_helper = CFunctionCall("SEG_U8", None, [runtime_ds, offset], codegen=codegen)
+
+    assert _expr_fingerprint(runtime_ds, project) == "reg:ds"
+    assert _expr_fingerprint(raw_helper, project) == _expr_fingerprint(lowered_helper, project)
+    assert _location_fingerprint(raw_helper, project) == _location_fingerprint(lowered_helper, project)
+
+
+def test_complete_insert_intrinsic_matches_lowered_bit_expression_fingerprint():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    base = _const(0x1234, codegen)
+    offset = _const(0, codegen)
+    value = CFunctionCall(
+        "SEG_U8",
+        None,
+        [_reg(project, "ds", codegen), _const(0xB4C, codegen)],
+        codegen=codegen,
+    )
+    insert = CFunctionCall("_INSERT", None, [base, offset, value], codegen=codegen)
+
+    lowered = lower_structured_insert_call_8616(insert)
+
+    assert lowered is not None
+    assert _expr_fingerprint(insert, project) == _expr_fingerprint(lowered, project)
 
 
 def test_runtime_segment_helper_preserves_structural_ds_argument_before_value_cache():

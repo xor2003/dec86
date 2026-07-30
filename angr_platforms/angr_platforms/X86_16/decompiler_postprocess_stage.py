@@ -143,11 +143,15 @@ from .lowering.segmented_memory_lowering import (
     apply_runtime_segment_lowering_8616,
     lower_runtime_ss_segment_helpers_to_stack_8616,
     materialize_runtime_helper_segment_carriers_8616,
+    runtime_segment_push_source_cvar_8616,
 )
 from .lowering.ss_bp_substitution import (
     apply_stack_variable_bindings_to_c_text,
 )
-from .lowering.stack_aggregate_objects import decay_stack_aggregate_call_arguments_8616
+from .lowering.stack_aggregate_objects import (
+    decay_stack_aggregate_call_arguments_8616,
+    reapply_stack_aggregate_object_facts_8616,
+)
 from .lowering.stack_lowering import run_stack_lowering_pass_8616
 from .lowering.stack_lowering_from_facts import (
     _canonical_stack_offset_8616,
@@ -549,6 +553,7 @@ class _PostprocessValidationDeltaKind8616(Enum):
     UNOBSERVED_DEFAULT_SCALAR_SYNTHETIC_RETURN = "unobserved_default_scalar_synthetic_return"
     EXPOSED_NONVOID_STACK_ARG_SCALAR_RETURN = "exposed_nonvoid_stack_arg_scalar_return"
     CFG_VOID_TAIL_CALL_GUARD_MATERIALIZATION = "cfg_void_tail_call_guard_materialization"
+    PROVEN_SURPLUS_EMPTY_GUARD_CLEANUP = "proven_surplus_empty_guard_cleanup"
     CONDITIONAL_CONTINUE_GUARD_REPAIR = "conditional_continue_guard_repair"
     SWITCH_LOOP_EXIT_RETURN_REPAIR = "switch_loop_exit_return_repair"
 
@@ -6800,7 +6805,25 @@ def _collapse_unsupported_ail_return_before_materialized_return_8616(codegen: St
 
 def _dead_code_elimination_final_cleanup_8616(codegen: StructuredAstValue) -> bool:
     """Run terminal DCE and final unresolved-return carrier cleanup."""
-    changed = _dead_code_elimination_8616(codegen)
+    had_storage_free_attr = hasattr(codegen, "_inertia_dce_allow_storage_free_dirty_8616")
+    previous_storage_free = getattr(codegen, "_inertia_dce_allow_storage_free_dirty_8616", None)
+    had_dirty_read_attr = hasattr(codegen, "_inertia_dce_allow_dirty_value_reads_8616")
+    previous_dirty_read = getattr(codegen, "_inertia_dce_allow_dirty_value_reads_8616", None)
+    codegen._inertia_dce_allow_storage_free_dirty_8616 = True
+    codegen._inertia_dce_allow_dirty_value_reads_8616 = True
+    try:
+        changed = _dead_code_elimination_8616(codegen)
+    finally:
+        if had_storage_free_attr:
+            codegen._inertia_dce_allow_storage_free_dirty_8616 = previous_storage_free
+        else:
+            with contextlib.suppress(Exception):
+                delattr(codegen, "_inertia_dce_allow_storage_free_dirty_8616")
+        if had_dirty_read_attr:
+            codegen._inertia_dce_allow_dirty_value_reads_8616 = previous_dirty_read
+        else:
+            with contextlib.suppress(Exception):
+                delattr(codegen, "_inertia_dce_allow_dirty_value_reads_8616")
     changed = _collapse_unsupported_ail_return_before_materialized_return_8616(codegen) or changed
     changed = _post._collapse_adjacent_unresolved_return_carrier_8616(cast(Any, object()), codegen) or changed
     return changed
@@ -7679,17 +7702,30 @@ def _materialize_direct_stack_mov_incdec_instructions_bootstrap_8616(
     return changed
 
 
+def _materialize_callsite_stack_arguments_with_target_identity_8616(
+    project: StructuredAstValue,
+    codegen: StructuredAstValue,
+) -> bool:
+    """Replay the Types/Lowering target identity after legacy argument rebuilding."""
+    changed = bool(_calls._materialize_callsite_stack_arguments_8616(project, codegen))
+    return bool(_calls._replay_call_target_identity_consumer_8616(project, codegen)) or changed
+
+
 def _materialize_callsite_stack_arguments_preserve_setup_8616(
     project: StructuredAstValue, codegen: StructuredAstValue
 ) -> bool:
     """Run callsite stack-argument materialization while preserving setup statements."""
+    _calls._bind_segment_push_source_lowerer_8616(
+        codegen,
+        runtime_segment_push_source_cvar_8616,
+    )
     controls = _calls._ensure_callsite_materialization_controls_8616(codegen)
     previous_consumed_arg_store_prune = controls._inertia_callsite_disable_consumed_arg_store_prune_8616
     previous_stack_probe_setup_prune = controls._inertia_callsite_disable_stack_probe_setup_prune_8616
     controls._inertia_callsite_disable_consumed_arg_store_prune_8616 = True
     controls._inertia_callsite_disable_stack_probe_setup_prune_8616 = True
     try:
-        return _calls._materialize_callsite_stack_arguments_8616(project, codegen)
+        return _materialize_callsite_stack_arguments_with_target_identity_8616(project, codegen)
     finally:
         controls._inertia_callsite_disable_consumed_arg_store_prune_8616 = previous_consumed_arg_store_prune
         controls._inertia_callsite_disable_stack_probe_setup_prune_8616 = previous_stack_probe_setup_prune
@@ -8335,13 +8371,14 @@ def _run_decompiler_postprocess_pass_spec_8616(
     changed = bool(spec.func(project, codegen) if spec.needs_project else spec.func(codegen))
     if spec.call_argument_effect is not CallArgumentAstEffect8616.REBUILDS:
         return changed
+    object_replay_changed = reapply_stack_aggregate_object_facts_8616(codegen)
     decay_changed = decay_stack_aggregate_call_arguments_8616(codegen)
     replayed = _boundary_list_8616(
         getattr(codegen, "_inertia_stack_aggregate_decay_replayed_after_passes_8616", ()) or ()
     )
     replayed.append(spec.name)
     codegen._inertia_stack_aggregate_decay_replayed_after_passes_8616 = tuple(replayed)
-    return decay_changed or changed
+    return object_replay_changed or decay_changed or changed
 
 
 DECOMPILER_POSTPROCESS_PASSES: tuple[DecompilerPostprocessPassSpec, ...] = _build_decompiler_postprocess_passes()
@@ -10030,7 +10067,7 @@ def _postprocess_runtime_config_8616(
         if isinstance(trace_func_addr, int) and isinstance(delta, int):
             trace_func_addr = trace_func_addr + delta
         validation_enabled = bool(getattr(project, "_inertia_tail_validation_enabled", True))
-        per_pass_validation_enabled = bool(getattr(project, "_inertia_postprocess_per_pass_validation_enabled", False))
+        per_pass_validation_enabled = bool(getattr(project, "_inertia_postprocess_per_pass_validation_enabled", True))
         if os.environ.get("INERTIA_DEBUG_CONDITION_TRACE") or os.environ.get("INERTIA_DEBUG_POSTPROCESS_VALIDATION"):
             per_pass_validation_enabled = True
         if os.environ.get("INERTIA_FORCE_PER_PASS_TV"):
@@ -10169,7 +10206,12 @@ def _selector_return_contract_skip_passes_8616() -> frozenset[str]:
 def _postprocess_pass_has_local_evidence_8616(pass_name: str, codegen: StructuredAstValue) -> bool:
     if pass_name in {
         "optimization:adjacent_temporary_copy_prune",
+        "_prune_surplus_void_empty_return_guards_8616",
+        "_prune_surplus_void_empty_return_guards_final_8616",
     }:
+        # The empty-guard pass computes a closed branch-count/JCC-tag proof
+        # before every mutation; final validation independently checks its
+        # exact evidence census and observable delta.
         return True
     if pass_name in {
         "_materialize_callsite_stack_arguments_final_8616",
@@ -11279,7 +11321,43 @@ def _postprocess_codegen_8616(project: StructuredAstValue, codegen: StructuredAs
                             )
                         else:
                             current_function = getattr(codegen, "_inertia_current_function_8616", None)
-                            if pass_name in {
+                            if (
+                                pass_name
+                                in {
+                                    "_prune_surplus_void_empty_return_guards_8616",
+                                    "_prune_surplus_void_empty_return_guards_final_8616",
+                                }
+                                and _is_proven_surplus_empty_guard_cleanup_delta_8616(
+                                    codegen,
+                                    validation,
+                                )
+                            ):
+                                delta_kind = (
+                                    _PostprocessValidationDeltaKind8616.PROVEN_SURPLUS_EMPTY_GUARD_CLEANUP
+                                )
+                                is_blocking_delta = False
+                                accepted = _boundary_list_8616(
+                                    getattr(
+                                        codegen,
+                                        "_inertia_postprocess_accepted_validation_deltas",
+                                        (),
+                                    )
+                                    or ()
+                                )
+                                accepted.append(
+                                    {
+                                        "pass": pass_name,
+                                        "kind": delta_kind.value,
+                                    }
+                                )
+                                codegen._inertia_postprocess_accepted_validation_deltas = tuple(accepted)
+                                logging.getLogger(__name__).warning(
+                                    "postprocess validation accepted function=%#x pass=%s kind=%s",
+                                    trace_func_addr if isinstance(trace_func_addr, int) else -1,
+                                    pass_name,
+                                    delta_kind.value,
+                                )
+                            elif pass_name in {
                                 "_materialize_empty_if_return_branches_8616",
                                 "_materialize_empty_if_return_branches_final_8616",
                                 "_prune_surplus_void_empty_return_guards_8616",
@@ -11649,6 +11727,8 @@ def _regenerate_text_safely(codegen: StructuredAstValue, *, context: str) -> boo
             with span("x86_16.postprocess.regenerate.normalize_stack_identifiers", function=func_addr):
                 _normalize_stack_variable_identifiers_8616(codegen)
             _debug_first_condition("after-normalize-stack-identifiers")
+            with span("x86_16.postprocess.regenerate.replay_stack_aggregates", function=func_addr):
+                reapply_stack_aggregate_object_facts_8616(codegen)
             with span("x86_16.postprocess.regenerate.bind_types", function=func_addr):
                 _bind_codegen_variable_types_to_arch_8616(codegen)
             _debug_first_condition("after-bind-types")
@@ -11852,6 +11932,66 @@ def _is_missing_terminal_ax_return_delta_8616(
         if added_control - {"return"} or removed_control:
             return False
     return True
+
+
+def _is_proven_surplus_empty_guard_cleanup_delta_8616(
+    codegen: StructuredAstValue,
+    validation: dict[str, StructuredAstValue],
+) -> bool:
+    """Accept only the exact no-op guards classified as binary-proven surplus.
+
+    The mutation is cleanup owned by Structuring's branch-count and JCC-tag
+    proofs. This compatibility validation consumes its closed evidence census;
+    it does not infer branch semantics from validation fingerprint text.
+    """
+    if not isinstance(validation, dict):
+        return False
+    if (
+        getattr(codegen, "_inertia_void_empty_return_guard_decision_8616", None)
+        != _VoidEmptyReturnGuardDecision8616.PRUNE.value
+    ):
+        return False
+    pruned = int(getattr(codegen, "_inertia_void_empty_return_guard_pruned_8616", 0) or 0)
+    noop_pruned = int(getattr(codegen, "_inertia_void_empty_return_guard_noop_pruned_8616", 0) or 0)
+    empty_return_pruned = int(
+        getattr(codegen, "_inertia_void_empty_return_guard_empty_return_pruned_8616", 0) or 0
+    )
+    identical_arms_collapsed = int(
+        getattr(codegen, "_inertia_void_empty_return_guard_identical_arms_collapsed_8616", 0) or 0
+    )
+    branch_count = getattr(codegen, "_inertia_void_empty_return_guard_branch_count_8616", None)
+    total_if_count = getattr(codegen, "_inertia_void_empty_return_guard_total_ifs_8616", None)
+    if (
+        pruned <= 0
+        or noop_pruned != pruned
+        or empty_return_pruned != 0
+        or identical_arms_collapsed != 0
+        or not isinstance(branch_count, int)
+        or not isinstance(total_if_count, int)
+        or total_if_count - branch_count < pruned
+    ):
+        return False
+
+    delta = validation.get("delta")
+    if not isinstance(delta, dict):
+        return False
+    if _validation_delta_touched_fields_8616(delta) != {"conditions", "control_flow_effects"}:
+        return False
+    conditions_delta = delta.get("conditions")
+    control_delta = delta.get("control_flow_effects")
+    if not isinstance(conditions_delta, dict) or not isinstance(control_delta, dict):
+        return False
+    added_conditions = _boundary_tuple_8616(conditions_delta.get("added") or ())
+    removed_conditions = _boundary_tuple_8616(conditions_delta.get("removed") or ())
+    added_control = _boundary_tuple_8616(control_delta.get("added") or ())
+    removed_control = _boundary_tuple_8616(control_delta.get("removed") or ())
+    if added_conditions or added_control:
+        return False
+    if len(removed_conditions) != pruned or len(removed_control) != pruned:
+        return False
+    if any(not isinstance(token, str) for token in removed_conditions):
+        return False
+    return set(removed_control) == {f"if:{token}" for token in removed_conditions}
 
 
 def _is_default_scalar_void_return_classification_delta_8616(
@@ -15283,7 +15423,7 @@ def run_callsite_stack_fact_materialization_8616(
         stack_arguments_changed = bool(
             guarded_rewrite_runner(
                 "_materialize_callsite_stack_arguments_8616",
-                lambda: _calls._materialize_callsite_stack_arguments_8616(project, codegen),
+                lambda: _materialize_callsite_stack_arguments_with_target_identity_8616(project, codegen),
             )
         )
     result = CallsiteStackFactMaterializationResult8616(
@@ -15312,6 +15452,7 @@ class LateAstCleanupResult8616:
 
     changed: bool
     adjacent_temporary_copy_changed: bool
+    empty_noop_guard_changed: bool
 
     @property
     def requires_dce_after_cleanup(self: StructuredAstValue) -> bool:
@@ -15319,20 +15460,128 @@ class LateAstCleanupResult8616:
         return self.adjacent_temporary_copy_changed
 
 
+@dataclass(frozen=True, slots=True)
+class LateEmptyNoopGuardCleanupStats8616:
+    """Record the closed evidence census for late semantically empty guard cleanup."""
+
+    raw_fact_count: int
+    normalized_fact_count: int
+    classified_fact_count: int
+    materialized_count: int
+    failure_count: int
+
+    @property
+    def changed(self) -> bool:
+        """Return whether at least one classified no-op guard was removed."""
+        return self.materialized_count > 0
+
+
+def _prune_late_semantically_empty_noop_guards_8616(
+    codegen: StructuredAstValue,
+) -> LateEmptyNoopGuardCleanupStats8616:
+    """Remove only side-effect-free empty branch shells exposed by evidence DCE.
+
+    Structuring owns the semantic-empty classifier. This late compatibility
+    consumer removes only ``EMPTY_NOOP`` guards whose condition has no call and
+    whose true and false arms contain no semantic statements. It does not use
+    rendered text, machine-branch counts, condition meaning, or JCC polarity.
+    Empty-return and non-empty branch shapes remain untouched.
+    """
+    # Dynamic angr codegen boundary: the generated C function may be absent.
+    cfunc = getattr(codegen, "cfunc", None)
+    # Dynamic angr C-AST boundary: statement roots vary across codegen versions.
+    root = getattr(cfunc, "statements", None) if cfunc is not None else None
+    if root is None:
+        stats = LateEmptyNoopGuardCleanupStats8616(0, 0, 0, 0, 0)
+        codegen._inertia_late_empty_noop_guard_cleanup_stats_8616 = stats
+        return stats
+
+    seen_blocks: set[int] = set()
+    blocks = [node for node in (root, *_iter_c_nodes_deep_8616(root)) if isinstance(node, CStatements)]
+    raw_fact_count = 0
+    normalized_fact_count = 0
+    candidates: list[tuple[CStatements, int, CIfElse]] = []
+    for block in blocks:
+        block_id = id(block)
+        if block_id in seen_blocks:
+            continue
+        seen_blocks.add(block_id)
+        for index, statement in enumerate(_boundary_list_8616(block.statements or ())):
+            if not isinstance(statement, CIfElse):
+                continue
+            raw_fact_count += 1
+            candidate = _surplus_empty_guard_condition_8616(statement)
+            if candidate is None:
+                continue
+            normalized_fact_count += 1
+            _condition, kind = candidate
+            if kind is _SurplusIfGuardKind8616.EMPTY_NOOP:
+                candidates.append((block, index, statement))
+
+    candidate_ids = {id(statement) for _block, _index, statement in candidates}
+    nested_candidate_ids: set[int] = set()
+    for _block, _index, statement in candidates:
+        nested_candidate_ids.update(
+            id(node)
+            for node in _iter_c_nodes_deep_8616(statement)
+            if id(node) in candidate_ids and node is not statement
+        )
+    classified = [
+        (block, index)
+        for block, index, statement in candidates
+        if id(statement) not in nested_candidate_ids
+    ]
+
+    prune_by_block: dict[int, tuple[CStatements, set[int]]] = {}
+    for block, index in classified:
+        block_id = id(block)
+        if block_id not in prune_by_block:
+            prune_by_block[block_id] = (block, set())
+        prune_by_block[block_id][1].add(index)
+
+    materialized_count = 0
+    for block, prune_indices in prune_by_block.values():
+        old_statements = _boundary_list_8616(block.statements or ())
+        block.statements = [
+            statement
+            for index, statement in enumerate(old_statements)
+            if index not in prune_indices
+        ]
+        materialized_count += len(prune_indices)
+
+    classified_fact_count = len(classified)
+    failure_count = classified_fact_count - materialized_count
+    stats = LateEmptyNoopGuardCleanupStats8616(
+        raw_fact_count=raw_fact_count,
+        normalized_fact_count=normalized_fact_count,
+        classified_fact_count=classified_fact_count,
+        materialized_count=materialized_count,
+        failure_count=failure_count,
+    )
+    codegen._inertia_late_empty_noop_guard_cleanup_stats_8616 = stats
+    if classified_fact_count > 0 and materialized_count == 0:
+        raise RuntimeError("classified late empty no-op guards were not materialized")
+    return stats
+
+
 def run_late_ast_cleanup_8616(project: StructuredAstValue, codegen: StructuredAstValue) -> LateAstCleanupResult8616:
     """Run AST-only cleanup after late materialization or CLI orchestration.
 
     This is deliberately still owned by the X86_16 postprocess/optimization
-    layer.  The caller may be CLI orchestration, but the cleanup is limited to
+    layer. The caller may be CLI orchestration, but cleanup is limited to
     structured C nodes: adjacent generated temporary carriers are folded into
-    their immediate consumer.  It does not inspect rendered C text, recover
-    aliases, infer types, or repair semantics.
+    their immediate consumer, and semantically empty no-op branch shells exposed
+    by evidence DCE are removed through Structuring's owned shape classifier. It
+    does not inspect rendered C text, recover aliases, infer types, or repair
+    semantics.
     """
     _ = project
+    empty_noop_guard_stats = _prune_late_semantically_empty_noop_guards_8616(codegen)
     trivial_copy_changed = bool(prune_adjacent_temporary_copy_assignments_8616(codegen))
     return LateAstCleanupResult8616(
-        changed=trivial_copy_changed,
+        changed=empty_noop_guard_stats.changed or trivial_copy_changed,
         adjacent_temporary_copy_changed=trivial_copy_changed,
+        empty_noop_guard_changed=empty_noop_guard_stats.changed,
     )
 
 
@@ -15348,6 +15597,7 @@ def finalize_late_ast_cleanup_8616(
         codegen._inertia_late_ast_cleanup_finalize_8616 = {
             "changed": result.changed,
             "adjacent_temporary_copy_changed": result.adjacent_temporary_copy_changed,
+            "empty_noop_guard_changed": result.empty_noop_guard_changed,
             "requires_dce_after_cleanup": result.requires_dce_after_cleanup,
             "owner": "postprocess.stage",
         }
@@ -16162,6 +16412,25 @@ def _try_accept_failed_postprocess_validation_8616(
             log.warning(
                 "Postprocess validation helper-call/return delta accepted from CFG evidence: %s",
                 validation.get("verdict"),
+            )
+            _postprocess_stable_accept_8616(self, validation, snapshot_function_info)
+            return True
+        if _is_proven_surplus_empty_guard_cleanup_delta_8616(self.codegen, validation):
+            log.warning(
+                "Postprocess validation surplus empty-guard cleanup accepted from "
+                "Structuring branch-count evidence: %s",
+                validation.get("verdict"),
+            )
+            self.codegen._inertia_surplus_empty_guard_validation_accepts_8616 = (
+                int(
+                    getattr(
+                        self.codegen,
+                        "_inertia_surplus_empty_guard_validation_accepts_8616",
+                        0,
+                    )
+                    or 0
+                )
+                + 1
             )
             _postprocess_stable_accept_8616(self, validation, snapshot_function_info)
             return True
@@ -16996,7 +17265,12 @@ def _salvage_callsite_stack_args_after_discard_8616(
             mode=validation_mode,
             boundary_fingerprint=before_fingerprint,
         )
-        changed = bool(_calls._materialize_callsite_stack_arguments_8616(self.project, self.codegen))
+        changed = bool(
+            _materialize_callsite_stack_arguments_with_target_identity_8616(
+                self.project,
+                self.codegen,
+            )
+        )
         if not changed:
             return False
         _regenerate_text_safely(self.codegen, context="postprocess:discard-callsite-arg-salvage")
@@ -17200,7 +17474,16 @@ def _discard_failed_postprocess_result_8616(
     self.codegen._inertia_postprocess_destructive_discard_recovery_8616 = destructive_discard_delta
     _invalidate_tail_validation_derived_caches_8616(self.codegen)
     _regenerate_text_safely(self.codegen, context="postprocess:discard-restore-baseline")
-    if destructive_discard_delta:
+    salvaged_direct_stack_updates = False
+    salvaged_direct_global_updates = False
+    salvaged_signed_idiv = False
+    salvaged_direct_stack_moves = False
+    salvaged_callsite_args = False
+    if self.codegen._inertia_structuring_validation_failed:
+        log.warning(
+            "Skipped postprocess rollback salvage because Structuring validation already failed"
+        )
+    elif destructive_discard_delta:
         if _postprocess_destructive_salvage_family_allowed_8616(
             destructive_salvage_family,
             _PostprocessDestructiveSalvageFamily8616.DIRECT_STACK_UPDATE,
@@ -17219,7 +17502,6 @@ def _discard_failed_postprocess_result_8616(
                 "Skipped direct stack update salvage after destructive postprocess validation delta: family=%s",
                 destructive_salvage_family.value,
             )
-        salvaged_direct_global_updates = False
         if _postprocess_destructive_salvage_family_allowed_8616(
             destructive_salvage_family,
             _PostprocessDestructiveSalvageFamily8616.DIRECT_STACK_MOVE,
@@ -17252,7 +17534,6 @@ def _discard_failed_postprocess_result_8616(
             snapshot_function_info=snapshot_function_info,
             log=log,
         )
-        salvaged_callsite_args = False
         log.warning("Skipped unsafe rollback salvage after destructive postprocess validation delta")
     else:
         salvaged_direct_stack_updates = _salvage_direct_stack_update_after_discard_8616(

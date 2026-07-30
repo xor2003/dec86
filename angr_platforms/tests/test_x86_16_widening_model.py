@@ -106,7 +106,7 @@ def test_widening_model_accepts_adjacent_stack_slices():
     assert merged.stack_slot == _StackSlotIdentity("bp", -4, 2, region=0x1000)
 
 
-def test_widening_model_accepts_adjacent_bp_and_ss_stack_slices():
+def test_widening_model_refuses_adjacent_bp_and_ss_stack_slices():
     codegen = _DummyCodegen()
     low = _decompile.structured_c.CVariable(
         _decompile.SimStackVariable(-4, 1, base="bp", name="field_0", region=0x1000),
@@ -117,10 +117,8 @@ def test_widening_model_accepts_adjacent_bp_and_ss_stack_slices():
         codegen=codegen,
     )
 
-    assert can_join_adjacent_storage_slices(low, high)
-    merged = merge_storage_slice_domains(low, high)
-    assert merged == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
-    assert merged.stack_slot == _StackSlotIdentity("bp", -4, 2, region=0x1000)
+    assert not can_join_adjacent_storage_slices(low, high)
+    assert merge_storage_slice_domains(low, high) == _StorageDomainSignature("mixed")
 
 
 def test_widening_model_rejects_mixed_expressions():

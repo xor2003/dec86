@@ -117,6 +117,18 @@ def _run_single_stack_lowering_round_8616(
         if codegen is not None and lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project):
             _record_lowering_change_8616(codegen)
             round_changed = True
+        # Preserve DS/ES provenance before anonymous global projection can
+        # collapse a segmented address into a plain SimMemoryVariable.
+        if (
+            lower_runtime_segment_accesses
+            and codegen is not None
+            and apply_runtime_segment_lowering_8616(
+                codegen,
+                target=str(_dynamic_codegen_attr_8616(project, "_inertia_c_target", "portable-flat") or "portable-flat"),
+            )
+        ):
+            _record_lowering_change_8616(codegen)
+            round_changed = True
         if (
             lower_global_segment_accesses
             and codegen is not None
@@ -142,16 +154,6 @@ def _run_single_stack_lowering_round_8616(
                 ) + 1
                 _record_lowering_change_8616(codegen)
                 round_changed = True
-        if (
-            lower_runtime_segment_accesses
-            and codegen is not None
-            and apply_runtime_segment_lowering_8616(
-                codegen,
-                target=str(_dynamic_codegen_attr_8616(project, "_inertia_c_target", "portable-flat") or "portable-flat"),
-            )
-        ):
-            _record_lowering_change_8616(codegen)
-            round_changed = True
         if lower_stable_ss_stack_accesses is not None:
             lowered = lower_stable_ss_stack_accesses()
             if lowered:

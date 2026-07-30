@@ -54,8 +54,10 @@ from .decompiler_postprocess_utils import (
     _stack_bp_displacement_8616,
     _structured_codegen_node_8616,
 )
+from .lowering.segment_register_state import runtime_segment_name_for_variable_8616
 from .lowering.segmented_global_loads import IndexedSegmentedGlobalStoreEvidence8616
 from .lowering.stack_variable_binding import StackVariableBinding
+from .lowering.structured_intrinsics import lower_structured_insert_call_8616
 
 __all__ = [
     "TAIL_VALIDATION_FINGERPRINT_VERSION",
@@ -76,7 +78,7 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION: int = 30
+TAIL_VALIDATION_FINGERPRINT_VERSION: int = 32
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log: logging.Logger = logging.getLogger(__name__)
 _EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 50000
@@ -2013,6 +2015,8 @@ def _is_register_expr_8616(node: Any, project: Any, reg_name: str) -> bool:
     if not isinstance(node, CVariable):
         return False
     variable = _dynamic_tail_validation_getattr_8616(node, "variable", None)
+    if runtime_segment_name_for_variable_8616(variable) == reg_name:
+        return True
     if not isinstance(variable, SimRegisterVariable):
         return False
     reg = _dynamic_tail_validation_getattr_8616(variable, "reg", None)
@@ -2338,6 +2342,9 @@ def _expr_fingerprint(node: object, project: object, _seen: set[int] | None = No
                 return _cached(runtime_helper)
             intrinsic = _structured_c_intrinsic_kind_8616(node)
             if intrinsic is not None:
+                lowered_insert = lower_structured_insert_call_8616(node)
+                if lowered_insert is not None:
+                    return _cached(_expr_fingerprint(lowered_insert, project, _child_seen()))
                 args = ",".join(
                     _expr_fingerprint(arg, project, _child_seen()) for arg in _dynamic_tail_validation_getattr_8616(node, "args", ()) or ()
                 )
@@ -2749,6 +2756,13 @@ def _location_fingerprint(
             runtime_location = _runtime_segment_helper_location_8616(node, project)
             if runtime_location is not None:
                 return runtime_location
+        if isinstance(node, CDirtyExpression) and not resolve_copy_alias:
+            dirty_register = _dirty_register_fingerprint_8616(node, project)
+            if dirty_register is not None:
+                return dirty_register
+            dirty_name = _dirty_virtual_name_8616(node)
+            if dirty_name is not None:
+                return f"virtual:{dirty_name}"
         if isinstance(node, CVariable):
             variable_fingerprint = _cvariable_location_fingerprint_8616(
                 node, project, _seen=_seen, resolve_copy_alias=resolve_copy_alias
@@ -2815,6 +2829,9 @@ def _cvariable_location_fingerprint_8616(node: Any, project: Any, *, _seen: set[
         if isinstance(variable, SimRegisterVariable) and _dynamic_tail_validation_getattr_8616(variable, "reg", None) is not None:
             return f"reg:{_register_name(project, variable.reg)}"
         if isinstance(variable, SimMemoryVariable):
+            runtime_segment_name = runtime_segment_name_for_variable_8616(variable)
+            if runtime_segment_name is not None:
+                return f"reg:{runtime_segment_name}"
             addr = _dynamic_tail_validation_getattr_8616(variable, "addr", None)
             if isinstance(addr, int) and addr < 0:
                 return f"stack:{addr:+#x}"
@@ -3196,6 +3213,11 @@ def _runtime_segment_helper_location_8616(node: CFunctionCall, project: object) 
             return pointer_location
     if isinstance(seg_expr, CVariable):
         variable = _dynamic_tail_validation_getattr_8616(seg_expr, "variable", None)
+        runtime_segment_name = runtime_segment_name_for_variable_8616(variable)
+        if runtime_segment_name is not None:
+            off_value = _c_constant_int_value(off_expr)
+            if isinstance(off_value, int):
+                return f"deref:{runtime_segment_name}:{off_value:#x}"
         if isinstance(variable, SimRegisterVariable):
             seg_name = _register_name(project, variable.reg)
             off_value = _c_constant_int_value(off_expr)

@@ -64,7 +64,15 @@ from .decompiler_postprocess_utils import (
     _structured_codegen_node_8616,
 )
 from .ir.condition_ir import ConditionIR
-from .ir.core import IRBinaryValue, IRValue, MemSpace
+from .ir.core import (
+    SEGMENTED_LOAD_ADDRESS_TAG_8616,
+    AddressStatus,
+    IRAddress,
+    IRBinaryValue,
+    IRValue,
+    MemSpace,
+    SegmentOrigin,
+)
 from .pipeline.contracts import SemanticLaneState
 from .structuring.condition_lowering import condition_origin_tags_8616
 from .tail_validation_fingerprint import _expr_fingerprint
@@ -224,6 +232,16 @@ def _build_segmented_operand_expr_8616(project: object, operand: IRValue, codege
         None,
         [segment, offset],
         codegen=codegen,
+        tags={
+            "inertia_x86_16_runtime_segment_helper": helper,
+            SEGMENTED_LOAD_ADDRESS_TAG_8616: IRAddress(
+                space=operand.space,
+                offset=int(operand.offset) & 0xFFFF,
+                size=width,
+                status=AddressStatus.STABLE,
+                segment_origin=SegmentOrigin.PROVEN,
+            ),
+        },
     )
 
 
@@ -325,7 +343,13 @@ def _build_c_expr_for_operand(
         if isinstance(operand, IRBinaryValue):
             lhs = _build_c_expr_for_operand(project, operand.lhs, codegen, cond)
             rhs = _build_c_expr_for_operand(project, operand.rhs, codegen, cond)
-            structured_op = {"and": "And", "or": "Or", "xor": "Xor"}.get(operand.op)
+            structured_op = {
+                "add": "Add",
+                "and": "And",
+                "or": "Or",
+                "sub": "Sub",
+                "xor": "Xor",
+            }.get(operand.op)
             if lhs is None or rhs is None or structured_op is None:
                 return None
             return CBinaryOp(structured_op, lhs, rhs, codegen=codegen)

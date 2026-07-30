@@ -731,6 +731,7 @@ def _normalize_function_signature_arg_names(c_text: str) -> str:
 
 
 def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
+    """Declare emitted generic locals that have no existing C declarator."""
     # Text-layer rule:
     # This helper is compile hygiene only. It may add missing declarations for names
     # that are already present in emitted text, but it must not infer new storage
@@ -742,7 +743,15 @@ def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
         generic_name_re = re.compile(
             r"^(?:a\d+|v\d+|vvar_\d+|tmp_\d+|ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+|local_[0-9a-fA-F]+)$"
         )
-        decl_name_re = re.compile(r"\b(?P<name>[A-Za-z_]\w*)\s*;\s*$")
+        plain_decl_re = re.compile(
+            r"^(?!(?:return|if|while|for|switch|goto|case|default|continue|break)\b)"
+            r"(?P<type>(?:[A-Za-z_][\w\[\]]*\s+)+(?:\*+\s*)*|[A-Za-z_][\w\[\]]*\s*\*+\s*)"
+            r"(?P<name>[A-Za-z_]\w*)(?:\s*\[[^\]]*\]\s*)*;\s*$"
+        )
+        func_ptr_decl_re = re.compile(
+            r"^(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\(\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*\)"
+            r"\s*\([^;{}]*\)\s*;\s*$"
+        )
         generic_use_re = re.compile(
             r"(?<![A-Za-z_])(?P<name>a\d+|v\d+|vvar_\d+|tmp_\d+|ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+|local_[0-9a-fA-F]+)(?![A-Za-z_])"
         )
@@ -778,27 +787,24 @@ def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
                 args.append("".join(current).strip())
             return args
 
-        def _declared_name(line: str) -> str | None:
+        def _declared_generic_name(line: str) -> tuple[bool, str | None]:
+            """Return whether a line is a declaration and its generic name, if any."""
             decl_part = line.split("//", 1)[0].strip()
             if not decl_part or decl_part.startswith(("/*", "*")):
-                return None
+                return False, None
             if "{" in decl_part or "}" in decl_part:
-                return None
+                return False, None
             if "(" in decl_part or ")" in decl_part:
-                funcptr_match = re.search(r"\(\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*\)", decl_part)
-                if funcptr_match is None or not decl_part.endswith(";"):
-                    return None
+                funcptr_match = func_ptr_decl_re.fullmatch(decl_part)
+                if funcptr_match is None:
+                    return False, None
                 name = funcptr_match.group("name")
-                if not generic_name_re.fullmatch(name):
-                    return None
-                return name
-            match = decl_name_re.search(decl_part)
+                return True, name if generic_name_re.fullmatch(name) else None
+            match = plain_decl_re.fullmatch(decl_part)
             if match is None:
-                return None
+                return False, None
             name = match.group("name")
-            if not generic_name_re.fullmatch(name):
-                return None
-            return name
+            return True, name if generic_name_re.fullmatch(name) else None
 
         changed = False
         index = 0
@@ -839,12 +845,13 @@ def _materialize_missing_generic_local_declarations_text(c_text: str) -> str:
             scan_index = body_start
             while scan_index < body_end:
                 line = lines[scan_index]
-                declared_name = _declared_name(line)
-                if declared_name is None:
+                is_declaration, declared_name = _declared_generic_name(line)
+                if not is_declaration:
                     if line.strip() and not line.lstrip().startswith("//"):
                         break
                 else:
-                    declared_names.add(declared_name)
+                    if declared_name is not None:
+                        declared_names.add(declared_name)
                     insertion_index = scan_index + 1
                 scan_index += 1
 
@@ -3083,11 +3090,12 @@ def _align_unknown_call_names_from_cod_evidence_text(c_text: str) -> str:
 
 
 def _prune_trailing_generic_return_text(c_text: str) -> str:
+    """Remove only an adjacent unreachable generic return in legacy text output."""
+
     def _impl() -> str:
         trailing_newline = c_text.endswith("\n")
         lines = c_text.splitlines()
         return_re = re.compile(r"^\s*return\s+(?P<expr>[A-Za-z_]\w*)\s*;\s*$")
-        any_return_re = re.compile(r"^\s*return\s+[^;]+;\s*$")
         generic_return_re = re.compile(r"^(?:ir_\d+(?:_\d+)?|v\d+|vvar_\d+|a\d+)$")
 
         index = len(lines) - 1
@@ -3115,17 +3123,7 @@ def _prune_trailing_generic_return_text(c_text: str) -> str:
                     normalized += "\n"
                 return normalized
             return c_text
-        if match is None or not generic_return_re.fullmatch(match.group("expr")):
-            return c_text
-
-        if not any(any_return_re.match(line) for line in lines[:index]):
-            return c_text
-
-        del lines[index]
-        normalized = "\n".join(lines)
-        if trailing_newline:
-            normalized += "\n"
-        return normalized
+        return c_text
 
     return _impl()
 
@@ -4040,6 +4038,8 @@ def _prune_standalone_memory_helper_reads_text(c_text: str) -> str:
 
 
 def _prune_unused_staging_assignments(c_text: str) -> str:
+    """Prune legacy text-only staging assignments while preserving observed values."""
+
     def _impl() -> str:
         current = c_text
         while True:
@@ -4073,7 +4073,7 @@ def _prune_unused_staging_assignments(c_text: str) -> str:
                     continue
                 stripped = line.strip()
                 decl_match = decl_re.match(stripped)
-                if decl_match is not None:
+                if decl_match is not None and not stripped.startswith("return "):
                     continue
                 assign_match = assign_re.match(stripped)
                 if assign_match is not None:

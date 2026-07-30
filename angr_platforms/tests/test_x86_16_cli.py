@@ -532,14 +532,15 @@ def test_evidence_recovered_c_replaces_split_abi_signature_text():
     assert cli_decompilation._select_evidence_recovered_c_8616(formatted, evidence) == evidence
 
 
-def test_validated_nontrivial_x86_16_refuses_legacy_cli_rewrite():
+def test_nontrivial_x86_16_refuses_legacy_cli_rewrite_after_tail_validation():
     project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
 
     assert (
         cli_decompilation._should_refuse_legacy_cli_rewrite_8616(
             project,
             small_function=False,
-            tail_validation_passed=True,
+            tail_validation_complete=True,
+            sidecar_free=True,
         )
         is True
     )
@@ -547,7 +548,8 @@ def test_validated_nontrivial_x86_16_refuses_legacy_cli_rewrite():
         cli_decompilation._should_refuse_legacy_cli_rewrite_8616(
             project,
             small_function=True,
-            tail_validation_passed=True,
+            tail_validation_complete=True,
+            sidecar_free=True,
         )
         is False
     )
@@ -555,10 +557,59 @@ def test_validated_nontrivial_x86_16_refuses_legacy_cli_rewrite():
         cli_decompilation._should_refuse_legacy_cli_rewrite_8616(
             project,
             small_function=False,
-            tail_validation_passed=False,
+            tail_validation_complete=False,
+            sidecar_free=True,
         )
         is False
     )
+    assert (
+        cli_decompilation._should_refuse_legacy_cli_rewrite_8616(
+            project,
+            small_function=False,
+            tail_validation_complete=True,
+            sidecar_free=False,
+        )
+        is False
+    )
+
+
+def test_cli_rewrite_gate_treats_stable_and_failed_tail_snapshots_as_complete():
+    stable = {
+        "structuring": {"status": "stable", "changed": False},
+        "postprocess": {"status": "stable", "changed": False},
+    }
+    failed = {
+        "structuring": {"status": "changed", "changed": True},
+        "postprocess": {"status": "changed", "changed": True},
+    }
+
+    assert cli_decompilation._tail_validation_snapshot_complete_for_cli_rewrite_8616(stable) is True
+    assert cli_decompilation._tail_validation_snapshot_complete_for_cli_rewrite_8616(failed) is True
+    assert cli_decompilation._tail_validation_snapshot_failed_for_cli_rewrite_8616(stable) is False
+    assert cli_decompilation._tail_validation_snapshot_failed_for_cli_rewrite_8616(failed) is True
+    assert (
+        cli_decompilation._tail_validation_snapshot_complete_for_cli_rewrite_8616(
+            {"structuring": {"status": "stable"}}
+        )
+        is False
+    )
+
+
+def test_partial_result_report_preserves_validation_failure_status():
+    validation_failed = decompile._partial_result_report_8616("validation_failed")
+    timeout = decompile._partial_result_report_8616("timeout")
+
+    assert validation_failed.status is decompile.WorkItemStatus.VALIDATION_FAILED
+    assert validation_failed.heading == "Decompilation validation_failed"
+    assert validation_failed.direct_c_header == "\n/* == c (partial validation failure) == */"
+    assert validation_failed.sweep_c_header == "/* -- c (partial validation failure) -- */"
+    assert validation_failed.fallback_detail == "unavailable after partial validation failure"
+    assert validation_failed.show_timeout_delay is False
+    assert timeout.status is decompile.WorkItemStatus.TIMEOUT
+    assert timeout.heading == "Decompilation timeout"
+    assert timeout.direct_c_header == "\n/* == c (partial timeout) == */"
+    assert timeout.sweep_c_header == "/* -- c (partial timeout) -- */"
+    assert timeout.show_timeout_delay is True
 
 
 def test_validated_rewrite_refusal_forces_render_refresh_when_text_empty():
@@ -7032,6 +7083,41 @@ def test_register_direct_call_target_function_stubs_preserves_duplicate_callee_c
     }
 
 
+def test_direct_callee_prototype_seed_scans_full_project_in_place(monkeypatch):
+    stub = SimpleNamespace()
+    project = SimpleNamespace(
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(
+                min_addr=0x10000,
+                max_addr=0x1FFFF,
+            )
+        )
+    )
+    calls: list[tuple[object, object, object, int]] = []
+
+    def seed(
+        source_project: object,
+        source_function: object,
+        target_function: object,
+        address: int,
+    ) -> bool:
+        calls.append((source_project, source_function, target_function, address))
+        return True
+
+    monkeypatch.setattr(
+        cli_decompilation,
+        "seed_wide_stack_prototype_from_binary_address_8616",
+        seed,
+    )
+
+    assert cli_decompilation._seed_direct_callee_prototype_from_original_project_8616(
+        project,
+        stub,
+        0x10F18,
+    )
+    assert calls == [(project, stub, stub, 0x10F18)]
+
+
 def test_collect_direct_calls_skips_stale_non_call_inventory_and_uses_capstone():
     blocks = {
         0x10010: SimpleNamespace(
@@ -7079,6 +7165,29 @@ def test_collect_direct_calls_merges_capstone_calls_when_inventory_is_partial():
     direct_calls = cli_decompilation._collect_direct_calls_8616(project, function)
 
     assert direct_calls == [(0x10010, 0x140D, 0x10013), (0x10020, 0x151E, 0x10023)]
+
+
+def test_collect_direct_calls_prefers_exact_capstone_target_over_stale_cfg_offset():
+    blocks = {
+        0x10528: SimpleNamespace(
+            capstone=SimpleNamespace(
+                insns=[
+                    SimpleNamespace(address=0x10537, mnemonic="call", op_str="0x10f18", insn=SimpleNamespace(size=3)),
+                ]
+            )
+        )
+    }
+    function = SimpleNamespace(
+        block_addrs_set=set(blocks),
+        get_call_sites=lambda: [0x10537],
+        get_call_target=lambda _site: 0x0F38,
+        get_call_return=lambda _site: 0x1053A,
+    )
+    project = SimpleNamespace(factory=SimpleNamespace(block=lambda block_addr, opt_level=0: blocks[block_addr]))
+
+    direct_calls = cli_decompilation._collect_direct_calls_8616(project, function)
+
+    assert direct_calls == [(0x10537, 0x10F18, 0x1053A)]
 
 
 def test_collect_direct_calls_merges_linear_exact_region_calls(monkeypatch):
@@ -7276,14 +7385,14 @@ def test_function_complexity_uses_bounded_local_blocks_before_raw_decode():
     assert function.info["_inertia_function_complexity"]["source"] == "bounded_local_blocks"
 
 
-def test_original_callee_name_uses_original_project_function_table_for_exact_slices():
+def test_original_callee_name_prefers_proven_label_over_generic_exact_slice_name():
     class OriginalFunctionManager:
         def function(self, *, addr=None, create=False, **_kwargs):
             if addr == 0x1005A and not create:
-                return SimpleNamespace(addr=addr, name="rel_i16")
+                return SimpleNamespace(addr=addr, name="sub_1005a")
             return None
 
-    original_project = SimpleNamespace(kb=SimpleNamespace(functions=OriginalFunctionManager(), labels={}))
+    original_project = SimpleNamespace(kb=SimpleNamespace(functions=OriginalFunctionManager(), labels={0x1005A: "rel_i16"}))
     project = SimpleNamespace(
         _inertia_original_project=original_project,
         _inertia_original_linear_delta=0xF1A7,
@@ -14765,7 +14874,7 @@ def test_recover_blob_entry_function_enables_data_references(monkeypatch):
     assert [entry["data_references"] for entry in captured] == [False, True]
 
 
-def test_decompile_cli_reports_monoprin_partial_timeout_without_source_fallback():
+def test_decompile_cli_reports_monoprin_partial_validation_without_source_fallback():
     result = subprocess.run(
         [sys.executable, str(CLI_PATH), str(MONOPRIN_COD), "--proc", "_mset_pos", "--timeout", "10"],
         cwd=REPO_ROOT,
@@ -14779,7 +14888,7 @@ def test_decompile_cli_reports_monoprin_partial_timeout_without_source_fallback(
     assert "function: 0x1000 _mset_pos" in result.stdout
     assert "/* COD annotations:" not in result.stdout
     if result.returncode == 4:
-        assert "partial timeout" in result.stdout
+        assert "partial validation failure" in result.stdout
         assert "direct validation=failed" in result.stdout
     assert "mono_x =" in result.stdout
     assert "mono_y =" in result.stdout
@@ -15201,7 +15310,7 @@ def test_decompile_cli_recovers_rotate_pt_logic():
         assert "Direct decompilation timeout is terminal for this function" in result.stdout
         return
     if result.returncode == 4:
-        assert "partial timeout" in result.stdout
+        assert "partial validation failure" in result.stdout
         return
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _rotate_pt" in result.stdout
@@ -15218,7 +15327,7 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert "function: 0x1000 _SetHook" in result.stdout
     if result.returncode == 4:
         assert "direct validation=failed" in result.stdout
-        assert "partial timeout" in result.stdout
+        assert "partial validation failure" in result.stdout
         return
     assert "unsigned short _SetHook(unsigned short Hook)" in result.stdout
     assert "/* COD annotations:" not in result.stdout
@@ -15235,7 +15344,7 @@ def test_decompile_cli_recovers_setgear_guard_logic():
     result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "CARR.COD", "_SetGear")
 
     if result.returncode == 4:
-        assert "partial timeout" in result.stdout
+        _assert_explicit_partial_or_fallback_failure(result)
         return
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _SetGear" in result.stdout

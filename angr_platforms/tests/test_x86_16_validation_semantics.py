@@ -44,6 +44,48 @@ def test_final_semantics_gate_rejects_vvar_used_as_unresolved_ss_base():
         assert_known_call_semantics_8616(c_text, function_addr=0x1000)
 
 
+def test_final_semantics_gate_allows_typed_stack_aggregate_name():
+    c_text = """
+    typedef struct inertia_stack_object_22_18w2 {
+        unsigned short field_18;
+    } inertia_stack_object_22_18w2;
+
+    void f(void)
+    {
+        inertia_stack_object_22_18w2 stack_object_70;
+        stack_object_70.field_18 = 1;
+        return;
+    }
+    """
+
+    assert_known_call_semantics_8616(c_text, function_addr=0x1000)
+
+
+def test_final_semantics_gate_allows_lowered_hex_offset_argument_name():
+    c_text = """
+    void f(unsigned short arg_a)
+    {
+        consume(arg_a);
+    }
+    """
+
+    assert_known_call_semantics_8616(c_text, function_addr=0x1000)
+
+
+def test_final_semantics_gate_still_rejects_untyped_stack_prefix():
+    c_text = """
+    void f(void)
+    {
+        unsigned short stack_unknown;
+        stack_unknown = 1;
+        return;
+    }
+    """
+
+    with pytest.raises(PipelineHardError, match="unresolved stack locals"):
+        assert_known_call_semantics_8616(c_text, function_addr=0x1000)
+
+
 def test_final_semantics_gate_ignores_forbidden_tokens_inside_comments():
     c_text = """
     void f(void)

@@ -29,6 +29,7 @@ from angr_platforms.X86_16.lowering.stack_aggregate_objects import (
     decay_stack_aggregate_call_arguments_8616,
     materialize_stack_aggregate_objects_8616,
     prune_nonmemory_stack_aggregate_carriers_8616,
+    reapply_stack_aggregate_object_facts_8616,
     recover_stack_aggregate_object_facts_from_instructions_8616,
 )
 from capstone.x86_const import (
@@ -97,6 +98,29 @@ class _AggregateCodegen:
         """Return a deterministic structured-C node index."""
         self._idx += 1
         return self._idx
+
+
+class _VariableManager:
+    """Minimal variable type store matching angr's refresh contract."""
+
+    def __init__(self) -> None:
+        self.variable_types: dict[object, object] = {}
+
+    def set_variable_type(
+        self,
+        variable: object,
+        variable_type: object,
+        *,
+        override_bot: bool = True,
+        all_unified: bool = False,
+    ) -> None:
+        """Persist one type assignment for a current variable identity."""
+        del override_bot, all_unified
+        self.variable_types[variable] = variable_type
+
+    def get_variable_type(self, variable: object) -> object | None:
+        """Return a previously persisted variable type."""
+        return self.variable_types.get(variable)
 
 
 def _reg(reg_id: int) -> _Operand:
@@ -772,6 +796,64 @@ def test_final_decay_replays_after_call_argument_regeneration_and_is_idempotent(
     assert decay_stack_aggregate_call_arguments_8616(codegen) is False
     assert call.args == [base_cvar]
     assert codegen._inertia_stack_aggregate_call_decay_8616.failure_count == 0
+
+
+def test_frame_object_type_replays_after_cfunction_regeneration() -> None:
+    codegen = _AggregateCodegen()
+    current_var, current_cvar = _stack_cvar(
+        codegen,
+        -44,
+        2,
+        "local_2c",
+        SimTypeShort(False),
+    )
+    variable_manager = _VariableManager()
+    variable_manager.set_variable_type(current_var, SimTypeShort(False))
+    codegen.cfunc.variable_manager = variable_manager
+    stale_codegen = _AggregateCodegen()
+    _stale_var, stale_cvar = _stack_cvar(
+        stale_codegen,
+        -44,
+        44,
+        "local_2c",
+        SimTypeFixedSizeArray(SimTypeChar(False), 44),
+    )
+    fact = StackAggregateObjectFact8616(
+        -44,
+        44,
+        1,
+        46,
+        2,
+        1,
+        (-44,),
+        -46,
+        2,
+        StackAggregateEvidenceKind8616.ADDRESSED_PARTITION,
+    )
+    codegen._inertia_stack_aggregate_object_facts_8616 = (fact,)
+    codegen._inertia_stack_aggregate_cvars_8616 = {-44: stale_cvar}
+    codegen.cfunc.unified_local_vars = {
+        current_var: {(current_cvar, SimTypeShort(False))}
+    }
+
+    changed = reapply_stack_aggregate_object_facts_8616(codegen)
+
+    assert changed is True
+    assert isinstance(current_cvar.variable_type, SimTypeFixedSizeArray)
+    assert current_cvar.variable_type.length == 44
+    persisted_type = variable_manager.get_variable_type(current_var)
+    assert isinstance(persisted_type, SimTypeFixedSizeArray)
+    assert persisted_type.length == 44
+    refreshed_type = next(iter(codegen.cfunc.unified_local_vars[current_var]))[1]
+    assert isinstance(refreshed_type, SimTypeFixedSizeArray)
+    assert refreshed_type.length == 44
+    stats = codegen._inertia_stack_aggregate_object_replay_8616
+    assert stats.raw_fact_count == 1
+    assert stats.normalized_fact_count == 1
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 0
+    assert reapply_stack_aggregate_object_facts_8616(codegen) is False
 
 
 def test_indexed_destination_consumes_exact_aggregate_displacement_evidence() -> None:

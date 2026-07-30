@@ -109,8 +109,14 @@ def can_join_alias_storage(lhs: object, rhs: object) -> bool:
     return describe_alias_storage(lhs).can_join(describe_alias_storage(rhs))
 
 
+def contains_alias_storage(container: object, subview: object) -> bool:
+    """Return whether one expression's proven storage contains another view."""
+    return describe_alias_storage(container).contains(describe_alias_storage(subview))
+
+
 __all__ = [
     "_storage_domain_for_expr",
+    "contains_alias_storage",
     "describe_alias_storage",
     "same_alias_storage_domain",
     "compatible_alias_storage_views",

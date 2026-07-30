@@ -22,7 +22,7 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from inertia_decompiler import cli_core  # noqa: E402
+from inertia_decompiler import cli as decompiler_cli  # noqa: E402
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +93,7 @@ def _build_proc_argv(args: argparse.Namespace, proc_name: str) -> list[str]:
 
 
 def _run_one_job(args: argparse.Namespace, job: BatchDecompileJob) -> BatchProcResult:
-    """Run one focused decompile job through ``cli_core.main`` and persist captured output."""
+    """Run one focused decompile job through the public CLI and persist captured output."""
 
     stdout_path = args.out_dir / f"{job.name}.stdout.c"
     stderr_path = args.out_dir / f"{job.name}.stderr.txt"
@@ -108,7 +108,7 @@ def _run_one_job(args: argparse.Namespace, job: BatchDecompileJob) -> BatchProcR
             contextlib.redirect_stdout(stdout_buffer),
             contextlib.redirect_stderr(stderr_buffer),
         ):
-            returncode = int(cli_core.main(job.argv))
+            returncode = int(decompiler_cli.main(job.argv))
     except SystemExit as ex:
         code = ex.code
         returncode = int(code) if isinstance(code, int) else 1

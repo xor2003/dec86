@@ -15,6 +15,7 @@ from typing import TypeAlias
 
 __all__ = [
     "AddressStatus",
+    "SEGMENTED_LOAD_ADDRESS_TAG_8616",
     "SegmentOrigin",
     "IRAddress",
     "IRBinaryValue",
@@ -28,6 +29,8 @@ __all__ = [
     "IRValue",
     "MemSpace",
 ]
+
+SEGMENTED_LOAD_ADDRESS_TAG_8616: str = "inertia_x86_16_segmented_load_address"
 
 
 class MemSpace(Enum):
@@ -89,8 +92,8 @@ class IRBinaryValue:
     """Typed binary value expression whose operands retain storage identity."""
 
     op: str
-    lhs: IRValue
-    rhs: IRValue
+    lhs: IRValue | IRBinaryValue
+    rhs: IRValue | IRBinaryValue
     size: int = 0
 
     def to_dict(self) -> dict[str, object]:

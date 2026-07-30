@@ -257,6 +257,15 @@ def prune_adjacent_temporary_copy_assignments_8616(codegen: object) -> bool:
         while idx < len(statements):
             stmt = statements[idx]
             if isinstance(stmt, CAssignment) and _dead_temp_to_local_assignment(stmt, idx, suffix_keys):
+                if debug:
+                    log.warning(
+                        "[trivial-copy] dead-temp-to-local candidate lhs=%r rhs=%r "
+                        "lhs_expr=%r rhs_expr=%r",
+                        _variable_name(stmt.lhs),
+                        _variable_name(stmt.rhs),
+                        _debug_expr(stmt.lhs),
+                        _debug_expr(stmt.rhs),
+                    )
                 typed_codegen.trivial_copy_dead_temp_to_local_pruned_8616 += 1
                 changed = True
                 idx += 1

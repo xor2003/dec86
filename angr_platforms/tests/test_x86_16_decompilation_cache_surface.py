@@ -1,6 +1,7 @@
+import os
 from pathlib import Path
 
-from inertia_decompiler.cache import DECOMPILATION_CACHE_SOURCE_FILES
+from inertia_decompiler.cache import DECOMPILATION_CACHE_SOURCE_FILES, _cache_file_fingerprint
 
 
 def test_decompilation_cache_surface_includes_tail_validation_layers():
@@ -36,3 +37,20 @@ def test_decompilation_cache_surface_includes_postprocess_optimization_layers():
     assert "decompiler_postprocess_typed_conditions.py" in names
     assert "decompiler_postprocess_utils.py" in names
     assert "segmented_memory_reasoning.py" in names
+
+
+def test_binary_cache_fingerprint_changes_for_same_size_and_mtime_content(tmp_path: Path):
+    binary = tmp_path / "ARGS.EXE"
+    binary.write_bytes(b"first-content")
+    original_stat = binary.stat()
+    first = _cache_file_fingerprint(binary)
+
+    binary.write_bytes(b"other-content")
+    os.utime(binary, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+    second = _cache_file_fingerprint(binary)
+
+    assert first is not None
+    assert second is not None
+    assert first["size"] == second["size"]
+    assert first["mtime_ns"] == second["mtime_ns"]
+    assert first["sha256"] != second["sha256"]

@@ -9,8 +9,9 @@ Consumes alias, widening, and typed facts.
 Do not recover semantics from COD, source, assembly, or rendered C text.
 Forbidden: source/COD type recovery, rendered-C matching, or name-based object
 joins.
-Postprocess may replay the exported bounded consumer after call-AST rebuilding,
-but it must not infer aggregate facts, boundaries, or array types.
+Postprocess may replay the exported bounded consumer after CFunction or AST
+rebuilding. Orchestration must replay it immediately before declaration
+rendering, but it must not infer aggregate facts, boundaries, or array types.
 Dynamic boundary: reads Capstone instructions and angr codegen/type objects whose
 plugin-defined compatibility fields are not available through owned protocols.
 """
@@ -34,7 +35,7 @@ from angr.sim_type import (
     SimTypeLong,
     SimTypeShort,
 )
-from angr.sim_variable import SimStackVariable
+from angr.sim_variable import SimStackVariable, SimVariable
 from capstone.x86_const import (
     X86_INS_CALL,
     X86_INS_LCALL,
@@ -62,10 +63,12 @@ __all__ = [
     "StackAggregateEvidenceKind8616",
     "StackAggregateRecovery8616",
     "StackAggregateRecoveryStatus8616",
+    "StackAggregateObjectReplay8616",
     "collect_stack_aggregate_object_facts_8616",
     "decay_stack_aggregate_call_arguments_8616",
     "materialize_stack_aggregate_objects_8616",
     "prune_nonmemory_stack_aggregate_carriers_8616",
+    "reapply_stack_aggregate_object_facts_8616",
     "recover_stack_aggregate_object_facts_from_instructions_8616",
     "stack_aggregate_object_facts_8616",
 ]
@@ -111,6 +114,27 @@ class _StackAggregateFactCarrier8616(Protocol):
     _inertia_stack_aggregate_object_facts_8616: tuple[
         StackAggregateObjectFact8616, ...
     ]
+
+
+class _VariableManagerTypeBoundary8616(Protocol):
+    """Type-assignment surface exposed by angr's function variable manager."""
+
+    def set_variable_type(
+        self,
+        variable: SimVariable,
+        type_: SimType,
+        *,
+        override_bot: bool = True,
+        all_unified: bool = False,
+    ) -> None:
+        """Assign a recovered type to one variable storage identity."""
+        ...
+
+
+class _AggregateCFunctionBoundary8616(Protocol):
+    """CFunction fields needed to persist a proven aggregate declaration."""
+
+    variable_manager: _VariableManagerTypeBoundary8616
 
 
 def stack_aggregate_object_facts_8616(
@@ -160,6 +184,17 @@ class StackAggregateCarrierPrune8616:
 @dataclass(frozen=True, slots=True)
 class StackAggregateCallDecay8616:
     """Closed evidence loop for typed stack-array call-argument decay."""
+
+    raw_fact_count: int
+    normalized_fact_count: int
+    classified_fact_count: int
+    materialized_count: int
+    failure_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class StackAggregateObjectReplay8616:
+    """Closed evidence loop for replaying proven aggregate frame objects."""
 
     raw_fact_count: int
     normalized_fact_count: int
@@ -906,6 +941,23 @@ def _materialize_fact(codegen: object, fact: StackAggregateObjectFact8616) -> tu
     array_type = SimTypeFixedSizeArray(element_type, fact.byte_size // fact.element_width).with_arch(
         arch
     )
+    typed_cfunc = typing.cast(_AggregateCFunctionBoundary8616, cfunc)
+    try:
+        variable_manager = typed_cfunc.variable_manager
+    except AttributeError:
+        variable_manager = None
+
+    def persist_type(variable: object, variable_type: SimType) -> None:
+        """Persist one exact frame-partition type across CFunction.refresh()."""
+        if variable_manager is None or not isinstance(variable, SimVariable):
+            return
+        variable_manager.set_variable_type(
+            variable,
+            variable_type,
+            override_bot=True,
+            all_unified=True,
+        )
+
     changed = False
     if not aggregate_candidates:
         aggregate_variable = SimStackVariable(
@@ -925,7 +977,15 @@ def _materialize_fact(codegen: object, fact: StackAggregateObjectFact8616) -> tu
         seen_candidates.add(id(aggregate_cvar))
         if isinstance(unified_local_vars, dict):
             unified_local_vars[aggregate_variable] = {(aggregate_cvar, array_type)}
+        persist_type(aggregate_variable, array_type)
         changed = True
+    for candidate_variable, candidate_cvar in variables_in_use.items():
+        if (
+            isinstance(candidate_variable, SimStackVariable)
+            and candidate_variable.base == "bp"
+            and candidate_variable.offset == fact.base_offset
+        ):
+            persist_type(candidate_variable, array_type)
     for candidate_cvar in aggregate_candidates:
         if candidate_cvar.variable_type != array_type:
             candidate_cvar.variable_type = array_type
@@ -944,6 +1004,7 @@ def _materialize_fact(codegen: object, fact: StackAggregateObjectFact8616) -> tu
             )
             if boundary_type is None:
                 continue
+            persist_type(candidate_cvar.variable, boundary_type)
             boundary_types[id(candidate_cvar)] = boundary_type
             if candidate_cvar.variable_type != boundary_type:
                 candidate_cvar.variable_type = boundary_type
@@ -1094,6 +1155,38 @@ def decay_stack_aggregate_call_arguments_8616(codegen: object) -> bool:
     )
     typing.cast(Any, codegen)._inertia_stack_aggregate_call_decay_8616 = result
     return result.materialized_count > 0
+
+
+def reapply_stack_aggregate_object_facts_8616(codegen: object) -> bool:
+    """Replay proven frame-object types after a CFunction lifecycle rebuild.
+
+    This bounded consumer performs no recovery. It applies only facts already
+    classified from binary frame allocation, address-taking, indexed access,
+    and scalar-boundary evidence.
+    """
+    facts = stack_aggregate_object_facts_8616(codegen)
+    materialized = 0
+    changed = False
+    for fact in facts:
+        fact_materialized, fact_changed = _materialize_fact(codegen, fact)
+        materialized += int(fact_materialized)
+        changed = fact_changed or changed
+    stats = StackAggregateObjectReplay8616(
+        raw_fact_count=len(facts),
+        normalized_fact_count=len(facts),
+        classified_fact_count=len(facts),
+        materialized_count=materialized,
+        failure_count=max(len(facts) - materialized, 0),
+    )
+    typing.cast(Any, codegen)._inertia_stack_aggregate_object_replay_8616 = stats
+    if stats.classified_fact_count > 0 and stats.materialized_count == 0:
+        from ..pipeline.errors import PipelineHardError
+
+        raise PipelineHardError(
+            "classified stack aggregate object facts were not replayed",
+            layer="types_lowering:stack_aggregate_objects",
+        )
+    return changed
 
 
 def _integer_type_for_width(

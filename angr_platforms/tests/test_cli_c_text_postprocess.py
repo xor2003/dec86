@@ -155,6 +155,37 @@ short InitMenu(void)
     assert rewritten.count("return ax;") == 1
 
 
+def test_prune_trailing_generic_return_keeps_distinct_fallthrough_return() -> None:
+    c_text = """\
+unsigned short choose_value(void)
+{
+    unsigned short v5;
+    unsigned short v10;
+    if (condition)
+        return v10;
+    return v5;
+}
+"""
+
+    assert _prune_trailing_generic_return_text(c_text) == c_text
+
+
+def test_prune_unused_staging_assignments_keeps_value_used_by_return() -> None:
+    c_text = """\
+unsigned short preserve_low_byte(void)
+{
+    unsigned short v10;
+    v10 = source & 0xff00;
+    return v10;
+}
+"""
+
+    rewritten = _prune_unused_staging_assignments(c_text)
+
+    assert "v10 = source & 0xff00;" in rewritten
+    assert "return v10;" in rewritten
+
+
 def test_cod_annotation_keeps_stack_alias_source_rewrites_inert():
     c_text = """\
 void *memset(void *dst, int ch, unsigned long count);
@@ -266,6 +297,40 @@ int select_and_apply(int value)
 
     assert "unsigned short local_2;\n" not in rewritten
     assert "unsigned short (*local_2)(unsigned short);  // [bp-0x2] fn" in rewritten
+
+
+def test_missing_generic_local_declarations_recognizes_array_decl():
+    c_text = """\
+void DrawBar(void)
+{
+    char local_2c[44];  // [bp-0x2c]
+
+    local_2c[0] = 0;
+}
+"""
+
+    rewritten = _materialize_missing_generic_local_declarations_text(c_text)
+
+    assert rewritten == c_text
+    assert "unsigned short local_2c;" not in rewritten
+
+
+def test_missing_generic_local_declarations_scans_past_owned_struct_decl():
+    c_text = """\
+void sub_10554(void)
+{
+    inertia_stack_object stack_object_70;  // [bp-0x70]
+    unsigned short local_5a[43];  // [bp-0x5a]
+    unsigned short local_4;  // [bp-0x4]
+
+    local_5a[local_4] = 1;
+}
+"""
+
+    rewritten = _materialize_missing_generic_local_declarations_text(c_text)
+
+    assert rewritten == c_text
+    assert "unsigned short local_5a;\n" not in rewritten
 
 
 def test_dedupe_duplicate_local_declarations_parses_function_pointer_parameter():

@@ -81,6 +81,180 @@ def _callbacks(jcc: _Insn, *, evidence: list[tuple[object | None, object]]) -> U
     )
 
 
+def _collapsed_loop_header_fixture(
+    codegen: _DummyCodegen,
+    *,
+    include_suffix_guard: bool = True,
+    include_body_effect: bool = True,
+) -> tuple[CWhileLoop, CIfBreak, CAssignment, list[tuple[object | None, object]]]:
+    """Build a loop whose header duplicates two body JCCs and one body effect."""
+
+    first_condition = CBinaryOp(
+        "CmpGT",
+        _reg("ax", codegen),
+        _reg("bx", codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4005, "vex_block_addr": 0x4000},
+    )
+    collapsed_effect = CBinaryOp(
+        "Add",
+        _reg("ax", codegen),
+        _const(1, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4012, "vex_block_addr": 0x4010},
+    )
+    suffix_condition = CBinaryOp(
+        "CmpGT",
+        _reg("ax", codegen),
+        _reg("bx", codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4015, "vex_block_addr": 0x4010},
+    )
+    loop_condition = CBinaryOp(
+        "LogicalAnd",
+        first_condition,
+        CBinaryOp(
+            "LogicalAnd",
+            collapsed_effect,
+            suffix_condition,
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    first_break = CIfBreak(
+        CBinaryOp(
+            "CmpLE",
+            _reg("ax", codegen),
+            _reg("bx", codegen),
+            codegen=codegen,
+            tags={"ins_addr": 0x4005, "vex_block_addr": 0x4000},
+        ),
+        codegen=codegen,
+        cstyle_ifs=True,
+    )
+    body_target = CAssignment(
+        _reg("ax", codegen),
+        _const(2, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    body_effect = CAssignment(
+        _reg("ax", codegen),
+        _const(3, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4012},
+    )
+    suffix_break = CIfBreak(
+        CBinaryOp(
+            "CmpLE",
+            _reg("ax", codegen),
+            _reg("bx", codegen),
+            codegen=codegen,
+            tags={"ins_addr": 0x4015, "vex_block_addr": 0x4010},
+        ),
+        codegen=codegen,
+        cstyle_ifs=True,
+    )
+    statements: list[object] = [first_break, body_target]
+    if include_body_effect:
+        statements.append(body_effect)
+    if include_suffix_guard:
+        statements.append(suffix_break)
+    loop = CWhileLoop(
+        loop_condition,
+        CStatements(statements, codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([loop], codegen=codegen)
+    codegen.cfunc.statements = root
+    codegen.cfunc.body = root
+    codegen._inertia_loop_branch_guard_facts_8616 = (
+        LoopBranchGuardFact8616(
+            jcc_addr=0x4015,
+            block_addr=0x4010,
+            body_target=0x4018,
+            fallthrough_target=0x4017,
+            false_target=0x4020,
+            decoded_condition_fingerprint="CmpGT",
+            guard_condition_fingerprint="CmpLE",
+        ),
+    )
+    evidence: list[tuple[object | None, object]] = []
+    return loop, first_break, body_effect, evidence
+
+
+def test_structuring_splits_fully_materialized_collapsed_loop_header() -> None:
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    loop, first_break, body_effect, evidence = _collapsed_loop_header_fixture(
+        codegen
+    )
+
+    changed = materialize_unconsumed_loop_break_jcc_8616(
+        project,
+        codegen,
+        _callbacks(_Insn(0x4005, "jg", 0x4010), evidence=evidence),
+    )
+
+    assert changed is True
+    assert isinstance(loop.condition, CBinaryOp)
+    assert loop.condition.op == "CmpGT"
+    assert first_break not in loop.body.statements
+    assert body_effect in loop.body.statements
+    assert any(
+        isinstance(statement, CIfBreak)
+        and statement.condition.tags["ins_addr"] == 0x4015
+        for statement in loop.body.statements
+    )
+    stats = codegen._inertia_unconsumed_loop_break_jcc_stats_8616
+    assert stats.split_loop_header_condition_chain == 1
+    assert stats.removed_loop_header_duplicate_guard == 1
+    assert loop_header_duplicate_guard_removal_facts_8616(codegen) == (
+        LoopHeaderDuplicateGuardRemovalFact8616(
+            jcc_addr=0x4005,
+            block_addr=0x4000,
+            removed_guard_fingerprint="CmpLE",
+            retained_loop_fingerprint="CmpGT",
+        ),
+    )
+    assert evidence[-1][0] is first_break.condition
+    assert evidence[-1][1] is loop.condition
+
+
+@pytest.mark.parametrize(
+    ("include_suffix_guard", "include_body_effect"),
+    ((False, True), (True, False)),
+)
+def test_structuring_refuses_partial_collapsed_loop_header_materialization(
+    include_suffix_guard: bool,
+    include_body_effect: bool,
+) -> None:
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    loop, first_break, _body_effect, evidence = _collapsed_loop_header_fixture(
+        codegen,
+        include_suffix_guard=include_suffix_guard,
+        include_body_effect=include_body_effect,
+    )
+    original_condition = loop.condition
+
+    changed = materialize_unconsumed_loop_break_jcc_8616(
+        project,
+        codegen,
+        _callbacks(_Insn(0x4005, "jg", 0x4010), evidence=evidence),
+    )
+
+    assert changed is False
+    assert loop.condition is original_condition
+    assert first_break in loop.body.statements
+    assert (
+        codegen._inertia_unconsumed_loop_break_jcc_stats_8616.split_loop_header_condition_chain
+        == 0
+    )
+    assert loop_header_duplicate_guard_removal_facts_8616(codegen) == ()
+    assert evidence == []
+
+
 def test_structuring_unconsumed_loop_break_jcc_inserts_guard_before_taken_body():
     project = SimpleNamespace(arch=Arch86_16())
     codegen = _DummyCodegen()

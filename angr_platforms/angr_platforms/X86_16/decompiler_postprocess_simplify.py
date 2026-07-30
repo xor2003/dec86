@@ -705,29 +705,6 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
             return _fold_pure_constant_binary_8616(str(expr.op), lhs, rhs)
         return None
 
-    def _runtime_segment_helper_name_8616(node: object) -> str | None:
-        node = _unwrap_c_casts_8616(node)
-        if not isinstance(node, CFunctionCall):
-            return None
-        for raw in (
-            node.callee_target,
-            getattr(node.callee_func, "name", None),
-        ):
-            if isinstance(raw, str) and raw:
-                normalized = raw.strip().upper()
-                if normalized in {"SEG_U8", "SEG_U16", "SEG_U32"}:
-                    return normalized
-        return None
-
-    def _runtime_segment_helper_args_8616(node: object) -> tuple[object, object] | None:
-        node = _unwrap_c_casts_8616(node)
-        if not isinstance(node, CFunctionCall):
-            return None
-        args = node.args
-        if not isinstance(args, (list, tuple)) or len(args) != 2:
-            return None
-        return args[0], args[1]
-
     def _flatten_offset_terms_8616(expr: object, sign: int = 1) -> tuple[int, tuple[tuple[int, object], ...]]:
         expr = _unwrap_c_casts_8616(expr)
         const_value = _pure_constant_expr_value_8616(expr)
@@ -758,53 +735,6 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                 return False
             del unmatched[found_index]
         return not unmatched
-
-    def _offset_exprs_are_adjacent_8616(low_offset: object, high_offset: object) -> bool:
-        low_const, low_terms = _flatten_offset_terms_8616(low_offset)
-        high_const, high_terms = _flatten_offset_terms_8616(high_offset)
-        return high_const == low_const + 1 and _same_signed_term_multiset_8616(low_terms, high_terms)
-
-    def _seg_u8_call_info_8616(expr: object) -> tuple[object, object] | None:
-        if _runtime_segment_helper_name_8616(expr) != "SEG_U8":
-            return None
-        return _runtime_segment_helper_args_8616(expr)
-
-    def _shifted_seg_u8_high_byte_8616(expr: object) -> tuple[object, object] | None:
-        expr = _unwrap_c_casts_8616(expr)
-        if not isinstance(expr, CBinaryOp):
-            return None
-        if expr.op == "Shl":
-            for maybe_call, maybe_shift in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
-                if _pure_constant_expr_value_8616(maybe_shift) == 8:
-                    return _seg_u8_call_info_8616(maybe_call)
-        if expr.op == "Mul":
-            for maybe_call, maybe_scale in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
-                if _pure_constant_expr_value_8616(maybe_scale) == 0x100:
-                    return _seg_u8_call_info_8616(maybe_call)
-        return None
-
-    def _fold_runtime_seg_u8_pair_8616(expr: object) -> object | None:
-        if not isinstance(expr, CBinaryOp) or expr.op not in {"Or", "Add"}:
-            return None
-        for maybe_low, maybe_high in ((expr.lhs, expr.rhs), (expr.rhs, expr.lhs)):
-            low_info = _seg_u8_call_info_8616(maybe_low)
-            high_info = _shifted_seg_u8_high_byte_8616(maybe_high)
-            if low_info is None or high_info is None:
-                continue
-            low_seg, low_offset = low_info
-            high_seg, high_offset = high_info
-            if not _same_c_expression_8616(low_seg, high_seg):
-                continue
-            if not _offset_exprs_are_adjacent_8616(low_offset, high_offset):
-                continue
-            return CFunctionCall(
-                "SEG_U16",
-                None,
-                [low_seg, low_offset],
-                codegen=codegen,
-                tags={"inertia_x86_16_runtime_segment_helper": "SEG_U16"},
-            )
-        return None
 
     def _global_byte_reference_addr_8616(expr: object) -> int | None:
         expr = _unwrap_c_casts_8616(expr)
@@ -1286,12 +1216,6 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
 
     def transform(node: object) -> object:
         if isinstance(node, CBinaryOp) and node.op in {"Or", "Add"}:
-            folded_seg_word = _fold_runtime_seg_u8_pair_8616(node)
-            if folded_seg_word is not None:
-                cast(Any, codegen)._inertia_runtime_seg_u8_pair_folded_count_8616 = (
-                    int(getattr(codegen, "_inertia_runtime_seg_u8_pair_folded_count_8616", 0) or 0) + 1
-                )
-                return folded_seg_word
             folded_global_word = _fold_global_byte_deref_pair_8616(node)
             if folded_global_word is not None:
                 cast(Any, codegen)._inertia_global_byte_pair_folded_count_8616 = (

@@ -18,6 +18,7 @@ from angr_platforms.X86_16.alias_model import (
     _stack_slot_identity_can_join,
     _StackPointerAliasState,
     _StackSlotIdentity,
+    _storage_domain_for_variable,
     _StorageDomainSignature,
     _StorageView,
 )
@@ -32,11 +33,11 @@ def _make_codegen():
 
 
 def test_storage_domain_classifier_distinguishes_variable_domains():
-    stack = _decompile._storage_domain_for_variable(
+    stack = _storage_domain_for_variable(
         _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)
     )
-    reg = _decompile._storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="v14"))
-    mem = _decompile._storage_domain_for_variable(_decompile.SimMemoryVariable(0x2000, 2, name="v15"))
+    reg = _storage_domain_for_variable(_decompile.SimRegisterVariable(30, 2, name="v14"))
+    mem = _storage_domain_for_variable(_decompile.SimMemoryVariable(0x2000, 2, name="v15"))
 
     assert stack == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
     assert stack.stack_slot == _StackSlotIdentity("bp", -4, 2, region=0x1000)
@@ -63,13 +64,13 @@ def test_storage_domain_classifier_preserves_far_pointer_segment_and_offset_iden
 
 
 def test_storage_domain_classifier_distinguishes_subregister_widths():
-    assert _decompile._storage_domain_for_variable(
+    assert _storage_domain_for_variable(
         _decompile.SimRegisterVariable(30, 1, name="al")
     ).view == _StorageView(0, 8)
-    assert _decompile._storage_domain_for_variable(
+    assert _storage_domain_for_variable(
         _decompile.SimRegisterVariable(30, 1, name="ah")
     ).view == _StorageView(8, 8)
-    assert _decompile._storage_domain_for_variable(
+    assert _storage_domain_for_variable(
         _decompile.SimRegisterVariable(30, 2, name="ax")
     ).view == _StorageView(0, 16)
 
@@ -82,6 +83,34 @@ def test_storage_domain_classifier_joins_adjacent_views():
 
     assert joined == _StorageDomainSignature("register", 2, _StorageView(0, 16))
     assert _StorageView(0, 8).can_join(_StorageView(8, 8))
+
+
+def test_storage_domain_classifier_proves_contained_stack_views():
+    word = _StorageDomainSignature(
+        "stack",
+        2,
+        _StorageView(-32, 16),
+        stack_slot=_StackSlotIdentity("bp", -4, 2, region=0x1000),
+    )
+    high_byte = _StorageDomainSignature(
+        "stack",
+        1,
+        _StorageView(-24, 8),
+        stack_slot=_StackSlotIdentity("bp", -3, 1, region=0x1000),
+    )
+    other_region = _StorageDomainSignature(
+        "stack",
+        1,
+        _StorageView(-24, 8),
+        stack_slot=_StackSlotIdentity("bp", -3, 1, region=0x2000),
+    )
+
+    assert word.view is not None and word.view.contains(high_byte.view)
+    assert word.stack_slot is not None and high_byte.stack_slot is not None
+    assert word.stack_slot.contains(high_byte.stack_slot)
+    assert word.contains(high_byte)
+    assert not high_byte.contains(word)
+    assert not word.contains(other_region)
 
 
 def test_storage_domain_classifier_joins_adjacent_stack_views():
@@ -113,13 +142,13 @@ def test_storage_domain_classifier_tracks_bp_stack_slot_identity():
     assert joined == _StorageDomainSignature("stack", 2, _StorageView(-32, 16))
 
 
-def test_storage_domain_classifier_canonicalizes_ss_stack_slot_identity():
-    stack = _decompile._storage_domain_for_variable(
+def test_storage_domain_classifier_preserves_ss_stack_base_without_inventing_bp_frame():
+    stack = _storage_domain_for_variable(
         _decompile.SimStackVariable(-4, 2, base="ss", name="v1", region=0x1000)
     )
 
-    assert stack.stack_slot == _StackSlotIdentity("bp", -4, 2, region=0x1000)
-    assert stack.stack_slot.base == "bp"
+    assert stack.stack_slot == _StackSlotIdentity("ss", -4, 2, region=0x1000)
+    assert stack.stack_slot.base == "ss"
 
 
 def test_storage_domain_classifier_rejects_mismatched_bp_stack_regions():
@@ -159,7 +188,7 @@ def test_same_stack_slot_identity_requires_exact_bp_slot():
     assert not _decompile._same_stack_slot_identity(low, other_region)
 
 
-def test_same_stack_slot_identity_normalizes_ss_backed_slices():
+def test_same_stack_slot_identity_refuses_ss_as_a_bp_frame_base():
     codegen = _make_codegen()
     low = _decompile.structured_c.CVariable(
         _decompile.SimStackVariable(-4, 1, base="bp", name="v1", region=0x1000),
@@ -170,7 +199,7 @@ def test_same_stack_slot_identity_normalizes_ss_backed_slices():
         codegen=codegen,
     )
 
-    assert _decompile._same_stack_slot_identity(low, high)
+    assert not _decompile._same_stack_slot_identity(low, high)
 
 
 def test_stack_offset_classifier_normalizes_wrapped_16bit_offsets():
@@ -220,7 +249,7 @@ def test_stack_slot_identity_can_join_adjacent_bp_slices():
     assert not _stack_slot_identity_can_join(low.variable, other_region.variable)
 
 
-def test_stack_slot_identity_can_join_adjacent_bp_and_ss_slices():
+def test_stack_slot_identity_refuses_adjacent_bp_and_ss_slices():
     codegen = _make_codegen()
     low = _decompile.structured_c.CVariable(
         _decompile.SimStackVariable(-4, 1, base="bp", name="v1", region=0x1000),
@@ -231,7 +260,7 @@ def test_stack_slot_identity_can_join_adjacent_bp_and_ss_slices():
         codegen=codegen,
     )
 
-    assert _decompile._stack_slot_identity_can_join(low, high)
+    assert not _decompile._stack_slot_identity_can_join(low, high)
 
 
 def test_decompile_stack_slot_identity_can_join_wrapper_accepts_joinable_bp_slices():

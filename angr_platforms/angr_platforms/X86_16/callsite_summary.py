@@ -29,7 +29,9 @@ __all__ = [
     "CallsiteArgumentClass8616",
     "CallsiteArgumentShapeDecision8616",
     "CallsiteArgumentShapeReconciliation8616",
+    "CallsiteStackCleanupEvidence8616",
     "CallsiteSummary8616",
+    "StructuredCallKind8616",
     "bind_structured_callsite_identity_8616",
     "build_callsite_summary_inventory_8616",
     "callsite_summary_inventory_8616",
@@ -38,6 +40,7 @@ __all__ = [
     "logical_argument_widths_from_callsite_8616",
     "record_caller_return_use_evidence_8616",
     "reconcile_materialized_call_argument_shape_8616",
+    "structured_call_kind_8616",
     "structured_callsite_addr_8616",
     "summarize_x86_16_callsite",
 ]
@@ -76,6 +79,13 @@ class _AngrInstructionWrapperSurface8616(Protocol):
     insn: _CapstoneInstructionSurface8616
 
 
+class _AngrFunctionPrototypeSurface8616(Protocol):
+    """Typed angr function fields used to rank recovered ABI prototypes."""
+
+    prototype: object | None
+    is_prototype_guessed: bool
+
+
 class _CapstoneOperandSurface8616(Protocol):
     """Typed fields used from a third-party Capstone operand."""
 
@@ -91,6 +101,24 @@ class CallsiteReturnShape8616(Enum):
 
     AX = "ax"
     DX_AX = "dx_ax"
+
+
+class StructuredCallKind8616(Enum):
+    """Typed classification for machine calls versus codegen intrinsics."""
+
+    MACHINE_CALL = "machine_call"
+    CODEGEN_INSERT_INTRINSIC = "codegen_insert_intrinsic"
+
+
+def structured_call_kind_8616(call: object) -> StructuredCallKind8616:
+    """Classify a structured call without treating codegen intrinsics as calls."""
+    callee_target = _dynamic_callsite_getattr_8616(call, "callee_target", None)
+    callee_func = _dynamic_callsite_getattr_8616(call, "callee_func", None)
+    callee_name = _dynamic_callsite_getattr_8616(callee_func, "name", None)
+    for candidate in (callee_target, callee_name):
+        if isinstance(candidate, str) and candidate.rsplit(".", 1)[-1].lstrip("_") == "INSERT":
+            return StructuredCallKind8616.CODEGEN_INSERT_INTRINSIC
+    return StructuredCallKind8616.MACHINE_CALL
 
 
 class CallsiteReturnUseKind8616(StrEnum):
@@ -202,6 +230,14 @@ class CallsiteArgumentClass8616(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class CallsiteStackCleanupEvidence8616:
+    """Exact caller-side stack cleanup instruction recovered after one call."""
+
+    amount: int
+    instruction_addr: int
+
+
+@dataclass(frozen=True, slots=True)
 class CallsiteSummary8616:
     """Structured 16-bit x86 callsite facts consumed by lowering/postprocess."""
 
@@ -228,6 +264,7 @@ class CallsiteSummary8616:
     return_use_kind: CallsiteReturnUseKind8616 | None = None
     logical_arg_widths: tuple[int, ...] = field(default=(), compare=False)
     logical_arg_classes: tuple[CallsiteArgumentClass8616, ...] = field(default=(), compare=False)
+    stack_cleanup_instruction_addr: int | None = None
 
     def brief(self) -> str:
         """Return a compact diagnostic rendering of the callsite summary."""
@@ -572,12 +609,21 @@ def _logical_arg_interface_for_target_8616(
         original_project = None
     if original_project is not None:
         candidate_projects.append(original_project)
+    candidates: list[tuple[bool, int, tuple[int, ...]]] = []
+    candidate_order = 0
     for candidate_project in candidate_projects:
         for candidate_addr in dict.fromkeys(addr for addr in candidate_addrs if addr >= 0):
+            candidate_order += 1
             try:
                 callee = candidate_project.kb.functions.function(addr=candidate_addr, create=False)
-                prototype = callee.prototype if callee is not None else None
             except (AttributeError, KeyError):
+                continue
+            if callee is None:
+                continue
+            typed_callee = cast(_AngrFunctionPrototypeSurface8616, callee)
+            try:
+                prototype = typed_callee.prototype
+            except AttributeError:
                 continue
             if not isinstance(prototype, SimTypeFunction):
                 continue
@@ -597,7 +643,17 @@ def _logical_arg_interface_for_target_8616(
                 width = max(2, (size_bits + 7) // 8)
                 widths.append(width)
             if widths:
-                return tuple(widths), ()
+                try:
+                    is_guessed = bool(typed_callee.is_prototype_guessed)
+                except AttributeError:
+                    is_guessed = True
+                candidates.append((is_guessed, candidate_order, tuple(widths)))
+    if candidates:
+        _is_guessed, _order, selected_widths = min(
+            candidates,
+            key=lambda candidate: (candidate[0], candidate[1]),
+        )
+        return selected_widths, ()
     return (), ()
 
 
@@ -1220,6 +1276,120 @@ def _linear_window_insns_for_callsite_8616(function: object, callsite_addr: int)
     if call_idx is None:
         return ()
     return insns
+
+
+def _function_cfg_instruction_inventory_8616(function: object) -> tuple[object, ...]:
+    """Return the address-ordered Capstone instructions owned by one function CFG."""
+    blocks: tuple[object, ...] = ()
+    try:
+        blocks = tuple(cast(Iterable[object], _dynamic_callsite_getattr_8616(function, "blocks", ())))
+    except Exception as ex:
+        log.debug("callee-save function block enumeration failed: %s", ex)
+
+    project = _dynamic_callsite_getattr_8616(function, "project", None)
+    if not blocks and project is not None:
+        decoded_blocks: list[object] = []
+        for block_addr in sorted(
+            addr
+            for addr in (_dynamic_callsite_getattr_8616(function, "block_addrs_set", ()) or ())
+            if isinstance(addr, int)
+        ):
+            try:
+                decoded_blocks.append(project.factory.block(block_addr, opt_level=0))
+            except Exception as ex:
+                log.debug("callee-save block decode failed block=%#x: %s", block_addr, ex)
+        blocks = tuple(decoded_blocks)
+
+    by_addr: dict[int, object] = {}
+    for block in blocks:
+        capstone = _dynamic_callsite_getattr_8616(block, "capstone", None)
+        for insn in tuple(_dynamic_callsite_getattr_8616(capstone, "insns", ()) or ()):
+            address = _instruction_address_8616(insn)
+            if isinstance(address, int):
+                by_addr.setdefault(address, insn)
+    return tuple(by_addr[address] for address in sorted(by_addr))
+
+
+def _callee_saved_frame_push_addresses_8616(function: object) -> frozenset[int]:
+    """Return exact prologue PUSH addresses restored by every decoded epilogue."""
+    insns = _function_cfg_instruction_inventory_8616(function)
+    if not insns:
+        return frozenset()
+
+    callee_saved = {"bx", "si", "di"}
+    restored_by_return: list[set[str]] = []
+    for ret_index, insn in enumerate(insns):
+        if not _mnemonic(insn).startswith("ret"):
+            continue
+        restored: set[str] = set()
+        scan = ret_index - 1
+        while scan >= 0:
+            candidate = insns[scan]
+            mnemonic = _mnemonic(candidate)
+            operands = _instruction_operands(candidate)
+            if mnemonic == "pop" and len(operands) == 1:
+                reg_name = _operand_reg_name(candidate, operands[0])
+                if reg_name == "bp":
+                    scan -= 1
+                    continue
+                if reg_name in callee_saved:
+                    restored.add(cast(str, reg_name))
+                    scan -= 1
+                    continue
+            if mnemonic == "leave":
+                scan -= 1
+                continue
+            if mnemonic == "mov" and len(operands) == 2:
+                if (
+                    _operand_reg_name(candidate, operands[0]) == "sp"
+                    and _operand_reg_name(candidate, operands[1]) == "bp"
+                ):
+                    scan -= 1
+                    continue
+            if mnemonic == "nop":
+                scan -= 1
+                continue
+            break
+        restored_by_return.append(restored)
+
+    if not restored_by_return or any(not restored for restored in restored_by_return):
+        return frozenset()
+    restored_on_all_paths = set.intersection(*restored_by_return)
+    if not restored_on_all_paths:
+        return frozenset()
+
+    push_by_register: dict[str, int] = {}
+    for insn in insns:
+        if _mnemonic(insn) != "push":
+            continue
+        operands = _instruction_operands(insn)
+        if len(operands) != 1:
+            continue
+        reg_name = _operand_reg_name(insn, operands[0])
+        address = _instruction_address_8616(insn)
+        if reg_name in restored_on_all_paths and isinstance(address, int):
+            push_by_register.setdefault(cast(str, reg_name), address)
+    return frozenset(push_by_register.values())
+
+
+def _filter_callee_saved_frame_pushes_8616(
+    function: object,
+    widths: tuple[int, ...],
+    sources: tuple[tuple | None, ...],
+    instruction_addrs: tuple[int, ...],
+) -> tuple[tuple[int, ...], tuple[tuple | None, ...], tuple[int, ...]]:
+    """Remove only push/pop-proven frame saves from physical call arguments."""
+    if not widths or len(widths) != len(sources) or len(widths) != len(instruction_addrs):
+        return widths, sources, instruction_addrs
+    frame_push_addrs = _callee_saved_frame_push_addresses_8616(function)
+    if not frame_push_addrs:
+        return widths, sources, instruction_addrs
+    kept = tuple(index for index, address in enumerate(instruction_addrs) if address not in frame_push_addrs)
+    return (
+        tuple(widths[index] for index in kept),
+        tuple(sources[index] for index in kept),
+        tuple(instruction_addrs[index] for index in kept),
+    )
 
 
 def _collect_push_args_before_call(
@@ -2037,7 +2207,13 @@ def _push_arg_sources_have_unknown_8616(arg_sources: tuple[tuple | None, ...]) -
     return any(source is None for source in arg_sources)
 
 
-def _stack_cleanup_after_call(function: object, insns: tuple[object, ...], idx: int, callsite_addr: int) -> int | None:
+def _stack_cleanup_after_call(
+    function: object,
+    insns: tuple[object, ...],
+    idx: int,
+    callsite_addr: int,
+) -> CallsiteStackCleanupEvidence8616 | None:
+    """Recover an exact positive caller-side ``ADD SP, imm`` cleanup."""
     follow_insns = _follow_insns_after_call_8616(function, insns, idx, callsite_addr, limit=1)
     if not follow_insns:
         return None
@@ -2049,7 +2225,16 @@ def _stack_cleanup_after_call(function: object, insns: tuple[object, ...], idx: 
         return None
     if not _operand_is_reg(insn, operands[0], {"sp", "esp"}):
         return None
-    return _operand_imm_value(operands[1])
+    amount = _operand_imm_value(operands[1])
+    instruction_addr = _instruction_address_8616(insn)
+    if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
+        return None
+    if not isinstance(instruction_addr, int) or isinstance(instruction_addr, bool):
+        return None
+    return CallsiteStackCleanupEvidence8616(
+        amount=amount,
+        instruction_addr=instruction_addr,
+    )
 
 
 def _instruction_reads_return_reg(insn: object, reg_names: set[str]) -> bool:
@@ -2067,7 +2252,7 @@ def _instruction_writes_return_reg(insn: object, reg_names: set[str]) -> bool:
     if not operands:
         return False
     mnemonic = _mnemonic(insn)
-    if mnemonic in {"cmp", "test"}:
+    if mnemonic in {"cmp", "test", "push", "pushw", "pushd"}:
         return False
     return _operand_is_reg(insn, operands[0], reg_names)
 
@@ -2622,7 +2807,18 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             if isinstance(insn_addr, int) and isinstance(insn_size, int) and insn_size > 0:
                 return_addr = (insn_addr + insn_size) & 0xFFFF
 
-        cleanup = _stack_cleanup_after_call(function, insns, call_idx, callsite_addr)
+        cleanup_evidence = _stack_cleanup_after_call(
+            function,
+            insns,
+            call_idx,
+            callsite_addr,
+        )
+        cleanup_instruction_addr = (
+            cleanup_evidence.instruction_addr
+            if cleanup_evidence is not None
+            else None
+        )
+        cleanup = cleanup_evidence.amount if cleanup_evidence is not None else None
         if cleanup is None:
             cleanup = _callee_stack_cleanup_bytes_8616(function, insns[call_idx])
         target_source = _call_target_source_8616(insns[call_idx])
@@ -2633,6 +2829,12 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             insns,
             call_idx,
             cleanup,
+        )
+        raw_arg_widths, raw_arg_sources, raw_push_instruction_addrs = _filter_callee_saved_frame_pushes_8616(
+            function,
+            raw_arg_widths,
+            raw_arg_sources,
+            raw_push_instruction_addrs,
         )
         if (
             isinstance(cleanup, int)
@@ -2742,6 +2944,7 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             return_use_kind=return_use_kind,
             logical_arg_widths=logical_arg_widths,
             logical_arg_classes=logical_arg_classes,
+            stack_cleanup_instruction_addr=cleanup_instruction_addr,
         )
 
     return _impl()

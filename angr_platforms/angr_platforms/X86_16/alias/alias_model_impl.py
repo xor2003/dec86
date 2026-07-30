@@ -69,6 +69,14 @@ class _StorageView:
             return False
         return self.end_bit() == other.bit_offset or other.end_bit() == self.bit_offset
 
+    def contains(self, other: "_StorageView") -> bool:
+        """Return whether this bounded bit view fully contains another view."""
+        end_bit = self.end_bit()
+        other_end_bit = other.end_bit()
+        if end_bit is None or other_end_bit is None:
+            return False
+        return self.bit_offset <= other.bit_offset and other_end_bit <= end_bit
+
     def join(self, other: "_StorageView") -> "_StorageView | None":
         """Return a combined bit view when two storage views are adjacent."""
         bit_width = self.bit_width
@@ -113,6 +121,18 @@ class _StackSlotIdentity:
         if self.width is None or other.width is None:
             return False
         return self.end_offset() == other.offset or other.end_offset() == self.offset
+
+    def contains(self, other: "_StackSlotIdentity") -> bool:
+        """Return whether this stack slot fully contains another frame view."""
+        if self.base != other.base:
+            return False
+        if self.region is not None and other.region is not None and self.region != other.region:
+            return False
+        end_offset = self.end_offset()
+        other_end_offset = other.end_offset()
+        if end_offset is None or other_end_offset is None:
+            return False
+        return self.offset <= other.offset and other_end_offset <= end_offset
 
     def join(self, other: "_StackSlotIdentity") -> "_StackSlotIdentity | None":
         """Return a combined stack slot identity when adjacent slots match."""
@@ -207,6 +227,19 @@ class _StorageDomainSignature:
                 return False
         return self.view.can_join(other.view)
 
+    def contains(self, other: "_StorageDomainSignature") -> bool:
+        """Return whether this storage domain fully contains another domain."""
+        if self.space != other.space:
+            return False
+        if self.view is None or other.view is None:
+            return False
+        if self.space == "stack":
+            if self.stack_slot is None or other.stack_slot is None:
+                return False
+            if not self.stack_slot.contains(other.stack_slot):
+                return False
+        return self.view.contains(other.view)
+
     def join(self, other: "_StorageDomainSignature") -> "_StorageDomainSignature | None":
         """Return a joined storage domain when identity and views agree."""
         if not self.can_join(other):
@@ -291,6 +324,25 @@ class AliasStorageFacts:
         if self.domain.view is None or other.domain.view is None:
             return False
         return self.domain.view.can_join(other.domain.view)
+
+    def contains(self, other: "AliasStorageFacts") -> bool:
+        """Return whether this proven storage identity contains another view."""
+        if self.needs_synthesis() or other.needs_synthesis():
+            return False
+        if self.identity is None or other.identity is None:
+            return False
+        kind, value = self.identity
+        other_kind, other_value = other.identity
+        if kind != other_kind:
+            return False
+        if kind == "stack":
+            if not isinstance(value, _StackSlotIdentity) or not isinstance(other_value, _StackSlotIdentity):
+                return False
+            if not value.contains(other_value):
+                return False
+        elif value != other_value:
+            return False
+        return self.domain.contains(other.domain)
 
     def needs_synthesis(self) -> bool:
         """Return whether this storage fact must remain explicitly synthesized."""
@@ -565,6 +617,13 @@ def can_join_alias_storage(lhs: object, rhs: object) -> bool:
     return _impl(lhs, rhs)
 
 
+def contains_alias_storage(container: object, subview: object) -> bool:
+    """Return whether one expression's proven storage contains another view."""
+    from ..semantics.alias_query import contains_alias_storage as _impl
+
+    return _impl(container, subview)
+
+
 ALIAS_RECOVERY_API: tuple[AliasRecoveryAPISpec, ...] = (
     AliasRecoveryAPISpec(
         name="same_domain",
@@ -585,6 +644,11 @@ ALIAS_RECOVERY_API: tuple[AliasRecoveryAPISpec, ...] = (
         name="can_join",
         purpose="Check the downstream-ready join condition used by widening and object recovery.",
         helpers=("can_join_alias_storage",),
+    ),
+    AliasRecoveryAPISpec(
+        name="contains",
+        purpose="Prove that a wider storage identity contains a narrower view before projection folding.",
+        helpers=("contains_alias_storage",),
     ),
 )
 
@@ -634,6 +698,7 @@ __all__ = [
     "alias_facts_for_ir_address_8616",
     "can_join_alias_storage",
     "compatible_alias_storage_views",
+    "contains_alias_storage",
     "describe_alias_storage",
     "describe_x86_16_alias_recovery_api",
     "needs_alias_synthesis",

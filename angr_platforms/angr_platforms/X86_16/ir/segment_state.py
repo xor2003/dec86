@@ -87,6 +87,16 @@ def _unknown_state(register: str) -> SegmentRegisterState:
     return SegmentRegisterState(register=register, value_kind="unknown", source=None, origin=SegmentOrigin.UNKNOWN)
 
 
+def _architectural_live_in_state(register: str) -> SegmentRegisterState:
+    """Return the defined, value-unknown segment state at function entry."""
+    return SegmentRegisterState(
+        register=register,
+        value_kind="architectural_live_in",
+        source=register,
+        origin=SegmentOrigin.PROVEN,
+    )
+
+
 def _join_register_states(states: tuple[SegmentRegisterState, ...], register: str) -> SegmentRegisterState:
     known = [state for state in states if state.origin != SegmentOrigin.UNKNOWN]
     if not known:
@@ -104,13 +114,18 @@ def _join_entry_state(
     predecessor_map: dict[int, tuple[int, ...]],
     exit_states: dict[int, dict[str, SegmentRegisterState]],
     block_addr: int,
+    function_addr: int,
 ) -> dict[str, SegmentRegisterState]:
     preds = predecessor_map.get(block_addr, ())
-    if not preds:
+    if not preds and block_addr != function_addr:
         return {register: _unknown_state(register) for register in _SEGMENT_REGS}
     return {
         register: _join_register_states(
-            tuple(exit_states.get(pred, {}).get(register, _unknown_state(register)) for pred in preds), register
+            (
+                ((_architectural_live_in_state(register),) if block_addr == function_addr else ())
+                + tuple(exit_states.get(pred, {}).get(register, _unknown_state(register)) for pred in preds)
+            ),
+            register,
         )
         for register in _SEGMENT_REGS
     }
@@ -169,7 +184,12 @@ def build_x86_16_segment_state_artifact(
         while changed:
             changed = False
             for block_addr in sorted(blocks_by_addr):
-                new_entry = _join_entry_state(predecessor_map, exit_states, block_addr)
+                new_entry = _join_entry_state(
+                    predecessor_map,
+                    exit_states,
+                    block_addr,
+                    artifact.function_addr,
+                )
                 new_exit = _transfer_block(blocks_by_addr[block_addr], new_entry)
                 if new_entry != entry_states[block_addr]:
                     entry_states[block_addr] = new_entry
@@ -187,6 +207,11 @@ def build_x86_16_segment_state_artifact(
         summary: dict[str, object] = {
             "block_count": len(blocks_by_addr),
             "explicit_write_count": explicit_write_count,
+            "architectural_live_in_count": sum(
+                1
+                for state in entry_states.get(artifact.function_addr, {}).values()
+                if state.value_kind == "architectural_live_in"
+            ),
             "proven_register_count": sum(
                 1
                 for states in exit_states.values()

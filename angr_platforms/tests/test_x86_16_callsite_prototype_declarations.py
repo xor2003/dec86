@@ -5,6 +5,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CConstant,
     CFunctionCall,
     CStatements,
+    CUnaryOp,
     CVariable,
 )
 from angr.sim_type import (
@@ -30,6 +31,7 @@ from angr_platforms.X86_16.callsite_summary import (
 from angr_platforms.X86_16.lowering import callsite_prototype_declarations as declaration_lowering
 from angr_platforms.X86_16.lowering import stack_prototype_materialization as prototype_lowering
 from angr_platforms.X86_16.lowering.callsite_prototype_declarations import (
+    canonicalize_callsite_target_identities_8616,
     materialize_callsite_prototype_declarations_8616,
 )
 
@@ -48,6 +50,29 @@ class _Codegen:
         return index
 
 
+class _BytesMemory:
+    def __init__(self, base: int, data: bytes) -> None:
+        self.base = base
+        self.data = data
+
+    def load(self, addr: int, size: int) -> bytes:
+        start = int(addr) - self.base
+        return self.data[start : start + int(size)]
+
+
+class _Functions:
+    def __init__(self) -> None:
+        self.raw = SimpleNamespace(addr=0x1075B, name="sub_1075b")
+        self.canonical = SimpleNamespace(addr=0x10768, name="sub_10768")
+
+    def function(self, *, addr: int, create: bool) -> object | None:
+        assert create is False
+        return {
+            0x1075B: self.raw,
+            0x10768: self.canonical,
+        }.get(addr)
+
+
 def _summary(callsite_addr: int, *, arg_count: int = 2) -> CallsiteSummary8616:
     return CallsiteSummary8616(
         callsite_addr=callsite_addr,
@@ -60,6 +85,129 @@ def _summary(callsite_addr: int, *, arg_count: int = 2) -> CallsiteSummary8616:
         return_register="ax",
         return_used=True,
     )
+
+
+def test_canonicalizes_padding_alias_call_to_typed_summary_target() -> None:
+    codegen = _Codegen()
+    functions = _Functions()
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(
+            memory=_BytesMemory(
+                0x1075B,
+                b"\x90" * 13 + b"\x55\x8b\xec",
+            ),
+        ),
+        kb=SimpleNamespace(functions=functions),
+    )
+    call = CFunctionCall(
+        "sub_1075b",
+        functions.raw,
+        [],
+        tags={"ins_addr": 0x10C9E},
+        codegen=codegen,
+    )
+    root = CStatements([call], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): replace(
+            _summary(0x10C9E),
+            target_addr=0x10768,
+        ),
+    }
+
+    changed = canonicalize_callsite_target_identities_8616(project, codegen)
+
+    assert changed is True
+    assert call.callee_func is functions.canonical
+    assert call.callee_target == "sub_10768"
+    assert codegen._inertia_call_target_identity_stats_8616.raw_fact_count == 1
+    assert codegen._inertia_call_target_identity_stats_8616.normalized_fact_count == 1
+    assert codegen._inertia_call_target_identity_stats_8616.classified_fact_count == 1
+    assert codegen._inertia_call_target_identity_stats_8616.materialized_count == 1
+    assert codegen._inertia_call_target_identity_stats_8616.failure_count == 0
+
+
+def test_call_target_identity_refuses_nonpadding_target_mismatch() -> None:
+    codegen = _Codegen()
+    functions = _Functions()
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(
+            memory=_BytesMemory(
+                0x1075B,
+                b"\x55\x8b\xec",
+            ),
+        ),
+        kb=SimpleNamespace(functions=functions),
+    )
+    call = CFunctionCall(
+        "sub_1075b",
+        functions.raw,
+        [],
+        tags={"ins_addr": 0x10C9E},
+        codegen=codegen,
+    )
+    root = CStatements([call], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): replace(
+            _summary(0x10C9E),
+            target_addr=0x10768,
+        ),
+    }
+
+    changed = canonicalize_callsite_target_identities_8616(project, codegen)
+
+    assert changed is False
+    assert call.callee_func is functions.raw
+    assert call.callee_target == "sub_1075b"
+    assert codegen._inertia_call_target_identity_stats_8616.failure_count == 1
+
+
+def test_call_target_identity_uses_address_name_without_canonical_kb_function() -> None:
+    codegen = _Codegen()
+    functions = _Functions()
+
+    class _RawOnlyFunctions:
+        @staticmethod
+        def function(*, addr: int, create: bool) -> object | None:
+            assert create is False
+            return functions.raw if addr == 0x1075B else None
+
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(
+            memory=_BytesMemory(
+                0x1075B,
+                b"\x90" * 13 + b"\x55\x8b\xec",
+            ),
+        ),
+        kb=SimpleNamespace(functions=_RawOnlyFunctions()),
+    )
+    call = CFunctionCall(
+        "sub_1075b",
+        functions.raw,
+        [],
+        tags={"ins_addr": 0x10C9E},
+        codegen=codegen,
+    )
+    root = CStatements([call], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): replace(
+            _summary(0x10C9E),
+            target_addr=0x10768,
+        ),
+    }
+
+    changed = canonicalize_callsite_target_identities_8616(project, codegen)
+
+    assert changed is True
+    assert call.callee_func is None
+    assert call.callee_target == "sub_10768"
+    assert codegen._inertia_call_target_identity_stats_8616.materialized_count == 1
+    assert codegen._inertia_call_target_identity_stats_8616.failure_count == 0
 
 
 def test_reconcile_call_shape_preserves_complete_binary_push_widths() -> None:
@@ -308,15 +456,13 @@ def test_incomplete_whole_program_caller_evidence_keeps_conservative_int() -> No
 
 def test_materializes_struct_tag_forward_declaration_before_pointer_prototype() -> None:
     codegen = _Codegen()
-    object_type = SimStruct(
-        {"field_0": SimTypeShort(False)},
-        name="recovered_object",
-    ).with_arch(codegen.project.arch)
-    pointer = CVariable(
+    object_type = SimStruct({"field_0": SimTypeShort(False)}, name="recovered_object").with_arch(codegen.project.arch)
+    object_value = CVariable(
         SimStackVariable(-4, 2, base="bp", name="object_pointer"),
-        variable_type=SimTypePointer(object_type).with_arch(codegen.project.arch),
+        variable_type=object_type,
         codegen=codegen,
     )
+    pointer = CUnaryOp("Reference", object_value, codegen=codegen)
     call = CFunctionCall(
         "fill_object",
         None,
@@ -333,6 +479,10 @@ def test_materializes_struct_tag_forward_declaration_before_pointer_prototype() 
         "struct recovered_object;",
         "unsigned short fill_object(struct recovered_object *a0);",
     )
+    pointer._type = None
+    object_value.variable_type = None
+    assert materialize_callsite_prototype_declarations_8616(codegen.project, codegen) is True
+    assert codegen._inertia_callsite_prototype_decls[-1] == "unsigned short fill_object(void* a0);"
 
 
 def test_runtime_abi_replaces_unproved_callsite_return_type() -> None:
@@ -712,6 +862,55 @@ def test_replaces_stale_declaration_for_same_callee() -> None:
 
     assert materialize_callsite_prototype_declarations_8616(codegen.project, codegen) is True
     assert codegen._inertia_callsite_prototype_decls == ("unsigned short combine(unsigned short a0);",)
+
+
+def test_conflicting_ast_argument_types_replace_stale_prototype_with_unprototyped_declaration() -> None:
+    """One proven physical ABI must not retain a guessed logical argument type."""
+    codegen = _Codegen()
+    scalar = CVariable(
+        SimStackVariable(4, 2, base="bp", name="offset"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    array = CVariable(
+        SimStackVariable(-18, 16, base="bp", name="buffer"),
+        variable_type=SimTypeFixedSizeArray(SimTypeChar(False), 16).with_arch(
+            codegen.project.arch
+        ),
+        codegen=codegen,
+    )
+    scalar_call = CFunctionCall(
+        "render",
+        None,
+        [scalar],
+        tags={"ins_addr": 0x1010},
+        codegen=codegen,
+    )
+    array_call = CFunctionCall(
+        "render",
+        None,
+        [array],
+        tags={"ins_addr": 0x1020},
+        codegen=codegen,
+    )
+    root = CStatements([scalar_call, array_call], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(scalar_call): _summary(0x1010, arg_count=1),
+        id(array_call): _summary(0x1020, arg_count=1),
+    }
+    codegen._inertia_callsite_prototype_decls = (
+        "unsigned short render(unsigned short a0);",
+    )
+
+    assert materialize_callsite_prototype_declarations_8616(
+        codegen.project,
+        codegen,
+    ) is True
+    assert codegen._inertia_callsite_prototype_decls == (
+        "unsigned short render();",
+    )
+    assert root.statements == [scalar_call, array_call]
 
 
 def test_interface_finalizer_does_not_report_metadata_only_change(monkeypatch) -> None:

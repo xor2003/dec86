@@ -38,6 +38,10 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _structured_slot_names_8616
 from ..pipeline.errors import PipelineHardError
+from .register_overwrite_evidence import (
+    StackMoveRegisterOverwriteFact8616,
+    stack_initializer_overwrites_register_8616,
+)
 
 __all__ = [
     "LoweredRegisterCarrierPruneStats8616",
@@ -100,6 +104,7 @@ class _CodegenSurface8616(Protocol):
     """Third-party codegen surface plus the owned result attached by this pass."""
 
     cfunc: _CFunctionSurface8616
+    _inertia_direct_stack_move_facts_8616: tuple[StackMoveRegisterOverwriteFact8616, ...]
     _inertia_lowered_register_carrier_prune_8616: LoweredRegisterCarrierPruneStats8616
 
 
@@ -277,12 +282,20 @@ def _first_following_physical_register_event_8616(
     block: CStatements,
     statement_index: int,
     identity: PhysicalRegisterIdentity8616,
+    stack_move_facts: tuple[StackMoveRegisterOverwriteFact8616, ...],
 ) -> tuple[str, int | None]:
     """Return the next same-block physical-register read or overwrite."""
     for following_index, statement in enumerate(
         block.statements[statement_index + 1 :],
         start=statement_index + 1,
     ):
+        if stack_initializer_overwrites_register_8616(
+            statement,
+            register_offset=identity.reg_offset,
+            register_width=identity.width,
+            facts=stack_move_facts,
+        ):
+            return "overwrite", following_index
         if identity in _physical_register_read_identities_8616(statement):
             return "read", following_index
         if isinstance(statement, CAssignment) and _physical_register_identity_8616(statement.lhs) == identity:
@@ -304,6 +317,10 @@ def prune_unread_stack_lowered_register_carriers_8616(codegen: object) -> bool:
         return False
     if root is None:
         return False
+    try:
+        stack_move_facts = typed_codegen._inertia_direct_stack_move_facts_8616
+    except AttributeError:
+        stack_move_facts = ()
 
     read_identities = _register_read_identities_8616(root)
     raw = 0
@@ -333,6 +350,7 @@ def prune_unread_stack_lowered_register_carriers_8616(codegen: object) -> bool:
                 location[0],
                 location[1],
                 physical_identity,
+                stack_move_facts,
             )
             if identity is None and location is not None and physical_identity is not None
             else ("unknown", None)

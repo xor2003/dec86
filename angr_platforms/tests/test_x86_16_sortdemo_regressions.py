@@ -148,6 +148,43 @@ def test_sortd_sidecar_free_swapbars_recovers_binary_stack_arguments(tmp_path):
     assert result.stdout.count("sub_106c8(") == 3
 
 
+def test_sortd_sidecar_free_initbars_preserves_binary_stack_array(tmp_path):
+    sortd_exe = tmp_path / "SORTD.EXE"
+    sortd_exe.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        sortd_exe,
+        0x10554,
+        analysis_timeout=75,
+        subprocess_timeout=210,
+        extra_args=(
+            "--no-alternate-source-c",
+            "--c-target",
+            "portable-flat",
+        ),
+        extra_env={"INERTIA_DISABLE_TIMING": "1"},
+    )
+    output = _combined_output(result)
+
+    assert result.returncode == 0, output
+    assert "no helper metadata (.lst/.map/.cod/debug info) found" in output
+    assert "validation=passed" in output
+    assert "whole-tail validation clean across 1 functions" in output
+    assert "gcc portable-flat syntax check failed" not in output
+    assert "unsigned short local_5a[43];" in result.stdout
+    assert "unsigned short local_5a;" not in result.stdout
+    assert "local_5a[local_2] = local_2 + 1;" in result.stdout
+    assert "local_72 = local_5a[local_76];" in result.stdout
+    assert "local_5a[local_76] = local_5a[local_4];" in result.stdout
+    assert "SEG_U16(inertia_ds, 2886) = 1;" in result.stdout
+    assert "SEG_U16(inertia_ds, 306) = 30;" in result.stdout
+    assert "SEG_U16(inertia_ds, 308) = 0;" in result.stdout
+    assert result.stdout.count("sub_10678();") == 1
+    assert "sub_10672();" not in result.stdout
+    assert "mem_" not in result.stdout
+    assert "_INSERT(" not in result.stdout
+
+
 def _typed_switch_replacement_safety_payloads(combined_output: str) -> tuple[dict[str, object], ...]:
     prefix = "[typed-switch-replacement-safety] "
     payloads: list[dict[str, object]] = []
@@ -445,6 +482,369 @@ def test_sortdemo_bubblesort_direct_path_validates_and_preserves_array_calls():
     assert initial_limit < outer_loop < inner_loop < next_limit < outer_condition
 
 
+def test_sortd_bubblesort_sidecar_free_preserves_direct_ds_row_count(tmp_path: Path):
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x108D0,
+        analysis_timeout=60,
+        subprocess_timeout=120,
+        extra_args=("--ignore-local-sidecar-hints", "--c-target", "portable-flat"),
+        extra_env={"INERTIA_DISABLE_TIMING": "1"},
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    _assert_clean_decompilation_output(combined)
+    assert "function: 0x108d0 sub_108d0" in result.stdout
+    assert "validation=passed" in combined
+    final_body = _function_body_from_stdout(result.stdout, "short sub_108d0")
+    assert "local_4 = SEG_U16(inertia_ds, 2978);" in final_body
+    assert "mem_0BA2" not in final_body
+    assert "sub_10794((local_2 << 1) + 2892, (local_2 << 1) + 2894);" in final_body
+    assert "sub_10768(local_2, local_2 + 1);" in final_body
+
+
+def test_sortd_exchangesort_sidecar_free_folds_alias_proven_high_byte(tmp_path: Path):
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x10B50,
+        analysis_timeout=90,
+        subprocess_timeout=150,
+        extra_args=("--ignore-local-sidecar-hints", "--c-target", "portable-flat"),
+        extra_env={"INERTIA_DISABLE_TIMING": "1"},
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    _assert_clean_decompilation_output(combined)
+    assert "function: 0x10b50 sub_10b50" in result.stdout
+    assert "validation=passed" in combined
+    final_body = result.stdout.rsplit("sub_10b50(", 1)[-1]
+    assert "local_3" not in final_body
+    assert "local_4 = local_4 + 1;" in final_body or "local_4 += 1;" in final_body
+    assert "sub_10498(local_2);" in final_body
+    assert "sub_10794((local_6 << 1) + 2892, (local_4 << 1) + 2892);" in final_body
+    assert "sub_10768(local_6, local_4);" in final_body
+
+
+def test_sortd_drawbar_sidecar_free_materializes_stack_buffer_and_void_return(
+    tmp_path: Path,
+) -> None:
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x106C8,
+        analysis_timeout=120,
+        subprocess_timeout=240,
+        extra_args=(
+            "--no-alternate-source-c",
+            "--window",
+            "0x93",
+            "--c-target",
+            "portable-flat",
+        ),
+        extra_env={"INERTIA_DISABLE_TIMING": "1"},
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    _assert_clean_decompilation_output(combined)
+    assert "no helper metadata (.lst/.map/.cod/debug info) found" in combined
+    assert "function: 0x106c8 sub_106c8" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    assert "gcc syntax check failed:" not in combined
+    assert re.search(
+        r"void sub_106c8\(unsigned short \w+\)",
+        result.stdout,
+    )
+    final_body = _function_body_from_stdout(result.stdout, "void sub_106c8")
+    assert "char local_2c[44];" in final_body
+    assert "unsigned short local_2c;" not in final_body
+    assert final_body.count("sub_113d4(") == 2
+    assert "local_2c[g_0BA2] = 0;" in final_body
+    assert "sub_12756(local_2c, inertia_ss);" in final_body
+    assert "return;" in final_body
+    assert re.search(r"\breturn\s+[^;]+;", final_body) is None
+
+
+def test_sortd_drawframe_sidecar_free_materializes_segmented_buffer_calls(
+    tmp_path: Path,
+) -> None:
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x101F0,
+        analysis_timeout=120,
+        subprocess_timeout=240,
+        extra_args=(
+            "--no-alternate-source-c",
+            "--window",
+            "0xf0",
+            "--c-target",
+            "portable-flat",
+        ),
+        extra_env={"INERTIA_DISABLE_TIMING": "1"},
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    _assert_clean_decompilation_output(combined)
+    assert "no helper metadata (.lst/.map/.cod/debug info) found" in combined
+    assert "function: 0x101f0 sub_101f0" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    assert "gcc syntax check failed:" not in combined
+    assert re.search(
+        r"void sub_101f0\([^)]*,[^)]*,[^)]*,[^)]*\)",
+        result.stdout,
+    )
+    final_body = _function_body_from_stdout(result.stdout, "void sub_101f0")
+    assert "char local_52[80];" in final_body
+    assert "unsigned short local_2;" in final_body
+    assert "unsigned long local_2;" not in final_body
+    assert final_body.count("sub_113d4(local_52,") == 3
+    assert final_body.count("sub_128e4(") == 3
+    assert final_body.count("sub_12756(local_52, inertia_ss);") == 3
+    assert re.search(r"local_2 = \w+ \+ 1;", final_body)
+    assert re.search(r"for \(; local_2 <= \w+; local_2 = local_2 \+ 1\)", final_body)
+    assert "SEG_U" not in final_body
+    assert "vvar_" not in final_body
+    assert "return;" in final_body
+    assert re.search(r"\breturn\s+[^;]+;", final_body) is None
+
+
+def test_sortd_reinitbars_sidecar_free_materializes_indexed_global_copy(
+    tmp_path: Path,
+) -> None:
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x10678,
+        analysis_timeout=120,
+        subprocess_timeout=240,
+        extra_args=(
+            "--no-alternate-source-c",
+            "--window",
+            "0x50",
+            "--c-target",
+            "portable-flat",
+        ),
+        extra_env={"INERTIA_DISABLE_TIMING": "1"},
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    _assert_clean_decompilation_output(combined)
+    assert "no helper metadata (.lst/.map/.cod/debug info) found" in combined
+    assert "function: 0x10678 sub_10678" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    assert "gcc syntax check failed:" not in combined
+    final_body = _function_body_from_stdout(result.stdout, "void sub_10678")
+    assert final_body.count("unsigned short local_2;") == 1
+    assert "g_0BA6 = sub_1137e();" in final_body
+    assert "g_0B4C[local_2] = g_08F0[local_2];" in final_body
+    assert final_body.count("sub_106c8(local_2);") == 1
+    assert "local_2 += 1;" in final_body
+    assert "mem_" not in final_body
+    assert "vvar_" not in final_body
+    assert "return;" in final_body
+    assert re.search(r"\breturn\s+[^;]+;", final_body) is None
+
+
+def test_sortd_drawtime_sidecar_free_materializes_wide_delay_arguments(
+    tmp_path: Path,
+) -> None:
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x10498,
+        analysis_timeout=120,
+        subprocess_timeout=240,
+        extra_args=(
+            "--no-alternate-source-c",
+            "--window",
+            "0xc2",
+            "--c-target",
+            "portable-flat",
+        ),
+        extra_env={"INERTIA_DISABLE_TIMING": "1"},
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    _assert_clean_decompilation_output(combined)
+    assert "no helper metadata (.lst/.map/.cod/debug info) found" in combined
+    assert "function: 0x10498 sub_10498" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    assert "gcc syntax check failed:" not in combined
+    assert re.search(r"\bsub_10f38\(unsigned long \w+\);", result.stdout)
+    final_body = _function_body_from_stdout(result.stdout, "void sub_10498")
+    assert "g_0B48 = sub_1137e();" in final_body
+    assert "sub_12756(local_50, inertia_ss);" in final_body
+    assert final_body.count("sub_10f38(SEG_U32(inertia_ds, 306));") == 1
+    assert final_body.count("sub_10f38(SEG_U32(inertia_ds, 306) - 75);") == 1
+    assert "sub_10f18(" not in final_body
+    assert "mem_" not in final_body
+    assert "flags" not in final_body
+    assert "vvar_" not in final_body
+
+
+def test_sortd_insertionsort_sidecar_free_splits_header_and_rebases_source(
+    tmp_path: Path,
+) -> None:
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x10808,
+        analysis_timeout=120,
+        subprocess_timeout=240,
+        extra_args=(
+            "--no-alternate-source-c",
+            "--window",
+            "0xc8",
+            "--c-target",
+            "portable-flat",
+        ),
+        extra_env={"INERTIA_DISABLE_TIMING": "1"},
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    _assert_clean_decompilation_output(combined)
+    assert "no helper metadata (.lst/.map/.cod/debug info) found" in combined
+    assert "function: 0x10808 sub_10808" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    assert "gcc syntax check failed:" not in combined
+    final_body = _function_body_from_stdout(result.stdout, "void sub_10808")
+    loop_header = (
+        "for (local_4 = local_2; local_4; local_4 = local_4 - 1)"
+    )
+    guard = "if (g_0B4A[local_4].field_0 <= local_6)"
+    source_copy = "g_0B4C[local_4] = g_0B4C[local_4 - 1];"
+    assert loop_header in final_body
+    assert final_body.count("g_0BAA += 1;") == 1
+    assert final_body.count(guard) == 1
+    assert final_body.count("g_0BA4 += 1;") == 1
+    assert final_body.count(source_copy) == 1
+    assert final_body.index("g_0BAA += 1;") < final_body.index(guard)
+    assert final_body.index(guard) < final_body.index("g_0BA4 += 1;")
+    assert final_body.index("g_0BA4 += 1;") < final_body.index(source_copy)
+    assert final_body.count("sub_106c8(local_4);") == 2
+    assert final_body.count("sub_10498(local_4);") == 2
+    assert "sub_10491(" not in final_body
+    assert "g_0B4C[local_4] = g_0B4A[local_4];" not in final_body
+    assert "vvar_" not in final_body
+    assert "reg+" not in combined
+
+
+def test_sortd_initmenu_sidecar_free_preserves_calls_and_compiles(
+    tmp_path: Path,
+) -> None:
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x10060,
+        analysis_timeout=120,
+        subprocess_timeout=240,
+        extra_args=(
+            "--no-alternate-source-c",
+            "--window",
+            "0x17b",
+            "--c-target",
+            "portable-flat",
+        ),
+        extra_env={"INERTIA_DISABLE_TIMING": "1"},
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    _assert_clean_decompilation_output(combined)
+    assert "no helper metadata (.lst/.map/.cod/debug info) found" in combined
+    assert "function: 0x10060 sub_10060" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    assert "gcc portable-flat syntax check failed:" not in combined
+    assert "int sub_12756();" in result.stdout
+    final_body = _function_body_from_stdout(result.stdout, "void sub_10060")
+    assert "char local_12[16];" in final_body
+    assert final_body.count("sub_12b24(15);") == 1
+    assert final_body.count("sub_12b3e(0, 0);") == 1
+    assert final_body.count("sub_101f0(") == 1
+    assert "sub_101db(" not in final_body
+    assert final_body.count("sub_12756(") == 5
+    assert final_body.count("sub_128e4(") == 5
+    assert final_body.count("sub_1123a(") == 3
+    assert "vvar_" not in final_body
+    assert "return;" in final_body
+    assert re.search(r"\breturn\s+[^;]+;", final_body) is None
+
+
+def test_sortd_quicksort_sidecar_free_preserves_typed_control_flow_and_compiles(
+    tmp_path: Path,
+) -> None:
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x10CE0,
+        analysis_timeout=180,
+        subprocess_timeout=300,
+        extra_args=(
+            "--no-alternate-source-c",
+            "--window",
+            "0x190",
+            "--c-target",
+            "portable-flat",
+        ),
+        extra_env={"INERTIA_DISABLE_TIMING": "1"},
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    _assert_clean_decompilation_output(combined)
+    assert "no helper metadata (.lst/.map/.cod/debug info) found" in combined
+    assert "function: 0x10ce0 sub_10ce0" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    assert "gcc portable-flat syntax check failed:" not in combined
+    final_body = _function_body_from_stdout(result.stdout, "void sub_10ce0")
+    assert "vvar_" not in final_body
+    assert "if (a0 < a1)" in final_body
+    assert "if (a1 - a0 == 1)" in final_body
+    assert "if (g_0B4C[a0].field_0 > g_0B4C[a1].field_0)" in final_body
+    assert "while (local_2 > local_6);" in final_body
+    assert "if (local_6 - a0 < a1 - local_6)" in final_body
+    assert final_body.count("sub_10794(") == 3
+    assert final_body.count("sub_10768(") == 3
+    assert "sub_1075b(" not in final_body
+    assert final_body.count("sub_10ce0(") == 5
+    assert final_body.count("sub_10ce0(a0, local_6 - 1);") == 2
+    assert final_body.count("sub_10ce0(local_6 + 1, a1);") == 2
+
+
 def test_sortdemo_exchangesort_preserves_inner_loop_setup_and_guarded_minimum_update():
     result = _run_decompile_addr(
         SORTDEMO_EXE,
@@ -554,7 +954,7 @@ def test_sortdemo_main_uses_portable_flat_int_main_signature():
     assert "gcc syntax check failed:" not in combined
     assert "void main(void)" not in result.stdout
     assert "int main(void)" in result.stdout
-    assert "return 0;" in result.stdout
+    assert "return setvideomode(65535);" in result.stdout
 
 
 def test_sortdemo_nfree_does_not_emit_undeclared_vvar_carrier():
@@ -1194,7 +1594,11 @@ def test_initbars_getvideoconfig_far_pointer_call_has_no_stack_setup_remnants():
     assert "iRowMax = cRow - 1;" in body
     assert "iLength = aTemp[iRand];" in body
     assert "abarPerm[iRow].field_0 = iLength;" in body
-    assert "abarPerm[iRow].field_1 = iLength % iColorMax + 1;" in body
+    assert (
+        "abarPerm[iRow].field_1 = iLength % iColorMax + 1;" in body
+        or "abarPerm[iRow].field_1 = (short)iLength % (short)iColorMax + 1;"
+        in body
+    )
     assert "local_70" not in body
     assert "local_72" not in body
     assert "local_73" not in body

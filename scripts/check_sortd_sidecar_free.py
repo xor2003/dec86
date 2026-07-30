@@ -41,6 +41,10 @@ EXPECTED_SORTD_FUNCTION_ADDRS: tuple[int, ...] = (
     0x10E70,
     0x10F38,
 )
+REQUIRED_DECOMPILED_SORTD_FUNCTION_ADDRS: tuple[int, ...] = EXPECTED_SORTD_FUNCTION_ADDRS
+DEFAULT_MINIMUM_DECOMPILED: int = len(REQUIRED_DECOMPILED_SORTD_FUNCTION_ADDRS)
+DEFAULT_MAXIMUM_EMPTY: int = 0
+DEFAULT_MAXIMUM_TIMEOUTS: int = 0
 
 _SOURCE_EVIDENCE_RE = re.compile(
     r"source-region discovery evidence: "
@@ -56,6 +60,7 @@ _QUEUED_RE = re.compile(r"functions queued for decompilation: (?P<count>\d+)")
 _SELECTED_RE = re.compile(r"selected (?P<count>\d+) function\(s\) for decompilation")
 _ATTEMPTED_RE = re.compile(r"decompilation attempted for (?P<attempted>\d+)/(?P<selected>\d+) selected function")
 _SUMMARY_RE = re.compile(r"summary: decompiled (?P<decompiled>\d+)/(?P<selected>\d+) selected functions")
+_TIMEOUT_SIGNAL_RE = re.compile(r"(?:Decompilation timeout|c \([^)]*partial timeout[^)]*\))", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,9 +78,11 @@ class SortdRatchetResult:
     attempted_count: int
     decompiled_count: int
     empty_count: int
+    timeout_count: int
     validation_failed_count: int
     traceback_count: int
     function_addrs: tuple[int, ...]
+    decompiled_function_addrs: tuple[int, ...]
     violations: tuple[str, ...]
 
     @property
@@ -105,6 +112,7 @@ def evaluate_sortd_transcript(
     decompiler_returncode: int,
     minimum_decompiled: int,
     maximum_empty: int,
+    maximum_timeouts: int,
     maximum_tracebacks: int,
 ) -> SortdRatchetResult:
     """Evaluate exact whole-binary coverage and gradual acceptance thresholds."""
@@ -128,7 +136,11 @@ def evaluate_sortd_transcript(
     decompiled_count = int(summary_match.group("decompiled")) if summary_match is not None else 0
     function_addrs = tuple(int(match.group("addr"), 16) for match in _FUNCTION_RE.finditer(transcript))
     statuses = tuple(match.group("status") for match in _STATUS_RE.finditer(transcript))
+    decompiled_function_addrs = tuple(
+        address for address, status in zip(function_addrs, statuses, strict=False) if status == "ok"
+    )
     empty_count = statuses.count("empty")
+    timeout_count = max(statuses.count("timeout"), len(_TIMEOUT_SIGNAL_RE.findall(transcript)))
     validation_failed_count = statuses.count("validation_failed")
     traceback_count = transcript.count("Traceback (most recent call last):")
 
@@ -147,8 +159,20 @@ def evaluate_sortd_transcript(
         violations.append(f"reported {len(statuses)} terminal function statuses, expected {expected_count}")
     if decompiled_count < minimum_decompiled:
         violations.append(f"decompiled {decompiled_count}, minimum is {minimum_decompiled}")
+    missing_decompiled_addrs = tuple(
+        address
+        for address in REQUIRED_DECOMPILED_SORTD_FUNCTION_ADDRS
+        if address not in decompiled_function_addrs
+    )
+    if missing_decompiled_addrs:
+        violations.append(
+            "required decompiled function regressions: "
+            + ", ".join(f"{address:#x}" for address in missing_decompiled_addrs)
+        )
     if empty_count > maximum_empty:
         violations.append(f"empty function count {empty_count} exceeds {maximum_empty}")
+    if timeout_count > maximum_timeouts:
+        violations.append(f"timeout signal count {timeout_count} exceeds {maximum_timeouts}")
     if traceback_count > maximum_tracebacks:
         violations.append(f"traceback count {traceback_count} exceeds {maximum_tracebacks}")
     if decompiler_returncode not in {0, 2}:
@@ -168,9 +192,11 @@ def evaluate_sortd_transcript(
         attempted_count=attempted_count,
         decompiled_count=decompiled_count,
         empty_count=empty_count,
+        timeout_count=timeout_count,
         validation_failed_count=validation_failed_count,
         traceback_count=traceback_count,
         function_addrs=function_addrs,
+        decompiled_function_addrs=decompiled_function_addrs,
         violations=tuple(violations),
     )
 
@@ -191,8 +217,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--decompile-timeout", type=int, default=60)
     parser.add_argument("--run-timeout", type=int, default=1200)
-    parser.add_argument("--minimum-decompiled", type=int, default=4)
-    parser.add_argument("--maximum-empty", type=int, default=1)
+    parser.add_argument("--minimum-decompiled", type=int, default=DEFAULT_MINIMUM_DECOMPILED)
+    parser.add_argument("--maximum-empty", type=int, default=DEFAULT_MAXIMUM_EMPTY)
+    parser.add_argument("--maximum-timeouts", type=int, default=DEFAULT_MAXIMUM_TIMEOUTS)
     parser.add_argument("--maximum-tracebacks", type=int, default=0)
     return parser.parse_args(argv)
 
@@ -243,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
         decompiler_returncode=returncode,
         minimum_decompiled=max(0, args.minimum_decompiled),
         maximum_empty=max(0, args.maximum_empty),
+        maximum_timeouts=max(0, args.maximum_timeouts),
         maximum_tracebacks=max(0, args.maximum_tracebacks),
     )
     args.report_out.write_text(json.dumps(asdict(result), indent=2, sort_keys=True) + "\n", encoding="utf-8")

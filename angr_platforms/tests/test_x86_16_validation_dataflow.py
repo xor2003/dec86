@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
+    CBreak,
     CConstant,
     CExpressionStatement,
     CFunctionCall,
@@ -15,8 +16,11 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimTypeFixedSizeArray, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr_platforms.X86_16.ir.core import SegmentOrigin
+from angr_platforms.X86_16.ir.segment_state import SegmentRegisterState, SegmentStateArtifact
 from angr_platforms.X86_16.tail_validation import (
     X86_16TailValidationSummary,
+    _def_use_entry_segment_register_offsets_8616,
     build_x86_16_tail_validation_cached_result,
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_summaries,
@@ -778,6 +782,93 @@ def test_def_use_does_not_treat_while_body_assignment_as_definite_after_loop():
     assert report.failure_count == 1
 
 
+def test_def_use_carries_definitions_from_all_unconditional_loop_breaks() -> None:
+    codegen = _codegen()
+    definition = _local(-2, codegen, "i")
+    read = _local(-2, codegen, "i")
+    loop = CWhileLoop(
+        _const(1, codegen),
+        CStatements(
+            [
+                CAssignment(definition, _const(2, codegen), codegen=codegen),
+                CIfElse(
+                    [
+                        (
+                            _local(4, codegen, "arg_4"),
+                            CStatements([CBreak(codegen=codegen)], codegen=codegen),
+                        )
+                    ],
+                    codegen=codegen,
+                ),
+                CBreak(codegen=codegen),
+            ],
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    root = CStatements([loop, read], codegen=codegen)
+
+    report = validate_structured_def_use_8616(root)
+
+    assert report.passed
+    assert report.materialized_count == 1
+
+
+def test_def_use_refuses_unconditional_loop_definition_after_possible_break() -> None:
+    codegen = _codegen()
+    definition = _local(-2, codegen, "i")
+    read = _local(-2, codegen, "i")
+    loop = CWhileLoop(
+        _const(1, codegen),
+        CStatements(
+            [
+                CIfElse(
+                    [
+                        (
+                            _local(4, codegen, "arg_4"),
+                            CStatements([CBreak(codegen=codegen)], codegen=codegen),
+                        )
+                    ],
+                    codegen=codegen,
+                ),
+                CAssignment(definition, _const(2, codegen), codegen=codegen),
+                CBreak(codegen=codegen),
+            ],
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    root = CStatements([loop, read], codegen=codegen)
+
+    report = validate_structured_def_use_8616(root)
+
+    assert report.failure_count == 1
+    assert report.materialized_count == 0
+
+
+def test_def_use_refuses_conditional_loop_definition_even_with_break() -> None:
+    codegen = _codegen()
+    definition = _local(-2, codegen, "i")
+    read = _local(-2, codegen, "i")
+    loop = CWhileLoop(
+        _local(4, codegen, "arg_4"),
+        CStatements(
+            [
+                CAssignment(definition, _const(2, codegen), codegen=codegen),
+                CBreak(codegen=codegen),
+            ],
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    root = CStatements([loop, read], codegen=codegen)
+
+    report = validate_structured_def_use_8616(root)
+
+    assert report.failure_count == 1
+    assert report.materialized_count == 0
+
+
 def test_def_use_ignores_positive_bp_argument_reads():
     codegen = _codegen()
     root = CStatements([_local(4, codegen, "arg_4")], codegen=codegen)
@@ -870,6 +961,51 @@ def test_def_use_refuses_segment_carrier_read_before_assignment() -> None:
     assert report.issue_tokens() == (
         "uninitialized-read:segment-carrier:reg+0x14:size2:region0x1000:ssa-str-ssa_ss:root.stmt0",
     )
+
+
+def test_def_use_accepts_typed_architectural_segment_live_in() -> None:
+    codegen = _codegen()
+    segment = _register_carrier(20, codegen, "ss", ident=None, region=None)
+    root = CStatements([segment], codegen=codegen)
+
+    report = validate_structured_def_use_8616(
+        root,
+        segment_register_offsets=frozenset({20}),
+        entry_defined_segment_register_offsets=frozenset({20}),
+    )
+
+    assert report.passed
+    assert report.materialized_count == 1
+
+
+def test_tail_validation_derives_entry_segments_only_from_proven_typed_ir_state() -> None:
+    project = SimpleNamespace(arch=ArchX86())
+    function_addr = 0x4010
+    ds_state = SegmentRegisterState(
+        register="ds",
+        value_kind="architectural_live_in",
+        source="ds",
+        origin=SegmentOrigin.PROVEN,
+    )
+    unknown_es_state = SegmentRegisterState(
+        register="es",
+        value_kind="unknown",
+        source=None,
+        origin=SegmentOrigin.UNKNOWN,
+    )
+    artifact = SegmentStateArtifact(
+        entry_states={function_addr: {"ds": ds_state, "es": unknown_es_state}},
+        exit_states={},
+        summary={},
+    )
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=function_addr),
+        _inertia_segment_state_artifact=artifact,
+    )
+
+    offsets = _def_use_entry_segment_register_offsets_8616(project, codegen)
+
+    assert offsets == frozenset({project.arch.registers["ds"][0]})
 
 
 def test_def_use_ignores_stale_direct_call_target_carrier() -> None:

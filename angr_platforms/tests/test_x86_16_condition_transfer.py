@@ -69,6 +69,122 @@ def test_dec_reg_chain_counts_same_register_predecessors():
     assert Instruction_ANY._same_preceding_incdec_reg16_count_8616(chained, "cx", mnemonic="dec") == 1
 
 
+def test_sub_flags_are_suppressed_when_cmp_overwrites_them_after_mov() -> None:
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    instruction = Instruction_ANY.__new__(Instruction_ANY)
+    instruction._future_instructions = (
+        SimpleNamespace(cs=SimpleNamespace(mnemonic="mov")),
+        SimpleNamespace(cs=SimpleNamespace(mnemonic="cmp")),
+    )
+
+    assert instruction._flags_fully_overwritten_before_use_8616()
+    assert not instruction._should_update_binop_flags_8616("sub", logical_condition_recorded=False)
+
+
+def test_sub_flags_survive_transparent_instruction_before_jcc() -> None:
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    instruction = Instruction_ANY.__new__(Instruction_ANY)
+    instruction._future_instructions = (
+        SimpleNamespace(cs=SimpleNamespace(mnemonic="mov")),
+        SimpleNamespace(cs=SimpleNamespace(mnemonic="jl")),
+    )
+
+    assert not instruction._flags_fully_overwritten_before_use_8616()
+    assert instruction._should_update_binop_flags_8616("sub", logical_condition_recorded=False)
+
+
+def test_sub_flag_suppression_refuses_unknown_future_instruction() -> None:
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    instruction = Instruction_ANY.__new__(Instruction_ANY)
+    instruction._future_instructions = (SimpleNamespace(cs=SimpleNamespace(mnemonic="mystery")),)
+
+    assert not instruction._flags_fully_overwritten_before_use_8616()
+    assert instruction._should_update_binop_flags_8616("sub", logical_condition_recorded=False)
+
+
+def test_sub_simple_semantics_requires_later_same_block_cmp_consumer() -> None:
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    arch = Arch86_16()
+    code = b"\x2b\x46\x06\x8b\x4e\x04\x2b\x4e\x02\x3b\xc1\x7c\x02"
+    instruction = Instruction_ANY(
+        bitstring.ConstBitStream(bytes=code),
+        arch,
+        0x4000,
+    )
+
+    assert instruction.simple_semantics == (
+        "sub_reg_mem16",
+        "ax",
+        ("bp", 6, 6),
+    )
+    assert instruction._later_same_block_condition_consumes_register_from_bytes_8616(
+        "ax"
+    )
+
+
+def test_sub_simple_semantics_accepts_later_dec_jcc_consumer() -> None:
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    arch = Arch86_16()
+    code = b"\x2b\x46\x04\x48\x74\x02"
+    instruction = Instruction_ANY(
+        bitstring.ConstBitStream(bytes=code),
+        arch,
+        0x4000,
+    )
+
+    assert instruction.simple_semantics == (
+        "sub_reg_mem16",
+        "ax",
+        ("bp", 4, 4),
+    )
+    assert instruction._later_same_block_condition_consumes_register_from_bytes_8616(
+        "ax"
+    )
+
+
+def test_sub_simple_semantics_refuses_call_argument_without_cmp_consumer() -> None:
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    arch = Arch86_16()
+    code = b"\x2d\x07\x00\x50\x90\x0e\xe8\x00\x00"
+    instruction = Instruction_ANY(
+        bitstring.ConstBitStream(bytes=code),
+        arch,
+        0x4000,
+    )
+
+    assert instruction.simple_semantics is None
+    assert not instruction._later_same_block_condition_consumes_register_from_bytes_8616(
+        "ax"
+    )
+
+
+def test_sub_simple_semantics_refuses_register_clobber_before_cmp() -> None:
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    arch = Arch86_16()
+    code = b"\x2d\x07\x00\xb8\x01\x00\x3d\x02\x00\x7c\x02"
+    instruction = Instruction_ANY(
+        bitstring.ConstBitStream(bytes=code),
+        arch,
+        0x4000,
+    )
+
+    assert instruction.simple_semantics is None
+    assert not instruction._later_same_block_condition_consumes_register_from_bytes_8616(
+        "ax"
+    )
+
+
 def test_pending_cmp_condition_harmonizes_mixed_width_operands_before_transfer():
     lhs = IRValue(MemSpace.REG, name="al", size=1)
     rhs = IRValue(MemSpace.CONST, const=0x1234, size=2)
@@ -387,6 +503,141 @@ def test_indexed_byte_cmp_condition_operands_use_stack_index_state():
         expr=("cmp-ds-indexed", "bp", "-2", "2", "1", "1"),
     )
     assert rhs == IRValue(MemSpace.REG, name="al", offset=0, size=1, expr=("cmp-reg",))
+
+
+def test_indexed_byte_cmp_uses_exact_loaded_rhs_until_register_clobber():
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_index_state = dict(
+        Instruction_ANY._inertia_condition_index_reg_state_8616
+    )
+    original_value_state = dict(
+        Instruction_ANY._inertia_condition_reg_value_state_8616
+    )
+    instr = Instruction_ANY.__new__(Instruction_ANY)
+    instr.arch = Arch86_16()
+    instr.addr = 0x4010
+    instr.cs = SimpleNamespace(size=4)
+    instr.emu = SimpleNamespace(_inertia_current_block_addr=0x4000)
+
+    try:
+        low_index = IRValue(MemSpace.SS, name="bp", offset=4, size=2)
+        high_index = IRValue(MemSpace.SS, name="bp", offset=6, size=2)
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = {
+            "bx": (low_index, 1),
+            "si": (high_index, 1),
+        }
+        Instruction_ANY._inertia_condition_reg_value_state_8616 = {}
+        instr._set_condition_reg_indexed_byte_value_8616(
+            "al",
+            ("si", 0xB4C, 0xB4C),
+        )
+        instr.addr = 0x4014
+        lhs, rhs = instr._condition_operands_from_cmp_semantics_8616(
+            ("cmp_indexed_abs_reg8", ("bx", 0xB4C, 0xB4C), "al"),
+        )
+        instr._clear_condition_reg_value_state_8616("ax")
+        _, clobbered_rhs = instr._condition_operands_from_cmp_semantics_8616(
+            ("cmp_indexed_abs_reg8", ("bx", 0xB4C, 0xB4C), "al"),
+        )
+    finally:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = (
+            original_index_state
+        )
+        Instruction_ANY._inertia_condition_reg_value_state_8616 = (
+            original_value_state
+        )
+
+    assert lhs == IRValue(
+        MemSpace.DS,
+        offset=0xB4C,
+        size=1,
+        expr=("cmp-ds-indexed", "bp", "4", "2", "1", "1"),
+    )
+    assert rhs == IRValue(
+        MemSpace.DS,
+        offset=0xB4C,
+        size=1,
+        expr=("cmp-ds-indexed", "bp", "6", "2", "1", "1"),
+    )
+    assert clobbered_rhs == IRValue(
+        MemSpace.REG,
+        name="al",
+        offset=0,
+        size=1,
+        expr=("cmp-reg",),
+    )
+
+
+def test_stack_subtraction_value_survives_unrelated_instruction_until_clobber():
+    from angr_platforms.X86_16.arch_86_16 import Arch86_16
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    original_index_state = dict(
+        Instruction_ANY._inertia_condition_index_reg_state_8616
+    )
+    original_value_state = dict(
+        Instruction_ANY._inertia_condition_reg_value_state_8616
+    )
+    instr = Instruction_ANY.__new__(Instruction_ANY)
+    instr.arch = Arch86_16()
+    instr.addr = 0x4010
+    instr.cs = SimpleNamespace(size=3)
+    instr.emu = SimpleNamespace(_inertia_current_block_addr=0x4000)
+
+    try:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = {}
+        Instruction_ANY._inertia_condition_reg_value_state_8616 = {}
+        instr._set_condition_index_reg_stack_state_8616(
+            "ax",
+            ("bp", 6, 6),
+        )
+        instr.addr = 0x4013
+        arithmetic = instr._arithmetic_result_value_from_semantics_8616(
+            ("sub_reg_mem16", "ax", ("bp", 4, 4)),
+        )
+        assert arithmetic is not None
+        register_name, value = arithmetic
+        instr._clear_condition_reg_value_state_8616(register_name)
+        instr._set_condition_reg_value_state_8616(register_name, value)
+        instr.addr = 0x4019
+        proven = instr._condition_proven_reg_value_8616(
+            "ax",
+            width_bits=16,
+        )
+        instr._clear_condition_reg_value_state_8616("ax")
+        refused = instr._condition_proven_reg_value_8616(
+            "ax",
+            width_bits=16,
+        )
+    finally:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = (
+            original_index_state
+        )
+        Instruction_ANY._inertia_condition_reg_value_state_8616 = (
+            original_value_state
+        )
+
+    assert proven == IRBinaryValue(
+        "sub",
+        IRValue(
+            MemSpace.SS,
+            name="bp",
+            offset=6,
+            size=2,
+            expr=("cmp-stack", "bp"),
+        ),
+        IRValue(
+            MemSpace.SS,
+            name="bp",
+            offset=4,
+            size=2,
+            expr=("cmp-stack", "bp"),
+        ),
+        size=2,
+    )
+    assert refused is None
 
 
 def test_indexed_byte_load_provenance_survives_word_cmp_operand_recovery():

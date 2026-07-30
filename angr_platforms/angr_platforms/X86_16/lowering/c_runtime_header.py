@@ -27,6 +27,10 @@ LOWERED_ZERO_ARG_RUNTIME_HELPER_DECLARATIONS_8616: dict[str, str] = {
     for name in ("clock", "rand")
 }
 
+LOWERED_RUNTIME_MACROS_8616: frozenset[str] = frozenset(
+    {"MEM_U8", "MEM_U16", "MEM_U32", "MK_FP", "SEG_LINEAR", "SEG_PTR", "SEG_U8", "SEG_U16", "SEG_U32"}
+)
+
 # Exact external return ABIs override caller-use inference. An unused result
 # proves only that the caller discards it; it does not change the callee ABI.
 KNOWN_EXTERNAL_RETURN_TYPES_8616: dict[str, str] = {
@@ -54,6 +58,13 @@ _TARGET_COMPILER_RUNTIME_HELPER_DECLARATIONS_8616: dict[str, dict[str, str]] = {
     },
 }
 
+_RUNTIME_SEGMENT_STATE_DECLARATIONS_8616: tuple[str, ...] = (
+    "extern uint16_t inertia_cs;",
+    "extern uint16_t inertia_ds;",
+    "extern uint16_t inertia_es;",
+    "extern uint16_t inertia_ss;",
+)
+
 
 def runtime_helper_declaration_8616(name: str, target: str | None) -> str | None:
     """Return an exact external declaration owned by the selected C ABI."""
@@ -68,10 +79,16 @@ def runtime_helper_declaration_8616(name: str, target: str | None) -> str | None
     return LOWERED_RUNTIME_HELPER_DECLARATIONS_8616.get(name)
 
 
+def is_lowered_runtime_macro_8616(name: str) -> bool:
+    """Return whether lowering owns ``name`` as a C macro rather than a callable."""
+    return name in LOWERED_RUNTIME_MACROS_8616
+
+
 def render_c_runtime_header_8616(target: str | None) -> str:
     """Return the C helper header for the requested generated-C target."""
     normalized = str(target or "").strip().lower()
     runtime_helper_declarations = "\n".join(LOWERED_RUNTIME_HELPER_DECLARATIONS_8616.values())
+    runtime_segment_state_declarations = "\n".join(_RUNTIME_SEGMENT_STATE_DECLARATIONS_8616)
     if normalized == "msc-dos":
         compiler_helper_declarations = "\n".join(_MSC_COMPILER_RUNTIME_HELPER_DECLARATIONS_8616)
         return (
@@ -88,6 +105,7 @@ def render_c_runtime_header_8616(target: str | None) -> str:
             "\n"
             f"{runtime_helper_declarations}\n"
             f"{compiler_helper_declarations}\n"
+            f"{runtime_segment_state_declarations}\n"
             "\n"
             "#ifndef MK_FP\n"
             "#define MK_FP(seg, off) ((uint8_t far *)((((unsigned long)(unsigned short)(seg)) << 16) | (unsigned short)(off)))\n"
@@ -114,6 +132,7 @@ def render_c_runtime_header_8616(target: str | None) -> str:
             f"{compiler_helper_declarations}\n"
             "\n"
             "extern uint8_t inertia_memory[];\n"
+            f"{runtime_segment_state_declarations}\n"
             "\n"
             "#ifndef far\n"
             "#define far\n"
@@ -136,7 +155,9 @@ __all__ = [
     "KNOWN_EXTERNAL_DECLARATIONS_8616",
     "KNOWN_EXTERNAL_RETURN_TYPES_8616",
     "LOWERED_RUNTIME_HELPER_DECLARATIONS_8616",
+    "LOWERED_RUNTIME_MACROS_8616",
     "LOWERED_ZERO_ARG_RUNTIME_HELPER_DECLARATIONS_8616",
+    "is_lowered_runtime_macro_8616",
     "render_c_runtime_header_8616",
     "runtime_helper_declaration_8616",
 ]

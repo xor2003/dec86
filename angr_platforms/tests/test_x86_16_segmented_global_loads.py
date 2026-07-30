@@ -3,6 +3,7 @@ from __future__ import annotations
 # pyright: reportAttributeAccessIssue=false
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -25,6 +26,7 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.cod_extract import CODGlobalAddressRef, CODGlobalRef
+from angr_platforms.X86_16.ir.core import MemSpace
 from angr_platforms.X86_16.lowering import segmented_global_loads as segmented_global_loads_module
 from angr_platforms.X86_16.lowering.global_declarations import (
     GlobalDeclarationCType8616,
@@ -32,12 +34,17 @@ from angr_platforms.X86_16.lowering.global_declarations import (
     record_global_declaration_spec_8616,
     record_scalar_global_declaration_spec_8616,
 )
+from angr_platforms.X86_16.lowering.segment_register_state import (
+    runtime_segment_push_source_cvar_8616,
+)
 from angr_platforms.X86_16.lowering.segmented_global_loads import (
     CompareRegisterGlobalCarrierEvidence8616,
     DirectGlobalBooleanStoreEvidence8616,
     DirectGlobalCallReturnStoreEvidence8616,
     DirectGlobalSymbolRef8616,
     DirectGlobalUpdateEvidence8616,
+    DirectSegmentedGlobalLoadEvidence8616,
+    DirectSegmentedGlobalStoreEvidence8616,
     DwordGlobalZeroTestEvidence8616,
     DwordGlobalZeroTestMaterializationRecord8616,
     GlobalAddressLiteralEvidence8616,
@@ -61,7 +68,10 @@ from angr_platforms.X86_16.lowering.segmented_global_loads import (
     _make_direct_global_symbol_expr_8616,
     _make_indexed_global_expr_8616,
     _materialize_direct_global_zero_test_or_expr_8616,
+    _materialized_sidecar_free_dword_update_refs_8616,
     _merge_direct_global_symbol_refs_8616,
+    _sidecar_free_boolean_store_refs_8616,
+    _sidecar_free_dword_update_refs_8616,
     materialize_compare_register_global_carriers_from_evidence_8616,
     materialize_direct_global_symbol_stores_from_evidence_8616,
     materialize_indexed_segmented_global_loads_from_evidence_8616,
@@ -69,10 +79,18 @@ from angr_platforms.X86_16.lowering.segmented_global_loads import (
     reapply_proven_named_global_aggregate_types_8616,
     reconcile_registered_named_global_aggregate_declarations_8616,
     recover_compare_register_global_carriers_8616,
+    recover_direct_segmented_global_load_evidence_8616,
+    recover_direct_segmented_global_store_evidence_8616,
     recover_dword_global_zero_test_evidence_8616,
+    recover_indexed_segmented_global_evidence_8616,
     recover_indexed_segmented_global_load_site_evidence_8616,
     recover_indexed_segmented_global_store_evidence_8616,
 )
+from angr_platforms.X86_16.lowering.storage_identity_facts import (
+    GlobalStorageIdentityFact8616,
+    StorageIdentityEvidenceKind8616,
+)
+from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.structuring.simple_loop_recovery import InsnSummary8616
 from capstone.x86_const import (
     X86_INS_ADD,
@@ -91,6 +109,7 @@ from capstone.x86_const import (
     X86_REG_BX,
     X86_REG_DL,
     X86_REG_DX,
+    X86_REG_ES,
     X86_REG_INVALID,
     X86_REG_SP,
 )
@@ -246,11 +265,11 @@ def _reg_operand(reg, *, size=2):
     return SimpleNamespace(type=X86_OP_REG, size=size, reg=reg)
 
 
-def _mem_operand(base, disp: int, *, size=2, index=X86_REG_INVALID):
+def _mem_operand(base, disp: int, *, size=2, index=X86_REG_INVALID, segment=X86_REG_INVALID):
     return SimpleNamespace(
         type=X86_OP_MEM,
         size=size,
-        mem=SimpleNamespace(base=base, index=index, disp=disp),
+        mem=SimpleNamespace(base=base, index=index, segment=segment, disp=disp),
     )
 
 
@@ -281,6 +300,338 @@ def test_segmented_global_load_materializes_named_ds_word_global():
     assert isinstance(assignment.rhs, CVariable)
     assert assignment.rhs.name == "g_rows"
     assert codegen._inertia_segmented_global_load_stats_8616.materialized_count == 1
+
+
+def test_direct_segmented_global_load_evidence_preserves_default_ds_and_es_override():
+    project = SimpleNamespace(arch=Arch86_16())
+    ds_load = SimpleNamespace(
+        address=0x108DB,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _mem_operand(X86_REG_INVALID, 0x0BA2)),
+    )
+    es_load = SimpleNamespace(
+        address=0x108E0,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_BX), _mem_operand(X86_REG_INVALID, 0x0BA4, segment=X86_REG_ES)),
+    )
+    store = SimpleNamespace(
+        address=0x108E5,
+        id=X86_INS_MOV,
+        operands=(_mem_operand(X86_REG_INVALID, 0x0BA6), _reg_operand(X86_REG_AX)),
+    )
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=(ds_load, es_load, store)))
+    function = SimpleNamespace(blocks=(block,))
+
+    evidence = recover_direct_segmented_global_load_evidence_8616(project, function)
+
+    assert evidence == (
+        DirectSegmentedGlobalLoadEvidence8616(0x0BA2, 2, MemSpace.DS, 0x108DB),
+        DirectSegmentedGlobalLoadEvidence8616(0x0BA4, 2, MemSpace.ES, 0x108E0),
+    )
+
+
+def test_direct_segmented_global_store_evidence_preserves_default_ds_and_es_override():
+    project = SimpleNamespace(arch=Arch86_16())
+    ds_store = SimpleNamespace(
+        address=0x1057C,
+        id=X86_INS_MOV,
+        operands=(_mem_operand(X86_REG_INVALID, 0x0B46), _imm_operand(1, size=2)),
+    )
+    es_store = SimpleNamespace(
+        address=0x10582,
+        id=X86_INS_MOV,
+        operands=(
+            _mem_operand(X86_REG_INVALID, 0x0132, segment=X86_REG_ES),
+            _imm_operand(30, size=2),
+        ),
+    )
+    load = SimpleNamespace(
+        address=0x10588,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _mem_operand(X86_REG_INVALID, 0x0134)),
+    )
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=(ds_store, es_store, load)))
+    function = SimpleNamespace(blocks=(block,))
+
+    evidence = recover_direct_segmented_global_store_evidence_8616(project, function)
+
+    assert evidence == (
+        DirectSegmentedGlobalStoreEvidence8616(0x0B46, 2, MemSpace.DS, 0x1057C),
+        DirectSegmentedGlobalStoreEvidence8616(0x0132, 2, MemSpace.ES, 0x10582),
+    )
+
+
+def test_anonymous_direct_word_store_folds_exact_instruction_byte_pair_and_replays():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    tags = {"ins_addr": 0x1057C}
+    low = CAssignment(
+        _mem(0x0B46, codegen, name="mem_0B46"),
+        _const(1, codegen),
+        codegen=codegen,
+        tags=tags,
+    )
+    high = CAssignment(
+        _mem(0x0B47, codegen, name="mem_0B47"),
+        _const(0, codegen),
+        codegen=codegen,
+        tags=tags,
+    )
+    root = CStatements([low, high], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x10560, statements=root, body=root)
+    evidence = (DirectSegmentedGlobalStoreEvidence8616(0x0B46, 2, MemSpace.DS, 0x1057C),)
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        (),
+        anonymous_direct_stores=evidence,
+        project=project,
+        stats=stats,
+    )
+
+    assert changed is True
+    assert len(root.statements) == 1
+    assignment = root.statements[0]
+    assert isinstance(assignment, CAssignment)
+    assert isinstance(assignment.lhs, CFunctionCall)
+    assert assignment.lhs.callee_target == "SEG_U16"
+    assert assignment.lhs.args[0].variable.name == "ds"
+    assert assignment.lhs.args[1].value == 0x0B46
+    assert assignment.rhs.value == 1
+    assert assignment.tags["ins_addr"] == 0x1057C
+    assert stats.anonymous_direct_store_raw_fact_count == 1
+    assert stats.anonymous_direct_store_normalized_fact_count == 1
+    assert stats.anonymous_direct_store_classified_fact_count == 1
+    assert stats.anonymous_direct_store_materialized_count == 1
+    assert stats.anonymous_direct_store_failure_count == 0
+
+    replay_stats = SegmentedGlobalLoadStats8616()
+    replay_changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        (),
+        anonymous_direct_stores=evidence,
+        project=project,
+        stats=replay_stats,
+    )
+
+    assert replay_changed is False
+    assert len(root.statements) == 1
+    assert replay_stats.anonymous_direct_store_classified_fact_count == 1
+    assert replay_stats.anonymous_direct_store_materialized_count == 1
+    assert replay_stats.anonymous_direct_store_failure_count == 0
+    assert replay_stats.refused_no_evidence == 0
+
+
+def test_anonymous_direct_word_store_resolves_unique_dirty_byte_pair_source():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    tags = {"ins_addr": 0x102EE}
+    carrier_definition = CAssignment(
+        _dirty(198, codegen),
+        _const(0, codegen),
+        codegen=codegen,
+    )
+    low = CAssignment(
+        _mem(0x0BAA, codegen, name="mem_0BAA"),
+        _dirty(198, codegen),
+        codegen=codegen,
+        tags=tags,
+    )
+    high = CAssignment(
+        _mem(0x0BAB, codegen, name="mem_0BAB"),
+        CBinaryOp("Shr", _dirty(198, codegen), _const(8, codegen), codegen=codegen),
+        codegen=codegen,
+        tags=tags,
+    )
+    root = CStatements([carrier_definition, low, high], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x102E0, statements=root, body=root)
+    evidence = (DirectSegmentedGlobalStoreEvidence8616(0x0BAA, 2, MemSpace.DS, 0x102EE),)
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        (),
+        anonymous_direct_stores=evidence,
+        project=project,
+        stats=stats,
+    )
+
+    assert changed is True
+    assert len(root.statements) == 2
+    assignment = root.statements[1]
+    assert isinstance(assignment, CAssignment)
+    assert isinstance(assignment.lhs, CFunctionCall)
+    assert assignment.lhs.callee_target == "SEG_U16"
+    assert assignment.lhs.args[0].variable.name == "ds"
+    assert assignment.lhs.args[1].value == 0x0BAA
+    assert isinstance(assignment.rhs, CConstant)
+    assert assignment.rhs.value == 0
+    assert stats.anonymous_direct_store_classified_fact_count == 1
+    assert stats.anonymous_direct_store_materialized_count == 1
+    assert stats.anonymous_direct_store_failure_count == 0
+
+
+def test_anonymous_direct_word_store_accepts_unique_pure_multiply_source_once():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    tags = {"ins_addr": 0x10421}
+    source = CBinaryOp(
+        "Mull",
+        _stack(-2, codegen, name="local_2"),
+        _const(-1, codegen),
+        codegen=codegen,
+    )
+    carrier_definition = CAssignment(
+        _dirty(534, codegen),
+        source,
+        codegen=codegen,
+    )
+    low = CAssignment(
+        _mem(0x0B46, codegen, name="mem_0B46"),
+        _dirty(534, codegen),
+        codegen=codegen,
+        tags=tags,
+    )
+    high = CAssignment(
+        _mem(0x0B47, codegen, name="mem_0B47"),
+        CBinaryOp("Shr", _dirty(534, codegen), _const(8, codegen), codegen=codegen),
+        codegen=codegen,
+        tags=tags,
+    )
+    root = CStatements([carrier_definition, low, high], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x102E0, statements=root, body=root)
+    evidence = (DirectSegmentedGlobalStoreEvidence8616(0x0B46, 2, MemSpace.DS, 0x10421),)
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        (),
+        anonymous_direct_stores=evidence,
+        project=project,
+        stats=stats,
+    )
+
+    assert changed is True
+    assert len(root.statements) == 2
+    assignment = root.statements[1]
+    assert isinstance(assignment, CAssignment)
+    assert isinstance(assignment.lhs, CFunctionCall)
+    assert assignment.lhs.callee_target == "SEG_U16"
+    assert assignment.lhs.args[1].value == 0x0B46
+    assert assignment.rhs is source
+    assert stats.anonymous_direct_store_classified_fact_count == 1
+    assert stats.anonymous_direct_store_materialized_count == 1
+    assert stats.anonymous_direct_store_failure_count == 0
+
+
+def test_anonymous_direct_word_store_refuses_ambiguous_segment_evidence():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    tags = {"ins_addr": 0x1057C}
+    low = CAssignment(_mem(0x0B46, codegen), _const(1, codegen), codegen=codegen, tags=tags)
+    high = CAssignment(_mem(0x0B47, codegen), _const(0, codegen), codegen=codegen, tags=tags)
+    root = CStatements([low, high], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x10560, statements=root, body=root)
+    evidence = (
+        DirectSegmentedGlobalStoreEvidence8616(0x0B46, 2, MemSpace.DS, 0x1057C),
+        DirectSegmentedGlobalStoreEvidence8616(0x0B46, 2, MemSpace.ES, 0x1057C),
+    )
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        (),
+        anonymous_direct_stores=evidence,
+        project=project,
+        stats=stats,
+    )
+
+    assert changed is False
+    assert root.statements == [low, high]
+    assert stats.anonymous_direct_store_raw_fact_count == 2
+    assert stats.anonymous_direct_store_normalized_fact_count == 2
+    assert stats.anonymous_direct_store_classified_fact_count == 0
+    assert stats.anonymous_direct_store_materialized_count == 0
+
+
+def test_anonymous_direct_word_store_fails_closed_after_classifying_unsafe_pair():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    tags = {"ins_addr": 0x1057C}
+    low = CAssignment(
+        _mem(0x0B46, codegen),
+        CFunctionCall("side_effect", None, [], codegen=codegen),
+        codegen=codegen,
+        tags=tags,
+    )
+    high = CAssignment(_mem(0x0B47, codegen), _const(0, codegen), codegen=codegen, tags=tags)
+    root = CStatements([low, high], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x10560, statements=root, body=root)
+    evidence = (DirectSegmentedGlobalStoreEvidence8616(0x0B46, 2, MemSpace.DS, 0x1057C),)
+    stats = SegmentedGlobalLoadStats8616()
+
+    with pytest.raises(
+        PipelineHardError,
+        match="classified anonymous direct segmented-global stores were not materialized",
+    ):
+        materialize_direct_global_symbol_stores_from_evidence_8616(
+            codegen,
+            (),
+            anonymous_direct_stores=evidence,
+            project=project,
+            stats=stats,
+        )
+
+    assert root.statements == [low, high]
+    assert stats.anonymous_direct_store_classified_fact_count == 1
+    assert stats.anonymous_direct_store_materialized_count == 0
+    assert stats.anonymous_direct_store_failure_count == 1
+
+
+def test_anonymous_direct_global_cvariable_materializes_segment_helper_without_touching_lvalue():
+    class _Functions:
+        def __init__(self, function):
+            self._function = function
+
+        def function(self, *, addr=None, create=False, **_kwargs):
+            del addr, create
+            return self._function
+
+    load = SimpleNamespace(
+        address=0x108DB,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_AX), _mem_operand(X86_REG_INVALID, 0x0BA2)),
+    )
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=(load,)))
+    function = SimpleNamespace(addr=0x108D0, blocks=(block,))
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        kb=SimpleNamespace(functions=_Functions(function), labels={}),
+    )
+    codegen = _DummyCodegen()
+    loaded = _mem_word(0x0BA2, codegen)
+    destination = _stack(-4, codegen)
+    load_assignment = CAssignment(destination, loaded, codegen=codegen)
+    untouched_lvalue = _mem_word(0x0BA2, codegen)
+    store_assignment = CAssignment(untouched_lvalue, _const(7, codegen), codegen=codegen)
+    root = CStatements([load_assignment, store_assignment], addr=0x108D0, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x108D0, statements=root, body=root)
+
+    changed = materialize_named_segmented_global_loads_8616(project, codegen, {})
+
+    assert changed is True
+    assert isinstance(load_assignment.rhs, CFunctionCall)
+    assert load_assignment.rhs.callee_target == "SEG_U16"
+    assert load_assignment.rhs.args[0].variable.name == "ds"
+    assert load_assignment.rhs.args[1].value == 0x0BA2
+    assert store_assignment.lhs is untouched_lvalue
+    stats = codegen._inertia_segmented_global_load_stats_8616
+    assert stats.anonymous_direct_raw_fact_count == 1
+    assert stats.anonymous_direct_normalized_fact_count == 1
+    assert stats.anonymous_direct_classified_fact_count == 1
+    assert stats.anonymous_direct_materialized_count == 1
+    assert stats.anonymous_direct_failure_count == 0
 
 
 def test_compare_register_global_carrier_evidence_from_direct_load_cmp():
@@ -418,6 +769,75 @@ def test_indexed_segmented_global_load_materializes_array_element():
     assert isinstance(assignment.rhs.index, CBinaryOp)
     assert assignment.rhs.index.op == "Sub"
     assert stats.indexed_materialized_count == 1
+
+
+def test_sidecar_free_indexed_global_recovery_uses_exact_binary_identities():
+    summaries = [
+        InsnSummary8616(
+            "mov",
+            op0_kind="reg",
+            op0_value="ax",
+            op1_kind="indexed_mem",
+            op1_value=0x08F0,
+            op1_size=2,
+        ),
+        InsnSummary8616(
+            "mov",
+            op0_kind="indexed_mem",
+            op0_value=0x0B4C,
+            op1_kind="reg",
+            op1_value="ax",
+            op0_size=2,
+        ),
+        InsnSummary8616(
+            "mov",
+            op0_kind="reg",
+            op0_value="dx",
+            op1_kind="indexed_mem",
+            op1_value=0x08F0,
+            op1_size=2,
+        ),
+    ]
+
+    evidence = recover_indexed_segmented_global_evidence_8616(summaries, None)
+
+    assert evidence == (
+        IndexedSegmentedGlobalEvidence8616(0x08F0, "g_08F0", 0, 2),
+        IndexedSegmentedGlobalEvidence8616(0x0B4C, "g_0B4C", 0, 2),
+    )
+
+
+def test_indexed_global_recovery_refuses_mismatched_sidecar_join():
+    summaries = [
+        InsnSummary8616(
+            "mov",
+            op0_kind="reg",
+            op0_value="ax",
+            op1_kind="indexed_mem",
+            op1_value=0x08F0,
+            op1_size=2,
+        ),
+        InsnSummary8616(
+            "mov",
+            op0_kind="indexed_mem",
+            op0_value=0x0B4C,
+            op1_kind="reg",
+            op1_value="ax",
+            op0_size=2,
+        ),
+    ]
+    cod_metadata = SimpleNamespace(
+        global_refs=(
+            SimpleNamespace(
+                indexed=True,
+                name="abarPerm",
+                relative_disp=0,
+                width=2,
+            ),
+        ),
+    )
+
+    assert recover_indexed_segmented_global_evidence_8616(summaries, cod_metadata) == ()
 
 
 def test_indexed_segmented_global_load_materializes_array_element_in_if_condition():
@@ -671,6 +1091,15 @@ def test_named_global_aggregate_reconcile_refuses_mismatched_registered_type():
     assert stats.classified_fact_count == 0
     assert stats.materialized_count == 0
     assert stats.failure_count == 0
+
+
+def test_named_global_aggregate_reconcile_initializes_empty_declaration_contract():
+    codegen = _DummyCodegen()
+
+    changed = reconcile_registered_named_global_aggregate_declarations_8616(codegen)
+
+    assert changed is False
+    assert codegen._inertia_global_declaration_specs_8616 == ()
 
 
 def test_indexed_segmented_global_materializes_heapsort_call_and_loop_shape():
@@ -968,6 +1397,77 @@ def test_indexed_byte_load_prefers_word_stride_projection_when_word_array_eviden
         ("struct g_work_entry { unsigned char field_0; unsigned char field_1; }", "g_work", 1),
     )
     assert stats.indexed_materialized_count == 1
+
+
+def test_indexed_byte_load_accepts_lowered_runtime_ds_state() -> None:
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    index = _stack(-4, codegen, name="i")
+    offset = CBinaryOp(
+        "Add",
+        _const(0x42, codegen),
+        CBinaryOp("Shl", index, _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    runtime_ds = runtime_segment_push_source_cvar_8616(
+        "ds",
+        codegen=codegen,
+        variable_type=SimTypeShort(False),
+        function_addr=0x4010,
+    )
+    assert runtime_ds is not None
+    rhs = CFunctionCall("SEG_U8", None, [runtime_ds, offset], codegen=codegen)
+    assignment = CAssignment(_stack(-2, codegen), rhs, codegen=codegen)
+    root = CStatements([assignment], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
+        project,
+        codegen,
+        (
+            IndexedSegmentedGlobalEvidence8616(0x42, "g_work", 0, 1),
+            IndexedSegmentedGlobalEvidence8616(0x42, "g_work", 0, 2),
+        ),
+    )
+
+    assert changed is True
+    assert isinstance(assignment.rhs, CVariableField)
+    assert assignment.rhs.field.field == "field_0"
+
+
+def test_indexed_byte_load_refuses_lowered_runtime_es_state() -> None:
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    index = _stack(-4, codegen, name="i")
+    offset = CBinaryOp(
+        "Add",
+        _const(0x42, codegen),
+        CBinaryOp("Shl", index, _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    runtime_es = runtime_segment_push_source_cvar_8616(
+        "es",
+        codegen=codegen,
+        variable_type=SimTypeShort(False),
+        function_addr=0x4010,
+    )
+    assert runtime_es is not None
+    rhs = CFunctionCall("SEG_U8", None, [runtime_es, offset], codegen=codegen)
+    assignment = CAssignment(_stack(-2, codegen), rhs, codegen=codegen)
+    root = CStatements([assignment], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
+        project,
+        codegen,
+        (
+            IndexedSegmentedGlobalEvidence8616(0x42, "g_work", 0, 1),
+            IndexedSegmentedGlobalEvidence8616(0x42, "g_work", 0, 2),
+        ),
+    )
+
+    assert changed is False
+    assert assignment.rhs is rhs
 
 
 def test_indexed_word_load_propagates_proven_struct_type_to_stack_copy():
@@ -1604,6 +2104,162 @@ def test_indexed_word_store_lvalue_materializes_source_index_evidence():
     assert assignment.lhs.index is up_var
     assert assignment.rhs.index is down_var
     assert stats.indexed_store_lvalue_materialized_count == 1
+
+
+def test_indexed_word_store_preserves_exact_sidecar_free_affine_source() -> None:
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    index_var = _stack(-4, codegen, name="row")
+    lhs = _global_indexed("g_0044", 0x44, index_var, codegen)
+    rhs = _global_indexed(
+        "g_0044",
+        0x44,
+        CBinaryOp("Sub", index_var, _const(18, codegen), codegen=codegen),
+        codegen,
+    )
+    assignment = CAssignment(lhs, rhs, codegen=codegen)
+    root = CStatements([assignment], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        statements=root,
+        body=root,
+        variables_in_use={index_var.variable: index_var},
+    )
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
+        project,
+        codegen,
+        (
+            IndexedSegmentedGlobalEvidence8616(0x44, "g_0044", 0, 2),
+            IndexedSegmentedGlobalEvidence8616(0x20, "g_0020", 0, 2),
+        ),
+        store_evidence=(
+            IndexedSegmentedGlobalStoreEvidence8616(
+                0x44,
+                2,
+                -4,
+                1,
+                0x1062,
+                0x20,
+                2,
+                -4,
+                1,
+            ),
+        ),
+        stats=stats,
+    )
+
+    assert changed is True
+    assert isinstance(assignment.rhs, CIndexedVariable)
+    assert isinstance(assignment.rhs.variable, CVariable)
+    assert isinstance(assignment.rhs.variable.variable, SimMemoryVariable)
+    assert assignment.rhs.variable.variable.addr == 0x20
+    assert assignment.rhs.variable.name == "g_0020"
+    assert assignment.rhs.index is index_var
+    assert stats.indexed_store_affine_source_raw_fact_count == 1
+    assert stats.indexed_store_affine_source_classified_count == 1
+    assert stats.indexed_store_affine_source_materialized_count == 1
+    assert stats.indexed_store_affine_source_failure_count == 0
+
+
+def test_indexed_word_store_rebases_immediately_adjacent_affine_source() -> None:
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    index_var = _stack(-4, codegen, name="row")
+    assignment = CAssignment(
+        _global_indexed("g_0044", 0x44, index_var, codegen),
+        _global_indexed("g_0042", 0x42, index_var, codegen),
+        codegen=codegen,
+    )
+    root = CStatements([assignment], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        statements=root,
+        body=root,
+        variables_in_use={index_var.variable: index_var},
+    )
+
+    changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
+        project,
+        codegen,
+        (
+            IndexedSegmentedGlobalEvidence8616(0x44, "g_0044", 0, 2),
+            IndexedSegmentedGlobalEvidence8616(0x42, "g_0042", 0, 2),
+        ),
+        store_evidence=(
+            IndexedSegmentedGlobalStoreEvidence8616(
+                0x44,
+                2,
+                -4,
+                1,
+                0x1062,
+                0x42,
+                2,
+                -4,
+                1,
+            ),
+        ),
+    )
+
+    assert changed is True
+    assert isinstance(assignment.rhs, CIndexedVariable)
+    assert assignment.rhs.variable.name == "g_0044"
+    assert isinstance(assignment.rhs.index, CBinaryOp)
+    assert assignment.rhs.index.op == "Sub"
+    assert assignment.rhs.index.lhs is index_var
+    assert _constant_int_8616(assignment.rhs.index.rhs) == 1
+
+
+def test_indexed_word_store_keeps_named_source_identity() -> None:
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    index_var = _stack(-4, codegen, name="row")
+    assignment = CAssignment(
+        _global_indexed("destination", 0x44, index_var, codegen),
+        _global_indexed("source", 0x42, index_var, codegen),
+        codegen=codegen,
+    )
+    root = CStatements([assignment], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        statements=root,
+        body=root,
+        variables_in_use={index_var.variable: index_var},
+    )
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
+        project,
+        codegen,
+        (
+            IndexedSegmentedGlobalEvidence8616(0x44, "destination", 0, 2),
+            IndexedSegmentedGlobalEvidence8616(0x42, "source", 0, 2),
+        ),
+        store_evidence=(
+            IndexedSegmentedGlobalStoreEvidence8616(
+                0x44,
+                2,
+                -4,
+                1,
+                0x1062,
+                0x42,
+                2,
+                -4,
+                1,
+            ),
+        ),
+        stats=stats,
+    )
+
+    assert changed is False
+    assert isinstance(assignment.rhs, CIndexedVariable)
+    assert assignment.rhs.variable.name == "source"
+    assert assignment.rhs.index is index_var
+    assert stats.indexed_store_affine_source_raw_fact_count == 1
+    assert stats.indexed_store_affine_source_classified_count == 0
+    assert stats.indexed_store_affine_source_materialized_count == 0
+    assert stats.indexed_store_affine_source_failure_count == 0
 
 
 def test_indexed_word_store_lvalue_materializes_from_store_index_evidence():
@@ -2424,6 +3080,252 @@ def test_indexed_byte_store_materializes_exact_stack_source() -> None:
     assert assignment.rhs is source
     assert stats.indexed_byte_store_lvalue_materialized_count == 1
     assert stats.indexed_byte_store_source_materialized_count == 1
+
+
+def test_instruction_backed_mk_fp_byte_stores_materialize_exact_lvalues_and_sources() -> None:
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    index = _stack(-2, codegen, name="iRow")
+    source = _stack(-114, codegen, name="iLength")
+    divisor = _stack(-116, codegen, name="iColorMax")
+
+    def _raw_store(ins_addr: int, rhs: object) -> CAssignment:
+        pointer = CBinaryOp(
+            "Add",
+            CFunctionCall(
+                "MK_FP",
+                None,
+                [_dirty(ins_addr, codegen), _const(0, codegen)],
+                codegen=codegen,
+            ),
+            _dirty(ins_addr + 1, codegen),
+            codegen=codegen,
+        )
+        return CAssignment(
+            _deref(pointer, codegen),
+            rhs,
+            codegen=codegen,
+            tags={"ins_addr": ins_addr},
+        )
+
+    low_store = _raw_store(0x1063A, _dirty(90, codegen))
+    constant_high_store = _raw_store(0x1064C, _const(7, codegen))
+    remainder_high_store = _raw_store(0x10662, _dirty(91, codegen))
+    root = CStatements(
+        [low_store, constant_high_store, remainder_high_store],
+        addr=0x10560,
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x10560,
+        statements=root,
+        body=root,
+        variables_in_use={
+            index.variable: index,
+            source.variable: source,
+            divisor.variable: divisor,
+        },
+    )
+    evidence = (
+        IndexedSegmentedGlobalEvidence8616(0x8F0, "g_08F0", 0, 1),
+        IndexedSegmentedGlobalEvidence8616(0x8F1, "g_08F1", 0, 1),
+    )
+    store_evidence = (
+        IndexedSegmentedGlobalStoreEvidence8616(
+            0x8F0,
+            1,
+            -2,
+            1,
+            0x1063A,
+            source_stack_offset=-114,
+            source_stack_width=1,
+        ),
+        IndexedSegmentedGlobalStoreEvidence8616(0x8F1, 1, -2, 1, 0x1064C),
+        IndexedSegmentedGlobalStoreEvidence8616(
+            0x8F1,
+            1,
+            -2,
+            1,
+            0x10662,
+            source_signed_remainder=SignedRemainderStackSource8616(
+                -114,
+                -116,
+                2,
+                1,
+            ),
+        ),
+    )
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
+        project,
+        codegen,
+        evidence,
+        store_evidence=store_evidence,
+        stats=stats,
+    )
+
+    assert changed is True
+    assert isinstance(low_store.lhs, CVariableField)
+    assert low_store.lhs.field.field == "field_0"
+    assert isinstance(low_store.lhs.variable, CIndexedVariable)
+    assert low_store.lhs.variable.variable.name == "g_08F0"
+    assert low_store.lhs.variable.index is index
+    assert low_store.rhs is source
+    assert isinstance(constant_high_store.lhs, CVariableField)
+    assert constant_high_store.lhs.field.field == "field_0"
+    assert isinstance(constant_high_store.lhs.variable, CIndexedVariable)
+    assert constant_high_store.lhs.variable.variable.name == "g_08F1"
+    assert constant_high_store.lhs.variable.index is index
+    assert isinstance(constant_high_store.rhs, CConstant)
+    assert constant_high_store.rhs.value == 7
+    assert isinstance(remainder_high_store.lhs, CVariableField)
+    assert isinstance(remainder_high_store.lhs.variable, CIndexedVariable)
+    assert remainder_high_store.lhs.variable.variable.name == "g_08F1"
+    assert remainder_high_store.lhs.variable.index is index
+    assert isinstance(remainder_high_store.rhs, CBinaryOp)
+    assert remainder_high_store.rhs.op == "Add"
+    assert isinstance(remainder_high_store.rhs.lhs, CBinaryOp)
+    assert remainder_high_store.rhs.lhs.op == "Mod"
+    assert isinstance(remainder_high_store.rhs.lhs.lhs, CTypeCast)
+    assert remainder_high_store.rhs.lhs.lhs.expr is source
+    assert isinstance(remainder_high_store.rhs.lhs.rhs, CTypeCast)
+    assert remainder_high_store.rhs.lhs.rhs.expr is divisor
+    assert stats.indexed_store_instruction_classified_count == 3
+    assert stats.indexed_store_instruction_materialized_count == 3
+    assert stats.indexed_store_instruction_failure_count == 0
+
+    rerun_stats = SegmentedGlobalLoadStats8616()
+    rerun_changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
+        project,
+        codegen,
+        evidence,
+        store_evidence=store_evidence,
+        stats=rerun_stats,
+    )
+
+    assert rerun_changed is False
+    assert rerun_stats.indexed_store_instruction_classified_count == 3
+    assert rerun_stats.indexed_store_instruction_materialized_count == 3
+    assert rerun_stats.indexed_store_instruction_failure_count == 0
+
+
+def test_instruction_backed_mk_fp_store_refuses_ambiguous_statement_join() -> None:
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    index = _stack(-2, codegen, name="iRow")
+    pointer = CBinaryOp(
+        "Add",
+        CFunctionCall(
+            "MK_FP",
+            None,
+            [_dirty(1, codegen), _const(0, codegen)],
+            codegen=codegen,
+        ),
+        _dirty(2, codegen),
+        codegen=codegen,
+    )
+    first_store = CAssignment(
+        _deref(pointer, codegen),
+        _const(1, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1064C},
+    )
+    second_store = CAssignment(
+        _deref(pointer, codegen),
+        _const(2, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1064C},
+    )
+    root = CStatements([first_store, second_store], addr=0x10560, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x10560,
+        statements=root,
+        body=root,
+        variables_in_use={index.variable: index},
+    )
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
+        project,
+        codegen,
+        (IndexedSegmentedGlobalEvidence8616(0x8F1, "g_08F1", 0, 1),),
+        store_evidence=(
+            IndexedSegmentedGlobalStoreEvidence8616(
+                0x8F1,
+                1,
+                -2,
+                1,
+                0x1064C,
+            ),
+        ),
+        stats=stats,
+    )
+
+    assert changed is False
+    assert isinstance(first_store.lhs, CUnaryOp)
+    assert isinstance(second_store.lhs, CUnaryOp)
+    assert stats.indexed_store_instruction_classified_count == 0
+    assert stats.indexed_store_instruction_materialized_count == 0
+    assert stats.indexed_store_instruction_failure_count == 1
+
+
+def test_instruction_backed_mk_fp_store_fails_closed_for_missing_proven_source() -> None:
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    index = _stack(-2, codegen, name="iRow")
+    pointer = CBinaryOp(
+        "Add",
+        CFunctionCall(
+            "MK_FP",
+            None,
+            [_dirty(1, codegen), _const(0, codegen)],
+            codegen=codegen,
+        ),
+        _dirty(2, codegen),
+        codegen=codegen,
+    )
+    store = CAssignment(
+        _deref(pointer, codegen),
+        _dirty(3, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1063A},
+    )
+    root = CStatements([store], addr=0x10560, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x10560,
+        statements=root,
+        body=root,
+        variables_in_use={index.variable: index},
+    )
+    stats = SegmentedGlobalLoadStats8616()
+
+    with pytest.raises(
+        PipelineHardError,
+        match="classified instruction-backed indexed-global stores",
+    ):
+        materialize_indexed_segmented_global_loads_from_evidence_8616(
+            project,
+            codegen,
+            (IndexedSegmentedGlobalEvidence8616(0x8F0, "g_08F0", 0, 1),),
+            store_evidence=(
+                IndexedSegmentedGlobalStoreEvidence8616(
+                    0x8F0,
+                    1,
+                    -2,
+                    1,
+                    0x1063A,
+                    source_stack_offset=-114,
+                    source_stack_width=1,
+                ),
+            ),
+            stats=stats,
+        )
+
+    assert isinstance(store.lhs, CUnaryOp)
+    assert stats.indexed_store_instruction_classified_count == 1
+    assert stats.indexed_store_instruction_materialized_count == 0
+    assert stats.indexed_store_instruction_failure_count == 1
 
 
 def test_indexed_byte_store_materializes_signed_remainder_source() -> None:
@@ -3651,6 +4553,128 @@ def test_collect_scalar_call_return_global_store_after_stack_cleanup(monkeypatch
     )
 
 
+def test_sidecar_free_scalar_call_return_reconnects_standalone_ax_carrier():
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    codegen.project = project
+    carrier = _reg(project, codegen, "ax")
+    call = CFunctionCall(
+        "sub_12a29",
+        None,
+        [CConstant(43, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+        tags={"ins_addr": 0x10021},
+    )
+    call_statement = CExpressionStatement(call, codegen=codegen)
+    low_store = CAssignment(
+        _mem(0xBA2, codegen),
+        carrier,
+        codegen=codegen,
+        tags={"ins_addr": 0x10027},
+    )
+    high_store = CAssignment(
+        _mem(0xBA3, codegen),
+        CBinaryOp(
+            "Shr",
+            carrier,
+            CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x10027},
+    )
+    root = CStatements([call_statement, low_store, high_store], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x10010, statements=root, body=root)
+    evidence = DirectGlobalCallReturnStoreEvidence8616(
+        offset=0xBA2,
+        width=2,
+        source_call_name="sub_12a29",
+        source_call_target=0x12A29,
+        source_call_ins_addr=0x10021,
+        low_store_ins_addr=0x10027,
+        high_store_ins_addr=None,
+    )
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        (),
+        direct_call_return_stores=(evidence,),
+        stats=stats,
+    )
+
+    assert changed is True
+    assignment = root.statements[0]
+    assert isinstance(assignment, CAssignment)
+    assert assignment.lhs is carrier
+    assert assignment.rhs is call
+    assert root.statements[1:] == [low_store, high_store]
+    assert stats.direct_symbol_call_return_materialized_count == 1
+    assert stats.materialized_count == 1
+    assert stats.refused_no_evidence == 0
+
+    repeated_changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        (),
+        direct_call_return_stores=(evidence,),
+    )
+
+    assert repeated_changed is False
+    assert root.statements[0] is assignment
+
+
+def test_sidecar_free_scalar_call_return_refuses_inexact_store_tag():
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    codegen.project = project
+    carrier = _reg(project, codegen, "ax")
+    call = CFunctionCall(
+        "sub_12a29",
+        None,
+        [],
+        codegen=codegen,
+        tags={"ins_addr": 0x10021},
+    )
+    call_statement = CExpressionStatement(call, codegen=codegen)
+    low_store = CAssignment(
+        _mem(0xBA2, codegen),
+        carrier,
+        codegen=codegen,
+        tags={"ins_addr": 0x10027},
+    )
+    high_store = CAssignment(
+        _mem(0xBA3, codegen),
+        CBinaryOp(
+            "Shr",
+            carrier,
+            CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x10028},
+    )
+    root = CStatements([call_statement, low_store, high_store], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x10010, statements=root, body=root)
+    evidence = DirectGlobalCallReturnStoreEvidence8616(
+        offset=0xBA2,
+        width=2,
+        source_call_name="sub_12a29",
+        source_call_target=0x12A29,
+        source_call_ins_addr=0x10021,
+        low_store_ins_addr=0x10027,
+        high_store_ins_addr=None,
+    )
+
+    changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        (),
+        direct_call_return_stores=(evidence,),
+    )
+
+    assert changed is False
+    assert root.statements == [call_statement, low_store, high_store]
+
+
 def test_scalar_call_return_global_store_consumes_only_exact_ax_carrier():
     project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
     codegen = _DummyCodegen()
@@ -3962,6 +4986,171 @@ def test_direct_global_call_return_store_folds_evidenced_nested_carrier_group():
 
     assert repeated_changed is False
     assert store_group.statements == [assignment]
+
+
+def test_sidecar_free_dword_call_return_store_materializes_generic_global():
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    codegen.project = project
+    clock_call = CFunctionCall(
+        "sub_1137e",
+        None,
+        [],
+        codegen=codegen,
+        tags={"ins_addr": 0x10683},
+    )
+    call_group = CStatements(
+        [
+            CExpressionStatement(
+                clock_call,
+                codegen=codegen,
+                tags={"ins_addr": 0x10683},
+            )
+        ],
+        codegen=codegen,
+    )
+    stale_low = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2"),
+        codegen=codegen,
+    )
+    stale_copy = CAssignment(_reg(project, codegen, "ax"), stale_low, codegen=codegen)
+    low_store = CAssignment(
+        _mem(0xBA6, codegen, name="g_ba6"),
+        stale_low,
+        codegen=codegen,
+        tags={"ins_addr": 0x10686},
+    )
+    low_high_store = CAssignment(
+        _mem(0xBA7, codegen, name="g_ba7"),
+        CBinaryOp(
+            "Shr",
+            stale_low,
+            CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x10686},
+    )
+    dx = _reg(project, codegen, "dx")
+    high_store = CAssignment(
+        _mem(0xBA8, codegen, name="g_ba8"),
+        dx,
+        codegen=codegen,
+        tags={"ins_addr": 0x10689},
+    )
+    high_high_store = CAssignment(
+        _mem(0xBA9, codegen, name="g_ba9"),
+        CBinaryOp(
+            "Shr",
+            dx,
+            CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags={"ins_addr": 0x10689},
+    )
+    store_group = CStatements(
+        [stale_copy, low_store, low_high_store, high_store, high_high_store],
+        codegen=codegen,
+    )
+    root = CStatements([call_group, store_group], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x10678, statements=root, body=root)
+    evidence = DirectGlobalCallReturnStoreEvidence8616(
+        offset=0xBA6,
+        width=4,
+        source_call_name="sub_1137e",
+        source_call_target=0x1137E,
+        source_call_ins_addr=0x10683,
+        low_store_ins_addr=0x10686,
+        high_store_ins_addr=0x10689,
+    )
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        (),
+        direct_call_return_stores=(evidence,),
+        stats=stats,
+    )
+
+    assert changed is True
+    assert call_group.statements == []
+    assert len(store_group.statements) == 1
+    assignment = store_group.statements[0]
+    assert isinstance(assignment, CAssignment)
+    assert isinstance(assignment.lhs, CVariable)
+    assert assignment.lhs.variable.name == "g_0BA6"
+    assert assignment.lhs.variable.size == 4
+    assert assignment.rhs is clock_call
+    assert stats.direct_symbol_call_return_materialized_count == 1
+    assert codegen._inertia_global_declaration_specs_8616 == (
+        ("unsigned long", "g_0BA6", None),
+    )
+
+
+def test_sidecar_free_dword_update_refs_require_exact_adjacent_carry_word():
+    summaries = [
+        InsnSummary8616("add", "direct_mem", 0x132, "imm", 30, 2, 2, 0x10408),
+        InsnSummary8616("adc", "direct_mem", 0x134, "imm", 0, 2, 2, 0x1040D),
+    ]
+
+    refs = _sidecar_free_dword_update_refs_8616(summaries)
+
+    assert refs == (
+        DirectGlobalSymbolRef8616(0x132, "g_0132", 0, 4, 0),
+        DirectGlobalSymbolRef8616(0x132, "g_0132", 0, 2, 2),
+        DirectGlobalSymbolRef8616(0x134, "g_0132", 2, 2, 2),
+    )
+
+
+def test_sidecar_free_dword_update_refs_wait_for_materialized_low_word_identity():
+    codegen = _DummyCodegen()
+    summaries = [
+        InsnSummary8616("add", "direct_mem", 0x132, "imm", 30, 2, 2, 0x10408),
+        InsnSummary8616("adc", "direct_mem", 0x134, "imm", 0, 2, 2, 0x1040D),
+    ]
+
+    assert _materialized_sidecar_free_dword_update_refs_8616(codegen, summaries) == ()
+
+    codegen._inertia_global_storage_identity_facts_8616 = (
+        GlobalStorageIdentityFact8616(
+            space=MemSpace.DS,
+            offset=0x132,
+            width=2,
+            name="g_0132",
+            evidence_addr=0x10408,
+            kind=StorageIdentityEvidenceKind8616.DIRECT_GLOBAL_UPDATE,
+        ),
+    )
+    assert _materialized_sidecar_free_dword_update_refs_8616(codegen, summaries) == ()
+
+    switch = CSwitchCase(_const(1, codegen), [], None, codegen=codegen)
+    root = CStatements([switch], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+
+    assert _materialized_sidecar_free_dword_update_refs_8616(
+        codegen,
+        summaries,
+    ) == _sidecar_free_dword_update_refs_8616(summaries)
+
+
+@pytest.mark.parametrize(
+    "high",
+    (
+        InsnSummary8616("adc", "direct_mem", 0x136, "imm", 0, 2, 2, 0x1040D),
+        InsnSummary8616("adc", "direct_mem", 0x134, "imm", 1, 2, 2, 0x1040D),
+        InsnSummary8616("sbb", "direct_mem", 0x134, "imm", 0, 2, 2, 0x1040D),
+    ),
+)
+def test_sidecar_free_dword_update_refs_refuse_nonmatching_high_word(
+    high: InsnSummary8616,
+):
+    summaries = [
+        InsnSummary8616("add", "direct_mem", 0x132, "imm", 30, 2, 2, 0x10408),
+        high,
+    ]
+
+    assert _sidecar_free_dword_update_refs_8616(summaries) == ()
 
 
 def test_direct_global_symbol_store_pairs_fold_call_return_evidence_from_byte_stores():
@@ -5068,9 +6257,32 @@ def test_direct_global_word_store_evidence_widens_low_byte_lvalue():
 
 def test_collect_direct_global_boolean_store_evidence_from_sbb_neg_idiom():
     summaries = [
-        InsnSummary8616("cmp", op0_kind="direct_mem", op0_value=0xB46, op1_kind="imm", op1_value=1, op0_size=2),
-        InsnSummary8616("sbb", op0_kind="reg", op0_value="ax", op1_kind="reg", op1_value="ax", op0_size=2, op1_size=2),
-        InsnSummary8616("neg", op0_kind="reg", op0_value="ax", op0_size=2),
+        InsnSummary8616(
+            "cmp",
+            op0_kind="direct_mem",
+            op0_value=0xB46,
+            op1_kind="imm",
+            op1_value=1,
+            op0_size=2,
+            address=0x10418,
+        ),
+        InsnSummary8616(
+            "sbb",
+            op0_kind="reg",
+            op0_value="ax",
+            op1_kind="reg",
+            op1_value="ax",
+            op0_size=2,
+            op1_size=2,
+            address=0x1041D,
+        ),
+        InsnSummary8616(
+            "neg",
+            op0_kind="reg",
+            op0_value="ax",
+            op0_size=2,
+            address=0x1041F,
+        ),
         InsnSummary8616(
             "mov",
             op0_kind="direct_mem",
@@ -5093,7 +6305,29 @@ def test_collect_direct_global_boolean_store_evidence_from_sbb_neg_idiom():
             dest_offset=0xB46,
             dest_width=2,
             store_ins_addr=0x1234,
+            compare_ins_addr=0x10418,
+            sbb_ins_addr=0x1041D,
+            neg_ins_addr=0x1041F,
         ),
+    )
+    assert evidence[0].carrier_ins_addrs == (0x10418, 0x1041D, 0x1041F)
+
+
+def test_sidecar_free_boolean_store_refs_cover_source_and_destination():
+    evidence = (
+        DirectGlobalBooleanStoreEvidence8616(
+            source_offset=0xB46,
+            source_width=2,
+            compare_value=1,
+            dest_offset=0xB48,
+            dest_width=2,
+            store_ins_addr=0x10421,
+        ),
+    )
+
+    assert _sidecar_free_boolean_store_refs_8616(evidence) == (
+        DirectGlobalSymbolRef8616(0xB46, "g_0B46", 0, 2, 0),
+        DirectGlobalSymbolRef8616(0xB48, "g_0B48", 0, 2, 0),
     )
 
 
@@ -5121,6 +6355,9 @@ def test_direct_global_boolean_store_evidence_materializes_explicit_condition_as
                 dest_offset=0xB46,
                 dest_width=2,
                 store_ins_addr=0x1234,
+                compare_ins_addr=0x10418,
+                sbb_ins_addr=0x1041D,
+                neg_ins_addr=0x1041F,
             ),
         ),
         stats=stats,
@@ -5133,6 +6370,10 @@ def test_direct_global_boolean_store_evidence_materializes_explicit_condition_as
     assert assignment.rhs.lhs.variable.name == "fSound"
     assert assignment.rhs.rhs.value == 1
     assert stats.direct_symbol_boolean_store_materialized_count == 1
+    assert (
+        codegen._inertia_consumed_direct_global_boolean_carrier_ins_addrs_8616
+        == frozenset({0x10418, 0x1041D, 0x1041F})
+    )
 
 
 def test_direct_global_boolean_store_prunes_same_instruction_switch_artifact():

@@ -70,7 +70,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CTypeCast,
     CUnaryOp,
 )
-from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
+from angr.sim_type import SimType, SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from inertia_decompiler.telemetry import span
@@ -87,9 +87,11 @@ from .callsite_summary import (
     CallsitePushExprOp8616,
     CallsitePushSourceKind8616,
     CallsiteSummary8616,
+    StructuredCallKind8616,
     bind_structured_callsite_identity_8616,
     logical_argument_widths_from_callsite_8616,
     reconcile_materialized_call_argument_shape_8616,
+    structured_call_kind_8616,
     structured_callsite_addr_8616,
     summarize_x86_16_callsite,
 )
@@ -139,6 +141,9 @@ __all__ = [
     "_recover_missing_direct_calls_from_evidence_8616",
     "_materialize_stdlib_call_chains_8616",
     "_materialize_callsite_stack_arguments_8616",
+    "_bind_call_target_identity_consumer_8616",
+    "_bind_segment_push_source_lowerer_8616",
+    "_replay_call_target_identity_consumer_8616",
     "_prune_scalar_global_high_byte_call_arg_remnants_8616",
     "prune_consumed_segmented_stack_byte_arg_stores_8616",
     "replay_callsite_stack_arguments_after_regeneration_8616",
@@ -159,6 +164,32 @@ _RUNTIME_SEGMENT_HELPERS_8616 = frozenset(
 )
 
 
+class SegmentPushSourceLowerer8616(Protocol):
+    """Types/Lowering service used to materialize one proven segment PUSH."""
+
+    def __call__(
+        self,
+        segment_name: str,
+        *,
+        codegen: object,
+        variable_type: SimType | None,
+        function_addr: int,
+    ) -> structured_c.CVariable | None:
+        """Return the explicit runtime-state C carrier for a proven segment source."""
+
+
+class CallTargetIdentityConsumer8616(Protocol):
+    """Types/Lowering service for replaying proven direct-call identities."""
+
+    def __call__(
+        self,
+        project: object,
+        codegen: object,
+    ) -> bool:
+        """Apply only call-target identities already proven by typed evidence."""
+        ...
+
+
 class _CallsiteMaterializationControlCarrier8616(Protocol):
     """Typed Inertia call-materialization state carried by an angr codegen object."""
 
@@ -171,6 +202,42 @@ class _CallsiteMaterializationControlCarrier8616(Protocol):
     _inertia_postprocess_changed: bool
     _inertia_callsite_regen_replay_conservative_no_prune_8616: int
     _inertia_callsite_return_exprs_8616: dict[int, StructuredAstValue]
+    _inertia_call_target_identity_consumer_8616: CallTargetIdentityConsumer8616
+    _inertia_segment_push_source_lowerer_8616: SegmentPushSourceLowerer8616
+
+
+def _bind_call_target_identity_consumer_8616(
+    codegen: StructuredCodegenValue,
+    consumer: CallTargetIdentityConsumer8616,
+) -> None:
+    """Bind the Types/Lowering call-target service at the dynamic codegen boundary."""
+    carrier = cast(_CallsiteMaterializationControlCarrier8616, codegen)
+    carrier._inertia_call_target_identity_consumer_8616 = consumer
+
+
+def _replay_call_target_identity_consumer_8616(
+    project: AngrProjectValue,
+    codegen: StructuredCodegenValue,
+) -> bool:
+    """Replay the bound Types/Lowering target consumer after call AST rebuilding."""
+    carrier = cast(_CallsiteMaterializationControlCarrier8616, codegen)
+    try:
+        consumer = carrier._inertia_call_target_identity_consumer_8616
+    except AttributeError as exc:
+        raise PipelineHardError(
+            "call-target identity replay requires a Structuring-bound Types/Lowering consumer",
+            layer="rewrite:callsite_compatibility",
+        ) from exc
+    return bool(consumer(project, codegen))
+
+
+def _bind_segment_push_source_lowerer_8616(
+    codegen: StructuredCodegenValue,
+    lowerer: SegmentPushSourceLowerer8616,
+) -> None:
+    """Bind the Types/Lowering segment-source service at the dynamic codegen boundary."""
+    carrier = cast(_CallsiteMaterializationControlCarrier8616, codegen)
+    carrier._inertia_segment_push_source_lowerer_8616 = lowerer
 
 
 def _ensure_callsite_materialization_controls_8616(
@@ -1223,6 +1290,7 @@ def _callsite_materialization_signature_8616(
                 _normalize_signature_value_8616(summary.callsite_addr),
                 _normalize_signature_value_8616(summary.target_addr),
                 _normalize_signature_value_8616(summary.arg_count),
+                _normalize_signature_value_8616(_boundary_tuple_8616(node.args or ())),
                 _normalize_signature_value_8616(_boundary_tuple_8616(summary.arg_widths or ())),
                 _normalize_signature_value_8616(summary.stack_cleanup),
                 _normalize_signature_value_8616(_boundary_tuple_8616(summary.push_arg_sources or ())),
@@ -4697,6 +4765,8 @@ def _materialize_callsite_prototypes_8616(project: StructuredAstValue, codegen: 
             if summary.arg_count == 0 and _boundary_tuple_8616(node.args or ()):
                 continue
             call_name = _call_node_name_8616(node)
+            if _is_runtime_segment_helper_call_8616(node):
+                continue
             if preferred_known_helper_signature_decl(call_name or "") is not None:
                 continue
             if _apply_summary_prototype_8616(project, node.callee_func, summary):
@@ -4852,6 +4922,7 @@ def _conservative_call_arg_seed_8616(
                         [-1] * len(direct_args),
                         [],
                         call_name=call_name,
+                        push_sources=tuple(ordered_sources),
                     )
                     if normalized_args is not None and all_arg_exprs_are_non_segment_registers_fn(normalized_args):
                         seeded_args = tuple(normalized_args)
@@ -7423,6 +7494,42 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
     def _segment_register_expr(seg_name: str) -> StructuredAstValue:
         return _register_expr_from_name_8616(seg_name)
 
+    def _lower_proven_segment_push_source_8616(
+        segment_name: str,
+        push_sources: tuple[StructuredAstValue, ...],
+    ) -> StructuredAstValue:
+        """Delegate an exact segment PUSH source to the bound Types/Lowering service."""
+        proven_segments = {
+            source[1].lower()
+            for source in push_sources
+            if (
+                isinstance(source, tuple)
+                and len(source) == 2
+                and source[0] == "seg"
+                and isinstance(source[1], str)
+            )
+        }
+        normalized_name = segment_name.lower()
+        if normalized_name not in proven_segments:
+            return None
+        try:
+            lowerer = cast(
+                _CallsiteMaterializationControlCarrier8616,
+                codegen,
+            )._inertia_segment_push_source_lowerer_8616
+        except AttributeError:
+            return None
+        cfunc = codegen.cfunc
+        function_addr = cfunc.addr if cfunc is not None else None
+        if not isinstance(function_addr, int):
+            return None
+        return lowerer(
+            normalized_name,
+            codegen=codegen,
+            variable_type=_word_type_8616(project),
+            function_addr=function_addr,
+        )
+
     def _plain_stack_slot_address_offset(node: StructuredAstValue) -> int | None:
         term_root = node
         while isinstance(term_root, CTypeCast):
@@ -9175,7 +9282,16 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                         normalized.append(_clone_c_ast_tree(source_expr))
                         continue
             if _is_segment_register_value_expr(rhs):
-                return _debug_normalize_refuse("segment-register-rhs", rhs)
+                segment_name = _segment_register_name_from_expr_8616(rhs)
+                lowered_segment = (
+                    _lower_proven_segment_push_source_8616(segment_name, push_sources)
+                    if segment_name is not None
+                    else None
+                )
+                if lowered_segment is None:
+                    return _debug_normalize_refuse("segment-register-rhs", rhs)
+                normalized.append(lowered_segment)
+                continue
             if arg_idx in preserved_register_indices and _expr_contains_plain_register_uses(rhs):
                 normalized.append(_clone_c_ast_tree(rhs))
                 continue
@@ -13504,6 +13620,16 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                 new_statements.append(stmt)
                 i += 1
                 continue
+            if (
+                call is not None
+                and structured_call_kind_8616(call) is StructuredCallKind8616.CODEGEN_INSERT_INTRINSIC
+            ):
+                codegen._inertia_callsite_structured_intrinsic_refusal_count_8616 = (
+                    int(getattr(codegen, "_inertia_callsite_structured_intrinsic_refusal_count_8616", 0) or 0) + 1
+                )
+                new_statements.append(stmt)
+                i += 1
+                continue
             if call is None:
                 new_statements.append(stmt)
                 i += 1
@@ -16049,7 +16175,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         if changed
         else CallsiteMaterializationDecision8616.PROCESSED_NO_CHANGE,
         changed=changed,
-        signature=signature,
+        signature=_callsite_materialization_signature_8616(codegen),
     )
     return changed
 
@@ -16086,6 +16212,7 @@ def replay_callsite_stack_arguments_after_regeneration_8616(
         # the summary-only materialization cache key.
         codegen._inertia_callsite_materialization_complete_8616 = False
         changed = bool(_materialize_callsite_stack_arguments_8616(project, codegen)) or changed
+        changed = bool(_replay_call_target_identity_consumer_8616(project, codegen)) or changed
     finally:
         codegen._inertia_callsite_arg_regen_replay_active_8616 = False
 

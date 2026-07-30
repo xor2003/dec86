@@ -1,12 +1,12 @@
-"""Materialize typed direct-call declarations without changing call semantics.
+"""Materialize typed direct-call identities and declarations.
 
 Layer: Types/lowering.
-Responsibility: lower typed callsite summaries and structured argument types
-into recompilable C declaration metadata after structuring creates direct calls.
+Responsibility: lower typed callsite summaries into canonical direct-call
+identities and recompilable declaration metadata after structuring creates calls.
 Consumes alias, widening, and typed facts.
 Do not recover semantics from COD, source, assembly, or rendered C text.
 Forbidden: source/COD/assembly/rendered-C recovery, callee prototype mutation,
-call-argument repair, or AST mutation.
+call-argument repair, or call-body mutation.
 """
 
 from __future__ import annotations
@@ -19,22 +19,30 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, cast
 
-from angr.analyses.decompiler.structured_codegen.c import CFunctionCall
-from angr.sim_type import SimStruct, SimType, SimTypeArray, SimTypeFixedSizeArray, SimTypePointer
+from angr.analyses.decompiler.structured_codegen.c import CFunctionCall, CUnaryOp
+from angr.knowledge_plugins.functions import Function
+from angr.sim_type import SimStruct, SimType, SimTypeArray, SimTypeBottom, SimTypeFixedSizeArray, SimTypePointer
 
+from ..analysis_helpers import _canonicalize_x86_16_padding_call_target_8616
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..callsite_summary import (
     CallsiteSummary8616,
     caller_return_use_evidence_by_addr_8616,
 )
 from ..codegen_metadata import get_codegen_sequence_attr, set_codegen_sequence_attr
+from ..pipeline.errors import PipelineHardError
 from .c_runtime_header import (
     KNOWN_EXTERNAL_RETURN_TYPES_8616,
+    is_lowered_runtime_macro_8616,
     runtime_helper_declaration_8616,
 )
 from .return_type_evidence import caller_return_use_evidence_proves_unused_8616
 
-__all__ = ["materialize_callsite_prototype_declarations_8616"]
+__all__ = [
+    "CallTargetIdentityStats8616",
+    "canonicalize_callsite_target_identities_8616",
+    "materialize_callsite_prototype_declarations_8616",
+]
 
 _C_IDENTIFIER_RE_8616 = re.compile(r"[A-Za-z_]\w*")
 _DECLARATION_NAME_RE_8616 = re.compile(
@@ -48,6 +56,7 @@ class _CodegenSurface8616(Protocol):
 
     cfunc: object
     _inertia_callsite_summaries: object
+    _inertia_call_target_identity_stats_8616: CallTargetIdentityStats8616
 
 
 class _CFunctionSurface8616(Protocol):
@@ -73,7 +82,7 @@ class _AddressedFunctionSurface8616(Protocol):
 class _FunctionManagerSurface8616(Protocol):
     """Minimal project function lookup used at the angr boundary."""
 
-    def function(self, *, addr: int, create: bool) -> object | None:
+    def function(self, *, addr: int, create: bool) -> Function | None:
         """Return the function at an exact target address."""
 
 
@@ -108,6 +117,17 @@ class _CallsiteDeclarationInterface8616:
     target_addr: int | None
     argument_widths: tuple[int, ...]
     stack_probe_helper: bool
+
+
+@dataclass(slots=True)
+class CallTargetIdentityStats8616:
+    """Closed evidence loop for canonical direct-call identity materialization."""
+
+    raw_fact_count: int = 0
+    normalized_fact_count: int = 0
+    classified_fact_count: int = 0
+    materialized_count: int = 0
+    failure_count: int = 0
 
 
 class _CallsiteReturnClass8616(Enum):
@@ -222,6 +242,131 @@ def _summary_for_call_8616(
     return _compatible_summary_8616(target_matches)
 
 
+def _callsite_addr_8616(node: CFunctionCall) -> int | None:
+    """Return one exact instruction address from a structured call."""
+    tags = node.tags
+    if not isinstance(tags, Mapping):
+        return None
+    for key in ("ins_addr", "insn_addr", "stmt_addr", "addr"):
+        value = tags.get(key)
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _callee_addr_8616(node: CFunctionCall) -> int | None:
+    """Return the explicit function-object address from a structured call."""
+    callee = node.callee_func
+    if callee is None:
+        return None
+    try:
+        addr = cast(_AddressedFunctionSurface8616, callee).addr
+    except AttributeError:
+        return None
+    return addr if isinstance(addr, int) else None
+
+
+def canonicalize_callsite_target_identities_8616(
+    project: object,
+    codegen: object,
+) -> bool:
+    """Rebind padding aliases to exact typed callsite-summary targets."""
+    carrier = cast(_CodegenSurface8616, codegen)
+    stats = CallTargetIdentityStats8616()
+    carrier._inertia_call_target_identity_stats_8616 = stats
+    try:
+        cfunc = carrier.cfunc
+        summaries = _typed_summary_map_8616(carrier._inertia_callsite_summaries)
+    except AttributeError:
+        return False
+    root = _structured_root_8616(cfunc)
+    if root is None or not summaries:
+        return False
+    try:
+        functions = cast(_ProjectSurface8616, project).kb.functions
+    except AttributeError:
+        return False
+
+    changed = False
+    decisions: list[tuple[int | None, int | None, str]] = []
+    for node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(node, CFunctionCall):
+            continue
+        summary = _summary_for_call_8616(project, node, summaries)
+        if summary is None or not isinstance(summary.target_addr, int):
+            continue
+        stats.raw_fact_count += 1
+        if _callsite_addr_8616(node) != summary.callsite_addr:
+            stats.failure_count += 1
+            decisions.append(
+                (_callee_addr_8616(node), summary.target_addr, "callsite-mismatch")
+            )
+            continue
+        current_addr = _callee_addr_8616(node)
+        if current_addr == summary.target_addr:
+            stats.normalized_fact_count += 1
+            decisions.append((current_addr, summary.target_addr, "already-canonical"))
+            continue
+        canonical_addr = _canonicalize_x86_16_padding_call_target_8616(
+            project,
+            current_addr,
+        )
+        if canonical_addr != summary.target_addr:
+            stats.failure_count += 1
+            decisions.append((current_addr, summary.target_addr, "target-mismatch"))
+            continue
+        stats.normalized_fact_count += 1
+        try:
+            canonical_function = functions.function(
+                addr=summary.target_addr,
+                create=False,
+            )
+        except (KeyError, TypeError):
+            canonical_function = None
+        if canonical_function is None:
+            canonical_name: object = f"sub_{summary.target_addr:x}"
+            decision = "materialized-generic"
+        else:
+            try:
+                canonical_name = cast(
+                    _AddressedFunctionSurface8616,
+                    canonical_function,
+                ).name
+            except AttributeError:
+                canonical_name = None
+            decision = "materialized-function"
+        if (
+            not isinstance(canonical_name, str)
+            or _C_IDENTIFIER_RE_8616.fullmatch(canonical_name) is None
+        ):
+            stats.failure_count += 1
+            decisions.append((current_addr, summary.target_addr, "name-missing"))
+            continue
+        stats.classified_fact_count += 1
+        node.callee_func = canonical_function
+        node.callee_target = canonical_name
+        stats.materialized_count += 1
+        decisions.append((current_addr, summary.target_addr, decision))
+        changed = True
+
+    if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
+        _LOGGER.warning(
+            "[call-target-identity] raw=%d normalized=%d classified=%d "
+            "materialized=%d failed=%d decisions=%r",
+            stats.raw_fact_count,
+            stats.normalized_fact_count,
+            stats.classified_fact_count,
+            stats.materialized_count,
+            stats.failure_count,
+            tuple(decisions),
+        )
+    if stats.classified_fact_count > 0 and stats.materialized_count == 0:
+        raise PipelineHardError(
+            "classified canonical call targets were not materialized"
+        )
+    return changed
+
+
 def _summary_arg_widths_8616(summary: CallsiteSummary8616) -> tuple[int, ...] | None:
     """Return exact logical argument widths or refuse an incomplete summary."""
     if not isinstance(summary.arg_count, int) or summary.arg_count < 0:
@@ -246,12 +391,24 @@ def _scalar_decl_for_width_8616(width: int, name: str) -> str:
     return f"unsigned short {name}"
 
 
-def _argument_decl_8616(argument: object, width: int, index: int) -> str:
-    """Render pointer class from typed AST evidence, otherwise summary width."""
+def _argument_type_8616(argument: object) -> object:
+    """Return the explicit or structured-reference argument type."""
     try:
         argument_type = cast(_TypedExpressionSurface8616, argument).type
     except AttributeError:
         argument_type = None
+    if isinstance(argument, CUnaryOp) and argument.op == "Reference" and not isinstance(argument_type, SimTypePointer):
+        try:
+            referent_type = cast(_TypedExpressionSurface8616, argument.operand).type
+        except AttributeError:
+            referent_type = None
+        return SimTypePointer(referent_type if isinstance(referent_type, SimType) else SimTypeBottom())
+    return argument_type
+
+
+def _argument_decl_8616(argument: object, width: int, index: int) -> str:
+    """Render pointer class from typed AST evidence, otherwise summary width."""
+    argument_type = _argument_type_8616(argument)
     if isinstance(argument_type, SimTypePointer):
         return cast(SimType, argument_type).c_repr(name=f"a{index}")
     if isinstance(argument_type, (SimTypeArray, SimTypeFixedSizeArray)):
@@ -261,10 +418,7 @@ def _argument_decl_8616(argument: object, width: int, index: int) -> str:
 
 def _argument_forward_declarations_8616(argument: object) -> tuple[str, ...]:
     """Return file-scope tag declarations required by one typed argument."""
-    try:
-        argument_type = cast(_TypedExpressionSurface8616, argument).type
-    except AttributeError:
-        return ()
+    argument_type = _argument_type_8616(argument)
     if not isinstance(argument_type, SimTypePointer):
         return ()
     pointee = argument_type.pts_to
@@ -414,6 +568,7 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
         return False
     existing = get_codegen_sequence_attr(codegen, surface.cfunc, "_inertia_callsite_prototype_decls")
     desired_by_name: dict[str, str] = {}
+    fallback_declarations_by_name: dict[str, set[str]] = {}
     required_forward_decls: set[str] = set()
     ambiguous_names: set[str] = set()
     call_count = 0
@@ -442,6 +597,8 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
                 summary.return_shape,
             )
         call_name = _call_name_8616(node)
+        if call_name is not None and is_lowered_runtime_macro_8616(call_name):
+            continue
         inferred_return_type = _joined_return_type_8616(project, summary, tuple(summaries.values()))
         return_type = (
             KNOWN_EXTERNAL_RETURN_TYPES_8616.get(call_name, inferred_return_type)
@@ -471,6 +628,8 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
         name = _declaration_name_8616(declaration)
         if name is None or name in ambiguous_names:
             continue
+        if runtime_declaration is None and return_type is not None:
+            fallback_declarations_by_name.setdefault(name, set()).add(f"{return_type} {name}();")
         previous = desired_by_name.get(name)
         if previous is not None and previous != declaration:
             if os.environ.get("INERTIA_DEBUG_CALLSITE_PROTOTYPE_DECLS") == "1":
@@ -485,6 +644,10 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
             ambiguous_names.add(name)
             continue
         desired_by_name[name] = declaration
+    for name in ambiguous_names:
+        fallback_declarations = fallback_declarations_by_name.get(name, set())
+        if len(fallback_declarations) == 1:
+            desired_by_name[name] = next(iter(fallback_declarations))
     if not desired_by_name:
         if os.environ.get("INERTIA_DEBUG_CALLSITE_PROTOTYPE_DECLS") == "1":
             _LOGGER.warning(

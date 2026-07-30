@@ -32,6 +32,8 @@ from capstone.x86_const import (
 )
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616, _same_c_expression_8616
+from ..ir.core import MemSpace
+from ..widening.segmented_load_identity import SegmentedLoadIdentity8616, segmented_load_tags_8616
 from .real_mode_linear import (
     RealModeLinearStackAccess8616,
     _canonical_stack_offset_8616,
@@ -44,6 +46,12 @@ from .real_mode_linear import (
     _stack_offset_from_expr_8616,
     stack_cvar_for_stable_ss_linear_access_8616,
 )
+from .segment_register_state import (
+    SegmentRegisterStateLoweringStats8616,
+    lower_architectural_segment_register_state_8616,
+    runtime_segment_push_source_cvar_8616,
+)
+from .stack_argument_identity import unify_positive_bp_argument_identity_8616
 from .stack_prototype_materialization import materialize_exact_trailing_stack_argument_8616
 
 _CarrierKey8616: TypeAlias = tuple[str, int | str]
@@ -87,6 +95,8 @@ class _AngrCodegenBoundary8616(Protocol):
     cfunc: _AngrCFunctionBoundary8616 | None
     project: _AngrProjectBoundary8616 | None
     _func: object | None
+    _inertia_assignment_maps: object | None
+    _inertia_segment_register_state_lowering_stats_8616: SegmentRegisterStateLoweringStats8616
     _inertia_stack_offset_cache: dict[int, object] | None
     _inertia_near_pointer_argument_classified_offsets_8616: set[int]
     _inertia_near_pointer_argument_facts_8616: tuple[NearPointerArgumentFact8616, ...]
@@ -533,6 +543,38 @@ def _materialize_binary_proven_near_pointer_argument_8616(
     return cvar
 
 
+def _rematerialize_binary_proven_near_pointer_types_8616(
+    codegen: _AngrCodegenBoundary8616,
+) -> bool:
+    """Restore pointer parameter types after prior lowering consumed helper AST."""
+    if codegen.cfunc is None:
+        return False
+    changed = False
+    for argument in tuple(codegen.cfunc.arg_list or ()):
+        if not isinstance(argument, structured_c.CVariable):
+            continue
+        stack_offset = _stack_offset_for_cvar_8616(argument)
+        widths = {
+            fact.access_width_bytes
+            for fact in codegen._inertia_near_pointer_argument_facts_8616
+            if fact.stack_offset == stack_offset
+        }
+        if widths != {2}:
+            continue
+        matched = SegmentedMemoryExpr(
+            space="DS",
+            segment_expr=argument,
+            offset_expr=argument,
+            width_bits=16,
+            access="read",
+        )
+        changed = (
+            _materialize_binary_proven_near_pointer_argument_8616(matched, codegen)
+            is not None
+        ) or changed
+    return changed
+
+
 def _lower_binary_proven_pointer_argument_helpers_8616(
     codegen: _AngrCodegenBoundary8616,
 ) -> bool:
@@ -924,6 +966,35 @@ def _seg_macro_for_width_bits_8616(width_bits: int) -> str | None:
     return None
 
 
+def _exact_segmented_load_tags_8616(
+    matched: SegmentedMemoryExpr,
+    codegen: _AngrCodegenBoundary8616 | None,
+    macro: str,
+) -> dict[str, object]:
+    """Retain an exact segmented scalar identity when lowering proves one."""
+    tags: dict[str, object] = {"inertia_x86_16_runtime_segment_helper": macro}
+    offset = _constant_value_8616(matched.offset_expr)
+    space = {
+        "DS": MemSpace.DS,
+        "ES": MemSpace.ES,
+        "SS": MemSpace.SS,
+    }.get(matched.space)
+    width = max(int(matched.width_bits) // 8, 1)
+    cfunc = codegen.cfunc if codegen is not None else None
+    region = cfunc.addr if cfunc is not None and isinstance(cfunc.addr, int) else None
+    if offset is None or space is None:
+        return tags
+    return segmented_load_tags_8616(
+        SegmentedLoadIdentity8616(
+            space=space,
+            offset=offset & 0xFFFF,
+            width=width,
+            region=region,
+        ),
+        existing=tags,
+    )
+
+
 def _expr_mentions_stack_variable_8616(node: object) -> bool:
     pending = [_strip_casts_8616(node)]
     seen: set[int] = set()
@@ -991,7 +1062,7 @@ def lower_runtime_segment_access_8616(expr: object, *, target: str) -> object | 
         None,
         [matched.segment_expr, matched.offset_expr],
         codegen=codegen,
-        tags={"inertia_x86_16_runtime_segment_helper": macro},
+        tags=_exact_segmented_load_tags_8616(matched, codegen, macro),
     )
 
 
@@ -1082,12 +1153,29 @@ def _direct_global_offsets_for_segment_proof_8616(
             _collect_direct_global_symbol_refs_8616,
             _collect_synthetic_direct_global_symbol_refs_8616,
             _merge_direct_global_symbol_refs_8616,
+            recover_direct_segmented_global_load_evidence_8616,
+            recover_direct_segmented_global_store_evidence_8616,
         )
     except Exception:
         return frozenset(offsets)
 
     function = _dynamic_angr_attr_8616(codegen, "_inertia_function", None) or _dynamic_angr_attr_8616(codegen, "_func", None)
     summaries = _function_instruction_summaries_8616(project, function) if function is not None else []
+    anonymous_spaces_by_offset: dict[int, set[MemSpace]] = {}
+    if function is not None:
+        anonymous_evidence = (
+            *recover_direct_segmented_global_load_evidence_8616(project, function),
+            *recover_direct_segmented_global_store_evidence_8616(project, function),
+        )
+        for item in anonymous_evidence:
+            anonymous_spaces_by_offset.setdefault(item.offset & 0xFFFF, set()).add(
+                item.space
+            )
+    offsets.update(
+        offset
+        for offset, spaces in anonymous_spaces_by_offset.items()
+        if spaces == {MemSpace.DS}
+    )
     cod_metadata = None
     func_addr = _dynamic_angr_attr_8616(_dynamic_angr_attr_8616(codegen, "cfunc", None), "addr", None)
     metadata_by_addr = _dynamic_angr_attr_8616(project, "_inertia_cod_metadata_by_func_addr_8616", None)
@@ -1275,7 +1363,7 @@ def materialize_runtime_helper_segment_carriers_8616(
 
 
 def _prune_runtime_segment_address_self_assignments_8616(codegen: _AngrCodegenBoundary8616) -> bool:
-    """Prune proven identity assignments without requiring an optional body alias."""
+    """Prune exact segment-address identities from every structured statement body."""
     root = _dynamic_angr_attr_8616(_dynamic_angr_attr_8616(codegen, "cfunc", None), "statements", None)
     if root is None:
         return False
@@ -1284,7 +1372,6 @@ def _prune_runtime_segment_address_self_assignments_8616(codegen: _AngrCodegenBo
     candidates = 0
     pruned = 0
     refused = 0
-    seen: set[int] = set()
 
     def is_prunable(stmt: object) -> bool:
         nonlocal candidates, pruned, refused
@@ -1302,59 +1389,13 @@ def _prune_runtime_segment_address_self_assignments_8616(codegen: _AngrCodegenBo
         refused += 1
         return False
 
-    def visit(node: object) -> None:
-        nonlocal changed
-        node = _strip_casts_8616(node)
-        if node is None:
-            return
-        node_id = id(node)
-        if node_id in seen:
-            return
-        seen.add(node_id)
-
+    for node in _iter_c_nodes_deep_8616(root):
         if isinstance(node, structured_c.CStatements):
             statements = list(_dynamic_angr_sequence_attr_8616(node, "statements"))
-            rebuilt = []
-            for stmt in statements:
-                if is_prunable(stmt):
-                    changed = True
-                    continue
-                visit(stmt)
-                rebuilt.append(stmt)
+            rebuilt = [stmt for stmt in statements if not is_prunable(stmt)]
             if len(rebuilt) != len(statements):
                 node.statements = rebuilt
-            return
-
-        for attr in (
-            "body",
-            "else_node",
-            "iftrue",
-            "iffalse",
-            "initializer",
-            "iterator",
-            "condition",
-            "cond",
-            "lhs",
-            "rhs",
-            "operand",
-            "expr",
-            "statements",
-            "retval",
-        ):
-            child = _dynamic_angr_attr_8616(node, attr, None)
-            if child is not None:
-                visit(child)
-        for attr in ("args", "operands", "condition_and_nodes"):
-            children = _dynamic_angr_attr_8616(node, attr, None)
-            if isinstance(children, (list, tuple)):
-                for child in children:
-                    if isinstance(child, tuple):
-                        for item in child:
-                            visit(item)
-                    else:
-                        visit(child)
-
-    visit(root)
+                changed = True
     _bump_codegen_counter_8616(codegen, "_inertia_runtime_segment_address_self_assign_candidates_8616", candidates)
     _bump_codegen_counter_8616(codegen, "_inertia_runtime_segment_address_self_assign_pruned_8616", pruned)
     _bump_codegen_counter_8616(codegen, "_inertia_runtime_segment_address_self_assign_refused_8616", refused)
@@ -1462,13 +1503,17 @@ def apply_runtime_segment_lowering_8616(
     # Offset resolution depends on mutable alias/prototype evidence. A cache
     # populated by an earlier Structuring replay cannot cross this pass boundary.
     typed_codegen._inertia_stack_offset_cache = {}
+    typed_codegen._inertia_assignment_maps = None
     active_function = _active_function_for_codegen_8616(typed_codegen)
     facts = _collect_near_pointer_argument_facts_8616(active_function)
     typed_codegen._inertia_near_pointer_argument_facts_8616 = facts
     typed_codegen._inertia_near_pointer_argument_classified_offsets_8616 = set()
     typed_codegen._inertia_near_pointer_argument_materialized_offsets_8616 = set()
     typed_codegen._inertia_near_pointer_argument_refusals_8616 = []
-    changed = False
+    changed = _rematerialize_binary_proven_near_pointer_types_8616(typed_codegen)
+    changed = lower_architectural_segment_register_state_8616(codegen) or changed
+    initial_segment_stats = typed_codegen._inertia_segment_register_state_lowering_stats_8616
+    typed_codegen._inertia_assignment_maps = None
 
     def transform(node: object) -> object:
         nonlocal changed
@@ -1490,12 +1535,33 @@ def apply_runtime_segment_lowering_8616(
         changed = True
     if _prune_runtime_segment_address_self_assignments_8616(typed_codegen):
         changed = True
+    typed_codegen._inertia_assignment_maps = None
     if materialize_runtime_helper_segment_carriers_8616(codegen, project=project):
         changed = True
     if _lower_binary_proven_pointer_argument_helpers_8616(typed_codegen):
         changed = True
+    if unify_positive_bp_argument_identity_8616(typed_codegen):
+        changed = True
     if lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project):
         changed = True
+    if lower_architectural_segment_register_state_8616(codegen):
+        changed = True
+        typed_codegen._inertia_assignment_maps = None
+    final_segment_stats = typed_codegen._inertia_segment_register_state_lowering_stats_8616
+    typed_codegen._inertia_segment_register_state_lowering_stats_8616 = (
+        SegmentRegisterStateLoweringStats8616(
+            raw_fact_count=initial_segment_stats.raw_fact_count
+            + final_segment_stats.raw_fact_count,
+            normalized_fact_count=initial_segment_stats.normalized_fact_count
+            + final_segment_stats.normalized_fact_count,
+            classified_fact_count=initial_segment_stats.classified_fact_count
+            + final_segment_stats.classified_fact_count,
+            materialized_count=initial_segment_stats.materialized_count
+            + final_segment_stats.materialized_count,
+            failure_count=initial_segment_stats.failure_count
+            + final_segment_stats.failure_count,
+        )
+    )
     classified_count = len(typed_codegen._inertia_near_pointer_argument_classified_offsets_8616)
     materialized_count = len(typed_codegen._inertia_near_pointer_argument_materialized_offsets_8616)
     typed_codegen._inertia_near_pointer_argument_stats_8616 = NearPointerArgumentStats8616(
@@ -1517,4 +1583,5 @@ __all__ = [
     "lower_runtime_ss_segment_helper_to_stack_8616",
     "lower_runtime_ss_segment_helpers_to_stack_8616",
     "materialize_runtime_helper_segment_carriers_8616",
+    "runtime_segment_push_source_cvar_8616",
 ]

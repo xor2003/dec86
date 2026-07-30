@@ -210,6 +210,104 @@ def test_binary_padding_entry_aliases_cover_nop_run_before_prologue():
     )
 
 
+def test_binary_padding_entry_aliases_clamp_scan_to_mapped_image_start():
+    class _StrictMemory(_Memory):
+        def load(self, addr: int, size: int) -> bytes:
+            if addr < self._base:
+                raise KeyError(addr)
+            return super().load(addr, size)
+
+    project = SimpleNamespace(
+        loader=SimpleNamespace(
+            memory=_StrictMemory(b"\xc3" + b"\x90" * 3 + b"\x55\x8b\xec", 0x1000),
+            main_object=SimpleNamespace(min_addr=0x1000),
+        ),
+    )
+
+    assert function_discovery._binary_padding_entry_aliases_8616(project, 0x1004) == (
+        0x1001,
+        0x1002,
+        0x1003,
+        0x1004,
+    )
+
+
+def test_direct_target_records_caller_use_from_framed_source_catalog(monkeypatch):
+    project = SimpleNamespace()
+    evidence = function_discovery.CallerReturnUseEvidence8616(
+        target_addr=0x1001,
+        verdict=function_discovery.CallerReturnUseVerdict8616.UNUSED,
+        raw_fact_count=2,
+        normalized_fact_count=2,
+        classified_fact_count=2,
+        materialized_count=2,
+        failure_count=0,
+        used_callsite_count=0,
+        unused_callsite_count=2,
+        callsite_addrs=(0x1080, 0x1090),
+    )
+    collect_calls: list[
+        tuple[tuple[int, ...], tuple[tuple[int, int], ...]]
+    ] = []
+    aliases_by_seed = {
+        0x1004: (0x1001, 0x1002, 0x1003, 0x1004),
+        0x1050: (0x1050,),
+    }
+    monkeypatch.setattr(
+        function_discovery,
+        "_rank_pre_entry_source_function_seeds_8616",
+        lambda _project: [0x1004, 0x1050],
+    )
+    monkeypatch.setattr(
+        function_discovery,
+        "_binary_padding_entry_aliases_8616",
+        lambda _project, seed: aliases_by_seed[seed],
+    )
+    monkeypatch.setattr(
+        function_discovery,
+        "_pre_entry_source_function_ranges_8616",
+        lambda _project, _seeds: ((0x1001, 0x1050), (0x1050, 0x1100)),
+    )
+
+    def collect(
+        _project: object,
+        aliases: tuple[int, ...],
+        ranges: tuple[tuple[int, int], ...],
+    ) -> function_discovery.CallerReturnUseEvidence8616:
+        collect_calls.append((aliases, ranges))
+        return evidence
+
+    monkeypatch.setattr(
+        function_discovery,
+        "_collect_caller_return_use_for_entry_aliases_8616",
+        collect,
+    )
+
+    result = function_discovery.record_direct_target_caller_return_use_evidence_8616(
+        project,
+        0x1004,
+    )
+
+    assert result is not None
+    assert result.target_addr == 0x1004
+    assert collect_calls == [
+        (
+            (0x1001, 0x1002, 0x1003, 0x1004),
+            ((0x1001, 0x1050), (0x1050, 0x1100)),
+        )
+    ]
+    records = function_discovery.caller_return_use_evidence_by_addr_8616(project)
+    assert set(records) == {0x1001, 0x1002, 0x1003, 0x1004}
+    assert records[0x1004].target_addr == 0x1004
+
+    repeated = function_discovery.record_direct_target_caller_return_use_evidence_8616(
+        project,
+        0x1004,
+    )
+    assert repeated == records[0x1004]
+    assert len(collect_calls) == 1
+
+
 def test_entry_linear_caller_range_stops_at_first_return():
     instructions = (
         SimpleNamespace(address=0x1100, size=1, mnemonic="ret", bytes=b"\xc3"),

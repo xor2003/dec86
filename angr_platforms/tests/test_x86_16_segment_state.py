@@ -44,6 +44,24 @@ def test_segment_state_tracks_explicit_ds_and_es_writes() -> None:
     assert segment_state.summary["explicit_write_count"] >= 2
 
 
+def test_segment_state_marks_function_entry_segments_as_architectural_live_ins() -> None:
+    artifact = IRFunctionArtifact(
+        function_addr=0x1800,
+        blocks=(IRBlock(addr=0x1800),),
+    )
+
+    segment_state = build_x86_16_segment_state_artifact(
+        artifact,
+        function_ssa=build_x86_16_function_ssa(artifact),
+    )
+
+    ds_entry = segment_state.entry_states[0x1800]["ds"]
+    assert ds_entry.value_kind == "architectural_live_in"
+    assert ds_entry.source == "ds"
+    assert ds_entry.origin is SegmentOrigin.PROVEN
+    assert segment_state.summary["architectural_live_in_count"] == 6
+
+
 def test_typed_string_effects_become_stable_from_segment_state_and_feed_array_matching() -> None:
     segment_ir = IRFunctionArtifact(
         function_addr=0x2000,

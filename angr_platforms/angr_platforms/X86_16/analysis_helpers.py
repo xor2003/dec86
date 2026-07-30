@@ -118,6 +118,15 @@ class _PrototypeFunctionBoundary8616(Protocol):
     is_prototype_guessed: bool
 
 
+def _function_has_proven_prototype_8616(function: object) -> bool:
+    """Return whether a function already carries a non-guessed ABI contract."""
+    typed_function = cast(_PrototypeFunctionBoundary8616, function)
+    try:
+        return typed_function.prototype is not None and not typed_function.is_prototype_guessed
+    except AttributeError:
+        return False
+
+
 def seed_wide_stack_prototype_from_binary_address_8616(
     project: object,
     source_function: object,
@@ -127,10 +136,13 @@ def seed_wide_stack_prototype_from_binary_address_8616(
     """Infer a wide stack ABI from binary facts and copy its typed contract."""
     from .calling_convention_compat import apply_x86_16_wide_stack_prototype_evidence_at_address
 
-    if not apply_x86_16_wide_stack_prototype_evidence_at_address(project, source_function, address):
+    if (
+        not _function_has_proven_prototype_8616(source_function)
+        and not apply_x86_16_wide_stack_prototype_evidence_at_address(project, source_function, address)
+    ):
         return False
     typed_source = cast(_PrototypeFunctionBoundary8616, source_function)
-    if typed_source.prototype is None:
+    if typed_source.prototype is None or typed_source.is_prototype_guessed:
         return False
     typed_target = cast(_PrototypeFunctionBoundary8616, target_function)
     typed_target.prototype = typed_source.prototype
@@ -2098,7 +2110,8 @@ def seed_calling_conventions(cfg: object) -> None:
     for function in _dynamic_analysis_getattr_8616(cfg, "functions", {}).values():
         candidate_count += 1
         try:
-            function._init_prototype_and_calling_convention()
+            if not _function_has_proven_prototype_8616(function):
+                function._init_prototype_and_calling_convention()
             if project is not None and apply_x86_16_stack_byte_prototype_evidence is not None:
                 if apply_x86_16_stack_byte_prototype_evidence(project, function):
                     stack_byte_count += 1

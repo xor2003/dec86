@@ -87,7 +87,9 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     lower_stable_ss_linear_stack_dereferences_8616,
     materialize_direct_stack_mov_instructions_8616,
 )
-from angr_platforms.X86_16.lowering.return_type_evidence import materialize_proven_void_return_type_8616
+from angr_platforms.X86_16.lowering.return_type_evidence import (
+    materialize_proven_void_return_type_8616,
+)
 from angr_platforms.X86_16.lowering.segmented_global_loads import (
     SegmentedGlobalLoadStats8616,
     materialize_compare_register_global_carriers_8616,
@@ -101,7 +103,7 @@ from angr_platforms.X86_16.lowering.segmented_global_loads import (
 )
 from angr_platforms.X86_16.lowering.segmented_memory_lowering import apply_runtime_segment_lowering_8616
 from angr_platforms.X86_16.lowering.stack_aggregate_objects import (
-    decay_stack_aggregate_call_arguments_8616,
+    reapply_stack_aggregate_object_facts_8616,
 )
 from angr_platforms.X86_16.lowering.stack_lowering import run_stack_lowering_pass_8616
 from angr_platforms.X86_16.lowering.stack_lowering_from_facts import (
@@ -1982,7 +1984,10 @@ def _replay_runtime_segment_lowering_after_regen_8616(codegen: object) -> bool:
         target = str(project._inertia_c_target or "portable-flat")
     except AttributeError:
         target = "portable-flat"
-    return apply_runtime_segment_lowering_8616(codegen, target=target)
+    try:
+        return apply_runtime_segment_lowering_8616(codegen, target=target)
+    except AttributeError:
+        return False
 
 
 def _finalize_callsite_arguments_after_noncall_regen_8616(codegen: object) -> bool:
@@ -2011,7 +2016,7 @@ def _finalize_callsite_arguments_after_noncall_regen_8616(codegen: object) -> bo
 
 def _finalize_typed_call_interfaces_before_render_8616(codegen: object) -> bool:
     """Replay Types/Lowering-owned argument and declaration consumers before rendering."""
-    changed = decay_stack_aggregate_call_arguments_8616(codegen)
+    changed = reapply_stack_aggregate_object_facts_8616(codegen)
     dynamic_codegen = typing.cast(typing.Any, codegen)
     try:
         project = dynamic_codegen.project
@@ -2088,6 +2093,18 @@ def _replay_direct_stack_semantics_after_regen_8616(codegen: object) -> bool:
     return stack_mov_changed or stack_update_changed
 
 
+def _replay_call_return_selector_lowering_after_regen_8616(codegen: object) -> bool:
+    """Invoke the Structuring-bound Lowering owner after AST regeneration."""
+    try:
+        replayer = cast(
+            Callable[[object], bool],
+            cast(Any, codegen)._inertia_call_return_selector_replayer_8616,
+        )
+    except AttributeError:
+        return False
+    return bool(replayer(codegen))
+
+
 def _stabilize_regenerated_noncall_ast_8616(codegen: object) -> bool:
     """Restore call identity before replaying widening and late cleanup."""
     project = getattr(codegen, "project", None)
@@ -2100,8 +2117,19 @@ def _stabilize_regenerated_noncall_ast_8616(codegen: object) -> bool:
     changed = bool(_run_typed_widening_pass(project, codegen)) or changed
     changed = prune_redundant_loop_break_carriers_after_lowering_8616(codegen) or changed
     cleanup_result = finalize_late_ast_cleanup_8616(project, codegen)
+    indexed_global_changed = _replay_indexed_segmented_global_lowering_after_regen_8616(
+        codegen
+    )
     final_occurrence_changed = finalize_shared_call_occurrences_8616(codegen)
-    return final_occurrence_changed or cleanup_result.changed or changed
+    return final_occurrence_changed or indexed_global_changed or cleanup_result.changed or changed
+
+
+def _finalize_regenerated_noncall_ast_8616(codegen: object) -> bool:
+    """Run cleanup before replaying final Lowering-owned AST identities."""
+    changed = _stabilize_regenerated_noncall_ast_8616(codegen)
+    changed = _simplify_structured_expressions_8616(codegen) or changed
+    changed = _replay_call_return_selector_lowering_after_regen_8616(codegen) or changed
+    return _replay_indexed_segmented_global_lowering_after_regen_8616(codegen) or changed
 
 
 def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[str, bool]:
@@ -2313,8 +2341,7 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
                     noncall_changed = _replay_pointer_arg_loads_if_unmaterialized_8616() or noncall_changed
                     noncall_changed = bool(_replay_indexed_segmented_global_lowering_after_regen_8616(codegen)) or noncall_changed
                     if noncall_changed:
-                        _stabilize_regenerated_noncall_ast_8616(codegen)
-                        _simplify_structured_expressions_8616(codegen)
+                        _finalize_regenerated_noncall_ast_8616(codegen)
                         noncall_text = _direct_cfunc_text_or_none("regen-cfunc-text-before-call-arg-replay-noncall")
                         if noncall_text is not None:
                             noncall_evidence = _render_refresh_preservation_evidence_8616(fallback_text, noncall_text)
@@ -2354,8 +2381,7 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
                     _replay_direct_stack_semantics_after_regen_8616(codegen)
                     _replay_pointer_arg_loads_if_unmaterialized_8616()
                     _replay_indexed_segmented_global_lowering_after_regen_8616(codegen)
-                    _stabilize_regenerated_noncall_ast_8616(codegen)
-                    _simplify_structured_expressions_8616(codegen)
+                    _finalize_regenerated_noncall_ast_8616(codegen)
                     _finalize_callsite_arguments_after_noncall_regen_8616(codegen)
                 direct_text = _direct_cfunc_text_or_none("regen-cfunc-text-after-call-arg-materialization")
                 if direct_text is not None:
@@ -2399,8 +2425,7 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
                     _replay_stack_address_lowering_after_regen_8616(codegen)
                     _replay_direct_stack_semantics_after_regen_8616(codegen)
                     _replay_pointer_arg_loads_if_unmaterialized_8616()
-                    _stabilize_regenerated_noncall_ast_8616(codegen)
-                    _simplify_structured_expressions_8616(codegen)
+                    _finalize_regenerated_noncall_ast_8616(codegen)
                     _finalize_callsite_arguments_after_noncall_regen_8616(codegen)
                 direct_text = _direct_cfunc_text_or_none("regen-cfunc-text-after-post-replay")
                 if direct_text is not None:
@@ -2414,8 +2439,7 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
                 with contextlib.suppress(Exception):
                     named_replay_changed = _replay_named_segmented_global_lowering_after_regen_8616(codegen)
                     if named_replay_changed:
-                        _stabilize_regenerated_noncall_ast_8616(codegen)
-                        _simplify_structured_expressions_8616(codegen)
+                        _finalize_regenerated_noncall_ast_8616(codegen)
                         direct_text = _direct_cfunc_text_or_none("regen-cfunc-text-after-named-seg-global-replay")
                         if direct_text is not None:
                             return direct_text, True
@@ -2425,8 +2449,7 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
                         _replay_direct_stack_semantics_after_regen_8616(codegen)
                         _replay_indexed_segmented_global_lowering_after_regen_8616(codegen)
                         _replay_pointer_arg_loads_if_unmaterialized_8616()
-                        _stabilize_regenerated_noncall_ast_8616(codegen)
-                        _simplify_structured_expressions_8616(codegen)
+                        _finalize_regenerated_noncall_ast_8616(codegen)
                         direct_text = _direct_cfunc_text_or_none("regen-cfunc-text-after-indexed-replay")
                         if direct_text is not None:
                             return direct_text, True
@@ -2436,8 +2459,7 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
                         _replay_direct_stack_semantics_after_regen_8616(codegen)
                         _replay_indexed_segmented_global_lowering_after_regen_8616(codegen)
                         _replay_pointer_arg_loads_if_unmaterialized_8616()
-                        _stabilize_regenerated_noncall_ast_8616(codegen)
-                        _simplify_structured_expressions_8616(codegen)
+                        _finalize_regenerated_noncall_ast_8616(codegen)
                         direct_text = _direct_cfunc_text_or_none("regen-cfunc-text-after-stack-replay")
                         if direct_text is not None:
                             return direct_text, True
@@ -2589,12 +2611,39 @@ def _should_refuse_legacy_cli_rewrite_8616(
     project: angr.Project,
     *,
     small_function: bool,
-    tail_validation_passed: bool,
+    tail_validation_complete: bool,
+    sidecar_free: bool,
 ) -> bool:
+    """Refuse late CLI rewrites after pure-binary x86-16 validation terminates."""
+
     return bool(
         getattr(getattr(project, "arch", None), "name", None) == "86_16"
         and not small_function
-        and tail_validation_passed
+        and tail_validation_complete
+        and sidecar_free
+    )
+
+
+def _tail_validation_snapshot_complete_for_cli_rewrite_8616(snapshot: object) -> bool:
+    """Return whether both core stages recorded a structured terminal result."""
+
+    if not isinstance(snapshot, Mapping):
+        return False
+    for stage in ("structuring", "postprocess"):
+        entry = snapshot.get(stage)
+        if not isinstance(entry, Mapping):
+            return False
+        if "status" not in entry and "changed" not in entry:
+            return False
+    return True
+
+
+def _tail_validation_snapshot_failed_for_cli_rewrite_8616(snapshot: object) -> bool:
+    """Return whether a complete core validation snapshot did not pass."""
+
+    return (
+        _tail_validation_snapshot_complete_for_cli_rewrite_8616(snapshot)
+        and not x86_16_tail_validation_snapshot_passed(typing.cast(Mapping[str, object], snapshot))
     )
 
 
@@ -4993,13 +5042,19 @@ def _decompile_function(
             typing.cast(typing.Any, dec.codegen)._inertia_codegen_decl_refresh_required_8616 = True
             typing.cast(typing.Any, dec.codegen)._inertia_force_codegen_regeneration_8616 = True
             _live_snapshot = ""
-        tail_validation_passed_for_rewrite_gate = x86_16_tail_validation_snapshot_passed(
-            _tail_validation_snapshot_for_function_run(project, function)
+        tail_validation_snapshot_for_rewrite_gate = _tail_validation_snapshot_for_function_run(project, function)
+        tail_validation_complete_for_rewrite_gate = _tail_validation_snapshot_complete_for_cli_rewrite_8616(
+            tail_validation_snapshot_for_rewrite_gate
         )
+        tail_validation_failed_for_rewrite_gate = _tail_validation_snapshot_failed_for_cli_rewrite_8616(
+            tail_validation_snapshot_for_rewrite_gate
+        )
+        sidecar_free_for_rewrite_gate = lst_metadata is None and effective_cod_metadata is None
         if _should_refuse_legacy_cli_rewrite_8616(
             project,
             small_function=small_function,
-            tail_validation_passed=tail_validation_passed_for_rewrite_gate,
+            tail_validation_complete=tail_validation_complete_for_rewrite_gate,
+            sidecar_free=sidecar_free_for_rewrite_gate,
         ):
             if _validated_rewrite_refusal_needs_render_refresh_8616(_live_snapshot):
                 changed = True
@@ -5007,13 +5062,39 @@ def _decompile_function(
                 typing.cast(typing.Any, dec.codegen)._inertia_force_codegen_regeneration_8616 = True
             typing.cast(typing.Any, dec.codegen)._inertia_legacy_cli_rewrite_refused_large_validated_ast = int(getattr(dec.codegen, "_inertia_legacy_cli_rewrite_refused_large_validated_ast", 0) or 0) + 1
             logging.getLogger(__name__).warning(
-                "Skipping legacy CLI rewrite loop for validated nontrivial x86-16 AST at function=%#x blocks=%d text_bytes=%d",
+                "Skipping legacy CLI rewrite loop after core validation for nontrivial x86-16 AST "
+                "at function=%#x blocks=%d text_bytes=%d",
                 function_original_addr(function),
                 block_count,
                 len(_live_snapshot) if isinstance(_live_snapshot, str) else 0,
             )
             _emit_typed_edge_switch_replacement_safety_stats_8616(dec.codegen)
             rewrite_passes = ()
+            if tail_validation_failed_for_rewrite_gate:
+                with span(
+                    "decompile.failed_core_partial_render",
+                    addr=hex(current_func_addr),
+                    name=getattr(function, "name", None),
+                ):
+                    partial_text = _snapshot_codegen_text(dec.codegen)
+                    if not isinstance(partial_text, str) or not partial_text.strip():
+                        partial_text, _regenerated = _regenerate_codegen_text_safely(
+                            dec.codegen,
+                            context=f"{hex(function.addr)} {function.name} failed-core-partial",
+                        )
+                _remember_tail_validation_snapshot(dec.codegen)
+                _emit_c_stage_trace(
+                    project,
+                    function,
+                    "failed-core-partial-c",
+                    partial_text,
+                    layer_dump_state=layer_dump_state,
+                )
+                typing.cast(typing.Any, project)._inertia_partial_codegen_text = partial_text
+                return (
+                    "validation_failed",
+                    "Core tail validation failed; emitted the unmodified structured C as partial output.",
+                )
         if os.environ.get("INERTIA_DEBUG_CALL_MUTATION"):
             try:
                 pre_rewrite_text = _snapshot_codegen_text(dec.codegen)
@@ -5665,8 +5746,9 @@ def _decompile_function(
             formatted,
             layer_dump_state=layer_dump_state,
         )
-        formatted = _prune_trailing_generic_return_text(formatted)
-        _debug_dump_calls_8616("post-prune-trailing-generic-return", formatted, debug_call_addr)
+        if not tail_validation_complete_for_rewrite_gate:
+            formatted = _prune_trailing_generic_return_text(formatted)
+            _debug_dump_calls_8616("post-prune-trailing-generic-return", formatted, debug_call_addr)
         formatted = _materialize_annotated_cod_declarations_text(
             formatted,
             function,
@@ -5684,8 +5766,9 @@ def _decompile_function(
             c_target=getattr(project, "_inertia_c_target", "portable-flat"),
         )
         _debug_dump_calls_8616("post-normalize-portable-flat-main-signature", formatted, debug_call_addr)
-        formatted = _prune_unused_staging_assignments(formatted)
-        _debug_dump_calls_8616("post-prune-unused-staging-assignments", formatted, debug_call_addr)
+        if not tail_validation_complete_for_rewrite_gate:
+            formatted = _prune_unused_staging_assignments(formatted)
+            _debug_dump_calls_8616("post-prune-unused-staging-assignments", formatted, debug_call_addr)
         formatted = _prune_non_lvalue_arithmetic_assignments(formatted)
         _debug_dump_calls_8616("post-prune-non-lvalue-arithmetic-assignments", formatted, debug_call_addr)
         formatted = _normalize_shift_add_precedence_in_assignments(formatted)
@@ -5819,7 +5902,8 @@ def _decompile_function(
             formatted = _hoist_c89_local_declarations_text(formatted)
             formatted = _dedupe_duplicate_local_declarations_text(formatted)
             formatted = _preserve_return_chain_text_8616(project, function, dec.codegen, formatted)
-            formatted = _prune_trailing_generic_return_text(formatted)
+            if not tail_validation_complete_for_rewrite_gate:
+                formatted = _prune_trailing_generic_return_text(formatted)
         formatted = _select_evidence_recovered_c_8616(formatted, evidence_recovered_c)
         formatted = _normalize_unary_not_shift_precedence_text(formatted)
         formatted = _normalize_boolean_conditions(formatted)
@@ -6116,7 +6200,7 @@ def _original_callee_name_8616(project: angr.Project, slice_target: int) -> str 
         helper_name = _compiler_helper_name_at_addr_8616(original_project, original_target)
         if _helper_overrides_generic_name(helper_name, function_name):
             return _cache_result(helper_name)
-        if isinstance(function_name, str) and function_name:
+        if isinstance(function_name, str) and function_name and not function_name.startswith(("sub_", "loc_")):
             return _cache_result(function_name)
         label = _label_at_addr_8616(original_project, original_target)
         if _helper_overrides_generic_name(helper_name, label):
@@ -6397,21 +6481,26 @@ def _collect_direct_calls_8616(
         with contextlib.suppress(Exception):
             ret_addr = function_dynamic.get_call_return(callsite)
         direct_calls.append((callsite, target, ret_addr))
-    known_callsites = {callsite for callsite, _target, _ret_addr in direct_calls if isinstance(callsite, int)}
+    call_index_by_site = {
+        callsite: index
+        for index, (callsite, _target, _ret_addr) in enumerate(direct_calls)
+        if isinstance(callsite, int)
+    }
     for callsite, target, ret_addr in _iter_capstone_direct_calls_8616(project, function):
-        if isinstance(callsite, int) and callsite in known_callsites:
+        if isinstance(callsite, int) and callsite in call_index_by_site:
+            direct_calls[call_index_by_site[callsite]] = (callsite, target, ret_addr)
             continue
-        direct_calls.append((callsite, target, ret_addr))
         if isinstance(callsite, int):
-            known_callsites.add(callsite)
+            call_index_by_site[callsite] = len(direct_calls)
+        direct_calls.append((callsite, target, ret_addr))
     if isinstance(getattr(project, "_inertia_original_linear_delta", None), int):
         local_ranges, _original_region = _direct_call_stub_filter_regions(project, function)
         for callsite, target, ret_addr in _iter_linear_region_direct_calls_8616(project, local_ranges):
-            if isinstance(callsite, int) and callsite in known_callsites:
+            if isinstance(callsite, int) and callsite in call_index_by_site:
                 continue
-            direct_calls.append((callsite, target, ret_addr))
             if isinstance(callsite, int):
-                known_callsites.add(callsite)
+                call_index_by_site[callsite] = len(direct_calls)
+            direct_calls.append((callsite, target, ret_addr))
     return direct_calls
 
 
@@ -6437,11 +6526,19 @@ def _seed_direct_callee_prototype_from_original_project_8616(
     stub: object,
     candidate: int,
 ) -> bool:
-    """Transfer binary-derived callee ABI evidence into an exact-slice stub."""
+    """Seed a callee ABI from the full binary or an exact slice's source project."""
     # Dynamic exact-slice project extension boundary.
     original_project = getattr(project, "_inertia_original_project", None)
     if not isinstance(original_project, angr.Project):
-        return False
+        main_object = project.loader.main_object
+        if not main_object.min_addr <= candidate <= main_object.max_addr:
+            return False
+        return seed_wide_stack_prototype_from_binary_address_8616(
+            project,
+            stub,
+            stub,
+            candidate,
+        )
     # Dynamic exact-slice project extension boundary.
     original_delta = getattr(project, "_inertia_original_linear_delta", None)
     targets = [candidate]
@@ -6511,7 +6608,11 @@ def _create_or_update_direct_call_stub_8616(
                 with contextlib.suppress(Exception):
                     stub.name = stub_name
                     current_stub_name = stub_name
-            _seed_direct_callee_prototype_from_original_project_8616(project, stub, candidate)
+            _seed_direct_callee_prototype_from_original_project_8616(
+                project,
+                stub,
+                candidate,
+            )
             if not _is_known_noreturn_name_8616(current_stub_name):
                 with contextlib.suppress(Exception):
                     stub.returning = True

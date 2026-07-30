@@ -16,12 +16,14 @@ from angr_platforms.X86_16.alias_domains import AX
 from angr_platforms.X86_16.alias_model import (
     can_join_alias_storage,
     compatible_alias_storage_views,
+    contains_alias_storage,
     describe_alias_storage,
     describe_x86_16_alias_recovery_api,
     needs_alias_synthesis,
     same_alias_storage_domain,
 )
 from angr_platforms.X86_16.alias_state import AliasState
+from angr_platforms.X86_16.widening.stack_widening import prove_contained_stack_subview
 from angr_platforms.X86_16.widening_alias import can_join_adjacent_register_slices
 from angr_platforms.X86_16.widening_model import (
     collect_widening_candidates,
@@ -62,8 +64,40 @@ def test_alias_api_tracks_register_storage_identity_and_view_compatibility():
 def test_alias_recovery_api_is_explicit_and_stable():
     api = describe_x86_16_alias_recovery_api()
 
-    assert [name for name, _, _ in api] == ["same_domain", "compatible_view", "needs_synthesis", "can_join"]
+    assert [name for name, _, _ in api] == [
+        "same_domain",
+        "compatible_view",
+        "needs_synthesis",
+        "can_join",
+        "contains",
+    ]
     assert api[0][2] == ("same_alias_storage_domain",)
+    assert api[-1][2] == ("contains_alias_storage",)
+
+
+def test_alias_and_widening_prove_contained_stack_high_byte():
+    codegen = _make_codegen()
+    word = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-4, 2, base="bp", name="word", region=0x1000),
+        codegen=codegen,
+    )
+    high_byte = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-3, 1, base="bp", name="high", region=0x1000),
+        codegen=codegen,
+    )
+    wrong_region = _decompile.structured_c.CVariable(
+        _decompile.SimStackVariable(-3, 1, base="bp", name="other", region=0x2000),
+        codegen=codegen,
+    )
+
+    proof = prove_contained_stack_subview(word, high_byte, expected_bit_offset=8)
+
+    assert contains_alias_storage(word, high_byte)
+    assert proof.ok
+    assert proof.reason == "ok"
+    assert proof.relative_bit_offset == 8
+    assert not contains_alias_storage(word, wrong_region)
+    assert prove_contained_stack_subview(word, wrong_region, expected_bit_offset=8).reason == "storage_mismatch"
 
 
 def test_alias_api_marks_mixed_expression_for_synthesis():

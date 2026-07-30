@@ -24,6 +24,7 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _flatten_conditional_return_chain_8616,
     _is_cfg_return_chain_callsite_materialization_delta_8616,
     _is_cfg_return_expr_chain_materialization_delta_8616,
+    _is_proven_surplus_empty_guard_cleanup_delta_8616,
     _materialize_cfg_mask_accumulator_8616,
     _materialize_cfg_selector_return_branches_pass_8616,
     _materialize_empty_if_return_branches_pass_8616,
@@ -481,6 +482,83 @@ def test_cfg_return_chain_delta_refuses_helper_call_changes(monkeypatch):
         SimpleNamespace(arch=Arch86_16()),
         SimpleNamespace(),
         codegen,
+        validation,
+    )
+
+
+def _surplus_empty_guard_codegen() -> SimpleNamespace:
+    return SimpleNamespace(
+        _inertia_void_empty_return_guard_decision_8616="prune",
+        _inertia_void_empty_return_guard_pruned_8616=2,
+        _inertia_void_empty_return_guard_noop_pruned_8616=2,
+        _inertia_void_empty_return_guard_empty_return_pruned_8616=0,
+        _inertia_void_empty_return_guard_identical_arms_collapsed_8616=0,
+        _inertia_void_empty_return_guard_branch_count_8616=10,
+        _inertia_void_empty_return_guard_total_ifs_8616=12,
+    )
+
+
+def _surplus_empty_guard_validation() -> dict[str, object]:
+    return {
+        "delta": {
+            "conditions": {
+                "added": (),
+                "removed": ("CmpLT(arg:a1,arg:a0)", "CmpLT(local:i,arg:a0)"),
+            },
+            "control_flow_effects": {
+                "added": (),
+                "removed": ("if:CmpLT(arg:a1,arg:a0)", "if:CmpLT(local:i,arg:a0)"),
+            },
+        }
+    }
+
+
+def test_surplus_empty_guard_delta_accepts_exact_structuring_proof() -> None:
+    assert _is_proven_surplus_empty_guard_cleanup_delta_8616(
+        _surplus_empty_guard_codegen(),
+        _surplus_empty_guard_validation(),
+    )
+
+
+def test_surplus_empty_guard_pass_declares_its_internal_local_proof() -> None:
+    codegen = SimpleNamespace()
+
+    assert post_stage._postprocess_pass_has_local_evidence_8616(
+        "_prune_surplus_void_empty_return_guards_8616",
+        codegen,
+    )
+    assert post_stage._postprocess_pass_has_local_evidence_8616(
+        "_prune_surplus_void_empty_return_guards_final_8616",
+        codegen,
+    )
+
+
+def test_surplus_empty_guard_delta_refuses_unrelated_effect() -> None:
+    validation = _surplus_empty_guard_validation()
+    validation["delta"]["helper_calls"] = {"added": (), "removed": ("addr:0x1234",)}
+
+    assert not _is_proven_surplus_empty_guard_cleanup_delta_8616(
+        _surplus_empty_guard_codegen(),
+        validation,
+    )
+
+
+def test_surplus_empty_guard_delta_refuses_incomplete_evidence_census() -> None:
+    codegen = _surplus_empty_guard_codegen()
+    codegen._inertia_void_empty_return_guard_noop_pruned_8616 = 1
+
+    assert not _is_proven_surplus_empty_guard_cleanup_delta_8616(
+        codegen,
+        _surplus_empty_guard_validation(),
+    )
+
+
+def test_surplus_empty_guard_delta_refuses_fingerprint_count_mismatch() -> None:
+    validation = _surplus_empty_guard_validation()
+    validation["delta"]["conditions"]["removed"] = ("CmpLT(arg:a1,arg:a0)",)
+
+    assert not _is_proven_surplus_empty_guard_cleanup_delta_8616(
+        _surplus_empty_guard_codegen(),
         validation,
     )
 

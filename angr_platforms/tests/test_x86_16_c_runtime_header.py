@@ -3,6 +3,7 @@ from __future__ import annotations
 from angr_platforms.X86_16.lowering.c_runtime_header import (
     LOWERED_RUNTIME_HELPER_DECLARATIONS_8616,
     LOWERED_ZERO_ARG_RUNTIME_HELPER_DECLARATIONS_8616,
+    is_lowered_runtime_macro_8616,
     render_c_runtime_header_8616,
     runtime_helper_declaration_8616,
 )
@@ -13,6 +14,7 @@ def test_x86_16_c_runtime_header_renders_portable_flat_helpers() -> None:
 
     assert "#include <stdint.h>" in header
     assert "extern uint8_t inertia_memory[];" in header
+    assert "extern uint16_t inertia_ds;" in header
     assert "#define SEG_LINEAR(seg, off)" in header
     assert "#define MK_FP(seg, off)" in header
     assert "#define SEG_U8(seg, off)" in header
@@ -29,6 +31,7 @@ def test_x86_16_c_runtime_header_renders_msc_dos_helpers() -> None:
     assert "#define SEG_PTR(seg, off)" in header
     assert "#define SEG_U32(seg, off)" in header
     assert "inertia_memory" not in header
+    assert "extern uint16_t inertia_ds;" in header
 
 
 def test_x86_16_c_runtime_header_is_case_and_space_tolerant() -> None:
@@ -89,3 +92,8 @@ def test_x86_16_c_runtime_header_refuses_unknown_target() -> None:
     assert render_c_runtime_header_8616(None) == ""
     assert render_c_runtime_header_8616("") == ""
     assert render_c_runtime_header_8616("unknown") == ""
+
+
+def test_x86_16_c_runtime_header_distinguishes_macros_from_callables() -> None:
+    assert is_lowered_runtime_macro_8616("SEG_U32")
+    assert not is_lowered_runtime_macro_8616("aNldiv")

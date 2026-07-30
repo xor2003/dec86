@@ -18,6 +18,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CDoWhileLoop,
     CExpression,
     CForLoop,
+    CFunctionCall,
     CIfBreak,
     CIfElse,
     CStatements,
@@ -27,7 +28,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from capstone.x86_const import X86_OP_IMM, X86_OP_MEM, X86_REG_BP, X86_REG_INVALID
 
-from .c_ast_utils import _same_c_expression_8616
+from .c_ast_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
 from .decompiler_postprocess_flags import (
     _extract_flag_predicate_from_expr_8616,
     _extract_flag_test_info_8616,
@@ -128,6 +129,8 @@ def _owned_materialized_condition_fingerprint_8616(cond: object, project: object
     if not any(tags.get(marker) is True for marker in materialized_markers):
         return None
     fingerprint = _expr_fingerprint(cond, project)
+    if any(isinstance(current, CFunctionCall) for current in _iter_c_nodes_deep_8616(cond)):
+        return fingerprint
     if _fingerprint_contains_raw_register_8616(fingerprint) or "virtual:" in fingerprint:
         return None
     return fingerprint

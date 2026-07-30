@@ -627,7 +627,7 @@ def test_batch_decompile_procs_writes_per_proc_outputs_and_report(monkeypatch, t
         print(f"[tail-validation] {proc_name} clean", file=sys.stderr)
         return 1 if proc_name == "bad_proc" else 0
 
-    monkeypatch.setattr(batch_decompile_procs.cli_core, "main", fake_main)
+    monkeypatch.setattr(batch_decompile_procs.decompiler_cli, "main", fake_main)
 
     rc = batch_decompile_procs.main(
         [
@@ -683,7 +683,7 @@ def test_batch_decompile_procs_accepts_json_job_file(monkeypatch, tmp_path):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(batch_decompile_procs.cli_core, "main", fake_main)
+    monkeypatch.setattr(batch_decompile_procs.decompiler_cli, "main", fake_main)
 
     rc = batch_decompile_procs.main(["--out-dir", str(tmp_path / "batch"), "--job-file", str(job_file)])
 
@@ -717,7 +717,7 @@ def test_batch_decompile_procs_direct_in_process_sets_and_restores_env(monkeypat
         print(f"int {proc_name}(void) {{ return 0; }}")
         return 0
 
-    monkeypatch.setattr(batch_decompile_procs.cli_core, "main", fake_main)
+    monkeypatch.setattr(batch_decompile_procs.decompiler_cli, "main", fake_main)
 
     rc = batch_decompile_procs.main(
         [

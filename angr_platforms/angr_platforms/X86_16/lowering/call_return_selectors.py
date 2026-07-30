@@ -19,16 +19,19 @@ Owned callsite summaries and result contracts use typed dot access.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimRegisterVariable
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..callsite_summary import CallsiteSummary8616
+from ..pipeline.errors import PipelineHardError
 
 __all__ = [
     "CallReturnSelectorBindingResult8616",
     "bind_call_return_switch_selectors_8616",
+    "replay_call_return_switch_selectors_8616",
 ]
 
 
@@ -137,7 +140,11 @@ def _structured_return_variable_8616(
     """Build deterministic register-SSA identity from one exact callsite fact."""
     variable = register.variable
     assert isinstance(variable, SimRegisterVariable)
-    name = variable.name if isinstance(variable.name, str) and variable.name else summary.return_register
+    name = (
+        summary.return_register
+        if isinstance(summary.return_register, str) and summary.return_register
+        else variable.name
+    )
     return SimRegisterVariable(
         variable.reg,
         variable.size,
@@ -165,6 +172,11 @@ def bind_call_return_switch_selectors_8616(
     shape must be the 16-bit AX view, and assignment-to-switch flow must contain
     no AX clobber, nested call, or control-flow boundary.
     """
+    # Dynamic boundary: regenerated angr codegen trees need to call back into
+    # this Lowering owner without importing its semantics into CLI.
+    cast(Any, codegen)._inertia_call_return_selector_replayer_8616 = (
+        replay_call_return_switch_selectors_8616
+    )
     cfunc = getattr(codegen, "cfunc", None)
     root = getattr(cfunc, "statements", None)
     function_addr = getattr(cfunc, "addr", None)
@@ -230,3 +242,17 @@ def bind_call_return_switch_selectors_8616(
         materialized_count=materialized_count,
         failure_count=failure_count,
     )
+
+
+def replay_call_return_switch_selectors_8616(codegen: object) -> bool:
+    """Replay selector identity at its Lowering owner after AST regeneration."""
+    result = bind_call_return_switch_selectors_8616(codegen)
+    if result.classified_fact_count > 0 and result.materialized_count == 0:
+        raise PipelineHardError(
+            "classified call-return switch selector was not materialized: "
+            f"classified={result.classified_fact_count} "
+            f"failures={result.failure_count}",
+            layer="types/lowering:call_return_selectors",
+        )
+    cast(Any, codegen)._inertia_call_return_selector_binding_8616 = result
+    return result.changed

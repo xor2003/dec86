@@ -26,6 +26,7 @@ from angr_platforms.X86_16.decompiler_postprocess_typed_conditions import (
 )
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRBinaryValue, IRValue, MemSpace
+from angr_platforms.X86_16.widening.segmented_load_identity import segmented_load_identity_8616
 
 
 class _DummyCodegen:
@@ -136,6 +137,41 @@ def test_build_c_zero_condition_expr_materializes_typed_logical_value():
     assert expr.lhs.rhs.args[1].value == 0x132
     assert isinstance(expr.rhs, CConstant)
     assert expr.rhs.value == 0
+
+
+def test_build_c_condition_expr_materializes_typed_stack_subtractions():
+    project = _project()
+    codegen = _codegen([])
+    cond = ConditionIR(
+        "slt",
+        IRBinaryValue(
+            op="sub",
+            lhs=IRValue(MemSpace.SS, name="bp", offset=-6, size=2),
+            rhs=IRValue(MemSpace.SS, name="bp", offset=4, size=2),
+            size=2,
+        ),
+        IRBinaryValue(
+            op="sub",
+            lhs=IRValue(MemSpace.SS, name="bp", offset=6, size=2),
+            rhs=IRValue(MemSpace.SS, name="bp", offset=-6, size=2),
+            size=2,
+        ),
+        src_insn=0x4020,
+        block_addr=0x4000,
+    )
+
+    expr = _build_c_condition_expr(project, cond, codegen)
+
+    assert isinstance(expr, CBinaryOp)
+    assert expr.op == "CmpLT"
+    assert isinstance(expr.lhs, CBinaryOp)
+    assert expr.lhs.op == "Sub"
+    assert expr.lhs.lhs.variable.name == "local_6"
+    assert expr.lhs.rhs.variable.name == "arg_4"
+    assert isinstance(expr.rhs, CBinaryOp)
+    assert expr.rhs.op == "Sub"
+    assert expr.rhs.lhs.variable.name == "arg_6"
+    assert expr.rhs.rhs.variable.name == "local_6"
 
 
 def test_build_c_condition_expr_preserves_signed_register_resolved_stack_operand_type():
@@ -806,6 +842,11 @@ def test_apply_typed_conditions_materializes_segmented_irvalue_operand():
     assert updated.op == "CmpLE"
     assert updated.lhs.callee_target == "SEG_U16"
     assert getattr(updated.lhs.args[1], "value", None) == 0x132
+    identity = segmented_load_identity_8616(updated.lhs)
+    assert identity is not None
+    assert identity.space is MemSpace.DS
+    assert identity.offset == 0x132
+    assert identity.width == 2
 
 
 def test_apply_typed_conditions_materializes_stack_irvalue_operand():

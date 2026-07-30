@@ -49,7 +49,12 @@ from inertia_decompiler.telemetry import span
 from .analysis_helpers import _canonicalize_x86_16_padding_call_target_8616
 from .c_ast_utils import _iter_c_nodes_deep_8616
 from .callee_name_normalization import normalize_callee_name_8616
-from .callsite_summary import CallsiteSummary8616, summarize_x86_16_callsite
+from .callsite_summary import (
+    CallsiteSummary8616,
+    callsite_summary_inventory_8616,
+    structured_callsite_addr_8616,
+    summarize_x86_16_callsite,
+)
 from .compiler_helpers import identify_x86_16_compiler_helper_at_8616
 from .decompiler_postprocess_flags import _split_ordering_if_chain_replacement_condition_8616
 from .ir.condition_ir import (
@@ -61,6 +66,8 @@ from .ir.condition_ir import (
     normalize_condition_fingerprint_algebraic_8616,
     normalize_condition_fingerprint_string_8616,
 )
+from .ir.core import SegmentOrigin
+from .ir.segment_state import SegmentStateArtifact
 from .lowering.call_output_stack_objects import CallOutputStackObjectFact8616
 from .lowering.real_mode_linear import DirectStackMoveFact8616
 from .lowering.segmented_global_loads import (
@@ -68,6 +75,7 @@ from .lowering.segmented_global_loads import (
     IndexedGlobalReadCarrierMaterializationRecord8616,
     IndexedSegmentedGlobalEvidence8616,
 )
+from .pipeline.errors import PipelineHardError
 from .structuring.indexed_stack_ranges import (
     IndexedStackReadProof8616,
     collect_indexed_stack_read_proofs_8616,
@@ -4114,7 +4122,11 @@ def _assignment_lhs_writes_memory_8616(lhs: TailValidationValue, project: TailVa
         return False
     if _dirty_expression_is_temporary_lvalue_8616(lhs):
         return False
-    location = _location_fingerprint(lhs, project)
+    location = _location_fingerprint(
+        lhs,
+        project,
+        resolve_copy_alias=False,
+    )
     return location.startswith("stack:") or location.startswith("global:") or location.startswith("deref:")
 
 
@@ -4744,7 +4756,10 @@ def _process_tail_validation_node_8616(
             # Dynamic angr/codegen compatibility boundary.
             for call_node in _iter_observable_call_nodes_for_validation_8616(node.rhs):
                 _record_helper_call(call_node)
-            for location in _assignment_write_locations_8616(node.lhs, project):
+            for location in _assignment_write_locations_8616(
+                node.lhs,
+                project,
+            ):
                 if location.startswith("reg:"):
                     if mode == "coarse" or location in observed_locations:
                         register_writes.add(location)
@@ -4836,14 +4851,22 @@ def _tail_validation_headline_8616(severity: str, scanned_count: int, changed_fu
 def _def_use_call_output_definitions_8616(
     codegen: TailValidationValue,
 ) -> dict[int, tuple[DefUseCallOutputDefinition8616, ...]]:
-    """Join lowering-owned output facts to their typed structured call nodes."""
+    """Join lowering-owned output facts to exact current structured calls.
+
+    Structuring may regenerate a call node after Lowering records its output
+    object. Reconnect that clone only through the typed machine-call tag and
+    authoritative callsite inventory; target names and AST order are not
+    evidence of identity.
+    """
     try:
         raw_facts = codegen._inertia_call_output_stack_object_facts_8616
         summary_map = codegen._inertia_callsite_summaries
+        root = codegen.cfunc.statements
     except AttributeError:
         return {}
     if not isinstance(summary_map, Mapping):
         return {}
+    inventory = callsite_summary_inventory_8616(codegen)
     facts = tuple(
         fact
         for fact in _boundary_tuple_8616(raw_facts)
@@ -4854,8 +4877,24 @@ def _def_use_call_output_definitions_8616(
     for fact in facts:
         facts_by_callsite.setdefault(fact.callsite_addr, []).append(fact)
     definitions: dict[int, tuple[DefUseCallOutputDefinition8616, ...]] = {}
-    for call_node_id, summary in summary_map.items():
-        if not isinstance(call_node_id, int) or not isinstance(summary, CallsiteSummary8616):
+    for node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(node, CFunctionCall):
+            continue
+        call_node_id = id(node)
+        summary = summary_map.get(call_node_id)
+        tagged_callsite_addr = structured_callsite_addr_8616(node)
+        if isinstance(summary, CallsiteSummary8616):
+            if (
+                tagged_callsite_addr is not None
+                and tagged_callsite_addr != summary.callsite_addr
+            ):
+                raise PipelineHardError(
+                    "structured call output identity conflicts with typed summary: "
+                    f"tag={tagged_callsite_addr:#x} summary={summary.callsite_addr:#x}"
+                )
+        elif tagged_callsite_addr is not None:
+            summary = inventory.get(tagged_callsite_addr)
+        if not isinstance(summary, CallsiteSummary8616):
             continue
         call_definitions = tuple(
             DefUseCallOutputDefinition8616(
@@ -4942,6 +4981,44 @@ def _def_use_segment_register_offsets_8616(project: TailValidationValue) -> froz
     return frozenset(offsets)
 
 
+def _def_use_entry_segment_register_offsets_8616(
+    project: TailValidationValue,
+    codegen: TailValidationValue,
+) -> frozenset[int]:
+    """Return segment offsets proven as architectural live-ins by typed IR."""
+    try:
+        artifact = codegen._inertia_segment_state_artifact
+    except AttributeError:
+        return frozenset()
+    if not isinstance(artifact, SegmentStateArtifact):
+        return frozenset()
+    try:
+        function_addr = codegen.cfunc.addr
+    except AttributeError:
+        return frozenset()
+    if not isinstance(function_addr, int):
+        return frozenset()
+    entry_states = artifact.entry_states.get(function_addr, {})
+    proven_names = {
+        register_name
+        for register_name, state in entry_states.items()
+        if state.origin is SegmentOrigin.PROVEN
+        and state.value_kind == "architectural_live_in"
+    }
+    try:
+        registers = project.arch.registers
+    except AttributeError:
+        return frozenset()
+    if not isinstance(registers, Mapping):
+        return frozenset()
+    offsets: set[int] = set()
+    for register_name in proven_names:
+        register = registers.get(register_name)
+        if isinstance(register, (list, tuple)) and register and isinstance(register[0], int):
+            offsets.add(register[0])
+    return frozenset(offsets)
+
+
 def refresh_x86_16_final_semantic_validation_8616(
     project: TailValidationValue,
     codegen: TailValidationValue,
@@ -4990,6 +5067,10 @@ def refresh_x86_16_final_semantic_validation_8616(
         ),
         entry_defined_registers=_def_use_entry_registers_8616(codegen),
         segment_register_offsets=_def_use_segment_register_offsets_8616(project),
+        entry_defined_segment_register_offsets=_def_use_entry_segment_register_offsets_8616(
+            project,
+            codegen,
+        ),
     )
     required_call_report = validate_required_callsites_8616(codegen, root)
     call_interface_report = validate_call_interfaces_8616(codegen, root)
@@ -5078,6 +5159,10 @@ def collect_x86_16_tail_validation_summary(
             ),
             entry_defined_registers=_def_use_entry_registers_8616(codegen),
             segment_register_offsets=_def_use_segment_register_offsets_8616(project),
+            entry_defined_segment_register_offsets=_def_use_entry_segment_register_offsets_8616(
+                project,
+                codegen,
+            ),
         )
         required_call_report = validate_required_callsites_8616(codegen, root)
         call_interface_report = validate_call_interfaces_8616(codegen, root)

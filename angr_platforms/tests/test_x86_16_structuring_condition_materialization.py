@@ -1,9 +1,23 @@
 from types import SimpleNamespace
 
-from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CForLoop, CIfElse, CStatements
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CBinaryOp,
+    CConstant,
+    CForLoop,
+    CFunctionCall,
+    CGoto,
+    CIfElse,
+    CLabel,
+    CStatements,
+    CUnaryOp,
+    CVariable,
+)
 from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
+from angr_platforms.X86_16.ir.core import IRValue, MemSpace
 from angr_platforms.X86_16.lowering.call_output_stack_objects import (
     WideCallReturnConditionResult8616,
     WideCallReturnConditionStats8616,
@@ -291,6 +305,37 @@ def test_structuring_condition_surface_token_detects_rebuilt_loop_condition():
     assert before != after
 
 
+def test_structuring_condition_surface_token_detects_in_place_operand_replacement():
+    codegen = _Codegen()
+    condition = CBinaryOp(
+        "CmpLT",
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1002, "vex_block_addr": 0x1000},
+    )
+    loop = CForLoop(
+        None,
+        condition,
+        None,
+        _tagged_statements(0x1010, codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=CStatements([loop], codegen=codegen)
+    )
+
+    before = condition_materialization.structuring_condition_surface_token_8616(
+        codegen
+    )
+    condition.rhs = CConstant(3, SimTypeShort(False), codegen=codegen)
+    after = condition_materialization.structuring_condition_surface_token_8616(
+        codegen
+    )
+
+    assert before != after
+
+
 def test_structuring_condition_chain_materializes_three_branch_short_circuit(monkeypatch):
     codegen = _Codegen()
     root_condition = CConstant(1, SimTypeShort(False), codegen=codegen)
@@ -356,6 +401,324 @@ def test_structuring_condition_chain_materializes_three_branch_short_circuit(mon
             materialized_count=1,
             failure_count=0,
         )
+    )
+
+
+def test_structuring_condition_chain_collapses_cfg_proven_assignment_diamond(monkeypatch):
+    codegen = _Codegen()
+    root_condition = CConstant(1, SimTypeShort(False), codegen=codegen)
+    root_condition.tags = {"ins_addr": 0x1002, "vex_block_addr": 0x1000}
+    second_condition = CConstant(1, SimTypeShort(False), codegen=codegen)
+    second_condition.tags = {"ins_addr": 0x1012, "vex_block_addr": 0x1010}
+    third_condition = CConstant(1, SimTypeShort(False), codegen=codegen)
+    third_condition.tags = {"ins_addr": 0x1022, "vex_block_addr": 0x1020}
+    result_variable = SimStackVariable(-4, 2, base="bp", name="result", region=0x1000)
+    true_assignment = CAssignment(
+        CVariable(result_variable, codegen=codegen),
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1030, "vex_block_addr": 0x1030},
+    )
+    false_assignment = CAssignment(
+        CVariable(result_variable, codegen=codegen),
+        CConstant(15, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x1040, "vex_block_addr": 0x1040},
+    )
+    second_branch = CIfElse(
+        [
+            (
+                second_condition,
+                CStatements(
+                    [CGoto(0x1030, None, codegen=codegen, tags={"ins_addr": 0x1012})],
+                    codegen=codegen,
+                ),
+            )
+        ],
+        else_node=None,
+        cstyle_ifs=True,
+        codegen=codegen,
+        tags={"ins_addr": 0x1012},
+    )
+    third_branch = CIfElse(
+        [
+            (
+                third_condition,
+                CStatements(
+                    [CGoto(0x1030, None, codegen=codegen, tags={"ins_addr": 0x1022})],
+                    codegen=codegen,
+                ),
+            )
+        ],
+        else_node=None,
+        cstyle_ifs=True,
+        codegen=codegen,
+        tags={"ins_addr": 0x1022},
+    )
+    branch = CIfElse(
+        [
+            (
+                root_condition,
+                CStatements(
+                    [second_branch, third_branch, false_assignment],
+                    codegen=codegen,
+                ),
+            )
+        ],
+        else_node=CStatements(
+            [
+                CLabel("LABEL_1030", codegen=codegen, tags={"ins_addr": 0x1030}),
+                true_assignment,
+            ],
+            codegen=codegen,
+        ),
+        cstyle_ifs=True,
+        codegen=codegen,
+        tags={"ins_addr": 0x1002},
+    )
+    root = CStatements([branch], codegen=codegen)
+    conditions = (
+        _targeted_condition(0x1002, 0x1000, 0x1010, 0x1030),
+        _targeted_condition(0x1012, 0x1010, 0x1020, 0x1030),
+        ConditionIR(
+            op="eq",
+            lhs=0x1022,
+            rhs=0,
+            src_insn=0x1022,
+            block_addr=0x1020,
+            taken_target=0x1030,
+            fallthrough_target=0x1040,
+        ),
+    )
+    graph = _Graph(
+        (
+            (0x1000, 0x1010),
+            (0x1000, 0x1030),
+            (0x1010, 0x1020),
+            (0x1010, 0x1030),
+            (0x1020, 0x1030),
+            (0x1020, 0x1040),
+            (0x1030, 0x1050),
+            (0x1040, 0x1050),
+        )
+    )
+    function = SimpleNamespace(transition_graph=graph, block_addrs_set=set(graph.nodes))
+    project = SimpleNamespace(kb=SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: function)))
+    codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root)
+    codegen._inertia_typed_conditions = conditions
+
+    def _materialize(_project, condition, _codegen):
+        value = CConstant(condition.src_insn, SimTypeShort(False), codegen=codegen)
+        zero = CConstant(0, SimTypeShort(False), codegen=codegen)
+        return CBinaryOp("CmpEQ" if condition.op == "eq" else "CmpNE", value, zero, codegen=codegen)
+
+    monkeypatch.setattr(
+        condition_materialization._legacy_typed_conditions,
+        "_build_c_condition_expr",
+        _materialize,
+    )
+
+    changed = condition_materialization.materialize_structuring_condition_chains_8616(project, codegen)
+
+    assert changed is True
+    replacement, true_body = branch.condition_and_nodes[0]
+    assert replacement.tags["inertia_structuring_assignment_diamond_materialized_8616"] is True
+    assert true_body.statements == [true_assignment]
+    assert branch.else_node.statements == [false_assignment]
+    assert all(not isinstance(node, CGoto) for node in condition_materialization._iter_c_nodes_deep_8616(branch))
+    assert codegen._inertia_structuring_condition_chain_stats_8616.materialized_count == 1
+    assert codegen._inertia_structuring_condition_chain_stats_8616.failure_count == 0
+
+
+def test_structuring_assignment_diamond_refuses_extra_semantic_call(monkeypatch):
+    codegen = _Codegen()
+    root_condition = CConstant(1, SimTypeShort(False), codegen=codegen)
+    root_condition.tags = {"ins_addr": 0x2002, "vex_block_addr": 0x2000}
+    nested_condition = CConstant(1, SimTypeShort(False), codegen=codegen)
+    nested_condition.tags = {"ins_addr": 0x2012, "vex_block_addr": 0x2010}
+    result_variable = SimStackVariable(-4, 2, base="bp", name="result", region=0x2000)
+    true_assignment = CAssignment(
+        CVariable(result_variable, codegen=codegen),
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x2030, "vex_block_addr": 0x2030},
+    )
+    false_assignment = CAssignment(
+        CVariable(result_variable, codegen=codegen),
+        CConstant(15, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x2040, "vex_block_addr": 0x2040},
+    )
+    semantic_call = CFunctionCall(
+        "side_effect",
+        None,
+        [],
+        codegen=codegen,
+        tags={"ins_addr": 0x2014, "vex_block_addr": 0x2010},
+    )
+    nested_branch = CIfElse(
+        [
+            (
+                nested_condition,
+                CStatements(
+                    [CGoto(0x2030, None, codegen=codegen, tags={"ins_addr": 0x2012})],
+                    codegen=codegen,
+                ),
+            )
+        ],
+        else_node=None,
+        cstyle_ifs=True,
+        codegen=codegen,
+        tags={"ins_addr": 0x2012},
+    )
+    branch = CIfElse(
+        [
+            (
+                root_condition,
+                CStatements(
+                    [semantic_call, nested_branch, false_assignment],
+                    codegen=codegen,
+                ),
+            )
+        ],
+        else_node=CStatements([true_assignment], codegen=codegen),
+        cstyle_ifs=True,
+        codegen=codegen,
+        tags={"ins_addr": 0x2002},
+    )
+    conditions = (
+        _targeted_condition(0x2002, 0x2000, 0x2010, 0x2030),
+        _targeted_condition(0x2012, 0x2010, 0x2030, 0x2040),
+    )
+    graph = _Graph(
+        (
+            (0x2000, 0x2010),
+            (0x2000, 0x2030),
+            (0x2010, 0x2030),
+            (0x2010, 0x2040),
+            (0x2030, 0x2050),
+            (0x2040, 0x2050),
+        )
+    )
+    function = SimpleNamespace(transition_graph=graph, block_addrs_set=set(graph.nodes))
+    project = SimpleNamespace(kb=SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: function)))
+    codegen.cfunc = SimpleNamespace(addr=0x2000, statements=CStatements([branch], codegen=codegen))
+    codegen._inertia_typed_conditions = conditions
+    monkeypatch.setattr(
+        condition_materialization._legacy_typed_conditions,
+        "_build_c_condition_expr",
+        lambda *_args: CConstant(1, SimTypeShort(False), codegen=codegen),
+    )
+
+    condition_materialization.materialize_structuring_condition_chains_8616(project, codegen)
+
+    replacement = branch.condition_and_nodes[0][0]
+    assert replacement.tags.get("inertia_structuring_assignment_diamond_materialized_8616") is not True
+    assert semantic_call in branch.condition_and_nodes[0][1].statements
+
+
+def test_structuring_replays_typed_wide_condition_over_existing_boolean_form(monkeypatch):
+    codegen = _Codegen()
+    expression = CUnaryOp(
+        "Not",
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    expression.tags = {"ins_addr": 0x1002, "vex_block_addr": 0x1000}
+    body = _tagged_statements(0x1040, codegen)
+    branch = CIfElse([(expression, body)], else_node=None, cstyle_ifs=True, codegen=codegen)
+    root = CStatements([branch], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+    dx = IRValue(MemSpace.REG, name="dx", offset=4, size=2)
+    ax = IRValue(MemSpace.REG, name="ax", offset=0, size=2)
+    high = IRValue(MemSpace.SS, name="bp", offset=-2, size=2)
+    low = IRValue(MemSpace.SS, name="bp", offset=-4, size=2)
+    conditions = (
+        ConditionIR(
+            op="sle",
+            lhs=dx,
+            rhs=high,
+            src_insn=0x1002,
+            block_addr=0x1000,
+            taken_target=0x1010,
+            fallthrough_target=0x1030,
+        ),
+        ConditionIR(
+            op="sge",
+            lhs=dx,
+            rhs=high,
+            src_insn=0x1012,
+            block_addr=0x1010,
+            taken_target=0x1020,
+            fallthrough_target=0x1030,
+        ),
+        ConditionIR(
+            op="ule",
+            lhs=ax,
+            rhs=low,
+            src_insn=0x1022,
+            block_addr=0x1020,
+            taken_target=0x1040,
+            fallthrough_target=0x1030,
+        ),
+    )
+    call = CFunctionCall("clock", None, [], codegen=codegen)
+    lowered = CBinaryOp(
+        "CmpGT",
+        call,
+        CConstant(0, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    prune_calls: list[CFunctionCall] = []
+    monkeypatch.setattr(
+        condition_materialization,
+        "lower_wide_call_return_condition_chain_8616",
+        lambda *_args: WideCallReturnConditionResult8616(
+            expression=lowered,
+            stats=WideCallReturnConditionStats8616(
+                raw_fact_count=1,
+                normalized_fact_count=1,
+                classified_fact_count=1,
+                materialized_count=1,
+                failure_count=0,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        condition_materialization,
+        "prune_materialized_wide_condition_call_carrier_8616",
+        lambda _codegen, consumed_call: prune_calls.append(consumed_call) or 1,
+    )
+    monkeypatch.setattr(
+        condition_materialization,
+        "prune_materialized_call_output_stack_carriers_8616",
+        lambda _codegen: 0,
+    )
+
+    changed, stats = condition_materialization._materialize_existing_wide_call_return_conditions_8616(
+        codegen,
+        conditions,
+        {condition.src_insn: condition for condition in conditions},
+        {
+            0x1000: (0x1010, 0x1030),
+            0x1010: (0x1020, 0x1030),
+            0x1020: (0x1040, 0x1030),
+            0x1030: (),
+            0x1040: (),
+        },
+    )
+
+    assert changed is True
+    replacement = branch.condition_and_nodes[0][0]
+    assert replacement is lowered
+    assert replacement.tags["inertia_structuring_wide_call_return_condition_materialized_8616"] is True
+    assert prune_calls == [call]
+    assert stats == condition_materialization.StructuringConditionChainStats8616(
+        raw_fact_count=1,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=1,
+        failure_count=0,
     )
 
 

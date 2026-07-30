@@ -19,6 +19,7 @@ from enum import StrEnum
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
+    CBreak,
     CConstant,
     CDoWhileLoop,
     CExpressionStatement,
@@ -752,13 +753,16 @@ def validate_structured_def_use_8616(
     indexed_stack_read_proofs: Mapping[int, IndexedStackReadProof8616] | None = None,
     entry_defined_registers: tuple[object, ...] = (),
     segment_register_offsets: frozenset[int] = frozenset(),
+    entry_defined_segment_register_offsets: frozenset[int] = frozenset(),
 ) -> DefUseValidationReport8616:
     """Validate definitely assigned stack and register reads in structured C.
 
     Positive ``BP`` slots are function arguments and therefore initialized at
     entry. Register arguments are initialized only when the caller supplies
-    their exact C variables. Register and segment carriers without complete
-    angr region/SSA identity are classified but never treated as defined.
+    their exact C variables. Segment carriers are initialized only when typed
+    IR state proves their architectural live-in offsets. Other register and
+    segment carriers without complete angr region/SSA identity remain
+    classified but are not treated as defined.
     Constant indexed stack-array accesses use their exact element range.
     Dynamic indexed reads conservatively require the complete bounded array to
     be definitely assigned; a dynamic store never defines the complete array.
@@ -766,6 +770,7 @@ def validate_structured_def_use_8616(
     report = _MutableDefUseReport8616()
     definitions_by_call = call_output_definitions or {}
     proofs_by_read = indexed_stack_read_proofs or {}
+    break_exit_scopes: list[list[_DefUseFlowState8616] | None] = []
 
     def _check_reads(
         expr: object,
@@ -790,7 +795,11 @@ def validate_structured_def_use_8616(
                     array_width=key.width,
                 )
             )
-            if proof_matches or (
+            segment_live_in = (
+                key.kind is DefUseStorageKind8616.SEGMENT_CARRIER
+                and key.offset in entry_defined_segment_register_offsets
+            )
+            if proof_matches or segment_live_in or (
                 key.definition_trackable
                 and _storage_bytes_8616(key).issubset(defined)
             ):
@@ -894,6 +903,10 @@ def validate_structured_def_use_8616(
             _check_reads(node.expr, state.defined, context=f"{context}.expr")
             _apply_call_output_definitions(node.expr, state, context=f"{context}.expr")
             return state
+        if isinstance(node, CBreak):
+            if break_exit_scopes and break_exit_scopes[-1] is not None:
+                break_exit_scopes[-1].append(state.copy())
+            return state
         if isinstance(node, CIfElse):
             branch_states: list[_DefUseFlowState8616] = []
             branch_predicates: list[_DefUsePredicate8616 | None] = []
@@ -935,7 +948,11 @@ def validate_structured_def_use_8616(
                 body_incoming,
                 _predicate_fact_8616(node.condition, segment_register_offsets),
             )
-            body_state = _walk(node.body, body_incoming, context=f"{context}.for.body")
+            break_exit_scopes.append([])
+            try:
+                body_state = _walk(node.body, body_incoming, context=f"{context}.for.body")
+            finally:
+                break_exit_scopes.pop()
             iterated = _walk(node.iterator, body_state, context=f"{context}.for.iterator")
             initialized.guarded = _intersect_guarded_8616(
                 [initialized.guarded, iterated.guarded],
@@ -949,26 +966,50 @@ def validate_structured_def_use_8616(
                 body_incoming,
                 _predicate_fact_8616(node.condition, segment_register_offsets),
             )
-            body_state = _walk(node.body, body_incoming, context=f"{context}.while.body")
+            break_exit_states: list[_DefUseFlowState8616] = []
+            break_exit_scopes.append(break_exit_states)
+            try:
+                body_state = _walk(node.body, body_incoming, context=f"{context}.while.body")
+            finally:
+                break_exit_scopes.pop()
             state.guarded = _intersect_guarded_8616(
                 [state.guarded, body_state.guarded],
                 state.guarded,
             )
+            if (
+                isinstance(node.condition, CConstant)
+                and isinstance(node.condition.value, (bool, int))
+                and bool(node.condition.value)
+                and break_exit_states
+            ):
+                return _intersect_flow_states_8616(break_exit_states, state)
             return state
         if isinstance(node, CDoWhileLoop):
-            body_state = _walk(node.body, state, context=f"{context}.do.body")
+            break_exit_scopes.append([])
+            try:
+                body_state = _walk(node.body, state, context=f"{context}.do.body")
+            finally:
+                break_exit_scopes.pop()
             _check_reads(node.condition, body_state.defined, context=f"{context}.do.condition")
             return body_state
         if isinstance(node, CSwitchCase):
             _check_reads(node.switch, state.defined, context=f"{context}.switch.selector")
-            branch_states = [
-                _walk(branch, state, context=f"{context}.switch.case")
-                for branch in _switch_case_bodies_8616(node.cases)
-            ]
+            break_exit_scopes.append(None)
+            try:
+                branch_states = [
+                    _walk(branch, state, context=f"{context}.switch.case")
+                    for branch in _switch_case_bodies_8616(node.cases)
+                ]
+            finally:
+                break_exit_scopes.pop()
             if node.default is None:
                 branch_states.append(state.copy())
             else:
-                branch_states.append(_walk(node.default, state, context=f"{context}.switch.default"))
+                break_exit_scopes.append(None)
+                try:
+                    branch_states.append(_walk(node.default, state, context=f"{context}.switch.default"))
+                finally:
+                    break_exit_scopes.pop()
             return _intersect_flow_states_8616(branch_states, state)
         _check_reads(node, state.defined, context=context)
         _apply_call_output_definitions(node, state, context=context)

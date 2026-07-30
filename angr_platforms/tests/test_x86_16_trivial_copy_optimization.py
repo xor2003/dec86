@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import angr_platforms.X86_16.decompiler_postprocess_stage as postprocess_stage
 import archinfo
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
@@ -195,28 +196,108 @@ def test_prune_adjacent_temporary_copy_moves_call_from_same_emitted_temp_name():
     assert statements[0].rhs is call
 
 
-def test_finalize_late_ast_cleanup_marks_refresh_after_temp_copy_fold():
+def test_finalize_late_ast_cleanup_marks_refresh_after_temp_copy_fold(monkeypatch):
     codegen = _mk_codegen_with_statements([])
     temp = _cvar(codegen, "vvar_195", 0)
     dst = _cvar(codegen, "ch", 2)
     first = structured_c.CAssignment(temp, _const(codegen, 75), codegen=codegen)
     second = structured_c.CAssignment(dst, temp, codegen=codegen)
     codegen.cfunc.statements = structured_c.CStatements([first, second], codegen=codegen)
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_prune_late_semantically_empty_noop_guards_8616",
+        lambda _codegen: postprocess_stage.LateEmptyNoopGuardCleanupStats8616(0, 0, 0, 0, 0),
+    )
 
     result = finalize_late_ast_cleanup_8616(SimpleNamespace(), codegen)
 
     assert result.changed is True
     assert result.adjacent_temporary_copy_changed is True
+    assert result.empty_noop_guard_changed is False
     assert result.requires_dce_after_cleanup is True
     assert codegen._inertia_codegen_decl_refresh_required_8616 is True
     assert codegen._inertia_force_codegen_regeneration_8616 is True
     assert codegen._inertia_late_ast_cleanup_finalize_8616 == {
         "changed": True,
         "adjacent_temporary_copy_changed": True,
+        "empty_noop_guard_changed": False,
         "requires_dce_after_cleanup": True,
         "owner": "postprocess.stage",
     }
     assert list(codegen.cfunc.statements.statements) == [second]
+
+
+def test_finalize_late_ast_cleanup_removes_semantically_empty_noop_guard():
+    codegen = _mk_codegen_with_statements([])
+    condition = structured_c.CBinaryOp(
+        "<",
+        _cvar(codegen, "vvar_1715", 0),
+        _stack_cvar(codegen, "local_6", -6),
+        codegen=codegen,
+    )
+    empty_guard = structured_c.CIfElse(
+        [(condition, structured_c.CStatements([], codegen=codegen))],
+        else_node=structured_c.CStatements([], codegen=codegen),
+        cstyle_ifs=True,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = structured_c.CStatements([empty_guard], codegen=codegen)
+
+    result = finalize_late_ast_cleanup_8616(SimpleNamespace(), codegen)
+
+    assert result.changed is True
+    assert result.adjacent_temporary_copy_changed is False
+    assert result.empty_noop_guard_changed is True
+    assert result.requires_dce_after_cleanup is False
+    assert list(codegen.cfunc.statements.statements) == []
+    assert codegen._inertia_late_empty_noop_guard_cleanup_stats_8616 == (
+        postprocess_stage.LateEmptyNoopGuardCleanupStats8616(
+            raw_fact_count=1,
+            normalized_fact_count=1,
+            classified_fact_count=1,
+            materialized_count=1,
+            failure_count=0,
+        )
+    )
+    assert codegen._inertia_late_ast_cleanup_finalize_8616 == {
+        "changed": True,
+        "adjacent_temporary_copy_changed": False,
+        "empty_noop_guard_changed": True,
+        "requires_dce_after_cleanup": False,
+        "owner": "postprocess.stage",
+    }
+
+
+def test_finalize_late_ast_cleanup_preserves_nonempty_guard():
+    codegen = _mk_codegen_with_statements([])
+    condition = _cvar(codegen, "vvar_1715", 0)
+    assignment = structured_c.CAssignment(
+        _stack_cvar(codegen, "local_6", -6),
+        _const(codegen, 1),
+        codegen=codegen,
+    )
+    guard = structured_c.CIfElse(
+        [(condition, structured_c.CStatements([assignment], codegen=codegen))],
+        else_node=structured_c.CStatements([], codegen=codegen),
+        cstyle_ifs=True,
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = structured_c.CStatements([guard], codegen=codegen)
+
+    result = finalize_late_ast_cleanup_8616(SimpleNamespace(), codegen)
+
+    assert result.changed is False
+    assert result.empty_noop_guard_changed is False
+    assert list(codegen.cfunc.statements.statements) == [guard]
+    assert codegen._inertia_late_empty_noop_guard_cleanup_stats_8616 == (
+        postprocess_stage.LateEmptyNoopGuardCleanupStats8616(
+            raw_fact_count=1,
+            normalized_fact_count=0,
+            classified_fact_count=0,
+            materialized_count=0,
+            failure_count=0,
+        )
+    )
 
 
 def test_prune_adjacent_temporary_copy_refuses_when_temp_used_later():

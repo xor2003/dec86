@@ -16,6 +16,8 @@ from typing import Protocol, TypeAlias, runtime_checkable
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
+from .segment_register_state import runtime_segment_name_for_variable_8616
+
 _CacheMap8616: TypeAlias = MutableMapping[str, MutableMapping[int, object]]
 _ProjectRewriteCache8616: TypeAlias = Callable[[object], _CacheMap8616]
 _UnaryObjectCallback8616: TypeAlias = Callable[[object], object]
@@ -135,8 +137,12 @@ def _segment_reg_name(
         cached = cache[key]
         return cached if isinstance(cached, str) else None
 
-    reg_offset = _register_offset_for_node_8616(node)
-    result = project.arch.register_names.get(reg_offset) if isinstance(reg_offset, int) else None
+    result = None
+    if isinstance(node, structured_c.CVariable):
+        result = runtime_segment_name_for_variable_8616(node.variable)
+    if result is None:
+        reg_offset = _register_offset_for_node_8616(node)
+        result = project.arch.register_names.get(reg_offset) if isinstance(reg_offset, int) else None
     cache[key] = result
     return result
 

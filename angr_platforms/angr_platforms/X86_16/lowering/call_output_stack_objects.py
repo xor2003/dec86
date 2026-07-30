@@ -23,15 +23,20 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
     CBinaryOp,
     CExpression,
+    CExpressionStatement,
     CFunctionCall,
+    CIfElse,
+    CStatements,
     CStructField,
     CTypeCast,
     CUnaryOp,
     CVariable,
     CVariableField,
 )
+from angr.knowledge_plugins.functions import Function
 from angr.sim_type import (
     SimStruct,
     SimType,
@@ -41,7 +46,7 @@ from angr.sim_type import (
     SimTypeShort,
     TypeRef,
 )
-from angr.sim_variable import SimStackVariable, SimVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable, SimVariable
 from archinfo import Arch
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
@@ -104,7 +109,7 @@ class _CallOutputKnowledgeBase8616(Protocol):
 class _CallOutputFunctionManager8616(Protocol):
     """Dynamic angr function lookup used by call-output lowering."""
 
-    def function(self, *, addr: int, create: bool) -> object | None:
+    def function(self, *, addr: int, create: bool) -> Function | None:
         """Return one existing function without creating it."""
 
 
@@ -290,6 +295,24 @@ def _wide_call_return_condition_expression_parts_8616(
     expression: CExpression,
 ) -> tuple[CExpression, CExpression] | None:
     """Return high and low stack operands from the target-directed Boolean form."""
+    if isinstance(expression, CUnaryOp) and expression.op == "Not":
+        non_break = expression.operand
+        if not isinstance(non_break, CBinaryOp) or non_break.op != "LogicalOr":
+            return None
+        high_lt = non_break.lhs
+        gated_low = non_break.rhs
+        if (
+            isinstance(high_lt, CBinaryOp)
+            and high_lt.op == "CmpLT"
+            and isinstance(gated_low, CBinaryOp)
+            and gated_low.op == "LogicalAnd"
+            and isinstance(gated_low.lhs, CBinaryOp)
+            and gated_low.lhs.op == "CmpEQ"
+            and isinstance(gated_low.rhs, CBinaryOp)
+            and gated_low.rhs.op == "CmpLE"
+        ):
+            return high_lt.rhs, gated_low.rhs.rhs
+        return None
     if not isinstance(expression, CBinaryOp) or expression.op != "LogicalOr":
         return None
     high_gt = expression.lhs
@@ -314,25 +337,39 @@ def _wide_condition_stack_cvar_8616(
     low_expr: CExpression,
 ) -> CVariable | None:
     """Return the existing four-byte stack object proven by adjacent word views."""
-    proof = prove_adjacent_storage_slices(low_expr, high_expr)
-    if not proof.ok or not isinstance(low_expr, CVariable):
+    if not isinstance(low_expr, CVariable) or not isinstance(high_expr, CVariable):
         return None
     low_variable = low_expr.variable
-    if not isinstance(low_variable, SimStackVariable) or not isinstance(low_variable.offset, int):
+    high_variable = high_expr.variable
+    if not (
+        isinstance(low_variable, SimStackVariable)
+        and low_variable.base == "bp"
+        and isinstance(low_variable.offset, int)
+        and isinstance(high_variable, SimStackVariable)
+        and high_variable.base == "bp"
+        and high_variable.offset == low_variable.offset + 2
+        and high_variable.size == 2
+    ):
         return None
-    candidates = tuple(
-        cvar
-        for variable, cvar in codegen.cfunc.variables_in_use.items()
-        if isinstance(variable, SimStackVariable)
-        and variable.base == "bp"
-        and variable.offset == low_variable.offset
-        and variable.size == 4
-        and isinstance(cvar, CVariable)
-    )
-    unique_candidates = tuple({id(candidate): candidate for candidate in candidates}.values())
-    if len(unique_candidates) != 1:
-        return None
-    wide_cvar = unique_candidates[0]
+    if low_variable.size == 4:
+        wide_cvar = low_expr
+    else:
+        proof = prove_adjacent_storage_slices(low_expr, high_expr)
+        if not proof.ok:
+            return None
+        candidates = tuple(
+            cvar
+            for variable, cvar in codegen.cfunc.variables_in_use.items()
+            if isinstance(variable, SimStackVariable)
+            and variable.base == "bp"
+            and variable.offset == low_variable.offset
+            and variable.size == 4
+            and isinstance(cvar, CVariable)
+        )
+        unique_candidates = tuple({id(candidate): candidate for candidate in candidates}.values())
+        if len(unique_candidates) != 1:
+            return None
+        wide_cvar = unique_candidates[0]
     wide_type = SimTypeLong(True).with_arch(codegen.project.arch)
     low_offset = low_variable.offset
     for variable, cvar in codegen.cfunc.variables_in_use.items():
@@ -358,6 +395,30 @@ def _wide_condition_stack_cvar_8616(
             node.variable_type = wide_type
     codegen.show_local_types = True
     return wide_cvar
+
+
+def select_wide_call_return_condition_chain_8616(
+    root_condition: ConditionIR,
+    conditions: tuple[ConditionIR, ...],
+) -> tuple[ConditionIR, ConditionIR, ConditionIR] | None:
+    """Select one unique typed DX:AX condition chain rooted at ``root_condition``."""
+    candidates: list[tuple[ConditionIR, ConditionIR, ConditionIR]] = []
+    for high_ge in conditions:
+        if high_ge is root_condition:
+            continue
+        for low_le in conditions:
+            if low_le is root_condition or low_le is high_ge:
+                continue
+            candidate = (root_condition, high_ge, low_le)
+            if _wide_call_return_condition_ir_8616(candidate) is not None:
+                candidates.append(candidate)
+    unique = tuple(
+        {
+            tuple(id(condition) for condition in candidate): candidate
+            for candidate in candidates
+        }.values()
+    )
+    return unique[0] if len(unique) == 1 else None
 
 
 def _wide_condition_call_8616(
@@ -401,12 +462,80 @@ def _wide_condition_call_8616(
     if len(nearest) != 1:
         return None
     call = nearest[0]
-    summary = inventory.get(nearest_callsite)
-    if summary is not None:
+    summary = inventory.get(nearest_callsite) or summary_map.get(id(call))
+    if isinstance(summary, CallsiteSummary8616):
         rebound = dict(summary_map)
         rebound[id(call)] = summary
         codegen._inertia_callsite_summaries = rebound
+        if call.callee_func is None and isinstance(summary.target_addr, int):
+            try:
+                callee = codegen.project.kb.functions.function(
+                    addr=summary.target_addr,
+                    create=False,
+                )
+            except AttributeError:
+                callee = None
+            if callee is not None:
+                call.callee_func = callee
     return call
+
+
+def prune_materialized_wide_condition_call_carrier_8616(
+    codegen: object,
+    call: CFunctionCall,
+) -> int:
+    """Remove the exact standalone or AX carrier consumed by a wide condition."""
+    boundary = cast(_CallOutputCodegen8616, codegen)
+    removed = 0
+    seen: set[int] = set()
+
+    def is_consumed_carrier(statement: object) -> bool:
+        """Return whether one statement exists only to carry ``call`` through AX."""
+        if statement is call:
+            return True
+        if isinstance(statement, CExpressionStatement):
+            return statement.expr is call
+        if not isinstance(statement, CAssignment) or statement.rhs is not call:
+            return False
+        lhs = statement.lhs
+        if not isinstance(lhs, CVariable) or not isinstance(lhs.variable, SimRegisterVariable):
+            return False
+        register_name = lhs.variable.name
+        if not isinstance(register_name, str) or not register_name:
+            register_name = boundary.project.arch.translate_register_name(
+                lhs.variable.reg,
+                lhs.variable.size,
+            )
+        return isinstance(register_name, str) and register_name.lower() == "ax"
+
+    def visit(node: object) -> None:
+        """Prune carrier statements from structured statement containers."""
+        nonlocal removed
+        if node is None or id(node) in seen:
+            return
+        seen.add(id(node))
+        if isinstance(node, CStatements):
+            retained: list[object] = []
+            for statement in tuple(node.statements):
+                if is_consumed_carrier(statement):
+                    removed += 1
+                    continue
+                retained.append(statement)
+                visit(statement)
+            node.statements[:] = retained
+            return
+        if isinstance(node, CIfElse):
+            for _condition, body in tuple(node.condition_and_nodes):
+                visit(body)
+            visit(node.else_node)
+            return
+        for attr in ("body", "else_node"):
+            child = getattr(node, attr, None)
+            if child is not None:
+                visit(child)
+
+    visit(boundary.cfunc.statements)
+    return removed
 
 
 def lower_wide_call_return_condition_chain_8616(
@@ -716,6 +845,72 @@ def recover_call_output_stack_object_facts_8616(
     return tuple(facts), stats
 
 
+def _replay_call_output_stack_object_facts_8616(
+    codegen: _CallOutputCodegen8616,
+    conditions: tuple[ConditionIR, ...],
+    previous_facts: tuple[CallOutputStackObjectFact8616, ...],
+) -> tuple[CallOutputStackObjectFact8616, ...]:
+    """Rebind previously proven object facts after structured AST regeneration.
+
+    A rebuilt tree may temporarily lose the adjacent aggregate declaration that
+    originally closed the object boundary. Replay still requires the exact
+    typed callsite/base pair and every ConditionIR field slice. A newly visible
+    aggregate boundary inside the proven object invalidates the old fact.
+    """
+    if not previous_facts:
+        return ()
+    try:
+        root = codegen.cfunc.statements
+        call_bases = _call_addressed_bases_8616(codegen)
+    except AttributeError:
+        return ()
+    condition_slices = {
+        (absolute_offset, width)
+        for _instruction_addr, absolute_offset, width in _condition_stack_slices_8616(
+            conditions
+        )
+    }
+    aggregate_boundaries = _aggregate_boundaries_8616(root)
+    replayed: list[CallOutputStackObjectFact8616] = []
+    for fact in previous_facts:
+        matching_bases = tuple(
+            call_base
+            for call_base in call_bases
+            if call_base.callsite_addr == fact.callsite_addr
+            and call_base.base_offset == fact.base_offset
+        )
+        if len(matching_bases) != 1:
+            continue
+        if any(
+            (field.absolute_offset, field.width) not in condition_slices
+            for field in fact.fields
+        ):
+            continue
+        if any(
+            fact.base_offset < boundary < fact.boundary_offset
+            for boundary in aggregate_boundaries
+        ):
+            continue
+        current_base = matching_bases[0].base_cvar or fact.base_cvar
+        current_variable = current_base.variable
+        if (
+            not isinstance(current_variable, SimStackVariable)
+            or current_variable.offset != fact.base_offset
+        ):
+            continue
+        replayed.append(
+            CallOutputStackObjectFact8616(
+                callsite_addr=fact.callsite_addr,
+                base_offset=fact.base_offset,
+                boundary_offset=fact.boundary_offset,
+                base_variable=current_variable,
+                base_cvar=current_base,
+                fields=fact.fields,
+            )
+        )
+    return tuple(replayed)
+
+
 def _field_type_8616(width: int) -> SimType:
     """Return an unsigned scalar type for one proven field width."""
     if width == 1:
@@ -769,6 +964,24 @@ def _replace_stack_fields_8616(
     field_map: dict[int, tuple[CallOutputStackObjectFact8616, CallOutputStackField8616, SimStruct]],
 ) -> tuple[CExpression, int]:
     """Replace exact stack variables in one condition expression with fields."""
+    if isinstance(expression, CVariableField) and not expression.var_is_ptr:
+        base = expression.variable
+        variable = base.variable if isinstance(base, CVariable) else None
+        field_offset = expression.field.offset
+        if (
+            isinstance(variable, SimStackVariable)
+            and isinstance(variable.offset, int)
+            and isinstance(field_offset, int)
+        ):
+            match = field_map.get(variable.offset + field_offset)
+            if (
+                match is not None
+                and match[0].base_offset == variable.offset
+                and match[1].relative_offset == field_offset
+                and match[1].name == expression.field.field
+            ):
+                return expression, 1
+        return expression, 0
     if isinstance(expression, CVariable):
         variable = expression.variable
         if isinstance(variable, SimStackVariable) and isinstance(variable.offset, int):
@@ -815,7 +1028,33 @@ def lower_call_output_stack_fields_in_condition_8616(
 ) -> CallOutputConditionLoweringResult8616:
     """Project proven call-output stack fields into one condition expression."""
     boundary = cast(_CallOutputCodegen8616, codegen)
-    facts, recovery_stats = recover_call_output_stack_object_facts_8616(codegen, conditions)
+    recovered_facts, recovery_stats = recover_call_output_stack_object_facts_8616(
+        codegen,
+        conditions,
+    )
+    try:
+        previous_facts = boundary._inertia_call_output_stack_object_facts_8616
+    except AttributeError:
+        previous_facts = ()
+    replayed_facts = _replay_call_output_stack_object_facts_8616(
+        boundary,
+        conditions,
+        previous_facts,
+    )
+    facts_by_key: dict[
+        tuple[int, int, int, tuple[CallOutputStackField8616, ...]],
+        CallOutputStackObjectFact8616,
+    ] = {}
+    for fact in (*recovered_facts, *replayed_facts):
+        key = (
+            fact.callsite_addr,
+            fact.base_offset,
+            fact.boundary_offset,
+            fact.fields,
+        )
+        facts_by_key.setdefault(key, fact)
+    facts = tuple(facts_by_key.values())
+    classified_count = sum(len(fact.fields) for fact in facts)
     field_map: dict[int, tuple[CallOutputStackObjectFact8616, CallOutputStackField8616, SimStruct]] = {}
     for fact in facts:
         struct_type = _struct_type_for_fact_8616(fact)
@@ -826,20 +1065,16 @@ def lower_call_output_stack_fields_in_condition_8616(
     stats = CallOutputStackObjectStats8616(
         raw_fact_count=recovery_stats.raw_fact_count,
         normalized_fact_count=recovery_stats.normalized_fact_count,
-        classified_fact_count=recovery_stats.classified_fact_count,
+        classified_fact_count=classified_count,
         materialized_count=materialized_count,
         failure_count=recovery_stats.failure_count
-        + max(0, recovery_stats.classified_fact_count - materialized_count),
+        + max(0, classified_count - materialized_count),
     )
     try:
         previous_stats = boundary._inertia_call_output_stack_object_stats_8616
     except AttributeError:
         previous_stats = CallOutputStackObjectStats8616()
     boundary._inertia_call_output_stack_object_stats_8616 = previous_stats.merged(stats)
-    try:
-        previous_facts = boundary._inertia_call_output_stack_object_facts_8616
-    except AttributeError:
-        previous_facts = ()
     boundary._inertia_call_output_stack_object_facts_8616 = tuple(dict.fromkeys((*previous_facts, *facts)))
     if stats.classified_fact_count > 0 and stats.materialized_count == 0:
         raise PipelineHardError("classified call-output stack fields were not materialized")
@@ -889,5 +1124,7 @@ __all__ = [
     "lower_wide_call_return_condition_chain_8616",
     "lower_call_output_stack_fields_in_condition_8616",
     "prune_materialized_call_output_stack_carriers_8616",
+    "prune_materialized_wide_condition_call_carrier_8616",
     "recover_call_output_stack_object_facts_8616",
+    "select_wide_call_return_condition_chain_8616",
 ]

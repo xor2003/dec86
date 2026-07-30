@@ -270,6 +270,23 @@ def _apply_arg_cvar_surface_8616(cvar: structured_c.CVariable, *, name: str, var
     return changed
 
 
+def _reconciled_positive_arg_name_8616(
+    variable: SimStackVariable,
+    prototype_name: str | None,
+) -> str:
+    """Replace provisional local names once a positive BP slot is proven an argument."""
+    variable_name = variable.name
+    for candidate in (prototype_name, variable_name):
+        if (
+            isinstance(candidate, str)
+            and candidate
+            and candidate != "local"
+            and not candidate.startswith("local_")
+        ):
+            return candidate
+    return f"arg_{variable.offset:x}"
+
+
 def _abi_word_size_8616(arch: object | None) -> int:
     """Return the target C ABI word size, independent of VEX register width."""
     try:
@@ -666,9 +683,11 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
     previous_end = 4
     callsite_widths = _callsite_stack_arg_widths_8616(codegen)
     width_facts: list[FunctionParameterWidthFact8616] = []
+    prototype_names = tuple(prototype.arg_names or ())
+    reconciled_names: list[str] = []
     debug_rows: list[tuple[object, ...]] = []
     changed = False
-    for arg_type, cvar in zip(args, arg_cvars):
+    for index, (arg_type, cvar) in enumerate(zip(args, arg_cvars)):
         variable = cvar.variable
         exact_width = _exact_typed_cvar_width_8616(cvar, arch)
         if isinstance(arg_type, SimTypeInt) and isinstance(variable, SimStackVariable):
@@ -688,6 +707,19 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
                 stack_offset=variable.offset,
                 width_bytes=exact_width,
             )
+        )
+        reconciled_name = _reconciled_positive_arg_name_8616(
+            variable,
+            prototype_names[index] if index < len(prototype_names) else None,
+        )
+        reconciled_names.append(reconciled_name)
+        changed = (
+            _apply_arg_cvar_surface_8616(
+                cvar,
+                name=reconciled_name,
+                variable_type=cvar.variable_type,
+            )
+            or changed
         )
         reconciled, materialized, failed = _constrain_scalar_arg_type_to_stack_slot_8616(
             arg_type,
@@ -732,17 +764,33 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
     new_prototype = SimTypeFunction(
         reconciled_args,
         prototype.returnty,
-        arg_names=tuple(prototype.arg_names or ()),
+        arg_names=tuple(reconciled_names),
         variadic=prototype.variadic,
     )
     new_prototype = cast(SimTypeFunction, _with_arch_8616(new_prototype, arch))
-    if not _prototype_equivalent_8616(typed_cfunc.functy, new_prototype):
+    cfunc_names = (
+        tuple(typed_cfunc.functy.arg_names or ())
+        if isinstance(typed_cfunc.functy, SimTypeFunction)
+        else ()
+    )
+    if (
+        not _prototype_equivalent_8616(typed_cfunc.functy, new_prototype)
+        or cfunc_names != tuple(reconciled_names)
+    ):
         typed_cfunc.functy = new_prototype
         changed = True
     func = _function_for_codegen_8616(project, codegen)
     if func is not None:
         typed_func = cast(_PrototypeFunction8616, func)
-        if not _prototype_equivalent_8616(typed_func.prototype, new_prototype):
+        function_names = (
+            tuple(typed_func.prototype.arg_names or ())
+            if isinstance(typed_func.prototype, SimTypeFunction)
+            else ()
+        )
+        if (
+            not _prototype_equivalent_8616(typed_func.prototype, new_prototype)
+            or function_names != tuple(reconciled_names)
+        ):
             typed_func.prototype = new_prototype
             changed = True
         if typed_func.is_prototype_guessed:

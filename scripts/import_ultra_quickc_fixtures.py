@@ -28,7 +28,6 @@ DEFAULT_OUTPUT: Path = REPO_ROOT / "examples" / "build_ultra_quickc"
 DEFAULT_COMPILE_FLAGS: tuple[str, ...] = ("/Od", "/AS")
 DEFAULT_LINK_FLAGS: tuple[str, ...] = ()
 DEFAULT_DECOMPILE: Path = REPO_ROOT / "decompile.py"
-DEFAULT_BATCH_DECOMPILE_PROCS: Path = REPO_ROOT / "scripts" / "batch_decompile_procs.py"
 DEFAULT_SIGNATURE_CATALOG: Path = REPO_ROOT / "signature_catalogs" / "all_compilers_catalog_bundle.zip"
 DECOMPILE_PROCESS_SETUP_TIMEOUT_SECONDS: int = 120
 ExpectedStatus: TypeAlias = Literal["required", "xfail"]
@@ -454,7 +453,7 @@ def _decompile_fixture(
         proc = _run_with_env(
             command,
             timeout=_decompile_process_timeout(timeout),
-            env={"INERTIA_ENABLE_TAIL_VALIDATION": "1", "INERTIA_DISABLE_TIMING": "1"},
+            env={"INERTIA_ENABLE_TAIL_VALIDATION": "1", "INERTIA_DISABLE_TIMING": "1", "PYTHONHASHSEED": "0"},
         )
     except subprocess.TimeoutExpired as ex:
         elapsed = time.monotonic() - start
@@ -830,104 +829,16 @@ def _finalize_decompile_status(result: dict[str, Any]) -> None:
     )
 
 
-def _batch_decompile_pending_results(
+def _decompile_pending_results_serially(
     results: list[dict[str, Any]],
     *,
-    output_root: Path,
     decompile: Path,
     decompile_timeout: int,
 ) -> None:
-    """Batch pending fixture decompiles and attach standard result records."""
+    """Decompile pending fixtures serially through isolated CLI subprocesses."""
 
-    pending: list[dict[str, Any]] = []
-    jobs: list[dict[str, Any]] = []
     for result in results:
         if result.get("status") != "pending" or result.get("pre_decompile_passed") is not True:
-            continue
-        exe = result.get("exe")
-        selection_json = result.get("decompile_target_selection")
-        if not isinstance(exe, str) or not isinstance(selection_json, dict):
-            continue
-        selection = _selection_from_json(selection_json)
-        if selection.addr is None:
-            continue
-        pending.append(result)
-        jobs.append(
-            {
-                "name": result.get("name"),
-                "binary": exe,
-                "addr": selection.addr,
-                "max_functions": 1,
-                "timeout": decompile_timeout,
-                "alternate_source_c": False,
-                "brief": True,
-            }
-        )
-    if not pending:
-        return
-    batch_dir = output_root / "decompile_batch"
-    batch_dir.mkdir(parents=True, exist_ok=True)
-    job_file = batch_dir / "jobs.json"
-    job_file.write_text(json.dumps({"jobs": jobs}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    cmd = [
-        sys.executable,
-        str(DEFAULT_BATCH_DECOMPILE_PROCS),
-        "--out-dir",
-        str(batch_dir),
-        "--job-file",
-        str(job_file),
-        "--direct-in-process",
-    ]
-    try:
-        _run_with_env(
-            cmd,
-            timeout=_decompile_process_timeout(decompile_timeout) * max(1, len(jobs)),
-            env={"INERTIA_ENABLE_TAIL_VALIDATION": "1", "INERTIA_DISABLE_TIMING": "1"},
-        )
-    except subprocess.TimeoutExpired:
-        return
-    report_path = batch_dir / "batch_report.json"
-    if not report_path.is_file():
-        return
-    try:
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return
-    raw_results = report.get("results") if isinstance(report, dict) else None
-    if not isinstance(raw_results, list):
-        return
-    batch_by_name = {str(item.get("proc")): item for item in raw_results if isinstance(item, dict)}
-    for result in pending:
-        name = result.get("name")
-        selection_json = result.get("decompile_target_selection")
-        if not isinstance(name, str) or not isinstance(selection_json, dict):
-            continue
-        batch_result = batch_by_name.get(name)
-        if not isinstance(batch_result, dict):
-            continue
-        stdout_path = Path(str(batch_result.get("stdout_path", "")))
-        stderr_path = Path(str(batch_result.get("stderr_path", "")))
-        if not stdout_path.is_file() or not stderr_path.is_file():
-            continue
-        selection = _selection_from_json(selection_json)
-        result["decompile"] = _decompile_result_from_output(
-            command=[str(item) for item in batch_result.get("argv", [])] if isinstance(batch_result.get("argv"), list) else [],
-            selection=selection,
-            targets=list(selection.targets),
-            returncode=batch_result.get("returncode") if isinstance(batch_result.get("returncode"), int) else None,
-            stdout=stdout_path.read_text(encoding="utf-8"),
-            stderr=stderr_path.read_text(encoding="utf-8"),
-            wall_seconds=float(batch_result.get("wall_seconds", 0.0))
-            if isinstance(batch_result.get("wall_seconds"), int | float)
-            else 0.0,
-            generated_c_contract=GeneratedCContract.from_json(
-                result.get("generated_c_contract_spec")
-            ),
-        )
-        result["decompile"]["batch_attempt"] = True
-        _finalize_decompile_status(result)
-    for result in pending:
-        if result.get("status") != "pending":
             continue
         exe = result.get("exe")
         selection_json = result.get("decompile_target_selection")
@@ -1074,9 +985,8 @@ def main(argv: list[str] | None = None) -> int:
         for spec in selected_fixtures(args.only)
     ]
     if not args.disable_batch_decompile:
-        _batch_decompile_pending_results(
+        _decompile_pending_results_serially(
             results,
-            output_root=args.output_root,
             decompile=args.decompile,
             decompile_timeout=args.decompile_timeout,
         )

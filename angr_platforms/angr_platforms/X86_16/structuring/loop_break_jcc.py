@@ -22,6 +22,7 @@ from typing import Protocol, cast
 from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CBreak,
+    CConstant,
     CDoWhileLoop,
     CExpression,
     CForLoop,
@@ -90,6 +91,7 @@ class UnconsumedLoopBreakJccStats8616:
     refused_no_loop_anchor: int = 0
     refused_duplicate_guard: int = 0
     removed_loop_header_duplicate_guard: int = 0
+    split_loop_header_condition_chain: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -562,6 +564,223 @@ def _remove_loop_header_duplicate_break_guard_8616(
     )
 
 
+def _condition_jcc_addrs_8616(condition: object) -> frozenset[int]:
+    """Return every exact JCC address attached to one condition tree."""
+    addresses: set[int] = set()
+    for node in (condition, *_iter_c_nodes_deep_8616(condition)):
+        key = _condition_tags_8616(node)
+        if key is not None:
+            addresses.add(key[0])
+    return frozenset(addresses)
+
+
+def _logical_and_prefix_matches_8616(
+    project: object,
+    condition: object,
+    decoded_condition: object,
+    callbacks: UnconsumedLoopBreakJccCallbacks8616,
+) -> bool:
+    """Return whether a collapsed loop chain starts with one decoded JCC."""
+    if (
+        isinstance(condition, CBinaryOp)
+        and condition.op == "CmpNE"
+        and isinstance(condition.rhs, CConstant)
+        and condition.rhs.value == 0
+    ):
+        condition = condition.lhs
+    if not isinstance(condition, CBinaryOp) or condition.op != "LogicalAnd":
+        return False
+    prefix = condition.lhs
+    while isinstance(prefix, CBinaryOp) and prefix.op == "LogicalAnd":
+        prefix = prefix.lhs
+    expected = _normalized_condition_fingerprint_8616(
+        callbacks.expr_fingerprint(decoded_condition, project)
+    )
+    actual = _normalized_condition_fingerprint_8616(
+        callbacks.expr_fingerprint(prefix, project)
+    )
+    return bool(expected) and (
+        actual == expected
+        or callbacks.same_c_expression(prefix, decoded_condition)
+    )
+
+
+def _condition_matches_decoded_8616(
+    project: object,
+    condition: object,
+    decoded_condition: object,
+    callbacks: UnconsumedLoopBreakJccCallbacks8616,
+) -> bool:
+    """Return whether a loop condition has one decoded semantic predicate."""
+    expected = _normalized_condition_fingerprint_8616(
+        callbacks.expr_fingerprint(decoded_condition, project)
+    )
+    actual = _normalized_condition_fingerprint_8616(
+        callbacks.expr_fingerprint(condition, project)
+    )
+    if os.environ.get("INERTIA_DEBUG_JCC_REWRITE"):
+        logging.getLogger(__name__).warning(
+            "[unconsumed-loop-break-jcc] split semantic condition "
+            "expected=%s actual=%s type=%s op=%r",
+            expected,
+            actual,
+            type(condition).__name__,
+            _dynamic_attr_8616(condition, "op", None),
+        )
+    return bool(expected) and (
+        actual == expected
+        or callbacks.same_c_expression(condition, decoded_condition)
+    )
+
+
+def _body_break_guard_for_fact_8616(
+    loop_body: CStatements,
+    fact: LoopBranchGuardFact8616,
+    *,
+    project: object,
+    callbacks: UnconsumedLoopBreakJccCallbacks8616,
+) -> tuple[object, object] | None:
+    """Return one exact body break and condition for a binary JCC fact."""
+    expected = _normalized_condition_fingerprint_8616(
+        fact.guard_condition_fingerprint
+    )
+    matches: list[tuple[object, object]] = []
+    for node in (loop_body, *_iter_c_nodes_deep_8616(loop_body)):
+        condition = _break_guard_condition_8616(node)
+        if condition is None:
+            continue
+        key = _condition_tags_8616(condition)
+        if key is None or key[0] != fact.jcc_addr:
+            continue
+        actual = _normalized_condition_fingerprint_8616(
+            callbacks.expr_fingerprint(condition, project)
+        )
+        if actual == expected:
+            matches.append((node, condition))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _split_materialized_loop_header_condition_chains_8616(
+    project: object,
+    root: object,
+    codegen: object,
+    decoded_conditions_by_jcc: Mapping[int, CExpression],
+    callbacks: UnconsumedLoopBreakJccCallbacks8616,
+    stats: UnconsumedLoopBreakJccStats8616,
+) -> bool:
+    """Move a fully materialized CFG suffix out of a collapsed loop header.
+
+    angr may collapse consecutive body JCCs and their side effects into a
+    short-circuit loop condition. The loop-break materializer then restores
+    the same effects and guards in the body from exact binary evidence. Once
+    every suffix JCC is represented there, keep only the first loop JCC and
+    remove its now-redundant body break. This restores the binary CFG shape
+    without deleting or inventing an effect.
+    """
+    facts_by_jcc = {
+        fact.jcc_addr: fact
+        for fact in loop_branch_guard_facts_8616(codegen)
+    }
+    changed = False
+    debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
+    for loop_node in _loop_nodes_with_body_8616(root):
+        loop_body = cast(CStatements, loop_node.body)
+        statements = _dynamic_sequence_8616(loop_body.statements)
+        if not statements:
+            continue
+        first_guard = _break_guard_condition_8616(statements[0])
+        first_key = _condition_tags_8616(first_guard)
+        if first_guard is None or first_key is None:
+            continue
+        first_fact = facts_by_jcc.get(first_key[0])
+        decoded_condition = decoded_conditions_by_jcc.get(first_key[0])
+        if first_fact is None or decoded_condition is None:
+            continue
+        condition_matches = _condition_matches_decoded_8616(
+            project,
+            loop_node.condition,
+            decoded_condition,
+            callbacks,
+        ) or _logical_and_prefix_matches_8616(
+            project,
+            loop_node.condition,
+            decoded_condition,
+            callbacks,
+        )
+        header_jccs = _condition_jcc_addrs_8616(loop_node.condition)
+        if debug_jcc:
+            logging.getLogger(__name__).warning(
+                "[unconsumed-loop-break-jcc] split candidate first=%#x "
+                "condition_matches=%s header_jccs=%r branch_jccs=%r body_types=%r",
+                first_fact.jcc_addr,
+                condition_matches,
+                tuple(sorted(header_jccs)),
+                tuple(sorted(facts_by_jcc)),
+                tuple(type(statement).__name__ for statement in statements[:5]),
+            )
+        if not condition_matches:
+            continue
+        suffix_jccs = (header_jccs & facts_by_jcc.keys()) - {
+            first_fact.jcc_addr
+        }
+        body_effect_addrs = header_jccs - facts_by_jcc.keys() - {
+            first_fact.jcc_addr
+        }
+        if not _root_contains_ins_addr_8616(loop_body, first_fact.body_target):
+            continue
+        if _root_contains_ins_addr_8616(loop_body, first_fact.false_target):
+            continue
+        if any(
+            not _root_contains_ins_addr_8616(loop_body, effect_addr)
+            for effect_addr in body_effect_addrs
+        ):
+            continue
+        suffix_guards = tuple(
+            _body_break_guard_for_fact_8616(
+                loop_body,
+                facts_by_jcc[jcc_addr],
+                project=project,
+                callbacks=callbacks,
+            )
+            for jcc_addr in sorted(suffix_jccs)
+            if jcc_addr in facts_by_jcc
+        )
+        if len(suffix_guards) != len(suffix_jccs) or any(
+            guard is None for guard in suffix_guards
+        ):
+            continue
+        retained_condition = callbacks.clone_c_value(decoded_condition)
+        if not isinstance(retained_condition, CExpression):
+            continue
+        removed_fingerprint = callbacks.expr_fingerprint(first_guard, project)
+        retained_fingerprint = callbacks.expr_fingerprint(
+            retained_condition,
+            project,
+        )
+        fact = LoopHeaderDuplicateGuardRemovalFact8616(
+            jcc_addr=first_fact.jcc_addr,
+            block_addr=first_fact.block_addr,
+            removed_guard_fingerprint=removed_fingerprint,
+            retained_loop_fingerprint=retained_fingerprint,
+        )
+        rebuilt = list(statements)
+        del rebuilt[0]
+        loop_body.statements = rebuilt
+        loop_node.condition = retained_condition
+        _record_loop_header_duplicate_guard_removal_fact_8616(codegen, fact)
+        callbacks.record_condition_evidence(
+            project,
+            codegen,
+            first_guard,
+            retained_condition,
+        )
+        stats.materialized_count += 1
+        stats.removed_loop_header_duplicate_guard += 1
+        stats.split_loop_header_condition_chain += 1
+        changed = True
+    return changed
+
+
 def _unconsumed_loop_break_jcc_stats_8616(codegen: object) -> UnconsumedLoopBreakJccStats8616:
     """Return or initialize codegen counters for this structuring repair."""
     stats = _dynamic_attr_8616(codegen, "_inertia_unconsumed_loop_break_jcc_stats_8616", None)
@@ -669,6 +888,7 @@ def materialize_unconsumed_loop_break_jcc_8616(
     existing_loop_header_jcc_addrs = _loop_header_jcc_addrs_8616(root)
     existing_break_nodes_by_key = _break_guard_nodes_by_key_8616(root)
     typed_conditions_by_key = _typed_conditions_by_key_8616(codegen)
+    decoded_conditions_by_jcc: dict[int, CExpression] = {}
     changed = False
     log = logging.getLogger(__name__)
     debug_jcc = bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE"))
@@ -771,7 +991,10 @@ def materialize_unconsumed_loop_break_jcc_8616(
                 continue
             guard_cond = callbacks.inverted_condition_expr(project, codegen, decoded, tags)
             decoded_cond = callbacks.decoded_condition_expr(project, codegen, decoded, tags)
-        if guard_cond is None or decoded_cond is None:
+        if not isinstance(guard_cond, CExpression) or not isinstance(
+            decoded_cond,
+            CExpression,
+        ):
             if debug_jcc:
                 log.warning(
                     "[unconsumed-loop-break-jcc] refuse decode key=%r guard=%r decoded=%r",
@@ -781,6 +1004,7 @@ def materialize_unconsumed_loop_break_jcc_8616(
                 )
             stats.refused_decode += 1
             continue
+        decoded_conditions_by_jcc[jcc_addr] = decoded_cond
         decoded_condition_fingerprint = (
             canonicalize_condition_storage_fingerprint_8616(
                 callbacks.expr_fingerprint(
@@ -989,6 +1213,17 @@ def materialize_unconsumed_loop_break_jcc_8616(
                 )
             stats.refused_no_loop_anchor += 1
 
+    changed = (
+        _split_materialized_loop_header_condition_chains_8616(
+            project,
+            root,
+            codegen,
+            decoded_conditions_by_jcc,
+            callbacks,
+            stats,
+        )
+        or changed
+    )
     if stats.raw_fact_count and stats.materialized_count == 0:
         stats.failure_count += 1
     return changed

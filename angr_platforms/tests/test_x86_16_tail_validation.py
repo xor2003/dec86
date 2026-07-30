@@ -34,6 +34,9 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_stage
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteReturnUseKind8616, CallsiteSummary8616
+from angr_platforms.X86_16.lowering.call_output_stack_objects import (
+    CallOutputStackObjectFact8616,
+)
 from angr_platforms.X86_16.lowering.segmented_global_loads import (
     DwordGlobalZeroTestEvidence8616,
     IndexedSegmentedGlobalEvidence8616,
@@ -107,6 +110,75 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+
+
+def test_call_output_definitions_rebind_regenerated_call_by_exact_tag() -> None:
+    """Tail validation must consume exact call-output facts after AST cloning."""
+    codegen = _DummyCodegen()
+    output_variable = SimStackVariable(
+        -8,
+        4,
+        base="bp",
+        name="output",
+        region=0x1000,
+    )
+    output_cvar = CVariable(
+        output_variable,
+        variable_type=SimTypeBottom(),
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        CConstant(0x3000, SimTypeShort(False), codegen=codegen),
+        None,
+        [CUnaryOp("Reference", output_cvar, codegen=codegen)],
+        tags={"ins_addr": 0x1035},
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=CStatements(
+            [CExpressionStatement(call, codegen=codegen)],
+            codegen=codegen,
+        )
+    )
+    summary = CallsiteSummary8616(
+        callsite_addr=0x1035,
+        target_addr=0x3000,
+        return_addr=0x103A,
+        kind="direct_far",
+        arg_count=2,
+        arg_widths=(2, 2),
+        stack_cleanup=4,
+        return_register=None,
+        return_used=False,
+        push_arg_sources=(("seg", "ss"), ("bp_addr", -8)),
+    )
+    codegen._inertia_callsite_summaries = {0xDEAD: summary}
+    codegen._inertia_callsite_summary_inventory_8616 = {
+        summary.callsite_addr: summary,
+    }
+    codegen._inertia_call_output_stack_object_facts_8616 = (
+        CallOutputStackObjectFact8616(
+            callsite_addr=summary.callsite_addr,
+            base_offset=-8,
+            boundary_offset=-4,
+            base_variable=output_variable,
+            base_cvar=output_cvar,
+            fields=(),
+        ),
+    )
+
+    definitions = tail_validation_module._def_use_call_output_definitions_8616(
+        codegen,
+    )
+
+    assert definitions == {
+        id(call): (
+            tail_validation_module.DefUseCallOutputDefinition8616(
+                base_offset=-8,
+                width=4,
+            ),
+        ),
+    }
 
 
 def _project():
@@ -7731,6 +7803,46 @@ def test_tail_validation_does_not_resolve_dirty_tmp_lhs_as_global_write(monkeypa
 
     assert locations == ()
     assert not tail_validation_module._assignment_lhs_writes_memory_8616(lhs, _project())
+
+
+def test_tail_validation_keeps_dirty_register_lhs_location_when_value_aliases_global() -> None:
+    codegen = _DummyCodegen()
+    project = codegen.project
+    ax_offset, ax_size = project.arch.registers["ax"]
+    dirty_register = SimpleNamespace(
+        varid=72,
+        name="vvar_72",
+        reg=ax_offset,
+        bits=ax_size * 8,
+        size=ax_size,
+        category=VirtualVariableCategory.REGISTER,
+    )
+    lhs = CDirtyExpression(dirty_register, codegen=codegen)
+    rhs = CVariable(
+        SimMemoryVariable(0x160, 2, name="mem_0160"),
+        codegen=codegen,
+    )
+    assignment = CAssignment(lhs, rhs, codegen=codegen)
+    root = CStatements([assignment], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x10060,
+        statements=root,
+        body=root,
+        variables_in_use={},
+    )
+
+    assert (
+        tail_validation_fingerprint_module._expr_fingerprint(lhs, project)
+        == "global:0x160"
+    )
+    assert tail_validation_module._assignment_write_locations_8616(
+        lhs,
+        project,
+    ) == ("reg:ax",)
+    assert not tail_validation_module._assignment_lhs_writes_memory_8616(
+        lhs,
+        project,
+    )
 
 
 def test_tail_validation_refuses_inconsistent_dirty_global_write_width(monkeypatch):

@@ -15,12 +15,16 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CITE,
     CAssignment,
     CBinaryOp,
+    CBreak,
     CConstant,
     CExpressionStatement,
     CForLoop,
@@ -30,16 +34,25 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CSwitchCase,
     CTypeCast,
+    CUnaryOp,
     CVariable,
+    CWhileLoop,
 )
 from angr.sim_type import SimType, SimTypeArray, SimTypeFixedSizeArray
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
+from ..callsite_summary import (
+    StructuredCallKind8616,
+    structured_call_kind_8616,
+)
+from ..ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from ..lowering.real_mode_linear import (
     DirectStackMoveFact8616,
     DirectStackMoveSourceKind8616,
 )
+from ..semantics.call_contracts import RuntimeCallReturnContract8616
+from ..widening.segmented_load_identity import segmented_load_identity_8616
 
 __all__ = [
     "IndexedStackReadProof8616",
@@ -58,7 +71,13 @@ class _ScalarStorageKind8616(Enum):
     CONSTANT = "constant"
 
 
-@dataclass(frozen=True, order=True, slots=True)
+class _AddressedCallee8616(Protocol):
+    """Third-party callee surface carrying an exact binary address."""
+
+    addr: int
+
+
+@dataclass(frozen=True, slots=True)
 class _ScalarStorage8616:
     """Stable scalar identity used by structured range proofs."""
 
@@ -67,6 +86,7 @@ class _ScalarStorage8616:
     width: int
     region: int | None = None
     ident: str = ""
+    space: MemSpace | None = None
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -150,6 +170,7 @@ class _RangeProofState8616:
     prefixes: dict[_StackArrayStorage8616, _ScalarStorage8616]
     predecessors: dict[_ScalarStorage8616, _ScalarStorage8616]
     ranges: dict[_ScalarStorage8616, _ScalarStorage8616]
+    constants: dict[_ScalarStorage8616, int]
 
     def copy(self) -> _RangeProofState8616:
         """Return an independent path state."""
@@ -157,6 +178,7 @@ class _RangeProofState8616:
             prefixes=dict(self.prefixes),
             predecessors=dict(self.predecessors),
             ranges=dict(self.ranges),
+            constants=dict(self.constants),
         )
 
 
@@ -166,6 +188,15 @@ class _AscendingLoop8616:
 
     induction: _ScalarStorage8616
     bound: _ScalarStorage8616
+
+
+@dataclass(frozen=True, slots=True)
+class _RemainderCallEvidence8616:
+    """Matched signed-remainder call contract and optional output bound."""
+
+    range_bound: _ScalarStorage8616 | None
+    call_node_id: int
+    call_contract: RuntimeCallReturnContract8616
 
 
 def _strip_casts_8616(node: object) -> object:
@@ -191,6 +222,15 @@ def _type_width_bytes_8616(type_: object) -> int | None:
 def _scalar_storage_8616(node: object) -> _ScalarStorage8616 | None:
     """Return stable storage identity for one scalar C variable."""
     node = _strip_casts_8616(node)
+    segmented_identity = segmented_load_identity_8616(node)
+    if segmented_identity is not None:
+        return _ScalarStorage8616(
+            kind=_ScalarStorageKind8616.MEMORY,
+            offset=segmented_identity.offset,
+            width=segmented_identity.width,
+            region=None,
+            space=segmented_identity.space,
+        )
     if isinstance(node, CConstant) and isinstance(node.value, int) and not isinstance(node.value, bool):
         return _ScalarStorage8616(
             kind=_ScalarStorageKind8616.CONSTANT,
@@ -218,7 +258,8 @@ def _scalar_storage_8616(node: object) -> _ScalarStorage8616 | None:
             kind=_ScalarStorageKind8616.STACK,
             offset=variable.offset,
             width=width,
-            region=variable.region if isinstance(variable.region, int) else None,
+            region=None,
+            space=MemSpace.SS,
         )
     if isinstance(variable, SimMemoryVariable):
         if not isinstance(variable.addr, int) or not isinstance(variable.size, int) or variable.size <= 0:
@@ -227,7 +268,8 @@ def _scalar_storage_8616(node: object) -> _ScalarStorage8616 | None:
             kind=_ScalarStorageKind8616.MEMORY,
             offset=variable.addr,
             width=variable.size,
-            region=variable.region if isinstance(variable.region, int) else None,
+            region=None,
+            space=MemSpace.DS,
         )
     if isinstance(variable, SimRegisterVariable):
         if not isinstance(variable.reg, int) or not isinstance(variable.size, int) or variable.size <= 0:
@@ -243,6 +285,37 @@ def _scalar_storage_8616(node: object) -> _ScalarStorage8616 | None:
             ident=ident,
         )
     return None
+
+
+def _scalar_memory_address_8616(
+    storage: _ScalarStorage8616,
+) -> IRAddress | None:
+    """Return an exact segmented address for one proven memory identity."""
+    if (
+        storage.kind is not _ScalarStorageKind8616.MEMORY
+        or storage.space not in {MemSpace.DS, MemSpace.ES}
+        or storage.width <= 0
+    ):
+        return None
+    return IRAddress(
+        space=storage.space,
+        offset=storage.offset,
+        size=storage.width,
+        status=AddressStatus.STABLE,
+        segment_origin=SegmentOrigin.PROVEN,
+    )
+
+
+def _structured_call_target_addr_8616(call: CFunctionCall) -> int | None:
+    """Return a structured call's exact third-party callee address."""
+    callee = call.callee_func
+    if callee is None:
+        return None
+    try:
+        addr = cast(_AddressedCallee8616, callee).addr
+    except AttributeError:
+        return None
+    return addr if isinstance(addr, int) else None
 
 
 def _stack_array_storage_8616(node: object) -> _StackArrayStorage8616 | None:
@@ -313,25 +386,230 @@ def _ascending_loop_8616(loop: CForLoop) -> _AscendingLoop8616 | None:
     if initializer is None or _constant_value_8616(initializer[1]) != 0:
         return None
     induction = initializer[0]
-    condition = _strip_casts_8616(loop.condition)
-    if not isinstance(condition, CBinaryOp):
-        return None
-    if condition.op == "CmpLT" and _scalar_storage_8616(condition.lhs) == induction:
-        bound = _scalar_storage_8616(condition.rhs)
-    elif condition.op == "CmpGT" and _scalar_storage_8616(condition.rhs) == induction:
-        bound = _scalar_storage_8616(condition.lhs)
-    else:
+    descriptor = _ascending_condition_8616(loop.condition)
+    if descriptor is None or descriptor.induction != induction:
         return None
     iterator = _assignment_to_scalar_8616(loop.iterator)
     if (
-        bound is None
-        or bound == induction
-        or iterator is None
+        iterator is None
         or iterator[0] != induction
         or _binary_storage_constant_8616(iterator[1], "Add", 1) != induction
     ):
         return None
+    return descriptor
+
+
+def _ascending_condition_8616(condition: object) -> _AscendingLoop8616 | None:
+    """Return the induction and bound from an exact ``index < bound`` predicate."""
+    condition = _strip_casts_8616(condition)
+    if not isinstance(condition, CBinaryOp):
+        return None
+    if condition.op == "CmpLT":
+        induction = _scalar_storage_8616(condition.lhs)
+        bound = _scalar_storage_8616(condition.rhs)
+    elif condition.op == "CmpGT":
+        induction = _scalar_storage_8616(condition.rhs)
+        bound = _scalar_storage_8616(condition.lhs)
+    else:
+        return None
+    if (
+        induction is None
+        or
+        bound is None
+        or bound == induction
+    ):
+        return None
     return _AscendingLoop8616(induction=induction, bound=bound)
+
+
+def _break_only_8616(node: object) -> bool:
+    """Return whether one structured branch contains exactly one break."""
+    if isinstance(node, CBreak):
+        return True
+    if not isinstance(node, CStatements) or len(node.statements) != 1:
+        return False
+    return _break_only_8616(node.statements[0])
+
+
+def _break_guard_descriptor_8616(node: object) -> _AscendingLoop8616 | None:
+    """Return the continued-loop predicate encoded by one exact break guard."""
+    if (
+        not isinstance(node, CIfElse)
+        or node.else_node is not None
+        or len(node.condition_and_nodes) != 1
+    ):
+        return None
+    condition, branch = node.condition_and_nodes[0]
+    if not _break_only_8616(branch):
+        return None
+    condition = _strip_casts_8616(condition)
+    if isinstance(condition, CUnaryOp) and condition.op == "Not":
+        operand = _strip_casts_8616(condition.operand)
+        if isinstance(operand, CUnaryOp) and operand.op == "Not":
+            return _ascending_condition_8616(operand.operand)
+        if (
+            isinstance(operand, CITE)
+            and _constant_value_8616(operand.iftrue) == 0
+            and _constant_value_8616(operand.iffalse) == 1
+        ):
+            return _ascending_condition_8616(operand.cond)
+        return _ascending_condition_8616(operand)
+    if not isinstance(condition, CBinaryOp):
+        return None
+    if condition.op == "CmpGE":
+        induction = _scalar_storage_8616(condition.lhs)
+        bound = _scalar_storage_8616(condition.rhs)
+    elif condition.op == "CmpLE":
+        induction = _scalar_storage_8616(condition.rhs)
+        bound = _scalar_storage_8616(condition.lhs)
+    else:
+        return None
+    if induction is None or bound is None or induction == bound:
+        return None
+    return _AscendingLoop8616(induction=induction, bound=bound)
+
+
+def _unconditional_while_8616(loop: CWhileLoop) -> bool:
+    """Return whether one structured while loop has an unconditional header."""
+    if loop.condition is None:
+        return True
+    condition = _strip_casts_8616(loop.condition)
+    return isinstance(condition, CConstant) and condition.value in {True, 1}
+
+
+def _canonical_while_8616(
+    loop: CWhileLoop,
+    state: _RangeProofState8616,
+) -> tuple[_AscendingLoop8616, int] | None:
+    """Match a zero-based unit-stride while loop with one leading break guard."""
+    debug = os.environ.get("INERTIA_DEBUG_INDEXED_STACK_RANGES") == "1"
+
+    def _debug(reason: str, **values: object) -> None:
+        """Emit opt-in canonical-while refusal details."""
+        if debug:
+            logging.getLogger(__name__).warning(
+                "indexed-stack-range event=while-shape-%s values=%r",
+                reason,
+                values,
+            )
+
+    def _shape(node: object, depth: int = 0) -> object:
+        """Return a bounded typed expression shape for opt-in diagnostics."""
+        if depth >= 5:
+            return type(node).__name__
+        node = _strip_casts_8616(node)
+        if isinstance(node, CVariable):
+            return ("variable", node.name, _scalar_storage_8616(node))
+        if isinstance(node, CConstant):
+            return ("constant", node.value)
+        if isinstance(node, CUnaryOp):
+            return ("unary", node.op, _shape(node.operand, depth + 1))
+        if isinstance(node, CBinaryOp):
+            return (
+                "binary",
+                node.op,
+                _shape(node.lhs, depth + 1),
+                _shape(node.rhs, depth + 1),
+            )
+        if isinstance(node, CITE):
+            return (
+                "ite",
+                _shape(node.cond, depth + 1),
+                _shape(node.iftrue, depth + 1),
+                _shape(node.iffalse, depth + 1),
+            )
+        if isinstance(node, CFunctionCall):
+            return (
+                "call",
+                node.callee_func,
+                node.callee_target,
+                tuple(_shape(argument, depth + 1) for argument in node.args),
+            )
+        return type(node).__name__
+
+    if not _unconditional_while_8616(loop):
+        _debug("conditional", condition=type(loop.condition).__name__)
+        return None
+    statements = _transparent_body_statements_8616(loop.body)
+    candidates: list[tuple[_AscendingLoop8616, int]] = []
+    for guard_index, statement in enumerate(statements):
+        descriptor = _break_guard_descriptor_8616(statement)
+        if isinstance(statement, CIfElse):
+            _debug(
+                "guard",
+                guard_index=guard_index,
+                descriptor=descriptor,
+                condition_types=tuple(
+                    (
+                        type(condition).__name__,
+                        condition.op if isinstance(condition, (CBinaryOp, CUnaryOp)) else None,
+                        _shape(condition),
+                        type(branch).__name__,
+                        _break_only_8616(branch),
+                    )
+                    for condition, branch in statement.condition_and_nodes
+                ),
+                has_else=statement.else_node is not None,
+            )
+        if (
+            descriptor is None
+            or state.constants.get(descriptor.induction) != 0
+        ):
+            continue
+        writes_before_guard = tuple(
+            assignment
+            for prior in statements[:guard_index]
+            for assignment in _direct_scalar_assignments_8616(prior)
+            for target_rhs in (_assignment_to_scalar_8616(assignment),)
+            if target_rhs is not None
+            and target_rhs[0] in {descriptor.induction, descriptor.bound}
+        )
+        if writes_before_guard:
+            _debug(
+                "writes-before-guard",
+                descriptor=descriptor,
+                writes=writes_before_guard,
+            )
+            continue
+        induction_writes = tuple(
+            assignment
+            for following in statements[guard_index + 1 :]
+            for assignment in _direct_scalar_assignments_8616(following)
+            for target_rhs in (_assignment_to_scalar_8616(assignment),)
+            if target_rhs is not None and target_rhs[0] == descriptor.induction
+        )
+        if (
+            len(induction_writes) != 1
+            or _binary_storage_constant_8616(
+                induction_writes[0].rhs,
+                "Add",
+                1,
+            )
+            != descriptor.induction
+        ):
+            _debug(
+                "induction-writes",
+                descriptor=descriptor,
+                write_count=len(induction_writes),
+                writes=tuple(
+                    (
+                        type(assignment.rhs).__name__,
+                        assignment.rhs.op if isinstance(assignment.rhs, CBinaryOp) else None,
+                    )
+                    for assignment in induction_writes
+                ),
+            )
+            continue
+        candidates.append((descriptor, guard_index))
+    if len(candidates) != 1:
+        _debug(
+            "candidate-count",
+            count=len(candidates),
+            statement_types=tuple(type(statement).__name__ for statement in statements),
+            constants=state.constants,
+        )
+        return None
+    return candidates[0]
 
 
 def _transparent_body_statements_8616(body: object) -> tuple[object, ...]:
@@ -358,6 +636,36 @@ def _prefix_array_8616(
 ) -> _StackArrayStorage8616 | None:
     """Return an array assigned at every iteration before any control split."""
     for statement in _transparent_body_statements_8616(loop.body):
+        if not isinstance(statement, CAssignment):
+            return None
+        if any(
+            isinstance(candidate, CFunctionCall)
+            for candidate in _iter_c_nodes_deep_8616(statement.rhs)
+        ):
+            return None
+        scalar_assignment = _assignment_to_scalar_8616(statement)
+        if scalar_assignment is not None and scalar_assignment[0] in {
+            descriptor.induction,
+            descriptor.bound,
+        }:
+            return None
+        lhs = statement.lhs
+        if not isinstance(lhs, CIndexedVariable):
+            continue
+        array = _stack_array_storage_8616(lhs.variable)
+        if array is not None and _scalar_storage_8616(lhs.index) == descriptor.induction:
+            return array
+    return None
+
+
+def _while_prefix_array_8616(
+    loop: CWhileLoop,
+    descriptor: _AscendingLoop8616,
+    guard_index: int,
+) -> _StackArrayStorage8616 | None:
+    """Return an array written on every guarded continuing while iteration."""
+    statements = _transparent_body_statements_8616(loop.body)
+    for statement in statements[guard_index + 1 :]:
         if not isinstance(statement, CAssignment):
             return None
         if any(
@@ -478,6 +786,18 @@ def _common_ranges_8616(
     }
 
 
+def _common_constants_8616(
+    states: tuple[_RangeProofState8616, ...],
+) -> dict[_ScalarStorage8616, int]:
+    """Return exact scalar constants shared by every supplied path state."""
+    first = states[0].constants
+    return {
+        key: value
+        for key, value in first.items()
+        if all(state.constants.get(key) == value for state in states[1:])
+    }
+
+
 def _intersect_states_8616(
     states: tuple[_RangeProofState8616, ...],
     fallback: _RangeProofState8616,
@@ -489,6 +809,7 @@ def _intersect_states_8616(
         prefixes=_common_prefixes_8616(states),
         predecessors=_common_predecessors_8616(states),
         ranges=_common_ranges_8616(states),
+        constants=_common_constants_8616(states),
     )
 
 
@@ -510,6 +831,34 @@ def collect_indexed_stack_read_proofs_8616(
         for fact in direct_stack_move_facts
         if isinstance(fact, DirectStackMoveFact8616)
     )
+    callsite_contracts: dict[int, RuntimeCallReturnContract8616] = {}
+    target_contracts: dict[int, RuntimeCallReturnContract8616] = {}
+    ambiguous_callsites: set[int] = set()
+    ambiguous_targets: set[int] = set()
+    for fact in facts:
+        contract = fact.source_call_return_contract
+        if contract is None:
+            continue
+        for key, inventory, ambiguous in (
+            (
+                fact.source_call_ins_addr,
+                callsite_contracts,
+                ambiguous_callsites,
+            ),
+            (
+                fact.source_call_target,
+                target_contracts,
+                ambiguous_targets,
+            ),
+        ):
+            if not isinstance(key, int) or key in ambiguous:
+                continue
+            existing = inventory.get(key)
+            if existing is not None and existing != contract:
+                inventory.pop(key, None)
+                ambiguous.add(key)
+            else:
+                inventory[key] = contract
     debug = os.environ.get("INERTIA_DEBUG_INDEXED_STACK_RANGES") == "1"
 
     def _debug(event: str, **values: object) -> None:
@@ -541,22 +890,46 @@ def collect_indexed_stack_read_proofs_8616(
             for candidate, bound in state.ranges.items()
             if candidate != scalar and bound != scalar
         }
+        state.constants.pop(scalar, None)
 
     def _invalidate_unknown_call(
         expr: object,
         state: _RangeProofState8616,
-        preserving_call_addrs: frozenset[int] = frozenset(),
+        call_contracts: Mapping[int, RuntimeCallReturnContract8616] | None = None,
     ) -> None:
-        """Drop global-bound proofs across calls without preservation evidence."""
+        """Drop bound proofs unless one call contract preserves their address."""
+        contracts = call_contracts or {}
         calls = tuple(
             node
             for node in _iter_c_nodes_deep_8616(expr)
             if isinstance(node, CFunctionCall)
         )
         for call in calls:
-            ins_addr = call.tags.get("ins_addr") if isinstance(call.tags, dict) else None
-            if isinstance(ins_addr, int) and ins_addr in preserving_call_addrs:
+            if segmented_load_identity_8616(call) is not None:
                 continue
+            if (
+                structured_call_kind_8616(call)
+                is StructuredCallKind8616.CODEGEN_INSERT_INTRINSIC
+            ):
+                continue
+            callsite_addr = (
+                call.tags.get("ins_addr")
+                if isinstance(call.tags, dict)
+                else None
+            )
+            callee_addr = _structured_call_target_addr_8616(call)
+            contract = contracts.get(id(call))
+            if contract is None and isinstance(callsite_addr, int):
+                contract = callsite_contracts.get(callsite_addr)
+            if contract is None and isinstance(callee_addr, int):
+                contract = target_contracts.get(callee_addr)
+            _debug(
+                "call-effect",
+                call_node_id=id(call),
+                contract=contract,
+                callsite_addr=callsite_addr,
+                callee_addr=callee_addr,
+            )
             global_bounds = {
                 bound
                 for bound in (
@@ -570,6 +943,13 @@ def collect_indexed_stack_read_proofs_8616(
                 }
             }
             for bound in global_bounds:
+                address = _scalar_memory_address_8616(bound)
+                if (
+                    contract is not None
+                    and address is not None
+                    and contract.preserves_address(address)
+                ):
+                    continue
                 _invalidate_scalar(state, bound)
 
     def _prove_reads(expr: object, state: _RangeProofState8616) -> None:
@@ -618,7 +998,7 @@ def collect_indexed_stack_read_proofs_8616(
         assignment: CAssignment,
         lhs: _ScalarStorage8616,
         state: _RangeProofState8616,
-    ) -> tuple[_ScalarStorage8616, frozenset[int]] | None:
+    ) -> _RemainderCallEvidence8616 | None:
         """Bind one structured modulo assignment to lowering and range evidence."""
         rhs = _strip_casts_8616(assignment.rhs)
         if not isinstance(rhs, CBinaryOp) or rhs.op != "Mod":
@@ -638,7 +1018,6 @@ def collect_indexed_stack_read_proofs_8616(
             and fact.source_immediate == 1
             and fact.source_call_return_contract is not None
             and fact.source_call_return_contract.value_range.is_nonnegative
-            and fact.source_call_return_contract.preserves_caller_storage
             and (
                 not isinstance(statement_ins_addr, int)
                 or statement_ins_addr
@@ -662,7 +1041,6 @@ def collect_indexed_stack_read_proofs_8616(
             divisor is None
             or divisor.kind is not _ScalarStorageKind8616.STACK
             or divisor.offset != fact.source_offset
-            or state.ranges.get(divisor) is None
             or not isinstance(fact.source_call_ins_addr, int)
         ):
             _debug(
@@ -678,16 +1056,45 @@ def collect_indexed_stack_read_proofs_8616(
             for node in _iter_c_nodes_deep_8616(rhs.lhs)
             if isinstance(node, CFunctionCall)
         )
-        if calls:
-            call_addrs = {
-                call.tags.get("ins_addr")
-                for call in calls
-                if isinstance(call.tags, dict)
-                and isinstance(call.tags.get("ins_addr"), int)
-            }
-            if call_addrs and call_addrs != {fact.source_call_ins_addr}:
-                return None
-        return state.ranges[divisor], frozenset({fact.source_call_ins_addr})
+        if len(calls) != 1:
+            _debug(
+                "remainder-call-count",
+                lhs=lhs,
+                statement_ins_addr=statement_ins_addr,
+                rhs_lhs_type=type(_strip_casts_8616(rhs.lhs)).__name__,
+                rhs_lhs_storage=_scalar_storage_8616(rhs.lhs),
+                divisor=divisor,
+                calls=calls,
+            )
+            return None
+        call = calls[0]
+        callsite_addr = (
+            call.tags.get("ins_addr")
+            if isinstance(call.tags, dict)
+            else None
+        )
+        callee_addr = _structured_call_target_addr_8616(call)
+        _debug(
+            "remainder-call-identity",
+            call_node_id=id(call),
+            callsite_addr=callsite_addr,
+            callee_addr=callee_addr,
+            expected_callsite_addr=fact.source_call_ins_addr,
+            expected_callee_addr=fact.source_call_target,
+        )
+        if (
+            callsite_addr != fact.source_call_ins_addr
+            and callee_addr != fact.source_call_target
+        ):
+            return None
+        contract = fact.source_call_return_contract
+        if contract is None:
+            return None
+        return _RemainderCallEvidence8616(
+            range_bound=state.ranges.get(divisor),
+            call_node_id=id(call),
+            call_contract=contract,
+        )
 
     def _walk(
         node: object,
@@ -704,20 +1111,22 @@ def collect_indexed_stack_read_proofs_8616(
         if isinstance(node, CAssignment):
             _prove_reads(node.rhs, state)
             assignment = _assignment_to_scalar_8616(node)
-            preserving_call_addrs = frozenset()
+            call_contracts: dict[int, RuntimeCallReturnContract8616] = {}
             derived_range = None
             if assignment is not None:
                 derived = _remainder_range_fact(node, assignment[0], state)
                 if derived is not None:
-                    derived_range, preserving_call_addrs = derived
+                    derived_range = derived.range_bound
+                    call_contracts[derived.call_node_id] = derived.call_contract
             _invalidate_unknown_call(
                 node.rhs,
                 state,
-                preserving_call_addrs,
+                call_contracts,
             )
             if assignment is None:
                 return state
             lhs, rhs = assignment
+            assigned_constant = _constant_value_8616(rhs)
             _invalidate_scalar(state, lhs)
             predecessor = _binary_storage_constant_8616(rhs, "Sub", 1)
             if predecessor is not None:
@@ -732,6 +1141,8 @@ def collect_indexed_stack_read_proofs_8616(
                 state.ranges[lhs] = derived_range
             elif copied_range is not None:
                 state.ranges[lhs] = copied_range
+            if assigned_constant is not None:
+                state.constants[lhs] = assigned_constant
             return state
         if isinstance(node, CExpressionStatement):
             _prove_reads(node.expr, state)
@@ -819,6 +1230,55 @@ def collect_indexed_stack_read_proofs_8616(
             if prefix_array is not None:
                 outgoing.prefixes[prefix_array] = descriptor.bound
             return outgoing
+        if isinstance(node, CWhileLoop):
+            while_descriptor = _canonical_while_8616(node, state)
+            _debug(
+                "while-loop",
+                descriptor=while_descriptor,
+                prefixes=state.prefixes,
+                predecessors=state.predecessors,
+                constants=state.constants,
+            )
+            if while_descriptor is None:
+                _walk(node.body, state)
+                return state
+            descriptor, guard_index = while_descriptor
+            body_state = state.copy()
+            body_state.ranges[descriptor.induction] = descriptor.bound
+            carriers = _direct_decrement_carriers_8616(
+                node.body,
+                state,
+                descriptor,
+            )
+            _debug("while-loop-carriers", descriptor=descriptor, carriers=carriers)
+            for carrier in carriers:
+                body_state.ranges[carrier] = descriptor.bound
+            iterated = _walk(node.body, body_state)
+            outgoing = _intersect_states_8616(
+                (state, iterated),
+                state,
+            )
+            written_scalars = {
+                assignment[0]
+                for candidate in _direct_scalar_assignments_8616(node)
+                for assignment in (_assignment_to_scalar_8616(candidate),)
+                if assignment is not None
+            }
+            for scalar in written_scalars:
+                _invalidate_scalar(outgoing, scalar)
+            prefix_array = _while_prefix_array_8616(
+                node,
+                descriptor,
+                guard_index,
+            )
+            _debug(
+                "while-loop-prefix",
+                descriptor=descriptor,
+                prefix_array=prefix_array,
+            )
+            if prefix_array is not None:
+                outgoing.prefixes[prefix_array] = descriptor.bound
+            return outgoing
         if isinstance(node, CSwitchCase):
             _prove_reads(node.switch, state)
             branches = tuple(
@@ -836,6 +1296,11 @@ def collect_indexed_stack_read_proofs_8616(
 
     _walk(
         root,
-        _RangeProofState8616(prefixes={}, predecessors={}, ranges={}),
+        _RangeProofState8616(
+            prefixes={},
+            predecessors={},
+            ranges={},
+            constants={},
+        ),
     )
     return report.freeze()

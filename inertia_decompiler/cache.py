@@ -110,18 +110,29 @@ DECOMPILATION_CACHE_SOURCE_FILES: tuple[Path, ...] = (
 )
 
 
+def _cache_sha256_file(path: Path) -> str:
+    """Return a streamed content digest for one cache input file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _cache_file_fingerprint(path: Path | None) -> dict[str, object] | None:
     if path is None:
         return None
     try:
         resolved = path.resolve()
         stat = resolved.stat()
+        content_sha256 = _cache_sha256_file(resolved)
     except OSError:
         return None
     return {
         "path": str(resolved),
         "size": stat.st_size,
         "mtime_ns": stat.st_mtime_ns,
+        "sha256": content_sha256,
     }
 
 

@@ -22,6 +22,7 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from ..alias.alias_model_impl import AliasStorageFacts
 from ..lowering.segmented_lowering import _SegmentedAccess
 from ..structuring.simple_loop_recovery import _function_instruction_summaries_8616
+from .stack_subview_projection import materialize_contained_stack_subviews_8616
 from .widening_copyprop_8616 import _widening_copy_propagation_8616
 
 
@@ -55,14 +56,16 @@ def run_typed_widening_pass_8616(
     coalesce_segmented_word_store_statements: Callable[..., object],
     copy_propagation_fn: Callable[..., object] = _widening_copy_propagation_8616,
     promote_stack_slots_from_instruction_widths: Callable[..., object] | None = None,
+    materialize_stack_subviews_fn: Callable[[object], object] = materialize_contained_stack_subviews_8616,
 ) -> bool:
     """Execute widening-owned passes in deterministic order.
 
     Order:
     1. Stack-slot width promotion from instruction evidence
-    2. Word-store coalescing (SROA-like)
-    3. Copy propagation (EarlyCSE-like)
-    4. Load/store folding (GVN-like)
+    2. Alias-proven contained stack-subview materialization
+    3. Word-store coalescing (SROA-like)
+    4. Copy propagation (EarlyCSE-like)
+    5. Load/store folding (GVN-like)
 
     This pass is the widening ownership boundary: callers provide typed helpers,
     widening decides pass ordering and changed-state aggregation.
@@ -70,6 +73,7 @@ def run_typed_widening_pass_8616(
     changed = False
     if promote_stack_slots_from_instruction_widths is not None:
         changed = bool(promote_stack_slots_from_instruction_widths(project, codegen)) or changed
+    changed = bool(materialize_stack_subviews_fn(codegen)) or changed
     changed = bool(coalesce_direct_ss_local_word_statements(project, codegen)) or changed
     changed = bool(coalesce_segmented_word_store_statements(project, codegen)) or changed
     changed = bool(copy_propagation_fn(codegen, enable_nested=True)) or changed

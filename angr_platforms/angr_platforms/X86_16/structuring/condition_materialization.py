@@ -34,11 +34,18 @@ from types import SimpleNamespace
 from typing import Any, Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
     CBinaryOp,
+    CDirtyExpression,
     CDoWhileLoop,
     CExpression,
     CForLoop,
+    CFunctionCall,
+    CGoto,
     CIfElse,
+    CLabel,
+    CStatement,
+    CStatements,
     CUnaryOp,
     CWhileLoop,
 )
@@ -51,6 +58,8 @@ from ..lowering.call_output_stack_objects import (
     lower_call_output_stack_fields_in_condition_8616,
     lower_wide_call_return_condition_chain_8616,
     prune_materialized_call_output_stack_carriers_8616,
+    prune_materialized_wide_condition_call_carrier_8616,
+    select_wide_call_return_condition_chain_8616,
 )
 from ..pipeline.errors import PipelineHardError
 from ..postprocess import flags_cleanup as _flags_cleanup
@@ -195,6 +204,17 @@ class StructuringConditionReplayCleanupResult8616:
             or self.unused_flag_assignments_pruned
             or self.overwritten_flag_assignments_pruned
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _AssignmentDiamond8616:
+    """One CFG-proven conditional assignment diamond ready for structuring."""
+
+    condition: CExpression
+    true_assignment: CAssignment
+    false_assignment: CAssignment
+    true_target: int
+    false_target: int
 
 
 def _cfg_node_addr_8616(node: object) -> int | None:
@@ -344,13 +364,39 @@ def _copied_condition_tags_8616(node: object) -> dict[str, object]:
     return dict(tags) if isinstance(tags, dict) else {}
 
 
-def _condition_structure_token_8616(condition: object) -> tuple[object, ...]:
-    """Return a bounded semantic-shape token for one structured condition."""
+def _condition_structure_token_8616(
+    condition: object,
+    *,
+    depth: int = 0,
+) -> tuple[object, ...]:
+    """Return a bounded identity-sensitive token for one structured condition."""
+    if depth >= 8:
+        return ("depth-limit", type(condition).__name__, id(condition))
     if isinstance(condition, CUnaryOp):
-        return ("unary", condition.op, _condition_structure_token_8616(condition.operand))
+        return (
+            "unary",
+            condition.op,
+            id(condition),
+            _condition_structure_token_8616(
+                condition.operand,
+                depth=depth + 1,
+            ),
+        )
     if isinstance(condition, CBinaryOp):
-        return ("binary", condition.op)
-    return (type(condition).__name__,)
+        return (
+            "binary",
+            condition.op,
+            id(condition),
+            _condition_structure_token_8616(
+                condition.lhs,
+                depth=depth + 1,
+            ),
+            _condition_structure_token_8616(
+                condition.rhs,
+                depth=depth + 1,
+            ),
+        )
+    return (type(condition).__name__, id(condition))
 
 
 def _condition_debug_tree_8616(condition: object, *, depth: int = 0) -> tuple[object, ...]:
@@ -496,6 +542,8 @@ def _materialize_cfg_condition_chain_expr_8616(
     successors: dict[int, tuple[int, ...]],
     true_target: int,
     false_target: int,
+    *,
+    required_conditions: tuple[ConditionIR, ...] = (),
 ) -> CExpression | None:
     """Materialize one target-directed predicate from typed conditions and CFG."""
     consumed_conditions: list[ConditionIR] = []
@@ -568,8 +616,163 @@ def _materialize_cfg_condition_chain_expr_8616(
             root_src=root_condition.src_insn,
         )
         return None
+    if any(
+        all(consumed is not required for consumed in consumed_conditions)
+        for required in required_conditions
+    ):
+        _debug_condition_chain_8616(
+            "cfg-chain-required-condition-refused",
+            consumed_sources=tuple(condition.src_insn for condition in consumed_conditions),
+            required_sources=tuple(condition.src_insn for condition in required_conditions),
+        )
+        return None
     lowering = lower_call_output_stack_fields_in_condition_8616(codegen, result, tuple(consumed_conditions))
     return lowering.expression
+
+
+def _tagged_statement_block_addr_8616(node: object) -> int | None:
+    """Return the exact CFG block tag attached to one structured statement."""
+    boundary = cast(_ConditionMaterializationTaggedNode8616, node)
+    try:
+        value = boundary.tags.get("vex_block_addr")
+    except AttributeError:
+        return None
+    return value if isinstance(value, int) else None
+
+
+def _assignment_diamond_nested_conditions_8616(
+    node: CIfElse,
+    root_condition: ConditionIR,
+    conditions_by_src: dict[int, ConditionIR],
+) -> tuple[ConditionIR, ...] | None:
+    """Collect every typed guard represented by one nested conditional subtree."""
+    conditions: list[ConditionIR] = [root_condition]
+    for current in _iter_c_nodes_deep_8616(node):
+        if not isinstance(current, CIfElse) or current is node:
+            continue
+        source = _direct_tagged_ins_addr_8616(current)
+        condition = conditions_by_src.get(source) if isinstance(source, int) else None
+        if condition is None:
+            return None
+        if all(existing is not condition for existing in conditions):
+            conditions.append(condition)
+    return tuple(conditions) if len(conditions) > 1 else None
+
+
+def _assignment_diamond_scaffolding_is_safe_8616(
+    node: CIfElse,
+    *,
+    condition_blocks: frozenset[int],
+    leaf_assignments: tuple[CAssignment, CAssignment],
+    leaf_targets: frozenset[int],
+) -> bool:
+    """Refuse a malformed diamond unless discarded nodes are control-only scaffolding."""
+    leaf_ids = {id(assignment) for assignment in leaf_assignments}
+    for current in _iter_c_nodes_deep_8616(node):
+        if isinstance(current, CFunctionCall):
+            return False
+        if isinstance(current, CAssignment):
+            if id(current) in leaf_ids:
+                continue
+            block_addr = _tagged_statement_block_addr_8616(current)
+            if block_addr not in condition_blocks or not isinstance(current.lhs, CDirtyExpression):
+                return False
+            continue
+        if isinstance(current, CGoto):
+            if not isinstance(current.target, int) or current.target not in leaf_targets:
+                return False
+            continue
+        if isinstance(current, CLabel):
+            label_target = _first_tagged_ins_addr_8616(current)
+            if label_target not in leaf_targets:
+                return False
+            continue
+        if isinstance(current, CStatement) and not isinstance(current, (CIfElse, CStatements)):
+            return False
+    return True
+
+
+def _materialize_cfg_assignment_diamond_8616(
+    project: object,
+    codegen: object,
+    node: CIfElse,
+    root_condition: ConditionIR,
+    conditions_by_src: dict[int, ConditionIR],
+    conditions_by_block: dict[int, ConditionIR],
+    successors: dict[int, tuple[int, ...]],
+) -> _AssignmentDiamond8616 | None:
+    """Collapse one nested-goto assignment diamond from typed CFG evidence."""
+    required_conditions = _assignment_diamond_nested_conditions_8616(
+        node,
+        root_condition,
+        conditions_by_src,
+    )
+    if required_conditions is None:
+        return None
+    condition_blocks = frozenset(
+        condition.block_addr
+        for condition in required_conditions
+        if isinstance(condition.block_addr, int)
+    )
+    leaf_candidates = tuple(
+        (block_addr, current)
+        for current in _iter_c_nodes_deep_8616(node)
+        if isinstance(current, CAssignment)
+        and isinstance(block_addr := _tagged_statement_block_addr_8616(current), int)
+        and block_addr not in condition_blocks
+    )
+    if len(leaf_candidates) != 2:
+        return None
+    ordered_candidates = tuple(sorted(leaf_candidates, key=lambda candidate: candidate[0]))
+    (true_target, true_assignment), (false_target, false_assignment) = ordered_candidates
+    if true_target == false_target or not _same_c_expression_8616(
+        true_assignment.lhs,
+        false_assignment.lhs,
+    ):
+        return None
+    true_successors = successors.get(true_target, ())
+    false_successors = successors.get(false_target, ())
+    if (
+        len(true_successors) != 1
+        or len(false_successors) != 1
+        or true_successors[0] != false_successors[0]
+    ):
+        return None
+    root_block = root_condition.block_addr
+    if not isinstance(root_block, int):
+        return None
+    if not _cfg_reaches_address_8616(successors, root_block, true_target):
+        return None
+    if not _cfg_reaches_address_8616(successors, root_block, false_target):
+        return None
+    leaf_assignments = (true_assignment, false_assignment)
+    leaf_targets = frozenset((true_target, false_target))
+    if not _assignment_diamond_scaffolding_is_safe_8616(
+        node,
+        condition_blocks=condition_blocks,
+        leaf_assignments=leaf_assignments,
+        leaf_targets=leaf_targets,
+    ):
+        return None
+    replacement = _materialize_cfg_condition_chain_expr_8616(
+        project,
+        codegen,
+        root_condition,
+        conditions_by_block,
+        successors,
+        true_target,
+        false_target,
+        required_conditions=required_conditions,
+    )
+    if replacement is None:
+        return None
+    return _AssignmentDiamond8616(
+        condition=replacement,
+        true_assignment=true_assignment,
+        false_assignment=false_assignment,
+        true_target=true_target,
+        false_target=false_target,
+    )
 
 
 def _materialize_cfg_shared_body_condition_chain_expr_8616(
@@ -760,6 +963,105 @@ def _select_single_branch_condition_8616(
     return owners[0] if len(owners) == 1 else None
 
 
+def _wide_condition_chain_cfg_connected_8616(
+    chain: tuple[ConditionIR, ConditionIR, ConditionIR],
+    successors: dict[int, tuple[int, ...]],
+) -> bool:
+    """Return whether each typed wide-condition stage reaches the next stage."""
+
+    def reaches_next(condition: ConditionIR, target_block: int) -> bool:
+        """Check both explicit condition outcomes for bounded CFG reachability."""
+        return any(
+            _cfg_reaches_address_8616(successors, start, target_block)
+            for start in (condition.taken_target, condition.fallthrough_target)
+            if isinstance(start, int)
+        )
+
+    root, high_ge, low_le = chain
+    return (
+        isinstance(high_ge.block_addr, int)
+        and isinstance(low_le.block_addr, int)
+        and reaches_next(root, high_ge.block_addr)
+        and reaches_next(high_ge, low_le.block_addr)
+    )
+
+
+def _materialize_existing_wide_call_return_conditions_8616(
+    codegen: object,
+    targeted: tuple[ConditionIR, ...],
+    conditions_by_src: dict[int, ConditionIR],
+    successors: dict[int, tuple[int, ...]],
+) -> tuple[bool, StructuringConditionChainStats8616]:
+    """Lower already-structured split DX:AX predicates from typed IR and CFG."""
+    metadata_codegen = cast(_ConditionMaterializationCodegen8616, codegen)
+    try:
+        root = cast(_ConditionMaterializationCFunction8616, metadata_codegen.cfunc).statements
+    except AttributeError:
+        return False, StructuringConditionChainStats8616()
+    raw_count = 0
+    normalized_count = 0
+    classified_count = 0
+    materialized_count = 0
+    failure_count = 0
+    changed = False
+    for node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(node, CIfElse):
+            continue
+        replacement_pairs: list[tuple[CExpression, CStatement | None]] = []
+        pair_changed = False
+        for expression, body in tuple(node.condition_and_nodes):
+            tags = _copied_condition_tags_8616(expression)
+            if tags.get("inertia_structuring_wide_call_return_condition_materialized_8616") is True:
+                replacement_pairs.append((expression, body))
+                continue
+            key = _condition_key_from_tags_8616(expression)
+            root_condition = conditions_by_src.get(key[0]) if key is not None else None
+            if (
+                root_condition is None
+                or key is None
+                or root_condition.block_addr != key[1]
+            ):
+                replacement_pairs.append((expression, body))
+                continue
+            chain = select_wide_call_return_condition_chain_8616(root_condition, targeted)
+            if chain is None or not _wide_condition_chain_cfg_connected_8616(chain, successors):
+                replacement_pairs.append((expression, body))
+                continue
+            raw_count += 1
+            lowering = lower_wide_call_return_condition_chain_8616(
+                codegen,
+                expression,
+                chain,
+            )
+            normalized_count += lowering.stats.normalized_fact_count
+            classified_count += lowering.stats.classified_fact_count
+            if lowering.stats.materialized_count != 1:
+                failure_count += 1
+                replacement_pairs.append((expression, body))
+                continue
+            replacement = lowering.expression
+            replacement.tags = tags
+            replacement.tags["inertia_structuring_condition_cfg_materialized_8616"] = True
+            replacement.tags["inertia_structuring_wide_call_return_condition_materialized_8616"] = True
+            replacement_pairs.append((replacement, body))
+            pair_changed = True
+            materialized_count += 1
+            changed = True
+            if isinstance(replacement, CBinaryOp) and isinstance(replacement.lhs, CFunctionCall):
+                prune_materialized_wide_condition_call_carrier_8616(codegen, replacement.lhs)
+            prune_materialized_call_output_stack_carriers_8616(codegen)
+        if pair_changed:
+            node.condition_and_nodes = replacement_pairs
+    stats = StructuringConditionChainStats8616(
+        raw_fact_count=raw_count,
+        normalized_fact_count=normalized_count,
+        classified_fact_count=classified_count,
+        materialized_count=materialized_count,
+        failure_count=failure_count,
+    )
+    return changed, stats
+
+
 def materialize_structuring_condition_chains_8616(project: object, codegen: object) -> bool:
     """Materialize CFG-proven branch predicates from target-bearing ConditionIR."""
     metadata_codegen = cast(_ConditionMaterializationCodegen8616, codegen)
@@ -796,7 +1098,11 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
         ),
         successors=tuple(sorted(successors.items())),
     )
-    conditions_by_src = {item.src_insn: item for item in targeted}
+    conditions_by_src = {
+        item.src_insn: item
+        for item in targeted
+        if isinstance(item.src_insn, int)
+    }
     conditions_by_block_candidates: dict[int, list[ConditionIR]] = {}
     for item in targeted:
         if isinstance(item.block_addr, int):
@@ -979,6 +1285,56 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             _debug_condition_chain_8616("no-successors", fact_src=root_fact.src_insn)
             failure_count += 1
             continue
+        assignment_diamond = (
+            _materialize_cfg_assignment_diamond_8616(
+                project,
+                codegen,
+                node,
+                root_fact,
+                conditions_by_src,
+                conditions_by_block,
+                successors,
+            )
+            if node.else_node is not None
+            else None
+        )
+        if assignment_diamond is not None:
+            classified_count += 1
+            if isinstance(root_fact.src_insn, int):
+                tags["ins_addr"] = root_fact.src_insn
+            if isinstance(root_fact.block_addr, int):
+                tags["vex_block_addr"] = root_fact.block_addr
+            if isinstance(root_fact.producer_insn, int):
+                tags["condition_producer_insn"] = root_fact.producer_insn
+            tags["inertia_structuring_condition_cfg_materialized_8616"] = True
+            tags["inertia_structuring_assignment_diamond_materialized_8616"] = True
+            assignment_diamond.condition.tags = tags
+            true_body: CStatement = CStatements(
+                [assignment_diamond.true_assignment],
+                codegen=codegen,
+            )
+            replacement_arms: list[tuple[CExpression, CStatement | None]] = [
+                (
+                    assignment_diamond.condition,
+                    true_body,
+                )
+            ]
+            node.condition_and_nodes = replacement_arms
+            node.else_node = CStatements(
+                [assignment_diamond.false_assignment],
+                codegen=codegen,
+            )
+            prune_materialized_call_output_stack_carriers_8616(codegen)
+            materialized_count += 1
+            changed = True
+            _debug_condition_chain_8616(
+                "assignment-diamond-materialized",
+                false_target=assignment_diamond.false_target,
+                fact_block=root_fact.block_addr,
+                fact_src=root_fact.src_insn,
+                true_target=assignment_diamond.true_target,
+            )
+            continue
         if node.else_node is None:
             replacement = _materialize_cfg_single_branch_expr_8616(
                 project,
@@ -1052,16 +1408,23 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             fact_src=root_fact.src_insn,
             marker=marker,
         )
+    wide_changed, wide_stats = _materialize_existing_wide_call_return_conditions_8616(
+        codegen,
+        targeted,
+        conditions_by_src,
+        successors,
+    )
+    changed = wide_changed or changed
     stats = StructuringConditionChainStats8616(
-        raw_fact_count=raw_count,
-        normalized_fact_count=raw_count,
-        classified_fact_count=classified_count,
-        materialized_count=materialized_count,
-        failure_count=failure_count,
+        raw_fact_count=raw_count + wide_stats.raw_fact_count,
+        normalized_fact_count=raw_count + wide_stats.normalized_fact_count,
+        classified_fact_count=classified_count + wide_stats.classified_fact_count,
+        materialized_count=materialized_count + wide_stats.materialized_count,
+        failure_count=failure_count + wide_stats.failure_count,
     )
     metadata_codegen._inertia_structuring_condition_chain_stats_8616 = stats
     _debug_condition_chain_8616("stats", stats=stats)
-    if classified_count > 0 and materialized_count == 0:
+    if stats.classified_fact_count > 0 and stats.materialized_count == 0:
         raise PipelineHardError("classified structuring condition chain was not materialized")
     return changed
 

@@ -30,10 +30,21 @@ def _ensure_project_venv() -> None:
             continue
         env = os.environ.copy()
         env["INERTIA_DECOMPILE_VENV"] = "1"
+        env["PYTHONHASHSEED"] = "0"
         env["VIRTUAL_ENV"] = str(candidate.parent.parent)
         current_path = env.get("PATH", "")
         env["PATH"] = f"{candidate.parent}:{current_path}" if current_path else str(candidate.parent)
         os.execvpe(str(candidate), [str(candidate), str(Path(__file__).resolve()), *sys.argv[1:]], env)
+
+
+def _ensure_deterministic_hash_seed() -> None:
+    """Restart the CLI before decompiler imports when Python hash order is unstable."""
+    if os.environ.get("PYTHONHASHSEED") == "0":
+        return
+    env = os.environ.copy()
+    env["PYTHONHASHSEED"] = "0"
+    executable = sys.executable
+    os.execvpe(executable, [executable, str(Path(__file__).resolve()), *sys.argv[1:]], env)
 
 
 def _install_early_log_levels() -> None:
@@ -94,6 +105,7 @@ def _configure_python_recursion_limit() -> None:
 # Tests import this module for helper access and must not exec-replace the process.
 if __name__ == "__main__":
     _ensure_project_venv()
+    _ensure_deterministic_hash_seed()
 _install_early_log_levels()
 _enable_line_buffered_stdio()
 _configure_python_recursion_limit()

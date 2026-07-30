@@ -139,3 +139,29 @@ def test_materialize_callsite_prototypes_prefers_validated_logical_arg_widths():
     assert len(callee.prototype.args) == 1
     assert isinstance(callee.prototype.args[0], SimTypeLong)
     assert codegen._inertia_callsite_prototype_decls == ("int Sleep(unsigned long a0);",)
+
+
+def test_materialize_callsite_prototypes_refuses_lowering_owned_runtime_macro() -> None:
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen(project)
+    callee = SimpleNamespace(name="SEG_U16", prototype=None, is_prototype_guessed=False)
+    call = CFunctionCall("SEG_U16", callee, [], codegen=codegen)
+    root = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1544,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=4,
+            arg_widths=(2, 2, 2, 2),
+            stack_cleanup=8,
+            return_register="ax",
+            return_used=True,
+        )
+    }
+
+    assert _materialize_callsite_prototypes_8616(project, codegen) is False
+    assert callee.prototype is None
+    assert getattr(codegen, "_inertia_callsite_prototype_decls", ()) == ()

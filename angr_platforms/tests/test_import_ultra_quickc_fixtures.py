@@ -229,7 +229,11 @@ def test_decompile_fixture_outer_timeout_includes_cli_startup_budget(monkeypatch
         "--brief",
     ]
     assert captured["timeout"] == 60 + ultra_qc.DECOMPILE_PROCESS_SETUP_TIMEOUT_SECONDS
-    assert captured["env"] == {"INERTIA_ENABLE_TAIL_VALIDATION": "1", "INERTIA_DISABLE_TIMING": "1"}
+    assert captured["env"] == {
+        "INERTIA_ENABLE_TAIL_VALIDATION": "1",
+        "INERTIA_DISABLE_TIMING": "1",
+        "PYTHONHASHSEED": "0",
+    }
 
 
 def test_build_ultra_quickc_fixture_records_kvikdos_compile_link_run(monkeypatch, tmp_path: Path) -> None:

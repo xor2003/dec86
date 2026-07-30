@@ -6,6 +6,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CForLoop,
     CFunctionCall,
     CStatements,
     CVariable,
@@ -15,6 +16,10 @@ from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lowering.dead_register_carriers import (
     prune_unread_stack_lowered_register_carriers_8616,
+)
+from angr_platforms.X86_16.lowering.real_mode_linear import (
+    DirectStackMoveFact8616,
+    DirectStackMoveSourceKind8616,
 )
 
 
@@ -183,6 +188,33 @@ def test_stack_lowered_carrier_prunes_unstructured_register_before_physical_over
     assert stats.failure_count == 0
 
 
+def test_stack_lowered_carrier_prunes_nested_unstructured_register_before_overwrite() -> None:
+    codegen = _DummyCodegen()
+    dead = CAssignment(
+        _unstructured_register_carrier(codegen),
+        _stack_local(codegen),
+        codegen=codegen,
+    )
+    overwrite = CAssignment(
+        _unstructured_register_carrier(codegen),
+        CConstant(7, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    observable_use = CAssignment(
+        _stack_local(codegen),
+        _unstructured_register_carrier(codegen),
+        codegen=codegen,
+    )
+    nested = CStatements([dead, overwrite, observable_use], codegen=codegen)
+    root = _install_root(codegen, [nested])
+
+    changed = prune_unread_stack_lowered_register_carriers_8616(codegen)
+
+    assert changed is True
+    assert nested.statements == [overwrite, observable_use]
+    assert root.statements == [nested]
+
+
 def test_stack_lowered_carrier_refuses_unstructured_register_read_before_overwrite() -> None:
     codegen = _DummyCodegen()
     definition = CAssignment(
@@ -206,3 +238,47 @@ def test_stack_lowered_carrier_refuses_unstructured_register_read_before_overwri
 
     assert changed is False
     assert root.statements == [definition, observable_use, overwrite]
+
+
+def test_stack_lowered_carrier_uses_proven_loop_initializer_register_overwrite() -> None:
+    codegen = _DummyCodegen()
+    source = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="next", region=0x4010),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    dead = CAssignment(_unstructured_register_carrier(codegen), source, codegen=codegen)
+    initializer = CAssignment(
+        source,
+        _stack_local(codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4020},
+    )
+    use = CAssignment(
+        _stack_local(codegen),
+        _unstructured_register_carrier(codegen),
+        codegen=codegen,
+    )
+    loop = CForLoop(
+        initializer,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        None,
+        CStatements([use], codegen=codegen),
+        codegen=codegen,
+    )
+    root = _install_root(codegen, [dead, loop])
+    codegen._inertia_direct_stack_move_facts_8616 = (
+        DirectStackMoveFact8616(
+            dst_offset=-2,
+            width=2,
+            source_kind=DirectStackMoveSourceKind8616.STACK_SLOT,
+            ins_addr=0x4020,
+            source_register_offset=0,
+            source_offset=-4,
+        ),
+    )
+
+    changed = prune_unread_stack_lowered_register_carriers_8616(codegen)
+
+    assert changed is True
+    assert root.statements == [loop]

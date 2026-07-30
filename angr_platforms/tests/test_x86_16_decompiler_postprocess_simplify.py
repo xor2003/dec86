@@ -26,6 +26,7 @@ from angr_platforms.X86_16.decompiler_postprocess_simplify import (
     _maybe_eliminate_single_use_temporaries_8616,
     _simplify_structured_expressions_8616,
 )
+from angr_platforms.X86_16.widening.segmented_load_widening import apply_segmented_load_widening_8616
 
 
 class _DummyCodegen:
@@ -139,7 +140,7 @@ def test_simplify_structured_expressions_folds_casted_literal_arithmetic_inside_
     assert result.args[0].value == 1193180
 
 
-def test_simplify_structured_expressions_folds_adjacent_seg_u8_pair_to_seg_u16():
+def test_segmented_load_widening_folds_adjacent_seg_u8_pair_to_seg_u16():
     project = _project()
     codegen = _codegen([])
     ds = _reg(project, "ds", codegen)
@@ -170,7 +171,7 @@ def test_simplify_structured_expressions_folds_adjacent_seg_u8_pair_to_seg_u16()
     codegen.cfunc.statements = expr
     codegen.cfunc.body = expr
 
-    changed = _simplify_structured_expressions_8616(codegen)
+    changed = apply_segmented_load_widening_8616(codegen)
 
     assert changed is True
     result = codegen.cfunc.statements

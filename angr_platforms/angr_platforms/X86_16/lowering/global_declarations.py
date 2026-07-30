@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, cast
 
+from .segment_register_state import is_runtime_segment_state_symbol_8616
+
 
 class GlobalDeclarationCodegen8616(Protocol):
     """Dynamic codegen metadata slot used by proven global declaration lowering."""
@@ -93,6 +95,15 @@ def ctype_for_global_width_8616(width: int) -> GlobalDeclarationCType8616:
     return GlobalDeclarationCType8616.UNSIGNED_SHORT
 
 
+def initialize_global_declaration_specs_8616(codegen: object) -> None:
+    """Initialize the owned declaration metadata contract on an angr codegen."""
+    typed_codegen = cast(GlobalDeclarationCodegen8616, codegen)
+    try:
+        typed_codegen._inertia_global_declaration_specs_8616
+    except AttributeError:
+        typed_codegen._inertia_global_declaration_specs_8616 = ()
+
+
 def record_global_declaration_spec_8616(
     codegen: object,
     *,
@@ -107,9 +118,14 @@ def record_global_declaration_spec_8616(
     contain one declaration for that semantic global, with the widest proven
     extent.
     """
-    if not isinstance(name, str) or re.fullmatch(r"[A-Za-z_]\w*", name) is None:
+    if (
+        not isinstance(name, str)
+        or re.fullmatch(r"[A-Za-z_]\w*", name) is None
+        or is_runtime_segment_state_symbol_8616(name)
+    ):
         return
     typed_codegen = cast(GlobalDeclarationCodegen8616, codegen)
+    initialize_global_declaration_specs_8616(codegen)
     if isinstance(ctype, (GlobalDeclarationCType8616, NamedAggregateDeclarationCType8616)):
         ctype_name = ctype.c_name
     else:
@@ -141,7 +157,15 @@ def record_global_declaration_spec_8616(
             if isinstance(ctype, NamedAggregateDeclarationCType8616)
             else None
         )
-        chosen_ctype = aggregate_merge or _choose_global_ctype_8616(old_ctype_name, ctype_name)
+        if (
+            isinstance(ctype, NamedAggregateDeclarationCType8616)
+            and aggregate_merge is None
+            and not _ctype_is_struct_8616(old_ctype_name)
+            and not _ctype_is_pointer_8616(old_ctype_name)
+        ):
+            chosen_ctype = ctype_name
+        else:
+            chosen_ctype = aggregate_merge or _choose_global_ctype_8616(old_ctype_name, ctype_name)
         if _scalar_global_covers_existing_array_8616(
             old_ctype_name,
             old_array_len,
@@ -171,6 +195,7 @@ def record_scalar_global_declaration_spec_8616(
     they may represent distinct aggregate evidence.
     """
     typed_codegen = cast(GlobalDeclarationCodegen8616, codegen)
+    initialize_global_declaration_specs_8616(codegen)
     ctype_name = ctype.c_name if isinstance(ctype, GlobalDeclarationCType8616) else " ".join(str(ctype).split())
     try:
         specs = tuple(cast(Iterable[object], typed_codegen._inertia_global_declaration_specs_8616 or ()))

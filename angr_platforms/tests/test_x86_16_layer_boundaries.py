@@ -306,6 +306,10 @@ def test_widening_entrypoint_runs_subpasses_in_fixed_order() -> None:
         calls.append("direct")
         return False
 
+    def _subviews(_codegen) -> bool:
+        calls.append("subviews")
+        return True
+
     def _segmented(_project, _codegen) -> bool:
         calls.append("segmented")
         return True
@@ -322,6 +326,7 @@ def test_widening_entrypoint_runs_subpasses_in_fixed_order() -> None:
         coalesce_segmented_word_store_statements=_segmented,
         copy_propagation_fn=_copyprop,
         promote_stack_slots_from_instruction_widths=_widths,
+        materialize_stack_subviews_fn=_subviews,
     )
     assert changed is True
-    assert calls == ["widths", "direct", "segmented", "copyprop"]
+    assert calls == ["widths", "subviews", "direct", "segmented", "copyprop"]

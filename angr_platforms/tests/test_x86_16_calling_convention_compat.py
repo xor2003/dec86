@@ -4,6 +4,10 @@ from types import SimpleNamespace
 
 import archinfo
 from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypeShort
+from angr_platforms.X86_16.analysis_helpers import (
+    seed_calling_conventions,
+    seed_wide_stack_prototype_from_binary_address_8616,
+)
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.calling_convention_compat import (
     _promote_terminal_word_return_8616,
@@ -15,6 +19,63 @@ from angr_platforms.X86_16.calling_convention_compat import (
     apply_x86_16_wide_stack_prototype_evidence,
     apply_x86_16_wide_stack_prototype_evidence_at_address,
 )
+
+
+def test_seed_calling_conventions_preserves_binary_proven_stub_prototype() -> None:
+    prototype = object()
+    calling_convention = object()
+    init_calls: list[None] = []
+    function = SimpleNamespace(
+        name="sub_1234",
+        prototype=prototype,
+        calling_convention=calling_convention,
+        is_prototype_guessed=False,
+        _init_prototype_and_calling_convention=lambda: init_calls.append(None),
+    )
+    cfg = SimpleNamespace(
+        functions={0x1234: function},
+        project=SimpleNamespace(arch=SimpleNamespace(name="not-86_16")),
+    )
+
+    seed_calling_conventions(cfg)
+
+    assert init_calls == []
+    assert function.prototype is prototype
+    assert function.calling_convention is calling_convention
+    assert function.is_prototype_guessed is False
+
+
+def test_wide_stack_seed_copies_an_already_proven_source_prototype(monkeypatch) -> None:
+    prototype = object()
+    calling_convention = object()
+    source = SimpleNamespace(
+        prototype=prototype,
+        calling_convention=calling_convention,
+        is_prototype_guessed=False,
+    )
+    target = SimpleNamespace(
+        prototype=None,
+        calling_convention=None,
+        is_prototype_guessed=True,
+    )
+
+    def reject_reanalysis(*_args: object, **_kwargs: object) -> bool:
+        raise AssertionError("already-proven source ABI must not be reanalyzed")
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.calling_convention_compat.apply_x86_16_wide_stack_prototype_evidence_at_address",
+        reject_reanalysis,
+    )
+
+    assert seed_wide_stack_prototype_from_binary_address_8616(
+        object(),
+        source,
+        target,
+        0x1234,
+    )
+    assert target.prototype is prototype
+    assert target.calling_convention is calling_convention
+    assert target.is_prototype_guessed is False
 
 
 class _FakeRegOperand:

@@ -8,6 +8,7 @@ from angr.sim_variable import SimRegisterVariable
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.lowering.call_return_selectors import (
     bind_call_return_switch_selectors_8616,
+    replay_call_return_switch_selectors_8616,
 )
 from angr_platforms.X86_16.validation_dataflow import validate_structured_def_use_8616
 
@@ -28,9 +29,9 @@ def _codegen() -> SimpleNamespace:
     )
 
 
-def _ax(codegen: SimpleNamespace) -> structured_c.CVariable:
+def _ax(codegen: SimpleNamespace, *, name: str = "ax") -> structured_c.CVariable:
     return structured_c.CVariable(
-        SimRegisterVariable(0, 2, name="ax"),
+        SimRegisterVariable(0, 2, name=name),
         variable_type=SimTypeShort(False),
         codegen=codegen,
     )
@@ -63,7 +64,7 @@ def _summary() -> CallsiteSummary8616:
 def test_call_return_selector_binding_materializes_one_structured_identity() -> None:
     codegen = _codegen()
     call = _call(codegen)
-    assignment = structured_c.CAssignment(_ax(codegen), call, codegen=codegen)
+    assignment = structured_c.CAssignment(_ax(codegen, name="ax_2"), call, codegen=codegen)
     intermediate = structured_c.CAssignment(
         structured_c.CVariable(
             SimRegisterVariable(18, 2, name="flags"),
@@ -96,7 +97,9 @@ def test_call_return_selector_binding_materializes_one_structured_identity() -> 
     selector_variable = switch.switch.variable
     assert assignment_variable is selector_variable
     assert assignment_variable.ident == "call-return-1048"
+    assert assignment_variable.name == "ax"
     assert assignment_variable.region == 0x4010
+    assert codegen._inertia_call_return_selector_replayer_8616 is replay_call_return_switch_selectors_8616
     assert validate_structured_def_use_8616(root).passed
 
 

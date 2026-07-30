@@ -24,6 +24,7 @@ from ..alias_state import AliasState
 from ..semantics.alias_query import (
     _storage_domain_for_expr,
     can_join_alias_storage,
+    contains_alias_storage,
     describe_alias_storage,
     same_alias_storage_domain,
 )
@@ -66,6 +67,21 @@ class WideningProof:
 
     def is_safe(self) -> bool:
         """Return whether this proof allows widening."""
+        return self.ok
+
+
+@dataclass(frozen=True)
+class StorageSubviewProof:
+    """Proof that one stack expression is a proper contained storage view."""
+
+    ok: bool
+    reason: str
+    container: AliasStorageFacts
+    subview: AliasStorageFacts
+    relative_bit_offset: int | None = None
+
+    def is_safe(self) -> bool:
+        """Return whether this proof allows contained-view materialization."""
         return self.ok
 
 
@@ -230,6 +246,49 @@ def prove_adjacent_storage_slices(
     return _impl()
 
 
+def prove_contained_stack_subview(
+    container_expr: object,
+    subview_expr: object,
+    *,
+    expected_bit_offset: int | None = None,
+) -> StorageSubviewProof:
+    """Prove that a narrower stack expression is contained by a wider one."""
+    container = describe_alias_storage(container_expr)
+    subview = describe_alias_storage(subview_expr)
+    if container.needs_synthesis() or subview.needs_synthesis():
+        return StorageSubviewProof(False, "needs_synthesis", container, subview)
+    if container.identity is None or subview.identity is None:
+        return StorageSubviewProof(False, "missing_identity", container, subview)
+    if container.identity[0] != "stack" or subview.identity[0] != "stack":
+        return StorageSubviewProof(False, "not_stack_storage", container, subview)
+    container_view = container.domain.view
+    subview_view = subview.domain.view
+    if container_view is None or subview_view is None:
+        return StorageSubviewProof(False, "missing_view", container, subview)
+    if container_view.bit_width is None or subview_view.bit_width is None:
+        return StorageSubviewProof(False, "unknown_width", container, subview)
+    if container_view.bit_width <= subview_view.bit_width:
+        return StorageSubviewProof(False, "not_proper_subview", container, subview)
+    if not contains_alias_storage(container_expr, subview_expr):
+        return StorageSubviewProof(False, "storage_mismatch", container, subview)
+    relative_bit_offset = subview_view.bit_offset - container_view.bit_offset
+    if expected_bit_offset is not None and relative_bit_offset != expected_bit_offset:
+        return StorageSubviewProof(
+            False,
+            "bit_offset_mismatch",
+            container,
+            subview,
+            relative_bit_offset=relative_bit_offset,
+        )
+    return StorageSubviewProof(
+        True,
+        "ok",
+        container,
+        subview,
+        relative_bit_offset=relative_bit_offset,
+    )
+
+
 def analyze_adjacent_storage_slices(
     low_expr: object, high_expr: object, *, alias_state: AliasState | None = None
 ) -> StorageJoinAnalysis:
@@ -272,8 +331,8 @@ WIDENING_PIPELINE: tuple[WideningPipelineSpec, ...] = (
     ),
     WideningPipelineSpec(
         name="compatibility_proof",
-        purpose="Prove adjacent slices are safe before widening proceeds.",
-        helpers=("prove_adjacent_storage_slices",),
+        purpose="Prove adjacent joins or contained projections are safe before widening proceeds.",
+        helpers=("prove_adjacent_storage_slices", "prove_contained_stack_subview"),
     ),
     WideningPipelineSpec(
         name="join_decision",
@@ -336,6 +395,7 @@ def merge_storage_slice_domains(
 
 __all__ = [
     "StorageJoinAnalysis",
+    "StorageSubviewProof",
     "WideningCandidate",
     "WideningPipelineSpec",
     "WideningProof",
@@ -347,4 +407,5 @@ __all__ = [
     "describe_x86_16_widening_pipeline",
     "merge_storage_slice_domains",
     "prove_adjacent_storage_slices",
+    "prove_contained_stack_subview",
 ]
