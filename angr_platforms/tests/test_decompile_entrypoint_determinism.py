@@ -13,6 +13,7 @@ import pytest
 
 from inertia_decompiler import cli as decompiler_cli
 from inertia_decompiler import cli_function_discovery as function_discovery
+from inertia_decompiler.function_worker_policy import requires_serial_function_decompilation
 from scripts import batch_decompile_procs
 from scripts import import_ultra_quickc_fixtures as ultra_qc
 
@@ -25,6 +26,19 @@ class _ExecIntercepted(RuntimeError):
 
 def test_batch_runner_uses_public_cli_initialization_boundary() -> None:
     assert batch_decompile_procs.decompiler_cli is decompiler_cli
+
+
+def test_whole_file_x86_16_executable_requires_serial_workers() -> None:
+    assert requires_serial_function_decompilation(
+        architecture="86_16",
+        binary_suffix=".EXE",
+        address_requested=False,
+    )
+    assert not requires_serial_function_decompilation(
+        architecture="86_16",
+        binary_suffix=".EXE",
+        address_requested=True,
+    )
 
 
 def test_caller_evidence_scan_uses_isolated_project(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1430,6 +1430,7 @@ _PROMOTED_TYPED_FILES = (
     "inertia_decompiler/cache.py",
     "inertia_decompiler/cli.py",
     "inertia_decompiler/cli_core.py",
+    "inertia_decompiler/function_worker_policy.py",
     "inertia_decompiler/cli_decompilation.py",
     "inertia_decompiler/cli_c_ast_rewrites.py",
     "inertia_decompiler/cli_c_text_postprocess.py",

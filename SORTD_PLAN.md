@@ -297,19 +297,20 @@ Status: complete.
 
 Progress:
 
-- The authoritative sidecar-backed and executable-only reports both accept all
-  20 functions with `validation=passed`, no fallback, empty result, timeout,
-  traceback, discovery failure, or source-contract violation.
+- The ordinary `./decompile.py ./SORTD.EXE` path and executable-only report
+  accept all 20 functions with `validation=passed` and no fallback, empty
+  result, timeout, traceback, discovery failure, or source-contract violation.
 - The current expanded pipeline passes 1,369 focused tests, all QuickC fixtures,
   all six MS C tiny compile-decompile-recompile-execute parity cases, and both
   whole-binary lanes; all five serial lanes pass.
-- Current-tree `make quality-fast` and the 1,883-test mapped pytest set pass.
-  The unit lane takes 43.086 seconds against its advisory 30-second budget.
+- The last broad baseline passed `make quality-fast` and 1,883 mapped tests;
+  current worker-policy, command-construction, lint, type, and architecture
+  gates pass. The unit lane's 43.086 seconds remains advisory debt.
 
 Definition of done:
 
 - sidecar-free evidence remains `20/20/20/20/0`
-- all 20 functions emit generated C
+- unmodified `./decompile.py ./SORTD.EXE` emits generated C for all 20 functions
 - all 20 functions report `validation=passed`
 - generated C passes the configured portable-flat acceptance checks
 - no asm/details fallback, empty result, timeout, traceback, or silent function

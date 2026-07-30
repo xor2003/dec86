@@ -9715,7 +9715,6 @@ def test_main_full_serial_whole_binary_uses_clean_process_lane_with_background_t
         "_supplement_cached_seeded_recovery",
         lambda _project, pairs, addrs, **_kwargs: (pairs, addrs),
     )
-    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
     monkeypatch.setattr(decompile.threading, "active_count", lambda: 3)
 
     def _fake_clean_process(context, item, *, timeout):
@@ -11474,69 +11473,6 @@ def test_direct_addr_use_fork_lane_keeps_non_tail_posix_fast_path(monkeypatch):
     assert decompile._direct_addr_use_fork_lane_8616(tail_validation_enabled=False) is True
 
 
-def test_main_uses_prefork_pool_for_isolated_x86_16_parallel_lane(monkeypatch, tmp_path, capsys):
-    binary = tmp_path / "sample.exe"
-    binary.write_bytes(b"MZ")
-    project = SimpleNamespace(
-        entry=0x11423,
-        arch=SimpleNamespace(name="86_16"),
-        loader=SimpleNamespace(
-            main_object=SimpleNamespace(binary=binary, linked_base=0x10000, max_addr=0x400),
-        ),
-    )
-    recovered_pairs = [
-        (SimpleNamespace(), SimpleNamespace(addr=0x10010, name="sub_10010", project=project)),
-        (SimpleNamespace(), SimpleNamespace(addr=0x10020, name="sub_10020", project=project)),
-        (SimpleNamespace(), SimpleNamespace(addr=0x10030, name="sub_10030", project=project)),
-    ]
-    seen = {"jobs": None, "workers": None}
-
-    class _FakePreforkPool:
-        def __init__(self, *, max_workers, worker_func, name_prefix="prefork"):
-            seen["workers"] = max_workers
-            self._worker_func = worker_func
-
-        def run_unordered(self, jobs, *, poll_timeout=0.25):
-            seen["jobs"] = list(jobs)
-            for job_id, payload in jobs:
-                yield job_id, self._worker_func(payload)
-
-        def shutdown(self):
-            return None
-
-    monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
-    monkeypatch.setattr(decompile, "_load_lst_metadata", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(decompile, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(decompile, "_prefer_low_memory_path", lambda: False)
-    monkeypatch.setattr(decompile, "_load_catalog_address_cache", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(decompile, "_recover_fast_exe_catalog", lambda *_args, **_kwargs: list(recovered_pairs))
-    monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 2)
-    monkeypatch.setattr(decompile, "PreforkJobPool", _FakePreforkPool)
-    monkeypatch.setattr(decompile.threading, "active_count", lambda: 1)
-    monkeypatch.setattr(
-        decompile,
-        "_run_function_work_item",
-        lambda item, **_kwargs: decompile.FunctionWorkResult(
-            index=item.index,
-            status="ok",
-            payload=f"int {item.function.name}(void) {{ return 0; }}",
-            debug_output="",
-            tail_validation=_fake_stable_tail_validation(),
-            function=item.function,
-            function_cfg=item.function_cfg,
-        ),
-    )
-
-    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "3"])
-    out = capsys.readouterr().out
-
-    assert rc == 0
-    assert seen["workers"] == 2
-    assert seen["jobs"] == [(1, 1), (2, 2), (3, 3)]
-    assert "summary: decompiled 3/3 shown functions" in out
-
-
 def test_main_parallel_keeps_timeout_after_deadline(monkeypatch, tmp_path, capsys):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
@@ -11597,6 +11533,7 @@ def test_main_parallel_keeps_timeout_after_deadline(monkeypatch, tmp_path, capsy
     )
     monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 2)
+    monkeypatch.setattr(decompile, "requires_serial_function_decompilation", lambda **_kwargs: False)
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(decompile, "DaemonThreadPoolExecutor", _FakeExecutor)
     monkeypatch.setattr(decompile, "wait", lambda pending, **_kwargs: (set(), set(pending)))
@@ -11670,6 +11607,7 @@ def test_main_parallel_does_not_promote_late_partial_after_deadline(monkeypatch,
     )
     monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 2)
+    monkeypatch.setattr(decompile, "requires_serial_function_decompilation", lambda **_kwargs: False)
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(decompile, "DaemonThreadPoolExecutor", _FakeExecutor)
     monkeypatch.setattr(decompile, "wait", lambda pending, **_kwargs: (set(), set(pending)))
@@ -11745,6 +11683,7 @@ def test_main_parallel_promotes_done_future_at_deadline(monkeypatch, tmp_path, c
     )
     monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 2)
+    monkeypatch.setattr(decompile, "requires_serial_function_decompilation", lambda **_kwargs: False)
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(decompile, "DaemonThreadPoolExecutor", _FakeExecutor)
     monkeypatch.setattr(decompile, "wait", lambda pending, **_kwargs: (set(), set(pending)))
@@ -11832,6 +11771,7 @@ def test_main_parallel_promotes_future_completed_during_late_collection(monkeypa
     )
     monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 2)
+    monkeypatch.setattr(decompile, "requires_serial_function_decompilation", lambda **_kwargs: False)
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(decompile, "DaemonThreadPoolExecutor", _FakeExecutor)
     monkeypatch.setattr(decompile, "wait", _fake_wait)

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 from scripts.check_sortd_sidecar_free import (
     DEFAULT_MAXIMUM_EMPTY,
     DEFAULT_MAXIMUM_TIMEOUTS,
@@ -7,6 +10,8 @@ from scripts.check_sortd_sidecar_free import (
     EXPECTED_SORTD_FUNCTION_ADDRS,
     REQUIRED_DECOMPILED_SORTD_FUNCTION_ADDRS,
     _parse_args,
+    default_decompiler_command,
+    default_decompiler_environment,
     evaluate_sortd_transcript,
     mz_executable_image,
 )
@@ -51,6 +56,14 @@ def test_sidecar_free_ratchet_defaults_track_current_whole_file_floor():
     assert args.minimum_decompiled == DEFAULT_MINIMUM_DECOMPILED
     assert args.maximum_empty == DEFAULT_MAXIMUM_EMPTY
     assert args.maximum_timeouts == DEFAULT_MAXIMUM_TIMEOUTS
+
+
+def test_sidecar_free_lane_runs_default_cli_without_forced_serial_override(monkeypatch):
+    monkeypatch.setenv("INERTIA_FORCE_SERIAL_FUNCTION_DECOMPILATION", "1")
+    binary = Path("/tmp/SORTD.EXE")
+
+    assert default_decompiler_command(binary) == (sys.executable, "decompile.py", str(binary))
+    assert "INERTIA_FORCE_SERIAL_FUNCTION_DECOMPILATION" not in default_decompiler_environment()
 
 
 def test_sidecar_free_ratchet_accepts_complete_catalog_and_current_floor():

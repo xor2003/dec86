@@ -46,6 +46,19 @@ DEFAULT_MINIMUM_DECOMPILED: int = len(REQUIRED_DECOMPILED_SORTD_FUNCTION_ADDRS)
 DEFAULT_MAXIMUM_EMPTY: int = 0
 DEFAULT_MAXIMUM_TIMEOUTS: int = 0
 
+
+def default_decompiler_command(binary: Path) -> tuple[str, ...]:
+    """Return the exact argument-free whole-file CLI command under test."""
+    return (sys.executable, "decompile.py", str(binary))
+
+
+def default_decompiler_environment() -> dict[str, str]:
+    """Return an inherited environment without a serial test override."""
+    env = dict(os.environ)
+    env.pop("INERTIA_FORCE_SERIAL_FUNCTION_DECOMPILATION", None)
+    return env
+
+
 _SOURCE_EVIDENCE_RE = re.compile(
     r"source-region discovery evidence: "
     r"raw_fact_count=(?P<raw>\d+) "
@@ -215,7 +228,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=REPO_ROOT / "angr_platforms" / ".cache" / "test_pipeline" / "sortd_sidecar_free.json",
     )
-    parser.add_argument("--decompile-timeout", type=int, default=60)
     parser.add_argument("--run-timeout", type=int, default=1200)
     parser.add_argument("--minimum-decompiled", type=int, default=DEFAULT_MINIMUM_DECOMPILED)
     parser.add_argument("--maximum-empty", type=int, default=DEFAULT_MAXIMUM_EMPTY)
@@ -230,24 +242,12 @@ def main(argv: list[str] | None = None) -> int:
     image = mz_executable_image(args.source_binary.read_bytes())
     args.transcript_out.parent.mkdir(parents=True, exist_ok=True)
     args.report_out.parent.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ)
-    env["INERTIA_ENABLE_TAIL_VALIDATION"] = "1"
-    env["INERTIA_FORCE_SERIAL_FUNCTION_DECOMPILATION"] = "1"
-    env["INERTIA_DISABLE_TIMING"] = "1"
+    env = default_decompiler_environment()
 
     with tempfile.TemporaryDirectory(prefix="inertia-sortd-sidecar-free-") as temp_dir:
         isolated_binary = Path(temp_dir) / "SORTD.EXE"
         isolated_binary.write_bytes(image)
-        command = [
-            sys.executable,
-            "decompile.py",
-            "--no-alternate-source-c",
-            "--c-target",
-            "portable-flat",
-            "--timeout",
-            str(args.decompile_timeout),
-            str(isolated_binary),
-        ]
+        command = default_decompiler_command(isolated_binary)
         with args.transcript_out.open("w", encoding="utf-8") as transcript_stream:
             try:
                 completed = subprocess.run(

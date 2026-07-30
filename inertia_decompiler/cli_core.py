@@ -85,6 +85,7 @@ from inertia_decompiler.disassembly_helpers import (
     _infer_linear_disassembly_window,
     _probe_lift_break,
 )
+from inertia_decompiler.function_worker_policy import requires_serial_function_decompilation
 from inertia_decompiler.library_function_classifier import (
     filter_code_labels_for_library_policy,
     is_library_like_function_name,
@@ -7754,11 +7755,10 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
         and low_memory_path
     ):
         workers = 1
-    if (
-        args.addr is None
-        and args.binary.suffix.lower() == ".exe"
-        and project.arch.name == "86_16"
-        and include_library_functions
+    if requires_serial_function_decompilation(
+        architecture=project.arch.name,
+        binary_suffix=args.binary.suffix,
+        address_requested=args.addr is not None,
     ):
         workers = 1
     forced_serial_function_decomp = os.environ.get(_FORCE_SERIAL_FUNCTION_DECOMP_ENV, "").strip().lower() in {

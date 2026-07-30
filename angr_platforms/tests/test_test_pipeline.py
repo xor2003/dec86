@@ -760,7 +760,6 @@ def test_sortd_sidecar_free_lane_uses_executable_only_ratchet(monkeypatch, tmp_p
     cmd = captured[0]
     assert cmd[:2] == [test_pipeline.sys.executable, "scripts/check_sortd_sidecar_free.py"]
     assert cmd[cmd.index("--source-binary") + 1] == str(binary)
-    assert cmd[cmd.index("--decompile-timeout") + 1] == "9"
     assert cmd[cmd.index("--run-timeout") + 1] == "123"
 
 

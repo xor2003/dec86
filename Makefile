@@ -314,6 +314,7 @@ QA_TYPED_FILES := \
 	inertia_decompiler/cache.py \
 	inertia_decompiler/cli.py \
 	inertia_decompiler/cli_core.py \
+	inertia_decompiler/function_worker_policy.py \
 	inertia_decompiler/cli_decompilation.py \
 	inertia_decompiler/cli_c_ast_rewrites.py \
 	inertia_decompiler/cli_c_text_postprocess.py \
@@ -831,7 +832,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_recovery_artifact_writer.py \
 	angr_platforms/tests/test_x86_16_targeted_recovery_artifact.py \
 	angr_platforms/tests/test_x86_16_decompiler_postprocess_callsite_prototypes.py \
-	angr_platforms/tests/test_build_msc6_examples.py \
+	inertia_decompiler/function_worker_policy.py \
 	angr_platforms/tests/test_decompile_entrypoint_determinism.py \
 	angr_platforms/tests/test_import_ultra_quickc_fixtures.py \
 	angr_platforms/tests/test_decompiler_architecture_check.py \

@@ -378,8 +378,6 @@ def _sortd_sidecar_free_lane(args: argparse.Namespace) -> LaneResult:
         "scripts/check_sortd_sidecar_free.py",
         "--source-binary",
         str(args.sortdemo_binary),
-        "--decompile-timeout",
-        str(args.sortdemo_decompile_timeout),
         "--run-timeout",
         str(args.sortd_run_timeout),
         "--transcript-out",
