@@ -178,6 +178,11 @@ def test_callsite_stack_argument_postprocess_fallbacks_refuse_after_structuring_
 
     monkeypatch.setattr(post_stage._calls, "_recover_missing_direct_calls_from_evidence_8616", recover)
     monkeypatch.setattr(post_stage, "_materialize_callsite_stack_arguments_preserve_setup_8616", stack_args)
+    monkeypatch.setattr(
+        post_stage,
+        "_snapshot_codegen_cfunc",
+        lambda _codegen: calls.append("rollback-snapshot"),
+    )
 
     assert post_stage._recover_missing_direct_calls_from_evidence_early_postprocess_8616(object(), codegen) is False
     assert post_stage._recover_missing_direct_calls_final_postprocess_8616(object(), codegen) is False
@@ -185,6 +190,16 @@ def test_callsite_stack_argument_postprocess_fallbacks_refuse_after_structuring_
     assert post_stage._materialize_callsite_stack_arguments_final_postprocess_8616(object(), codegen) is False
     assert post_stage._materialize_callsite_stack_arguments_after_ss_lowering_8616(object(), codegen) is False
     assert post_stage._materialize_recovered_callsite_stack_arguments_postprocess_8616(object(), codegen) is False
+    assert (
+        post_stage._salvage_callsite_stack_args_after_discard_8616(
+            SimpleNamespace(codegen=codegen),
+            validation_mode="live_out",
+            snapshot_function_info=object(),
+            function=object(),
+            log=object(),
+        )
+        is False
+    )
     assert calls == []
 
 
@@ -574,7 +589,9 @@ def test_empty_if_return_materialization_refuses_unsafe_effect_function(monkeypa
     )
     codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
 
-    monkeypatch.setattr(post_stage, "_selector_function_has_unsafe_effects_8616", lambda _project, _codegen: True)
+    monkeypatch.setattr(
+        post_stage, "_selector_function_has_unsafe_effects_8616", lambda _project, _codegen, allowed_call_addrs: True
+    )
     monkeypatch.setattr(post_stage, "_ordered_conditional_return_values_8616", lambda _project, _codegen: (7,))
 
     changed = post_stage._materialize_empty_if_return_branches_8616(SimpleNamespace(arch=Arch86_16()), codegen)
@@ -697,7 +714,7 @@ def test_void_tail_call_guard_repair_moves_cfg_proven_call_into_if_body(monkeypa
     assert len(root.statements) == 1
     repaired_if = root.statements[0]
     repaired_body = repaired_if.condition_and_nodes[0][1]
-    assert repaired_body.statements == [tail_call]
+    assert [statement.expr for statement in repaired_body.statements] == [tail_call]
     assert codegen._inertia_void_tail_call_guard_stats_8616 == {
         "candidates": 1,
         "materialized": 1,
@@ -733,7 +750,7 @@ def test_void_tail_call_guard_repair_handles_else_node_tail_call(monkeypatch):
     repaired_if = root.statements[0]
     assert repaired_if.else_node is None
     repaired_body = repaired_if.condition_and_nodes[0][1]
-    assert repaired_body.statements == [tail_call]
+    assert [statement.expr for statement in repaired_body.statements] == [tail_call]
 
 
 def test_void_tail_call_guard_repair_handles_wrapped_else_tail_call(monkeypatch):
@@ -770,7 +787,7 @@ def test_void_tail_call_guard_repair_handles_wrapped_else_tail_call(monkeypatch)
     repaired_if = root.statements[0]
     assert repaired_if.else_node is None
     repaired_body = repaired_if.condition_and_nodes[0][1]
-    assert repaired_body.statements == [tail_call]
+    assert [statement.expr for statement in repaired_body.statements] == [tail_call]
 
 
 def test_void_tail_call_guard_repair_preserves_setup_sequence(monkeypatch):
@@ -857,7 +874,7 @@ def test_void_tail_call_guard_repair_accepts_exact_condition_with_unmaterialized
     repaired_if = root.statements[0]
     assert repaired_if.else_node is None
     repaired_body = repaired_if.condition_and_nodes[0][1]
-    assert repaired_body.statements == [tail_call]
+    assert [statement.expr for statement in repaired_body.statements] == [tail_call]
 
 
 def test_void_tail_call_guard_repair_inverts_cfg_proven_suffix_diamond(monkeypatch):
@@ -1208,45 +1225,57 @@ def test_pre_validation_stack_prime_refuses_materialized_pointer_memory(monkeypa
     assert codegen._inertia_pre_validation_stack_semantics_primed is True
 
 
-def test_pre_validation_segmented_memory_replay_runs_after_pointer_memory_regeneration(monkeypatch):
-    calls: list[tuple[object, str]] = []
+def test_pre_validation_segment_global_replay_runs_after_ast_regeneration(monkeypatch):
+    calls: list[tuple[object, object, object, object | None, bool]] = []
+    order: list[str] = []
     invalidated: list[object] = []
+    cod_metadata = object()
 
-    def replay(codegen: object, *, target: str) -> bool:
-        calls.append((codegen, target))
-        return True
+    def replay(project, codegen, synthetic_globals, *, cod_metadata=None, include_runtime_segment=False):
+        order.append("lowering")
+        calls.append((project, codegen, synthetic_globals, cod_metadata, include_runtime_segment))
+        return SimpleNamespace(changed=True)
 
-    monkeypatch.setattr(post_stage, "apply_runtime_segment_lowering_8616", replay)
+    monkeypatch.setattr(
+        post_stage,
+        "replay_codegen_structured_condition_segment_provenance_8616",
+        lambda _codegen: order.append("provenance") or SimpleNamespace(changed=False),
+    )
+    monkeypatch.setattr(post_stage, "run_segment_global_materialization_8616", replay)
+    monkeypatch.setattr(post_stage, "cod_metadata_for_codegen_8616", lambda *_args: cod_metadata)
     monkeypatch.setattr(
         post_stage,
         "_invalidate_tail_validation_derived_caches_8616",
         invalidated.append,
     )
+    synthetic_globals = object()
     codegen = SimpleNamespace(_inertia_pointer_memory_materialized_8616="pointer_swap")
-    project = SimpleNamespace(_inertia_c_target="msc-dos")
+    project = SimpleNamespace(_inertia_synthetic_globals=synthetic_globals)
 
-    changed = post_stage._replay_segmented_memory_lowering_before_validation_baseline_8616(project, codegen)
+    changed = post_stage._replay_segment_global_lowering_before_validation_baseline_8616(project, codegen)
 
     assert changed is True
-    assert calls == [(codegen, "msc-dos")]
+    assert order == ["provenance", "lowering"]
+    assert calls == [(project, codegen, synthetic_globals, cod_metadata, True)]
     assert invalidated == [codegen]
-    assert codegen._inertia_pre_validation_segmented_memory_lowering_replayed_8616 is True
+    assert codegen._inertia_pre_validation_segment_global_lowering_replayed_8616 is True
 
 
-def test_pre_validation_segmented_memory_replay_is_single_round(monkeypatch):
+def test_pre_validation_segment_global_replay_is_single_round(monkeypatch):
     calls: list[object] = []
 
-    def replay(codegen: object, *, target: str) -> bool:
-        del target
+    def replay(project, codegen, synthetic_globals, **_kwargs):
+        del project, synthetic_globals
         calls.append(codegen)
-        return False
+        return SimpleNamespace(changed=False)
 
-    monkeypatch.setattr(post_stage, "apply_runtime_segment_lowering_8616", replay)
+    monkeypatch.setattr(post_stage, "run_segment_global_materialization_8616", replay)
+    monkeypatch.setattr(post_stage, "cod_metadata_for_codegen_8616", lambda *_args: None)
     codegen = SimpleNamespace()
     project = SimpleNamespace()
 
-    assert post_stage._replay_segmented_memory_lowering_before_validation_baseline_8616(project, codegen) is False
-    assert post_stage._replay_segmented_memory_lowering_before_validation_baseline_8616(project, codegen) is False
+    assert post_stage._replay_segment_global_lowering_before_validation_baseline_8616(project, codegen) is False
+    assert post_stage._replay_segment_global_lowering_before_validation_baseline_8616(project, codegen) is False
     assert calls == [codegen]
 
 

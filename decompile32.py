@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+"""Legacy 32-bit angr decompiler experiment.
+
+Layer: Tooling/gates.
+"""
+
 import sys
 
 import angr

@@ -42,10 +42,11 @@ def _stack_local(codegen: _DummyCodegen) -> CVariable:
     )
 
 
-def _register_carrier(codegen: _DummyCodegen) -> CVariable:
+def _register_carrier(codegen: _DummyCodegen, *, vvar_id: int | None = None) -> CVariable:
     return CVariable(
         SimRegisterVariable(6, 2, ident="ir_3", name="bx", region=0x4010),
         variable_type=SimTypeShort(False),
+        vvar_id=vvar_id,
         codegen=codegen,
     )
 
@@ -117,6 +118,42 @@ def test_stack_lowered_carrier_refuses_register_with_live_read() -> None:
     assert stats.classified_fact_count == 0
     assert stats.materialized_count == 0
     assert stats.live_use_refused_count == 1
+
+
+def test_stack_lowered_carrier_ignores_own_rhs_read() -> None:
+    codegen = _DummyCodegen()
+    definition = _register_carrier(codegen, vvar_id=12)
+    rhs_read = _register_carrier(codegen, vvar_id=12)
+    assignment = CAssignment(
+        definition,
+        CBinaryOp("Add", rhs_read, _stack_local(codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    root = _install_root(codegen, [assignment])
+
+    changed = prune_unread_stack_lowered_register_carriers_8616(codegen)
+
+    assert changed is True
+    assert root.statements == []
+    stats = codegen._inertia_lowered_register_carrier_prune_8616
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 0
+
+
+def test_stack_lowered_carrier_keeps_same_ssa_version_read() -> None:
+    codegen = _DummyCodegen()
+    definition = _register_carrier(codegen, vvar_id=12)
+    live_read = _register_carrier(codegen, vvar_id=12)
+    assignment = CAssignment(definition, _stack_local(codegen), codegen=codegen)
+    use = CAssignment(_stack_local(codegen), live_read, codegen=codegen)
+    root = _install_root(codegen, [assignment, use])
+
+    changed = prune_unread_stack_lowered_register_carriers_8616(codegen)
+
+    assert changed is False
+    assert root.statements == [assignment, use]
+    assert codegen._inertia_lowered_register_carrier_prune_8616.live_use_refused_count == 1
 
 
 def test_stack_lowered_carrier_refuses_effectful_rhs() -> None:

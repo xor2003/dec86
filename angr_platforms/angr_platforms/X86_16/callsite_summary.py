@@ -10,7 +10,7 @@ import builtins
 import contextlib
 import logging
 import os
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from enum import Enum, StrEnum
 from types import SimpleNamespace
 from typing import Any, Iterable, Protocol, TypeAlias, cast
@@ -18,28 +18,38 @@ from typing import Any, Iterable, Protocol, TypeAlias, cast
 from angr.sim_type import SimTypeBottom, SimTypeFunction
 from capstone.x86_const import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
 
+from .alias.callsite_stack_merge import (
+    CallsitePredecessorStackMerge8616,
+    CallsitePushTrace8616,
+    CallsiteRegisterJoinTrace8616,
+    merge_callsite_predecessor_stack_traces_8616,
+    merge_callsite_register_join_traces_8616,
+)
 from .analysis_helpers import collect_neighbor_call_targets, resolve_direct_call_target_from_block
 from .callee_name_normalization import normalize_callee_name_8616
-from .compiler_helpers import identify_x86_16_compiler_helper_at_8616, is_x86_16_stack_probe_name_8616
+from .compiler_helpers import (
+    identify_x86_16_compiler_helper_at_8616,
+    is_x86_16_registered_stack_probe_target_8616,
+    is_x86_16_stack_probe_name_8616,
+)
 from .pipeline.errors import PipelineHardError
 
 __all__ = [
     "CallerReturnUseEvidence8616",
     "CallerReturnUseVerdict8616",
     "CallsiteArgumentClass8616",
-    "CallsiteArgumentShapeDecision8616",
-    "CallsiteArgumentShapeReconciliation8616",
+    "CallsiteMachineFrameKind8616",
     "CallsiteStackCleanupEvidence8616",
     "CallsiteSummary8616",
     "StructuredCallKind8616",
     "bind_structured_callsite_identity_8616",
     "build_callsite_summary_inventory_8616",
     "callsite_summary_inventory_8616",
+    "callsite_machine_frame_kind_8616",
     "caller_return_use_evidence_by_addr_8616",
     "collect_caller_return_use_evidence_8616",
     "logical_argument_widths_from_callsite_8616",
     "record_caller_return_use_evidence_8616",
-    "reconcile_materialized_call_argument_shape_8616",
     "structured_call_kind_8616",
     "structured_callsite_addr_8616",
     "summarize_x86_16_callsite",
@@ -72,6 +82,10 @@ class _CapstoneInstructionSurface8616(Protocol):
         """Return the backend register name for an operand register id."""
         ...
 
+    def regs_access(self) -> tuple[list[int], list[int]]:
+        """Return the registers read and written by this instruction."""
+        ...
+
 
 class _AngrInstructionWrapperSurface8616(Protocol):
     """Typed angr instruction wrapper carrying a Capstone instruction."""
@@ -96,6 +110,16 @@ class _CapstoneOperandSurface8616(Protocol):
     mem: object
 
 
+class _DirectedGraphSurface8616(Protocol):
+    """Typed fields used from a third-party function CFG."""
+
+    nodes: Iterable[object]
+
+    def predecessors(self, node: object) -> Iterable[object]:
+        """Return direct predecessor nodes for one CFG node."""
+        ...
+
+
 class CallsiteReturnShape8616(Enum):
     """AX-family return register width observed after a callsite."""
 
@@ -108,6 +132,18 @@ class StructuredCallKind8616(Enum):
 
     MACHINE_CALL = "machine_call"
     CODEGEN_INSERT_INTRINSIC = "codegen_insert_intrinsic"
+
+
+class CallsiteMachineFrameKind8616(StrEnum):
+    """Typed machine return-frame category for a recovered callsite."""
+
+    NEAR = "near"
+    FAR = "far"
+
+    @property
+    def return_frame_width(self) -> int:
+        """Return the number of bytes pushed by the machine call itself."""
+        return 2 if self is CallsiteMachineFrameKind8616.NEAR else 4
 
 
 def structured_call_kind_8616(call: object) -> StructuredCallKind8616:
@@ -152,6 +188,7 @@ class CallerReturnUseEvidence8616:
     used_callsite_count: int
     unused_callsite_count: int
     callsite_addrs: tuple[int, ...]
+    excluded_callsite_count: int = 0
 
 
 class _CallerReturnUseEvidenceOwner8616(Protocol):
@@ -251,6 +288,7 @@ class CallsiteSummary8616:
     return_register: str | None
     return_used: bool | None
     stack_probe_helper: bool = False
+    stack_probe_allocation_size: int | None = None
     helper_return_state: str = "none"
     helper_return_space: str | None = None
     helper_return_width: int | None = None
@@ -265,6 +303,7 @@ class CallsiteSummary8616:
     logical_arg_widths: tuple[int, ...] = field(default=(), compare=False)
     logical_arg_classes: tuple[CallsiteArgumentClass8616, ...] = field(default=(), compare=False)
     stack_cleanup_instruction_addr: int | None = None
+    predecessor_stack_merge: CallsitePredecessorStackMerge8616 | None = field(default=None, compare=False)
 
     def brief(self) -> str:
         """Return a compact diagnostic rendering of the callsite summary."""
@@ -273,6 +312,7 @@ class CallsiteSummary8616:
             f"target={None if self.target_addr is None else hex(self.target_addr)} "
             f"args={self.arg_count} "
             f"return_shape={self.return_shape} "
+            f"probe_allocation={self.stack_probe_allocation_size} "
             f"helper_return={self.helper_return_state} "
             f"helper_space={self.helper_return_space} "
             f"helper_width={self.helper_return_width} "
@@ -284,160 +324,18 @@ class CallsiteSummary8616:
         return asdict(self)
 
 
-class CallsiteArgumentShapeDecision8616(StrEnum):
-    """Typed outcome for physical callsite-width reconciliation."""
-
-    PRESERVED_COMPLETE_BINARY = "preserved-complete-binary"
-    PRESERVED_UNPROVEN_LIVE_SHAPE = "preserved-unproven-live-shape"
-    MATERIALIZED_LOGICAL_FAR_POINTER = "materialized-logical-far-pointer"
-    MATERIALIZED_LIVE_SHAPE = "materialized-live-shape"
-    INVALID_LIVE_SHAPE = "invalid-live-shape"
-
-
-@dataclass(frozen=True, slots=True)
-class CallsiteArgumentShapeReconciliation8616:
-    """Closed evidence result for one materialized call argument shape."""
-
-    summary: CallsiteSummary8616
-    decision: CallsiteArgumentShapeDecision8616
-    raw_fact_count: int
-    normalized_fact_count: int
-    classified_fact_count: int
-    materialized_count: int
-    failure_count: int
-
-
-def _materialized_far_pointer_logical_widths_8616(
+def callsite_machine_frame_kind_8616(
     summary: CallsiteSummary8616,
-    live_widths: tuple[int, ...],
-) -> tuple[int, ...]:
-    """Classify one logical far pointer from exact segment-and-offset PUSH facts.
-
-    The frontend intentionally retains two physical word PUSHes. Types/Lowering
-    may publish one four-byte logical argument only after its live AST has one
-    argument and the binary sources prove one segment plus one BP address.
-    """
-    if len(live_widths) != 1:
-        return ()
-    physical_widths = summary.arg_widths
-    if physical_widths != (2, 2):
-        return ()
-    cleanup = summary.stack_cleanup
-    if cleanup is not None and cleanup != 4:
-        return ()
-    sources = summary.push_arg_sources
-    if len(sources) != 2:
-        return ()
-
-    segment_count = 0
-    address_count = 0
-    for source in sources:
-        if not isinstance(source, tuple) or len(source) < 2:
-            return ()
-        kind, value = source[:2]
-        if kind == CallsitePushSourceKind8616.SEGMENT.value:
-            if not isinstance(value, str) or value.lower() not in {"cs", "ds", "es", "ss"}:
-                return ()
-            segment_count += 1
-        elif kind == CallsitePushSourceKind8616.BP_ADDRESS.value:
-            if not isinstance(value, int) or isinstance(value, bool):
-                return ()
-            address_count += 1
-        else:
-            return ()
-    return (4,) if segment_count == 1 and address_count == 1 else ()
-
-
-def reconcile_materialized_call_argument_shape_8616(
-    summary: CallsiteSummary8616,
-    argument_widths: tuple[int, ...],
-) -> CallsiteArgumentShapeReconciliation8616:
-    """Reconcile live C argument widths without overwriting machine PUSH facts.
-
-    ``CallsiteSummary8616.arg_widths`` describes physical stack pushes. A stale
-    C prototype may temporarily make materialized arguments wider than the
-    machine cleanup. Complete binary widths therefore remain authoritative.
-    """
-    if any(not isinstance(width, int) or isinstance(width, bool) or width <= 0 for width in argument_widths):
-        return CallsiteArgumentShapeReconciliation8616(
-            summary=summary,
-            decision=CallsiteArgumentShapeDecision8616.INVALID_LIVE_SHAPE,
-            raw_fact_count=len(argument_widths),
-            normalized_fact_count=0,
-            classified_fact_count=0,
-            materialized_count=0,
-            failure_count=1,
-        )
-
-    live_widths = tuple(int(width) for width in argument_widths)
-    physical_widths = tuple(
-        width
-        for width in summary.arg_widths
-        if isinstance(width, int) and not isinstance(width, bool) and width > 0
-    )
-    cleanup = summary.stack_cleanup if isinstance(summary.stack_cleanup, int) and summary.stack_cleanup > 0 else None
-    push_sources = tuple(summary.push_arg_sources)
-    complete_physical_shape = bool(physical_widths) and (
-        (cleanup is not None and sum(physical_widths) == cleanup)
-        or (
-            len(push_sources) == len(physical_widths)
-            and bool(push_sources)
-            and all(source is not None for source in push_sources)
-        )
-    )
-    if complete_physical_shape:
-        logical_widths = _materialized_far_pointer_logical_widths_8616(summary, live_widths)
-        if logical_widths and summary.logical_arg_widths != logical_widths:
-            return CallsiteArgumentShapeReconciliation8616(
-                summary=replace(
-                    summary,
-                    logical_arg_widths=logical_widths,
-                    logical_arg_classes=(CallsiteArgumentClass8616.POINTER,),
-                ),
-                decision=CallsiteArgumentShapeDecision8616.MATERIALIZED_LOGICAL_FAR_POINTER,
-                raw_fact_count=len(argument_widths),
-                normalized_fact_count=len(live_widths),
-                classified_fact_count=1,
-                materialized_count=1,
-                failure_count=0,
-            )
-        return CallsiteArgumentShapeReconciliation8616(
-            summary=summary,
-            decision=CallsiteArgumentShapeDecision8616.PRESERVED_COMPLETE_BINARY,
-            raw_fact_count=len(argument_widths),
-            normalized_fact_count=len(live_widths),
-            classified_fact_count=1,
-            materialized_count=1,
-            failure_count=0,
-        )
-
-    live_shape_accounts_for_stack = cleanup is not None and sum(live_widths) == cleanup
-    no_physical_shape = not physical_widths and cleanup is None
-    if live_shape_accounts_for_stack or no_physical_shape:
-        updated = replace(
-            summary,
-            arg_count=len(live_widths),
-            arg_widths=live_widths,
-        )
-        return CallsiteArgumentShapeReconciliation8616(
-            summary=updated,
-            decision=CallsiteArgumentShapeDecision8616.MATERIALIZED_LIVE_SHAPE,
-            raw_fact_count=len(argument_widths),
-            normalized_fact_count=len(live_widths),
-            classified_fact_count=1,
-            materialized_count=1,
-            failure_count=0,
-        )
-
-    return CallsiteArgumentShapeReconciliation8616(
-        summary=summary,
-        decision=CallsiteArgumentShapeDecision8616.PRESERVED_UNPROVEN_LIVE_SHAPE,
-        raw_fact_count=len(argument_widths),
-        normalized_fact_count=len(live_widths),
-        classified_fact_count=1,
-        materialized_count=1,
-        failure_count=0,
-    )
+) -> CallsiteMachineFrameKind8616 | None:
+    """Normalize legacy call-kind spellings at the summary boundary."""
+    if summary.kind is None:
+        return None
+    return {
+        "near": CallsiteMachineFrameKind8616.NEAR,
+        "direct_near": CallsiteMachineFrameKind8616.NEAR,
+        "far": CallsiteMachineFrameKind8616.FAR,
+        "direct_far": CallsiteMachineFrameKind8616.FAR,
+    }.get(summary.kind)
 
 
 class _StructuredCallsiteTagCarrier8616(Protocol):
@@ -842,6 +740,24 @@ def _instruction_operands(insn: object) -> tuple[object, ...]:
         return tuple(_capstone_insn(insn).operands or ())
     except AttributeError:
         return ()
+
+
+def _fixed_stack_probe_allocation_before_call_8616(
+    insns: tuple[object, ...],
+    call_index: int,
+) -> int | None:
+    """Return a bounded immediate AX allocation immediately preceding a probe."""
+    for index in range(call_index - 1, max(-1, call_index - 5), -1):
+        insn = insns[index]
+        operands = _instruction_operands(insn)
+        if _mnemonic(insn) == "mov" and len(operands) == 2:
+            if not _operand_is_reg(insn, operands[0], {"ax"}):
+                continue
+            value = _operand_imm_value(operands[1])
+            return value if isinstance(value, int) and 0 <= value <= 0x7FFF else None
+        if _mnemonic(insn).startswith(("j", "ret", "call")):
+            return None
+    return None
 
 
 def _instruction_address_8616(insn: object) -> int | None:
@@ -1714,6 +1630,12 @@ def _register_source_from_context_8616(insns: tuple, idx: int, reg_name: str, *,
                     base_source = _indexed_global_source_from_mov_operand_8616(insns, scan, insn, operands[1])
             if base_source is None:
                 return None
+            if (
+                "al" in source_regs
+                and len(base_source) == 2
+                and base_source[0] == CallsitePushSourceKind8616.BP_VALUE.value
+            ):
+                base_source = (*base_source, 1)
             if not ops:
                 return base_source
             return (CallsitePushSourceKind8616.EXPR.value, base_source, tuple(reversed(ops)))
@@ -1777,9 +1699,15 @@ def _register_source_from_context_8616(insns: tuple, idx: int, reg_name: str, *,
                 scan -= 1
                 skipped += 1
                 continue
-        if _mnemonic(insn).startswith(("call", "push", "pop", "ret", "jmp")):
+        if mnemonic.startswith("push"):
+            scan -= 1
+            skipped += 1
+            continue
+        if mnemonic.startswith(("call", "pop", "ret", "jmp")):
             return None
-        if not _transparent_between_push_args_8616(insn):
+        if _instruction_writes_return_reg(insn, _register_family_for_carrier_8616(reg_name)):
+            return None
+        if ops and not _transparent_between_push_args_8616(insn):
             return None
         skipped += 1
         scan -= 1
@@ -1791,13 +1719,175 @@ def _zeroing_register_source_8616(insn: object, source_regs: set[str]) -> tuple 
     if len(operands) != 2:
         return None
     mnemonic = _mnemonic(insn)
+    lhs = _operand_reg_name(insn, operands[0])
+    if mnemonic == "mov" and lhs in source_regs and _operand_imm_value(operands[1]) == 0:
+        return (CallsitePushSourceKind8616.IMMEDIATE.value, 0)
     if mnemonic not in {"sub", "xor"}:
         return None
-    lhs = _operand_reg_name(insn, operands[0])
     rhs = _operand_reg_name(insn, operands[1])
     if lhs is None or lhs != rhs or lhs not in source_regs:
         return None
     return (CallsitePushSourceKind8616.IMMEDIATE.value, 0)
+
+
+def _register_family_for_carrier_8616(reg_name: str) -> set[str]:
+    """Return the complete 16-bit register family for one return carrier."""
+    families = (
+        {"ax", "al", "ah"},
+        {"bx", "bl", "bh"},
+        {"cx", "cl", "ch"},
+        {"dx", "dl", "dh"},
+    )
+    return next((family for family in families if reg_name in family), {reg_name})
+
+
+def _instruction_preserves_return_carrier_8616(insn: object, reg_name: str) -> bool:
+    """Prove that one instruction does not overwrite a return-value carrier."""
+    mnemonic = _mnemonic(insn)
+    if mnemonic.startswith(("call", "ret", "int")) or mnemonic in {
+        "iret",
+        "iretw",
+        "jmp",
+        "jmpw",
+        "ljmp",
+        "loop",
+        "loope",
+        "loopne",
+        "loopnz",
+        "loopz",
+    }:
+        return False
+    family = _register_family_for_carrier_8616(reg_name)
+    capstone_insn = _capstone_insn(insn)
+    try:
+        _read_ids, written_ids = capstone_insn.regs_access()
+        written_names = {capstone_insn.reg_name(reg_id).lower() for reg_id in written_ids}
+    except Exception:
+        # Dynamic Capstone boundary: reduced test doubles may not expose regs_access().
+        written_names = set()
+    if written_names:
+        return family.isdisjoint(written_names)
+    if mnemonic in {"aaa", "aad", "aam", "aas", "cbw", "cwd", "div", "idiv", "mul", "xlat", "xlatb"}:
+        return False
+    return not _instruction_writes_return_reg(insn, family)
+
+
+def _transparent_return_arg_carrier_insn_8616(insn: object) -> bool:
+    """Recognize ABI cleanup that preserves an immediately forwarded return pair."""
+    mnemonic = _mnemonic(insn)
+    operands = _instruction_operands(insn)
+    if mnemonic == "nop":
+        return True
+    if mnemonic == "add" and len(operands) == 2 and _operand_is_reg(insn, operands[0], {"sp", "esp"}):
+        return _operand_imm_value(operands[1]) is not None
+    return False
+
+
+def _cfg_node_addr_8616(node: object) -> int | None:
+    """Return a basic-block address across the third-party CFG boundary."""
+    if isinstance(node, int) and not isinstance(node, bool):
+        return node
+    address = _dynamic_callsite_getattr_8616(node, "addr", None)
+    return address if isinstance(address, int) and not isinstance(address, bool) else None
+
+
+def _cfg_node_for_instruction_8616(graph: _DirectedGraphSurface8616, instruction_addr: int) -> object | None:
+    """Find the latest CFG block start that contains an instruction address."""
+    candidates = [
+        (node_addr, node)
+        for node in graph.nodes
+        if (node_addr := _cfg_node_addr_8616(node)) is not None and node_addr <= instruction_addr
+    ]
+    return max(candidates, key=lambda item: item[0])[1] if candidates else None
+
+
+def _unique_cfg_predecessor_chain_8616(function: object, source_addr: int, sink_addr: int) -> bool:
+    """Prove that every path into the sink block passes through the source block."""
+    graph_value = _dynamic_callsite_getattr_8616(function, "graph", None)
+    if graph_value is None:
+        return False
+    graph = cast(_DirectedGraphSurface8616, graph_value)
+    source = _cfg_node_for_instruction_8616(graph, source_addr)
+    sink = _cfg_node_for_instruction_8616(graph, sink_addr)
+    if source is None or sink is None:
+        return False
+    if source == sink:
+        return source_addr < sink_addr
+    visited = {sink}
+    current = sink
+    while current != source:
+        try:
+            predecessors = tuple(graph.predecessors(current))
+        except Exception:
+            # Dynamic NetworkX/angr boundary: an unavailable predecessor view is unknown evidence.
+            return False
+        if len(predecessors) != 1 or predecessors[0] in visited:
+            return False
+        current = predecessors[0]
+        visited.add(current)
+    return True
+
+
+def _return_carrier_path_is_proven_8616(
+    function: object,
+    insns: tuple[object, ...],
+    call_idx: int,
+    push_idx: int,
+    pushed_reg: str,
+) -> bool:
+    """Prove a no-clobber, unique-CFG path from a call return to a push."""
+    call_addr = _instruction_address_8616(insns[call_idx])
+    push_addr = _instruction_address_8616(insns[push_idx])
+    if not isinstance(call_addr, int) or not isinstance(push_addr, int):
+        return False
+    saw_control_transfer = False
+    for insn in insns[call_idx + 1 : push_idx]:
+        mnemonic = _mnemonic(insn)
+        if mnemonic.startswith("push"):
+            operands = _instruction_operands(insn)
+            sibling = _operand_reg_name(insn, operands[0]) if len(operands) == 1 else None
+            if sibling in {"ax", "dx"}:
+                continue
+        if mnemonic.startswith("j"):
+            operands = _instruction_operands(insn)
+            target = _operand_imm_value(operands[0]) if len(operands) == 1 else None
+            insn_addr = _instruction_address_8616(insn)
+            if mnemonic in {"jmp", "jmpw", "ljmp"} or not isinstance(target, int):
+                return False
+            if not isinstance(insn_addr, int) or target < insn_addr:
+                return False
+            saw_control_transfer = True
+            continue
+        if not _instruction_preserves_return_carrier_8616(insn, pushed_reg):
+            return False
+    if not saw_control_transfer:
+        return True
+    return _unique_cfg_predecessor_chain_8616(function, call_addr, push_addr)
+
+
+def _stable_stack_return_store_source_8616(
+    function: object,
+    insns: tuple[object, ...],
+    call_idx: int,
+    push_idx: int,
+    callsite_addr: int,
+) -> tuple[str, int] | None:
+    """Resolve unchanged AX provenance through its exact BP-local return store."""
+    return_store = _return_store_after_call(function, insns, call_idx, callsite_addr)
+    if return_store is None or return_store[0] != "bp" or return_store[2] != 2:
+        return None
+    destination = return_store[1]
+    matching_writes = 0
+    for insn in insns[call_idx + 1 : push_idx]:
+        operands = _instruction_operands(insn)
+        if not operands or _mnemonic(insn) in {"cmp", "test", "lea", "push", "pushw", "pushd"}:
+            continue
+        base, displacement = _operand_mem_base_disp(insn, operands[0])
+        if base == "bp" and displacement == destination:
+            matching_writes += 1
+    if matching_writes != 1:
+        return None
+    return (CallsitePushSourceKind8616.BP_VALUE.value, destination)
 
 
 def _return_register_push_source_from_context_8616(function: object, insns: tuple[object, ...], idx: int, pushed_reg: str) -> tuple | None:
@@ -1808,7 +1898,7 @@ def _return_register_push_source_from_context_8616(function: object, insns: tupl
         insn = insns[call_idx]
         if _mnemonic(insn).startswith("call"):
             break
-        if _transparent_return_arg_carrier_insn_8616(insn):
+        if _instruction_preserves_return_carrier_8616(insn, pushed_reg):
             call_idx -= 1
             continue
         if not _mnemonic(insn).startswith("push"):
@@ -1821,6 +1911,8 @@ def _return_register_push_source_from_context_8616(function: object, insns: tupl
             return None
         call_idx -= 1
     if call_idx < 0 or not _mnemonic(insns[call_idx]).startswith("call"):
+        return None
+    if not _return_carrier_path_is_proven_8616(function, insns, call_idx, idx, pushed_reg):
         return None
 
     observed_regs: set[str] = set()
@@ -1845,6 +1937,9 @@ def _return_register_push_source_from_context_8616(function: object, insns: tupl
         return None
     return_shape = _return_shape_after_call(function, insns, call_idx, callsite_addr)
     if pushed_reg == "ax" and return_shape in {CallsiteReturnShape8616.AX, CallsiteReturnShape8616.DX_AX}:
+        stack_source = _stable_stack_return_store_source_8616(function, insns, call_idx, idx, callsite_addr)
+        if stack_source is not None:
+            return stack_source
         return (CallsitePushSourceKind8616.RETURN_REGISTER.value, callsite_addr, pushed_reg)
     if pushed_reg == "dx" and return_shape is CallsiteReturnShape8616.DX_AX:
         return (CallsitePushSourceKind8616.RETURN_REGISTER.value, callsite_addr, pushed_reg)
@@ -1853,14 +1948,64 @@ def _return_register_push_source_from_context_8616(function: object, insns: tupl
     return None
 
 
-def _transparent_return_arg_carrier_insn_8616(insn: object) -> bool:
-    mnemonic = _mnemonic(insn)
-    operands = _instruction_operands(insn)
-    if mnemonic == "nop":
-        return True
-    if mnemonic == "add" and len(operands) == 2 and _operand_is_reg(insn, operands[0], {"sp", "esp"}):
-        return _operand_imm_value(operands[1]) is not None
-    return False
+def _zero_extended_byte_push_source_8616(
+    insns: tuple[object, ...], idx: int, pushed_reg: str
+) -> tuple[object, ...] | None:
+    """Recover a word PUSH composed from a byte source and a proven-zero high byte."""
+    byte_parts = {
+        "ax": ("al", "ah"),
+        "bx": ("bl", "bh"),
+        "cx": ("cl", "ch"),
+        "dx": ("dl", "dh"),
+    }.get(pushed_reg)
+    if byte_parts is None:
+        return None
+    low_reg, high_reg = byte_parts
+    low_source: tuple[object, ...] | None = None
+    high_zeroed = False
+    scan = idx - 1
+    skipped = 0
+    while scan >= 0 and skipped < 8:
+        insn = insns[scan]
+        operands = _instruction_operands(insn)
+        mnemonic = _mnemonic(insn)
+        if mnemonic.startswith("push"):
+            scan -= 1
+            skipped += 1
+            continue
+        destination = _operand_reg_name(insn, operands[0]) if operands else None
+        if destination == high_reg:
+            if _zeroing_register_source_8616(insn, {high_reg}) is None:
+                return None
+            high_zeroed = True
+        elif destination == low_reg:
+            if mnemonic != "mov" or len(operands) != 2:
+                return None
+            rhs_reg = _operand_reg_name(insn, operands[1])
+            low_source = (
+                _register_source_from_context_8616(insns, scan, rhs_reg, depth=1)
+                if isinstance(rhs_reg, str) and rhs_reg
+                else _source_from_mov_operand(insn, operands[1])
+            )
+            if low_source is None:
+                low_source = _indexed_global_source_from_mov_operand_8616(insns, scan, insn, operands[1])
+            if low_source is None:
+                return None
+            if len(low_source) == 2 and low_source[0] == CallsitePushSourceKind8616.BP_VALUE.value:
+                low_source = (*low_source, 1)
+        elif destination == pushed_reg:
+            return None
+        if low_source is not None and high_zeroed:
+            return (
+                CallsitePushSourceKind8616.EXPR.value,
+                low_source,
+                ((CallsitePushExprOp8616.AND.value, 0xFF),),
+            )
+        if mnemonic.startswith(("call", "pop", "ret", "jmp")):
+            return None
+        scan -= 1
+        skipped += 1
+    return None
 
 
 def _push_arg_source_from_context(
@@ -1887,6 +2032,9 @@ def _push_arg_source_from_context(
         return_source = _return_register_push_source_from_context_8616(function, insns, idx, pushed_reg)
         if return_source is not None:
             return return_source
+        byte_source = _zero_extended_byte_push_source_8616(insns, idx, pushed_reg)
+        if byte_source is not None:
+            return byte_source
         scan = idx - 1
         skipped = 0
         ops: list[tuple[str, object]] = []
@@ -1918,6 +2066,13 @@ def _push_arg_source_from_context(
                     base_source = _indexed_global_source_from_mov_operand_8616(insns, scan, insn, operands[1])
                 if base_source is None:
                     return None
+                if (
+                    "al" in source_regs
+                    and len(base_source) == 2
+                    and base_source[0]
+                    == CallsitePushSourceKind8616.BP_VALUE.value
+                ):
+                    base_source = (*base_source, 1)
                 if not ops:
                     return base_source
                 return (CallsitePushSourceKind8616.EXPR.value, base_source, tuple(reversed(ops)))
@@ -2139,6 +2294,160 @@ def _collect_push_arg_instruction_addrs_before_call(
         break
     addresses.reverse()
     return tuple(addresses)
+
+
+def _push_scan_reaches_block_entry_8616(
+    insns: tuple[object, ...],
+    call_idx: int,
+    push_instruction_addrs: tuple[int, ...],
+) -> bool:
+    """Return whether backward argument scanning reaches this block's entry."""
+    if not push_instruction_addrs:
+        return False
+    first_push_addr = push_instruction_addrs[0]
+    first_push_idx = next(
+        (idx for idx, insn in enumerate(insns[:call_idx]) if _instruction_address_8616(insn) == first_push_addr),
+        None,
+    )
+    return isinstance(first_push_idx, int) and all(
+        _transparent_between_push_args_8616(insn) for insn in insns[:first_push_idx]
+    )
+
+
+def _unresolved_entry_push_register_8616(
+    insns: tuple[object, ...],
+    sources: tuple[tuple | None, ...],
+    instruction_addrs: tuple[int, ...],
+) -> tuple[str, int] | None:
+    """Return a block-entry register PUSH whose source needs CFG joining."""
+    if not sources or not instruction_addrs or sources[0] is not None:
+        return None
+    push_addr = instruction_addrs[0]
+    push = next(
+        (insn for insn in insns if _instruction_address_8616(insn) == push_addr),
+        None,
+    )
+    if push is None:
+        return None
+    operands = _instruction_operands(push)
+    register = _operand_reg_name(push, operands[0]) if len(operands) == 1 else None
+    if register in {None, "sp", "bp", "ss", "ds", "es", "cs"}:
+        return None
+    return cast(str, register), push_addr
+
+
+def _predecessor_stack_merge_8616(
+    function: object,
+    callsite_addr: int,
+    *,
+    join_register: str | None = None,
+    join_push_addr: int | None = None,
+) -> CallsitePredecessorStackMerge8616 | None:
+    """Collect and merge physical pushes from every direct predecessor block."""
+    graph_value = _dynamic_callsite_getattr_8616(function, "graph", None)
+    project = _dynamic_callsite_getattr_8616(function, "project", None)
+    if graph_value is None or project is None:
+        return None
+    graph = cast(_DirectedGraphSurface8616, graph_value)
+    sink = _cfg_node_for_instruction_8616(graph, callsite_addr)
+    if sink is None:
+        return None
+    sink_addr = _cfg_node_addr_8616(sink)
+    if not isinstance(sink_addr, int):
+        return None
+    try:
+        predecessors = tuple(graph.predecessors(sink))
+    except Exception:
+        return None
+    debug = bool(os.environ.get("INERTIA_DEBUG_CALLSITE_SUMMARY"))
+    if debug:
+        log.warning(
+            "[callsite-predecessor-stack] callsite=%#x sink=%r predecessors=%r",
+            callsite_addr,
+            _cfg_node_addr_8616(sink),
+            tuple(_cfg_node_addr_8616(node) for node in predecessors),
+        )
+    if not predecessors:
+        return None
+    traces: list[CallsitePushTrace8616] = []
+    register_traces: list[CallsiteRegisterJoinTrace8616] = []
+    for predecessor in predecessors:
+        predecessor_addr = _cfg_node_addr_8616(predecessor)
+        if not isinstance(predecessor_addr, int):
+            return None
+        try:
+            block = project.factory.block(predecessor_addr, opt_level=0)
+        except Exception:
+            return None
+        predecessor_insns = tuple(
+            _dynamic_callsite_getattr_8616(
+                _dynamic_callsite_getattr_8616(block, "capstone", None),
+                "insns",
+                (),
+            )
+            or ()
+        )
+        predecessor_insns = tuple(
+            insn
+            for insn in predecessor_insns
+            if (address := _instruction_address_8616(insn)) is not None and address < sink_addr
+        )
+        if debug:
+            log.warning(
+                "[callsite-predecessor-stack] block=%#x insns=%r",
+                predecessor_addr,
+                tuple(
+                    (_instruction_address_8616(insn), _mnemonic(insn), _instruction_op_str_8616(insn))
+                    for insn in predecessor_insns
+                ),
+            )
+        while predecessor_insns and _mnemonic(predecessor_insns[-1]).startswith("j"):
+            predecessor_insns = predecessor_insns[:-1]
+        if join_register is not None:
+            register_traces.append(
+                CallsiteRegisterJoinTrace8616(
+                    predecessor_addr=predecessor_addr,
+                    register=join_register,
+                    source=_register_source_from_context_8616(
+                        predecessor_insns,
+                        len(predecessor_insns),
+                        join_register,
+                    ),
+                )
+            )
+        argument_scan_end = len(predecessor_insns)
+        while argument_scan_end > 0 and _transparent_between_push_args_8616(
+            predecessor_insns[argument_scan_end - 1]
+        ):
+            argument_scan_end -= 1
+        widths = _collect_push_args_before_call(function, predecessor_insns, argument_scan_end)
+        sources = _collect_push_arg_sources_before_call(function, predecessor_insns, argument_scan_end)
+        addresses = _collect_push_arg_instruction_addrs_before_call(
+            function,
+            predecessor_insns,
+            argument_scan_end,
+        )
+        traces.append(CallsitePushTrace8616(widths, sources, addresses))
+    register_join = (
+        merge_callsite_register_join_traces_8616(
+            tuple(register_traces),
+            push_instruction_addr=join_push_addr,
+        )
+        if register_traces and isinstance(join_push_addr, int)
+        else None
+    )
+    merged = merge_callsite_predecessor_stack_traces_8616(
+        tuple(traces),
+        register_join=register_join,
+    )
+    if debug:
+        log.warning(
+            "[callsite-predecessor-stack] callsite=%#x traces=%r merged=%r",
+            callsite_addr,
+            tuple(traces),
+            merged,
+        )
+    return merged
 
 
 def _trim_push_args_to_stack_cleanup(arg_widths: tuple[int, ...], cleanup: int | None) -> tuple[int, ...]:
@@ -2462,6 +2771,8 @@ def _return_use_after_call(
         return "ax", True, CallsiteReturnUseKind8616.CONDITION
     follow_insns = _extend_follow_insns_through_direct_jumps_8616(function, follow_insns, limit=16)
     bounded_follow_insns = follow_insns[:16]
+    if _return_shape_after_call(function, insns, idx, callsite_addr) is CallsiteReturnShape8616.DX_AX:
+        return "ax", True, CallsiteReturnUseKind8616.VALUE
     if _return_value_feeds_divide_8616(tuple(bounded_follow_insns)):
         return "ax", True, CallsiteReturnUseKind8616.VALUE
     for follow_index, insn in enumerate(bounded_follow_insns):
@@ -2471,9 +2782,17 @@ def _return_use_after_call(
             continue
         if _wide_return_condition_use_8616(bounded_follow_insns, follow_index):
             return "ax", True, CallsiteReturnUseKind8616.CONDITION
-        if mnemonic not in {"cmp", "test"} and _instruction_writes_return_reg(insn, {"ax", "al", "ah"}):
+        reads_return = _instruction_reads_return_reg(insn, {"ax", "al", "ah"})
+        writes_return = _instruction_writes_return_reg(insn, {"ax", "al", "ah"})
+        if reads_return and writes_return and mnemonic in {
+            "adc", "add", "and", "dec", "inc", "neg", "not", "or", "rcl", "rcr", "rol", "ror", "sar", "sbb", "shl", "shr", "sub", "xor"
+        }:
+            next_mnemonic = _mnemonic(bounded_follow_insns[follow_index + 1]) if follow_index + 1 < len(bounded_follow_insns) else ""
+            use_kind = CallsiteReturnUseKind8616.CONDITION if next_mnemonic.startswith("j") and next_mnemonic != "jmp" else CallsiteReturnUseKind8616.VALUE
+            return "ax", True, use_kind
+        if mnemonic not in {"cmp", "test"} and writes_return:
             return "ax", False, CallsiteReturnUseKind8616.CLOBBERED
-        if _instruction_reads_return_reg(insn, {"ax", "al", "ah"}):
+        if reads_return:
             return (
                 "ax",
                 True,
@@ -2554,8 +2873,14 @@ def collect_caller_return_use_evidence_8616(
     project: object,
     target_addr: int,
     function_ranges: tuple[tuple[int, int], ...],
+    *,
+    target_aliases: tuple[int, ...] = (),
 ) -> CallerReturnUseEvidence8616:
-    """Collect binary caller-use facts from independently proven function ranges."""
+    """Collect binary caller-use facts from independently proven function ranges.
+
+    Proven target aliases identify recursive calls whose caller-range entry
+    differs from the direct-call target because the target has an entry prelude.
+    """
     arch = _dynamic_callsite_getattr_8616(project, "arch", None)
     disassembler = _dynamic_callsite_getattr_8616(arch, "capstone", None)
     memory = _dynamic_callsite_getattr_8616(_dynamic_callsite_getattr_8616(project, "loader", None), "memory", None)
@@ -2646,14 +2971,18 @@ def collect_caller_return_use_evidence_8616(
         return result
 
     direct_facts = _callsites_for_target(target_addr)
+    normalized_target_aliases = frozenset(addr & 0xFFFF for addr in target_aliases)
     callsites: dict[int, bool | None] = {}
     for callsite_addr, (return_used, kind, caller_start) in direct_facts.items():
+        if normalized_target_aliases and (caller_start & 0xFFFF) in normalized_target_aliases:
+            continue
         if kind is CallsiteReturnUseKind8616.FUNCTION_RETURN:
             return_used = _return_observed_transitively(
                 caller_start,
                 frozenset({target_addr & 0xFFFF}),
             )
         callsites[callsite_addr] = return_used
+    excluded_count = len(direct_facts) - len(callsites)
     used_count = sum(result is True for result in callsites.values())
     unused_count = sum(result is False for result in callsites.values())
     classified_count = used_count + unused_count
@@ -2667,14 +2996,15 @@ def collect_caller_return_use_evidence_8616(
     return CallerReturnUseEvidence8616(
         target_addr=target_addr,
         verdict=verdict,
-        raw_fact_count=len(callsites),
-        normalized_fact_count=len(callsites),
+        raw_fact_count=len(direct_facts),
+        normalized_fact_count=len(direct_facts),
         classified_fact_count=classified_count,
         materialized_count=classified_count,
         failure_count=failure_count,
         used_callsite_count=used_count,
         unused_callsite_count=unused_count,
-        callsite_addrs=tuple(sorted(callsites)),
+        callsite_addrs=tuple(sorted(direct_facts)),
+        excluded_callsite_count=excluded_count,
     )
 
 
@@ -2688,6 +3018,8 @@ def _return_shape_after_call(
 
     store_dx_offsets: set[int] = set()
     store_ax_offsets: set[int] = set()
+    forwarded_return_regs: set[str] = set()
+    forwarding_window_open = True
     saw_ax = False
 
     def _has_adjacent_word_pair_8616(ax_offsets: set[int], dx_offsets: set[int]) -> bool:
@@ -2705,6 +3037,20 @@ def _return_shape_after_call(
             break
         if _wide_return_condition_use_8616(bounded_follow_insns, follow_index):
             return CallsiteReturnShape8616.DX_AX
+
+        if forwarding_window_open and _mnemonic(insn) == "push":
+            operands = _instruction_operands(insn)
+            pushed_reg = _operand_reg_name(insn, operands[0]) if len(operands) == 1 else None
+            if pushed_reg in {"ax", "dx"}:
+                forwarded_return_regs.add(pushed_reg)
+                if {"ax", "dx"} <= forwarded_return_regs:
+                    return CallsiteReturnShape8616.DX_AX
+            else:
+                forwarding_window_open = False
+        elif forwarding_window_open and not _transparent_return_arg_carrier_insn_8616(insn):
+            forwarding_window_open = False
+        if _mnemonic(insn).startswith("call"):
+            break
 
         if _mnemonic(insn) == "mov" and len(_instruction_operands(insn)) == 2:
             operands = _instruction_operands(insn)
@@ -2755,7 +3101,11 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             break
 
         insns = _block_insns_for_callsite(function, callsite_addr)
-        stack_probe_helper = _is_stack_probe_target_name_8616(_lookup_target_name_8616(function, target_addr))
+        target_name = _lookup_target_name_8616(function, target_addr)
+        stack_probe_helper = is_x86_16_registered_stack_probe_target_8616(
+            _dynamic_callsite_getattr_8616(project, "arch", None),
+            target_addr,
+        ) or _is_stack_probe_target_name_8616(target_name)
         if not insns:
             helper_return_state = "stack_address" if stack_probe_helper else "none"
             helper_return_space = "ss" if stack_probe_helper else None
@@ -2800,6 +3150,12 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
                 helper_return_address_kind=helper_return_address_kind,
             )
 
+        stack_probe_allocation_size = (
+            _fixed_stack_probe_allocation_before_call_8616(insns, call_idx)
+            if stack_probe_helper
+            else None
+        )
+
         if return_addr is None:
             call_insn = insns[call_idx]
             insn_addr = _instruction_address_8616(call_insn)
@@ -2830,6 +3186,26 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             call_idx,
             cleanup,
         )
+        predecessor_stack_merge = None
+        if _push_scan_reaches_block_entry_8616(insns, call_idx, raw_push_instruction_addrs):
+            unresolved_entry_push = _unresolved_entry_push_register_8616(
+                insns,
+                raw_arg_sources,
+                raw_push_instruction_addrs,
+            )
+            predecessor_stack_merge = _predecessor_stack_merge_8616(
+                function,
+                callsite_addr,
+                join_register=unresolved_entry_push[0] if unresolved_entry_push is not None else None,
+                join_push_addr=unresolved_entry_push[1] if unresolved_entry_push is not None else None,
+            )
+            if predecessor_stack_merge is not None:
+                raw_arg_widths = predecessor_stack_merge.widths + raw_arg_widths
+                raw_arg_sources = predecessor_stack_merge.sources + raw_arg_sources
+                raw_push_instruction_addrs = (
+                    predecessor_stack_merge.representative_instruction_addrs
+                    + raw_push_instruction_addrs
+                )
         raw_arg_widths, raw_arg_sources, raw_push_instruction_addrs = _filter_callee_saved_frame_pushes_8616(
             function,
             raw_arg_widths,
@@ -2931,6 +3307,7 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             return_register=return_register,
             return_used=return_used,
             stack_probe_helper=stack_probe_helper,
+            stack_probe_allocation_size=stack_probe_allocation_size,
             helper_return_state=helper_return_state,
             helper_return_space=helper_return_space,
             helper_return_width=helper_return_width,
@@ -2945,6 +3322,7 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             logical_arg_widths=logical_arg_widths,
             logical_arg_classes=logical_arg_classes,
             stack_cleanup_instruction_addr=cleanup_instruction_addr,
+            predecessor_stack_merge=predecessor_stack_merge,
         )
 
     return _impl()

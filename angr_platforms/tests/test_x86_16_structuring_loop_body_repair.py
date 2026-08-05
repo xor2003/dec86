@@ -939,7 +939,7 @@ def test_switch_loop_exit_return_repair_adds_missing_return_case_and_prunes_tail
     assert stats.trailing_unreachable_pruned_count == 1
 
 
-def test_switch_loop_exit_return_repair_skips_evidence_recovery_without_candidate(monkeypatch):
+def test_switch_loop_exit_return_repair_publishes_evidence_without_candidate(monkeypatch):
     import angr_platforms.X86_16.structuring.loop_body_repair as loop_body_repair
 
     codegen = _DummyCodegen()
@@ -952,21 +952,23 @@ def test_switch_loop_exit_return_repair_skips_evidence_recovery_without_candidat
         ),
     )
 
-    def fail_evidence_recovery(_project, _function):
-        raise AssertionError("evidence recovery should be skipped without a switch-loop candidate")
-
     monkeypatch.setattr(
         loop_body_repair,
         "recover_switch_loop_exit_return_evidence_8616",
-        fail_evidence_recovery,
+        lambda _project, _function: (
+            SwitchLoopExitReturnEvidence8616(27, 0x441A, 0x447B),
+        ),
     )
 
     changed = repair_switch_loop_exit_returns_from_evidence_8616(project, codegen)
 
     assert changed is False
     stats = codegen._inertia_structuring_switch_loop_exit_return_stats_8616
-    assert stats.raw_fact_count == 0
+    assert stats.raw_fact_count == 1
     assert stats.refused_no_matching_loop == 1
+    assert codegen._inertia_structuring_switch_loop_exit_return_evidence_8616 == (
+        SwitchLoopExitReturnEvidence8616(27, 0x441A, 0x447B),
+    )
 
 
 def test_switch_loop_exit_return_repair_prunes_wrapped_return_tail_when_case_already_present(monkeypatch):

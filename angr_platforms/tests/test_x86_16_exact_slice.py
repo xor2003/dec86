@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseEvidence8616,
     CallerReturnUseVerdict8616,
@@ -16,6 +17,14 @@ from inertia_decompiler.x86_16_exact_slice import (
     mark_function_original_addr,
     plan_x86_16_exact_slice,
 )
+
+
+class _BytesMemory:
+    def __init__(self, regions: dict[int, bytes]) -> None:
+        self._regions = regions
+
+    def load(self, addr: int, size: int) -> bytes:
+        return self._regions[addr][:size]
 
 
 def test_plan_x86_16_exact_slice_rebases_high_linear_addresses() -> None:
@@ -32,7 +41,7 @@ def test_function_original_addr_prefers_marked_original() -> None:
 
 
 def test_caller_return_use_collection_checks_label_and_prologue_aliases(monkeypatch) -> None:
-    calls: list[int] = []
+    calls: list[tuple[int, tuple[int, ...]]] = []
 
     def evidence(target_addr: int, verdict: CallerReturnUseVerdict8616) -> CallerReturnUseEvidence8616:
         classified = int(verdict is not CallerReturnUseVerdict8616.UNKNOWN)
@@ -54,8 +63,8 @@ def test_caller_return_use_collection_checks_label_and_prologue_aliases(monkeypa
         0x102E0: evidence(0x102E0, CallerReturnUseVerdict8616.UNUSED),
     }
 
-    def collect(_project, target_addr, _function_ranges):
-        calls.append(target_addr)
+    def collect(_project, target_addr, _function_ranges, *, target_aliases):
+        calls.append((target_addr, target_aliases))
         return evidence_by_target[target_addr]
 
     monkeypatch.setattr(cli_function_discovery, "collect_caller_return_use_evidence_8616", collect)
@@ -66,7 +75,10 @@ def test_caller_return_use_collection_checks_label_and_prologue_aliases(monkeypa
         ((0x10010, 0x1005D),),
     )
 
-    assert calls == [0x102CC, 0x102E0]
+    assert calls == [
+        (0x102CC, (0x102CC, 0x102E0)),
+        (0x102E0, (0x102CC, 0x102E0)),
+    ]
     assert result is evidence_by_target[0x102E0]
 
 
@@ -98,7 +110,9 @@ def test_caller_return_use_collection_keeps_any_used_alias(monkeypatch) -> None:
     monkeypatch.setattr(
         cli_function_discovery,
         "collect_caller_return_use_evidence_8616",
-        lambda _project, target_addr, _ranges: used if target_addr == 0x102E0 else unused,
+        lambda _project, target_addr, _ranges, *, target_aliases: (
+            used if target_addr == 0x102E0 else unused
+        ),
     )
 
     result = cli_function_discovery._collect_caller_return_use_for_entry_aliases_8616(
@@ -108,6 +122,36 @@ def test_caller_return_use_collection_keeps_any_used_alias(monkeypatch) -> None:
     )
 
     assert result is used
+
+
+def test_caller_return_use_collection_excludes_recursive_prologue_alias() -> None:
+    recursive_tail = bytes.fromhex("e8 ed ff c3")
+    independent_caller = bytes.fromhex("e8 dd ff b8 00 00")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(
+            memory=_BytesMemory(
+                {
+                    0x1030: recursive_tail,
+                    0x1040: independent_caller,
+                }
+            )
+        ),
+    )
+
+    result = cli_function_discovery._collect_caller_return_use_for_entry_aliases_8616(
+        project,
+        (0x1020, 0x1030),
+        ((0x1030, 0x1034), (0x1040, 0x1046)),
+    )
+
+    assert result is not None
+    assert result.verdict is CallerReturnUseVerdict8616.UNUSED
+    assert result.raw_fact_count == 2
+    assert result.normalized_fact_count == 2
+    assert result.classified_fact_count == 1
+    assert result.excluded_callsite_count == 1
+    assert result.failure_count == 0
 
 
 def test_direct_callee_return_use_collection_records_only_uncached_calls(monkeypatch) -> None:
@@ -138,7 +182,7 @@ def test_direct_callee_return_use_collection_records_only_uncached_calls(monkeyp
     )
     collected: list[int] = []
 
-    def collect(_project, target_addr, _ranges):
+    def collect(_project, target_addr, _ranges, *, target_aliases):
         collected.append(target_addr)
         return CallerReturnUseEvidence8616(
             target_addr,
@@ -184,7 +228,7 @@ def test_direct_callee_return_use_collection_joins_public_entry_and_prologue_ali
     )
     observed: list[int] = []
 
-    def collect(_project, target_addr, _ranges):
+    def collect(_project, target_addr, _ranges, *, target_aliases):
         observed.append(target_addr)
         verdict = (
             CallerReturnUseVerdict8616.UNUSED

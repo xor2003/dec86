@@ -16,6 +16,7 @@ def test_decompilation_cache_surface_includes_tail_validation_layers():
 def test_decompilation_cache_surface_includes_condition_and_induction_rewrite_layers():
     names = {Path(path).name for path in DECOMPILATION_CACHE_SOURCE_FILES}
 
+    assert "callsite_prototype_declarations.py" in names
     assert "cli_decompilation.py" in names
     assert "condition_ir.py" in names
     assert "decompiler_postprocess_flags.py" in names

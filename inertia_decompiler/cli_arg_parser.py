@@ -24,6 +24,7 @@ class CliArguments(argparse.Namespace):
     show_asm: bool
     alternate_source_c: bool
     c_target: str
+    output_c_dir: Path | None
     trace_c_stages: bool
     dump_layers: bool
     dump_layer_dir: Path
@@ -110,6 +111,13 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         choices=("msc-dos", "portable-flat"),
         default="portable-flat",
         help="Emit segmented-memory helper macros for a specific recompilable C target.",
+    )
+    output_c_dir = os.environ.get("INERTIA_OUTPUT_C_DIR", "").strip()
+    parser.add_argument(
+        "--output-c-dir",
+        type=Path,
+        default=Path(output_c_dir) if output_c_dir else None,
+        help="Write each validated generated-C function to this directory without CLI diagnostics.",
     )
     parser.add_argument(
         "--trace-c-stages",

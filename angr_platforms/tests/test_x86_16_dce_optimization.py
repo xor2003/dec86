@@ -59,6 +59,20 @@ def test_dce_deletes_unread_plain_temp_assignment():
     assert getattr(codegen, "dce_deleted", 0) == 1
 
 
+def test_dce_deletes_unread_wide_multiply_temp_assignment():
+    codegen = _mk_codegen_with_statements([])
+    tmp = _mk_cvar(codegen, "tmp_wide", 0)
+    rhs = structured_c.CBinaryOp("Mull", _const(codegen, 60), _const(codegen, 3), codegen=codegen)
+    stmt = structured_c.CAssignment(tmp, rhs, codegen=codegen)
+    codegen.cfunc.statements = structured_c.CStatements([stmt], codegen=codegen)
+
+    changed = _dead_code_elimination_8616(codegen)
+
+    assert changed is True
+    assert list(codegen.cfunc.statements.statements) == []
+    assert codegen.dce_deleted == 1
+
+
 def test_dce_refuses_unread_temp_assignment_from_dereference():
     codegen = _mk_codegen_with_statements([])
     tmp = _mk_cvar(codegen, "tmp_1", 0)

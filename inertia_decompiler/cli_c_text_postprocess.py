@@ -654,7 +654,7 @@ def _normalize_function_signature_arg_names(c_text: str) -> str:
         if idx == end:
             return None
         name = text[idx:end]
-        if name in type_keywords:
+        if re.fullmatch(r"[A-Za-z_]\w*", name) is None or name in type_keywords:
             return None
         prefix = text[:idx]
         if not prefix.strip():
@@ -4623,7 +4623,7 @@ def _prune_unused_local_declarations_text(c_text: str) -> str:
             r"^(?P<indent>\s*)(?!(?:return|if|while|for|switch|goto|case|default)\b)(?P<type>[A-Za-z_][\w\s\*\[\]]*?)\s+(?P<name>[A-Za-z_]\w*)(?P<array>\s*\[[^\]]+\])?\s*;\s*(?P<comment>//.*)?$"
         )
         synthetic_name_re = re.compile(
-            r"^(?:ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*|stack_bp_[pm][0-9a-fA-F]+_b\d+|tmp_slot_\d+|tmp_\d+|local_\d+|mem_[0-9A-Fa-f]+|v\d+|vvar_\d+|a\d+|arg_\d+|ax(?:_\d+)?|dx(?:_\d+)?|cx(?:_\d+)?|bx(?:_\d+)?|(?:cs|ds|es|ss|fs|gs)(?:_\d+)?|al|ah|[A-Za-z_]\w*_\d+)$"
+            r"^(?:ir_\d+(?:_\d+)?|s_[0-9a-fA-F]+(?:_[0-9a-fA-F]+)*|stack_bp_[pm][0-9a-fA-F]+_b\d+|tmp_slot_\d+|tmp_\d+|local_[0-9a-fA-F]+|mem_[0-9A-Fa-f]+|v\d+|vvar_\d+|a\d+|arg_\d+|ax(?:_\d+)?|dx(?:_\d+)?|cx(?:_\d+)?|bx(?:_\d+)?|(?:cs|ds|es|ss|fs|gs)(?:_\d+)?|al|ah|[A-Za-z_]\w*_\d+)$"
         )
 
         def _split_args(args_text: str) -> list[str]:
@@ -4930,6 +4930,8 @@ def _repair_missing_fallthrough_returns(c_text: str) -> str:
                     terminal_indent = body_lines[terminal_index][: len(body_lines[terminal_index]) - len(body_lines[terminal_index].lstrip())]
                     body_lines[terminal_index] = f"{terminal_indent}return {return_name};"
                     return "\n".join(body_lines) + "}" + closing_brace
+                return c_text
+            if re.fullmatch(r"return(?:\s+.+)?;\s*", terminal) is not None:
                 return c_text
         return body_text + f"\n{indent}return {return_name};\n" + "}" + closing_brace
 

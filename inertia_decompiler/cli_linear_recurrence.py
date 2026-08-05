@@ -728,7 +728,7 @@ def _coalesce_linear_recurrence_statements(
                         expr_contains_dereference=state.expr_contains_dereference,
                         same_c_expression=same_c_expression,
                     ):
-                        new_cond = candidate_cond
+                        new_cond = cast(structured_c.CExpression, candidate_cond)
                 if new_cond is not cond:
                     pair_changed = True
                 visit(body)

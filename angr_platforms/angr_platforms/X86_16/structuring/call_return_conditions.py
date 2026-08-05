@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
     CBinaryOp,
     CConstant,
     CExpression,
@@ -27,20 +28,31 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 from angr.sim_type import SimTypeShort
-from angr.sim_variable import SimRegisterVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from archinfo import Arch
 
-from ..c_ast_utils import _iter_c_nodes_deep_8616
+from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616
+from ..call_target_identity import (
+    resolve_x86_16_call_target_function_8616,
+    x86_16_call_targets_equivalent_8616,
+)
 from ..callsite_summary import (
     CallsiteReturnUseKind8616,
     CallsiteSummary8616,
     bind_structured_callsite_identity_8616,
-    rebind_cloned_structured_callsite_identity_8616,
     structured_callsite_addr_8616,
 )
 from ..ir.condition_ir import ConditionIR
 from ..ir.core import IRValue, MemSpace
+from ..lowering.call_return_stack_stores import (
+    CallReturnStackStoreEvidence8616,
+    classify_call_return_stack_store_8616,
+)
+from ..lowering.stack_lowering_from_facts import (
+    materialize_stack_cvar_at_offset_from_facts_8616,
+)
 from ..pipeline.errors import PipelineHardError
+from .expression_substitution import replace_exact_expression_8616
 
 
 class _CallReturnFunction8616(Protocol):
@@ -124,9 +136,9 @@ def _return_register_slice_8616(
     return int(register[0]), int(register[1])
 
 
-def _is_zero_value_8616(value: object) -> bool:
-    """Return whether one typed IR operand is the integer constant zero."""
-    return isinstance(value, IRValue) and value.space is MemSpace.CONST and value.const == 0
+def _is_constant_value_8616(value: object) -> bool:
+    """Return whether one typed IR operand is an exact integer constant."""
+    return isinstance(value, IRValue) and value.space is MemSpace.CONST and isinstance(value.const, int)
 
 
 def _is_return_register_value_8616(
@@ -153,9 +165,9 @@ def _condition_tests_return_register_8616(
         return _is_return_register_value_8616(condition.lhs, register_slice)
     return (
         _is_return_register_value_8616(condition.lhs, register_slice)
-        and _is_zero_value_8616(condition.rhs)
+        and _is_constant_value_8616(condition.rhs)
     ) or (
-        _is_zero_value_8616(condition.lhs)
+        _is_constant_value_8616(condition.lhs)
         and _is_return_register_value_8616(condition.rhs, register_slice)
     )
 
@@ -178,19 +190,19 @@ def _expression_return_register_count_8616(
 def _replace_return_register_8616(
     expression: CExpression,
     register_slice: tuple[int, int],
-    call: CFunctionCall,
+    replacement: CExpression,
 ) -> CExpression:
     """Replace the single exact return-register leaf in a condition."""
     if isinstance(expression, CVariable) and isinstance(expression.variable, SimRegisterVariable):
         variable = expression.variable
         if int(variable.reg) == register_slice[0] and int(variable.size) == register_slice[1]:
-            return call
+            return replacement
         return expression
     if isinstance(expression, CBinaryOp):
-        expression.lhs = _replace_return_register_8616(expression.lhs, register_slice, call)
-        expression.rhs = _replace_return_register_8616(expression.rhs, register_slice, call)
+        expression.lhs = _replace_return_register_8616(expression.lhs, register_slice, replacement)
+        expression.rhs = _replace_return_register_8616(expression.rhs, register_slice, replacement)
     elif isinstance(expression, CUnaryOp):
-        expression.operand = _replace_return_register_8616(expression.operand, register_slice, call)
+        expression.operand = _replace_return_register_8616(expression.operand, register_slice, replacement)
     return expression
 
 
@@ -203,7 +215,11 @@ def _existing_callsite_count_8616(expression: object, callsite_addr: int) -> int
     )
 
 
-def _target_calls_8616(expression: object, target_addr: int) -> tuple[CFunctionCall, ...]:
+def _target_calls_8616(
+    project: object,
+    expression: object,
+    target_addr: int,
+) -> tuple[CFunctionCall, ...]:
     """Return calls whose exact angr callee address matches the typed target."""
     matches: list[CFunctionCall] = []
     for node in _iter_c_nodes_deep_8616(expression):
@@ -214,9 +230,146 @@ def _target_calls_8616(expression: object, target_addr: int) -> tuple[CFunctionC
             callee_addr = callee.addr
         except AttributeError:
             continue
-        if callee_addr == target_addr:
+        if x86_16_call_targets_equivalent_8616(project, callee_addr, target_addr):
             matches.append(node)
     return tuple(matches)
+
+
+def _canonical_stack_offset_8616(offset: int) -> int:
+    """Normalize a 16-bit BP displacement to its signed identity."""
+    return offset - 0x10000 if offset >= 0x8000 else offset
+
+
+def _is_exact_stack_destination_8616(
+    expression: object,
+    evidence: CallReturnStackStoreEvidence8616,
+) -> bool:
+    """Return whether one C variable is the exact proven return-store object."""
+    if not isinstance(expression, CVariable) or not isinstance(expression.variable, SimStackVariable):
+        return False
+    variable = expression.variable
+    return (
+        variable.base == "bp"
+        and isinstance(variable.offset, int)
+        and _canonical_stack_offset_8616(variable.offset) == evidence.dst_offset
+        and int(variable.size) == evidence.width
+    )
+
+
+def _stack_destination_count_8616(
+    expression: object,
+    evidence: CallReturnStackStoreEvidence8616,
+) -> int:
+    """Count exact uses of one proven BP-relative return-store object."""
+    return sum(
+        1
+        for node in _iter_c_nodes_deep_8616(expression)
+        if _is_exact_stack_destination_8616(node, evidence)
+    )
+
+
+def _unique_summary_call_8616(
+    project: object,
+    root: object,
+    summary: CallsiteSummary8616,
+) -> CFunctionCall | None:
+    """Resolve one structured call by exact callsite or unique target identity."""
+    bound = tuple(
+        node
+        for node in _iter_c_nodes_deep_8616(root)
+        if isinstance(node, CFunctionCall) and structured_callsite_addr_8616(node) == summary.callsite_addr
+    )
+    if len(bound) == 1:
+        target_addr = summary.target_addr
+        if not isinstance(target_addr, int):
+            return None
+        exact = _target_calls_8616(project, bound[0], target_addr)
+        return bound[0] if len(exact) == 1 else None
+    if bound or not isinstance(summary.target_addr, int):
+        return None
+    target_calls = _target_calls_8616(project, root, summary.target_addr)
+    return target_calls[0] if len(target_calls) == 1 else None
+
+
+def _unique_call_assignment_8616(root: object, call: CFunctionCall) -> CAssignment | None:
+    """Return the unique assignment whose RHS contains the exact call node."""
+    assignments = tuple(
+        node
+        for node in _iter_c_nodes_deep_8616(root)
+        if isinstance(node, CAssignment)
+        and any(candidate is call for candidate in _iter_c_nodes_deep_8616(node.rhs))
+    )
+    return assignments[0] if len(assignments) == 1 else None
+
+
+def _materialize_stored_return_condition_8616(
+    project: object,
+    codegen: object,
+    root: object,
+    expression: CExpression,
+    summary: CallsiteSummary8616,
+    register_slice: tuple[int, int],
+    summary_map: dict[int, CallsiteSummary8616],
+) -> tuple[CExpression, bool] | None:
+    """Bind a value-return store and its branch to one exact stack local."""
+    evidence = classify_call_return_stack_store_8616(summary)
+    if evidence is None or evidence.width != register_slice[1]:
+        return None
+    call = _unique_summary_call_8616(project, root, summary)
+    if call is None:
+        return None
+    assignment = _unique_call_assignment_8616(root, call)
+    if assignment is None:
+        return None
+    if _is_exact_stack_destination_8616(assignment.lhs, evidence):
+        if _stack_destination_count_8616(expression, evidence) != 1:
+            return None
+        bind_structured_callsite_identity_8616(call, summary)
+        summary_map[id(call)] = summary
+        return expression, False
+    old_lhs = assignment.lhs
+    if not isinstance(old_lhs, CVariable) or not isinstance(old_lhs.variable, SimRegisterVariable):
+        return None
+    old_variable = old_lhs.variable
+    if (int(old_variable.reg), int(old_variable.size)) != register_slice:
+        return None
+    definitions = sum(
+        1
+        for node in _iter_c_nodes_deep_8616(root)
+        if isinstance(node, CAssignment)
+        and isinstance(node.lhs, CVariable)
+        and node.lhs.variable is old_variable
+    )
+    if definitions != 1 or _expression_return_register_count_8616(expression, register_slice) != 1:
+        return None
+    destination = materialize_stack_cvar_at_offset_from_facts_8616(
+        codegen,
+        evidence.dst_offset,
+        evidence.width,
+    )
+    if not isinstance(destination, CVariable):
+        return None
+
+    def replace_exact_carrier(node: object) -> object:
+        """Replace only references to the assignment's exact SSA variable."""
+        if isinstance(node, CVariable) and node.variable is old_variable:
+            return destination
+        return node
+
+    changed = _replace_c_children_8616(root, replace_exact_carrier)
+    remaining_registers = _expression_return_register_count_8616(expression, register_slice)
+    if remaining_registers == 1:
+        expression = _replace_return_register_8616(expression, register_slice, destination)
+        changed = True
+    elif remaining_registers != 0:
+        return None
+    if not changed or not _is_exact_stack_destination_8616(assignment.lhs, evidence):
+        return None
+    if _stack_destination_count_8616(expression, evidence) != 1:
+        return None
+    bind_structured_callsite_identity_8616(call, summary)
+    summary_map[id(call)] = summary
+    return expression, True
 
 
 def materialize_call_return_conditions_8616(project: object, codegen: object) -> bool:
@@ -246,7 +399,11 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
         if isinstance(summary, CallsiteSummary8616)
         and isinstance(summary.return_addr, int)
         and summary.return_used is True
-        and summary.return_use_kind is CallsiteReturnUseKind8616.CONDITION
+        and summary.return_use_kind
+        in {
+            CallsiteReturnUseKind8616.CONDITION,
+            CallsiteReturnUseKind8616.VALUE,
+        }
         and isinstance(summary.target_addr, int)
     }
     raw = normalized = classified = materialized = failed = 0
@@ -279,9 +436,28 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
             failed += 1
             continue
         normalized += 1
+        if summary.return_use_kind is CallsiteReturnUseKind8616.VALUE:
+            stored_result = _materialize_stored_return_condition_8616(
+                project,
+                codegen,
+                root,
+                expression,
+                summary,
+                register_slice,
+                summary_map,
+            )
+            if stored_result is None:
+                failed += 1
+                continue
+            replacement, stored_changed = stored_result
+            node.condition_and_nodes = [(replacement, body)]
+            classified += 1
+            materialized += 1
+            changed = stored_changed or changed
+            continue
         existing_count = _existing_callsite_count_8616(expression, summary.callsite_addr)
         if existing_count == 1:
-            exact_calls = _target_calls_8616(expression, target_addr)
+            exact_calls = _target_calls_8616(project, expression, target_addr)
             if len(exact_calls) != 1:
                 failed += 1
                 continue
@@ -292,19 +468,17 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
         if existing_count != 0:
             failed += 1
             continue
-        target_calls = _target_calls_8616(expression, target_addr)
+        target_calls = _target_calls_8616(project, expression, target_addr)
         if len(target_calls) == 1:
-            call = target_calls[0]
-            inherited_addr = structured_callsite_addr_8616(call)
-            inherited_summary = inventory.get(inherited_addr) if isinstance(inherited_addr, int) else None
-            if inherited_summary is None:
-                bind_structured_callsite_identity_8616(call, summary)
-            elif inherited_summary.target_addr == summary.target_addr:
-                rebind_cloned_structured_callsite_identity_8616(call, inherited_summary, summary)
-            else:
+            callee = resolve_x86_16_call_target_function_8616(project, target_addr)
+            if callee is None or not isinstance(callee.name, str) or not callee.name:
                 failed += 1
                 continue
+            call = CFunctionCall(callee.name, callee, [], codegen=codegen)
+            bind_structured_callsite_identity_8616(call, summary)
             summary_map[id(call)] = summary
+            replacement = replace_exact_expression_8616(expression, target_calls[0], call)
+            node.condition_and_nodes = [(replacement, body)]
             classified += 1
             materialized += 1
             changed = True
@@ -312,7 +486,7 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
         if target_calls or _expression_return_register_count_8616(expression, register_slice) != 1:
             failed += 1
             continue
-        callee = typed_project.kb.functions.function(addr=target_addr, create=False)
+        callee = resolve_x86_16_call_target_function_8616(project, target_addr)
         if callee is None or not isinstance(callee.name, str) or not callee.name:
             failed += 1
             continue

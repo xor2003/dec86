@@ -332,6 +332,46 @@ def test_structuring_refuses_break_when_loop_header_already_consumes_jcc():
     assert evidence == []
 
 
+def test_structuring_refuses_break_for_typed_loop_continuation() -> None:
+    """A typed loop latch must not be reclassified as a missing break guard."""
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    loop_condition = CBinaryOp(
+        "CmpNE",
+        _reg("ax", codegen),
+        _const(0, codegen),
+        codegen=codegen,
+        tags={
+            "ins_addr": 0x4005,
+            "vex_block_addr": 0x4000,
+            "inertia_typed_loop_condition_bound_8616": True,
+            "inertia_typed_loop_condition_key_8616": (0x4005, 0x4000),
+        },
+    )
+    loop = CWhileLoop(
+        loop_condition,
+        CStatements([], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([loop], codegen=codegen)
+    codegen.cfunc.statements = root
+    codegen.cfunc.body = root
+    evidence: list[tuple[object | None, object]] = []
+
+    changed = materialize_unconsumed_loop_break_jcc_8616(
+        project,
+        codegen,
+        _callbacks(_Insn(0x4005, "je", 0x4020), evidence=evidence),
+    )
+
+    assert changed is False
+    assert loop_branch_guard_facts_8616(codegen) == ()
+    stats = codegen._inertia_unconsumed_loop_break_jcc_stats_8616
+    assert stats.refused_existing_condition == 1
+    assert stats.materialized_count == 0
+    assert evidence == []
+
+
 def test_structuring_refuses_duplicate_untagged_semantic_break_guard():
     project = SimpleNamespace(arch=Arch86_16())
     codegen = _DummyCodegen()

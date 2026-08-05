@@ -71,6 +71,7 @@ def test_agent_context_report_rejects_understand_auto_update(tmp_path):
 def test_agent_context_main_requires_graph(monkeypatch, tmp_path, capsys):
     _write_context_files(tmp_path)
     monkeypatch.setattr(agent_context_check, "REPO_ROOT", tmp_path)
+    monkeypatch.delenv("CODEBASE_MEMORY_MCP_STATUS", raising=False)
 
     rc = agent_context_check.main(["--require-graph"])
     output = capsys.readouterr().out

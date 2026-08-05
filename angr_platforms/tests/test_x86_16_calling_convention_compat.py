@@ -5,13 +5,15 @@ from types import SimpleNamespace
 import archinfo
 from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypeShort
 from angr_platforms.X86_16.analysis_helpers import (
+    _analysis_function_addr_8616,
     seed_calling_conventions,
     seed_wide_stack_prototype_from_binary_address_8616,
 )
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.calling_convention_compat import (
-    _promote_terminal_word_return_8616,
+    _promote_wide_return_and_stack_args_8616,
     _set_function_prototype_8616,
+    _terminal_byte_return_evidence_8616,
     _terminal_wide_return_evidence_8616,
     _terminal_word_return_evidence_8616,
     _wide_stack_argument_evidence_8616,
@@ -43,6 +45,109 @@ def test_seed_calling_conventions_preserves_binary_proven_stub_prototype() -> No
     assert function.prototype is prototype
     assert function.calling_convention is calling_convention
     assert function.is_prototype_guessed is False
+
+
+def test_seed_calling_conventions_caches_progress_per_cfg_function(monkeypatch) -> None:
+    init_calls: list[int] = []
+    stack_byte_calls: list[int] = []
+    wide_stack_calls: list[int] = []
+    terminal_calls: list[int] = []
+    terminal_register_calls: list[int] = []
+
+    def _track_stack_byte(project: object, function: SimpleNamespace) -> bool:  # noqa: ARG001
+        stack_byte_calls.append(_analysis_function_addr_8616(function))
+        return False
+
+    def _track_wide_stack(project: object, function: SimpleNamespace) -> bool:  # noqa: ARG001
+        wide_stack_calls.append(_analysis_function_addr_8616(function))
+        return False
+
+    def _track_terminal(project: object, function: SimpleNamespace) -> object:  # noqa: ARG001
+        terminal_calls.append(_analysis_function_addr_8616(function))
+        return SimpleNamespace(
+            evidence=SimpleNamespace(
+                raw_fact_count=0,
+                normalized_fact_count=0,
+                classified_fact_count=0,
+                materialized_count=0,
+                failure_count=0,
+            ),
+            changed=False,
+        )
+
+    def _track_terminal_register(project: object, function: SimpleNamespace) -> object:  # noqa: ARG001
+        terminal_register_calls.append(_analysis_function_addr_8616(function))
+        return SimpleNamespace(
+            stats=SimpleNamespace(
+                raw_fact_count=0,
+                normalized_fact_count=0,
+                classified_fact_count=0,
+                materialized_count=0,
+                failure_count=0,
+            ),
+            changed=False,
+        )
+
+    def _make_function(function_addr: int) -> SimpleNamespace:
+        def _init() -> None:
+            init_calls.append(function_addr)
+
+        return SimpleNamespace(
+            name=f"sub_{function_addr:x}",
+            prototype=None,
+            calling_convention=None,
+            is_prototype_guessed=True,
+            _init_prototype_and_calling_convention=_init,
+            addr=function_addr,
+            block_addrs_set={function_addr},
+        )
+
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.calling_convention_compat.apply_x86_16_stack_byte_prototype_evidence",
+        _track_stack_byte,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.calling_convention_compat.apply_x86_16_wide_stack_prototype_evidence",
+        _track_wide_stack,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.lowering.terminal_call_return_types.apply_terminal_call_return_type_evidence_8616",
+        _track_terminal,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.lowering.terminal_register_return_types.apply_terminal_register_return_type_evidence_8616",
+        _track_terminal_register,
+    )
+
+    cfg = SimpleNamespace(
+        functions={0x1000: _make_function(0x1000)},
+        project=SimpleNamespace(arch=SimpleNamespace(name="86_16")),
+    )
+    seed_calling_conventions(cfg)
+    seed_calling_conventions(cfg)
+
+    assert init_calls == [0x1000]
+    assert stack_byte_calls == [0x1000]
+    assert wide_stack_calls == [0x1000]
+    assert terminal_calls == [0x1000]
+    assert terminal_register_calls == [0x1000]
+
+    cfg.functions[0x1000].block_addrs_set.add(0x1010)
+    seed_calling_conventions(cfg)
+
+    assert init_calls == [0x1000, 0x1000]
+    assert terminal_calls == [0x1000, 0x1000]
+    assert terminal_register_calls == [0x1000, 0x1000]
+
+    cfg.functions[0x2000] = _make_function(0x2000)
+    seed_calling_conventions(cfg)
+
+    assert init_calls == [0x1000, 0x1000, 0x2000]
+    assert stack_byte_calls == [0x1000, 0x1000, 0x2000]
+    assert wide_stack_calls == [0x1000, 0x1000, 0x2000]
+    assert terminal_calls == [0x1000, 0x1000, 0x2000]
+    assert terminal_register_calls == [0x1000, 0x1000, 0x2000]
+    assert getattr(cfg, "_inertia_seeded_calling_conventions", None) == {0x1000, 0x2000}
 
 
 def test_wide_stack_seed_copies_an_already_proven_source_prototype(monkeypatch) -> None:
@@ -115,7 +220,7 @@ class _FakeInsn:
         self.mnemonic = mnemonic
         operands = []
         if writes is not None:
-            operands.append(_FakeRegOperand({"ax": 1, "dx": 2}[writes]))
+            operands.append(_FakeRegOperand({"ax": 1, "dx": 2, "al": 3, "ah": 4}[writes]))
         if source_bp_offset is not None:
             operands.append(_FakeMemOperand(base=6, disp=source_bp_offset))
         if target is not None:
@@ -123,7 +228,7 @@ class _FakeInsn:
         self.operands = tuple(operands)
 
     def reg_name(self, reg_id: int) -> str:
-        return {1: "ax", 2: "dx", 6: "bp"}.get(reg_id, "")
+        return {1: "ax", 2: "dx", 3: "al", 4: "ah", 6: "bp"}.get(reg_id, "")
 
 
 class _FakeMovSpBpInsn:
@@ -175,6 +280,19 @@ def test_terminal_wide_return_evidence_requires_terminal_suffix() -> None:
     evidence = _terminal_wide_return_evidence_8616(project, function)
 
     assert evidence is _WideReturnEvidence8616.NONE
+
+
+def test_terminal_wide_return_evidence_rejects_stale_dx_before_later_ax_write() -> None:
+    project = _FakeProject(
+        (
+            _FakeInsn("imul", writes="dx"),
+            _FakeInsn("sub", writes="ax"),
+            _FakeInsn("ret"),
+        )
+    )
+    function = SimpleNamespace(block_addrs_set={0x1000})
+
+    assert _terminal_wide_return_evidence_8616(project, function) is _WideReturnEvidence8616.NONE
 
 
 def test_terminal_wide_return_evidence_accepts_epilogue_suffix() -> None:
@@ -248,26 +366,65 @@ def test_terminal_word_return_evidence_accepts_ax_before_return() -> None:
     assert _terminal_word_return_evidence_8616(project, function)
 
 
-def test_terminal_word_return_promotion_preserves_explicit_nonvoid_return() -> None:
-    arch = archinfo.ArchX86()
-    project = _FakeProject((_FakeInsn("mov", writes="ax"), _FakeInsn("ret")))
+def test_terminal_word_return_evidence_accepts_complete_al_ah_pair() -> None:
+    project = _FakeProject(
+        (_FakeInsn("mov", writes="al"), _FakeInsn("mov", writes="ah"), _FakeInsn("ret"))
+    )
+    function = SimpleNamespace(block_addrs_set={0x1000})
+
+    assert _terminal_word_return_evidence_8616(project, function)
+    assert not _terminal_byte_return_evidence_8616(project, function)
+
+
+def test_terminal_word_return_evidence_follows_al_to_ah_epilogue_edge() -> None:
+    project = _FakeProject(
+        (_FakeInsn("mov", writes="al"), _FakeInsn("jmp", target=0x1010)),
+        extra_blocks={0x1010: (_FakeInsn("mov", writes="ah"), _FakeInsn("ret"))},
+    )
+    function = SimpleNamespace(block_addrs_set={0x1000, 0x1010})
+
+    assert _terminal_word_return_evidence_8616(project, function)
+    assert not _terminal_byte_return_evidence_8616(project, function)
+
+
+def test_terminal_return_evidence_invalidates_register_writes_at_calls() -> None:
+    function = SimpleNamespace(block_addrs_set={0x1000})
+    direct_byte_project = _FakeProject((_FakeInsn("mov", writes="al"), _FakeInsn("ret")))
+    byte_call_project = _FakeProject(
+        (_FakeInsn("mov", writes="al"), _FakeInsn("call", target=0x2000), _FakeInsn("ret"))
+    )
+    word_call_project = _FakeProject(
+        (_FakeInsn("mov", writes="ax"), _FakeInsn("call", target=0x2000), _FakeInsn("ret"))
+    )
+
+    assert _terminal_byte_return_evidence_8616(direct_byte_project, function)
+    assert not _terminal_byte_return_evidence_8616(byte_call_project, function)
+    assert not _terminal_word_return_evidence_8616(word_call_project, function)
+
+
+def test_terminal_wide_return_promotion_accepts_zero_arguments() -> None:
+    arch = Arch86_16()
+    project = _FakeProject(
+        (
+            _FakeInsn("mov", writes="ax"),
+            _FakeInsn("mov", writes="dx"),
+            _FakeInsn("ret"),
+        )
+    )
     project.arch = arch
     function = SimpleNamespace(block_addrs_set={0x1000})
-    prototype = SimTypeFunction([], SimTypeLong()).with_arch(arch)
+    analysis = SimpleNamespace(project=project, _function=function)
+    prototype = SimTypeFunction([], SimTypeShort(False)).with_arch(arch)
 
-    assert _promote_terminal_word_return_8616(project, function, prototype) is prototype
+    promoted = _promote_wide_return_and_stack_args_8616(
+        analysis,
+        prototype,
+        promote_return=True,
+    )
 
-
-def test_terminal_word_return_promotion_replaces_guessed_void_return() -> None:
-    arch = archinfo.ArchX86()
-    project = _FakeProject((_FakeInsn("mov", writes="ax"), _FakeInsn("ret")))
-    project.arch = arch
-    function = SimpleNamespace(block_addrs_set={0x1000})
-    prototype = SimTypeFunction([], SimTypeBottom(label="void")).with_arch(arch)
-
-    promoted = _promote_terminal_word_return_8616(project, function, prototype)
-
-    assert isinstance(promoted.returnty, SimTypeShort)
+    assert isinstance(promoted.returnty, SimTypeLong)
+    assert promoted.returnty.size == 32
+    assert promoted.args == ()
 
 
 def test_wide_stack_prototype_evidence_preserves_non_guessed_source_prototype():
@@ -360,7 +517,7 @@ def test_apply_wide_stack_prototype_evidence_merges_physical_words_for_void_call
     assert changed
     assert len(function.prototype.args) == 1
     assert isinstance(function.prototype.args[0], SimTypeLong)
-    assert isinstance(function.prototype.returnty, SimTypeBottom)
+    assert isinstance(function.prototype.returnty, SimTypeLong)
 
 
 def test_address_wide_stack_evidence_materializes_bodyless_stub_from_bounded_body() -> None:
@@ -381,7 +538,7 @@ def test_address_wide_stack_evidence_materializes_bodyless_stub_from_bounded_bod
             [SimTypeShort(False), SimTypeShort(False)],
             SimTypeBottom(label="void"),
         ).with_arch(arch),
-        is_prototype_guessed=True,
+        is_prototype_guessed=False,
         project=project,
     )
 
@@ -390,6 +547,7 @@ def test_address_wide_stack_evidence_materializes_bodyless_stub_from_bounded_bod
     assert changed
     assert len(function.prototype.args) == 1
     assert isinstance(function.prototype.args[0], SimTypeLong)
+    assert isinstance(function.prototype.returnty, SimTypeLong)
 
 
 def test_address_wide_stack_evidence_refuses_window_without_return() -> None:

@@ -30,6 +30,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 
 from .c_ast_utils import _iter_c_nodes_deep_8616
 from .ir.condition_ir import (
+    ConditionIR,
     canonicalize_condition_storage_fingerprint_8616,
     invert_condition_fingerprint_string_8616,
     normalize_condition_fingerprint_algebraic_8616,
@@ -37,6 +38,8 @@ from .ir.condition_ir import (
 )
 from .structuring.loop_break_jcc import LoopBranchGuardFact8616
 from .validation.canonicalize import EquivalenceResult, equivalent_expr_8616
+from .validation_branch_conditions import BranchConditionIssue8616
+from .validation_control_flow_obligations import ControlFlowObligationIssue8616
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -105,7 +108,10 @@ class LoopBranchGuardIssue8616:
 
 
 ControlFlowValidationIssue8616: TypeAlias = (
-    ControlFlowIssue8616 | LoopBranchGuardIssue8616
+    BranchConditionIssue8616
+    | ControlFlowIssue8616
+    | LoopBranchGuardIssue8616
+    | ControlFlowObligationIssue8616
 )
 
 
@@ -200,7 +206,7 @@ def _node_ins_addr_8616(node: object) -> int | None:
 def _break_guard_condition_8616(node: object) -> object | None:
     """Return the condition for supported final C break-guard shapes."""
     if isinstance(node, CIfBreak):
-        return node.condition
+        return cast(object, node.condition)
     if not isinstance(node, CIfElse) or node.else_node is not None:
         return None
     pairs = tuple(node.condition_and_nodes)
@@ -208,12 +214,12 @@ def _break_guard_condition_8616(node: object) -> object | None:
         return None
     condition, body = pairs[0]
     if isinstance(body, CBreak):
-        return condition
+        return cast(object, condition)
     if not isinstance(body, CStatements):
         return None
     statements = tuple(body.statements)
     if len(statements) == 1 and isinstance(statements[0], CBreak):
-        return condition
+        return cast(object, condition)
     return None
 
 
@@ -372,9 +378,11 @@ def _loop_branch_fact_is_valid_8616(fact: LoopBranchGuardFact8616) -> bool:
 
 def _normalize_condition_fingerprint_8616(value: str) -> str:
     """Return the IR-canonical condition fingerprint used for exact joins."""
-    return normalize_condition_fingerprint_algebraic_8616(
-        normalize_condition_fingerprint_string_8616(
-            canonicalize_condition_storage_fingerprint_8616(value)
+    return str(
+        normalize_condition_fingerprint_algebraic_8616(
+            normalize_condition_fingerprint_string_8616(
+                canonicalize_condition_storage_fingerprint_8616(value)
+            )
         )
     )
 
@@ -383,17 +391,29 @@ def _condition_fingerprint_matches_8616(
     condition: object,
     expected_fingerprint: str,
     condition_fingerprint: Callable[[object], str],
+    condition_fingerprint_normalizer: Callable[[str], str] | None,
 ) -> bool:
     """Match one AST condition, including C scalar truth-value shorthand."""
     actual = _normalize_condition_fingerprint_8616(
         condition_fingerprint(condition)
     )
     expected = _normalize_condition_fingerprint_8616(expected_fingerprint)
+    if condition_fingerprint_normalizer is not None:
+        actual = _normalize_condition_fingerprint_8616(
+            condition_fingerprint_normalizer(actual)
+        )
+        expected = _normalize_condition_fingerprint_8616(
+            condition_fingerprint_normalizer(expected)
+        )
     if actual == expected:
         return True
     truth_value = _normalize_condition_fingerprint_8616(
         f"CmpNE({actual},const:0)"
     )
+    if condition_fingerprint_normalizer is not None:
+        truth_value = _normalize_condition_fingerprint_8616(
+            condition_fingerprint_normalizer(truth_value)
+        )
     return truth_value == expected
 
 
@@ -421,8 +441,21 @@ def _semantic_loop_branch_guards_8616(
     root: object,
     fact: LoopBranchGuardFact8616,
     condition_fingerprint: Callable[[object], str],
+    condition_ir_fingerprint: Callable[[ConditionIR], str | None] | None,
+    condition_fingerprint_normalizer: Callable[[str], str] | None,
 ) -> tuple[object, ...]:
     """Join an untagged folded guard by exact condition and CFG evidence."""
+    decoded_fingerprint = fact.decoded_condition_fingerprint
+    guard_fingerprint = fact.guard_condition_fingerprint
+    if fact.condition_ir is not None and condition_ir_fingerprint is not None:
+        materialized = condition_ir_fingerprint(fact.condition_ir)
+        if materialized is None:
+            return ()
+        inverted = invert_condition_fingerprint_string_8616(materialized)
+        if inverted is None:
+            return ()
+        decoded_fingerprint = materialized
+        guard_fingerprint = inverted
     guards: list[object] = []
     seen: set[int] = set()
     for loop in _loop_nodes_8616(root):
@@ -430,8 +463,9 @@ def _semantic_loop_branch_guards_8616(
             continue
         if _condition_fingerprint_matches_8616(
             loop.condition,
-            fact.decoded_condition_fingerprint,
+            decoded_fingerprint,
             condition_fingerprint,
+            condition_fingerprint_normalizer,
         ):
             guards.append(loop)
             seen.add(id(loop))
@@ -442,8 +476,9 @@ def _semantic_loop_branch_guards_8616(
                 or id(node) in seen
                 or not _condition_fingerprint_matches_8616(
                     guard_condition,
-                    fact.guard_condition_fingerprint,
+                    guard_fingerprint,
                     condition_fingerprint,
+                    condition_fingerprint_normalizer,
                 )
             ):
                 continue
@@ -474,6 +509,8 @@ def validate_structured_control_flow_8616(
     *,
     loop_branch_facts: tuple[LoopBranchGuardFact8616, ...] = (),
     condition_fingerprint: Callable[[object], str] | None = None,
+    condition_ir_fingerprint: Callable[[ConditionIR], str | None] | None = None,
+    condition_fingerprint_normalizer: Callable[[str], str] | None = None,
 ) -> ControlFlowValidationReport8616:
     """Validate final guarded reachability and proven loop-branch presence.
 
@@ -579,6 +616,8 @@ def validate_structured_control_flow_8616(
                     root,
                     fact,
                     condition_fingerprint,
+                    condition_ir_fingerprint,
+                    condition_fingerprint_normalizer,
                 )
                 if condition_fingerprint is not None
                 else ()
@@ -673,6 +712,8 @@ def validate_structured_control_flow_8616(
                         root,
                         fact,
                         condition_fingerprint,
+                        condition_ir_fingerprint,
+                        condition_fingerprint_normalizer,
                     )
                     if condition_fingerprint is not None
                     and _loop_branch_fact_is_valid_8616(fact)

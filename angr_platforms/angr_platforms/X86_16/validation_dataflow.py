@@ -21,6 +21,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CBreak,
     CConstant,
+    CDirtyExpression,
     CDoWhileLoop,
     CExpressionStatement,
     CFakeVariable,
@@ -42,7 +43,9 @@ from .c_ast_utils import (
     _structured_codegen_node_8616,
     _structured_slot_names_8616,
 )
+from .semantics.expression_analysis import describe_virtual_value_identity_8616
 from .structuring.indexed_stack_ranges import IndexedStackReadProof8616
+from .validation_predicates import PredicateToken8616, invert_predicate_token_8616
 
 __all__ = [
     "DefUseIssue8616",
@@ -60,6 +63,7 @@ class DefUseStorageKind8616(StrEnum):
     STACK_LOCAL = "stack-local"
     REGISTER_CARRIER = "register-carrier"
     SEGMENT_CARRIER = "segment-carrier"
+    VIRTUAL_CARRIER = "virtual-carrier"
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -79,6 +83,8 @@ class DefUseStorageKey8616:
         if self.kind is DefUseStorageKind8616.STACK_LOCAL:
             sign = "+" if self.offset >= 0 else "-"
             return f"{self.kind.value}:SS:BP{sign}0x{abs(self.offset):x}:size{self.width}"
+        if self.kind is DefUseStorageKind8616.VIRTUAL_CARRIER:
+            return f"{self.kind.value}:{self.ssa_id}:size{self.width}"
         prefix = f"{self.kind.value}:reg+0x{self.offset:x}:size{self.width}"
         if not self.definition_trackable:
             return f"{prefix}:ssa-unproven"
@@ -99,6 +105,8 @@ class _DefUseStorageByte8616:
         if self.kind is DefUseStorageKind8616.STACK_LOCAL:
             sign = "+" if self.offset >= 0 else "-"
             return f"{self.kind.value}:SS:BP{sign}0x{abs(self.offset):x}"
+        if self.kind is DefUseStorageKind8616.VIRTUAL_CARRIER:
+            return f"{self.kind.value}:{self.ssa_id}:byte+0x{self.offset:x}"
         return f"{self.kind.value}:reg+0x{self.offset:x}:region0x{self.region:x}:ssa-{self.ssa_id}"
 
 
@@ -106,7 +114,7 @@ class _DefUseStorageByte8616:
 class _DefUsePredicate8616:
     """Exact structured predicate and the storage identities it evaluates."""
 
-    token: tuple[object, ...]
+    token: PredicateToken8616
     dependencies: frozenset[_DefUseStorageByte8616]
 
 
@@ -295,24 +303,31 @@ def _indexed_stack_storage_key_8616(
     name = variable.name if isinstance(variable.name, str) else ""
     element_width = _type_width_bytes_8616(node.type)
     element_count = base.type.length
-    bounded_element_count = (
-        element_count
-        if isinstance(element_count, int)
+    array_element_width = _type_width_bytes_8616(base.type.elem_type)
+    object_width = (
+        array_element_width * element_count
+        if array_element_width is not None
+        and isinstance(element_count, int)
         and element_count > 0
-        and variable.size % element_count == 0
+        and variable.size
+        in {
+            array_element_width,
+            array_element_width * element_count,
+        }
         else None
     )
     if (
         element_width is None
-        and bounded_element_count is not None
+        and object_width is not None
+        and isinstance(element_count, int)
     ):
-        element_width = variable.size // bounded_element_count
+        element_width = object_width // element_count
     if element_width is None:
         if dynamic_array_as_object:
             return DefUseStorageKey8616(
                 kind=DefUseStorageKind8616.STACK_LOCAL,
                 offset=variable.offset,
-                width=variable.size,
+                width=object_width or variable.size,
                 definition_trackable=False,
                 display_name=name,
             )
@@ -323,27 +338,27 @@ def _indexed_stack_storage_key_8616(
         if (
             index < 0
             or relative_offset < 0
-            or relative_offset + element_width > variable.size
+            or relative_offset + element_width > (object_width or variable.size)
         ):
             if dynamic_array_as_object:
                 return DefUseStorageKey8616(
                     kind=DefUseStorageKind8616.STACK_LOCAL,
                     offset=variable.offset,
-                    width=variable.size,
+                    width=object_width or variable.size,
                     definition_trackable=False,
                     display_name=name,
                 )
             return None
         offset = variable.offset + relative_offset
         width = element_width
-    elif dynamic_array_as_object and bounded_element_count is not None:
+    elif dynamic_array_as_object and object_width is not None:
         offset = variable.offset
-        width = variable.size
+        width = object_width
     elif dynamic_array_as_object:
         return DefUseStorageKey8616(
             kind=DefUseStorageKind8616.STACK_LOCAL,
             offset=variable.offset,
-            width=variable.size,
+            width=object_width or variable.size,
             definition_trackable=False,
             display_name=name,
         )
@@ -408,8 +423,9 @@ def _storage_key_8616(
     segment_register_offsets: frozenset[int],
     *,
     dynamic_array_as_object: bool = False,
+    include_virtual_carriers: bool = False,
 ) -> DefUseStorageKey8616 | None:
-    """Return one exact stack or register storage identity."""
+    """Return one exact architectural or opt-in virtual storage identity."""
     indexed_key = _indexed_stack_storage_key_8616(
         node,
         dynamic_array_as_object=dynamic_array_as_object,
@@ -419,7 +435,22 @@ def _storage_key_8616(
     stack_key = _stack_storage_key_8616(node)
     if stack_key is not None:
         return stack_key
-    return _register_storage_key_8616(node, segment_register_offsets)
+    register_key = _register_storage_key_8616(node, segment_register_offsets)
+    if register_key is not None:
+        return register_key
+    if not include_virtual_carriers:
+        return None
+    virtual_identity = describe_virtual_value_identity_8616(node)
+    if virtual_identity is None:
+        return None
+    width = _type_width_bytes_8616(node.type) if isinstance(node, CDirtyExpression) else None
+    return DefUseStorageKey8616(
+        kind=DefUseStorageKind8616.VIRTUAL_CARRIER,
+        offset=0,
+        width=width or 1,
+        region=0,
+        ssa_id=f"{virtual_identity.kind.value}-{virtual_identity.value}",
+    )
 
 
 def _predicate_storage_key_8616(
@@ -478,8 +509,10 @@ def _iter_value_nodes_8616(root: object) -> tuple[object, ...]:
 def _value_read_keys_8616(
     expr: object,
     segment_register_offsets: frozenset[int],
+    *,
+    include_virtual_carriers: bool = False,
 ) -> tuple[_DefUseValueRead8616, ...]:
-    """Collect stack and register views whose stored values are evaluated."""
+    """Collect tracked storage views whose stored values are evaluated."""
     if expr is None:
         return ()
     if os.environ.get("INERTIA_DEBUG_DEF_USE") == "1" and isinstance(expr, CFunctionCall):
@@ -521,6 +554,7 @@ def _value_read_keys_8616(
             node,
             segment_register_offsets,
             dynamic_array_as_object=True,
+            include_virtual_carriers=include_virtual_carriers,
         )
         if key is None:
             continue
@@ -557,7 +591,7 @@ def _predicate_fact_8616(
     """Build an exact non-text predicate identity from structured C expressions."""
     active: set[int] = set()
 
-    def _visit(node: object) -> tuple[tuple[object, ...], frozenset[_DefUseStorageByte8616]] | None:
+    def _visit(node: object) -> tuple[PredicateToken8616, frozenset[_DefUseStorageByte8616]] | None:
         node_id = id(node)
         if node_id in active:
             return None
@@ -590,6 +624,8 @@ def _predicate_fact_8616(
                 if operand is None:
                     return None
                 operand_token, dependencies = operand
+                if node.op == "Not":
+                    return (invert_predicate_token_8616(operand_token), dependencies)
                 return (("unary", node.op, operand_token), dependencies)
             lhs = _visit(node.lhs)
             rhs = _visit(node.rhs)
@@ -688,6 +724,18 @@ def _activate_guarded_definitions_8616(
     state.defined.update(state.guarded.get(predicate, ()))
 
 
+def _inverted_predicate_fact_8616(
+    predicate: _DefUsePredicate8616 | None,
+) -> _DefUsePredicate8616 | None:
+    """Return the exact complementary fact while preserving its dependencies."""
+    if predicate is None:
+        return None
+    return _DefUsePredicate8616(
+        token=invert_predicate_token_8616(predicate.token),
+        dependencies=predicate.dependencies,
+    )
+
+
 def _invalidate_call_affected_guards_8616(
     expression: object,
     state: _DefUseFlowState8616,
@@ -754,6 +802,7 @@ def validate_structured_def_use_8616(
     entry_defined_registers: tuple[object, ...] = (),
     segment_register_offsets: frozenset[int] = frozenset(),
     entry_defined_segment_register_offsets: frozenset[int] = frozenset(),
+    include_virtual_carriers: bool = False,
 ) -> DefUseValidationReport8616:
     """Validate definitely assigned stack and register reads in structured C.
 
@@ -766,6 +815,8 @@ def validate_structured_def_use_8616(
     Constant indexed stack-array accesses use their exact element range.
     Dynamic indexed reads conservatively require the complete bounded array to
     be definitely assigned; a dynamic store never defines the complete array.
+    Virtual carriers are opt-in because legal lowering regenerates their SSA
+    identities; the final emission guard enables them after mutation stops.
     """
     report = _MutableDefUseReport8616()
     definitions_by_call = call_output_definitions or {}
@@ -778,13 +829,16 @@ def validate_structured_def_use_8616(
         *,
         context: str,
     ) -> None:
-        reads = _value_read_keys_8616(expr, segment_register_offsets)
+        reads = _value_read_keys_8616(
+            expr,
+            segment_register_offsets,
+            include_virtual_carriers=include_virtual_carriers,
+        )
         report.raw_fact_count += len(reads)
         report.normalized_fact_count += len(reads)
         report.classified_fact_count += len(reads)
         for read in reads:
             key = read.storage
-            _debug_def_use_event_8616("read", key, defined, context=context)
             proof = proofs_by_read.get(id(read.node))
             proof_matches = (
                 isinstance(read.node, CIndexedVariable)
@@ -805,6 +859,7 @@ def validate_structured_def_use_8616(
             ):
                 report.materialized_count += 1
             else:
+                _debug_def_use_event_8616("issue", key, defined, context=context)
                 report.issues.append(DefUseIssue8616(storage=key, context=context))
 
     def _check_lvalue_reads(
@@ -892,7 +947,11 @@ def validate_structured_def_use_8616(
                     state,
                     _storage_bytes_8616(predicate_lhs_key),
                 )
-            lhs_key = _storage_key_8616(node.lhs, segment_register_offsets)
+            lhs_key = _storage_key_8616(
+                node.lhs,
+                segment_register_offsets,
+                include_virtual_carriers=include_virtual_carriers,
+            )
             if lhs_key is None:
                 _check_lvalue_reads(node.lhs, state.defined, context=f"{context}.lhs")
             elif lhs_key.definition_trackable:
@@ -926,7 +985,15 @@ def validate_structured_def_use_8616(
             if node.else_node is None:
                 branch_states.append(state.copy())
             else:
-                branch_states.append(_walk(node.else_node, state, context=f"{context}.else"))
+                else_incoming = state.copy()
+                if len(branch_predicates) == 1:
+                    _activate_guarded_definitions_8616(
+                        else_incoming,
+                        _inverted_predicate_fact_8616(branch_predicates[0]),
+                    )
+                branch_states.append(
+                    _walk(node.else_node, else_incoming, context=f"{context}.else")
+                )
             merged = _intersect_flow_states_8616(branch_states, state)
             if (
                 node.else_node is None

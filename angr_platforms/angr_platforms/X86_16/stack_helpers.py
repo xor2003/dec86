@@ -57,7 +57,12 @@ class StackIrsb(Protocol):
 class StackLifterInstruction(Protocol):
     """Control-flow jump surface exposed by the x86 lifter instruction."""
 
-    def jump(self, condition: object, target: object, jumpkind: object | None = None) -> None:
+    def jump(
+        self,
+        condition: object,
+        target: object,
+        jumpkind: object | None = None,  # noqa: V107 - PyVEX keyword contract
+    ) -> None:
         """Emit a VEX control-flow edge."""
         ...
 

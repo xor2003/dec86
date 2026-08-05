@@ -37,6 +37,7 @@ class _DummyCFunc:
     def __init__(self, codegen):
         self.addr = 0x1000
         self.codegen = codegen
+        self.functy = None
         self.statements = None
         self.body = None
 
@@ -106,6 +107,7 @@ def test_regenerate_codegen_text_replays_call_arguments_after_broad_simplificati
     class _TextCFunc:
         def __init__(self) -> None:
             self.text = stale_text
+            self.functy = None
 
         def c_repr(self) -> str:
             return self.text
@@ -198,3 +200,34 @@ def test_callsite_finalize_enforces_structuring_identity_after_call_replay(monke
 
     assert changed is False
     assert events == ["stack", "calls", "interfaces", "occurrences"]
+
+
+def test_typed_interface_finalize_replays_stack_widths_before_specialized_parameters(monkeypatch):
+    codegen = SimpleNamespace(project=object(), cfunc=SimpleNamespace(functy=None))
+    events: list[str] = []
+
+    monkeypatch.setattr(
+        cli_decompilation,
+        "reapply_stack_aggregate_object_facts_8616",
+        lambda _codegen: events.append("aggregates") or False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "reconcile_exact_stack_argument_prototype_8616",
+        lambda _project, _codegen: events.append("stack-widths") or True,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "materialize_function_pointer_parameters_8616",
+        lambda _project, _codegen: events.append("function-pointers") or False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "materialize_callsite_prototype_declarations_8616",
+        lambda _project, _codegen: events.append("declarations"),
+    )
+
+    changed = cli_decompilation._finalize_typed_call_interfaces_before_render_8616(codegen)
+
+    assert changed is True
+    assert events == ["aggregates", "stack-widths", "function-pointers", "declarations"]

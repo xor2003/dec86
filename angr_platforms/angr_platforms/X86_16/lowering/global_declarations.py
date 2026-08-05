@@ -16,18 +16,28 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, cast
 
+from ..codegen_metadata import (
+    GlobalDeclarationArrayExtent8616,
+    GlobalDeclarationArrayLength8616,
+)
 from .segment_register_state import is_runtime_segment_state_symbol_8616
 
 
 class GlobalDeclarationCodegen8616(Protocol):
     """Dynamic codegen metadata slot used by proven global declaration lowering."""
 
-    _inertia_global_declaration_specs_8616: tuple[tuple[str, str, int | None], ...]
+    _inertia_global_declaration_specs_8616: tuple[
+        tuple[str, str, GlobalDeclarationArrayLength8616], ...
+    ]
+    _inertia_strong_global_declaration_specs_8616: tuple[
+        tuple[str, str, GlobalDeclarationArrayLength8616], ...
+    ]
 
 
 class GlobalDeclarationCType8616(Enum):
     """Canonical C declaration type for one proven global storage width."""
 
+    SIGNED_LONG = "long"
     UNSIGNED_CHAR = "unsigned char"
     UNSIGNED_SHORT = "unsigned short"
     UNSIGNED_LONG = "unsigned long"
@@ -80,6 +90,7 @@ class NamedAggregateDeclarationCType8616:
 
 
 _GLOBAL_CTYPE_WIDTHS_8616: dict[GlobalDeclarationCType8616, int] = {
+    GlobalDeclarationCType8616.SIGNED_LONG: 4,
     GlobalDeclarationCType8616.UNSIGNED_CHAR: 1,
     GlobalDeclarationCType8616.UNSIGNED_SHORT: 2,
     GlobalDeclarationCType8616.UNSIGNED_LONG: 4,
@@ -109,7 +120,7 @@ def record_global_declaration_spec_8616(
     *,
     ctype: GlobalDeclarationCType8616 | NamedAggregateDeclarationCType8616 | str,
     name: str,
-    array_len: int | None,
+    array_len: GlobalDeclarationArrayLength8616,
 ) -> None:
     """Record one proven global declaration, merging duplicate storage identities.
 
@@ -132,13 +143,13 @@ def record_global_declaration_spec_8616(
         ctype_name = " ".join(str(ctype).split())
     if not ctype_name:
         return
-    normalized_len = int(array_len) if isinstance(array_len, int) and array_len > 0 else None
+    normalized_len = _normalize_global_array_len_8616(array_len)
     try:
         raw_specs = typed_codegen._inertia_global_declaration_specs_8616
     except AttributeError:
         raw_specs = ()
     specs = tuple(cast(Iterable[object], raw_specs or ()))
-    merged: list[tuple[str, str, int | None]] = []
+    merged: list[tuple[str, str, GlobalDeclarationArrayLength8616]] = []
     replaced = False
     for spec in specs:
         if not isinstance(spec, (list, tuple)) or len(spec) != 3:
@@ -147,7 +158,7 @@ def record_global_declaration_spec_8616(
         if not isinstance(old_ctype, str) or not isinstance(old_name, str):
             continue
         old_ctype_name = " ".join(old_ctype.split())
-        old_array_len = int(old_len) if isinstance(old_len, int) and old_len > 0 else None
+        old_array_len = _normalize_global_array_len_8616(old_len)
         if old_name != name:
             merged.append((old_ctype_name, old_name, old_array_len))
             continue
@@ -174,11 +185,102 @@ def record_global_declaration_spec_8616(
         ):
             chosen_len = None
         else:
-            chosen_len = _choose_global_array_len_8616(old_array_len, normalized_len)
+            chosen_len = merge_global_array_extents_8616(old_array_len, normalized_len)
         merged.append((chosen_ctype, name, chosen_len))
     if not replaced:
         merged.append((ctype_name, name, normalized_len))
     typed_codegen._inertia_global_declaration_specs_8616 = tuple(dict.fromkeys(merged))
+
+
+def replace_global_declaration_spec_from_stronger_typed_evidence_8616(
+    codegen: object,
+    *,
+    ctype: GlobalDeclarationCType8616 | NamedAggregateDeclarationCType8616,
+    name: str,
+    array_len: GlobalDeclarationArrayLength8616,
+) -> None:
+    """Replace one weaker declaration after typed evidence upgrades its identity.
+
+    The caller must already have proven storage identity and type compatibility.
+    This function selects by owned storage name only and never infers semantics
+    from the serialized C type spelling being replaced.
+    """
+    if (
+        not isinstance(name, str)
+        or re.fullmatch(r"[A-Za-z_]\w*", name) is None
+        or is_runtime_segment_state_symbol_8616(name)
+    ):
+        return
+    typed_codegen = cast(GlobalDeclarationCodegen8616, codegen)
+    initialize_global_declaration_specs_8616(codegen)
+    try:
+        raw_specs = typed_codegen._inertia_global_declaration_specs_8616
+    except AttributeError:
+        raw_specs = ()
+    retained = tuple(
+        (old_ctype, old_name, old_len)
+        for old_ctype, old_name, old_len in raw_specs
+        if old_name != name
+    )
+    normalized_len = _normalize_global_array_len_8616(array_len)
+    typed_codegen._inertia_global_declaration_specs_8616 = (
+        *retained,
+        (ctype.c_name, name, normalized_len),
+    )
+    _record_strong_global_declaration_spec_8616(
+        typed_codegen,
+        ctype=ctype.c_name,
+        name=name,
+        array_len=normalized_len,
+    )
+
+
+def _record_strong_global_declaration_spec_8616(
+    codegen: GlobalDeclarationCodegen8616,
+    *,
+    ctype: str,
+    name: str,
+    array_len: GlobalDeclarationArrayLength8616,
+) -> None:
+    """Persist one typed replacement across later alias reconciliation."""
+    try:
+        raw_specs = codegen._inertia_strong_global_declaration_specs_8616
+    except AttributeError:
+        raw_specs = ()
+    retained = tuple(
+        (old_ctype, old_name, old_len)
+        for old_ctype, old_name, old_len in raw_specs
+        if old_name != name
+    )
+    codegen._inertia_strong_global_declaration_specs_8616 = (
+        *retained,
+        (ctype, name, array_len),
+    )
+
+
+def reconcile_strong_global_declaration_specs_8616(codegen: object) -> bool:
+    """Replay authoritative typed declarations after weaker alias metadata."""
+    typed_codegen = cast(GlobalDeclarationCodegen8616, codegen)
+    initialize_global_declaration_specs_8616(codegen)
+    try:
+        raw_specs = typed_codegen._inertia_strong_global_declaration_specs_8616
+    except AttributeError:
+        return False
+    strong_specs = tuple(
+        (ctype, name, _normalize_global_array_len_8616(array_len))
+        for ctype, name, array_len in raw_specs
+        if isinstance(ctype, str)
+        and bool(ctype)
+        and isinstance(name, str)
+        and bool(name)
+    )
+    before = typed_codegen._inertia_global_declaration_specs_8616
+    strong_names = {name for _ctype, name, _array_len in strong_specs}
+    retained = tuple(spec for spec in before if spec[1] not in strong_names)
+    typed_codegen._inertia_global_declaration_specs_8616 = tuple(
+        dict.fromkeys((*retained, *strong_specs))
+    )
+    return before != typed_codegen._inertia_global_declaration_specs_8616
 
 
 def record_scalar_global_declaration_spec_8616(
@@ -201,7 +303,7 @@ def record_scalar_global_declaration_spec_8616(
         specs = tuple(cast(Iterable[object], typed_codegen._inertia_global_declaration_specs_8616 or ()))
     except AttributeError:
         specs = ()
-    filtered: list[tuple[str, str, int | None]] = []
+    filtered: list[tuple[str, str, GlobalDeclarationArrayLength8616]] = []
     for spec in specs:
         if not isinstance(spec, (list, tuple)) or len(spec) != 3:
             continue
@@ -209,7 +311,7 @@ def record_scalar_global_declaration_spec_8616(
         if not isinstance(old_ctype, str) or not isinstance(old_name, str):
             continue
         old_ctype_name = " ".join(old_ctype.split())
-        old_array_len = int(old_len) if isinstance(old_len, int) and old_len > 0 else None
+        old_array_len = _normalize_global_array_len_8616(old_len)
         if (
             old_name == name
             and old_array_len == 1
@@ -221,20 +323,36 @@ def record_scalar_global_declaration_spec_8616(
     record_global_declaration_spec_8616(codegen, ctype=ctype, name=name, array_len=None)
 
 
-def _choose_global_array_len_8616(left: int | None, right: int | None) -> int | None:
+def _normalize_global_array_len_8616(value: object) -> GlobalDeclarationArrayLength8616:
+    """Normalize one owned array extent without inventing a numeric bound."""
+    if value is GlobalDeclarationArrayExtent8616.UNKNOWN:
+        return value
+    return int(value) if isinstance(value, int) and value > 0 else None
+
+
+def merge_global_array_extents_8616(
+    left: GlobalDeclarationArrayLength8616,
+    right: GlobalDeclarationArrayLength8616,
+) -> GlobalDeclarationArrayLength8616:
     """Choose the widest proven array extent for one merged global name."""
+    if isinstance(left, int) and isinstance(right, int):
+        return max(left, right)
+    if isinstance(left, int):
+        return left
+    if isinstance(right, int):
+        return right
+    if left is GlobalDeclarationArrayExtent8616.UNKNOWN or right is GlobalDeclarationArrayExtent8616.UNKNOWN:
+        return GlobalDeclarationArrayExtent8616.UNKNOWN
     if left is None:
         return right
-    if right is None:
-        return left
-    return max(left, right)
+    return left
 
 
 def _scalar_global_covers_existing_array_8616(
     left_ctype: str,
-    left_len: int | None,
+    left_len: GlobalDeclarationArrayLength8616,
     right_ctype: str,
-    right_len: int | None,
+    right_len: GlobalDeclarationArrayLength8616,
 ) -> bool:
     """Return whether a scalar declaration exactly covers an existing array."""
     left_width = _ctype_width_8616(left_ctype)
@@ -246,9 +364,12 @@ def _scalar_global_covers_existing_array_8616(
     return False
 
 
-def _array_byte_extent_8616(ctype: str, array_len: int | None) -> int | None:
+def _array_byte_extent_8616(
+    ctype: str,
+    array_len: GlobalDeclarationArrayLength8616,
+) -> int | None:
     """Return the byte extent for a declared array, when it is array-shaped."""
-    if array_len is None:
+    if not isinstance(array_len, int):
         return None
     return _ctype_width_8616(ctype) * array_len
 

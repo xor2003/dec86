@@ -7,7 +7,7 @@ from angr_platforms.X86_16 import decompiler_postprocess as legacy_postprocess
 from angr_platforms.X86_16 import decompiler_postprocess_stage as post_stage
 from angr_platforms.X86_16 import decompiler_structuring_stage as stage
 from angr_platforms.X86_16.decompiler_postprocess_stage import _VoidTailCallGuardDecision8616
-from angr_platforms.X86_16.lowering import real_mode_linear
+from angr_platforms.X86_16.lowering import real_mode_linear, segment_global_materialization
 from angr_platforms.X86_16.lowering.real_mode_linear import DirectStackMoveSourceKind8616
 from angr_platforms.X86_16.lowering.segmented_global_loads import (
     DwordGlobalZeroTestEvidence8616,
@@ -239,25 +239,32 @@ def test_structuring_stable_stack_semantics_owner_records_pass(monkeypatch):
         calls.append("ss")
         return False
 
+    def _runtime_ss_lowering(_codegen, *, project=None):
+        del project
+        calls.append("runtime-ss")
+        return False
+
     def _prune_carriers(_codegen):
         calls.append("carrier")
         return False
 
     monkeypatch.setattr(stage, "transfer_semantic_alias_facts_to_codegen_8616", _transfer)
     monkeypatch.setattr(stage, "lower_stack_accesses_from_alias_facts_8616", _alias_lowering)
+    monkeypatch.setattr(stage, "lower_runtime_ss_segment_helpers_to_stack_8616", _runtime_ss_lowering)
     monkeypatch.setattr(stage, "lower_stable_ss_linear_stack_dereferences_8616", _ss_lowering)
     monkeypatch.setattr(stage, "prune_unread_stack_lowered_register_carriers_8616", _prune_carriers)
 
     changed = stage._apply_structuring_stable_stack_semantics_8616(project, codegen)
 
     assert changed is True
-    assert calls == ["transfer", "alias:1", "ss", "carrier"]
+    assert calls == ["transfer", "alias:1", "runtime-ss", "ss", "carrier"]
     assert codegen._inertia_stable_stack_semantics_structuring_pass_ran_8616 is True
     assert codegen._inertia_codegen_decl_refresh_required_8616 is True
 
 
 def test_structuring_codegen_replays_lowered_register_carrier_consumer(monkeypatch):
     calls: list[str] = []
+    project = SimpleNamespace()
     codegen = SimpleNamespace()
 
     monkeypatch.setattr(
@@ -267,14 +274,26 @@ def test_structuring_codegen_replays_lowered_register_carrier_consumer(monkeypat
     )
     monkeypatch.setattr(
         stage,
+        "_apply_structuring_direct_stack_materialization_8616",
+        lambda actual_project, actual_codegen: calls.append("direct")
+        or (actual_project is project and actual_codegen is codegen),
+    )
+    monkeypatch.setattr(
+        stage,
+        "_replay_materialized_call_stack_metadata_8616",
+        lambda actual_project, actual_codegen: calls.append("call-stack")
+        or (actual_project is project and actual_codegen is codegen),
+    )
+    monkeypatch.setattr(
+        stage,
         "prune_unread_stack_lowered_register_carriers_8616",
         lambda actual_codegen: calls.append("lowering") or actual_codegen is codegen,
     )
 
-    changed = stage._run_structuring_codegen_with_lowering_replay_8616(codegen)
+    changed = stage._run_structuring_codegen_with_lowering_replay_8616(project, codegen)
 
     assert changed is True
-    assert calls == ["codegen", "lowering"]
+    assert calls == ["codegen", "direct", "call-stack", "lowering"]
 
 
 def test_structuring_pointer_arg_indirect_owner_records_pass(monkeypatch):
@@ -622,8 +641,7 @@ def test_structuring_stage_transfers_typed_conditions_before_final_validation_ba
     assert first_loop_guard < calls.index("conditional_continue")
     assert calls.index("conditional_continue") < calls.index("pretest_loop_break")
     assert calls.index("pretest_loop_break") < calls.index("hoisted_jcc_target_copy")
-    assert calls.index("hoisted_jcc_target_copy") < calls.index("switch_loop_exit_return")
-    assert calls.index("switch_loop_exit_return") < calls.index("return_shape")
+    assert calls.index("hoisted_jcc_target_copy") < calls.index("return_shape")
     assert calls.index("return_shape") < calls.index("void_tail_guard")
     first_lowering_replay = calls.index("lowering_replay")
     assert calls.index("void_tail_guard") < first_lowering_replay
@@ -632,7 +650,7 @@ def test_structuring_stage_transfers_typed_conditions_before_final_validation_ba
     final_lowering_replay = len(calls) - 1 - calls[::-1].index("lowering_replay")
     final_fingerprint = len(calls) - 1 - calls[::-1].index("fingerprint")
     assert final_loop_guard < final_condition_refresh < final_lowering_replay
-    assert final_lowering_replay < final_fingerprint
+    assert final_lowering_replay < calls.index("switch_loop_exit_return") < final_fingerprint
     assert calls.count("lowering_replay") == 2
     assert calls.count("unconsumed_loop_break_jcc") == 2
     assert codegen._inertia_typed_conditions_transferred is True
@@ -864,12 +882,13 @@ def test_condition_refresh_replays_after_structured_root_replacement(monkeypatch
     )
     monkeypatch.setattr(
         stage,
-        "materialize_indexed_segmented_global_loads_8616",
-        lambda *_args, **_kwargs: calls.append("indexed-global") or True,
+        "run_segment_global_materialization_8616",
+        lambda *_args, **_kwargs: calls.append("segment-global")
+        or SimpleNamespace(changed=True),
     )
     stage._refresh_structuring_condition_semantics_8616(project, codegen)
 
-    assert calls == ["materialize", "indexed-global"]
+    assert calls == ["materialize", "segment-global"]
     assert codegen._inertia_structuring_conditions_materialized_root_8616 is replacement_statements
     assert codegen._inertia_codegen_decl_refresh_required_8616 is True
 
@@ -1139,7 +1158,7 @@ def test_structuring_condition_cleanup_transfers_and_records_cleanup(monkeypatch
     assert codegen._inertia_condition_cleanup_structuring_pass_ran_8616 is True
 
 
-def test_segment_global_materialization_sequences_stage_owned_passes(monkeypatch):
+def test_segment_global_materialization_sequences_lowering_owned_passes(monkeypatch):
     calls = []
     project = SimpleNamespace(_inertia_c_target="msc6")
     codegen = SimpleNamespace()
@@ -1159,10 +1178,12 @@ def test_segment_global_materialization_sequences_stage_owned_passes(monkeypatch
         return True
 
     def _direct(_project, _codegen, _synthetic_globals, *, cod_metadata=None):
+        assert _codegen.indexed_global_lvalues_ready is True
         calls.append(("direct", _project, _codegen, _synthetic_globals, cod_metadata))
         return False
 
     def _indexed(_project, _codegen, *, cod_metadata=None):
+        _codegen.indexed_global_lvalues_ready = True
         calls.append(("indexed", _project, _codegen, cod_metadata))
         return True
 
@@ -1170,14 +1191,27 @@ def test_segment_global_materialization_sequences_stage_owned_passes(monkeypatch
         calls.append(("widen", _codegen))
         return True
 
-    monkeypatch.setattr(stage, "apply_runtime_segment_lowering_8616", _runtime)
-    monkeypatch.setattr(stage, "materialize_named_segmented_global_loads_8616", _named)
-    monkeypatch.setattr(stage, "materialize_compare_register_global_carriers_8616", _compare)
-    monkeypatch.setattr(stage, "materialize_direct_global_symbol_stores_8616", _direct)
-    monkeypatch.setattr(stage, "materialize_indexed_segmented_global_loads_8616", _indexed)
-    monkeypatch.setattr(stage, "apply_segmented_load_widening_8616", _widen)
+    def _dos_interrupt(_codegen):
+        calls.append(("dos_interrupt", _codegen))
+        return True
 
-    result = stage.run_segment_global_materialization_8616(
+    monkeypatch.setattr(segment_global_materialization, "apply_runtime_segment_lowering_8616", _runtime)
+    monkeypatch.setattr(segment_global_materialization, "materialize_named_segmented_global_loads_8616", _named)
+    monkeypatch.setattr(
+        segment_global_materialization,
+        "materialize_compare_register_global_carriers_8616",
+        _compare,
+    )
+    monkeypatch.setattr(segment_global_materialization, "materialize_direct_global_symbol_stores_8616", _direct)
+    monkeypatch.setattr(segment_global_materialization, "materialize_indexed_segmented_global_loads_8616", _indexed)
+    monkeypatch.setattr(
+        segment_global_materialization,
+        "materialize_dos_interrupt_aggregate_globals_8616",
+        _dos_interrupt,
+    )
+    monkeypatch.setattr(segment_global_materialization, "apply_segmented_load_widening_8616", _widen)
+
+    result = segment_global_materialization.run_segment_global_materialization_8616(
         project,
         codegen,
         synthetic_globals,
@@ -1192,12 +1226,14 @@ def test_segment_global_materialization_sequences_stage_owned_passes(monkeypatch
     assert result.compare_register_global_changed is True
     assert result.direct_global_store_changed is False
     assert result.indexed_global_changed is True
+    assert result.dos_interrupt_aggregate_changed is True
     assert calls == [
         ("runtime", codegen, "msc6"),
         ("named", project, codegen, synthetic_globals, cod_metadata),
         ("compare", project, codegen, synthetic_globals, cod_metadata),
-        ("direct", project, codegen, synthetic_globals, cod_metadata),
         ("indexed", project, codegen, cod_metadata),
+        ("direct", project, codegen, synthetic_globals, cod_metadata),
+        ("dos_interrupt", codegen),
         ("widen", codegen),
     ]
     assert codegen._inertia_segment_global_materialization_8616 == {
@@ -1207,9 +1243,40 @@ def test_segment_global_materialization_sequences_stage_owned_passes(monkeypatch
         "compare_register_global_changed": True,
         "direct_global_store_changed": False,
         "indexed_global_changed": True,
+        "dos_interrupt_aggregate_changed": True,
         "changed": True,
-        "owner": "structuring.stage",
+        "owner": "lowering.segment_global_materialization",
     }
+
+
+def test_late_switch_segment_replay_refreshes_condition_provenance_first(monkeypatch):
+    calls: list[str] = []
+    project = SimpleNamespace()
+    codegen = SimpleNamespace()
+
+    def replay_provenance(_codegen):
+        calls.append("provenance")
+        return SimpleNamespace(changed=True)
+
+    def replay_lowering(*_args, **_kwargs):
+        calls.append("lowering")
+        return SimpleNamespace(changed=False)
+
+    monkeypatch.setattr(
+        stage,
+        "replay_codegen_structured_condition_segment_provenance_8616",
+        replay_provenance,
+    )
+    monkeypatch.setattr(stage, "run_segment_global_materialization_8616", replay_lowering)
+
+    changed = stage._replay_segment_global_lowering_after_switch_replacement_8616(
+        project,
+        codegen,
+        object(),
+    )
+
+    assert changed is True
+    assert calls == ["provenance", "lowering"]
 
 
 def test_redundant_loop_break_carrier_replay_stays_stage_owned(monkeypatch) -> None:
@@ -1421,6 +1488,7 @@ def test_structuring_direct_stack_materialization_records_owner_run_flag(monkeyp
     cod_metadata = object()
     project = SimpleNamespace(_inertia_cod_metadata_by_func_addr_8616={0x4010: cod_metadata})
     codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x4010))
+    function = object()
 
     def stack_mov(_codegen, *, project=None, function=None, allow_stack_slot_fallback=True, source_kinds=None):
         del project, function, allow_stack_slot_fallback, source_kinds
@@ -1450,14 +1518,36 @@ def test_structuring_direct_stack_materialization_records_owner_run_flag(monkeyp
         calls.append("callee_saved")
         return False
 
+    def loop_entry(_project, _codegen, _function):
+        assert (_project, _codegen, _function) == (project, codegen, function)
+        calls.append("loop_entry")
+        return True
+
+    def branch(_project, _codegen, _function):
+        assert (_project, _codegen, _function) == (project, codegen, function)
+        calls.append("branch")
+        return True
+
+    monkeypatch.setattr(stage, "_current_structuring_function_8616", lambda *_args: function)
+    monkeypatch.setattr(stage, "_bind_direct_stack_move_branch_ownership_8616", lambda *_args: None)
     monkeypatch.setattr(stage, "materialize_direct_stack_mov_instructions_8616", stack_mov)
     monkeypatch.setattr(stage, "materialize_direct_stack_incdec_instructions_8616", stack_incdec)
     monkeypatch.setattr(stage, "materialize_direct_global_incdec_instructions_8616", global_incdec)
     monkeypatch.setattr(stage, "materialize_indexed_segmented_global_loads_8616", indexed_global)
     monkeypatch.setattr(stage, "prune_callee_saved_stack_spills_8616", callee_saved)
+    monkeypatch.setattr(stage, "materialize_direct_stack_move_loop_entry_ownership_8616", loop_entry)
+    monkeypatch.setattr(stage, "materialize_direct_stack_move_branch_ownership_8616", branch)
 
     assert stage._apply_structuring_direct_stack_materialization_8616(project, codegen) is True
-    assert calls == ["mov", "incdec", "global_incdec", "callee_saved", "indexed_global"]
+    assert calls == [
+        "mov",
+        "incdec",
+        "global_incdec",
+        "callee_saved",
+        "branch",
+        "loop_entry",
+        "indexed_global",
+    ]
     assert codegen._inertia_direct_stack_materialization_structuring_pass_ran_8616 is True
     assert codegen._inertia_direct_global_incdec_materialization_structuring_pass_ran_8616 is True
     assert codegen._inertia_codegen_decl_refresh_required_8616 is True
@@ -1542,7 +1632,6 @@ def test_structuring_validation_prime_refreshes_conditions_after_final_lowering_
         "_repair_structuring_switch_loop_exit_returns_8616",
         "_materialize_structuring_return_shape_8616",
         "run_structuring_condition_cleanup_8616",
-        "lower_structured_insert_intrinsics_8616",
     ):
         monkeypatch.setattr(stage, name, unchanged)
     monkeypatch.setattr(stage._codegen, "split_distinct_condition_call_occurrences_8616", unchanged)
@@ -1583,6 +1672,10 @@ def test_structuring_validation_prime_refreshes_conditions_after_final_lowering_
 
     def carrier_prune(*_args, **_kwargs):
         calls.append("carrier-prune")
+        return False
+
+    def lowering_replay(*_args, **_kwargs):
+        calls.extend(("segment", "consumed-push", "carrier-prune"))
         return False
 
     monkeypatch.setattr(
@@ -1631,7 +1724,7 @@ def test_structuring_validation_prime_refreshes_conditions_after_final_lowering_
         "prune_unread_stack_lowered_register_carriers_8616",
         carrier_prune,
     )
-
+    monkeypatch.setattr(stage, "_replay_structuring_lowering_before_validation_8616", lowering_replay)
     stage._prime_structuring_validation_semantics_8616(project, codegen)
 
     assert calls == [
@@ -1703,8 +1796,11 @@ def test_structuring_lowering_replay_orders_call_and_pointer_consumers_before_co
         calls.append("structured-intrinsics")
         return False
 
-    def carrier_prune(*_args, **_kwargs):
-        calls.append("carrier-prune")
+    def prune_structured_intrinsics(*_args, **_kwargs):
+        calls.append("prune-structured-intrinsics")
+        return False
+
+    def no_op_type_consumer(*_args, **_kwargs):
         return False
 
     monkeypatch.setattr(
@@ -1712,6 +1808,8 @@ def test_structuring_lowering_replay_orders_call_and_pointer_consumers_before_co
         "_materialize_structuring_callsite_prototypes_8616",
         callsite_prototypes,
     )
+    monkeypatch.setattr(stage, "materialize_annotated_stack_prototype_8616", no_op_type_consumer)
+    monkeypatch.setattr(stage, "materialize_call_return_conditions_8616", no_op_type_consumer)
     monkeypatch.setattr(
         stage,
         "_materialize_structuring_callsite_stack_arguments_8616",
@@ -1745,19 +1843,23 @@ def test_structuring_lowering_replay_orders_call_and_pointer_consumers_before_co
     monkeypatch.setattr(stage, "_prime_structuring_segment_global_semantics_8616", segment_replay)
     monkeypatch.setattr(
         stage,
-        "prune_materialized_call_push_stack_assignments_8616",
+        "_replay_materialized_call_stack_metadata_8616",
         consumed_push_replay,
+    )
+    monkeypatch.setattr(stage, "materialize_software_interrupt_calls_8616", no_op_type_consumer)
+    monkeypatch.setattr(
+        stage,
+        "prune_unused_structured_insert_intrinsics_8616",
+        prune_structured_intrinsics,
     )
     monkeypatch.setattr(
         stage,
         "lower_structured_insert_intrinsics_8616",
         structured_intrinsics,
     )
-    monkeypatch.setattr(
-        stage,
-        "prune_unread_stack_lowered_register_carriers_8616",
-        carrier_prune,
-    )
+    monkeypatch.setattr(stage, "materialize_signed_global_declarations_8616", no_op_type_consumer)
+    monkeypatch.setattr(stage, "apply_condition_scalar_types_8616", no_op_type_consumer)
+    monkeypatch.setattr(stage, "materialize_explicit_scalar_char_types_8616", no_op_type_consumer)
 
     changed = stage._replay_structuring_lowering_before_validation_8616(
         project,
@@ -1775,8 +1877,8 @@ def test_structuring_lowering_replay_orders_call_and_pointer_consumers_before_co
         "direct-stack",
         "segment",
         "consumed-push",
+        "prune-structured-intrinsics",
         "structured-intrinsics",
-        "carrier-prune",
     ]
 
 
@@ -1949,6 +2051,11 @@ def test_structuring_pass_validation_refreshes_conditions_before_lowering_and_fi
     )
     monkeypatch.setattr(
         stage,
+        "_repair_structuring_switch_loop_exit_returns_8616",
+        lambda *_args: events.append("switch-exit") or False,
+    )
+    monkeypatch.setattr(
+        stage,
         "fingerprint_x86_16_tail_validation_boundary",
         lambda *_args, **_kwargs: events.append("fingerprint") or ("fp", len(events)),
     )
@@ -1983,7 +2090,7 @@ def test_structuring_pass_validation_refreshes_conditions_before_lowering_and_fi
 
     finalize()
 
-    assert events[:3] == ["conditions", "lowering", "fingerprint"]
+    assert events[:4] == ["conditions", "lowering", "switch-exit", "fingerprint"]
 
 
 def test_structuring_validation_accepts_evidenced_direct_stack_update_delta():

@@ -102,7 +102,6 @@ OPTIMIZATION_PASSES: tuple[OptimizationPassSpec, ...] = (
     ),
 )
 
-
 def describe_x86_16_optimization_passes() -> tuple[tuple[str, str], ...]:
     """Return the cleanup optimization inventory for tests and diagnostics."""
     return tuple((spec.name, spec.description) for spec in OPTIMIZATION_PASSES)

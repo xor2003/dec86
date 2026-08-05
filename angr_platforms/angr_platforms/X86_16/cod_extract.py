@@ -23,6 +23,7 @@ class CODGlobalRef:
     width: int
     indexed: bool
     instruction_bytes: bytes
+    source_alias: str | None = None
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,7 @@ class CODGlobalAddressRef:
     width: int
     instruction_bytes: bytes
     string_literal: str | None = None
+    source_alias: str | None = None
 
 
 @dataclass(frozen=True)
@@ -287,8 +289,13 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
         except Exception:
             pass
         string_literals = _extract_cod_data_string_literals(lines)
-        global_refs = _extract_cod_global_refs_from_entries(raw_entries, tuple(source_lines))
-        global_address_refs = _extract_cod_global_address_refs_from_entries(raw_entries, string_literals)
+        symbol_aliases = _extract_cod_symbol_aliases(lines)
+        global_refs = _extract_cod_global_refs_from_entries(raw_entries, symbol_aliases)
+        global_address_refs = _extract_cod_global_address_refs_from_entries(
+            raw_entries,
+            string_literals,
+            symbol_aliases,
+        )
 
         return CODProcMetadata(
             stack_aliases=stack_aliases,
@@ -325,6 +332,21 @@ _COD_OFFSET_GLOBAL_REF_RE = re.compile(
     r"(?P<disp>[+-](?:0x[0-9A-Fa-f]+|[0-9A-Fa-f]+H|\d+))?",
     re.IGNORECASE,
 )
+_COD_SYMBOL_ALIAS_RE = re.compile(
+    r"^\s*;\s*(?P<generated>\$[A-Za-z][\w$?@]*)\s+EQU\s+(?P<source>[A-Za-z_][\w$?@]*)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _extract_cod_symbol_aliases(lines: list[str]) -> dict[str, str]:
+    """Return exact compiler-symbol aliases declared by COD ``EQU`` comments."""
+    aliases: dict[str, str] = {}
+    for line in lines:
+        match = _COD_SYMBOL_ALIAS_RE.match(line)
+        if match is None:
+            continue
+        aliases.setdefault(match.group("generated").casefold(), match.group("source"))
+    return aliases
 
 
 def _cod_entry_offset_8616(entry: dict[str, object]) -> int | None:
@@ -353,47 +375,48 @@ def _parse_cod_global_disp(text: str | None) -> int:
     return sign * value
 
 
-def _source_local_static_names(source_lines: tuple[str, ...]) -> frozenset[str]:
-    names: set[str] = set()
-    static_decl_re = re.compile(
-        r"^\s*static\s+(?:unsigned\s+|signed\s+)?(?:char|short|int|long)\s+(?P<name>[A-Za-z_]\w*)\b"
-    )
-    for line in source_lines:
-        match = static_decl_re.match(line)
-        if match is not None:
-            names.add(match.group("name"))
-    return frozenset(names)
-
-
-def _canonical_cod_global_ref_name(raw_name: str | None, source_local_statics: frozenset[str]) -> str | None:
+def _canonical_cod_global_ref_name(
+    raw_name: str | None,
+    symbol_aliases: dict[str, str] | None = None,
+) -> str | None:
+    """Canonicalize one COD global while preserving unique storage identity."""
     if not isinstance(raw_name, str) or not raw_name:
         return None
     raw = raw_name.lstrip("_")
     static_match = re.match(r"^\$[A-Za-z]+\d+_(?P<name>[A-Za-z_]\w*)$", raw)
-    if static_match is not None and static_match.group("name") in source_local_statics:
+    if static_match is not None:
         name = f"_{raw.removeprefix('$')}"
         return name if re.fullmatch(r"[A-Za-z_]\w*", name) is not None else None
-    else:
-        name = static_match.group("name") if static_match is not None else canonical_known_cod_object_name(raw_name) or raw
+    alias_name = (symbol_aliases or {}).get(raw.casefold())
+    name = canonical_known_cod_object_name(alias_name or raw_name) or alias_name or raw
     name = name.lstrip("_")
     return name if re.fullmatch(r"[A-Za-z_]\w*", name) is not None else None
 
 
-def _canonical_cod_address_ref_name(raw_name: str | None) -> str | None:
+def _canonical_cod_address_ref_name(
+    raw_name: str | None,
+    symbol_aliases: dict[str, str] | None = None,
+) -> str | None:
+    """Canonicalize one COD address while preserving unique storage identity."""
     if not isinstance(raw_name, str) or not raw_name:
         return None
+    generated = raw_name.lstrip("_")
+    if re.fullmatch(r"\$[A-Za-z]+\d+_[A-Za-z_]\w*", generated) is not None:
+        return f"_{generated.removeprefix('$')}"
     raw = raw_name.lstrip("_").lstrip("$")
-    name = canonical_known_cod_object_name(raw_name)
+    alias_name = (symbol_aliases or {}).get(raw_name.lstrip("_").casefold())
+    name = canonical_known_cod_object_name(alias_name or raw_name)
     if name is None or not re.fullmatch(r"[A-Za-z_]\w*", name):
-        name = raw
+        name = alias_name or raw
     return name if re.fullmatch(r"[A-Za-z_]\w*", name) is not None else None
 
 
 def _extract_cod_global_refs_from_entries(
-    entries: list[dict[str, object]], source_lines: tuple[str, ...] = ()
+    entries: list[dict[str, object]],
+    symbol_aliases: dict[str, str] | None = None,
 ) -> tuple[CODGlobalRef, ...]:
+    """Extract typed global references from COD instruction rows."""
     width_by_name = {"BYTE": 1, "WORD": 2, "DWORD": 4}
-    source_local_statics = _source_local_static_names(source_lines)
     refs: list[CODGlobalRef] = []
     for entry in entries:
         offset = entry.get("offset")
@@ -406,7 +429,7 @@ def _extract_cod_global_refs_from_entries(
         match = indexed_match if indexed_match is not None else direct_match
         if match is None:
             continue
-        name = _canonical_cod_global_ref_name(match.group("name"), source_local_statics)
+        name = _canonical_cod_global_ref_name(match.group("name"), symbol_aliases)
         width = width_by_name.get(str(match.group("width")).upper())
         if name is None or width is None:
             continue
@@ -423,14 +446,18 @@ def _extract_cod_global_refs_from_entries(
                 width=width,
                 indexed=indexed_match is not None,
                 instruction_bytes=instruction_bytes,
+                source_alias=(symbol_aliases or {}).get(match.group("name").lstrip("_").casefold()),
             )
         )
     return tuple(refs)
 
 
 def _extract_cod_global_address_refs_from_entries(
-    entries: list[dict[str, object]], string_literals: dict[str, str] | None = None
+    entries: list[dict[str, object]],
+    string_literals: dict[str, str] | None = None,
+    symbol_aliases: dict[str, str] | None = None,
 ) -> tuple[CODGlobalAddressRef, ...]:
+    """Extract typed global-address references from COD instruction rows."""
     refs: list[CODGlobalAddressRef] = []
     literals = string_literals or {}
     for entry in entries:
@@ -442,7 +469,7 @@ def _extract_cod_global_address_refs_from_entries(
         match = _COD_OFFSET_GLOBAL_REF_RE.search(text)
         if match is None:
             continue
-        name = _canonical_cod_address_ref_name(match.group("name"))
+        name = _canonical_cod_address_ref_name(match.group("name"), symbol_aliases)
         if name is None:
             continue
         refs.append(
@@ -453,6 +480,7 @@ def _extract_cod_global_address_refs_from_entries(
                 width=2,
                 instruction_bytes=instruction_bytes,
                 string_literal=literals.get(name),
+                source_alias=(symbol_aliases or {}).get(match.group("name").lstrip("_").casefold()),
             )
         )
     return tuple(refs)
@@ -828,12 +856,12 @@ def extract_small_two_arg_cod_logic_entries(entries: list[dict[str, object]]) ->
         saw_ret = False
         arg_disps: set[int] = set()
         body_entries: list[dict[str, object]] = []
-
         for idx, entry in enumerate(entries[2:], start=2):
             text = str(entry.get("text", "")).strip().lower()
+            mnemonic = text.split(None, 1)[0] if text else ""
             if "[bp-" in text or "sub\tsp," in text or "enter" in text:
                 return None
-            if "call" in text:
+            if mnemonic in {"call", "iret"}:
                 return None
 
             for match in re.finditer(r"\[bp\+([0-9a-f]+)\]", text):
@@ -841,12 +869,23 @@ def extract_small_two_arg_cod_logic_entries(entries: list[dict[str, object]]) ->
 
             next_text = str(entries[idx + 1].get("text", "")).strip().lower() if idx + 1 < len(entries) else ""
             if text == "mov\tsp,bp":
+                data = _cod_entry_bytes_8616(entry)
+                if data is None:
+                    return None
+                replacement = dict(entry)
+                replacement["bytes"] = b"\x90" * len(data)
+                replacement["text"] = "nop"
+                body_entries.append(replacement)
                 continue
             if text == "pop\tbp" and next_text == "ret":
+                data = _cod_entry_bytes_8616(entry)
+                if data is None:
+                    return None
+                replacement = dict(entry)
+                replacement["bytes"] = b"\x90" * len(data)
+                replacement["text"] = "nop"
+                body_entries.append(replacement)
                 continue
-            if text == "nop":
-                continue
-
             body_entries.append(entry)
             if text == "ret":
                 saw_ret = True

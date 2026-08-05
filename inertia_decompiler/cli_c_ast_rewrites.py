@@ -33,15 +33,16 @@ from angr_platforms.X86_16.analysis_helpers import (
     collect_interrupt_service_calls,
     dos_helper_declarations,
     interrupt_service_addr,
-    interrupt_service_declarations,
     preferred_known_helper_signature_decl,
     render_dos_int21_call,
     render_interrupt_call,
 )
 from angr_platforms.X86_16.annotations import _normalize_bp_disp
 from angr_platforms.X86_16.cod_extract import CODProcMetadata
-from angr_platforms.X86_16.cod_known_objects import known_cod_object_spec
 from angr_platforms.X86_16.cod_source_rewrites import rewrite_cod_proc_from_source as _rewrite_cod_proc_from_source
+from angr_platforms.X86_16.lowering.c_runtime_header import (
+    interrupt_helper_declarations_8616,
+)
 from angr_platforms.X86_16.lowering.segmented_lowering import _SegmentedAccess
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 from angr_platforms.X86_16.semantics.alias_query import (
@@ -97,8 +98,8 @@ StructuredAstValue: TypeAlias = Any
 StructuredCodegenValue: TypeAlias = Any
 AngrProjectValue: TypeAlias = Any
 
-_AccessTraitEvidenceProfile = _cli_access_profiles.AccessTraitEvidenceProfile
-_AccessTraitStrideEvidence = _cli_access_profiles.AccessTraitStrideEvidence
+_AccessTraitEvidenceProfile: TypeAlias = _cli_access_profiles.AccessTraitEvidenceProfile
+_AccessTraitStrideEvidence: TypeAlias = _cli_access_profiles.AccessTraitStrideEvidence
 
 
 def _compat_callback(callback: Callable[..., object]) -> StructuredAstValue:
@@ -245,7 +246,7 @@ def _helper_name(project: AngrProjectValue, addr: int) -> str | None:
     name = getattr(proc, "display_name", None)
     if isinstance(name, str) and name:
         return name
-    return proc.__class__.__name__
+    return cast(str, proc.__class__.__name__)
 
 
 def _attach_cod_callee_names(
@@ -255,11 +256,15 @@ def _attach_cod_callee_names(
 
 
 def _build_cod_positive_bp_alias_map(bp_disps: list[int], cod_metadata: CODProcMetadata | None) -> dict[int, str]:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> dict[int, str]:
         if cod_metadata is None:
             return {}
+        aliases = getattr(cod_metadata, "stack_aliases", None)
+        if not isinstance(aliases, dict):
+            return {}
+        cast_aliases = cast(dict[int, str], aliases)
 
-        meta_positive = sorted((disp, name) for disp, name in cod_metadata.stack_aliases.items() if disp > 0)
+        meta_positive = sorted((disp, name) for disp, name in cast_aliases.items() if isinstance(disp, int) and isinstance(name, str) and disp > 0)
         if not meta_positive:
             return {}
 
@@ -269,7 +274,7 @@ def _build_cod_positive_bp_alias_map(bp_disps: list[int], cod_metadata: CODProcM
 
         alias_map: dict[int, str] = {}
         for disp in var_positive:
-            direct = cod_metadata.stack_aliases.get(disp)
+            direct = cast_aliases.get(disp)
             if direct is not None:
                 alias_map[disp] = direct
 
@@ -294,12 +299,17 @@ def _cod_stack_alias_for_disp(
 ) -> str | None:
     if cod_metadata is None:
         return None
+    stack_aliases = getattr(cod_metadata, "stack_aliases", None)
+    if not isinstance(stack_aliases, dict):
+        return None
+    cast_aliases = cast(dict[int, str], stack_aliases)
+
     if argument_aliases is not None:
         alias = argument_aliases.get(disp)
         if alias is not None:
             return alias
     if disp < 0:
-        alias = cod_metadata.stack_aliases.get(disp)
+        alias = cast_aliases.get(disp)
         if alias is not None:
             return alias
     if normalized_aliases is not None:
@@ -310,7 +320,7 @@ def _cod_stack_alias_for_disp(
         alias = positive_aliases.get(disp)
         if alias is not None:
             return alias
-    return cod_metadata.stack_aliases.get(disp)
+    return cast_aliases.get(disp)
 
 
 def _build_cod_normalized_bp_alias_map(cod_metadata: CODProcMetadata | None) -> dict[int, str]:
@@ -327,7 +337,7 @@ def _build_cod_normalized_bp_alias_map(cod_metadata: CODProcMetadata | None) -> 
 
 
 def _collect_cod_name_ownership(codegen: StructuredCodegenValue) -> tuple[set[str], dict[str, int]]:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> tuple[set[str], dict[str, int]]:
         used_names: set[str] = set()
         name_owner_offsets: dict[str, int] = {}
         variables_in_use = getattr(codegen.cfunc, "variables_in_use", {})
@@ -365,7 +375,7 @@ def _ordered_stack_identity_variables(codegen: StructuredCodegenValue) -> list[t
             getattr(item[0], "offset", 0) if isinstance(getattr(item[0], "offset", 0), int) else 0,
             -getattr(item[0], "size", 0) if isinstance(getattr(item[0], "size", 0), int) else 0,
             getattr(item[0], "name", "") or "",
-        ),
+        )
     )
 
 
@@ -422,7 +432,7 @@ def _ordered_stack_identity_nodes(codegen: StructuredCodegenValue) -> list[tuple
 def _apply_generic_unified_name_for_param_slot(
     variable: StructuredAstValue, cvar: StructuredAstValue, cod_metadata: CODProcMetadata | None
 ) -> bool:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> bool:
         disp = getattr(variable, "offset", None)
         if not (isinstance(disp, int) and disp in {0, 2}):
             return False
@@ -559,7 +569,7 @@ def _structured_codegen_node(value: StructuredAstValue) -> bool:
 
 
 def _structured_slot_names_8616(value: StructuredAstValue) -> tuple[str, ...]:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> tuple[str, ...]:
         attrs: list[str] = []
         if type(value) is object:
             return ()
@@ -595,12 +605,13 @@ def _structured_slot_names_8616(value: StructuredAstValue) -> tuple[str, ...]:
     return _impl()
 
 
-def _iter_c_node_children_8616(value: StructuredAstValue, seen_values: set[int] | None = None) -> StructuredAstValue:
-    def _impl() -> StructuredAstValue:
+def _iter_c_node_children_8616(value: StructuredAstValue, seen_values: set[int] | None = None) -> tuple[StructuredAstValue, ...]:
+    def _impl() -> tuple[StructuredAstValue, ...]:
         nonlocal seen_values
         if seen_values is None:
             seen_values = set()
 
+        collected: list[StructuredAstValue] = []
         stack = [value]
         while stack:
             current = stack.pop()
@@ -613,7 +624,7 @@ def _iter_c_node_children_8616(value: StructuredAstValue, seen_values: set[int] 
             seen_values.add(current_id)
 
             if _structured_codegen_node(current):
-                yield current
+                collected.append(current)
                 continue
 
             if isinstance(current, (str, bytes)):
@@ -640,6 +651,8 @@ def _iter_c_node_children_8616(value: StructuredAstValue, seen_values: set[int] 
                     stack.extend(tuple(current))
                 except Exception:
                     continue
+
+        return tuple(collected)
 
     return _impl()
 
@@ -685,17 +698,22 @@ class _CODSourceRewriteSpec:
 
     def apply(self, c_text: str, metadata: CODProcMetadata | None) -> str:
         """Apply this rewrite through the quarantined legacy source boundary."""
-        return _rewrite_cod_proc_from_source(
+        return str(
+            _rewrite_cod_proc_from_source(
             c_text,
             metadata,
             header_regex=self.header_regex,
             rewritten=self.rewritten,
             required_lines=self.required_lines,
         )
+        )
 
 
 def _segment_reg_name(node: StructuredAstValue, project: AngrProjectValue) -> str | None:
-    return _cli_segmented._segment_reg_name(node, project, project_rewrite_cache=_project_rewrite_cache)
+    return cast(
+        str | None,
+        _cli_segmented._segment_reg_name(node, project, project_rewrite_cache=_project_rewrite_cache),
+    )
 
 
 def _classify_segmented_addr_expr(node: StructuredAstValue, project: AngrProjectValue) -> _SegmentedAccess | None:
@@ -722,20 +740,26 @@ def _classify_segmented_dereference(node: StructuredAstValue, project: AngrProje
 
 
 def _match_real_mode_linear_expr(node: StructuredAstValue, project: AngrProjectValue) -> tuple[str | None, int | None]:
-    return _cli_segmented._match_real_mode_linear_expr(
-        node,
-        project,
-        project_rewrite_cache=_project_rewrite_cache,
-        classify_segmented_addr_expr=_classify_segmented_addr_expr,
+    return cast(
+        tuple[str | None, int | None],
+        _cli_segmented._match_real_mode_linear_expr(
+            node,
+            project,
+            project_rewrite_cache=_project_rewrite_cache,
+            classify_segmented_addr_expr=_classify_segmented_addr_expr,
+        ),
     )
 
 
 def _match_segmented_dereference(node: StructuredAstValue, project: AngrProjectValue) -> tuple[str | None, int | None]:
-    return _cli_segmented._match_segmented_dereference(
-        node,
-        project,
-        project_rewrite_cache=_compat_callback(_project_rewrite_cache),
-        classify_segmented_dereference=_compat_callback(_classify_segmented_dereference),
+    return cast(
+        tuple[str | None, int | None],
+        _cli_segmented._match_segmented_dereference(
+            node,
+            project,
+            project_rewrite_cache=_compat_callback(_project_rewrite_cache),
+            classify_segmented_dereference=_compat_callback(_classify_segmented_dereference),
+        ),
     )
 
 
@@ -954,7 +978,7 @@ def _replace_list_child_attrs(
     *,
     should_process_child: Callable[[StructuredAstValue, str], bool] | None = None,
 ) -> bool:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> bool:
         changed = False
         for attr in _CHILD_LIST_ATTRS:
             if not hasattr(current, attr):
@@ -1000,7 +1024,7 @@ def _replace_condition_pairs(
     *,
     should_process_child: Callable[[StructuredAstValue, str], bool] | None = None,
 ) -> bool:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> bool:
         if callable(should_process_child) and not should_process_child(current, "condition_and_nodes"):
             return False
         if not hasattr(current, "condition_and_nodes"):
@@ -1110,7 +1134,7 @@ def _iter_c_nodes_deep(node: StructuredAstValue, seen: set[int] | None = None) -
 def _same_c_expression(
     lhs: StructuredAstValue, rhs: StructuredAstValue, seen_pairs: set[tuple[int, int]] | None = None
 ) -> bool:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> bool:
         nonlocal seen_pairs
         if type(lhs) is not type(rhs):
             return False
@@ -1123,7 +1147,7 @@ def _same_c_expression(
         seen_pairs.add(pair)
 
         if isinstance(lhs, structured_c.CConstant):
-            return lhs.value == rhs.value
+            return bool(lhs.value == rhs.value)
 
         if isinstance(lhs, structured_c.CTypeCast):
             return _same_c_expression(lhs.expr, rhs.expr, seen_pairs)
@@ -1165,15 +1189,18 @@ def _same_c_expression(
             if type(lvar) is not type(rvar):
                 return False
             if isinstance(lvar, SimRegisterVariable):
-                return lvar.reg == getattr(rvar, "reg", None)
+                return bool(lvar.reg == getattr(rvar, "reg", None))
             if isinstance(lvar, SimStackVariable):
-                return (
+                return bool(
                     lvar.base == getattr(rvar, "base", None)
                     and lvar.offset == getattr(rvar, "offset", None)
                     and lvar.size == getattr(rvar, "size", None)
                 )
             if isinstance(lvar, SimMemoryVariable):
-                return lvar.addr == getattr(rvar, "addr", None) and lvar.size == getattr(rvar, "size", None)
+                return bool(
+                    lvar.addr == getattr(rvar, "addr", None)
+                    and lvar.size == getattr(rvar, "size", None)
+                )
             return lvar == rvar
 
         return lhs is rhs
@@ -1191,20 +1218,21 @@ def _same_c_storage(lhs: StructuredAstValue, rhs: StructuredAstValue) -> bool:
         return False
 
     if isinstance(lvar, SimRegisterVariable):
-        return lvar.reg == getattr(rvar, "reg", None)
+        return bool(lvar.reg == getattr(rvar, "reg", None))
     if isinstance(lvar, SimStackVariable):
-        return lvar.base == getattr(rvar, "base", None) and lvar.offset == getattr(
-            rvar, "offset", None
+        return bool(
+            lvar.base == getattr(rvar, "base", None)
+            and lvar.offset == getattr(rvar, "offset", None)
         )
     if isinstance(lvar, SimMemoryVariable):
-        return lvar.addr == getattr(rvar, "addr", None)
+        return bool(lvar.addr == getattr(rvar, "addr", None))
     return lvar == rvar
 
 
 def _same_stack_slot_identity_var(lhs_var: StructuredAstValue, rhs_var: StructuredAstValue) -> bool:
     lhs_identity = _stack_slot_identity_for_variable(lhs_var)
     rhs_identity = _stack_slot_identity_for_variable(rhs_var)
-    return lhs_identity is not None and rhs_identity is not None and lhs_identity == rhs_identity
+    return bool(lhs_identity is not None and rhs_identity is not None and lhs_identity == rhs_identity)
 
 
 def _stack_slot_identity_can_join_var(lhs_var: StructuredAstValue, rhs_var: StructuredAstValue) -> bool:
@@ -1212,7 +1240,7 @@ def _stack_slot_identity_can_join_var(lhs_var: StructuredAstValue, rhs_var: Stru
     rhs_identity = _stack_slot_identity_for_variable(rhs_var)
     if lhs_identity is None or rhs_identity is None:
         return False
-    return lhs_identity.can_join(rhs_identity)
+    return bool(lhs_identity.can_join(rhs_identity))
 
 
 def _same_stack_slot_identity(lhs: StructuredAstValue, rhs: StructuredAstValue) -> bool:
@@ -2694,10 +2722,10 @@ def _simplify_structured_c_expressions(codegen: StructuredCodegenValue) -> bool:
                             return structured_c.CConstant(
                                 const_value if const_value is not None else 0, type_, codegen=codegen
                             )
-                        result = rebuilt_terms[0]
+                        rebuilt_result: object = rebuilt_terms[0]
                         for term in rebuilt_terms[1:]:
-                            result = structured_c.CBinaryOp(node.op, result, term, codegen=codegen)
-                        return result
+                            rebuilt_result = structured_c.CBinaryOp(node.op, rebuilt_result, term, codegen=codegen)
+                        return rebuilt_result
                 if node.op in {"Add", "Or", "Xor"}:
                     if _c_constant_value(lhs) == 0:
                         return node.rhs
@@ -2802,7 +2830,8 @@ def _simplify_structured_c_expressions(codegen: StructuredCodegenValue) -> bool:
                         if isinstance(maybe_inner, structured_c.CVariable):
                             alias = mask_shift_aliases.get(id(maybe_inner.variable))
                             if alias is not None:
-                                base_expr, mask, total_shift = alias
+                                mask_alias = alias
+                                base_expr, mask, total_shift = mask_alias
                                 if mask == 0xFF00:
                                     simplified = structured_c.CBinaryOp(
                                         "Shr",
@@ -2824,9 +2853,9 @@ def _simplify_structured_c_expressions(codegen: StructuredCodegenValue) -> bool:
                             shift = _c_constant_value(_unwrap_c_casts(inner.rhs))
                             shifted = _unwrap_c_casts(inner.lhs)
                             if isinstance(shifted, structured_c.CVariable):
-                                alias = shift_extract_aliases.get(id(shifted.variable))
-                                if alias is not None and isinstance(shift, int):
-                                    base_expr, base_shift = alias
+                                shift_alias = shift_extract_aliases.get(id(shifted.variable))
+                                if shift_alias is not None and isinstance(shift, int):
+                                    base_expr, base_shift = shift_alias
                                     total_shift = base_shift + shift
                                     simplified = structured_c.CBinaryOp(
                                         "Shr",
@@ -2858,15 +2887,15 @@ def _simplify_structured_c_expressions(codegen: StructuredCodegenValue) -> bool:
                                 codegen=codegen,
                             )
                     if _is_c_constant_int(rhs, 8) and isinstance(lhs, structured_c.CVariable):
-                        alias = high_byte_aliases.get(id(lhs.variable))
-                        if alias is not None:
+                        high_alias = high_byte_aliases.get(id(lhs.variable))
+                        if high_alias is not None:
                             type_ = (
                                 node.type
                                 or getattr(node.lhs, "type", None)
                                 or getattr(node.rhs, "type", None)
                                 or SimTypeShort(False)
                             )
-                            return structured_c.CConstant(alias, type_, codegen=codegen)
+                            return structured_c.CConstant(high_alias, type_, codegen=codegen)
                 if lhs is not node.lhs or rhs is not node.rhs:
                     return resolved
             simplified = _simplify_boolean_expr(node, codegen)
@@ -3155,7 +3184,7 @@ def _attach_cod_global_names(
 def _attach_cod_global_declaration_names(
     codegen: StructuredCodegenValue, synthetic_globals: dict[int, tuple[str, int]] | None
 ) -> bool:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> bool:
         if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
             return False
 
@@ -3208,7 +3237,9 @@ def _attach_cod_global_declaration_names(
 def _attach_cod_global_declaration_types(
     codegen: StructuredCodegenValue, synthetic_globals: dict[int, tuple[str, int]] | None
 ) -> bool:
-    def _impl() -> StructuredAstValue:
+    """Apply scalar storage widths; aggregate typing is owned by Lowering."""
+
+    def _impl() -> bool:
         if not synthetic_globals or getattr(codegen, "cfunc", None) is None:
             return False
 
@@ -3220,10 +3251,7 @@ def _attach_cod_global_declaration_types(
             symbol = _synthetic_global_entry(synthetic_globals, getattr(variable, "addr", None))
             if symbol is None:
                 return None, None, None
-            raw_name, width = symbol
-            known_spec = known_cod_object_spec(raw_name)
-            if known_spec is not None:
-                return known_spec.type, known_spec.size, known_spec.name
+            _raw_name, width = symbol
             if width == 1:
                 return char_type, 1, None
             if width >= 2:
@@ -3330,10 +3358,10 @@ def _access_trait_variable_key(variable: StructuredAstValue) -> tuple[object, ..
 
 
 def _access_trait_profile_for_key(
-    evidence_profiles: Mapping[tuple[object, ...], "_AccessTraitEvidenceProfile"],
+    evidence_profiles: Mapping[tuple[object, ...], _AccessTraitEvidenceProfile],
     base_key: tuple[object, ...],
-) -> "_AccessTraitEvidenceProfile | None":
-    return _cli_access_profiles.access_trait_profile_for_key(evidence_profiles, base_key)
+) -> _AccessTraitEvidenceProfile | None:
+    return cast(_AccessTraitEvidenceProfile | None, _cli_access_profiles.access_trait_profile_for_key(evidence_profiles, base_key))  # type: ignore[redundant-cast]
 
 
 @dataclass(frozen=True)
@@ -3353,21 +3381,26 @@ class _AccessTraitRewriteDecision:
 
     def should_rename_stack(self) -> bool:
         """Return whether stable evidence permits stack-object renaming."""
-        return self._inner().should_rename_stack()
+        return bool(self._inner().should_rename_stack())
 
     def preferred_kind(self) -> str | None:
         """Return the preferred recovered object kind, when evidence is stable."""
-        return self._inner().preferred_kind()
+        result = self._inner().preferred_kind()
+        return result if isinstance(result, str) else None
 
     def candidate_field_names(self) -> tuple[str, ...]:
         """Return deterministic field-name candidates from access evidence."""
-        return self._inner().candidate_field_names(_access_trait_field_name)
+        result = self._inner().candidate_field_names(_access_trait_field_name)
+        return tuple(result) if isinstance(result, tuple) else ()
 
 
 def _build_access_trait_evidence_profiles(
     traits: dict[str, dict[tuple[object, ...], object]],
 ) -> dict[tuple[object, ...], _AccessTraitEvidenceProfile]:
-    return _cli_access_profiles.build_access_trait_evidence_profiles(traits)
+    return cast(  # type: ignore[redundant-cast]
+        dict[tuple[object, ...], _AccessTraitEvidenceProfile],
+        _cli_access_profiles.build_access_trait_evidence_profiles(traits),
+    )
 
 
 def _analyze_widening_expr(
@@ -3477,11 +3510,16 @@ def _access_trait_member_candidates(
     traits: dict[str, dict[tuple[object, ...], int]],
 ) -> dict[tuple[object, ...], list[tuple[int, int, int]]]:
     compatible_traits = cast(dict[str, dict[tuple[object, ...], object]], traits)
-    return _cli_access_profiles.access_trait_member_candidates(compatible_traits)
+    return cast(  # type: ignore[redundant-cast]
+        dict[tuple[object, ...], list[tuple[int, int, int]]],
+        _cli_access_profiles.access_trait_member_candidates(compatible_traits),
+    )
 
 
 def _should_attach_access_trait_names(codegen: StructuredCodegenValue) -> bool:
-    return _cli_access_trait_rewrite._should_attach_access_trait_names(
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_access_trait_rewrite._should_attach_access_trait_names(
         codegen,
         has_access_rewrite_artifact=lambda current_codegen: _cli_access_rewrite_artifact.has_access_rewrite_artifact(
             getattr(current_codegen, "project", None),
@@ -3493,10 +3531,13 @@ def _should_attach_access_trait_names(codegen: StructuredCodegenValue) -> bool:
             ),
         ),
     )
+    )
 
 
 def _attach_access_trait_field_names(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    return _cli_access_trait_rewrite._attach_access_trait_field_names(
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_access_trait_rewrite._attach_access_trait_field_names(
         project,
         codegen,
         should_attach_access_trait_names=_should_attach_access_trait_names,
@@ -3518,11 +3559,13 @@ def _attach_access_trait_field_names(project: AngrProjectValue, codegen: Structu
         stack_object_name=_stack_object_name,
         access_trait_field_name=_access_trait_field_name,
         replace_c_children=_replace_c_children,
-    )
+    ))
 
 
 def _attach_pointer_member_names(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    return _cli_access_trait_rewrite._attach_pointer_member_names(
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_access_trait_rewrite._attach_pointer_member_names(
         project,
         codegen,
         should_attach_access_trait_names=_should_attach_access_trait_names,
@@ -3543,7 +3586,7 @@ def _attach_pointer_member_names(project: AngrProjectValue, codegen: StructuredC
         access_trait_variable_key=_access_trait_variable_key,
         access_trait_field_name=_access_trait_field_name,
         replace_c_children=_replace_c_children,
-    )
+    ))
 
 
 def _attach_lst_data_names(
@@ -3697,7 +3740,7 @@ def _attach_lst_data_names(
 
 
 def _normalize_scalar_byte_register_types(codegen: StructuredCodegenValue) -> bool:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> bool:
         if getattr(codegen, "cfunc", None) is None:
             return False
 
@@ -3781,7 +3824,7 @@ def _normalize_scalar_byte_register_types(codegen: StructuredCodegenValue) -> bo
 
 
 def _attach_segment_register_names(codegen: StructuredCodegenValue, project: AngrProjectValue = None) -> bool:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> bool:
         if getattr(codegen, "cfunc", None) is None:
             return False
 
@@ -3794,7 +3837,7 @@ def _attach_segment_register_names(codegen: StructuredCodegenValue, project: Ang
             if project is not None:
                 reg = variable.reg
                 name = project.arch.register_names.get(reg) if isinstance(reg, int) else None
-                if name in desired_names:
+                if isinstance(name, str) and name in desired_names:
                     return name
             name = variable.name
             if isinstance(name, str) and name in desired_names:
@@ -3832,7 +3875,7 @@ def _attach_segment_register_names(codegen: StructuredCodegenValue, project: Ang
 
 
 def _attach_register_names(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> bool:
         if getattr(codegen, "cfunc", None) is None:
             return False
 
@@ -3855,7 +3898,7 @@ def _attach_register_names(project: AngrProjectValue, codegen: StructuredCodegen
             size = variable.size
             if isinstance(reg, int) and isinstance(size, int):
                 for name, (offset, reg_size) in registers.items():
-                    if offset == reg and reg_size == size:
+                    if isinstance(name, str) and offset == reg and reg_size == size:
                         return name
             name = register_names.get(reg)
             if not isinstance(name, str) or not name:
@@ -3917,165 +3960,207 @@ def _attach_register_names(project: AngrProjectValue, codegen: StructuredCodegen
 
 
 def _elide_redundant_segment_pointer_dereferences(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    return _cli_segmented_elision._elide_redundant_segment_pointer_dereferences(
-        project,
-        codegen,
-        iter_c_nodes_deep=_iter_c_nodes_deep,
-        classify_segmented_dereference=_compat_callback(_classify_segmented_dereference),
-        flatten_c_add_terms=_flatten_c_add_terms,
-        unwrap_c_casts=_unwrap_c_casts,
-        c_constant_value=_c_constant_value,
-        segment_reg_name=_segment_reg_name,
-        match_segment_register_based_dereference=_match_segment_register_based_dereference,
-        strip_segment_scale_from_addr_expr=_strip_segment_scale_from_addr_expr,
-        same_c_storage=_same_c_storage,
-        replace_c_children=_replace_c_children,
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_segmented_elision._elide_redundant_segment_pointer_dereferences(
+            project,
+            codegen,
+            iter_c_nodes_deep=_iter_c_nodes_deep,
+            classify_segmented_dereference=_compat_callback(_classify_segmented_dereference),
+            flatten_c_add_terms=_flatten_c_add_terms,
+            unwrap_c_casts=_unwrap_c_casts,
+            c_constant_value=_c_constant_value,
+            segment_reg_name=_segment_reg_name,
+            match_segment_register_based_dereference=_match_segment_register_based_dereference,
+            strip_segment_scale_from_addr_expr=_strip_segment_scale_from_addr_expr,
+            same_c_storage=_same_c_storage,
+            replace_c_children=_replace_c_children,
+        ),
     )
 
 
 def _collect_access_traits(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    return _cli_access_traits._collect_access_traits(
-        project,
-        codegen,
-        iter_c_nodes_deep=_iter_c_nodes_deep,
-        unwrap_c_casts=_unwrap_c_casts,
-        c_constant_value=_c_constant_value,
-        classify_segmented_dereference=_compat_callback(_classify_segmented_dereference),
-        stack_slot_identity_for_variable=_compat_callback(_stack_slot_identity_for_variable),
-        access_trait_variable_key=_access_trait_variable_key,
-        AccessTraitStrideEvidence=_AccessTraitStrideEvidence,
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_access_traits._collect_access_traits(
+            project,
+            codegen,
+            iter_c_nodes_deep=_iter_c_nodes_deep,
+            unwrap_c_casts=_unwrap_c_casts,
+            c_constant_value=_c_constant_value,
+            classify_segmented_dereference=_compat_callback(_classify_segmented_dereference),
+            stack_slot_identity_for_variable=_compat_callback(_stack_slot_identity_for_variable),
+            access_trait_variable_key=_access_trait_variable_key,
+            AccessTraitStrideEvidence=_AccessTraitStrideEvidence,
+        ),
     )
 
 
 def _prune_unused_unnamed_memory_declarations(codegen: StructuredCodegenValue) -> bool:
-    return _cli_memory_prune._prune_unused_unnamed_memory_declarations(
-        codegen,
-        iter_c_nodes_deep=_iter_c_nodes_deep,
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_memory_prune._prune_unused_unnamed_memory_declarations(
+            codegen,
+            iter_c_nodes_deep=_iter_c_nodes_deep,
+        ),
     )
 
 
 def _prune_unused_linear_register_declarations(codegen: StructuredCodegenValue) -> bool:
-    return _cli_local_prune._prune_unused_linear_register_declarations(
-        codegen,
-        iter_c_nodes_deep=_iter_c_nodes_deep,
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_local_prune._prune_unused_linear_register_declarations(
+            codegen,
+            iter_c_nodes_deep=_iter_c_nodes_deep,
+        ),
     )
 
 
 def _prune_unused_local_declarations(codegen: StructuredCodegenValue) -> bool:
-    return _cli_local_prune._prune_unused_local_declarations(
-        codegen,
-        iter_c_nodes_deep=_iter_c_nodes_deep,
-        describe_alias_storage=_compat_callback(describe_alias_storage),
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_local_prune._prune_unused_local_declarations(
+            codegen,
+            iter_c_nodes_deep=_iter_c_nodes_deep,
+            describe_alias_storage=_compat_callback(describe_alias_storage),
+        ),
     )
 
 
 def _prune_dead_local_assignments(codegen: StructuredCodegenValue) -> bool:
-    return _cli_dead_local_prune._prune_dead_local_assignments(
-        codegen,
-        structured_codegen_node=_structured_codegen_node,
-        iter_c_nodes_deep=_iter_c_nodes_deep,
-        unwrap_c_casts=_unwrap_c_casts,
-        describe_alias_storage=_compat_callback(describe_alias_storage),
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_dead_local_prune._prune_dead_local_assignments(
+            codegen,
+            structured_codegen_node=_structured_codegen_node,
+            iter_c_nodes_deep=_iter_c_nodes_deep,
+            unwrap_c_casts=_unwrap_c_casts,
+            describe_alias_storage=_compat_callback(describe_alias_storage),
+        ),
     )
 
 
 def _materialize_missing_stack_local_declarations(codegen: StructuredCodegenValue) -> bool:
-    return _cli_local_rewrites._materialize_missing_stack_local_declarations(
-        codegen,
-        stack_slot_identity_for_variable=_compat_callback(_stack_slot_identity_for_variable),
-        stack_type_for_size=_stack_type_for_size,
-        replace_c_children=_replace_c_children,
-        iter_c_nodes_deep=_iter_c_nodes_deep,
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_local_rewrites._materialize_missing_stack_local_declarations(
+            codegen,
+            stack_slot_identity_for_variable=_compat_callback(_stack_slot_identity_for_variable),
+            stack_type_for_size=_stack_type_for_size,
+            replace_c_children=_replace_c_children,
+            iter_c_nodes_deep=_iter_c_nodes_deep,
+        ),
     )
 
 
 def _dedupe_codegen_variable_names_8616(codegen: StructuredCodegenValue) -> bool:
-    return _cli_local_rewrites._dedupe_codegen_variable_names_8616(
-        codegen,
-        make_unique_identifier=_make_unique_identifier,
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_local_rewrites._dedupe_codegen_variable_names_8616(
+            codegen,
+            make_unique_identifier=_make_unique_identifier,
+        ),
     )
 
 
 def _materialize_missing_register_local_declarations(codegen: StructuredCodegenValue) -> bool:
-    return _cli_local_rewrites._materialize_missing_register_local_declarations(
-        codegen,
-        stack_slot_identity_for_variable=_compat_callback(_stack_slot_identity_for_variable),
-        stack_type_for_size=_stack_type_for_size,
-        structured_codegen_node=_structured_codegen_node,
-        iter_c_nodes_deep=_iter_c_nodes_deep,
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_local_rewrites._materialize_missing_register_local_declarations(
+            codegen,
+            stack_slot_identity_for_variable=_compat_callback(_stack_slot_identity_for_variable),
+            stack_type_for_size=_stack_type_for_size,
+            structured_codegen_node=_structured_codegen_node,
+            iter_c_nodes_deep=_iter_c_nodes_deep,
+        ),
     )
 
 
 def _prune_void_function_return_values(codegen: StructuredCodegenValue) -> bool:
-    return _cli_local_rewrites._prune_void_function_return_values(
-        codegen,
-        iter_c_nodes_deep=_iter_c_nodes_deep,
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_local_rewrites._prune_void_function_return_values(
+            codegen,
+            iter_c_nodes_deep=_iter_c_nodes_deep,
+        ),
     )
 
 
 def _coalesce_far_pointer_stack_expressions(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    return _cli_far_pointer_stack._coalesce_far_pointer_stack_expressions(
-        project,
-        codegen,
-        unwrap_c_casts=_unwrap_c_casts,
-        segment_reg_name=_segment_reg_name,
-        iter_c_nodes_deep=_iter_c_nodes_deep,
-        resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
-        build_access_trait_evidence_profiles=_build_access_trait_evidence_profiles,
-        build_stable_access_object_hints=lambda traits: _cli_access_object_hints._build_stable_access_object_hints(
-            traits,
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_far_pointer_stack._coalesce_far_pointer_stack_expressions(
+            project,
+            codegen,
+            unwrap_c_casts=_unwrap_c_casts,
+            segment_reg_name=_segment_reg_name,
+            iter_c_nodes_deep=_iter_c_nodes_deep,
+            resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
             build_access_trait_evidence_profiles=_build_access_trait_evidence_profiles,
+            build_stable_access_object_hints=lambda traits: _cli_access_object_hints._build_stable_access_object_hints(
+                traits,
+                build_access_trait_evidence_profiles=_build_access_trait_evidence_profiles,
+            ),
+            access_trait_variable_key=_access_trait_variable_key,
+            replace_c_children=_replace_c_children,
+            describe_alias_storage=_compat_callback(describe_alias_storage),
         ),
-        access_trait_variable_key=_access_trait_variable_key,
-        replace_c_children=_replace_c_children,
-        describe_alias_storage=_compat_callback(describe_alias_storage),
     )
 
 
 def _simplify_nested_mk_fp_calls(codegen: StructuredCodegenValue) -> bool:
-    return _cli_mkfp_simplify._simplify_nested_mk_fp_calls(
-        codegen,
-        unwrap_c_casts=_unwrap_c_casts,
-        c_constant_value=_c_constant_value,
-        replace_c_children=_replace_c_children,
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_mkfp_simplify._simplify_nested_mk_fp_calls(
+            codegen,
+            unwrap_c_casts=_unwrap_c_casts,
+            c_constant_value=_c_constant_value,
+            replace_c_children=_replace_c_children,
+        ),
     )
 
 
 def _attach_ss_stack_variables(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    return _cli_stack_locals._attach_ss_stack_variables(
-        project,
-        codegen,
-        match_ss_stack_reference=_match_ss_stack_reference,
-        resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
-        replace_c_children=_replace_c_children,
-        stack_slot_identity_for_variable=_compat_callback(_stack_slot_identity_for_variable),
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_stack_locals._attach_ss_stack_variables(
+            project,
+            codegen,
+            match_ss_stack_reference=_match_ss_stack_reference,
+            resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
+            replace_c_children=_replace_c_children,
+            stack_slot_identity_for_variable=_compat_callback(_stack_slot_identity_for_variable),
+        ),
     )
 
 
 def _rewrite_ss_stack_byte_offsets(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    return _cli_stack_byte_offsets._rewrite_ss_stack_byte_offsets(
-        project,
-        codegen,
-        unwrap_c_casts=_unwrap_c_casts,
-        iter_c_nodes_deep=_iter_c_nodes_deep,
-        replace_c_children=_replace_c_children,
-        c_constant_value=_c_constant_value,
-        flatten_c_add_terms=_flatten_c_add_terms,
-        classify_segmented_dereference=_classify_segmented_dereference,
-        strip_segment_scale_from_addr_expr=_strip_segment_scale_from_addr_expr,
-        resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
-        promote_direct_stack_cvariable=_promote_direct_stack_cvariable,
-        stack_type_for_size=_stack_type_for_size,
-        materialize_stack_cvar_at_offset=_materialize_stack_cvar_at_offset,
-        stack_slot_identity_for_variable=_compat_callback(_stack_slot_identity_for_variable),
-        stack_pointer_alias_state=_compat_callback(_StackPointerAliasState),
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_stack_byte_offsets._rewrite_ss_stack_byte_offsets(
+            project,
+            codegen,
+            unwrap_c_casts=_unwrap_c_casts,
+            iter_c_nodes_deep=_iter_c_nodes_deep,
+            replace_c_children=_replace_c_children,
+            c_constant_value=_c_constant_value,
+            flatten_c_add_terms=_flatten_c_add_terms,
+            classify_segmented_dereference=_classify_segmented_dereference,
+            strip_segment_scale_from_addr_expr=_strip_segment_scale_from_addr_expr,
+            resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
+            promote_direct_stack_cvariable=_promote_direct_stack_cvariable,
+            stack_type_for_size=_stack_type_for_size,
+            materialize_stack_cvar_at_offset=_materialize_stack_cvar_at_offset,
+            stack_slot_identity_for_variable=_compat_callback(_stack_slot_identity_for_variable),
+            stack_pointer_alias_state=_compat_callback(_StackPointerAliasState),
+        ),
     )
 
 
 def _promote_direct_stack_cvariable(
     codegen: StructuredCodegenValue, cvar: StructuredAstValue, size: int, type_: StructuredAstValue
 ) -> bool:
-    return _cli_stack_locals._promote_direct_stack_cvariable(codegen, cvar, size, type_)
+    return cast(bool, _cli_stack_locals._promote_direct_stack_cvariable(codegen, cvar, size, type_))  # type: ignore[redundant-cast]
 
 
 def _stack_type_for_size(size: int) -> StructuredAstValue:
@@ -4124,10 +4209,13 @@ def _canonicalize_stack_cvar_expr(
 
 
 def _canonicalize_stack_cvars(codegen: StructuredCodegenValue) -> bool:
-    return _cli_stack_cvars._canonicalize_stack_cvars(
+    return cast(
+        bool,
+        _cli_stack_cvars._canonicalize_stack_cvars(
         codegen,
         replace_c_children=_replace_c_children,
         canonicalize_stack_cvar_expr=_canonicalize_stack_cvar_expr,
+        ),
     )
 
 
@@ -4147,7 +4235,9 @@ def _resolve_stack_cvar_from_addr_expr(
 
 
 def _coalesce_direct_ss_local_word_statements(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    return _cli_stack_coalesce._coalesce_direct_ss_local_word_statements(
+    return cast(
+        bool,
+        _cli_stack_coalesce._coalesce_direct_ss_local_word_statements(
         project,
         codegen,
         match_ss_local_plus_const=_match_ss_local_plus_const,
@@ -4161,11 +4251,14 @@ def _coalesce_direct_ss_local_word_statements(project: AngrProjectValue, codegen
         addr_exprs_are_byte_pair=_addr_exprs_are_byte_pair,
         resolve_stack_cvar_from_addr_expr=_resolve_stack_cvar_from_addr_expr,
         canonicalize_stack_cvar_expr=_canonicalize_stack_cvar_expr,
+        ),
     )
 
 
 def _seed_adjacent_byte_pair_aliases(project: AngrProjectValue, codegen: StructuredCodegenValue) -> dict[int, object]:
-    return _cli_linear_aliases._seed_adjacent_byte_pair_aliases(
+    return cast(  # type: ignore[redundant-cast]
+        dict[int, object],
+        _cli_linear_aliases._seed_adjacent_byte_pair_aliases(
         project,
         codegen,
         structured_codegen_node=_structured_codegen_node,
@@ -4174,32 +4267,38 @@ def _seed_adjacent_byte_pair_aliases(project: AngrProjectValue, codegen: Structu
         match_byte_load_addr_expr=_match_byte_load_addr_expr,
         addr_exprs_are_byte_pair=_addr_exprs_are_byte_pair,
         make_word_dereference_from_addr_expr=_make_word_dereference_from_addr_expr,
+        ),
     )
 
 
 def _coalesce_linear_recurrence_statements(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    return _cli_linear_recurrence._coalesce_linear_recurrence_statements(
-        project,
-        codegen,
-        unwrap_c_casts=_unwrap_c_casts,
-        structured_codegen_node=_structured_codegen_node,
-        iter_c_nodes_deep=_iter_c_nodes_deep,
-        same_c_expression=_same_c_expression,
-        c_constant_value=_c_constant_value,
-        canonicalize_stack_cvar_expr=_canonicalize_stack_cvar_expr,
-        seed_adjacent_byte_pair_aliases=_compat_callback(_seed_adjacent_byte_pair_aliases),
-        describe_alias_storage=describe_alias_storage,
-        analyze_widening_expr=_analyze_widening_expr,
-        match_high_byte_projection_base=_match_high_byte_projection_base,
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_linear_recurrence._coalesce_linear_recurrence_statements(
+            project,
+            codegen,
+            unwrap_c_casts=_unwrap_c_casts,
+            structured_codegen_node=_structured_codegen_node,
+            iter_c_nodes_deep=_iter_c_nodes_deep,
+            same_c_expression=_same_c_expression,
+            c_constant_value=_c_constant_value,
+            canonicalize_stack_cvar_expr=_canonicalize_stack_cvar_expr,
+            seed_adjacent_byte_pair_aliases=_compat_callback(_seed_adjacent_byte_pair_aliases),
+            describe_alias_storage=describe_alias_storage,
+            analyze_widening_expr=_analyze_widening_expr,
+            match_high_byte_projection_base=_match_high_byte_projection_base,
         match_duplicate_word_base_expr=_match_duplicate_word_base_expr,
         match_duplicate_word_increment_shift_expr=_match_duplicate_word_increment_shift_expr,
         same_stack_slot_identity_var=_same_stack_slot_identity_var,
         rules=_cli_linear_recurrence_rules,
+        ),
     )
 
 
 def _coalesce_segmented_word_store_statements(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    return _cli_segmented_store_coalesce._coalesce_segmented_word_store_statements(
+    return cast(
+        bool,
+        _cli_segmented_store_coalesce._coalesce_segmented_word_store_statements(
         project,
         codegen,
         match_ss_local_plus_const=_match_ss_local_plus_const,
@@ -4217,41 +4316,48 @@ def _coalesce_segmented_word_store_statements(project: AngrProjectValue, codegen
         describe_alias_storage=describe_alias_storage,
         match_byte_load_addr_expr=_match_byte_load_addr_expr,
         same_c_expression=_same_c_expression,
+        ),
     )
 
 
 def _run_typed_widening_pass(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    return _cli_segmented_store_coalesce.run_typed_widening_pass_8616(
+    return cast(
+        bool,
+        _cli_segmented_store_coalesce.run_typed_widening_pass_8616(
         project,
         codegen,
         coalesce_direct_ss_local_word_statements=_coalesce_direct_ss_local_word_statements,
         coalesce_segmented_word_store_statements=_coalesce_segmented_word_store_statements,
         promote_stack_slots_from_instruction_widths=lambda current_project, current_codegen: (
-            _cli_segmented_store_coalesce.promote_stack_slots_from_instruction_widths_8616(
-                current_project,
-                current_codegen,
-                resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
-                promote_direct_stack_cvariable=_promote_direct_stack_cvariable,
-                stack_type_for_size=_stack_type_for_size,
-            )
+                _cli_segmented_store_coalesce.promote_stack_slots_from_instruction_widths_8616(
+                    current_project,
+                    current_codegen,
+                    resolve_stack_cvar_at_offset=_resolve_stack_cvar_at_offset,
+                    promote_direct_stack_cvariable=_promote_direct_stack_cvariable,
+                    stack_type_for_size=_stack_type_for_size,
+                )
+        ),
         ),
     )
 
 
 def _global_memory_addr(node: StructuredAstValue) -> int | None:
-    return _cli_word_loads._global_memory_addr(node)
+    return cast(int | None, _cli_word_loads._global_memory_addr(node))
 
 
 def _global_load_addr(node: StructuredAstValue, project: AngrProjectValue) -> int | None:
-    return _cli_word_loads._global_load_addr(node, project)
+    return cast(int | None, _cli_word_loads._global_load_addr(node, project))
 
 
 def _match_scaled_high_byte(node: StructuredAstValue, project: AngrProjectValue) -> int | None:
-    return _cli_word_loads._match_scaled_high_byte(
+    return cast(
+        int | None,
+        _cli_word_loads._match_scaled_high_byte(
         node,
         project,
         c_constant_value=_c_constant_value,
         global_load_addr=_global_load_addr,
+        ),
     )
 
 
@@ -4300,17 +4406,22 @@ def _split_expr_const_offset(node: StructuredAstValue) -> StructuredAstValue:
 
 
 def _same_expression_list(lhs_terms: StructuredAstValue, rhs_terms: StructuredAstValue) -> bool:
-    return _cli_segmented_compare._same_expression_list(
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_segmented_compare._same_expression_list(
         lhs_terms,
         rhs_terms,
         same_c_expression=_same_c_expression,
+        ),
     )
 
 
 def _addr_exprs_are_same(
     low_addr_expr: StructuredAstValue, high_addr_expr: StructuredAstValue, project: AngrProjectValue
 ) -> bool:
-    return _cli_segmented_compare._addr_exprs_are_same(
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_segmented_compare._addr_exprs_are_same(
         low_addr_expr,
         high_addr_expr,
         project,
@@ -4318,13 +4429,16 @@ def _addr_exprs_are_same(
         same_c_expression=_same_c_expression,
         split_expr_const_offset=_split_expr_const_offset,
         same_expression_list=_same_expression_list,
+        ),
     )
 
 
 def _addr_exprs_are_byte_pair(
     low_addr_expr: StructuredAstValue, high_addr_expr: StructuredAstValue, project: AngrProjectValue = None
 ) -> bool:
-    return _cli_segmented_compare._addr_exprs_are_byte_pair(
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_segmented_compare._addr_exprs_are_byte_pair(
         low_addr_expr,
         high_addr_expr,
         project,
@@ -4332,6 +4446,7 @@ def _addr_exprs_are_byte_pair(
         stack_slot_identity_can_join_var=_stack_slot_identity_can_join_var,
         split_expr_const_offset=_split_expr_const_offset,
         same_expression_list=_same_expression_list,
+        ),
     )
 
 
@@ -4517,10 +4632,13 @@ def _match_word_rhs_from_byte_pair(
 
 
 def _high_byte_store_addr(node: StructuredAstValue, project: AngrProjectValue) -> int | None:
-    return _cli_word_loads._high_byte_store_addr(
+    return cast(
+        int | None,
+        _cli_word_loads._high_byte_store_addr(
         node,
         project,
         classify_segmented_dereference=_classify_segmented_dereference,
+        ),
     )
 
 
@@ -4543,25 +4661,30 @@ def _synthetic_word_global_variable(
 def _coalesce_cod_word_global_loads(
     project: AngrProjectValue, codegen: StructuredCodegenValue, synthetic_globals: dict[int, tuple[str, int]] | None
 ) -> bool:
-    return _cli_cod_globals._coalesce_cod_word_global_loads(
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_cod_globals._coalesce_cod_word_global_loads(
         project,
         codegen,
-        synthetic_globals,
-        collect_access_traits=_collect_access_traits,
-        build_access_trait_evidence_profiles=_build_access_trait_evidence_profiles,
-        build_stable_access_object_hints=lambda traits: _cli_access_object_hints._build_stable_access_object_hints(
-            traits,
+            synthetic_globals,
+            collect_access_traits=_collect_access_traits,
             build_access_trait_evidence_profiles=_build_access_trait_evidence_profiles,
-        ),
+            build_stable_access_object_hints=lambda traits: _cli_access_object_hints._build_stable_access_object_hints(
+                traits,
+                build_access_trait_evidence_profiles=_build_access_trait_evidence_profiles,
+            ),
         global_load_addr=_global_load_addr,
         match_scaled_high_byte=_match_scaled_high_byte,
         synthetic_word_global_variable=_compat_callback(_synthetic_word_global_variable),
         replace_c_children=_replace_c_children,
+        ),
     )
 
 
 def _coalesce_segmented_word_load_expressions(project: AngrProjectValue, codegen: StructuredCodegenValue) -> bool:
-    return _cli_segmented_load_coalesce._coalesce_segmented_word_load_expressions(
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_segmented_load_coalesce._coalesce_segmented_word_load_expressions(
         project,
         codegen,
         unwrap_c_casts=_unwrap_c_casts,
@@ -4575,39 +4698,48 @@ def _coalesce_segmented_word_load_expressions(project: AngrProjectValue, codegen
         resolve_stack_cvar_from_addr_expr=_resolve_stack_cvar_from_addr_expr,
         make_word_dereference_from_addr_expr=_make_word_dereference_from_addr_expr,
         describe_alias_storage=_compat_callback(describe_alias_storage),
+        ),
     )
 
 
 def _coalesce_cod_word_global_statements(
     project: AngrProjectValue, codegen: StructuredCodegenValue, synthetic_globals: dict[int, tuple[str, int]] | None
 ) -> bool:
-    return _cli_cod_global_statements._coalesce_cod_word_global_statements(
+    return cast(  # type: ignore[redundant-cast]
+        bool,
+        _cli_cod_global_statements._coalesce_cod_word_global_statements(
         project,
         codegen,
         synthetic_globals,
         global_memory_addr=_global_memory_addr,
         high_byte_store_addr=_high_byte_store_addr,
         synthetic_word_global_variable=_compat_callback(_synthetic_word_global_variable),
+        ),
     )
 
 
 def _int21_call_replacements(
     project: AngrProjectValue, function: StructuredAstValue, api_style: str, binary_path: Path | None
 ) -> list[str]:
-    return _cli_helper_modeling._int21_call_replacements(
+    return cast(  # type: ignore[redundant-cast]
+        list[str],
+        _cli_helper_modeling._int21_call_replacements(
         project,
         function,
         api_style,
         binary_path,
         collect_dos_int21_calls=collect_dos_int21_calls,
         render_dos_int21_call=_compat_callback(render_dos_int21_call),
+        ),
     )
 
 
 def _interrupt_call_replacement_map(
     project: AngrProjectValue, function: StructuredAstValue, api_style: str, binary_path: Path | None
 ) -> dict[str, str]:
-    return _cli_helper_modeling._interrupt_call_replacement_map(
+    return cast(  # type: ignore[redundant-cast]
+        dict[str, str],
+        _cli_helper_modeling._interrupt_call_replacement_map(
         project,
         function,
         api_style,
@@ -4616,33 +4748,43 @@ def _interrupt_call_replacement_map(
         render_interrupt_call=_compat_callback(render_interrupt_call),
         helper_name=_helper_name,
         interrupt_service_addr=_compat_callback(interrupt_service_addr),
+        ),
     )
 
 
 def _dos_helper_declarations(function: StructuredAstValue, api_style: str, binary_path: Path | None) -> list[str]:
-    return _cli_helper_modeling._dos_helper_declarations(
+    return cast(  # type: ignore[redundant-cast]
+        list[str],
+        _cli_helper_modeling._dos_helper_declarations(
         function,
         api_style,
         binary_path,
         collect_dos_int21_calls=collect_dos_int21_calls,
         dos_helper_declarations=_compat_callback(dos_helper_declarations),
+        ),
     )
 
 
 def _interrupt_helper_declarations(function: StructuredAstValue, api_style: str, binary_path: Path | None) -> list[str]:
-    return _cli_helper_modeling._interrupt_helper_declarations(
+    return cast(  # type: ignore[redundant-cast]
+        list[str],
+        _cli_helper_modeling._interrupt_helper_declarations(
         function,
         api_style,
         binary_path,
         collect_interrupt_service_calls=collect_interrupt_service_calls,
-        interrupt_service_declarations=_compat_callback(interrupt_service_declarations),
+        interrupt_service_declarations=_compat_callback(interrupt_helper_declarations_8616),
+        ),
     )
 
 
 def _known_helper_declarations(cod_metadata: CODProcMetadata | None) -> list[str]:
-    return _cli_helper_modeling._known_helper_declarations(
+    return cast(  # type: ignore[redundant-cast]
+        list[str],
+        _cli_helper_modeling._known_helper_declarations(
         cod_metadata,
         preferred_known_helper_signature_decl=preferred_known_helper_signature_decl,
+        ),
     )
 
 
@@ -4702,7 +4844,7 @@ def _clone_structured_c_value(value: StructuredAstValue, memo: dict[int, object]
 
 
 def _collect_staging_wrapper_summary(statements: list[object]) -> tuple[int, dict[int, object], set[int], bool]:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> tuple[int, dict[int, object], set[int], bool]:
         call_count = 0
         staging_replacements: dict[int, object] = {}
         staging_variable_ids: set[int] = set()
@@ -4780,7 +4922,7 @@ def _remove_unused_staging_vars_from_maps(
 
 
 def _prune_tiny_wrapper_staging_locals(codegen: StructuredCodegenValue) -> bool:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> bool:
         if getattr(codegen, "cfunc", None) is None:
             return False
         root = getattr(codegen.cfunc, "statements", None)

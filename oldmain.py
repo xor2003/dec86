@@ -1,3 +1,8 @@
+"""Legacy VEX lifting experiment kept outside the decompiler pipeline.
+
+Layer: Tooling/gates.
+"""
+
 import re
 from copy import copy, deepcopy
 

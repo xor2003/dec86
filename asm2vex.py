@@ -1,3 +1,8 @@
+"""Legacy VEX serialization experiment.
+
+Layer: Tooling/gates.
+"""
+
 import re
 from copy import copy
 

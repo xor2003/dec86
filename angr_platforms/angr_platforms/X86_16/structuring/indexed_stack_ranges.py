@@ -336,13 +336,19 @@ def _stack_array_storage_8616(node: object) -> _StackArrayStorage8616 | None:
         or variable.size <= 0
         or not isinstance(node.type.length, int)
         or node.type.length <= 0
-        or variable.size % node.type.length
     ):
         return None
-    element_width = variable.size // node.type.length
+    element_width = _type_width_bytes_8616(node.type.elem_type)
+    if element_width is None:
+        if variable.size % node.type.length:
+            return None
+        element_width = variable.size // node.type.length
+    object_width = element_width * node.type.length
+    if variable.size not in {element_width, object_width}:
+        return None
     return _StackArrayStorage8616(
         offset=variable.offset,
-        width=variable.size,
+        width=object_width,
         element_width=element_width,
         element_count=node.type.length,
     )
@@ -1051,23 +1057,16 @@ def collect_indexed_stack_read_proofs_8616(
                 ranges=state.ranges,
             )
             return None
-        calls = tuple(
-            node
-            for node in _iter_c_nodes_deep_8616(rhs.lhs)
-            if isinstance(node, CFunctionCall)
-        )
-        if len(calls) != 1:
+        call = _strip_casts_8616(rhs.lhs)
+        if not isinstance(call, CFunctionCall):
             _debug(
-                "remainder-call-count",
+                "remainder-numerator",
                 lhs=lhs,
                 statement_ins_addr=statement_ins_addr,
-                rhs_lhs_type=type(_strip_casts_8616(rhs.lhs)).__name__,
-                rhs_lhs_storage=_scalar_storage_8616(rhs.lhs),
+                numerator_type=type(call).__name__,
                 divisor=divisor,
-                calls=calls,
             )
             return None
-        call = calls[0]
         callsite_addr = (
             call.tags.get("ins_addr")
             if isinstance(call.tags, dict)

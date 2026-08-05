@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from angr_platforms.X86_16.analysis_helpers import InterruptCall
 from angr_platforms.X86_16.lowering.c_runtime_header import (
     LOWERED_RUNTIME_HELPER_DECLARATIONS_8616,
     LOWERED_ZERO_ARG_RUNTIME_HELPER_DECLARATIONS_8616,
+    interrupt_helper_declarations_8616,
     is_lowered_runtime_macro_8616,
     render_c_runtime_header_8616,
     runtime_helper_declaration_8616,
@@ -73,6 +75,26 @@ def test_x86_16_c_runtime_header_exposes_exact_memset_abi() -> None:
 
     assert runtime_helper_declaration_8616("memset", "portable-flat") == declaration
     assert runtime_helper_declaration_8616("memset", "msc-dos") == declaration
+
+
+def test_x86_16_c_runtime_header_declares_generic_interrupt_runtime_helper() -> None:
+    declarations = interrupt_helper_declarations_8616(
+        [InterruptCall(insn_addr=0x101D, vector=0x33)],
+        "pseudo",
+    )
+
+    assert declarations == ["unsigned short interrupt_int33(void);"]
+
+
+def test_x86_16_c_runtime_header_declares_mouse_position_interrupt_inputs() -> None:
+    declarations = interrupt_helper_declarations_8616(
+        [InterruptCall(insn_addr=0x1023, vector=0x33, ax=4)],
+        "pseudo",
+    )
+
+    assert declarations == [
+        "unsigned short interrupt_int33(unsigned short ax, unsigned short cx, unsigned short dx);"
+    ]
 
 
 def test_x86_16_c_runtime_header_exposes_target_width_external_abis() -> None:

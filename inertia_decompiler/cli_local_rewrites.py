@@ -469,17 +469,21 @@ def _dedupe_codegen_variable_names_8616(
         def is_generic_name(name: object) -> bool:
             return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", name) is not None
 
+        def is_identifier(name: object) -> bool:
+            return isinstance(name, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is not None
+
         def preferred_name(variable: object, cvar: object) -> str | None:
             candidates = [
                 _dynamic_codegen_attr(variable, "name", None),
+                _dynamic_codegen_attr(variable, "ident", None),
                 _dynamic_codegen_attr(cvar, "name", None),
                 _dynamic_codegen_attr(_dynamic_codegen_attr(cvar, "unified_variable", None), "name", None),
             ]
             for candidate in candidates:
-                if isinstance(candidate, str) and candidate and not is_generic_name(candidate):
+                if is_identifier(candidate) and not is_generic_name(candidate):
                     return candidate
             for candidate in candidates:
-                if isinstance(candidate, str) and candidate:
+                if is_identifier(candidate):
                     return candidate
             return None
 

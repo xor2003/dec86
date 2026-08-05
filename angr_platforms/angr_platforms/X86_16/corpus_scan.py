@@ -16,6 +16,7 @@ from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from types import FrameType
 from typing import Any, cast
 
 import angr
@@ -170,15 +171,26 @@ def _patch_scan_destructors() -> None:
 _patch_scan_destructors()
 
 
-_SCAN_ACTIVE = False
+_SCAN_ACTIVE: bool = False
+_SCAN_TIMEOUT_FINALIZER_RETRY_SECONDS: float = 0.01
 
 
-def _alarm_handler(_signum: int, _frame: object) -> None:
+def _alarm_handler(_signum: int, frame: FrameType | None) -> None:
+    """Raise a scan timeout outside Python finalizers.
+
+    Asynchronous exceptions raised inside ``__del__`` become unraisable and
+    consume the timeout. A short retry preserves the deadline while allowing
+    best-effort finalizers to finish.
+    """
     global _SCAN_ACTIVE
-    if _SCAN_ACTIVE:
-        _SCAN_ACTIVE = False
-        _clear_alarm()
-        raise ScanTimeout("timed out")
+    if not _SCAN_ACTIVE:
+        return
+    if frame is not None and frame.f_code.co_name == "__del__":
+        signal.setitimer(signal.ITIMER_REAL, _SCAN_TIMEOUT_FINALIZER_RETRY_SECONDS)
+        return
+    _SCAN_ACTIVE = False
+    _clear_alarm()
+    raise ScanTimeout("timed out")
 
 
 def _clear_alarm() -> None:

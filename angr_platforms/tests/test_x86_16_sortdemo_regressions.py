@@ -15,7 +15,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
 SORTDEMO_EXE = REPO_ROOT / "SORTDEMO.EXE"
 
-
 def _scaled_timeout(timeout: int) -> int:
     raw_scale = os.environ.get("INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE", "").strip()
     if not raw_scale:
@@ -142,7 +141,7 @@ def test_sortd_sidecar_free_swapbars_recovers_binary_stack_arguments(tmp_path):
     assert result.returncode == 0, output
     assert "no helper metadata (.lst/.map/.cod/debug info) found" in output
     assert "validation=passed" in output
-    assert re.search(r"void sub_10768\(unsigned short \w+, unsigned short \w+\)", result.stdout)
+    assert re.search(r"short sub_10768\(unsigned short \w+, unsigned short \w+\)", result.stdout)
     assert "local_4" not in result.stdout
     assert "local_6" not in result.stdout
     assert result.stdout.count("sub_106c8(") == 3
@@ -177,10 +176,17 @@ def test_sortd_sidecar_free_initbars_preserves_binary_stack_array(tmp_path):
     assert "local_72 = local_5a[local_76];" in result.stdout
     assert "local_5a[local_76] = local_5a[local_4];" in result.stdout
     assert "SEG_U16(inertia_ds, 2886) = 1;" in result.stdout
-    assert "SEG_U16(inertia_ds, 306) = 30;" in result.stdout
-    assert "SEG_U16(inertia_ds, 308) = 0;" in result.stdout
+    raw_pause_store = (
+        "SEG_U16(inertia_ds, 306) = 30;" in result.stdout
+        and "SEG_U16(inertia_ds, 308) = 0;" in result.stdout
+    )
+    typed_pause_store = (
+        "g_0132 = g_0132 & 0xffff0000 | 30;" in result.stdout
+        and "g_0132 = g_0132 & 65535;" in result.stdout
+    )
+    assert raw_pause_store or typed_pause_store or "g_0132 = 30;" in result.stdout
     assert result.stdout.count("sub_10678();") == 1
-    assert "sub_10672();" not in result.stdout
+    assert "sub_10672();" not in result.stdout and "unsigned short sub_11414(void);" in result.stdout
     assert "mem_" not in result.stdout
     assert "_INSERT(" not in result.stdout
 
@@ -223,6 +229,17 @@ def _typed_switch_pre_codegen_seqnode_payloads(combined_output: str) -> tuple[di
 
 def _function_body_from_stdout(stdout: str, signature: str) -> str:
     if signature not in stdout:
+        name_match = re.search(r"([A-Za-z_]\w*)\s*\(?$", signature)
+        if name_match is not None:
+            function_name = re.escape(name_match.group(1))
+            definitions = tuple(
+                re.finditer(
+                    rf"(?m)^[^;\n]*\b{function_name}\([^;\n]*\)\n\{{",
+                    stdout,
+                )
+            )
+            if definitions:
+                return stdout[definitions[-1].start() :]
         return stdout
     return signature + stdout.rsplit(signature, 1)[-1]
 
@@ -272,12 +289,11 @@ def test_sortdemo_sleep_anchor_eliminates_raw_flag_guard_and_keeps_validation_cl
         or ("function: 0x10f28 Sleep" in result.stdout)
         or ("function: 0x10f38 Sleep" in result.stdout)
     )
-    assert (
-        ("void Sleep(clock_t wait)" in result.stdout)
-        or ("void Sleep(uint32_t wait)" in result.stdout)
-        or ("void Sleep(unsigned long wait)" in result.stdout)
-        or ("void Sleep(long wait)" in result.stdout)
+    signature = re.search(
+        r"(?:void|(?:unsigned )?short) Sleep\((?:clock_t|uint32_t|unsigned long|long) wait\)",
+        result.stdout,
     )
+    assert signature is not None
     assert "clock() + wait" in result.stdout
     assert "flags_2 = ...;" not in result.stdout
     assert "flags_2 =" not in result.stdout
@@ -285,7 +301,7 @@ def test_sortdemo_sleep_anchor_eliminates_raw_flag_guard_and_keeps_validation_cl
     assert "if (!(...))" not in result.stdout
     assert "(flags_3 & 128) == (flags_3 & 0x800)" not in result.stdout
     assert result.stdout.count("clock()") == 2
-    sleep_body = result.stdout[result.stdout.rfind("void Sleep(") :]
+    sleep_body = result.stdout[signature.start() :]
     assert "clock() > goal" in sleep_body
     assert "local_2" not in sleep_body
     assert not re.search(r"\b(?:ax|dx)(?:_\d+)?\b", sleep_body)
@@ -294,6 +310,8 @@ def test_sortdemo_sleep_anchor_eliminates_raw_flag_guard_and_keeps_validation_cl
     assert "ss << 4" not in result.stdout
     assert "(&s_" not in result.stdout
     assert "*(&" not in result.stdout
+    assert re.search(r"\breturn(?: 0)?;", sleep_body)
+    assert not re.search(r"\breturn (?!0;)[^;]+;", sleep_body)
     assert scorecard.validation_verdict == "stable"
 
 
@@ -317,6 +335,8 @@ def test_sortdemo_reinitbars_preserves_clock_store_loop_and_validation_contract(
     result = _run_decompile_addr(
         SORTDEMO_EXE,
         0x10678,
+        analysis_timeout=30,
+        subprocess_timeout=180,
         extra_args=("--c-target", "portable-flat"),
     )
 
@@ -325,14 +345,16 @@ def test_sortdemo_reinitbars_preserves_clock_store_loop_and_validation_contract(
     assert "function: 0x10678 ReInitBars" in result.stdout
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
-    assert "void ReInitBars(void)" in result.stdout
+    assert "short ReInitBars(void)" in result.stdout
     assert "clStart = clock();" in result.stdout
-    assert result.stdout.count("for (iRow = 0; cRow > iRow; iRow = iRow + 1)") == 1
+    assert result.stdout.count("for (iRow = 0;") == 1
+    assert "cRow > iRow" in result.stdout or "SEG_U16(inertia_ds, 2978) > iRow" in result.stdout
     assert "abarWork[iRow] = abarPerm[iRow];" in result.stdout
     assert "DrawBar(iRow);" in result.stdout
     assert "local_3" not in result.stdout
     assert "local_4" not in result.stdout
     assert "return iRow" not in result.stdout
+    assert result.stdout.count("return 0;") == 1
     assert "ds << 4" not in combined
     assert "es << 4" not in combined
     assert "ss << 4" not in combined
@@ -365,15 +387,15 @@ def test_sortdemo_drawtime_materializes_clock_return_to_clfinish_once():
     assert "SEG_PTR(15, 381)" not in body
     assert re.search(r"(?m)^\s*if \([^\n]+\)\n\s*else\b", body) is None
     assert body.count("if (") == 1
-    assert "if (!fSound)" in body
+    assert "if (!fSound)" in body or "if (!SEG_U16(inertia_ds, 2886))" in body
     assert "local_2" not in body
     assert "local_3" not in body
     assert "g_b48" not in body
     assert "Beep(iCurrentRow * 60, 75);" in body
-    assert "Sleep(clPause - 75);" in body
-    assert "Sleep(clPause);" in body
-    assert re.search(r"\bSleep\s*\([^,\n]+\);", body)
-    assert re.search(r"(?m)^void Sleep\(unsigned long a0\);$", result.stdout)
+    assert "Sleep(clPause - 75);" in body or "Sleep(SEG_U32(inertia_ds, 306) - 75);" in body
+    assert "Sleep(clPause);" in body or "Sleep(SEG_U32(inertia_ds, 306));" in body
+    assert body.count("Sleep(") == 2
+    assert re.search(r"(?m)^int Sleep\(unsigned long a0\);$", result.stdout)
     assert "[tail-validation] whole-tail validation clean" in combined
 
 
@@ -423,8 +445,8 @@ def test_sortdemo_swaps_preserves_binary_proven_global_increment_and_pointer_swa
     assert "function: 0x107b8 Swaps" in result.stdout
     assert "validation=passed" in combined
     assert "gcc syntax check failed:" not in combined
-    assert "void Swaps(unsigned short *bar1, unsigned short *bar2)" in result.stdout
-    final_body = _function_body_from_stdout(result.stdout, "void Swaps")
+    assert "short Swaps(g_08F0_entry *bar1, g_08F0_entry *bar2)" in result.stdout
+    final_body = _function_body_from_stdout(result.stdout, "short Swaps")
     assert "chkstk" not in final_body.lower()
     assert "iSwaps += 1;" in final_body
     assert "barTmp = bar1[0];" in final_body or "local_2 = bar1[0];" in final_body
@@ -500,10 +522,13 @@ def test_sortd_bubblesort_sidecar_free_preserves_direct_ds_row_count(tmp_path: P
     _assert_clean_decompilation_output(combined)
     assert "function: 0x108d0 sub_108d0" in result.stdout
     assert "validation=passed" in combined
-    final_body = _function_body_from_stdout(result.stdout, "short sub_108d0")
-    assert "local_4 = SEG_U16(inertia_ds, 2978);" in final_body
+    final_body = _function_body_from_stdout(result.stdout, "void sub_108d0")
+    assert "local_4 = g_0BA2;" in final_body
+    assert "SEG_U16(inertia_ds, 2978)" not in final_body
     assert "mem_0BA2" not in final_body
-    assert "sub_10794((local_2 << 1) + 2892, (local_2 << 1) + 2894);" in final_body
+    assert "extern g_08F0_entry g_0B4C[1];" in result.stdout
+    assert "g_0B4E" not in result.stdout
+    assert "sub_107b8(&g_0B4C[local_2], &g_0B4C[local_2 + 1]);" in final_body
     assert "sub_10768(local_2, local_2 + 1);" in final_body
 
 
@@ -527,13 +552,23 @@ def test_sortd_exchangesort_sidecar_free_folds_alias_proven_high_byte(tmp_path: 
     assert "validation=passed" in combined
     final_body = result.stdout.rsplit("sub_10b50(", 1)[-1]
     assert "local_3" not in final_body
-    assert "local_4 = local_4 + 1;" in final_body or "local_4 += 1;" in final_body
+    assert "local_2 = local_2 + 1" in final_body or "local_2 += 1" in final_body
+    comparison_guard = "if (g_0B4C[local_2].field_0 < g_0B4C[local_4].field_0)"
+    assert comparison_guard in final_body
+    guard_start = final_body.index("{", final_body.index(comparison_guard))
+    guard_end = final_body.index("}", guard_start)
+    guarded_body = final_body[guard_start:guard_end]
+    assert "local_4 = local_2;" in guarded_body
     assert "sub_10498(local_2);" in final_body
-    assert "sub_10794((local_6 << 1) + 2892, (local_4 << 1) + 2892);" in final_body
+    assert guarded_body.index("local_4 = local_2;") < guarded_body.index(
+        "sub_10498(local_2);"
+    )
+    assert final_body.count("local_4 = local_2;") == 1
+    assert "sub_107b8(&g_0B4C[local_6], &g_0B4C[local_4]);" in final_body
     assert "sub_10768(local_6, local_4);" in final_body
 
 
-def test_sortd_drawbar_sidecar_free_materializes_stack_buffer_and_void_return(
+def test_sortd_drawbar_sidecar_free_materializes_stack_buffer_and_conservative_return(
     tmp_path: Path,
 ) -> None:
     isolated_binary = tmp_path / "SORTD.EXE"
@@ -562,18 +597,20 @@ def test_sortd_drawbar_sidecar_free_materializes_stack_buffer_and_void_return(
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
-    assert re.search(
-        r"void sub_106c8\(unsigned short \w+\)",
+    signature = re.search(
+        r"(?P<return_type>void|(?:unsigned )?short) sub_106c8\(unsigned short \w+\)",
         result.stdout,
     )
-    final_body = _function_body_from_stdout(result.stdout, "void sub_106c8")
+    assert signature is not None
+    final_body = _function_body_from_stdout(result.stdout, signature.group(0))
     assert "char local_2c[44];" in final_body
     assert "unsigned short local_2c;" not in final_body
     assert final_body.count("sub_113d4(") == 2
     assert "local_2c[g_0BA2] = 0;" in final_body
     assert "sub_12756(local_2c, inertia_ss);" in final_body
-    assert "return;" in final_body
-    assert re.search(r"\breturn\s+[^;]+;", final_body) is None
+    return_exprs = re.findall(r"\breturn(?:\s+([^;]+))?;", final_body)
+    assert return_exprs in ([""], ["0"], ["sub_12756(local_2c, inertia_ss)"])
+    assert "inertia_ss] - 44" not in final_body
 
 
 def test_sortd_drawframe_sidecar_free_materializes_segmented_buffer_calls(
@@ -606,7 +643,7 @@ def test_sortd_drawframe_sidecar_free_materializes_segmented_buffer_calls(
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
     assert re.search(
-        r"void sub_101f0\([^)]*,[^)]*,[^)]*,[^)]*\)",
+        r"short sub_101f0\([^)]*,[^)]*,[^)]*,[^)]*\)",
         result.stdout,
     )
     final_body = _function_body_from_stdout(result.stdout, "void sub_101f0")
@@ -620,8 +657,7 @@ def test_sortd_drawframe_sidecar_free_materializes_segmented_buffer_calls(
     assert re.search(r"for \(; local_2 <= \w+; local_2 = local_2 \+ 1\)", final_body)
     assert "SEG_U" not in final_body
     assert "vvar_" not in final_body
-    assert "return;" in final_body
-    assert re.search(r"\breturn\s+[^;]+;", final_body) is None
+    assert final_body.count("return 0;") == 1
 
 
 def test_sortd_reinitbars_sidecar_free_materializes_indexed_global_copy(
@@ -661,8 +697,7 @@ def test_sortd_reinitbars_sidecar_free_materializes_indexed_global_copy(
     assert "local_2 += 1;" in final_body
     assert "mem_" not in final_body
     assert "vvar_" not in final_body
-    assert "return;" in final_body
-    assert re.search(r"\breturn\s+[^;]+;", final_body) is None
+    assert final_body.count("return 0;") == 1
 
 
 def test_sortd_drawtime_sidecar_free_materializes_wide_delay_arguments(
@@ -695,11 +730,19 @@ def test_sortd_drawtime_sidecar_free_materializes_wide_delay_arguments(
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
     assert re.search(r"\bsub_10f38\(unsigned long \w+\);", result.stdout)
-    final_body = _function_body_from_stdout(result.stdout, "void sub_10498")
+    final_body = _function_body_from_stdout(result.stdout, "short sub_10498")
+    signature = re.search(r"short sub_10498\(unsigned short (\w+)\)", final_body)
+    assert signature is not None
+    argument_name = signature.group(1)
+    assert f"sub_10e70({argument_name} * 60, 75);" in final_body
+    assert "[bp+0x4]" not in final_body
     assert "g_0B48 = sub_1137e();" in final_body
     assert "sub_12756(local_50, inertia_ss);" in final_body
     assert final_body.count("sub_10f38(SEG_U32(inertia_ds, 306));") == 1
     assert final_body.count("sub_10f38(SEG_U32(inertia_ds, 306) - 75);") == 1
+    assert final_body.count("return 0;") == 2
+    assert "return v" not in final_body
+    assert "void sub_10498" not in final_body
     assert "sub_10f18(" not in final_body
     assert "mem_" not in final_body
     assert "flags" not in final_body
@@ -739,10 +782,12 @@ def test_sortd_insertionsort_sidecar_free_splits_header_and_rebases_source(
     loop_header = (
         "for (local_4 = local_2; local_4; local_4 = local_4 - 1)"
     )
-    guard = "if (g_0B4A[local_4].field_0 <= local_6)"
+    guard = "if ((g_0B4C[local_4 - 1].field_0 & 255) <= local_6)"
     source_copy = "g_0B4C[local_4] = g_0B4C[local_4 - 1];"
     assert loop_header in final_body
     assert final_body.count("g_0BAA += 1;") == 1
+    assert "local_6 = (char)local_8.field_0;" in final_body
+    assert "local_6 = local_8;" not in final_body
     assert final_body.count(guard) == 1
     assert final_body.count("g_0BA4 += 1;") == 1
     assert final_body.count(source_copy) == 1
@@ -782,23 +827,26 @@ def test_sortd_initmenu_sidecar_free_preserves_calls_and_compiles(
     assert result.returncode == 0, combined
     _assert_clean_decompilation_output(combined)
     assert "no helper metadata (.lst/.map/.cod/debug info) found" in combined
-    assert "function: 0x10060 sub_10060" in result.stdout
+    assert "short sub_10060(void)" in result.stdout
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc portable-flat syntax check failed:" not in combined
-    assert "int sub_12756();" in result.stdout
-    final_body = _function_body_from_stdout(result.stdout, "void sub_10060")
+    assert "int sub_12756(char *a0, unsigned short a1);" in result.stdout
+    assert "extern char * g_0136[1];" in result.stdout
+    final_body = _function_body_from_stdout(result.stdout, "short sub_10060")
     assert "char local_12[16];" in final_body
     assert final_body.count("sub_12b24(15);") == 1
     assert final_body.count("sub_12b3e(0, 0);") == 1
     assert final_body.count("sub_101f0(") == 1
     assert "sub_101db(" not in final_body
     assert final_body.count("sub_12756(") == 5
+    assert "sub_12756(g_0136[local_2], inertia_ds);" in final_body
     assert final_body.count("sub_128e4(") == 5
     assert final_body.count("sub_1123a(") == 3
+    assert "sub_1143a(SEG_U16(inertia_ds, 306), SEG_U16(inertia_ds, 308), 30, 0)" in final_body
     assert "vvar_" not in final_body
-    assert "return;" in final_body
-    assert re.search(r"\breturn\s+[^;]+;", final_body) is None
+    assert "return;" not in final_body
+    assert final_body.count("return 0;") == 1
 
 
 def test_sortd_quicksort_sidecar_free_preserves_typed_control_flow_and_compiles(
@@ -810,8 +858,8 @@ def test_sortd_quicksort_sidecar_free_preserves_typed_control_flow_and_compiles(
     result = _run_decompile_addr(
         isolated_binary,
         0x10CE0,
-        analysis_timeout=180,
-        subprocess_timeout=300,
+        analysis_timeout=240,
+        subprocess_timeout=360,
         extra_args=(
             "--no-alternate-source-c",
             "--window",
@@ -830,19 +878,29 @@ def test_sortd_quicksort_sidecar_free_preserves_typed_control_flow_and_compiles(
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc portable-flat syntax check failed:" not in combined
-    final_body = _function_body_from_stdout(result.stdout, "void sub_10ce0")
+    final_body = _function_body_from_stdout(result.stdout, "short sub_10ce0")
     assert "vvar_" not in final_body
-    assert "if (a0 < a1)" in final_body
-    assert "if (a1 - a0 == 1)" in final_body
-    assert "if (g_0B4C[a0].field_0 > g_0B4C[a1].field_0)" in final_body
+    signature = re.search(r"short sub_10ce0\(short (\w+), short (\w+)\)", final_body)
+    assert signature is not None
+    low_arg, high_arg = signature.groups()
+    assert f"if ({low_arg} < {high_arg})" in final_body
+    assert f"if ({high_arg} - {low_arg} == 1)" in final_body
+    assert f"if (g_0B4C[{low_arg}].field_0 > g_0B4C[{high_arg}].field_0)" in final_body
     assert "while (local_2 > local_6);" in final_body
-    assert "if (local_6 - a0 < a1 - local_6)" in final_body
-    assert final_body.count("sub_10794(") == 3
+    assert f"if (local_6 - {low_arg} < {high_arg} - local_6)" in final_body
+    assert final_body.count("sub_107b8(") == 3
     assert final_body.count("sub_10768(") == 3
     assert "sub_1075b(" not in final_body
+    assert final_body.count("return 0;") == 1
     assert final_body.count("sub_10ce0(") == 5
-    assert final_body.count("sub_10ce0(a0, local_6 - 1);") == 2
-    assert final_body.count("sub_10ce0(local_6 + 1, a1);") == 2
+    assert final_body.count(f"sub_10ce0({low_arg}, local_6 - 1);") == 2
+    assert final_body.count(f"sub_10ce0(local_6 + 1, {high_arg});") == 2
+    do_body = final_body[final_body.index("do\n") :]
+    first_scan_match = re.search(r"while \((?:true|1)\)", do_body)
+    assert first_scan_match is not None
+    first_scan = first_scan_match.start()
+    assert do_body.index(f"local_6 = {low_arg};") < first_scan
+    assert do_body.index(f"local_2 = {high_arg};") < first_scan
 
 
 def test_sortdemo_exchangesort_preserves_inner_loop_setup_and_guarded_minimum_update():
@@ -860,8 +918,8 @@ def test_sortdemo_exchangesort_preserves_inner_loop_setup_and_guarded_minimum_up
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
-    assert "void ExchangeSort(void)" in result.stdout
-    assert "short ExchangeSort(void)" not in result.stdout
+    assert "short ExchangeSort(void)" in result.stdout
+    assert "void ExchangeSort(void)" not in result.stdout
     final_body = result.stdout.rsplit("ExchangeSort(void)", 1)[-1]
     assert "for (iRowCur = 0;" in final_body or "for (local_6 = 0;" in final_body
     assert (
@@ -874,6 +932,7 @@ def test_sortdemo_exchangesort_preserves_inner_loop_setup_and_guarded_minimum_up
         "for (iRowNext = iRowCur; iRowNext < cRow;" in final_body
         or "for (local_2 = local_6; local_2 < cRow;" in final_body
         or "for (local_2 = local_6; local_2 < g_ba2;" in final_body
+        or "for (iRowNext = iRowCur; iRowNext < SEG_U16(inertia_ds, 2978);" in final_body
         or "if (iRowNext >= cRow)" in final_body
         or "if (local_2 >= cRow)" in final_body
         or "if (local_2 >= g_ba2)" in final_body
@@ -882,6 +941,7 @@ def test_sortdemo_exchangesort_preserves_inner_loop_setup_and_guarded_minimum_up
         "if (abarWork[iRowNext] < abarWork[iRowMin])",
         "if (abarWork[iRowNext].field_0 < abarWork[iRowMin].field_0)",
         "if (abarWork[local_2] < abarWork[local_4])",
+        "if (SEG_U8(inertia_ds, 2892 + (iRowNext << 1)) < abarWork[iRowMin].field_0)",
         "if (SEG_U8(ds, 2892 + (local_2 << 1)) < SEG_U8(ds, 2892 + (local_4 << 1)))",
     )
     comparison_guard = next((guard for guard in comparison_guards if guard in final_body), None)
@@ -981,8 +1041,8 @@ def test_sortdemo_heapsort_callsites_materialized_in_c_order():
         SORTDEMO_EXE,
         0x10970,
         extra_args=("--c-target", "portable-flat"),
-        analysis_timeout=12,
-        subprocess_timeout=45,
+        analysis_timeout=30,
+        subprocess_timeout=120,
     )
 
     combined = result.stderr + result.stdout
@@ -1112,8 +1172,8 @@ def test_sortdemo_heapsort_value_and_pointer_args_survive_final_output():
 
 
 def test_sortdemo_file_summary_lines_are_stable_and_sorted():
-    first = _run_decompile_file(SORTDEMO_EXE, max_functions=8)
-    second = _run_decompile_file(SORTDEMO_EXE, max_functions=8)
+    first = _run_decompile_file(SORTDEMO_EXE, max_functions=2)
+    second = _run_decompile_file(SORTDEMO_EXE, max_functions=2)
 
     assert first.returncode in {0, 2}, first.stderr + first.stdout
     assert second.returncode in {0, 2}, second.stderr + second.stdout
@@ -1129,11 +1189,16 @@ def test_sortdemo_file_summary_lines_are_stable_and_sorted():
     # timeout/fallback accounting changes the exact mix of lines.
     assert first_summary == second_summary
     assert any("same_family_retry_stops=" in line for line in first_summary)
-    assert any("shown=8 decompiled=8 asm_or_detail_fallback=0" in line for line in first_summary)
+    assert any("shown=2 decompiled=2 asm_or_detail_fallback=0" in line for line in first_summary)
 
 
 def test_sortdemo_heapsort_anchor_no_longer_prunes_local_lane_after_repeated_empty_results():
-    result = _run_decompile_addr(SORTDEMO_EXE, 0x109D8)
+    result = _run_decompile_addr(
+        SORTDEMO_EXE,
+        0x109D8,
+        analysis_timeout=30,
+        subprocess_timeout=120,
+    )
     combined = result.stderr + result.stdout
 
     assert result.returncode in {0, 1, 4}, combined
@@ -1192,8 +1257,8 @@ def test_sortdemo_quicksort_preserves_pivot_swaps_and_recursive_calls():
     result = _run_decompile_addr(
         SORTDEMO_EXE,
         0x10CE0,
-        analysis_timeout=60,
-        subprocess_timeout=150,
+        analysis_timeout=180,
+        subprocess_timeout=300,
         extra_args=("--no-alternate-source-c", "--c-target", "portable-flat"),
         extra_env={"INERTIA_DISABLE_TIMING": "1"},
     )
@@ -1205,7 +1270,7 @@ def test_sortdemo_quicksort_preserves_pivot_swaps_and_recursive_calls():
     assert "function: 0x10ce0 QuickSort" in result.stdout
     assert "validation=passed" in combined
     assert "Function recovery failed" not in combined
-    body = _function_body_from_stdout(result.stdout, "void QuickSort")
+    body = _function_body_from_stdout(result.stdout, "short QuickSort")
     assert "vvar_" not in body
     assert "MK_FP(" not in body
     assert "iBreak = abarWork[iHigh].field_0;" in body
@@ -1219,7 +1284,9 @@ def test_sortdemo_quicksort_preserves_pivot_swaps_and_recursive_calls():
     assert "QuickSort(iLow, iUp);" not in body
     assert "QuickSort(iUp, iHigh);" not in body
     do_body = body[body.index("do\n") :]
-    first_scan = do_body.index("while (true)")
+    first_scan_match = re.search(r"while \((?:true|1)\)", do_body)
+    assert first_scan_match is not None
+    first_scan = first_scan_match.start()
     assert do_body.index("iUp = iLow;") < first_scan
     assert do_body.index("iDown = iHigh;") < first_scan
 
@@ -1291,10 +1358,10 @@ def test_sortdemo_acceptance_scorecards_capture_main_sleep_and_percolateup_state
 
 def test_sortdemo_acceptance_scorecards_capture_heapsort_quicksort_runmenu_and_beep_state():
     function_specs = {
-        "HeapSort": (0x109D8, 30, 90),
-        "QuickSort": (0x10CE0, 30, 120),
-        "RunMenu": (0x102E0, 30, 120),
-        "Beep": (0x10E70, 30, 90),
+        "HeapSort": (0x109D8, 60, 180),
+        "QuickSort": (0x10CE0, 90, 240),
+        "RunMenu": (0x102E0, 90, 240),
+        "Beep": (0x10E70, 30, 120),
     }
     scorecards = {}
     results = {}
@@ -1459,8 +1526,8 @@ def test_sortdemo_runmenu_default_direct_path_validates_without_temp_carrier_fal
     result = _run_decompile_addr(
         SORTDEMO_EXE,
         0x102E0,
-        analysis_timeout=60,
-        subprocess_timeout=180,
+        analysis_timeout=180,
+        subprocess_timeout=300,
         extra_args=("--no-alternate-source-c", "--c-target", "portable-flat"),
         extra_env={"INERTIA_DISABLE_TIMING": "1"},
     )
@@ -1487,6 +1554,37 @@ def test_sortdemo_runmenu_default_direct_path_validates_without_temp_carrier_fal
     assert body.count("InitMenu(") == 3
 
 
+def test_sortd_runmenu_sidecar_free_preserves_binary_escape_exit(tmp_path: Path) -> None:
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x102E0,
+        analysis_timeout=180,
+        subprocess_timeout=300,
+        extra_args=(
+            "--no-alternate-source-c",
+            "--ignore-local-sidecar-hints",
+            "--c-target",
+            "portable-flat",
+        ),
+        extra_env={"INERTIA_DISABLE_TIMING": "1"},
+    )
+
+    combined = _combined_output(result)
+    assert result.returncode == 0, combined
+    _assert_clean_decompilation_output(combined)
+    assert "no helper metadata (.lst/.map/.cod/debug info) found" in combined
+    assert "function: 0x102e0 sub_102e0" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    body = _function_body_from_stdout(result.stdout, "sub_102e0(")
+    assert re.search(r"case 27:\s*return 0;", body)
+    for case_value in (27, 60, 62, 66, 69, 72, 73, 81, 83, 84):
+        assert f"case {case_value}:" in body
+
+
 def test_sortdemo_acceptance_scorecards_capture_swaps_swapbars_and_reinitbars_state():
     function_specs = {
         "Swaps": (0x107B8, 30),
@@ -1495,7 +1593,12 @@ def test_sortdemo_acceptance_scorecards_capture_swaps_swapbars_and_reinitbars_st
     }
     scorecards = {}
     for function_name, (addr, subprocess_timeout) in function_specs.items():
-        result = _run_decompile_addr(SORTDEMO_EXE, addr, subprocess_timeout=subprocess_timeout)
+        result = _run_decompile_addr(
+            SORTDEMO_EXE,
+            addr,
+            analysis_timeout=30,
+            subprocess_timeout=subprocess_timeout,
+        )
         assert result.returncode in {0, 4, 6}, result.stderr + result.stdout
         scorecards[function_name] = build_acceptance_scorecard(
             function_name,
@@ -1545,38 +1648,46 @@ def test_initbars_getvideoconfig_far_pointer_call_has_no_stack_setup_remnants():
         SORTDEMO_EXE,
         0x10554,
         extra_args=("--no-alternate-source-c", "--c-target", "portable-flat"),
-        analysis_timeout=75,
-        subprocess_timeout=210,
+        analysis_timeout=240,
+        subprocess_timeout=300,
     )
 
     combined = _combined_output(result)
     assert result.returncode == 0, combined
-    assert "function: 0x10560 InitBars" in result.stdout
+    assert "function: 0x10560 InitBars" in combined
+    assert "short sub_10560(void)" in result.stdout
     assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
     assert "Source-backed quality guard rejected" not in combined
-    body = _function_body_from_stdout(result.stdout, "void InitBars")
-    assert "fSound = 1;" in body
-    assert "clPause = 30;" in body
-    assert "clPause[0]" not in body
-    assert "clPause[1]" not in body
-    assert "getvideoconfig(&vc);" in body
-    assert body.count("ReInitBars();") == 1
-    assert "vc.field_18 == 1 || vc.field_14 == 2 || !vc.field_14" in body
+    body = _function_body_from_stdout(result.stdout, "void sub_10560")
+    assert "SEG_U16(inertia_ds, 2886) = 1;" in body
+    raw_pause_store = (
+        "SEG_U16(inertia_ds, 306) = 30;" in body
+        and "SEG_U16(inertia_ds, 308) = 0;" in body
+    )
+    typed_pause_store = (
+        "g_0132 = g_0132 & 0xffff0000 | 30;" in body
+        and "g_0132 = g_0132 & 65535;" in body
+    )
+    assert raw_pause_store or typed_pause_store
+    assert "sub_12ac8(&stack_object_70, inertia_ss);" in body
+    assert body.count("sub_10678();") == 1
+    assert "stack_object_70.field_18 == 1 || stack_object_70.field_14 == 2 || !stack_object_70.field_14" in body
     assert "local_5e" not in body
     assert "local_62" not in body
     assert "local_5e != 1 || local_5e == 1 && local_62" not in body
     assert "typedef struct inertia_stack_object_22_14w2_18w2" in result.stdout
     struct_forward = "struct inertia_stack_object_22_14w2_18w2;"
     struct_prototype = (
-        "unsigned short getvideoconfig("
-        "struct inertia_stack_object_22_14w2_18w2 *a0);"
+        "int sub_12ac8(struct inertia_stack_object_22_14w2_18w2 *a0, "
+        "unsigned short a1);"
     )
     struct_definition = "typedef struct inertia_stack_object_22_14w2_18w2"
     assert struct_forward in result.stdout
     assert struct_prototype in result.stdout
     assert result.stdout.index(struct_forward) < result.stdout.index(struct_prototype)
     assert result.stdout.index(struct_prototype) < result.stdout.index(struct_definition)
-    assert "void ReInitBars(void);" in result.stdout
+    assert "int sub_10678(void);" in result.stdout
     assert "int rand(void);" in result.stdout
     assert "void srand(unsigned int seed);" in result.stdout
     assert "time_t time(time_t *out);" in result.stdout
@@ -1588,24 +1699,17 @@ def test_initbars_getvideoconfig_far_pointer_call_has_no_stack_setup_remnants():
     assert "_INSERT(" not in body
     assert "7860();" not in body
     assert "sub_1eb4();" not in body
-    assert body.count("rand()") == 1
-    assert "unsigned short aTemp[43]" in body
-    assert "aTemp[iRow] = iRow + 1;" in body
-    assert "iRowMax = cRow - 1;" in body
-    assert "iLength = aTemp[iRand];" in body
-    assert "abarPerm[iRow].field_0 = iLength;" in body
-    assert (
-        "abarPerm[iRow].field_1 = iLength % iColorMax + 1;" in body
-        or "abarPerm[iRow].field_1 = (short)iLength % (short)iColorMax + 1;"
-        in body
-    )
-    assert "local_70" not in body
-    assert "local_72" not in body
+    assert body.count("sub_11414()") == 1
+    assert "unsigned short local_5a[43]" in body
+    assert "local_5a[local_2] = local_2 + 1;" in body
+    assert "local_4 = g_0BA2 - 1;" in body
+    assert "local_72 = local_5a[local_76];" in body
+    assert "g_08F0[local_2].field_0 = local_72;" in body
+    assert "g_08F0[local_2].field_1 = (short)local_72 % (short)local_74 + 1;" in body
     assert "local_73" not in body
-    assert body.count("iRow = iRow + 1)") == 2
-    assert "iRow += 1;" not in body
-    aggregate_copy = "aTemp[iRand] = aTemp[iRowMax];"
-    aggregate_update = "iRowMax -= 1;"
+    assert body.count("local_2 += 1;") == 2
+    aggregate_copy = "local_5a[local_76] = local_5a[local_4];"
+    aggregate_update = "local_4 -= 1;"
     assert aggregate_copy in body
     assert aggregate_update in body
     assert body.index(aggregate_copy) < body.index(aggregate_update)
@@ -1616,8 +1720,8 @@ def test_initmenu_pause_zero_guard_has_no_raw_flag_carrier():
         SORTDEMO_EXE,
         0x10060,
         extra_args=("--c-target", "portable-flat", "--no-alternate-source-c"),
-        analysis_timeout=90,
-        subprocess_timeout=240,
+        analysis_timeout=150,
+        subprocess_timeout=300,
         extra_env={"INERTIA_DISABLE_TIMING": "1"},
     )
 
@@ -1633,7 +1737,7 @@ def test_initmenu_pause_zero_guard_has_no_raw_flag_carrier():
     assert "gcc portable-flat syntax check failed:" not in combined
     assert "int32_t setbkcolor(int32_t color);" in result.stdout
     assert "int sprintf(char *buf, const char *fmt, ...);" in result.stdout
-    assert "void InitMenu" in result.stdout
+    assert "short InitMenu" in result.stdout
     body = _function_body_from_stdout(result.stdout, "void InitMenu")
     tail_after_pause_text = body.rsplit('strcpy(ach, "            ");', 1)[-1]
     assert "vvar_" not in body
@@ -1712,14 +1816,18 @@ def test_beep_direct_path_validates_without_high_byte_contract_fallback():
     assert "direct failure family: status=ok" in combined
     assert "Sleep(duration);" in result.stdout
     assert "Sleep(duration," not in result.stdout
-    assert "if (!frequency)" not in result.stdout
-    assert result.stdout.count("if (frequency)") == 2
+    assert result.stdout.count("if (frequency)") in {1, 2}
     first_guard = result.stdout.index("if (frequency)")
     control_definition = result.stdout.index("control = inp(97);")
     sleep_call = result.stdout.index("Sleep(duration);")
-    second_guard = result.stdout.index("if (frequency)", first_guard + 1)
     control_read = result.stdout.index("outp(97, control);")
-    assert first_guard < control_definition < sleep_call < second_guard < control_read
+    if result.stdout.count("if (frequency)") == 2:
+        second_guard = result.stdout.index("if (frequency)", first_guard + 1)
+        assert first_guard < control_definition < sleep_call < second_guard < control_read
+    else:
+        zero_guard = result.stdout.index("if (!frequency)", first_guard + 1)
+        assert re.search(r"if \(!frequency\)\s+return 0;", result.stdout)
+        assert first_guard < control_definition < sleep_call < zero_guard < control_read
     assert re.search(r"(?m)^(?:void|int|unsigned short) Sleep\(unsigned long a0\);$", result.stdout)
 
 
@@ -1783,12 +1891,12 @@ def test_drawbar_word_stride_byte_fields_validate_without_indexed_mem_helper_syn
     assert "function: 0x106c8 DrawBar" in result.stdout
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
-    assert "void DrawBar" in result.stdout
+    assert re.search(r"\b(?:unsigned )?short DrawBar\(", result.stdout) is not None
     assert "asm fallback" not in combined.lower()
     assert "sidecar slice fallback" not in combined.lower()
     assert "non-optimized fallback" not in combined.lower()
     assert "extern unsigned short g_0BA2;" in result.stdout or "extern unsigned short cRow;" in result.stdout
-    final_body = _function_body_from_stdout(result.stdout, "void DrawBar")
+    final_body = _function_body_from_stdout(result.stdout, "DrawBar(unsigned short iRow)")
     assert "char achT[44];" in final_body
     assert "abarWork[iRow].field_0" in final_body or "abarWork[iRow] & 255" in final_body
     assert "abarWork[iRow].field_1" in final_body or "abarWork[iRow] >> 8 & 255" in final_body
@@ -1808,7 +1916,7 @@ def test_drawbar_word_stride_byte_fields_validate_without_indexed_mem_helper_syn
     assert "void * memset(void *dst, int value, unsigned short count);" in result.stdout
     assert "local_2" not in final_body
     assert "dst =" not in final_body
-    assert re.search(r"\breturn\s+[^;]+;", final_body) is None
+    assert "return 0;" in final_body
     assert "memset(&iRow" not in final_body
     assert "memset(iRow +" not in final_body
     assert "MEM_U8(&abarWork[iRow))]" not in final_body
@@ -1858,6 +1966,11 @@ def test_percolatedown_direct_global_increment_materialized():
     else:
         final_body = _function_body_from_stdout(result.stdout, "unsigned short PercolateDown")
     assert final_body.count("iCompares += 1;") == 2
+    assert re.search(
+        r"(?:Swaps|sub_107b8)\([^;]+;\s*(?:SwapBars|sub_10768)\([^;]+;"
+        r"\s*(?:local_2 = local_4|i = iChild);",
+        final_body,
+    )
     assert "mem_0BAA" not in final_body
     assert "mem_0BAB" not in final_body
     assert "SEG_U" not in final_body

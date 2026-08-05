@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 __all__ = [
     "attach_cod_stack_alias_annotations_8616",
     "build_stack_variable_bindings_from_alias_facts_8616",
+    "canonical_stack_offset_8616",
     "lower_stack_accesses_from_alias_facts_8616",
 ]
 
@@ -168,8 +169,21 @@ def attach_cod_stack_alias_annotations_8616(project: object, func_addr: int, cod
         not isinstance(stack_vars.get(offset), dict) or stack_vars.get(offset, {}).get("name") != spec["name"]
         for offset, spec in normalized_specs.items()
     )
-    annotate_function(project, func_addr, stack_vars=cast(dict[int, str | dict], normalized_specs))
+    annotate_function(
+        project,
+        func_addr,
+        stack_vars=cast(dict[int, str | dict[object, object]], normalized_specs),
+    )
     return changed
+
+
+def canonical_stack_offset_8616(offset: object) -> object:
+    """Normalize integer 16-bit stack offsets while preserving unknown values."""
+    if not isinstance(offset, int):
+        return offset
+    if 0x8000 <= offset <= 0xFFFF:
+        return offset - 0x10000
+    return offset
 
 
 @overload
@@ -181,12 +195,8 @@ def _canonical_stack_offset_8616(offset: object) -> object: ...
 
 
 def _canonical_stack_offset_8616(offset: object) -> object:
-    """Normalize integer 16-bit stack offsets while preserving unknown values."""
-    if not isinstance(offset, int):
-        return offset
-    if 0x8000 <= offset <= 0xFFFF:
-        return offset - 0x10000
-    return offset
+    """Compatibility wrapper for internal typed stack-lowering callers."""
+    return canonical_stack_offset_8616(offset)
 
 
 def build_stack_variable_bindings_from_alias_facts_8616(
@@ -234,9 +244,12 @@ def build_stack_variable_bindings_from_alias_facts_8616(
         if not address_sizes:
             return []
 
-        return build_stack_variable_bindings_8616(
-            sorted(address_sizes.items()),
-            preferred_names=preferred_names,
+        return cast(
+            list[StackVariableBinding],
+            build_stack_variable_bindings_8616(
+                sorted(address_sizes.items()),
+                preferred_names=preferred_names,
+            ),
         )
 
     return _impl()
@@ -348,7 +361,7 @@ def _arg_cvar_at_stack_offset_8616(codegen: object, offset: int) -> object | Non
             and isinstance(variable, SimStackVariable)
             and _canonical_stack_offset_8616(_dynamic_boundary_attr_8616(variable, "offset")) == offset
         ):
-            return arg
+            return cast(object, arg)
     return None
 
 
@@ -366,21 +379,21 @@ def _register_stack_cvar_surface_8616(codegen: object, cvar: object, target_type
         unified_locals[variable] = {(cvar, _dynamic_boundary_attr_8616(cvar, "variable_type") or target_type)}
 
 
-def _materialize_stack_cvar_at_offset(
+def materialize_stack_cvar_at_offset_from_facts_8616(
     codegen: object,
     offset: int,
     size: int = 2,
     *,
     preferred_name: str | None = None,
 ) -> object | None:
+    """Register a stack CVariable from exact canonical BP-offset facts.
+
+    This self-contained entry point avoids a circular dependency on the
+    injected helpers used by the canonical stack-lowering pass.
+    """
+
     def _impl() -> object | None:
         nonlocal offset
-        """Self-contained: register a SimStackVariable + CVariable for offset.
-
-        This is a standalone copy of the logic in stack_lowering_impl.py
-        for use by fact-based lowering, to avoid circular dependency on
-        the injected helpers used in the canonicalization pass.
-        """
         cfunc = _dynamic_boundary_attr_8616(codegen, "cfunc")
         if cfunc is None:
             return None
@@ -401,7 +414,7 @@ def _materialize_stack_cvar_at_offset(
                 )
                 _apply_stack_binding_name_8616(arg_cvar, preferred_name)
                 _register_stack_cvar_surface_8616(codegen, arg_cvar, target_type)
-                return arg_cvar
+                return cast(object, arg_cvar)
 
         # Check if already exists in variables_in_use
         variables_in_use = _dynamic_boundary_attr_8616(cfunc, "variables_in_use")
@@ -413,7 +426,7 @@ def _materialize_stack_cvar_at_offset(
                 ):
                     _promote_direct_stack_cvariable(codegen, cvar, size, target_type)
                     _apply_stack_binding_name_8616(cvar, preferred_name)
-                    return cvar
+                    return cast(object, cvar)
 
         variable = SimStackVariable(
             offset,
@@ -441,7 +454,7 @@ def _materialize_stack_cvar_at_offset(
             with contextlib.suppress(Exception):
                 sort_local_vars()
 
-        return cvar
+        return cast(object, cvar)
 
     return _impl()
 
@@ -546,7 +559,7 @@ def lower_stack_accesses_from_alias_facts_8616(
                 if not isinstance(offset, int):
                     raise TypeError(f"invalid stack binding offset {binding.bp_offset!r}")
 
-                cvar = _materialize_stack_cvar_at_offset(
+                cvar = materialize_stack_cvar_at_offset_from_facts_8616(
                     codegen,
                     offset,
                     size,

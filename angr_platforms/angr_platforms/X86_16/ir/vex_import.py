@@ -33,6 +33,7 @@ from .ssa import build_x86_16_block_local_ssa
 from .ssa_function import build_x86_16_function_ssa
 from .vex_addressing import SegmentHintMap, block_segment_hints, expr_to_address
 from .vex_condition_lifting import build_condition_from_binop, expr_to_condition
+from .vex_control_flow import terminal_control_flow_instr_8616
 
 __all__ = (
     "apply_x86_16_vex_ir_artifact",
@@ -81,6 +82,7 @@ class _VexStmtBoundary(Protocol):
     data: object
     offset: object
     addr: object
+    delta: object
     guard: object
     dst: object
 
@@ -104,7 +106,20 @@ class _FunctionBoundary(Protocol):
 
     addr: object
     block_addrs_set: object
+    graph: object
     info: object
+
+
+class _FunctionGraphBoundary(Protocol):
+    """Minimal graph edge surface exposed by an angr function."""
+
+    edges: object
+
+
+class _FunctionGraphNodeBoundary(Protocol):
+    """Minimal address surface exposed by an angr function-graph node."""
+
+    addr: object
 
 
 class _FactoryBoundary(Protocol):
@@ -287,6 +302,15 @@ def _stmt_addr(stmt: object | None) -> object | None:
         return None
 
 
+def _stmt_instruction_addr(stmt: object) -> int | None:
+    """Return the effective guest address carried by a VEX instruction mark."""
+    boundary = cast(_VexStmtBoundary, stmt)
+    try:
+        return _external_int(boundary.addr) + _external_int(boundary.delta)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 def _stmt_guard(stmt: object | None) -> object | None:
     """Return a VEX Exit guard expression."""
     if stmt is None:
@@ -365,6 +389,40 @@ def _function_block_addrs(function: object) -> tuple[object, ...]:
     return tuple(sorted(_external_int(block_addr) for block_addr in cast(Iterable[object], block_addrs)))
 
 
+def _function_graph_successors(
+    function: object,
+    block_addrs: frozenset[int],
+) -> dict[int, tuple[int, ...]] | None:
+    """Read exact internal CFG edges from the recovered angr function graph."""
+    try:
+        graph = cast(_FunctionBoundary, function).graph
+        edges = cast(_FunctionGraphBoundary, graph).edges
+    except AttributeError:
+        return None
+    raw_edges = edges() if callable(edges) else edges
+    successors: dict[int, set[int]] = {address: set() for address in block_addrs}
+    try:
+        edge_items = tuple(cast(Iterable[object], raw_edges))
+    except TypeError:
+        return None
+    for edge in edge_items:
+        if not isinstance(edge, (tuple, list)) or len(edge) < 2:
+            continue
+        addresses: list[int] = []
+        for node in edge[:2]:
+            raw_address = node if isinstance(node, int) else cast(_FunctionGraphNodeBoundary, node).addr
+            try:
+                addresses.append(_external_int(raw_address))
+            except (AttributeError, TypeError, ValueError):
+                break
+        if len(addresses) == 2 and addresses[0] in block_addrs and addresses[1] in block_addrs:
+            successors[addresses[0]].add(addresses[1])
+    return {
+        address: tuple(sorted(targets))
+        for address, targets in sorted(successors.items())
+    }
+
+
 def _function_info(function: object) -> dict[object, object] | None:
     """Return mutable angr function info metadata when available."""
     try:
@@ -420,6 +478,7 @@ def _expr_to_value(expr: object, tmps: _TmpValues, conditions: _TmpConditions) -
                 const=inner.const,
                 size=inner.size,
                 expr=(op,),
+                source_tmp=inner.source_tmp,
             )
 
         def _binop_value() -> IRValue:
@@ -489,6 +548,7 @@ def _stmt_to_instr(
     tmps: _MutableTmpValues,
     conditions: _MutableTmpConditions,
     *,
+    instruction_addr: int | None,
     segment_hints: SegmentHintMap,
     tmp_exprs: _TmpExprs,
 ) -> IRInstr | None:
@@ -512,8 +572,14 @@ def _stmt_to_instr(
                     segment_hints=segment_hints,
                     tmp_exprs=tmp_exprs,
                 )
-                tmps[tmp_id] = IRValue(MemSpace.TMP, name=f"load_t{tmp_id}", size=_int_size(data), expr=("load",))
-                return IRInstr(op="LOAD", dst=dst, args=(addr,), size=_int_size(data))
+                tmps[tmp_id] = IRValue(
+                    MemSpace.TMP,
+                    name=f"load_t{tmp_id}",
+                    size=_int_size(data),
+                    expr=("load",),
+                    source_tmp=tmp_id,
+                )
+                return IRInstr(op="LOAD", dst=dst, args=(addr,), size=_int_size(data), addr=instruction_addr)
             if data_tag == "Iex_Binop":
                 op = _expr_op(data, "BINOP")
                 args = _expr_args(data)
@@ -532,8 +598,25 @@ def _stmt_to_instr(
                         cond = build_condition_from_binop(op, left, right)
                         if cond is not None:
                             conditions[tmp_id] = cond
-                    tmps[tmp_id] = _expr_to_value(data, tmps, conditions)
-                    return IRInstr(op=op, dst=dst, args=(left, right), size=max(left.size, right.size))
+                    value = _expr_to_value(data, tmps, conditions)
+                    tmps[tmp_id] = IRValue(
+                        value.space,
+                        name=value.name,
+                        offset=value.offset,
+                        const=value.const,
+                        size=value.size,
+                        version=value.version,
+                        expr=value.expr,
+                        memory_access_insn=value.memory_access_insn,
+                        source_tmp=tmp_id,
+                    )
+                    return IRInstr(
+                        op=op,
+                        dst=dst,
+                        args=(left, right),
+                        size=max(left.size, right.size),
+                        addr=instruction_addr,
+                    )
             if data_tag == "Iex_ITE":
                 cond = expr_to_condition(data, tmps, conditions, expr_to_value=_expr_to_value, tmp_exprs=tmp_exprs)
                 if not (
@@ -545,13 +628,23 @@ def _stmt_to_instr(
                 ):
                     conditions[tmp_id] = cond
             value = _expr_to_value(data, tmps, conditions)
-            tmps[tmp_id] = value
-            return IRInstr(op="MOV", dst=dst, args=(value,), size=value.size)
+            tmps[tmp_id] = IRValue(
+                value.space,
+                name=value.name,
+                offset=value.offset,
+                const=value.const,
+                size=value.size,
+                version=value.version,
+                expr=value.expr,
+                memory_access_insn=value.memory_access_insn,
+                source_tmp=tmp_id,
+            )
+            return IRInstr(op="MOV", dst=dst, args=(value,), size=value.size, addr=instruction_addr)
         if tag == "Ist_Put":
             offset = _stmt_offset(stmt)
             dst = IRValue(MemSpace.REG, name=register_name_from_offset(offset), size=2)
             src = _expr_to_value(_stmt_data(stmt), tmps, conditions)
-            return IRInstr(op="MOV", dst=dst, args=(src,), size=dst.size)
+            return IRInstr(op="MOV", dst=dst, args=(src,), size=dst.size, addr=instruction_addr)
         if tag == "Ist_Store":
             data_expr = _stmt_data(stmt)
             addr = expr_to_address(
@@ -564,13 +657,13 @@ def _stmt_to_instr(
                 tmp_exprs=tmp_exprs,
             )
             data = _expr_to_value(data_expr, tmps, conditions)
-            return IRInstr(op="STORE", dst=None, args=(addr, data), size=data.size)
+            return IRInstr(op="STORE", dst=None, args=(addr, data), size=data.size, addr=instruction_addr)
         if tag == "Ist_Exit":
             cond = expr_to_condition(
                 _stmt_guard(stmt), tmps, conditions, expr_to_value=_expr_to_value, tmp_exprs=tmp_exprs
             )
             target = _expr_to_value(_stmt_dst(stmt), tmps, conditions)
-            return IRInstr(op="CJMP", dst=None, args=(cond, target), size=0)
+            return IRInstr(op="CJMP", dst=None, args=(cond, target), size=0, addr=instruction_addr)
         return None
 
     return _impl()
@@ -591,14 +684,28 @@ def _block_to_ir(block: object) -> IRBlock:
         refusals: list[IRRefusal] = []
         segment_hints = block_segment_hints(block)
         statements = _vex_statements(vex)
+        instruction_addr: int | None = None
         for stmt in statements:
-            instr = _stmt_to_instr(stmt, tmps, conditions, segment_hints=segment_hints, tmp_exprs=tmp_exprs)
+            tag = _stmt_tag(stmt)
+            if tag == "Ist_IMark":
+                instruction_addr = _stmt_instruction_addr(stmt)
+                continue
+            instr = _stmt_to_instr(
+                stmt,
+                tmps,
+                conditions,
+                instruction_addr=instruction_addr,
+                segment_hints=segment_hints,
+                tmp_exprs=tmp_exprs,
+            )
             if instr is None:
-                tag = _stmt_tag(stmt)
                 if tag:
                     refusals.append(IRRefusal("unsupported_stmt", f"unsupported VEX statement {tag}", addr))
                 continue
             instrs.append(instr)
+        terminal = terminal_control_flow_instr_8616(vex, instruction_addr)
+        if terminal is not None:
+            instrs.append(terminal)
         successor_addrs: list[int] = []
         for stmt in statements:
             if _stmt_tag(stmt) == "Ist_Exit":
@@ -633,6 +740,20 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
         ir_block = _block_to_ir(block)
         blocks.append(ir_block)
         refusals.extend(ir_block.refusals)
+    graph_successors = _function_graph_successors(
+        function,
+        frozenset(block.addr for block in blocks),
+    )
+    if graph_successors is not None:
+        blocks = [
+            IRBlock(
+                addr=block.addr,
+                instrs=block.instrs,
+                refusals=block.refusals,
+                successor_addrs=graph_successors[block.addr],
+            )
+            for block in blocks
+        ]
     function_addr = _function_addr(function)
     return IRFunctionArtifact(
         function_addr=function_addr,

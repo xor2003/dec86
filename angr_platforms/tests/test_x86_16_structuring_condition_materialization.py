@@ -75,11 +75,13 @@ def test_structuring_condition_materialization_delegates_legacy_consumers_in_ord
         "typed_conditions_changed": True,
         "condition_chains_changed": False,
         "decoded_jcc_changed": False,
+        "loop_conditions_changed": False,
+        "segment_access_provenance_changed": False,
         "changed": True,
         "owner": "structuring.condition_materialization",
     }
     assert codegen._inertia_condition_materialization_structuring_pass_ran_8616 is True
-    assert project._inertia_decompiler_stage == "structuring:condition_materialization:chains"
+    assert project._inertia_decompiler_stage == "structuring:condition_materialization:provenance"
 
 
 def test_structuring_condition_materialization_bool_entrypoint(monkeypatch):
@@ -682,6 +684,7 @@ def test_structuring_replays_typed_wide_condition_over_existing_boolean_form(mon
                 materialized_count=1,
                 failure_count=0,
             ),
+            consumed_call=call,
         ),
     )
     monkeypatch.setattr(
@@ -927,11 +930,20 @@ def test_structuring_shared_body_chain_refuses_different_body_targets():
 
 def test_structuring_condition_owner_refuses_unrelated_container_tag():
     fact = _targeted_condition(0x103F, 0x103B, 0x1044, 0x1041)
+    condition_blocks = frozenset({fact.block_addr})
 
-    assert condition_materialization._structured_node_owns_condition_fact_8616(0x103F, fact)
-    assert condition_materialization._structured_node_owns_condition_fact_8616(0x103B, fact)
-    assert condition_materialization._structured_node_owns_condition_fact_8616(None, fact)
-    assert not condition_materialization._structured_node_owns_condition_fact_8616(0x9999, fact)
+    assert condition_materialization._structured_node_owns_condition_fact_8616(
+        0x103F, fact, {}, condition_blocks
+    )
+    assert condition_materialization._structured_node_owns_condition_fact_8616(
+        0x103B, fact, {}, condition_blocks
+    )
+    assert condition_materialization._structured_node_owns_condition_fact_8616(
+        None, fact, {}, condition_blocks
+    )
+    assert not condition_materialization._structured_node_owns_condition_fact_8616(
+        0x9999, fact, {}, condition_blocks
+    )
 
 
 def test_structuring_condition_chain_refuses_unproven_leaf(monkeypatch):
@@ -973,13 +985,15 @@ def test_structuring_single_branch_uses_taken_condition_for_taken_owned_body(mon
     condition = CConstant(0, SimTypeShort(False), codegen=codegen)
     condition.tags = {"ins_addr": 0x1002, "vex_block_addr": 0x1000}
     body = _tagged_statements(0x1012, codegen)
-    body.tags["vex_block_addr"] = 0x1010
+    body.tags["vex_block_addr"] = 0x1000
     root = CStatements(
         [CIfElse([(condition, body)], else_node=None, cstyle_ifs=True, codegen=codegen)],
         codegen=codegen,
     )
-    fact = _targeted_condition(0x1002, 0x1000, 0x1010, 0x1004)
-    graph = _Graph(((0x1004, 0x1020), (0x1010, 0x1018), (0x1018, 0x1020)))
+    fact = _targeted_condition(0x1002, 0x1000, 0x1012, 0x1004)
+    graph = _Graph(
+        ((0x1000, 0x1012), (0x1000, 0x1004), (0x1004, 0x1000), (0x1012, 0x1018), (0x1018, 0x1020))
+    )
     function = SimpleNamespace(transition_graph=graph, block_addrs_set=set(graph.nodes) | {0x1000})
     project = SimpleNamespace(kb=SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: function)))
     codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root)

@@ -89,7 +89,7 @@ def _global(addr: int, codegen: _Codegen, name: str) -> CVariable:
 
 def _array(codegen: _Codegen) -> CVariable:
     return CVariable(
-        SimStackVariable(-8, 8, base="bp", name="items", region=0x4010),
+        SimStackVariable(-8, 2, base="bp", name="items", region=0x4010),
         variable_type=SimTypeFixedSizeArray(SimTypeShort(False), 4),
         codegen=codegen,
     )

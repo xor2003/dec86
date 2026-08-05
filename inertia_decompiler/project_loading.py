@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Any, Callable, Protocol, cast
 
 import angr
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -23,6 +23,7 @@ from angr_platforms.X86_16.compiler_helpers import hook_x86_16_known_compiler_he
 from inertia_decompiler.telemetry import trace_function
 
 _IDA_BASE_ADDRESS_RE = re.compile(r"Base Address:\s*([0-9A-Fa-f]+)h", re.IGNORECASE)
+_TRACE_FUNCTION: Any = cast(Any, trace_function)
 
 
 def _debug_print(message: str) -> None:
@@ -49,17 +50,29 @@ def _finalize_x86_16_project(project: angr.Project) -> angr.Project:
 
 
 def _find_sidecar_file(binary: Path, suffix: str) -> Path | None:
-    direct = binary.with_suffix(suffix)
+    """Find a companion sidecar path for a binary using an exact basename match when possible.
+
+    Caching this lookup avoids repeated directory scans during multi-function runs where the same
+    binary is consulted for the same sidecar types.
+    """
+    return _find_sidecar_file_cached(binary.as_posix(), suffix.lower())
+
+
+@lru_cache(maxsize=256)
+def _find_sidecar_file_cached(binary: str, suffix: str) -> Path | None:
+    """Resolve one normalized string cache key to an existing sidecar path."""
+    binary_path = Path(binary)
+    direct = binary_path.with_suffix(suffix)
     if direct.exists():
         return direct
-    direct_appended = binary.with_name(f"{binary.name}{suffix}")
+    direct_appended = binary_path.with_name(f"{binary_path.name}{suffix}")
     if direct_appended.exists():
         return direct_appended
     try:
-        siblings = binary.parent.iterdir()
+        siblings = binary_path.parent.iterdir()
     except OSError:
         return None
-    wanted = binary.name.lower() + suffix.lower()
+    wanted = binary_path.name.lower() + suffix.lower()
     for sibling in siblings:
         if sibling.name.lower() == wanted:
             return sibling
@@ -67,8 +80,15 @@ def _find_sidecar_file(binary: Path, suffix: str) -> Path | None:
 
 
 def _probe_ida_base_linear(binary: Path, fallback_linear: int) -> int:
+    """Return the IDA listing base for a binary, or the supplied fallback."""
+    return _probe_ida_base_linear_cached(binary, fallback_linear)
+
+
+@lru_cache(maxsize=256)
+def _probe_ida_base_linear_cached(binary: Path, fallback_linear: int) -> int:
+    """Cache the bounded IDA listing base probe for one binary path."""
     try:
-        lst_path = _find_sidecar_file(binary, ".lst")
+        lst_path = _find_sidecar_file_cached(binary.as_posix(), ".lst")
         if lst_path is None:
             return fallback_linear
         with lst_path.open("r", encoding="utf-8", errors="ignore") as fp:
@@ -85,6 +105,13 @@ def _probe_ida_base_linear(binary: Path, fallback_linear: int) -> int:
 
 
 def _looks_like_ne_executable(path: Path) -> bool:
+    """Return whether the executable carries an NE header signature."""
+    return _looks_like_ne_executable_cached(path)
+
+
+@lru_cache(maxsize=256)
+def _looks_like_ne_executable_cached(path: Path) -> bool:
+    """Cache the bounded NE signature probe for one executable path."""
     try:
         with path.open("rb") as fp:
             header = fp.read(0x40)
@@ -100,6 +127,13 @@ def _looks_like_ne_executable(path: Path) -> bool:
 
 
 def _detect_packed_mz_executable(path: Path) -> str | None:
+    """Return the recognized MZ packer name, when one is present."""
+    return _detect_packed_mz_executable_cached(path)
+
+
+@lru_cache(maxsize=256)
+def _detect_packed_mz_executable_cached(path: Path) -> str | None:
+    """Cache the bounded MZ packer signature probe for one executable path."""
     try:
         header = path.read_bytes()[:0x40]
     except OSError:
@@ -239,7 +273,6 @@ def _unpack_lzexe_image(data: bytes, *, base_addr: int) -> _UnpackedLZEXEImage:
     return _impl()
 
 
-@trace_function(name="project.build")
 def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point: int) -> angr.Project:
     def _impl() -> angr.Project:
         suffix = path.suffix.lower()
@@ -338,9 +371,11 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
     return _impl()
 
 
+_build_project = cast(Callable[..., angr.Project], _TRACE_FUNCTION(name="project.build")(_build_project))
+
+
 @lru_cache(maxsize=16)
-@trace_function(name="project.build_cached")
-def _build_project_cached(
+def _build_project_cached_impl(
     path: str,
     *,
     force_blob: bool,
@@ -354,8 +389,10 @@ def _build_project_cached(
         entry_point=entry_point,
     )
 
+_build_project_cached = cast(
+    Callable[..., angr.Project], _TRACE_FUNCTION(name="project.build_cached")(_build_project_cached_impl)
+)
 
-@trace_function(name="project.build_from_bytes")
 def _build_project_from_bytes(code: bytes, *, base_addr: int, entry_point: int) -> angr.Project:
     arch = Arch86_16()
     arch.bits = max(arch.bits, 32)
@@ -372,3 +409,8 @@ def _build_project_from_bytes(code: bytes, *, base_addr: int, entry_point: int) 
             simos="DOS",
         )
     )
+
+
+_build_project_from_bytes = cast(
+    Callable[..., angr.Project], _TRACE_FUNCTION(name="project.build_from_bytes")(_build_project_from_bytes)
+)

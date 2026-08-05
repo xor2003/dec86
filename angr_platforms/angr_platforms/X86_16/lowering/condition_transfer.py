@@ -48,6 +48,7 @@ from ..ir.condition_ir import (
     deduplicate_conditions_8616,
 )
 from ..ir.core import IRValue, MemSpace
+from .condition_fact_arbitration import resolve_condition_fact_conflicts_8616
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -241,19 +242,20 @@ def _filter_conditions_to_current_function_8616(
     ownership: _ConditionFunctionOwnership8616,
 ) -> tuple[list[ConditionIR], _ConditionOwnershipStats8616]:
     """Retain conditions proven to match the current function's decoded blocks."""
-    normalized = deduplicate_conditions_8616(conditions)
+    resolution = resolve_condition_fact_conflicts_8616(conditions)
+    normalized = list(resolution.conditions)
     if not ownership.decoded_block_addrs:
         return normalized, _ConditionOwnershipStats8616(
             raw_fact_count=len(conditions),
             normalized_fact_count=len(normalized),
             classified_fact_count=0,
             materialized_count=len(normalized),
-            failure_count=0,
+            failure_count=resolution.failure_count,
         )
 
     retained: list[ConditionIR] = []
     classified = 0
-    failures = 0
+    failures = resolution.failure_count
     for cond in normalized:
         block_addr = cond.block_addr
         if not isinstance(block_addr, int) or block_addr not in ownership.decoded_block_addrs:
@@ -398,7 +400,9 @@ def _collect_pending_fallthrough_conditions_8616(
 
     The lifter owns operand recovery and records ConditionSource objects.  This
     bridge only proves that a pending function block begins with a supported JCC
-    instruction, then converts that already-typed source into ConditionIR.
+    instruction, then converts that already-typed source into ConditionIR. Pending
+    sources are single-consumer lifter state; later transfers replay the typed
+    evidence already attached to the active codegen contract.
     """
     block_addr_set = set(block_addrs)
     conditions: list[ConditionIR] = []

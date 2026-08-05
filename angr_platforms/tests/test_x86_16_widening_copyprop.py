@@ -21,7 +21,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CWhileLoop,
 )
 from angr.sim_type import SimTypeChar, SimTypeShort
-from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimTemporaryVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.c_ast_utils import _c_ast_cycle_path_8616
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
@@ -101,6 +101,38 @@ def test_widening_copyprop_consumes_structured_virtual_value_identity() -> None:
     assert changed is True
     assert isinstance(guard.condition.rhs, CVariable)
     assert guard.condition.rhs.variable.addr == 0x160
+
+
+def test_widening_copyprop_consumes_typed_temporary_in_nested_value_expression() -> None:
+    codegen = _DummyCodegen()
+    source = CVariable(
+        SimStackVariable(4, 2, base="bp", name="x"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    definition = CVariable(SimTemporaryVariable(7, 16), codegen=codegen)
+    read = CVariable(SimTemporaryVariable(7, 16), codegen=codegen)
+    copy = CAssignment(definition, source, codegen=codegen)
+    shifted = CBinaryOp(
+        "Shl",
+        read,
+        CConstant(1, SimTypeChar(False), codegen=codegen),
+        codegen=codegen,
+    )
+    store = CAssignment(
+        CVariable(SimMemoryVariable(0x44, 2, name="g_word"), codegen=codegen),
+        shifted,
+        codegen=codegen,
+    )
+    root = CStatements([copy, store], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+
+    changed = _widening_copy_propagation_8616(codegen, enable_nested=True)
+
+    assert changed is True
+    assert isinstance(store.rhs, CBinaryOp)
+    assert isinstance(store.rhs.lhs, CVariable)
+    assert store.rhs.lhs.variable.offset == 4
 
 
 def test_widening_copyprop_refuses_virtual_name_without_structured_identity() -> None:
@@ -375,6 +407,14 @@ def test_widening_copyprop_materializes_nontrivial_transient_carrier() -> None:
         codegen=codegen,
     )
     definition = CAssignment(carrier, expression, codegen=codegen)
+    ordinary_use = CBinaryOp(
+        "Sub",
+        carrier,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    sink = CVariable(SimRegisterVariable(8, 2, name="v73"), variable_type=SimTypeShort(False), codegen=codegen)
+    use = CAssignment(sink, ordinary_use, codegen=codegen)
     condition = CBinaryOp(
         "CmpLE",
         source,
@@ -382,15 +422,18 @@ def test_widening_copyprop_materializes_nontrivial_transient_carrier() -> None:
         codegen=codegen,
     )
     guard = CIfBreak(condition, codegen=codegen)
-    root = CStatements([definition, guard], addr=0x4010, codegen=codegen)
+    root = CStatements([definition, use, guard], addr=0x4010, codegen=codegen)
     codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
 
     changed = _widening_copy_propagation_8616(codegen, enable_nested=True)
 
     assert changed is True
+    assert ordinary_use.lhs is carrier
     assert isinstance(condition.rhs, CBinaryOp)
     assert condition.rhs is not expression
     assert codegen.widening_copyprop_nontrivial_stack_definitions_refused_8616 == 0
+    assert codegen.widening_copyprop_nontrivial_assignment_uses_refused_8616 == 1
+    assert codegen._inertia_widening_nontrivial_definition_guard_8616.is_closed
 
 
 def test_widening_copyprop_rewrites_direct_break_condition_from_preceding_copy():

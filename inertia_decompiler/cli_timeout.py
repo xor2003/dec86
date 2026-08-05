@@ -6,10 +6,15 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 
 from __future__ import annotations
 
+import math
 import sys
+
+_MEDIUM_FUNCTION_TIMEOUT_FLOOR: int = 150
+_LARGE_FUNCTION_TIMEOUT_FLOOR: int = 180
 
 
 def _default_recovery_timeout(configured_timeout: int, *, explicit_timeout: bool) -> int:
+    """Return the recovery budget selected by CLI timeout policy."""
     if configured_timeout <= 0:
         return 5
     if not explicit_timeout:
@@ -18,7 +23,10 @@ def _default_recovery_timeout(configured_timeout: int, *, explicit_timeout: bool
 
 
 class _AdaptivePerByteTimeoutModel:
+    """Estimate serial function budgets from size and successful run evidence."""
+
     def __init__(self, configured_timeout: int, *, explicit_timeout: bool, margin: float = 1.5) -> None:
+        """Initialize a bounded timing model for one serial function sweep."""
         self.configured_timeout = max(1, configured_timeout)
         self.explicit_timeout = explicit_timeout
         self.margin = max(1.0, float(margin))
@@ -32,35 +40,29 @@ class _AdaptivePerByteTimeoutModel:
         if len(self._samples) > 64:
             self._samples = self._samples[-64:]
 
-    def _seed_rate(self) -> tuple[float, float]:
+    def _seed_rate(self) -> float:
+        """Return a conservative observed seconds-per-byte rate."""
         if not self._samples:
-            return (0.05, 0.5)
+            return 0.05
         rates = [elapsed / max(1, byte_count) for byte_count, elapsed in self._samples]
-        overheads = [
-            max(0.0, elapsed - (rate * byte_count)) for (byte_count, elapsed), rate in zip(self._samples, rates)
-        ]
-        rate = sum(rates) / len(rates)
-        overhead = sum(overheads) / len(overheads) if overheads else 0.5
-        return max(0.005, rate), max(0.0, overhead)
+        return max(0.005, max(rates))
 
     def timeout_for_byte_count(self, byte_count: int) -> int:
         """Return the timeout budget for a function with the given byte count."""
         base = max(1, int(self.configured_timeout))
         if self.explicit_timeout:
             return base
-        # Adaptive default budgets for larger functions in serial file sweeps.
-        # Keeps deterministic behavior while avoiding frequent 86_16 timeout
-        # churn on medium/large procedures (e.g. menu/render loops).
+        static_floor = base
         if byte_count >= 520:
-            return max(base, 120)
-        if byte_count >= 380:
-            return max(base, 90)
-        if byte_count >= 280:
-            return max(base, 60)
-        return base
+            static_floor = _LARGE_FUNCTION_TIMEOUT_FLOOR
+        elif byte_count >= 280:
+            static_floor = _MEDIUM_FUNCTION_TIMEOUT_FLOOR
+        observed_budget = math.ceil(self._seed_rate() * max(0, byte_count) * self.margin)
+        return max(base, static_floor, observed_budget)
 
 
 def _stdout_is_interactive() -> bool:
+    """Return whether stdout is an interactive terminal."""
     stream = sys.stdout
     try:
         return bool(stream is not None and hasattr(stream, "isatty") and stream.isatty())

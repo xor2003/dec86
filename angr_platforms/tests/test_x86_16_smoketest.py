@@ -554,6 +554,9 @@ def test_stack_arg_prototype_inference():
 
     assert dec.codegen is not None
     _assert_word_signature(func, 2)
+    arg_names = [argument.variable.name for argument in dec.codegen.cfunc.arg_list]
+    assert all(isinstance(name, str) for name in arg_names)
+    assert f"return {arg_names[0]} + {arg_names[1]};" in dec.codegen.text
 
 
 def test_single_word_arg_signature_and_return_type():
@@ -674,8 +677,10 @@ def test_explicit_near_pointer_prototype():
     dec = project.analyses.Decompiler(func, cfg=cfg)
 
     assert dec.codegen is not None
-    assert "char * _start(char *a0)" in dec.codegen.text or "char * _start(char *v2)" in dec.codegen.text
-    assert "return a0;" in dec.codegen.text or "return v2;" in dec.codegen.text
+    arg_name = dec.codegen.cfunc.arg_list[0].variable.name
+    assert isinstance(arg_name, str)
+    assert f"char * _start(char *{arg_name})" in dec.codegen.text
+    assert f"return {arg_name};" in dec.codegen.text
 
 
 def test_explicit_far_pointer_like_prototype():
@@ -691,7 +696,9 @@ def test_explicit_far_pointer_like_prototype():
 
     assert dec.codegen is not None
     assert "long _start" in dec.codegen.text
-    assert "return a0;" in dec.codegen.text
+    arg_name = dec.codegen.cfunc.arg_list[0].variable.name
+    assert isinstance(arg_name, str)
+    assert f"return {arg_name};" in dec.codegen.text
 
 
 def test_c_decl_annotation_applies_function_and_argument_names():

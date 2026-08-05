@@ -41,6 +41,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeLong, SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 
+from ..callsite_summary import CallerReturnUseVerdict8616
 from ..semantics.branch_target_return import (
     BranchTargetReturnEffectKind8616 as BranchTargetReturnEffectKind8616,
 )
@@ -58,6 +59,16 @@ from ..semantics.branch_target_return import (
 )
 from ..semantics.branch_target_return import (
     terminal_ax_return_effect_8616 as terminal_ax_return_effect_8616,
+)
+from ..semantics.terminal_call_paths import (
+    TerminalCallPathCallbacks8616,
+    TerminalCallPathStatus8616,
+    prove_terminal_call_path_8616,
+)
+from .expression_substitution import unique_tagged_conditions_8616
+from .multi_arm_return_chains import multi_arm_wide_return_obligation_count_8616
+from .terminal_register_values import (
+    compose_ax_byte_lanes_8616 as compose_ax_byte_lanes_8616,
 )
 
 
@@ -743,7 +754,9 @@ class ReturnChainProofCallbacks8616:
     branch_target_return_value: Callable[[object, int], int | None]
     decoded_condition_expr: Callable[[object, object, object, dict[str, int] | None], CExpression | None]
     translate_cmp_jcc_guard: Callable[[object, object, int, int], object | None]
+    last_call_addr_before_jcc: Callable[[object, object, int], int | None]
     condition_tags: Callable[[object], object]
+    iter_c_nodes_deep: Callable[[object], Iterable[object]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -751,7 +764,8 @@ class ReturnChainEmptyIfCallbacks8616:
     """Dynamic adapters for CFG-proven empty-if return-chain orchestration."""
 
     ordered_return_values: Callable[[object, object], list[int]]
-    selector_function_has_unsafe_effects: Callable[[object, object], bool]
+    selector_function_has_unsafe_effects: Callable[[object, object, frozenset[int]], bool]
+    condition_call_addrs: Callable[[Iterable[CExpression]], frozenset[int]]
     condition_branch_return_value: Callable[[object, object], int | None]
     condition_branch_is_non_branch: Callable[[object, object], bool]
     condition_tags: Callable[[object], object]
@@ -823,12 +837,29 @@ class TerminalCallResultReturnStatus8616(Enum):
     NON_ADJACENT_CALL_RETURN = "non_adjacent_call_return"
     AMBIGUOUS_AST_CANDIDATE = "ambiguous_ast_candidate"
     CALL_TAG_MISSING = "call_tag_missing"
+    CALLEE_RETURNS_VOID = "callee_returns_void"
+    CALLER_USE_PROVEN_UNUSED = "caller_use_proven_unused"
     CALLER_USE_NOT_PROVEN = "caller_use_not_proven"
     CALL_BLOCK_MISSING_OR_AMBIGUOUS = "call_block_missing_or_ambiguous"
     CALL_INSTRUCTION_MISSING_OR_AMBIGUOUS = "call_instruction_missing_or_ambiguous"
     CFG_PATH_AMBIGUOUS = "cfg_path_ambiguous"
     UNSAFE_POST_CALL_EFFECT = "unsafe_post_call_effect"
     RETURN_NOT_REACHED = "return_not_reached"
+
+
+class TerminalCallResultContract8616(Enum):
+    """Typed value contract for one structured terminal call."""
+
+    VALUE = "value"
+    VOID = "void"
+    UNKNOWN = "unknown"
+
+
+def _unknown_terminal_call_result_contract_8616(
+    _call: CFunctionCall,
+) -> TerminalCallResultContract8616:
+    """Keep legacy callback fixtures conservative when no type adapter exists."""
+    return TerminalCallResultContract8616.UNKNOWN
 
 
 @dataclass(frozen=True, slots=True)
@@ -840,6 +871,9 @@ class TerminalCallResultReturnCallbacks8616:
     load_block: Callable[[int, int], object | None]
     successor_addrs: Callable[[int], Iterable[int]]
     branch_target_imm: Callable[[object], int | None]
+    call_result_contract: Callable[
+        [CFunctionCall], TerminalCallResultContract8616
+    ] = _unknown_terminal_call_result_contract_8616
 
 
 @dataclass(frozen=True, slots=True)
@@ -860,12 +894,33 @@ class TerminalCallResultReturnStats8616:
 class _TerminalCallReturnCandidate8616:
     """One exact structured terminal-call return candidate."""
 
-    container: CStatements
+    call_container: CStatements
+    return_container: CStatements
     call: CFunctionCall
     call_statement_index: int | None
     return_index: int
     already_materialized: bool
-    empty_return: CReturn | None
+    return_use_proven_locally: bool
+    return_statement: CReturn | None
+
+
+@dataclass(frozen=True, slots=True)
+class _TerminalAssignedCall8616:
+    """One call assigned to an exact structured-C result carrier."""
+
+    container: CStatements
+    index: int
+    call: CFunctionCall
+    carrier: object
+
+
+@dataclass(frozen=True, slots=True)
+class _TerminalCarrierReturn8616:
+    """One structured return of an exact result-carrier object."""
+
+    container: CStatements
+    index: int
+    statement: CReturn
 
 
 def _terminal_call_return_containers_8616(
@@ -887,16 +942,9 @@ def _terminal_call_return_leaf_8616(
     statement: object,
 ) -> tuple[str, CFunctionCall | None, CReturn | None] | None:
     """Unwrap one transparent statement wrapper to a terminal call/return leaf."""
-    current = statement
-    visited: set[int] = set()
-    while isinstance(current, CStatements):
-        if id(current) in visited:
-            return None
-        visited.add(id(current))
-        children = tuple(current.statements or ())
-        if len(children) != 1:
-            return None
-        current = children[0]
+    current = _terminal_call_return_statement_8616(statement)
+    if current is None:
+        return None
     if isinstance(current, CExpressionStatement) and isinstance(current.expr, CFunctionCall):
         return "call", current.expr, None
     if isinstance(current, CReturn):
@@ -907,6 +955,21 @@ def _terminal_call_return_leaf_8616(
     return None
 
 
+def _terminal_call_return_statement_8616(statement: object) -> object | None:
+    """Unwrap one transparent statement container without inferring meaning."""
+    current = statement
+    visited: set[int] = set()
+    while isinstance(current, CStatements):
+        if id(current) in visited:
+            return None
+        visited.add(id(current))
+        children = tuple(current.statements or ())
+        if len(children) != 1:
+            return None
+        current = children[0]
+    return current
+
+
 def _terminal_call_return_candidates_8616(
     root: object,
     callbacks: TerminalCallResultReturnCallbacks8616,
@@ -914,10 +977,38 @@ def _terminal_call_return_candidates_8616(
     """Collect exact adjacent candidates and report a unique non-adjacent shape."""
     candidates: list[_TerminalCallReturnCandidate8616] = []
     candidate_keys: set[tuple[int, int, bool]] = set()
+    assigned_calls: list[_TerminalAssignedCall8616] = []
+    carrier_returns: list[_TerminalCarrierReturn8616] = []
     non_adjacent = False
-    for container in _terminal_call_return_containers_8616(root, callbacks):
+    containers = _terminal_call_return_containers_8616(root, callbacks)
+    for container in containers:
         statements = tuple(container.statements or ())
         leaves = tuple(_terminal_call_return_leaf_8616(statement) for statement in statements)
+        for index, statement in enumerate(statements):
+            leaf_statement = _terminal_call_return_statement_8616(statement)
+            if isinstance(leaf_statement, CAssignment) and isinstance(
+                leaf_statement.rhs, CFunctionCall
+            ):
+                assigned_calls.append(
+                    _TerminalAssignedCall8616(
+                        container=container,
+                        index=index,
+                        call=leaf_statement.rhs,
+                        carrier=leaf_statement.lhs,
+                    )
+                )
+            elif (
+                isinstance(leaf_statement, CReturn)
+                and leaf_statement.retval is not None
+                and not isinstance(leaf_statement.retval, CFunctionCall)
+            ):
+                carrier_returns.append(
+                    _TerminalCarrierReturn8616(
+                        container=container,
+                        index=index,
+                        statement=leaf_statement,
+                    )
+                )
         call_indexes = tuple(index for index, leaf in enumerate(leaves) if leaf is not None and leaf[0] == "call")
         empty_return_indexes = tuple(
             index for index, leaf in enumerate(leaves) if leaf is not None and leaf[0] == "empty_return"
@@ -934,12 +1025,14 @@ def _terminal_call_return_candidates_8616(
             candidate_keys.add(key)
             candidates.append(
                 _TerminalCallReturnCandidate8616(
-                    container=container,
+                    call_container=container,
+                    return_container=container,
                     call=call,
                     call_statement_index=None,
                     return_index=return_index,
                     already_materialized=True,
-                    empty_return=None,
+                    return_use_proven_locally=True,
+                    return_statement=None,
                 )
             )
         for return_index in empty_return_indexes:
@@ -960,12 +1053,14 @@ def _terminal_call_return_candidates_8616(
             candidate_keys.add(key)
             candidates.append(
                 _TerminalCallReturnCandidate8616(
-                    container=container,
+                    call_container=container,
+                    return_container=container,
                     call=call,
                     call_statement_index=call_index,
                     return_index=return_index,
                     already_materialized=False,
-                    empty_return=empty_return,
+                    return_use_proven_locally=False,
+                    return_statement=empty_return,
                 )
             )
         if (
@@ -975,6 +1070,29 @@ def _terminal_call_return_candidates_8616(
             and call_indexes[0] < empty_return_indexes[0]
         ):
             non_adjacent = True
+    for assigned_call in assigned_calls:
+        for carrier_return in carrier_returns:
+            if carrier_return.statement.retval is not assigned_call.carrier:
+                continue
+            same_container = assigned_call.container is carrier_return.container
+            if same_container and carrier_return.index != assigned_call.index + 1:
+                continue
+            key = (id(assigned_call.call), id(carrier_return.statement), False)
+            if key in candidate_keys:
+                continue
+            candidate_keys.add(key)
+            candidates.append(
+                _TerminalCallReturnCandidate8616(
+                    call_container=assigned_call.container,
+                    return_container=carrier_return.container,
+                    call=assigned_call.call,
+                    call_statement_index=assigned_call.index,
+                    return_index=carrier_return.index,
+                    already_materialized=False,
+                    return_use_proven_locally=True,
+                    return_statement=carrier_return.statement,
+                )
+            )
     return tuple(candidates), non_adjacent
 
 
@@ -1021,116 +1139,40 @@ def _terminal_call_path_frame_teardown_8616(insn: object) -> bool:
     )
 
 
-def _terminal_call_result_path_status_8616(
+def prove_terminal_call_result_path_8616(
     call_ins_addr: int,
     callbacks: TerminalCallResultReturnCallbacks8616,
 ) -> tuple[TerminalCallResultReturnStatus8616, tuple[int, ...]]:
     """Prove one AX-preserving CFG path from an exact call instruction to return."""
-    block_ranges = tuple(
-        sorted(
-            {
-                (int(block_addr), int(block_size))
-                for block_addr, block_size in callbacks.function_block_ranges()
-                if int(block_size) > 0
-            }
-        )
+    result = prove_terminal_call_path_8616(
+        call_ins_addr,
+        TerminalCallPathCallbacks8616(
+            function_block_ranges=callbacks.function_block_ranges,
+            load_block=callbacks.load_block,
+            successor_addrs=callbacks.successor_addrs,
+            branch_target_imm=callbacks.branch_target_imm,
+        ),
     )
-    containing = tuple(
-        (block_addr, block_size)
-        for block_addr, block_size in block_ranges
-        if block_addr <= call_ins_addr < block_addr + block_size
-    )
-    if len(containing) != 1:
-        return TerminalCallResultReturnStatus8616.CALL_BLOCK_MISSING_OR_AMBIGUOUS, ()
-
-    size_by_addr = {block_addr: block_size for block_addr, block_size in block_ranges}
-    current_addr = containing[0][0]
-    first_block = True
-    path: list[int] = []
-    visited: set[int] = set()
-    while current_addr not in visited and len(path) <= len(block_ranges):
-        visited.add(current_addr)
-        path.append(current_addr)
-        block_size = size_by_addr.get(current_addr)
-        if block_size is None:
-            return TerminalCallResultReturnStatus8616.CFG_PATH_AMBIGUOUS, tuple(path)
-        try:
-            block = callbacks.load_block(current_addr, block_size)
-        except Exception:
-            return TerminalCallResultReturnStatus8616.CFG_PATH_AMBIGUOUS, tuple(path)
-        if block is None:
-            return TerminalCallResultReturnStatus8616.CFG_PATH_AMBIGUOUS, tuple(path)
-        insns = _dynamic_object_tuple_8616(
-            _capstone_attr_8616(
-                _capstone_attr_8616(block, "capstone", None),
-                "insns",
-                (),
-            )
-        )
-        scan_start = 0
-        if first_block:
-            exact_call_indexes = tuple(
-                index
-                for index, insn in enumerate(insns)
-                if _capstone_int_attr_8616(insn, "address", -1) == call_ins_addr
-                and terminal_ax_return_effect_8616(insn).kind is TerminalAxReturnEffectKind8616.CALL_CLOBBER
-            )
-            if len(exact_call_indexes) != 1:
-                return TerminalCallResultReturnStatus8616.CALL_INSTRUCTION_MISSING_OR_AMBIGUOUS, tuple(path)
-            scan_start = exact_call_indexes[0] + 1
-            first_block = False
-
-        saw_jump = False
-        saw_return = False
-        jump_target: int | None = None
-        for index, insn in enumerate(insns[scan_start:], start=scan_start):
-            mnemonic = str(_capstone_attr_8616(insn, "mnemonic", "")).lower()
-            if mnemonic in {"ret", "retf", "iret"}:
-                if index != len(insns) - 1:
-                    return TerminalCallResultReturnStatus8616.UNSAFE_POST_CALL_EFFECT, tuple(path)
-                saw_return = True
-                continue
-            if mnemonic in {"jmp", "ljmp"}:
-                if index != len(insns) - 1:
-                    return TerminalCallResultReturnStatus8616.UNSAFE_POST_CALL_EFFECT, tuple(path)
-                try:
-                    jump_target = callbacks.branch_target_imm(insn)
-                except Exception:
-                    return TerminalCallResultReturnStatus8616.CFG_PATH_AMBIGUOUS, tuple(path)
-                if jump_target is None:
-                    return TerminalCallResultReturnStatus8616.CFG_PATH_AMBIGUOUS, tuple(path)
-                saw_jump = True
-                continue
-            if _terminal_call_path_stack_adjust_8616(insn) or _terminal_call_path_frame_teardown_8616(insn):
-                continue
-            return TerminalCallResultReturnStatus8616.UNSAFE_POST_CALL_EFFECT, tuple(path)
-
-        try:
-            successors = tuple(sorted({int(addr) for addr in callbacks.successor_addrs(current_addr)}))
-        except Exception:
-            return TerminalCallResultReturnStatus8616.CFG_PATH_AMBIGUOUS, tuple(path)
-        if saw_return:
-            if successors:
-                return TerminalCallResultReturnStatus8616.CFG_PATH_AMBIGUOUS, tuple(path)
-            return TerminalCallResultReturnStatus8616.MATERIALIZED, tuple(path)
-        if len(successors) != 1:
-            return (
-                TerminalCallResultReturnStatus8616.RETURN_NOT_REACHED
-                if not successors
-                else TerminalCallResultReturnStatus8616.CFG_PATH_AMBIGUOUS,
-                tuple(path),
-            )
-        if saw_jump and jump_target != successors[0]:
-            return TerminalCallResultReturnStatus8616.CFG_PATH_AMBIGUOUS, tuple(path)
-        current_addr = successors[0]
-    return TerminalCallResultReturnStatus8616.CFG_PATH_AMBIGUOUS, tuple(path)
+    status = {
+        TerminalCallPathStatus8616.PROVEN: TerminalCallResultReturnStatus8616.MATERIALIZED,
+        TerminalCallPathStatus8616.CALL_BLOCK_MISSING_OR_AMBIGUOUS: (
+            TerminalCallResultReturnStatus8616.CALL_BLOCK_MISSING_OR_AMBIGUOUS
+        ),
+        TerminalCallPathStatus8616.CALL_INSTRUCTION_MISSING_OR_AMBIGUOUS: (
+            TerminalCallResultReturnStatus8616.CALL_INSTRUCTION_MISSING_OR_AMBIGUOUS
+        ),
+        TerminalCallPathStatus8616.CFG_PATH_AMBIGUOUS: TerminalCallResultReturnStatus8616.CFG_PATH_AMBIGUOUS,
+        TerminalCallPathStatus8616.UNSAFE_POST_CALL_EFFECT: TerminalCallResultReturnStatus8616.UNSAFE_POST_CALL_EFFECT,
+        TerminalCallPathStatus8616.RETURN_NOT_REACHED: TerminalCallResultReturnStatus8616.RETURN_NOT_REACHED,
+    }[result.status]
+    return status, result.path_block_addrs
 
 
 def materialize_terminal_call_result_return_8616(
     root: object,
     codegen: object,
     *,
-    caller_use_proven: bool,
+    caller_use: CallerReturnUseVerdict8616,
     callbacks: TerminalCallResultReturnCallbacks8616,
 ) -> TerminalCallResultReturnStats8616:
     """Replace one CFG-proven terminal call plus empty return with a returned call."""
@@ -1171,7 +1213,33 @@ def materialize_terminal_call_result_return_8616(
             materialized_count=0,
             failure_count=1,
         )
-    if not caller_use_proven:
+    if (
+        callbacks.call_result_contract(candidate.call)
+        is TerminalCallResultContract8616.VOID
+    ):
+        return TerminalCallResultReturnStats8616(
+            status=TerminalCallResultReturnStatus8616.CALLEE_RETURNS_VOID,
+            raw_fact_count=1,
+            normalized_fact_count=1,
+            classified_fact_count=0,
+            materialized_count=0,
+            failure_count=1,
+            call_ins_addr=call_ins_addr,
+        )
+    if caller_use is CallerReturnUseVerdict8616.UNUSED:
+        return TerminalCallResultReturnStats8616(
+            status=TerminalCallResultReturnStatus8616.CALLER_USE_PROVEN_UNUSED,
+            raw_fact_count=1,
+            normalized_fact_count=1,
+            classified_fact_count=0,
+            materialized_count=0,
+            failure_count=0,
+            call_ins_addr=call_ins_addr,
+        )
+    if (
+        caller_use is not CallerReturnUseVerdict8616.USED
+        and not candidate.return_use_proven_locally
+    ):
         return TerminalCallResultReturnStats8616(
             status=TerminalCallResultReturnStatus8616.CALLER_USE_NOT_PROVEN,
             raw_fact_count=1,
@@ -1182,7 +1250,7 @@ def materialize_terminal_call_result_return_8616(
             call_ins_addr=call_ins_addr,
         )
 
-    path_status, path = _terminal_call_result_path_status_8616(call_ins_addr, callbacks)
+    path_status, path = prove_terminal_call_result_path_8616(call_ins_addr, callbacks)
     if path_status is not TerminalCallResultReturnStatus8616.MATERIALIZED:
         return TerminalCallResultReturnStats8616(
             status=path_status,
@@ -1206,17 +1274,35 @@ def materialize_terminal_call_result_return_8616(
             path_block_addrs=path,
         )
 
-    statements: list[CStatement] = list(
-        cast(Iterable[CStatement], candidate.container.statements or ())
-    )
     replacement = CReturn(
         candidate.call,
-        tags=candidate.empty_return.tags if candidate.empty_return is not None else None,
+        tags=(
+            candidate.return_statement.tags
+            if candidate.return_statement is not None
+            else None
+        ),
         codegen=codegen,
     )
     assert candidate.call_statement_index is not None
-    statements[candidate.call_statement_index : candidate.return_index + 1] = [replacement]
-    candidate.container.statements = statements
+    if candidate.call_container is candidate.return_container:
+        statements: list[CStatement] = list(
+            cast(Iterable[CStatement], candidate.call_container.statements or ())
+        )
+        statements[candidate.call_statement_index : candidate.return_index + 1] = [
+            replacement
+        ]
+        candidate.call_container.statements = statements
+    else:
+        call_statements: list[CStatement] = list(
+            cast(Iterable[CStatement], candidate.call_container.statements or ())
+        )
+        del call_statements[candidate.call_statement_index]
+        candidate.call_container.statements = call_statements
+        return_statements: list[CStatement] = list(
+            cast(Iterable[CStatement], candidate.return_container.statements or ())
+        )
+        return_statements[candidate.return_index] = replacement
+        candidate.return_container.statements = return_statements
     return TerminalCallResultReturnStats8616(
         status=TerminalCallResultReturnStatus8616.MATERIALIZED,
         raw_fact_count=1,
@@ -1278,6 +1364,8 @@ def scan_branch_target_return_block_8616(
             return BranchTargetReturnBlockResult8616(next_target=effect.jump_target)
         if effect.kind is BranchTargetReturnEffectKind8616.RETURN:
             return BranchTargetReturnBlockResult8616(expr=_combined_return_expr())
+        if effect.kind is BranchTargetReturnEffectKind8616.CONTROL_BOUNDARY:
+            return BranchTargetReturnBlockResult8616()
     return BranchTargetReturnBlockResult8616(expr=_combined_return_expr())
 
 
@@ -1479,12 +1567,13 @@ def _debug_cvar_slot_8616(expr: object) -> str:
 
 
 def selector_condition_call_addrs_8616(
-    pairs: list[tuple[CExpression, CExpression, CExpression]],
+    pairs: Iterable[tuple[CExpression, ...]],
     iter_c_nodes_deep: Callable[[object], Iterable[object]],
 ) -> frozenset[int]:
-    """Return selector condition call addresses from a dynamic boundary: angr codegen C AST proof nodes."""
+    """Return condition call addresses from dynamic angr codegen proof nodes."""
     addrs: set[int] = set()
-    for cond, _true_expr, _false_expr in pairs:
+    for pair in pairs:
+        cond = pair[0]
         cond_tags = getattr(cond, "tags", None)
         if isinstance(cond_tags, dict):
             condition_call_addr = cond_tags.get("condition_call_ins_addr")
@@ -2507,6 +2596,19 @@ def materialize_cfg_selector_return_branches_8616(
     if not isinstance(stats, dict):
         stats = {"candidates": 0, "materialized": 0, "refused": 0}
         codegen._inertia_cfg_selector_return_stats_8616 = stats
+    multi_arm_obligations = multi_arm_wide_return_obligation_count_8616(
+        codegen.cfunc.statements
+    )
+    if multi_arm_obligations:
+        stats["candidates"] += multi_arm_obligations
+        stats["refused"] += multi_arm_obligations
+        if debug:
+            log.warning(
+                "[cfg-selector-return] refused existing multi-arm obligations=%d stats=%r",
+                multi_arm_obligations,
+                stats,
+            )
+        return False
     if callbacks.materialize_decrement_switch_return_chain(project, codegen):
         stats["materialized"] += 1
         return True
@@ -2652,6 +2754,11 @@ def ordered_conditional_return_pairs_from_cfg_8616(
     jcc_count = 0
     return_target_count = 0
     decoded_count = 0
+    structured_conditions = unique_tagged_conditions_8616(
+        codegen.cfunc.statements,
+        callbacks.iter_c_nodes_deep,
+        callbacks.condition_tags,
+    )
     for block_addr, insn in callbacks.linear_jcc_block_starts(project, codegen):
         jcc_count += 1
         target = callbacks.branch_target_imm(insn)
@@ -2667,9 +2774,18 @@ def ordered_conditional_return_pairs_from_cfg_8616(
             continue
         decoded_count += 1
         tags = {"ins_addr": insn_addr, "vex_block_addr": int(block_addr)}
-        expr = callbacks.decoded_condition_expr(project, codegen, decoded, tags)
+        condition_call_addr = callbacks.last_call_addr_before_jcc(project, codegen, insn_addr)
+        expr = structured_conditions.get((insn_addr, int(block_addr)))
+        if expr is not None and condition_call_addr is not None:
+            call_addrs = selector_condition_call_addrs_8616(((expr,),), callbacks.iter_c_nodes_deep)
+            if condition_call_addr not in call_addrs:
+                expr = None
+        if expr is None:
+            expr = callbacks.decoded_condition_expr(project, codegen, decoded, tags)
         if expr is None:
             continue
+        if condition_call_addr is not None:
+            expr.tags = {**dict(expr.tags or {}), "condition_call_ins_addr": int(condition_call_addr)}
         pairs.append((expr, int(value)))
     if debug:
         log.warning(
@@ -3372,8 +3488,26 @@ def materialize_empty_if_return_branches_8616(
     if not isinstance(stats, dict):
         stats = {"candidates": 0, "materialized": 0, "refused": 0}
         codegen._inertia_empty_return_branch_stats_8616 = stats
+    multi_arm_obligations = multi_arm_wide_return_obligation_count_8616(
+        cfunc.statements
+    )
+    if multi_arm_obligations:
+        stats["candidates"] += multi_arm_obligations
+        stats["refused"] += multi_arm_obligations
+        if debug:
+            log.warning(
+                "[empty-return-branch] refused existing multi-arm obligations=%d stats=%r",
+                multi_arm_obligations,
+                stats,
+            )
+        return False
     ordered_return_values = callbacks.ordered_return_values(project, codegen)
-    unsafe_effects = callbacks.selector_function_has_unsafe_effects(project, codegen)
+    ordered_cfg_return_pairs = callbacks.ordered_return_pairs(project, codegen)
+    ordered_32bit_cfg_return_pairs = callbacks.ordered_32bit_return_pairs(project, codegen)
+    allowed_call_addrs = callbacks.condition_call_addrs(
+        cond for cond, _value in (*ordered_cfg_return_pairs, *ordered_32bit_cfg_return_pairs)
+    )
+    unsafe_effects = callbacks.selector_function_has_unsafe_effects(project, codegen, allowed_call_addrs)
     if unsafe_effects:
         codegen._inertia_empty_return_branch_refused_unsafe_effects_8616 = (
             int(codegen._inertia_empty_return_branch_refused_unsafe_effects_8616) + 1
@@ -3508,7 +3642,7 @@ def materialize_empty_if_return_branches_8616(
                     len(empty_if_nodes),
                     total_if_nodes,
                 )
-        elif callbacks.selector_function_has_unsafe_effects(project, codegen):
+        elif callbacks.selector_function_has_unsafe_effects(project, codegen, allowed_call_addrs):
             stats["refused"] += len(empty_if_nodes)
             if debug:
                 log.warning("[empty-return-branch] cfg expr rebuild refused: unsafe function effects")
@@ -3545,7 +3679,7 @@ def materialize_empty_if_return_branches_8616(
                         len(empty_if_nodes),
                     )
     if len(cond_return_pairs) >= 2:
-        cfg_return_pairs = callbacks.ordered_return_pairs(project, codegen)
+        cfg_return_pairs = ordered_cfg_return_pairs
         flatten_pairs = cond_return_pairs
         if len(cfg_return_pairs) >= len(cond_return_pairs):
             flatten_pairs = cfg_return_pairs[: len(cond_return_pairs)]
@@ -3554,7 +3688,7 @@ def materialize_empty_if_return_branches_8616(
         changed = callbacks.flatten_conditional_return_chain(project, codegen, flatten_pairs) or changed
         cond_return_pairs = flatten_pairs
     if not cond_return_pairs:
-        cfg_return_pairs = callbacks.ordered_32bit_return_pairs(project, codegen)
+        cfg_return_pairs = ordered_32bit_cfg_return_pairs
         if len(cfg_return_pairs) >= 2:
             if unsafe_effects:
                 stats["refused"] += len(cfg_return_pairs)
@@ -3566,9 +3700,9 @@ def materialize_empty_if_return_branches_8616(
                 changed = callbacks.flatten_conditional_return_chain(project, codegen, cfg_return_pairs) or changed
                 cond_return_pairs = cfg_return_pairs
     if not cond_return_pairs:
-        cfg_return_pairs = callbacks.ordered_return_pairs(project, codegen)
+        cfg_return_pairs = ordered_cfg_return_pairs
         if len(cfg_return_pairs) >= 2:
-            if callbacks.selector_function_has_unsafe_effects(project, codegen):
+            if callbacks.selector_function_has_unsafe_effects(project, codegen, allowed_call_addrs):
                 stats["refused"] += len(cfg_return_pairs)
                 if debug:
                     log.warning(
@@ -3578,7 +3712,7 @@ def materialize_empty_if_return_branches_8616(
                 changed = callbacks.flatten_conditional_return_chain(project, codegen, cfg_return_pairs) or changed
                 cond_return_pairs = cfg_return_pairs
     if not cond_return_pairs and not codegen._inertia_return_chain_suffix_materialized_8616:
-        cfg_return_pairs = callbacks.ordered_return_pairs(project, codegen)
+        cfg_return_pairs = ordered_cfg_return_pairs
         if unsafe_effects and cfg_return_pairs:
             stats["refused"] += len(cfg_return_pairs)
             if debug:

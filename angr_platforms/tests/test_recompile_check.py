@@ -142,3 +142,25 @@ def test_msc_recompile_rejects_nonzero_exit_without_diagnostic_keyword(
 
     assert result.passed is False
     assert result.exit_code == 1
+
+
+def test_msc_compile_payload_uses_dos_header_aggregate_definitions() -> None:
+    payload = recompile_check._compile_input_payload_8616(
+        "typedef union REGS {\n"
+        "    struct { unsigned short ax, cflag; } x;\n"
+        "} REGS;\n"
+        "typedef struct SREGS {\n"
+        "    unsigned short es, cs, ss, ds;\n"
+        "} SREGS;\n"
+        "extern REGS rin;\n"
+        "extern SREGS sreg;\n",
+        target="msc-dos",
+    )
+
+    assert "#include <DOS.H>" in payload
+    assert "typedef union REGS {" not in payload
+    assert "typedef struct SREGS {" not in payload
+    assert "typedef union REGS REGS;" in payload
+    assert "typedef struct SREGS SREGS;" in payload
+    assert "extern REGS rin;" in payload
+    assert "extern SREGS sreg;" in payload

@@ -16,8 +16,8 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CVariableField,
 )
-from angr.sim_type import SimStruct, SimTypeFunction, SimTypeShort
-from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+from angr.sim_type import SimStruct, SimTypeChar, SimTypeFunction, SimTypeShort
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimTemporaryVariable
 from angr_platforms.X86_16.alias_model import _stack_storage_facts_for_segmented_address_8616
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.decompiler_postprocess_stage import (
@@ -455,6 +455,44 @@ def test_expr_fingerprint_matches_indexed_global_field_to_ds_linear_deref():
     )
 
     assert _expr_fingerprint(field, project) == _expr_fingerprint(raw, project)
+
+
+def test_expr_fingerprint_matches_nested_global_aggregate_field_to_exact_byte():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    byte_fields = SimStruct(
+        {"low": SimTypeChar(False), "high": SimTypeChar(False)},
+        name="ByteFields",
+        pack=True,
+    ).with_arch(project.arch)
+    aggregate = SimStruct(
+        {"bytes": byte_fields},
+        name="Aggregate",
+        pack=True,
+    ).with_arch(project.arch)
+    base = CVariable(
+        SimMemoryVariable(0x7000, 2, name="aggregate"),
+        variable_type=aggregate,
+        codegen=codegen,
+    )
+    bytes_field = CVariableField(
+        base,
+        CStructField(aggregate, 0, "bytes", codegen=codegen),
+        codegen=codegen,
+    )
+    high_field = CVariableField(
+        bytes_field,
+        CStructField(byte_fields, 1, "high", codegen=codegen),
+        codegen=codegen,
+    )
+    exact_byte = CVariable(
+        SimMemoryVariable(0x7001, 1, name="g_7001"),
+        variable_type=SimTypeChar(False),
+        codegen=codegen,
+    )
+
+    assert _expr_fingerprint(high_field, project) == "global:0x7001"
+    assert _expr_fingerprint(high_field, project) == _expr_fingerprint(exact_byte, project)
 
 
 def test_expr_fingerprint_distributes_scaled_index_constant_in_runtime_segment_address():
@@ -1432,3 +1470,13 @@ def test_deepcopy_cfunc_for_validation_handles_itertools_count():
     assert cloned._next_counter is not counter
     assert next(counter) == 10
     assert next(cloned._next_counter) == 10
+
+
+def test_temporary_cvariables_have_distinct_terminating_location_fingerprints():
+    codegen = _DummyCodegen()
+    first = CVariable(SimTemporaryVariable(57, 8), codegen=codegen)
+    second = CVariable(SimTemporaryVariable(59, 8), codegen=codegen)
+
+    assert _location_fingerprint(first, codegen.project) == "virtual:tmp_57"
+    assert _expr_fingerprint(first, codegen.project) == "virtual:tmp_57"
+    assert _location_fingerprint(second, codegen.project) == "virtual:tmp_59"

@@ -27,6 +27,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
     CBinaryOp,
     CConstant,
+    CConstruct,
     CDirtyExpression,
     CFunctionCall,
     CIndexedVariable,
@@ -105,7 +106,10 @@ def _unwrap_statements_8616(node: object) -> tuple[object, ...]:
 
 
 def _structured_codegen_node_8616(value: object) -> bool:
-    return type(value).__module__.startswith("angr.analyses.decompiler.structured_codegen")
+    """Return whether a value participates in the structured C AST boundary."""
+    return isinstance(value, CConstruct) or type(value).__module__.startswith(
+        "angr.analyses.decompiler.structured_codegen"
+    )
 
 
 def _c_ast_cycle_path_8616(node: object, *, max_nodes: int = 16_384) -> tuple[str, ...]:

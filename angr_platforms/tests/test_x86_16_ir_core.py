@@ -24,6 +24,11 @@ def test_ir_value_to_dict_preserves_expr_and_version():
         "size": 2,
         "version": 1,
         "expr": ("phi",),
+        "index": None,
+        "index_shift": 0,
+        "memory_access_size": None,
+        "memory_access_insn": None,
+        "source_tmp": None,
     }
 
 

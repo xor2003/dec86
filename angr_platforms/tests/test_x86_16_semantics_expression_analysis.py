@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimTemporaryVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.semantics.expression_analysis import (
     VirtualValueIdentity8616,
@@ -63,3 +64,15 @@ def test_virtual_value_identity_refuses_dirty_name_only() -> None:
     expression.idx = None
 
     assert describe_virtual_value_identity_8616(expression) is None
+
+
+def test_virtual_value_identity_uses_typed_temporary_id() -> None:
+    expression = structured_c.CVariable(
+        SimTemporaryVariable(7, 16),
+        codegen=_Codegen(),
+    )
+
+    assert describe_virtual_value_identity_8616(expression) == VirtualValueIdentity8616(
+        VirtualValueIdentityKind8616.TEMPORARY_ID,
+        7,
+    )

@@ -9,14 +9,27 @@ rewrite cleanup, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
+from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..ir.condition_ir import (
     ConditionIR,
     condition_compare_symbol_8616,
     is_condition_compare_family_8616,
 )
-from ..ir.core import IRCondition, IRValue, MemSpace
+from ..ir.core import (
+    SEGMENTED_LOAD_ADDRESS_TAG_8616,
+    AddressStatus,
+    IRAddress,
+    IRBinaryValue,
+    IRCondition,
+    IRValue,
+    MemSpace,
+    SegmentOrigin,
+)
+from ..lowering.stack_variable_binding import StackVariableBinding, stable_stack_binding_tags_8616
+from ..widening.segmented_load_identity import segmented_load_identity_8616
+from .indexed_condition_values import materialize_indexed_segmented_condition_value_8616
 
 if TYPE_CHECKING:
     from angr.analyses.decompiler.structured_codegen.c import CConstant, CExpression
@@ -26,7 +39,13 @@ __all__ = [
     "lower_ir_value_to_c_expr_8616",
     "condition_op_to_structured_kind_8616",
     "condition_origin_tags_8616",
+    "condition_segment_access_tags_8616",
+    "attach_condition_segment_access_provenance_8616",
+    "materialize_indexed_segmented_condition_value_8616",
+    "stable_stack_condition_binding_tags_8616",
 ]
+
+_SOURCE_INSTRUCTION_ADDRS_TAG_8616 = "inertia_source_instruction_addrs"
 
 
 def _make_c_constant_8616(value: int, codegen: object, signed: bool = False) -> "CConstant":
@@ -58,6 +77,17 @@ def lower_ir_value_to_c_expr_8616(
     return _ir_value_to_cvar_8616(value, project, codegen, resolve_register_name=resolve_register_name)
 
 
+def stable_stack_condition_binding_tags_8616(
+    bp_offset: int,
+    size: int,
+    *,
+    name: str | None = None,
+) -> dict[str, object]:
+    """Return exact stack-slot tags for one proven ConditionIR operand."""
+    binding = StackVariableBinding(bp_offset, size, var_name=name)
+    return stable_stack_binding_tags_8616(binding)
+
+
 def condition_origin_tags_8616(condition: ConditionIR | IRCondition) -> dict[str, object]:
     """Return C-AST provenance tags for a typed branch condition."""
     tags: dict[str, object] = {"typed_condition": True}
@@ -72,6 +102,96 @@ def condition_origin_tags_8616(condition: ConditionIR | IRCondition) -> dict[str
     if isinstance(producer_insn, int):
         tags["condition_producer_insn"] = producer_insn
     return tags
+
+
+def condition_segment_access_tags_8616(
+    operand: IRValue,
+    helper: str,
+) -> dict[str, object]:
+    """Return typed tags for a segment access already proven by ConditionIR."""
+    if operand.space not in {MemSpace.DS, MemSpace.ES, MemSpace.SS}:
+        raise ValueError("condition segment access requires a segmented IRValue")
+    width = max(1, int(operand.memory_access_size or operand.size or 2))
+    tags: dict[str, object] = {
+        "inertia_x86_16_runtime_segment_helper": helper,
+        SEGMENTED_LOAD_ADDRESS_TAG_8616: IRAddress(
+            space=operand.space,
+            offset=int(operand.offset) & 0xFFFF,
+            size=width,
+            status=AddressStatus.STABLE,
+            segment_origin=SegmentOrigin.PROVEN,
+        ),
+    }
+    if isinstance(operand.memory_access_insn, int):
+        tags[_SOURCE_INSTRUCTION_ADDRS_TAG_8616] = (operand.memory_access_insn,)
+    return tags
+
+
+def _condition_segment_accesses_8616(
+    value: object,
+) -> tuple[IRValue, ...]:
+    """Return segmented leaves carrying exact access provenance."""
+    if isinstance(value, IRBinaryValue):
+        return (
+            *_condition_segment_accesses_8616(value.lhs),
+            *_condition_segment_accesses_8616(value.rhs),
+        )
+    if (
+        isinstance(value, IRValue)
+        and value.space in {MemSpace.DS, MemSpace.ES, MemSpace.SS}
+        and isinstance(value.memory_access_insn, int)
+    ):
+        return (value,)
+    return ()
+
+
+def attach_condition_segment_access_provenance_8616(
+    expression: "CExpression",
+    condition: ConditionIR,
+) -> int:
+    """Carry exact operand access provenance onto matching segment helpers.
+
+    The condition producer defines flags and is not necessarily a memory load.
+    This boundary therefore matches typed operand addresses and refuses absent
+    or ambiguous access evidence instead of borrowing CMP/JCC provenance.
+    """
+    from angr.analyses.decompiler.structured_codegen.c import CFunctionCall
+
+    sources_by_access: dict[tuple[MemSpace, int, int], set[int]] = {}
+    for operand in (
+        *_condition_segment_accesses_8616(condition.lhs),
+        *_condition_segment_accesses_8616(condition.rhs),
+    ):
+        key = (
+            operand.space,
+            int(operand.offset) & 0xFFFF,
+            max(1, int(operand.memory_access_size or operand.size or 2)),
+        )
+        sources_by_access.setdefault(key, set()).add(cast(int, operand.memory_access_insn))
+
+    tagged_count = 0
+    for candidate in _iter_c_nodes_deep_8616(expression):
+        if not isinstance(candidate, CFunctionCall):
+            continue
+        boundary = cast(Any, candidate)  # mutable tags are an angr C-AST boundary
+        tags = boundary.tags
+        identity = segmented_load_identity_8616(candidate)
+        if not isinstance(tags, dict) or identity is None:
+            continue
+        sources = sources_by_access.get(
+            (identity.space, identity.offset, identity.width),
+            set(),
+        )
+        if len(sources) != 1:
+            continue
+        exact_sources = tuple(sorted(sources))
+        if tags.get(_SOURCE_INSTRUCTION_ADDRS_TAG_8616) == exact_sources:
+            continue
+        updated_tags = dict(tags)
+        updated_tags[_SOURCE_INSTRUCTION_ADDRS_TAG_8616] = exact_sources
+        boundary.tags = updated_tags
+        tagged_count += 1
+    return tagged_count
 
 
 def _ir_value_to_cvar_8616(
@@ -99,7 +219,8 @@ def _ir_value_to_cvar_8616(
 
     if value.space == MemSpace.SS:
         var = SimStackVariable(offset=value.offset, size=value.size or 2, base="bp")
-        return CVariable(variable=var, codegen=codegen)
+        tags = stable_stack_condition_binding_tags_8616(int(value.offset), int(value.size or 2))
+        return CVariable(variable=var, codegen=codegen, tags=tags)
 
     # Fallback: unnamed register variable
     var = SimRegisterVariable(0, value.size or 2)

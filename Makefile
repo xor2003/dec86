@@ -1,16 +1,37 @@
 PYTHON ?= python
+TIMEOUT ?= timeout
+PYRIGHT_DCE_TIMEOUT ?= 600
 FILES ?=
-PYTEST_ARGS ?=
+PYRIGHT_WATCH ?= $(if $(CI),0,1)
+PYRIGHT_STATS ?= 0
+PYTEST_ARGS ?= -n 7 --dist loadgroup --durations=5
+AGENT_TEST_JSON ?=
+AGENT_TEST_JSON_ONLY ?=
+ifeq ($(strip $(PYRIGHT_WATCH)),1)
+PYRIGHT_WATCH_FLAG := --watch
+endif
+ifeq ($(strip $(PYRIGHT_STATS)),1)
+PYRIGHT_STATS_FLAG := --stats
+endif
+PYRIGHT_CMD_BASE := $(PYTHON) -m pyright $(PYRIGHT_STATS_FLAG) $(PYRIGHT_WATCH_FLAG)
 PY_FILES_ALL := $(shell git ls-files '*.py')
 PY_FILES := $(filter %.py,$(FILES))
 PYTEST_FILES := $(filter angr_platforms/tests/%.py tests/%.py,$(PY_FILES))
 PY_CHANGED_FILES := $(shell { git diff --name-only -- '*.py'; git ls-files --others --exclude-standard -- '*.py'; } | sort -u)
+LINT_JOBS ?= 4
+LINTERS_DEV_MYPY_FILES ?= inertia_decompiler/decompile_file_summary.py
+LINTERS_DEV_RADON_PATHS ?= inertia_decompiler/decompile_file_summary.py
 
-.PHONY: quality quality-fast decompiler-check decompiler-check-fast decompiler-check-expanded architecture-check agent-context-check test-ownership-check linters linters-files check-files check-all pytest pytest-files pytest-all ruff ruff-files ruff-all pyright pyright-files pyright-all type-ratchet-files type-ratchet-changed vulture radon test-pipeline test-pipeline-fast test-pipeline-expanded msc6-examples sortdemo-selftest monkeytype-trace monkeytype-stubs monkeytype-apply types
+.PHONY: quality quality-dev quality-fast quality-hard decompiler-check decompiler-check-fast decompiler-check-expanded architecture-check agent-context-check test-ownership-check linters linters-hard linters-dev linters-dev-locked linters-files check-files check-all pytest pytest-files pytest-all ruff ruff-files ruff-all pyright pyright-files pyright-all mypy mypy-dev mypy-files mypy-all mypyc type-ratchet-files type-ratchet-changed vulture radon radon-dev test-pipeline test-pipeline-fast test-pipeline-expanded test-layer test-agent-confidence msc6-examples sortdemo-selftest monkeytype-trace monkeytype-stubs monkeytype-apply decomp-opt-regression decomp-opt-regression-suite decomp-opt-regression-thread types
 
-quality: linters type-ratchet-changed decompiler-check
+quality: linters type-ratchet-changed decompiler-check decomp-opt-regression-suite
 
-quality-fast: linters type-ratchet-changed decompiler-check-fast
+quality-dev: linters-dev type-ratchet-changed decompiler-check-fast decomp-opt-regression-suite
+
+quality-fast: linters type-ratchet-changed decompiler-check-fast decomp-opt-regression-suite
+
+# Hard local/per-PR gate: mandatory practical checks for in-flight development.
+quality-hard: linters-hard type-ratchet-changed decompiler-check-fast decomp-opt-regression-suite
 
 decompiler-check: architecture-check agent-context-check test-ownership-check pytest test-pipeline
 
@@ -19,15 +40,32 @@ decompiler-check-fast: architecture-check agent-context-check test-ownership-che
 decompiler-check-expanded: architecture-check agent-context-check test-ownership-check pytest test-pipeline-expanded
 
 linters:
-	# Pyright scans the full promoted source set; concurrent full-tree linters can exhaust its worker.
-	$(MAKE) ruff pyright vulture radon PYTHON="$(PYTHON)"
+	# Keep one bounded job per independent linter.
+	$(MAKE) -j$(LINT_JOBS) ruff mypy mypyc radon PYTHON="$(PYTHON)"
+
+linters-dev:
+	# Hard local gate: practical and reproducible per file-level mypyc scope.
+	$(MAKE) -j$(LINT_JOBS) ruff mypy-dev mypyc radon-dev PYTHON="$(PYTHON)"
+
+linters-dev-locked:
+	# Serial for deterministic CI-noise-free smoke checks.
+	$(MAKE) ruff mypy-dev mypyc radon-dev PYTHON="$(PYTHON)"
+
+linters-hard:
+	# Mandatory development hard gate.
+	$(MAKE) linters-dev-locked
 
 linters-files:
-	$(MAKE) -j3 ruff-files pyright-files type-ratchet-files PYTHON="$(PYTHON)" FILES="$(FILES)"
+	$(MAKE) -j$(LINT_JOBS) ruff-files mypy-files type-ratchet-files PYTHON="$(PYTHON)" FILES="$(FILES)"
 
 check-files: linters-files architecture-check agent-context-check test-ownership-check pytest-files
 
 check-all: ruff-all pyright-all type-ratchet-changed architecture-check agent-context-check test-ownership-check pytest-all
+	$(MAKE) ruff-all
+	$(MAKE) pyright-all
+	$(MAKE) mypy-all
+	$(MAKE) mypyc
+	$(MAKE) type-ratchet-changed architecture-check agent-context-check test-ownership-check pytest-all
 
 QA_TYPED_FILES := \
 	monkeytype_config.py \
@@ -39,9 +77,12 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/alias_transfer.py \
 	angr_platforms/angr_platforms/X86_16/alias/alias_model.py \
 	angr_platforms/angr_platforms/X86_16/alias/alias_model_impl.py \
+	angr_platforms/angr_platforms/X86_16/alias/callsite_stack_merge.py \
 	angr_platforms/angr_platforms/X86_16/alias/domains.py \
 	angr_platforms/angr_platforms/X86_16/alias/state.py \
 	angr_platforms/angr_platforms/X86_16/alias/stack_lowering.py \
+	angr_platforms/angr_platforms/X86_16/alias/segment_stack_fragments.py \
+	angr_platforms/angr_platforms/X86_16/alias/segment_stack_restore.py \
 	angr_platforms/angr_platforms/X86_16/alias/transfer.py \
 	angr_platforms/angr_platforms/X86_16/analysis/__init__.py \
 	angr_platforms/angr_platforms/X86_16/analysis/alias.py \
@@ -63,13 +104,21 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/ir/effects.py \
 	angr_platforms/angr_platforms/X86_16/ir/ir_canonicalize_8616.py \
 	angr_platforms/angr_platforms/X86_16/ir/regs.py \
+	angr_platforms/angr_platforms/X86_16/ir/segment_contract.py \
+	angr_platforms/angr_platforms/X86_16/segment_function_summary.py \
+	angr_platforms/angr_platforms/X86_16/segment_program_layout.py \
+	angr_platforms/angr_platforms/X86_16/segment_program_layout_codec.py \
+	angr_platforms/angr_platforms/X86_16/segment_program_layout_contract.py \
 	angr_platforms/angr_platforms/X86_16/ir/segment_state.py \
+	angr_platforms/angr_platforms/X86_16/ir/segment_state_solver.py \
+	angr_platforms/angr_platforms/X86_16/ir/segment_state_transfer.py \
 	angr_platforms/angr_platforms/X86_16/ir/ssa.py \
 	angr_platforms/angr_platforms/X86_16/ir/ssa_function.py \
 	angr_platforms/angr_platforms/X86_16/ir/string_effects.py \
 	angr_platforms/angr_platforms/X86_16/ir/value_ir.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_addressing.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_condition_lifting.py \
+	angr_platforms/angr_platforms/X86_16/ir/vex_control_flow.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_import.py \
 	angr_platforms/angr_platforms/X86_16/function_effect_summary.py \
 	angr_platforms/angr_platforms/X86_16/helper_effect_summary.py \
@@ -78,6 +127,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/function_summary.py \
 	angr_platforms/angr_platforms/X86_16/function_state_summary.py \
 	angr_platforms/angr_platforms/X86_16/callsite_summary.py \
+	angr_platforms/angr_platforms/X86_16/call_target_identity.py \
 	angr_platforms/angr_platforms/X86_16/callsite_stack_metadata.py \
 	angr_platforms/angr_platforms/X86_16/stack_probe_fact_trace.py \
 	angr_platforms/angr_platforms/X86_16/tail_validation_condition_context.py \
@@ -137,7 +187,9 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/type_storage_object_bridge.py \
 	angr_platforms/angr_platforms/X86_16/bootstrap.py \
 	angr_platforms/angr_platforms/X86_16/cod_comment_emitter.py \
+	angr_platforms/angr_platforms/X86_16/cod_analysis_image.py \
 	angr_platforms/angr_platforms/X86_16/cod_extract.py \
+	angr_platforms/angr_platforms/X86_16/interrupt_contract.py \
 	angr_platforms/angr_platforms/X86_16/cod_known_objects.py \
 	angr_platforms/angr_platforms/X86_16/cod_source_rewrites.py \
 	angr_platforms/angr_platforms/X86_16/codeview_nb00.py \
@@ -195,9 +247,18 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/validation_helper_report.py \
 	angr_platforms/angr_platforms/X86_16/validation_summary.py \
 	angr_platforms/angr_platforms/X86_16/validation_calls.py \
+	angr_platforms/angr_platforms/X86_16/validation_call_argument_sources.py \
+	angr_platforms/angr_platforms/X86_16/validation_branch_conditions.py \
+	angr_platforms/angr_platforms/X86_16/validation_condition_identity.py \
 	angr_platforms/angr_platforms/X86_16/validation_control_flow.py \
+	angr_platforms/angr_platforms/X86_16/validation_condition_precision.py \
+	angr_platforms/angr_platforms/X86_16/validation_control_flow_obligations.py \
 	angr_platforms/angr_platforms/X86_16/validation_dataflow.py \
+	angr_platforms/angr_platforms/X86_16/validation_semantic_failures.py \
+	angr_platforms/angr_platforms/X86_16/validation_predicates.py \
 	angr_platforms/angr_platforms/X86_16/validation_storage.py \
+	angr_platforms/angr_platforms/X86_16/validation_aggregate_storage.py \
+	angr_platforms/angr_platforms/X86_16/validation_required_memory_effects.py \
 	angr_platforms/angr_platforms/X86_16/validation_semantics.py \
 	angr_platforms/angr_platforms/X86_16/verification_80286.py \
 	angr_platforms/angr_platforms/X86_16/turbo_debug_tdinfo.py \
@@ -217,25 +278,82 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/structuring_cross_entry.py \
 	angr_platforms/angr_platforms/X86_16/structuring_sequences.py \
 	angr_platforms/angr_platforms/X86_16/lowering/__init__.py \
+	angr_platforms/angr_platforms/X86_16/lowering/annotated_global_refs.py \
+	angr_platforms/angr_platforms/X86_16/lowering/call_argument_shape.py \
+	angr_platforms/angr_platforms/X86_16/lowering/call_argument_state.py \
+	angr_platforms/angr_platforms/X86_16/callsite_argument_value_sources.py \
+	angr_platforms/angr_platforms/X86_16/lowering/call_execution_frame_carriers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_output_stack_objects.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_return_selectors.py \
+	angr_platforms/angr_platforms/X86_16/lowering/call_return_stack_stores.py \
+	angr_platforms/angr_platforms/X86_16/lowering/call_cleanup_carriers.py \
+	angr_platforms/angr_platforms/X86_16/lowering/runtime_segment_access.py \
+	angr_platforms/angr_platforms/X86_16/lowering/runtime_memory_helpers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callsite_prototype_declarations.py \
+	angr_platforms/angr_platforms/X86_16/lowering/dos_interrupt_abi.py \
+	angr_platforms/angr_platforms/X86_16/lowering/dos_interrupt_aggregate_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/dos_interrupt_aggregate_globals.py \
+	angr_platforms/angr_platforms/X86_16/lowering/dos_interrupt_aggregate_projection.py \
+	angr_platforms/angr_platforms/X86_16/lowering/named_type_definitions.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callsite_prototype_seeding.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callsite_pointer_tables.py \
+	angr_platforms/angr_platforms/X86_16/lowering/signed_global_declarations.py \
+	angr_platforms/angr_platforms/X86_16/lowering/project_global_signedness.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_argument_count_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_argument_interface.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_collection.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_interface.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_sources.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_type_surface.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_pointer_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/indexed_global_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py \
+	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_type.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py \
+	angr_platforms/angr_platforms/X86_16/lowering/condition_fact_arbitration.py \
+	angr_platforms/angr_platforms/X86_16/lowering/condition_argument_type_facts.py \
+	angr_platforms/angr_platforms/X86_16/lowering/condition_argument_types.py \
+	angr_platforms/angr_platforms/X86_16/lowering/condition_scalar_types.py \
 	angr_platforms/angr_platforms/X86_16/lowering/c_runtime_header.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_saved_frame.py \
 	angr_platforms/angr_platforms/X86_16/lowering/dead_register_carriers.py \
+	angr_platforms/angr_platforms/X86_16/lowering/explicit_char_types.py \
+	angr_platforms/angr_platforms/X86_16/lowering/fixed_stack_probe_frames.py \
+	angr_platforms/angr_platforms/X86_16/lowering/frame_prologue_carriers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/register_overwrite_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/fact_transfer.py \
+	angr_platforms/angr_platforms/X86_16/lowering/function_pointer_parameter_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/function_pointer_parameters.py \
+	angr_platforms/angr_platforms/X86_16/lowering/cod_global_identity.py \
 	angr_platforms/angr_platforms/X86_16/lowering/global_declarations.py \
+	angr_platforms/angr_platforms/X86_16/lowering/global_symbol_names.py \
 	angr_platforms/angr_platforms/X86_16/lowering/object_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/pointer_memory_idioms.py \
+	angr_platforms/angr_platforms/X86_16/lowering/physical_registers.py \
+	angr_platforms/angr_platforms/X86_16/lowering/positive_bp_arguments.py \
+	angr_platforms/angr_platforms/X86_16/lowering/project_global_object_layout.py \
 	angr_platforms/angr_platforms/X86_16/lowering/real_mode_linear.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callsite_segment_provenance.py \
+	angr_platforms/angr_platforms/X86_16/lowering/segment_access_coverage.py \
+	angr_platforms/angr_platforms/X86_16/lowering/segment_access_policy.py \
+	angr_platforms/angr_platforms/X86_16/lowering/segment_global_materialization.py \
+	angr_platforms/angr_platforms/X86_16/lowering/semantic_cast.py \
 	angr_platforms/angr_platforms/X86_16/lowering/return_type_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/unobserved_returns.py \
+	angr_platforms/angr_platforms/X86_16/lowering/scalar_return_types.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segment_register_state.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_global_loads.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py \
+	angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py \
 	angr_platforms/angr_platforms/X86_16/lowering/structured_intrinsics.py \
+	angr_platforms/angr_platforms/X86_16/lowering/terminal_call_return_types.py \
+	angr_platforms/angr_platforms/X86_16/lowering/terminal_register_return_values.py \
+	angr_platforms/angr_platforms/X86_16/lowering/terminal_register_return_types.py \
+	angr_platforms/angr_platforms/X86_16/lowering/terminal_return_expressions.py \
+	angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_calls.py \
 	angr_platforms/angr_platforms/X86_16/segmented_memory_reasoning.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_aggregate_objects.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_c_ast_matching.py \
@@ -248,6 +366,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/ss_bp_substitution.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_result.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_variable_binding.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_stack_pair_evidence.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/__init__.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/__init__.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/condition_patterns.py \
@@ -258,7 +377,10 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/const_prop.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/copy_prop.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_walk.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_liveness.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_setup.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_condition_carriers.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/pass_driver.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/trivial_copy.py \
 	angr_platforms/angr_platforms/X86_16/semantics/__init__.py \
@@ -271,34 +393,72 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/semantics/evidence_cache.py \
 	angr_platforms/angr_platforms/X86_16/semantics/expression_analysis.py \
 	angr_platforms/angr_platforms/X86_16/semantics/flag_semantics.py \
+	angr_platforms/angr_platforms/X86_16/semantics/direct_call_result_storage.py \
+	angr_platforms/angr_platforms/X86_16/semantics/direct_global_ordering.py \
 	angr_platforms/angr_platforms/X86_16/semantics/memory_semantics.py \
+	angr_platforms/angr_platforms/X86_16/semantics/software_interrupt_inputs.py \
 	angr_platforms/angr_platforms/X86_16/semantics/stack_frame_recovery.py \
+	angr_platforms/angr_platforms/X86_16/semantics/terminal_call_paths.py \
+	angr_platforms/angr_platforms/X86_16/semantics/terminal_register_returns.py \
+	angr_platforms/angr_platforms/X86_16/structuring/branch_return_expressions.py \
+	angr_platforms/angr_platforms/X86_16/structuring/multi_arm_return_chains.py \
+	angr_platforms/angr_platforms/X86_16/structuring/total_return_suffixes.py \
 	angr_platforms/angr_platforms/X86_16/structuring/compare32_recovery.py \
+	angr_platforms/angr_platforms/X86_16/structuring/call_argument_join_conditions.py \
+	angr_platforms/angr_platforms/X86_16/structuring/call_argument_joins.py \
 	angr_platforms/angr_platforms/X86_16/structuring/call_return_conditions.py \
 	angr_platforms/angr_platforms/X86_16/structuring/control_flow.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_materialization.py \
+	angr_platforms/angr_platforms/X86_16/structuring/clinic_option_policy.py \
+	angr_platforms/angr_platforms/X86_16/structuring/loop_condition_materialization.py \
+	angr_platforms/angr_platforms/X86_16/structuring/condition_binding.py \
+	angr_platforms/angr_platforms/X86_16/structuring/condition_provenance.py \
+	angr_platforms/angr_platforms/X86_16/structuring/condition_ownership.py \
+	angr_platforms/angr_platforms/X86_16/structuring/condition_replay.py \
+	angr_platforms/angr_platforms/X86_16/structuring/expression_substitution.py \
+	angr_platforms/angr_platforms/X86_16/structuring/wide_call_return_guard_chains.py \
+	angr_platforms/angr_platforms/X86_16/structuring/wide_stack_condition_chains.py \
+	angr_platforms/angr_platforms/X86_16/structuring/wide_stack_single_branches.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_lowering.py \
+	angr_platforms/angr_platforms/X86_16/structuring/indexed_condition_values.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_rendering.py \
 	angr_platforms/angr_platforms/X86_16/structuring/indexed_stack_ranges.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_branches.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_ownership.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loop_entries.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loop_evidence.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loop_sites.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_pretest_initializers.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loops.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loop_tail_replay.py \
 	angr_platforms/angr_platforms/X86_16/structuring/loop_body_repair.py \
 	angr_platforms/angr_platforms/X86_16/structuring/loop_break_jcc.py \
 	angr_platforms/angr_platforms/X86_16/structuring/loop_exit_return_guards.py \
 	angr_platforms/angr_platforms/X86_16/structuring/loop_recovery.py \
+	angr_platforms/angr_platforms/X86_16/structuring/register_dependencies.py \
 	angr_platforms/angr_platforms/X86_16/structuring/return_chains.py \
+	angr_platforms/angr_platforms/X86_16/structuring/terminal_register_values.py \
+	angr_platforms/angr_platforms/X86_16/structuring/software_interrupt_returns.py \
+	angr_platforms/angr_platforms/X86_16/structuring/scalar_return_evidence.py \
 	angr_platforms/angr_platforms/X86_16/structuring/simple_loop_recovery.py \
 	angr_platforms/angr_platforms/X86_16/structuring/typed_switch_seqnode.py \
+	angr_platforms/angr_platforms/X86_16/structuring/wide_return_values.py \
 	angr_platforms/angr_platforms/X86_16/structuring/__init__.py \
 	angr_platforms/angr_platforms/X86_16/validation/__init__.py \
 	angr_platforms/angr_platforms/X86_16/validation/canonicalize.py \
+	angr_platforms/angr_platforms/X86_16/validation_interrupt_calls.py \
 	angr_platforms/angr_platforms/X86_16/widening_alias.py \
 	angr_platforms/angr_platforms/X86_16/widening_model.py \
 	angr_platforms/angr_platforms/X86_16/widening/__init__.py \
+	angr_platforms/angr_platforms/X86_16/widening/global_object_layout.py \
 	angr_platforms/angr_platforms/X86_16/widening/register_widening.py \
 	angr_platforms/angr_platforms/X86_16/widening/segmented_load_identity.py \
 	angr_platforms/angr_platforms/X86_16/widening/segmented_load_widening.py \
+	angr_platforms/angr_platforms/X86_16/widening/stack_argument_widths.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_widening.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py \
 	angr_platforms/angr_platforms/X86_16/widening/store_width.py \
+	angr_platforms/angr_platforms/X86_16/widening/word_projection_recomposition.py \
 	angr_platforms/angr_platforms/X86_16/widening/widening_copyprop_8616.py \
 	angr_platforms/angr_platforms/X86_16/widening/widening_memory_fold_8616.py \
 	angr_platforms/angr_platforms/X86_16/widening/widening_rules.py \
@@ -307,14 +467,21 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/pipeline/errors.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/invariants.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/linear_guard.py \
+	angr_platforms/angr_platforms/X86_16/pipeline/render_authority.py \
 	inertia_decompiler/__init__.py \
 	inertia_decompiler/acceptance_scorecard.py \
 	inertia_decompiler/architecture_runtime_guard.py \
+	inertia_decompiler/project_evidence_transport.py \
 	inertia_decompiler/c_text_cleanup.py \
 	inertia_decompiler/cache.py \
 	inertia_decompiler/cli.py \
 	inertia_decompiler/cli_core.py \
+	inertia_decompiler/serial_clean_worker_cli.py \
+	inertia_decompiler/serial_worker_cache.py \
+	inertia_decompiler/discovery_cache_contract.py \
+	inertia_decompiler/segment_program_layout_reporting.py \
 	inertia_decompiler/function_worker_policy.py \
+	inertia_decompiler/generated_c_artifacts.py \
 	inertia_decompiler/cli_decompilation.py \
 	inertia_decompiler/cli_c_ast_rewrites.py \
 	inertia_decompiler/cli_c_text_postprocess.py \
@@ -329,6 +496,7 @@ QA_TYPED_FILES := \
 	inertia_decompiler/cli_cod_global_statements.py \
 	inertia_decompiler/cli_cod_globals.py \
 	inertia_decompiler/cli_dead_local_prune.py \
+	inertia_decompiler/cli_semantic_rollback.py \
 	inertia_decompiler/cli_helper_modeling.py \
 	inertia_decompiler/cli_interrupt_modeling.py \
 	inertia_decompiler/cli_linear_aliases.py \
@@ -397,10 +565,15 @@ QA_TYPED_FILES := \
 	scripts/apply_monkeytype_annotations.py \
 	scripts/export_monkeytype_stubs.py \
 	scripts/agent_context_check.py \
+	scripts/agent_test_focus.py \
 	scripts/batch_decompile_procs.py \
 	scripts/build_msc6_examples.py \
 	scripts/check_sortd_sidecar_free.py \
+	scripts/check_generated_translation_unit.py \
+	scripts/generated_translation_unit_assembly.py \
+	scripts/check_sortd_generated_sort_core.py \
 	scripts/check_decompiler_architecture.py \
+	scripts/generated_c_contracts.py \
 	scripts/import_ultra_quickc_fixtures.py \
 	scripts/test_pipeline.py \
 	scripts/test_ownership_manifest.py \
@@ -418,9 +591,12 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/alias_transfer.py \
 	angr_platforms/angr_platforms/X86_16/alias/alias_model.py \
 	angr_platforms/angr_platforms/X86_16/alias/alias_model_impl.py \
+	angr_platforms/angr_platforms/X86_16/alias/callsite_stack_merge.py \
 	angr_platforms/angr_platforms/X86_16/alias/domains.py \
 	angr_platforms/angr_platforms/X86_16/alias/state.py \
 	angr_platforms/angr_platforms/X86_16/alias/stack_lowering.py \
+	angr_platforms/angr_platforms/X86_16/alias/segment_stack_fragments.py \
+	angr_platforms/angr_platforms/X86_16/alias/segment_stack_restore.py \
 	angr_platforms/angr_platforms/X86_16/alias/transfer.py \
 	angr_platforms/angr_platforms/X86_16/analysis/__init__.py \
 	angr_platforms/angr_platforms/X86_16/analysis/alias.py \
@@ -442,13 +618,21 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/ir/effects.py \
 	angr_platforms/angr_platforms/X86_16/ir/ir_canonicalize_8616.py \
 	angr_platforms/angr_platforms/X86_16/ir/regs.py \
+	angr_platforms/angr_platforms/X86_16/ir/segment_contract.py \
+	angr_platforms/angr_platforms/X86_16/segment_function_summary.py \
+	angr_platforms/angr_platforms/X86_16/segment_program_layout.py \
+	angr_platforms/angr_platforms/X86_16/segment_program_layout_codec.py \
+	angr_platforms/angr_platforms/X86_16/segment_program_layout_contract.py \
 	angr_platforms/angr_platforms/X86_16/ir/segment_state.py \
+	angr_platforms/angr_platforms/X86_16/ir/segment_state_solver.py \
+	angr_platforms/angr_platforms/X86_16/ir/segment_state_transfer.py \
 	angr_platforms/angr_platforms/X86_16/ir/ssa.py \
 	angr_platforms/angr_platforms/X86_16/ir/ssa_function.py \
 	angr_platforms/angr_platforms/X86_16/ir/string_effects.py \
 	angr_platforms/angr_platforms/X86_16/ir/value_ir.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_addressing.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_condition_lifting.py \
+	angr_platforms/angr_platforms/X86_16/ir/vex_control_flow.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_import.py \
 	angr_platforms/angr_platforms/X86_16/function_effect_summary.py \
 	angr_platforms/angr_platforms/X86_16/helper_effect_summary.py \
@@ -457,6 +641,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/function_summary.py \
 	angr_platforms/angr_platforms/X86_16/function_state_summary.py \
 	angr_platforms/angr_platforms/X86_16/callsite_summary.py \
+	angr_platforms/angr_platforms/X86_16/call_target_identity.py \
 	angr_platforms/angr_platforms/X86_16/callsite_stack_metadata.py \
 	angr_platforms/angr_platforms/X86_16/stack_probe_fact_trace.py \
 	angr_platforms/angr_platforms/X86_16/tail_validation_condition_context.py \
@@ -516,7 +701,9 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/type_storage_object_bridge.py \
 	angr_platforms/angr_platforms/X86_16/bootstrap.py \
 	angr_platforms/angr_platforms/X86_16/cod_comment_emitter.py \
+	angr_platforms/angr_platforms/X86_16/cod_analysis_image.py \
 	angr_platforms/angr_platforms/X86_16/cod_extract.py \
+	angr_platforms/angr_platforms/X86_16/interrupt_contract.py \
 	angr_platforms/angr_platforms/X86_16/cod_known_objects.py \
 	angr_platforms/angr_platforms/X86_16/cod_source_rewrites.py \
 	angr_platforms/angr_platforms/X86_16/codeview_nb00.py \
@@ -574,9 +761,18 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/validation_helper_report.py \
 	angr_platforms/angr_platforms/X86_16/validation_summary.py \
 	angr_platforms/angr_platforms/X86_16/validation_calls.py \
+	angr_platforms/angr_platforms/X86_16/validation_call_argument_sources.py \
+	angr_platforms/angr_platforms/X86_16/validation_branch_conditions.py \
+	angr_platforms/angr_platforms/X86_16/validation_condition_identity.py \
 	angr_platforms/angr_platforms/X86_16/validation_control_flow.py \
+	angr_platforms/angr_platforms/X86_16/validation_condition_precision.py \
+	angr_platforms/angr_platforms/X86_16/validation_control_flow_obligations.py \
 	angr_platforms/angr_platforms/X86_16/validation_dataflow.py \
+	angr_platforms/angr_platforms/X86_16/validation_semantic_failures.py \
+	angr_platforms/angr_platforms/X86_16/validation_predicates.py \
 	angr_platforms/angr_platforms/X86_16/validation_storage.py \
+	angr_platforms/angr_platforms/X86_16/validation_aggregate_storage.py \
+	angr_platforms/angr_platforms/X86_16/validation_required_memory_effects.py \
 	angr_platforms/angr_platforms/X86_16/validation_semantics.py \
 	angr_platforms/angr_platforms/X86_16/verification_80286.py \
 	angr_platforms/angr_platforms/X86_16/turbo_debug_tdinfo.py \
@@ -596,25 +792,82 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/structuring_cross_entry.py \
 	angr_platforms/angr_platforms/X86_16/structuring_sequences.py \
 	angr_platforms/angr_platforms/X86_16/lowering/__init__.py \
+	angr_platforms/angr_platforms/X86_16/lowering/annotated_global_refs.py \
+	angr_platforms/angr_platforms/X86_16/lowering/call_argument_shape.py \
+	angr_platforms/angr_platforms/X86_16/lowering/call_argument_state.py \
+	angr_platforms/angr_platforms/X86_16/callsite_argument_value_sources.py \
+	angr_platforms/angr_platforms/X86_16/lowering/call_execution_frame_carriers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_output_stack_objects.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_return_selectors.py \
+	angr_platforms/angr_platforms/X86_16/lowering/call_return_stack_stores.py \
+	angr_platforms/angr_platforms/X86_16/lowering/call_cleanup_carriers.py \
+	angr_platforms/angr_platforms/X86_16/lowering/runtime_segment_access.py \
+	angr_platforms/angr_platforms/X86_16/lowering/runtime_memory_helpers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callsite_prototype_declarations.py \
+	angr_platforms/angr_platforms/X86_16/lowering/dos_interrupt_abi.py \
+	angr_platforms/angr_platforms/X86_16/lowering/dos_interrupt_aggregate_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/dos_interrupt_aggregate_globals.py \
+	angr_platforms/angr_platforms/X86_16/lowering/dos_interrupt_aggregate_projection.py \
+	angr_platforms/angr_platforms/X86_16/lowering/named_type_definitions.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callsite_prototype_seeding.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callsite_pointer_tables.py \
+	angr_platforms/angr_platforms/X86_16/lowering/signed_global_declarations.py \
+	angr_platforms/angr_platforms/X86_16/lowering/project_global_signedness.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_argument_count_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_argument_interface.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_collection.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_interface.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_sources.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_type_surface.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_pointer_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/indexed_global_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py \
+	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_type.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py \
+	angr_platforms/angr_platforms/X86_16/lowering/condition_fact_arbitration.py \
+	angr_platforms/angr_platforms/X86_16/lowering/condition_argument_type_facts.py \
+	angr_platforms/angr_platforms/X86_16/lowering/condition_argument_types.py \
+	angr_platforms/angr_platforms/X86_16/lowering/condition_scalar_types.py \
 	angr_platforms/angr_platforms/X86_16/lowering/c_runtime_header.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callee_saved_frame.py \
 	angr_platforms/angr_platforms/X86_16/lowering/dead_register_carriers.py \
+	angr_platforms/angr_platforms/X86_16/lowering/explicit_char_types.py \
+	angr_platforms/angr_platforms/X86_16/lowering/fixed_stack_probe_frames.py \
+	angr_platforms/angr_platforms/X86_16/lowering/frame_prologue_carriers.py \
 	angr_platforms/angr_platforms/X86_16/lowering/register_overwrite_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/fact_transfer.py \
+	angr_platforms/angr_platforms/X86_16/lowering/function_pointer_parameter_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/function_pointer_parameters.py \
+	angr_platforms/angr_platforms/X86_16/lowering/cod_global_identity.py \
 	angr_platforms/angr_platforms/X86_16/lowering/global_declarations.py \
+	angr_platforms/angr_platforms/X86_16/lowering/global_symbol_names.py \
 	angr_platforms/angr_platforms/X86_16/lowering/object_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/pointer_memory_idioms.py \
+	angr_platforms/angr_platforms/X86_16/lowering/physical_registers.py \
+	angr_platforms/angr_platforms/X86_16/lowering/positive_bp_arguments.py \
+	angr_platforms/angr_platforms/X86_16/lowering/project_global_object_layout.py \
 	angr_platforms/angr_platforms/X86_16/lowering/real_mode_linear.py \
+	angr_platforms/angr_platforms/X86_16/lowering/callsite_segment_provenance.py \
+	angr_platforms/angr_platforms/X86_16/lowering/segment_access_coverage.py \
+	angr_platforms/angr_platforms/X86_16/lowering/segment_access_policy.py \
+	angr_platforms/angr_platforms/X86_16/lowering/segment_global_materialization.py \
+	angr_platforms/angr_platforms/X86_16/lowering/semantic_cast.py \
 	angr_platforms/angr_platforms/X86_16/lowering/return_type_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/unobserved_returns.py \
+	angr_platforms/angr_platforms/X86_16/lowering/scalar_return_types.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segment_register_state.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_global_loads.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py \
+	angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py \
 	angr_platforms/angr_platforms/X86_16/lowering/structured_intrinsics.py \
+	angr_platforms/angr_platforms/X86_16/lowering/terminal_call_return_types.py \
+	angr_platforms/angr_platforms/X86_16/lowering/terminal_register_return_values.py \
+	angr_platforms/angr_platforms/X86_16/lowering/terminal_register_return_types.py \
+	angr_platforms/angr_platforms/X86_16/lowering/terminal_return_expressions.py \
+	angr_platforms/angr_platforms/X86_16/lowering/software_interrupt_calls.py \
 	angr_platforms/angr_platforms/X86_16/segmented_memory_reasoning.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_aggregate_objects.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_c_ast_matching.py \
@@ -627,6 +880,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/ss_bp_substitution.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_result.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_variable_binding.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_stack_pair_evidence.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/__init__.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/__init__.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/condition_patterns.py \
@@ -637,7 +891,10 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/const_prop.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/copy_prop.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_walk.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_liveness.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_setup.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_condition_carriers.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/pass_driver.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/trivial_copy.py \
 	angr_platforms/angr_platforms/X86_16/semantics/__init__.py \
@@ -650,34 +907,72 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/semantics/evidence_cache.py \
 	angr_platforms/angr_platforms/X86_16/semantics/expression_analysis.py \
 	angr_platforms/angr_platforms/X86_16/semantics/flag_semantics.py \
+	angr_platforms/angr_platforms/X86_16/semantics/direct_call_result_storage.py \
+	angr_platforms/angr_platforms/X86_16/semantics/direct_global_ordering.py \
 	angr_platforms/angr_platforms/X86_16/semantics/memory_semantics.py \
+	angr_platforms/angr_platforms/X86_16/semantics/software_interrupt_inputs.py \
 	angr_platforms/angr_platforms/X86_16/semantics/stack_frame_recovery.py \
+	angr_platforms/angr_platforms/X86_16/semantics/terminal_call_paths.py \
+	angr_platforms/angr_platforms/X86_16/semantics/terminal_register_returns.py \
+	angr_platforms/angr_platforms/X86_16/structuring/branch_return_expressions.py \
+	angr_platforms/angr_platforms/X86_16/structuring/multi_arm_return_chains.py \
+	angr_platforms/angr_platforms/X86_16/structuring/total_return_suffixes.py \
 	angr_platforms/angr_platforms/X86_16/structuring/compare32_recovery.py \
+	angr_platforms/angr_platforms/X86_16/structuring/call_argument_join_conditions.py \
+	angr_platforms/angr_platforms/X86_16/structuring/call_argument_joins.py \
 	angr_platforms/angr_platforms/X86_16/structuring/call_return_conditions.py \
 	angr_platforms/angr_platforms/X86_16/structuring/control_flow.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_materialization.py \
+	angr_platforms/angr_platforms/X86_16/structuring/clinic_option_policy.py \
+	angr_platforms/angr_platforms/X86_16/structuring/loop_condition_materialization.py \
+	angr_platforms/angr_platforms/X86_16/structuring/condition_binding.py \
+	angr_platforms/angr_platforms/X86_16/structuring/condition_provenance.py \
+	angr_platforms/angr_platforms/X86_16/structuring/condition_ownership.py \
+	angr_platforms/angr_platforms/X86_16/structuring/condition_replay.py \
+	angr_platforms/angr_platforms/X86_16/structuring/expression_substitution.py \
+	angr_platforms/angr_platforms/X86_16/structuring/wide_call_return_guard_chains.py \
+	angr_platforms/angr_platforms/X86_16/structuring/wide_stack_condition_chains.py \
+	angr_platforms/angr_platforms/X86_16/structuring/wide_stack_single_branches.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_lowering.py \
+	angr_platforms/angr_platforms/X86_16/structuring/indexed_condition_values.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_rendering.py \
 	angr_platforms/angr_platforms/X86_16/structuring/indexed_stack_ranges.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_branches.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_ownership.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loop_entries.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loop_evidence.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loop_sites.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_pretest_initializers.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loops.py \
+	angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loop_tail_replay.py \
 	angr_platforms/angr_platforms/X86_16/structuring/loop_body_repair.py \
 	angr_platforms/angr_platforms/X86_16/structuring/loop_break_jcc.py \
 	angr_platforms/angr_platforms/X86_16/structuring/loop_exit_return_guards.py \
 	angr_platforms/angr_platforms/X86_16/structuring/loop_recovery.py \
+	angr_platforms/angr_platforms/X86_16/structuring/register_dependencies.py \
 	angr_platforms/angr_platforms/X86_16/structuring/return_chains.py \
+	angr_platforms/angr_platforms/X86_16/structuring/terminal_register_values.py \
+	angr_platforms/angr_platforms/X86_16/structuring/software_interrupt_returns.py \
+	angr_platforms/angr_platforms/X86_16/structuring/scalar_return_evidence.py \
 	angr_platforms/angr_platforms/X86_16/structuring/simple_loop_recovery.py \
 	angr_platforms/angr_platforms/X86_16/structuring/typed_switch_seqnode.py \
+	angr_platforms/angr_platforms/X86_16/structuring/wide_return_values.py \
 	angr_platforms/angr_platforms/X86_16/structuring/__init__.py \
 	angr_platforms/angr_platforms/X86_16/validation/__init__.py \
 	angr_platforms/angr_platforms/X86_16/validation/canonicalize.py \
+	angr_platforms/angr_platforms/X86_16/validation_interrupt_calls.py \
 	angr_platforms/angr_platforms/X86_16/widening_alias.py \
 	angr_platforms/angr_platforms/X86_16/widening_model.py \
 	angr_platforms/angr_platforms/X86_16/widening/__init__.py \
+	angr_platforms/angr_platforms/X86_16/widening/global_object_layout.py \
 	angr_platforms/angr_platforms/X86_16/widening/register_widening.py \
 	angr_platforms/angr_platforms/X86_16/widening/segmented_load_identity.py \
 	angr_platforms/angr_platforms/X86_16/widening/segmented_load_widening.py \
+	angr_platforms/angr_platforms/X86_16/widening/stack_argument_widths.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_widening.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py \
 	angr_platforms/angr_platforms/X86_16/widening/store_width.py \
+	angr_platforms/angr_platforms/X86_16/widening/word_projection_recomposition.py \
 	angr_platforms/angr_platforms/X86_16/widening/widening_copyprop_8616.py \
 	angr_platforms/angr_platforms/X86_16/widening/widening_memory_fold_8616.py \
 	angr_platforms/angr_platforms/X86_16/widening/widening_rules.py \
@@ -686,13 +981,20 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/pipeline/errors.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/invariants.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/linear_guard.py \
+	angr_platforms/angr_platforms/X86_16/pipeline/render_authority.py \
 	inertia_decompiler/__init__.py \
 	inertia_decompiler/acceptance_scorecard.py \
 	inertia_decompiler/architecture_runtime_guard.py \
+	inertia_decompiler/project_evidence_transport.py \
 	inertia_decompiler/c_text_cleanup.py \
 	inertia_decompiler/cache.py \
 	inertia_decompiler/cli.py \
 	inertia_decompiler/cli_core.py \
+	inertia_decompiler/serial_clean_worker_cli.py \
+	inertia_decompiler/serial_worker_cache.py \
+	inertia_decompiler/discovery_cache_contract.py \
+	inertia_decompiler/segment_program_layout_reporting.py \
+	inertia_decompiler/generated_c_artifacts.py \
 	inertia_decompiler/cli_decompilation.py \
 	inertia_decompiler/cli_c_ast_rewrites.py \
 	inertia_decompiler/cli_c_text_postprocess.py \
@@ -707,6 +1009,7 @@ QA_RUFF_TARGETS := \
 	inertia_decompiler/cli_cod_global_statements.py \
 	inertia_decompiler/cli_cod_globals.py \
 	inertia_decompiler/cli_dead_local_prune.py \
+	inertia_decompiler/cli_semantic_rollback.py \
 	inertia_decompiler/cli_helper_modeling.py \
 	inertia_decompiler/cli_interrupt_modeling.py \
 	inertia_decompiler/cli_linear_aliases.py \
@@ -775,11 +1078,16 @@ QA_RUFF_TARGETS := \
 	scripts/apply_monkeytype_annotations.py \
 	scripts/export_monkeytype_stubs.py \
 	scripts/agent_context_check.py \
+	scripts/agent_test_focus.py \
 	scripts/batch_decompile_procs.py \
 	scripts/build_msc6_examples.py \
 	scripts/check_changed_non_test_types.py \
 	scripts/check_decompiler_architecture.py \
 	scripts/check_sortd_sidecar_free.py \
+	scripts/check_generated_translation_unit.py \
+	scripts/generated_translation_unit_assembly.py \
+	scripts/check_sortd_generated_sort_core.py \
+	scripts/generated_c_contracts.py \
 	scripts/import_ultra_quickc_fixtures.py \
 	scripts/sortdemo_decompiler_status.py \
 	scripts/test_pipeline.py \
@@ -812,6 +1120,16 @@ QA_RUFF_TARGETS := \
 		angr_platforms/tests/test_x86_16_semantics_evidence_cache.py \
 		angr_platforms/tests/test_x86_16_semantics_expression_analysis.py \
 		angr_platforms/tests/test_x86_16_address_ir.py \
+	angr_platforms/tests/test_x86_16_segment_contract.py \
+	angr_platforms/tests/test_x86_16_segment_address_policy.py \
+	angr_platforms/tests/test_x86_16_segment_access_coverage.py \
+	angr_platforms/tests/test_x86_16_segment_access_policy.py \
+	angr_platforms/tests/test_x86_16_segment_function_summary.py \
+	angr_platforms/tests/test_x86_16_segment_program_layout.py \
+	angr_platforms/tests/test_segment_program_layout_reporting.py \
+	angr_platforms/tests/test_x86_16_segment_stack_restore.py \
+	angr_platforms/tests/test_serial_clean_worker_cache.py \
+	angr_platforms/tests/test_discovery_cache_contract.py \
 	angr_platforms/tests/test_x86_16_segment_state.py \
 	angr_platforms/tests/test_x86_16_vex_import.py \
 	angr_platforms/tests/test_x86_16_condition_rendering.py \
@@ -835,23 +1153,40 @@ QA_RUFF_TARGETS := \
 	inertia_decompiler/function_worker_policy.py \
 	angr_platforms/tests/test_decompile_entrypoint_determinism.py \
 	angr_platforms/tests/test_import_ultra_quickc_fixtures.py \
+	angr_platforms/tests/test_project_loading_cache.py \
 	angr_platforms/tests/test_decompiler_architecture_check.py \
+	angr_platforms/tests/test_rizin_discovery.py \
 		angr_platforms/tests/test_decompilation_quality.py \
 		angr_platforms/tests/test_cli_regeneration.py \
+		angr_platforms/tests/test_agent_test_focus.py \
 		angr_platforms/tests/test_test_ownership_manifest.py \
 		angr_platforms/tests/test_x86_16_call_contracts.py \
+		angr_platforms/tests/test_x86_16_calling_convention_compat.py \
+		angr_platforms/tests/test_x86_16_call_execution_frame_carriers.py \
 		angr_platforms/tests/test_x86_16_call_output_stack_objects.py \
+		angr_platforms/tests/test_x86_16_structuring_call_argument_joins.py \
 		angr_platforms/tests/test_x86_16_call_return_conditions.py \
 		angr_platforms/tests/test_x86_16_callsite_prototype_declarations.py \
+		angr_platforms/tests/test_x86_16_callsite_pointer_tables.py \
+		angr_platforms/tests/test_x86_16_signed_global_declarations.py \
 		angr_platforms/tests/test_x86_16_condition_lowering.py \
 		angr_platforms/tests/test_x86_16_condition_transfer.py \
 		angr_platforms/tests/test_x86_16_decompiler_postprocess_typed_conditions.py \
 		angr_platforms/tests/test_x86_16_decompiler_postprocess_jcc.py \
 		angr_platforms/tests/test_x86_16_indexed_stack_ranges.py \
 		angr_platforms/tests/test_x86_16_validation_canonicalize.py \
+		angr_platforms/tests/test_x86_16_validation_loop_condition_ir.py \
+		angr_platforms/tests/test_x86_16_validation_branch_conditions.py \
 		angr_platforms/tests/test_x86_16_validation_control_flow.py \
 		angr_platforms/tests/test_x86_16_validation_dataflow.py \
+		angr_platforms/tests/test_x86_16_validation_semantic_failures.py \
+		angr_platforms/tests/test_x86_16_validation_virtual_carriers.py \
+		angr_platforms/tests/test_x86_16_validation_predicates.py \
 		angr_platforms/tests/test_x86_16_validation_storage.py \
+		angr_platforms/tests/test_x86_16_validation_required_memory_effects.py \
+		angr_platforms/tests/test_x86_16_runtime_segment_access.py \
+		angr_platforms/tests/test_x86_16_sortd_indexed_aggregate_regression.py \
+		angr_platforms/tests/test_x86_16_sortd_menu_pointer_table.py \
 	angr_platforms/tests/test_x86_16_validation_manifest.py \
 	angr_platforms/tests/test_x86_16_validation_helper_report.py \
 	angr_platforms/tests/test_x86_16_low_memory_regions.py \
@@ -862,21 +1197,43 @@ QA_RUFF_TARGETS := \
 		angr_platforms/tests/test_x86_16_structuring_grouping_report.py \
 		angr_platforms/tests/test_x86_16_structuring_grouped_refusal_report.py \
 		angr_platforms/tests/test_x86_16_structuring_condition_materialization.py \
+		angr_platforms/tests/test_x86_16_wide_call_return_guard_chains.py \
 		angr_platforms/tests/test_x86_16_structuring_loop_body_repair.py \
 		angr_platforms/tests/test_x86_16_structuring_sequences.py \
 		angr_platforms/tests/test_x86_16_dce_optimization.py \
+		angr_platforms/tests/test_x86_16_dce_lvalue_reads.py \
+		angr_platforms/tests/test_x86_16_dead_local_prune.py \
+		angr_platforms/tests/test_x86_16_local_liveness.py \
+		angr_platforms/tests/test_cli_semantic_rollback.py \
 		angr_platforms/tests/test_x86_16_trivial_copy_optimization.py \
 		angr_platforms/tests/test_x86_16_widening_copyprop.py \
 		angr_platforms/tests/test_x86_16_widening_memory_fold.py \
 		angr_platforms/tests/test_x86_16_widening_rules.py \
 		angr_platforms/tests/test_x86_16_package_exports.py \
+		angr_platforms/tests/test_x86_16_sortd_sleep_regression.py \
 		angr_platforms/tests/test_x86_16_pipeline_contracts.py \
 	angr_platforms/tests/test_x86_16_rewrite_boundary.py \
 	angr_platforms/tests/test_x86_16_heapsort_widening_regression.py \
 	angr_platforms/tests/test_x86_16_global_declarations.py \
+	angr_platforms/tests/test_x86_16_function_pointer_parameters.py \
+	angr_platforms/tests/test_x86_16_callee_global_object_interface.py \
+	angr_platforms/tests/test_x86_16_callee_global_object_sources.py \
+	angr_platforms/tests/test_x86_16_callee_pointer_evidence.py \
+	angr_platforms/tests/test_x86_16_direct_stack_move_branches.py \
+	angr_platforms/tests/test_x86_16_direct_stack_move_ownership_priority.py \
+	angr_platforms/tests/test_x86_16_runtime_memory_helpers.py \
+	angr_platforms/tests/test_x86_16_loop_condition_materialization.py \
+	angr_platforms/tests/test_x86_16_call_return_stack_stores.py \
+	angr_platforms/tests/test_x86_16_direct_stack_move_loop_entries.py \
+	angr_platforms/tests/test_x86_16_direct_stack_move_pretest_initializers.py \
+	angr_platforms/tests/test_x86_16_direct_stack_move_loops.py \
 	angr_platforms/tests/test_x86_16_direct_stack_update_groups.py \
+	angr_platforms/tests/test_x86_16_global_object_layout.py \
+	angr_platforms/tests/test_x86_16_project_type_contracts.py \
+	angr_platforms/tests/test_x86_16_cod_global_identity.py \
 	angr_platforms/tests/test_x86_16_segmented_global_loads.py \
 	angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py \
+	angr_platforms/tests/test_x86_16_consumed_push_lvalues.py \
 	angr_platforms/tests/test_x86_16_stack_aggregate_objects.py \
 	angr_platforms/tests/test_x86_16_stack_argument_identity.py \
 	angr_platforms/tests/test_x86_16_stack_lowering_contracts.py \
@@ -885,11 +1242,27 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_test_pipeline.py \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py \
 	angr_platforms/tests/test_x86_16_generated_c_acceptance.py \
-	angr_platforms/tests/test_x86_16_sortdemo_decompiler_status.py
+	angr_platforms/tests/test_x86_16_corpus_scan_timeout.py \
+	angr_platforms/tests/test_x86_16_sortdemo_decompiler_status.py \
+	angr_platforms/tests/test_x86_16_branch_return_expressions.py \
+	angr_platforms/tests/test_x86_16_condition_argument_types.py \
+	angr_platforms/tests/test_x86_16_validation_condition_precision.py \
+	angr_platforms/tests/test_x86_16_msc6_cmp32_regression.py \
+	angr_platforms/tests/test_x86_16_msc6_regressions.py \
+	angr_platforms/tests/test_x86_16_multi_arm_return_chains.py \
+	angr_platforms/tests/test_x86_16_scalar_return_evidence.py \
+	angr_platforms/tests/test_x86_16_scalar_return_types.py \
+	angr_platforms/tests/test_x86_16_structuring_return_chains.py \
+	angr_platforms/tests/test_x86_16_total_return_suffixes.py \
+	angr_platforms/tests/test_x86_16_wide_stack_condition_chains.py
 
 QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_agent_context_check.py \
 	angr_platforms/tests/test_check_changed_non_test_types.py \
+	angr_platforms/tests/test_cli_direct_argument_evidence_context.py \
+	angr_platforms/tests/test_generated_c_artifacts.py \
+	angr_platforms/tests/test_generated_translation_unit_assembly.py \
+	angr_platforms/tests/test_generated_translation_unit_gate.py \
 	angr_platforms/tests/test_x86_16_callee_name_normalization.py \
 	angr_platforms/tests/test_x86_16_cr.py \
 	angr_platforms/tests/test_x86_16_exception.py \
@@ -919,6 +1292,16 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_stack_frame_recovery.py \
 	angr_platforms/tests/test_x86_16_segmented_lowering.py \
 	angr_platforms/tests/test_x86_16_address_ir.py \
+	angr_platforms/tests/test_x86_16_segment_contract.py \
+	angr_platforms/tests/test_x86_16_segment_address_policy.py \
+	angr_platforms/tests/test_x86_16_segment_access_coverage.py \
+	angr_platforms/tests/test_x86_16_segment_access_policy.py \
+	angr_platforms/tests/test_x86_16_segment_function_summary.py \
+	angr_platforms/tests/test_x86_16_segment_program_layout.py \
+	angr_platforms/tests/test_segment_program_layout_reporting.py \
+	angr_platforms/tests/test_x86_16_segment_stack_restore.py \
+	angr_platforms/tests/test_serial_clean_worker_cache.py \
+	angr_platforms/tests/test_discovery_cache_contract.py \
 	angr_platforms/tests/test_x86_16_segment_state.py \
 	angr_platforms/tests/test_x86_16_vex_import.py \
 	angr_platforms/tests/test_x86_16_condition_rendering.py \
@@ -939,24 +1322,43 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_recovery_artifact_writer.py \
 	angr_platforms/tests/test_x86_16_targeted_recovery_artifact.py \
 	angr_platforms/tests/test_x86_16_corpus_recovery_artifact.py \
+	angr_platforms/tests/test_x86_16_corpus_scan_timeout.py \
 	angr_platforms/tests/test_build_msc6_examples.py \
 	angr_platforms/tests/test_decompile_entrypoint_determinism.py \
 	angr_platforms/tests/test_import_ultra_quickc_fixtures.py \
+	angr_platforms/tests/test_project_loading_cache.py \
 	angr_platforms/tests/test_omf_pat_lidata.py \
 	angr_platforms/tests/test_decompiler_architecture_check.py \
+	angr_platforms/tests/test_rizin_discovery.py \
 	angr_platforms/tests/test_decompilation_quality.py \
 	angr_platforms/tests/test_cli_regeneration.py \
 	angr_platforms/tests/test_check_sortd_sidecar_free.py \
+	angr_platforms/tests/test_agent_test_focus.py \
 	angr_platforms/tests/test_test_pipeline.py \
 	angr_platforms/tests/test_test_ownership_manifest.py \
 	angr_platforms/tests/test_x86_16_alias_register_mvp.py \
 	angr_platforms/tests/test_x86_16_call_contracts.py \
+	angr_platforms/tests/test_x86_16_call_execution_frame_carriers.py \
 	angr_platforms/tests/test_x86_16_call_output_stack_objects.py \
+	angr_platforms/tests/test_x86_16_structuring_call_argument_joins.py \
 	angr_platforms/tests/test_x86_16_call_return_conditions.py \
 	angr_platforms/tests/test_x86_16_callsite_prototype_declarations.py \
+	angr_platforms/tests/test_x86_16_callsite_pointer_tables.py \
+	angr_platforms/tests/test_x86_16_signed_global_declarations.py \
+	angr_platforms/tests/test_x86_16_sortd_sleep_regression.py \
 	angr_platforms/tests/test_x86_16_decompiler_postprocess_callsites.py \
+	angr_platforms/tests/test_x86_16_protected_call_arguments.py \
 	angr_platforms/tests/test_x86_16_condition_lowering.py \
 	angr_platforms/tests/test_x86_16_condition_transfer.py \
+	angr_platforms/tests/test_x86_16_wide_call_return_guard_chains.py \
+	angr_platforms/tests/test_x86_16_branch_return_expressions.py \
+	angr_platforms/tests/test_x86_16_condition_argument_types.py \
+	angr_platforms/tests/test_x86_16_validation_condition_precision.py \
+	angr_platforms/tests/test_x86_16_msc6_cmp32_regression.py \
+	angr_platforms/tests/test_x86_16_multi_arm_return_chains.py \
+	angr_platforms/tests/test_x86_16_scalar_return_evidence.py \
+	angr_platforms/tests/test_x86_16_scalar_return_types.py \
+	angr_platforms/tests/test_x86_16_structuring_return_chains.py \
 	angr_platforms/tests/test_x86_16_decompiler_postprocess_typed_conditions.py \
 	angr_platforms/tests/test_x86_16_decompiler_postprocess_jcc.py \
 	angr_platforms/tests/test_x86_16_package_exports.py \
@@ -964,9 +1366,20 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_rewrite_boundary.py \
 	angr_platforms/tests/test_x86_16_indexed_stack_ranges.py \
 	angr_platforms/tests/test_x86_16_validation_canonicalize.py \
+	angr_platforms/tests/test_x86_16_validation_call_argument_sources.py \
+	angr_platforms/tests/test_x86_16_validation_calls.py \
+	angr_platforms/tests/test_x86_16_validation_loop_condition_ir.py \
+	angr_platforms/tests/test_x86_16_validation_branch_conditions.py \
 	angr_platforms/tests/test_x86_16_validation_control_flow.py \
 	angr_platforms/tests/test_x86_16_validation_dataflow.py \
+	angr_platforms/tests/test_x86_16_validation_semantic_failures.py \
+	angr_platforms/tests/test_x86_16_validation_virtual_carriers.py \
+	angr_platforms/tests/test_x86_16_validation_predicates.py \
 	angr_platforms/tests/test_x86_16_validation_storage.py \
+	angr_platforms/tests/test_x86_16_validation_required_memory_effects.py \
+	angr_platforms/tests/test_x86_16_runtime_segment_access.py \
+	angr_platforms/tests/test_x86_16_sortd_indexed_aggregate_regression.py \
+	angr_platforms/tests/test_x86_16_sortd_menu_pointer_table.py \
 	angr_platforms/tests/test_x86_16_validation_manifest.py \
 	angr_platforms/tests/test_x86_16_validation_helper_report.py \
 	angr_platforms/tests/test_x86_16_low_memory_regions.py \
@@ -978,7 +1391,13 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_struct_merging.py \
 	angr_platforms/tests/test_x86_16_structuring_condition_materialization.py \
 	angr_platforms/tests/test_x86_16_structuring_loop_body_repair.py \
+	angr_platforms/tests/test_x86_16_total_return_suffixes.py \
+	angr_platforms/tests/test_x86_16_wide_stack_condition_chains.py \
 	angr_platforms/tests/test_x86_16_dce_optimization.py \
+	angr_platforms/tests/test_x86_16_dce_lvalue_reads.py \
+	angr_platforms/tests/test_x86_16_dead_local_prune.py \
+	angr_platforms/tests/test_x86_16_local_liveness.py \
+	angr_platforms/tests/test_cli_semantic_rollback.py \
 	angr_platforms/tests/test_x86_16_trivial_copy_optimization.py \
 	angr_platforms/tests/test_x86_16_widening_copyprop.py \
 	angr_platforms/tests/test_x86_16_widening_memory_fold.py \
@@ -990,11 +1409,27 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_stack_aggregate_objects.py \
 	angr_platforms/tests/test_x86_16_stack_argument_identity.py \
 	angr_platforms/tests/test_x86_16_stack_lowering_contracts.py \
-	angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::test_apply_runtime_segment_lowering_promotes_only_binary_proven_pointer_argument \
+	angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py \
+	angr_platforms/tests/test_x86_16_consumed_push_lvalues.py \
 	angr_platforms/tests/test_x86_16_sortdemo_decompiler_status.py \
 	angr_platforms/tests/test_x86_16_heapsort_widening_regression.py \
 	angr_platforms/tests/test_x86_16_global_declarations.py \
+	angr_platforms/tests/test_x86_16_global_object_layout.py \
+	angr_platforms/tests/test_x86_16_project_type_contracts.py \
+	angr_platforms/tests/test_x86_16_function_pointer_parameters.py \
+	angr_platforms/tests/test_x86_16_callee_global_object_interface.py \
+	angr_platforms/tests/test_x86_16_callee_global_object_sources.py \
+	angr_platforms/tests/test_x86_16_callee_pointer_evidence.py \
+	angr_platforms/tests/test_x86_16_direct_stack_move_branches.py \
+	angr_platforms/tests/test_x86_16_direct_stack_move_ownership_priority.py \
+	angr_platforms/tests/test_x86_16_runtime_memory_helpers.py \
+	angr_platforms/tests/test_x86_16_loop_condition_materialization.py \
+	angr_platforms/tests/test_x86_16_call_return_stack_stores.py \
+	angr_platforms/tests/test_x86_16_direct_stack_move_loop_entries.py \
+	angr_platforms/tests/test_x86_16_direct_stack_move_pretest_initializers.py \
+	angr_platforms/tests/test_x86_16_direct_stack_move_loops.py \
 	angr_platforms/tests/test_x86_16_direct_stack_update_groups.py \
+	angr_platforms/tests/test_x86_16_cod_global_identity.py \
 	angr_platforms/tests/test_x86_16_segmented_global_loads.py \
 	angr_platforms/tests/test_x86_16_decompilation_cache_surface.py \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_sortdemo_heapsort_callsites_materialized_in_c_order \
@@ -1023,6 +1458,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_sortd_insertionsort_sidecar_free_splits_header_and_rebases_source \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_sortd_initmenu_sidecar_free_preserves_calls_and_compiles \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_sortdemo_runmenu_default_direct_path_validates_without_temp_carrier_fallback \
+	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_sortd_runmenu_sidecar_free_preserves_binary_escape_exit \
 	angr_platforms/tests/test_x86_16_decompiler_postprocess_callsites.py::test_normalize_call_target_names_drops_detached_angr_callee_func \
 	angr_platforms/tests/test_x86_16_decompiler_postprocess_callsites.py::test_callsite_stats_count_stale_target_rejection \
 	angr_platforms/tests/test_x86_16_access_trait_arrays.py \
@@ -1032,8 +1468,43 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_segmented_memory.py \
 	angr_platforms/tests/test_x86_16_type_equivalence_classes.py
 
+# Focused owner tests are appended while the legacy QA lists remain curated.
+QA_RUFF_TARGETS += \
+	angr_platforms/tests/test_build_msc6_artifact_names.py \
+	angr_platforms/tests/test_x86_16_callee_saved_frame.py \
+	angr_platforms/tests/test_x86_16_canonical_frame_carriers.py \
+	angr_platforms/tests/test_cli_decompilation_render_refresh.py \
+	angr_platforms/tests/test_project_evidence_transport.py \
+	angr_platforms/tests/test_x86_16_condition_fact_arbitration.py \
+	angr_platforms/tests/test_x86_16_direct_global_zero_index_replay.py \
+	angr_platforms/tests/test_x86_16_direct_stack_immediate_branches.py \
+	angr_platforms/tests/test_x86_16_lifter_condition_cache.py \
+	angr_platforms/tests/test_x86_16_msc6_sort_patterns_regression.py \
+	angr_platforms/tests/test_x86_16_stack_pointer_snapshot.py \
+	angr_platforms/tests/test_x86_16_cod_extract_control_flow.py \
+	angr_platforms/tests/test_x86_16_software_interrupt_pipeline.py \
+	angr_platforms/tests/test_x86_16_software_interrupt_validation.py \
+	angr_platforms/tests/test_x86_16_terminal_register_return_values.py \
+	angr_platforms/tests/test_x86_16_terminal_register_return_semantics.py \
+	angr_platforms/tests/test_x86_16_terminal_return_expression_scaling.py
+
+QA_PYTEST_TARGETS += \
+	angr_platforms/tests/test_build_msc6_artifact_names.py \
+	angr_platforms/tests/test_x86_16_callee_saved_frame.py \
+	angr_platforms/tests/test_x86_16_canonical_frame_carriers.py \
+	angr_platforms/tests/test_x86_16_cod_extract_control_flow.py \
+	angr_platforms/tests/test_x86_16_lifter_condition_cache.py \
+	angr_platforms/tests/test_x86_16_stack_pointer_snapshot.py \
+	angr_platforms/tests/test_x86_16_software_interrupt_pipeline.py \
+	angr_platforms/tests/test_x86_16_software_interrupt_validation.py \
+	angr_platforms/tests/test_x86_16_terminal_register_return_values.py \
+	angr_platforms/tests/test_x86_16_terminal_register_return_semantics.py \
+	angr_platforms/tests/test_x86_16_terminal_return_expression_scaling.py
+
 PYRIGHT_SELECTED_FILES := $(filter $(QA_TYPED_FILES),$(PY_FILES))
 PYRIGHT_SKIPPED_FILES := $(filter-out $(QA_TYPED_FILES),$(PY_FILES))
+MYPY_SELECTED_FILES := $(filter $(QA_TYPED_FILES),$(PY_FILES))
+MYPY_SKIPPED_FILES := $(filter-out $(QA_TYPED_FILES),$(PY_FILES))
 RUFF_SELECTED_FILES := $(filter $(QA_RUFF_TARGETS),$(PY_FILES))
 RUFF_SKIPPED_FILES := $(filter-out $(QA_RUFF_TARGETS),$(PY_FILES))
 QA_CHANGED_TYPED_FILES := $(filter $(QA_TYPED_FILES),$(PY_CHANGED_FILES))
@@ -1085,12 +1556,28 @@ ruff-all:
 	$(PYTHON) -m ruff check --fix $(PY_FILES_ALL)
 
 pyright:
-	$(PYTHON) -m pyright $(QA_TYPED_FILES)
+	$(PYRIGHT_CMD_BASE) $(wordlist 1,55,$(wildcard angr_platforms/angr_platforms/X86_16/*.py))
+	$(PYRIGHT_CMD_BASE) $(wordlist 56,110,$(wildcard angr_platforms/angr_platforms/X86_16/*.py))
+	$(PYRIGHT_CMD_BASE) $(wordlist 111,10000,$(wildcard angr_platforms/angr_platforms/X86_16/*.py))
+	$(PYRIGHT_CMD_BASE) angr_platforms/angr_platforms/X86_16/alias angr_platforms/angr_platforms/X86_16/analysis angr_platforms/angr_platforms/X86_16/ir angr_platforms/angr_platforms/X86_16/pipeline
+	$(PYRIGHT_CMD_BASE) angr_platforms/angr_platforms/X86_16/lowering
+	$(PYRIGHT_CMD_BASE) $(filter-out angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py,$(wildcard angr_platforms/angr_platforms/X86_16/postprocess/*.py) $(wildcard angr_platforms/angr_platforms/X86_16/postprocess/optimization/*.py))
+	# Legacy hardening check expects this exact DCE command form in makefile text.
+	$(if $(strip $(PYRIGHT_WATCH_FLAG)),,$(TIMEOUT) --foreground $(PYRIGHT_DCE_TIMEOUT) $(PYTHON) -m pyright angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py) || { \
+		status=$$?; \
+		if [ $$status -eq 124 ]; then echo "pyright: DCE batch exceeded $(PYRIGHT_DCE_TIMEOUT)s; split its oversized function instead of suppressing types"; fi; \
+		exit $$status; \
+	}
+	$(PYRIGHT_CMD_BASE) angr_platforms/angr_platforms/X86_16/semantics
+	$(PYRIGHT_CMD_BASE) angr_platforms/angr_platforms/X86_16/structuring
+	$(PYRIGHT_CMD_BASE) angr_platforms/angr_platforms/X86_16/validation
+	$(PYRIGHT_CMD_BASE) angr_platforms/angr_platforms/X86_16/widening
+	$(PYRIGHT_CMD_BASE) inertia_decompiler $(filter-out angr_platforms/angr_platforms/X86_16/% inertia_decompiler/%,$(QA_TYPED_FILES))
 
 pyright-files:
 	@test -n "$(strip $(PY_FILES))" || (echo 'pyright-files: no Python files selected'; exit 0)
 	@if [ -n "$(strip $(PYRIGHT_SELECTED_FILES))" ]; then \
-		$(PYTHON) -m pyright $(PYRIGHT_SELECTED_FILES); \
+		$(PYRIGHT_CMD_BASE) $(PYRIGHT_SELECTED_FILES); \
 	else \
 		echo "pyright-files: no promoted typed files selected"; \
 	fi
@@ -1113,13 +1600,39 @@ type-ratchet-changed:
 	fi
 
 pyright-all:
-	$(PYTHON) -m pyright
+	$(PYRIGHT_CMD_BASE)
+
+mypy:
+	$(PYTHON) -m mypy --cache-dir .mypy_cache --config-file pyproject.toml $(QA_TYPED_FILES)
+
+mypy-dev:
+	$(PYTHON) -m mypy --cache-dir .mypy_cache --config-file pyproject.toml $(LINTERS_DEV_MYPY_FILES)
+
+mypy-files:
+	@test -n "$(strip $(PY_FILES))" || (echo 'mypy-files: no Python files selected'; exit 0)
+	@if [ -n "$(strip $(MYPY_SELECTED_FILES))" ]; then \
+		$(PYTHON) -m mypy --cache-dir .mypy_cache --config-file pyproject.toml $(MYPY_SELECTED_FILES); \
+	else \
+		echo "mypy-files: no promoted typed files selected"; \
+	fi
+	@if [ -n "$(strip $(MYPY_SKIPPED_FILES))" ]; then \
+		echo "mypy-files: skipped legacy files not in QA_TYPED_FILES: $(MYPY_SKIPPED_FILES)"; \
+	fi
+
+mypy-all:
+	$(PYTHON) -m mypy --cache-dir .mypy_cache --config-file pyproject.toml
+
+mypyc:
+	$(PYTHON) scripts/build_mypyc.py
 
 vulture:
 	$(PYTHON) -m vulture $(QA_TYPED_FILES)
 
 radon:
 	$(PYTHON) -m radon cc scripts inertia_decompiler --show-complexity --min C
+
+radon-dev:
+	$(PYTHON) -m radon cc $(LINTERS_DEV_RADON_PATHS) --show-complexity --min C
 
 test-pipeline:
 	$(PYTHON) scripts/test_pipeline.py --require-external
@@ -1130,11 +1643,56 @@ test-pipeline-fast:
 test-pipeline-expanded:
 	$(PYTHON) scripts/test_pipeline.py --tier expanded --require-external
 
+test-layer:
+	$(PYTHON) scripts/agent_test_focus.py \
+		$(if $(strip $(LAYER)),--layer $(LAYER),) \
+		$(if $(strip $(FILES)),--files $(FILES),$(if $(strip $(LAYER)),--no-infer-changed,)) \
+		$(if $(strip $(MAX_TESTS)),--max-tests $(MAX_TESTS),) \
+		$(if $(strip $(AGENT_TEST_JSON)),--json,) \
+		$(if $(strip $(AGENT_TEST_JSON_ONLY)),--json-only,) \
+		$(if $(strip $(NO_SHARED)),--no-shared,) \
+		$(if $(filter 1,$(RUN)),--run)
+
+test-agent-confidence:
+	$(PYTHON) scripts/agent_test_focus.py --run \
+		$(if $(strip $(MAX_TESTS)),--max-tests $(MAX_TESTS),) \
+		$(if $(strip $(AGENT_TEST_JSON)),--json,) \
+		$(if $(strip $(AGENT_TEST_JSON_ONLY)),--json-only,) \
+		$(if $(strip $(NO_SHARED)),--no-shared,)
+
 msc6-examples:
 	INERTIA_ENABLE_TAIL_VALIDATION=1 INERTIA_DISABLE_TIMING=1 $(PYTHON) scripts/build_msc6_examples.py --skip-constructs medium_structs,enum_union --decompile-mode functions --decompile-max-functions 0 --decompile-timeout 60 --decompile-run-timeout 600
 
 sortdemo-selftest:
 	$(PYTHON) scripts/build_sortdemo_selftest.py --clean
+
+DECOMP_OPT_REGRESSION_ARGS ?= --max-functions 20 -q
+DECOMP_OPT_REGRESSION_TIMEOUT ?= 120
+DECOMP_OPT_REGRESSION_BINARIES ?= \
+	examples/build_msc6_tiny/CMP16.EXE \
+	examples/build_msc6_tiny/LOOPS.EXE \
+	examples/build_msc6_tiny/FPTR.EXE
+
+decomp-opt-regression:
+	$(PYTHON) scripts/benchmark_optimization_quality_guard.py examples/build_msc6/CMP16.EXE -- $(DECOMP_OPT_REGRESSION_ARGS)
+
+decomp-opt-regression-suite:
+	@for binary in $(DECOMP_OPT_REGRESSION_BINARIES); do \
+		echo "/* decompilation quality guard: $$binary */"; \
+		$(PYTHON) scripts/benchmark_optimization_quality_guard.py "$$binary" \
+			--mode-timeout $(DECOMP_OPT_REGRESSION_TIMEOUT) \
+			-- $(DECOMP_OPT_REGRESSION_ARGS) \
+			|| exit $$?; \
+	done
+
+decomp-opt-regression-thread:
+	@for binary in $(DECOMP_OPT_REGRESSION_BINARIES); do \
+		echo "/* decompilation quality guard (thread timeout lanes): $$binary */"; \
+		INERTIA_FORCE_TIMEOUT_LANES_THREAD=1 $(PYTHON) scripts/benchmark_optimization_quality_guard.py "$$binary" \
+			--mode-timeout $(DECOMP_OPT_REGRESSION_TIMEOUT) \
+			-- $(DECOMP_OPT_REGRESSION_ARGS) \
+			|| exit $$?; \
+	done
 
 monkeytype-trace:
 	$(PYTHON) scripts/collect_monkeytype_pytest.py

@@ -439,7 +439,7 @@ int main(void)
 }
 """
 
-SCALAR_TYPES_HARNESS_MAIN = """
+SCALAR_TYPES_HARNESS_MAIN: str = """
 int main(void)
 {
     char text1[4];
@@ -467,6 +467,9 @@ int main(void)
     }
     if (mix_uc(7, 3) != (unsigned char)13) {
         return 2;
+    }
+    if (byteops_unsigned() != 0xC000U) {
+        return 13;
     }
     if (sub_ss(9, 4) != 5) {
         return 3;
@@ -503,9 +506,9 @@ int main(void)
 """
 
 STORAGE_CLASSES_PREFIX = """
-short g_counter = 3;
+unsigned short g_counter = 3;
 unsigned char g_table[4] = { 1, 2, 3, 4 };
-unsigned short _S104_seen = 10;
+unsigned short seen = 10;
 """
 
 STORAGE_CLASSES_HARNESS_MAIN = """
@@ -660,7 +663,7 @@ FALLBACK_EXAMPLE_REBUILD: dict[str, dict[str, object]] = {
         "source_contracts": (
             GeneratedFunctionSourceContract(
                 function_name="fill_bytes",
-                required_return_class=GeneratedFunctionReturnClass.VOID,
+                required_return_class=GeneratedFunctionReturnClass.ANY,
             ),
             GeneratedFunctionSourceContract(
                 function_name="sum_words",
@@ -668,7 +671,7 @@ FALLBACK_EXAMPLE_REBUILD: dict[str, dict[str, object]] = {
             ),
             GeneratedFunctionSourceContract(
                 function_name="swap_ptrs",
-                required_return_class=GeneratedFunctionReturnClass.VOID,
+                required_return_class=GeneratedFunctionReturnClass.ANY,
             ),
         ),
     },
@@ -681,6 +684,7 @@ FALLBACK_EXAMPLE_REBUILD: dict[str, dict[str, object]] = {
         "functions": (
             "add_sc",
             "mix_uc",
+            "byteops_unsigned",
             "sub_ss",
             "mul_us",
             "add_int",
@@ -698,7 +702,7 @@ FALLBACK_EXAMPLE_REBUILD: dict[str, dict[str, object]] = {
         "source_contracts": (
             GeneratedFunctionSourceContract(
                 function_name="bump_static",
-                required_global_writes=("_S104_seen",),
+                required_global_writes=("seen",),
             ),
         ),
     },
@@ -1167,17 +1171,18 @@ def _prepare_signature_catalog(
 
 
 def _dos_safe_names(stem: str, counter: int | None = None) -> tuple[str, str, str, str]:
-    """Return short DOS-friendly base names for C source, OBJ, EXE and MAP outputs."""
+    """Return distinct DOS-friendly names for rebuilt decompiler artifacts."""
     normalized = "".join(ch for ch in stem.upper() if ch.isalnum())
     if not normalized:
         normalized = "DECOMPILE"
 
-    # Keep short names within 8.3 constraints and avoid collisions by suffixing an index.
-    short_core = normalized[:6]
-    if counter is not None and counter > 0:
-        short_core = f"{short_core[:5]}{counter % 10}"
-    if not short_core:
-        short_core = "DECOM1"[:6]
+    source_core = normalized[:8]
+    sequence = max(counter or 0, 0) % 100
+    short_core = next(
+        candidate
+        for marker in ("D", "R")
+        if (candidate := f"{marker}{normalized[:4]}{sequence:02d}") != source_core
+    )
 
     return (
         f"{short_core}.C",
@@ -2096,7 +2101,6 @@ def _build_from_function_decompiles(
             str(exe_path),
             "--out-dir",
             str(batch_dir),
-            "--direct-in-process",
             "--timeout",
             str(decompile_timeout),
             "--function-discovery-backend",

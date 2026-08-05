@@ -13,16 +13,23 @@ import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol, TypeAlias, cast
 
 import claripy
 from angr import SimProcedure
+from angr.sim_type import SimTypeFunction
 
-INTERRUPT_CORE_VECTOR_BASE: int = 0xFF000
-INTERRUPT_CORE_VECTOR_COUNT: int = 0x100
+from .interrupt_contract import (
+    DOS_SERVICE_BASE_ADDR,
+    INTERRUPT_CORE_VECTOR_BASE,
+    INTERRUPT_CORE_VECTOR_COUNT,
+    INTERRUPT_SERVICE_BASE_ADDR,
+)
 
 __all__ = (
+    "CallTargetKind8616",
     "CallTargetSeed",
     "DOSInt21Call",
     "DOS_SERVICE_BASE_ADDR",
@@ -34,6 +41,7 @@ __all__ = (
     "INTERRUPT_SERVICE_BASE_ADDR",
     "InterruptCall",
     "InterruptServiceSpec",
+    "canonicalize_x86_16_padding_call_target_8616",
     "collect_direct_far_call_targets",
     "collect_dos_int21_calls",
     "collect_interrupt_calls",
@@ -135,14 +143,68 @@ def seed_wide_stack_prototype_from_binary_address_8616(
 ) -> bool:
     """Infer a wide stack ABI from binary facts and copy its typed contract."""
     from .calling_convention_compat import apply_x86_16_wide_stack_prototype_evidence_at_address
+    from .lowering.callee_pointer_evidence import apply_callee_pointer_argument_evidence_at_address_8616
 
-    if (
-        not _function_has_proven_prototype_8616(source_function)
-        and not apply_x86_16_wide_stack_prototype_evidence_at_address(project, source_function, address)
-    ):
-        return False
+    canonical_address = (
+        canonicalize_x86_16_padding_call_target_8616(project, address)
+        or address
+    )
+    source_proven = _function_has_proven_prototype_8616(source_function)
     typed_source = cast(_PrototypeFunctionBoundary8616, source_function)
-    if typed_source.prototype is None or typed_source.is_prototype_guessed:
+    bounded_refinement_allowed = (
+        not source_proven
+        or isinstance(typed_source.prototype, SimTypeFunction)
+    )
+    binary_wide_seeded = (
+        apply_x86_16_wide_stack_prototype_evidence_at_address(
+            project,
+            source_function,
+            canonical_address,
+        )
+        if bounded_refinement_allowed
+        else False
+    )
+    abi_seeded = source_proven or binary_wide_seeded
+    pointer_seeded = (
+        apply_callee_pointer_argument_evidence_at_address_8616(
+            project,
+            source_function,
+            canonical_address,
+        )
+        if bounded_refinement_allowed
+        else False
+    )
+    if canonical_address != address:
+        functions = _dynamic_analysis_getattr_8616(
+            _dynamic_analysis_getattr_8616(project, "kb", None),
+            "functions",
+            None,
+        )
+        lookup = _dynamic_analysis_getattr_8616(functions, "function", None)
+        canonical_function = (
+            cast(Any, lookup)(addr=canonical_address, create=True)
+            if callable(lookup)
+            else None
+        )
+        if canonical_function is not None:
+            if binary_wide_seeded and typed_source.prototype is not None:
+                typed_canonical = cast(
+                    _PrototypeFunctionBoundary8616,
+                    canonical_function,
+                )
+                typed_canonical.prototype = typed_source.prototype
+                typed_canonical.calling_convention = typed_source.calling_convention
+                typed_canonical.is_prototype_guessed = typed_source.is_prototype_guessed
+            pointer_seeded = apply_callee_pointer_argument_evidence_at_address_8616(
+                project,
+                canonical_function,
+                canonical_address,
+            ) or pointer_seeded
+    if not abi_seeded and not pointer_seeded:
+        return False
+    if typed_source.prototype is None or (
+        typed_source.is_prototype_guessed and not pointer_seeded
+    ):
         return False
     typed_target = cast(_PrototypeFunctionBoundary8616, target_function)
     typed_target.prototype = typed_source.prototype
@@ -250,6 +312,18 @@ class FarCallTarget:
     return_addr: int | None
 
 
+class CallTargetKind8616(str, Enum):
+    """Typed origin and distance of one recovered control-transfer target."""
+
+    CFG_RESOLVED_CALL = "existing"
+    DIRECT_NEAR_CALL = "direct_near"
+    DIRECT_FAR_CALL = "direct_far"
+    STORED_NEAR_CALL = "stored_near"
+    DIRECT_NEAR_TAIL_JUMP = "tail_jump"
+    DIRECT_FAR_TAIL_JUMP = "far_tail_jump"
+    STORED_NEAR_TAIL_JUMP = "stored_tail_jump"
+
+
 @dataclass(frozen=True)
 class CallTargetSeed:
     """Recovered neighboring call target used to seed bounded CFG recovery."""
@@ -257,7 +331,12 @@ class CallTargetSeed:
     callsite_addr: int
     target_addr: int
     return_addr: int | None
-    kind: str
+    kind: CallTargetKind8616
+
+    def __post_init__(self) -> None:
+        """Normalize legacy string constructors at the typed frontend boundary."""
+        if not isinstance(self.kind, CallTargetKind8616):
+            object.__setattr__(self, "kind", CallTargetKind8616(cast(str, self.kind)))
 
 
 @dataclass(frozen=True)
@@ -613,18 +692,15 @@ INTERRUPT_SERVICE_SPECS: dict[int, InterruptServiceSpec] = {
 }
 
 
-INTERRUPT_SERVICE_BASE_ADDR: int = 0xFE000
-DOS_SERVICE_BASE_ADDR: int = INTERRUPT_SERVICE_BASE_ADDR
-
-
 def _interrupt_service_key(call: InterruptCall) -> int:
-    if call.vector == 0x21:
-        return call.ah & 0xFF if call.ah is not None else 0
     return call.vector & 0xFF
 
 
 def interrupt_service_addr(call: InterruptCall) -> int:
     """Return the synthetic hook address for a recovered interrupt service."""
+    if call.vector == 0x21:
+        service = call.ah & 0xFF if call.ah is not None else 0
+        return DOS_SERVICE_BASE_ADDR + service
     return INTERRUPT_SERVICE_BASE_ADDR + _interrupt_service_key(call)
 
 
@@ -1553,14 +1629,18 @@ def _looks_like_x86_16_frame_prologue_8616(code: bytes, offset: int) -> bool:
     return 0 <= offset <= len(code) - 3 and code[offset : offset + 3] in {b"\x55\x8b\xec", b"\x55\x89\xe5"}
 
 
-def _canonicalize_x86_16_padding_call_target_8616(project: object, addr: int | None) -> int | None:
+def canonicalize_x86_16_padding_call_target_8616(
+    project: object,
+    addr: int | None,
+) -> int | None:
+    """Advance a public padding entry to its proven x86-16 frame prologue."""
     if not isinstance(addr, int):
         return None
     if _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(project, "arch", None), "name", None) != "86_16":
         return addr
 
     padding_bytes = {0x00, 0x90, 0xCC}
-    scan_limit = 0x20
+    scan_limit = 0x80
     for candidate_project, candidate_addr in (
         (project, addr),
         (_dynamic_analysis_getattr_8616(project, "_inertia_original_project", None), addr),
@@ -1618,13 +1698,13 @@ def _resolve_direct_call_target_from_insn(project: object, insn: object) -> int 
     if mnemonic == "lcall" and len(operands) == 2 and all(_dynamic_analysis_getattr_8616(op, "type", None) == 2 for op in operands):
         seg = operands[0].imm & 0xFFFF
         off = operands[1].imm & 0xFFFF
-        return _canonicalize_x86_16_padding_call_target_8616(
+        return canonicalize_x86_16_padding_call_target_8616(
             project,
             _canonical_code_linear_addr(project, (seg << 4) + off),
         )
 
     if mnemonic == "call" and len(operands) == 1 and _dynamic_analysis_getattr_8616(operands[0], "type", None) == 2:
-        return _canonicalize_x86_16_padding_call_target_8616(
+        return canonicalize_x86_16_padding_call_target_8616(
             project,
             _canonical_code_linear_addr(project, operands[0].imm),
         )
@@ -1738,6 +1818,33 @@ def resolve_direct_jump_target_from_block(project: object, block_addr: int) -> i
         return None
 
     return _impl()
+
+
+def _direct_call_target_kind_8616(project: object, callsite_addr: int) -> CallTargetKind8616 | None:
+    """Classify an exact decoded direct call without interpreting rendered assembly."""
+    insn = _direct_call_insn_from_block(project, callsite_addr)
+    if insn is None or _resolve_direct_call_target_from_insn(project, insn) is None:
+        return None
+    mnemonic = str(_dynamic_analysis_getattr_8616(insn, "mnemonic", "") or "").lower()
+    if mnemonic == "lcall":
+        return CallTargetKind8616.DIRECT_FAR_CALL
+    if mnemonic == "call":
+        return CallTargetKind8616.DIRECT_NEAR_CALL
+    return None
+
+
+def _direct_tail_jump_kind_8616(project: object, block_addr: int) -> CallTargetKind8616 | None:
+    """Classify an exact decoded direct tail jump by architectural form."""
+    block = _analysis_project_block_8616(project, block_addr)
+    insns = _dynamic_analysis_tuple_attr_8616(block.capstone, "insns")
+    if not insns:
+        return None
+    mnemonic = str(_dynamic_analysis_getattr_8616(insns[-1], "mnemonic", "") or "").lower()
+    if mnemonic == "ljmp":
+        return CallTargetKind8616.DIRECT_FAR_TAIL_JUMP
+    if mnemonic == "jmp":
+        return CallTargetKind8616.DIRECT_NEAR_TAIL_JUMP
+    return None
 
 
 def patch_direct_call_sites(function: object) -> bool:
@@ -1918,7 +2025,7 @@ def resolve_stored_near_jump_target_from_function(function: object, jump_addr: i
 
 
 def collect_direct_far_call_targets(function: object) -> list[FarCallTarget]:
-    """Recover direct or startup-recoverable call targets directly from lifted blocks.
+    """Recover only immediate far-call targets directly from lifted blocks.
 
     angr's stock call-target recovery does not currently understand the x86-16
     `CS:IP` far-call pattern very well, so medium-model DOS startup code often
@@ -1932,9 +2039,9 @@ def collect_direct_far_call_targets(function: object) -> list[FarCallTarget]:
     recovered: list[FarCallTarget] = []
 
     for callsite_addr in _analysis_function_call_sites_8616(function):
+        if _direct_call_target_kind_8616(project, callsite_addr) is not CallTargetKind8616.DIRECT_FAR_CALL:
+            continue
         target_addr = resolve_direct_call_target_from_block(project, callsite_addr)
-        if target_addr is None:
-            target_addr = resolve_stored_near_call_target_from_function(function, callsite_addr)
         # Real-mode far calls commonly land below 64 KiB once segment:offset is
         # linearized (for example 0x0114:0x0240 -> 0x1380). Only discard calls
         # we still failed to resolve, not low linear addresses.
@@ -1971,32 +2078,26 @@ def collect_neighbor_call_targets(function: object) -> list[CallTargetSeed]:
 
         recovered: list[CallTargetSeed] = []
         seen: set[tuple[int, int]] = set()
-        far_targets = {
-            (target.callsite_addr, target.target_addr): target for target in collect_direct_far_call_targets(function)
-        }
-
         for callsite_addr in _analysis_function_call_sites_8616(function):
             target_addr = None
-            kind = "existing"
+            kind = CallTargetKind8616.CFG_RESOLVED_CALL
             target_addr = _analysis_function_call_target_8616(function, callsite_addr)
             if target_addr is not None and linked_base is not None and image_end is not None and not (
                 linked_base <= target_addr < image_end
             ):
                 target_addr = None
 
-            far_target = far_targets.get((callsite_addr, target_addr)) if target_addr is not None else None
-            if far_target is not None:
-                kind = "direct_far"
+            direct_target = resolve_direct_call_target_from_block(project, callsite_addr)
+            direct_kind = _direct_call_target_kind_8616(project, callsite_addr)
+            if direct_target is not None:
+                target_addr = direct_target
+                if direct_kind is not None:
+                    kind = direct_kind
             elif target_addr is None:
-                direct_target = resolve_direct_call_target_from_block(project, callsite_addr)
-                if direct_target is not None:
-                    target_addr = direct_target
-                    kind = "direct_far" if (callsite_addr, direct_target) in far_targets else "direct_near"
-                else:
-                    stored_target = resolve_stored_near_call_target_from_function(function, callsite_addr)
-                    if stored_target is not None:
-                        target_addr = stored_target
-                        kind = "stored_near"
+                stored_target = resolve_stored_near_call_target_from_function(function, callsite_addr)
+                if stored_target is not None:
+                    target_addr = stored_target
+                    kind = CallTargetKind8616.STORED_NEAR_CALL
             if target_addr is None:
                 continue
             if linked_base is not None and image_end is not None and not (linked_base <= target_addr < image_end):
@@ -2018,12 +2119,12 @@ def collect_neighbor_call_targets(function: object) -> list[CallTargetSeed]:
         block_addr_set = set(block_addrs)
         for block_addr in block_addrs:
             jump_target = resolve_direct_jump_target_from_block(project, block_addr)
-            kind = "tail_jump"
+            kind = _direct_tail_jump_kind_8616(project, block_addr)
             if jump_target is None:
                 jump_target = resolve_stored_near_jump_target_from_function(function, block_addr)
                 if jump_target is not None:
-                    kind = "stored_tail_jump"
-            if jump_target is None:
+                    kind = CallTargetKind8616.STORED_NEAR_TAIL_JUMP
+            if jump_target is None or kind is None:
                 continue
             function_addr = _analysis_function_addr_8616(function)
             if jump_target in block_addr_set or jump_target == function_addr:
@@ -2081,6 +2182,9 @@ def patch_dos_int21_call_sites(function: object, binary_path: Path | str | None 
 
 def seed_calling_conventions(cfg: object) -> None:
     """Initialize and refine x86-16 calling conventions for CFG functions."""
+    from .lowering.terminal_call_return_types import apply_terminal_call_return_type_evidence_8616
+    from .lowering.terminal_register_return_types import apply_terminal_register_return_type_evidence_8616
+
     try:
         from .calling_convention_compat import (
             apply_x86_16_stack_byte_prototype_evidence,
@@ -2090,25 +2194,91 @@ def seed_calling_conventions(cfg: object) -> None:
         apply_x86_16_stack_byte_prototype_evidence = None
         apply_x86_16_wide_stack_prototype_evidence = None
 
+    def _function_identity_8616(function: object) -> int:
+        function_addr = _analysis_function_addr_8616(function)
+        if isinstance(function_addr, int):
+            return function_addr
+        return id(function)
+
+    def _seeded_calling_conventions_function_ids(cfg_obj: object) -> set[int]:
+        cached = _dynamic_analysis_getattr_8616(cfg_obj, "_inertia_seeded_calling_conventions", None)
+        if isinstance(cached, set):
+            return cast(set[int], cached)
+        return set()
+
+    def _function_seed_revision_8616(
+        function: object,
+    ) -> tuple[tuple[int, ...], str | None, str | None, bool]:
+        """Fingerprint CFG and prototype state that can change seed evidence."""
+        raw_blocks = _dynamic_analysis_getattr_8616(function, "block_addrs_set", ()) or ()
+        blocks = tuple(sorted(int(addr) for addr in raw_blocks if isinstance(addr, int)))
+        prototype = _dynamic_analysis_getattr_8616(function, "prototype", None)
+        return_type = _dynamic_analysis_getattr_8616(prototype, "returnty", None)
+        guessed = bool(_dynamic_analysis_getattr_8616(function, "is_prototype_guessed", True))
+        return (
+            blocks,
+            type(prototype).__name__ if prototype is not None else None,
+            type(return_type).__name__ if return_type is not None else None,
+            guessed,
+        )
+
+    def _seeded_calling_convention_revisions_8616(
+        cfg_obj: object,
+    ) -> dict[int, tuple[tuple[int, ...], str | None, str | None, bool]]:
+        """Read revision-aware cache state across the dynamic CFG boundary."""
+        cached = _dynamic_analysis_getattr_8616(
+            cfg_obj,
+            "_inertia_seeded_calling_convention_revisions_8616",
+            None,
+        )
+        return dict(cached) if isinstance(cached, Mapping) else {}
+
     def _is_stack_probe_helper_name(name: str | None) -> bool:
         if not isinstance(name, str):
             return False
         normalized = name.strip().lower().lstrip("_")
         return normalized in {"anchkstk", "analloca_probe"}
 
+    cfg_functions = _dynamic_analysis_getattr_8616(cfg, "functions", {})
+    if not isinstance(cfg_functions, Mapping):
+        cfg_functions = {}
+    project = _dynamic_analysis_getattr_8616(cfg, "project", None) or _dynamic_analysis_getattr_8616(cfg, "_project", None)
+    total_functions = len(cfg_functions)
+    seeded_ids = _seeded_calling_conventions_function_ids(cfg)
+    seeded_revisions = _seeded_calling_convention_revisions_8616(cfg)
+    candidates = tuple(
+        function for function in cfg_functions.values()
+        if (
+            _function_identity_8616(function) not in seeded_ids
+            or seeded_revisions.get(_function_identity_8616(function))
+            != _function_seed_revision_8616(function)
+        )
+    )
+    candidate_count = len(candidates)
+    if candidate_count == 0:
+        return
+
     track = True
-    candidate_count = 0
     success_count = 0
     error_count = 0
     stack_probe_count = 0
     stack_byte_count = 0
     wide_stack_count = 0
-    total_functions = len(_dynamic_analysis_getattr_8616(cfg, "functions", {}))
-    project = _dynamic_analysis_getattr_8616(cfg, "project", None) or _dynamic_analysis_getattr_8616(cfg, "_project", None)
+    terminal_call_return_count = 0
+    terminal_call_return_raw = 0
+    terminal_call_return_normalized = 0
+    terminal_call_return_classified = 0
+    terminal_call_return_materialized = 0
+    terminal_call_return_failures = 0
+    terminal_register_return_raw = 0
+    terminal_register_return_normalized = 0
+    terminal_register_return_classified = 0
+    terminal_register_return_materialized = 0
+    terminal_register_return_failures = 0
     if track:
         start = time.perf_counter()
-    for function in _dynamic_analysis_getattr_8616(cfg, "functions", {}).values():
-        candidate_count += 1
+    for function in candidates:
+        function_id = _function_identity_8616(function)
         try:
             if not _function_has_proven_prototype_8616(function):
                 function._init_prototype_and_calling_convention()
@@ -2118,6 +2288,13 @@ def seed_calling_conventions(cfg: object) -> None:
             if project is not None and apply_x86_16_wide_stack_prototype_evidence is not None:
                 if apply_x86_16_wide_stack_prototype_evidence(project, function):
                     wide_stack_count += 1
+            if project is not None:
+                terminal_register_result = apply_terminal_register_return_type_evidence_8616(project, function)
+                terminal_register_return_raw += terminal_register_result.stats.raw_fact_count
+                terminal_register_return_normalized += terminal_register_result.stats.normalized_fact_count
+                terminal_register_return_classified += terminal_register_result.stats.classified_fact_count
+                terminal_register_return_materialized += terminal_register_result.stats.materialized_count
+                terminal_register_return_failures += terminal_register_result.stats.failure_count
             success_count += 1
             if _is_stack_probe_helper_name(_dynamic_analysis_getattr_8616(function, "name", None)):
                 stack_probe_count += 1
@@ -2129,6 +2306,36 @@ def seed_calling_conventions(cfg: object) -> None:
         if _is_stack_probe_helper_name(_dynamic_analysis_getattr_8616(function, "name", None)):
             with contextlib.suppress(Exception):
                 function.returning = True
+        seeded_ids.add(function_id)
+        seeded_revisions[function_id] = _function_seed_revision_8616(function)
+        try:
+            cast(Any, cfg)._inertia_seeded_calling_conventions = seeded_ids
+            cast(Any, cfg)._inertia_seeded_calling_convention_revisions_8616 = seeded_revisions
+        except Exception:
+            logging.getLogger(__name__).debug("failed to cache calling convention seed state on CFG")
+            cast(Any, cfg)._inertia_seeded_calling_conventions = seeded_ids
+            cast(Any, cfg)._inertia_seeded_calling_convention_revisions_8616 = seeded_revisions
+
+    if project is not None:
+        for function in candidates:
+            function_id = _function_identity_8616(function)
+            result = apply_terminal_call_return_type_evidence_8616(project, function)
+            terminal_call_return_raw += result.evidence.raw_fact_count
+            terminal_call_return_normalized += result.evidence.normalized_fact_count
+            terminal_call_return_classified += result.evidence.classified_fact_count
+            terminal_call_return_materialized += result.evidence.materialized_count
+            terminal_call_return_failures += result.evidence.failure_count
+            if result.changed:
+                terminal_call_return_count += 1
+            seeded_ids.add(function_id)
+            seeded_revisions[function_id] = _function_seed_revision_8616(function)
+        try:
+            cast(Any, cfg)._inertia_seeded_calling_conventions = seeded_ids
+            cast(Any, cfg)._inertia_seeded_calling_convention_revisions_8616 = seeded_revisions
+        except Exception:
+            logging.getLogger(__name__).debug("failed to cache calling convention seed state on CFG")
+            cast(Any, cfg)._inertia_seeded_calling_conventions = seeded_ids
+            cast(Any, cfg)._inertia_seeded_calling_convention_revisions_8616 = seeded_revisions
 
     if track:
         elapsed_ms = int((time.perf_counter() - start) * 1000)
@@ -2136,7 +2343,18 @@ def seed_calling_conventions(cfg: object) -> None:
             f"[metric] seed_calling_conventions cfg_functions={total_functions} "
             f"candidates={candidate_count} initialized={success_count} errors={error_count} "
             f"stack_probes={stack_probe_count} stack_byte={stack_byte_count} "
-            f"wide_stack={wide_stack_count} elapsed_ms={elapsed_ms}",
+            f"wide_stack={wide_stack_count} terminal_call_return={terminal_call_return_count} "
+            f"terminal_call_return_raw={terminal_call_return_raw} "
+            f"terminal_call_return_normalized={terminal_call_return_normalized} "
+            f"terminal_call_return_classified={terminal_call_return_classified} "
+            f"terminal_call_return_materialized={terminal_call_return_materialized} "
+            f"terminal_call_return_failures={terminal_call_return_failures} "
+            f"terminal_register_return_raw={terminal_register_return_raw} "
+            f"terminal_register_return_normalized={terminal_register_return_normalized} "
+            f"terminal_register_return_classified={terminal_register_return_classified} "
+            f"terminal_register_return_materialized={terminal_register_return_materialized} "
+            f"terminal_register_return_failures={terminal_register_return_failures} "
+            f"elapsed_ms={elapsed_ms}",
             file=sys.stderr,
             flush=True,
         )

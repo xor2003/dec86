@@ -46,6 +46,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CForLoop,
     CFunctionCall,
     CIfElse,
+    CIndexedVariable,
     CStatements,
     CSwitchCase,
     CTypeCast,
@@ -201,6 +202,16 @@ def _virtual_inline_identity_keys_8616(keys: tuple[tuple[str, object], ...]) -> 
     return tmp_keys or keys
 
 
+def _virtual_definition_has_disposable_storage_8616(node: object) -> bool:
+    """Require explicit virtual or register storage before deleting a definition."""
+    keys = _virtual_expr_keys_8616(node)
+    if isinstance(node, CDirtyExpression):
+        return any(key_kind == "dirty-reg" for key_kind, _value in keys)
+    return isinstance(node, CVariable) and any(
+        key_kind == "virtual-name" for key_kind, _value in keys
+    )
+
+
 def _debug_c_repr_8616(node: object) -> str:
     try:
         return "".join(str(text) for text, _obj in cast(Any, node).c_repr_chunks(asexpr=True))
@@ -214,8 +225,13 @@ def _pure_virtual_inline_rhs_8616(expr: object) -> bool:
     if isinstance(expr, CTypeCast):
         return _pure_virtual_inline_rhs_8616(expr.expr)
     if isinstance(expr, CUnaryOp):
-        if expr.op in {"Dereference", "Reference"}:
+        if expr.op == "Dereference":
             return False
+        if expr.op == "Reference":
+            operand = expr.operand
+            if isinstance(operand, CIndexedVariable):
+                return _pure_virtual_inline_rhs_8616(operand.variable) and _pure_virtual_inline_rhs_8616(operand.index)
+            return isinstance(operand, CVariable)
         return _pure_virtual_inline_rhs_8616(expr.operand)
     if isinstance(expr, CBinaryOp):
         return _pure_virtual_inline_rhs_8616(expr.lhs) and _pure_virtual_inline_rhs_8616(expr.rhs)
@@ -553,6 +569,9 @@ def _inline_single_assignment_virtual_expressions_8616(codegen: object) -> bool:
                     if (
                         keys
                         and any(key in replacements for key in keys)
+                        and _virtual_definition_has_disposable_storage_8616(
+                            statement.lhs
+                        )
                         and _pure_virtual_inline_rhs_8616(statement.rhs)
                         and all(use_counts.get(key, 0) == 0 for key in keys)
                     ):
@@ -577,12 +596,13 @@ def _inline_single_assignment_virtual_expressions_8616(codegen: object) -> bool:
         _visit(node)
         return pruned
 
+    pruned_defs = _prune_consumed_virtual_definitions_8616(root)
+    if pruned_defs:
+        changed = True
+        cast(Any, codegen)._inertia_virtual_inline_pruned_defs = (
+            int(getattr(codegen, "_inertia_virtual_inline_pruned_defs", 0) or 0) + pruned_defs
+        )
     if changed:
-        pruned_defs = _prune_consumed_virtual_definitions_8616(root)
-        if pruned_defs:
-            cast(Any, codegen)._inertia_virtual_inline_pruned_defs = (
-                int(getattr(codegen, "_inertia_virtual_inline_pruned_defs", 0) or 0) + pruned_defs
-            )
         cast(Any, codegen)._inertia_virtual_inline_candidates = (
             int(getattr(codegen, "_inertia_virtual_inline_candidates", 0) or 0) + candidate_count
         )

@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from angr.sim_type import SimStruct, SimTypeShort
+from angr_platforms.X86_16.analysis_helpers import interrupt_service_declarations
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DECOMPILE_PATH = REPO_ROOT / "decompile.py"
@@ -75,7 +76,7 @@ def test_interrupt_service_renderer_carries_bios_keybrd_selector():
 
     assert _decompile.render_interrupt_call(call, "pseudo") == "bios_keybrd(2)"
     assert _decompile.render_interrupt_call(call, "dos") == "_bios_keybrd(2)"
-    assert _decompile.interrupt_service_declarations([call], "dos") == ["unsigned _bios_keybrd(unsigned keycmd);"]
+    assert interrupt_service_declarations([call], "dos") == ["unsigned _bios_keybrd(unsigned keycmd);"]
 
 
 def test_interrupt_service_renderer_covers_vector_management_apis():
@@ -89,7 +90,7 @@ def test_interrupt_service_renderer_covers_vector_management_apis():
     assert _decompile.render_interrupt_call(call_set, "dos") == "_dos_setvect(0x21, MK_FP(0x1234, 0x5678))"
     assert _decompile.render_interrupt_call(call_set, "modern") == "setvect(0x21, MK_FP(0x1234, 0x5678))"
 
-    declarations = _decompile.interrupt_service_declarations([call_get, call_set], "modern")
+    declarations = interrupt_service_declarations([call_get, call_set], "modern")
     assert "void (*getvect(int interruptno))(void);" in declarations
     assert "void setvect(int interruptno, void (*isr)(void));" in declarations
 
@@ -104,7 +105,7 @@ def test_interrupt_service_renderer_keeps_int10_wrapper_oriented():
     assert _decompile.render_interrupt_call(callx, "pseudo") == "bios_int10_video(3)"
     assert _decompile.render_interrupt_call(call_unknown, "pseudo") == "int86(0x10, &inregs, &outregs)"
     assert _decompile.render_interrupt_call(call_unknown, "dos") == "int86(0x10, &inregs, &outregs)"
-    assert _decompile.interrupt_service_declarations([call, callx], "pseudo") == [
+    assert interrupt_service_declarations([call, callx], "pseudo") == [
         "int bios_int10_video(unsigned int service);"
     ]
 

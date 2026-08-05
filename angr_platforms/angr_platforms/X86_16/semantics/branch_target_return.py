@@ -18,6 +18,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
+_X87_INTERRUPT_ESCAPES_8616 = frozenset({0x34, 0x35, 0x38, 0x39, 0x3D})
+
 
 class BranchTargetReturnEffectKind8616(Enum):
     """Kinds of branch-target return effects understood by the decompiler."""
@@ -29,6 +31,7 @@ class BranchTargetReturnEffectKind8616(Enum):
     AX_INCDEC = "ax_incdec"
     JUMP = "jump"
     RETURN = "return"
+    CONTROL_BOUNDARY = "control_boundary"
     OTHER = "other"
 
 
@@ -55,6 +58,7 @@ class TerminalAxReturnOperandKind8616(Enum):
     """Operand source kinds for terminal AX-return value effects."""
 
     IMM = "imm"
+    REGISTER = "register"
     STACK = "stack"
     DIRECT_GLOBAL = "direct_global"
 
@@ -79,6 +83,7 @@ class TerminalAxReturnEffect8616:
     kind: TerminalAxReturnEffectKind8616
     dst_reg: str | None = None
     rhs_kind: TerminalAxReturnOperandKind8616 | None = None
+    rhs_reg: str | None = None
     imm: int | None = None
     op: str | None = None
     mem_disp: int | None = None
@@ -89,6 +94,21 @@ def _operand_kind_8616(operand: object) -> int:
     """Return a capstone operand kind from the dynamic capstone boundary."""
     # Dynamic third-party capstone boundary: operand kind is decoded by capstone wrappers.
     return int(getattr(operand, "type", -1))
+
+
+def _is_software_interrupt_boundary_8616(
+    mnemonic: str,
+    operands: tuple[object, ...],
+) -> bool:
+    """Classify software interrupts while excluding Microsoft x87 escapes."""
+    if mnemonic not in {"int", "int1", "int3", "into"}:
+        return False
+    return not (
+        mnemonic == "int"
+        and len(operands) == 1
+        and _operand_kind_8616(operands[0]) == 2
+        and int(getattr(operands[0], "imm", -1)) in _X87_INTERRUPT_ESCAPES_8616
+    )
 
 
 def _register_name_8616(insn: object, operand: object) -> str:
@@ -117,11 +137,14 @@ def _memory_base_index_8616(insn: object, mem: object) -> tuple[str | None, int,
 def _terminal_value_operand_8616(
     insn: object,
     operand: object,
-) -> tuple[TerminalAxReturnOperandKind8616, int | None, int | None, int | None] | None:
-    """Classify an immediate, BP-relative stack, or direct-global value operand."""
+) -> tuple[TerminalAxReturnOperandKind8616, int | None, int | None, int | None, str | None] | None:
+    """Classify a register, immediate, BP-stack, or direct-global operand."""
+    if _operand_kind_8616(operand) == 1:
+        register = _register_name_8616(insn, operand)
+        return (TerminalAxReturnOperandKind8616.REGISTER, None, None, None, register) if register else None
     if _operand_kind_8616(operand) == 2:
         # Dynamic third-party capstone boundary: immediate payload is decoded by capstone.
-        return TerminalAxReturnOperandKind8616.IMM, int(getattr(operand, "imm", 0) or 0), None, None
+        return TerminalAxReturnOperandKind8616.IMM, int(getattr(operand, "imm", 0) or 0), None, None, None
     if _operand_kind_8616(operand) != 3:
         return None
     # Dynamic third-party capstone boundary: memory operand payload is decoded by capstone.
@@ -134,9 +157,9 @@ def _terminal_value_operand_8616(
     # Dynamic third-party capstone boundary: displacement is decoded by capstone.
     disp = int(getattr(mem, "disp", 0) or 0)
     if base_name == "bp" and index == 0:
-        return TerminalAxReturnOperandKind8616.STACK, None, disp, size
+        return TerminalAxReturnOperandKind8616.STACK, None, disp, size, None
     if base == 0 and index == 0:
-        return TerminalAxReturnOperandKind8616.DIRECT_GLOBAL, None, disp, size
+        return TerminalAxReturnOperandKind8616.DIRECT_GLOBAL, None, disp, size, None
     return None
 
 
@@ -221,6 +244,16 @@ def branch_target_return_effect_8616(
         )
     if mnemonic in {"ret", "retf", "iret"}:
         return BranchTargetReturnEffect8616(BranchTargetReturnEffectKind8616.RETURN)
+    if mnemonic.startswith("j") or mnemonic in {
+        "call",
+        "lcall",
+        "loop",
+        "loope",
+        "loopne",
+    } or _is_software_interrupt_boundary_8616(mnemonic, operands):
+        return BranchTargetReturnEffect8616(
+            BranchTargetReturnEffectKind8616.CONTROL_BOUNDARY
+        )
     return BranchTargetReturnEffect8616(BranchTargetReturnEffectKind8616.OTHER)
 
 
@@ -230,13 +263,16 @@ def terminal_ax_return_effect_8616(insn: object) -> TerminalAxReturnEffect8616:
     mnemonic = str(getattr(insn, "mnemonic", "")).lower()
     # Dynamic third-party capstone boundary: operands are decoded by capstone wrappers.
     operands = tuple(getattr(insn, "operands", ()) or ())
-    if mnemonic in {"call", "lcall"}:
+    if mnemonic in {"call", "lcall"} or _is_software_interrupt_boundary_8616(
+        mnemonic,
+        operands,
+    ):
         return TerminalAxReturnEffect8616(TerminalAxReturnEffectKind8616.CALL_CLOBBER)
     if (
         mnemonic == "mov"
         and len(operands) == 2
         and _operand_kind_8616(operands[0]) == 1
-        and _register_name_8616(insn, operands[0]) in {"al", "cl", "cx", "ax", "dx"}
+        and _register_name_8616(insn, operands[0]) in {"al", "ah", "cl", "cx", "ax", "dx"}
     ):
         dst_reg = _register_name_8616(insn, operands[0])
         rhs = operands[1]
@@ -352,11 +388,12 @@ def terminal_ax_return_effect_8616(insn: object) -> TerminalAxReturnEffect8616:
         value_operand = _terminal_value_operand_8616(insn, operands[1])
         if value_operand is None:
             return TerminalAxReturnEffect8616(TerminalAxReturnEffectKind8616.OTHER)
-        rhs_kind, imm, mem_disp, mem_size = value_operand
+        rhs_kind, imm, mem_disp, mem_size, rhs_reg = value_operand
         return TerminalAxReturnEffect8616(
             TerminalAxReturnEffectKind8616.REG_ALU_VALUE,
             dst_reg="al",
             rhs_kind=rhs_kind,
+            rhs_reg=rhs_reg,
             imm=imm,
             op={"add": "Add", "sub": "Sub", "xor": "Xor"}[mnemonic],
             mem_disp=mem_disp,
@@ -370,12 +407,13 @@ def terminal_ax_return_effect_8616(insn: object) -> TerminalAxReturnEffect8616:
     ):
         value_operand = _terminal_value_operand_8616(insn, operands[1])
         if value_operand is None or value_operand[0] is TerminalAxReturnOperandKind8616.IMM:
-            return TerminalAxReturnEffect8616(TerminalAxReturnEffectKind8616.OTHER)
-        rhs_kind, imm, mem_disp, mem_size = value_operand
+            return TerminalAxReturnEffect8616(TerminalAxReturnEffectKind8616.OTHER, dst_reg="ax")
+        rhs_kind, imm, mem_disp, mem_size, rhs_reg = value_operand
         return TerminalAxReturnEffect8616(
             TerminalAxReturnEffectKind8616.REG_ALU_VALUE,
             dst_reg="ax",
             rhs_kind=rhs_kind,
+            rhs_reg=rhs_reg,
             imm=imm,
             op={"add": "Add", "sub": "Sub"}[mnemonic],
             mem_disp=mem_disp,
@@ -385,16 +423,18 @@ def terminal_ax_return_effect_8616(insn: object) -> TerminalAxReturnEffect8616:
         value_operand = _terminal_value_operand_8616(insn, operands[0])
         if value_operand is None:
             return TerminalAxReturnEffect8616(TerminalAxReturnEffectKind8616.OTHER)
-        rhs_kind, imm, mem_disp, mem_size = value_operand
+        rhs_kind, imm, mem_disp, mem_size, rhs_reg = value_operand
         return TerminalAxReturnEffect8616(
             TerminalAxReturnEffectKind8616.AX_MUL_VALUE,
             rhs_kind=rhs_kind,
+            rhs_reg=rhs_reg,
             imm=imm,
             op="Mul",
             mem_disp=mem_disp,
             mem_size=mem_size,
         )
-    return TerminalAxReturnEffect8616(TerminalAxReturnEffectKind8616.OTHER)
+    dst_reg = _register_name_8616(insn, operands[0]) if operands and _operand_kind_8616(operands[0]) == 1 else None
+    return TerminalAxReturnEffect8616(TerminalAxReturnEffectKind8616.OTHER, dst_reg=dst_reg)
 
 
 __all__ = [

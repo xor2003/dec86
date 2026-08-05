@@ -12,6 +12,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CForLoop,
     CFunctionCall,
     CIfElse,
+    CIndexedVariable,
     CReturn,
     CStatements,
     CTypeCast,
@@ -581,6 +582,59 @@ def test_simplify_virtual_inline_uses_unique_virtual_id_before_register_key():
     retval = codegen.cfunc.statements.statements[0].retval
     assert isinstance(retval, CConstant)
     assert retval.value == 7
+
+
+def test_simplify_virtual_inline_prunes_unique_pure_definition_without_use():
+    class _DirtyCarrier:
+        varid = 290
+        name = "vvar_290"
+        reg = 0
+        bits = 16
+
+    codegen = _codegen([])
+    dirty_lhs = CDirtyExpression(_DirtyCarrier(), codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [CAssignment(dirty_lhs, _const(7, codegen), codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
+    assert codegen._inertia_virtual_inline_pruned_defs == 1
+
+
+def test_simplify_virtual_inline_prunes_unused_indexed_stack_address_carrier():
+    class _DirtyCarrier:
+        varid = 25
+        name = "vvar_25"
+        reg = 8
+        bits = 16
+
+    codegen = _codegen([])
+    dirty_lhs = CDirtyExpression(_DirtyCarrier(), codegen=codegen)
+    local = CVariable(SimStackVariable(-82, 80, base="bp", name="local_52"), codegen=codegen)
+    indexed = CIndexedVariable(
+        CUnaryOp("Reference", local, codegen=codegen),
+        _const(6, codegen),
+        codegen=codegen,
+    )
+    address = CUnaryOp("Reference", indexed, codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [CAssignment(dirty_lhs, address, codegen=codegen)],
+        addr=0x4010,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+
+    changed = _simplify_structured_expressions_8616(codegen)
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
+    assert codegen._inertia_virtual_inline_pruned_defs == 1
 
 
 def test_eliminate_single_use_temporaries_inlines_immediate_use():

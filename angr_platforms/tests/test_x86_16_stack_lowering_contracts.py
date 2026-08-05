@@ -21,6 +21,7 @@ from angr_platforms.X86_16.lowering.stack_lowering_from_facts import (
     lower_stack_accesses_from_alias_facts_8616,
 )
 from angr_platforms.X86_16.lowering.stack_lowering_impl import (
+    _prefer_bound_stack_cvar_8616,
     _sole_bound_stack_cvar_8616,
     _typed_alias_fact_bp_offsets_8616,
 )
@@ -35,10 +36,14 @@ from angr_platforms.X86_16.lowering.stack_probe_return_facts import (
     build_typed_stack_probe_return_facts_8616,
 )
 from angr_platforms.X86_16.lowering.stack_variable_binding import (
+    StackBaseBpBiasEvidence8616,
     StackVariableBinding,
     stable_ss_offset_to_ir_address_8616,
+    stable_stack_binding_tags_8616,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
+
+from inertia_decompiler.cli_c_ast_rewrites import _canonicalize_stack_cvar_expr
 
 
 def test_stack_lowering_result_uses_typed_status_values() -> None:
@@ -144,6 +149,74 @@ def test_bound_stack_cvar_resolution_uses_binding_bp_offset() -> None:
 
     assert _sole_bound_stack_cvar_8616(codegen, resolve_stack_cvar_at_offset) is cvar
     assert seen_offsets == [-6]
+
+
+def test_named_stack_fallback_preserves_exact_slot_identity() -> None:
+    """A sole named local must not replace a different exact BP slot."""
+
+    class FakeCodegen:
+        def __init__(self) -> None:
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cfunc = SimpleNamespace(variables_in_use={}, arg_list=())
+            self._idx = 0
+
+        def next_idx(self, _name: str) -> int:
+            self._idx += 1
+            return self._idx
+
+    codegen = FakeCodegen()
+    source_var = SimStackVariable(-4, 2, base="bp", name="local_4")
+    source = structured_c.CVariable(source_var, variable_type=SimTypeShort(False), codegen=codegen)
+    named_var = SimStackVariable(-2, 2, base="bp", name="iRow")
+    named = structured_c.CVariable(named_var, variable_type=SimTypeShort(False), codegen=codegen)
+    codegen.cfunc.variables_in_use[named_var] = named
+
+    resolved = _prefer_bound_stack_cvar_8616(codegen, source, lambda _codegen, _offset: source)
+
+    assert resolved is source
+
+
+def test_exact_stack_condition_binding_refuses_inferred_bp_rebase() -> None:
+    """Typed SS:BP evidence must outrank a structured stack-base bias."""
+
+    root = object()
+
+    class FakeCodegen:
+        def __init__(self) -> None:
+            self.project = SimpleNamespace(arch=Arch86_16())
+            self.cfunc = SimpleNamespace(addr=0x108D0, statements=root, variables_in_use={}, arg_list=())
+            self._idx = 0
+
+        def next_idx(self, _name: str) -> int:
+            self._idx += 1
+            return self._idx
+
+    codegen = FakeCodegen()
+    target_var = SimStackVariable(-2, 2, base="bp", name="local_2")
+    target = structured_c.CVariable(target_var, variable_type=SimTypeShort(False), codegen=codegen)
+    source_var = SimStackVariable(-4, 2, base="bp", name="local_4")
+    source_binding = StackVariableBinding(-4, 2, var_name="local_4")
+    source = structured_c.CVariable(
+        source_var,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+        tags=stable_stack_binding_tags_8616(source_binding),
+    )
+    codegen.cfunc.variables_in_use[target_var] = target
+    codegen._inertia_semantic_alias_facts = [
+        AliasStorageFacts(
+            domain=_StorageDomainSignature("stack", 2),
+            identity=("stack", _StackSlotIdentity("bp", -2, 2)),
+        )
+    ]
+    codegen._inertia_stack_base_bp_bias_evidence_8616 = StackBaseBpBiasEvidence8616(
+        statement_root=root,
+        stack_base_displacements=(-4,),
+        known_bp_offsets=frozenset({-2}),
+        inferred_bias=2,
+    )
+
+    assert _canonicalize_stack_cvar_expr(source, codegen) is source
 
 
 def test_known_bp_stack_offsets_uses_typed_stack_bindings() -> None:

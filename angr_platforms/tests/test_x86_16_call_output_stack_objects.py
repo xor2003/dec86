@@ -1,6 +1,7 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -9,6 +10,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CFunctionCall,
     CIfElse,
     CStatements,
+    CTypeCast,
     CUnaryOp,
     CVariable,
     CVariableField,
@@ -405,7 +407,12 @@ def test_wide_call_return_condition_joins_typed_dx_ax_and_stack_pair():
     result = lower_wide_call_return_condition_chain_8616(codegen, expression, conditions)
 
     assert result.expression.op == "CmpGT"
-    assert result.expression.lhs is call
+    assert isinstance(result.expression.lhs, CTypeCast)
+    assert result.expression.lhs.expr is call
+    assert result.consumed_call is call
+    assert result.consumed_callsite is codegen._inertia_callsite_summaries[id(call)]
+    assert isinstance(result.expression.lhs.type, SimTypeLong)
+    assert result.expression.lhs.type.signed is True
     assert result.expression.rhs is wide
     assert isinstance(wide.variable_type, SimTypeLong)
     assert wide.variable_type.signed is True
@@ -427,6 +434,8 @@ def test_wide_call_return_condition_refuses_without_typed_callsite():
     assert result.stats.classified_fact_count == 0
     assert result.stats.materialized_count == 0
     assert result.stats.failure_count == 1
+    assert result.consumed_call is None
+    assert result.consumed_callsite is None
 
 
 def test_wide_call_return_condition_uses_inventory_before_ast_summary_attachment():
@@ -437,24 +446,29 @@ def test_wide_call_return_condition_uses_inventory_before_ast_summary_attachment
     result = lower_wide_call_return_condition_chain_8616(codegen, expression, conditions)
 
     assert result.stats.materialized_count == 1
-    assert result.expression.lhs is call
+    assert isinstance(result.expression.lhs, CTypeCast)
+    assert result.expression.lhs.expr is call
     assert codegen._inertia_callsite_summaries[id(call)].callsite_addr == 0x1000
 
 
 def test_wide_call_return_condition_binds_direct_callee_from_typed_summary():
     codegen, expression, conditions, call, _wide = _wide_condition_fixture()
-    call.callee_func = None
+    call.callee_func = SimpleNamespace(addr=0x300)
     callee = SimpleNamespace(
+        addr=0x3000,
+        name="sub_3000",
         prototype=SimTypeFunction([], SimTypeLong(True)).with_arch(codegen.project.arch),
         prototype_libname=None,
     )
-    codegen.project.kb = SimpleNamespace(
+    original_project = SimpleNamespace(
         functions=SimpleNamespace(
             function=lambda *, addr, create: callee
             if addr == 0x3000 and create is False
             else None
         )
     )
+    codegen.project._inertia_original_project = SimpleNamespace(kb=original_project)
+    codegen.project._inertia_original_linear_delta = 0x2D00
 
     result = lower_wide_call_return_condition_chain_8616(codegen, expression, conditions)
 
@@ -490,7 +504,8 @@ def test_wide_call_return_condition_joins_negated_non_break_form_with_wide_low_v
     )
 
     assert result.expression.op == "CmpGT"
-    assert result.expression.lhs is call
+    assert isinstance(result.expression.lhs, CTypeCast)
+    assert result.expression.lhs.expr is call
     assert result.expression.rhs is wide
     assert result.stats.materialized_count == 1
     assert result.stats.failure_count == 0
@@ -512,12 +527,20 @@ def test_select_wide_call_return_condition_chain_refuses_ambiguous_typed_pair():
     )
 
 
-def test_prune_materialized_wide_condition_call_carrier_consumes_exact_ax_assignment():
+@pytest.mark.parametrize("register_name", ("ax", "v15"))
+@pytest.mark.parametrize("wrapped", (False, True))
+def test_prune_materialized_wide_condition_call_carrier_consumes_exact_ax_assignment(
+    register_name,
+    wrapped,
+):
     codegen, expression, _conditions, call, _wide = _wide_condition_fixture()
     ax = expression.rhs.rhs.lhs
+    ax.variable.name = register_name
     carrier = CAssignment(ax, call, codegen=codegen)
     branch = codegen.cfunc.statements.statements[1]
-    codegen.cfunc.statements.statements[0] = carrier
+    codegen.cfunc.statements.statements[0] = (
+        CExpressionStatement(carrier, codegen=codegen) if wrapped else carrier
+    )
     branch.condition_and_nodes = [(call, branch.condition_and_nodes[0][1])]
 
     removed = prune_materialized_wide_condition_call_carrier_8616(codegen, call)

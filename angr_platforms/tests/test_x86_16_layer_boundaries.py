@@ -199,7 +199,6 @@ def test_prototype_quality_modules_are_test_only_until_pipeline_admission() -> N
     modules = (
         "angr_platforms.X86_16.ir.ir_canonicalize_8616",
         "angr_platforms.X86_16.structuring.loop_recovery",
-        "angr_platforms.X86_16.validation.canonicalize",
         "angr_platforms.X86_16.postprocess.condition_patterns",
     )
     unexpected = {module: _production_importers_for_module(module) for module in modules}
@@ -310,6 +309,10 @@ def test_widening_entrypoint_runs_subpasses_in_fixed_order() -> None:
         calls.append("subviews")
         return True
 
+    def _word_projections(_codegen) -> bool:
+        calls.append("word-projections")
+        return True
+
     def _segmented(_project, _codegen) -> bool:
         calls.append("segmented")
         return True
@@ -327,6 +330,7 @@ def test_widening_entrypoint_runs_subpasses_in_fixed_order() -> None:
         copy_propagation_fn=_copyprop,
         promote_stack_slots_from_instruction_widths=_widths,
         materialize_stack_subviews_fn=_subviews,
+        materialize_word_projections_fn=_word_projections,
     )
     assert changed is True
-    assert calls == ["widths", "subviews", "direct", "segmented", "copyprop"]
+    assert calls == ["widths", "subviews", "direct", "segmented", "copyprop", "word-projections"]

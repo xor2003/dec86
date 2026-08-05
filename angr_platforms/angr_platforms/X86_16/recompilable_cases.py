@@ -68,8 +68,8 @@ _RECOMPILABLE_SUBSET_CASES: Final[tuple[RecompilableSubsetCase, ...]] = (
         cod_path=_REPO_ROOT / "cod" / "default" / "STRLEN.COD",
         proc_name="_strlen",
         expected_c_anchors=(
-            "unsigned short _strlen(unsigned short *s)",
-            "while (*s++)",
+            "short _strlen(char *s)",
+            "if (!s[-1])",
         ),
         forbidden_c_anchors=("unsigned short _strlen(unsigned short s)", "s_3"),
     ),

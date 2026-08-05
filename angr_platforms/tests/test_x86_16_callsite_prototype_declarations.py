@@ -16,6 +16,7 @@ from angr.sim_type import (
     SimTypeLong,
     SimTypePointer,
     SimTypeShort,
+    TypeRef,
 )
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -23,13 +24,25 @@ from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseEvidence8616,
     CallerReturnUseVerdict8616,
     CallsiteArgumentClass8616,
-    CallsiteArgumentShapeDecision8616,
     CallsiteSummary8616,
-    reconcile_materialized_call_argument_shape_8616,
     record_caller_return_use_evidence_8616,
 )
 from angr_platforms.X86_16.lowering import callsite_prototype_declarations as declaration_lowering
 from angr_platforms.X86_16.lowering import stack_prototype_materialization as prototype_lowering
+from angr_platforms.X86_16.lowering.call_argument_shape import (
+    CallerStackObject8616,
+    CallsiteArgumentShapeDecision8616,
+    LogicalArgumentShapeEvidence8616,
+    LogicalArgumentShapeEvidenceSource8616,
+    accounted_target_prototype_shape_evidence_8616,
+    exact_caller_stack_object_for_word_pair_8616,
+    exact_caller_stack_object_shape_evidence_8616,
+    reconcile_materialized_call_argument_shape_8616,
+)
+from angr_platforms.X86_16.lowering.callee_argument_count_evidence import (
+    CalleeArgumentCountEvidence8616,
+    CalleeArgumentCountVerdict8616,
+)
 from angr_platforms.X86_16.lowering.callsite_prototype_declarations import (
     canonicalize_callsite_target_identities_8616,
     materialize_callsite_prototype_declarations_8616,
@@ -42,6 +55,7 @@ class _Codegen:
         self.project = SimpleNamespace(arch=Arch86_16())
         self.cfunc = None
         self._inertia_callsite_summaries = {}
+        self._inertia_callsite_summary_inventory_8616 = {}
         self._inertia_callsite_prototype_decls = ()
 
     def next_idx(self, _kind: str) -> int:
@@ -259,6 +273,181 @@ def test_reconcile_call_shape_refuses_unproven_two_word_logical_width() -> None:
     assert result.decision is CallsiteArgumentShapeDecision8616.PRESERVED_COMPLETE_BINARY
 
 
+def test_reconcile_call_shape_records_proven_two_dword_logical_widths() -> None:
+    summary = replace(
+        _summary(0x1010),
+        arg_count=4,
+        arg_widths=(2, 2, 2, 2),
+        stack_cleanup=8,
+        push_arg_sources=(("imm", 0), ("imm", 30), ("global", 0x134, 2), ("global", 0x132, 2)),
+        logical_arg_widths=(2, 2, 2, 2),
+        logical_arg_classes=(CallsiteArgumentClass8616.VALUE,) * 4,
+    )
+    evidence = LogicalArgumentShapeEvidence8616(
+        widths=(4, 4),
+        source=LogicalArgumentShapeEvidenceSource8616.ACCOUNTED_TARGET_PROTOTYPE,
+    )
+
+    result = reconcile_materialized_call_argument_shape_8616(
+        summary,
+        (4, 4),
+        logical_evidence=evidence,
+    )
+
+    assert result.summary.arg_count == 4
+    assert result.summary.arg_widths == (2, 2, 2, 2)
+    assert result.summary.logical_arg_widths == (4, 4)
+    assert result.summary.logical_arg_classes == ()
+    assert result.decision is CallsiteArgumentShapeDecision8616.MATERIALIZED_PROVEN_LOGICAL_SHAPE
+    assert (
+        result.raw_fact_count,
+        result.normalized_fact_count,
+        result.classified_fact_count,
+        result.materialized_count,
+        result.failure_count,
+    ) == (4, 4, 2, 1, 0)
+
+
+def test_reconcile_call_shape_groups_exact_nested_dx_ax_return_argument() -> None:
+    summary = replace(
+        _summary(0x1010),
+        arg_count=4,
+        arg_widths=(2, 2, 2, 2),
+        stack_cleanup=8,
+        push_arg_sources=(
+            ("ret_reg", 0x1008, "dx"),
+            ("ret_reg", 0x1008, "ax"),
+            ("imm", 0x16A),
+            ("bp_addr", -18),
+        ),
+        logical_arg_widths=(2, 2, 2, 2),
+        logical_arg_classes=(CallsiteArgumentClass8616.VALUE,) * 4,
+    )
+
+    result = reconcile_materialized_call_argument_shape_8616(summary, (4, 2, 4))
+
+    assert result.summary.logical_arg_widths == (2, 2, 4)
+    assert result.summary.logical_arg_classes == ()
+    assert result.decision is CallsiteArgumentShapeDecision8616.MATERIALIZED_PROVEN_LOGICAL_SHAPE
+    assert result.materialized_count == 1
+    assert result.failure_count == 0
+
+
+def test_reconcile_call_shape_refuses_unrelated_dx_ax_pushes() -> None:
+    summary = replace(
+        _summary(0x1010),
+        arg_count=4,
+        arg_widths=(2, 2, 2, 2),
+        stack_cleanup=8,
+        push_arg_sources=(
+            ("ret_reg", 0x1006, "dx"),
+            ("ret_reg", 0x1008, "ax"),
+            ("imm", 0x16A),
+            ("bp_addr", -18),
+        ),
+    )
+
+    result = reconcile_materialized_call_argument_shape_8616(summary, (2, 2, 4))
+
+    assert result.summary is summary
+    assert result.decision is CallsiteArgumentShapeDecision8616.PRESERVED_COMPLETE_BINARY
+
+
+def test_accounted_target_prototype_proves_nested_two_dword_shape() -> None:
+    summary = replace(
+        _summary(0x1010),
+        arg_count=4,
+        arg_widths=(2, 2, 2, 2),
+        stack_cleanup=8,
+        push_arg_sources=(("imm", 0), ("imm", 30), ("global", 0x134, 2), ("global", 0x132, 2)),
+    )
+
+    evidence = accounted_target_prototype_shape_evidence_8616(summary, (4, 4), (4, 4))
+
+    assert evidence == LogicalArgumentShapeEvidence8616(
+        widths=(4, 4),
+        source=LogicalArgumentShapeEvidenceSource8616.ACCOUNTED_TARGET_PROTOTYPE,
+    )
+
+
+def test_exact_caller_stack_object_groups_reversed_word_pushes() -> None:
+    """Group adjacent high/low PUSH slices into one logical caller argument."""
+    summary = replace(
+        _summary(0x1010),
+        arg_count=5,
+        arg_widths=(2, 2, 2, 2, 2),
+        stack_cleanup=10,
+        push_arg_sources=(("bp", 8), ("bp", 6), ("imm", 1), ("imm", 0), ("bp", 4)),
+    )
+
+    evidence = exact_caller_stack_object_shape_evidence_8616(
+        summary,
+        (
+            CallerStackObject8616(4, 2),
+            CallerStackObject8616(6, 4),
+            CallerStackObject8616(10, 2),
+        ),
+    )
+
+    assert evidence == LogicalArgumentShapeEvidence8616(
+        widths=(2, 2, 2, 4),
+        source=LogicalArgumentShapeEvidenceSource8616.EXACT_CALLER_STACK_OBJECT,
+    )
+
+
+def test_exact_caller_stack_object_identifies_low_high_word_owner() -> None:
+    """Bind a physical BP word pair to its exact widened caller object."""
+    owner = exact_caller_stack_object_for_word_pair_8616(
+        ("bp", 6),
+        ("bp", 8),
+        (
+            CallerStackObject8616(4, 2),
+            CallerStackObject8616(6, 4),
+            CallerStackObject8616(10, 2),
+        ),
+    )
+
+    assert owner == CallerStackObject8616(6, 4)
+
+
+def test_accounted_target_prototype_refuses_unaccounted_nested_shape() -> None:
+    summary = replace(
+        _summary(0x1010),
+        arg_count=4,
+        arg_widths=(2, 2, 2, 2),
+        stack_cleanup=8,
+        push_arg_sources=(("imm", 0), ("imm", 30), ("global", 0x134, 2), ("global", 0x132, 2)),
+    )
+
+    assert accounted_target_prototype_shape_evidence_8616(summary, (4, 2), (4, 2)) is None
+    assert accounted_target_prototype_shape_evidence_8616(summary, (4, 4), (2, 2, 2, 2)) is None
+
+
+def test_reconcile_call_shape_refuses_contradictory_logical_evidence() -> None:
+    summary = replace(
+        _summary(0x1010),
+        arg_count=4,
+        arg_widths=(2, 2, 2, 2),
+        stack_cleanup=8,
+        push_arg_sources=(("imm", 0), ("imm", 30), ("global", 0x134, 2), ("global", 0x132, 2)),
+    )
+    evidence = LogicalArgumentShapeEvidence8616(
+        widths=(4,),
+        source=LogicalArgumentShapeEvidenceSource8616.ACCOUNTED_TARGET_PROTOTYPE,
+    )
+
+    result = reconcile_materialized_call_argument_shape_8616(
+        summary,
+        (4,),
+        logical_evidence=evidence,
+    )
+
+    assert result.summary is summary
+    assert result.decision is CallsiteArgumentShapeDecision8616.INVALID_LOGICAL_EVIDENCE
+    assert result.materialized_count == 0
+    assert result.failure_count == 1
+
+
 def test_reconcile_call_shape_expands_incomplete_widths_from_exact_cleanup() -> None:
     summary = replace(
         _summary(0x1010),
@@ -321,7 +510,7 @@ def test_materializes_function_pointer_argument_without_mutating_call() -> None:
     assert call.callee_func is None
 
 
-def test_materializes_array_argument_as_c_parameter_array() -> None:
+def test_materializes_array_argument_as_canonical_parameter_pointer() -> None:
     codegen = _Codegen()
     array = CVariable(
         SimStackVariable(-82, 80, base="bp", name="buffer"),
@@ -341,7 +530,7 @@ def test_materializes_array_argument_as_c_parameter_array() -> None:
 
     assert materialize_callsite_prototype_declarations_8616(codegen.project, codegen) is True
     assert codegen._inertia_callsite_prototype_decls == (
-        "unsigned short fill(char a0[80]);",
+        "unsigned short fill(char *a0);",
     )
 
 
@@ -374,7 +563,7 @@ def test_materializes_one_logical_long_argument_from_two_word_pushes() -> None:
     )
 
 
-def test_materializes_void_only_from_closed_whole_program_caller_evidence() -> None:
+def test_keeps_conservative_return_type_when_all_callers_ignore_result() -> None:
     codegen = _Codegen()
     wait = CVariable(
         SimStackVariable(-4, 4, base="bp", name="wait"),
@@ -417,7 +606,7 @@ def test_materializes_void_only_from_closed_whole_program_caller_evidence() -> N
 
     assert materialize_callsite_prototype_declarations_8616(codegen.project, codegen) is True
     assert codegen._inertia_callsite_prototype_decls == (
-        "void sleep_ticks(unsigned long a0);",
+        "int sleep_ticks(unsigned long a0);",
     )
 
 
@@ -485,6 +674,70 @@ def test_materializes_struct_tag_forward_declaration_before_pointer_prototype() 
     assert codegen._inertia_callsite_prototype_decls[-1] == "unsigned short fill_object(void* a0);"
 
 
+def test_struct_referent_type_replaces_stale_scalar_pointer_wrapper_type() -> None:
+    codegen = _Codegen()
+    object_type = SimStruct({"field_0": SimTypeShort(False)}, name="recovered_object").with_arch(codegen.project.arch)
+    object_value = CVariable(
+        SimStackVariable(-4, 2, base="bp", name="object_pointer"),
+        variable_type=object_type,
+        codegen=codegen,
+    )
+    pointer = CUnaryOp("Reference", object_value, codegen=codegen)
+    pointer._type = SimTypePointer(SimTypeShort(False)).with_arch(codegen.project.arch)
+    call = CFunctionCall(
+        "fill_object",
+        None,
+        [pointer],
+        tags={"ins_addr": 0x1010},
+        codegen=codegen,
+    )
+    root = CStatements([call], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+    codegen._inertia_callsite_summaries = {id(call): _summary(0x1010, arg_count=1)}
+
+    assert materialize_callsite_prototype_declarations_8616(codegen.project, codegen) is True
+    assert codegen._inertia_callsite_prototype_decls == (
+        "struct recovered_object;",
+        "unsigned short fill_object(struct recovered_object *a0);",
+    )
+
+
+def test_struct_pointer_prototype_normalizes_registered_type_refs_to_tags() -> None:
+    codegen = _Codegen()
+    object_type = SimStruct({"field_0": SimTypeShort(False)}, name="recovered_object").with_arch(
+        codegen.project.arch
+    )
+    direct = CVariable(
+        SimStackVariable(-4, 2, base="bp", name="direct"),
+        variable_type=object_type,
+        codegen=codegen,
+    )
+    registered = CVariable(
+        SimStackVariable(-6, 2, base="bp", name="registered"),
+        variable_type=TypeRef("recovered_object", object_type),
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        "copy_object",
+        None,
+        [
+            CUnaryOp("Reference", direct, codegen=codegen),
+            CUnaryOp("Reference", registered, codegen=codegen),
+        ],
+        tags={"ins_addr": 0x1010},
+        codegen=codegen,
+    )
+    root = CStatements([call], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+    codegen._inertia_callsite_summaries = {id(call): _summary(0x1010, arg_count=2)}
+
+    assert materialize_callsite_prototype_declarations_8616(codegen.project, codegen) is True
+    assert codegen._inertia_callsite_prototype_decls == (
+        "struct recovered_object;",
+        "unsigned short copy_object(struct recovered_object *a0, struct recovered_object *a1);",
+    )
+
+
 def test_runtime_abi_replaces_unproved_callsite_return_type() -> None:
     codegen = _Codegen()
     call = CFunctionCall(
@@ -496,7 +749,7 @@ def test_runtime_abi_replaces_unproved_callsite_return_type() -> None:
     )
     root = CStatements([call], codegen=codegen)
     codegen.cfunc = SimpleNamespace(statements=root, body=root)
-    codegen._inertia_callsite_summaries = {id(call): _summary(0x1010, arg_count=0)}
+    codegen._inertia_callsite_summary_inventory_8616 = {0x1010: _summary(0x1010, arg_count=0)}
 
     assert materialize_callsite_prototype_declarations_8616(codegen.project, codegen) is True
     assert codegen._inertia_callsite_prototype_decls == ("int rand(void);",)
@@ -755,7 +1008,7 @@ def test_rebinds_repeated_target_summaries_with_identical_typed_interface() -> N
 
     assert materialize_callsite_prototype_declarations_8616(codegen.project, codegen) is True
     assert codegen._inertia_callsite_prototype_decls == (
-        "unsigned short render(char a0[80]);",
+        "unsigned short render(char *a0);",
     )
 
 
@@ -911,6 +1164,49 @@ def test_conflicting_ast_argument_types_replace_stale_prototype_with_unprototype
         "unsigned short render();",
     )
     assert root.statements == [scalar_call, array_call]
+
+
+def test_program_arity_conflict_materializes_unprototyped_declaration(monkeypatch) -> None:
+    """Cross-caller binary arity conflict must not emit a local fixed prototype."""
+    codegen = _Codegen()
+    first = CVariable(
+        SimStackVariable(4, 2, base="bp", name="a"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        "format_value",
+        None,
+        [first],
+        tags={"ins_addr": 0x1010},
+        codegen=codegen,
+    )
+    root = CStatements([call], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+    codegen._inertia_callsite_summaries = {id(call): _summary(0x1010, arg_count=1)}
+    evidence = CalleeArgumentCountEvidence8616(
+        target_addr=0x2000,
+        verdict=CalleeArgumentCountVerdict8616.CONFLICT,
+        raw_fact_count=2,
+        normalized_fact_count=2,
+        classified_fact_count=2,
+        materialized_count=2,
+        failure_count=1,
+        callsite_addrs=(0x1010, 0x2010),
+    )
+    monkeypatch.setattr(
+        declaration_lowering,
+        "collect_callee_argument_count_evidence_8616",
+        lambda _project, _target_addr: evidence,
+    )
+
+    assert materialize_callsite_prototype_declarations_8616(
+        codegen.project,
+        codegen,
+    ) is True
+    assert codegen._inertia_callsite_prototype_decls == (
+        "unsigned short format_value();",
+    )
 
 
 def test_interface_finalizer_does_not_report_metadata_only_change(monkeypatch) -> None:

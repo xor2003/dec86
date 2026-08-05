@@ -67,7 +67,9 @@ def test_build_c_expr_for_indexed_ds_condition_operand_uses_stack_index():
         MemSpace.DS,
         offset=0xB4C,
         size=2,
-        expr=("cmp-ds-indexed", "bp", "-2", "2", "1", "1"),
+        index=IRValue(MemSpace.SS, name="bp", offset=-2, size=2),
+        index_shift=1,
+        memory_access_size=1,
     )
 
     expr = _build_c_expr_for_operand(project, operand, codegen)

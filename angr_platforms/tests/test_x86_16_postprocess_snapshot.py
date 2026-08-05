@@ -202,7 +202,7 @@ def test_after_ss_callsite_materialization_disables_consumed_store_prune(monkeyp
         return True
 
     monkeypatch.setattr(post_stage._calls, "_materialize_callsite_stack_arguments_8616", fake_materialize)
-    codegen = SimpleNamespace()
+    codegen = SimpleNamespace(_inertia_call_target_identity_consumer_8616=lambda _project, _codegen: False)
 
     assert post_stage._materialize_callsite_stack_arguments_after_ss_lowering_8616(SimpleNamespace(), codegen) is True
     assert observed == [True]
@@ -220,7 +220,10 @@ def test_after_ss_callsite_dce_is_validated_and_locally_rejectable():
 
 def test_pre_validation_callsite_prime_materializes_arguments_before_baseline(monkeypatch):
     calls: list[str] = []
-    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000))
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1000),
+        _inertia_call_target_identity_consumer_8616=lambda _project, _codegen: False,
+    )
 
     monkeypatch.setattr(post_stage._calls, "_attach_callsite_summaries_8616", lambda *_args: calls.append("attach") or True)
     monkeypatch.setattr(
@@ -596,6 +599,47 @@ def test_proven_nondestructive_rejection_clears_failure_without_destructive_mark
     assert codegen._inertia_postprocess_validation_failure_error is None
     assert codegen._inertia_postprocess_rejected_restore_proven_8616 == 1
     assert not hasattr(codegen, "_inertia_postprocess_destructive_rejected_restore_proven_8616")
+
+
+def test_discard_cleanup_salvage_runs_virtual_cleanup_when_dce_is_stable(monkeypatch):
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, statements=[]))
+    stage = SimpleNamespace(project=SimpleNamespace(), codegen=codegen)
+    calls: list[str] = []
+
+    monkeypatch.setattr(post_stage, "_snapshot_codegen_cfunc", lambda _codegen: SimpleNamespace())
+    monkeypatch.setattr(post_stage, "_snapshot_codegen_inertia_metadata_8616", lambda _codegen: {})
+    monkeypatch.setattr(post_stage, "fingerprint_x86_16_tail_validation_boundary", lambda *_args, **_kwargs: "fp")
+    monkeypatch.setattr(
+        post_stage,
+        "_collect_tail_validation_summary_with_baseline_canonicalization_8616",
+        lambda *_args, **_kwargs: {"stack_writes": []},
+    )
+    monkeypatch.setattr(post_stage, "_dead_code_elimination_8616", lambda _codegen: False)
+    monkeypatch.setattr(
+        post_stage._simplify,
+        "_inline_single_assignment_virtual_expressions_8616",
+        lambda _codegen: calls.append("virtual-cleanup") or True,
+    )
+    monkeypatch.setattr(post_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: calls.append("regenerate"))
+    monkeypatch.setattr(
+        post_stage,
+        "build_x86_16_tail_validation_cached_result",
+        lambda **_kwargs: {"changed": False, "status": "stable"},
+    )
+    monkeypatch.setattr(post_stage, "build_x86_16_tail_validation_verdict", lambda *_args: "stable")
+    monkeypatch.setattr(post_stage, "persist_x86_16_tail_validation_snapshot", lambda **_kwargs: calls.append("persist"))
+    log = SimpleNamespace(warning=lambda *_args, **_kwargs: None, debug=lambda *_args, **_kwargs: None)
+
+    changed = post_stage._salvage_dce_after_discard_8616(
+        stage,
+        validation_mode="live_out",
+        snapshot_function_info={},
+        log=log,
+    )
+
+    assert changed is True
+    assert calls == ["virtual-cleanup", "regenerate", "persist"]
+    assert codegen._inertia_dce_salvaged_after_discard_8616 is True
 
 
 def test_destructive_discard_runs_evidenced_salvage_and_stable_dce_before_identity_proof(monkeypatch):

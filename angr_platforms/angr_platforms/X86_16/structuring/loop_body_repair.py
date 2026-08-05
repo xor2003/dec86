@@ -787,8 +787,24 @@ def recover_switch_loop_exit_return_evidence_8616(
     The returned fact is still only CFG evidence.  The AST mutation below owns
     the structuring decision, and rendered C text is never consulted.
     """
-    summaries = _function_instruction_summaries_8616(project, function)
+    function_addr = getattr(function, "addr", None)
+    function_size = getattr(function, "size", None)
+    scan_function = function
+    if isinstance(function_addr, int) and isinstance(function_size, int) and function_size > 0:
+        # angr's function size may end just before a shared epilogue. Read only
+        # enough tail to prove the RET, while keeping recovered targets inside
+        # the original function boundary below.
+        scan_function = SimpleNamespace(addr=function_addr, size=min(function_size + 0x20, 0x300))
+    summaries = _function_instruction_summaries_8616(project, scan_function)
     recovered = list(_recover_switch_loop_exit_return_evidence_from_summaries_8616(summaries))
+    if isinstance(function_addr, int) and isinstance(function_size, int) and function_size > 0:
+        function_end = function_addr + function_size
+        recovered = [
+            item
+            for item in recovered
+            if function_addr <= item.case_target < function_end
+            and function_addr <= item.exit_target < function_end
+        ]
     if recovered:
         return tuple(recovered)
     recovered.extend(_recover_switch_loop_exit_return_evidence_from_original_slice_8616(project, function))
@@ -960,17 +976,18 @@ def repair_switch_loop_exit_returns_from_evidence_8616(project: object, codegen:
         stats.record(SwitchLoopExitReturnRepairDecision8616.REFUSED_NO_STATEMENTS)
         _store_switch_loop_exit_return_stats_8616(codegen, stats)
         return False
-    if not _has_switch_loop_exit_return_candidate_8616(roots):
-        stats.record(SwitchLoopExitReturnRepairDecision8616.REFUSED_NO_MATCHING_LOOP)
-        _store_switch_loop_exit_return_stats_8616(codegen, stats)
-        return False
     function = _active_function_8616(project, codegen)
     evidence = recover_switch_loop_exit_return_evidence_8616(project, function) if function is not None else ()
+    cast(Any, codegen)._inertia_structuring_switch_loop_exit_return_evidence_8616 = evidence
     stats.raw_fact_count = len(evidence)
     stats.normalized_fact_count = len(evidence)
     stats.classified_fact_count = len(evidence)
     if not evidence:
         stats.record(SwitchLoopExitReturnRepairDecision8616.REFUSED_NO_EVIDENCE)
+        _store_switch_loop_exit_return_stats_8616(codegen, stats)
+        return False
+    if not _has_switch_loop_exit_return_candidate_8616(roots):
+        stats.record(SwitchLoopExitReturnRepairDecision8616.REFUSED_NO_MATCHING_LOOP)
         _store_switch_loop_exit_return_stats_8616(codegen, stats)
         return False
     changed = False
@@ -1884,12 +1901,14 @@ def _repair_one_switch_loop_exit_return_8616(
             stats.record(SwitchLoopExitReturnRepairDecision8616.MATERIALIZED)
             return SwitchLoopExitReturnRepairDecision8616.MATERIALIZED
         return SwitchLoopExitReturnRepairDecision8616.REFUSED_CASE_ALREADY_PRESENT
-    return_body = CStatements(
-        [CReturn(None, codegen=codegen)],
-        codegen=codegen,
-    )
-    _append_switch_case_8616(switch, missing[0].case_value, return_body)
-    stats.record(SwitchLoopExitReturnRepairDecision8616.MATERIALIZED)
+    for item in missing:
+        return_body = CStatements(
+            [CReturn(None, codegen=codegen, tags={"ins_addr": item.case_target})],
+            addr=item.case_target,
+            codegen=codegen,
+        )
+        _append_switch_case_8616(switch, item.case_value, return_body)
+        stats.record(SwitchLoopExitReturnRepairDecision8616.MATERIALIZED)
     stats.trailing_unreachable_pruned_count += _prune_trailing_returns_after_loop_8616(statements, loop_index)
     return SwitchLoopExitReturnRepairDecision8616.MATERIALIZED
 

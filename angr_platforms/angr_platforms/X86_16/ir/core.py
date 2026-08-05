@@ -63,7 +63,7 @@ class SegmentOrigin(Enum):
 
 @dataclass(frozen=True, slots=True)
 class IRValue:
-    """Typed scalar value or storage value in the IR layer."""
+    """Typed scalar or storage value with optional exact access provenance."""
 
     space: MemSpace
     name: str | None = None
@@ -72,6 +72,11 @@ class IRValue:
     size: int = 0
     version: int | None = None
     expr: tuple[str, ...] | None = None
+    index: IRValue | IRBinaryValue | None = None
+    index_shift: int = 0
+    memory_access_size: int | None = None
+    memory_access_insn: int | None = field(default=None, compare=False)
+    source_tmp: int | None = field(default=None, compare=False)
 
     def to_dict(self) -> dict[str, object]:
         """Serialize this typed IR value for diagnostics and artifacts."""
@@ -84,6 +89,11 @@ class IRValue:
             "size": self.size,
             "version": self.version,
             "expr": self.expr,
+            "index": None if self.index is None else self.index.to_dict(),
+            "index_shift": self.index_shift,
+            "memory_access_size": self.memory_access_size,
+            "memory_access_insn": self.memory_access_insn,
+            "source_tmp": self.source_tmp,
         }
 
 

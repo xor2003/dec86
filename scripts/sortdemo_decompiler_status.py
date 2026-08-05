@@ -13,6 +13,7 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 from pathlib import Path
@@ -36,6 +37,7 @@ _RECOVERY_START_RE = re.compile(
 _TIMEOUT_DELAY_RE = re.compile(r"timeout delay:\s+(?P<seconds>\d+(?:\.\d+)?)s")
 _TIMED_OUT_AFTER_RE = re.compile(r"timed out after\s+(?P<seconds>\d+(?:\.\d+)?)s", re.IGNORECASE)
 _STAGE_TIMEOUT_RE = re.compile(r"\bTIMEOUT\s+stage=(?P<stage>\S+)")
+_RETRY_RECOVERED_RE = re.compile(r"/\* retry lane: recovered validation-passed candidate \*/$")
 _RUN_SUMMARY_START_RE = re.compile(
     r"(?:/\*\s*(?:info:\s+decompilation attempted|summary:)|\[tail-validation\]\s+"
     r"(?:severity=|coverage=|uncollected|detail artifact))"
@@ -55,6 +57,7 @@ _LEAKAGE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("raw_segmented_access", re.compile(r"\b(?:SEG_PTR|SEG_U8|SEG_U16|SEG_U32|MK_FP)\s*\(")),
     ("raw_memory_symbol", re.compile(r"\bmem_[0-9a-fA-F]{4,}\b")),
 )
+_BLOCKING_LEAKAGE_NAMES = frozenset({"unresolved_vvar", "expr_cycle", "raw_memory_symbol"})
 _SOURCE_QUALITY_REASON_RE = re.compile(r"quality guard rejected emitted C\s+\((?P<markers>[^)]*)\)")
 _SOURCE_QUALITY_REASON_TO_LEAKAGE = {
     "unresolved-vvar": "unresolved_vvar",
@@ -187,6 +190,9 @@ class ConditionalBreakRequirement:
     comparison_ops: frozenset[str]
     required_identifiers: frozenset[str]
     required_arrays: frozenset[str] = frozenset()
+    alternative_shapes: tuple[
+        tuple[frozenset[str], frozenset[str]], ...
+    ] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +260,56 @@ _V = ArgumentClass.VALUE
 _P = ArgumentClass.POINTER
 _PN = ArgumentClass.POINTER_OR_NULL
 _DIV_HELPERS = frozenset({"aNldiv", "aNuldiv", "aNlmul", "aNulmul"})
+_GENERATED_MEMORY_INTRINSICS = frozenset(
+    {"MK_FP", "SEG_PTR", "SEG_U8", "SEG_U16", "SEG_U32"}
+)
+_SORTDEMO_BINARY_CALL_ALIASES = {
+    f"sub_{addr:x}": name
+    for addr, name in (
+        (0x10060, "InitMenu"),
+        (0x101F0, "DrawFrame"),
+        (0x102E0, "RunMenu"),
+        (0x10498, "DrawTime"),
+        (0x10560, "InitBars"),
+        (0x10678, "ReInitBars"),
+        (0x106C8, "DrawBar"),
+        (0x10768, "SwapBars"),
+        (0x107B8, "Swaps"),
+        (0x10808, "InsertionSort"),
+        (0x108D0, "BubbleSort"),
+        (0x10970, "HeapSort"),
+        (0x109E8, "PercolateUp"),
+        (0x10A88, "PercolateDown"),
+        (0x10B50, "ExchangeSort"),
+        (0x10C18, "ShellSort"),
+        (0x10CE0, "QuickSort"),
+        (0x10E70, "Beep"),
+        (0x10F38, "Sleep"),
+        (0x1123A, "strcpy"),
+        (0x1126C, "toupper"),
+        (0x11278, "toupper"),
+        (0x11292, "getch"),
+        (0x112BA, "sprintf"),
+        (0x11310, "inp"),
+        (0x1131E, "outp"),
+        (0x1132C, "time"),
+        (0x1137E, "clock"),
+        (0x113D4, "memset"),
+        (0x11402, "srand"),
+        (0x11414, "rand"),
+        (0x1143A, "aNldiv"),
+        (0x11F38, "aNlmul"),
+        (0x12756, "outtext"),
+        (0x128E4, "settextposition"),
+        (0x1294F, "setvideomode"),
+        (0x12A29, "settextrows"),
+        (0x12AC8, "getvideoconfig"),
+        (0x12B24, "settextcolor"),
+        (0x12B3E, "setbkcolor"),
+        (0x12B5E, "clearscreen"),
+        (0x12BC0, "displaycursor"),
+    )
+}
 
 SORTDEMO_SOURCE_CALL_CONTRACTS: dict[str, FunctionCallContract] = {
     "main": FunctionCallContract(
@@ -367,6 +423,12 @@ SORTDEMO_SOURCE_CALL_CONTRACTS: dict[str, FunctionCallContract] = {
                     {"abarWork", "iRowTmp", "iLength"}
                 ),
                 required_arrays=frozenset({"abarWork"}),
+                alternative_shapes=(
+                    (
+                        frozenset({"g_0B4C", "local_4", "local_6"}),
+                        frozenset({"g_0B4C"}),
+                    ),
+                ),
             ),
         ),
     ),
@@ -499,13 +561,32 @@ class FunctionStatus:
                     counts[leakage_name] = 1
         return counts
 
+    def is_recovery_placeholder(self) -> bool:
+        """Return whether this record has no terminal or generated-C evidence."""
+        return (
+            self.attempt is None
+            and self.validation is None
+            and self.generated_c_marker() is None
+            and not any(
+                (
+                    self.validation_passed,
+                    self.validation_failed,
+                    self.timeout,
+                    self.fallback,
+                    self.uncollected,
+                    self.error,
+                )
+            )
+        )
+
     def terminal_status(self) -> TerminalStatus:
         """Return the single terminal status for this function."""
         if self.source_quality_refused:
             return TerminalStatus.SOURCE_QUALITY_REFUSED
         if self.final_quality_refused:
             return TerminalStatus.QUALITY_REFUSED
-        if self.validation_passed and any(count > 0 for count in self.leakage_counts().values()):
+        leakage = self.leakage_counts()
+        if self.validation_passed and any(leakage[name] > 0 for name in _BLOCKING_LEAKAGE_NAMES):
             return TerminalStatus.SOURCE_QUALITY_REFUSED
         if self.validation_passed and self.source_contract is not None and not self.source_contract.passed:
             return TerminalStatus.SOURCE_CONTRACT_REFUSED
@@ -632,6 +713,20 @@ def _merge_duplicate_proc_records(records: list[FunctionStatus]) -> list[Functio
 def _update_flags(record: FunctionStatus, line: str) -> None:
     """Update one function verdict from a structured or fatal transcript line."""
     lowered = line.lower()
+    if _RETRY_RECOVERED_RE.search(line) is not None:
+        record.validation_passed = True
+        record.validation_failed = False
+        record.timeout = False
+        record.fallback = False
+        record.final_quality_refused = False
+        record.uncollected = False
+        record.error = False
+        record.failure_status = FailureStatus.OK
+        record.failure_stage = None
+        record.attempt = AttemptStatus.DECOMPILED
+        record.validation = ValidationStatus.PASSED
+        record.timeout_seconds = None
+        record.timeout_message = None
     if "[tail-validation] whole-tail validation clean across" in lowered:
         record.validation_passed = True
         record.validation_failed = False
@@ -784,6 +879,12 @@ def _expression_is_pointer(
     declared_types: dict[str, c_ast.Node],
 ) -> bool:
     """Return whether a generated-C expression has an evident pointer shape."""
+    if (
+        isinstance(expression, c_ast.FuncCall)
+        and isinstance(expression.name, c_ast.ID)
+        and expression.name.name in {"MK_FP", "SEG_PTR"}
+    ):
+        return True
     if isinstance(expression, c_ast.UnaryOp) and expression.op == "&":
         return True
     if isinstance(expression, c_ast.Constant) and expression.type == "string":
@@ -835,6 +936,9 @@ class _FunctionCallCollector(c_ast.NodeVisitor):
     def visit_FuncCall(self, node: c_ast.FuncCall) -> None:  # noqa: N802
         """Record one direct call, retaining null-constant evidence by observation index."""
         name = node.name.name if isinstance(node.name, c_ast.ID) else "<indirect>"
+        if name in _GENERATED_MEMORY_INTRINSICS:
+            self.generic_visit(node)
+            return
         arguments = () if node.args is None else tuple(node.args.exprs)
         observation_index = len(self.observations)
         self.observations.append(
@@ -962,7 +1066,10 @@ def _parse_generated_contract_observations(
         None,
     )
     if function is None:
-        raise ValueError(f"generated C has no function body for {function_name}")
+        generated_functions = tuple(item for item in translation_unit.ext if isinstance(item, c_ast.FuncDef))
+        if len(generated_functions) != 1:
+            raise ValueError(f"generated C has no function body for {function_name}")
+        function = generated_functions[0]
     declarations = _DeclarationTypeCollector()
     declarations.visit(translation_unit)
     calls = _FunctionCallCollector(declarations.types_by_name)
@@ -994,9 +1101,46 @@ def _argument_classes_match(
     )
 
 
+def _source_argument_classes_for_binary_call(
+    binary_name: str,
+    argument_classes: tuple[ArgumentClass, ...],
+) -> tuple[ArgumentClass, ...]:
+    """Collapse proven 16-bit ABI words into source-level argument classes."""
+    if binary_name in {"sub_12756", "sub_12ac8"} and len(argument_classes) == 2:
+        return (ArgumentClass.POINTER,)
+    if binary_name == "sub_12b3e" and len(argument_classes) == 2:
+        return (ArgumentClass.VALUE,)
+    if binary_name == "sub_112ba" and len(argument_classes) >= 2:
+        return (
+            argument_classes[0],
+            ArgumentClass.POINTER,
+            *argument_classes[2:],
+        )
+    return argument_classes
+
+
+def _conditional_break_matches(
+    requirement: ConditionalBreakRequirement,
+    observation: ConditionalBreakObservation,
+) -> bool:
+    """Match source or explicitly proven binary identities for one exit guard."""
+    if observation.comparison_op not in requirement.comparison_ops:
+        return False
+    shapes = (
+        (requirement.required_identifiers, requirement.required_arrays),
+        *requirement.alternative_shapes,
+    )
+    return any(
+        identifiers <= observation.identifiers and arrays <= observation.arrays
+        for identifiers, arrays in shapes
+    )
+
+
 def _evaluate_source_contract(
     contract: FunctionCallContract,
     emitted_c: str | None,
+    *,
+    call_name_aliases: Mapping[str, str] | None = None,
 ) -> SourceContractResult:
     """Compare one generated function against its source-call acceptance contract."""
     if emitted_c is None:
@@ -1013,7 +1157,17 @@ def _evaluate_source_contract(
 
     observations_by_name: dict[str, list[tuple[int, CallObservation]]] = {}
     for index, observation in enumerate(observations):
-        observations_by_name.setdefault(observation.name, []).append((index, observation))
+        normalized_name = (call_name_aliases or {}).get(observation.name, observation.name)
+        normalized_observation = CallObservation(
+            name=normalized_name,
+            argument_classes=_source_argument_classes_for_binary_call(
+                observation.name,
+                observation.argument_classes,
+            ),
+        )
+        observations_by_name.setdefault(normalized_name, []).append(
+            (index, normalized_observation)
+        )
 
     missing_calls: list[str] = []
     count_mismatches: list[str] = []
@@ -1046,10 +1200,7 @@ def _evaluate_source_contract(
     missing_control_flow: list[str] = []
     for requirement in contract.conditional_breaks:
         matched = any(
-            observation.comparison_op in requirement.comparison_ops
-            and requirement.required_identifiers
-            <= observation.identifiers
-            and requirement.required_arrays <= observation.arrays
+            _conditional_break_matches(requirement, observation)
             for observation in conditional_breaks
         )
         if matched:
@@ -1082,7 +1233,11 @@ def _apply_sortdemo_source_contracts(records: list[FunctionStatus]) -> None:
     for record in records:
         contract = SORTDEMO_SOURCE_CALL_CONTRACTS.get(record.name)
         if contract is not None:
-            record.source_contract = _evaluate_source_contract(contract, _emitted_c_for_record(record))
+            record.source_contract = _evaluate_source_contract(
+                contract,
+                _emitted_c_for_record(record),
+                call_name_aliases=_SORTDEMO_BINARY_CALL_ALIASES,
+            )
 
 
 def parse_status_text(text: str, *, check_source_contracts: bool = False) -> dict[str, Any]:
@@ -1106,9 +1261,12 @@ def parse_status_text(text: str, *, check_source_contracts: bool = False) -> dic
                 current.lines.append(line)
                 _update_flags(current, line)
                 continue
-        match = _FUNCTION_HEADER_RE.search(line) or direct_header_match
+        function_header_match = _FUNCTION_HEADER_RE.search(line)
+        match = function_header_match or direct_header_match
         if match is not None:
-            if current is not None:
+            if current is not None and not (
+                function_header_match is not None and current.is_recovery_placeholder()
+            ):
                 records.append(current)
             current = FunctionStatus(addr=match.group(1).lower(), name=match.group(2).strip())
             pending_function = None

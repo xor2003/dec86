@@ -17,6 +17,13 @@ _ROOT = Path(__file__).resolve().parent
 _PROJECT_VENV_PYTHONS = (_ROOT / ".venv" / "bin" / "python",)
 
 
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_DECOMPILE_DISABLE_CLI_LAZY_IMPORTS: bool = _env_truthy("INERTIA_DISABLE_CLI_LAZY_IMPORTS")
+
+
 def _ensure_project_venv() -> None:
     if os.environ.get("INERTIA_DECOMPILE_VENV") == "1":
         return
@@ -121,31 +128,61 @@ except DecompilerArchitectureGuardError as ex:
     print(str(ex), file=sys.stderr)
     raise SystemExit(3) from ex
 
-from inertia_decompiler import cli as _cli  # noqa: E402
-from inertia_decompiler.telemetry import emit_compact_summary  # noqa: E402
-
-_THIS_MODULE = sys.modules[__name__]
+_CLI_MODULE: ModuleType | None = None
 
 
-class _CliProxyModule(ModuleType):
-    def __getattr__(self, name: str) -> object:
-        return getattr(_cli, name)
+def _ensure_cli() -> ModuleType:
+    global _CLI_MODULE
+    if _CLI_MODULE is None:
+        _CLI_MODULE = __import__("inertia_decompiler.cli", fromlist=["*"])
+        if _DECOMPILE_DISABLE_CLI_LAZY_IMPORTS:
+            # Dynamic boundary: third-party CLI plugin module can vary by package layout.
+            for _name in vars(_CLI_MODULE):
+                if _name.startswith("__"):
+                    continue
+                if _name not in globals():
+                    globals()[_name] = _CLI_MODULE.__dict__[_name]
+            # Dynamic boundary: third-party plugin exports may be runtime-computed.
+            for _name in _CLI_MODULE.__dict__.get("__all__", ()):
+                if _name.startswith("__"):
+                    continue
+                if _name not in globals():
+                    globals()[_name] = _CLI_MODULE.__dict__[_name]
+    return _CLI_MODULE
+
+
+def __getattr__(name: str) -> object:
+    try:
+        _plugin = _ensure_cli()
+        # Dynamic boundary: third-party plugin exports are runtime-resolved here.
+        return getattr(_plugin, name)
+    except AttributeError as ex:
+        raise AttributeError(name) from ex
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(dir(_ensure_cli())))
+
+
+class _EntrypointCompatModule(ModuleType):
+    """Mirror legacy facade assignments into the owning CLI proxy modules."""
 
     def __setattr__(self, name: str, value: object) -> None:
+        """Forward external monkeypatches while retaining the facade attribute."""
         ModuleType.__setattr__(self, name, value)
-        if name not in {"__class__", "__dict__"}:
-            setattr(_cli, name, value)
-
-    def __dir__(self) -> list[str]:
-        return sorted(set(ModuleType.__dir__(self)) | set(dir(_cli)))
+        if name.startswith("__"):
+            return
+        setattr(_ensure_cli(), name, value)
 
 
-_THIS_MODULE.__class__ = _CliProxyModule
-sys.modules[__name__] = _cli
+sys.modules[__name__].__class__ = _EntrypointCompatModule
 
 
 if __name__ == "__main__":
+    from inertia_decompiler.telemetry import emit_compact_summary
+
     try:
-        raise SystemExit(_cli.main())
+        cli_module = _ensure_cli()
+        raise SystemExit(cli_module.main())
     finally:
         emit_compact_summary()

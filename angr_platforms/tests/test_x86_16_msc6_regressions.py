@@ -127,13 +127,13 @@ def test_msc6_cmp16_rel_i16_keeps_recovered_signature_and_avoids_implicit_arg_pl
     assert ">> 8" not in emitted_body
     for fragment in (
         "if (b > a)",
-        "mask |= 1;",
+        "mask = mask | 1;",
         "if (b >= a)",
-        "mask |= 2;",
+        "mask = mask | 2;",
         "if (b < a)",
-        "mask |= 4;",
+        "mask = mask | 4;",
         "if (b <= a)",
-        "mask |= 8;",
+        "mask = mask | 8;",
     ):
         assert fragment in emitted_body, emitted_body
     assert "return mask;" in emitted_body
@@ -147,7 +147,8 @@ def test_msc6_cmp16_main_preserves_all_guarded_return_chain_values() -> None:
     assert result.returncode == 0, combined
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
 
-    emitted = combined.split("/* == c == */", 1)[-1]
+    emitted = _extract_emitted_function_8616(combined, "main")
+    assert emitted, combined
     emitted_without_source_comments = "\n".join(
         line for line in emitted.splitlines() if not line.lstrip().startswith("///")
     )
@@ -155,11 +156,16 @@ def test_msc6_cmp16_main_preserves_all_guarded_return_chain_values() -> None:
         assert f"return {value};" in emitted_without_source_comments, emitted_without_source_comments
     assert "return 255;" in emitted_without_source_comments, emitted_without_source_comments
     assert "::0x" not in emitted_without_source_comments
-    assert "cmp_i16(" in emitted_without_source_comments
-    assert "rel_i16(" in emitted_without_source_comments
-    assert "rel_u16(" in emitted_without_source_comments
-    assert "clamp_u16(" in emitted_without_source_comments
-    assert "in_window_i16(" in emitted_without_source_comments
+    expected_calls = (
+        "cmp_i16(65534, 5)", "cmp_i16(9, 3)", "cmp_i16(7, 7)",
+        "rel_i16(65534, 5)", "rel_i16(9, 3)", "rel_i16(7, 7)",
+        "rel_u16(2, 9)", "rel_u16(12, 3)", "rel_u16(6, 6)",
+        "clamp_u16(10, 7)", "clamp_u16(6, 7)",
+        "in_window_i16(4, 1, 7)", "in_window_i16(9, 1, 7)",
+    )
+    assert re.findall(r"\b(?:cmp_i16|rel_i16|rel_u16|clamp_u16|in_window_i16)\([^)]*\)", emitted) == list(
+        expected_calls
+    )
 
 
 @pytest.mark.skipif(not SIMPLE_EXE.is_file(), reason="SIMPLE example binary is not available in this workspace.")
@@ -172,7 +178,10 @@ def test_msc6_simple_switch_fold_direct_output_uses_source_argument_identity() -
 
     emitted_body = _extract_emitted_function_8616(combined, "switch_fold")
     assert emitted_body, combined
-    assert "int switch_fold(int x)" in emitted_body
+    assert re.search(
+        r"\b(?:int|short|unsigned short) switch_fold\((?:int|short|unsigned short) x\)",
+        emitted_body,
+    )
     assert "if (!x)" in emitted_body
     assert "return x - 5;" in emitted_body
     assert "return x + 20;" in emitted_body
@@ -197,7 +206,23 @@ def test_msc6_scalar_add_sc_keeps_byte_arg_source_identity_through_cli_regenerat
 
 
 @pytest.mark.skipif(not TYPES_EXE.is_file(), reason="TYPES example binary is not available in this workspace.")
-def test_msc6_scalar_sub_ulong_consumes_stack_probe_prologue_artifacts() -> None:
+def test_msc6_scalar_sub_ss_keeps_straight_line_subtraction() -> None:
+    result = _run_decompile_proc("sub_ss", proc_kind="NEAR", exe_path=TYPES_EXE)
+    combined = _combined_output_8616(result)
+
+    assert result.returncode == 0, combined
+    assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
+
+    emitted_body = _extract_emitted_function_8616(combined, "sub_ss")
+    assert emitted_body, combined
+    assert "return a - b;" in emitted_body
+    assert "if (" not in emitted_body
+    assert "stack_base" not in emitted_body
+    assert not re.search(r"\b(?:ax|ir_[0-9]+|vvar_[0-9]+)\s*=", emitted_body), emitted_body
+
+
+@pytest.mark.skipif(not TYPES_EXE.is_file(), reason="TYPES example binary is not available in this workspace.")
+def test_msc6_scalar_sub_ulong_emits_consistent_wide_signature_without_probe_artifacts() -> None:
     result = _run_decompile_proc("sub_ulong", proc_kind="NEAR", exe_path=TYPES_EXE)
     combined = _combined_output_8616(result)
 
@@ -207,7 +232,10 @@ def test_msc6_scalar_sub_ulong_consumes_stack_probe_prologue_artifacts() -> None
 
     emitted_body = _extract_emitted_function_8616(combined, "sub_ulong")
     assert emitted_body, combined
-    assert "unsigned long sub_ulong(unsigned long a, unsigned long b)" in emitted_body
+    assert re.search(
+        r"\b(?:long sub_ulong\(long a, long b\)|unsigned long sub_ulong\(unsigned long a, unsigned long b\))",
+        emitted_body,
+    )
     assert "return a - b;" in emitted_body
     assert "sub_105ba" not in emitted_body
     assert "aNchkstk" not in emitted_body
@@ -223,29 +251,29 @@ def test_msc6_scalar_sub_ulong_consumes_stack_probe_prologue_artifacts() -> None
         ("cmp_i16", ("return -1;", "return 1;", "return 0;", "return 2;", " == ")),
         (
             "rel_i16",
-            (
-                "if (b > a)",
-                "mask |= 1;",
-                "if (b >= a)",
-                "mask |= 2;",
-                "if (b < a)",
-                "mask |= 4;",
-                "if (b <= a)",
-                "mask |= 8;",
+                (
+                    "if (b > a)",
+                    "mask = mask | 1;",
+                    "if (b >= a)",
+                    "mask = mask | 2;",
+                    "if (b < a)",
+                    "mask = mask | 4;",
+                    "if (b <= a)",
+                    "mask = mask | 8;",
                 "return mask;",
             ),
         ),
         (
             "rel_u16",
-            (
-                "if (b > a)",
-                "mask |= 1;",
-                "if (b >= a)",
-                "mask |= 2;",
-                "if (b < a)",
-                "mask |= 4;",
-                "if (b <= a)",
-                "mask |= 8;",
+                (
+                    "if (b > a)",
+                    "mask = mask | 1;",
+                    "if (b >= a)",
+                    "mask = mask | 2;",
+                    "if (b < a)",
+                    "mask = mask | 4;",
+                    "if (b <= a)",
+                    "mask = mask | 8;",
                 "return mask;",
             ),
         ),
@@ -330,6 +358,7 @@ def test_msc6_fptr_apply_twice_consumes_stack_probe_call_artifacts() -> None:
     assert "apply_twice(" in emitted_body
     assert "fn" in emitted_body
     assert "value" in emitted_body
+    assert "(*fn)(" in emitted_body
     assert emitted_body.count("fn(value)") == 2
     assert "return value;" in emitted_body
     assert "chkstk" not in emitted_body.lower()

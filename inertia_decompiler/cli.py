@@ -6,8 +6,12 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 
 from __future__ import annotations
 
+import os
 import sys
+from collections.abc import Callable
+from importlib import import_module
 from types import ModuleType
+from typing import TYPE_CHECKING, cast
 
 from .architecture_runtime_guard import (
     DecompilerArchitectureGuardError,
@@ -20,113 +24,180 @@ except DecompilerArchitectureGuardError as ex:
     print(str(ex), file=sys.stderr)
     raise SystemExit(3) from ex
 
-import angr
-from angr.analyses.decompiler import structured_codegen
-from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CVariable
-from angr.sim_type import SimTypePointer, SimTypeShort
-from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
-from angr_platforms.X86_16.semantics.alias_query import describe_alias_storage
-from angr_platforms.X86_16.widening.register_widening import (
-    can_join_adjacent_register_slices,
-    join_adjacent_register_slices,
+if TYPE_CHECKING:
+    pass
+
+
+_WideningAttr = Callable[..., object]
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_CLI_PROXY_MODULES: tuple[str, ...] = (
+    "cli_core",
+    "cli_function_discovery",
+    "cli_decompilation",
+    "cli_fallback_decompilation",
+    "cli_c_ast_rewrites",
+    "cli_c_text_postprocess",
+    "cli_interrupt_modeling",
+    "cache",
+    "cli_access_profiles",
+    "non_optimized_fallback",
+    "disassembly_helpers",
+    "project_loading",
+    "runtime_support",
+    "sidecar_metadata",
+    "sidecar_parsers",
+    "tail_validation",
+    "work_items",
 )
-from angr_platforms.X86_16.widening_model import analyze_adjacent_storage_slices
-
-from . import cache as _cache
-from . import cli_access_profiles as _cli_access_profiles
-from . import cli_c_ast_rewrites as _cli_c_ast_rewrites
-from . import cli_c_text_postprocess as _cli_c_text_postprocess
-from . import cli_core as _cli_core
-from . import cli_decompilation as _cli_decompilation
-from . import cli_fallback_decompilation as _cli_fallback_decompilation
-from . import cli_function_discovery as _cli_function_discovery
-from . import cli_interrupt_modeling as _cli_interrupt_modeling
-from . import non_optimized_fallback as _non_optimized_fallback
-from . import project_loading as _project_loading
-from . import runtime_support as _runtime_support
-from . import sidecar_metadata as _sidecar_metadata
-from . import sidecar_parsers as _sidecar_parsers
-from . import tail_validation as _tail_validation
-from . import work_items as _work_items
-from .cli_c_ast_rewrites import (
-    _addr_exprs_are_byte_pair,
-    _c_constant_value,
-    _canonicalize_stack_cvar_expr,
-    _canonicalize_stack_cvars,
-    _classify_segmented_addr_expr,
-    _coalesce_cod_word_global_loads,
-    _coalesce_direct_ss_local_word_statements,
-    _coalesce_far_pointer_stack_expressions,
-    _coalesce_linear_recurrence_statements,
-    _coalesce_segmented_word_load_expressions,
-    _coalesce_segmented_word_store_statements,
-    _get_or_seed_inertia_alias_state,
-    _make_word_dereference_from_addr_expr,
-    _match_byte_load_addr_expr,
-    _match_byte_store_addr_expr,
-    _match_duplicate_word_increment_shift_expr,
-    _match_shift_right_8_expr,
-    _match_shifted_high_byte_addr_expr,
-    _match_ss_local_plus_const,
-    _match_word_rhs_from_byte_pair,
-    _materialize_missing_stack_local_declarations,
-    _resolve_stack_cvar_from_addr_expr,
-    _rewrite_ss_stack_byte_offsets,
-    _same_c_expression,
-    _seed_adjacent_byte_pair_aliases,
-    _stack_slot_identity_can_join,
-    _unwrap_c_casts,
-)
-from .cli_c_text_postprocess import _simplify_x86_16_conditions, _simplify_x86_16_stack_byte_pointers
-from .cli_core import main
-from .disassembly_helpers import _infer_linear_disassembly_window, _linear_disassembly
-
-_PROXY_MODULES = (
-    _cli_core,
-    _cli_access_profiles,
-    _cli_c_ast_rewrites,
-    _cli_decompilation,
-    _cli_fallback_decompilation,
-    _cli_function_discovery,
-    _cli_interrupt_modeling,
-    _non_optimized_fallback,
-    _project_loading,
-    _runtime_support,
-    _sidecar_parsers,
-    _sidecar_metadata,
-    _tail_validation,
-    _work_items,
-    _cache,
-)
-
-structured_c: object = structured_codegen.c
-_AccessTraitEvidenceProfile = _cli_access_profiles.AccessTraitEvidenceProfile
-_AccessTraitStrideEvidence = _cli_access_profiles.AccessTraitStrideEvidence
+_PROXY_MODULE_CACHE: dict[str, ModuleType] = {}
+_PROXY_LOADING: set[str] = set()
+_PROXY_ATTR_OVERRIDES: dict[str, object] = {}
+_CLI_DISABLE_LAZY_IMPORTS: bool = _env_truthy("INERTIA_DISABLE_CLI_LAZY_IMPORTS")
 
 
-def _probe_lift_break(project: angr.Project, addr: int, *, max_window: int = 0x80) -> str:
-    start, end = _infer_linear_disassembly_window(project, addr, max_window=max_window)
+def _import_cli_module(module_name: str) -> ModuleType:
+    module = _PROXY_MODULE_CACHE.get(module_name)
+    if module is not None:
+        return module
+    if module_name in _PROXY_LOADING:
+        raise RuntimeError(f"circular lazy import detected for inertia_decompiler.{module_name}")
+    _PROXY_LOADING.add(module_name)
     try:
-        insns = _linear_disassembly(project, start, end)
-    except Exception as ex:
-        return f"<lift probe unavailable: {ex}>"
-    if not insns:
-        return "<lift probe unavailable: no instructions>"
-    for index, insn in enumerate(insns):
-        try:
-            project.factory.block(insn.address, size=max(1, insn.size), opt_level=0)
-        except Exception as ex:
-            window = insns[max(0, index - 3) : min(len(insns), index + 5)]
-            lines = [f"{cur.address:#06x}: {cur.mnemonic} {cur.op_str}".rstrip() for cur in window]
-            return f"first lift failure at {insn.address:#x}: {_project_loading._describe_exception(ex)}\n" + "\n".join(
-                lines
-            )
-    return "no per-instruction lift failure detected in linear probe window"
+        module = import_module(f"{__package__}.{module_name}")
+        if not isinstance(module, ModuleType):
+            raise TypeError(f"inertia_decompiler.{module_name} is not a ModuleType: {type(module)!r}")
+        for override_name, override_value in _PROXY_ATTR_OVERRIDES.items():
+            if override_name == "_recovery_code_labels" and module.__name__.endswith("sidecar_metadata"):
+                continue
+            if hasattr(module, override_name):
+                ModuleType.__setattr__(module, override_name, override_value)
+        _PROXY_MODULE_CACHE[module_name] = module
+        return module
+    finally:
+        _PROXY_LOADING.discard(module_name)
+
+
+_CLI_SPECIAL_ATTRS: dict[str, str] = {
+    "main": "cli_core",
+    "_linear_disassembly": "disassembly_helpers",
+    "_probe_lift_break": "disassembly_helpers",
+}
+
+
+def _load_alias_query_attr(name: str) -> object:
+    if name == "describe_alias_storage":
+        from angr_platforms.X86_16.semantics.alias_query import describe_alias_storage
+
+        return describe_alias_storage
+    raise AttributeError(name)
+
+
+def _load_structured_c() -> object:
+    from angr.analyses.decompiler import structured_codegen
+
+    return structured_codegen.c
+
+
+def _load_widening_attr(name: str) -> _WideningAttr:
+    from angr_platforms.X86_16.widening.register_widening import (
+        can_join_adjacent_register_slices,
+        join_adjacent_register_slices,
+    )
+    from angr_platforms.X86_16.widening_model import analyze_adjacent_storage_slices
+
+    if name == "analyze_adjacent_storage_slices":
+        return cast(_WideningAttr, analyze_adjacent_storage_slices)
+    if name == "join_adjacent_register_slices":
+        return cast(_WideningAttr, join_adjacent_register_slices)
+    if name == "can_join_adjacent_register_slices":
+        return cast(_WideningAttr, can_join_adjacent_register_slices)
+    raise AttributeError(name)
+
+
+def _load_angr_sim_types(name: str) -> object:
+    if name in {"SimTypePointer", "SimTypeShort"}:
+        from angr.sim_type import SimTypePointer, SimTypeShort
+
+        return SimTypePointer if name == "SimTypePointer" else SimTypeShort
+    if name in {"SimMemoryVariable", "SimRegisterVariable", "SimStackVariable"}:
+        from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+
+        return {
+            "SimMemoryVariable": SimMemoryVariable,
+            "SimRegisterVariable": SimRegisterVariable,
+            "SimStackVariable": SimStackVariable,
+        }[name]
+    raise AttributeError(name)
+
+
+def _load_access_profile_attr(name: str) -> object:
+    from . import cli_access_profiles
+
+    return {
+        "_AccessTraitEvidenceProfile": cli_access_profiles.AccessTraitEvidenceProfile,
+        "_AccessTraitStrideEvidence": cli_access_profiles.AccessTraitStrideEvidence,
+    }[name]
+
+
+def _resolve_proxy_attr(name: str) -> object:
+    if name in _CLI_SPECIAL_ATTRS:
+        module = _import_cli_module(_CLI_SPECIAL_ATTRS[name])
+        value = ModuleType.__getattribute__(module, name)
+        globals()[name] = value
+        return value
+    if name == "structured_c":
+        value = _load_structured_c()
+        globals()[name] = value
+        return value
+    if name.startswith("Sim"):
+        value = _load_angr_sim_types(name)
+        globals()[name] = value
+        return value
+    if name in {"SimTypePointer", "SimTypeShort", "_AccessTraitEvidenceProfile", "_AccessTraitStrideEvidence", "describe_alias_storage"}:
+        if name in {"SimTypePointer", "SimTypeShort"}:
+            value = _load_angr_sim_types(name)
+        elif name in {"_AccessTraitEvidenceProfile", "_AccessTraitStrideEvidence"}:
+            value = _load_access_profile_attr(name)
+        else:
+            value = _load_alias_query_attr(name)
+        globals()[name] = value
+        return value
+    if name in {"analyze_adjacent_storage_slices", "join_adjacent_register_slices", "can_join_adjacent_register_slices"}:
+        value = _load_widening_attr(name)
+        globals()[name] = value
+        return value
+    for module_name in _CLI_PROXY_MODULES:
+        module = _import_cli_module(module_name)
+        if hasattr(module, name):
+            value = ModuleType.__getattribute__(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(name)
+
+
+structured_c: object
+_AccessTraitEvidenceProfile: type
+_AccessTraitStrideEvidence: type
 
 
 def _match_adjacent_register_pair_var_expr(low_expr: object, high_expr: object, codegen: object) -> object | None:
     # Compatibility surface for legacy tests and callers importing from decompile/cli.
     def _impl() -> object | None:
+        from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CVariable
+        from angr.sim_variable import SimRegisterVariable
+        from angr_platforms.X86_16.widening_model import analyze_adjacent_storage_slices
+
+        from .cli_c_ast_rewrites import (
+            _c_constant_value,
+            _get_or_seed_inertia_alias_state,
+            _unwrap_c_casts,
+        )
+
         current_low_expr = low_expr
         current_high_expr = high_expr
         if isinstance(current_high_expr, CBinaryOp) and current_high_expr.op in {"Mul", "Shl"}:
@@ -169,52 +240,92 @@ def _match_adjacent_register_pair_var_expr(low_expr: object, high_expr: object, 
         # Dynamic codegen boundary: widening proof fields are analysis-owned evidence.
         if getattr(proof, "left_version", None) != getattr(proof, "right_version", None):
             return None
-        if not can_join_adjacent_register_slices(
-            current_low_expr, current_high_expr, alias_state=alias_state, proof=proof
-        ):
+        can_join_attr = _load_widening_attr("can_join_adjacent_register_slices")
+        if not can_join_attr(current_low_expr, current_high_expr, alias_state=alias_state, proof=proof):
             return None
-        return join_adjacent_register_slices(
+        join_attr = _load_widening_attr("join_adjacent_register_slices")
+        return join_attr(
             current_low_expr, current_high_expr, codegen, alias_state=alias_state, proof=proof
         )
+
 
     return _impl()
 
 
-class _CompatModule(ModuleType):
-    def __getattr__(self, name: str) -> object:
-        for module in _PROXY_MODULES:
-            if hasattr(module, name):
-                # Dynamic compatibility boundary: cli.py proxies legacy imports across split CLI modules.
-                return getattr(module, name)
-        raise AttributeError(name)
+def _compat_module_getattr(name_or_self: object, name: object | None = None) -> object:
+    """Resolve one legacy CLI export lazily."""
+    target_name = name if name is not None else name_or_self
+    if not isinstance(target_name, str):
+        raise TypeError(f"attribute name must be str, got {type(target_name).__name__}")
+    return _resolve_proxy_attr(target_name)
 
-    def __setattr__(self, name: str, value: object) -> None:
-        ModuleType.__setattr__(self, name, value)
-        for module in _PROXY_MODULES:
-            if module is _sidecar_metadata and name == "_recovery_code_labels":
-                continue
-            if hasattr(module, name):
-                # Dynamic compatibility boundary: cli.py mirrors monkeypatched legacy attributes.
-                setattr(module, name, value)
-        if hasattr(_cli_c_ast_rewrites, name):
-            # Dynamic compatibility boundary: cli.py mirrors monkeypatched legacy attributes.
-            setattr(_cli_c_ast_rewrites, name, value)
-        if hasattr(_cli_c_text_postprocess, name):
-            # Dynamic compatibility boundary: cli.py mirrors monkeypatched legacy attributes.
-            setattr(_cli_c_text_postprocess, name, value)
 
-    def __dir__(self) -> list[str]:
-        names = set(ModuleType.__dir__(self))
-        for module in _PROXY_MODULES:
-            names.update(dir(module))
-        return sorted(names)
+def _compat_module_setattr(
+    name_or_self: object,
+    name_or_value: object | None = None,
+    value: object | None = None,
+) -> None:
+    """Mirror one legacy monkeypatch into loaded compatibility modules."""
+    if isinstance(name_or_self, ModuleType):
+        module = name_or_self
+        override_name = name_or_value
+        override_value = value
+    else:
+        module = sys.modules[__name__]
+        override_name = name_or_self
+        override_value = name_or_value
+    if not isinstance(override_name, str):
+        # Ignore non-string bootstrap payloads if passed by import internals.
+        return None
+    ModuleType.__setattr__(module, override_name, override_value)
+    if override_name == "main":
+        return None
+    _PROXY_ATTR_OVERRIDES[override_name] = override_value
+    for module_name in _CLI_PROXY_MODULES:
+        cached_module = _PROXY_MODULE_CACHE.get(module_name)
+        if cached_module is None:
+            loaded = sys.modules.get(f"{__package__}.{module_name}")
+            if isinstance(loaded, ModuleType):
+                cached_module = loaded
+        if cached_module is None:
+            continue
+        if cached_module.__name__.endswith("sidecar_metadata") and override_name == "_recovery_code_labels":
+            continue
+        if hasattr(cached_module, override_name):
+            ModuleType.__setattr__(cached_module, override_name, override_value)
+
+
+def _compat_module_dir(self: object | None = None) -> list[str]:
+    """List known eager and loaded lazy compatibility exports."""
+    module = self if isinstance(self, ModuleType) else sys.modules[__name__]
+    names = set(ModuleType.__dir__(module))
+    names.update(__all__)
+    names.update(_PROXY_ATTR_OVERRIDES)
+    for module in _PROXY_MODULE_CACHE.values():
+        names.update(dir(module))
+    return sorted(names)
+
+
+_CompatModule = cast(
+    type[ModuleType],
+    type(
+        "_CompatModule",
+        (ModuleType,),
+        {
+            "__slots__": (),
+            "__getattr__": _compat_module_getattr,
+            "__setattr__": _compat_module_setattr,
+            "__dir__": _compat_module_dir,
+        },
+    ),
+)
 
 
 _THIS_MODULE = sys.modules[__name__]
 _THIS_MODULE.__class__ = _CompatModule
 
 
-__all__ = [
+__all__: tuple[str, ...] = (
     "main",
     "_rewrite_ss_stack_byte_offsets",
     "_canonicalize_stack_cvars",
@@ -257,7 +368,49 @@ __all__ = [
     "SimStackVariable",
     "_AccessTraitEvidenceProfile",
     "_AccessTraitStrideEvidence",
-]
+)
+
+
+def _prime_eager_cli_exports() -> None:
+    """Load all CLI proxy modules up front for debugger-friendly execution."""
+    if not _CLI_DISABLE_LAZY_IMPORTS:
+        return
+    for module_name in (
+        *_CLI_PROXY_MODULES,
+        "disassembly_helpers",
+        "project_loading",
+    ):
+        _import_cli_module(module_name)
+    for name in list(__all__):
+        if name not in globals():
+            try:
+                globals()[name] = _resolve_proxy_attr(name)
+            except AttributeError:
+                pass
+    for module in _PROXY_MODULE_CACHE.values():
+        try:
+            public_names = ModuleType.__getattribute__(module, "__all__")
+        except AttributeError:
+            public_names = None
+        candidates = list(public_names) if public_names else dir(module)
+        for name in candidates:
+            if not isinstance(name, str) or name.startswith("__"):
+                continue
+            if name in globals():
+                continue
+            globals()[name] = ModuleType.__getattribute__(module, name)
+
+
+if _CLI_DISABLE_LAZY_IMPORTS:
+    _prime_eager_cli_exports()
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Proxy the real CLI entrypoint through lazy module loading."""
+
+    entrypoint = cast("Callable[[list[str] | None], int]", _resolve_proxy_attr("main"))
+    return entrypoint(argv)
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

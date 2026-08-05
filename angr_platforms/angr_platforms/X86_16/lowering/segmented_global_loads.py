@@ -20,7 +20,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from enum import Enum
 from types import SimpleNamespace
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -41,14 +41,17 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimStruct, SimType, SimTypeChar, SimTypeLong, SimTypePointer, SimTypeShort, TypeRef
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
+from capstone import CS_AC_READ
 from capstone.x86_const import (
     X86_INS_ADD,
     X86_INS_CALL,
+    X86_INS_CMP,
     X86_INS_CWD,
     X86_INS_IDIV,
     X86_INS_INC,
     X86_INS_LCALL,
     X86_INS_MOV,
+    X86_INS_PUSH,
     X86_INS_SAL,
     X86_INS_SHL,
     X86_OP_IMM,
@@ -64,18 +67,58 @@ from capstone.x86_const import (
 from ..alias.domains import register_domain_for_name
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616, _same_c_expression_8616
 from ..callsite_summary import CallsiteSummary8616, build_callsite_summary_inventory_8616
+from ..cod_extract import CODProcMetadata
+from ..codegen_metadata import (
+    GlobalDeclarationArrayExtent8616,
+    GlobalDeclarationArrayLength8616,
+)
 from ..ir.core import MemSpace
 from ..pipeline.errors import PipelineHardError
+from ..semantics.direct_call_result_storage import recover_direct_call_result_storage_facts_8616
 from ..structuring.simple_loop_recovery import InsnSummary8616, _function_instruction_summaries_8616
+from ..widening.global_object_layout import GlobalObjectLayout8616, GlobalObjectLayoutEvidence8616
 from ..widening.segmented_load_identity import (
     SegmentedLoadIdentity8616,
     segmented_load_tags_8616,
+)
+from .annotated_global_refs import collect_annotated_direct_global_refs_8616
+from .callee_global_object_interface import (
+    materialize_callee_global_object_interface_8616,
+)
+from .callee_global_object_sources import (
+    collect_project_global_object_source_evidence_8616,
+)
+from .cod_global_identity import (
+    CodGlobalStorageSurface8616,
+    reconcile_recorded_cod_global_storage_identities_8616,
+    record_cod_global_storage_identities_8616,
 )
 from .global_declarations import (
     NamedAggregateDeclarationCType8616,
     ctype_for_global_width_8616,
     initialize_global_declaration_specs_8616,
+    merge_global_array_extents_8616,
+    reconcile_strong_global_declaration_specs_8616,
     record_global_declaration_spec_8616,
+    replace_global_declaration_spec_from_stronger_typed_evidence_8616,
+)
+from .global_symbol_names import (
+    DSGlobalSymbolNameFact8616,
+    reconcile_ds_global_local_declarations_8616,
+    synchronize_ds_global_symbol_names_8616,
+)
+from .indexed_global_evidence import (
+    IndexedSegmentedGlobalEvidence8616,
+    merge_global_object_source_evidence_8616,
+)
+from .near_pointer_argument import (
+    NearPointerArgumentFact8616,
+    collect_near_pointer_argument_facts_8616,
+)
+from .project_global_object_layout import (
+    DirectGlobalStorageEvidenceBoundary8616,
+    collect_project_direct_global_object_layout_evidence_8616,
+    collect_project_global_object_layout_evidence_8616,
 )
 from .real_mode_linear import (
     _callee_name_for_direct_stack_move_8616,
@@ -86,6 +129,12 @@ from .real_mode_linear import (
     _direct_stack_move_segment_name_8616,
     _direct_zero_arg_call_before_8616,
     _stack_mem_operand_offset_width_8616,
+)
+from .runtime_memory_helpers import MemoryPointerHelper8616, memory_pointer_helper_8616
+from .runtime_segment_access import runtime_segment_access_offset_expr_8616
+from .segment_access_policy import (
+    may_lower_codegen_access_to_entry_ds_object_8616,
+    may_lower_codegen_address_to_entry_ds_object_8616,
 )
 from .segment_register_state import runtime_segment_name_for_variable_8616
 from .storage_identity_facts import (
@@ -102,6 +151,9 @@ SyntheticGlobalsBoundary8616: TypeAlias = object
 CodMetadataBoundary8616: TypeAlias = object | None
 DwordUpdateMatch8616: TypeAlias = tuple[CAssignment, int] | None
 DwordStorePairMatch8616: TypeAlias = tuple[CAssignment, bool] | None
+_ANONYMOUS_DIRECT_SCALAR_CLASSIFIED_TAG_8616 = "inertia_x86_16_anonymous_direct_scalar_classified"
+_ANONYMOUS_DIRECT_SCALAR_MATERIALIZED_TAG_8616 = "inertia_x86_16_anonymous_direct_scalar_materialized"
+_DIRECT_CALL_RETURN_STORE_EVIDENCE_TAG_8616 = "inertia_x86_16_direct_call_return_store_evidence"
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +172,7 @@ class CapstoneOperandView8616:
 
     raw: object
     kind: int | None
+    access: int | None
     register: int | None
     size: int | None
     immediate: int | None
@@ -149,6 +202,7 @@ class _CapstoneOperandBoundary8616(typing.Protocol):
     """Dynamic fields exposed by a third-party Capstone x86 operand."""
 
     type: object
+    access: object
     reg: object
     size: object
     imm: object
@@ -172,6 +226,14 @@ class _CapstoneWrapperBoundary8616(typing.Protocol):
 class _TaggedCNodeBoundary8616(typing.Protocol):
     """Dynamic tags field exposed by third-party angr C AST nodes."""
 
+    tags: object
+
+
+class _CAssignmentBoundary8616(typing.Protocol):
+    """Typed fields consumed from an angr C assignment after shape validation."""
+
+    lhs: object
+    rhs: object
     tags: object
 
 
@@ -236,8 +298,11 @@ class _CodegenStackAggregateFactBoundary8616(typing.Protocol):
     """Owned Lowering metadata used to survive later CFunction rebuilds."""
 
     _inertia_consumed_direct_global_boolean_carrier_ins_addrs_8616: frozenset[int]
-    _inertia_global_declaration_specs_8616: tuple[tuple[str, str, int | None], ...]
+    _inertia_global_declaration_specs_8616: tuple[
+        tuple[str, str, GlobalDeclarationArrayLength8616], ...
+    ]
     _inertia_named_global_aggregate_declaration_reconcile_stats_8616: NamedGlobalAggregateTypeReplayStats8616
+    _inertia_named_global_aggregate_expression_replay_stats_8616: NamedGlobalAggregateExpressionReplayStats8616
     _inertia_named_global_aggregate_type_facts_8616: tuple[NamedGlobalAggregateTypeFact8616, ...]
     _inertia_named_global_aggregate_type_replay_stats_8616: NamedGlobalAggregateTypeReplayStats8616
     _inertia_stack_aggregate_type_facts_8616: tuple[StackAggregateTypeFact8616, ...]
@@ -310,6 +375,10 @@ def _capstone_instruction_view_8616(wrapper: object) -> CapstoneInstructionView8
         except AttributeError:
             operand_kind = None
         try:
+            operand_access = operand_boundary.access
+        except AttributeError:
+            operand_access = None
+        try:
             operand_register = operand_boundary.reg
         except AttributeError:
             operand_register = None
@@ -325,6 +394,7 @@ def _capstone_instruction_view_8616(wrapper: object) -> CapstoneInstructionView8
             CapstoneOperandView8616(
                 raw=operand,
                 kind=_optional_int_boundary_8616(operand_kind),
+                access=_optional_int_boundary_8616(operand_access),
                 register=_optional_int_boundary_8616(operand_register),
                 size=_optional_int_boundary_8616(operand_size),
                 immediate=_optional_int_boundary_8616(operand_immediate),
@@ -491,30 +561,6 @@ class SegmentLoadHelper8616(Enum):
         return 2
 
 
-class MemoryPointerHelper8616(Enum):
-    """Memory pointer helper names and their dereference widths."""
-
-    MEM_U8 = "MEM_U8"
-    MEM_U16 = "MEM_U16"
-    MEM_U32 = "MEM_U32"
-
-    @property
-    def helper_name(self) -> str:
-        """Return the generated helper function name."""
-
-        return self.value
-
-    @property
-    def width(self) -> int:
-        """Return the byte width dereferenced by the helper."""
-
-        if self is MemoryPointerHelper8616.MEM_U8:
-            return 1
-        if self is MemoryPointerHelper8616.MEM_U32:
-            return 4
-        return 2
-
-
 class SegmentPointerHelper8616(Enum):
     """Segment pointer helper names used by generated C expressions."""
 
@@ -569,16 +615,6 @@ class DwordGlobalZeroTestMaterializationRecord8616:
 
 
 @dataclass(frozen=True, slots=True)
-class IndexedSegmentedGlobalEvidence8616:
-    """Indexed global load evidence keyed by base offset and width."""
-
-    base_offset: int
-    name: str
-    relative_disp: int
-    width: int
-
-
-@dataclass(frozen=True, slots=True)
 class IndexedSegmentedGlobalMaterializationRecord8616:
     """Cumulative typed evidence consumed by indexed-global materialization."""
 
@@ -598,13 +634,23 @@ class IndexedGlobalReadCarrierMaterializationRecord8616:
     failure_count: int
 
 
+class AggregateTypeIdentityStrength8616(Enum):
+    """Evidence scope supporting one recovered aggregate type identity."""
+
+    FUNCTION_LOCAL = "function-local"
+    PROJECT_COPY_FAMILY = "project-copy-family"
+
+
 @dataclass(frozen=True, slots=True)
 class NamedGlobalAggregateTypeFact8616:
     """Proven named global aggregate that must survive codegen rebuilds."""
 
     global_name: str
     struct_type: SimStruct
-    array_len: int
+    array_len: GlobalDeclarationArrayLength8616
+    identity_strength: AggregateTypeIdentityStrength8616 = (
+        AggregateTypeIdentityStrength8616.FUNCTION_LOCAL
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -616,6 +662,19 @@ class NamedGlobalAggregateTypeReplayStats8616:
     classified_fact_count: int
     materialized_count: int
     failure_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class NamedGlobalAggregateExpressionReplayStats8616:
+    """Closed evidence loop for restoring named aggregate expression types."""
+
+    raw_fact_count: int
+    normalized_fact_count: int
+    classified_fact_count: int
+    materialized_count: int
+    failure_count: int
+    field_projection_count: int
+    changed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -689,6 +748,14 @@ class IndexedSegmentedGlobalStackStore8616:
     ins_addr: int
 
 
+class IndexedSegmentedGlobalLoadConsumer8616(Enum):
+    """Binary destination class for one indexed segmented-global load."""
+
+    REGISTER = "register"
+    DIRECT_STACK = "direct_stack"
+    COMPARISON = "comparison"
+
+
 @dataclass(frozen=True, slots=True)
 class IndexedSegmentedGlobalLoadSiteEvidence8616:
     """Binary-proven indexed DS load site and its stack-index provenance."""
@@ -701,6 +768,7 @@ class IndexedSegmentedGlobalLoadSiteEvidence8616:
     stack_stores: tuple[IndexedSegmentedGlobalStackStore8616, ...] = ()
     destination_register: str | None = None
     index_stack_width: int = 2
+    consumer: IndexedSegmentedGlobalLoadConsumer8616 = IndexedSegmentedGlobalLoadConsumer8616.REGISTER
 
 
 @dataclass(frozen=True, slots=True)
@@ -760,6 +828,7 @@ class DirectSegmentedGlobalStoreEvidence8616:
     width: int
     space: MemSpace
     ins_addr: int
+    immediate_value: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -990,8 +1059,13 @@ def materialize_named_segmented_global_loads_8616(
         summaries
     )
     direct_refs = _merge_direct_global_symbol_refs_8616(
+        _sidecar_free_project_direct_global_scalar_refs_8616(project, cod_metadata),
         _collect_direct_global_symbol_refs_8616(cod_metadata, summaries),
         _collect_synthetic_direct_global_symbol_refs_8616(synthetic_globals, summaries),
+        tuple(
+            DirectGlobalSymbolRef8616(ref.offset, ref.name, 0, ref.width, 0)
+            for ref in collect_annotated_direct_global_refs_8616(function, summaries)
+        ),
         _materialized_sidecar_free_dword_update_refs_8616(codegen, summaries),
         _sidecar_free_boolean_store_refs_8616(direct_boolean_stores),
     )
@@ -1055,7 +1129,7 @@ def materialize_named_segmented_global_loads_8616(
                     zero_test_materialized_count += 1
             stats.direct_symbol_materialized_count += 1
             stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
-            return zero_test_expr
+            return _with_replacement_tags_8616(node, zero_test_expr)
         pair_expr = _materialize_direct_global_load_pair_expr_8616(
             codegen,
             node,
@@ -1065,10 +1139,35 @@ def materialize_named_segmented_global_loads_8616(
             dirty_assignments=dirty_assignments,
         )
         if pair_expr is not None:
-            return pair_expr
+            return _with_replacement_tags_8616(node, pair_expr)
         if isinstance(node, CVariable):
+            if isinstance(
+                node.tags.get(_ANONYMOUS_DIRECT_SCALAR_MATERIALIZED_TAG_8616),
+                SegmentedLoadIdentity8616,
+            ):
+                return node
+            identity = _direct_memory_cvar_identity_8616(node)
+            anonymous_evidence = anonymous_by_offset.get(identity) if identity is not None else None
             direct_ref = _direct_ref_for_cvariable_8616(node, direct_by_offset)
             if direct_ref is not None:
+                direct_load_evidence = anonymous_by_offset.get(
+                    (direct_ref.offset & 0xFFFF, direct_ref.width)
+                )
+                direct_instruction_addrs = (
+                    frozenset({direct_load_evidence.ins_addr})
+                    if direct_load_evidence is not None
+                    else frozenset()
+                )
+                if not may_lower_codegen_access_to_entry_ds_object_8616(
+                    codegen,
+                    node,
+                    instruction_addrs=direct_instruction_addrs,
+                    segment_register="ds",
+                    offset=direct_ref.offset,
+                    width=direct_ref.width,
+                ):
+                    stats.record(SegmentedGlobalLoadDecision8616.REFUSED_SEGMENT_MISMATCH)
+                    return node
                 expr = _make_direct_global_symbol_or_projection_expr_8616(
                     codegen,
                     direct_ref,
@@ -1078,9 +1177,7 @@ def materialize_named_segmented_global_loads_8616(
                 if expr is not None:
                     stats.direct_symbol_materialized_count += 1
                     stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
-                    return expr
-            identity = _direct_memory_cvar_identity_8616(node)
-            anonymous_evidence = anonymous_by_offset.get(identity) if identity is not None else None
+                    return _with_replacement_tags_8616(node, expr)
             if anonymous_evidence is not None:
                 node_id = id(node)
                 if node_id not in anonymous_classified_nodes:
@@ -1089,11 +1186,19 @@ def materialize_named_segmented_global_loads_8616(
                     stats.classified_fact_count += 1
                 expr = _make_direct_segmented_global_load_expr_8616(project, codegen, anonymous_evidence)
                 if expr is not None:
-                    if node_id not in anonymous_materialized_nodes:
-                        anonymous_materialized_nodes.add(node_id)
-                        stats.anonymous_direct_materialized_count += 1
-                    stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
-                    return expr
+                    expr.tags[_ANONYMOUS_DIRECT_SCALAR_CLASSIFIED_TAG_8616] = SegmentedLoadIdentity8616(
+                        space=anonymous_evidence.space,
+                        offset=anonymous_evidence.offset & 0xFFFF,
+                        width=anonymous_evidence.width,
+                        region=cfunc.addr,
+                    )
+                    resolved_expr = transform(expr)
+                    if resolved_expr is expr:
+                        if node_id not in anonymous_materialized_nodes:
+                            anonymous_materialized_nodes.add(node_id)
+                            stats.anonymous_direct_materialized_count += 1
+                        stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
+                    return resolved_expr
             return node
         indexed_projection = _make_dword_scalar_indexed_subword_projection_expr_8616(
             codegen,
@@ -1103,7 +1208,7 @@ def materialize_named_segmented_global_loads_8616(
         if indexed_projection is not None:
             stats.direct_symbol_materialized_count += 1
             stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
-            return indexed_projection
+            return _with_replacement_tags_8616(node, indexed_projection)
         if not isinstance(node, CFunctionCall):
             return node
         helper = _segment_load_helper_8616(node)
@@ -1120,6 +1225,15 @@ def materialize_named_segmented_global_loads_8616(
             return node
         direct_ref = direct_by_offset.get((offset & 0xFFFF, helper.width))
         if direct_ref is not None:
+            if not may_lower_codegen_access_to_entry_ds_object_8616(
+                codegen,
+                node,
+                segment_register="ds",
+                offset=offset,
+                width=helper.width,
+            ):
+                stats.record(SegmentedGlobalLoadDecision8616.REFUSED_SEGMENT_MISMATCH)
+                return node
             expr = _make_direct_global_symbol_or_projection_expr_8616(
                 codegen,
                 direct_ref,
@@ -1129,8 +1243,14 @@ def materialize_named_segmented_global_loads_8616(
             if expr is not None:
                 stats.direct_symbol_materialized_count += 1
                 stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
-                return expr
-        if not _is_ds_segment_expr_8616(project, args[0]):
+                return _with_replacement_tags_8616(node, expr)
+        if not _is_ds_segment_expr_8616(project, args[0]) or not may_lower_codegen_access_to_entry_ds_object_8616(
+            codegen,
+            node,
+            segment_register="ds",
+            offset=offset,
+            width=helper.width,
+        ):
             stats.record(SegmentedGlobalLoadDecision8616.REFUSED_SEGMENT_MISMATCH)
             return node
         if helper.width == 1:
@@ -1145,7 +1265,41 @@ def materialize_named_segmented_global_loads_8616(
                 if expr is not None:
                     stats.direct_symbol_materialized_count += 1
                     stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
-                    return expr
+                    return _with_replacement_tags_8616(node, expr)
+        anonymous_evidence = _unambiguous_anonymous_direct_scalar_evidence_8616(
+            anonymous_by_offset,
+            offset,
+            helper.width,
+        )
+        if anonymous_evidence is not None:
+            node_id = id(node)
+            already_classified = isinstance(
+                node.tags.get(_ANONYMOUS_DIRECT_SCALAR_CLASSIFIED_TAG_8616),
+                SegmentedLoadIdentity8616,
+            )
+            if not already_classified and node_id not in anonymous_classified_nodes:
+                anonymous_classified_nodes.add(node_id)
+                stats.anonymous_direct_classified_fact_count += 1
+                stats.classified_fact_count += 1
+            name = f"g_{offset & 0xFFFF:04X}"
+            _record_global_declaration_8616(codegen, helper.width, name)
+            if node_id not in anonymous_materialized_nodes:
+                anonymous_materialized_nodes.add(node_id)
+                stats.anonymous_direct_materialized_count += 1
+            stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
+            tags = dict(node.tags)
+            tags[_ANONYMOUS_DIRECT_SCALAR_MATERIALIZED_TAG_8616] = SegmentedLoadIdentity8616(
+                space=anonymous_evidence.space,
+                offset=offset & 0xFFFF,
+                width=helper.width,
+                region=cfunc.addr,
+            )
+            return CVariable(
+                SimMemoryVariable(offset & 0xFFFF, helper.width, name=name, region=cfunc.addr),
+                variable_type=_type_for_width_8616(helper.width),
+                codegen=codegen,
+                tags=tags,
+            )
         item = evidence_by_offset.get(offset & 0xFFFF)
         if item is None or item.width < helper.width:
             stats.record(SegmentedGlobalLoadDecision8616.REFUSED_OFFSET_MISMATCH)
@@ -1163,7 +1317,7 @@ def materialize_named_segmented_global_loads_8616(
             created[key] = cvar
             _record_global_declaration_8616(codegen, helper.width, _sanitize_identifier_8616(item.name))
         stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
-        return cvar
+        return _with_replacement_tags_8616(node, cvar)
 
     def should_process_child(current: object, attr: str) -> bool:
         if isinstance(current, CAssignment) and attr == "lhs":
@@ -1242,10 +1396,27 @@ def materialize_direct_global_symbol_stores_8616(
         summaries
     )
     direct_refs = _merge_direct_global_symbol_refs_8616(
+        _sidecar_free_project_direct_global_scalar_refs_8616(project, cod_metadata),
         _collect_direct_global_symbol_refs_8616(cod_metadata, summaries),
         _collect_synthetic_direct_global_symbol_refs_8616(synthetic_globals, summaries),
+        tuple(
+            DirectGlobalSymbolRef8616(ref.offset, ref.name, 0, ref.width, 0)
+            for ref in collect_annotated_direct_global_refs_8616(function, summaries)
+        ),
         _materialized_sidecar_free_dword_update_refs_8616(codegen, summaries),
         _sidecar_free_boolean_store_refs_8616(direct_boolean_stores),
+    )
+    record_cod_global_storage_identities_8616(
+        codegen,
+        cod_metadata if isinstance(cod_metadata, CODProcMetadata) else None,
+        tuple(
+            CodGlobalStorageSurface8616(
+                offset=(ref.offset - ref.relative_disp) & 0xFFFF,
+                width=ref.width,
+                canonical_name=_sanitize_identifier_8616(ref.name),
+            )
+            for ref in direct_refs
+        ),
     )
     codegen._inertia_direct_global_symbol_store_spans_8616 = tuple(
         (item.offset & 0xFFFF, max(1, int(item.width))) for item in direct_refs
@@ -1278,8 +1449,51 @@ def materialize_direct_global_symbol_stores_8616(
         project=project,
         stats=stats,
     )
+    name_facts = _direct_global_symbol_name_facts_8616(direct_refs, direct_updates)
+    if synchronize_ds_global_symbol_names_8616(codegen, name_facts):
+        changed = True
+    if reconcile_ds_global_local_declarations_8616(codegen, name_facts):
+        changed = True
+    if reconcile_recorded_cod_global_storage_identities_8616(codegen):
+        changed = True
     _store_stats_8616(codegen, stats)
     return changed
+
+
+def _direct_global_symbol_name_facts_8616(
+    direct_refs: tuple[DirectGlobalSymbolRef8616, ...],
+    direct_updates: tuple[DirectGlobalUpdateEvidence8616, ...],
+) -> tuple[DSGlobalSymbolNameFact8616, ...]:
+    """Join named references and update-only facts into exact DS identities."""
+    name_facts_by_storage = {
+        (fact.offset, fact.width): fact
+        for fact in (
+            DSGlobalSymbolNameFact8616(
+                offset=(
+                    (ref.offset - ref.relative_disp) & 0xFFFF
+                    if ref.max_relative_disp > 0
+                    and ref.relative_disp % ref.width == 0
+                    else ref.offset & 0xFFFF
+                ),
+                width=ref.width,
+                name=_sanitize_identifier_8616(ref.name),
+            )
+            for ref in direct_refs
+        )
+    }
+    for update in direct_updates:
+        key = (update.offset & 0xFFFF, update.width)
+        name_facts_by_storage.setdefault(
+            key,
+            DSGlobalSymbolNameFact8616(
+                offset=key[0],
+                width=key[1],
+                name=f"g_{key[0]:04X}",
+            ),
+        )
+    return tuple(
+        name_facts_by_storage[key] for key in sorted(name_facts_by_storage)
+    )
 
 
 def materialize_direct_global_symbol_stores_from_evidence_8616(
@@ -1311,6 +1525,7 @@ def materialize_direct_global_symbol_stores_from_evidence_8616(
     )
     stats.anonymous_direct_store_raw_fact_count = len(anonymous_direct_stores)
     stats.anonymous_direct_store_normalized_fact_count = len(normalized_anonymous_stores)
+    codegen._inertia_required_direct_segmented_global_stores_8616 = normalized_anonymous_stores
     anonymous_result = _materialize_anonymous_direct_segmented_global_stores_8616(
         tuple(_cfunc_roots_8616(cfunc)),
         project,
@@ -1350,14 +1565,22 @@ def materialize_direct_global_symbol_stores_from_evidence_8616(
         return changed
     direct_by_offset = {(item.offset & 0xFFFF, item.width): item for item in direct_refs}
     direct_update_by_offset: dict[tuple[int, int], list[DirectGlobalUpdateEvidence8616]] = {}
-    for item in direct_updates:
-        direct_update_by_offset.setdefault((item.offset & 0xFFFF, item.width), []).append(item)
+    for update_evidence in direct_updates:
+        direct_update_by_offset.setdefault(
+            (update_evidence.offset & 0xFFFF, update_evidence.width), []
+        ).append(update_evidence)
     direct_boolean_by_offset: dict[tuple[int, int], list[DirectGlobalBooleanStoreEvidence8616]] = {}
-    for item in direct_boolean_stores:
-        direct_boolean_by_offset.setdefault((item.dest_offset & 0xFFFF, item.dest_width), []).append(item)
+    for boolean_evidence in direct_boolean_stores:
+        direct_boolean_by_offset.setdefault(
+            (boolean_evidence.dest_offset & 0xFFFF, boolean_evidence.dest_width),
+            [],
+        ).append(boolean_evidence)
     direct_call_return_by_offset: dict[tuple[int, int], list[DirectGlobalCallReturnStoreEvidence8616]] = {}
-    for item in direct_call_return_stores:
-        direct_call_return_by_offset.setdefault((item.offset & 0xFFFF, item.width), []).append(item)
+    for call_return_evidence in direct_call_return_stores:
+        direct_call_return_by_offset.setdefault(
+            (call_return_evidence.offset & 0xFFFF, call_return_evidence.width),
+            [],
+        ).append(call_return_evidence)
     for root in tuple(_cfunc_roots_8616(cfunc)):
         root_changed = False
         if isinstance(root, CStatements) and _materialize_direct_global_dword_update_from_low_word_high_bytes_8616(
@@ -1575,10 +1798,46 @@ def _materialize_anonymous_direct_segmented_global_stores_8616(
                     item
                     for item in candidates
                     if identity == (item.offset & 0xFFFF, item.width)
+                    or (
+                        identity is not None
+                        and identity[0] == (item.offset & 0xFFFF)
+                        and identity[1] > item.width
+                        and assignment is not None
+                        and (
+                            isinstance(assignment.lhs, CFunctionCall)
+                            or _wide_call_return_store_covers_anonymous_evidence_8616(
+                                assignment,
+                                item,
+                            )
+                        )
+                    )
                 )
                 if assignment is not None and len(exact_wide) == 1:
                     evidence = exact_wide[0]
                     classified.add(evidence)
+                    if (
+                        identity is not None
+                        and identity[1] > evidence.width
+                        and not isinstance(assignment.lhs, CFunctionCall)
+                    ):
+                        materialized.add(evidence)
+                        process_statements(statement)
+                        index += 1
+                        continue
+                    if evidence.immediate_value is not None:
+                        immediate_value = evidence.immediate_value & ((1 << (evidence.width * 8)) - 1)
+                        rhs_is_exact_scalar = (
+                            isinstance(assignment.rhs, CConstant)
+                            and assignment.rhs.reference_values is None
+                            and _constant_int_8616(assignment.rhs) == immediate_value
+                        )
+                        if not rhs_is_exact_scalar:
+                            assignment.rhs = CConstant(
+                                immediate_value,
+                                _type_for_width_8616(evidence.width),
+                                codegen=codegen,
+                            )
+                            changed = True
                     if _anonymous_direct_store_lvalue_matches_evidence_8616(
                         project,
                         assignment.lhs,
@@ -1592,6 +1851,7 @@ def _materialize_anonymous_direct_segmented_global_stores_8616(
                             offset=evidence.offset,
                             width=evidence.width,
                             space=evidence.space,
+                            source_insn=evidence.ins_addr,
                         )
                         if replacement is not None:
                             assignment.lhs = replacement
@@ -1655,13 +1915,14 @@ def _materialize_anonymous_direct_segmented_global_stores_8616(
                                 offset=evidence.offset,
                                 width=evidence.width,
                                 space=evidence.space,
+                                source_insn=evidence.ins_addr,
                             )
                             if project is not None
-                            and _anonymous_direct_store_byte_source_is_safe_8616(
-                                low_rhs
-                            )
-                            and _anonymous_direct_store_byte_source_is_safe_8616(
-                                high_rhs
+                            and (
+                                word_source is not None
+                                and not _rhs_has_obvious_side_effect_8616(word_source)
+                                or _anonymous_direct_store_byte_source_is_safe_8616(low_rhs)
+                                and _anonymous_direct_store_byte_source_is_safe_8616(high_rhs)
                             )
                             else None
                         )
@@ -1795,7 +2056,7 @@ def _anonymous_direct_store_lvalue_matches_evidence_8616(
         return False
     runtime_name = runtime_segment_name_for_variable_8616(segment.variable)
     if runtime_name is not None:
-        return runtime_name == evidence.space.value
+        return bool(runtime_name == evidence.space.value)
     raw_name = segment.name or segment.variable.name
     if isinstance(raw_name, str) and raw_name.lower() == evidence.space.value:
         return True
@@ -1866,6 +2127,65 @@ def _sidecar_free_dword_update_refs_8616(
             )
         )
     return tuple(refs)
+
+
+def _collect_project_direct_global_width_evidence_8616(
+    project: object,
+    function: object,
+) -> tuple[DirectGlobalStorageEvidenceBoundary8616, ...]:
+    """Collect exact dword update and direct call-result extents."""
+    summaries = _function_instruction_summaries_8616(project, function)
+    update_refs = tuple(
+        ref
+        for ref in _sidecar_free_dword_update_refs_8616(summaries)
+        if ref.width >= 4 and ref.relative_disp == 0
+    )
+    instructions = _direct_global_update_ordered_insns_8616(project, function)
+    call_result_facts = recover_direct_call_result_storage_facts_8616(
+        _capstone_instruction_view_8616(instruction) for instruction in instructions
+    )
+    return (*update_refs, *call_result_facts)
+
+
+def _project_direct_global_scalar_refs_8616(
+    project: ProjectBoundary8616,
+) -> tuple[DirectGlobalSymbolRef8616, ...]:
+    """Create consistent generic scalar refs from project-wide wide extents."""
+    evidence = collect_project_direct_global_object_layout_evidence_8616(
+        project,
+        (_collect_project_direct_global_width_evidence_8616,),
+    )
+    if evidence.classified_fact_count > 0 and evidence.materialized_count == 0:
+        raise PipelineHardError(
+            "project direct-global facts classified without object materialization "
+            f"raw={evidence.raw_fact_count} normalized={evidence.normalized_fact_count} "
+            f"classified={evidence.classified_fact_count} failures={evidence.failure_count}"
+        )
+
+    refs: list[DirectGlobalSymbolRef8616] = []
+    for layout in evidence.layouts:
+        offset = layout.address.offset & 0xFFFF
+        width = layout.address.size
+        name = f"g_{offset:04X}"
+        refs.append(DirectGlobalSymbolRef8616(offset, name, 0, width, 0))
+        if width == 4:
+            refs.extend(
+                (
+                    DirectGlobalSymbolRef8616(offset, name, 0, 2, 2),
+                    DirectGlobalSymbolRef8616((offset + 2) & 0xFFFF, name, 2, 2, 2),
+                )
+            )
+    return tuple(refs)
+
+
+def _sidecar_free_project_direct_global_scalar_refs_8616(
+    project: ProjectBoundary8616,
+    cod_metadata: CodMetadataBoundary8616,
+) -> tuple[DirectGlobalSymbolRef8616, ...]:
+    """Use generic project identities only without stronger COD object refs."""
+    if _cod_direct_global_refs_8616(cod_metadata):
+        return ()
+    return _project_direct_global_scalar_refs_8616(project)
 
 
 def _materialized_sidecar_free_dword_update_refs_8616(
@@ -2110,6 +2430,47 @@ def _merged_statement_tags_8616(*nodes: object) -> dict[str, object]:
     return merged
 
 
+def _direct_call_return_store_tags_8616(
+    evidence: DirectGlobalCallReturnStoreEvidence8616,
+    *nodes: object,
+) -> dict[str, object]:
+    """Preserve the typed wide-store proof on a canonical assignment."""
+    tags = _merged_statement_tags_8616(*nodes)
+    tags["ins_addr"] = evidence.source_call_ins_addr
+    tags[_DIRECT_CALL_RETURN_STORE_EVIDENCE_TAG_8616] = evidence
+    return tags
+
+
+def _wide_call_return_store_covers_anonymous_evidence_8616(
+    assignment: CAssignment,
+    evidence: DirectSegmentedGlobalStoreEvidence8616,
+) -> bool:
+    """Prove that a canonical wide call-result store covers one raw store fact."""
+    tags = assignment.tags
+    if not isinstance(tags, dict):
+        return False
+    wide_evidence = tags.get(_DIRECT_CALL_RETURN_STORE_EVIDENCE_TAG_8616)
+    if not isinstance(wide_evidence, DirectGlobalCallReturnStoreEvidence8616):
+        return False
+    if evidence.space is not MemSpace.DS or evidence.ins_addr not in wide_evidence.store_ins_addrs:
+        return False
+    wide_offsets = {
+        (wide_evidence.offset + index) & 0xFFFF
+        for index in range(wide_evidence.width)
+    }
+    required_offsets = {
+        (evidence.offset + index) & 0xFFFF
+        for index in range(evidence.width)
+    }
+    return required_offsets.issubset(wide_offsets)
+
+
+def _with_replacement_tags_8616(source: object, replacement: CExpression) -> CExpression:
+    """Preserve exact C-AST provenance across a Types/Lowering replacement."""
+    replacement.tags = _merged_statement_tags_8616(source, replacement)
+    return replacement
+
+
 def _materialize_nested_direct_global_call_return_store_8616(
     root: CStatements,
     codegen: CodegenBoundary8616,
@@ -2256,7 +2617,11 @@ def _materialize_nested_direct_global_call_return_store_8616(
             lhs,
             call,
             codegen=codegen,
-            tags=_merged_statement_tags_8616(call_statement, call),
+            tags=_direct_call_return_store_tags_8616(
+                evidence,
+                call_statement,
+                call,
+            ),
         )
         del call_group.statements[call_index]
         store_group.statements[store_start : store_end + 1] = [
@@ -3475,7 +3840,10 @@ def _direct_global_dword_update_high_byte_window_8616(
     return None
 
 
-def _direct_global_dword_update_removable_window_end_8616(statements: list, high_high_index: int) -> int:
+def _direct_global_dword_update_removable_window_end_8616(
+    statements: list[object],
+    high_high_index: int,
+) -> int:
     last_index = high_high_index
     # MS C 16-bit arithmetic commonly emits a long, pure flag-reconstruction
     # suffix after a split dword update.  The later liveness gate below proves
@@ -3521,7 +3889,7 @@ def _direct_global_dword_update_removable_window_end_8616(statements: list, high
 
 def _direct_global_dword_update_gap_is_removable_8616(
     _root: CStatements,
-    statements: list,
+    statements: list[object],
     first_index: int,
     last_index: int,
 ) -> bool:
@@ -3789,7 +4157,11 @@ def _match_direct_global_dword_store_pair_8616(
         return None
     lhs = _make_direct_global_symbol_expr_8616(codegen, dword_ref, 4)
     consume_previous = False
-    call_return_evidence = None
+    call_return_evidence = _direct_global_call_return_store_evidence_for_pair_8616(
+        direct_call_return_by_offset.get((low_addr & 0xFFFF, 4), ()),
+        low_assignment,
+        high_assignment,
+    )
     rhs = _make_wide_call_return_dword_store_rhs_8616(
         codegen,
         previous_stmt,
@@ -3799,11 +4171,6 @@ def _match_direct_global_dword_store_pair_8616(
     if rhs is not None:
         consume_previous = True
     else:
-        call_return_evidence = _direct_global_call_return_store_evidence_for_pair_8616(
-            direct_call_return_by_offset.get((low_addr & 0xFFFF, 4), ()),
-            low_assignment,
-            high_assignment,
-        )
         rhs = _make_direct_global_call_return_store_rhs_8616(
             codegen,
             call_return_evidence,
@@ -3827,7 +4194,16 @@ def _match_direct_global_dword_store_pair_8616(
     stats.direct_symbol_materialized_count += 1
     stats.direct_symbol_store_materialized_count += 1
     stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
-    return CAssignment(lhs, rhs, codegen=codegen, tags=low_assignment.tags), consume_previous
+    tags = (
+        _direct_call_return_store_tags_8616(
+            call_return_evidence,
+            low_assignment,
+            high_assignment,
+        )
+        if call_return_evidence is not None
+        else low_assignment.tags
+    )
+    return CAssignment(lhs, rhs, codegen=codegen, tags=tags), consume_previous
 
 
 def _make_wide_call_return_dword_store_rhs_8616(
@@ -4148,7 +4524,11 @@ def _copy_key_used_outside_ids_8616(root: CStatements, skip_ids: set[int], key: 
     return False
 
 
-def _copy_key_used_outside_ids_in_statement_list_8616(statements: list, skip_ids: set[int], key: object) -> bool:
+def _copy_key_used_outside_ids_in_statement_list_8616(
+    statements: list[object],
+    skip_ids: set[int],
+    key: object,
+) -> bool:
     debug_enabled = bool(os.environ.get("INERTIA_DEBUG_SEGMENTED_GLOBAL_LOADS"))
     for stmt in statements:
         for node in _iter_c_nodes_deep_8616(stmt):
@@ -4215,7 +4595,7 @@ def _make_direct_global_dword_store_rhs_8616(
     high_constant = _constant_int_8616(high_rhs)
     if low_constant is not None and high_constant is not None:
         value = (int(low_constant) & 0xFFFF) | ((int(high_constant) & 0xFFFF) << 16)
-        return CConstant(value, SimTypeLong(False), codegen=codegen)
+        return cast(object, CConstant(value, SimTypeLong(False), codegen=codegen))
     if high_constant == 0:
         return low_rhs
     high_shifted = CBinaryOp(
@@ -4224,7 +4604,7 @@ def _make_direct_global_dword_store_rhs_8616(
         CConstant(16, SimTypeShort(False), codegen=codegen),
         codegen=codegen,
     )
-    return CBinaryOp("Or", low_rhs, high_shifted, codegen=codegen)
+    return cast(object, CBinaryOp("Or", low_rhs, high_shifted, codegen=codegen))
 
 
 def _match_direct_global_word_store_pair_8616(
@@ -4430,7 +4810,7 @@ def _make_dword_scalar_subword_store_rhs_8616(
             CConstant(0xFFFF0000, SimTypeLong(False), codegen=codegen),
             codegen=codegen,
         )
-        return CBinaryOp("Or", preserved, word_value, codegen=codegen)
+        return cast(object, CBinaryOp("Or", preserved, word_value, codegen=codegen))
     if int(relative_disp) == 2:
         preserved = CBinaryOp(
             "And",
@@ -4444,7 +4824,7 @@ def _make_dword_scalar_subword_store_rhs_8616(
             CConstant(16, SimTypeShort(False), codegen=codegen),
             codegen=codegen,
         )
-        return CBinaryOp("Or", preserved, shifted, codegen=codegen)
+        return cast(object, CBinaryOp("Or", preserved, shifted, codegen=codegen))
     return None
 
 
@@ -4461,7 +4841,10 @@ def _direct_global_word_update_rhs_from_byte_pair_8616(
         return None
     word_constant = _constant_int_8616(word_source)
     if word_constant is not None:
-        return CConstant(int(word_constant) & 0xFFFF, SimTypeShort(False), codegen=codegen)
+        return cast(
+            object,
+            CConstant(int(word_constant) & 0xFFFF, SimTypeShort(False), codegen=codegen),
+        )
     normalized = _normalize_direct_global_word_update_rhs_8616(codegen, ref, word_source)
     if normalized is not None:
         return normalized
@@ -4576,7 +4959,7 @@ def _make_direct_global_single_byte_store_rhs_8616(
             CConstant(0xFF00, SimTypeShort(False), codegen=codegen),
             codegen=codegen,
         )
-        return CBinaryOp("Or", preserved, byte_value, codegen=codegen)
+        return cast(object, CBinaryOp("Or", preserved, byte_value, codegen=codegen))
     preserved = CBinaryOp(
         "And",
         base_expr,
@@ -4589,7 +4972,7 @@ def _make_direct_global_single_byte_store_rhs_8616(
         CConstant(8, SimTypeShort(False), codegen=codegen),
         codegen=codegen,
     )
-    return CBinaryOp("Or", preserved, shifted, codegen=codegen)
+    return cast(object, CBinaryOp("Or", preserved, shifted, codegen=codegen))
 
 
 def _direct_global_ref_covering_byte_8616(
@@ -4641,18 +5024,18 @@ def _normalize_direct_global_word_update_rhs_8616(
         return None
     identity = _direct_global_lvalue_identity_8616(expr)
     if identity == (ref.offset & 0xFFFF, 2):
-        return direct_expr
+        return cast(object, direct_expr)
     if _direct_global_word_byte_pair_source_8616(expr, ref):
-        return direct_expr
+        return cast(object, direct_expr)
     if not isinstance(expr, CBinaryOp) or expr.op not in {"Add", "Sub"}:
         return None
     rhs_const = _constant_int_8616(expr.rhs)
     if rhs_const is not None and _direct_global_word_byte_pair_source_8616(expr.lhs, ref):
-        return CBinaryOp(expr.op, direct_expr, expr.rhs, codegen=codegen)
+        return cast(object, CBinaryOp(expr.op, direct_expr, expr.rhs, codegen=codegen))
     if expr.op == "Add":
         lhs_const = _constant_int_8616(expr.lhs)
         if lhs_const is not None and _direct_global_word_byte_pair_source_8616(expr.rhs, ref):
-            return CBinaryOp("Add", direct_expr, expr.lhs, codegen=codegen)
+            return cast(object, CBinaryOp("Add", direct_expr, expr.lhs, codegen=codegen))
     return None
 
 
@@ -4810,7 +5193,7 @@ def _materialize_direct_global_load_pair_expr_8616(
     stats: SegmentedGlobalLoadStats8616,
     *,
     dirty_assignments: dict[tuple[str, int | str], object] | None = None,
-) -> object | None:
+) -> CExpression | None:
     direct_expr = _materialize_direct_ref_load_pair_expr_8616(
         codegen,
         node,
@@ -4851,7 +5234,7 @@ def _materialize_direct_ref_load_pair_expr_8616(
     stats: SegmentedGlobalLoadStats8616,
     *,
     dirty_assignments: dict[tuple[str, int | str], object] | None = None,
-) -> object | None:
+) -> CExpression | None:
     for (_offset, width), ref in direct_by_offset.items():
         if width == 2:
             matched = _direct_global_word_byte_pair_source_8616(node, ref, dirty_assignments)
@@ -5295,7 +5678,16 @@ def _direct_ref_for_cvariable_8616(
     if exact is not None:
         return exact
     if width != 1:
-        return None
+        name = variable.name
+        widened_base_refs = tuple(
+            ref
+            for ref in direct_by_offset.values()
+            if ref.relative_disp == 0
+            and (ref.offset & 0xFFFF) == (addr & 0xFFFF)
+            and _sanitize_identifier_8616(ref.name) == name
+            and ref.width + ref.max_relative_disp == width
+        )
+        return widened_base_refs[0] if len(widened_base_refs) == 1 else None
     name = variable.name
     if isinstance(name, str) and re.fullmatch(r"mem_[0-9a-fA-F]{4,}", name) is None:
         return None
@@ -5345,22 +5737,94 @@ def materialize_indexed_segmented_global_loads_8616(
     stats = SegmentedGlobalLoadStats8616()
     function = _active_function_8616(project, codegen)
     summaries = _function_instruction_summaries_8616(project, function) if function is not None else []
-    indexed_evidence = recover_indexed_segmented_global_evidence_8616(summaries, cod_metadata)
+    near_pointer_facts = collect_near_pointer_argument_facts_8616(function, project=project)
+    indexed_evidence = recover_indexed_segmented_global_evidence_8616(
+        summaries,
+        cod_metadata,
+        near_pointer_facts=near_pointer_facts,
+    )
     direct_refs = _collect_direct_global_symbol_refs_8616(cod_metadata, summaries)
     address_refs = _collect_global_address_symbol_refs_8616(cod_metadata, summaries)
     address_literals = _collect_global_address_literal_evidence_8616(cod_metadata, summaries)
-    evidence = _merge_indexed_global_evidence_8616(
-        indexed_evidence,
-        _indexed_evidence_from_direct_symbol_refs_8616((*direct_refs, *address_refs)),
-    )
-    codegen._inertia_indexed_global_evidence_8616 = evidence
     load_site_evidence = recover_indexed_segmented_global_load_site_evidence_8616(project, function)
     store_evidence = recover_indexed_segmented_global_store_evidence_8616(project, function)
     codegen._inertia_indexed_global_store_evidence_8616 = store_evidence
+    evidence = _unify_sidecar_free_indexed_evidence_8616(
+        indexed_evidence,
+        _indexed_evidence_from_direct_symbol_refs_8616((*direct_refs, *address_refs)),
+        store_evidence,
+    )
+    layout_evidence = collect_project_global_object_layout_evidence_8616(
+        project,
+        (
+            recover_indexed_segmented_global_load_site_evidence_8616,
+            recover_indexed_segmented_global_store_evidence_8616,
+        ),
+    )
+    source_evidence = collect_project_global_object_source_evidence_8616(
+        project,
+        layout_evidence,
+    )
+    evidence, source_evidence = merge_global_object_source_evidence_8616(
+        evidence,
+        source_evidence,
+    )
+    codegen._inertia_project_global_object_source_evidence_8616 = source_evidence
+    if (
+        source_evidence.classified_fact_count > 0
+        and source_evidence.materialized_count == 0
+    ):
+        raise PipelineHardError(
+            "project source-family facts classified without indexed-global "
+            f"materialization raw={source_evidence.raw_fact_count} "
+            f"normalized={source_evidence.normalized_fact_count} "
+            f"classified={source_evidence.classified_fact_count} "
+            f"failures={source_evidence.failure_count}"
+        )
+    evidence = _augment_indexed_evidence_with_project_layouts_8616(evidence, layout_evidence)
+    record_cod_global_storage_identities_8616(
+        codegen,
+        cod_metadata if isinstance(cod_metadata, CODProcMetadata) else None,
+        tuple(
+            CodGlobalStorageSurface8616(
+                offset=item.base_offset & 0xFFFF,
+                width=item.width,
+                canonical_name=_sanitize_identifier_8616(item.name),
+            )
+            for item in evidence
+        ),
+    )
+    codegen._inertia_indexed_global_evidence_8616 = evidence
     if os.environ.get("INERTIA_DEBUG_SEGMENTED_GLOBAL_LOADS"):
         log.warning(
-            "[seg-global-indexed] evidence=%s load_site_evidence=%s store_evidence=%s",
-            tuple((hex(item.base_offset & 0xFFFF), item.width, item.name, item.relative_disp) for item in evidence),
+            "[seg-global-indexed] layout_census=%s layouts=%s evidence=%s load_site_evidence=%s "
+            "store_evidence=%s",
+            (
+                layout_evidence.raw_fact_count,
+                layout_evidence.normalized_fact_count,
+                layout_evidence.classified_fact_count,
+                layout_evidence.materialized_count,
+                layout_evidence.failure_count,
+            ),
+            tuple(
+                (
+                    hex(layout.address.offset & 0xFFFF),
+                    layout.element_width,
+                    layout.field_offsets,
+                    hex(layout.family_base_offset & 0xFFFF),
+                )
+                for layout in layout_evidence.layouts
+            ),
+            tuple(
+                (
+                    hex(item.base_offset & 0xFFFF),
+                    item.width,
+                    item.name,
+                    item.relative_disp,
+                    item.aggregate_type_name,
+                )
+                for item in evidence
+            ),
                     tuple(
                         (
                             hex(fact.base_offset & 0xFFFF),
@@ -5402,7 +5866,7 @@ def materialize_indexed_segmented_global_loads_8616(
     stats.classified_fact_count = len(evidence)
     stats.indexed_classified_count = len(evidence)
     consumed_load_sites: list[IndexedSegmentedGlobalLoadSiteEvidence8616] = []
-    changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
+    changed = bool(materialize_indexed_segmented_global_loads_from_evidence_8616(
         project,
         codegen,
         evidence,
@@ -5411,7 +5875,13 @@ def materialize_indexed_segmented_global_loads_8616(
         address_literals=address_literals,
         stats=stats,
         consumed_load_sites=consumed_load_sites,
-    )
+    ))
+    changed |= bool(materialize_callee_global_object_interface_8616(
+        project,
+        codegen,
+        layout_evidence,
+        _two_byte_global_struct_type_8616,
+    ))
     if consumed_load_sites:
         # Dynamic angr codegen boundary: retain typed Lowering proof across rebuilds.
         previous_read_record = getattr(
@@ -5504,15 +5974,29 @@ def materialize_indexed_segmented_global_loads_8616(
 def recover_indexed_segmented_global_evidence_8616(
     summaries: list[InsnSummary8616],
     cod_metadata: CodMetadataBoundary8616,
+    *,
+    near_pointer_facts: tuple[NearPointerArgumentFact8616, ...] = (),
 ) -> tuple[IndexedSegmentedGlobalEvidence8616, ...]:
     """Recover indexed global load evidence from instruction summaries and optional sidecar refs."""
 
     cod_refs = _cod_indexed_global_refs_8616(cod_metadata)
+    near_pointer_accesses = {
+        (fact.dereference_ins_addr, fact.access_width_bytes)
+        for fact in near_pointer_facts
+    }
     binary_refs: list[tuple[int, int]] = []
     for insn in summaries:
-        if insn.op0_kind == "indexed_mem" and isinstance(insn.op0_value, int):
+        if (
+            insn.op0_kind == "indexed_mem"
+            and isinstance(insn.op0_value, int)
+            and (insn.address, int(insn.op0_size or 2)) not in near_pointer_accesses
+        ):
             binary_refs.append((int(insn.op0_value) & 0xFFFF, int(insn.op0_size or 2)))
-        if insn.op1_kind == "indexed_mem" and isinstance(insn.op1_value, int):
+        if (
+            insn.op1_kind == "indexed_mem"
+            and isinstance(insn.op1_value, int)
+            and (insn.address, int(insn.op1_size or 2)) not in near_pointer_accesses
+        ):
             binary_refs.append((int(insn.op1_value) & 0xFFFF, int(insn.op1_size or 2)))
     if not cod_refs:
         if os.environ.get("INERTIA_DEBUG_SEGMENTED_GLOBAL_LOADS"):
@@ -5565,11 +6049,65 @@ def _sidecar_free_indexed_global_evidence_8616(
     return tuple(recovered)
 
 
+def _indexed_segmented_global_load_site_from_operand_8616(
+    insn: CapstoneInstructionView8616,
+    operand: CapstoneOperandView8616,
+    register_stack_indices: dict[str, tuple[int, int, int]],
+    *,
+    destination_register: str | None = None,
+    consumer: IndexedSegmentedGlobalLoadConsumer8616 = IndexedSegmentedGlobalLoadConsumer8616.REGISTER,
+) -> IndexedSegmentedGlobalLoadSiteEvidence8616 | None:
+    """Create one exact indexed DS load fact from a typed memory operand."""
+
+    memory = operand.memory
+    if operand.kind != X86_OP_MEM or memory is None:
+        return None
+    segment_name = _direct_stack_move_segment_name_8616(insn.raw, memory.segment)
+    base_name = _direct_stack_move_register_name_8616(insn.raw, memory.base)
+    index_name = _direct_stack_move_register_name_8616(insn.raw, memory.index)
+    index_sources = tuple(
+        source
+        for name in (base_name, index_name)
+        if name is not None
+        for source in (register_stack_indices.get(name),)
+        if source is not None
+    )
+    if (
+        segment_name != "ds"
+        or not isinstance(memory.displacement, int)
+        or operand.size not in {1, 2}
+        or not isinstance(insn.address, int)
+        or len(index_sources) != 1
+    ):
+        return None
+    stack_offset, stack_width, shift = index_sources[0]
+    destination_domain = (
+        register_domain_for_name(destination_register)
+        if destination_register is not None
+        else None
+    )
+    normalized_destination = (
+        destination_domain.name.lower()
+        if destination_domain is not None
+        else destination_register.lower() if destination_register is not None else None
+    )
+    return IndexedSegmentedGlobalLoadSiteEvidence8616(
+        base_offset=memory.displacement & 0xFFFF,
+        width=operand.size,
+        index_stack_offset=stack_offset,
+        index_shift=shift,
+        ins_addr=insn.address,
+        destination_register=normalized_destination,
+        index_stack_width=stack_width,
+        consumer=consumer,
+    )
+
+
 def recover_indexed_segmented_global_load_site_evidence_8616(
     project: ProjectBoundary8616,
     function: object,
 ) -> tuple[IndexedSegmentedGlobalLoadSiteEvidence8616, ...]:
-    """Recover indexed DS loads and exact BP stores through register carriers."""
+    """Recover indexed DS register/comparison reads and their exact BP stores."""
 
     if project is None or function is None:
         return ()
@@ -5581,6 +6119,16 @@ def recover_indexed_segmented_global_load_site_evidence_8616(
             insn = _capstone_instruction_view_8616(wrapper)
             operands = insn.operands
             insn_id = insn.instruction_id
+            if insn_id == X86_INS_PUSH and len(operands) == 1:
+                direct_push_load = _indexed_segmented_global_load_site_from_operand_8616(
+                    insn,
+                    operands[0],
+                    reg_stack_index,
+                    consumer=IndexedSegmentedGlobalLoadConsumer8616.DIRECT_STACK,
+                )
+                if direct_push_load is not None:
+                    recovered.append(direct_push_load)
+                continue
             if insn_id == X86_INS_MOV and len(operands) == 2:
                 dst, src = operands
                 if dst.kind != X86_OP_REG:
@@ -5614,44 +6162,15 @@ def recover_indexed_segmented_global_load_site_evidence_8616(
                     reg_stack_index[dst_name] = (stack_offset, stack_width, 0)
                     _invalidate_register_storage_carriers_8616(reg_indexed_load, dst_name)
                     continue
-                mem = src.memory
-                if src.kind == X86_OP_MEM and mem is not None:
-                    segment_name = _direct_stack_move_segment_name_8616(insn.raw, mem.segment)
-                    displacement = mem.displacement
-                    access_width = src.size
-                    ins_addr = insn.address
-                    base_name = _direct_stack_move_register_name_8616(insn.raw, mem.base)
-                    index_name = _direct_stack_move_register_name_8616(insn.raw, mem.index)
-                    base_value = reg_stack_index.get(base_name) if base_name is not None else None
-                    index_value = reg_stack_index.get(index_name) if index_name is not None else None
-                    index_sources = [
-                        value
-                        for value in (base_value, index_value)
-                        if value is not None
-                    ]
-                    if (
-                        segment_name == "ds"
-                        and isinstance(displacement, int)
-                        and access_width in {1, 2}
-                        and isinstance(ins_addr, int)
-                        and len(index_sources) == 1
-                    ):
-                        stack_offset, _stack_width, shift = index_sources[0]
-                        destination_domain = register_domain_for_name(dst_name)
-                        load = IndexedSegmentedGlobalLoadSiteEvidence8616(
-                            base_offset=int(displacement) & 0xFFFF,
-                            width=int(access_width),
-                            index_stack_offset=int(stack_offset),
-                            index_shift=int(shift),
-                            ins_addr=int(ins_addr),
-                            destination_register=(
-                                destination_domain.name.lower()
-                                if destination_domain is not None
-                                else dst_name.lower()
-                            ),
-                            index_stack_width=int(_stack_width),
-                        )
-                        recovered.append(load)
+                if src.kind == X86_OP_MEM and src.memory is not None:
+                    load_site = _indexed_segmented_global_load_site_from_operand_8616(
+                        insn,
+                        src,
+                        reg_stack_index,
+                        destination_register=dst_name,
+                    )
+                    if load_site is not None:
+                        recovered.append(load_site)
                         _invalidate_register_storage_carriers_8616(reg_indexed_load, dst_name)
                         reg_indexed_load[dst_name] = len(recovered) - 1
                     else:
@@ -5671,6 +6190,17 @@ def recover_indexed_segmented_global_load_site_evidence_8616(
                         continue
                 reg_stack_index.pop(dst_name, None)
                 _invalidate_register_storage_carriers_8616(reg_indexed_load, dst_name)
+                continue
+            if insn_id == X86_INS_CMP and len(operands) == 2:
+                for operand in operands:
+                    comparison_load = _indexed_segmented_global_load_site_from_operand_8616(
+                        insn,
+                        operand,
+                        reg_stack_index,
+                        consumer=IndexedSegmentedGlobalLoadConsumer8616.COMPARISON,
+                    )
+                    if comparison_load is not None:
+                        recovered.append(comparison_load)
                 continue
             if insn_id in {X86_INS_SHL, X86_INS_SAL} and len(operands) == 2:
                 dst, amount = operands
@@ -5692,7 +6222,15 @@ def recover_indexed_segmented_global_load_site_evidence_8616(
                 if reg_name is not None:
                     reg_stack_index.pop(reg_name, None)
                     _invalidate_register_storage_carriers_8616(reg_indexed_load, reg_name)
-    return tuple(dict.fromkeys(recovered))
+    near_pointer_keys = {
+        (fact.dereference_ins_addr, fact.access_width_bytes, fact.stack_offset)
+        for fact in collect_near_pointer_argument_facts_8616(function, project=project)
+    }
+    return tuple(
+        fact
+        for fact in dict.fromkeys(recovered)
+        if (fact.ins_addr, fact.width, fact.index_stack_offset) not in near_pointer_keys
+    )
 
 
 def recover_indexed_segmented_global_store_evidence_8616(
@@ -5745,9 +6283,9 @@ def recover_indexed_segmented_global_store_evidence_8616(
                     insn.raw,
                     operands[0].register,
                 )
-                remainder = reg_signed_remainder.get(register_name) if register_name is not None else None
-                if register_name is not None and remainder is not None:
-                    adjusted = replace(remainder, post_adjust=remainder.post_adjust + 1)
+                remainder_source = reg_signed_remainder.get(register_name) if register_name is not None else None
+                if register_name is not None and remainder_source is not None:
+                    adjusted = replace(remainder_source, post_adjust=remainder_source.post_adjust + 1)
                     for alias in _signed_remainder_register_aliases_8616(register_name):
                         reg_signed_remainder[alias] = adjusted
                     continue
@@ -5895,7 +6433,15 @@ def recover_indexed_segmented_global_store_evidence_8616(
                     reg_indexed_global.pop(reg_name, None)
                     for alias in _signed_remainder_register_aliases_8616(reg_name):
                         reg_signed_remainder.pop(alias, None)
-    return tuple(dict.fromkeys(recovered))
+    near_pointer_keys = {
+        (fact.dereference_ins_addr, fact.access_width_bytes, fact.stack_offset)
+        for fact in collect_near_pointer_argument_facts_8616(function, project=project)
+    }
+    return tuple(
+        fact
+        for fact in dict.fromkeys(recovered)
+        if (fact.ins_addr, fact.width, fact.index_stack_offset) not in near_pointer_keys
+    )
 
 
 def materialize_indexed_segmented_global_loads_from_evidence_8616(
@@ -5950,7 +6496,7 @@ def materialize_indexed_segmented_global_loads_from_evidence_8616(
             return node
         _debug_segmented_global_materialized_8616("indexed", node, indexed)
         changed = True
-        return indexed
+        return _with_replacement_tags_8616(node, indexed) if isinstance(indexed, CExpression) else indexed
 
     for root in tuple(_cfunc_roots_8616(cfunc)):
         if root not in _cfunc_roots_8616(cfunc):
@@ -6050,11 +6596,15 @@ def _materialize_indexed_global_expr_node_8616(
 ) -> object | None:
     """Lower one segmented-global helper expression from structured evidence."""
 
+    segment_helper = _segment_load_helper_8616(node) if isinstance(node, CFunctionCall) else None
+    segment_pointer_helper = _segment_pointer_helper_8616(node) if isinstance(node, CFunctionCall) else None
     load_site_expr = _indexed_global_load_from_site_evidence_8616(
+        project,
         codegen,
         node,
         evidence_by_base,
         load_sites_by_ins_addr or {},
+        copies=copies,
         consumed_load_sites=consumed_load_sites,
     )
     if load_site_expr is not None:
@@ -6062,6 +6612,25 @@ def _materialize_indexed_global_expr_node_8616(
             stats.record_indexed(IndexedSegmentedGlobalDecision8616.MATERIALIZED)
             stats.indexed_load_site_materialized_count += 1
         return load_site_expr
+    if segment_helper is not None or segment_pointer_helper is not None:
+        helper_args: tuple[Any, ...] = tuple(cast(Iterable[Any], cast(Any, node).args or ()))
+        if len(helper_args) != 2 or not _is_ds_segment_expr_8616(project, helper_args[0]):
+            return None
+        if segment_helper is not None:
+            if not may_lower_codegen_access_to_entry_ds_object_8616(
+                codegen,
+                node,
+                segment_register="ds",
+                offset=_constant_int_8616(helper_args[1]),
+                width=segment_helper.width,
+            ):
+                return None
+        elif not may_lower_codegen_address_to_entry_ds_object_8616(
+            codegen,
+            node,
+            segment_register="ds",
+        ):
+            return None
 
     byte_pair_load = _indexed_word_load_from_byte_pair_8616(
         codegen,
@@ -6072,16 +6641,13 @@ def _materialize_indexed_global_expr_node_8616(
     if byte_pair_load is not None:
         if stats is not None:
             stats.record_indexed(IndexedSegmentedGlobalDecision8616.MATERIALIZED)
-        return byte_pair_load
+        return cast(object, byte_pair_load)
 
     if not isinstance(node, CFunctionCall):
         return None
+    args: tuple[Any, ...] = tuple(cast(Iterable[Any], cast(Any, node).args or ()))
 
-    segment_helper = _segment_load_helper_8616(node)
     if segment_helper is not None:
-        args = tuple(node.args or ())
-        if len(args) != 2 or not _is_ds_segment_expr_8616(project, args[0]):
-            return None
         if segment_helper.width == 1:
             stride_matched = _match_indexed_offset_expr_with_stride_8616(args[1], copies=copies)
             if stride_matched is not None:
@@ -6098,7 +6664,11 @@ def _materialize_indexed_global_expr_node_8616(
                     if stats is not None:
                         stats.record_indexed(IndexedSegmentedGlobalDecision8616.MATERIALIZED)
                     return value_expr
-        matched = _match_indexed_offset_expr_8616(args[1], segment_helper.width, copies=copies)
+        matched: tuple[int, object] | tuple[int, int, object] | None = _match_indexed_offset_expr_8616(
+            args[1],
+            segment_helper.width,
+            copies=copies,
+        )
         width = segment_helper.width
         if matched is None:
             matched = _match_indexed_offset_expr_for_evidence_8616(args[1], evidence_by_base, copies=copies)
@@ -6123,7 +6693,7 @@ def _materialize_indexed_global_expr_node_8616(
                     if direct_expr is not None:
                         if stats is not None:
                             stats.record_indexed(IndexedSegmentedGlobalDecision8616.MATERIALIZED)
-                        return direct_expr
+                        return cast(object, direct_expr)
         if matched is None:
             stride_matched = _match_indexed_offset_expr_with_stride_8616(args[1], copies=copies)
             if stride_matched is not None:
@@ -6141,11 +6711,7 @@ def _materialize_indexed_global_expr_node_8616(
                         stats.record_indexed(IndexedSegmentedGlobalDecision8616.MATERIALIZED)
                     return value_expr
     else:
-        args = tuple(node.args or ())
-        segment_pointer_helper = _segment_pointer_helper_8616(node)
         if segment_pointer_helper is not None:
-            if len(args) != 2 or not _is_ds_segment_expr_8616(project, args[0]):
-                return None
             direct_offset = _constant_int_8616(args[1])
             if direct_offset is not None:
                 literal = (literals_by_offset or {}).get(direct_offset & 0xFFFF)
@@ -6153,7 +6719,10 @@ def _materialize_indexed_global_expr_node_8616(
                     if stats is not None:
                         stats.record_indexed(IndexedSegmentedGlobalDecision8616.MATERIALIZED)
                     char_ptr = SimTypePointer(SimTypeChar(False))
-                    return CConstant(0, char_ptr, reference_values={char_ptr: literal.value}, codegen=codegen)
+                    return cast(
+                        object,
+                        CConstant(0, char_ptr, reference_values={char_ptr: literal.value}, codegen=codegen),
+                    )
                 address_expr = _make_direct_global_address_from_evidence_8616(
                     codegen,
                     evidence_by_base,
@@ -6171,7 +6740,7 @@ def _materialize_indexed_global_expr_node_8616(
             if near_pointer_element is not None:
                 if stats is not None:
                     stats.record_indexed(IndexedSegmentedGlobalDecision8616.MATERIALIZED)
-                return near_pointer_element
+                return cast(object, near_pointer_element)
             near_pointer_load = _near_pointer_table_element_from_ds_load_8616(
                 project,
                 codegen,
@@ -6223,9 +6792,9 @@ def _materialize_indexed_global_expr_node_8616(
             if stats is not None:
                 stats.record_indexed(IndexedSegmentedGlobalDecision8616.MATERIALIZED)
             if isinstance(indexed, CExpression):
-                return CUnaryOp("Reference", indexed, codegen=codegen)
+                return cast(object, CUnaryOp("Reference", indexed, codegen=codegen))
             return None
-        memory_helper = _memory_pointer_helper_8616(node)
+        memory_helper = memory_pointer_helper_8616(node)
         if memory_helper is None:
             return None
         if len(args) != 1:
@@ -6301,27 +6870,102 @@ def _materialize_indexed_global_expr_node_8616(
     return indexed
 
 
+def _runtime_indexed_global_load_site_8616(
+    project: ProjectBoundary8616,
+    codegen: CodegenBoundary8616,
+    node: object,
+    load_sites_by_ins_addr: dict[int, IndexedSegmentedGlobalLoadSiteEvidence8616],
+    *,
+    copies: dict[CopyKey8616, object] | None,
+) -> IndexedSegmentedGlobalLoadSiteEvidence8616 | None:
+    """Join a late runtime helper to an equivalent binary load-site class."""
+
+    helper = _segment_load_helper_8616(node) if isinstance(node, CFunctionCall) else None
+    if helper is None:
+        return None
+    offset_expr = runtime_segment_access_offset_expr_8616(
+        project,
+        codegen,
+        node,
+        expected_space=MemSpace.DS,
+        width=helper.width,
+    )
+    if offset_expr is None:
+        return None
+    matched = _match_indexed_offset_expr_with_stride_8616(offset_expr, copies=copies)
+    if matched is None:
+        return None
+    base_offset, stride, index_expr = matched
+    index_identity = _stack_index_identity_and_adjustment_8616(index_expr)
+    if index_identity is None:
+        return None
+    index_base, index_offset, index_adjustment = index_identity
+    candidates = tuple(
+        site
+        for site in load_sites_by_ins_addr.values()
+        if site.base_offset & 0xFFFF == base_offset & 0xFFFF
+        and site.width == helper.width
+        and site.index_stack_offset == index_offset
+        and site.index_shift >= 0
+        and 1 << site.index_shift == stride
+        and index_base == "bp"
+        and index_adjustment == 0
+    )
+    if not candidates:
+        return None
+    candidate_ins_addrs = frozenset(site.ins_addr for site in candidates)
+    if not may_lower_codegen_access_to_entry_ds_object_8616(
+        codegen,
+        node,
+        instruction_addrs=candidate_ins_addrs,
+        segment_register="ds",
+        offset=None,
+        width=helper.width,
+    ):
+        return None
+    return min(candidates, key=lambda site: site.ins_addr)
+
+
 def _indexed_global_load_from_site_evidence_8616(
+    project: ProjectBoundary8616,
     codegen: CodegenBoundary8616,
     node: object,
     evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616],
     load_sites_by_ins_addr: dict[int, IndexedSegmentedGlobalLoadSiteEvidence8616],
     *,
+    copies: dict[CopyKey8616, object] | None,
     consumed_load_sites: list[IndexedSegmentedGlobalLoadSiteEvidence8616] | None = None,
 ) -> object | None:
-    """Materialize a raw dereference only when its instruction tag has binary load evidence."""
+    """Materialize a raw or runtime access joined to exact load-site evidence."""
 
-    if not isinstance(node, CUnaryOp) or node.op != "Dereference" or not load_sites_by_ins_addr:
+    if not load_sites_by_ins_addr:
         return None
-    ins_addrs = {
-        ins_addr
-        for child in _iter_c_nodes_deep_8616(node)
-        if (ins_addr := _statement_ins_addr_8616(child)) is not None
-    }
-    matching_sites = [load_sites_by_ins_addr[addr] for addr in ins_addrs if addr in load_sites_by_ins_addr]
-    if len(matching_sites) != 1:
-        return None
-    site = matching_sites[0]
+    site = _runtime_indexed_global_load_site_8616(
+        project,
+        codegen,
+        node,
+        load_sites_by_ins_addr,
+        copies=copies,
+    )
+    if site is None:
+        if not isinstance(node, CUnaryOp) or node.op != "Dereference":
+            return None
+        ins_addrs = {
+            ins_addr
+            for child in _iter_c_nodes_deep_8616(node)
+            if (ins_addr := _statement_ins_addr_8616(child)) is not None
+        }
+        matching_sites = [
+            load_sites_by_ins_addr[addr]
+            for addr in ins_addrs
+            if addr in load_sites_by_ins_addr
+        ]
+        if (
+            len(matching_sites) != 1
+            or matching_sites[0].consumer is IndexedSegmentedGlobalLoadConsumer8616.DIRECT_STACK
+        ):
+            return None
+        site = matching_sites[0]
     item = evidence_by_base.get((site.base_offset & 0xFFFF, site.width))
     index_expr = _stack_cvar_for_offset_8616(codegen, site.index_stack_offset)
     if item is None or index_expr is None or site.index_shift < 0 or site.index_shift > 4:
@@ -6354,7 +6998,7 @@ def _indexed_word_load_from_byte_pair_8616(
             return None
         if _constant_int_8616(expr.rhs) != 8:
             return None
-        return expr.lhs
+        return cast(object, expr.lhs)
 
     candidates = ((node.lhs, _shifted_high_byte(node.rhs)), (node.rhs, _shifted_high_byte(node.lhs)))
     for low_expr, high_expr in candidates:
@@ -6386,7 +7030,7 @@ def _indexed_byte_load_match_8616(
     copies: dict[CopyKey8616, object] | None = None,
 ) -> tuple[int, object] | None:
     node = _unwrap_codegen_expr_8616(node)
-    memory_helper = _memory_pointer_helper_8616(node)
+    memory_helper = memory_pointer_helper_8616(node)
     if memory_helper is MemoryPointerHelper8616.MEM_U8:
         if not isinstance(node, CFunctionCall):
             return None
@@ -6433,7 +7077,7 @@ def _near_pointer_table_element_from_ds_offset_8616(
         codegen,
         ctype="char *",
         name=name,
-        array_len=1,
+        array_len=GlobalDeclarationArrayExtent8616.UNKNOWN,
     )
     return node
 
@@ -6454,6 +7098,14 @@ def _near_pointer_table_element_from_ds_load_8616(
     args = tuple(node.args or ())
     if len(args) != 2 or not _is_ds_segment_expr_8616(project, args[0]):
         return None
+    if not may_lower_codegen_access_to_entry_ds_object_8616(
+        codegen,
+        node,
+        segment_register="ds",
+        offset=None,
+        width=2,
+    ):
+        return None
     matched = _match_indexed_offset_expr_for_evidence_8616(args[1], evidence_by_base, copies=copies)
     if matched is None:
         return None
@@ -6470,9 +7122,9 @@ def _near_pointer_table_element_from_ds_load_8616(
         codegen,
         ctype="char *",
         name=_sanitize_identifier_8616(evidence.name),
-        array_len=1,
+        array_len=GlobalDeclarationArrayExtent8616.UNKNOWN,
     )
-    return indexed
+    return cast(object, indexed)
 
 
 def _materialize_indexed_global_word_store_pairs_8616(
@@ -6510,7 +7162,15 @@ def _materialize_indexed_global_word_store_pairs_8616(
                 stats,
             )
             if replacement is not None:
-                _consume_indexed_word_store_fact_for_pair_8616(stmt, next_stmt, evidence_by_base, copies, store_facts)
+                _consume_indexed_word_store_fact_for_pair_8616(
+                    stmt,
+                    next_stmt,
+                    project,
+                    codegen,
+                    evidence_by_base,
+                    copies,
+                    store_facts,
+                )
                 rewritten.append(replacement)
                 _record_assignment_copy_8616(replacement, copies)
                 idx += 2
@@ -6555,6 +7215,8 @@ def _materialize_indexed_global_word_store_pairs_8616(
                         _consume_indexed_word_store_fact_for_pair_8616(
                             stmt,
                             following_stmt,
+                            project,
+                            codegen,
                             evidence_by_base,
                             copies,
                             store_facts,
@@ -6611,11 +7273,20 @@ def _indexed_word_store_facts_for_pairs_8616(
 def _consume_indexed_word_store_fact_for_pair_8616(
     low_stmt: object,
     high_stmt: object,
+    project: ProjectBoundary8616,
+    codegen: CodegenBoundary8616,
     evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616],
     copies: dict[CopyKey8616, object],
     store_facts: list[IndexedSegmentedGlobalStoreEvidence8616],
 ) -> None:
-    matched = _match_indexed_word_store_pair_lvalues_8616(low_stmt, high_stmt, evidence_by_base, copies)
+    matched = _match_indexed_word_store_pair_lvalues_8616(
+        low_stmt,
+        high_stmt,
+        project,
+        codegen,
+        evidence_by_base,
+        copies,
+    )
     if matched is None:
         return
     low_base, _low_index = matched
@@ -6664,8 +7335,14 @@ def _match_indexed_global_word_store_pair_from_store_evidence_8616(
     stats: SegmentedGlobalLoadStats8616,
     store_facts: list[IndexedSegmentedGlobalStoreEvidence8616],
 ) -> CAssignment | None:
-    del project
-    matched = _match_indexed_word_store_pair_lvalues_8616(low_stmt, high_stmt, evidence_by_base, copies)
+    matched = _match_indexed_word_store_pair_lvalues_8616(
+        low_stmt,
+        high_stmt,
+        project,
+        codegen,
+        evidence_by_base,
+        copies,
+    )
     if matched is None:
         return None
     low_base, _low_index = matched
@@ -6699,18 +7376,25 @@ def _match_indexed_global_word_store_pair_from_store_evidence_8616(
 def _match_indexed_word_store_pair_lvalues_8616(
     low_stmt: object,
     high_stmt: object,
+    project: ProjectBoundary8616,
+    codegen: CodegenBoundary8616,
     evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616],
     copies: dict[CopyKey8616, object],
 ) -> tuple[int, object] | None:
     if high_stmt is None or not isinstance(low_stmt, CAssignment) or not isinstance(high_stmt, CAssignment):
         return None
+    high_assignment = cast(_CAssignmentBoundary8616, high_stmt)
     low_match = _match_byte_store_lvalue_8616(
         low_stmt.lhs,
+        project=project,
+        codegen=codegen,
         copies=copies,
         evidence_by_base=evidence_by_base,
     )
     high_match = _match_byte_store_lvalue_8616(
-        high_stmt.lhs,
+        high_assignment.lhs,
+        project=project,
+        codegen=codegen,
         copies=copies,
         evidence_by_base=evidence_by_base,
     )
@@ -6874,11 +7558,11 @@ def _same_instruction_store_lvalue_8616(
     """Compare instruction-backed store lvalues including typed struct fields."""
 
     if isinstance(lhs, CVariableField) and isinstance(rhs, CVariableField):
-        return (
+        return bool(
             lhs.field.field == rhs.field.field
             and _same_c_expression_8616(lhs.variable, rhs.variable)
         )
-    return _same_c_expression_8616(lhs, rhs)
+    return bool(_same_c_expression_8616(lhs, rhs))
 
 
 def _is_segmented_memory_store_lvalue_8616(node: object) -> bool:
@@ -6887,11 +7571,11 @@ def _is_segmented_memory_store_lvalue_8616(node: object) -> bool:
     if isinstance(node, (CIndexedVariable, CVariableField)):
         return True
     if isinstance(node, CUnaryOp):
-        return node.op == "Dereference"
+        return bool(node.op == "Dereference")
     if not isinstance(node, CFunctionCall):
         return False
     return (
-        _memory_pointer_helper_8616(node) is not None
+        memory_pointer_helper_8616(node) is not None
         or _segment_load_helper_8616(node) is not None
     )
 
@@ -7026,7 +7710,7 @@ def _indexed_global_byte_store_lvalue_8616(
     helper_name = _memory_pointer_helper_name_for_width_8616(1)
     if helper_name is None:
         return None
-    return CFunctionCall(helper_name, None, [address_expr], codegen=codegen)
+    return cast(object, CFunctionCall(helper_name, None, [address_expr], codegen=codegen))
 
 
 def _evidenced_byte_store_index_expr_8616(
@@ -7236,7 +7920,7 @@ def _same_index_storage_expr_8616(lhs: object, rhs: object) -> bool:
         lhs_variable = lhs.variable
         rhs_variable = rhs.variable
         if isinstance(lhs_variable, SimStackVariable) and isinstance(rhs_variable, SimStackVariable):
-            return (
+            return bool(
                 lhs_variable.offset == rhs_variable.offset
                 and lhs_variable.base == rhs_variable.base
                 and lhs_variable.region == rhs_variable.region
@@ -7244,12 +7928,12 @@ def _same_index_storage_expr_8616(lhs: object, rhs: object) -> bool:
     if isinstance(lhs, CTypeCast) and isinstance(rhs, CTypeCast):
         return _same_index_storage_expr_8616(lhs.expr, rhs.expr)
     if isinstance(lhs, CBinaryOp) and isinstance(rhs, CBinaryOp):
-        return (
+        return bool(
             lhs.op == rhs.op
             and _same_index_storage_expr_8616(lhs.lhs, rhs.lhs)
             and _same_index_storage_expr_8616(lhs.rhs, rhs.rhs)
         )
-    return _same_c_expression_8616(lhs, rhs)
+    return bool(_same_c_expression_8616(lhs, rhs))
 
 
 def _remove_indexed_global_store_source_carriers_8616(
@@ -7324,7 +8008,7 @@ def _standalone_indexed_memory_read_key_8616(
         return indexed_key
     if not isinstance(expr, CFunctionCall):
         return None
-    memory_helper = _memory_pointer_helper_8616(expr)
+    memory_helper = memory_pointer_helper_8616(expr)
     if memory_helper is None:
         return None
     args = tuple(expr.args or ())
@@ -7396,20 +8080,20 @@ def _indexed_global_store_source_expr_8616(
             return None
         signed_type = SimTypeShort(True)
         storage_type = SimTypeShort(False)
-        source: object = CBinaryOp(
+        remainder_source_expr: object = CBinaryOp(
             "Mod",
             CTypeCast(storage_type, signed_type, dividend, codegen=codegen),
             CTypeCast(storage_type, signed_type, divisor, codegen=codegen),
             codegen=codegen,
         )
         if remainder.post_adjust:
-            source = CBinaryOp(
+            remainder_source_expr = CBinaryOp(
                 "Add" if remainder.post_adjust > 0 else "Sub",
-                source,
+                remainder_source_expr,
                 CConstant(abs(remainder.post_adjust), signed_type, codegen=codegen),
                 codegen=codegen,
             )
-        return source
+        return remainder_source_expr
     if (
         not isinstance(fact.source_base_offset, int)
         or not isinstance(fact.source_width, int)
@@ -7518,7 +8202,7 @@ def _is_sidecar_free_indexed_identity_8616(
     """Return whether evidence carries only its deterministic binary identity."""
 
     normalized_base = evidence.base_offset & 0xFFFF
-    return (
+    return bool(
         evidence.relative_disp == 0
         and evidence.name == f"g_{normalized_base:04X}"
     )
@@ -7586,13 +8270,18 @@ def _match_indexed_global_word_store_pair_8616(
     if high_stmt is None or not isinstance(low_stmt, CAssignment) or not isinstance(high_stmt, CAssignment):
         _debug_indexed_store_refusal_8616("not_assignment_pair", low_stmt, high_stmt)
         return None
+    high_assignment = cast(_CAssignmentBoundary8616, high_stmt)
     low_match = _match_byte_store_lvalue_8616(
         low_stmt.lhs,
+        project=project,
+        codegen=codegen,
         copies=copies,
         evidence_by_base=evidence_by_base,
     )
     high_match = _match_byte_store_lvalue_8616(
-        high_stmt.lhs,
+        high_assignment.lhs,
+        project=project,
+        codegen=codegen,
         copies=copies,
         evidence_by_base=evidence_by_base,
     )
@@ -7601,8 +8290,8 @@ def _match_indexed_global_word_store_pair_8616(
             "lvalue_shape",
             low_stmt,
             high_stmt,
-            high_lvalue=_debug_lvalue_8616(high_stmt.lhs),
-            high_rhs=_debug_source_8616(high_stmt.rhs),
+            high_lvalue=_debug_lvalue_8616(high_assignment.lhs),
+            high_rhs=_debug_source_8616(high_assignment.rhs),
             low_lvalue=_debug_lvalue_8616(low_stmt.lhs),
             low_rhs=_debug_source_8616(low_stmt.rhs),
         )
@@ -7623,7 +8312,7 @@ def _match_indexed_global_word_store_pair_8616(
             "no_word_evidence", low_stmt, high_stmt, low_base=low_base, high_base=high_base
         )
         return None
-    word_source = _word_source_for_byte_pair_store_8616(high_stmt.rhs, low_stmt.rhs, copies)
+    word_source = _word_source_for_byte_pair_store_8616(high_assignment.rhs, low_stmt.rhs, copies)
     if word_source is None:
         _debug_indexed_store_refusal_8616(
             "high_source_mismatch",
@@ -7631,9 +8320,9 @@ def _match_indexed_global_word_store_pair_8616(
             high_stmt,
             low_base=low_base,
             high_base=high_base,
-            high_key=_high_byte_source_key_8616(high_stmt.rhs),
+            high_key=_high_byte_source_key_8616(high_assignment.rhs),
             low_key=_cvariable_key_8616(low_stmt.rhs),
-            resolved_high=_debug_resolved_source_8616(high_stmt.rhs, copies),
+            resolved_high=_debug_resolved_source_8616(high_assignment.rhs, copies),
             resolved_low=_debug_source_8616(low_stmt.rhs),
             copy_keys=",".join(str(key) for key in sorted(copies, key=str)),
         )
@@ -7740,7 +8429,7 @@ def _debug_indexed_expr_refusal_8616(reason: str, node: object, **fields: object
     extras = " ".join(f"{key}={value}" for key, value in sorted(fields.items()))
     rendered = _debug_c_repr_8616(node)
     call_name = _cfunction_call_name_8616(node)
-    arg_shapes = ()
+    arg_shapes: tuple[tuple[str, str], ...] = ()
     if isinstance(node, CFunctionCall):
         rendered_args = []
         for arg in tuple(node.args or ()):
@@ -7797,32 +8486,114 @@ def _record_named_global_aggregate_type_fact_8616(
     codegen: object,
     global_name: str,
     struct_type: SimStruct,
-    array_len: int,
-) -> None:
+    array_len: GlobalDeclarationArrayLength8616,
+    *,
+    allow_layout_equivalent_type_upgrade: bool = False,
+) -> bool:
     """Persist one proven global aggregate across later CFunction rebuilds."""
 
     normalized_name = _sanitize_identifier_8616(global_name)
-    if not normalized_name or not struct_type.name or array_len <= 0:
-        return
-    fact = NamedGlobalAggregateTypeFact8616(normalized_name, struct_type, array_len)
+    if (
+        not normalized_name
+        or not struct_type.name
+        or array_len is None
+        or (isinstance(array_len, int) and array_len <= 0)
+    ):
+        return False
+    identity_strength = (
+        AggregateTypeIdentityStrength8616.PROJECT_COPY_FAMILY
+        if allow_layout_equivalent_type_upgrade
+        else AggregateTypeIdentityStrength8616.FUNCTION_LOCAL
+    )
+    fact = NamedGlobalAggregateTypeFact8616(
+        normalized_name,
+        struct_type,
+        array_len,
+        identity_strength,
+    )
     typed_codegen = typing.cast(_CodegenStackAggregateFactBoundary8616, codegen)
     try:
         existing_facts = typed_codegen._inertia_named_global_aggregate_type_facts_8616
     except AttributeError:
         existing_facts = ()
     retained: list[NamedGlobalAggregateTypeFact8616] = []
+    upgraded = False
     for existing in existing_facts:
         if existing.global_name != fact.global_name:
             retained.append(existing)
             continue
-        if existing.struct_type != fact.struct_type:
+        same_type = existing.struct_type == fact.struct_type
+        layout_equivalent = _global_aggregate_layouts_equivalent_8616(
+            existing.struct_type,
+            fact.struct_type,
+        )
+        if not same_type and not layout_equivalent:
             raise PipelineHardError(
                 "conflicting named global aggregate facts "
                 f"name={fact.global_name} existing={existing.struct_type!r} candidate={fact.struct_type!r}"
             )
-        fact = replace(fact, array_len=max(existing.array_len, fact.array_len))
+        existing_is_project = (
+            existing.identity_strength
+            is AggregateTypeIdentityStrength8616.PROJECT_COPY_FAMILY
+        )
+        candidate_is_project = (
+            fact.identity_strength
+            is AggregateTypeIdentityStrength8616.PROJECT_COPY_FAMILY
+        )
+        if not same_type and existing_is_project == candidate_is_project:
+            raise PipelineHardError(
+                "conflicting equal-strength named global aggregate identities "
+                f"name={fact.global_name} existing={existing.struct_type!r} candidate={fact.struct_type!r}"
+            )
+        if existing_is_project and not candidate_is_project:
+            fact = replace(
+                existing,
+                array_len=merge_global_array_extents_8616(
+                    existing.array_len,
+                    fact.array_len,
+                ),
+            )
+        else:
+            upgraded = upgraded or (not same_type and candidate_is_project)
+            fact = replace(
+                fact,
+                array_len=merge_global_array_extents_8616(
+                    existing.array_len,
+                    fact.array_len,
+                ),
+            )
     retained.append(fact)
     typed_codegen._inertia_named_global_aggregate_type_facts_8616 = tuple(dict.fromkeys(retained))
+    return upgraded
+
+
+def _preferred_named_global_aggregate_type_8616(
+    codegen: object,
+    global_name: str,
+    candidate: SimStruct,
+) -> SimStruct:
+    """Reuse a stronger project-family type over an equivalent local candidate."""
+
+    normalized_name = _sanitize_identifier_8616(global_name)
+    typed_codegen = typing.cast(_CodegenStackAggregateFactBoundary8616, codegen)
+    try:
+        existing_facts = typed_codegen._inertia_named_global_aggregate_type_facts_8616
+    except AttributeError:
+        return candidate
+    for existing in existing_facts:
+        if (
+            existing.global_name != normalized_name
+            or existing.identity_strength
+            is not AggregateTypeIdentityStrength8616.PROJECT_COPY_FAMILY
+        ):
+            continue
+        if not _global_aggregate_layouts_equivalent_8616(existing.struct_type, candidate):
+            raise PipelineHardError(
+                "project-family global aggregate conflicts with local layout "
+                f"name={normalized_name} existing={existing.struct_type!r} candidate={candidate!r}"
+            )
+        return existing.struct_type
+    return candidate
 
 
 def _promote_stack_value_expr_to_type_8616(
@@ -8071,7 +8842,7 @@ def _stack_storage_has_aggregate_type_8616(codegen: object, expr: CVariable) -> 
 
 
 def reapply_proven_named_global_aggregate_types_8616(codegen: object) -> bool:
-    """Replay Lowering-owned named aggregate declarations after a rebuild."""
+    """Replay Lowering-owned named aggregate declarations and expression types."""
 
     typed_codegen = typing.cast(_CodegenStackAggregateFactBoundary8616, codegen)
     try:
@@ -8086,7 +8857,11 @@ def reapply_proven_named_global_aggregate_types_8616(codegen: object) -> bool:
             and isinstance(fact.global_name, str)
             and bool(fact.global_name)
             and isinstance(fact.struct_type, SimStruct)
-            and fact.array_len > 0
+            and (
+                fact.array_len is GlobalDeclarationArrayExtent8616.UNKNOWN
+                or isinstance(fact.array_len, int)
+                and fact.array_len > 0
+            )
         )
     )
     cfunc = _codegen_cfunc_optional_8616(codegen)
@@ -8100,11 +8875,11 @@ def reapply_proven_named_global_aggregate_types_8616(codegen: object) -> bool:
             if registered_type is None:
                 continue
             classified += 1
-            declaration_type = _two_byte_global_struct_declaration_ctype_8616(
-                fact.global_name,
+            declaration_type = _two_byte_global_struct_declaration_ctype_from_type_8616(
+                fact.struct_type,
                 registered=True,
             )
-            record_global_declaration_spec_8616(
+            replace_global_declaration_spec_from_stronger_typed_evidence_8616(
                 codegen,
                 ctype=declaration_type,
                 name=fact.global_name,
@@ -8119,6 +8894,15 @@ def reapply_proven_named_global_aggregate_types_8616(codegen: object) -> bool:
                 changed = True
             else:
                 failures += 1
+        expression_stats = _replay_named_global_aggregate_expression_types_8616(
+            codegen,
+            cfunc,
+            facts,
+        )
+        typed_codegen._inertia_named_global_aggregate_expression_replay_stats_8616 = (
+            expression_stats
+        )
+        changed = expression_stats.changed or changed
     stats = NamedGlobalAggregateTypeReplayStats8616(
         raw_fact_count=len(raw_facts),
         normalized_fact_count=len(facts),
@@ -8159,7 +8943,11 @@ def reconcile_registered_named_global_aggregate_declarations_8616(codegen: objec
             and isinstance(fact.global_name, str)
             and bool(fact.global_name)
             and isinstance(fact.struct_type, SimStruct)
-            and fact.array_len > 0
+            and (
+                fact.array_len is GlobalDeclarationArrayExtent8616.UNKNOWN
+                or isinstance(fact.array_len, int)
+                and fact.array_len > 0
+            )
         )
     )
     cfunc = _codegen_cfunc_optional_8616(codegen)
@@ -8205,12 +8993,12 @@ def reconcile_registered_named_global_aggregate_declarations_8616(codegen: objec
                 if not fact.struct_type.name:
                     continue
                 classified += 1
-                declaration_type = _two_byte_global_struct_declaration_ctype_8616(
-                    fact.global_name,
+                declaration_type = _two_byte_global_struct_declaration_ctype_from_type_8616(
+                    fact.struct_type,
                     registered=True,
                 )
                 before = tuple(typed_codegen._inertia_global_declaration_specs_8616)
-                record_global_declaration_spec_8616(
+                replace_global_declaration_spec_from_stronger_typed_evidence_8616(
                     codegen,
                     ctype=declaration_type,
                     name=fact.global_name,
@@ -8253,7 +9041,30 @@ def reconcile_registered_named_global_aggregate_declarations_8616(codegen: objec
             f"raw={stats.raw_fact_count} normalized={stats.normalized_fact_count} "
             f"classified={classified} failures={failures}"
         )
+    changed = reconcile_recorded_cod_global_storage_identities_8616(codegen) or changed
+    changed = reconcile_strong_global_declaration_specs_8616(codegen) or changed
     return changed
+
+
+def _global_aggregate_layouts_equivalent_8616(
+    candidate: object,
+    expected: SimStruct,
+) -> bool:
+    """Return whether two named structs have the same exact physical layout."""
+
+    if not isinstance(candidate, SimStruct) or candidate.pack != expected.pack:
+        return False
+    if tuple(candidate.fields) != tuple(expected.fields):
+        return False
+    for field_name, expected_field in expected.fields.items():
+        candidate_field = candidate.fields[field_name]
+        if not isinstance(candidate_field, SimTypeChar) or not isinstance(
+            expected_field, SimTypeChar
+        ):
+            return False
+        if candidate_field.signed != expected_field.signed:
+            return False
+    return True
 
 
 def named_global_aggregate_types_match_8616(
@@ -8293,12 +9104,19 @@ def _named_global_aggregate_declaration_materialized_8616(
         if not isinstance(spec, (tuple, list)) or len(spec) != 3:
             continue
         ctype, name, array_len = spec
-        if (
-            ctype == declaration_type.c_name
-            and name == fact.global_name
+        extent_materialized = (
+            fact.array_len is GlobalDeclarationArrayExtent8616.UNKNOWN
+            and (
+                array_len is GlobalDeclarationArrayExtent8616.UNKNOWN
+                or isinstance(array_len, int)
+                and array_len > 0
+            )
+        ) or (
+            isinstance(fact.array_len, int)
             and isinstance(array_len, int)
             and array_len >= fact.array_len
-        ):
+        )
+        if ctype == declaration_type.c_name and name == fact.global_name and extent_materialized:
             return True
     return False
 
@@ -8842,11 +9660,12 @@ def _record_stack_aggregate_field_projection_fact_8616(
 
 
 def _project_two_byte_aggregate_char_casts_8616(codegen: CodegenBoundary8616, root: object) -> int:
-    """Project low-byte scalar casts after binary evidence promotes their source to an aggregate.
+    """Project low-byte scalar uses after evidence promotes their source to an aggregate.
 
     A pre-promotion ``(char)word`` expression denotes the low byte.  Once the
     same two-byte storage is proven to be an aggregate, casting the aggregate
     itself is invalid C; its equivalent typed expression is a cast of field 0.
+    A binary-proven ``word & 0xff`` zero-extension similarly applies to field 0.
     """
 
     projected = 0
@@ -8859,8 +9678,8 @@ def _project_two_byte_aggregate_char_casts_8616(codegen: CodegenBoundary8616, ro
         aggregate_expr = cast_expr.expr
         if not isinstance(aggregate_expr, CVariable) or not isinstance(assignment.lhs, CVariable):
             continue
-        aggregate_type = aggregate_expr.type
-        if not _is_two_byte_global_struct_type_8616(aggregate_type):
+        aggregate_type = _resolve_two_byte_global_struct_type_8616(aggregate_expr.type)
+        if aggregate_type is None:
             continue
         _record_stack_aggregate_field_projection_fact_8616(
             codegen,
@@ -8877,8 +9696,8 @@ def _project_two_byte_aggregate_char_casts_8616(codegen: CodegenBoundary8616, ro
         aggregate_expr = node.expr
         if not isinstance(aggregate_expr, CExpression):
             continue
-        aggregate_type = aggregate_expr.type
-        if not _is_two_byte_global_struct_type_8616(aggregate_type):
+        aggregate_type = _resolve_two_byte_global_struct_type_8616(aggregate_expr.type)
+        if aggregate_type is None:
             continue
         node.expr = CVariableField(
             aggregate_expr,
@@ -8891,7 +9710,105 @@ def _project_two_byte_aggregate_char_casts_8616(codegen: CodegenBoundary8616, ro
             codegen=codegen,
         )
         projected += 1
+    for node in _iter_c_nodes_deep_8616(root):
+        if not isinstance(node, CBinaryOp) or node.op != "And":
+            continue
+        masked_aggregate_expr: CExpression | None = None
+        if _constant_int_8616(node.rhs) == 0xFF and isinstance(node.lhs, CExpression):
+            masked_aggregate_expr = node.lhs
+        elif _constant_int_8616(node.lhs) == 0xFF and isinstance(node.rhs, CExpression):
+            masked_aggregate_expr = node.rhs
+        if masked_aggregate_expr is None:
+            continue
+        aggregate_type = _resolve_two_byte_global_struct_type_8616(masked_aggregate_expr.type)
+        if aggregate_type is None:
+            continue
+        field_expr = CVariableField(
+            masked_aggregate_expr,
+            CStructField(
+                aggregate_type,
+                0,
+                _two_byte_global_struct_field_name_8616(0),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+        )
+        if masked_aggregate_expr is node.lhs:
+            node.lhs = field_expr
+        else:
+            node.rhs = field_expr
+        projected += 1
     return projected
+
+
+def _replay_named_global_aggregate_expression_types_8616(
+    codegen: CodegenBoundary8616,
+    cfunc: object,
+    facts: tuple[NamedGlobalAggregateTypeFact8616, ...],
+) -> NamedGlobalAggregateExpressionReplayStats8616:
+    """Restore aggregate element types on regenerated indexed-global nodes.
+
+    angr may rebuild a ``CIndexedVariable`` with its pre-widening scalar type
+    while Lowering's persistent declaration fact remains valid. Matching the
+    exact Lowering-owned global identity restores that type before projecting
+    scalar low-byte uses. Rendered C is never inspected.
+    """
+
+    facts_by_name = {fact.global_name: fact for fact in facts}
+    raw_nodes: list[CIndexedVariable] = []
+    for root in _cfunc_roots_8616(cfunc):
+        raw_nodes.extend(
+            node
+            for node in _iter_c_nodes_deep_8616(root)
+            if isinstance(node, CIndexedVariable)
+            and isinstance(node.variable, CVariable)
+            and isinstance(node.variable.variable, SimMemoryVariable)
+        )
+    nodes_by_id = {id(node): node for node in raw_nodes}
+    classified = 0
+    materialized = 0
+    failures = 0
+    changed = False
+    for node in nodes_by_id.values():
+        name = _indexed_global_name_8616(node)
+        fact = facts_by_name.get(name) if name is not None else None
+        if fact is None:
+            continue
+        classified += 1
+        current_type = _resolve_two_byte_global_struct_type_8616(node.type)
+        if current_type is not None and current_type != fact.struct_type:
+            failures += 1
+            continue
+        if current_type is None:
+            # Third-party angr CIndexedVariable stores its element type in
+            # this explicit runtime slot; ``type`` is a read-only property.
+            node._type = TypeRef(fact.struct_type.name, fact.struct_type)
+            changed = True
+        if _resolve_two_byte_global_struct_type_8616(node.type) == fact.struct_type:
+            materialized += 1
+        else:
+            failures += 1
+    projected = 0
+    for root in _cfunc_roots_8616(cfunc):
+        projected += _project_two_byte_aggregate_char_casts_8616(codegen, root)
+    if projected:
+        changed = True
+    stats = NamedGlobalAggregateExpressionReplayStats8616(
+        raw_fact_count=len(raw_nodes),
+        normalized_fact_count=len(nodes_by_id),
+        classified_fact_count=classified,
+        materialized_count=materialized,
+        failure_count=failures,
+        field_projection_count=projected,
+        changed=changed,
+    )
+    if classified > 0 and (materialized == 0 or failures > 0):
+        raise PipelineHardError(
+            "named global aggregate expression replay did not materialize all classified facts "
+            f"raw={stats.raw_fact_count} normalized={stats.normalized_fact_count} "
+            f"classified={classified} materialized={materialized} failures={failures}"
+        )
+    return stats
 
 
 def recover_compare_register_global_carriers_8616(
@@ -9196,11 +10113,41 @@ def _collect_direct_global_symbol_refs_8616(
     return tuple(refs)
 
 
+def _direct_memory_read_operands_8616(
+    insn: CapstoneInstructionView8616,
+) -> tuple[CapstoneOperandView8616, ...]:
+    """Return memory operands proven read by decoded access metadata.
+
+    Synthetic and legacy Capstone wrappers may omit access metadata. Preserve
+    the historically proven MOV-source case for those wrappers only.
+    """
+
+    proven = tuple(
+        operand
+        for operand in insn.operands
+        if operand.kind == X86_OP_MEM
+        and operand.memory is not None
+        and isinstance(operand.access, int)
+        and bool(operand.access & CS_AC_READ)
+    )
+    if proven:
+        return proven
+    if (
+        insn.instruction_id == X86_INS_MOV
+        and len(insn.operands) == 2
+        and all(operand.access is None for operand in insn.operands)
+    ):
+        source = insn.operands[1]
+        if source.kind == X86_OP_MEM and source.memory is not None:
+            return (source,)
+    return ()
+
+
 def recover_direct_segmented_global_load_evidence_8616(
     project: ProjectBoundary8616,
     function: object | None,
 ) -> tuple[DirectSegmentedGlobalLoadEvidence8616, ...]:
-    """Recover direct DS/ES loads from decoded MOV source operands.
+    """Recover direct DS/ES loads from decoded memory-read operands.
 
     This evidence intentionally does not assign a source-level symbol. It only
     preserves the architectural segment, offset, width, and instruction
@@ -9213,33 +10160,31 @@ def recover_direct_segmented_global_load_evidence_8616(
     for block in _direct_global_update_blocks_8616(project, function):
         for wrapper in _capstone_insns_for_direct_global_update_8616(project, block):
             insn = _capstone_instruction_view_8616(wrapper)
-            if insn.instruction_id != X86_INS_MOV or len(insn.operands) != 2:
-                continue
-            source = insn.operands[1]
-            memory = source.memory
-            if source.kind != X86_OP_MEM or memory is None:
-                continue
-            if memory.base not in {None, 0, X86_REG_INVALID} or memory.index not in {
-                None,
-                0,
-                X86_REG_INVALID,
-            }:
-                continue
-            if source.size not in {1, 2, 4} or not isinstance(memory.displacement, int):
-                continue
-            if not isinstance(insn.address, int):
-                continue
-            segment_name = _direct_stack_move_segment_name_8616(insn.raw, memory.segment)
-            space = MemSpace.DS if segment_name == "ds" else MemSpace.ES if segment_name == "es" else None
-            if space is None:
-                continue
-            evidence = DirectSegmentedGlobalLoadEvidence8616(
-                offset=int(memory.displacement) & 0xFFFF,
-                width=int(source.size),
-                space=space,
-                ins_addr=int(insn.address),
-            )
-            recovered[(evidence.offset, evidence.width, evidence.space, evidence.ins_addr)] = evidence
+            for source in _direct_memory_read_operands_8616(insn):
+                memory = source.memory
+                if memory is None:
+                    continue
+                if memory.base not in {None, 0, X86_REG_INVALID} or memory.index not in {
+                    None,
+                    0,
+                    X86_REG_INVALID,
+                }:
+                    continue
+                if source.size not in {1, 2, 4} or not isinstance(memory.displacement, int):
+                    continue
+                if not isinstance(insn.address, int):
+                    continue
+                segment_name = _direct_stack_move_segment_name_8616(insn.raw, memory.segment)
+                space = MemSpace.DS if segment_name == "ds" else MemSpace.ES if segment_name == "es" else None
+                if space is None:
+                    continue
+                evidence = DirectSegmentedGlobalLoadEvidence8616(
+                    offset=int(memory.displacement) & 0xFFFF,
+                    width=int(source.size),
+                    space=space,
+                    ins_addr=int(insn.address),
+                )
+                recovered[(evidence.offset, evidence.width, evidence.space, evidence.ins_addr)] = evidence
     return tuple(sorted(recovered.values(), key=lambda item: (item.ins_addr, item.offset, item.width, item.space.value)))
 
 
@@ -9250,8 +10195,9 @@ def recover_direct_segmented_global_store_evidence_8616(
     """Recover direct DS/ES stores from decoded MOV destination operands.
 
     The fact deliberately carries no source-level symbol. The binary proves
-    only the architectural segment, offset, width, and instruction identity;
-    the structured-C assignment remains responsible for the source value.
+    the architectural segment, offset, width, instruction identity, and an
+    exact source value only for immediate operands. Other source values remain
+    the responsibility of the structured-C assignment.
     """
 
     if project is None or function is None:
@@ -9276,6 +10222,7 @@ def recover_direct_segmented_global_store_evidence_8616(
                 continue
             if not isinstance(insn.address, int):
                 continue
+            source = insn.operands[1]
             segment_name = _direct_stack_move_segment_name_8616(insn.raw, memory.segment)
             space = MemSpace.DS if segment_name == "ds" else MemSpace.ES if segment_name == "es" else None
             if space is None:
@@ -9285,6 +10232,11 @@ def recover_direct_segmented_global_store_evidence_8616(
                 width=int(destination.size),
                 space=space,
                 ins_addr=int(insn.address),
+                immediate_value=(
+                    int(source.immediate)
+                    if source.kind == X86_OP_IMM and isinstance(source.immediate, int)
+                    else None
+                ),
             )
             recovered[(evidence.offset, evidence.width, evidence.space, evidence.ins_addr)] = evidence
     return tuple(
@@ -9311,6 +10263,30 @@ def _normalize_direct_segmented_global_load_evidence_8616(
     return normalized
 
 
+def _unambiguous_anonymous_direct_scalar_evidence_8616(
+    normalized: dict[tuple[int, int], DirectSegmentedGlobalLoadEvidence8616],
+    offset: int,
+    width: int,
+) -> DirectSegmentedGlobalLoadEvidence8616 | None:
+    """Return one non-overlapping exact DS scalar identity or refuse it."""
+
+    key = (offset & 0xFFFF, width)
+    candidate = normalized.get(key)
+    if candidate is None or candidate.space is not MemSpace.DS or width not in {1, 2, 4}:
+        return None
+    start = key[0]
+    end = start + width
+    if end > 0x10000:
+        return None
+    for (other_start, other_width), _other in normalized.items():
+        if (other_start, other_width) == key:
+            continue
+        other_end = other_start + other_width
+        if other_end > 0x10000 or max(start, other_start) < min(end, other_end):
+            return None
+    return candidate
+
+
 def _make_direct_segmented_global_load_expr_8616(
     project: ProjectBoundary8616,
     codegen: CodegenBoundary8616,
@@ -9324,6 +10300,7 @@ def _make_direct_segmented_global_load_expr_8616(
         offset=evidence.offset,
         width=evidence.width,
         space=evidence.space,
+        source_insn=evidence.ins_addr,
     )
 
 
@@ -9334,6 +10311,7 @@ def _make_direct_segmented_global_access_expr_8616(
     offset: int,
     width: int,
     space: MemSpace,
+    source_insn: int | None = None,
 ) -> CFunctionCall | None:
     """Materialize one anonymous direct access as an explicit segment helper."""
 
@@ -9361,7 +10339,14 @@ def _make_direct_segmented_global_access_expr_8616(
         codegen=codegen,
         tags=segmented_load_tags_8616(
             identity,
-            existing={"inertia_x86_16_runtime_segment_helper": helper.helper_name},
+            existing={
+                "inertia_x86_16_runtime_segment_helper": helper.helper_name,
+                **(
+                    {"inertia_source_instruction_addrs": (source_insn,)}
+                    if isinstance(source_insn, int)
+                    else {}
+                ),
+            },
         ),
     )
 
@@ -9660,6 +10645,7 @@ def _direct_global_call_return_store_operand_8616(
 def _merge_direct_global_symbol_refs_8616(
     *groups: tuple[DirectGlobalSymbolRef8616, ...],
 ) -> tuple[DirectGlobalSymbolRef8616, ...]:
+    """Merge exact refs, preferring paired named scalars over generated names."""
     refs: dict[tuple[int, int], DirectGlobalSymbolRef8616] = {}
     for group in groups:
         for ref in group:
@@ -9668,7 +10654,14 @@ def _merge_direct_global_symbol_refs_8616(
                 continue
             refs.setdefault((ref.offset & 0xFFFF, width), ref)
     for ref in _derive_direct_global_dword_scalar_refs_8616(tuple(refs.values())):
-        refs.setdefault((ref.offset & 0xFFFF, ref.width), ref)
+        key = (ref.offset & 0xFFFF, ref.width)
+        current = refs.get(key)
+        generated_name = f"g_{ref.offset & 0xFFFF:04X}"
+        if current is None or (
+            _sanitize_identifier_8616(current.name).casefold() == generated_name.casefold()
+            and _sanitize_identifier_8616(ref.name).casefold() != generated_name.casefold()
+        ):
+            refs[key] = ref
     return tuple(refs[key] for key in sorted(refs))
 
 
@@ -9835,9 +10828,9 @@ def _summary_matches_cod_offset_opcode_8616(insn: InsnSummary8616, opcode: int |
         return True
     mnemonic = insn.mnemonic.lower()
     if 0xB8 <= opcode <= 0xBF:
-        return mnemonic == "mov" and (insn.op0_kind == "imm" or insn.op1_kind == "imm")
+        return bool(mnemonic == "mov" and (insn.op0_kind == "imm" or insn.op1_kind == "imm"))
     if opcode == 0x68:
-        return mnemonic == "push" and (insn.op0_kind == "imm" or insn.op1_kind == "imm")
+        return bool(mnemonic == "push" and (insn.op0_kind == "imm" or insn.op1_kind == "imm"))
     return True
 
 
@@ -10015,14 +11008,38 @@ def _match_indexed_offset_expr_with_stride_8616(
     return None
 
 
+def _match_segmented_indexed_offset_expr_8616(
+    node: object,
+    width: int,
+    *,
+    copies: dict[CopyKey8616, object] | None = None,
+) -> tuple[int, object] | None:
+    """Match a proven segment-relative ``base + index * width`` offset."""
+    node = _unwrap_codegen_expr_8616(node)
+    if not isinstance(node, CBinaryOp) or node.op != "Add":
+        return None
+    for maybe_base, maybe_index in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+        base = _constant_int_8616(maybe_base)
+        scaled = _match_scaled_index_expr_8616(
+            _resolve_copy_8616(maybe_index, copies),
+            width,
+            copies=copies,
+        )
+        if base is not None and scaled is not None:
+            return base & 0xFFFF, scaled
+    return None
+
+
 def _match_byte_store_lvalue_8616(
     node: object,
     *,
+    project: ProjectBoundary8616 | None = None,
+    codegen: CodegenBoundary8616 | None = None,
     copies: dict[CopyKey8616, object] | None = None,
     evidence_by_base: dict[tuple[int, int], IndexedSegmentedGlobalEvidence8616] | None = None,
 ) -> tuple[int, object] | None:
     node = _unwrap_codegen_expr_8616(node)
-    memory_helper = _memory_pointer_helper_8616(node)
+    memory_helper = memory_pointer_helper_8616(node)
     if memory_helper is MemoryPointerHelper8616.MEM_U8:
         if not isinstance(node, CFunctionCall):
             return None
@@ -10038,6 +11055,27 @@ def _match_byte_store_lvalue_8616(
                     copies=copies,
                 )
         return None
+    if project is not None and codegen is not None and evidence_by_base is not None:
+        offset_expr = runtime_segment_access_offset_expr_8616(
+            project,
+            codegen,
+            node,
+            expected_space=MemSpace.DS,
+            width=1,
+        )
+        if offset_expr is not None:
+            matched = _match_segmented_indexed_offset_expr_8616(
+                offset_expr,
+                2,
+                copies=copies,
+            )
+            if matched is not None:
+                return matched
+            return _match_indexed_global_byte_address_8616(
+                offset_expr,
+                evidence_by_base,
+                copies=copies,
+            )
     if not isinstance(node, CUnaryOp) or node.op != "Dereference":
         return None
     return _match_indexed_pointer_expr_8616(node.operand, 2, copies=copies)
@@ -10190,6 +11228,7 @@ def _make_indexed_global_byte_field_expr_from_reference_8616(
         name=storage_name,
         relative_disp=0,
         width=storage_size,
+        aggregate_type_name=byte_evidence.aggregate_type_name,
     )
     return _make_indexed_global_byte_field_expr_8616(
         codegen,
@@ -10239,7 +11278,7 @@ def _make_indexed_global_value_from_stride_evidence_8616(
     if address_expr is None:
         return None
     if load_width == stride and isinstance(address_expr, CUnaryOp) and address_expr.op == "Reference":
-        return address_expr.operand
+        return cast(object, address_expr.operand)
     if stride == 2 and load_width == 1:
         item = _indexed_evidence_for_base_stride_8616(evidence_by_base, base_offset, stride)
         if item is not None:
@@ -10255,6 +11294,7 @@ def _make_indexed_global_value_from_stride_evidence_8616(
                         name=low_item.name,
                         relative_disp=low_item.relative_disp - (low_item.relative_disp % stride),
                         width=stride,
+                        aggregate_type_name=item.aggregate_type_name,
                     )
                 elif low_item is not None:
                     adjacent_word = evidence_by_base.get(((element_base + stride) & 0xFFFF, stride))
@@ -10266,6 +11306,7 @@ def _make_indexed_global_value_from_stride_evidence_8616(
                             name=low_item.name,
                             relative_disp=low_item.relative_disp - field_disp,
                             width=stride,
+                            aggregate_type_name=item.aggregate_type_name,
                         )
                     elif (
                         isinstance(address_expr, CUnaryOp)
@@ -10287,33 +11328,46 @@ def _make_indexed_global_value_from_stride_evidence_8616(
                                 name=low_item.name,
                                 relative_disp=low_item.relative_disp - field_disp,
                                 width=stride,
+                                aggregate_type_name=item.aggregate_type_name,
                             )
                         else:
-                            return CFunctionCall(
+                            return cast(
+                                object,
+                                CFunctionCall(
+                                    _memory_pointer_helper_name_for_width_8616(load_width),
+                                    None,
+                                    [address_expr],
+                                    codegen=codegen,
+                                ),
+                            )
+                    else:
+                        return cast(
+                            object,
+                            CFunctionCall(
                                 _memory_pointer_helper_name_for_width_8616(load_width),
                                 None,
                                 [address_expr],
                                 codegen=codegen,
-                            )
-                    else:
-                        return CFunctionCall(
+                            ),
+                        )
+                else:
+                    return cast(
+                        object,
+                        CFunctionCall(
                             _memory_pointer_helper_name_for_width_8616(load_width),
                             None,
                             [address_expr],
                             codegen=codegen,
-                        )
-                else:
-                    return CFunctionCall(
-                        _memory_pointer_helper_name_for_width_8616(load_width),
-                        None,
-                        [address_expr],
-                        codegen=codegen,
+                        ),
                     )
             element_item = IndexedSegmentedGlobalEvidence8616(
                 base_offset=element_base,
                 name=word_item.name,
                 relative_disp=word_item.relative_disp,
                 width=stride,
+                aggregate_type_name=(
+                    word_item.aggregate_type_name or item.aggregate_type_name
+                ),
             )
             field_expr = _make_indexed_global_byte_field_expr_8616(
                 codegen,
@@ -10323,12 +11377,12 @@ def _make_indexed_global_value_from_stride_evidence_8616(
                 evidence_by_base,
             )
             if field_expr is not None:
-                return field_expr
+                return cast(object, field_expr)
             indexed = _make_indexed_global_expr_8616(codegen, element_item, index_expr)
             if indexed is not None:
                 mask = CConstant(0xFF, SimTypeShort(False), codegen=codegen)
                 if field_disp == 0:
-                    return CBinaryOp("And", indexed, mask, codegen=codegen)
+                    return cast(object, CBinaryOp("And", indexed, mask, codegen=codegen))
                 if field_disp == 1:
                     shifted = CBinaryOp(
                         "Shr",
@@ -10336,11 +11390,11 @@ def _make_indexed_global_value_from_stride_evidence_8616(
                         CConstant(8, SimTypeShort(False), codegen=codegen),
                         codegen=codegen,
                     )
-                    return CBinaryOp("And", shifted, mask, codegen=codegen)
+                    return cast(object, CBinaryOp("And", shifted, mask, codegen=codegen))
     helper_name = _memory_pointer_helper_name_for_width_8616(load_width)
     if helper_name is None:
         return None
-    return CFunctionCall(helper_name, None, [address_expr], codegen=codegen)
+    return cast(object, CFunctionCall(helper_name, None, [address_expr], codegen=codegen))
 
 
 def _make_direct_global_address_from_evidence_8616(
@@ -10368,7 +11422,7 @@ def _make_direct_global_address_from_evidence_8616(
     )
     if not isinstance(indexed, CExpression):
         return None
-    return CUnaryOp("Reference", indexed, codegen=codegen)
+    return cast(object, CUnaryOp("Reference", indexed, codegen=codegen))
 
 
 def _make_indexed_global_address_from_stride_evidence_8616(
@@ -10389,6 +11443,7 @@ def _make_indexed_global_address_from_stride_evidence_8616(
         name=item.name,
         relative_disp=item.relative_disp - field_disp,
         width=stride,
+        aggregate_type_name=item.aggregate_type_name,
     )
     if field_disp == 0:
         indexed = _make_indexed_global_value_expr_8616(
@@ -10406,12 +11461,15 @@ def _make_indexed_global_address_from_stride_evidence_8616(
         return None
     address_expr = CUnaryOp("Reference", indexed, codegen=codegen)
     if field_disp == 0:
-        return address_expr
-    return CBinaryOp(
-        "Add",
-        address_expr,
-        CConstant(field_disp, SimTypeShort(False), codegen=codegen),
-        codegen=codegen,
+        return cast(object, address_expr)
+    return cast(
+        object,
+        CBinaryOp(
+            "Add",
+            address_expr,
+            CConstant(field_disp, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
     )
 
 
@@ -10441,6 +11499,7 @@ def _indexed_evidence_for_base_stride_8616(
                 name=field.name,
                 relative_disp=field.relative_disp,
                 width=stride,
+                aggregate_type_name=field.aggregate_type_name,
             )
     if direct is not None:
         return direct
@@ -10479,15 +11538,157 @@ def _merge_indexed_global_evidence_8616(
 ) -> tuple[IndexedSegmentedGlobalEvidence8616, ...]:
     merged: dict[tuple[int, int, str], IndexedSegmentedGlobalEvidence8616] = {}
     for item in (*fallback, *primary):
-        key = (item.base_offset & 0xFFFF, int(item.width or 0), str(item.name))
+        key = (
+            item.base_offset & 0xFFFF,
+            int(item.width or 0),
+            str(item.name),
+        )
         merged[key] = item
     return tuple(merged.values())
+
+
+def _normalize_sidecar_free_indexed_evidence_name_8616(
+    item: IndexedSegmentedGlobalEvidence8616,
+) -> str:
+    """Return canonical sidecar-free evidence name for an indexed global object."""
+
+    sanitized = _sanitize_identifier_8616(item.name)
+    if re.fullmatch(r"g_[0-9A-Fa-f]{4,5}", sanitized):
+        return sanitized
+    return ""
+
+
+def _unify_sidecar_free_indexed_evidence_8616(
+    primary: tuple[IndexedSegmentedGlobalEvidence8616, ...],
+    fallback: tuple[IndexedSegmentedGlobalEvidence8616, ...],
+    store_evidence: tuple[IndexedSegmentedGlobalStoreEvidence8616, ...],
+) -> tuple[IndexedSegmentedGlobalEvidence8616, ...]:
+    """Unify sidecar-free indexed identities from exact indexed copy/store affinity."""
+
+    def _signed_16bit_delta_8616(lhs: int, rhs: int) -> int:
+        return ((lhs - rhs + 0x8000) & 0xFFFF) - 0x8000
+
+    evidence = _merge_indexed_global_evidence_8616(primary, fallback)
+    evidence_by_key = {
+        (item.base_offset & 0xFFFF, int(item.width or 0)): item for item in evidence
+    }
+    source_to_dest: dict[tuple[int, int], tuple[int, int]] = {}
+    for fact in store_evidence:
+        width = int(fact.width or 0)
+        if width <= 0:
+            continue
+        source_base = fact.source_base_offset
+        source_index_stack_offset = fact.source_index_stack_offset
+        source_index_shift = fact.source_index_shift
+        if (
+            source_base is None
+            or fact.source_width is None
+            or source_index_stack_offset is None
+            or source_index_shift is None
+            or fact.source_width != width
+            or fact.index_stack_offset != source_index_stack_offset
+            or fact.index_shift != source_index_shift
+            or not isinstance(source_base, int)
+        ):
+            continue
+        source = evidence_by_key.get((source_base & 0xFFFF, width))
+        destination = evidence_by_key.get((fact.base_offset & 0xFFFF, width))
+        if source is None or destination is None:
+            continue
+        source_name = _normalize_sidecar_free_indexed_evidence_name_8616(source)
+        destination_name = _normalize_sidecar_free_indexed_evidence_name_8616(destination)
+        if not source_name or not destination_name:
+            continue
+        if _signed_16bit_delta_8616(fact.base_offset, source_base) != width:
+            continue
+        source_key = (source_base & 0xFFFF, width)
+        destination_key = (fact.base_offset & 0xFFFF, width)
+        existing_destination_key = source_to_dest.get(source_key)
+        if existing_destination_key is not None and existing_destination_key != destination_key:
+            del source_to_dest[source_key]
+            continue
+        source_to_dest[source_key] = destination_key
+
+    if not source_to_dest:
+        return evidence
+
+    updated: list[IndexedSegmentedGlobalEvidence8616] = []
+    for item in evidence:
+        width = int(item.width or 0)
+        name = item.name
+        relative_disp = int(item.relative_disp)
+        canonical_key = source_to_dest.get((item.base_offset & 0xFFFF, width))
+        if canonical_key is not None:
+            canonical = evidence_by_key.get(canonical_key)
+            if canonical is not None:
+                name = canonical.name
+                canonical_base = canonical_key[0]
+                relative_disp = int(item.relative_disp + _signed_16bit_delta_8616(item.base_offset, canonical_base))
+        updated.append(
+            IndexedSegmentedGlobalEvidence8616(
+                base_offset=item.base_offset,
+                name=name,
+                relative_disp=relative_disp,
+                width=item.width,
+            )
+        )
+
+    dedup: dict[tuple[int, int, str], IndexedSegmentedGlobalEvidence8616] = {}
+    for item in updated:
+        key = (
+            item.base_offset & 0xFFFF,
+            int(item.width or 0),
+            str(_sanitize_identifier_8616(item.name)),
+        )
+        dedup[key] = item
+    return tuple(dedup.values())
+
+
+def _augment_indexed_evidence_with_project_layouts_8616(
+    evidence: tuple[IndexedSegmentedGlobalEvidence8616, ...],
+    layout_evidence: GlobalObjectLayoutEvidence8616,
+) -> tuple[IndexedSegmentedGlobalEvidence8616, ...]:
+    """Add field views only for exact project-proven aggregate identities."""
+
+    augmented: list[IndexedSegmentedGlobalEvidence8616] = []
+    matched_layouts: dict[
+        int, tuple[IndexedSegmentedGlobalEvidence8616, GlobalObjectLayout8616]
+    ] = {}
+    layouts_by_base = {layout.address.offset & 0xFFFF: layout for layout in layout_evidence.layouts}
+    for item in evidence:
+        width = int(item.width or 0)
+        canonical_base = (int(item.base_offset) - int(item.relative_disp)) & 0xFFFF
+        layout = layouts_by_base.get(canonical_base)
+        matches_layout = layout is not None and (
+            width == layout.element_width
+            or (width == 1 and int(item.relative_disp) in layout.field_offsets)
+        )
+        if layout is not None and matches_layout:
+            item = replace(
+                item,
+                aggregate_type_name=f"g_{layout.family_base_offset:04X}",
+            )
+            matched_layouts[canonical_base] = (item, layout)
+        augmented.append(item)
+    for canonical_base, (canonical, layout) in matched_layouts.items():
+        for field_offset in layout.field_offsets:
+            augmented.append(
+                IndexedSegmentedGlobalEvidence8616(
+                    base_offset=(canonical_base + field_offset) & 0xFFFF,
+                    name=canonical.name,
+                    relative_disp=field_offset,
+                    width=1,
+                    aggregate_type_name=canonical.aggregate_type_name,
+                )
+            )
+    return tuple(dict.fromkeys(augmented))
 
 
 def _memory_pointer_helper_name_for_width_8616(width: int) -> str | None:
     for helper in MemoryPointerHelper8616:
         if helper.width == width:
-            return helper.helper_name
+            helper_name = helper.helper_name
+            return helper_name if isinstance(helper_name, str) else None
     return None
 
 
@@ -10512,7 +11713,7 @@ def _word_source_for_byte_pair_store_8616(
 def _word_store_source_is_safe_8616(node: object) -> bool:
     if isinstance(node, (CVariable, CFunctionCall, CIndexedVariable)):
         return True
-    return isinstance(node, CBinaryOp) and node.op in {"Add", "Sub", "Mul", "Mull", "Shl", "Shr", "And", "Or"}
+    return isinstance(node, CBinaryOp) and node.op in {"Add", "Sub", "Mul", "Mull", "Mod", "Shl", "Shr", "And", "Or"}
 
 
 def _low_byte_source_is_artifact_8616(node: object, copies: dict[CopyKey8616, object]) -> bool:
@@ -10523,7 +11724,7 @@ def _low_byte_source_is_artifact_8616(node: object, copies: dict[CopyKey8616, ob
         return False
     variable = node.variable
     if isinstance(variable, SimStackVariable):
-        return variable.base == "bp" and variable.offset == 0
+        return bool(variable.base == "bp" and variable.offset == 0)
     if isinstance(variable, SimMemoryVariable):
         return False
     if isinstance(variable, SimRegisterVariable):
@@ -10572,7 +11773,7 @@ def _same_word_store_source_8616(lhs: object, rhs: object) -> bool:
     rvar = rhs.variable
     if not isinstance(lvar, SimStackVariable) or not isinstance(rvar, SimStackVariable):
         return False
-    return (
+    return bool(
         lvar.offset == rvar.offset
         and lvar.base == rvar.base
         and lvar.region == rvar.region
@@ -10587,7 +11788,11 @@ def _make_indexed_global_value_expr_8616(
     *,
     allow_unregistered_for_address: bool = False,
 ) -> object | None:
-    """Build an indexed value, retaining unregistered aggregates only for addresses."""
+    """Build an indexed value without treating subword views as aggregate proof.
+
+    Adjacent byte accesses can be projections of one scalar word. Only an
+    explicit aggregate type fact may introduce a struct element type.
+    """
 
     element_type: SimType | None = None
     declaration_ctype: NamedAggregateDeclarationCType8616 | None = None
@@ -10601,16 +11806,35 @@ def _make_indexed_global_value_expr_8616(
             and int(field_evidence.relative_disp) % 2 in {0, 1}
             for (_field_base, field_width), field_evidence in evidence_by_base.items()
         )
-        if byte_field_proven:
-            candidate_type = _two_byte_global_struct_type_8616(expected_name)
-            _record_named_global_aggregate_type_fact_8616(codegen, expected_name, candidate_type, 1)
+        if evidence.aggregate_type_name is not None and byte_field_proven:
+            aggregate_type_name = _sanitize_identifier_8616(evidence.aggregate_type_name)
+            candidate_type = _two_byte_global_struct_type_8616(aggregate_type_name)
+            candidate_type = _preferred_named_global_aggregate_type_8616(
+                codegen,
+                expected_name,
+                candidate_type,
+            )
+            _record_named_global_aggregate_type_fact_8616(
+                codegen,
+                expected_name,
+                candidate_type,
+                GlobalDeclarationArrayExtent8616.UNKNOWN,
+                allow_layout_equivalent_type_upgrade=evidence.aggregate_type_name is not None,
+            )
             registered_type = _register_codegen_struct_type_8616(codegen, candidate_type)
             if registered_type is not None or allow_unregistered_for_address:
                 element_type = candidate_type
-                declaration_ctype = _two_byte_global_struct_declaration_ctype_8616(
-                    expected_name,
+                declaration_ctype = _two_byte_global_struct_declaration_ctype_from_type_8616(
+                    candidate_type,
                     registered=registered_type is not None,
                 )
+    if evidence.aggregate_type_name is not None and declaration_ctype is not None:
+        replace_global_declaration_spec_from_stronger_typed_evidence_8616(
+            codegen,
+            ctype=declaration_ctype,
+            name=_sanitize_identifier_8616(evidence.name),
+            array_len=GlobalDeclarationArrayExtent8616.UNKNOWN,
+        )
     return _make_indexed_global_expr_8616(
         codegen,
         evidence,
@@ -10662,13 +11886,16 @@ def _make_indexed_global_expr_8616(
         codegen,
         ctype=declaration_ctype or ctype_for_global_width_8616(width),
         name=name,
-        array_len=1,
+        array_len=GlobalDeclarationArrayExtent8616.UNKNOWN,
     )
-    return CIndexedVariable(
-        base_var,
-        final_index,
-        variable_type=resolved_type,
-        codegen=codegen,
+    return cast(
+        object,
+        CIndexedVariable(
+            base_var,
+            final_index,
+            variable_type=resolved_type,
+            codegen=codegen,
+        ),
     )
 
 
@@ -10692,8 +11919,20 @@ def _make_indexed_global_byte_field_expr_8616(
         return None
     base_addr = (int(evidence.base_offset) - int(evidence.relative_disp)) & 0xFFFF
     name = _sanitize_identifier_8616(evidence.name)
-    struct_type = _two_byte_global_struct_type_8616(name)
-    _record_named_global_aggregate_type_fact_8616(codegen, name, struct_type, 1)
+    aggregate_type_name = _sanitize_identifier_8616(evidence.aggregate_type_name or name)
+    struct_type = _two_byte_global_struct_type_8616(aggregate_type_name)
+    struct_type = _preferred_named_global_aggregate_type_8616(
+        codegen,
+        name,
+        struct_type,
+    )
+    _record_named_global_aggregate_type_fact_8616(
+        codegen,
+        name,
+        struct_type,
+        GlobalDeclarationArrayExtent8616.UNKNOWN,
+        allow_layout_equivalent_type_upgrade=evidence.aggregate_type_name is not None,
+    )
     type_registered = _register_codegen_struct_type_8616(codegen, struct_type) is not None
     cfunc = _codegen_cfunc_optional_8616(codegen)
     base_var = CVariable(
@@ -10723,15 +11962,24 @@ def _make_indexed_global_byte_field_expr_8616(
         return None
     indexed = CIndexedVariable(base_var, final_index, variable_type=struct_type, codegen=codegen)
     field_name = _two_byte_global_struct_field_name_8616(field_offset)
-    record_global_declaration_spec_8616(
-        codegen,
-        ctype=_two_byte_global_struct_declaration_ctype_8616(
-            name,
-            registered=type_registered,
-        ),
-        name=name,
-        array_len=1,
+    declaration_ctype = _two_byte_global_struct_declaration_ctype_from_type_8616(
+        struct_type,
+        registered=type_registered,
     )
+    if evidence.aggregate_type_name is not None:
+        replace_global_declaration_spec_from_stronger_typed_evidence_8616(
+            codegen,
+            ctype=declaration_ctype,
+            name=name,
+            array_len=GlobalDeclarationArrayExtent8616.UNKNOWN,
+        )
+    else:
+        record_global_declaration_spec_8616(
+            codegen,
+            ctype=declaration_ctype,
+            name=name,
+            array_len=GlobalDeclarationArrayExtent8616.UNKNOWN,
+        )
     return CVariableField(
         indexed,
         CStructField(struct_type, field_offset, field_name, codegen=codegen),
@@ -10763,6 +12011,25 @@ def _two_byte_global_struct_declaration_ctype_8616(
     return NamedAggregateDeclarationCType8616(
         type_name=tag,
         inline_definition=_two_byte_global_struct_ctype_8616(name),
+        registered=registered,
+    )
+
+
+def _two_byte_global_struct_declaration_ctype_from_type_8616(
+    struct_type: SimStruct,
+    *,
+    registered: bool,
+) -> NamedAggregateDeclarationCType8616:
+    """Build declaration metadata from the proven struct type identity."""
+
+    if not _is_two_byte_global_struct_type_8616(struct_type) or not struct_type.name:
+        raise PipelineHardError("invalid two-byte global struct declaration type")
+    tag = _sanitize_identifier_8616(struct_type.name)
+    return NamedAggregateDeclarationCType8616(
+        type_name=tag,
+        inline_definition=(
+            f"struct {tag} {{ unsigned char field_0; unsigned char field_1; }}"
+        ),
         registered=registered,
     )
 
@@ -10818,6 +12085,13 @@ def _is_two_byte_global_struct_type_8616(candidate: object) -> typing.TypeGuard[
     ):
         return False
     return all(isinstance(field_type, SimTypeChar) for field_type in fields.values())
+
+
+def _resolve_two_byte_global_struct_type_8616(candidate: object) -> SimStruct | None:
+    """Resolve a direct or registered two-byte global aggregate type."""
+
+    resolved = candidate.type if isinstance(candidate, TypeRef) else candidate
+    return resolved if _is_two_byte_global_struct_type_8616(resolved) else None
 
 
 def _make_direct_global_symbol_or_projection_expr_8616(
@@ -10937,6 +12211,14 @@ def _make_dword_scalar_indexed_subword_projection_expr_8616(
         return None
     scalar_ref = _dword_scalar_ref_for_subword_ref_8616(ref, direct_by_offset)
     if scalar_ref is None:
+        return None
+    if not may_lower_codegen_access_to_entry_ds_object_8616(
+        codegen,
+        node,
+        segment_register="ds",
+        offset=ref.offset,
+        width=width,
+    ):
         return None
     return _make_dword_scalar_subword_projection_expr_8616(codegen, scalar_ref, int(ref.relative_disp))
 
@@ -11152,7 +12434,7 @@ def _active_function_8616(project: ProjectBoundary8616, codegen: CodegenBoundary
         except Exception:
             function = None
         if function is not None:
-            return function
+            return cast(object, function)
     return SimpleNamespace(addr=addr, size=getattr(cfunc, "size", None), name=getattr(cfunc, "name", None))
 
 
@@ -11181,21 +12463,6 @@ def _segment_pointer_helper_8616(node: object) -> SegmentPointerHelper8616 | Non
         return None
     normalized = raw_name.strip().upper()
     for helper in SegmentPointerHelper8616:
-        if normalized == helper.helper_name:
-            return helper
-    return None
-
-
-def _memory_pointer_helper_8616(node: object) -> MemoryPointerHelper8616 | None:
-    """Return the memory pointer helper from a dynamic boundary: angr codegen call metadata."""
-
-    raw_name = getattr(node, "callee_target", None)
-    if not isinstance(raw_name, str):
-        raw_name = getattr(getattr(node, "callee_func", None), "name", None)
-    if not isinstance(raw_name, str):
-        return None
-    normalized = raw_name.strip().upper()
-    for helper in MemoryPointerHelper8616:
         if normalized == helper.helper_name:
             return helper
     return None

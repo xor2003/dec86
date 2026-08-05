@@ -32,12 +32,13 @@ from typing import Any, TypeAlias, cast
 import angr
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr_platforms.X86_16.analysis_helpers import collect_neighbor_call_targets
+from angr_platforms.X86_16.annotations import annotate_function
 from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseEvidence8616,
-    CallerReturnUseVerdict8616,
     caller_return_use_evidence_by_addr_8616,
     record_caller_return_use_evidence_8616,
 )
+from angr_platforms.X86_16.cod_analysis_image import build_cod_analysis_image_8616
 from angr_platforms.X86_16.cod_extract import (
     CODProcMetadata,
     extract_cod_function_entries,
@@ -45,15 +46,17 @@ from angr_platforms.X86_16.cod_extract import (
     extract_simple_cod_logic_entries,
     extract_small_two_arg_cod_logic_entries,
     infer_cod_logic_start,
-    join_cod_entries_with_synthetic_globals,
 )
 from angr_platforms.X86_16.compiler_helpers import is_x86_16_stack_probe_name_8616
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
 from angr_platforms.X86_16.lst_extract import LSTMetadata
+from angr_platforms.X86_16.segment_program_layout_codec import segment_program_function_evidence_from_record_8616
+from angr_platforms.X86_16.segment_program_layout_contract import SegmentProgramFunctionEvidence8616
 from angr_platforms.X86_16.structuring.compare32_recovery import recover_32bit_compare_c_8616
 from angr_platforms.X86_16.structuring.simple_loop_recovery import recover_counted_stack_loop_c_8616
 
 from inertia_decompiler.architecture_runtime_guard import (
+    ARCHITECTURE_GUARD_VERIFIED_PARENT_PID_ENV,
     DecompilerArchitectureGuardError,
     assert_decompiler_architecture_clean,
 )
@@ -85,7 +88,17 @@ from inertia_decompiler.disassembly_helpers import (
     _infer_linear_disassembly_window,
     _probe_lift_break,
 )
-from inertia_decompiler.function_worker_policy import requires_serial_function_decompilation
+from inertia_decompiler.discovery_cache_contract import (
+    caller_return_use_evidence_from_record_8616,
+    caller_return_use_evidence_record_8616,
+)
+from inertia_decompiler.function_worker_policy import (
+    FunctionWorkerMode8616,
+    clean_process_override_8616,
+    requires_serial_function_decompilation,
+    select_function_worker_policy_8616,
+)
+from inertia_decompiler.generated_c_artifacts import write_generated_function_c
 from inertia_decompiler.library_function_classifier import (
     filter_code_labels_for_library_policy,
     is_library_like_function_name,
@@ -95,6 +108,7 @@ from inertia_decompiler.non_optimized_fallback import (
     describe_non_optimized_unavailable,
     sidecar_verdict_closes_non_optimized_lane,
 )
+from inertia_decompiler.project_evidence_transport import transfer_project_evidence_8616
 from inertia_decompiler.project_loading import (
     _build_project,
     _build_project_cached,
@@ -146,6 +160,18 @@ from inertia_decompiler.runtime_support import (
 )
 from inertia_decompiler.runtime_support import (
     timing_output_enabled as _timing_output_enabled,
+)
+from inertia_decompiler.segment_program_layout_reporting import (
+    attach_segment_program_layout_8616,
+    segment_program_function_evidence_for_function_8616,
+    segment_program_function_evidence_matches_item_8616,
+    with_segment_program_function_evidence_8616,
+)
+from inertia_decompiler.serial_worker_cache import (
+    SerialWorkerCacheVerdict8616,
+    load_serial_worker_cache_8616,
+    serial_worker_cache_inputs_8616,
+    store_serial_worker_cache_8616,
 )
 from inertia_decompiler.sidecar_metadata import (
     _load_lst_metadata,
@@ -300,6 +326,7 @@ from .cli_function_discovery import (
     _store_catalog_address_cache,
     _supplement_cached_seeded_recovery,
     _supplement_functions_from_prologue_scan,
+    attach_direct_target_argument_evidence_context_8616,
     record_direct_target_caller_return_use_evidence_8616,
 )
 
@@ -316,6 +343,7 @@ _DirectDecompileJobResult8616: TypeAlias = tuple[
     int,
     float,
     dict[str, object],
+    SegmentProgramFunctionEvidence8616 | None,
     FailureFamilyState,
 ]
 __all__ = [
@@ -354,6 +382,9 @@ def _ensure_runtime_architecture_guard_8616() -> None:
 
 
 _TRUTHY_ENV_VALUES_8616 = frozenset({"1", "true", "yes", "on"})
+
+_DIRECT_ADDR_FORCE_THREAD_LANE_ENV_8616 = "INERTIA_DIRECT_ADDR_FORCE_THREAD"
+_ANALYSIS_TIMEOUT_FORCE_THREAD_LANES_ENV_8616 = "INERTIA_FORCE_TIMEOUT_LANES_THREAD"
 
 
 class DirectClinicPolicy8616(Enum):
@@ -467,14 +498,29 @@ def _env_truthy_8616(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in _TRUTHY_ENV_VALUES_8616
 
 
-def _direct_addr_use_fork_lane_8616(*, tail_validation_enabled: bool) -> bool:
-    del tail_validation_enabled
+def _analysis_timeout_lane_allows_fork() -> bool:
+    """Return true when timeout wrapper state supports fork isolation."""
     return (
         os.name == "posix"
         and threading.current_thread() is threading.main_thread()
         and threading.active_count() == 1
+    )
+
+
+def _analysis_timeout_use_fork_8616() -> bool:
+    """Return whether timeout-heavy lanes should use fork isolation."""
+    return (
+        _analysis_timeout_lane_allows_fork()
+        and not _env_truthy_8616(_ANALYSIS_TIMEOUT_FORCE_THREAD_LANES_ENV_8616)
         and not _env_truthy_8616("INERTIA_OTEL_PROFILE_IN_PROCESS")
     )
+
+
+def _direct_addr_use_fork_lane_8616(*, tail_validation_enabled: bool) -> bool:
+    del tail_validation_enabled
+    if _env_truthy_8616(_DIRECT_ADDR_FORCE_THREAD_LANE_ENV_8616):
+        return False
+    return _analysis_timeout_use_fork_8616()
 
 
 def _argument_was_explicit(name: str) -> bool:
@@ -709,7 +755,7 @@ def _bounded_non_optimized_timeout(timeout: int) -> int:
     return min(max(1, timeout), 60)
 
 
-_DEFAULT_FUNCTION_TIMEOUT_CAP = 120
+_DEFAULT_FUNCTION_TIMEOUT_CAP = 180
 
 
 def _parse_env_timeout_cap() -> int | None:
@@ -919,11 +965,7 @@ def _prepare_ranked_binary_preview_items(
 
         for addr in ranked_binary_offsets[:probe_budget]:
             try:
-                if (
-                    os.name == "posix"
-                    and threading.current_thread() is threading.main_thread()
-                    and threading.active_count() == 1
-                ):
+                if _analysis_timeout_use_fork_8616():
                     function_cfg, function = cast(
                         tuple[object, object],
                         _run_with_timeout_in_fork(
@@ -1021,7 +1063,7 @@ def _function_work_item_recovery_addr_8616(item: FunctionWorkItem) -> int:
         recovery_addr = function_original_addr(item.function)
     if recovery_addr < 0:
         raise ValueError(f"function work-item recovery address must be nonnegative, got {recovery_addr}")
-    return recovery_addr
+    return cast(int, recovery_addr)
 
 
 def _supplement_function_cfg_pairs_with_ranked_preview(
@@ -1298,7 +1340,7 @@ def _isolated_project_recovery_target_8616(
     return candidate_addr, isolated_image_end
 
 
-@trace_function(name="function.work_item")
+@cast(Callable[[Callable[..., FunctionWorkResult]], Callable[..., FunctionWorkResult]], trace_function(name="function.work_item"))
 def _run_function_work_item(
     item: FunctionWorkItem,
     *,
@@ -1638,9 +1680,7 @@ def _run_function_work_item(
         fork_isolated_eligible = (
             force_isolated_project
             and not process_isolated_worker
-            and os.name == "posix"
-            and threading.current_thread() is threading.main_thread()
-            and threading.active_count() == 1
+            and _analysis_timeout_use_fork_8616()
             and decompile_cfg is not None
         )
         if fork_isolated_eligible:
@@ -1810,84 +1850,24 @@ def _function_work_result_for_fork_ipc(result: FunctionWorkResult) -> FunctionWo
 
 
 _SERIAL_CLEAN_WORKER_RESULT_ENV_8616 = "INERTIA_SERIAL_CLEAN_WORKER_RESULT"
-_SERIAL_CLEAN_WORKER_RESULT_SCHEMA_8616 = 2
+_SERIAL_CLEAN_WORKER_RESULT_SCHEMA_8616 = 3
 _SERIAL_CLEAN_WORKER_EVIDENCE_ENV_8616 = "INERTIA_SERIAL_CLEAN_WORKER_EVIDENCE"
 _SERIAL_CLEAN_WORKER_EVIDENCE_SCHEMA_8616 = 1
 
 
-def _caller_return_use_evidence_record_8616(
-    evidence: CallerReturnUseEvidence8616,
-) -> dict[str, object]:
-    """Serialize one owned caller-return evidence contract without inference."""
-    return {
-        "target_addr": evidence.target_addr,
-        "verdict": evidence.verdict.value,
-        "raw_fact_count": evidence.raw_fact_count,
-        "normalized_fact_count": evidence.normalized_fact_count,
-        "classified_fact_count": evidence.classified_fact_count,
-        "materialized_count": evidence.materialized_count,
-        "failure_count": evidence.failure_count,
-        "used_callsite_count": evidence.used_callsite_count,
-        "unused_callsite_count": evidence.unused_callsite_count,
-        "callsite_addrs": list(evidence.callsite_addrs),
-    }
-
-
-def _caller_return_use_evidence_from_record_8616(
-    record: object,
-) -> CallerReturnUseEvidence8616:
-    """Validate and deserialize one clean-worker caller-return evidence record."""
-    if not isinstance(record, dict):
-        raise ValueError("serial clean-worker evidence entry must be an object")
-    target_addr = record.get("target_addr")
-    verdict_value = record.get("verdict")
-    count_fields = (
-        "raw_fact_count",
-        "normalized_fact_count",
-        "classified_fact_count",
-        "materialized_count",
-        "failure_count",
-        "used_callsite_count",
-        "unused_callsite_count",
-    )
-    if not isinstance(target_addr, int) or target_addr < 0:
-        raise ValueError("serial clean-worker evidence has an invalid target address")
-    try:
-        verdict = CallerReturnUseVerdict8616(verdict_value)
-    except (TypeError, ValueError) as ex:
-        raise ValueError("serial clean-worker evidence has an invalid verdict") from ex
-    counts: dict[str, int] = {}
-    for field_name in count_fields:
-        field_value = record.get(field_name)
-        if not isinstance(field_value, int) or field_value < 0:
-            raise ValueError(f"serial clean-worker evidence has invalid {field_name}")
-        counts[field_name] = field_value
-    callsite_addrs = record.get("callsite_addrs")
-    if not isinstance(callsite_addrs, list) or not all(
-        isinstance(callsite_addr, int) and callsite_addr >= 0 for callsite_addr in callsite_addrs
-    ):
-        raise ValueError("serial clean-worker evidence has invalid callsite addresses")
-    return CallerReturnUseEvidence8616(
-        target_addr=target_addr,
-        verdict=verdict,
-        raw_fact_count=counts["raw_fact_count"],
-        normalized_fact_count=counts["normalized_fact_count"],
-        classified_fact_count=counts["classified_fact_count"],
-        materialized_count=counts["materialized_count"],
-        failure_count=counts["failure_count"],
-        used_callsite_count=counts["used_callsite_count"],
-        unused_callsite_count=counts["unused_callsite_count"],
-        callsite_addrs=tuple(callsite_addrs),
-    )
-
-
-def _write_serial_clean_worker_evidence_8616(source_project: object, evidence_path: Path) -> int:
+def _write_serial_clean_worker_evidence_8616(
+    source_project: object,
+    evidence_path: Path,
+    *,
+    evidence_by_addr: dict[int, CallerReturnUseEvidence8616] | None = None,
+) -> int:
     """Write typed discovery evidence needed by an isolated clean worker."""
-    evidence_by_addr = caller_return_use_evidence_by_addr_8616(source_project)
+    if evidence_by_addr is None:
+        evidence_by_addr = caller_return_use_evidence_by_addr_8616(source_project)
     records = [
         {
             "function_addr": function_addr,
-            "evidence": _caller_return_use_evidence_record_8616(evidence),
+            "evidence": caller_return_use_evidence_record_8616(evidence),
         }
         for function_addr, evidence in sorted(evidence_by_addr.items())
     ]
@@ -1921,7 +1901,7 @@ def _read_serial_clean_worker_evidence_8616(
             raise ValueError("serial clean-worker caller-return entry has an invalid function address")
         if function_addr in evidence_by_addr:
             raise ValueError("serial clean-worker caller-return evidence contains duplicate function addresses")
-        evidence_by_addr[function_addr] = _caller_return_use_evidence_from_record_8616(record.get("evidence"))
+        evidence_by_addr[function_addr] = caller_return_use_evidence_from_record_8616(record.get("evidence"))
     return evidence_by_addr
 
 
@@ -1936,11 +1916,17 @@ def _hydrate_serial_clean_worker_evidence_8616(project: object) -> int:
     return len(evidence_by_addr)
 
 
-def _write_serial_clean_worker_result_8616(result: FunctionWorkResult) -> None:
+def _write_serial_clean_worker_result_8616(
+    result: FunctionWorkResult,
+    *,
+    project: object | None = None,
+) -> None:
     """Write a direct-address result for its serial clean-process parent."""
     result_path_text = os.environ.get(_SERIAL_CLEAN_WORKER_RESULT_ENV_8616)
     if not result_path_text:
         return
+    if project is not None:
+        result = with_segment_program_function_evidence_8616(result, project)
     result_path = Path(result_path_text)
     result_path.parent.mkdir(parents=True, exist_ok=True)
     record: dict[str, object] = {
@@ -1958,6 +1944,11 @@ def _write_serial_clean_worker_result_8616(result: FunctionWorkResult) -> None:
         "fallback_family_labels": list(result.fallback_family_labels),
         "validated_payload_hash": result.validated_payload_hash,
         "gcc_checked_payload_hash": result.gcc_checked_payload_hash,
+        "segment_program_function_evidence": (
+            None
+            if result.segment_program_function_evidence is None
+            else result.segment_program_function_evidence.to_dict()
+        ),
     }
     temporary_path = result_path.with_suffix(result_path.suffix + ".tmp")
     temporary_path.write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
@@ -1997,6 +1988,17 @@ def _read_serial_clean_worker_result_8616(
     same_family_retry_stops = record.get("same_family_retry_stops")
     if not isinstance(same_family_retry_stops, int):
         same_family_retry_stops = 0
+    raw_segment_evidence = record.get("segment_program_function_evidence")
+    segment_evidence = (
+        None
+        if raw_segment_evidence is None
+        else segment_program_function_evidence_from_record_8616(raw_segment_evidence)
+    )
+    if segment_evidence is not None and not segment_program_function_evidence_matches_item_8616(
+        segment_evidence,
+        item,
+    ):
+        raise ValueError("serial clean-worker segment evidence belongs to a different function")
     return FunctionWorkResult(
         index=item.index,
         status=status,
@@ -2021,14 +2023,19 @@ def _read_serial_clean_worker_result_8616(
             if isinstance(record.get("gcc_checked_payload_hash"), str)
             else None
         ),
+        segment_program_function_evidence=segment_evidence,
     )
 
 
-def _complete_serial_clean_worker_result_8616(result: FunctionWorkResult) -> bool:
+def _complete_serial_clean_worker_result_8616(
+    result: FunctionWorkResult,
+    *,
+    project: object | None = None,
+) -> bool:
     """Serialize a clean-worker result and tell the direct CLI to stop retrying."""
     if not os.environ.get(_SERIAL_CLEAN_WORKER_RESULT_ENV_8616):
         return False
-    _write_serial_clean_worker_result_8616(result)
+    _write_serial_clean_worker_result_8616(result, project=project)
     return True
 
 
@@ -2042,7 +2049,7 @@ def _serial_clean_worker_command_8616(
     command = [
         sys.executable,
         "-m",
-        "inertia_decompiler.cli",
+        "inertia_decompiler.serial_clean_worker_cli",
         str(args.binary),
         "--addr",
         hex(recovery_addr),
@@ -2061,11 +2068,10 @@ def _serial_clean_worker_command_8616(
         "--pat-backend",
         args.pat_backend,
         "--no-alternate-source-c",
+        "--ignore-local-sidecar-hints",
     ]
     if args.blob:
         command.append("--blob")
-    if args.ignore_local_sidecar_hints:
-        command.append("--ignore-local-sidecar-hints")
     if args.signature_catalog is not None:
         command.extend(("--signature-catalog", str(args.signature_catalog)))
     if args.trace_c_stages:
@@ -2107,19 +2113,55 @@ def _run_serial_clean_process_work_item_8616(
     item: FunctionWorkItem,
     *,
     timeout: int,
+    caller_return_evidence_by_addr: dict[int, CallerReturnUseEvidence8616] | None = None,
 ) -> FunctionWorkResult:
     """Run one function in a new interpreter without inherited module state."""
     recovery_addr = _function_work_item_recovery_addr_8616(item)
+    requested_addr = recovery_addr
+    canonical = _canonicalize_direct_addr_from_sidecar_padding_8616(
+        context.project,
+        context.lst_metadata,
+        recovery_addr,
+    )
+    if canonical is not None:
+        recovery_addr = canonical.canonical_addr
     command = _serial_clean_worker_command_8616(context.args, recovery_addr=recovery_addr, timeout=timeout)
     started_at = time.perf_counter()
     with tempfile.TemporaryDirectory(prefix="inertia-clean-worker-") as temporary_dir:
         result_path = Path(temporary_dir) / "result.json"
         evidence_path = Path(temporary_dir) / "evidence.json"
-        _write_serial_clean_worker_evidence_8616(context.project, evidence_path)
+        _write_serial_clean_worker_evidence_8616(
+            context.project,
+            evidence_path,
+            evidence_by_addr=caller_return_evidence_by_addr,
+        )
+        cache_lookup = load_serial_worker_cache_8616(
+            serial_worker_cache_inputs_8616(
+                context.args,
+                requested_addr=requested_addr,
+                recovery_addr=recovery_addr,
+                timeout=timeout,
+                evidence_path=evidence_path,
+                environment=os.environ,
+                result_schema=_SERIAL_CLEAN_WORKER_RESULT_SCHEMA_8616,
+            ),
+            enabled=not context.args.trace_c_stages and not context.args.dump_layers,
+        )
+        if cache_lookup.verdict is SerialWorkerCacheVerdict8616.HIT and cache_lookup.record is not None:
+            result_path.write_text(json.dumps(cache_lookup.record, sort_keys=True), encoding="utf-8")
+            cached_result = _read_serial_clean_worker_result_8616(
+                result_path,
+                item=replace(item, recovery_addr=recovery_addr),
+                debug_output=f"[dbg] clean serial function cache hit: {recovery_addr:#x}\n",
+            )
+            return replace(cached_result, from_cache=True)
         environment = os.environ.copy()
         environment[_SERIAL_CLEAN_WORKER_RESULT_ENV_8616] = str(result_path)
         environment[_SERIAL_CLEAN_WORKER_EVIDENCE_ENV_8616] = str(evidence_path)
+        if _ARCHITECTURE_GUARD_STATUS_8616 is True:
+            environment[ARCHITECTURE_GUARD_VERIFIED_PARENT_PID_ENV] = str(os.getpid())
         environment["INERTIA_OTEL_PROFILE_IN_PROCESS"] = "1"
+        environment["INERTIA_DIRECT_ADDR_PREFER_LST"] = "0"
         outer_timeout = _serial_clean_worker_outer_timeout_8616(timeout)
         try:
             completed = subprocess.run(
@@ -2158,11 +2200,19 @@ def _run_serial_clean_process_work_item_8616(
                 failure_stage="clean_process_decompilation",
             )
         try:
-            return _read_serial_clean_worker_result_8616(
+            result = _read_serial_clean_worker_result_8616(
                 result_path,
-                item=item,
+                item=replace(item, recovery_addr=recovery_addr),
                 debug_output=debug_output,
             )
+            record = json.loads(result_path.read_text(encoding="utf-8"))
+            if isinstance(record, dict):
+                store_serial_worker_cache_8616(
+                    cache_lookup,
+                    record,
+                    result_schema=_SERIAL_CLEAN_WORKER_RESULT_SCHEMA_8616,
+                )
+            return result
         except ValueError as ex:
             return FunctionWorkResult(
                 index=item.index,
@@ -2174,6 +2224,60 @@ def _run_serial_clean_process_work_item_8616(
                 elapsed=time.perf_counter() - started_at,
                 failure_stage="clean_process_protocol",
             )
+
+
+def _run_canonicalized_direct_clean_worker_8616(
+    project: angr.Project,
+    args: CliArguments,
+    lst_metadata: LSTMetadata,
+    canonical: DirectAddrCanonicalization8616,
+    *,
+    function_label: str | None,
+    caller_return_evidence_by_addr: dict[int, CallerReturnUseEvidence8616] | None = None,
+) -> int:
+    """Decompile a sidecar-canonicalized entry in the pure-binary worker."""
+    function = SimpleNamespace(
+        addr=canonical.canonical_addr,
+        name=function_label or canonical.name or f"sub_{canonical.canonical_addr:x}",
+    )
+    item = FunctionWorkItem(
+        index=1,
+        function_cfg=SimpleNamespace(),
+        function=function,
+        recovery_addr=canonical.canonical_addr,
+    )
+    context = cast(
+        "_BatchCliContext8616",
+        SimpleNamespace(args=args, project=project, lst_metadata=lst_metadata),
+    )
+    result = _run_serial_clean_process_work_item_8616(
+        context,
+        item,
+        timeout=max(1, args.timeout),
+        caller_return_evidence_by_addr=caller_return_evidence_by_addr,
+    )
+    if result.debug_output:
+        print(result.debug_output, file=sys.stderr, end="" if result.debug_output.endswith("\n") else "\n")
+    if result.status == WorkItemStatus.OK.value:
+        print(f"/* function: {canonical.canonical_addr:#x} {function.name} */")
+        if not _tail_validation_passes_lenient(
+            result.tail_validation,
+            expected_stages=["structuring", "postprocess"],
+        ):
+            print("/* canonical clean worker validation=failed: stable snapshots missing */", file=sys.stderr)
+            return 4
+        print("/* canonical clean worker validation=passed */", file=sys.stderr)
+        print("[tail-validation] whole-tail validation clean across 1 functions", file=sys.stderr)
+        print(result.payload)
+        return 0
+    if result.partial_payload:
+        print(result.partial_payload)
+    print(f"/* canonical clean worker {result.status}: {result.payload} */", file=sys.stderr)
+    if result.status == WorkItemStatus.TIMEOUT.value:
+        return 3
+    if result.status == WorkItemStatus.VALIDATION_FAILED.value:
+        return 4
+    return 6
 
 
 def _tail_validation_passes_lenient(
@@ -2283,7 +2387,7 @@ def _normalize_accepted_payload_8616(payload: str) -> str:
     accepted_payload = _prune_void_call_assignments_text(accepted_payload)
     accepted_payload = _materialize_opaque_pointer_typedefs_text(accepted_payload)
     accepted_payload = _normalize_function_signature_arg_names(accepted_payload)
-    return _hoist_c89_local_declarations_text(accepted_payload)
+    return cast(str, _hoist_c89_local_declarations_text(accepted_payload))
 
 
 def _tail_validation_stage_detail_8616(
@@ -2356,7 +2460,10 @@ def _collect_recompilation_payloads_8616(accepted_payload: str) -> tuple[list[tu
     return _impl()
 
 
-@trace_function(name="validation.acceptance")
+@cast(
+    Callable[[Callable[..., CAcceptanceResult8616]], Callable[..., CAcceptanceResult8616]],
+    trace_function(name="validation.acceptance"),
+)
 def _validated_generated_c_acceptance_8616(
     *,
     status: str,
@@ -2869,7 +2976,7 @@ def _helper_name(project: angr.Project, addr: int) -> str | None:
     name = getattr(proc, "display_name", None)
     if isinstance(name, str) and name:
         return name
-    return proc.__class__.__name__
+    return str(proc.__class__.__name__)
 
 
 def _iter_c_nodes(node: _StructuredCNode8616) -> Iterator[_StructuredCNode8616]:
@@ -2959,7 +3066,7 @@ def _remember_fallback_tail_validation(
         allow_project_fallback=allow_project_fallback,
     )
     fallback_tail_validation_by_index[item.index] = snapshot
-    return snapshot
+    return cast(dict[str, object], snapshot)
 
 
 def _tail_validation_snapshot_from_result_8616(raw_tail_validation: object) -> dict[str, object]:
@@ -2969,7 +3076,10 @@ def _tail_validation_snapshot_from_result_8616(raw_tail_validation: object) -> d
         return dict(raw_tail_validation)
     if not isinstance(raw_tail_validation, Mapping):
         return {}
-    return _extract_x86_16_tail_validation_snapshot(cast(Mapping[str, Any], raw_tail_validation))
+    return cast(
+        dict[str, object],
+        _extract_x86_16_tail_validation_snapshot(cast(Mapping[str, Any], raw_tail_validation)),
+    )
 
 
 def _emit_sidecar_slice_tail_validation_snapshot_8616(
@@ -2998,11 +3108,11 @@ def _retry_function_tail_validation_snapshot_8616(project: angr.Project, functio
     """
     function_snapshot = _extract_x86_16_tail_validation_snapshot(getattr(function, "info", None))
     if function_snapshot:
-        return function_snapshot
+        return cast(dict[str, object], function_snapshot)
     project_snapshot = getattr(project, "_inertia_last_validated_function_payload_snapshot", None)
     if isinstance(project_snapshot, dict):
         return dict(project_snapshot)
-    return _tail_validation_snapshot_for_function_run(project, function)
+    return cast(dict[str, object], _tail_validation_snapshot_for_function_run(project, function))
 
 
 def _fresh_sidecar_retry_work_item_8616(
@@ -3197,6 +3307,13 @@ def _emit_function_result(
                     attempt="decompiled",
                     validation_snapshot=result_tail_validation,
                 )
+                if args.output_c_dir is not None:
+                    write_generated_function_c(
+                        args.output_c_dir,
+                        address=function_original_addr(function),
+                        name=function.name,
+                        payload=result.payload,
+                    )
                 _emit_optional_source_sidecar_c_block(
                     args.binary,
                     function.name,
@@ -3353,6 +3470,30 @@ def _try_emit_retry_recovered_candidate_8616(
         retry_result = _accept_function_work_result_for_emission_8616(retry_result, project=project)
         retry_tv = _tail_validation_snapshot_from_result_8616(retry_result.tail_validation)
         retry_has_payload = isinstance(retry_result.payload, str) and bool(retry_result.payload.strip())
+        if (
+            (retry_result.status != "ok" or not x86_16_tail_validation_snapshot_passed(retry_tv))
+            and project.arch.name == "86_16"
+            and (lst_metadata is not None or cod_metadata is not None)
+        ):
+            clean_item = FunctionWorkItem(
+                index=item.index,
+                function_cfg=item.function_cfg,
+                function=function,
+                recovery_addr=function_original_addr(function),
+            )
+            clean_context = cast(
+                "_BatchCliContext8616",
+                SimpleNamespace(args=args, project=project, lst_metadata=lst_metadata),
+            )
+            retry_result = _run_serial_clean_process_work_item_8616(
+                clean_context,
+                clean_item,
+                timeout=retry_timeout,
+                caller_return_evidence_by_addr=caller_return_use_evidence_by_addr_8616(project),
+            )
+            retry_result = _accept_function_work_result_for_emission_8616(retry_result, project=project)
+            retry_tv = _tail_validation_snapshot_from_result_8616(retry_result.tail_validation)
+            retry_has_payload = isinstance(retry_result.payload, str) and bool(retry_result.payload.strip())
         if retry_result.status != "ok" or not x86_16_tail_validation_snapshot_passed(retry_tv) or not retry_has_payload:
             return False
         retry_payload = retry_result.payload
@@ -4098,16 +4239,18 @@ def _prepare_main_project_8616(
                 selected_entries = extract_simple_cod_logic_entries(entries)
             if selected_entries is None:
                 logic_start = infer_cod_logic_start(entries)
-                proc_code, synthetic_globals = join_cod_entries_with_synthetic_globals(
-                    entries, start_offset=logic_start
-                )
+                cod_image = build_cod_analysis_image_8616(entries, start_offset=logic_start)
             else:
-                proc_code, synthetic_globals = join_cod_entries_with_synthetic_globals(selected_entries)
+                cod_image = build_cod_analysis_image_8616(selected_entries)
+            proc_code = cod_image.code
+            synthetic_globals = cod_image.synthetic_globals
             project = _build_project_from_bytes(
                 proc_code,
                 base_addr=args.base_addr,
                 entry_point=args.entry_point,
             )
+            for target_offset, target_name in cod_image.call_target_offsets.items():
+                annotate_function(project, args.base_addr + target_offset, name=target_name)
             typing.cast(typing.Any, project)._inertia_c_target = args.c_target
             typing.cast(typing.Any, project)._inertia_dump_layers = bool(args.dump_layers)
             typing.cast(typing.Any, project)._inertia_dump_layer_root = args.dump_layer_dir
@@ -4203,6 +4346,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         raise ValueError("direct-address CLI branch requires args.addr")
     project = context.project
     _hydrate_serial_clean_worker_evidence_8616(project)
+    clean_worker_caller_return_evidence_by_addr = dict(caller_return_use_evidence_by_addr_8616(project))
     function_label = context.function_label
     cod_metadata = context.cod_metadata
     synthetic_globals = context.synthetic_globals
@@ -4306,15 +4450,18 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
     try:
 
         def _recover_target_function() -> _FunctionCfgPair8616:
-            return _recover_direct_addr_function(
-                project,
-                direct_addr,
-                timeout=args.timeout,
-                window=args.window,
-                function_label=function_label,
-                lst_metadata=lst_metadata,
-                low_memory_path=low_memory_path,
-                prefer_fast_recovery=prefer_fast_recovery,
+            return cast(
+                _FunctionCfgPair8616,
+                _recover_direct_addr_function(
+                    project,
+                    direct_addr,
+                    timeout=args.timeout,
+                    window=args.window,
+                    function_label=function_label,
+                    lst_metadata=lst_metadata,
+                    low_memory_path=low_memory_path,
+                    prefer_fast_recovery=prefer_fast_recovery,
+                ),
             )
 
         direct_recovery_timeout = (
@@ -4447,7 +4594,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             print("\n/* == asm fallback == */")
             print(_format_asm_range(project, sidecar_region[0], sidecar_region[1]))
             return 4
-        nonopt_result: NonOptimizedSliceOutcome | str | None = None
+        nonopt_result = None
         _enforce_direct_addr_budget_timeout()
         nonopt_result = _try_decompile_non_optimized_slice(
             project,
@@ -4576,7 +4723,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                 )
                 return 0
             _enforce_direct_addr_budget_timeout()
-            nonopt_result: NonOptimizedSliceOutcome | str | None = _try_decompile_non_optimized_slice(
+            nonopt_result = _try_decompile_non_optimized_slice(
                 project,
                 sidecar_region[0],
                 code_name,
@@ -4655,7 +4802,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             print("\n/* == asm fallback == */")
             print(_format_asm_range(project, sidecar_region[0], sidecar_region[1]))
             return 4
-        nonopt_result: NonOptimizedSliceOutcome | str | None = None
+        nonopt_result = None
         if precise_sidecar_regions:
             _enforce_direct_addr_budget_timeout()
             nonopt_result = _try_decompile_non_optimized_slice(
@@ -4831,6 +4978,15 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         if code_name is not None:
             func.name = code_name
     direct_project = getattr(func, "project", project)
+    if project.arch.name == "86_16":
+        attach_direct_target_argument_evidence_context_8616(
+            project,
+            direct_project,
+            function_original_addr(func),
+        )
+        for call_target in collect_neighbor_call_targets(func):
+            if call_target.return_addr is not None:
+                record_direct_target_caller_return_use_evidence_8616(project, call_target.target_addr)
     _transfer_caller_return_use_evidence_8616(project, direct_project)
     typing.cast(typing.Any, direct_project)._inertia_trace_c_stages = bool(args.trace_c_stages)
     typing.cast(typing.Any, direct_project)._inertia_dump_layers = bool(args.dump_layers)
@@ -4881,7 +5037,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             function_cfg=cfg,
             tail_validation=helper_snapshot,
         )
-        if _complete_serial_clean_worker_result_8616(helper_result):
+        if _complete_serial_clean_worker_result_8616(helper_result, project=direct_project):
             return 0
         print(
             "[dbg] direct failure family: status=ok stage=helper_model sidecar=not_applicable "
@@ -4904,6 +5060,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
 
     print("/* decompiling... */", flush=True)
     direct_tail_validation_snapshot: dict[str, object] | None = None
+    direct_segment_program_evidence: SegmentProgramFunctionEvidence8616 | None = None
     direct_failure_family_state = FailureFamilyState()
     direct_sidecar_verdict = "not_attempted"
     direct_nonoptimized_verdict = "not_attempted"
@@ -5042,6 +5199,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             return (
                 *result,
                 snapshot,
+                segment_program_function_evidence_for_function_8616(direct_project, func),
                 FailureFamilyState(
                     previous_snapshot=direct_failure_family_state.previous_snapshot,
                     candidate_snapshot=direct_failure_family_state.candidate_snapshot,
@@ -5128,6 +5286,8 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             for extra in direct_extra:
                 if isinstance(extra, dict):
                     direct_tail_validation_snapshot = dict(extra)
+                elif isinstance(extra, SegmentProgramFunctionEvidence8616):
+                    direct_segment_program_evidence = extra
                 elif isinstance(extra, FailureFamilyState):
                     direct_failure_family_state.previous_snapshot = extra.previous_snapshot
                     direct_failure_family_state.candidate_snapshot = extra.candidate_snapshot
@@ -5163,6 +5323,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         elapsed=_elapsed,
         block_count=_block_count,
         byte_count=_byte_count,
+        segment_program_function_evidence=direct_segment_program_evidence,
     )
     direct_acceptance = _validated_generated_c_acceptance_8616(
         status=direct_result.status,
@@ -5209,13 +5370,15 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         preserved_candidate = _preserve_acceptance_candidate_or_best_failure(direct_acceptance, direct_result)
         direct_payload = direct_acceptance.gcc_checked_payload
     else:
-        direct_payload = direct_result.payload
+        direct_payload = direct_acceptance.gcc_checked_payload
         preserved_candidate = direct_result.partial_payload
     direct_result = replace(
         direct_result,
         status=direct_status,
         payload=direct_blocker if direct_blocker is not None else direct_payload,
         partial_payload=preserved_candidate if direct_blocker is not None else direct_result.partial_payload,
+        validated_payload_hash=(direct_acceptance.validated_payload_hash if direct_blocker is None else None),
+        gcc_checked_payload_hash=(direct_acceptance.gcc_checked_payload_hash if direct_blocker is None else None),
     )
     if direct_status == "validation_failed" and isinstance(direct_result.tail_validation, dict):
         typing.cast(typing.Any, direct_project)._inertia_forced_tail_validation_snapshot = dict(direct_result.tail_validation)
@@ -5260,6 +5423,21 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                 payload=partial_acceptance.gcc_checked_payload,
                 partial_payload=None,
             )
+    if (
+        canonical_direct_addr is not None
+        and canonical_direct_addr.requested_addr != canonical_direct_addr.canonical_addr
+        and not args.ignore_local_sidecar_hints
+        and _work_item_status_8616(direct_result.status) is WorkItemStatus.VALIDATION_FAILED
+    ):
+        assert lst_metadata is not None
+        return _run_canonicalized_direct_clean_worker_8616(
+            project,
+            args,
+            lst_metadata,
+            canonical_direct_addr,
+            function_label=function_label,
+            caller_return_evidence_by_addr=clean_worker_caller_return_evidence_by_addr,
+        )
     if direct_result.status != "ok":
         helper_model = (
             _try_emit_known_runtime_helper_c(name=getattr(func, "name", ""))
@@ -5302,7 +5480,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                     partial_payload=None,
                     tail_validation=helper_tail_validation_snapshot,
                 )
-    if _complete_serial_clean_worker_result_8616(direct_result):
+    if _complete_serial_clean_worker_result_8616(direct_result, project=direct_project):
         return 0
     direct_timeout_payload = direct_result.payload
     _direct_blocks_for_timeout_guard, _direct_bytes_for_timeout_guard = _function_complexity(func)
@@ -5679,6 +5857,11 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                         window=args.window,
                         low_memory=low_memory_path,
                     )
+                    # Dynamic angr boundary: exact recovery may return a function owned by a slice project.
+                    side_project = getattr(side_func, "project", project)
+                    if not isinstance(side_project, angr.Project):
+                        side_project = project
+                    _transfer_caller_return_use_evidence_8616(project, side_project)
                     with span(
                         "direct.sidecar_retry",
                         addr=hex(sidecar_addr),
@@ -5687,7 +5870,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                     ):
                         side_tail_from_decompile = None
                         side_status, side_payload, *_ = _decompile_function_with_stats(
-                            project,
+                            side_project,
                             side_cfg,
                             side_func,
                             max(2, min(args.timeout, 8)),
@@ -5700,18 +5883,22 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                             failure_family_state=direct_failure_family_state,
                         )
                         side_tail_candidate = getattr(
-                            project,
+                            side_project,
                             "_inertia_last_validated_function_payload_snapshot",
                             None,
                         )
                         function_tail_candidate = _retry_function_tail_validation_snapshot_8616(
-                            project,
+                            side_project,
                             side_func,
                         )
                         if function_tail_candidate:
                             side_tail_candidate = function_tail_candidate
                         if not isinstance(side_tail_candidate, dict):
-                            side_tail_candidate = getattr(project, "_inertia_last_tail_validation_snapshot", None)
+                            side_tail_candidate = getattr(
+                                side_project,
+                                "_inertia_last_tail_validation_snapshot",
+                                None,
+                            )
                         if isinstance(side_tail_candidate, dict):
                             side_tail_from_decompile = dict(side_tail_candidate)
                         annotate_current_span(status=side_status)
@@ -5720,7 +5907,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                         side_tail = (
                             side_tail_from_decompile
                             if isinstance(side_tail_from_decompile, dict)
-                            else _retry_function_tail_validation_snapshot_8616(project, side_func)
+                            else _retry_function_tail_validation_snapshot_8616(side_project, side_func)
                         )
                         _emit_tail_validation_snapshot_or_uncollected(
                             side_cfg,
@@ -5732,9 +5919,9 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                             status=side_status,
                             payload=side_payload,
                             tail_validation_snapshot=side_tail,
-                            tail_validation_enabled=_tail_validation_runtime_enabled(project),
+                            tail_validation_enabled=_tail_validation_runtime_enabled(side_project),
                             expected_validation_stages=["structuring", "postprocess"],
-                            c_target=getattr(project, "_inertia_c_target", "portable-flat"),
+                            c_target=getattr(side_project, "_inertia_c_target", "portable-flat"),
                         )
                         side_status_checked = side_acceptance.status
                         side_payload_checked = side_acceptance.gcc_checked_payload
@@ -5982,7 +6169,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                 c_header="\n/* == c (trivial sidecar fallback) == */",
             )
             return 0
-        nonopt_result: NonOptimizedSliceOutcome | str | None = None
+        nonopt_result = None
         if (
             partial_payload is None
             and known_nonopt_c is None
@@ -6196,6 +6383,13 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                     "}\n"
                 ),
             )
+    if args.output_c_dir is not None:
+        write_generated_function_c(
+            args.output_c_dir,
+            address=function_original_addr(func),
+            name=func.name,
+            payload=direct_result.payload,
+        )
     _emit_optional_source_sidecar_c_block(
         args.binary,
         func.name,
@@ -6203,7 +6397,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         alternate_source_c=bool(args.alternate_source_c),
         c_header="\n/* == c == */",
     )
-    _write_serial_clean_worker_result_8616(direct_result)
+    _write_serial_clean_worker_result_8616(direct_result, project=direct_project)
     return 0
 
 
@@ -6277,15 +6471,8 @@ def _transfer_caller_return_use_evidence_8616(
     source_project: object,
     destination_project: object,
 ) -> int:
-    """Copy typed caller-use facts across a fresh-project worker boundary."""
-    evidence_by_addr = caller_return_use_evidence_by_addr_8616(source_project)
-    for function_addr, evidence in evidence_by_addr.items():
-        record_caller_return_use_evidence_8616(
-            destination_project,
-            function_addr,
-            evidence,
-        )
-    return len(evidence_by_addr)
+    """Copy typed project evidence across a fresh-project worker boundary."""
+    return cast(int, transfer_project_evidence_8616(source_project, destination_project).caller_return_use_count)
 
 
 def _fresh_primary_function_work_item_8616(
@@ -6448,11 +6635,7 @@ def _run_serial_function_8616(
                         f"[dbg] recovery worker: start {recovery_addr:#x} {item_function.name} "
                         f"mode=lst recovery_timeout={local_recover_timeout}s"
                     )
-                    if (
-                        os.name == "posix"
-                        and threading.current_thread() is threading.main_thread()
-                        and threading.active_count() == 1
-                    ):
+                    if _analysis_timeout_use_fork_8616():
                         try:
                             function_cfg, function = cast(
                                 _FunctionCfgPair8616,
@@ -6513,11 +6696,7 @@ def _run_serial_function_8616(
                         f"[dbg] recovery worker: start {recovery_addr:#x} {item_function.name} "
                         f"mode=ranked recovery_timeout={local_recover_timeout}s"
                     )
-                    if (
-                        os.name == "posix"
-                        and threading.current_thread() is threading.main_thread()
-                        and threading.active_count() == 1
-                    ):
+                    if _analysis_timeout_use_fork_8616():
                         try:
                             function_cfg, function = cast(
                                 _FunctionCfgPair8616,
@@ -6884,6 +7063,12 @@ def _finish_batch_cli_8616(
         existing = result_map.get(index)
         if existing is not None:
             result_map[index] = replace(existing, tail_validation=snapshot)
+    attach_segment_program_layout_8616(
+        project,
+        function_tasks,
+        result_map.values(),
+        _source_region_catalog_evidence_8616(project),
+    )
     total_shown = shown_total
     _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
     summary_target = "selected functions" if args.max_functions <= 0 and args.addr is None else "shown functions"
@@ -7755,11 +7940,12 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
         and low_memory_path
     ):
         workers = 1
-    if requires_serial_function_decompilation(
+    serial_function_decompilation_required = requires_serial_function_decompilation(
         architecture=project.arch.name,
         binary_suffix=args.binary.suffix,
         address_requested=args.addr is not None,
-    ):
+    )
+    if serial_function_decompilation_required:
         workers = 1
     forced_serial_function_decomp = os.environ.get(_FORCE_SERIAL_FUNCTION_DECOMP_ENV, "").strip().lower() in {
         "1",
@@ -7767,18 +7953,24 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
         "yes",
         "on",
     }
-    serial_fork_env = os.environ.get("INERTIA_ENABLE_SERIAL_FORK_PER_FUNCTION")
-    enable_serial_fork_per_function = True
-    if serial_fork_env is not None and serial_fork_env.strip():
-        enable_serial_fork_per_function = serial_fork_env.strip().lower() in {"1", "true", "yes", "on"}
-    use_serial_fork_per_function = (
-        enable_serial_fork_per_function
-        and workers <= 1
-        and args.addr is None
-        and args.max_functions <= 0
-        and not (args.binary.suffix.lower() == ".exe" and project.arch.name == "86_16" and include_library_functions)
-        and os.name == "posix"
+    worker_policy = select_function_worker_policy_8616(
+        serial_required=serial_function_decompilation_required,
+        sidecar_available=lst_metadata is not None,
+        full_sweep=(
+            args.addr is None
+            and args.max_functions <= 0
+            and all(item.function_cfg is not None for item in function_tasks)
+        ),
+        include_library_functions=include_library_functions,
+        posix_available=os.name == "posix",
+        function_count=len(function_tasks),
+        shared_worker_count=workers,
+        clean_process_override=clean_process_override_8616(
+            os.environ.get("INERTIA_ENABLE_SERIAL_FORK_PER_FUNCTION")
+        ),
     )
+    workers = worker_policy.workers
+    use_serial_fork_per_function = worker_policy.mode is FunctionWorkerMode8616.CLEAN_PROCESS
     if workers > 1:
         print(f"/* parallel function decompilation: {workers} workers, shared imports */")
     elif use_serial_fork_per_function:
@@ -7787,9 +7979,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
         print("/* parallel function decompilation: disabled (forced serial) */")
     else:
         print("/* parallel function decompilation: disabled (RAM pressure or single function) */")
-    force_isolated_function_projects = (
-        args.addr is None and args.binary.suffix.lower() == ".exe" and project.arch.name == "86_16"
-    )
+    force_isolated_function_projects = serial_function_decompilation_required
     typing.cast(typing.Any, project)._inertia_fast_direct_probe = bool(
             args.addr is not None
             and os.environ.get("INERTIA_FAST_DIRECT_PROBE", "").strip().lower() in {"1", "true", "yes", "on"}

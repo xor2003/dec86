@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeShort
-from angr_platforms.X86_16.annotations import ANNOTATION_KEY
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CConstant,
+    CFunctionCall,
+    CReturn,
+    CStatements,
+    CVariable,
+)
+from angr.sim_type import SimTypeFunction, SimTypeShort
+from angr.sim_variable import SimRegisterVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseEvidence8616,
@@ -13,9 +21,12 @@ from angr_platforms.X86_16.callsite_summary import (
 from angr_platforms.X86_16.lowering.return_type_evidence import (
     FunctionReturnClass8616,
     caller_return_use_evidence_proves_used_8616,
-    function_has_proven_void_return_type_8616,
-    materialize_proven_void_return_type_8616,
+    function_result_is_proven_unobserved_8616,
     proven_function_return_class_8616,
+)
+from angr_platforms.X86_16.lowering.unobserved_returns import (
+    UnobservedReturnLoweringStats8616,
+    neutralize_unobserved_unresolved_returns_8616,
 )
 
 
@@ -25,9 +36,10 @@ def _evidence(
     raw: int,
     classified: int,
     failures: int,
+    target_addr: int = 0x1000,
 ) -> CallerReturnUseEvidence8616:
     return CallerReturnUseEvidence8616(
-        target_addr=0x1000,
+        target_addr=target_addr,
         verdict=verdict,
         raw_fact_count=raw,
         normalized_fact_count=raw,
@@ -56,7 +68,7 @@ def test_proves_used_return_from_at_least_one_classified_caller() -> None:
     assert caller_return_use_evidence_proves_used_8616(evidence) is True
 
 
-def test_classifies_used_and_closed_unused_return_evidence() -> None:
+def test_only_observed_callers_prove_a_return_class() -> None:
     project = SimpleNamespace()
     record_caller_return_use_evidence_8616(
         project,
@@ -81,7 +93,9 @@ def test_classifies_used_and_closed_unused_return_evidence() -> None:
     )
 
     assert proven_function_return_class_8616(project, 0x1000) is FunctionReturnClass8616.VALUE
-    assert proven_function_return_class_8616(project, 0x2000) is FunctionReturnClass8616.VOID
+    assert function_result_is_proven_unobserved_8616(project, 0x1000) is False
+    assert proven_function_return_class_8616(project, 0x2000) is None
+    assert function_result_is_proven_unobserved_8616(project, 0x2000) is True
 
 
 def test_return_class_refuses_incomplete_or_absent_evidence() -> None:
@@ -93,6 +107,7 @@ def test_return_class_refuses_incomplete_or_absent_evidence() -> None:
     )
 
     assert proven_function_return_class_8616(project, 0x1000) is None
+    assert function_result_is_proven_unobserved_8616(project, 0x1000) is False
     assert proven_function_return_class_8616(project, 0x2000) is None
 
 
@@ -113,88 +128,160 @@ def test_refuses_used_verdict_without_a_materialized_used_callsite() -> None:
     assert caller_return_use_evidence_proves_used_8616(evidence) is False
 
 
-def test_materializes_void_return_from_closed_unused_caller_evidence() -> None:
+def test_closed_unused_caller_evidence_does_not_prove_void() -> None:
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
     function = _function(arch)
     evidence = _evidence(CallerReturnUseVerdict8616.UNUSED, raw=3, classified=3, failures=0)
     record_caller_return_use_evidence_8616(project, 0x1000, evidence)
 
-    changed = materialize_proven_void_return_type_8616(project, function)
-
-    assert changed is True
-    assert isinstance(function.prototype.returnty, SimTypeBottom)
-    assert function.prototype.returnty.label == "void"
-    assert len(function.prototype.args) == 1
-    assert function.is_prototype_guessed is False
-    assert function_has_proven_void_return_type_8616(project, function) is True
-
-
-def test_refuses_incomplete_unused_caller_evidence() -> None:
-    arch = Arch86_16()
-    project = SimpleNamespace(arch=arch)
-    function = _function(arch)
-    record_caller_return_use_evidence_8616(
-        project,
-        0x1000,
-        _evidence(CallerReturnUseVerdict8616.UNKNOWN, raw=3, classified=2, failures=1),
-    )
-
-    assert materialize_proven_void_return_type_8616(project, function) is False
+    assert proven_function_return_class_8616(project, function.addr) is None
+    assert function_result_is_proven_unobserved_8616(project, function.addr) is True
     assert isinstance(function.prototype.returnty, SimTypeShort)
     assert function.is_prototype_guessed is True
-    assert function_has_proven_void_return_type_8616(project, function) is False
 
 
-def test_materializes_void_return_when_calling_convention_left_prototype_unset() -> None:
+def test_closed_unused_evidence_lowers_unresolved_return_without_inferring_void() -> None:
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
-    function = SimpleNamespace(
+    return_type = SimTypeShort(False).with_arch(arch)
+    prototype = SimTypeFunction([], return_type).with_arch(arch)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1)
+    variable = SimRegisterVariable(0, 2, ident="ir_2", name="v5", region=0x1000)
+    carrier = CVariable(
+        variable,
+        unified_variable=variable,
+        variable_type=return_type,
+        codegen=codegen,
+    )
+    return_node = CReturn(carrier, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
         addr=0x1000,
-        prototype=None,
-        is_prototype_guessed=True,
-        info={},
+        statements=CStatements([return_node], codegen=codegen),
+        prototype=prototype,
+        functy=prototype,
     )
     record_caller_return_use_evidence_8616(
         project,
         0x1000,
-        _evidence(CallerReturnUseVerdict8616.UNUSED, raw=2, classified=2, failures=0),
+        _evidence(CallerReturnUseVerdict8616.UNUSED, raw=1, classified=1, failures=0),
     )
 
-    assert materialize_proven_void_return_type_8616(project, function) is True
-    assert isinstance(function.prototype, SimTypeFunction)
-    assert isinstance(function.prototype.returnty, SimTypeBottom)
-    assert function.prototype.args == ()
+    assert neutralize_unobserved_unresolved_returns_8616(project, codegen) is True
+    assert isinstance(return_node.retval, CConstant)
+    assert return_node.retval.value == 0
+    assert isinstance(codegen.cfunc.prototype.returnty, SimTypeShort)
+    assert codegen._inertia_unobserved_return_lowering_stats_8616 == UnobservedReturnLoweringStats8616(
+        raw_fact_count=1,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=1,
+        failure_count=0,
+    )
 
 
-def test_refuses_overriding_explicit_prototype() -> None:
+def test_unobserved_return_lowering_keeps_assigned_scalar_carrier() -> None:
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
-    function = _function(arch)
-    function.is_prototype_guessed = False
-    function.info = {ANNOTATION_KEY: {"prototype": function.prototype}}
+    return_type = SimTypeShort(False).with_arch(arch)
+    prototype = SimTypeFunction([], return_type).with_arch(arch)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1)
+    variable = SimRegisterVariable(0, 2, ident="ir_3", name="v10", region=0x1000)
+    assigned = CVariable(variable, unified_variable=variable, variable_type=return_type, codegen=codegen)
+    returned = CVariable(variable, unified_variable=variable, variable_type=return_type, codegen=codegen)
+    return_node = CReturn(returned, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=CStatements(
+            [CAssignment(assigned, CConstant(7, return_type, codegen=codegen), codegen=codegen), return_node],
+            codegen=codegen,
+        ),
+        prototype=prototype,
+        functy=prototype,
+    )
     record_caller_return_use_evidence_8616(
         project,
         0x1000,
-        _evidence(CallerReturnUseVerdict8616.UNUSED, raw=3, classified=3, failures=0),
+        _evidence(CallerReturnUseVerdict8616.UNUSED, raw=1, classified=1, failures=0),
     )
 
-    assert materialize_proven_void_return_type_8616(project, function) is False
+    assert neutralize_unobserved_unresolved_returns_8616(project, codegen) is False
+    assert return_node.retval is returned
+
+
+def test_unobserved_return_lowering_preserves_side_effecting_call_result() -> None:
+    arch = Arch86_16()
+    project = SimpleNamespace(arch=arch)
+    return_type = SimTypeShort(False).with_arch(arch)
+    prototype = SimTypeFunction([], return_type).with_arch(arch)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1)
+    call = CFunctionCall("probe", None, [], codegen=codegen)
+    return_node = CReturn(call, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        statements=CStatements([return_node], codegen=codegen),
+        prototype=prototype,
+        functy=prototype,
+    )
+    record_caller_return_use_evidence_8616(
+        project,
+        0x1000,
+        _evidence(CallerReturnUseVerdict8616.UNUSED, raw=1, classified=1, failures=0),
+    )
+
+    assert neutralize_unobserved_unresolved_returns_8616(project, codegen) is False
+    assert return_node.retval is call
+    assert codegen._inertia_unobserved_return_lowering_stats_8616.classified_fact_count == 0
+
+
+def test_rebased_closed_unused_evidence_does_not_prove_void() -> None:
+    arch = Arch86_16()
+    original_addr = 0x104DC
+    project = SimpleNamespace(
+        arch=arch,
+        _inertia_original_linear_delta=original_addr - 0x1000,
+    )
+    function = _function(arch)
+    evidence = _evidence(
+        CallerReturnUseVerdict8616.UNUSED,
+        raw=1,
+        classified=1,
+        failures=0,
+        target_addr=original_addr,
+    )
+    record_caller_return_use_evidence_8616(project, original_addr, evidence)
+
+    assert proven_function_return_class_8616(project, function.addr) is None
+    assert function_result_is_proven_unobserved_8616(project, function.addr) is True
     assert isinstance(function.prototype.returnty, SimTypeShort)
 
 
-def test_materializes_void_over_binary_inferred_non_guessed_prototype() -> None:
+def test_refuses_conflicting_return_evidence_across_exact_slice_aliases() -> None:
     arch = Arch86_16()
-    project = SimpleNamespace(arch=arch)
+    original_addr = 0x104DC
+    project = SimpleNamespace(
+        arch=arch,
+        _inertia_original_linear_delta=original_addr - 0x1000,
+    )
     function = _function(arch)
-    function.is_prototype_guessed = False
     record_caller_return_use_evidence_8616(
         project,
-        0x1000,
-        _evidence(CallerReturnUseVerdict8616.UNUSED, raw=3, classified=3, failures=0),
+        function.addr,
+        _evidence(CallerReturnUseVerdict8616.UNUSED, raw=1, classified=1, failures=0),
+    )
+    record_caller_return_use_evidence_8616(
+        project,
+        original_addr,
+        _evidence(
+            CallerReturnUseVerdict8616.USED,
+            raw=1,
+            classified=1,
+            failures=0,
+            target_addr=original_addr,
+        ),
     )
 
-    assert materialize_proven_void_return_type_8616(project, function) is True
-    assert isinstance(function.prototype.returnty, SimTypeBottom)
-    assert function.prototype.returnty.label == "void"
-    assert function.is_prototype_guessed is False
+    assert proven_function_return_class_8616(project, function.addr) is None
+    assert function_result_is_proven_unobserved_8616(project, function.addr) is False
+    assert isinstance(function.prototype.returnty, SimTypeShort)
+    assert function.is_prototype_guessed is True

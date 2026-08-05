@@ -24,6 +24,9 @@ from ..lowering.segmented_lowering import _SegmentedAccess
 from ..structuring.simple_loop_recovery import _function_instruction_summaries_8616
 from .stack_subview_projection import materialize_contained_stack_subviews_8616
 from .widening_copyprop_8616 import _widening_copy_propagation_8616
+from .word_projection_recomposition import (
+    materialize_word_projection_recompositions_8616,
+)
 
 
 def _dynamic_attr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
@@ -57,6 +60,7 @@ def run_typed_widening_pass_8616(
     copy_propagation_fn: Callable[..., object] = _widening_copy_propagation_8616,
     promote_stack_slots_from_instruction_widths: Callable[..., object] | None = None,
     materialize_stack_subviews_fn: Callable[[object], object] = materialize_contained_stack_subviews_8616,
+    materialize_word_projections_fn: Callable[[object], object] = materialize_word_projection_recompositions_8616,
 ) -> bool:
     """Execute widening-owned passes in deterministic order.
 
@@ -65,7 +69,7 @@ def run_typed_widening_pass_8616(
     2. Alias-proven contained stack-subview materialization
     3. Word-store coalescing (SROA-like)
     4. Copy propagation (EarlyCSE-like)
-    5. Load/store folding (GVN-like)
+    5. Alias-proven complete word-projection materialization
 
     This pass is the widening ownership boundary: callers provide typed helpers,
     widening decides pass ordering and changed-state aggregation.
@@ -77,6 +81,7 @@ def run_typed_widening_pass_8616(
     changed = bool(coalesce_direct_ss_local_word_statements(project, codegen)) or changed
     changed = bool(coalesce_segmented_word_store_statements(project, codegen)) or changed
     changed = bool(copy_propagation_fn(codegen, enable_nested=True)) or changed
+    changed = bool(materialize_word_projections_fn(codegen)) or changed
     return changed
 
 
@@ -161,7 +166,12 @@ def promote_stack_slots_from_instruction_widths_8616(
     promote_direct_stack_cvariable: Callable[..., object],
     stack_type_for_size: Callable[..., object],
 ) -> bool:
-    """Promote existing stack C variables when instruction evidence proves a wider slot."""
+    """Promote stack variables only when an access proves a larger storage extent.
+
+    A decoded access width is a lower bound on the containing logical object. It
+    must not narrow a wider stack variable or replace independently proven type
+    signedness merely because the object is accessed one word at a time.
+    """
     if _dynamic_attr_8616(codegen, "cfunc", None) is None:
         return False
 
@@ -174,6 +184,9 @@ def promote_stack_slots_from_instruction_widths_8616(
         cvar = resolve_stack_cvar_at_offset(codegen, offset, preferred_size=size)
         variable = _dynamic_attr_8616(cvar, "variable", None)
         if variable is None or _dynamic_attr_8616(variable, "offset", None) != offset:
+            continue
+        current_size = _dynamic_attr_8616(variable, "size", None)
+        if isinstance(current_size, int) and current_size >= size:
             continue
         target_type = stack_type_for_size(size)
         if promote_direct_stack_cvariable(codegen, cvar, size, target_type):

@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, replace
 from typing import Any, Literal, TypeAlias
 
-from .core import IRCondition, IRValue
+from .core import IRBinaryValue, IRCondition, IRValue
 
 __all__ = (
     "ConditionEdgeEvidence",
@@ -277,6 +277,12 @@ def build_condition_from_test_8616(
     test ax, ax  (or: or ax, ax / and ax, ax where both operands same)
     jz label  →  ConditionIR(ZERO, ax)
     """
+    if (
+        isinstance(value, IRBinaryValue)
+        and value.op in {"and", "or"}
+        and value.lhs == value.rhs
+    ):
+        value = value.lhs
     jcc = jcc.lower()
     if jcc in {"je", "jz"}:
         return ConditionIR(
@@ -377,7 +383,9 @@ class ConditionEdgeEvidence:
 # ── Condition sorting/deduplication ──
 
 
-def condition_sort_key_8616(cond: ConditionIR) -> tuple:
+def condition_sort_key_8616(
+    cond: ConditionIR,
+) -> tuple[int, int, int, int, int, int, str, str, str, str, int]:
     """Deterministic sort key for ConditionIR."""
     return (
         cond.block_addr if isinstance(cond.block_addr, int) else -1,
@@ -396,7 +404,7 @@ def condition_sort_key_8616(cond: ConditionIR) -> tuple:
 
 def deduplicate_conditions_8616(conditions: list[ConditionIR]) -> list[ConditionIR]:
     """Return deduplicated, deterministically sorted conditions."""
-    seen: set[tuple] = set()
+    seen: set[tuple[int, int, int, int, int, int, str, str, str, str, int]] = set()
     unique: list[ConditionIR] = []
     for cond in sorted(conditions, key=condition_sort_key_8616):
         key = condition_sort_key_8616(cond)
@@ -686,6 +694,8 @@ def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
         CmpNE(Sub(x,const:c),const:0) -> CmpNE(x,const:c)
         CmpEQ(Sub(x,y),const:0) -> CmpEQ(x,y)
         CmpNE(Sub(x,y),const:0) -> CmpNE(x,y)
+        Add(x,Neg(y)) -> Sub(x,y)
+        Add(Neg(y),x) -> Sub(x,y)
 
     Also handles doubled Sub nesting:
 
@@ -711,11 +721,22 @@ def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
             return normalized_value
 
         op, args_str = call
+        args = _split_fingerprint_args_8616(args_str)
+
+        # x - x and x + (-x) are the same exact zero value.
+        if op == "Sub" and len(args) == 2 and args[0] == args[1]:
+            return "const:0"
+        if op == "Add" and len(args) == 2:
+            for value_arg, negated_arg in ((args[0], args[1]), (args[1], args[0])):
+                negated_call = _split_fingerprint_call_8616(negated_arg)
+                if negated_call is not None and negated_call[0] == "Neg":
+                    negated_args = _split_fingerprint_args_8616(negated_call[1])
+                    if negated_args == [value_arg]:
+                        return "const:0"
 
         # Rule: CmpEQ(Sub(x,const:c),const:0) → CmpEQ(x,const:c)
         # Rule: CmpNE(Sub(x,const:c),const:0) → CmpNE(x,const:c)
         if op in ("CmpEQ", "CmpNE"):
-            args = _split_fingerprint_args_8616(args_str)
             if len(args) == 2 and args[1] == "const:0":
                 lhs_call = _split_fingerprint_call_8616(args[0])
                 if lhs_call is not None:
@@ -759,8 +780,10 @@ def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
                                     return f"{op}({inner_args[0]},{c_str})"
 
         # Recurse into args for nested normalization
-        args = _split_fingerprint_args_8616(args_str)
         normalized_args = [_normalize_arg_fingerprint_8616(a) for a in args]
+        canonical = _canonicalize_add_neg_fingerprint_8616(op, normalized_args)
+        if canonical is not None:
+            return canonical
         if normalized_args != args:
             return f"{op}({','.join(normalized_args)})"
 
@@ -780,7 +803,27 @@ def _normalize_arg_fingerprint_8616(arg: str) -> str:
     op, args_str = call
     args = _split_fingerprint_args_8616(args_str)
     normalized_args = [_normalize_arg_fingerprint_8616(a) for a in args]
+    canonical = _canonicalize_add_neg_fingerprint_8616(op, normalized_args)
+    if canonical is not None:
+        return canonical
     return f"{op}({','.join(normalized_args)})"
+
+
+def _canonicalize_add_neg_fingerprint_8616(
+    op: str,
+    args: list[str],
+) -> str | None:
+    """Return canonical subtraction for one exact addition of a negation."""
+    if op != "Add" or len(args) != 2:
+        return None
+    for value, negated in ((args[0], args[1]), (args[1], args[0])):
+        negated_call = _split_fingerprint_call_8616(negated)
+        if negated_call is None or negated_call[0] != "Neg":
+            continue
+        negated_args = _split_fingerprint_args_8616(negated_call[1])
+        if len(negated_args) == 1:
+            return f"Sub({value},{negated_args[0]})"
+    return None
 
 
 def _normalize_global_word_pair_arg_fingerprint_8616(arg: str) -> str | None:

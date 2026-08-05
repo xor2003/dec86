@@ -337,13 +337,13 @@ class Processor(Eflags, CR):
                 raise ValueError("Cannot get gpreg from a non-constant VexValue without an active lifter instruction")
             name = register_name_8616(n)
             if isinstance(n, reg8_t):
-                base = self.get_gpreg(self._reg8_base(n))
                 if self.lifter_instruction is not None:
-                    if not isinstance(base, VexValue):
-                        raise TypeError("Lifting mode register reads must return VexValue")
-                    if self._reg8_is_high(n):
-                        return cast(RegisterValue, (base >> 8).cast_to(Type.int_8))
-                    return cast(RegisterValue, base.cast_to(Type.int_8))
+                    if self.vex_offsets is None:
+                        raise ValueError("vex_offsets not initialized for lifting mode")
+                    base_name = register_name_8616(self._reg8_base(n))
+                    offset = self.vex_offsets[base_name] + int(self._reg8_is_high(n))
+                    return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, Type.int_8))
+                base = self.get_gpreg(self._reg8_base(n))
                 if not isinstance(base, int):
                     raise TypeError("Concrete register reads must return integers")
                 if self._reg8_is_high(n):
@@ -453,23 +453,17 @@ class Processor(Eflags, CR):
             nonlocal value
             name = register_name_8616(n)
             if isinstance(n, reg8_t):
-                if isinstance(value, int):
-                    value = self.constant(value, Type.int_8) if self.lifter_instruction is not None else value & 0xFF
                 base_reg = self._reg8_base(n)
                 if self.lifter_instruction is not None:
-                    base = self.get_gpreg(base_reg)
-                    if not isinstance(base, VexValue):
-                        base = VexValue(self.lifter_instruction, self.lifter_instruction._settmp(base))
-                    base_v = VexValue(self.lifter_instruction, base.rdt)
+                    if self.vex_offsets is None:
+                        raise ValueError("vex_offsets not initialized for lifting mode")
+                    base_name = register_name_8616(base_reg)
+                    offset = self.vex_offsets[base_name] + int(self._reg8_is_high(n))
+                    if isinstance(value, int):
+                        value = self.constant(value, Type.int_8)
                     if isinstance(value, VexValue):
-                        value_v = VexValue(self.lifter_instruction, value.rdt)
-                    else:
-                        value_v = VexValue(self.lifter_instruction, self.lifter_instruction._settmp(value))
-                    if self._reg8_is_high(n):
-                        new_base = cast(VexValue, (cast(VexValue, value_v.cast_to(Type.int_16)) << 8) | (base_v & 0x00FF))
-                    else:
-                        new_base = cast(VexValue, (base_v & 0xFF00) | cast(VexValue, value_v.cast_to(Type.int_16)))
-                    self.set_gpreg(base_reg, new_base)
+                        value = cast(VexValue, value.cast_to(Type.int_8)).rdt
+                    self.lifter_instruction._append_stmt(Put(cast(Any, value), offset))
                     return
 
                 if not isinstance(value, int):

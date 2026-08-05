@@ -33,7 +33,13 @@ from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeInt, SimTypePoi
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16 import decompiler_postprocess_stage as postprocess_stage
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.callsite_summary import CallsiteReturnUseKind8616, CallsiteSummary8616
+from angr_platforms.X86_16.callsite_summary import (
+    CallerReturnUseEvidence8616,
+    CallerReturnUseVerdict8616,
+    CallsiteReturnUseKind8616,
+    CallsiteSummary8616,
+    record_caller_return_use_evidence_8616,
+)
 from angr_platforms.X86_16.lowering.call_output_stack_objects import (
     CallOutputStackObjectFact8616,
 )
@@ -187,7 +193,7 @@ def _project():
 
 def _postprocess_cfunc(**fields):
     """Build the complete cfunc boundary required by postprocess-stage tests."""
-    return SimpleNamespace(functy=None, **fields)
+    return SimpleNamespace(functy=None, statements=None, body=None, **fields)
 
 
 def test_conditional_continue_guard_repair_delta_accepts_removed_ifbreak_and_condition():
@@ -3507,6 +3513,46 @@ def test_tail_validation_void_return_value_does_not_observe_ax_live_out():
     assert summary.returns == ("none",)
 
 
+def test_tail_validation_closed_unused_result_does_not_observe_ax_live_out() -> None:
+    project = _project()
+    record_caller_return_use_evidence_8616(
+        project,
+        0x4010,
+        CallerReturnUseEvidence8616(
+            target_addr=0x4010,
+            verdict=CallerReturnUseVerdict8616.UNUSED,
+            raw_fact_count=2,
+            normalized_fact_count=2,
+            classified_fact_count=2,
+            materialized_count=2,
+            failure_count=0,
+            used_callsite_count=0,
+            unused_callsite_count=2,
+            callsite_addrs=(0x3010, 0x3020),
+        ),
+    )
+    codegen = _DummyCodegen()
+    ax = _reg(project, "ax", codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        functy=SimTypeFunction([], SimTypeShort(False)),
+        body=CStatements(
+            [
+                CAssignment(ax, _const(7, codegen), codegen=codegen),
+                CReturn(ax, codegen=codegen),
+            ],
+            addr=0x4010,
+            codegen=codegen,
+        ),
+    )
+
+    summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
+
+    assert summary.register_writes == ()
+    assert summary.returns == ("none",)
+    assert isinstance(codegen.cfunc.functy.returnty, SimTypeShort)
+
+
 def test_tail_validation_ignores_void_return_evidence_from_source_annotation():
     project = _project()
     codegen = _DummyCodegen()
@@ -6480,6 +6526,9 @@ def test_postprocess_codegen_validates_small_function_typed_conditions(monkeypat
         arch=SimpleNamespace(name="86_16"),
         _inertia_tail_validation_enabled=True,
         _inertia_postprocess_per_pass_validation_enabled=False,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr=None, **_kwargs: None),
+        ),
     )
     codegen = SimpleNamespace(cfunc=_postprocess_cfunc(addr=0x1234, state="baseline"), project=project)
     calls: list[str] = []
@@ -7234,6 +7283,72 @@ def test_postprocess_force_validates_large_function_return_address_prune(monkeyp
         "_apply_annotations_8616",
         "optimization:dce",
     )
+
+
+def test_postprocess_optimization_validates_when_stable(monkeypatch):
+    project = SimpleNamespace(
+        arch=SimpleNamespace(name="86_16"),
+        _inertia_tail_validation_enabled=True,
+        _inertia_postprocess_per_pass_validation_enabled=False,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr=None, **_kwargs: None),
+        ),
+    )
+    codegen = SimpleNamespace(cfunc=_postprocess_cfunc(addr=0x1234, state="baseline"), project=project)
+    calls: list[str] = []
+
+    def _optimization_noop_pass(_codegen):
+        calls.append("optimization")
+        _codegen.cfunc.state = "changed"
+        return False
+
+    def _summary(_project, codegen_arg, *, mode="live_out"):
+        return SimpleNamespace(state=codegen_arg.cfunc.state, mode=mode)
+
+    def _compare(before, after):
+        return {"changed": before.state != after.state, "summary_text": "optimization pass changed state"}
+
+    monkeypatch.setenv(
+        "INERTIA_SKIP_POSTPROCESS_PASSES",
+        ",".join(
+            (
+                "_materialize_stable_stack_semantics_bootstrap_8616",
+                "_normalize_fact_backed_stack_accesses_8616",
+                "_apply_typed_conditions_to_codegen_8616",
+                "_materialize_global_byte_index_sum_loop_8616",
+                "_materialize_nested_stack_counter_accumulator_loop_8616",
+                "_materialize_stack_arg_accumulator_loop_8616",
+                "_materialize_cfg_selector_return_branches_early_8616",
+                "_rewrite_decoded_jcc_conditions_8616",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_decompiler_postprocess_passes_for_function",
+        lambda _project, _codegen: (),
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "OPTIMIZATION_PASSES",
+        (SimpleNamespace(name="dce", func=_optimization_noop_pass),),
+    )
+    monkeypatch.setattr(
+        postprocess_stage,
+        "_collect_tail_validation_summary_with_baseline_canonicalization_8616",
+        _summary,
+    )
+    monkeypatch.setattr(postprocess_stage, "collect_x86_16_tail_validation_summary", _summary)
+    monkeypatch.setattr(postprocess_stage, "compare_x86_16_tail_validation_summaries", _compare)
+    monkeypatch.setattr(postprocess_stage, "_regenerate_text_safely", lambda *_args, **_kwargs: True)
+
+    changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
+
+    assert changed is False
+    assert calls == ["optimization"]
+    assert codegen.cfunc.state == "baseline"
+    assert codegen._inertia_postprocess_validation_failed is False
+    assert codegen._inertia_postprocess_rejected_passes == ("optimization:dce",)
 
 
 def test_postprocess_codegen_validates_small_function_annotations(monkeypatch):

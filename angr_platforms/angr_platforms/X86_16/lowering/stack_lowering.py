@@ -24,6 +24,7 @@ from .real_mode_linear import (
     lower_stable_ss_linear_stack_dereferences_8616,
 )
 from .segmented_memory_lowering import apply_runtime_segment_lowering_8616
+from .software_interrupt_calls import materialize_software_interrupt_calls_8616
 from .stack_lowering_impl import (
     _canonicalize_stack_cvar_expr,
     _canonicalize_stack_cvars,
@@ -235,6 +236,8 @@ def run_stack_lowering_pass_8616(
         )
         if not round_changed:
             break
+        changed = True
+    if codegen is not None and materialize_software_interrupt_calls_8616(codegen):
         changed = True
     _emit_stack_lowering_debug_summary_8616(codegen)
     return changed

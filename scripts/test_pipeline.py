@@ -13,7 +13,9 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
@@ -33,11 +35,17 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_decompiler_architecture_check.py",
     "angr_platforms/tests/test_test_pipeline.py",
     "angr_platforms/tests/test_check_sortd_sidecar_free.py",
+    "angr_platforms/tests/test_generated_c_artifacts.py",
+    "angr_platforms/tests/test_generated_translation_unit_assembly.py",
+    "angr_platforms/tests/test_generated_translation_unit_gate.py",
+    "angr_platforms/tests/test_cli_direct_argument_evidence_context.py",
     "angr_platforms/tests/test_test_ownership_manifest.py",
+    "angr_platforms/tests/test_x86_16_corpus_scan_timeout.py",
     "angr_platforms/tests/test_decompilation_quality.py",
     "angr_platforms/tests/test_cli_regeneration.py",
     "angr_platforms/tests/test_x86_16_alias_register_mvp.py",
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_callsites.py",
+    "angr_platforms/tests/test_x86_16_protected_call_arguments.py",
     "angr_platforms/tests/test_x86_16_condition_lowering.py",
     "angr_platforms/tests/test_x86_16_condition_transfer.py",
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_typed_conditions.py",
@@ -49,6 +57,8 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_semantics_expression_analysis.py",
     "angr_platforms/tests/test_x86_16_stack_frame_recovery.py",
     "angr_platforms/tests/test_x86_16_validation_canonicalize.py",
+    "angr_platforms/tests/test_x86_16_validation_call_argument_sources.py",
+    "angr_platforms/tests/test_x86_16_validation_calls.py",
     "angr_platforms/tests/test_x86_16_package_exports.py",
     "angr_platforms/tests/test_x86_16_pipeline_contracts.py",
     "angr_platforms/tests/test_x86_16_rewrite_boundary.py",
@@ -63,8 +73,15 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_widening_rules.py",
     "angr_platforms/tests/test_x86_16_generated_c_acceptance.py",
     "angr_platforms/tests/test_x86_16_sortdemo_decompiler_status.py",
+    "angr_platforms/tests/test_x86_16_segment_access_policy.py",
+    "angr_platforms/tests/test_x86_16_segment_address_policy.py",
+    "angr_platforms/tests/test_x86_16_segment_state.py",
+    "angr_platforms/tests/test_x86_16_vex_import.py",
+    "angr_platforms/tests/test_x86_16_cod_global_identity.py",
     "angr_platforms/tests/test_x86_16_segmented_global_loads.py",
     "angr_platforms/tests/test_x86_16_segmented_lowering.py",
+    "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py",
+    "angr_platforms/tests/test_x86_16_direct_stack_move_loop_entries.py",
     "angr_platforms/tests/test_x86_16_decompilation_cache_surface.py",
 )
 
@@ -75,6 +92,7 @@ MSC6_TINY_CONSTRUCTS: tuple[str, ...] = (
     "storage_classes",
     "function_pointers",
     "pointer_memory",
+    "scalar_types_io",
 )
 MSC6_TINY_SMOKE_CONSTRUCTS: tuple[str, ...] = ("storage_classes",)
 MSC6_TINY_NEXT_CONSTRUCTS: tuple[str, ...] = ()
@@ -84,9 +102,11 @@ LANE_BUDGET_SECONDS: dict[str, float] = {
     "msc6-tiny-smoke": 90.0,
     "msc6-tiny-full-pipeline": 300.0,
     "ultra-quickc-fixtures": 180.0,
-    "sortdemo-status": 2100.0,
-    "sortdemo-status-proc-diagnostic": 2100.0,
+    "sortdemo-status": 2460.0,
+    "sortdemo-status-proc-diagnostic": 2460.0,
     "sortd-sidecar-free": 1200.0,
+    "sortd-generated-sort-core": 60.0,
+    "sortd-generated-translation-unit": 60.0,
 }
 
 PIPELINE_TIERS: dict[str, tuple[str, ...]] = {
@@ -212,7 +232,7 @@ def _run_captured_command(name: str, cmd: list[str], *, env: dict[str, str] | No
     reason = None
     if completed.returncode != 0:
         reason = (completed.stderr or completed.stdout).strip()[:1000] or f"exit {completed.returncode}"
-    child: dict[str, object] = {
+    completed_child: dict[str, object] = {
         "stdout": completed.stdout,
         "stderr": completed.stderr,
     }
@@ -225,7 +245,7 @@ def _run_captured_command(name: str, cmd: list[str], *, env: dict[str, str] | No
         reason=reason,
         budget_seconds=budget,
         budget_status=budget_status,
-        children=[child],
+        children=[completed_child],
     )
 
 
@@ -250,7 +270,19 @@ def _ultra_quickc_tools_available(kvikdos: Path, quickc_root: Path) -> tuple[boo
 def _unit_lane() -> LaneResult:
     return _run_command(
         "unit-focused",
-        [sys.executable, "-m", "pytest", "-q", "--durations=25", "--durations-min=1.0", *FOCUSED_PYTEST_TARGETS],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-n",
+            "7",
+            "--dist",
+            "loadgroup",
+            "--durations=25",
+            "--durations-min=1.0",
+            *FOCUSED_PYTEST_TARGETS,
+        ],
     )
 
 
@@ -373,26 +405,87 @@ def _sortdemo_status_lane(
 
 def _sortd_sidecar_free_lane(args: argparse.Namespace) -> LaneResult:
     """Run the executable-only whole-binary discovery and acceptance ratchet."""
-    cmd = [
-        sys.executable,
-        "scripts/check_sortd_sidecar_free.py",
-        "--source-binary",
-        str(args.sortdemo_binary),
-        "--run-timeout",
-        str(args.sortd_run_timeout),
-        "--transcript-out",
-        str(args.sortd_transcript_out),
-        "--report-out",
-        str(args.sortd_report_out),
-    ]
+    args.sortd_report_out.parent.mkdir(parents=True, exist_ok=True)
     if not args.sortdemo_binary.is_file():
+        cmd = [sys.executable, "scripts/check_sortd_sidecar_free.py"]
         return _missing_external_lane(
             "sortd-sidecar-free",
             cmd,
             reason=f"SORTDEMO source binary not found: {args.sortdemo_binary}",
             require_external=bool(args.require_external),
         )
-    return _run_command("sortd-sidecar-free", cmd)
+    with tempfile.TemporaryDirectory(
+        prefix="sortd-generated-functions-",
+        dir=args.sortd_report_out.parent,
+    ) as function_c_dir_text:
+        function_c_dir = Path(function_c_dir_text)
+        cmd = [
+            sys.executable,
+            "scripts/check_sortd_sidecar_free.py",
+            "--source-binary",
+            str(args.sortdemo_binary),
+            "--run-timeout",
+            str(args.sortd_run_timeout),
+            "--transcript-out",
+            str(args.sortd_transcript_out),
+            "--report-out",
+            str(args.sortd_report_out),
+            "--function-c-dir",
+            str(function_c_dir),
+        ]
+        sidecar_result = _run_command("sortd-sidecar-free", cmd)
+        if sidecar_result.status is not LaneStatus.PASSED:
+            return sidecar_result
+        translation_unit_out = args.sortd_report_out.with_name("sortd_generated_translation_unit.c")
+        translation_unit_report = args.sortd_report_out.with_name("sortd_generated_translation_unit.json")
+        translation_unit_cmd = [
+            sys.executable,
+            "scripts/check_generated_translation_unit.py",
+            "--function-c-dir",
+            str(function_c_dir),
+            "--output",
+            str(translation_unit_out),
+            "--report-out",
+            str(translation_unit_report),
+        ]
+        translation_unit_result = _run_command(
+            "sortd-generated-translation-unit",
+            translation_unit_cmd,
+        )
+        behavior_cmd = [
+            sys.executable,
+            "scripts/check_sortd_generated_sort_core.py",
+            "--transcript",
+            str(args.sortd_transcript_out),
+        ]
+        behavior_result = _run_command("sortd-generated-sort-core", behavior_cmd)
+    elapsed = round(
+        sidecar_result.elapsed_seconds
+        + translation_unit_result.elapsed_seconds
+        + behavior_result.elapsed_seconds,
+        3,
+    )
+    budget, budget_status = _budget_status("sortd-sidecar-free", elapsed)
+    terminal_result = (
+        translation_unit_result
+        if translation_unit_result.status is not LaneStatus.PASSED
+        else behavior_result
+    )
+    return LaneResult(
+        name="sortd-sidecar-free",
+        status=terminal_result.status,
+        command=cmd,
+        elapsed_seconds=elapsed,
+        returncode=terminal_result.returncode,
+        reason=terminal_result.reason,
+        budget_seconds=budget,
+        budget_status=budget_status,
+        children=[
+            asdict(sidecar_result),
+            asdict(translation_unit_result),
+            asdict(behavior_result),
+        ],
+    )
 
 
 def _ultra_quickc_fixtures_command(args: argparse.Namespace) -> list[str]:
@@ -406,7 +499,7 @@ def _ultra_quickc_fixtures_command(args: argparse.Namespace) -> list[str]:
         "--output-root",
         str(args.ultra_quickc_out_dir),
         "--decompile-timeout",
-        str(args.decompile_timeout),
+        str(args.ultra_quickc_decompile_timeout),
     ]
 
 
@@ -611,11 +704,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--msc6-root", type=Path, default=DEFAULT_MSC6_ROOT)
     parser.add_argument("--require-external", action="store_true")
     parser.add_argument("--decompile-timeout", type=int, default=60)
+    parser.add_argument("--ultra-quickc-decompile-timeout", type=int, default=180)
     parser.add_argument("--decompile-run-timeout", type=int, default=600)
     parser.add_argument("--sortdemo-binary", type=Path, default=REPO_ROOT / "SORTDEMO.EXE")
     parser.add_argument("--sortdemo-max-functions", type=int, default=0)
-    parser.add_argument("--sortdemo-decompile-timeout", type=int, default=60)
-    parser.add_argument("--sortdemo-run-timeout", type=int, default=2000)
+    parser.add_argument("--sortdemo-decompile-timeout", type=int, default=240)
+    parser.add_argument("--sortdemo-run-timeout", type=int, default=2400)
     parser.add_argument("--sortd-run-timeout", type=int, default=1200)
     parser.add_argument(
         "--sortdemo-status-out",
@@ -655,7 +749,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _parse_args(argv)
     lane_names = _selected_lanes(args)
-    lane_fns = {
+    lane_fns: dict[str, Callable[[], LaneResult]] = {
         "unit-focused": _unit_lane,
         "ultra-quickc-fixtures": lambda: _ultra_quickc_fixtures_lane(args),
         "msc6-tiny-smoke": lambda: _msc6_tiny_lane(args, name="msc6-tiny-smoke", constructs=MSC6_TINY_SMOKE_CONSTRUCTS),

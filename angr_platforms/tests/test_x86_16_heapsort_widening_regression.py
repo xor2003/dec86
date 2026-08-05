@@ -7,6 +7,10 @@ import sys
 from pathlib import Path
 
 from scripts.check_sortd_sidecar_free import mz_executable_image
+from scripts.generated_c_contracts import (
+    BranchBodyEffectsRequirement,
+    GeneratedCContract,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
@@ -88,12 +92,14 @@ def test_sortd_heapsort_sidecar_free_accepts_typed_segment_live_in(tmp_path: Pat
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "uninitialized-read:segment-carrier" not in combined
-    assert result.stdout.count("SEG_U16(inertia_ds, 2978)") >= 2
+    assert "g_0BA2 <= local_2" in result.stdout
+    assert "for (local_2 = g_0BA2 - 1; local_2 > 0;" in result.stdout
     assert "sub_109e8(local_2);" in result.stdout
-    assert "sub_10794(2892, (local_2 << 1) + 2892);" in result.stdout
+    assert "sub_107b8(&g_0B4C[0], &g_0B4C[local_2]);" in result.stdout
+    assert "SEG_PTR(inertia_ds, 2892)" not in result.stdout
     assert "sub_10768(0, local_2);" in result.stdout
     assert re.search(r"^\s+sub_1075b\(", result.stdout, re.MULTILINE) is None
-    assert "sub_10a61(local_2 - 1);" in result.stdout
+    assert "sub_10a88(local_2 - 1);" in result.stdout
 
 
 def test_sortd_shellsort_sidecar_free_accepts_typed_segment_live_in(tmp_path: Path) -> None:
@@ -114,6 +120,169 @@ def test_sortd_shellsort_sidecar_free_accepts_typed_segment_live_in(tmp_path: Pa
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "uninitialized-read:segment-carrier" not in combined
-    assert "for (local_2 = SEG_U16(inertia_ds, 2978) / 2; local_2; )" in result.stdout
-    assert "sub_10794((local_4 << 1) + 2892, (local_4 + local_2 << 1) + 2892);" in result.stdout
+    assert "for (local_2 = (short)g_0BA2 / 2; local_2; )" in result.stdout
+    assert "SEG_U16(inertia_ds, 2978)" not in result.stdout
+    assert "sub_107b8(&g_0B4C[local_4], &g_0B4C[local_4 + local_2]);" in result.stdout
     assert "sub_10768(local_4, local_4 + local_2);" in result.stdout
+    assert "while (local_8);" in result.stdout
+    assert "while (local_6);" not in result.stdout
+    generated_c_marker = "/* == c == */"
+    assert generated_c_marker in result.stdout
+    generated_c = result.stdout.split(generated_c_marker, 1)[1]
+    contract = GeneratedCContract(
+        required_fragments=(
+            "g_0B4C[local_4 + local_2].field_0 < g_0B4C[local_4].field_0",
+        ),
+        forbidden_fragments=("g_0B4C[local_4 + local_4]",),
+        branch_body_effects=(
+            BranchBodyEffectsRequirement(
+                function_name="sub_10c18",
+                required_calls=("sub_107b8", "sub_10768"),
+                assignment_name="local_8",
+                assignment_source_name="local_4",
+            ),
+        ),
+    )
+    contract_result = contract.assess(generated_c)
+    assert contract_result.passed, contract_result.to_json()
+
+
+def test_sortd_swaps_sidecar_free_materializes_aggregate_interface(
+    tmp_path: Path,
+) -> None:
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x107B8,
+        analysis_timeout=60,
+        subprocess_timeout=120,
+        extra_args=(
+            "--ignore-local-sidecar-hints",
+            "--c-target",
+            "portable-flat",
+            "--no-alternate-source-c",
+            "--window",
+            "0x50",
+        ),
+    )
+
+    combined = result.stderr + result.stdout
+    assert result.returncode == 0, combined
+    assert "function: 0x107b8 sub_107b8" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    assert "typedef struct g_08F0_entry" in result.stdout
+    assert "short sub_107b8(g_08F0_entry *left, g_08F0_entry *right)" in result.stdout
+    assert "g_08F0_entry local_2;" in result.stdout
+    assert "local_2 = left[0];" in result.stdout
+    assert "left[0] = right[0];" in result.stdout
+    assert "right[0] = local_2;" in result.stdout
+    assert "return 0;" in result.stdout
+    assert "void sub_107b8" not in result.stdout
+    assert "return;" not in result.stdout
+    assert "unsigned short *left" not in result.stdout
+    assert "validation_failed" not in combined
+
+
+def test_sortd_swaps_caller_uses_one_proven_aggregate_family(
+    tmp_path: Path,
+) -> None:
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x108D0,
+        analysis_timeout=60,
+        subprocess_timeout=120,
+        extra_args=(
+            "--ignore-local-sidecar-hints",
+            "--c-target",
+            "portable-flat",
+            "--no-alternate-source-c",
+        ),
+    )
+
+    combined = result.stderr + result.stdout
+    assert result.returncode == 0, combined
+    assert "function: 0x108d0 sub_108d0" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    assert (
+        "int sub_107b8(struct g_08F0_entry *a0, struct g_08F0_entry *a1);"
+        in result.stdout
+    )
+    assert "void sub_107b8" not in result.stdout
+    assert "extern g_08F0_entry g_0B4C[];" in result.stdout
+    assert "sub_107b8(&g_0B4C[local_2], &g_0B4C[local_2 + 1]);" in result.stdout
+    assert "g_0B4E" not in result.stdout
+
+
+def test_sortd_percolate_down_uses_canonical_shifted_global_view(
+    tmp_path: Path,
+) -> None:
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x10A88,
+        analysis_timeout=60,
+        subprocess_timeout=120,
+        extra_args=(
+            "--ignore-local-sidecar-hints",
+            "--c-target",
+            "portable-flat",
+            "--no-alternate-source-c",
+        ),
+    )
+
+    combined = result.stderr + result.stdout
+    assert result.returncode == 0, combined
+    assert "function: 0x10a88 sub_10a88" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    assert "extern g_08F0_entry g_0B4C[];" in result.stdout
+    assert "if (local_4 + 1 <= arg)" in result.stdout
+    assert result.stdout.count("if (local_4 <= arg)") == 1
+    assert (
+        "g_0B4C[local_4 + 1].field_0 > g_0B4C[local_4].field_0"
+        in result.stdout
+    )
+    assert "sub_107b8(&g_0B4C[local_2], &g_0B4C[local_4]);" in result.stdout
+    assert "g_0B4E" not in result.stdout
+
+
+def test_sortd_percolate_up_sidecar_free_preserves_heap_updates_and_compiles(
+    tmp_path: Path,
+) -> None:
+    isolated_binary = tmp_path / "SORTD.EXE"
+    isolated_binary.write_bytes(mz_executable_image(SORTDEMO_EXE.read_bytes()))
+
+    result = _run_decompile_addr(
+        isolated_binary,
+        0x109E8,
+        analysis_timeout=60,
+        subprocess_timeout=120,
+        extra_args=(
+            "--ignore-local-sidecar-hints",
+            "--c-target",
+            "portable-flat",
+            "--no-alternate-source-c",
+        ),
+    )
+
+    combined = result.stderr + result.stdout
+    assert result.returncode == 0, combined
+    assert "function: 0x109e8 sub_109e8" in result.stdout
+    assert "validation=passed" in combined
+    assert "whole-tail validation clean across 1 functions" in combined
+    assert "g_0BAA += 1;" in result.stdout
+    assert "g_0B4C[local_4].field_0 <= g_0B4C[local_2].field_0" in result.stdout
+    assert "sub_107b8(&g_0B4C[local_2], &g_0B4C[local_4]);" in result.stdout
+    assert "sub_10768(local_2, local_4);" in result.stdout
+    assert "vvar_" not in result.stdout
+    assert "stack_base" not in result.stdout
+    assert "ir_" not in result.stdout

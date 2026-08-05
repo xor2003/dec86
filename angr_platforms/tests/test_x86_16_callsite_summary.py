@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import networkx
 import pytest
 from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
 from angr_platforms.X86_16.analysis_helpers import CallTargetSeed, resolve_direct_call_target_from_block
@@ -10,6 +11,7 @@ from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseVerdict8616,
     CallsitePushExprOp8616,
     CallsiteReturnShape8616,
+    CallsiteReturnUseKind8616,
     CallsiteSummary8616,
     StructuredCallKind8616,
     _logical_arg_interface_for_target_8616,
@@ -347,6 +349,26 @@ def test_callsite_summary_reports_push_args_cleanup_and_return_use(monkeypatch):
     )
 
 
+def test_callsite_summary_classifies_inc_ax_jcc_as_return_condition(monkeypatch):
+    function = _function_with_block(
+        [
+            _Insn(0x1000, "call"),
+            _Insn(0x1003, "inc", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+            _Insn(0x1004, "jne", [_Operand(imm=0x1010)]),
+        ]
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x1000, 0x1544, 0x1003, "direct_near")],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1000)
+
+    assert summary is not None
+    assert summary.return_used is True
+    assert summary.return_use_kind is CallsiteReturnUseKind8616.CONDITION
+
+
 def test_callsite_summary_treats_previous_call_cleanup_as_return_arg_carrier(monkeypatch):
     function = _function_with_block(
         [
@@ -616,6 +638,53 @@ def test_callsite_summary_recovers_zero_register_push_sources(monkeypatch):
     assert summary.arg_widths == (2, 2)
     assert summary.push_arg_sources == (("imm", 0), ("imm", 0))
     assert summary.push_arg_instruction_addrs == (0x1002, 0x1003)
+
+
+def test_callsite_summary_recovers_zero_extended_byte_register_push_sources(monkeypatch):
+    reg_names = {1: "sp", 2: "ax", 5: "bp", 6: "al", 7: "ah", 8: "cl"}
+    function = _function_with_block(
+        [
+            _Insn(
+                0x1000,
+                "mov",
+                [_Operand(reg=8), _Operand(mem=SimpleNamespace(base=5, index=0, disp=-2), size=1)],
+                reg_names=reg_names,
+            ),
+            _Insn(
+                0x1003,
+                "shr",
+                [_Operand(mem=SimpleNamespace(base=5, index=0, disp=-4), size=1), _Operand(reg=8)],
+                reg_names=reg_names,
+            ),
+            _Insn(
+                0x1006,
+                "mov",
+                [_Operand(reg=6), _Operand(mem=SimpleNamespace(base=5, index=0, disp=-4), size=1)],
+                reg_names=reg_names,
+            ),
+            _Insn(0x1009, "sub", [_Operand(reg=7), _Operand(reg=7)], reg_names=reg_names),
+            _Insn(0x100B, "push", [_Operand(reg=2, size=2)], reg_names=reg_names),
+            _Insn(0x100C, "mov", [_Operand(reg=6), _Operand(reg=8)], reg_names=reg_names),
+            _Insn(0x100E, "push", [_Operand(reg=2, size=2)], reg_names=reg_names),
+            _Insn(0x100F, "mov", [_Operand(reg=2), _Operand(imm=0x7000)], reg_names=reg_names),
+            _Insn(0x1012, "push", [_Operand(reg=2, size=2)], reg_names=reg_names),
+            _Insn(0x1013, "call"),
+            _Insn(0x1016, "add", [_Operand(reg=1), _Operand(imm=6)], reg_names=reg_names),
+        ]
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x1013, 0x1544, 0x1016, "direct_near")],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1013)
+
+    assert summary.push_arg_sources == (
+        ("expr", ("bp", -4, 1), ((CallsitePushExprOp8616.AND.value, 0xFF),)),
+        ("expr", ("bp", -2, 1), ((CallsitePushExprOp8616.AND.value, 0xFF),)),
+        ("imm", 0x7000),
+    )
+    assert summary.push_arg_instruction_addrs == (0x100B, 0x100E, 0x1012)
 
 
 def test_callsite_summary_records_register_stack_source_add_push_expr(monkeypatch):
@@ -1074,11 +1143,17 @@ def test_callsite_summary_records_forwarded_dx_ax_return_push_sources(monkeypatc
     )
     monkeypatch.setattr(
         "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
-        lambda _function: [CallTargetSeed(0x100F, 0x3000, 0x1012, "direct_near")],
+        lambda _function: [
+            CallTargetSeed(0x1004, 0x2000, 0x1007, "direct_near"),
+            CallTargetSeed(0x100F, 0x3000, 0x1012, "direct_near"),
+        ],
     )
 
     summary = summarize_x86_16_callsite(function, 0x100F)
+    source_summary = summarize_x86_16_callsite(function, 0x1004)
 
+    assert source_summary.return_shape == "dx_ax"
+    assert source_summary.return_used is True
     assert summary.arg_count == 4
     assert summary.arg_widths == (2, 2, 2, 2)
     assert summary.push_arg_sources == (
@@ -1087,6 +1162,77 @@ def test_callsite_summary_records_forwarded_dx_ax_return_push_sources(monkeypatc
         ("imm", 0x17D),
         ("bp_addr", -80),
     )
+
+
+def test_callsite_summary_resolves_return_carrier_through_dominating_stack_store(monkeypatch):
+    reg_names = {1: "sp", 2: "ax", 5: "bp"}
+    insns = [
+        _Insn(0x1000, "call", [_Operand(imm=0x2000)], reg_names=reg_names, size=3),
+        _Insn(0x1003, "add", [_Operand(reg=1), _Operand(imm=6)], reg_names=reg_names),
+        _Insn(
+            0x1006,
+            "mov",
+            [_Operand(mem=SimpleNamespace(base=5, index=0, disp=-2), size=2), _Operand(reg=2, size=2)],
+            reg_names=reg_names,
+        ),
+        _Insn(0x1009, "cmp", [_Operand(imm=0x7010), _Operand(imm=0)], reg_names=reg_names),
+        _Insn(0x100C, "je", [_Operand(imm=0x1020)], reg_names=reg_names),
+        _Insn(0x100E, "push", [_Operand(reg=2, size=2)], reg_names=reg_names),
+        _Insn(0x100F, "push", [_Operand(mem=SimpleNamespace(base=5, index=0, disp=4), size=2)], reg_names=reg_names),
+        _Insn(0x1012, "push", [_Operand(imm=0x7012, size=2)], reg_names=reg_names),
+        _Insn(0x1015, "call", [_Operand(imm=0x3000)], reg_names=reg_names, size=3),
+        _Insn(0x1018, "add", [_Operand(reg=1), _Operand(imm=6)], reg_names=reg_names),
+    ]
+    function = _function_with_block(insns)
+    function.addr = 0x1000
+    function.block_addrs_set = {0x1000, 0x1003, 0x100E, 0x1020}
+    function.graph = networkx.DiGraph([(0x1000, 0x1003), (0x1003, 0x100E), (0x1003, 0x1020)])
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [
+            CallTargetSeed(0x1000, 0x2000, 0x1003, "direct_near"),
+            CallTargetSeed(0x1015, 0x3000, 0x1018, "direct_near"),
+        ],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1015)
+
+    assert summary.push_arg_sources == (("bp", -2), ("bp", 4), ("imm", 0x7012))
+
+
+def test_callsite_summary_refuses_return_carrier_when_cfg_path_bypasses_producer(monkeypatch):
+    reg_names = {1: "sp", 2: "ax", 5: "bp"}
+    insns = [
+        _Insn(0x1000, "call", [_Operand(imm=0x2000)], reg_names=reg_names, size=3),
+        _Insn(0x1003, "add", [_Operand(reg=1), _Operand(imm=6)], reg_names=reg_names),
+        _Insn(
+            0x1006,
+            "mov",
+            [_Operand(mem=SimpleNamespace(base=5, index=0, disp=-2), size=2), _Operand(reg=2, size=2)],
+            reg_names=reg_names,
+        ),
+        _Insn(0x1009, "je", [_Operand(imm=0x100E)], reg_names=reg_names),
+        _Insn(0x100E, "push", [_Operand(reg=2, size=2)], reg_names=reg_names),
+        _Insn(0x100F, "call", [_Operand(imm=0x3000)], reg_names=reg_names, size=3),
+        _Insn(0x1012, "add", [_Operand(reg=1), _Operand(imm=2)], reg_names=reg_names),
+    ]
+    function = _function_with_block(insns)
+    function.addr = 0x0FF0
+    function.block_addrs_set = {0x0FF0, 0x1000, 0x1003, 0x100E}
+    function.graph = networkx.DiGraph(
+        [(0x0FF0, 0x1000), (0x0FF0, 0x100E), (0x1000, 0x1003), (0x1003, 0x100E)]
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [
+            CallTargetSeed(0x1000, 0x2000, 0x1003, "direct_near"),
+            CallTargetSeed(0x100F, 0x3000, 0x1012, "direct_near"),
+        ],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x100F)
+
+    assert summary.push_arg_sources == (None,)
 
 
 def test_callsite_summary_keeps_outer_pushes_across_nested_callee_clean_call(monkeypatch):
@@ -1557,6 +1703,44 @@ def test_callsite_summary_marks_binary_signature_stack_probe_without_sidecars(mo
     assert summary.stack_probe_helper is True
     assert summary.helper_return_width == 2
     assert summary.helper_return_address_kind == "stack"
+
+
+@pytest.mark.parametrize("allocation_size", (0, 2))
+def test_callsite_summary_carries_registered_fixed_stack_probe_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+    allocation_size: int,
+) -> None:
+    insns = (
+        _Insn(
+            0x1002,
+            "mov",
+            [_Operand(reg=2), _Operand(imm=allocation_size)],
+            reg_names={2: "ax"},
+        ),
+        _Insn(0x1005, "call"),
+        _Insn(0x1008, "push", [_Operand(reg=3, size=2)], reg_names={3: "di"}),
+    )
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=insns))
+    project = SimpleNamespace(
+        arch=SimpleNamespace(
+            name="86_16",
+            _inertia_stack_probe_helper_targets_8616=frozenset({0x1544}),
+        ),
+        factory=SimpleNamespace(block=lambda addr, opt_level=0: block),
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: None), labels={}),
+    )
+    function = SimpleNamespace(project=project)
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x1005, 0x1544, 0x1008, "direct_near")],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1005)
+
+    assert summary is not None
+    assert summary.stack_probe_helper is True
+    assert summary.stack_probe_allocation_size == allocation_size
+    assert summary.return_used is False
 
 
 def test_callsite_summary_helper_signature_overrides_generic_stub_name(monkeypatch):

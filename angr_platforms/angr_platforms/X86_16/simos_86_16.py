@@ -21,6 +21,11 @@ from angr.simos import SimOS, register_simos
 from claripy.ast.bv import BV
 
 from .arch_86_16 import Arch86_16
+from .interrupt_contract import (
+    INTERRUPT_CORE_VECTOR_BASE,
+    INTERRUPT_CORE_VECTOR_COUNT,
+    interrupt_core_addr_8616,
+)
 
 __all__ = (
     "BIOSInt12MemorySize",
@@ -38,13 +43,13 @@ __all__ = (
     "runtime_interrupt_addr",
 )
 
-INTERRUPT_BASE_ADDR: int = 0xFF000
-INTERRUPT_VECTOR_COUNT: int = 0x100
+INTERRUPT_BASE_ADDR: int = INTERRUPT_CORE_VECTOR_BASE
+INTERRUPT_VECTOR_COUNT: int = INTERRUPT_CORE_VECTOR_COUNT
 
 
 def interrupt_addr(vector: int) -> int:
     """Return the synthetic linear interrupt target used by the DOS SimOS."""
-    return INTERRUPT_BASE_ADDR + (vector & 0xFF)
+    return interrupt_core_addr_8616(vector & 0xFF)
 
 
 def runtime_interrupt_addr(vector: int) -> int:

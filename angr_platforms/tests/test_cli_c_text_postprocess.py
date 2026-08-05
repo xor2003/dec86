@@ -139,6 +139,22 @@ short InitMenu(void)
     assert rewritten.count("return ax;") == 1
 
 
+def test_repair_missing_fallthrough_returns_keeps_terminal_call_return():
+    c_text = """\
+unsigned short main(void)
+{
+    unsigned short ax;  // ax
+    ax = 7;
+    return helper(ax);
+}
+"""
+
+    rewritten = _repair_missing_fallthrough_returns(c_text)
+
+    assert rewritten == c_text
+    assert "return ax;" not in rewritten
+
+
 def test_prune_trailing_generic_return_removes_unreachable_vvar_before_ax_return():
     c_text = """\
 short InitMenu(void)
@@ -998,7 +1014,7 @@ def test_prune_unused_local_declarations_text_removes_unused_local_number_placeh
     c_text = """
 int cmp_i16(int a, int b)
 {
-    unsigned short local_4;  // [bp-0x4]
+    unsigned short local_a;  // [bp-0xa]
     unsigned short local_2;  // [bp-0x2]
 
     if (b > a)
@@ -1009,7 +1025,7 @@ int cmp_i16(int a, int b)
 
     rewritten = _prune_unused_local_declarations_text(c_text)
 
-    assert "unsigned short local_4;" not in rewritten
+    assert "unsigned short local_a;" not in rewritten
     assert "unsigned short local_2;" not in rewritten
     assert "return -1;" in rewritten
 

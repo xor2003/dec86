@@ -7,12 +7,17 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CFunctionCall,
     CIfBreak,
     CIfElse,
+    CReturn,
     CStatements,
+    CSwitchCase,
     CVariable,
     CWhileLoop,
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.structuring.loop_body_repair import (
+    SwitchLoopExitReturnEvidence8616,
+)
 from angr_platforms.X86_16.structuring.loop_break_jcc import (
     LoopBranchGuardFact8616,
 )
@@ -26,6 +31,10 @@ from angr_platforms.X86_16.tail_validation import (
 from angr_platforms.X86_16.validation_control_flow import (
     LoopBranchGuardIssueKind8616,
     validate_structured_control_flow_8616,
+)
+from angr_platforms.X86_16.validation_control_flow_obligations import (
+    ControlFlowObligationIssueKind8616,
+    validate_switch_exit_obligations_8616,
 )
 from archinfo import ArchX86
 
@@ -812,3 +821,158 @@ def test_final_semantic_refresh_promotes_missing_proven_loop_break_guard() -> No
     assert x86_16_tail_validation_snapshot_passed(
         codegen._inertia_tail_validation_snapshot
     ) is False
+
+
+def _switch_exit_root(
+    codegen: _Codegen,
+    *,
+    include_case: bool = True,
+    return_from_case: bool = True,
+) -> CStatements:
+    case_body = CStatements(
+        [
+            CReturn(None, codegen=codegen, tags={"ins_addr": 0x441A})
+            if return_from_case
+            else CAssignment(_local(codegen), _const(1, codegen), codegen=codegen)
+        ],
+        addr=0x441A,
+        codegen=codegen,
+    )
+    switch = CSwitchCase(
+        _const(0, codegen),
+        [(27, case_body)] if include_case else [],
+        None,
+        codegen=codegen,
+    )
+    return CStatements([switch], codegen=codegen)
+
+
+def test_switch_exit_obligation_accepts_exact_unconditional_return() -> None:
+    codegen = _Codegen()
+    evidence = (SwitchLoopExitReturnEvidence8616(27, 0x441A, 0x447B),)
+
+    report = validate_switch_exit_obligations_8616(
+        _switch_exit_root(codegen),
+        evidence,
+    )
+
+    assert report.passed
+    assert report.classified_fact_count == 1
+    assert report.materialized_count == 1
+
+
+def test_switch_exit_obligation_rejects_missing_or_nonreturn_case() -> None:
+    codegen = _Codegen()
+    evidence = (SwitchLoopExitReturnEvidence8616(27, 0x441A, 0x447B),)
+
+    missing = validate_switch_exit_obligations_8616(
+        _switch_exit_root(codegen, include_case=False),
+        evidence,
+    )
+    wrong_exit = validate_switch_exit_obligations_8616(
+        _switch_exit_root(codegen, return_from_case=False),
+        evidence,
+    )
+
+    assert missing.issues[0].kind is ControlFlowObligationIssueKind8616.MISSING_CASE
+    assert wrong_exit.issues[0].kind is ControlFlowObligationIssueKind8616.WRONG_EXIT_SHAPE
+
+
+def test_switch_exit_obligation_rejects_unanchored_and_ambiguous_cases() -> None:
+    codegen = _Codegen()
+    evidence = (SwitchLoopExitReturnEvidence8616(27, 0x441A, 0x447B),)
+    unanchored_root = _switch_exit_root(codegen)
+    unanchored_switch = unanchored_root.statements[0]
+    assert isinstance(unanchored_switch, CSwitchCase)
+    unanchored_body = unanchored_switch.cases[0][1]
+    unanchored_body.addr = None
+    unanchored_body.statements[0].tags = {}
+    first_root = _switch_exit_root(codegen)
+    second_root = _switch_exit_root(codegen)
+    ambiguous_root = CStatements(
+        [first_root.statements[0], second_root.statements[0]],
+        codegen=codegen,
+    )
+
+    unanchored = validate_switch_exit_obligations_8616(unanchored_root, evidence)
+    ambiguous = validate_switch_exit_obligations_8616(ambiguous_root, evidence)
+
+    assert unanchored.issues[0].kind is (
+        ControlFlowObligationIssueKind8616.MISSING_TARGET_ANCHOR
+    )
+    assert ambiguous.issues[0].kind is (
+        ControlFlowObligationIssueKind8616.AMBIGUOUS_CASE
+    )
+
+
+def test_switch_exit_obligation_rejects_malformed_and_conflicting_evidence() -> None:
+    codegen = _Codegen()
+    root = _switch_exit_root(codegen)
+
+    malformed = validate_switch_exit_obligations_8616(root, (object(),))
+    conflicting = validate_switch_exit_obligations_8616(
+        root,
+        (
+            SwitchLoopExitReturnEvidence8616(27, 0x441A, 0x447B),
+            SwitchLoopExitReturnEvidence8616(27, 0x441A, 0x4480),
+        ),
+    )
+
+    assert malformed.issues[0].kind is (
+        ControlFlowObligationIssueKind8616.INVALID_EVIDENCE
+    )
+    assert malformed.classified_fact_count == 1
+    assert malformed.materialized_count == 0
+    assert {issue.kind for issue in conflicting.issues} == {
+        ControlFlowObligationIssueKind8616.CONFLICTING_EVIDENCE
+    }
+    assert conflicting.classified_fact_count == 2
+    assert conflicting.materialized_count == 0
+
+
+def test_final_semantic_refresh_rejects_missing_binary_proven_switch_exit() -> None:
+    codegen = _Codegen()
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[],
+        statements=_switch_exit_root(codegen, include_case=False),
+    )
+    codegen._inertia_structuring_switch_loop_exit_return_evidence_8616 = (
+        SwitchLoopExitReturnEvidence8616(27, 0x441A, 0x447B),
+    )
+    codegen._inertia_tail_validation_snapshot = {
+        "structuring": {"status": "stable", "changed": False},
+        "postprocess": {"status": "stable", "changed": False},
+    }
+
+    report = refresh_x86_16_final_semantic_validation_8616(
+        codegen.project,
+        codegen,
+    )
+
+    assert report.passed is False
+    assert report.control_flow.classified_fact_count == 1
+    assert report.control_flow.materialized_count == 0
+    assert report.control_flow.issues[0].kind is (
+        ControlFlowObligationIssueKind8616.MISSING_CASE
+    )
+    assert x86_16_tail_validation_snapshot_passed(
+        codegen._inertia_tail_validation_snapshot
+    ) is False
+
+
+def test_tail_summary_rejects_missing_binary_proven_switch_exit() -> None:
+    codegen = _Codegen()
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[],
+        statements=_switch_exit_root(codegen, include_case=False),
+    )
+    codegen._inertia_structuring_switch_loop_exit_return_evidence_8616 = (
+        SwitchLoopExitReturnEvidence8616(27, 0x441A, 0x447B),
+    )
+
+    summary = collect_x86_16_tail_validation_summary(codegen.project, codegen)
+
+    assert summary.control_flow_issues == (
+        "switch-exit:missing-case:index=0:case=27:target=0x441a:"
+        "exit=0x447b:matches=0",
+    )

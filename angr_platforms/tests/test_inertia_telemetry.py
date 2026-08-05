@@ -240,6 +240,16 @@ def test_cli_otel_args_drive_telemetry_output(monkeypatch, tmp_path):
     args = SimpleNamespace(
         otel_spans=True,
         otel_span_file=trace_path,
+        otel_top_n=None,
+        otel_min_ms=None,
+        otel_full_jsonl=None,
+        otel_stderr=None,
+        otel_format=None,
+        otel_text_max_spans=None,
+        otel_export_otlp=None,
+        otel_service_name=None,
+        otel_force_flush_ms=None,
+        otel_endpoint=None,
     )
 
     cli_core._configure_cli_telemetry_8616(args)

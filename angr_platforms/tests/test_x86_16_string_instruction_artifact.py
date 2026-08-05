@@ -9,9 +9,10 @@ from angr_platforms.X86_16.string_instruction_artifact import (
 
 
 class _FakeInsn:
-    def __init__(self, mnemonic: str, op_str: str = ""):
+    def __init__(self, mnemonic: str, op_str: str = "", address: int | None = None):
         self.mnemonic = mnemonic
         self.op_str = op_str
+        self.address = address
 
 
 class _FakeBlock:
@@ -38,7 +39,10 @@ def _project_with_blocks(blocks, function):
 
 def test_string_instruction_artifact_captures_rep_movsb():
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
-    project = _project_with_blocks({0x1000: _FakeBlock((_FakeInsn("cld"), _FakeInsn("rep movsb")))}, function)
+    project = _project_with_blocks(
+        {0x1000: _FakeBlock((_FakeInsn("cld", address=0x1000), _FakeInsn("rep movsb", address=0x1001)))},
+        function,
+    )
 
     artifact = build_x86_16_string_instruction_artifact(project, function)
 
@@ -49,6 +53,7 @@ def test_string_instruction_artifact_captures_rep_movsb():
     assert record.direction_mode == "forward"
     assert record.source_segment == "ds"
     assert record.destination_segment == "es"
+    assert record.instruction_addr == 0x1001
     assert artifact.refusals == ()
 
 

@@ -42,6 +42,7 @@ from inertia_decompiler.disassembly_helpers import (
 from inertia_decompiler.non_optimized_fallback import (
     bounded_non_optimized_attempt_timeout,
 )
+from inertia_decompiler.project_evidence_transport import transfer_project_evidence_8616
 from inertia_decompiler.project_loading import (
     _build_project_cached,
     _build_project_from_bytes,
@@ -215,6 +216,7 @@ def _try_decompile_sidecar_slice(
                     typing.cast(typing.Any, slice_project)._inertia_disable_complex_expr_scan = True
                     typing.cast(typing.Any, slice_project)._inertia_fast_block_peephole = True
                 _inherit_tail_validation_runtime_policy(slice_project, project)
+                transfer_project_evidence_8616(project, slice_project)
 
             outcomes = run_bounded_slice_recovery(
                 recovery_attempts,
@@ -540,6 +542,7 @@ def _try_decompile_non_optimized_slice(
                     typing.cast(typing.Any, slice_project)._inertia_disable_complex_expr_scan = True
                     typing.cast(typing.Any, slice_project)._inertia_fast_block_peephole = True
                 _inherit_tail_validation_runtime_policy(slice_project, slice_source_project)
+                transfer_project_evidence_8616(slice_source_project, slice_project)
 
             outcomes = run_bounded_slice_recovery(
                 recovery_attempts,
@@ -663,6 +666,7 @@ def _try_decompile_non_optimized_slice(
                     entry_point=getattr(project, "entry", 0),
                 )
                 _inherit_tail_validation_runtime_policy(fresh_project, project)
+                transfer_project_evidence_8616(project, fresh_project)
             except Exception as ex:  # noqa: BLE001
                 retry_failures.append(f"fresh-project setup failed: {_describe_exception(ex)}")
             else:

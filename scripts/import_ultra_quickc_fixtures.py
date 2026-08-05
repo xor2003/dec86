@@ -15,9 +15,23 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
+
+if __package__:
+    from .generated_c_contracts import (
+        CallGuardedAssignmentRequirement,
+        GeneratedCContract,
+        GeneratedCContractResult,
+        GeneratedCContractStatus,
+    )
+else:
+    from generated_c_contracts import (
+        CallGuardedAssignmentRequirement,
+        GeneratedCContract,
+        GeneratedCContractResult,
+        GeneratedCContractStatus,
+    )
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -31,103 +45,6 @@ DEFAULT_DECOMPILE: Path = REPO_ROOT / "decompile.py"
 DEFAULT_SIGNATURE_CATALOG: Path = REPO_ROOT / "signature_catalogs" / "all_compilers_catalog_bundle.zip"
 DECOMPILE_PROCESS_SETUP_TIMEOUT_SECONDS: int = 120
 ExpectedStatus: TypeAlias = Literal["required", "xfail"]
-
-
-class GeneratedCContractStatus(str, Enum):
-    """Typed terminal status for one generated-C fixture contract."""
-
-    NOT_REQUIRED = "not_required"
-    PASSED = "passed"
-    FAILED = "failed"
-
-
-@dataclass(frozen=True, slots=True)
-class GeneratedCContractResult:
-    """Result of evaluating source-backed expectations against generated C."""
-
-    status: GeneratedCContractStatus
-    missing_required_fragments: tuple[str, ...] = ()
-    present_forbidden_fragments: tuple[str, ...] = ()
-    insufficient_occurrences: tuple[tuple[str, int, int], ...] = ()
-
-    @property
-    def passed(self) -> bool:
-        """Return whether the contract passed or was not required."""
-        return self.status is not GeneratedCContractStatus.FAILED
-
-    def to_json(self) -> dict[str, Any]:
-        """Return a stable JSON representation for fixture reports."""
-        return {
-            "status": self.status.value,
-            "missing_required_fragments": list(self.missing_required_fragments),
-            "present_forbidden_fragments": list(self.present_forbidden_fragments),
-            "insufficient_occurrences": [list(item) for item in self.insufficient_occurrences],
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class GeneratedCContract:
-    """Source-backed output expectations used only by the fixture gate."""
-
-    required_fragments: tuple[str, ...] = ()
-    forbidden_fragments: tuple[str, ...] = ()
-    minimum_occurrences: tuple[tuple[str, int], ...] = ()
-
-    def assess(self, generated_output: str) -> GeneratedCContractResult:
-        """Evaluate required, forbidden, and minimum-occurrence expectations."""
-        missing = tuple(fragment for fragment in self.required_fragments if fragment not in generated_output)
-        forbidden = tuple(fragment for fragment in self.forbidden_fragments if fragment in generated_output)
-        insufficient = tuple(
-            (fragment, minimum, generated_output.count(fragment))
-            for fragment, minimum in self.minimum_occurrences
-            if generated_output.count(fragment) < minimum
-        )
-        status = (
-            GeneratedCContractStatus.FAILED
-            if missing or forbidden or insufficient
-            else GeneratedCContractStatus.PASSED
-        )
-        return GeneratedCContractResult(
-            status=status,
-            missing_required_fragments=missing,
-            present_forbidden_fragments=forbidden,
-            insufficient_occurrences=insufficient,
-        )
-
-    def to_json(self) -> dict[str, Any]:
-        """Return a stable JSON representation for deferred batch execution."""
-        return {
-            "required_fragments": list(self.required_fragments),
-            "forbidden_fragments": list(self.forbidden_fragments),
-            "minimum_occurrences": [list(item) for item in self.minimum_occurrences],
-        }
-
-    @classmethod
-    def from_json(cls, raw: object) -> GeneratedCContract | None:
-        """Parse a contract persisted in an outer fixture result."""
-        if not isinstance(raw, dict):
-            return None
-        required = raw.get("required_fragments")
-        forbidden = raw.get("forbidden_fragments")
-        minimum = raw.get("minimum_occurrences")
-        if not isinstance(required, list) or not all(isinstance(item, str) for item in required):
-            return None
-        if not isinstance(forbidden, list) or not all(isinstance(item, str) for item in forbidden):
-            return None
-        if not isinstance(minimum, list):
-            return None
-        parsed_minimum: list[tuple[str, int]] = []
-        for item in minimum:
-            if (
-                not isinstance(item, list)
-                or len(item) != 2
-                or not isinstance(item[0], str)
-                or not isinstance(item[1], int)
-                or item[1] < 1
-            ):
-                return None
-            parsed_minimum.append((item[0], item[1]))
-        return cls(tuple(required), tuple(forbidden), tuple(parsed_minimum))
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,15 +75,23 @@ ARGS_FIXTURE: QuickCFixtureSpec = QuickCFixtureSpec(
     run_args=("-v", "alpha", "beta"),
     generated_c_contract=GeneratedCContract(
         required_fragments=(
-            "sub_10010(arg_6[local_2], 104)",
-            "sub_10010(arg_6[local_2], 118)",
+            "sub_10010(SEG_PTR(inertia_ds, arg_5[local_2]), 104)",
+            "sub_10010(SEG_PTR(inertia_ds, arg_5[local_2]), 118)",
         ),
         forbidden_fragments=(
-            "SEG_U16(ds, arg_6 + (local_2 << 1))",
+            "SEG_U16(ds, arg_5 + (local_2 << 1))",
             "local_2 = 104;",
             "local_2 = 118;",
         ),
-        minimum_occurrences=(("arg_6[local_2]", 3),),
+        minimum_occurrences=(("arg_5[local_2]", 3),),
+        guarded_assignments=(
+            CallGuardedAssignmentRequirement(
+                guard_call="sub_10010",
+                guard_argument=118,
+                assignment_name="local_4",
+                assignment_value=1,
+            ),
+        ),
     ),
 )
 

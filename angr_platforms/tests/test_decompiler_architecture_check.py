@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from inertia_decompiler import architecture_runtime_guard, cli_core
+from inertia_decompiler import architecture_runtime_guard, cli, cli_core
 from scripts import check_changed_non_test_types, test_ownership_manifest
 from scripts import check_decompiler_architecture as arch_check
 
@@ -917,19 +917,36 @@ def test_architecture_check_rejects_unadmitted_cli_x86_16_import(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "body",
+    ("body", "forbidden_call"),
     (
-        "from angr_platforms.X86_16.decompiler_postprocess_calls import "
-        "prune_consumed_segmented_stack_byte_arg_stores_8616\n"
-        "def run(project: object, codegen: object) -> bool:\n"
-        "    return prune_consumed_segmented_stack_byte_arg_stores_8616(project, codegen)\n",
-        "import angr_platforms.X86_16.decompiler_postprocess_calls as calls\n"
-        "def run(project: object, codegen: object) -> bool:\n"
-        "    return calls.prune_consumed_segmented_stack_byte_arg_stores_8616(project, codegen)\n",
+        (
+            "from angr_platforms.X86_16.decompiler_postprocess_calls import "
+            "prune_consumed_segmented_stack_byte_arg_stores_8616\n"
+            "def run(project: object, codegen: object) -> bool:\n"
+            "    return prune_consumed_segmented_stack_byte_arg_stores_8616(project, codegen)\n",
+            "prune_consumed_segmented_stack_byte_arg_stores_8616",
+        ),
+        (
+            "import angr_platforms.X86_16.decompiler_postprocess_calls as calls\n"
+            "def run(project: object, codegen: object) -> bool:\n"
+            "    return calls.prune_consumed_segmented_stack_byte_arg_stores_8616(project, codegen)\n",
+            "prune_consumed_segmented_stack_byte_arg_stores_8616",
+        ),
+        (
+            "from angr_platforms.X86_16.decompiler_structuring_stage import "
+            "run_structuring_condition_cleanup_8616\n"
+            "def run(project: object, codegen: object) -> bool:\n"
+            "    return run_structuring_condition_cleanup_8616(project, codegen, 0x1000)\n",
+            "run_structuring_condition_cleanup_8616",
+        ),
     ),
 )
-def test_architecture_check_rejects_cli_semantic_stack_store_prune(tmp_path: Path, body: str) -> None:
-    """Keep evidence-backed stack-store mutation inside the validated X86_16 pipeline."""
+def test_architecture_check_rejects_cli_semantic_mutation(
+    tmp_path: Path,
+    body: str,
+    forbidden_call: str,
+) -> None:
+    """Keep semantic AST mutation inside the validated X86_16 pipeline."""
     root, cli = _write_minimal_tree(tmp_path)
     cli.write_text(
         '"""CLI boundary; must not become the owner of decompiler semantics."""\n'
@@ -941,8 +958,7 @@ def test_architecture_check_rejects_cli_semantic_stack_store_prune(tmp_path: Pat
     violations = arch_check.check_decompiler_architecture(root, cli, tmp_path)
 
     assert any(
-        item.rule == "cli-semantic-mutation"
-        and "prune_consumed_segmented_stack_byte_arg_stores_8616" in item.detail
+        item.rule == "cli-semantic-mutation" and forbidden_call in item.detail
         for item in violations
     )
 
@@ -7152,13 +7168,88 @@ def test_runtime_architecture_guard_raises_before_startup(monkeypatch):
         detail="bad import",
     )
     monkeypatch.setattr(
-        architecture_runtime_guard.architecture_check,
-        "check_decompiler_startup_architecture",
-        lambda: (violation,),
+        architecture_runtime_guard,
+        "_runtime_import_violations",
+        lambda _root, _cli: (violation,),
     )
 
     with pytest.raises(architecture_runtime_guard.DecompilerArchitectureGuardError, match="cli-x86-16-import"):
         architecture_runtime_guard.assert_decompiler_architecture_clean()
+
+
+def test_runtime_architecture_guard_accepts_current_parent_attestation(monkeypatch):
+    monkeypatch.setenv(
+        architecture_runtime_guard.ARCHITECTURE_GUARD_VERIFIED_PARENT_PID_ENV,
+        str(os.getppid()),
+    )
+
+    def fail_if_scanned():
+        raise AssertionError("verified serial child must not repeat the static scan")
+
+    monkeypatch.setattr(
+        architecture_runtime_guard,
+        "_runtime_import_violations",
+        lambda _root, _cli: fail_if_scanned(),
+    )
+
+    architecture_runtime_guard.assert_decompiler_architecture_clean()
+
+
+def test_runtime_architecture_guard_rejects_stale_parent_attestation(monkeypatch):
+    violation = arch_check.ArchitectureViolation(
+        path="inertia_decompiler/cli_decompilation.py",
+        rule="cli-x86-16-import",
+        detail="bad import",
+    )
+    monkeypatch.setenv(
+        architecture_runtime_guard.ARCHITECTURE_GUARD_VERIFIED_PARENT_PID_ENV,
+        str(os.getppid() + 1),
+    )
+    monkeypatch.setattr(
+        architecture_runtime_guard,
+        "_runtime_import_violations",
+        lambda _root, _cli: (violation,),
+    )
+
+    with pytest.raises(architecture_runtime_guard.DecompilerArchitectureGuardError, match="cli-x86-16-import"):
+        architecture_runtime_guard.assert_decompiler_architecture_clean()
+
+
+def test_runtime_import_guard_rejects_wrong_layer_postprocess_import(tmp_path):
+    root, cli = _write_minimal_tree(tmp_path)
+    postprocess = root / "decompiler_postprocess_jcc.py"
+    postprocess.write_text(
+        '"""Guarded compatibility bridge.\n\n'
+        "Allowed work: cleanup only.\n"
+        "Forbidden work: semantic recovery.\n"
+        "Owning layer: Structuring.\n"
+        '"""\n'
+        "from .semantics.condition_recovery import recover\n",
+        encoding="utf-8",
+    )
+
+    violations = architecture_runtime_guard._runtime_import_violations(root, cli)
+
+    assert any(item.rule == "postprocess-protected-import" for item in violations)
+
+
+def test_runtime_import_guard_fingerprint_tracks_source_bytes(tmp_path):
+    root, cli = _write_minimal_tree(tmp_path)
+    before = architecture_runtime_guard._architecture_guard_source_fingerprint(
+        root,
+        cli,
+    )
+    (root / "new_rule.py").write_text(
+        "from __future__ import annotations\n",
+        encoding="utf-8",
+    )
+
+    after = architecture_runtime_guard._architecture_guard_source_fingerprint(
+        root,
+        cli,
+    )
+
+    assert after != before
 
 
 def test_startup_architecture_check_excludes_docs_types_ratchet(tmp_path):
@@ -7296,6 +7387,19 @@ def test_cli_core_main_rejects_architecture_violations(monkeypatch):
     exit_code = cli_core.main(["--help"])
 
     assert exit_code == 3
+
+
+def test_cli_main_proxy_patch_does_not_replace_owner(monkeypatch):
+    """Compatibility monkeypatches must not turn the owner entrypoint recursive."""
+    owner_main = cli_core.main
+
+    def fake_main(_argv=None):
+        return 17
+
+    monkeypatch.setattr(cli, "main", fake_main)
+
+    assert cli.main is fake_main
+    assert cli_core.main is owner_main
 
 
 def test_architecture_check_requires_decompile_entrypoint_runtime_guard(tmp_path):

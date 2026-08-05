@@ -23,6 +23,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.tail_validation import (
     collect_x86_16_tail_validation_summary,
     compare_x86_16_tail_validation_summaries,
@@ -70,7 +71,7 @@ def _global(addr: int, codegen, *, name: str = "g"):
 
 
 def _ds_deref(project, linear: int, codegen):
-    return CUnaryOp(
+    dereference = CUnaryOp(
         "Dereference",
         CBinaryOp(
             "Add",
@@ -80,6 +81,8 @@ def _ds_deref(project, linear: int, codegen):
         ),
         codegen=codegen,
     )
+    dereference.set_type(SimTypeShort(False).with_arch(project.arch))
+    return dereference
 
 
 def _ss_stack_deref(project, stack_offset: int, addend: int, codegen):
@@ -252,8 +255,8 @@ def test_tail_validation_micro_slice_detects_segmented_write_observable():
     )
 
     assert diff["changed"] is True
-    assert diff["delta"]["global_writes"]["removed"] == ("global:0x1234",)
-    assert diff["delta"]["segmented_writes"]["added"] == ("deref:ds:0x1234",)
+    assert diff["delta"]["global_writes"]["removed"] == ("global:0x1235",)
+    assert diff["delta"]["segmented_writes"]["added"] == ()
 
 
 def test_tail_validation_micro_slice_detects_stack_slot_to_segmented_ss_regression():
@@ -671,7 +674,17 @@ def test_tail_validation_micro_slice_sortdemo_helper_target_identity_prefers_sum
     monkeypatch.setattr(
         tail_validation_module,
         "summarize_x86_16_callsite",
-        lambda _function, _callsite_addr: SimpleNamespace(target_addr=0x14AE, arg_count=1),
+        lambda _function, _callsite_addr: CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x14AE,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register=None,
+            return_used=False,
+        ),
     )
 
     summary = collect_x86_16_tail_validation_summary(project, wrapped, mode="live_out")

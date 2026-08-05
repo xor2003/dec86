@@ -28,7 +28,11 @@ from angr.sim_variable import SimStackVariable
 from ..alias.alias_model_impl import AliasStorageFacts, _StackSlotIdentity
 from .segmented_lowering import _SegmentedAccess
 from .stack_c_ast_matching import _match_bp_stack_dereference_8616
-from .stack_variable_binding import StackBaseBpBiasEvidence8616, StackVariableBinding
+from .stack_variable_binding import (
+    StackBaseBpBiasEvidence8616,
+    StackVariableBinding,
+    stack_binding_from_tags_8616,
+)
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -263,6 +267,8 @@ def _prefer_bound_stack_cvar_8616(
     resolved: object,
     resolve_stack_cvar_at_offset: Callable[[object, int], object],
 ) -> object:
+    """Prefer a named binding only when it identifies the same stack slot."""
+
     def _impl() -> object:
         if not isinstance(resolved, structured_c.CVariable):
             return resolved
@@ -299,6 +305,12 @@ def _prefer_bound_stack_cvar_8616(
             return resolved
         fallback_var = getattr(fallback, "variable", None)
         if not isinstance(fallback_var, SimStackVariable):
+            return resolved
+        if (
+            fallback_var.base != variable.base
+            or _canonical_stack_offset_8616(fallback_var.offset) != _canonical_stack_offset_8616(variable.offset)
+            or fallback_var.size != variable.size
+        ):
             return resolved
         fallback_name = getattr(fallback, "name", None) or fallback_var.name
         if _is_generic_stack_name_8616(fallback_name):
@@ -1541,7 +1553,8 @@ def _canonicalize_stack_cvar_expr(
                 offset = variable.offset
                 if isinstance(offset, int):
                     canonical_offset = _canonical_stack_offset_8616(offset)
-                    if isinstance(canonical_offset, int):
+                    exact_binding = stack_binding_from_tags_8616(expr.tags)
+                    if isinstance(canonical_offset, int) and exact_binding is None:
                         rebased = _resolve_rebased_stack_cvar_8616(canonical_offset, variable.size)
                         if isinstance(rebased, structured_c.CVariable):
                             active_expr_ids.discard(expr_id)

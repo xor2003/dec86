@@ -102,6 +102,7 @@ RECOVERY_LAYERS: tuple[RecoveryLayerSpec, ...] = (
         purpose="Unify stack args, returns, helper calls, and far/near class evidence.",
         helpers=(
             "seed_calling_conventions",
+            "materialize_function_pointer_parameters_8616",
             "materialize_annotated_stack_prototype_8616",
             "_promote_stack_prototype_from_bp_loads_8616",
             "apply_x86_16_decompiler_return_compatibility",

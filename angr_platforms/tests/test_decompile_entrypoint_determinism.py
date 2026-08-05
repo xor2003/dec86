@@ -11,6 +11,7 @@ from typing import Callable, NoReturn, cast
 
 import pytest
 
+import decompile as decompile_entrypoint
 from inertia_decompiler import cli as decompiler_cli
 from inertia_decompiler import cli_function_discovery as function_discovery
 from inertia_decompiler.function_worker_policy import requires_serial_function_decompilation
@@ -26,6 +27,15 @@ class _ExecIntercepted(RuntimeError):
 
 def test_batch_runner_uses_public_cli_initialization_boundary() -> None:
     assert batch_decompile_procs.decompiler_cli is decompiler_cli
+
+
+def test_entrypoint_facade_monkeypatch_reaches_owner_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    def replacement(_project: object) -> list[int]:
+        return [0x1000]
+
+    monkeypatch.setattr(decompile_entrypoint, "_rank_exe_function_seeds", replacement)
+
+    assert function_discovery._rank_exe_function_seeds is replacement
 
 
 def test_whole_file_x86_16_executable_requires_serial_workers() -> None:

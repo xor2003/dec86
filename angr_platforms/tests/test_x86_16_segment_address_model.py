@@ -40,7 +40,14 @@ def _codegen(*, summary=None):
     project = _project()
     codegen = _DummyCodegen(project)
     root = CStatements([], addr=0x4010, codegen=codegen)
-    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root, variables_in_use={}, unified_local_vars={})
+    codegen.cfunc = SimpleNamespace(
+        addr=0x4010,
+        statements=root,
+        body=root,
+        arg_list=[],
+        variables_in_use={},
+        unified_local_vars={},
+    )
     codegen._inertia_vex_ir_artifact = SimpleNamespace(summary=summary or {})
     return project, codegen
 

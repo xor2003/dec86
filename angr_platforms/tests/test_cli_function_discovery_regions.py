@@ -308,6 +308,65 @@ def test_direct_target_records_caller_use_from_framed_source_catalog(monkeypatch
     assert len(collect_calls) == 1
 
 
+def test_external_direct_target_uses_framed_application_callers(monkeypatch):
+    project = SimpleNamespace()
+    evidence = function_discovery.CallerReturnUseEvidence8616(
+        target_addr=0x2200,
+        verdict=function_discovery.CallerReturnUseVerdict8616.UNUSED,
+        raw_fact_count=1,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=1,
+        failure_count=0,
+        used_callsite_count=0,
+        unused_callsite_count=1,
+        callsite_addrs=(0x1080,),
+    )
+    collect_calls: list[
+        tuple[tuple[int, ...], tuple[tuple[int, int], ...]]
+    ] = []
+    monkeypatch.setattr(
+        function_discovery,
+        "_rank_pre_entry_source_function_seeds_8616",
+        lambda _project: [0x1000, 0x1100],
+    )
+    monkeypatch.setattr(
+        function_discovery,
+        "_binary_padding_entry_aliases_8616",
+        lambda _project, seed: (seed,),
+    )
+    monkeypatch.setattr(
+        function_discovery,
+        "_pre_entry_source_function_ranges_8616",
+        lambda _project, _seeds: ((0x1000, 0x1100), (0x1100, 0x1200)),
+    )
+
+    def collect(
+        _project: object,
+        aliases: tuple[int, ...],
+        ranges: tuple[tuple[int, int], ...],
+    ) -> function_discovery.CallerReturnUseEvidence8616:
+        collect_calls.append((aliases, ranges))
+        return evidence
+
+    monkeypatch.setattr(
+        function_discovery,
+        "_collect_caller_return_use_for_entry_aliases_8616",
+        collect,
+    )
+
+    result = function_discovery.record_direct_target_caller_return_use_evidence_8616(
+        project,
+        0x2200,
+    )
+
+    assert result == evidence
+    assert collect_calls == [
+        ((0x2200,), ((0x1000, 0x1100), (0x1100, 0x1200)))
+    ]
+    assert function_discovery.caller_return_use_evidence_by_addr_8616(project)[0x2200] == evidence
+
+
 def test_entry_linear_caller_range_stops_at_first_return():
     instructions = (
         SimpleNamespace(address=0x1100, size=1, mnemonic="ret", bytes=b"\xc3"),

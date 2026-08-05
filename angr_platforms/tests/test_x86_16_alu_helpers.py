@@ -41,6 +41,9 @@ class _AluEmu:
     def update_eflags_xor(self, lhs, rhs):
         self.last_flags = ("xor", lhs, rhs)
 
+    def update_eflags_inc(self, value):
+        self.last_flags = ("inc", value)
+
     def set_last_condition(self, condition):
         self.last_condition = condition
 
@@ -173,6 +176,26 @@ def test_build_compare_condition_recovers_compare_family():
             IRValue(MemSpace.CONST, const=2, size=1, expr=("int",)),
         ),
         expr=("update_eflags_sub",),
+    )
+
+
+def test_build_compare_condition_recovers_inc_zero_boundary() -> None:
+    emu = _AluEmu()
+
+    condition = build_compare_condition_8616(_RegOperand(0), 0, emu.update_eflags_inc)
+
+    assert condition == IRCondition(
+        op="compare",
+        args=(
+            IRValue(MemSpace.REG, name="ax", offset=0, size=2, expr=("Ity_I16",)),
+            IRValue(
+                MemSpace.CONST,
+                const=0xFFFF,
+                size=2,
+                expr=("update_eflags_inc", "zero_boundary"),
+            ),
+        ),
+        expr=("update_eflags_inc",),
     )
 
 

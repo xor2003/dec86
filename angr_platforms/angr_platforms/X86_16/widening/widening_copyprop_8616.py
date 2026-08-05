@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from typing import Protocol, cast
+
+from angr.sim_variable import SimTemporaryVariable
 
 from ..alias.alias_model_impl import AliasStorageFacts
 from ..c_ast_utils import (
@@ -79,10 +82,20 @@ class _WideningCopypropCodegen8616(Protocol):
     widening_copyprop_address_context_refused_8616: int
     widening_copyprop_memory_kills_8616: int
     widening_copyprop_nontrivial_stack_definitions_refused_8616: int
+    widening_copyprop_nontrivial_assignment_uses_refused_8616: int
     widening_copyprop_recursive_definitions_refused_8616: int
     widening_copyprop_typed_cast_definitions_refused_8616: int
     widening_copyprop_unknown_identity_refused_8616: int
     _inertia_widening_call_push_definition_guard_8616: SemanticLaneState
+    _inertia_widening_nontrivial_definition_guard_8616: SemanticLaneState
+
+
+@dataclass(frozen=True)
+class _ReusableDefinition8616:
+    """One alias-proven source and the structured contexts that may consume it."""
+
+    expression: object
+    condition_only: bool
 
 
 class _ConditionNode8616(Protocol):
@@ -147,6 +160,12 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
     typed_codegen._inertia_widening_call_push_definition_guard_8616 = (
         call_push_definition_guard
     )
+    nontrivial_definition_guard = SemanticLaneState(
+        name="widening_nontrivial_definition_guard"
+    )
+    typed_codegen._inertia_widening_nontrivial_definition_guard_8616 = (
+        nontrivial_definition_guard
+    )
     try:
         typed_codegen.widening_copyprop_nested_replacements_8616
     except AttributeError:
@@ -163,6 +182,10 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
         typed_codegen.widening_copyprop_nontrivial_stack_definitions_refused_8616
     except AttributeError:
         typed_codegen.widening_copyprop_nontrivial_stack_definitions_refused_8616 = 0
+    try:
+        typed_codegen.widening_copyprop_nontrivial_assignment_uses_refused_8616
+    except AttributeError:
+        typed_codegen.widening_copyprop_nontrivial_assignment_uses_refused_8616 = 0
     try:
         typed_codegen.widening_copyprop_recursive_definitions_refused_8616
     except AttributeError:
@@ -207,7 +230,7 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
 
     def _walk_statements(
         statements_obj: object,
-        inherited_defs: dict[str, object] | None = None,
+        inherited_defs: dict[str, _ReusableDefinition8616] | None = None,
         inherited_virtual_defs: dict[VirtualValueIdentity8616, object] | None = None,
     ) -> None:
         """Walk statements through the dynamic third-party angr C AST boundary."""
@@ -216,7 +239,7 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
 
         stmts = _unwrap_statements_8616(statements_obj)
         # Map storage domain key -> source_expr for last plain-variable definition.
-        block_defs: dict[str, object] = inherited_defs if inherited_defs is not None else {}
+        block_defs: dict[str, _ReusableDefinition8616] = inherited_defs if inherited_defs is not None else {}
         virtual_defs: dict[VirtualValueIdentity8616, object] = (
             inherited_virtual_defs if inherited_virtual_defs is not None else {}
         )
@@ -234,12 +257,25 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
             # Unknown lvalue shape: conservatively treat it as an observable memory write.
             return True
 
-        def _replacement_for_variable(node: object) -> object | None:
+        def _replacement_for_variable(node: object, *, condition_use: bool = False) -> object | None:
             if not isinstance(node, structured_c.CVariable):
                 return None
+            virtual_identity = describe_virtual_value_identity_8616(node)
+            if virtual_identity is not None:
+                virtual_replacement = virtual_defs.get(virtual_identity)
+                if virtual_replacement is not None:
+                    return virtual_replacement
             storage_key = _block_def_key(describe_alias_storage(node))
-            replacement = block_defs.get(storage_key) if storage_key is not None else None
-            if replacement is not None and storage_key is not None:
+            definition = block_defs.get(storage_key) if storage_key is not None else None
+            if definition is None:
+                return None
+            if definition.condition_only and not condition_use:
+                typed_codegen.widening_copyprop_nontrivial_assignment_uses_refused_8616 = (
+                    int(typed_codegen.widening_copyprop_nontrivial_assignment_uses_refused_8616 or 0) + 1
+                )
+                return None
+            replacement = definition.expression
+            if storage_key is not None:
                 _debug_copy_replacement_8616(
                     storage_key=storage_key,
                     original=node,
@@ -247,7 +283,7 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
                 )
             return replacement
 
-        def _recordable_copy_source(lhs: object, rhs: object) -> object | None:
+        def _recordable_copy_source(lhs: object, rhs: object) -> _ReusableDefinition8616 | None:
             """Return a reusable RHS only when no explicit conversion is crossed.
 
             Widening does not own enough destination-conversion evidence to prove
@@ -276,7 +312,13 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
                     + 1
                 )
                 return None
-            return _clone_c_ast_tree_8616(rhs)
+            nontrivial = not isinstance(rhs, (structured_c.CVariable, structured_c.CConstant))
+            if nontrivial:
+                nontrivial_definition_guard.raw += 1
+                nontrivial_definition_guard.normalized += 1
+                nontrivial_definition_guard.classified += 1
+                nontrivial_definition_guard.materialized += 1
+            return _ReusableDefinition8616(_clone_c_ast_tree_8616(rhs), condition_only=nontrivial)
 
         def _expression_reads_storage_key(expr: object, storage_key: str) -> bool:
             """Return whether an expression reads the alias domain being defined."""
@@ -288,7 +330,7 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
                     return True
             return False
 
-        def _propagate_expr(expr: object) -> object:
+        def _propagate_expr(expr: object, *, condition_use: bool = False) -> object:
             """Propagate expressions through the dynamic third-party angr C AST boundary."""
             nonlocal changed
             if enable_nested and isinstance(expr, structured_c.CMultiStatementExpression):
@@ -298,11 +340,11 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
                     inherited_defs=block_defs,
                     inherited_virtual_defs=virtual_defs,
                 )
-                propagated_value = _propagate_expr(expr.expr)
+                propagated_value = _propagate_expr(expr.expr, condition_use=condition_use)
                 if propagated_value is not expr.expr:
                     typed_expression.expr = propagated_value
                 return expr
-            replacement = _replacement_for_variable(expr)
+            replacement = _replacement_for_variable(expr, condition_use=condition_use)
             if replacement is not None and not _is_same_expr(replacement, expr):
                 changed = True
                 if enable_nested:
@@ -327,8 +369,8 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
                 """Transform nested nodes through the dynamic third-party angr C AST boundary."""
                 nonlocal changed
                 if isinstance(node, structured_c.CMultiStatementExpression):
-                    return _propagate_expr(node)
-                nested_replacement = _replacement_for_variable(node)
+                    return _propagate_expr(node, condition_use=condition_use)
+                nested_replacement = _replacement_for_variable(node, condition_use=condition_use)
                 if nested_replacement is None or _is_same_expr(nested_replacement, node):
                     return node
                 changed = True
@@ -348,6 +390,8 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
                 return bits if isinstance(bits, int) and bits > 0 else None
             if isinstance(expr, structured_c.CVariable):
                 size = expr.variable.size
+                if isinstance(expr.variable, SimTemporaryVariable):
+                    return size if isinstance(size, int) and size > 0 else None
                 return size * 8 if isinstance(size, int) and size > 0 else None
             return None
 
@@ -423,7 +467,7 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
                         rewritten_pairs.append(pair)
                         continue
                     pair_condition = pair[0]
-                    propagated_pair_condition = _propagate_expr(pair_condition)
+                    propagated_pair_condition = _propagate_expr(pair_condition, condition_use=True)
                     _propagate_virtual_comparison_operands(propagated_pair_condition)
                     if propagated_pair_condition is not pair_condition:
                         pair = (propagated_pair_condition, *pair[1:])
@@ -435,7 +479,7 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
                 if pairs_changed and pairs_node is not None:
                     pairs_node.condition_and_nodes = type(pairs)(rewritten_pairs)
                 return
-            propagated = _propagate_expr(condition)
+            propagated = _propagate_expr(condition, condition_use=True)
             _propagate_virtual_comparison_operands(propagated)
             if propagated is not condition:
                 if condition_node is not None:
@@ -576,6 +620,7 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
     if not walked_root_ids:
         _walk_statements(cfunc)
     call_push_definition_guard.assert_closed_loop(layer="widening")
+    nontrivial_definition_guard.assert_closed_loop(layer="widening")
     return changed
 
 

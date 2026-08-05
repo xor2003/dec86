@@ -16,6 +16,7 @@ from typing import Protocol, TypeAlias, runtime_checkable
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
+from .physical_registers import physical_register_view_8616
 from .segment_register_state import runtime_segment_name_for_variable_8616
 
 _CacheMap8616: TypeAlias = MutableMapping[str, MutableMapping[int, object]]
@@ -148,6 +149,9 @@ def _segment_reg_name(
 
 
 def _register_offset_for_node_8616(node: object) -> int | None:
+    register_view = physical_register_view_8616(node)
+    if register_view is not None:
+        return register_view.reg_offset
     if isinstance(node, structured_c.CVariable):
         variable = _dynamic_c_attr_8616(node, "variable")
         if isinstance(variable, SimRegisterVariable):
@@ -163,6 +167,9 @@ def _register_offset_for_node_8616(node: object) -> int | None:
 
 
 def _register_size_for_node_8616(node: object) -> int | None:
+    register_view = physical_register_view_8616(node)
+    if register_view is not None:
+        return register_view.width
     if isinstance(node, structured_c.CVariable):
         variable = _dynamic_c_attr_8616(node, "variable")
         size = _dynamic_c_attr_8616(variable, "size")

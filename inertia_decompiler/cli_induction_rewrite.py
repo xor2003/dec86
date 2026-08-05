@@ -121,9 +121,10 @@ def _unwrap_boolified_condition(node: object) -> structured_c.CBinaryOp | None:
     if _const_int(getattr(operand, "iffalse", None)) != 1:
         return None
     # Dynamic codegen boundary: CITE condition payload is supplied by angr structured C.
-    cond = getattr(operand, "cond", None)
-    if isinstance(cond, structured_c.CBinaryOp):
-        return cond
+    ite_cond = getattr(operand, "cond", None)
+    if not isinstance(ite_cond, structured_c.CBinaryOp):
+        return None
+    return ite_cond
     return None
 
 

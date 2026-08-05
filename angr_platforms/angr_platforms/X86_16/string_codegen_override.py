@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import typing
 
+from .pipeline.render_authority import CodegenRenderAuthority8616
 from .string_instruction_lowering import StringIntrinsicArtifact, render_x86_16_string_intrinsic_c
 
 __all__ = ["apply_x86_16_string_codegen_override"]
@@ -53,5 +54,8 @@ def apply_x86_16_string_codegen_override(project: object, codegen: object) -> bo
 
     typing.cast(typing.Any, codegen)._inertia_original_render_text = original
     typing.cast(typing.Any, codegen)._inertia_string_codegen_override_text = rendered
+    typing.cast(typing.Any, codegen)._inertia_codegen_render_authority_8616 = (
+        CodegenRenderAuthority8616.PROVEN_FULL_FUNCTION_OVERRIDE
+    )
     typing.cast(typing.Any, codegen).render_text = _render_text_override
     return True

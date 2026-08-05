@@ -9,6 +9,15 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
+from ..analysis_helpers import (
+    InterruptCall,
+    interrupt_service_declarations,
+    interrupt_service_spec,
+)
+from ..simos_86_16 import get_interrupt_handler_class
+
 LOWERED_RUNTIME_HELPER_DECLARATIONS_8616: dict[str, str] = {
     "clock": "clock_t clock(void);",
     "rand": "int rand(void);",
@@ -77,6 +86,36 @@ def runtime_helper_declaration_8616(name: str, target: str | None) -> str | None
     if declaration is not None:
         return declaration
     return LOWERED_RUNTIME_HELPER_DECLARATIONS_8616.get(name)
+
+
+def interrupt_helper_declarations_8616(
+    calls: Sequence[InterruptCall],
+    api_style: str,
+) -> list[str]:
+    """Lower typed interrupt calls to declarations for their emitted helpers."""
+    service_calls = [
+        call
+        for call in calls
+        if call.vector == 0x21 or interrupt_service_spec(call) is not None
+    ]
+    declarations = interrupt_service_declarations(service_calls, api_style)
+    seen = set(declarations)
+    for call in calls:
+        if call.vector == 0x21 or interrupt_service_spec(call) is not None:
+            continue
+        handler = get_interrupt_handler_class(call.vector)
+        return_type = "void" if handler.NO_RET else "unsigned short"
+        if call.vector == 0x33 and call.ax == 0x0004:
+            declaration = (
+                f"{return_type} {handler.INT_NAME}(unsigned short ax, "
+                "unsigned short cx, unsigned short dx);"
+            )
+        else:
+            declaration = f"{return_type} {handler.INT_NAME}(void);"
+        if declaration not in seen:
+            seen.add(declaration)
+            declarations.append(declaration)
+    return declarations
 
 
 def is_lowered_runtime_macro_8616(name: str) -> bool:
@@ -157,6 +196,7 @@ __all__ = [
     "LOWERED_RUNTIME_HELPER_DECLARATIONS_8616",
     "LOWERED_RUNTIME_MACROS_8616",
     "LOWERED_ZERO_ARG_RUNTIME_HELPER_DECLARATIONS_8616",
+    "interrupt_helper_declarations_8616",
     "is_lowered_runtime_macro_8616",
     "render_c_runtime_header_8616",
     "runtime_helper_declaration_8616",

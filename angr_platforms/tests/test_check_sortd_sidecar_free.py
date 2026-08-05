@@ -18,11 +18,17 @@ from scripts.check_sortd_sidecar_free import (
 
 
 def _passing_transcript() -> str:
+    required_bodies = {
+        0x102E0: "short sub_102e0(void) { switch (ax) { case 27: return 0; } }",
+        0x10498: "short sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return 0; }",
+        0x10E70: "short sub_10e70(unsigned short arg, short arg_6) { return arg + arg_6; }",
+    }
     function_rows = "\n".join(
         f"/* == function {addr:#x} sub_{addr:x} == */\n"
         f"/* failure family: status={'ok' if addr in REQUIRED_DECOMPILED_SORTD_FUNCTION_ADDRS else 'validation_failed'} "
         "stage=not_set sidecar=not_attempted nonopt=not_attempted fallback=file_sweep "
         f"validation={'passed' if addr in REQUIRED_DECOMPILED_SORTD_FUNCTION_ADDRS else 'failed'} */"
+        + (f"\n{required_bodies[addr]}" if addr in required_bodies else "")
         for addr in EXPECTED_SORTD_FUNCTION_ADDRS
     )
     return (
@@ -124,6 +130,95 @@ def test_sidecar_free_ratchet_rejects_required_function_acceptance_regression() 
 
     assert not result.passed
     assert f"required decompiled function regressions: {required_addr:#x}" in result.violations
+
+
+def test_sidecar_free_ratchet_rejects_runmenu_without_proven_escape_return() -> None:
+    transcript = _passing_transcript().replace("case 27: return 0;", "case 27: break;")
+
+    result = evaluate_sortd_transcript(
+        transcript,
+        decompiler_returncode=2,
+        minimum_decompiled=DEFAULT_MINIMUM_DECOMPILED,
+        maximum_empty=0,
+        maximum_timeouts=0,
+        maximum_tracebacks=0,
+    )
+
+    assert not result.passed
+    assert "RunMenu lacks its scalar binary-proven ESC return case" in result.violations
+
+
+def test_sidecar_free_ratchet_rejects_runmenu_bare_return() -> None:
+    transcript = _passing_transcript().replace("case 27: return 0;", "case 27: return;")
+
+    result = evaluate_sortd_transcript(
+        transcript,
+        decompiler_returncode=2,
+        minimum_decompiled=DEFAULT_MINIMUM_DECOMPILED,
+        maximum_empty=0,
+        maximum_timeouts=0,
+        maximum_tracebacks=0,
+    )
+
+    assert not result.passed
+    assert "RunMenu lacks its scalar binary-proven ESC return case" in result.violations
+
+
+def test_sidecar_free_ratchet_rejects_unmaterialized_positive_bp_arguments() -> None:
+    transcript = _passing_transcript().replace(
+        "short sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return 0; }",
+        "short sub_10498(void) { unsigned short local_4; // [bp+0x4]\n return 0; }",
+    )
+
+    result = evaluate_sortd_transcript(
+        transcript,
+        decompiler_returncode=2,
+        minimum_decompiled=DEFAULT_MINIMUM_DECOMPILED,
+        maximum_empty=0,
+        maximum_timeouts=0,
+        maximum_tracebacks=0,
+    )
+
+    assert not result.passed
+    assert "DrawTime lacks its canonical scalar-return positive-BP signature" in result.violations
+
+
+def test_sidecar_free_ratchet_rejects_beep_void_return() -> None:
+    transcript = _passing_transcript().replace(
+        "short sub_10e70(unsigned short arg, short arg_6)",
+        "void sub_10e70(unsigned short arg, short arg_6)",
+    )
+
+    result = evaluate_sortd_transcript(
+        transcript,
+        decompiler_returncode=2,
+        minimum_decompiled=DEFAULT_MINIMUM_DECOMPILED,
+        maximum_empty=0,
+        maximum_timeouts=0,
+        maximum_tracebacks=0,
+    )
+
+    assert not result.passed
+    assert "Beep lacks its scalar two-argument positive-BP signature" in result.violations
+
+
+def test_sidecar_free_ratchet_rejects_drawtime_void_return() -> None:
+    transcript = _passing_transcript().replace(
+        "short sub_10498(unsigned short arg)",
+        "void sub_10498(unsigned short arg)",
+    )
+
+    result = evaluate_sortd_transcript(
+        transcript,
+        decompiler_returncode=2,
+        minimum_decompiled=DEFAULT_MINIMUM_DECOMPILED,
+        maximum_empty=0,
+        maximum_timeouts=0,
+        maximum_tracebacks=0,
+    )
+
+    assert not result.passed
+    assert "DrawTime lacks its canonical scalar-return positive-BP signature" in result.violations
 
 
 def test_sidecar_free_ratchet_rejects_any_traceback():

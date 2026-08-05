@@ -11,7 +11,10 @@ Verifies:
   - JCC mnemonic mapping is correct
 """
 
+import pytest
 from angr_platforms.X86_16.ir.condition_ir import (
+    ConditionIR,
+    build_condition_from_test_8616,
     build_condition_ir_8616,
     canonicalize_condition_storage_fingerprint_8616,
     condition_compare_symbol_8616,
@@ -23,7 +26,7 @@ from angr_platforms.X86_16.ir.condition_ir import (
     normalize_condition_fingerprint_algebraic_8616,
     normalize_condition_op_8616,
 )
-from angr_platforms.X86_16.ir.core import IRValue, MemSpace
+from angr_platforms.X86_16.ir.core import IRBinaryValue, IRValue, MemSpace
 from angr_platforms.X86_16.semantics.condition_recovery import (
     ConditionConfidence,
     RecoveredCondition,
@@ -62,6 +65,18 @@ class TestConditionIRConstruction:
         assert cond.op == "ult"
         assert cond.args[1].const == 10
 
+    def test_idempotent_or_self_test_keeps_register_identity(self):
+        operand = IRValue(MemSpace.REG, name="ax", offset=0, size=2)
+
+        condition = build_condition_from_test_8616(
+            IRBinaryValue("or", operand, operand, size=2),
+            "je",
+        )
+
+        assert isinstance(condition, ConditionIR)
+        assert condition.op == "zero"
+        assert condition.lhs is operand
+
 
 class TestConditionOpNormalization:
     """Condition ops must be normalized to canonical form."""
@@ -97,6 +112,31 @@ class TestConditionOpNormalization:
             "const:2892)),"
             "stack_slot:SS:BP-0x4:size2)"
         )
+
+    def test_add_value_and_its_negation_normalizes_to_zero(self):
+        assert normalize_condition_fingerprint_algebraic_8616(
+            "Add(reg:ax,Neg(reg:ax))"
+        ) == "const:0"
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        (
+            ("Add(reg:ax,Neg(reg:bx))", "Sub(reg:ax,reg:bx)"),
+            ("Add(Neg(reg:bx),reg:ax)", "Sub(reg:ax,reg:bx)"),
+            (
+                "CmpEQ(Add(stack_slot:SS:BP+0x6:size2,"
+                "Neg(stack_slot:SS:BP+0x4:size2)),const:1)",
+                "CmpEQ(Sub(stack_slot:SS:BP+0x6:size2,"
+                "stack_slot:SS:BP+0x4:size2),const:1)",
+            ),
+        ),
+    )
+    def test_add_negation_normalizes_to_subtraction(
+        self,
+        raw: str,
+        expected: str,
+    ) -> None:
+        assert normalize_condition_fingerprint_algebraic_8616(raw) == expected
 
     def test_named_stack_argument_fingerprint_normalizes_to_exact_bp_slot(self):
         value = (

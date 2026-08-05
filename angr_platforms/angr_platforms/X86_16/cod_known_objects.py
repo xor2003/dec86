@@ -69,7 +69,7 @@ def _make_union_regs_type() -> SimUnion:
             "x": SimStruct(x_fields, name="x", pack=True),
             "h": SimStruct(h_fields, name="h", pack=True),
         },
-        name="union REGS",
+        name="REGS",
     )
 
 
@@ -84,7 +84,7 @@ def _make_sregs_type() -> SimStruct:
                 ("ds", word),
             )
         ),
-        name="struct SREGS",
+        name="SREGS",
         pack=True,
     )
 
@@ -106,14 +106,14 @@ def _make_exe_load_params_type() -> SimStruct:
             ("cs", word),
         )
     )
-    return SimStruct(fields, name="struct ExeLoadParams", pack=True)
+    return SimStruct(fields, name="ExeLoadParams", pack=True)
 
 
 def _make_ovl_load_params_type() -> SimStruct:
     word: SimType = SimTypeShort(False)
     return SimStruct(
         OrderedDict((("segment", word), ("reloc", word))),
-        name="struct OvlLoadParams",
+        name="OvlLoadParams",
         pack=True,
     )
 
@@ -122,7 +122,7 @@ def _make_ovl_header_type() -> SimTypePointer:
     word: SimType = SimTypeShort(False)
     header = SimStruct(
         OrderedDict((("code_segment", word), ("slot", word))),
-        name="struct OvlHeader",
+        name="OvlHeader",
         pack=True,
     )
     return SimTypePointer(header)
@@ -133,8 +133,10 @@ def _make_slot_array_type() -> SimTypePointer:
 
 
 def _type_name(type_obj: object) -> str:
-    if isinstance(type_obj, SimStruct | SimUnion) and type_obj.name:
-        return str(type_obj.name)
+    if isinstance(type_obj, SimUnion) and type_obj.name:
+        return f"union {type_obj.name}"
+    if isinstance(type_obj, SimStruct) and type_obj.name:
+        return f"struct {type_obj.name}"
     return type_obj.__class__.__name__
 
 

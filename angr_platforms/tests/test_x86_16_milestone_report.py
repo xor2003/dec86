@@ -673,6 +673,7 @@ def test_x86_16_milestone_report_combines_scan_and_quality_context():
         "compatible_view",
         "needs_synthesis",
         "can_join",
+        "contains",
     ]
     assert [item["name"] for item in report["widening_pipeline"]] == [
         "candidate_extraction",

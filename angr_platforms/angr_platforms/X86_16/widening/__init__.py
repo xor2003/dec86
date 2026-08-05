@@ -39,6 +39,10 @@ from .widening_rules import (
     promote_stack_slots_from_instruction_widths_8616,
     run_typed_widening_pass_8616,
 )
+from .word_projection_recomposition import (
+    WordProjectionRecompositionStats8616,
+    materialize_word_projection_recompositions_8616,
+)
 
 __all__ = [
     "RegisterWideningCandidate",
@@ -48,6 +52,7 @@ __all__ = [
     "WideningCandidate",
     "WideningPipelineSpec",
     "WideningProof",
+    "WordProjectionRecompositionStats8616",
     "analyze_adjacent_storage_slices",
     "can_join_adjacent_register_slices",
     "can_join_adjacent_storage_slices",
@@ -58,6 +63,7 @@ __all__ = [
     "join_adjacent_register_slices",
     "merge_storage_slice_domains",
     "materialize_contained_stack_subviews_8616",
+    "materialize_word_projection_recompositions_8616",
     "promote_stack_slots_from_instruction_widths_8616",
     "prove_adjacent_storage_slices",
     "prove_contained_stack_subview",

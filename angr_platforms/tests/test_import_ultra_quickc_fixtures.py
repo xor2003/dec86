@@ -4,6 +4,10 @@ import subprocess
 from pathlib import Path
 
 from scripts import import_ultra_quickc_fixtures as ultra_qc
+from scripts.generated_c_contracts import (
+    BranchBodyEffectsRequirement,
+    GeneratedCContract,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -19,11 +23,14 @@ def test_args_generated_c_contract_accepts_indexed_independent_calls() -> None:
         reason="focused generated-C contract",
     )
     stdout = """
-unsigned short sub_10058(short arg, unsigned short *arg_6)
+unsigned short sub_10058(short arg, unsigned short *arg_5)
 {
-    sub_10010(arg_6[local_2], 104);
-    sub_10010(arg_6[local_2], 118);
-    sub_106d6(676, arg_6[local_2]);
+    unsigned short local_4;
+    if (sub_10010(SEG_PTR(inertia_ds, arg_5[local_2]), 118)) {
+        local_4 = 1;
+    }
+    sub_10010(SEG_PTR(inertia_ds, arg_5[local_2]), 104);
+    sub_106d6(676, arg_5[local_2]);
 }
 """
 
@@ -53,10 +60,10 @@ def test_args_generated_c_contract_refuses_raw_segment_and_push_carriers() -> No
         reason="focused generated-C contract",
     )
     stdout = """
-unsigned short sub_10058(short arg, unsigned short *arg_6)
+unsigned short sub_10058(short arg, unsigned short *arg_5)
 {
     local_2 = 104;
-    sub_10010(SEG_U16(ds, arg_6 + (local_2 << 1)), 104);
+    sub_10010(SEG_U16(ds, arg_5 + (local_2 << 1)), 104);
 }
 """
 
@@ -75,7 +82,96 @@ unsigned short sub_10058(short arg, unsigned short *arg_6)
     contract_result = result["generated_c_contract"]
     assert contract_result["status"] == "failed"
     assert "local_2 = 104;" in contract_result["present_forbidden_fragments"]
-    assert contract_result["insufficient_occurrences"] == [["arg_6[local_2]", 3, 0]]
+    assert contract_result["insufficient_occurrences"] == [["arg_5[local_2]", 3, 0]]
+
+
+def test_args_generated_c_contract_refuses_hoisted_verbose_assignment() -> None:
+    """The fixture gate must reject a branch-owned assignment at function scope."""
+    contract = ultra_qc.ARGS_FIXTURE.generated_c_contract
+    assert contract is not None
+    stdout = """
+unsigned short sub_10010(void *a0, unsigned short a1);
+int sub_106d6(unsigned short a0, unsigned short a1);
+extern unsigned short inertia_ds;
+int sub_10058(short arg_4, unsigned short *arg_5)
+{
+    unsigned short local_4;
+    unsigned short local_2;
+    local_4 = 1;
+    if (sub_10010(SEG_PTR(inertia_ds, arg_5[local_2]), 104)) { }
+    if (sub_10010(SEG_PTR(inertia_ds, arg_5[local_2]), 118)) { }
+    sub_106d6(676, arg_5[local_2]);
+}
+"""
+
+    result = contract.assess(stdout).to_json()
+
+    assert result["status"] == "failed"
+    assert result["parse_error"] is None
+    assert result["missing_guarded_assignments"] == [
+        "local_4=1 under sub_10010(...,118)"
+    ]
+
+
+def test_branch_body_effect_contract_accepts_co_owned_calls_and_copy() -> None:
+    contract = GeneratedCContract(
+        branch_body_effects=(
+            BranchBodyEffectsRequirement(
+                function_name="sort",
+                required_calls=("swap_values", "swap_rows"),
+                assignment_name="changed",
+                assignment_source_name="row",
+            ),
+        ),
+    )
+    source = """
+void swap_values(void);
+void swap_rows(void);
+void sort(void) {
+    int changed;
+    int row;
+    if (row) {
+        swap_values();
+        swap_rows();
+        changed = row;
+    }
+}
+"""
+
+    assert contract.assess(source).passed
+
+
+def test_branch_body_effect_contract_rejects_hoisted_copy() -> None:
+    contract = GeneratedCContract(
+        branch_body_effects=(
+            BranchBodyEffectsRequirement(
+                function_name="sort",
+                required_calls=("swap_values", "swap_rows"),
+                assignment_name="changed",
+                assignment_source_name="row",
+            ),
+        ),
+    )
+    source = """
+void swap_values(void);
+void swap_rows(void);
+void sort(void) {
+    int changed;
+    int row;
+    if (row) {
+        swap_values();
+        swap_rows();
+    }
+    changed = row;
+}
+"""
+
+    result = contract.assess(source)
+
+    assert not result.passed
+    assert result.missing_branch_body_effects == (
+        "sort: changed=row with swap_values,swap_rows",
+    )
 
 
 def test_selected_ultra_quickc_fixtures_record_borrowed_provenance() -> None:

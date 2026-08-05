@@ -78,6 +78,10 @@ def _insn(mnemonic: str, op_str: str = ""):
     return SimpleNamespace(mnemonic=mnemonic, op_str=op_str)
 
 
+def _imark(addr: int, delta: int = 0):
+    return SimpleNamespace(tag="Ist_IMark", addr=addr, delta=delta)
+
+
 def _block(addr: int, *stmts, next_expr=None, insns=()):
     return SimpleNamespace(
         addr=addr,
@@ -148,6 +152,7 @@ def test_vex_import_maps_si_based_store_to_typed_provisional_ds_address() -> Non
         {
             0x1000: _block(
                 0x1000,
+                _imark(0x0FFE, 2),
                 _wrtmp(0, _get(12)),
                 _wrtmp(1, _const(4)),
                 _wrtmp(2, _binop("Iop_Add16", _rdtmp(0), _rdtmp(1))),
@@ -169,6 +174,8 @@ def test_vex_import_maps_si_based_store_to_typed_provisional_ds_address() -> Non
     assert addr.offset == 4
     assert addr.status == AddressStatus.PROVISIONAL
     assert addr.segment_origin == SegmentOrigin.DEFAULTED
+    assert all(instruction.addr == 0x1000 for instruction in artifact.blocks[0].instrs)
+    assert all(refusal.kind != "unsupported_stmt" for refusal in artifact.blocks[0].refusals)
 
 
 def test_vex_import_keeps_load_arguments_typed_as_address() -> None:
@@ -536,6 +543,35 @@ def test_vex_import_records_successor_addrs_and_function_ssa() -> None:
     assert codegen._inertia_vex_ir_artifact.blocks[0].successor_addrs == (0x1010,)
     assert codegen._inertia_vex_ir_function_ssa.summary["block_count"] == 3
     assert function.info["x86_16_vex_ir_function_ssa"]["summary"]["block_count"] == 3
+
+
+def test_vex_import_prefers_exact_function_graph_edges_over_low16_vex_successors() -> None:
+    entry_node = SimpleNamespace(addr=0x11000)
+    body_node = SimpleNamespace(addr=0x11010)
+    function = SimpleNamespace(
+        addr=0x11000,
+        block_addrs_set={0x11000, 0x11010},
+        graph=SimpleNamespace(edges=((entry_node, body_node), (body_node, entry_node))),
+        info={},
+    )
+    project = _project(
+        {
+            0x11000: _block(0x11000, _wrtmp(0, _get(0)), next_expr=_const(0x0010)),
+            0x11010: _block(0x11010, _wrtmp(0, _get(0)), next_expr=_const(0x0000)),
+        },
+        function,
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x11000))
+
+    apply_x86_16_vex_ir_artifact(project, codegen)
+
+    blocks = codegen._inertia_vex_ir_artifact.blocks
+    assert blocks[0].successor_addrs == (0x11010,)
+    assert blocks[1].successor_addrs == (0x11000,)
+    assert codegen._inertia_vex_ir_function_ssa.predecessor_map == {
+        0x11000: (0x11010,),
+        0x11010: (0x11000,),
+    }
 
 
 def test_apply_vex_ir_artifact_attaches_summary_to_codegen_and_function_info() -> None:

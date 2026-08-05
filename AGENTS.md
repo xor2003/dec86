@@ -107,14 +107,16 @@ Every semantic improvement needs closed evidence loop: `raw_fact_count`, `normal
 3. What corpus result improved? What might regress?
 4. Architectural or temporary rescue? If temporary, what replaces it?
 
+
 ## Improving code
 
-Regular local gate: `make quality-fast PYTHON=./.venv/bin/python`. Use `make test-pipeline PYTHON=./.venv/bin/python` before claiming semantic decompiler improvements, and `make test-pipeline-expanded PYTHON=./.venv/bin/python` for broad slow audits.
+Regular local gate: `make quality-fast PYTHON=./.venv/bin/python`.
+`make test-pipeline PYTHON=./.venv/bin/python` before claiming semantic decompiler improvements.
+`make test-pipeline-expanded PYTHON=./.venv/bin/python` for broad slow audits.
+Hard development gate before PR/incremental work: `make quality-hard PYTHON=./.venv/bin/python`.
+For a narrower local loop with only linters: `make linters-hard PYTHON=./.venv/bin/python`.
 
-Diagnostics, telemetry, and CLI quickstart live under `reference/`. Current `SORTDEMO.EXE` handoff: read `SORTDEMO_HANDOFF.md` before restarting work on ReInitBars/SwapBars/HeapSort.
-
-## Reference files
-
-Detailed diagnostics, testing, and CLI quickstart → `reference/`. Supplemental glossary and long-running-agent guidance → `reference/agent-rules.md`.
-
-Before changing code, read `reference/project-map.md`. For decompiler internals, also read `reference/decompiler-map.md`; for DOS execution, also read `reference/dosunit-execution-spec.md`.
+For the changed surface, run `make quality-dev PYTHON=./.venv/bin/python`.
+For global typing debt accounting, run `make linters PYTHON=./.venv/bin/python`.
+Read `reference/project-map.md`, `reference/decompiler-map.md`, and `reference/agent-rules.md`.
+This includes the Supplemental glossary and long-running-agent guidance.

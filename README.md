@@ -4,6 +4,42 @@ Inertia is an angr-based workspace for decompiling and comparing 16-bit x86 DOS 
 
 Correctness comes before pretty C. When evidence is weak, the tools prefer low-level output, visible refusals, or explicit fallback reports over guessed source.
 
+## Why Inertia For DOS
+
+Inertia focuses on the results that matter when restoring a DOS program:
+
+- **More of the program becomes C.** The goal is to recover every function
+  instead of silently omitting difficult functions or leaving most of the
+  program as an assembly listing.
+- **The C is checked against the executable.** Recovered conditions, calls,
+  return values, and memory changes are validated. Code that looks cleaner but
+  changes the program's behavior is rejected.
+- **The output is intended to compile.** Inertia can generate portable C or C
+  suitable for Microsoft C on DOS. It checks for common decompiler failures such
+  as wrong function arguments, incompatible pointer types, missing declarations,
+  and invalid assignments.
+- **The output is easier to understand.** Proven stack locations become
+  arguments and local variables, branches become meaningful conditions, and
+  repeated memory layouts can become arrays or structures. When a readable
+  interpretation cannot be proved, Inertia keeps a lower-level representation
+  instead of inventing one.
+- **Stripped executables are first-class inputs.** Debug files and original
+  source are not required. When old `.COD`, `.LST`, `.MAP`, CodeView, or TDInfo
+  files are available, they can restore useful names and source locations.
+- **Library code creates less noise.** Signatures from old DOS compilers,
+  object files, and libraries help identify runtime and library functions so the
+  report stays focused on the program's own code.
+- **You can test whether a rebuild still behaves like the original.** Included
+  comparison tools can run both versions and compare function results, changed
+  memory, and other externally visible behavior.
+- **Uncertain output is clearly marked.** Timeouts, incomplete recovery, failed
+  validation, and fallback output remain visible. A plausible-looking function
+  is not presented as trustworthy C without supporting evidence.
+
+No decompiler can reconstruct every original name, type, or source construct
+from machine code. Inertia is designed for cases where complete, recompilable,
+behaviorally checked C is more useful than attractive but unverified pseudocode.
+
 ## Install
 
 The repo is tested against the angr stack pinned in [pyproject.toml](pyproject.toml).
@@ -237,10 +273,16 @@ python scripts/compare_discovery_backends.py PROGRAM.EXE \
   --json-output /tmp/discovery.json
 ```
 
-Run the curated development gate:
+Run the legacy curated check (full validation package):
 
 ```bash
 make decompiler-check PYTHON=./.venv/bin/python
+```
+
+For routine development work, use the hard gate:
+
+```bash
+make quality-dev PYTHON=./.venv/bin/python
 ```
 
 Run the MS C tiny pipeline examples:
@@ -257,6 +299,21 @@ python scripts/build_mypyc.py build_ext --inplace
 ```
 
 If `mypyc` is unavailable, normal `.py` execution is unchanged.
+
+Optimization changes must not reduce semantic quality.
+Use the quality gate before enabling any speed-up path:
+
+```bash
+make decomp-opt-regression-suite PYTHON=./.venv/bin/python
+DECOMP_OPT_REGRESSION_ARGS="--max-functions 20 --timeout 45 -q" \
+  make decomp-opt-regression-thread PYTHON=./.venv/bin/python
+```
+
+The gate compares pure-Python decompilation to the optimized path and fails unless:
+
+- both runs validate (`validation=passed`)
+- no functions are lost
+- no quality metrics regress
 
 ## How It Works
 

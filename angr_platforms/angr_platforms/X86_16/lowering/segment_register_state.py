@@ -28,7 +28,7 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
 
 from ..c_ast_utils import _replace_c_children_8616
 from ..ir.core import SegmentOrigin
-from ..ir.segment_state import SegmentStateArtifact
+from ..ir.segment_state import SegmentStateArtifact, SegmentValueKind8616
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -212,7 +212,7 @@ def _entry_live_in_segments_8616(
         for segment_name, state in entry_state.items()
         if segment_name in _RUNTIME_SEGMENT_STATE_SYMBOLS_8616
         and state.origin is SegmentOrigin.PROVEN
-        and state.value_kind == "architectural_live_in"
+        and state.value_kind is SegmentValueKind8616.ARCHITECTURAL_LIVE_IN
         and state.source == segment_name
     )
 

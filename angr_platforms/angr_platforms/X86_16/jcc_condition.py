@@ -181,6 +181,9 @@ def _direct_jcc_condition_from_last_condition_8616(
         if len(args) != len(condition.args):
             return None
         op = str(condition.op)
+        if condition.expr and condition.expr[0] in {"update_eflags_inc", "update_eflags_dec"}:
+            if kind not in JCC_EQ_MNEMONICS_8616 | JCC_NE_MNEMONICS_8616:
+                return None
         if op in {
             "compare",
             "eq",

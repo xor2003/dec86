@@ -24,6 +24,7 @@ __all__ = [
     "identify_x86_16_compiler_helper_at_8616",
     "is_x86_16_registered_stack_probe_target_8616",
     "is_x86_16_stack_probe_name_8616",
+    "transfer_x86_16_compiler_helper_evidence_8616",
 ]
 
 
@@ -97,6 +98,12 @@ _MSC_ANCHKSTK_PATTERN_8616: tuple[int | None, ...] = (
 
 class _ArchWithStackProbeRegistry8616(Protocol):
     _inertia_stack_probe_helper_targets_8616: frozenset[int]
+
+
+class _ProjectArchSurface8616(Protocol):
+    """Third-party project field needed to transport compiler-helper evidence."""
+
+    arch: object
 
 
 def is_x86_16_stack_probe_name_8616(name: str | None) -> bool:
@@ -256,3 +263,30 @@ def is_x86_16_registered_stack_probe_target_8616(arch: object, target: int | Non
     # Dynamic boundary: arch is an angr Arch object carrying optional runtime metadata.
     targets = getattr(arch, "_inertia_stack_probe_helper_targets_8616", frozenset())
     return target in targets or (target & 0xFFFF) in targets
+
+
+def transfer_x86_16_compiler_helper_evidence_8616(
+    source_project: object,
+    destination_project: object,
+) -> int:
+    """Copy binary-proven compiler-helper targets across a project boundary."""
+    try:
+        source_arch = cast(_ProjectArchSurface8616, source_project).arch
+        destination_arch = cast(_ProjectArchSurface8616, destination_project).arch
+    except AttributeError:
+        return 0
+    try:
+        source_targets = cast(_ArchWithStackProbeRegistry8616, source_arch)._inertia_stack_probe_helper_targets_8616
+    except AttributeError:
+        return 0
+    try:
+        destination_targets = cast(
+            _ArchWithStackProbeRegistry8616,
+            destination_arch,
+        )._inertia_stack_probe_helper_targets_8616
+    except AttributeError:
+        destination_targets = frozenset()
+    merged_targets = destination_targets | source_targets
+    registry = cast(_ArchWithStackProbeRegistry8616, destination_arch)
+    registry._inertia_stack_probe_helper_targets_8616 = frozenset(sorted(merged_targets))
+    return len(source_targets)

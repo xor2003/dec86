@@ -285,6 +285,9 @@ int main(void)
     if (mix_uc(7, 3) != (unsigned char)13) {
         return 2;
     }
+    if (byteops_unsigned() != 0xC000U) {
+        return 13;
+    }
     if (sub_ss(9, 4) != 5) {
         return 3;
     }
@@ -393,6 +396,7 @@ EXAMPLES: dict[str, ExampleSpec] = {
         functions=(
             FunctionSpec("add_sc", proc_kind="NEAR"),
             FunctionSpec("mix_uc", proc_kind="NEAR"),
+            FunctionSpec("byteops_unsigned", proc_kind="NEAR"),
             FunctionSpec("sub_ss", proc_kind="NEAR"),
             FunctionSpec("mul_us", proc_kind="NEAR"),
             FunctionSpec("add_int", proc_kind="NEAR"),

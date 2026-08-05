@@ -37,6 +37,7 @@ class DecompCase:
     expected_tokens: tuple[str, ...]
     cod_dir: Path | None = None
     proc_kind: str = "NEAR"
+    forbidden_tokens: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -86,7 +87,13 @@ DECOMP_CASES = (
         proc_name="_ChangeWeather",
         cod_dir=_F14_COD_DIR,
         original_c=("if (BadWeather) { CLOUDHEIGHT=8150; CLOUDTHICK=500; } else { CLOUDHEIGHT=125; CLOUDTHICK=1000; }"),
-        expected_tokens=("g_6 = 214", "g_8 = 244", "g_6 = 125", "g_8 = 232", "return"),
+        expected_tokens=(
+            "SEG_U16(ds, 6) = 8150",
+            "SEG_U16(ds, 8) = 500",
+            "SEG_U16(ds, 6) = 125",
+            "SEG_U16(ds, 8) = 1000",
+            "return",
+        ),
     ),
     DecompCase(
         name="f14_ready5",
@@ -94,7 +101,8 @@ DECOMP_CASES = (
         proc_name="_Ready5",
         cod_dir=_F14_COD_DIR,
         original_c="bv[planecnt].basespeed = 0; /* struct stride 46, field offset 18 */ return 0;",
-        expected_tokens=("46", "mem_0013", "return"),
+        expected_tokens=("46", "18", "return 0"),
+        forbidden_tokens=("CONCAT",),
     ),
     DecompCase(
         name="f14_lookdown",
@@ -1066,13 +1074,14 @@ def test_strlen_cod_sample_resolves_direct_stack_loads_to_annotated_slots():
     assert "ir_4 = s_3;" not in text
     assert "s_3 = (ir_3 | ir_4 * 0x100) + 1;" not in text
     assert "s_3 = ir_3 + 1 >> 8;" not in text
-    assert "s_3 += 1;" not in text
-    assert "while (*s++)" in text
+    assert "s += 1;" in text
+    assert "if (!s[-1])" in text
+    assert "if (!s[0])" not in text
     assert "if (!(s + 1))" not in text
     assert "n += 1;" in text
     assert "n = 0;" in text
-    assert "return (n);" in text
-    assert "unsigned short _strlen(unsigned short *s)" in text
+    assert "return n;" in text
+    assert "short _strlen(char *s)" in text
     assert "unsigned short s_3;" not in text
     assert "s_3" not in text
     assert "char s_0;" not in text
@@ -1207,7 +1216,8 @@ def test_dosfunc_cod_sample_deduplicates_stack_local_names():
     text = result.stdout
 
     assert text.count("return err;") == 1
-    assert "sub_1038();" in text
+    assert "sub_1038(28690, segment, err);" in text
+    assert "sub_1038();" not in text
     assert "err_2" not in text
 
 
@@ -1265,7 +1275,12 @@ def test_bios_cod_sample_decompilation():
 
     _assert_text_contains(
         dec.codegen.text,
-        ("1047", "g_418", "return"),
+        (
+            "inertia_es = 0",
+            "SEG_U8(inertia_es, 1047) = 0",
+            "SEG_U8(inertia_es, 1048) = inertia_es >> 8",
+            "return",
+        ),
         "MK_FP(0x40, 0x17)",
     )
 
@@ -1289,6 +1304,7 @@ def test_cod_decompilation_cases(case: DecompCase):
     entries = _extract_cod_function(case.cod_name, case.proc_name, cod_dir=case.cod_dir, proc_kind=case.proc_kind)
     text = _decompile_blob(_join_entries(entries))
     _assert_text_contains(text, case.expected_tokens, case.original_c)
+    assert not [token for token in case.forbidden_tokens if token in text]
 
 
 @pytest.mark.parametrize("case", BLOCK_LIFT_CASES, ids=lambda case: case.name)

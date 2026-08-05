@@ -295,7 +295,7 @@ def _parse_pat_comment_metadata(comment_text: str) -> tuple[str, str, str]:
 
 
 def _compiler_name_from_source_path(source_path: str) -> str:
-    def _impl() -> list[str]:
+    def _impl() -> str:
         probed = _compiler_version_from_source_path(source_path)
         if probed:
             return probed
@@ -618,7 +618,7 @@ def parse_omf_lib(lib_path: Path) -> MicrosoftLibMetadata:
     return parse_microsoft_lib(lib_path)
 
 
-def get_lib_format_info(lib_path: Path) -> dict[str, str | int]:
+def get_lib_format_info(lib_path: Path) -> dict[str, str | int | None]:
     """Get diagnostic information about a library file format.
 
     Returns a dict with:
@@ -1124,7 +1124,7 @@ def _generate_pat_lines_from_omf_blob(
                                     )
                                 )
                             )
-                        lines.append(emulator_line)
+                            lines.append(emulator_line)
         if not lines:
             fallback_public_names = _SYNTHETIC_OMF_MODULE_FALLBACK_PUBLICS.get(module_name.upper())
             if fallback_public_names is None:
@@ -1846,8 +1846,8 @@ def _find_pat_matches(
         return []
     checked_match_length = _get_pat_checked_match_length(module)
     if selected_backend == "hyperscan":
-        hits = _find_pat_matches_hyperscan(image_bytes, module, checked_match_length)
-        return hits if hits is not None else []
+        backend_hits = _find_pat_matches_hyperscan(image_bytes, module, checked_match_length)
+        return backend_hits if backend_hits is not None else []
     hits: list[int] = []
     end_limit = len(image_bytes) - module_length + 1
     regex = _get_pat_module_regex(module)
@@ -2035,7 +2035,7 @@ def _decode_pat_bytes(text: str) -> list[int | None]:
     return decoded
 
 
-def _encode_pat_bytes(data: bytes | bytearray | list[int | None]) -> str:
+def _encode_pat_bytes(data: bytes | bytearray | tuple[int | None, ...] | list[int | None]) -> str:
     parts: list[str] = []
     for byte in data:
         parts.append(".." if byte is None else f"{byte:02X}")

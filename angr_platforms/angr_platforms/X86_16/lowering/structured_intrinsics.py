@@ -14,13 +14,20 @@ Incomplete or effectful forms are retained; rewrite and CLI must not hide them.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimType, SimTypeShort
 
-from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616
+from ..c_ast_utils import (
+    _iter_c_nodes_deep_8616,
+    _replace_c_children_8616,
+    _structured_codegen_node_8616,
+    _structured_slot_names_8616,
+)
 from ..callsite_summary import StructuredCallKind8616, structured_call_kind_8616
 
 __all__ = [
@@ -124,8 +131,15 @@ def lower_structured_insert_call_8616(
     if not isinstance(offset, structured_c.CConstant) or not isinstance(offset.value, int):
         return None
     base_width = _expression_width_bits_8616(base)
+    result_width = _expression_width_bits_8616(call)
     value_width = _insert_value_width_bits_8616(value)
-    if base_width is None or value_width is None or value_width > base_width:
+    if value_width is None:
+        return None
+    candidate_widths = tuple(width for width in (base_width, result_width) if width is not None)
+    if not candidate_widths:
+        return None
+    base_width = max(candidate_widths)
+    if value_width > base_width:
         return None
     shift = offset.value * 8
     if shift < 0 or shift + value_width > base_width:
@@ -212,15 +226,45 @@ def _cvariable_is_unread_elsewhere_8616(
     root: object,
     lhs: structured_c.CVariable,
 ) -> bool:
-    """Return whether one exact variable identity has no other C AST use."""
+    """Return whether one exact variable identity has no other AST occurrence."""
     identity = lhs.unified_variable or lhs.variable
-    for node in _iter_c_nodes_deep_8616(root):
-        if not isinstance(node, structured_c.CVariable) or node is lhs:
+    skipped_definition = False
+    for node in _iter_c_node_occurrences_8616(root):
+        if not isinstance(node, structured_c.CVariable):
+            continue
+        if node is lhs and not skipped_definition:
+            skipped_definition = True
             continue
         candidate_identity = node.unified_variable or node.variable
-        if candidate_identity is identity:
+        if node is lhs or candidate_identity is identity:
             return False
     return True
+
+
+def _iter_c_node_occurrences_8616(
+    value: object,
+    active_node_ids: frozenset[int] = frozenset(),
+) -> Iterator[object]:
+    """Yield every owned AST edge occurrence while refusing active-path cycles."""
+    if isinstance(value, dict):
+        for child in value.values():
+            yield from _iter_c_node_occurrences_8616(child, active_node_ids)
+        return
+    if isinstance(value, (list, tuple)):
+        for child in value:
+            yield from _iter_c_node_occurrences_8616(child, active_node_ids)
+        return
+    if not _structured_codegen_node_8616(value):
+        return
+    node_id = id(value)
+    if node_id in active_node_ids:
+        return
+    yield value
+    child_active_ids = active_node_ids | {node_id}
+    for attr in _structured_slot_names_8616(value):
+        with suppress(Exception):
+            # Dynamic boundary: angr C node child slots vary by node class and version.
+            yield from _iter_c_node_occurrences_8616(getattr(value, attr), child_active_ids)
 
 
 def _unused_insert_statement_8616(

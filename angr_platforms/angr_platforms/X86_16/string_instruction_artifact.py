@@ -21,6 +21,7 @@ __all__ = (
 
 
 class _DecodedInstruction(Protocol):
+    address: int
     mnemonic: str
     op_str: str
 
@@ -111,6 +112,7 @@ class StringInstructionRecord:
     direction_mode: str
     zero_seeded_accumulator: bool | None
     zf_sensitive: bool
+    instruction_addr: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +145,7 @@ class StringInstructionArtifact:
                     "direction_mode": rec.direction_mode,
                     "zero_seeded_accumulator": rec.zero_seeded_accumulator,
                     "zf_sensitive": rec.zf_sensitive,
+                    "instruction_addr": rec.instruction_addr,
                 }
                 for rec in self.records
             ],
@@ -257,12 +260,17 @@ def _records_from_insns(insns: tuple[object, ...]) -> StringInstructionArtifact:
     al_zero = False
     ax_zero = False
     for insn in insns:
+        decoded = cast(_DecodedInstruction, insn)
         direction_mode = _direction_state(insn, direction_mode)
         al_zero, ax_zero = _register_zero_seed(insn, al_zero, ax_zero)
-        repeat_kind, base = _normalize_string_mnemonic(cast(_DecodedInstruction, insn).mnemonic)
+        repeat_kind, base = _normalize_string_mnemonic(decoded.mnemonic)
         info = _string_family(base)
         if info is None:
             continue
+        try:
+            instruction_addr = int(decoded.address)
+        except (AttributeError, TypeError, ValueError):
+            instruction_addr = None
         family, width, source_segment, destination_segment, zf_sensitive = info
         zero_seed = None
         if family == "scas":
@@ -279,6 +287,7 @@ def _records_from_insns(insns: tuple[object, ...]) -> StringInstructionArtifact:
                 direction_mode=direction_mode,
                 zero_seeded_accumulator=zero_seed,
                 zf_sensitive=zf_sensitive,
+                instruction_addr=instruction_addr,
             )
         )
 

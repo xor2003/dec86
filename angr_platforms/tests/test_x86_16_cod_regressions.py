@@ -26,6 +26,7 @@ from angr_platforms.X86_16.decompiler_postprocess_utils import _replace_c_childr
 from angr_platforms.X86_16.decompiler_return_compat import (
     _infer_x86_16_c_return_value_from_ax_8616,
     _resolve_codegen_prototype_8616,
+    _return_compat_c_result_needs_neutralization_8616,
     _return_compat_function_caller_return_use_8616,
     _return_compat_should_drop_unresolved_c_return_8616,
     apply_x86_16_decompiler_return_compatibility,
@@ -367,7 +368,7 @@ def test_cod_overlay_header_known_object_is_pointer_typed():
     assert spec is not None
     assert spec.type.__class__.__name__ == "SimTypePointer"
     assert getattr(spec.type, "pts_to", None) is not None
-    assert getattr(spec.type.pts_to, "name", None) == "struct OvlHeader"
+    assert getattr(spec.type.pts_to, "name", None) == "OvlHeader"
 
 
 def test_cod_overlay_load_preserves_guarded_free_memory_probe_before_final_return():
@@ -1398,7 +1399,7 @@ def test_decompiler_return_compat_refuses_ax_inference_for_source_proven_void():
         ReturnMaker._handle_Return = original_handle_return
 
 
-def test_decompiler_return_compat_refuses_guessed_scalar_ax_in_multiblock_function():
+def test_decompiler_return_compat_preserves_proven_scalar_ax_in_multiblock_function():
     original_handle_return = ReturnMaker._handle_Return
     fallback_calls: list[tuple[int, object, object]] = []
 
@@ -1445,15 +1446,58 @@ def test_decompiler_return_compat_refuses_guessed_scalar_ax_in_multiblock_functi
         result = ReturnMaker._handle_Return(fake_self, 1, ret_stmt, ret_block)
 
         assert isinstance(result, ailment.Stmt.Return)
-        assert result.ret_exprs == []
+        assert len(result.ret_exprs) == 1
+        assert isinstance(result.ret_exprs[0], ailment.Expr.Const)
+        assert result.ret_exprs[0].value == 75
+        assert result.ret_exprs[0].bits == 16
         assert fallback_calls == []
-        assert getattr(function, "_inertia_return_compat_guessed_scalar_refused_count", 0) == 1
-        assert isinstance(function.prototype.returnty, SimTypeBottom)
-        assert function.prototype.returnty.label == "void"
-        assert function.is_prototype_guessed is False
-        assert getattr(function, "_inertia_return_compat_guessed_scalar_void_promoted_count", 0) == 1
+        assert isinstance(function.prototype.returnty, SimTypeShort)
+        assert function.is_prototype_guessed is True
+        assert getattr(function, "_inertia_return_compat_guessed_scalar_void_promoted_count", 0) == 0
     finally:
         ReturnMaker._handle_Return = original_handle_return
+
+
+def test_decompiler_return_compat_classifies_only_unusable_c_results_for_neutralization():
+    arch = Arch86_16()
+    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    return_type = SimTypeShort(False).with_arch(arch)
+    unresolved = structured_c.CVariable(
+        SimRegisterVariable(arch.registers["ax"][0], 2, name="vvar_32"),
+        variable_type=return_type,
+        codegen=codegen,
+    )
+    valid = structured_c.CConstant(7, return_type, codegen=codegen)
+    dirty_register = ailment.Expr.VirtualVariable(
+        2,
+        32,
+        16,
+        ailment.expression.VirtualVariableCategory.REGISTER,
+        oident=arch.registers["ax"][0],
+    )
+    unresolved_dirty = structured_c.CTypeCast(
+        return_type,
+        return_type,
+        structured_c.CDirtyExpression(dirty_register, codegen=codegen),
+        codegen=codegen,
+    )
+    non_scalar = structured_c.CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2"),
+        variable_type=SimTypeFunction([], SimTypeBottom(label="void")).with_arch(arch),
+        codegen=codegen,
+    )
+
+    assert _return_compat_c_result_needs_neutralization_8616(None, return_type) is True
+    assert _return_compat_c_result_needs_neutralization_8616(unresolved, return_type) is True
+    assert _return_compat_c_result_needs_neutralization_8616(unresolved_dirty, return_type) is True
+    assert _return_compat_c_result_needs_neutralization_8616(
+        structured_c.CBinaryOp(
+            "Add", valid, structured_c.CFakeVariable("stack_base", return_type, codegen=codegen), codegen=codegen
+        ),
+        return_type,
+    ) is True
+    assert _return_compat_c_result_needs_neutralization_8616(non_scalar, return_type) is True
+    assert _return_compat_c_result_needs_neutralization_8616(valid, return_type) is False
 
 
 def test_decompiler_return_compat_uses_original_addr_for_exact_region_callers(monkeypatch):
@@ -1743,7 +1787,7 @@ def test_decompiler_return_compat_keeps_unresolved_c_return_carrier_for_unknown_
     assert _return_compat_should_drop_unresolved_c_return_8616(function, unresolved_retval) is False
 
 
-def test_decompiler_return_compat_drops_unresolved_c_return_carrier_for_proven_unused_caller():
+def test_decompiler_return_compat_keeps_unresolved_c_return_for_unused_caller():
     arch = Arch86_16()
     codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), next_idx=lambda _name: 1)
     unresolved_var = SimRegisterVariable(0, 2, name="vvar_21")
@@ -1755,7 +1799,7 @@ def test_decompiler_return_compat_drops_unresolved_c_return_carrier_for_proven_u
         _inertia_return_compat_caller_uses_return_8616=False,
     )
 
-    assert _return_compat_should_drop_unresolved_c_return_8616(function, unresolved_retval) is True
+    assert _return_compat_should_drop_unresolved_c_return_8616(function, unresolved_retval) is False
 
 
 def test_decompiler_return_compat_keeps_unresolved_c_return_when_reaching_ax_is_proven():
@@ -2550,7 +2594,7 @@ def test_missing_terminal_ax_return_materializes_direct_global_add_return():
     assert bad_return.retval.rhs.variable.name == "g_0044"
 
 
-def test_missing_terminal_ax_return_replaces_generic_byte_return_artifact_from_binary_evidence():
+def test_missing_terminal_ax_return_replaces_artifact_with_ax_byte_pair_from_binary_evidence():
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
     codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
@@ -2601,16 +2645,16 @@ def test_missing_terminal_ax_return_replaces_generic_byte_return_artifact_from_b
         ),
         reg_name=lambda reg: {1: "al", 2: "bp"}.get(reg, ""),
     )
-    add_al_a = SimpleNamespace(
-        mnemonic="add",
+    mov_ah_a = SimpleNamespace(
+        mnemonic="mov",
         operands=(
-            SimpleNamespace(type=1, reg=1),
+            SimpleNamespace(type=1, reg=3),
             SimpleNamespace(type=3, size=1, mem=SimpleNamespace(base=2, index=0, disp=4)),
         ),
-        reg_name=lambda reg: {1: "al", 2: "bp"}.get(reg, ""),
+        reg_name=lambda reg: {2: "bp", 3: "ah"}.get(reg, ""),
     )
     ret = SimpleNamespace(mnemonic="ret", operands=(), reg_name=lambda _reg: "")
-    block = SimpleNamespace(capstone=SimpleNamespace(insns=(mov_al_b, add_al_a, ret)))
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=(mov_al_b, mov_ah_a, ret)))
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, prototype=codegen.cfunc.functy)
     project = SimpleNamespace(
         arch=arch,
@@ -2624,9 +2668,9 @@ def test_missing_terminal_ax_return_replaces_generic_byte_return_artifact_from_b
     assert changed is True
     assert root.statements[-1] is bad_return
     assert isinstance(bad_return.retval, structured_c.CBinaryOp)
-    assert bad_return.retval.op == "Add"
-    assert bad_return.retval.lhs.variable.name == "b"
-    assert bad_return.retval.rhs.variable.name == "a"
+    assert bad_return.retval.op == "Or"
+    assert bad_return.retval.lhs.op == "And"
+    assert bad_return.retval.rhs.op == "Shl"
 
 
 def test_decompiler_return_compat_uses_latest_ail_insn_when_c_return_has_no_ail_return():

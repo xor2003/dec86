@@ -10,11 +10,13 @@ import os
 import sys
 import types
 
+resource: types.ModuleType | None = None
 try:
-    import resource
+    import resource as _resource
 except ImportError:  # pragma: no cover
-    resource = None
-
+    pass
+else:
+    resource = _resource
 
 def _is_one_liner_invocation() -> bool:
     if not sys.argv:
@@ -88,8 +90,8 @@ def _install_msgspec_shim() -> None:
             return json.loads(data)
 
     msgspec_module = types.ModuleType("msgspec")
-    msgspec_module.json = _MsgSpecJson
-    msgspec_module.__all__ = ["json"]
+    setattr(msgspec_module, "json", _MsgSpecJson)
+    setattr(msgspec_module, "__all__", ["json"])
     sys.modules["msgspec"] = msgspec_module
 
 

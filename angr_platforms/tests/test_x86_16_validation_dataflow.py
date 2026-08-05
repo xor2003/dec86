@@ -1183,6 +1183,30 @@ def test_final_semantic_refresh_promotes_absolute_def_use_failure() -> None:
     }
 
 
+def test_final_semantic_probe_does_not_persist_transient_failure() -> None:
+    codegen = _codegen()
+    local = _local(-2, codegen, "control")
+    codegen.cfunc = SimpleNamespace(
+        arg_list=[],
+        statements=CStatements([local], codegen=codegen),
+    )
+    stable_snapshot = {
+        "structuring": {"status": "stable", "changed": False},
+        "postprocess": {"status": "stable", "changed": False},
+    }
+    expected_snapshot = {stage: dict(entry) for stage, entry in stable_snapshot.items()}
+    codegen._inertia_tail_validation_snapshot = stable_snapshot
+
+    report = refresh_x86_16_final_semantic_validation_8616(
+        codegen.project,
+        codegen,
+        persist_failures=False,
+    )
+
+    assert report.passed is False
+    assert codegen._inertia_tail_validation_snapshot == expected_snapshot
+
+
 def test_final_semantic_refresh_refuses_dynamic_read_of_partial_stack_array() -> None:
     codegen = _codegen()
     element_type = SimTypeShort(False)

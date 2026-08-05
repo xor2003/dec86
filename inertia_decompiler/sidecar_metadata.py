@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import typing
 from collections.abc import Mapping, Sequence
+from functools import lru_cache
 from pathlib import Path
-from typing import cast
+from typing import Any, Callable, cast
 
 import angr
 from angr_platforms.X86_16.codeview_nb00 import parse_codeview_nb00
@@ -48,6 +49,8 @@ from inertia_decompiler.sidecar_parsers import (
 )
 from inertia_decompiler.telemetry import trace_function
 
+_TRACE_FUNCTION: Any = cast(Any, trace_function)
+
 
 def _dynamic_attr(obj: object, name: str, default: object = None) -> object:
     """Read optional attributes from dynamic angr/debug-parser compatibility objects."""
@@ -68,20 +71,31 @@ def _dynamic_mapping_attr(obj: object, name: str) -> dict[object, object]:
 
 
 def _find_sibling_sidecar(binary: Path, suffix: str) -> Path | None:
-    direct = binary.with_suffix(suffix)
+    """Resolve a sibling sidecar file and cache results for repeated lookups.
+
+    This avoids repeated directory scans during repeated per-function recovery passes
+    while keeping semantics unchanged.
+    """
+    return _find_sibling_sidecar_cached(binary.as_posix(), suffix.lower())
+
+
+@lru_cache(maxsize=256)
+def _find_sibling_sidecar_cached(binary: str, suffix: str) -> Path | None:
+    binary_path = Path(binary)
+    direct = binary_path.with_suffix(suffix)
     if direct.exists():
         return direct
-    direct_appended = binary.with_name(f"{binary.name}{suffix}")
+    direct_appended = binary_path.with_name(f"{binary_path.name}{suffix}")
     if direct_appended.exists():
         return direct_appended
     try:
-        siblings = sorted(binary.parent.iterdir(), key=lambda path: path.name.lower())
+        siblings = sorted(binary_path.parent.iterdir(), key=lambda path: path.name.lower())
     except OSError:
         return None
-    wanted_stem = binary.stem.lower()
+    wanted_stem = binary_path.stem.lower()
     wanted_suffix = suffix.lower()
     for sibling in siblings:
-        if sibling.name.lower() == f"{binary.name.lower()}{wanted_suffix}":
+        if sibling.name.lower() == f"{binary_path.name.lower()}{wanted_suffix}":
             return sibling
         if sibling.stem.lower() == wanted_stem and sibling.suffix.lower() == wanted_suffix:
             return sibling
@@ -761,7 +775,6 @@ def _load_cod_mzre_flair_sidecars(
     return _impl()
 
 
-@trace_function(name="sidecar.load_metadata")
 def _load_lst_metadata(
     binary: Path,
     project: angr.Project,
@@ -941,6 +954,10 @@ def _load_lst_metadata(
     return _impl()
 
 
+_load_lst_metadata = cast(
+    Callable[..., LSTMetadata | None], _TRACE_FUNCTION(name="sidecar.load_metadata")(_load_lst_metadata)
+)
+
 def attach_lst_metadata_to_project(project: angr.Project | None, metadata: LSTMetadata | None) -> bool:
     """Attach already-loaded sidecar metadata to a fresh project instance.
 
@@ -950,23 +967,30 @@ def attach_lst_metadata_to_project(project: angr.Project | None, metadata: LSTMe
     """
     if project is None or metadata is None:
         return False
+    metadata_obj = cast(LSTMetadata, metadata)
     changed = False
     project_like = cast(_ProjectLike, project)
-    _attach_debug_evidence_attrs(project_like, metadata)
+    _attach_debug_evidence_attrs(project_like, metadata_obj)
     # Dynamic angr boundary: project stores sidecar metadata for downstream fallback/reporting passes.
-    if _dynamic_attr(project, "_inertia_lst_metadata", None) is not metadata:
+    if _dynamic_attr(project, "_inertia_lst_metadata", None) is not metadata_obj:
         # Dynamic angr boundary: project stores sidecar metadata for downstream fallback/reporting passes.
-        typing.cast(typing.Any, project)._inertia_lst_metadata = metadata
+        typing.cast(typing.Any, project)._inertia_lst_metadata = metadata_obj
         changed = True
     # Dynamic angr boundary: project knowledge bases expose backend-owned label maps.
     labels = _dynamic_attr(_dynamic_attr(project, "kb", None), "labels", None)
     if not isinstance(labels, dict):
         return changed
-    for addr, name in metadata.data_labels.items():
+    data_labels = cast(dict[int, str], metadata_obj.data_labels)
+    if not isinstance(data_labels, dict):
+        return changed
+    for addr, name in data_labels.items():
         if labels.get(addr) != name:
             labels[addr] = name
             changed = True
-    for addr, name in metadata.code_labels.items():
+    code_labels = cast(dict[int, str], metadata_obj.code_labels)
+    if not isinstance(code_labels, dict):
+        return changed
+    for addr, name in code_labels.items():
         if labels.get(addr) != name:
             labels[addr] = name
             changed = True
@@ -976,17 +1000,19 @@ def attach_lst_metadata_to_project(project: angr.Project | None, metadata: LSTMe
 def _lst_data_label(metadata: LSTMetadata | None, offset: int | None) -> str | None:
     if metadata is None or offset is None:
         return None
-    return metadata.data_labels.get(offset)
+    metadata_obj = cast(LSTMetadata, metadata)
+    return metadata_obj.data_labels.get(offset)
 
 
 def _lst_code_label(metadata: LSTMetadata | None, addr: int | None, code_base: int | None) -> str | None:
     if metadata is None or addr is None:
         return None
-    absolute_addrs = metadata.absolute_addrs
+    metadata_obj = cast(LSTMetadata, metadata)
+    absolute_addrs = metadata_obj.absolute_addrs
     lookup_addr = addr if absolute_addrs else addr - code_base if code_base is not None else None
     if lookup_addr is None:
         return None
-    code_labels = metadata.code_labels
+    code_labels = metadata_obj.code_labels
     if not isinstance(code_labels, dict):
         return None
     label = code_labels.get(lookup_addr)

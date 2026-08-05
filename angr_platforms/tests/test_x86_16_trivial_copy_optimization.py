@@ -214,6 +214,7 @@ def test_finalize_late_ast_cleanup_marks_refresh_after_temp_copy_fold(monkeypatc
     assert result.changed is True
     assert result.adjacent_temporary_copy_changed is True
     assert result.empty_noop_guard_changed is False
+    assert result.dead_condition_carrier_changed is False
     assert result.requires_dce_after_cleanup is True
     assert codegen._inertia_codegen_decl_refresh_required_8616 is True
     assert codegen._inertia_force_codegen_regeneration_8616 is True
@@ -221,6 +222,7 @@ def test_finalize_late_ast_cleanup_marks_refresh_after_temp_copy_fold(monkeypatc
         "changed": True,
         "adjacent_temporary_copy_changed": True,
         "empty_noop_guard_changed": False,
+        "dead_condition_carrier_changed": False,
         "requires_dce_after_cleanup": True,
         "owner": "postprocess.stage",
     }
@@ -248,6 +250,7 @@ def test_finalize_late_ast_cleanup_removes_semantically_empty_noop_guard():
     assert result.changed is True
     assert result.adjacent_temporary_copy_changed is False
     assert result.empty_noop_guard_changed is True
+    assert result.dead_condition_carrier_changed is False
     assert result.requires_dce_after_cleanup is False
     assert list(codegen.cfunc.statements.statements) == []
     assert codegen._inertia_late_empty_noop_guard_cleanup_stats_8616 == (
@@ -263,6 +266,7 @@ def test_finalize_late_ast_cleanup_removes_semantically_empty_noop_guard():
         "changed": True,
         "adjacent_temporary_copy_changed": False,
         "empty_noop_guard_changed": True,
+        "dead_condition_carrier_changed": False,
         "requires_dce_after_cleanup": False,
         "owner": "postprocess.stage",
     }

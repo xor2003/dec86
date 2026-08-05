@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from angr_platforms.X86_16.callsite_summary import (
+    CallerReturnUseEvidence8616,
+    CallerReturnUseVerdict8616,
+    caller_return_use_evidence_by_addr_8616,
+    record_caller_return_use_evidence_8616,
+)
+
+from inertia_decompiler.project_evidence_transport import (
+    transfer_caller_return_use_evidence_8616,
+    transfer_project_evidence_8616,
+)
+
+
+def _unused_evidence() -> CallerReturnUseEvidence8616:
+    return CallerReturnUseEvidence8616(
+        target_addr=0x104DC,
+        verdict=CallerReturnUseVerdict8616.UNUSED,
+        raw_fact_count=1,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=1,
+        failure_count=0,
+        used_callsite_count=0,
+        unused_callsite_count=1,
+        callsite_addrs=(0x106BC,),
+    )
+
+
+def test_transfers_typed_caller_return_evidence_to_retry_project() -> None:
+    source = SimpleNamespace()
+    destination = SimpleNamespace()
+    evidence = _unused_evidence()
+    record_caller_return_use_evidence_8616(source, evidence.target_addr, evidence)
+
+    copied = transfer_caller_return_use_evidence_8616(source, destination)
+
+    assert copied == 1
+    assert caller_return_use_evidence_by_addr_8616(destination) == {evidence.target_addr: evidence}
+    assert caller_return_use_evidence_by_addr_8616(source) == {evidence.target_addr: evidence}
+
+
+def test_same_project_transport_is_idempotent() -> None:
+    project = SimpleNamespace()
+    evidence = _unused_evidence()
+    record_caller_return_use_evidence_8616(project, evidence.target_addr, evidence)
+
+    assert transfer_caller_return_use_evidence_8616(project, project) == 1
+    assert caller_return_use_evidence_by_addr_8616(project) == {evidence.target_addr: evidence}
+
+
+def test_project_transport_preserves_binary_proven_compiler_helper_targets() -> None:
+    source = SimpleNamespace(
+        arch=SimpleNamespace(_inertia_stack_probe_helper_targets_8616=frozenset({0x11222, 0x1222}))
+    )
+    destination = SimpleNamespace(
+        arch=SimpleNamespace(_inertia_stack_probe_helper_targets_8616=frozenset({0x1999}))
+    )
+
+    result = transfer_project_evidence_8616(source, destination)
+
+    assert result.caller_return_use_count == 0
+    assert result.compiler_helper_target_count == 2
+    assert destination.arch._inertia_stack_probe_helper_targets_8616 == frozenset({0x11222, 0x1222, 0x1999})

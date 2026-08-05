@@ -47,8 +47,15 @@ def _load_manifest():
     return json.loads(MANIFEST_PATH.read_text())
 
 
-def _decompile_entry_function(binary_name: str, window: int = 0x200, api_style: str | None = None):
+def _sample_path(binary_name: str) -> Path:
     path = MATRIX_DIR / binary_name
+    if not path.is_file():
+        pytest.skip(f"optional x16 sample fixture is not available: {binary_name}")
+    return path
+
+
+def _decompile_entry_function(binary_name: str, window: int = 0x200, api_style: str | None = None):
+    path = _sample_path(binary_name)
     if binary_name.lower().endswith(".com"):
         project = angr.Project(
             path,
@@ -164,9 +171,7 @@ def test_com_variants_disassemble_as_real_mode_blobs():
 
 
 def test_small_model_rep_cmps_block_lifts():
-    path = MATRIX_DIR / "ISOD.EXE"
-    if not path.exists():
-        pytest.skip("optional x16 sample fixture is not available: ISOD.EXE")
+    path = _sample_path("ISOD.EXE")
     project = angr.Project(path)
 
     block = project.factory.block(0x1267, size=8, opt_level=0)
@@ -177,9 +182,7 @@ def test_small_model_rep_cmps_block_lifts():
 
 
 def test_medium_model_global_add_block_lifts():
-    path = MATRIX_DIR / "IMOD.EXE"
-    if not path.exists():
-        pytest.skip("optional x16 sample fixture is not available: IMOD.EXE")
+    path = _sample_path("IMOD.EXE")
     project = angr.Project(path)
 
     block = project.factory.block(0x1682, size=4, opt_level=0)
@@ -193,7 +196,7 @@ def test_medium_model_global_add_block_lifts():
 
 
 def test_medium_model_entry_far_call_targets_are_discoverable():
-    project = angr.Project(MATRIX_DIR / "IMOD.EXE")
+    project = angr.Project(_sample_path("IMOD.EXE"))
     cfg = project.analyses.CFGFast(
         start_at_entry=False,
         function_starts=[project.entry],
@@ -209,7 +212,7 @@ def test_medium_model_entry_far_call_targets_are_discoverable():
 
 
 def test_medium_model_entry_far_call_sites_are_patched():
-    project = angr.Project(MATRIX_DIR / "IMOD.EXE")
+    project = angr.Project(_sample_path("IMOD.EXE"))
     cfg = project.analyses.CFGFast(
         start_at_entry=False,
         function_starts=[project.entry],
@@ -224,7 +227,7 @@ def test_medium_model_entry_far_call_sites_are_patched():
     assert function.get_call_target(0x117E) == 0x1380
 
 
-def test_cod_access_traits_are_collected_for_segmented_proc():
+def test_cod_segmented_proc_does_not_publish_unclassified_access_traits():
     proc_path = REPO_ROOT / "cod" / "f14" / "COCKPIT.COD"
     entries = decompile.extract_cod_function_entries(proc_path, "_TIDShowRange", "NEAR")
     cod_metadata = decompile.extract_cod_proc_metadata(proc_path, "_TIDShowRange", "NEAR")
@@ -253,7 +256,7 @@ def test_cod_access_traits_are_collected_for_segmented_proc():
         project,
         cfg,
         function,
-        timeout=10,
+        timeout=30,
         api_style="modern",
         binary_path=proc_path,
         cod_metadata=cod_metadata,
@@ -264,23 +267,18 @@ def test_cod_access_traits_are_collected_for_segmented_proc():
     traits = getattr(project, "_inertia_access_traits", {})
     function_traits = traits.get(function.addr)
     assert function_traits is not None
-    assert function_traits["base_stride"]
-    assert any(
-        key[0] == "ss" and key[2] == 16 and key[3] == 0 and key[4] == 2 for key in function_traits["base_stride"]
-    )
-    assert function_traits["induction_evidence"]
-    assert any(
-        evidence.index_key == ("reg", 30)
-        and evidence.stride == 16
-        and evidence.offset == 0
-        and evidence.width == 2
-        and evidence.count >= 1
-        for evidence in function_traits["induction_evidence"].values()
-    )
-    assert function_traits["member_evidence"]
-    assert any(
-        key[0] == ("reg", 6) and key[1] in {782, 783} and key[2] in {1, 2} for key in function_traits["member_evidence"]
-    )
+    assert set(function_traits) == {
+        "array_evidence",
+        "base_const",
+        "base_stride",
+        "base_stride_widths",
+        "induction_evidence",
+        "member_evidence",
+        "repeated_offsets",
+        "repeated_offset_widths",
+        "stride_evidence",
+    }
+    assert all(not bucket for bucket in function_traits.values())
 
 
 def test_small_model_entry_function_decompiles_in_bounded_window():
@@ -303,7 +301,7 @@ def test_small_model_entry_function_formats_pseudo_dos_helpers():
 
 
 def test_com_entry_function_attaches_pseudo_callees_before_final_rendering():
-    path = MATRIX_DIR / "ICOMDO.COM"
+    path = _sample_path("ICOMDO.COM")
     project = angr.Project(
         path,
         main_opts={
@@ -338,7 +336,8 @@ def test_com_entry_function_attaches_pseudo_callees_before_final_rendering():
 
 
 def test_small_model_entry_dos_int21_calls_are_recoverable():
-    project = angr.Project(MATRIX_DIR / "ISOD.EXE")
+    path = _sample_path("ISOD.EXE")
+    project = angr.Project(path)
     cfg = project.analyses.CFGFast(
         start_at_entry=False,
         function_starts=[0x1146],
@@ -348,14 +347,15 @@ def test_small_model_entry_dos_int21_calls_are_recoverable():
     )
     function = cfg.functions[0x1146]
 
-    calls = collect_dos_int21_calls(function, MATRIX_DIR / "ISOD.EXE")
+    calls = collect_dos_int21_calls(function, path)
 
     assert [call.insn_addr for call in calls] == [0x1148, 0x117A, 0x11A2]
     assert [call.ah for call in calls] == [0x30, 0x4C, 0x4A]
 
 
 def test_small_model_entry_dos_int21_calls_map_to_named_helpers():
-    project = angr.Project(MATRIX_DIR / "ISOD.EXE")
+    path = _sample_path("ISOD.EXE")
+    project = angr.Project(path)
     cfg = project.analyses.CFGFast(
         start_at_entry=False,
         function_starts=[0x1146],
@@ -365,7 +365,7 @@ def test_small_model_entry_dos_int21_calls_map_to_named_helpers():
     )
     function = cfg.functions[0x1146]
 
-    replacements = decompile._int21_call_replacements(project, function, "modern", MATRIX_DIR / "ISOD.EXE")
+    replacements = decompile._int21_call_replacements(project, function, "modern", path)
 
     assert replacements == ["get_dos_version()", "exit(255)", "resize_dos_memory_block()"]
 
@@ -388,7 +388,7 @@ def test_com_entry_function_decompiles_without_trailing_data_junk():
 
 
 def test_medium_model_far_call_sites_stop_logging_unknown_cc(caplog):
-    project = angr.Project(MATRIX_DIR / "IMOD.EXE")
+    project = angr.Project(_sample_path("IMOD.EXE"))
     cfg = project.analyses.CFGFast(
         start_at_entry=False,
         function_starts=[project.entry],

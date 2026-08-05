@@ -59,6 +59,7 @@ class RegisterSsaIdentity8616:
     ident: int | str
     reg_offset: int
     width: int
+    vvar_id: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +123,7 @@ def _register_ssa_identity_8616(node: object) -> RegisterSsaIdentity8616 | None:
         ident=variable.ident,
         reg_offset=variable.reg,
         width=variable.size,
+        vvar_id=node.vvar_id if isinstance(node.vvar_id, int) and not isinstance(node.vvar_id, bool) else None,
     )
 
 
@@ -167,22 +169,30 @@ class _StructuredValueVisitor8616(Protocol):
         ...
 
 
-def _register_read_identities_8616(root: object) -> frozenset[RegisterSsaIdentity8616]:
-    """Collect register identities read outside direct assignment definitions."""
-    reads: set[RegisterSsaIdentity8616] = set()
+def _register_read_owner_ids_8616(
+    root: object,
+) -> dict[RegisterSsaIdentity8616, frozenset[int | None]]:
+    """Map register reads to their containing direct assignment, if any."""
+    mutable_reads: dict[RegisterSsaIdentity8616, set[int | None]] = {}
     active: set[int] = set()
+    assignment_owners: list[CAssignment] = []
 
     def visit(value: object) -> None:
         """Visit one structured-C node and distinguish definitions from reads."""
         if isinstance(value, CVariable):
             identity = _register_ssa_identity_8616(value)
             if identity is not None:
-                reads.add(identity)
+                owner = assignment_owners[-1] if assignment_owners else None
+                mutable_reads.setdefault(identity, set()).add(id(owner) if owner is not None else None)
             return
         if isinstance(value, CAssignment):
             if not isinstance(value.lhs, CVariable):
                 _walk_structured_values_8616(value.lhs, visit, active)
-            _walk_structured_values_8616(value.rhs, visit, active)
+            assignment_owners.append(value)
+            try:
+                _walk_structured_values_8616(value.rhs, visit, active)
+            finally:
+                assignment_owners.pop()
             return
         for attr in _structured_slot_names_8616(value):
             # Dynamic third-party angr structured-C child boundary.
@@ -190,7 +200,12 @@ def _register_read_identities_8616(root: object) -> frozenset[RegisterSsaIdentit
             _walk_structured_values_8616(child, visit, active)
 
     _walk_structured_values_8616(root, visit, active)
-    return frozenset(reads)
+    return {identity: frozenset(owners) for identity, owners in mutable_reads.items()}
+
+
+def _register_read_identities_8616(root: object) -> frozenset[RegisterSsaIdentity8616]:
+    """Collect register identities read outside direct assignment definitions."""
+    return frozenset(_register_read_owner_ids_8616(root))
 
 
 def _physical_register_read_identities_8616(root: object) -> frozenset[PhysicalRegisterIdentity8616]:
@@ -322,7 +337,7 @@ def prune_unread_stack_lowered_register_carriers_8616(codegen: object) -> bool:
     except AttributeError:
         stack_move_facts = ()
 
-    read_identities = _register_read_identities_8616(root)
+    read_owner_ids = _register_read_owner_ids_8616(root)
     raw = 0
     normalized = 0
     classified = 0
@@ -372,7 +387,7 @@ def prune_unread_stack_lowered_register_carriers_8616(codegen: object) -> bool:
         elif not has_stack_source:
             no_stack_refused += 1
             decision = LoweredRegisterCarrierDecision8616.NO_STACK_SOURCE
-        elif identity is not None and identity in read_identities:
+        elif identity is not None and any(owner != id(node) for owner in read_owner_ids.get(identity, ())):
             live_refused += 1
             decision = LoweredRegisterCarrierDecision8616.LIVE_USE
         else:

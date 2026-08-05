@@ -11,10 +11,11 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CVariable,
 )
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lowering.structured_intrinsics import (
+    lower_structured_insert_call_8616,
     lower_structured_insert_intrinsics_8616,
     prune_unused_structured_insert_intrinsics_8616,
 )
@@ -87,6 +88,23 @@ def test_complete_insert_intrinsic_lowers_to_exact_little_endian_bit_insert() ->
     assert stats.failure_count == 0
 
 
+def test_insert_intrinsic_uses_wider_result_type_after_base_is_narrowed() -> None:
+    codegen = _DummyCodegen()
+    base = CVariable(SimRegisterVariable(0, 1, ident=1, region=0x1000), codegen=codegen)
+    offset = _constant(1, codegen)
+    value = CConstant(0, SimTypeChar(False), codegen=codegen)
+    insert = CFunctionCall("_INSERT", None, [base, offset, value], codegen=codegen)
+
+    lowered = lower_structured_insert_call_8616(insert)
+
+    assert isinstance(lowered, CBinaryOp)
+    assert lowered.op == "Or"
+    assert isinstance(lowered.lhs, CBinaryOp)
+    assert lowered.lhs.rhs.value == 0xFF
+    assert isinstance(lowered.rhs, CBinaryOp)
+    assert lowered.rhs.op == "Shl"
+
+
 def test_direct_unused_insert_expression_is_removed_from_statement_list() -> None:
     codegen = _DummyCodegen()
     insert = CFunctionCall("_INSERT", None, [_constant(3, codegen)], codegen=codegen)
@@ -121,6 +139,20 @@ def test_insert_assignment_with_exact_carrier_read_is_retained() -> None:
     insert = CFunctionCall("_INSERT", None, [_constant(3, codegen)], codegen=codegen)
     assignment = CAssignment(carrier_lhs, insert, codegen=codegen)
     read_statement = CExpressionStatement(carrier_read, codegen=codegen)
+    codegen.cfunc.statements = CStatements([assignment, read_statement], codegen=codegen)
+
+    changed = prune_unused_structured_insert_intrinsics_8616(codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [assignment, read_statement]
+
+
+def test_insert_assignment_with_shared_carrier_node_read_is_retained() -> None:
+    codegen = _DummyCodegen()
+    carrier = CVariable(SimRegisterVariable(0, 2, ident=1, region=0x1000), codegen=codegen)
+    insert = CFunctionCall("_INSERT", None, [_constant(3, codegen)], codegen=codegen)
+    assignment = CAssignment(carrier, insert, codegen=codegen)
+    read_statement = CExpressionStatement(carrier, codegen=codegen)
     codegen.cfunc.statements = CStatements([assignment, read_statement], codegen=codegen)
 
     changed = prune_unused_structured_insert_intrinsics_8616(codegen)

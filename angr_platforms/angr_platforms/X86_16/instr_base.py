@@ -36,6 +36,7 @@ from .emu import EmuInstr
 from .exception import EXP_GP
 from .exec import ExecInstr, OpcodeExecHandler
 from .instruction import CHK_IMM8, CHK_IMM16, CHK_MODRM, CHK_MOFFS, MAX_OPCODE, InstrData, InstrFlags
+from .interrupt_contract import interrupt_core_addr_8616
 from .parse import ParseInstr
 from .regs import coerce_reg8_t, coerce_reg32_t, reg8_t, reg16_t
 from .stack_helpers import StackEmulator, branch_rel8, return_far16, return_interrupt16
@@ -147,8 +148,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         sf(0xA0, self.mov_al_moffs8, CHK_MOFFS)
         sf(0xA2, self.mov_moffs8_al, CHK_MOFFS)
         sf(0xA8, self.test_al_imm8, CHK_IMM8)
-        for i in range(8):
-            sf(0xB0 + i, self.mov_r8_imm8, CHK_IMM8)
+        self._register_opcode_range(0xB0, 0xB7, self.mov_r8_imm8, CHK_IMM8)
         sf(0xC6, self.mov_rm8_imm8, CHK_MODRM | CHK_IMM8)
         sf(0xCA, self.retf_imm16, CHK_IMM16)
         sf(0xCB, self.retf, 0)
@@ -889,7 +889,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         # Model real-mode interrupts as synthetic call targets so CFG/decompilation
         # can treat them like normal helper functions.
         self.emu.set_gpreg(reg16_t.IP, self.emu.constant(self.instr.imm8, Type.int_16))
-        lifter_instruction.jump(None, 0xFF000 + self.instr.imm8, JumpKind.Call)
+        lifter_instruction.jump(None, interrupt_core_addr_8616(self.instr.imm8), JumpKind.Call)
 
     def iret(self) -> None:
         """Execute decoded ``IRET`` semantics through frontend emulator effects."""

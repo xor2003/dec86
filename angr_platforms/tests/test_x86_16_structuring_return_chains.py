@@ -10,9 +10,12 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CIfElse,
     CReturn,
     CStatements,
+    CVariable,
 )
 from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimRegisterVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.callsite_summary import CallerReturnUseVerdict8616
 from angr_platforms.X86_16.structuring.return_chains import (
     BranchTargetReturnBlockResult8616,
     BranchTargetReturnScanCallbacks8616,
@@ -44,6 +47,7 @@ from angr_platforms.X86_16.structuring.return_chains import (
     TerminalAxReturnEffect8616,
     TerminalAxReturnEffectKind8616,
     TerminalAxScanCallbacks8616,
+    TerminalCallResultContract8616,
     TerminalCallResultReturnCallbacks8616,
     TerminalCallResultReturnStatus8616,
     VoidTailCallGuardProof8616,
@@ -249,6 +253,7 @@ def _terminal_call_callbacks(
     blocks,
     block_ranges,
     successors,
+    call_result_contract=lambda _call: TerminalCallResultContract8616.UNKNOWN,
 ) -> TerminalCallResultReturnCallbacks8616:
     return TerminalCallResultReturnCallbacks8616(
         iter_c_nodes_deep=_iter_nodes,
@@ -256,6 +261,7 @@ def _terminal_call_callbacks(
         load_block=lambda addr, _size: blocks.get(addr),
         successor_addrs=lambda addr: successors.get(addr, ()),
         branch_target_imm=lambda insn: getattr(insn, "target", None),
+        call_result_contract=call_result_contract,
     )
 
 
@@ -316,7 +322,12 @@ def _empty_if_callbacks(
 
     return ReturnChainEmptyIfCallbacks8616(
         ordered_return_values=lambda _project, _codegen: list(ordered_values or []),
-        selector_function_has_unsafe_effects=lambda _project, _codegen: unsafe_effects,
+        selector_function_has_unsafe_effects=lambda _project, _codegen, allowed: unsafe_effects and not allowed,
+        condition_call_addrs=lambda conditions: frozenset(
+            int(condition.tags["condition_call_ins_addr"])
+            for condition in conditions
+            if isinstance(condition.tags.get("condition_call_ins_addr"), int)
+        ),
         condition_branch_return_value=lambda _project, _cond: None,
         condition_branch_is_non_branch=lambda _project, _cond: False,
         condition_tags=lambda cond: getattr(cond, "condition_key", None),
@@ -814,11 +825,20 @@ def _selector_callbacks(
     )
 
 
-def _proof_callbacks(jcc_entries, return_values) -> ReturnChainProofCallbacks8616:
+def _proof_callbacks(jcc_entries, return_values, call_addrs=None) -> ReturnChainProofCallbacks8616:
     def _decoded_condition(_project, codegen, decoded, tags):
         expr = _const(int(decoded), codegen)
         expr.tags = dict(tags or {})
         return expr
+
+    def _condition_key(cond):
+        key = getattr(cond, "condition_key", None)
+        if key is not None:
+            return key
+        tags = getattr(cond, "tags", None)
+        if isinstance(tags, dict):
+            return tags.get("ins_addr"), tags.get("vex_block_addr")
+        return None
 
     return ReturnChainProofCallbacks8616(
         linear_jcc_block_starts=lambda _project, _codegen: tuple(jcc_entries),
@@ -826,7 +846,9 @@ def _proof_callbacks(jcc_entries, return_values) -> ReturnChainProofCallbacks861
         branch_target_return_value=lambda _project, target: return_values.get(int(target)),
         decoded_condition_expr=_decoded_condition,
         translate_cmp_jcc_guard=lambda _project, _codegen, _block_addr, jcc_addr: jcc_addr,
-        condition_tags=lambda cond: getattr(cond, "condition_key", None),
+        last_call_addr_before_jcc=lambda _project, _codegen, jcc_addr: (call_addrs or {}).get(jcc_addr),
+        condition_tags=_condition_key,
+        iter_c_nodes_deep=_iter_nodes,
     )
 
 
@@ -866,15 +888,22 @@ def test_structuring_return_chain_flattening_rebuilds_cfg_proven_chain():
 def test_structuring_return_chain_orders_cfg_proven_pairs_and_values():
     project = SimpleNamespace(arch=Arch86_16())
     codegen = _DummyCodegen()
+    structured_first = _const(0x55, codegen)
+    structured_first.tags = {"ins_addr": 0x1010, "vex_block_addr": 0x1000}
+    branch = CIfElse([(structured_first, CStatements([], codegen=codegen))], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=CStatements([branch], codegen=codegen))
     first_jcc = SimpleNamespace(address=0x1010, target=0x1200)
     second_jcc = SimpleNamespace(address=0x1020, target=0x1220)
-    callbacks = _proof_callbacks(((0x1000, first_jcc), (0x1018, second_jcc)), {0x1200: 7, 0x1220: 9})
+    callbacks = _proof_callbacks(
+        ((0x1000, first_jcc), (0x1018, second_jcc)),
+        {0x1200: 7, 0x1220: 9},
+    )
 
     pairs = ordered_conditional_return_pairs_from_cfg_8616(project, codegen, callbacks)
     values = ordered_conditional_return_values_8616(project, codegen, callbacks)
 
     assert values == [7, 9]
-    assert [(pair[0].value, pair[1]) for pair in pairs] == [(0x1010, 7), (0x1020, 9)]
+    assert [(pair[0].value, pair[1]) for pair in pairs] == [(0x55, 7), (0x1020, 9)]
     assert [pair[0].tags for pair in pairs] == [
         {"ins_addr": 0x1010, "vex_block_addr": 0x1000},
         {"ins_addr": 0x1020, "vex_block_addr": 0x1018},
@@ -2246,7 +2275,7 @@ def test_structuring_terminal_call_result_materializes_exact_cfg_proven_return()
     stats = materialize_terminal_call_result_return_8616(
         root,
         codegen,
-        caller_use_proven=True,
+        caller_use=CallerReturnUseVerdict8616.USED,
         callbacks=_terminal_call_callbacks(
             blocks,
             ((0x100, 6), (0x106, 5), (0x10B, 2)),
@@ -2293,7 +2322,7 @@ def test_structuring_terminal_call_result_connects_adjacent_transparent_wrappers
     stats = materialize_terminal_call_result_return_8616(
         root,
         codegen,
-        caller_use_proven=True,
+        caller_use=CallerReturnUseVerdict8616.USED,
         callbacks=callbacks,
     )
 
@@ -2302,6 +2331,54 @@ def test_structuring_terminal_call_result_connects_adjacent_transparent_wrappers
     assert isinstance(root.statements[0], CReturn)
     assert root.statements[0].retval is call
     assert root.statements[0].tags == {"ins_addr": 0x109}
+
+
+def test_structuring_terminal_call_result_folds_exact_carrier_return():
+    codegen = _DummyCodegen()
+    call = CFunctionCall("apply_twice", None, [], tags={"ins_addr": 0x104}, codegen=codegen)
+    carrier = CVariable(
+        SimRegisterVariable(0, 2, name="result"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    call_container = CStatements(
+        statements=[
+            CExpressionStatement(_const(1, codegen), codegen=codegen),
+            CAssignment(carrier, call, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    return_container = CStatements(
+        statements=[
+            CExpressionStatement(_const(2, codegen), codegen=codegen),
+            CReturn(carrier, tags={"ins_addr": 0x109}, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    root = CStatements(
+        statements=[call_container, return_container], codegen=codegen
+    )
+
+    stats = materialize_terminal_call_result_return_8616(
+        root,
+        codegen,
+        caller_use=CallerReturnUseVerdict8616.USED,
+        callbacks=_terminal_call_callbacks(
+            {
+                0x100: _block(_insn_at(0x104, _Insn("call"))),
+                0x106: _block(_insn_at(0x106, _Insn("ret"))),
+            },
+            ((0x100, 6), (0x106, 1)),
+            {0x100: (0x106,), 0x106: ()},
+        ),
+    )
+
+    assert stats.status is TerminalCallResultReturnStatus8616.MATERIALIZED
+    assert len(call_container.statements) == 1
+    assert len(return_container.statements) == 2
+    assert isinstance(return_container.statements[1], CReturn)
+    assert return_container.statements[1].retval is call
+    assert return_container.statements[1].tags == {"ins_addr": 0x109}
 
 
 def test_structuring_terminal_call_result_is_idempotent_after_materialization():
@@ -2320,7 +2397,7 @@ def test_structuring_terminal_call_result_is_idempotent_after_materialization():
     stats = materialize_terminal_call_result_return_8616(
         root,
         codegen,
-        caller_use_proven=True,
+        caller_use=CallerReturnUseVerdict8616.USED,
         callbacks=callbacks,
     )
 
@@ -2340,11 +2417,61 @@ def test_structuring_terminal_call_result_refuses_unproven_caller_use():
     stats = materialize_terminal_call_result_return_8616(
         root,
         codegen,
-        caller_use_proven=False,
+        caller_use=CallerReturnUseVerdict8616.UNKNOWN,
         callbacks=_terminal_call_callbacks({}, (), {}),
     )
 
     assert stats.status is TerminalCallResultReturnStatus8616.CALLER_USE_NOT_PROVEN
+    assert stats.failure_count == 1
+    assert tuple(root.statements) == (call_statement, empty_return)
+
+
+def test_structuring_terminal_call_result_closed_unused_overrides_local_carrier():
+    codegen = _DummyCodegen()
+    call = CFunctionCall("outtext", None, [], tags={"ins_addr": 0x104}, codegen=codegen)
+    carrier = CVariable(
+        SimRegisterVariable(0, 2, name="result"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    assignment = CAssignment(carrier, call, codegen=codegen)
+    returned_carrier = CReturn(carrier, codegen=codegen)
+    root = CStatements([assignment, returned_carrier], codegen=codegen)
+
+    stats = materialize_terminal_call_result_return_8616(
+        root,
+        codegen,
+        caller_use=CallerReturnUseVerdict8616.UNUSED,
+        callbacks=_terminal_call_callbacks({}, (), {}),
+    )
+
+    assert stats.status is TerminalCallResultReturnStatus8616.CALLER_USE_PROVEN_UNUSED
+    assert stats.materialized_count == stats.failure_count == 0
+    assert tuple(root.statements) == (assignment, returned_carrier)
+
+
+def test_structuring_terminal_call_result_refuses_explicit_void_callee():
+    codegen = _DummyCodegen()
+    call = CFunctionCall("outtext", None, [], tags={"ins_addr": 0x104}, codegen=codegen)
+    call_statement = CExpressionStatement(call, codegen=codegen)
+    empty_return = CReturn(None, codegen=codegen)
+    root = CStatements(statements=[call_statement, empty_return], codegen=codegen)
+    callbacks = _terminal_call_callbacks(
+        {},
+        (),
+        {},
+        call_result_contract=lambda _call: TerminalCallResultContract8616.VOID,
+    )
+
+    stats = materialize_terminal_call_result_return_8616(
+        root,
+        codegen,
+        caller_use=CallerReturnUseVerdict8616.USED,
+        callbacks=callbacks,
+    )
+
+    assert stats.status is TerminalCallResultReturnStatus8616.CALLEE_RETURNS_VOID
+    assert stats.materialized_count == 0
     assert stats.failure_count == 1
     assert tuple(root.statements) == (call_statement, empty_return)
 
@@ -2360,7 +2487,7 @@ def test_structuring_terminal_call_result_refuses_missing_exact_call_tag():
     stats = materialize_terminal_call_result_return_8616(
         root,
         codegen,
-        caller_use_proven=True,
+        caller_use=CallerReturnUseVerdict8616.USED,
         callbacks=_terminal_call_callbacks({}, (), {}),
     )
 
@@ -2388,7 +2515,7 @@ def test_structuring_terminal_call_result_refuses_ax_clobber_after_call():
     stats = materialize_terminal_call_result_return_8616(
         root,
         codegen,
-        caller_use_proven=True,
+        caller_use=CallerReturnUseVerdict8616.USED,
         callbacks=_terminal_call_callbacks(blocks, ((0x100, 10),), {0x100: ()}),
     )
 
@@ -2410,7 +2537,7 @@ def test_structuring_terminal_call_result_refuses_ambiguous_cfg_successors():
     stats = materialize_terminal_call_result_return_8616(
         root,
         codegen,
-        caller_use_proven=True,
+        caller_use=CallerReturnUseVerdict8616.USED,
         callbacks=_terminal_call_callbacks(
             blocks,
             ((0x100, 6), (0x106, 1), (0x108, 1)),
@@ -2438,7 +2565,7 @@ def test_structuring_terminal_call_result_refuses_non_adjacent_ast_pair():
     stats = materialize_terminal_call_result_return_8616(
         root,
         codegen,
-        caller_use_proven=True,
+        caller_use=CallerReturnUseVerdict8616.USED,
         callbacks=_terminal_call_callbacks({}, (), {}),
     )
 

@@ -8,6 +8,23 @@ unsigned char mix_uc(unsigned char a, unsigned char b)
     return (unsigned char)((a << 1) ^ b);
 }
 
+unsigned short byteops_unsigned(void)
+{
+    unsigned char a;
+    unsigned char b;
+
+    a = 255;
+    b = 143;
+    b = a + b;
+    a = a - b;
+    a = a * b;
+    b = b / a;
+    b = b % a;
+    a = a << 5;
+    b = b >> a;
+    return ((unsigned short)a << 8) | b;
+}
+
 short sub_ss(short a, short b)
 {
     return (short)(a - b);
@@ -83,6 +100,9 @@ int main(void)
     }
     if (mix_uc(7, 3) != (unsigned char)13) {
         return 2;
+    }
+    if (byteops_unsigned() != 0xC000U) {
+        return 13;
     }
     if (sub_ss(9, 4) != 5) {
         return 3;

@@ -55,11 +55,21 @@ def test_unit_lane_promotes_test_ownership_manifest_contract():
     assert "angr_platforms/tests/test_test_ownership_manifest.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
 
 
+def test_unit_lane_promotes_corpus_scan_timeout_contract():
+    assert "angr_platforms/tests/test_x86_16_corpus_scan_timeout.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
+
+
 def test_unit_lane_promotes_type_ratchet_contract():
     assert "angr_platforms/tests/test_check_changed_non_test_types.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
 
 
-def test_unit_lane_promotes_decompilation_cache_surface_contract():
+def test_unit_lane_promotes_segmented_runtime_and_cache_contracts():
+    assert "angr_platforms/tests/test_x86_16_segment_access_policy.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
+    assert "angr_platforms/tests/test_x86_16_segment_address_policy.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
+    assert "angr_platforms/tests/test_x86_16_segment_state.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
+    assert "angr_platforms/tests/test_x86_16_vex_import.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
+    assert "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
+    assert "angr_platforms/tests/test_x86_16_direct_stack_move_loop_entries.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
     assert "angr_platforms/tests/test_x86_16_decompilation_cache_surface.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
 
 
@@ -73,6 +83,9 @@ def test_unit_lane_promotes_ultradecompiler_borrow_contracts():
 def test_default_tier_keeps_full_msc6_tiny_pipeline():
     args = test_pipeline._parse_args([])
 
+    assert args.ultra_quickc_decompile_timeout == 180
+    assert args.sortdemo_decompile_timeout == 240
+    assert args.sortdemo_run_timeout == 2400
     assert test_pipeline._selected_lanes(args) == (
         "unit-focused",
         "ultra-quickc-fixtures",
@@ -168,6 +181,18 @@ def test_makefile_focused_type_ratchet_is_fatal():
     assert "type-ratchet-files:" in makefile
 
 
+def test_makefile_dce_type_batch_is_mandatory_and_bounded():
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "PYRIGHT_DCE_TIMEOUT ?= 600" in makefile
+    assert (
+        "$(TIMEOUT) --foreground $(PYRIGHT_DCE_TIMEOUT) $(PYTHON) -m pyright "
+        "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py"
+        in makefile
+    )
+    assert "split its oversized function instead of suppressing types" in makefile
+
+
 def test_msc6_workers_default_to_serial_until_shared_state_is_isolated():
     args = test_pipeline._parse_args([])
 
@@ -188,6 +213,19 @@ def test_lane_result_records_duration_budget(monkeypatch):
     assert result.budget_status == test_pipeline.BudgetStatus.PASSED
 
 
+def test_sortdemo_lane_budget_exceeds_its_internal_run_timeout():
+    args = test_pipeline._parse_args([])
+
+    assert (
+        test_pipeline.LANE_BUDGET_SECONDS["sortdemo-status"]
+        >= args.sortdemo_run_timeout + 60
+    )
+    assert (
+        test_pipeline.LANE_BUDGET_SECONDS["sortdemo-status-proc-diagnostic"]
+        >= args.sortdemo_run_timeout + 60
+    )
+
+
 def test_unit_lane_reports_slow_pytest_durations(monkeypatch):
     captured: list[list[str]] = []
 
@@ -202,6 +240,8 @@ def test_unit_lane_reports_slow_pytest_durations(monkeypatch):
     assert result.status == test_pipeline.LaneStatus.PASSED
     assert captured
     assert "--durations=25" in captured[0]
+    assert captured[0][captured[0].index("-n") + 1] == "7"
+    assert captured[0][captured[0].index("--dist") + 1] == "loadgroup"
     assert "--durations-min=1.0" in captured[0]
 
 
@@ -291,7 +331,7 @@ def test_ultra_quickc_fixture_lane_runs_importer_through_pipeline(monkeypatch, t
     assert cmd[cmd.index("--kvikdos") + 1] == str(kvikdos)
     assert cmd[cmd.index("--quickc-root") + 1] == str(quickc_root)
     assert cmd[cmd.index("--output-root") + 1] == str(tmp_path / "out")
-    assert cmd[cmd.index("--decompile-timeout") + 1] == "60"
+    assert cmd[cmd.index("--decompile-timeout") + 1] == "180"
 
 
 def test_ultra_quickc_fixture_lane_reports_missing_nested_report(monkeypatch, tmp_path):
@@ -488,9 +528,10 @@ def test_msc6_tiny_lane_uses_build_examples_full_pipeline(monkeypatch, tmp_path)
         "msc6-tiny:simple_control",
         "msc6-tiny:loops_jumps",
         "msc6-tiny:storage_classes",
-        "msc6-tiny:function_pointers",
-        "msc6-tiny:pointer_memory",
-    ]
+            "msc6-tiny:function_pointers",
+            "msc6-tiny:pointer_memory",
+            "msc6-tiny:scalar_types_io",
+        ]
 
 
 def test_msc6_tiny_smoke_lane_uses_per_construct_output_dir(monkeypatch, tmp_path):
@@ -729,12 +770,11 @@ def test_sortdemo_status_lane_uses_normal_whole_binary_harness(monkeypatch, tmp_
 def test_sortd_sidecar_free_lane_uses_executable_only_ratchet(monkeypatch, tmp_path):
     binary = tmp_path / "SORTDEMO.EXE"
     binary.write_bytes(b"MZ")
-    captured: list[list[str]] = []
+    captured: list[tuple[str, list[str]]] = []
 
     def fake_run_command(name, cmd, *, env=None):
-        assert name == "sortd-sidecar-free"
         assert env is None
-        captured.append(cmd)
+        captured.append((name, cmd))
         return test_pipeline.LaneResult(name, test_pipeline.LaneStatus.PASSED, cmd, 0.1, returncode=0)
 
     monkeypatch.setattr(test_pipeline, "_run_command", fake_run_command)
@@ -756,11 +796,29 @@ def test_sortd_sidecar_free_lane_uses_executable_only_ratchet(monkeypatch, tmp_p
     result = test_pipeline._sortd_sidecar_free_lane(args)
 
     assert result.status == test_pipeline.LaneStatus.PASSED
-    assert captured
-    cmd = captured[0]
+    assert tuple(name for name, _cmd in captured) == (
+        "sortd-sidecar-free",
+        "sortd-generated-translation-unit",
+        "sortd-generated-sort-core",
+    )
+    cmd = captured[0][1]
     assert cmd[:2] == [test_pipeline.sys.executable, "scripts/check_sortd_sidecar_free.py"]
     assert cmd[cmd.index("--source-binary") + 1] == str(binary)
     assert cmd[cmd.index("--run-timeout") + 1] == "123"
+    translation_unit_cmd = captured[1][1]
+    assert translation_unit_cmd[:2] == [
+        test_pipeline.sys.executable,
+        "scripts/check_generated_translation_unit.py",
+    ]
+    assert "--function-c-dir" in translation_unit_cmd
+    behavior_cmd = captured[2][1]
+    assert behavior_cmd[:2] == [
+        test_pipeline.sys.executable,
+        "scripts/check_sortd_generated_sort_core.py",
+    ]
+    assert behavior_cmd[behavior_cmd.index("--transcript") + 1] == str(
+        tmp_path / "sortd.txt"
+    )
 
 
 def test_sortdemo_proc_status_lane_is_explicitly_diagnostic(monkeypatch, tmp_path):

@@ -99,13 +99,19 @@ def _destination_base_for_family(family: str) -> tuple[str, ...]:
 
 
 def _segment_state_status(
-    segment: str | None, segment_state_artifact: SegmentStateArtifact | None
+    segment: str | None,
+    segment_state_artifact: SegmentStateArtifact | None,
+    instruction_addr: int | None,
 ) -> AddressStatus:
     if segment_state_artifact is None:
         return AddressStatus.PROVISIONAL
     if segment is None:
         return AddressStatus.UNKNOWN
-    state = segment_state_artifact.state_for_register(segment)
+    state = (
+        segment_state_artifact.state_before_instruction(instruction_addr, segment)
+        if instruction_addr is not None
+        else segment_state_artifact.state_for_register(segment)
+    )
     if state is None:
         return AddressStatus.PROVISIONAL
     if state.origin == SegmentOrigin.PROVEN:
@@ -120,6 +126,7 @@ def _typed_address(
     expr: str,
     *,
     segment_state_artifact: SegmentStateArtifact | None = None,
+    instruction_addr: int | None = None,
 ) -> IRAddress | None:
     space = _space_for_segment(segment)
     if space is None:
@@ -129,7 +136,7 @@ def _typed_address(
         base=base,
         offset=0,
         size=width,
-        status=_segment_state_status(segment, segment_state_artifact),
+        status=_segment_state_status(segment, segment_state_artifact, instruction_addr),
         segment_origin=SegmentOrigin.PROVEN,
         expr=(expr,),
     )
@@ -153,6 +160,7 @@ def _typed_record(
             record.width,
             f"{record.family}_source",
             segment_state_artifact=segment_state_artifact,
+            instruction_addr=record.instruction_addr,
         ),
         destination=_typed_address(
             record.destination_segment,
@@ -160,6 +168,7 @@ def _typed_record(
             record.width,
             f"{record.family}_destination",
             segment_state_artifact=segment_state_artifact,
+            instruction_addr=record.instruction_addr,
         ),
         zf_sensitive=record.zf_sensitive,
         zero_seeded_accumulator=record.zero_seeded_accumulator,

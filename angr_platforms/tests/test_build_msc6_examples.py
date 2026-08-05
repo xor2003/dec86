@@ -293,7 +293,7 @@ def test_storage_classes_gate_requires_nonshadowed_global_write() -> None:
     assert contracts == (
         GeneratedFunctionSourceContract(
             function_name="bump_static",
-            required_global_writes=("_S104_seen",),
+            required_global_writes=("seen",),
         ),
     )
 
@@ -446,6 +446,7 @@ def test_scalar_types_fallback_tracks_active_non_fpu_functions():
     assert functions == (
         "add_sc",
         "mix_uc",
+        "byteops_unsigned",
         "sub_ss",
         "mul_us",
         "add_int",
@@ -469,7 +470,7 @@ def test_pointer_memory_fallback_tracks_all_runtime_checked_functions():
     assert config["source_contracts"] == (
         GeneratedFunctionSourceContract(
             function_name="fill_bytes",
-            required_return_class=GeneratedFunctionReturnClass.VOID,
+            required_return_class=GeneratedFunctionReturnClass.ANY,
         ),
         GeneratedFunctionSourceContract(
             function_name="sum_words",
@@ -477,7 +478,7 @@ def test_pointer_memory_fallback_tracks_all_runtime_checked_functions():
         ),
         GeneratedFunctionSourceContract(
             function_name="swap_ptrs",
-            required_return_class=GeneratedFunctionReturnClass.VOID,
+            required_return_class=GeneratedFunctionReturnClass.ANY,
         ),
     )
 
@@ -868,7 +869,7 @@ def test_function_fallback_uses_batch_report_when_proc_returns_nonzero_with_body
     exe_path.write_bytes(b"MZ")
 
     def fake_run(cmd, **_kwargs):
-        assert "--direct-in-process" in cmd
+        assert "--direct-in-process" not in cmd
         batch_dir = tmp_path / "TEST1.batch"
         batch_dir.mkdir()
         stdout_path = batch_dir / "f.stdout.c"

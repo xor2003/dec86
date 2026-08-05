@@ -102,11 +102,10 @@ class Instr32(InstrBase):
         sf(0x3B, self.cmp_r32_rm32, CHK_MODRM)
         sf(0x3D, self.cmp_eax_imm32, CHK_IMM32)
 
-        for i in range(8):
-            sf(0x40 + i, self.inc_r32, 0)
-            sf(0x48 + i, self.dec_r32, 0)
-            sf(0x50 + i, self.push_r32, 0)
-            sf(0x58 + i, self.pop_r32, 0)
+        self._register_opcode_range(0x40, 0x47, self.inc_r32, 0)
+        self._register_opcode_range(0x48, 0x4F, self.dec_r32, 0)
+        self._register_opcode_range(0x50, 0x57, self.push_r32, 0)
+        self._register_opcode_range(0x58, 0x5F, self.pop_r32, 0)
 
         sf(0x60, self.pushad, 0)
         sf(0x61, self.popad, 0)
@@ -121,8 +120,7 @@ class Instr32(InstrBase):
         sf(0x8C, self.mov_rm32_sreg, CHK_MODRM)
         sf(0x8D, self.lea_r32_m32, CHK_MODRM)
 
-        for i in range(1, 8):
-            sf(0x90 + i, self.xchg_r32_eax, CHK_IMM32)
+        self._register_opcode_range(0x91, 0x97, self.xchg_r32_eax, CHK_IMM32)
 
         sf(0x98, self.cwde, 0)
         sf(0x99, self.cdq, 0)
@@ -135,8 +133,7 @@ class Instr32(InstrBase):
         sf(0xA7, self.cmps_m32_m32, 0)
         sf(0xA9, self.test_eax_imm32, CHK_IMM32)
 
-        for i in range(8):
-            sf(0xB8 + i, self.mov_r32_imm32, CHK_IMM32)
+        self._register_opcode_range(0xB8, 0xBF, self.mov_r32_imm32, CHK_IMM32)
 
         sf(0xC3, self.ret, 0)
         sf(0xC7, self.mov_rm32_imm32, CHK_MODRM | CHK_IMM32)

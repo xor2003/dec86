@@ -9,47 +9,43 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, cast
 
-from .core import IRBlock, IRFunctionArtifact, IRInstr, IRValue, MemSpace, SegmentOrigin
+from .core import IRFunctionArtifact, IRValue, MemSpace, SegmentOrigin
+from .segment_state_solver import solve_segment_state_8616
+from .segment_state_transfer import (
+    SEGMENT_REGISTERS,
+    InstructionStateKey,
+    SegmentRegisterState,
+    SegmentRestoreSource,
+    SegmentValueKind8616,
+    join_register_states,
+)
 from .ssa_function import SSAFunctionArtifact
 
 __all__ = [
     "SegmentRegisterState",
+    "SegmentRestoreSource",
+    "SegmentValueKind8616",
     "SegmentStateArtifact",
     "apply_x86_16_segment_state_artifact",
     "build_x86_16_segment_state_artifact",
 ]
-
-_SEGMENT_REGS = ("cs", "ds", "es", "ss", "fs", "gs")
-
 
 class _SegmentStateCodegenBoundary(Protocol):
     """Dynamic codegen attributes consumed and produced by this IR attachment."""
 
     _inertia_vex_ir_artifact: object
     _inertia_vex_ir_function_ssa: object
+    _inertia_segment_stack_restore_artifact: object
     _inertia_segment_state_artifact: SegmentStateArtifact
 
 
-@dataclass(frozen=True, slots=True)
-class SegmentRegisterState:
-    """Proven state for one segment register at a block boundary."""
+class _SegmentRestoreEvidenceSurface(Protocol):
+    """Alias-owned restore evidence consumed through a typed IR relation."""
 
-    register: str
-    value_kind: str
-    source: str | None
-    origin: SegmentOrigin
-
-    def to_dict(self) -> dict[str, object]:
-        """Return a deterministic JSON-friendly representation."""
-        return {
-            "register": self.register,
-            "value_kind": self.value_kind,
-            "source": self.source,
-            "origin": self.origin.value,
-        }
+    restore_sources: tuple[SegmentRestoreSource, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,14 +55,47 @@ class SegmentStateArtifact:
     entry_states: dict[int, dict[str, SegmentRegisterState]]
     exit_states: dict[int, dict[str, SegmentRegisterState]]
     summary: dict[str, object]
+    instruction_entry_states: dict[InstructionStateKey, dict[str, SegmentRegisterState]] = field(default_factory=dict)
+    instruction_exit_states: dict[InstructionStateKey, dict[str, SegmentRegisterState]] = field(default_factory=dict)
 
     def state_for_register(self, register: str) -> SegmentRegisterState | None:
-        """Return a proven state for `register` if any exit state proves it."""
-        for state_map in self.exit_states.values():
-            state = state_map.get(register)
-            if state is not None and state.origin == SegmentOrigin.PROVEN:
-                return state
-        return None
+        """Return the one proven identity held throughout the function."""
+        observed = tuple(
+            state
+            for state_map in (
+                *self.entry_states.values(),
+                *self.exit_states.values(),
+                *self.instruction_entry_states.values(),
+                *self.instruction_exit_states.values(),
+            )
+            if (state := state_map.get(register)) is not None
+        )
+        joined = join_register_states(observed, register)
+        return joined if joined.origin is SegmentOrigin.PROVEN else None
+
+    def state_at_block_entry(self, block_addr: int, register: str) -> SegmentRegisterState | None:
+        """Return the exact state before one IR block when available."""
+        return self.entry_states.get(block_addr, {}).get(register)
+
+    def state_at_block_exit(self, block_addr: int, register: str) -> SegmentRegisterState | None:
+        """Return the exact state after one IR block when available."""
+        return self.exit_states.get(block_addr, {}).get(register)
+
+    def state_before_instruction(
+        self,
+        instruction_addr: int,
+        register: str,
+    ) -> SegmentRegisterState | None:
+        """Return the exact state immediately before one typed IR instruction."""
+        return self.instruction_entry_states.get(instruction_addr, {}).get(register)
+
+    def state_after_instruction(
+        self,
+        instruction_addr: int,
+        register: str,
+    ) -> SegmentRegisterState | None:
+        """Return the exact state immediately after one typed IR instruction."""
+        return self.instruction_exit_states.get(instruction_addr, {}).get(register)
 
     def to_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-friendly representation."""
@@ -79,155 +108,79 @@ class SegmentStateArtifact:
                 hex(addr): {name: state.to_dict() for name, state in sorted(states.items())}
                 for addr, states in sorted(self.exit_states.items())
             },
+            "instruction_entry_states": {
+                _instruction_state_key_text(key): {name: state.to_dict() for name, state in sorted(states.items())}
+                for key, states in sorted(self.instruction_entry_states.items(), key=lambda item: str(item[0]))
+            },
+            "instruction_exit_states": {
+                _instruction_state_key_text(key): {name: state.to_dict() for name, state in sorted(states.items())}
+                for key, states in sorted(self.instruction_exit_states.items(), key=lambda item: str(item[0]))
+            },
             "summary": dict(self.summary),
         }
 
 
-def _unknown_state(register: str) -> SegmentRegisterState:
-    return SegmentRegisterState(register=register, value_kind="unknown", source=None, origin=SegmentOrigin.UNKNOWN)
-
-
-def _architectural_live_in_state(register: str) -> SegmentRegisterState:
-    """Return the defined, value-unknown segment state at function entry."""
-    return SegmentRegisterState(
-        register=register,
-        value_kind="architectural_live_in",
-        source=register,
-        origin=SegmentOrigin.PROVEN,
-    )
-
-
-def _join_register_states(states: tuple[SegmentRegisterState, ...], register: str) -> SegmentRegisterState:
-    known = [state for state in states if state.origin != SegmentOrigin.UNKNOWN]
-    if not known:
-        return _unknown_state(register)
-    first = known[0]
-    if all(
-        (state.value_kind, state.source, state.origin) == (first.value_kind, first.source, first.origin)
-        for state in known[1:]
-    ):
-        return first
-    return SegmentRegisterState(register=register, value_kind="merged", source=None, origin=SegmentOrigin.UNKNOWN)
-
-
-def _join_entry_state(
-    predecessor_map: dict[int, tuple[int, ...]],
-    exit_states: dict[int, dict[str, SegmentRegisterState]],
-    block_addr: int,
-    function_addr: int,
-) -> dict[str, SegmentRegisterState]:
-    preds = predecessor_map.get(block_addr, ())
-    if not preds and block_addr != function_addr:
-        return {register: _unknown_state(register) for register in _SEGMENT_REGS}
-    return {
-        register: _join_register_states(
-            (
-                ((_architectural_live_in_state(register),) if block_addr == function_addr else ())
-                + tuple(exit_states.get(pred, {}).get(register, _unknown_state(register)) for pred in preds)
-            ),
-            register,
-        )
-        for register in _SEGMENT_REGS
-    }
-
-
-def _written_segment_state(dst_name: str, src: IRValue, state: dict[str, SegmentRegisterState]) -> SegmentRegisterState:
-    if src.space == MemSpace.CONST and src.const is not None:
-        return SegmentRegisterState(dst_name, "const_write", hex(int(src.const)), SegmentOrigin.PROVEN)
-    if src.space == MemSpace.REG and src.name in _SEGMENT_REGS:
-        inherited = state.get(src.name)
-        if inherited is not None and inherited.origin == SegmentOrigin.PROVEN:
-            return SegmentRegisterState(dst_name, "segment_copy", src.name, SegmentOrigin.PROVEN)
-        return SegmentRegisterState(dst_name, "segment_copy", src.name, SegmentOrigin.PROVEN)
-    if src.space == MemSpace.REG and src.name is not None:
-        return SegmentRegisterState(dst_name, "register_write", src.name, SegmentOrigin.PROVEN)
-    return SegmentRegisterState(dst_name, "unknown_write", None, SegmentOrigin.UNKNOWN)
-
-
-def _transfer_block(block: IRBlock, entry_state: dict[str, SegmentRegisterState]) -> dict[str, SegmentRegisterState]:
-    state = dict(entry_state)
-    for instr in tuple(block.instrs or ()):
-        if not isinstance(instr, IRInstr):
-            continue
-        dst = instr.dst
-        if not isinstance(dst, IRValue) or dst.space != MemSpace.REG or dst.name not in _SEGMENT_REGS:
-            continue
-        src = instr.args[0] if instr.args else None
-        if not isinstance(src, IRValue):
-            state[dst.name] = _unknown_state(dst.name)
-            continue
-        state[dst.name] = _written_segment_state(dst.name, src, state)
-    return state
+def _instruction_state_key_text(key: InstructionStateKey) -> str:
+    return hex(key) if isinstance(key, int) else f"{key[0]:#x}:{key[1]}"
 
 
 def build_x86_16_segment_state_artifact(
     artifact: IRFunctionArtifact,
     function_ssa: SSAFunctionArtifact | None = None,
+    restore_sources: tuple[SegmentRestoreSource, ...] = (),
 ) -> SegmentStateArtifact:
     """Build forward segment-register state from typed IR and SSA predecessors."""
-
-    def _impl() -> SegmentStateArtifact:
-        blocks_by_addr = {block.addr: block for block in artifact.blocks}
-        predecessor_map = (
-            dict(function_ssa.predecessor_map or {})
-            if function_ssa is not None
-            else {block.addr: () for block in artifact.blocks}
-        )
-        entry_states = {
-            addr: {register: _unknown_state(register) for register in _SEGMENT_REGS} for addr in blocks_by_addr
-        }
-        exit_states = {
-            addr: {register: _unknown_state(register) for register in _SEGMENT_REGS} for addr in blocks_by_addr
-        }
-
-        changed = True
-        while changed:
-            changed = False
-            for block_addr in sorted(blocks_by_addr):
-                new_entry = _join_entry_state(
-                    predecessor_map,
-                    exit_states,
-                    block_addr,
-                    artifact.function_addr,
-                )
-                new_exit = _transfer_block(blocks_by_addr[block_addr], new_entry)
-                if new_entry != entry_states[block_addr]:
-                    entry_states[block_addr] = new_entry
-                    changed = True
-                if new_exit != exit_states[block_addr]:
-                    exit_states[block_addr] = new_exit
-                    changed = True
-
-        explicit_write_count = sum(
-            1
-            for states in exit_states.values()
+    solution = solve_segment_state_8616(artifact, function_ssa, restore_sources)
+    explicit_write_count = sum(
+        1
+        for block in artifact.blocks
+        for instruction in block.instrs
+        if isinstance(instruction.dst, IRValue)
+        and instruction.dst.space is MemSpace.REG
+        and instruction.dst.name in SEGMENT_REGISTERS
+    )
+    classified_write_count = sum(
+        1
+        for block in artifact.blocks
+        for instruction_index, instruction in enumerate(block.instrs)
+        if isinstance(instruction.dst, IRValue)
+        and instruction.dst.space is MemSpace.REG
+        and instruction.dst.name in SEGMENT_REGISTERS
+        and solution.instruction_exit_states[
+            instruction.addr if isinstance(instruction.addr, int) else (block.addr, instruction_index)
+        ][instruction.dst.name].origin
+        is SegmentOrigin.PROVEN
+    )
+    summary: dict[str, object] = {
+        "block_count": len(artifact.blocks),
+        "explicit_write_count": explicit_write_count,
+        "raw_fact_count": explicit_write_count,
+        "normalized_fact_count": explicit_write_count,
+        "classified_fact_count": classified_write_count,
+        "materialized_count": classified_write_count,
+        "failure_count": explicit_write_count - classified_write_count,
+        "architectural_live_in_count": sum(
+            state.value_kind is SegmentValueKind8616.ARCHITECTURAL_LIVE_IN
+            for state in solution.entry_states.get(artifact.function_addr, {}).values()
+        ),
+        "proven_register_count": sum(
+            state.origin is SegmentOrigin.PROVEN
+            for states in solution.exit_states.values()
             for state in states.values()
-            if state.value_kind in {"const_write", "register_write", "segment_copy"}
-        )
-        summary: dict[str, object] = {
-            "block_count": len(blocks_by_addr),
-            "explicit_write_count": explicit_write_count,
-            "architectural_live_in_count": sum(
-                1
-                for state in entry_states.get(artifact.function_addr, {}).values()
-                if state.value_kind == "architectural_live_in"
-            ),
-            "proven_register_count": sum(
-                1
-                for states in exit_states.values()
-                for state in states.values()
-                if state.origin == SegmentOrigin.PROVEN
-            ),
-            "unknown_register_count": sum(
-                1
-                for states in exit_states.values()
-                for state in states.values()
-                if state.origin == SegmentOrigin.UNKNOWN
-            ),
-        }
-        return SegmentStateArtifact(entry_states=entry_states, exit_states=exit_states, summary=summary)
-
-    return _impl()
+        ),
+        "unknown_register_count": sum(
+            state.origin is SegmentOrigin.UNKNOWN
+            for states in solution.exit_states.values()
+            for state in states.values()
+        ),
+    }
+    return SegmentStateArtifact(
+        entry_states=solution.entry_states,
+        exit_states=solution.exit_states,
+        summary=summary,
+        instruction_entry_states=solution.instruction_entry_states,
+        instruction_exit_states=solution.instruction_exit_states,
+    )
 
 
 def apply_x86_16_segment_state_artifact(project: object, codegen: object) -> bool:  # noqa: ARG001
@@ -244,6 +197,18 @@ def apply_x86_16_segment_state_artifact(project: object, codegen: object) -> boo
     except AttributeError:
         candidate_function_ssa = None
     function_ssa = candidate_function_ssa if isinstance(candidate_function_ssa, SSAFunctionArtifact) else None
-    segment_artifact = build_x86_16_segment_state_artifact(artifact, function_ssa=function_ssa)
+    try:
+        restore_evidence = cast(
+            _SegmentRestoreEvidenceSurface,
+            boundary._inertia_segment_stack_restore_artifact,
+        )
+        restore_sources = restore_evidence.restore_sources
+    except AttributeError:
+        restore_sources = ()
+    segment_artifact = build_x86_16_segment_state_artifact(
+        artifact,
+        function_ssa=function_ssa,
+        restore_sources=restore_sources,
+    )
     boundary._inertia_segment_state_artifact = segment_artifact
     return False

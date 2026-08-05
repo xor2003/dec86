@@ -9,13 +9,28 @@ angr/codegen compatibility objects and optional diagnostic metadata.
 from __future__ import annotations
 
 import typing
+from enum import Enum
+from typing import TypeAlias
 
 __all__ = [
+    "GlobalDeclarationArrayExtent8616",
+    "GlobalDeclarationArrayLength8616",
     "append_codegen_sequence_attr",
     "get_codegen_sequence_attr",
     "get_codegen_side_metadata",
     "set_codegen_sequence_attr",
 ]
+
+
+class GlobalDeclarationArrayExtent8616(Enum):
+    """Typed non-numeric array extent carried from Lowering to rendering."""
+
+    UNKNOWN = "unknown"
+
+
+GlobalDeclarationArrayLength8616: TypeAlias = (
+    int | GlobalDeclarationArrayExtent8616 | None
+)
 
 
 def get_codegen_side_metadata(codegen: object) -> dict[str, object]:

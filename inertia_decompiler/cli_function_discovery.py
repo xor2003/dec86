@@ -58,6 +58,11 @@ from inertia_decompiler.cli_output import (
 from inertia_decompiler.disassembly_helpers import (
     _linear_disassembly,
 )
+from inertia_decompiler.discovery_cache_contract import (
+    SourceRegionCatalogEvidence8616,
+    display_catalog_cache_payload_from_record_8616,
+    display_catalog_cache_record_8616,
+)
 from inertia_decompiler.discovery_evidence_project import isolated_discovery_evidence_project_8616
 from inertia_decompiler.project_loading import (
     _build_project_cached,
@@ -198,27 +203,6 @@ class DisplayCatalogCachePolicy8616:
         }
 
 
-@dataclass(frozen=True, slots=True)
-class SourceRegionCatalogEvidence8616:
-    """Closed evidence counts for a startup-bounded application catalog."""
-
-    raw_fact_count: int
-    normalized_fact_count: int
-    classified_fact_count: int
-    materialized_count: int
-    failure_count: int
-    failed_addrs: tuple[int, ...]
-
-    @property
-    def complete(self) -> bool:
-        """Return whether every classified source entry was materialized."""
-        return (
-            self.classified_fact_count > 0
-            and self.materialized_count == self.classified_fact_count
-            and self.failure_count == 0
-        )
-
-
 def _configure_display_catalog_cache_policy_8616(
     project: angr.Project,
     policy: DisplayCatalogCachePolicy8616,
@@ -292,7 +276,12 @@ def _collect_caller_return_use_for_entry_aliases_8616(
     a consumer, the strongest fully classified unused verdict is retained.
     """
     evidence_items = tuple(
-        collect_caller_return_use_evidence_8616(project, target_addr, function_ranges)
+        collect_caller_return_use_evidence_8616(
+            project,
+            target_addr,
+            function_ranges,
+            target_aliases=target_addrs,
+        )
         for target_addr in dict.fromkeys(target_addrs)
     )
     if os.environ.get("INERTIA_DEBUG_RETURN_TYPE_EVIDENCE") == "1":
@@ -306,6 +295,7 @@ def _collect_caller_return_use_for_entry_aliases_8616(
                     item.callsite_addrs,
                     item.used_callsite_count,
                     item.unused_callsite_count,
+                    item.excluded_callsite_count,
                     item.failure_count,
                 )
                 for item in evidence_items
@@ -2328,26 +2318,39 @@ def _store_catalog_address_cache(
     binary_path: Path,
     function_cfg_pairs: list[_FunctionCfgPair],
 ) -> None:
+    """Persist addresses with the exact typed evidence that can affect workers."""
     cache_key = _catalog_address_cache_key_8616(project, binary_path)
     if cache_key is None:
         return
-    addrs = [
-        _dynamic_attr(function, "addr", None)
+    addrs = tuple(
+        function_addr
         for _cfg, function in function_cfg_pairs
-        if isinstance(_dynamic_attr(function, "addr", None), int)
-    ]
-    _store_cache_json("recovery", cache_key, {"addrs": addrs})
+        if isinstance((function_addr := _dynamic_attr(function, "addr", None)), int)
+    )
+    try:
+        payload = display_catalog_cache_record_8616(
+            addrs,
+            caller_return_use_evidence_by_addr_8616(project),
+            _source_region_catalog_evidence_8616(project),
+        )
+    except ValueError:
+        return
+    _store_cache_json("recovery", cache_key, payload)
 
 
 def _load_catalog_address_cache(project: angr.Project, binary_path: Path) -> list[int]:
+    """Restore a display catalog only when its typed evidence contract validates."""
     cache_key = _catalog_address_cache_key_8616(project, binary_path)
     cached = _load_cache_json("recovery", cache_key) if cache_key is not None else None
-    if not isinstance(cached, dict):
+    try:
+        payload = display_catalog_cache_payload_from_record_8616(cached)
+    except ValueError:
         return []
-    addrs = cached.get("addrs")
-    if not isinstance(addrs, list) or not all(isinstance(addr, int) for addr in addrs):
-        return []
-    return addrs
+    for function_addr, evidence in payload.caller_return_use:
+        _record_caller_return_use_evidence_8616(project, function_addr, evidence)
+    if payload.source_region is not None:
+        cast(Any, project)._inertia_source_region_catalog_evidence = payload.source_region
+    return list(payload.addrs)
 
 
 def _supplement_functions_from_prologue_scan(
@@ -3232,8 +3235,8 @@ def record_direct_target_caller_return_use_evidence_8616(
 ) -> CallerReturnUseEvidence8616 | None:
     """Record closed caller-use evidence for one sidecar-free direct target.
 
-    Discovery is bounded to framed functions in the startup-proven application
-    region. Targets outside that catalog remain unknown.
+    Caller discovery is bounded to framed functions in the startup-proven
+    application region. An exact direct callee may live outside that catalog.
     """
     existing = caller_return_use_evidence_by_addr_8616(project).get(target_addr)
     if isinstance(existing, CallerReturnUseEvidence8616):
@@ -3248,12 +3251,14 @@ def record_direct_target_caller_return_use_evidence_8616(
         ),
         None,
     )
-    if canonical_target is None:
-        return None
     function_ranges = _pre_entry_source_function_ranges_8616(evidence_project, source_seeds)
     if not function_ranges:
         return None
-    target_aliases = _binary_padding_entry_aliases_8616(evidence_project, canonical_target)
+    target_aliases = (
+        (target_addr,)
+        if canonical_target is None
+        else _binary_padding_entry_aliases_8616(evidence_project, canonical_target)
+    )
     evidence = _collect_caller_return_use_for_entry_aliases_8616(
         evidence_project,
         target_aliases,
@@ -3268,6 +3273,34 @@ def record_direct_target_caller_return_use_evidence_8616(
             replace(evidence, target_addr=evidence_target),
         )
     return replace(evidence, target_addr=target_addr)
+
+
+def attach_direct_target_argument_evidence_context_8616(
+    source_project: angr.Project,
+    target_project: angr.Project,
+    target_addr: int,
+) -> bool:
+    """Attach independently framed caller ranges for callee-interface Lowering."""
+    evidence_project = isolated_discovery_evidence_project_8616(source_project)
+    source_seeds = tuple(_rank_pre_entry_source_function_seeds_8616(evidence_project))
+    canonical_target = next(
+        (
+            seed
+            for seed in source_seeds
+            if target_addr in _binary_padding_entry_aliases_8616(evidence_project, seed)
+        ),
+        None,
+    )
+    if canonical_target is None:
+        return False
+    function_ranges = _pre_entry_source_function_ranges_8616(evidence_project, source_seeds)
+    if not function_ranges:
+        return False
+    target_aliases = _binary_padding_entry_aliases_8616(evidence_project, canonical_target)
+    dynamic_target = cast(_AngrObject, target_project)
+    dynamic_target._inertia_caller_function_ranges_8616 = function_ranges
+    dynamic_target._inertia_caller_target_aliases_8616 = target_aliases
+    return True
 
 
 def _recover_pre_entry_source_catalog_8616(
@@ -4462,6 +4495,8 @@ def _try_rebased_exact_region_recovery_8616(
     dynamic_slice_project = cast(_AngrObject, slice_project)
     dynamic_slice_project._inertia_original_project = project
     dynamic_slice_project._inertia_original_linear_delta = exact_region[0] - slice_plan.slice_start
+    dynamic_slice_project._inertia_caller_function_ranges_8616 = function_ranges
+    dynamic_slice_project._inertia_caller_target_aliases_8616 = caller_target_addrs
     c_target = _dynamic_attr(project, "_inertia_c_target", None)
     if isinstance(c_target, str):
         dynamic_slice_project._inertia_c_target = c_target
@@ -5330,7 +5365,7 @@ def _recover_direct_addr_function(
             return _recover_blob_entry_function(project, addr, timeout=timeout)
 
         candidate_addr = addr
-        if project.arch.name == "86_16" and lst_metadata is not None:
+        if prefer_lst_direct and project.arch.name == "86_16" and lst_metadata is not None:
             sidecar_region = _lst_code_region(lst_metadata, addr)
             if sidecar_region is not None and isinstance(sidecar_region[0], int):
                 candidate_addr = sidecar_region[0]
@@ -5345,7 +5380,7 @@ def _recover_direct_addr_function(
                         project,
                         candidate_addr=candidate_addr,
                         image_end=linked_base + max_addr + 1,
-                        metadata=lst_metadata,
+                        metadata=lst_metadata if prefer_lst_direct else None,
                         project_entry=project.entry,
                         region_span=max(window, 0x180),
                         exact_region=exact_region,

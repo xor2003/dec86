@@ -1,0 +1,355 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.interrupt_contract import interrupt_core_addr_8616
+from angr_platforms.X86_16.ir.core import (
+    IRBinaryValue,
+    IRBlock,
+    IRFunctionArtifact,
+    IRInstr,
+    IRValue,
+    MemSpace,
+)
+from angr_platforms.X86_16.lowering.software_interrupt_calls import (
+    materialize_software_interrupt_calls_8616,
+)
+from angr_platforms.X86_16.pipeline.errors import PipelineHardError
+from angr_platforms.X86_16.semantics.software_interrupt_inputs import (
+    SoftwareInterruptInputArtifact8616,
+    SoftwareInterruptInputFact8616,
+    SoftwareInterruptInputStats8616,
+    build_software_interrupt_input_artifact_8616,
+    software_interrupt_value_fingerprint_8616,
+)
+from angr_platforms.X86_16.structuring.return_chains import (
+    TerminalCallResultReturnCallbacks8616,
+)
+from angr_platforms.X86_16.structuring.software_interrupt_returns import (
+    SoftwareInterruptResultStatus8616,
+    materialize_software_interrupt_terminal_results_8616,
+)
+from angr_platforms.X86_16.validation_interrupt_calls import (
+    SoftwareInterruptValidationIssueKind8616,
+    validate_software_interrupt_inputs_8616,
+)
+
+
+class _Codegen:
+    def __init__(self) -> None:
+        self._idx = 0
+        self.cstyle_null_cmp = False
+        self.project = SimpleNamespace(arch=Arch86_16())
+
+    def next_idx(self, _name: str) -> int:
+        self._idx += 1
+        return self._idx
+
+
+class _Insn:
+    def __init__(self, address: int, mnemonic: str, operands: tuple[object, ...] = ()) -> None:
+        self.address = address
+        self.mnemonic = mnemonic
+        self.operands = operands
+
+    def reg_name(self, reg: int) -> str:
+        return {1: "ax", 2: "sp", 3: "bp"}.get(reg, "")
+
+
+def _imm(value: int) -> object:
+    return SimpleNamespace(type=2, imm=value)
+
+
+def _reg(value: int) -> object:
+    return SimpleNamespace(type=1, reg=value)
+
+
+def _block(*insns: _Insn) -> object:
+    return SimpleNamespace(capstone=SimpleNamespace(insns=insns))
+
+
+def _callbacks(
+    blocks: dict[int, object],
+    ranges: tuple[tuple[int, int], ...],
+    successors: dict[int, tuple[int, ...]],
+) -> TerminalCallResultReturnCallbacks8616:
+    return TerminalCallResultReturnCallbacks8616(
+        iter_c_nodes_deep=lambda root: (root,),
+        function_block_ranges=lambda: ranges,
+        load_block=lambda addr, _size: blocks.get(addr),
+        successor_addrs=lambda addr: successors.get(addr, ()),
+        branch_target_imm=lambda insn: (
+            int(insn.operands[0].imm) if insn.operands else None
+        ),
+    )
+
+
+def _const(value: int, codegen: _Codegen) -> structured_c.CConstant:
+    return structured_c.CConstant(value, SimTypeShort(False), codegen=codegen)
+
+
+def _interrupt_ir() -> IRFunctionArtifact:
+    ax = IRValue(MemSpace.REG, name="ax", size=2)
+    cx = IRValue(MemSpace.REG, name="cx", size=2)
+    dx = IRValue(MemSpace.REG, name="dx", size=2)
+    x = IRValue(MemSpace.SS, name="bp", offset=4, size=2)
+    y = IRValue(MemSpace.SS, name="bp", offset=6, size=2)
+    one = IRValue(MemSpace.CONST, const=1, size=2)
+    return IRFunctionArtifact(
+        function_addr=0x100,
+        blocks=(
+            IRBlock(
+                addr=0x100,
+                instrs=(
+                    IRInstr("MOV", ax, (IRValue(MemSpace.CONST, const=4, size=2),), size=2, addr=0x100),
+                    IRInstr("MOV", cx, (IRBinaryValue("Shl", x, one, size=2),), size=2, addr=0x102),
+                    IRInstr("MOV", dx, (y,), size=2, addr=0x104),
+                    IRInstr(
+                        "CALL",
+                        None,
+                        (IRValue(MemSpace.CONST, const=interrupt_core_addr_8616(0x33), size=2),),
+                        size=2,
+                        addr=0x106,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+def _constant_fact() -> SoftwareInterruptInputFact8616:
+    return SoftwareInterruptInputFact8616(
+        callsite_addr=0x104,
+        target_addr=interrupt_core_addr_8616(0x33),
+        vector=0x33,
+        selector_value=4,
+        argument_registers=("ax", "cx", "dx"),
+        argument_values=tuple(
+            IRValue(MemSpace.CONST, const=value, size=2) for value in (4, 5, 6)
+        ),
+        result_register="ax",
+    )
+
+
+def _artifact(fact: SoftwareInterruptInputFact8616) -> SoftwareInterruptInputArtifact8616:
+    return SoftwareInterruptInputArtifact8616(
+        facts=(fact,),
+        stats=SoftwareInterruptInputStats8616(1, 1, 1, 1, 0),
+    )
+
+
+def _stale_result_ast(
+    codegen: _Codegen,
+    fact: SoftwareInterruptInputFact8616,
+) -> tuple[
+    structured_c.CStatements,
+    structured_c.CStatements,
+    structured_c.CStatements,
+    structured_c.CFunctionCall,
+]:
+    call = structured_c.CFunctionCall(
+        "interrupt_int33",
+        None,
+        [_const(value, codegen) for value in (4, 5, 6)],
+        tags={"ins_addr": fact.callsite_addr},
+        codegen=codegen,
+    )
+    carrier = structured_c.CVariable(
+        SimRegisterVariable(0, 2, name="result"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    call_container = structured_c.CStatements(
+        statements=[
+            structured_c.CExpressionStatement(_const(1, codegen), codegen=codegen),
+            structured_c.CAssignment(carrier, call, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    return_container = structured_c.CStatements(
+        statements=[
+            structured_c.CExpressionStatement(_const(2, codegen), codegen=codegen),
+            structured_c.CReturn(
+                _const(fact.selector_value, codegen),
+                tags={"ins_addr": 0x108},
+                codegen=codegen,
+            )
+        ],
+        codegen=codegen,
+    )
+    root = structured_c.CStatements(
+        statements=[call_container, return_container],
+        codegen=codegen,
+    )
+    return root, call_container, return_container, call
+
+
+def test_semantics_recovers_mouse_interrupt_inputs_and_ax_result() -> None:
+    artifact = build_software_interrupt_input_artifact_8616(_interrupt_ir())
+
+    assert artifact.stats == SoftwareInterruptInputStats8616(1, 1, 1, 1, 0)
+    assert len(artifact.facts) == 1
+    fact = artifact.facts[0]
+    assert fact.result_register == "ax"
+    assert tuple(
+        software_interrupt_value_fingerprint_8616(value)
+        for value in fact.argument_values
+    ) == (
+        "const:0x4:size2",
+        "Shl(stack:SS:BP+0x4:size2,const:0x1:size2):size2",
+        "stack:SS:BP+0x6:size2",
+    )
+
+
+def test_lowering_materializes_all_interrupt_arguments() -> None:
+    codegen = _Codegen()
+    call = structured_c.CFunctionCall(
+        "interrupt_int33",
+        None,
+        [],
+        tags={"ins_addr": 0x106},
+        codegen=codegen,
+    )
+    root = structured_c.CStatements(
+        statements=[structured_c.CExpressionStatement(call, codegen=codegen)],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(statements=root, arg_list=[])
+    codegen._inertia_vex_ir_artifact = IRFunctionArtifact(
+        function_addr=0x100,
+        blocks=(
+            IRBlock(
+                addr=0x100,
+                instrs=tuple(
+                    [
+                        IRInstr(
+                            "MOV",
+                            IRValue(MemSpace.REG, name=name, size=2),
+                            (IRValue(MemSpace.CONST, const=value, size=2),),
+                            size=2,
+                            addr=0x100 + index,
+                        )
+                        for index, (name, value) in enumerate(
+                            (("ax", 4), ("cx", 5), ("dx", 6))
+                        )
+                    ]
+                    + [
+                        IRInstr(
+                            "CALL",
+                            None,
+                            (IRValue(MemSpace.CONST, const=interrupt_core_addr_8616(0x33), size=2),),
+                            size=2,
+                            addr=0x106,
+                        )
+                    ]
+                ),
+            ),
+        ),
+    )
+
+    assert materialize_software_interrupt_calls_8616(codegen)
+    assert [argument.value for argument in call.args] == [4, 5, 6]
+
+
+def test_lowering_rematerializes_missing_stack_arguments_from_semantics() -> None:
+    codegen = _Codegen()
+    call = structured_c.CFunctionCall(
+        "interrupt_int33",
+        None,
+        [],
+        tags={"ins_addr": 0x106},
+        codegen=codegen,
+    )
+    root = structured_c.CStatements(
+        statements=[structured_c.CExpressionStatement(call, codegen=codegen)],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(addr=0x100, statements=root, arg_list=[])
+    codegen._inertia_vex_ir_artifact = _interrupt_ir()
+
+    assert materialize_software_interrupt_calls_8616(codegen)
+
+    assert call.args[0].value == 4
+    assert isinstance(call.args[1], structured_c.CBinaryOp)
+    x_variable = call.args[1].lhs.variable
+    y_variable = call.args[2].variable
+    assert isinstance(x_variable, SimStackVariable)
+    assert isinstance(y_variable, SimStackVariable)
+    assert (x_variable.base, x_variable.offset, x_variable.name) == ("bp", 4, "arg_4")
+    assert (y_variable.base, y_variable.offset, y_variable.name) == ("bp", 6, "arg_6")
+
+
+def test_structuring_materializes_cross_container_terminal_interrupt_result() -> None:
+    codegen = _Codegen()
+    fact = _constant_fact()
+    codegen._inertia_software_interrupt_input_artifact_8616 = _artifact(fact)
+    root, call_container, return_container, call = _stale_result_ast(codegen, fact)
+    callbacks = _callbacks(
+        {
+            0x100: _block(_Insn(0x104, "int", (_imm(0x33),))),
+            0x106: _block(_Insn(0x106, "ret")),
+        },
+        ((0x100, 6), (0x106, 1)),
+        {0x100: (0x106,), 0x106: ()},
+    )
+
+    assert materialize_software_interrupt_terminal_results_8616(
+        root,
+        codegen,
+        callbacks,
+    )
+    stats = codegen._inertia_software_interrupt_result_stats_8616
+    assert stats.status is SoftwareInterruptResultStatus8616.MATERIALIZED
+    assert stats.path_block_addrs == (0x100, 0x106)
+    assert len(call_container.statements) == 1
+    assert isinstance(return_container.statements[1], structured_c.CReturn)
+    assert return_container.statements[1].retval is call
+
+
+def test_structuring_refuses_post_interrupt_ax_clobber() -> None:
+    codegen = _Codegen()
+    fact = _constant_fact()
+    codegen._inertia_software_interrupt_input_artifact_8616 = _artifact(fact)
+    root, _call_container, _return_container, _call = _stale_result_ast(codegen, fact)
+    callbacks = _callbacks(
+        {
+            0x100: _block(
+                _Insn(0x104, "int", (_imm(0x33),)),
+                _Insn(0x106, "mov", (_reg(1), _imm(0))),
+                _Insn(0x109, "ret"),
+            )
+        },
+        ((0x100, 10),),
+        {0x100: ()},
+    )
+
+    with pytest.raises(PipelineHardError, match="interrupt result"):
+        materialize_software_interrupt_terminal_results_8616(
+            root,
+            codegen,
+            callbacks,
+        )
+    assert (
+        codegen._inertia_software_interrupt_result_stats_8616.status
+        is SoftwareInterruptResultStatus8616.CFG_PROOF_REFUSED
+    )
+
+
+def test_tail_validation_rejects_stale_interrupt_selector_return() -> None:
+    codegen = _Codegen()
+    fact = _constant_fact()
+    codegen._inertia_software_interrupt_input_artifact_8616 = _artifact(fact)
+    root, _call_container, _return_container, _call = _stale_result_ast(codegen, fact)
+
+    report = validate_software_interrupt_inputs_8616(codegen, root)
+
+    assert not report.passed
+    assert report.materialized_count == 0
+    assert tuple(issue.kind for issue in report.issues) == (
+        SoftwareInterruptValidationIssueKind8616.STALE_RESULT_SELECTOR,
+    )

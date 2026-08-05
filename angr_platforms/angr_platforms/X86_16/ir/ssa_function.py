@@ -19,6 +19,7 @@ __all__ = [
     "SSAIncomingValue",
     "SSAPhiNode",
     "build_x86_16_function_ssa",
+    "build_x86_16_ir_predecessor_map",
 ]
 
 
@@ -95,7 +96,8 @@ def _block_exit_versions(block: SSABlock) -> dict[tuple[str, str | None, int], I
     return exit_versions
 
 
-def _predecessor_map(artifact: IRFunctionArtifact) -> dict[int, tuple[int, ...]]:
+def build_x86_16_ir_predecessor_map(artifact: IRFunctionArtifact) -> dict[int, tuple[int, ...]]:
+    """Derive deterministic in-function predecessors from typed IR CFG edges."""
     block_addrs = {block.addr for block in artifact.blocks}
     pred_map: dict[int, set[int]] = {block.addr: set() for block in artifact.blocks}
     for block in artifact.blocks:
@@ -140,7 +142,7 @@ def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifa
     def _impl() -> SSAFunctionArtifact:
         local_blocks = tuple(build_x86_16_block_local_ssa(block) for block in artifact.blocks)
         local_by_addr = {block.addr: block for block in local_blocks}
-        pred_map = _predecessor_map(artifact)
+        pred_map = build_x86_16_ir_predecessor_map(artifact)
         exits_by_addr = {block.addr: _block_exit_versions(block) for block in local_blocks}
         phi_nodes: list[SSAPhiNode] = []
 

@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
+    CConstant,
+    CExpressionStatement,
+    CFunctionCall,
+    CStatements,
+    CVariable,
+)
+from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
+from angr_platforms.X86_16.lowering.fixed_stack_probe_frames import lower_fixed_stack_probe_frames_8616
+
+
+def _fixed_probe_codegen(
+    *,
+    allocation_size: int,
+    local_offset: int = -2,
+    stack_probe_helper: bool = True,
+    return_used: bool = False,
+) -> tuple[SimpleNamespace, CStatements, CFunctionCall]:
+    codegen = SimpleNamespace(
+        cstyle_null_cmp=False,
+        next_idx=lambda _name: 0,
+        project=SimpleNamespace(arch=Arch86_16()),
+    )
+    call = CFunctionCall(
+        "chkstk",
+        SimpleNamespace(addr=0x11222),
+        [],
+        tags={"ins_addr": 0x1006},
+        codegen=codegen,
+    )
+    local = CVariable(
+        SimStackVariable(local_offset, 2, base="bp", name="local_2", region=0x1000),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    assignment = CAssignment(
+        local,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements(
+        [CExpressionStatement(call, codegen=codegen), assignment],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(statements=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x1006,
+            target_addr=0x11222,
+            return_addr=0x1009,
+            kind="direct_near",
+            arg_count=0,
+            arg_widths=(),
+            stack_cleanup=0,
+            return_register=None,
+            return_used=return_used,
+            stack_probe_helper=stack_probe_helper,
+            stack_probe_allocation_size=allocation_size,
+        )
+    }
+    return codegen, root, call
+
+
+def test_lowers_fixed_unused_probe_covered_by_recovered_bp_frame() -> None:
+    codegen, root, call = _fixed_probe_codegen(allocation_size=2)
+
+    stats = lower_fixed_stack_probe_frames_8616(codegen)
+
+    assert stats.raw_fact_count == 1
+    assert stats.normalized_fact_count == 1
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 0
+    assert stats.recovered_frame_extent == 2
+    assert all(
+        not (isinstance(statement, CExpressionStatement) and statement.expr is call)
+        for statement in root.statements
+    )
+
+
+def test_refuses_name_only_probe_without_typed_helper_evidence() -> None:
+    codegen, root, call = _fixed_probe_codegen(
+        allocation_size=2,
+        stack_probe_helper=False,
+    )
+
+    stats = lower_fixed_stack_probe_frames_8616(codegen)
+
+    assert stats.raw_fact_count == 0
+    assert stats.materialized_count == 0
+    assert any(
+        isinstance(statement, CExpressionStatement) and statement.expr is call
+        for statement in root.statements
+    )
+
+
+def test_refuses_probe_not_covered_by_frame_or_with_live_return() -> None:
+    shallow_codegen, shallow_root, shallow_call = _fixed_probe_codegen(allocation_size=4)
+    live_codegen, live_root, live_call = _fixed_probe_codegen(allocation_size=2, return_used=True)
+
+    shallow_stats = lower_fixed_stack_probe_frames_8616(shallow_codegen)
+    live_stats = lower_fixed_stack_probe_frames_8616(live_codegen)
+
+    assert shallow_stats.classified_fact_count == 0
+    assert live_stats.classified_fact_count == 0
+    assert any(
+        isinstance(statement, CExpressionStatement) and statement.expr is shallow_call
+        for statement in shallow_root.statements
+    )
+    assert any(
+        isinstance(statement, CExpressionStatement) and statement.expr is live_call
+        for statement in live_root.statements
+    )

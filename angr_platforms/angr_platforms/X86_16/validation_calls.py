@@ -24,25 +24,37 @@ from angr.sim_type import (
     SimTypePointer,
 )
 from angr.sim_variable import SimStackVariable
+from archinfo import Arch
 
 from .c_ast_utils import _iter_c_nodes_deep_8616
+from .call_target_identity import normalize_x86_16_call_target_addr_8616
 from .callsite_summary import (
     CallerReturnUseEvidence8616,
     CallsiteArgumentClass8616,
     CallsiteSummary8616,
     caller_return_use_evidence_by_addr_8616,
 )
+from .lowering.call_argument_shape import accounted_target_prototype_shape_evidence_8616
+from .lowering.near_pointer_argument import NearPointerArgumentFact8616
 from .lowering.return_type_evidence import (
     FunctionReturnClass8616,
     proven_function_return_class_8616,
 )
-from .lowering.segmented_memory_lowering import NearPointerArgumentFact8616
 from .lowering.stack_prototype_materialization import FunctionParameterWidthFact8616
+from .validation_call_argument_sources import (
+    CallArgumentSourceDependencyFact8616,
+    CallArgumentSourceIssue8616,
+    CallArgumentSourceIssueKind8616,
+    call_argument_source_dependency_facts_8616,
+    call_argument_source_stack_dependencies_8616,
+)
 
 __all__ = [
     "CallArgumentClassIssue8616",
     "CallArgumentClassIssueKind8616",
     "CallArgumentClassValidationReport8616",
+    "CallArgumentSourceIssue8616",
+    "CallArgumentSourceIssueKind8616",
     "CallInterfaceIssue8616",
     "CallInterfaceIssueKind8616",
     "CallInterfaceValidationReport8616",
@@ -67,10 +79,22 @@ class _CodegenCallsiteSurface8616(Protocol):
     _inertia_callsite_summaries: object
 
 
+class _CodegenProjectSurface8616(Protocol):
+    """Dynamic angr codegen project used to normalize exact-slice addresses."""
+
+    project: object
+
+
 class _AddressedCalleeSurface8616(Protocol):
     """Minimal third-party callee identity used for exact target matching."""
 
     addr: object
+
+
+class _PrototypedCalleeSurface8616(Protocol):
+    """Third-party callee prototype used to validate logical argument widths."""
+
+    prototype: object
 
 
 class _TypedCExpressionSurface8616(Protocol):
@@ -116,7 +140,7 @@ class _CVariableStorageSurface8616(Protocol):
 class _ProjectArchSurface8616(Protocol):
     """Third-party project architecture used for ABI pointer width."""
 
-    arch: object
+    arch: Arch
 
 
 class _ArchBytesSurface8616(Protocol):
@@ -286,14 +310,14 @@ class CallArgumentClassIssue8616:
 
 @dataclass(frozen=True, slots=True)
 class CallArgumentClassValidationReport8616:
-    """Closed evidence-loop counters for final pointer/value argument classes."""
+    """Closed evidence counters for final argument classes and dependencies."""
 
     raw_fact_count: int = 0
     normalized_fact_count: int = 0
     classified_fact_count: int = 0
     materialized_count: int = 0
     failure_count: int = 0
-    issues: tuple[CallArgumentClassIssue8616, ...] = ()
+    issues: tuple[CallArgumentClassIssue8616 | CallArgumentSourceIssue8616, ...] = ()
 
     @property
     def passed(self) -> bool:
@@ -781,6 +805,10 @@ def _required_call_matches_8616(
         if not summary.stack_probe_helper and isinstance(summary.target_addr, int)
     )
     calls = tuple(node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CFunctionCall))
+    try:
+        project = cast(_CodegenProjectSurface8616, codegen).project
+    except AttributeError:
+        project = None
     required = _canonical_required_summary_items_8616(required_candidates, calls)
     available = list(calls)
     matches: list[_RequiredCallMatch8616] = []
@@ -799,11 +827,19 @@ def _required_call_matches_8616(
                 None,
             )
         if match_index is None:
+            normalized_summary_target = normalize_x86_16_call_target_addr_8616(
+                project,
+                summary.target_addr,
+            )
             match_index = next(
                 (
                     index
                     for index, node in enumerate(available)
-                    if _callee_addr_8616(node) == summary.target_addr
+                    if normalize_x86_16_call_target_addr_8616(
+                        project,
+                        _callee_addr_8616(node),
+                    )
+                    == normalized_summary_target
                 ),
                 None,
             )
@@ -858,6 +894,68 @@ def _materialized_argument_count_8616(call: CFunctionCall) -> int | None:
     return None
 
 
+def _type_width_bytes_8616(type_surface: object, project: object) -> int | None:
+    """Read one structured-C or prototype type width at the angr boundary."""
+    if not isinstance(type_surface, SimType):
+        return None
+    try:
+        size_bits = type_surface.size
+    except ValueError:
+        try:
+            arch = cast(_ProjectArchSurface8616, project).arch
+            size_bits = type_surface.with_arch(arch).size
+        except (AttributeError, ValueError):
+            return None
+    if not isinstance(size_bits, int) or isinstance(size_bits, bool) or size_bits <= 0:
+        return None
+    return max(1, (size_bits + 7) // 8)
+
+
+def _materialized_argument_widths_8616(
+    call: CFunctionCall,
+    project: object,
+) -> tuple[int, ...] | None:
+    """Return exact byte widths for every final structured-C argument."""
+    arguments = _materialized_arguments_8616(call)
+    if arguments is None:
+        return None
+    widths: list[int] = []
+    for argument in arguments:
+        try:
+            argument_type = cast(_TypedCExpressionSurface8616, argument).type
+        except AttributeError:
+            return None
+        width = _type_width_bytes_8616(argument_type, project)
+        if width is None:
+            return None
+        widths.append(width)
+    return tuple(widths)
+
+
+def _target_prototype_argument_widths_8616(
+    call: CFunctionCall,
+    project: object,
+) -> tuple[int, ...] | None:
+    """Return exact byte widths from the materialized call target prototype."""
+    callee = call.callee_func
+    if callee is None:
+        return None
+    try:
+        prototype = cast(_PrototypedCalleeSurface8616, callee).prototype
+        prototype_args = cast(SimTypeFunction, prototype).args
+    except AttributeError:
+        return None
+    if not isinstance(prototype_args, Sequence) or isinstance(prototype_args, (str, bytes)):
+        return None
+    widths: list[int] = []
+    for argument_type in prototype_args:
+        width = _type_width_bytes_8616(argument_type, project)
+        if width is None:
+            return None
+        widths.append(width)
+    return tuple(widths)
+
+
 def _materialized_arguments_8616(call: CFunctionCall) -> tuple[object, ...] | None:
     """Return final arguments from the third-party structured-C call surface."""
     args = call.args
@@ -887,15 +985,15 @@ def validate_call_argument_classes_8616(
     codegen: object,
     root: object,
 ) -> CallArgumentClassValidationReport8616:
-    """Refuse final call arguments that contradict binary-seeded type classes."""
+    """Refuse final arguments that contradict binary classes or dependencies."""
     _raw_summary_count, matches = _required_call_matches_8616(codegen, root)
     proven_matches = tuple(
         match
         for match in matches
         if match.call is not None and match.summary.logical_arg_classes
     )
-    raw_fact_count = sum(len(match.summary.logical_arg_classes) for match in matches)
-    normalized_fact_count = sum(len(match.summary.logical_arg_classes) for match in proven_matches)
+    raw_class_fact_count = sum(len(match.summary.logical_arg_classes) for match in matches)
+    normalized_class_fact_count = sum(len(match.summary.logical_arg_classes) for match in proven_matches)
     classified: list[
         tuple[_RequiredCallMatch8616, int, CallsiteArgumentClass8616, object]
     ] = []
@@ -909,7 +1007,25 @@ def validate_call_argument_classes_8616(
             (match, index, expected_class, arguments[index])
             for index, expected_class in enumerate(expected_classes)
         )
-    issues: list[CallArgumentClassIssue8616] = []
+    source_facts: list[
+        tuple[_RequiredCallMatch8616, CallArgumentSourceDependencyFact8616]
+    ] = []
+    raw_source_fact_count = 0
+    normalized_source_fact_count = 0
+    for match in matches:
+        dependencies = call_argument_source_stack_dependencies_8616(match.summary)
+        if dependencies is None:
+            continue
+        raw_source_fact_count += sum(bool(offsets) for offsets in dependencies)
+        if match.call is None:
+            continue
+        arguments = _materialized_arguments_8616(match.call)
+        if arguments is None or len(arguments) != len(dependencies):
+            continue
+        facts = call_argument_source_dependency_facts_8616(match.summary, arguments)
+        normalized_source_fact_count += len(facts)
+        source_facts.extend((match, fact) for fact in facts)
+    issues: list[CallArgumentClassIssue8616 | CallArgumentSourceIssue8616] = []
     materialized_count = 0
     for match, index, expected_class, argument in classified:
         target_addr = match.summary.target_addr
@@ -941,10 +1057,27 @@ def validate_call_argument_classes_8616(
             )
             continue
         materialized_count += 1
+    for match, source_fact in source_facts:
+        target_addr = match.summary.target_addr
+        if not isinstance(target_addr, int):
+            continue
+        if source_fact.materialized:
+            materialized_count += 1
+            continue
+        issues.append(
+            CallArgumentSourceIssue8616(
+                kind=CallArgumentSourceIssueKind8616.STACK_DEPENDENCY_MISMATCH,
+                callsite_addr=match.summary.callsite_addr,
+                target_addr=target_addr,
+                argument_index=source_fact.argument_index,
+                expected_stack_offsets=source_fact.expected_stack_offsets,
+                actual_stack_offsets=source_fact.actual_stack_offsets,
+            )
+        )
     return CallArgumentClassValidationReport8616(
-        raw_fact_count=raw_fact_count,
-        normalized_fact_count=normalized_fact_count,
-        classified_fact_count=len(classified),
+        raw_fact_count=raw_class_fact_count + raw_source_fact_count,
+        normalized_fact_count=normalized_class_fact_count + normalized_source_fact_count,
+        classified_fact_count=len(classified) + len(source_facts),
         materialized_count=materialized_count,
         failure_count=len(issues),
         issues=tuple(issues),
@@ -965,6 +1098,10 @@ def validate_call_interfaces_8616(
             classified.append((match, expected_count))
     issues: list[CallInterfaceIssue8616] = []
     materialized_count = 0
+    try:
+        project = cast(_CodegenProjectSurface8616, codegen).project
+    except AttributeError:
+        project = None
     for match, expected_count in classified:
         assert match.call is not None
         actual_count = _materialized_argument_count_8616(match.call)
@@ -983,6 +1120,20 @@ def validate_call_interfaces_8616(
             )
             continue
         if actual_count != expected_count:
+            live_widths = _materialized_argument_widths_8616(match.call, project)
+            prototype_widths = _target_prototype_argument_widths_8616(match.call, project)
+            grouped_evidence = (
+                accounted_target_prototype_shape_evidence_8616(
+                    match.summary,
+                    live_widths,
+                    prototype_widths,
+                )
+                if live_widths is not None
+                else None
+            )
+            if grouped_evidence is not None and len(grouped_evidence.widths) == actual_count:
+                materialized_count += 1
+                continue
             issues.append(
                 CallInterfaceIssue8616(
                     kind=CallInterfaceIssueKind8616.ARGUMENT_COUNT_MISMATCH,

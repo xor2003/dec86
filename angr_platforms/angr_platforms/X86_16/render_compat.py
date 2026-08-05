@@ -84,7 +84,7 @@ def _iter_c_nodes_8616(root: object) -> Iterator[object]:
     seen: set[int] = set()
     while stack:
         node = stack.pop()
-        if node is None or not type(node).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
+        if node is None or not isinstance(node, structured_c.CConstruct):
             continue
         node_id = id(node)
         if node_id in seen:

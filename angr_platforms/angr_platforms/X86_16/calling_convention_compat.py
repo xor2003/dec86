@@ -10,7 +10,6 @@ contracts must use typed fields and dot access.
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Protocol, cast
 
@@ -22,39 +21,31 @@ from angr.sim_type import SimType, SimTypeBottom, SimTypeChar, SimTypeFunction, 
 from pyvex.expr import Get
 from pyvex.stmt import Put
 
+from .semantics.terminal_register_returns import (
+    TerminalAxReturnLane8616,
+    terminal_ax_return_lane_states_8616,
+)
 from .simos_86_16 import SimCC8616MSCsmall
+from .widening.stack_argument_widths import (
+    StackWordArithmeticFact8616,
+    StackWordRegisterRole8616,
+    WideStackArgumentWidthEvidence8616,
+    analyze_wide_stack_argument_widths_8616,
+)
 
 __all__ = [
     "apply_x86_16_calling_convention_compatibility",
     "apply_x86_16_stack_byte_prototype_evidence",
     "apply_x86_16_wide_stack_prototype_evidence",
     "apply_x86_16_wide_stack_prototype_evidence_at_address",
+    "collect_bp_word_stack_access_offsets_8616",
+    "collect_wide_stack_argument_width_evidence_8616",
 ]
 
 
 class _WideReturnEvidence8616(Enum):
     NONE = "none"
     DX_AX_TERMINAL_ARITH = "dx_ax_terminal_arith"
-
-
-@dataclass(frozen=True)
-class _WideStackArgumentEvidence8616:
-    """Track carry-chain evidence for logical wide stack arguments."""
-
-    raw_fact_count: int
-    normalized_fact_count: int
-    classified_offsets: tuple[int, ...]
-    materialized_count: int = 0
-    failure_count: int = 0
-
-    @property
-    def classified_fact_count(self) -> int:
-        """Return the number of distinct proven wide argument offsets."""
-        return len(self.classified_offsets)
-
-    def with_materialized_count(self, count: int) -> _WideStackArgumentEvidence8616:
-        """Return this evidence with its prototype materialization count."""
-        return replace(self, materialized_count=count)
 
 
 class _CapstoneMemory8616(Protocol):
@@ -160,11 +151,30 @@ def _bp_word_memory_offset_8616(insn: object, operand: _CapstoneOperand8616) -> 
 
 
 def _binary_stack_operand_offset_8616(insn: object) -> int | None:
-    """Return the BP word offset consumed by a two-operand instruction."""
+    """Return the sole BP word offset used by a two-operand instruction."""
     operands = _typed_capstone_instruction_8616(insn).operands
     if len(operands) != 2:
         return None
-    return _bp_word_memory_offset_8616(insn, operands[1])
+    offsets = tuple(
+        offset
+        for operand in operands
+        if (offset := _bp_word_memory_offset_8616(insn, operand)) is not None
+    )
+    return offsets[0] if len(offsets) == 1 else None
+
+
+def _compared_register_id_8616(insn: object) -> int | None:
+    """Return the register compared with one exact BP word operand."""
+    instruction = _typed_capstone_instruction_8616(insn)
+    operands = instruction.operands
+    if instruction.mnemonic.lower() != "cmp" or len(operands) != 2:
+        return None
+    for index, operand in enumerate(operands):
+        if _bp_word_memory_offset_8616(insn, operand) is None:
+            continue
+        peer = operands[1 - index]
+        return peer.reg if peer.type == 1 else None
+    return None
 
 
 def _written_register_id_8616(insn: object) -> int | None:
@@ -175,38 +185,35 @@ def _written_register_id_8616(insn: object) -> int | None:
     return operands[0].reg
 
 
+def _written_register_role_8616(insn: object) -> StackWordRegisterRole8616:
+    """Classify the ABI return role of an instruction destination register."""
+    register_id = _written_register_id_8616(insn)
+    if register_id is None:
+        return StackWordRegisterRole8616.OTHER
+    register_name = _capstone_reg_name_8616(insn, register_id)
+    if register_name == "ax":
+        return StackWordRegisterRole8616.AX_LOW_RETURN
+    if register_name == "dx":
+        return StackWordRegisterRole8616.DX_HIGH_RETURN
+    return StackWordRegisterRole8616.OTHER
+
+
 def _wide_stack_argument_evidence_from_insns_8616(
     instruction_groups: Iterator[tuple[object, ...]],
-) -> _WideStackArgumentEvidence8616:
-    """Classify carry-linked arithmetic from normalized instruction groups."""
-    raw_fact_count = 0
-    normalized_fact_count = 0
-    failure_count = 0
-    classified_offsets: set[int] = set()
-    carry_mnemonic = {"add": "adc", "sub": "sbb"}
-    for insns in instruction_groups:
-        for low_insn, high_insn in zip(insns, insns[1:]):
-            low_mnemonic = _typed_capstone_instruction_8616(low_insn).mnemonic.lower()
-            if carry_mnemonic.get(low_mnemonic) != _typed_capstone_instruction_8616(high_insn).mnemonic.lower():
-                continue
-            raw_fact_count += 1
-            low_offset = _binary_stack_operand_offset_8616(low_insn)
-            high_offset = _binary_stack_operand_offset_8616(high_insn)
-            if low_offset is None or high_offset is None:
-                failure_count += 1
-                continue
-            normalized_fact_count += 1
-            low_reg = _written_register_id_8616(low_insn)
-            high_reg = _written_register_id_8616(high_insn)
-            if high_offset != low_offset + 2 or low_reg is None or high_reg is None or low_reg == high_reg:
-                failure_count += 1
-                continue
-            classified_offsets.add(low_offset)
-    return _WideStackArgumentEvidence8616(
-        raw_fact_count=raw_fact_count,
-        normalized_fact_count=normalized_fact_count,
-        classified_offsets=tuple(sorted(classified_offsets)),
-        failure_count=failure_count,
+) -> WideStackArgumentWidthEvidence8616:
+    """Normalize Capstone instructions before the Widening proof."""
+    return analyze_wide_stack_argument_widths_8616(
+        tuple(
+            StackWordArithmeticFact8616(
+                mnemonic=_typed_capstone_instruction_8616(insn).mnemonic,
+                destination_register=_written_register_id_8616(insn),
+                source_bp_offset=_binary_stack_operand_offset_8616(insn),
+                compared_register=_compared_register_id_8616(insn),
+                destination_role=_written_register_role_8616(insn),
+            )
+            for insn in instruction_group
+        )
+        for instruction_group in instruction_groups
     )
 
 
@@ -217,9 +224,20 @@ def _function_instruction_groups_8616(project: object, function: object) -> Iter
         yield tuple(cast(Any, block).capstone.insns or ())
 
 
-def _wide_stack_argument_evidence_8616(project: object, function: object) -> _WideStackArgumentEvidence8616:
+def _wide_stack_argument_evidence_8616(
+    project: object,
+    function: object,
+) -> WideStackArgumentWidthEvidence8616:
     """Classify carry-linked arithmetic over adjacent BP words as one value."""
     return _wide_stack_argument_evidence_from_insns_8616(_function_instruction_groups_8616(project, function))
+
+
+def collect_wide_stack_argument_width_evidence_8616(
+    project: object,
+    function: object,
+) -> WideStackArgumentWidthEvidence8616:
+    """Collect binary-backed logical stack-argument widths for lowering."""
+    return _wide_stack_argument_evidence_8616(project, function)
 
 
 def _instruction_writes_reg_8616(insn: object, reg_name: str) -> bool:
@@ -288,35 +306,17 @@ def _bp_byte_load_offsets_from_instructions_8616(project: object, function: obje
 
 
 def _terminal_byte_return_evidence_8616(project: object, function: object) -> bool:
-    """Detect terminal AL-family return production without source declarations."""
-    for block in _iter_function_blocks_8616(project, function):
-        last_return_write: str | None = None
-        # Dynamic angr/capstone compatibility boundary.
-        for insn in tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
-            if _instruction_writes_reg_8616(insn, "ax"):
-                last_return_write = "ax"
-            elif _instruction_writes_reg_8616(insn, "al"):
-                last_return_write = "al"
-            # Dynamic capstone compatibility boundary.
-            mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
-            if mnemonic in {"ret", "retf", "iret", "jmp", "ljmp"} and last_return_write == "al":
-                return True
-    return False
+    """Detect terminal low-byte-only return production without source declarations."""
+    states = terminal_ax_return_lane_states_8616(project, function)
+    return TerminalAxReturnLane8616.LOW in states and TerminalAxReturnLane8616.WORD not in states
 
 
 def _terminal_word_return_evidence_8616(project: object, function: object) -> bool:
     """Return whether a terminal path leaves a word result in AX."""
     if _terminal_wide_return_evidence_8616(project, function) is not _WideReturnEvidence8616.NONE:
         return False
-    for block in _iter_function_blocks_8616(project, function):
-        saw_ax_write = False
-        for insn in tuple(cast(Any, block).capstone.insns or ()):
-            if _instruction_writes_reg_8616(insn, "ax"):
-                saw_ax_write = True
-            mnemonic = str(cast(Any, insn).mnemonic or "").lower()
-            if mnemonic in {"ret", "retf", "iret"} and saw_ax_write:
-                return True
-    return False
+    states = terminal_ax_return_lane_states_8616(project, function)
+    return TerminalAxReturnLane8616.WORD in states and TerminalAxReturnLane8616.LOW not in states
 
 
 def _function_target_addrs_8616(function: object) -> set[int]:
@@ -377,31 +377,41 @@ def _caller_sign_extends_byte_return_8616(project: object, function: object) -> 
     return False if saw_matching_call else None
 
 
+def _terminal_wide_return_evidence_from_instructions_8616(
+    project: object,
+    function: object,
+    insns: tuple[object, ...],
+) -> _WideReturnEvidence8616:
+    """Detect a terminal DX:AX producer in one bounded instruction sequence."""
+    terminal_dx_ops = {"adc", "sbb", "mov"}
+    last_ax_idx = None
+    last_dx_idx = None
+    last_dx_mnemonic = None
+    for idx, insn in enumerate(insns):
+        if _instruction_writes_reg_8616(insn, "ax"):
+            last_ax_idx = idx
+        if _instruction_writes_reg_8616(insn, "dx"):
+            last_dx_idx = idx
+            last_dx_mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+    if last_ax_idx is None or last_dx_idx is None or last_dx_idx <= last_ax_idx:
+        return _WideReturnEvidence8616.NONE
+    if last_dx_mnemonic in terminal_dx_ops and _wide_return_suffix_is_terminal_8616(
+        project, function, insns, last_dx_idx
+    ):
+        return _WideReturnEvidence8616.DX_AX_TERMINAL_ARITH
+    return _WideReturnEvidence8616.NONE
+
+
 def _terminal_wide_return_evidence_8616(project: object, function: object) -> _WideReturnEvidence8616:
     """Detect a terminal DX:AX producer without relying on source names."""
-    terminal_dx_ops = {"adc", "sbb", "mov"}
     for block in _iter_function_blocks_8616(project, function):
         # Dynamic angr/capstone compatibility boundary.
         insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
         if not insns:
             continue
-        last_ax_idx = None
-        last_dx_idx = None
-        last_dx_mnemonic = None
-        for idx, insn in enumerate(insns):
-            if _instruction_writes_reg_8616(insn, "ax"):
-                last_ax_idx = idx
-            if _instruction_writes_reg_8616(insn, "dx"):
-                last_dx_idx = idx
-                last_dx_mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
-        if last_ax_idx is None or last_dx_idx is None:
-            continue
-        if last_dx_idx <= last_ax_idx:
-            continue
-        if last_dx_mnemonic in terminal_dx_ops:
-            if not _wide_return_suffix_is_terminal_8616(project, function, insns, last_dx_idx):
-                continue
-            return _WideReturnEvidence8616.DX_AX_TERMINAL_ARITH
+        evidence = _terminal_wide_return_evidence_from_instructions_8616(project, function, insns)
+        if evidence is not _WideReturnEvidence8616.NONE:
+            return evidence
     return _WideReturnEvidence8616.NONE
 
 
@@ -495,8 +505,8 @@ def _bp_word_load_offsets_from_insns_8616(instruction_groups: Iterator[tuple[obj
     return tuple(sorted(offsets))
 
 
-def _bp_word_load_offsets_from_instructions_8616(project: object, function: object) -> tuple[int, ...]:
-    """Return positive BP stack offsets read through word memory operands."""
+def collect_bp_word_stack_access_offsets_8616(project: object, function: object) -> tuple[int, ...]:
+    """Return positive BP stack offsets accessed through word memory operands."""
     return _bp_word_load_offsets_from_insns_8616(_function_instruction_groups_8616(project, function))
 
 
@@ -523,10 +533,11 @@ def _wide_stack_arithmetic_prototype_from_evidence_8616(
     project: object,
     function: object,
     *,
-    evidence: _WideStackArgumentEvidence8616,
+    evidence: WideStackArgumentWidthEvidence8616,
     loaded_offsets: tuple[int, ...],
     signed: bool,
-) -> tuple[object, object, _WideStackArgumentEvidence8616] | None:
+    terminal_wide_return: bool = False,
+) -> tuple[object, object, WideStackArgumentWidthEvidence8616] | None:
     """Build a logical prototype from carry-linked adjacent stack words."""
     if evidence.classified_fact_count == 0:
         return None
@@ -542,6 +553,8 @@ def _wide_stack_arithmetic_prototype_from_evidence_8616(
         physical_args = []
         return_type = SimTypeBottom(label="void").with_arch(project_dynamic.arch)
         variadic = False
+    if terminal_wide_return:
+        return_type = SimTypeLong(signed=signed).with_arch(project_dynamic.arch)
 
     required_word_count = 0
     if loaded_offsets:
@@ -585,14 +598,16 @@ def _wide_stack_arithmetic_prototype_from_evidence_8616(
 
 def _wide_stack_arithmetic_prototype_from_function_8616(
     project: object, function: object, *, signed: bool
-) -> tuple[object, object, _WideStackArgumentEvidence8616] | None:
+) -> tuple[object, object, WideStackArgumentWidthEvidence8616] | None:
     """Build a logical prototype from one discovered function body."""
     return _wide_stack_arithmetic_prototype_from_evidence_8616(
         project,
         function,
         evidence=_wide_stack_argument_evidence_8616(project, function),
-        loaded_offsets=_bp_word_load_offsets_from_instructions_8616(project, function),
+        loaded_offsets=collect_bp_word_stack_access_offsets_8616(project, function),
         signed=signed,
+        terminal_wide_return=_terminal_wide_return_evidence_8616(project, function)
+        is not _WideReturnEvidence8616.NONE,
     )
 
 
@@ -611,7 +626,7 @@ def _wide_stack_arg_prototype_from_function_8616(
     evidence = _terminal_wide_return_evidence_8616(project, function)
     if evidence is _WideReturnEvidence8616.NONE:
         return None
-    arg_count = _wide_stack_arg_count_from_offsets_8616(_bp_word_load_offsets_from_instructions_8616(project, function))
+    arg_count = _wide_stack_arg_count_from_offsets_8616(collect_bp_word_stack_access_offsets_8616(project, function))
     if arg_count <= 0:
         return None
     wide_ty = SimTypeLong(signed=signed).with_arch(project_dynamic.arch)
@@ -637,8 +652,8 @@ def _stack_byte_prototype_from_function_8616(project: object, function: object) 
 
 
 def _guess_retval_type_8616(self: object, cc: object, ret_val_size: object) -> object:
+    """Refine angr's guessed return type using terminal register evidence."""
     self_dynamic = cast(Any, self)
-    cc_dynamic = cast(Any, cc)
 
     def _impl() -> object:
         ret_type = cast(Any, _guess_retval_type_8616)._orig(self, cc, ret_val_size)
@@ -646,40 +661,25 @@ def _guess_retval_type_8616(self: object, cc: object, ret_val_size: object) -> o
             return ret_type
         if not isinstance(ret_type, SimTypeShort):
             return ret_type
+        cc_dynamic = cast(Any, cc)
         if not getattr(cc_dynamic, "OVERFLOW_RETURN_VAL", None) or getattr(cc_dynamic, "RETURN_VAL", None) is None:
             return ret_type
-        if getattr(self_dynamic._function, "_argument_registers", None) or getattr(
-            self_dynamic._function, "_argument_stack_variables", None
-        ):
-            return ret_type
-
-        for ret_block in getattr(self_dynamic._function, "ret_sites", ()):
-            retval_updated, overflow_updated = False, False
-            try:
-                irsb = self_dynamic.project.factory.block(ret_block.addr, size=ret_block.size).vex
-            except SimTranslationError:
-                continue
-            if _irsb_reads_word_bp_8616(irsb, self_dynamic.project.arch):
-                continue
-            for stmt in irsb.statements:
-                if isinstance(stmt, Put):
-                    reg_name = self_dynamic.project.arch.translate_register_name(
-                        stmt.offset, size=self_dynamic.project.arch.bytes
-                    )
-                    if reg_name == cc_dynamic.RETURN_VAL.reg_name:
-                        retval_updated = True
-                    elif reg_name == cc_dynamic.OVERFLOW_RETURN_VAL.reg_name:
-                        overflow_updated = True
-            if retval_updated and overflow_updated:
-                return SimTypeLong().with_arch(self_dynamic.project.arch)
+        evidence = _terminal_wide_return_evidence_8616(self_dynamic.project, self_dynamic._function)
+        if evidence is not _WideReturnEvidence8616.NONE:
+            return SimTypeLong().with_arch(self_dynamic.project.arch)
         return ret_type
 
     return _impl()
 
 
-def _promote_wide_stack_return_to_wide_arg_8616(self: object, prototype: object) -> object:
+def _promote_wide_return_and_stack_args_8616(
+    self: object,
+    prototype: object,
+    *,
+    promote_return: bool,
+) -> object:
+    """Apply proven wide stack arguments and an optional terminal DX:AX return."""
     self_dynamic = cast(Any, self)
-    prototype_dynamic = cast(Any, prototype)
 
     def _impl() -> object:
         if getattr(self_dynamic.project.arch, "name", None) != "86_16" or prototype is None:
@@ -688,104 +688,51 @@ def _promote_wide_stack_return_to_wide_arg_8616(self: object, prototype: object)
         if wide_stack_proto is not None:
             _cc, promoted = wide_stack_proto
             return promoted
-        if len(prototype_dynamic.args) == 0 and isinstance(prototype_dynamic.returnty, SimTypeLong):
-            block_addrs = sorted(getattr(self_dynamic._function, "block_addrs_set", ()) or ())
-            if block_addrs:
-                try:
-                    irsb = self_dynamic.project.factory.block(block_addrs[0]).vex
-                except SimTranslationError:
-                    irsb = None
-                if irsb is not None:
-                    if _irsb_reads_word_bp_8616(irsb, self_dynamic.project.arch):
-                        if _count_ax_dx_puts_8616(irsb, self_dynamic.project.arch) == 2:
-                            wide_ty = SimTypeLong().with_arch(self_dynamic.project.arch)
-                            return prototype_dynamic.__class__([wide_ty], wide_ty).with_arch(self_dynamic.project.arch)
-        if len(prototype_dynamic.args) != 2:
-            return prototype
-        if not all(type(arg) is SimTypeShort for arg in prototype_dynamic.args):
-            return prototype
-        if type(prototype_dynamic.returnty) is not SimTypeShort:
-            return prototype
-
-        block_addrs = sorted(getattr(self_dynamic._function, "block_addrs_set", ()) or ())
-        if not block_addrs:
-            return prototype
-
-        try:
-            irsb = self_dynamic.project.factory.block(block_addrs[0]).vex
-        except SimTranslationError:
-            return prototype
-
-        if not _irsb_reads_word_bp_8616(irsb, self_dynamic.project.arch):
-            return prototype
-
-        if _count_ax_dx_puts_8616(irsb, self_dynamic.project.arch) != 2:
-            return prototype
-
-        wide_ty = SimTypeLong().with_arch(self_dynamic.project.arch)
-        return prototype_dynamic.__class__([wide_ty], wide_ty).with_arch(self_dynamic.project.arch)
+        if (
+            promote_return
+            and isinstance(prototype, SimTypeFunction)
+            and _terminal_wide_return_evidence_8616(self_dynamic.project, self_dynamic._function)
+            is not _WideReturnEvidence8616.NONE
+        ):
+            wide_type = SimTypeLong(signed=True).with_arch(self_dynamic.project.arch)
+            return SimTypeFunction(
+                list(prototype.args),
+                wide_type,
+                arg_names=prototype.arg_names,
+                variadic=prototype.variadic,
+            ).with_arch(self_dynamic.project.arch)
+        return prototype
 
     return _impl()
 
 
-def _promote_terminal_word_return_8616(project: object, function: object, prototype: object) -> object:
-    """Promote a guessed void prototype when terminal AX evidence proves a word return."""
-    project_dynamic = cast(Any, project)
-    prototype_dynamic = cast(Any, prototype)
-    return_type = prototype_dynamic.returnty
-    if not isinstance(return_type, SimTypeBottom):
-        return prototype
-    if not _terminal_word_return_evidence_8616(project, function):
-        return prototype
-    word_type = SimTypeShort().with_arch(project_dynamic.arch)
-    return prototype_dynamic.__class__(list(prototype_dynamic.args), word_type).with_arch(project_dynamic.arch)
-
-
-def _fallback_terminal_word_return_prototype_8616(self: object) -> tuple[object, object] | None:
-    """Build a no-argument word-return prototype from terminal AX evidence."""
-    self_dynamic = cast(Any, self)
-    if not _terminal_word_return_evidence_8616(self_dynamic.project, self_dynamic._function):
-        return None
-    word_type = SimTypeShort().with_arch(self_dynamic.project.arch)
-    return SimCC8616MSCsmall(self_dynamic.project.arch), SimTypeFunction([], word_type).with_arch(
-        self_dynamic.project.arch
-    )
-
-
 def _fallback_wide_stack_return_prototype_8616(self: object) -> tuple[object, object] | None:
+    """Return only a prototype backed by typed terminal wide-stack evidence."""
     self_dynamic = cast(Any, self)
-    wide_stack_proto = _wide_stack_arg_prototype_from_function_8616(self_dynamic.project, self_dynamic._function)
-    if wide_stack_proto is not None:
-        return wide_stack_proto
-
-    block_addrs = sorted(getattr(self_dynamic._function, "block_addrs_set", ()) or ())
-    if not block_addrs:
-        return None
-
-    try:
-        irsb = self_dynamic.project.factory.block(block_addrs[0]).vex
-    except SimTranslationError:
-        return None
-
-    if not _irsb_reads_word_bp_8616(irsb, self_dynamic.project.arch) or irsb.jumpkind != "Ijk_Ret":
-        return None
-
-    if _count_ax_dx_puts_8616(irsb, self_dynamic.project.arch) != 2:
-        return None
-
-    wide_ty = SimTypeLong().with_arch(self_dynamic.project.arch)
-    return SimCC8616MSCsmall(self_dynamic.project.arch), SimTypeFunction([wide_ty], wide_ty).with_arch(
-        self_dynamic.project.arch
+    return _wide_stack_arg_prototype_from_function_8616(
+        self_dynamic.project,
+        self_dynamic._function,
     )
 
 
-def _set_function_prototype_8616(function: object, cc: object, prototype: object) -> tuple[object, object]:
+def _set_function_prototype_8616(
+    function: object,
+    cc: object,
+    prototype: object,
+    *,
+    allow_binary_refinement: bool = False,
+) -> tuple[object, object]:
+    """Set one inferred prototype without replacing stronger named evidence."""
     function_dynamic = cast(Any, function)
     # Dynamic angr function compatibility boundary.
     existing = getattr(function, "prototype", None)
     if existing is not None and (
         # Dynamic angr function compatibility boundary.
-        _has_explicit_arg_names_8616(existing) or not bool(getattr(function, "is_prototype_guessed", True))
+        _has_explicit_arg_names_8616(existing)
+        or (
+            not allow_binary_refinement
+            and not bool(getattr(function, "is_prototype_guessed", True))
+        )
     ):
         return cc, existing
     # Dynamic angr SimType compatibility boundary.
@@ -842,9 +789,7 @@ def apply_x86_16_wide_stack_prototype_evidence_at_address(
     if project_dynamic.arch.name != "86_16" or address < 0 or not 16 <= scan_size <= 4096:
         return False
     existing = function_dynamic.prototype
-    if existing is not None and (
-        _has_explicit_arg_names_8616(existing) or not bool(function_dynamic.is_prototype_guessed)
-    ):
+    if existing is not None and _has_explicit_arg_names_8616(existing):
         return False
     try:
         block = project_dynamic.factory.block(address, size=scan_size, opt_level=0)
@@ -868,13 +813,22 @@ def apply_x86_16_wide_stack_prototype_evidence_at_address(
         evidence=_wide_stack_argument_evidence_from_insns_8616(iter(instruction_group)),
         loaded_offsets=_bp_word_load_offsets_from_insns_8616(iter(instruction_group)),
         signed=True,
+        terminal_wide_return=_terminal_wide_return_evidence_from_instructions_8616(
+            project, function, tuple(instructions)
+        )
+        is not _WideReturnEvidence8616.NONE,
     )
     if inferred is None:
         return False
     cc, prototype, evidence = inferred
     if evidence.classified_fact_count > 0 and evidence.materialized_count == 0:
         raise RuntimeError("wide stack argument evidence was classified but not materialized")
-    _set_function_prototype_8616(function, cc, prototype)
+    _set_function_prototype_8616(
+        function,
+        cc,
+        prototype,
+        allow_binary_refinement=True,
+    )
     return True
 
 
@@ -929,24 +883,18 @@ def apply_x86_16_calling_convention_compatibility() -> None:
             if result is None:
                 fallback = _fallback_wide_stack_return_prototype_8616(self)
                 if fallback is None:
-                    fallback = _fallback_terminal_word_return_prototype_8616(self)
-                if fallback is None:
                     return result
                 return _set_function_prototype_8616(self_dynamic._function, *fallback)
             cc, prototype = result
             if prototype is None:
                 fallback = _fallback_wide_stack_return_prototype_8616(self)
-                if fallback is None:
-                    fallback = _fallback_terminal_word_return_prototype_8616(self)
                 if fallback is not None:
                     return _set_function_prototype_8616(self_dynamic._function, *fallback)
-            promoted = _promote_wide_stack_return_to_wide_arg_8616(self, prototype)
-            if not had_explicit_prototype:
-                promoted = _promote_terminal_word_return_8616(
-                    self_dynamic.project,
-                    self_dynamic._function,
-                    promoted,
-                )
+            promoted = _promote_wide_return_and_stack_args_8616(
+                self,
+                prototype,
+                promote_return=not had_explicit_prototype,
+            )
             if (
                 promoted is not prototype
                 and not had_explicit_prototype

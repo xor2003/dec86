@@ -13,6 +13,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from angr_platforms.X86_16.segment_program_layout_contract import SegmentProgramFunctionEvidence8616
 
 from inertia_decompiler.tail_validation import (
     emit_tail_validation_console_summary,
@@ -151,6 +155,7 @@ class FunctionWorkResult:
     fallback_family_labels: tuple[str, ...] = ()
     validated_payload_hash: str | None = None
     gcc_checked_payload_hash: str | None = None
+    segment_program_function_evidence: SegmentProgramFunctionEvidence8616 | None = None
 
 
 def emit_tail_validation_for_function_run_or_uncollected(

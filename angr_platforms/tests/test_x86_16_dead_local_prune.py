@@ -46,6 +46,37 @@ def test_prune_dead_local_assignments_keeps_side_effecting_rhs() -> None:
     assert len(codegen.cfunc.statements.statements) == 1
 
 
+def test_prune_dead_local_assignments_keeps_read_ssa_register_carrier() -> None:
+    codegen = _FakeCodegen()
+    assigned_var = SimRegisterVariable(6, 2, ident="ir_6", name="v9", region=0x10678)
+    read_var = SimRegisterVariable(6, 2, ident="ir_6", name="v9", region=0x10678)
+    assigned_cvar = structured_c.CVariable(
+        assigned_var,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    read_cvar = structured_c.CVariable(
+        read_var,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    assignment = structured_c.CAssignment(
+        assigned_cvar,
+        structured_c.CConstant(2, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    returned = structured_c.CReturn(read_cvar, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        statements=structured_c.CStatements([assignment, returned], codegen=codegen),
+        variables_in_use={assigned_var: assigned_cvar, read_var: read_cvar},
+    )
+
+    changed = decompile._prune_dead_local_assignments(codegen)
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [assignment, returned]
+
+
 def test_prune_dead_local_assignments_drops_unread_generated_memory_helper_rhs() -> None:
     codegen = _FakeCodegen()
     local_var = SimStackVariable(-2, 2, base="bp", name="local", region=0x1000)

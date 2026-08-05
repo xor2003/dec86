@@ -294,7 +294,11 @@ def _decode_signature_catalog_match(payload: dict[str, object] | None) -> LocalP
         except (TypeError, ValueError):
             return None
         raw_formats = payload.get("source_formats", ())
+        if not isinstance(raw_formats, (tuple, list)):
+            return None
         raw_compilers = payload.get("matched_compiler_names", ())
+        if not isinstance(raw_compilers, (tuple, list)):
+            return None
         source_formats = tuple(value for value in raw_formats if isinstance(value, str))
         matched_compiler_names = tuple(value for value in raw_compilers if isinstance(value, str))
         return LocalPatMatchResult(code_labels, code_ranges, source_formats, matched_compiler_names)

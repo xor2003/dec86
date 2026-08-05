@@ -15,16 +15,21 @@ from dataclasses import dataclass
 from ..ir.core import AddressStatus, IRAddress, IRValue, MemSpace, SegmentOrigin
 
 __all__ = [
+    "STACK_SLOT_BINDING_TAG_8616",
     "StackAnnotationSpec8616",
     "StackBaseBpBiasEvidence8616",
     "StackVariableBinding",
     "build_stack_variable_bindings_8616",
     "select_normalized_stack_argument_annotation_spec_8616",
     "select_stack_annotation_spec_8616",
+    "stable_stack_binding_tags_8616",
     "stack_binding_inherits_containing_name_8616",
+    "stack_binding_from_tags_8616",
     "stable_ss_address_to_ir_value_8616",
     "stable_ss_offset_to_ir_address_8616",
 ]
+
+STACK_SLOT_BINDING_TAG_8616: str = "inertia_stack_slot_binding_8616"
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +103,25 @@ class StackVariableBinding:
     def contains_offset(self, bp_offset: int) -> bool:
         """Return whether this binding owns the byte at ``bp_offset``."""
         return self.bp_offset <= bp_offset < self.bp_offset + self.size
+
+    def contains_access(self, bp_offset: int, size: int) -> bool:
+        """Return whether a positive-width access is fully inside this binding."""
+        return size > 0 and self.size > 0 and self.bp_offset <= bp_offset and bp_offset + size <= self.bp_offset + self.size
+
+
+def stable_stack_binding_tags_8616(binding: StackVariableBinding) -> dict[str, object]:
+    """Return C-AST tags carrying one alias-proven stack-slot identity."""
+    if not binding.is_stable:
+        raise ValueError("exact stack-slot provenance requires a stable binding")
+    return {STACK_SLOT_BINDING_TAG_8616: binding}
+
+
+def stack_binding_from_tags_8616(tags: object) -> StackVariableBinding | None:
+    """Read exact stack-slot provenance from a dynamic C-AST tag mapping."""
+    if not isinstance(tags, Mapping):
+        return None
+    binding = tags.get(STACK_SLOT_BINDING_TAG_8616)
+    return binding if isinstance(binding, StackVariableBinding) and binding.is_stable else None
 
 
 def _coerce_stack_annotation_spec_8616(value: object) -> StackAnnotationSpec8616 | None:

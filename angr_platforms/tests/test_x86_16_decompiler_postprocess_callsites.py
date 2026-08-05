@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import angr_platforms.X86_16.decompiler_postprocess_calls as postprocess_calls
+import angr_platforms.X86_16.decompiler_structuring_stage as structuring_stage
 import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -126,6 +127,23 @@ def test_regeneration_replay_refuses_missing_target_identity_binding(monkeypatch
             project,
             codegen,
         )
+
+
+def test_structuring_binds_target_identity_before_validation_mode_diverges(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    codegen = SimpleNamespace(project=project, cfunc=object(), _inertia_callsite_summaries={})
+    calls: list[str] = []
+    monkeypatch.setattr(
+        structuring_stage,
+        "canonicalize_callsite_target_identities_8616",
+        lambda _project, _codegen: calls.append("target-identity") or False,
+    )
+
+    structuring_stage._bind_structuring_callsite_consumers_8616(codegen)
+    changed = postprocess_calls._replay_call_target_identity_consumer_8616(project, codegen)
+
+    assert changed is False
+    assert calls == ["target-identity"]
 
 
 def test_callsite_materialization_stats_expose_standard_evidence_counters():
@@ -1222,6 +1240,35 @@ def test_refresh_callsite_summaries_restores_missing_repeated_callee_from_invent
     assert summary_map[id(second)].push_arg_sources[0] == ("imm", 118)
 
 
+def test_refresh_callsite_summaries_never_rebinds_a_different_tagged_repeated_callee():
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    surviving_call = CFunctionCall("is_flag", None, [], tags={"ins_addr": 0x4020}, codegen=codegen)
+    root = CStatements([surviving_call], addr=0x4000, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4000, statements=root, body=root)
+
+    removed_summary = CallsiteSummary8616(
+        0x4010,
+        0x2000,
+        0x4013,
+        "direct_near",
+        2,
+        (2, 2),
+        4,
+        None,
+        False,
+    )
+    summary_map = {0xDEADBEEF: removed_summary}
+    codegen._inertia_callsite_summaries = summary_map
+    codegen._inertia_callsite_summary_inventory_8616 = {removed_summary.callsite_addr: removed_summary}
+
+    changed = _refresh_callsite_summary_node_ids_8616(codegen, summary_map)
+
+    assert changed is True
+    assert summary_map == {}
+    assert surviving_call.tags["ins_addr"] == 0x4020
+
+
 def test_ordered_callsite_pairs_refuses_single_mismatched_named_node(monkeypatch):
     project = SimpleNamespace()
     codegen = _DummyCodegen(project)
@@ -1577,7 +1624,7 @@ def test_resolve_direct_call_target_rebases_exact_slice_linear_target():
     assert resolve_direct_call_target_from_block(slice_project, 0x100E) == 0x106C8
 
 
-def test_collect_neighbor_call_targets_keeps_rebased_exact_slice_direct_calls():
+def test_collect_neighbor_call_targets_classifies_rebased_exact_slice_near_call():
     class _Operand:
         def __init__(self, type_, imm):
             self.type = type_
@@ -1613,7 +1660,7 @@ def test_collect_neighbor_call_targets_keeps_rebased_exact_slice_direct_calls():
     assert len(recovered) == 1
     assert recovered[0].callsite_addr == 0x100E
     assert recovered[0].target_addr == 0x106C8
-    assert recovered[0].kind == "direct_far"
+    assert recovered[0].kind == "direct_near"
 
 
 def test_collect_neighbor_call_targets_refuses_malformed_function_project_without_crashing():
@@ -2112,7 +2159,7 @@ def test_callsite_stats_reject_known_prototype_arg_mismatch():
     project = SimpleNamespace()
     codegen = _DummyCodegen(project)
     call = CFunctionCall(
-        "DrawBar", SimpleNamespace(addr=0x1544, name="DrawBar", block_addrs_set={0x1544}), [], codegen=codegen
+        "memset", SimpleNamespace(addr=0x1544, name="memset", block_addrs_set={0x1544}), [], codegen=codegen
     )
     root = CStatements([call], addr=0x4010, codegen=codegen)
     codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
@@ -2122,9 +2169,9 @@ def test_callsite_stats_reject_known_prototype_arg_mismatch():
             target_addr=0x1544,
             return_addr=0x4015,
             kind="direct_near",
-            arg_count=1,
-            arg_widths=(2,),
-            stack_cleanup=2,
+            arg_count=3,
+            arg_widths=(2, 2, 2),
+            stack_cleanup=6,
             return_register=None,
             return_used=False,
         )

@@ -80,24 +80,29 @@ def _cache_key(binary_path: Path, *, timeout_sec: int, max_count: int | None) ->
 
 
 def _run_rizin_json(binary_path: Path, command: str, *, timeout_sec: int) -> object:
+    """Return decoded optional rizin JSON, or None when the probe cannot complete."""
     cmd = ["rizin", "-2", "-q", "-c", command, str(binary_path)]
-    completed = subprocess.run(
-        cmd,
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=max(1, int(timeout_sec)),
-    )
+    try:
+        completed = subprocess.run(
+            cmd,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=max(1, int(timeout_sec)),
+        )
+    except subprocess.TimeoutExpired:
+        return None
     if completed.returncode != 0:
         return None
     try:
         return json.loads(completed.stdout)
-    except Exception:
+    except json.JSONDecodeError:
         return None
 
 
 def _mz_linear_candidates_from_prologues(binary_path: Path) -> tuple[list[int], str]:
+    """Collect MZ prologue candidates even when optional entrypoint probing times out."""
     data = binary_path.read_bytes()
     segments = _run_rizin_json(binary_path, "iSj", timeout_sec=3)
     if not isinstance(segments, list):
@@ -115,6 +120,8 @@ def _mz_linear_candidates_from_prologues(binary_path: Path) -> tuple[list[int], 
         if not perm.startswith("-rwx") and "x" not in perm:
             continue
         executable_segments.append((paddr, vaddr, max(0, vsize)))
+    pbase: int | None = None
+    vbase: int | None = None
     if not executable_segments:
         # Fallback: keep prior behavior for binaries with sparse rizin segment metadata.
         chosen = None
@@ -139,7 +146,7 @@ def _mz_linear_candidates_from_prologues(binary_path: Path) -> tuple[list[int], 
         if exec_vsize <= 0:
             pbase = executable_segments[0][0]
             vbase = executable_segments[0][1]
-    if "pbase" not in locals() or "vbase" not in locals():
+    if pbase is None or vbase is None:
         return [], "no_mappable_segment"
     patterns = (b"\x55\x8b\xec", b"\x55\x89\xe5")
     candidates: list[int] = []
@@ -157,20 +164,23 @@ def _mz_linear_candidates_from_prologues(binary_path: Path) -> tuple[list[int], 
                 continue
             # angr DOS MZ loader base is 0x10000 in this pipeline.
             candidates.append(0x10000 + vaddr)
-    entry_raw = subprocess.run(
-        ["rizin", "-2", "-q", "-c", "ieq", str(binary_path)],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=2,
-    )
-    if entry_raw.returncode == 0:
+    try:
+        entry_raw = subprocess.run(
+            ["rizin", "-2", "-q", "-c", "ieq", str(binary_path)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=2,
+        )
+    except subprocess.TimeoutExpired:
+        entry_raw = None
+    if entry_raw is not None and entry_raw.returncode == 0:
         entry_text = entry_raw.stdout.strip()
         if entry_text.startswith("0x"):
             try:
                 candidates.append(0x10000 + int(entry_text, 16))
-            except Exception:
+            except ValueError:
                 pass
     dedup: set[int] = set()
     ordered: list[int] = []

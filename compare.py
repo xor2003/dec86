@@ -1,3 +1,8 @@
+"""Legacy comparison experiment for angr/VEX output.
+
+Layer: Tooling/gates.
+"""
+
 import logging
 import re
 

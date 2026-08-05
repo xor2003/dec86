@@ -38,6 +38,10 @@ def test_selects_real_mode_linear_focused_tests_for_implementation_file():
     )
 
     assert selected == (
+        "angr_platforms/tests/test_x86_16_consumed_push_lvalues.py",
+        "angr_platforms/tests/test_x86_16_segment_access_coverage.py",
+        "angr_platforms/tests/test_x86_16_segment_access_policy.py",
+        "angr_platforms/tests/test_x86_16_segment_address_policy.py",
         "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
         "test_materialize_direct_stack_mov_signed_half_inserts_before_outer_branch_first_use",
         "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
@@ -46,6 +50,17 @@ def test_selects_real_mode_linear_focused_tests_for_implementation_file():
         "test_materialize_direct_stack_mov_arg_copy_inserts_inside_else_after_prior_stack_assignment",
     )
 
+
+def test_selects_segment_global_materialization_owner_tests():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/lowering/segment_global_materialization.py",)
+    )
+
+    assert selected == (
+        "angr_platforms/tests/test_x86_16_segmented_global_loads.py",
+        "angr_platforms/tests/test_x86_16_structuring_pass_validation.py",
+        "angr_platforms/tests/test_x86_16_decompiler_postprocess_return_chain.py",
+    )
 
 def test_selects_pipeline_invariant_tests_for_implementation_file():
     selected = test_ownership_manifest.select_tests_for_files(
@@ -85,7 +100,21 @@ def test_selects_validation_dataflow_tests_for_root_validation_file():
         ("angr_platforms/angr_platforms/X86_16/validation_dataflow.py",)
     )
 
-    assert selected == ("angr_platforms/tests/test_x86_16_validation_dataflow.py",)
+    assert selected == (
+        "angr_platforms/tests/test_x86_16_validation_dataflow.py",
+        "angr_platforms/tests/test_x86_16_validation_predicates.py",
+        "angr_platforms/tests/test_x86_16_validation_virtual_carriers.py",
+    )
+
+
+def test_selects_validation_semantic_failure_tests_for_owner_file():
+    selected = test_ownership_manifest.select_tests_for_files(
+        ("angr_platforms/angr_platforms/X86_16/validation_semantic_failures.py",)
+    )
+
+    assert selected == (
+        "angr_platforms/tests/test_x86_16_validation_semantic_failures.py",
+    )
 
 
 def test_selects_ir_layer_fallback_for_unowned_ir_file():
@@ -201,6 +230,10 @@ def test_selects_postprocess_callsite_argument_tests_for_implementation_file():
         "angr_platforms/tests/test_x86_16_decompiler_postprocess_utils.py",
         "angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py::"
         "test_conservative_call_arg_seed_uses_known_default_for_zero_arg_helper_summary",
+        "angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py::"
+        "test_materialize_callsite_stack_arguments_refuses_direct_ds_byte_pair_store_prune",
+        "angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py::"
+        "test_materialize_callsite_stack_arguments_prunes_keep_existing_scalar_byte_pair_stores",
     )
 
 
@@ -215,6 +248,8 @@ def test_selects_cli_direct_fallback_focused_tests_for_legacy_cli_file():
 
     assert selected == (
         "angr_platforms/tests/test_decompiler_architecture_check.py",
+        "angr_platforms/tests/test_serial_clean_worker_cache.py",
+        "angr_platforms/tests/test_segment_program_layout_reporting.py",
         "angr_platforms/tests/test_x86_16_cli.py::"
         "test_direct_addr_project_local_fallback_addr_uses_rebased_function_addr",
         "angr_platforms/tests/test_x86_16_cli.py::"

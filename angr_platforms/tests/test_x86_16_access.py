@@ -10,6 +10,7 @@ class _FakeAccess:
     def __init__(self):
         self._inertia_last_resolved_operand = None
         self._inertia_resolved_operands = []
+        self._inertia_semantic_access_log = []
         self.reads = []
         self.writes = []
 
@@ -57,6 +58,9 @@ def test_segment_access_records_typed_operand_before_flattening():
     assert typed.space is MemSpace.DS
     assert typed.status is AddressStatus.STABLE
     assert typed.segment_origin is SegmentOrigin.PROVEN
+    semantic_mode, semantic_address = access._inertia_semantic_access_log[-1]
+    assert semantic_mode == MODE_READ
+    assert semantic_address.space is MemSpace.DS
 
 
 def test_ss_access_keeps_stack_space_in_recorded_operand():
@@ -71,6 +75,9 @@ def test_ss_access_keeps_stack_space_in_recorded_operand():
     assert typed.space is MemSpace.SS
     assert typed.status is AddressStatus.STABLE
     assert typed.segment_origin is SegmentOrigin.PROVEN
+    semantic_mode, semantic_address = access._inertia_semantic_access_log[-1]
+    assert semantic_mode == MODE_WRITE
+    assert semantic_address.space is MemSpace.SS
 
 
 def test_resolve_memory_operand_builder_owns_linear_and_typed_policy():

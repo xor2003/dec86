@@ -201,8 +201,7 @@ class Instr16(InstrBase):
         sf(0xA7, self.cmps_m16_m16, 0)
         sf(0xA9, self.test_ax_imm16, CHK_IMM16)
 
-        for i in range(8):
-            sf(0xB8 + i, self.mov_r16_imm16, CHK_IMM16)
+        self._register_opcode_range(0xB8, 0xBF, self.mov_r16_imm16, CHK_IMM16)
 
         sf(0xC2, self.ret_imm16, CHK_IMM16)
         sf(0xC3, self.ret, 0)

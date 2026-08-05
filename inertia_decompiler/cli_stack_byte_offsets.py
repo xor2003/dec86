@@ -783,6 +783,8 @@ def _rewrite_ss_stack_byte_offsets(
         element_type = SimTypeChar(False) if bits == 8 else SimTypeShort(False)
         ptr_type = SimTypePointer(element_type).with_arch(project.arch)
         base_ref = structured_c.CUnaryOp("Reference", cvar, codegen=codegen)
+        addr_expr: structured_c.CExpression
+        addr_expr = base_ref
         if offset > 0:
             addr_expr = structured_c.CBinaryOp(
                 "Add",
@@ -797,8 +799,6 @@ def _rewrite_ss_stack_byte_offsets(
                 structured_c.CConstant(offset, SimTypeShort(True), codegen=codegen),
                 codegen=codegen,
             )
-        else:
-            addr_expr = base_ref
         return structured_c.CUnaryOp(
             "Dereference",
             structured_c.CTypeCast(

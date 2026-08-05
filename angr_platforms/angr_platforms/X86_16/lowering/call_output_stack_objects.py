@@ -50,6 +50,9 @@ from angr.sim_variable import SimRegisterVariable, SimStackVariable, SimVariable
 from archinfo import Arch
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
+from ..call_target_identity import (
+    resolve_x86_16_canonical_call_target_function_8616,
+)
 from ..callsite_summary import (
     CallsiteReturnShape8616,
     CallsiteReturnUseKind8616,
@@ -61,6 +64,7 @@ from ..ir.condition_ir import ConditionIR
 from ..ir.core import IRValue, MemSpace
 from ..pipeline.errors import PipelineHardError
 from ..widening.stack_widening import prove_adjacent_storage_slices
+from .semantic_cast import CSemanticCast8616
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -202,6 +206,8 @@ class WideCallReturnConditionResult8616:
 
     expression: CExpression
     stats: WideCallReturnConditionStats8616
+    consumed_call: CFunctionCall | None = None
+    consumed_callsite: CallsiteSummary8616 | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -424,7 +430,7 @@ def select_wide_call_return_condition_chain_8616(
 def _wide_condition_call_8616(
     codegen: _CallOutputCodegen8616,
     first_condition_insn: int,
-) -> CFunctionCall | None:
+) -> tuple[CFunctionCall, CallsiteSummary8616] | None:
     """Return one typed DX:AX condition-return call immediately preceding the chain."""
     try:
         summary_map = codegen._inertia_callsite_summaries
@@ -463,21 +469,22 @@ def _wide_condition_call_8616(
         return None
     call = nearest[0]
     summary = inventory.get(nearest_callsite) or summary_map.get(id(call))
-    if isinstance(summary, CallsiteSummary8616):
-        rebound = dict(summary_map)
-        rebound[id(call)] = summary
-        codegen._inertia_callsite_summaries = rebound
-        if call.callee_func is None and isinstance(summary.target_addr, int):
-            try:
-                callee = codegen.project.kb.functions.function(
-                    addr=summary.target_addr,
-                    create=False,
-                )
-            except AttributeError:
-                callee = None
-            if callee is not None:
-                call.callee_func = callee
-    return call
+    if not isinstance(summary, CallsiteSummary8616):
+        return None
+    rebound = dict(summary_map)
+    rebound[id(call)] = summary
+    codegen._inertia_callsite_summaries = rebound
+    if isinstance(summary.target_addr, int):
+        callee = resolve_x86_16_canonical_call_target_function_8616(
+            codegen.project,
+            summary.target_addr,
+        )
+        if callee is None:
+            call.callee_func = None
+            call.callee_target = f"sub_{summary.target_addr:x}"
+        else:
+            call.callee_func = cast(Function, callee)
+    return call, summary
 
 
 def prune_materialized_wide_condition_call_carrier_8616(
@@ -488,24 +495,23 @@ def prune_materialized_wide_condition_call_carrier_8616(
     boundary = cast(_CallOutputCodegen8616, codegen)
     removed = 0
     seen: set[int] = set()
-
     def is_consumed_carrier(statement: object) -> bool:
         """Return whether one statement exists only to carry ``call`` through AX."""
         if statement is call:
             return True
         if isinstance(statement, CExpressionStatement):
-            return statement.expr is call
+            if statement.expr is call:
+                return True
+            statement = statement.expr
         if not isinstance(statement, CAssignment) or statement.rhs is not call:
             return False
         lhs = statement.lhs
         if not isinstance(lhs, CVariable) or not isinstance(lhs.variable, SimRegisterVariable):
             return False
-        register_name = lhs.variable.name
-        if not isinstance(register_name, str) or not register_name:
-            register_name = boundary.project.arch.translate_register_name(
-                lhs.variable.reg,
-                lhs.variable.size,
-            )
+        register_name = boundary.project.arch.translate_register_name(
+            lhs.variable.reg,
+            lhs.variable.size,
+        )
         return isinstance(register_name, str) and register_name.lower() == "ax"
 
     def visit(node: object) -> None:
@@ -549,17 +555,20 @@ def lower_wide_call_return_condition_chain_8616(
     normalized_count = 0
     classified_count = 0
     materialized_count = 0
+    consumed_call: CFunctionCall | None = None
+    consumed_callsite: CallsiteSummary8616 | None = None
     ir_pair = _wide_call_return_condition_ir_8616(conditions)
     expression_parts = _wide_call_return_condition_expression_parts_8616(expression)
     lowered = expression
     if ir_pair is not None and expression_parts is not None:
         normalized_count = 1
         first_condition_insn = conditions[0].src_insn
-        call = (
+        call_selection = (
             _wide_condition_call_8616(boundary, first_condition_insn)
             if isinstance(first_condition_insn, int)
             else None
         )
+        call, callsite = call_selection if call_selection is not None else (None, None)
         wide_stack = _wide_condition_stack_cvar_8616(
             boundary,
             expression_parts[0],
@@ -567,8 +576,16 @@ def lower_wide_call_return_condition_chain_8616(
         )
         if call is not None and wide_stack is not None:
             classified_count = 1
-            lowered = CBinaryOp("CmpGT", call, wide_stack, codegen=codegen)
+            signed_call = CSemanticCast8616(
+                None,
+                SimTypeLong(True).with_arch(boundary.project.arch),
+                call,
+                codegen=codegen,
+            )
+            lowered = CBinaryOp("CmpGT", signed_call, wide_stack, codegen=codegen)
             materialized_count = 1
+            consumed_call = call
+            consumed_callsite = callsite
     stats = WideCallReturnConditionStats8616(
         raw_fact_count=raw_count,
         normalized_fact_count=normalized_count,
@@ -579,7 +596,12 @@ def lower_wide_call_return_condition_chain_8616(
     boundary._inertia_wide_call_return_condition_stats_8616 = stats
     if stats.classified_fact_count > 0 and stats.materialized_count == 0:
         raise PipelineHardError("classified wide call-return condition was not materialized")
-    return WideCallReturnConditionResult8616(lowered, stats)
+    return WideCallReturnConditionResult8616(
+        expression=lowered,
+        stats=stats,
+        consumed_call=consumed_call,
+        consumed_callsite=consumed_callsite,
+    )
 
 
 def _aggregate_boundaries_8616(root: object) -> tuple[int, ...]:

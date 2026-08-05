@@ -40,7 +40,6 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (  # noqa: E402
     DECOMPILER_POSTPROCESS_PASSES,
     _decompiler_postprocess_passes_for_function,
     _is_exposed_nonvoid_stack_arg_scalar_return_delta_8616,
-    _wrapper_passes_8616,
 )
 
 
@@ -185,7 +184,6 @@ def test_tiny_wrapper_like_postprocess_keeps_argument_normalization():
     pass_specs = _decompiler_postprocess_passes_for_function(project, codegen)
     pass_names = tuple(spec.name for spec in pass_specs)
 
-    assert pass_names == tuple(spec.name for spec in _wrapper_passes_8616())
     assert pass_names[:6] == (
         "_apply_word_global_types_8616",
         "_apply_annotations_8616",
@@ -197,10 +195,8 @@ def test_tiny_wrapper_like_postprocess_keeps_argument_normalization():
     assert "_lower_stable_ss_stack_accesses_8616" in pass_names
     assert (
         "_attach_callsite_summaries_8616",
-        "_recover_missing_direct_calls_from_evidence_early_8616",
         "_materialize_callsite_stack_arguments_8616",
         "_materialize_callsite_prototypes_8616",
-        "_materialize_recovered_callsite_stack_arguments_8616",
     ) == tuple(name for name in pass_names if "callsite" in name or "direct_calls" in name)
 
 
@@ -224,12 +220,19 @@ def test_call_heavy_small_function_postprocess_keeps_full_pass_list():
         "_normalize_fact_backed_stack_accesses_8616",
         "_simplify_boolean_cites_8616",
         "_simplify_structured_expressions_8616",
+        "_recover_missing_direct_calls_from_evidence_8616",
+        "_recover_missing_direct_calls_from_evidence_early_8616",
+        "_recover_missing_direct_calls_final_8616",
+        "_materialize_recovered_callsite_stack_arguments_8616",
+        "_materialize_callsite_stack_arguments_final_8616",
+        "_normalize_recovered_call_target_names_8616",
+        "_normalize_call_target_names_final_8616",
     }
 
     assert pass_names == tuple(name for name in expected_names if name not in default_disabled)
     assert "_apply_annotations_8616" in pass_names
     assert "_normalize_function_prototype_arg_names_8616" in pass_names
-    assert "_materialize_callsite_stack_arguments_final_8616" in pass_names
+    assert "_materialize_callsite_stack_arguments_final_8616" not in pass_names
 
 
 def test_call_heavy_small_function_profile_is_not_marked_wrapper_like():
@@ -473,13 +476,18 @@ def test_apply_annotations_deduplicates_stack_variable_names():
 
     stack_a = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
     stack_b = SimStackVariable(6, 2, base="bp", name="s", region=0x1000)
+    ast_codegen = _FakeCodegen()
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(
             addr=0x1000,
-            statements=structured_c.CStatements([], codegen=_FakeCodegen()),
+            statements=structured_c.CStatements([], codegen=ast_codegen),
             variables_in_use={
-                stack_a: SimpleNamespace(unified_variable=SimpleNamespace(name="s")),
-                stack_b: SimpleNamespace(unified_variable=SimpleNamespace(name="s")),
+                stack_a: structured_c.CVariable(
+                    stack_a, unified_variable=SimpleNamespace(name="s"), codegen=ast_codegen
+                ),
+                stack_b: structured_c.CVariable(
+                    stack_b, unified_variable=SimpleNamespace(name="s"), codegen=ast_codegen
+                ),
             },
         )
     )
@@ -848,7 +856,7 @@ def test_return_shape_classify_ignores_cfg_proven_switch_loop_unreachable_tail_r
     assert func.info["x86_16_return_shape"]["ignored_unreachable_returns"] == 2
 
 
-def test_return_shape_classify_drops_unobserved_default_scalar_synthetic_return():
+def test_return_shape_classify_keeps_unobserved_default_scalar_synthetic_return():
     class _FakeCodegen:
         def __init__(self):
             self._idx = 0
@@ -967,13 +975,11 @@ def test_return_shape_classify_drops_unobserved_default_scalar_synthetic_return(
 
     changed = _classify_return_shape_8616(project, codegen)
 
-    assert changed is True
-    assert synthetic_return.retval is None
-    assert isinstance(func.prototype.returnty, SimTypeBottom)
-    assert func.prototype.returnty.label == "void"
-    assert isinstance(codegen.cfunc.functy.returnty, SimTypeBottom)
-    assert func.info["x86_16_return_shape"]["shape"] == "void"
-    assert func.info["x86_16_return_shape"]["value_returns"] == 0
+    assert changed is False
+    assert synthetic_return.retval is not None
+    assert isinstance(func.prototype.returnty, SimTypeShort)
+    assert isinstance(codegen.cfunc.functy.returnty, SimTypeShort)
+    assert "x86_16_return_shape" not in func.info
 
 
 def test_validation_accepts_exposed_nonvoid_stack_arg_scalar_return():

@@ -1,0 +1,175 @@
+"""Fold exact byte-lane recompositions at the Widening layer.
+
+Layer: Widening.
+Responsibility: replace a complete low/high-byte projection with its shared
+source only when Alias proves the assignment destination is exactly one word.
+Do not infer width from rendered C, names, compiler samples, or postprocess.
+Consumes alias-proven storage identity.
+Do not join values from rendered text, cosmetic shape, postprocess, or
+CLI/reporting evidence.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol, cast
+
+from angr.analyses.decompiler.structured_codegen import c as structured_c
+
+from ..c_ast_utils import (
+    _clone_c_ast_tree_8616,
+    _iter_c_nodes_deep_8616,
+    _same_c_expression_8616,
+)
+from ..codegen_metadata import get_codegen_side_metadata
+from ..pipeline.errors import PipelineHardError
+from ..semantics.alias_query import describe_alias_storage
+
+
+@dataclass(slots=True)
+class WordProjectionRecompositionStats8616:
+    """Closed evidence counters for word-projection recomposition."""
+
+    raw_fact_count: int = 0
+    normalized_fact_count: int = 0
+    classified_fact_count: int = 0
+    materialized_count: int = 0
+    failure_count: int = 0
+
+
+class _CFunctionSurface8616(Protocol):
+    """Narrowed current-angr C function contract used by Widening."""
+
+    statements: object
+
+
+class _CodegenSurface8616(Protocol):
+    """Narrowed current-angr codegen contract used by Widening."""
+
+    cfunc: _CFunctionSurface8616
+
+
+def _unwrap_casts_8616(node: object) -> object:
+    """Remove syntax-only casts from a structured expression."""
+    while isinstance(node, structured_c.CTypeCast):
+        node = node.expr
+    return node
+
+
+def _constant_is_8616(node: object, expected: int) -> bool:
+    """Return whether a structured node is one exact integer constant."""
+    node = _unwrap_casts_8616(node)
+    return (
+        isinstance(node, structured_c.CConstant)
+        and isinstance(node.value, int)
+        and node.value == expected
+    )
+
+
+def _masked_byte_source_8616(node: object) -> object | None:
+    """Return the source of one exact low-byte mask."""
+    node = _unwrap_casts_8616(node)
+    if not isinstance(node, structured_c.CBinaryOp) or node.op != "And":
+        return None
+    if _constant_is_8616(node.rhs, 0xFF):
+        return _unwrap_casts_8616(node.lhs)
+    if _constant_is_8616(node.lhs, 0xFF):
+        return _unwrap_casts_8616(node.rhs)
+    return None
+
+
+def _high_byte_source_8616(node: object) -> object | None:
+    """Return the source of one exact high-byte projection."""
+    node = _unwrap_casts_8616(node)
+    if (
+        not isinstance(node, structured_c.CBinaryOp)
+        or node.op != "Shl"
+        or not _constant_is_8616(node.rhs, 8)
+    ):
+        return None
+    shifted = _masked_byte_source_8616(node.lhs)
+    shifted = _unwrap_casts_8616(shifted) if shifted is not None else None
+    if (
+        not isinstance(shifted, structured_c.CBinaryOp)
+        or shifted.op != "Shr"
+        or not _constant_is_8616(shifted.rhs, 8)
+    ):
+        return None
+    return _unwrap_casts_8616(shifted.lhs)
+
+
+def _word_projection_sources_8616(node: object) -> tuple[object, object] | None:
+    """Return low/high sources from one complete 16-bit recomposition."""
+    node = _unwrap_casts_8616(node)
+    if not isinstance(node, structured_c.CBinaryOp) or node.op != "Or":
+        return None
+    for low_node, high_node in ((node.lhs, node.rhs), (node.rhs, node.lhs)):
+        low_source = _masked_byte_source_8616(low_node)
+        high_source = _high_byte_source_8616(high_node)
+        if low_source is not None and high_source is not None:
+            return low_source, high_source
+    return None
+
+
+def _side_effect_free_source_8616(node: object) -> bool:
+    """Accept only recursively pure value expressions for deduplication."""
+    node = _unwrap_casts_8616(node)
+    if isinstance(node, (structured_c.CConstant, structured_c.CVariable)):
+        return True
+    if isinstance(node, structured_c.CBinaryOp):
+        return _side_effect_free_source_8616(node.lhs) and _side_effect_free_source_8616(
+            node.rhs
+        )
+    return False
+
+
+def _word_destination_proven_8616(node: object) -> bool:
+    """Return whether Alias proves one stable two-byte destination."""
+    facts = describe_alias_storage(node)
+    return facts.domain.width == 2 and not facts.needs_synthesis()
+
+
+def materialize_word_projection_recompositions_8616(codegen: object) -> bool:
+    """Fold complete word projections while preserving destination truncation."""
+    surface = cast(_CodegenSurface8616, codegen)
+    try:
+        root = surface.cfunc.statements
+    except AttributeError:
+        return False
+    stats = WordProjectionRecompositionStats8616()
+    assignments = tuple(
+        node
+        for node in _iter_c_nodes_deep_8616(root)
+        if isinstance(node, structured_c.CAssignment)
+    )
+    for assignment in assignments:
+        sources = _word_projection_sources_8616(assignment.rhs)
+        if sources is None:
+            continue
+        stats.raw_fact_count += 1
+        low_source, high_source = sources
+        if not _same_c_expression_8616(low_source, high_source) or not _side_effect_free_source_8616(
+            low_source
+        ):
+            stats.failure_count += 1
+            continue
+        stats.normalized_fact_count += 1
+        if not _word_destination_proven_8616(assignment.lhs):
+            stats.failure_count += 1
+            continue
+        stats.classified_fact_count += 1
+        assignment.rhs = cast(structured_c.CExpression, _clone_c_ast_tree_8616(low_source))
+        stats.materialized_count += 1
+    get_codegen_side_metadata(codegen)["word_projection_recomposition_8616"] = stats
+    if stats.classified_fact_count > 0 and stats.materialized_count == 0:
+        raise PipelineHardError(
+            "classified word projection was not materialized",
+            layer="widening",
+        )
+    return stats.materialized_count > 0
+
+
+__all__ = [
+    "WordProjectionRecompositionStats8616",
+    "materialize_word_projection_recompositions_8616",
+]

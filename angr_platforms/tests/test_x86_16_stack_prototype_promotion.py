@@ -13,12 +13,10 @@ from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseVerdict8616,
     record_caller_return_use_evidence_8616,
 )
-from angr_platforms.X86_16.lowering.return_type_evidence import (
-    materialize_proven_void_return_type_8616,
-)
 from angr_platforms.X86_16.lowering.stack_lowering_from_facts import attach_cod_stack_alias_annotations_8616
 from angr_platforms.X86_16.lowering.stack_prototype_materialization import (
     FunctionParameterWidthFact8616,
+    align_pointer_flags_to_stack_argument_widths_8616,
     materialize_annotated_stack_prototype_8616,
     reconcile_exact_stack_argument_prototype_8616,
 )
@@ -495,6 +493,69 @@ def test_lowering_materializes_normalized_stack_annotation_prototype_before_post
     assert postprocess._apply_annotations_8616(project, codegen) is False
 
 
+def test_lowering_materializes_wide_argument_from_adjacent_annotation_starts() -> None:
+    """Collapse physical word slots when structured BP starts prove one wide object."""
+    arch = Arch86_16()
+    short_type = SimTypeShort(False).with_arch(arch)
+    physical_prototype = SimTypeFunction(
+        [short_type] * 5,
+        short_type,
+        arg_names=("file", "cmdline", "cmdline_hi", "cs", "ss"),
+    ).with_arch(arch)
+    func = SimpleNamespace(
+        addr=0x1000,
+        name="load_program",
+        prototype=physical_prototype,
+        is_prototype_guessed=True,
+        info={
+            ANNOTATION_KEY: {
+                "stack_vars": {
+                    2: {"name": "file"},
+                    4: {"name": "cmdline"},
+                    8: {"name": "cs"},
+                    10: {"name": "ss"},
+                }
+            }
+        },
+    )
+    project = SimpleNamespace(
+        arch=arch,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
+    )
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    physical_args = []
+    variables_in_use = {}
+    for offset, name in zip((4, 6, 8, 10, 12), physical_prototype.arg_names):
+        variable = SimStackVariable(offset, 2, base="bp", name=name, region=0x1000)
+        cvar = structured_c.CVariable(variable, variable_type=short_type, codegen=c_codegen)
+        variables_in_use[variable] = cvar
+        physical_args.append(cvar)
+    cfunc = SimpleNamespace(
+        addr=0x1000,
+        variables_in_use=variables_in_use,
+        unified_local_vars={},
+        arg_list=physical_args,
+        functy=physical_prototype,
+        prototype=physical_prototype,
+        statements=structured_c.CStatements([], codegen=c_codegen),
+    )
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False)
+
+    assert materialize_annotated_stack_prototype_8616(project, codegen)
+
+    assert [arg.variable.offset for arg in cfunc.arg_list] == [4, 6, 10, 12]
+    assert [arg.variable.size for arg in cfunc.arg_list] == [2, 4, 2, 2]
+    assert isinstance(cfunc.functy.args[1], SimTypeLong)
+    assert codegen._inertia_function_parameter_width_facts_8616 == (
+        FunctionParameterWidthFact8616(stack_offset=4, width_bytes=2),
+        FunctionParameterWidthFact8616(stack_offset=6, width_bytes=4),
+        FunctionParameterWidthFact8616(stack_offset=10, width_bytes=2),
+        FunctionParameterWidthFact8616(stack_offset=12, width_bytes=2),
+    )
+
+
 def test_lowering_stack_prototype_preserves_explicit_void_return_type():
     arch = Arch86_16()
     void_type = SimTypeBottom(label="void").with_arch(arch)
@@ -596,7 +657,12 @@ def test_lowering_explicit_zero_args_without_positive_stack_facts_blocks_legacy_
         name="no_args",
         prototype=explicit_prototype,
         is_prototype_guessed=False,
-        info={ANNOTATION_KEY: {"stack_vars": {-2: {"name": "local_word"}}}},
+        info={
+            ANNOTATION_KEY: {
+                "prototype": explicit_prototype,
+                "stack_vars": {-2: {"name": "local_word"}},
+            }
+        },
     )
     project = SimpleNamespace(
         arch=arch,
@@ -782,7 +848,59 @@ def test_reconcile_exact_stack_argument_prototype_narrows_all_word_slots():
     )
 
 
+def test_reconcile_aggregates_split_call_sources_covering_one_wide_stack_object() -> None:
+    """Keep a wide argument when one call consumes both exact word slices."""
+    arch = Arch86_16()
+    short_type = SimTypeShort(False).with_arch(arch)
+    wide_type = SimTypeLong(False).with_arch(arch)
+    prototype = SimTypeFunction(
+        [short_type, wide_type],
+        short_type,
+        arg_names=("file", "cmdline"),
+    ).with_arch(arch)
+    func = SimpleNamespace(prototype=prototype, is_prototype_guessed=False)
+    project = SimpleNamespace(
+        arch=arch,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
+        ),
+    )
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    file_var = SimStackVariable(4, 2, base="bp", name="file", region=0x1000)
+    cmdline_var = SimStackVariable(6, 4, base="bp", name="cmdline", region=0x1000)
+    file_arg = structured_c.CVariable(file_var, variable_type=short_type, codegen=c_codegen)
+    cmdline_arg = structured_c.CVariable(cmdline_var, variable_type=short_type, codegen=c_codegen)
+    cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=[file_arg, cmdline_arg],
+        functy=prototype,
+        prototype=prototype,
+        unified_local_vars={},
+    )
+    codegen = SimpleNamespace(
+        cfunc=cfunc,
+        _inertia_callsite_summaries={
+            0x1020: SimpleNamespace(
+                push_arg_sources=(("bp", 8), ("bp", 6), ("bp", 4)),
+                arg_widths=(2, 2, 2),
+            )
+        },
+    )
+
+    changed = reconcile_exact_stack_argument_prototype_8616(project, codegen)
+
+    assert changed is True
+    assert isinstance(cfunc.functy.args[1], SimTypeLong)
+    assert isinstance(cmdline_arg.variable_type, SimTypeLong)
+    assert cmdline_arg.variable.size == 4
+    assert codegen._inertia_function_parameter_width_facts_8616 == (
+        FunctionParameterWidthFact8616(stack_offset=4, width_bytes=2),
+        FunctionParameterWidthFact8616(stack_offset=6, width_bytes=4),
+    )
+
+
 def test_reconcile_uses_exact_near_pointer_parameter_slot_width() -> None:
+    assert align_pointer_flags_to_stack_argument_widths_8616((False, False, False, True, True), (4, 6, 10, 12), {4: 2, 6: 4, 10: 2, 12: 2}) == (False, False, True, True)
     arch = Arch86_16()
     guessed_wide = SimTypeLong(False).with_arch(arch)
     pointer_type = SimTypePointer(SimTypeShort(False)).with_arch(arch)
@@ -802,7 +920,7 @@ def test_reconcile_uses_exact_near_pointer_parameter_slot_width() -> None:
     count_var = SimStackVariable(4, 2, base="bp", name="count", region=0x1000)
     values_var = SimStackVariable(6, 2, base="bp", name="values", region=0x1000)
     count = structured_c.CVariable(count_var, variable_type=guessed_wide, codegen=c_codegen)
-    values = structured_c.CVariable(values_var, variable_type=pointer_type, codegen=c_codegen)
+    values = structured_c.CVariable(values_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     cfunc = SimpleNamespace(
         addr=0x1000,
         arg_list=[count, values],
@@ -825,7 +943,7 @@ def test_reconcile_uses_exact_near_pointer_parameter_slot_width() -> None:
     assert changed is True
     assert isinstance(cfunc.functy.args[0], SimTypeShort)
     assert isinstance(cfunc.functy.args[1], SimTypePointer)
-    assert values.variable.size == 2
+    assert isinstance(values.variable_type, SimTypePointer) and values.variable.size == 2
     assert codegen._inertia_stack_prototype_width_stats_8616.failure_count == 0
     assert codegen._inertia_function_parameter_width_facts_8616 == (
         FunctionParameterWidthFact8616(stack_offset=4, width_bytes=2),
@@ -2097,8 +2215,7 @@ def test_classify_return_shape_promotes_scalar_returns_from_void_prototypes(monk
     assert func.prototype.returnty.size == 16
 
 
-def test_classify_return_shape_preserves_lowering_proven_void_return(monkeypatch):
-    monkeypatch.setenv("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "1")
+def test_classify_return_shape_does_not_treat_unused_callers_as_void():
     c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
     ret = structured_c.CReturn(
         structured_c.CConstant(0, SimTypeShort(False), codegen=c_codegen),
@@ -2138,15 +2255,14 @@ def test_classify_return_shape_preserves_lowering_proven_void_return(monkeypatch
         _inertia_current_function_8616=func,
     )
     record_caller_return_use_evidence_8616(project, 0x1000, evidence)
-    assert materialize_proven_void_return_type_8616(project, func) is True
 
     classified = postprocess._classify_return_shape_8616(project, codegen)
     pruned = postprocess._prune_void_function_return_values_8616(project, codegen)
 
     assert classified is False
-    assert pruned is True
-    assert isinstance(func.prototype.returnty, SimTypeBottom)
-    assert ret.retval is None
+    assert pruned is False
+    assert isinstance(func.prototype.returnty, SimTypeShort)
+    assert ret.retval is not None
 
 
 def test_classify_return_shape_ignores_source_return_lines_when_returns_are_missing(monkeypatch):
@@ -2225,7 +2341,7 @@ def test_classify_return_shape_treats_explicit_void_returns_as_void(monkeypatch)
     assert isinstance(func.prototype.returnty, SimTypeBottom)
 
 
-def test_classify_return_shape_treats_unused_guessed_no_return_as_void():
+def test_classify_return_shape_refuses_unused_guessed_no_return_as_void():
     c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
     prototype = _FakePrototype(args=[SimTypeLong(False)], arg_names=("wait",), returnty=SimTypeShort(False))
     func = SimpleNamespace(
@@ -2246,11 +2362,11 @@ def test_classify_return_shape_treats_unused_guessed_no_return_as_void():
 
     changed = postprocess._classify_return_shape_8616(project, codegen)
 
-    assert changed is True
-    assert isinstance(func.prototype.returnty, SimTypeBottom)
+    assert changed is False
+    assert isinstance(func.prototype.returnty, SimTypeShort)
 
 
-def test_classify_return_shape_treats_unresolved_unused_return_carrier_as_void():
+def test_classify_return_shape_keeps_unresolved_unused_return_carrier():
     c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
     unresolved_var = SimStackVariable(-2, 2, base="bp", name="vvar_21", region=0x1000)
     unresolved_return = structured_c.CReturn(
@@ -2276,12 +2392,12 @@ def test_classify_return_shape_treats_unresolved_unused_return_carrier_as_void()
 
     changed = postprocess._classify_return_shape_8616(project, codegen)
 
-    assert changed is True
-    assert isinstance(func.prototype.returnty, SimTypeBottom)
-    assert unresolved_return.retval is None
+    assert changed is False
+    assert isinstance(func.prototype.returnty, SimTypeShort)
+    assert unresolved_return.retval is not None
 
 
-def test_classify_return_shape_treats_unobserved_terminal_call_result_as_void():
+def test_classify_return_shape_keeps_unobserved_terminal_call_result():
     c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
     call = structured_c.CFunctionCall("outtext", None, [], codegen=c_codegen)
     call_return = structured_c.CReturn(call, codegen=c_codegen)
@@ -2310,15 +2426,13 @@ def test_classify_return_shape_treats_unobserved_terminal_call_result_as_void():
     classified = postprocess._classify_return_shape_8616(project, codegen)
     pruned = postprocess._prune_void_function_return_values_8616(project, codegen)
 
-    assert classified is True
-    assert pruned is True
-    assert isinstance(func.prototype.returnty, SimTypeBottom)
+    assert classified is False
+    assert pruned is False
+    assert isinstance(func.prototype.returnty, SimTypeShort)
     statements = codegen.cfunc.statements.statements
-    assert len(statements) == 2
-    assert isinstance(statements[0], structured_c.CExpressionStatement)
-    assert statements[0].expr is call
-    assert isinstance(statements[1], structured_c.CReturn)
-    assert statements[1].retval is None
+    assert len(statements) == 1
+    assert isinstance(statements[0], structured_c.CReturn)
+    assert statements[0].retval is call
 
 
 def test_collapse_adjacent_unresolved_return_carrier_uses_concrete_ax_return():

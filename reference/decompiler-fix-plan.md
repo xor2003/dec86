@@ -6,6 +6,28 @@ some accepted outputs still expose unresolved temporaries, raw segmented memory,
 unproven loop state, or fallback bodies.  Those states must be made measurable
 and refused before deeper semantic recovery work is trusted.
 
+## 2026-08-04 Return-Class Evidence Correction
+
+This supersedes earlier claims in this document that a closed set of callers
+ignoring AX proves a source-level `void` return type. It proves only that the
+result is unobserved in the recovered closed program. Types/Lowering may use
+that fact to replace an unresolved, pure scalar return carrier with a typed
+zero so generated C remains compilable, but it must not mutate the prototype
+or delete a resolved return value. A value-returning ABI is proven when at
+least one caller consumes the result; an exact `void` ABI requires independent
+prototype/type evidence.
+
+DoD completed:
+- focused tests refuse void inference for complete unused-caller evidence,
+  including exact-slice rebasing and conflicting address-domain evidence;
+- unresolved pure scalar carriers are neutralized only with complete unobserved
+  evidence, while assigned values and side-effecting calls are preserved;
+- `pointer_memory.C` requires a value return for `sum_words`; `fill_bytes` and
+  `swap_ptrs` deliberately accept either C return surface because the stripped
+  binary cannot distinguish the original source declarations;
+- the full pointer-memory compile/decompile/recompile/DOS lane passes with all
+  three tail validations clean and original/generated exit code `255`.
+
 ## 2026-07-28 Pointer-Memory Lifecycle and Return-Evidence Closure
 
 This supersedes the Step 17 note that `pointer_memory.C` is only a candidate.
@@ -26,9 +48,9 @@ indirect-memory validation family is complete.
      supported only when they do not carry a memory payload.
    - The exact `call swap_ptrs; add sp, 4; cmp byte ptr [bp-10], 3` regression
      classifies the result as unused, while `test ax, ax` remains used.
-   - Whole-program caller-use evidence therefore proves `swap_ptrs` is `void`
-     in Types/Lowering. Validation, postprocess, and CLI do not infer or repair
-     that return class.
+   - Whole-program caller-use evidence proves only that `swap_ptrs`'s result is
+     unobserved. It does not prove a source-level `void` ABI; Validation,
+     postprocess, and CLI do not infer or repair that return class.
 
 2. **Materialize pointer-memory facts before Structuring baselines.**
 
@@ -69,9 +91,9 @@ indirect-memory validation family is complete.
      source-contract requirement. The gate parses the final generated function
      AST after lexical comment removal and reports a typed refusal for a wrong
      return class; it never repairs generated C.
-   - `pointer_memory.C` requires `fill_bytes=void`, `sum_words=value`, and
-     `swap_ptrs=void`. Positive and negative tests include the former wrong
-     scalar `swap_ptrs` shape.
+   - `pointer_memory.C` requires `sum_words=value`; `fill_bytes` and
+     `swap_ptrs` accept either return surface because no independent binary
+     evidence distinguishes source `void` from an ignored scalar result.
    - Its DOS harness checks all eight byte stores, `sum_words(...)=100`, both
      swapped values, and exit code `255`. The duplicate-swap regression exits
      differently and therefore cannot pass by recompilation alone.
@@ -573,7 +595,7 @@ Recurrence evidence is pinned at three levels:
 - Structuring lifecycle tests require call/prototype/pointer consumers to run
   before consumed PUSH pruning and final validation;
 - the real `ARGS.EXE` lane requires independent `104` and `118` call
-  arguments, three indexed `arg_6[local_2]` uses, and forbids the former raw
+  arguments, three indexed `arg_5[local_2]` uses, and forbids the former raw
   `SEG_U16` access and leaked constant-carrier assignments.
 
 Current gate evidence after this fix:
@@ -923,21 +945,21 @@ Implemented evidence:
   and `1281` tests; and `make test-pipeline PYTHON=./.venv/bin/python` passes
   `3/3`, including Ultra QuickC and all five serial MS C tiny `.C` full
   round trips.
-- Types/Lowering now exposes a typed `VOID`/`VALUE` function-result class only
-  from closed binary caller-use evidence. A proven used result establishes
-  `VALUE`; `VOID` requires every discovered caller result to be classified and
-  unused with no evidence-loop failure. Incomplete, unknown, and absent evidence
-  remain unclassified.
+- Types/Lowering exposes a typed `VALUE` function-result class from closed
+  binary caller-use evidence when at least one caller consumes the result.
+  Complete unused-caller evidence establishes only an `UNUSED` observation
+  verdict, not a source-level `VOID` class. Incomplete, unknown, and absent
+  evidence remain unclassified.
 - `validation_calls.py` compares that proof with
   `codegen.cfunc.functy.returnty`, the exact third-party type surface that emits
   the final C function header. It reports only: mismatches and unavailable final
   type surfaces become typed absolute failures; validation never changes the
   declaration, return body, or caller evidence.
-- Return-class recurrence coverage is symmetric: proven void and value
-  declarations pass, value-as-void and void-as-value both fail, a missing final
-  type surface fails, and incomplete evidence refuses to guess. Final semantic
-  refresh, summary cache identity, semantic failure metadata, and closed-loop
-  counters all carry the new issue family.
+- Return-class recurrence coverage requires a value declaration when callers
+  provably consume the result. Explicit void surfaces may still be validated
+  from independent prototype evidence, while unused callers alone refuse to
+  guess. Final semantic refresh, summary cache identity, semantic failure
+  metadata, and closed-loop counters carry the issue family.
 - The broader validation bundle initially exposed two stale postprocess test
   doubles. One expected an owned boolean control field to be deleted instead of
   restored to `False`; the other omitted the mandatory direct
@@ -1202,7 +1224,7 @@ Latest prevention-gate evidence:
 
 - Direct QuickC `ARGS.EXE` exits `0`, reports `validation=passed`, keeps
   `for (local_2 = 1; ...)`, emits independent call constants `104` and `118`,
-  lowers the dereference to `arg_6[local_2]`, and emits no false
+  lowers the dereference to `arg_5[local_2]`, and emits no false
   `local_2 = &local_0`.
 - The required Ultra QuickC lane passes all four real fixtures with
   `passed_fixture_count=4`, `failed_fixture_count=0`, and

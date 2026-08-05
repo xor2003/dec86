@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
@@ -56,6 +56,7 @@ class LoopBranchGuardFact8616:
     false_target: int
     decoded_condition_fingerprint: str
     guard_condition_fingerprint: str
+    condition_ir: ConditionIR | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -402,11 +403,29 @@ def _loop_header_jcc_addrs_8616(root: object) -> frozenset[int]:
     return frozenset(jcc_addrs)
 
 
+def _typed_loop_condition_jcc_addrs_8616(root: object) -> frozenset[int]:
+    """Return JCCs already bound as typed loop continuations."""
+    jcc_addrs: set[int] = set()
+    for loop in _loop_nodes_with_body_8616(root):
+        condition = loop.condition
+        tags = _dynamic_attr_8616(condition, "tags", None)
+        key = _condition_tags_8616(condition)
+        if (
+            isinstance(tags, Mapping)
+            and tags.get("inertia_typed_loop_condition_bound_8616") is True
+            and key is not None
+        ):
+            jcc_addrs.add(key[0])
+    return frozenset(jcc_addrs)
+
+
 def _normalized_condition_fingerprint_8616(value: str) -> str:
     """Return the lossless IR-normalized condition identity for exact joins."""
-    return normalize_condition_fingerprint_algebraic_8616(
-        normalize_condition_fingerprint_string_8616(
-            canonicalize_condition_storage_fingerprint_8616(value)
+    return str(
+        normalize_condition_fingerprint_algebraic_8616(
+            normalize_condition_fingerprint_string_8616(
+                canonicalize_condition_storage_fingerprint_8616(value)
+            )
         )
     )
 
@@ -886,6 +905,7 @@ def materialize_unconsumed_loop_break_jcc_8616(
     stats = _unconsumed_loop_break_jcc_stats_8616(codegen)
     existing_condition_keys = _condition_keys_in_codegen_8616(codegen)
     existing_loop_header_jcc_addrs = _loop_header_jcc_addrs_8616(root)
+    typed_loop_condition_jcc_addrs = _typed_loop_condition_jcc_addrs_8616(root)
     existing_break_nodes_by_key = _break_guard_nodes_by_key_8616(root)
     typed_conditions_by_key = _typed_conditions_by_key_8616(codegen)
     decoded_conditions_by_jcc: dict[int, CExpression] = {}
@@ -900,6 +920,9 @@ def materialize_unconsumed_loop_break_jcc_8616(
             continue
         stats.raw_fact_count += 1
         key = (jcc_addr, int(block_addr))
+        if jcc_addr in typed_loop_condition_jcc_addrs:
+            stats.refused_existing_condition += 1
+            continue
         existing_break_nodes = tuple(
             node
             for existing_key, nodes in existing_break_nodes_by_key.items()
@@ -950,6 +973,7 @@ def materialize_unconsumed_loop_break_jcc_8616(
         if len(typed_candidates) > 1:
             stats.refused_decode += 1
             continue
+        typed_condition: ConditionIR | None = None
         if typed_candidates:
             typed_condition = typed_candidates[0]
             if not _typed_condition_matches_jcc_targets_8616(
@@ -1066,6 +1090,7 @@ def materialize_unconsumed_loop_break_jcc_8616(
             false_target=int(false_target),
             decoded_condition_fingerprint=decoded_condition_fingerprint,
             guard_condition_fingerprint=guard_condition_fingerprint,
+            condition_ir=typed_condition,
         )
         if has_existing_condition_without_break:
             _record_loop_branch_guard_fact_8616(codegen, branch_fact)

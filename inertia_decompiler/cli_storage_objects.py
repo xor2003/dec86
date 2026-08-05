@@ -7,11 +7,11 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, TypeAlias
+from typing import Any, Callable, TypeAlias
 
-from angr_platforms.X86_16.lowering.object_lowering import AccessTraitObjectHint, BaseKey
-
-from .cli_access_profiles import AccessTraitEvidenceProfile
+BaseKey: TypeAlias = tuple[object, ...]
+AccessTraitObjectHint: TypeAlias = Any
+AccessTraitEvidenceProfile: TypeAlias = Any
 
 StableHints: TypeAlias = dict[BaseKey, AccessTraitObjectHint]
 EvidenceProfiles: TypeAlias = dict[BaseKey, AccessTraitEvidenceProfile]

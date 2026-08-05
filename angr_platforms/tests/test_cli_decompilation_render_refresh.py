@@ -14,17 +14,72 @@ from angr_platforms.X86_16 import decompiler_postprocess as postprocess
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.pipeline.contracts import assert_pipeline_contracts_8616
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
+from angr_platforms.X86_16.structuring.clinic_option_policy import enforce_x86_16_clinic_options_8616
 
 from inertia_decompiler import cli_decompilation
 
 
-def test_callsite_finalization_runs_array_decay_when_call_replay_is_stable(monkeypatch) -> None:
+def test_indexed_global_regeneration_replay_delegates_to_stage_owned_order(monkeypatch) -> None:
+    cod_metadata = object()
+    synthetic_globals: dict[str, object] = {}
+    project = SimpleNamespace(_inertia_cod_metadata_by_func_addr_8616={0x4010: cod_metadata})
+    codegen = SimpleNamespace(
+        project=project,
+        cfunc=SimpleNamespace(addr=0x4010),
+        _inertia_synthetic_globals=synthetic_globals,
+    )
+    calls: list[str] = []
+
+    def segment_global(
+        actual_project: object,
+        actual_codegen: object,
+        actual_globals: object,
+        *,
+        cod_metadata: object | None = None,
+    ) -> SimpleNamespace:
+        assert (actual_project, actual_codegen, actual_globals) == (
+            project,
+            codegen,
+            synthetic_globals,
+        )
+        assert cod_metadata is project._inertia_cod_metadata_by_func_addr_8616[0x4010]
+        calls.extend(("indexed", "direct"))
+        return SimpleNamespace(changed=True)
+
+    monkeypatch.setattr(
+        cli_decompilation,
+        "run_segment_global_materialization_8616",
+        segment_global,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "reapply_proven_named_global_aggregate_types_8616",
+        lambda _codegen: calls.append("named_types") or False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "reapply_proven_stack_aggregate_types_8616",
+        lambda _codegen: calls.append("stack_types") or False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "reapply_proven_stack_aggregate_field_projections_8616",
+        lambda _codegen: calls.append("field_projections") or False,
+    )
+
+    assert cli_decompilation._replay_indexed_segmented_global_lowering_after_regen_8616(codegen)
+    assert calls == ["indexed", "direct", "named_types", "stack_types", "field_projections"]
+
+
+def test_callsite_finalization_reapplies_stack_aggregate_facts_when_call_replay_is_stable(
+    monkeypatch,
+) -> None:
     project = object()
     codegen = SimpleNamespace(project=project)
     calls: list[str] = []
 
-    def decay(_codegen: object) -> bool:
-        calls.append("aggregate_decay")
+    def reapply(_codegen: object) -> bool:
+        calls.append("aggregate_reapply")
         return False
 
     monkeypatch.setattr(
@@ -39,12 +94,12 @@ def test_callsite_finalization_runs_array_decay_when_call_replay_is_stable(monke
     )
     monkeypatch.setattr(
         cli_decompilation,
-        "decay_stack_aggregate_call_arguments_8616",
-        decay,
+        "reapply_stack_aggregate_object_facts_8616",
+        reapply,
     )
 
     assert cli_decompilation._finalize_callsite_arguments_after_noncall_regen_8616(codegen) is False
-    assert calls == ["aggregate_decay"]
+    assert calls == ["aggregate_reapply"]
     assert codegen._inertia_stack_aggregate_decay_render_replay_count_8616 == 1
 
 
@@ -164,6 +219,16 @@ def test_regenerated_noncall_finalization_returns_lowering_ownership_after_clean
         "_replay_call_return_selector_lowering_after_regen_8616",
         lambda candidate_codegen: calls.append("call_return_selector") or False,
     )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_replay_direct_stack_semantics_after_regen_8616",
+        lambda candidate_codegen: calls.append("direct_stack") or False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_replay_runtime_segment_lowering_after_regen_8616",
+        lambda candidate_codegen: calls.append("runtime_segment") or False,
+    )
 
     changed = cli_decompilation._finalize_regenerated_noncall_ast_8616(codegen)
 
@@ -177,6 +242,9 @@ def test_regenerated_noncall_finalization_returns_lowering_ownership_after_clean
         "shared_calls",
         "simplify",
         "call_return_selector",
+        "indexed_global",
+        "direct_stack",
+        "runtime_segment",
         "indexed_global",
     ]
 
@@ -626,10 +694,14 @@ def test_indexed_replay_reapplies_lowering_owned_stack_aggregate_types(monkeypat
     codegen = SimpleNamespace(project=project, cfunc=SimpleNamespace(addr=0x1000))
     calls: list[tuple[str, object]] = []
 
-    def materialize(candidate_project: object, candidate_codegen: object, *, cod_metadata: object) -> bool:
-        assert candidate_project is project
+    def replay_named(candidate_codegen: object) -> bool:
         assert candidate_codegen is codegen
-        calls.append(("materialize", cod_metadata))
+        calls.append(("replay_named", candidate_codegen))
+        return False
+
+    def reapply_globals(candidate_codegen: object) -> bool:
+        assert candidate_codegen is codegen
+        calls.append(("reapply_global_types", candidate_codegen))
         return False
 
     def reapply(candidate_codegen: object) -> bool:
@@ -642,7 +714,16 @@ def test_indexed_replay_reapplies_lowering_owned_stack_aggregate_types(monkeypat
         calls.append(("reapply_fields", candidate_codegen))
         return False
 
-    monkeypatch.setattr(cli_decompilation, "materialize_indexed_segmented_global_loads_8616", materialize)
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_replay_named_segmented_global_lowering_after_regen_8616",
+        replay_named,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "reapply_proven_named_global_aggregate_types_8616",
+        reapply_globals,
+    )
     monkeypatch.setattr(cli_decompilation, "reapply_proven_stack_aggregate_types_8616", reapply)
     monkeypatch.setattr(
         cli_decompilation,
@@ -652,7 +733,8 @@ def test_indexed_replay_reapplies_lowering_owned_stack_aggregate_types(monkeypat
 
     assert cli_decompilation._replay_indexed_segmented_global_lowering_after_regen_8616(codegen) is True
     assert calls == [
-        ("materialize", "metadata"),
+        ("replay_named", codegen),
+        ("reapply_global_types", codegen),
         ("reapply_types", codegen),
         ("reapply_fields", codegen),
     ]
@@ -1176,3 +1258,24 @@ def test_preferred_options_can_disable_dead_memdefs_without_no_call_guard():
     )
 
     assert options == [("remove_dead_memdefs", False)]
+
+
+def test_x86_16_clinic_policy_disables_ite_diamonds_only_for_straightline_cfgs():
+    options = cli_decompilation._preferred_decompiler_options(
+        3,
+        26,
+        disable_dead_memdefs=True,
+    )
+    straightline = SimpleNamespace(
+        graph=SimpleNamespace(nodes=(0, 1, 2), out_degree=lambda node: {0: 1, 1: 1, 2: 0}[node])
+    )
+    branching = SimpleNamespace(
+        graph=SimpleNamespace(nodes=(0, 1, 2), out_degree=lambda node: {0: 2, 1: 0, 2: 0}[node])
+    )
+
+    assert options == [("remove_dead_memdefs", False)]
+    assert enforce_x86_16_clinic_options_8616(options, function=straightline) == [
+        ("remove_dead_memdefs", False),
+        ("rewrite_ites_to_diamonds", False),
+    ]
+    assert enforce_x86_16_clinic_options_8616(options, function=branching) == options

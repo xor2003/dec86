@@ -64,13 +64,10 @@ from .decompiler_postprocess_utils import (
     _replace_c_children_8616,
     _structured_codegen_node_8616,
 )
-from .decompiler_return_compat import (
-    _return_compat_function_caller_return_use_8616,
-    x86_16_msvc_x87_scalar_stack_args,
-)
-from .lowering.return_type_evidence import function_has_proven_void_return_type_8616
+from .decompiler_return_compat import x86_16_msvc_x87_scalar_stack_args
 from .lowering.stack_c_ast_matching import _stack_variable_read_offsets_8616
 from .lowering.stack_lowering_from_facts import _stack_object_name
+from .lowering.stack_prototype_materialization import align_pointer_flags_to_stack_argument_widths_8616
 from .lowering.stack_variable_binding import (
     StackAnnotationSpec8616,
     StackVariableBinding,
@@ -3003,12 +3000,6 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
             # Dynamic angr/codegen compatibility boundary.
             getattr(codegen, "_inertia_switch_loop_exit_return_materialized_8616", False)
         )
-        has_unused_guessed_return_evidence = _function_has_unused_guessed_return_evidence_8616(func)
-        has_unobserved_default_scalar_return_evidence = _function_has_unobserved_default_scalar_return_evidence_8616(
-            func,
-            prototype,
-        )
-        has_proven_void_return_type = function_has_proven_void_return_type_8616(project, func)
         if os.environ.get("INERTIA_DEBUG_RETURN_SHAPE", "").strip().lower() in {"1", "true", "yes", "on"}:
             print(
                 "[return-shape] "
@@ -3016,11 +3007,7 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
                 f"func={getattr(func, 'name', None)!r} addr={getattr(func, 'addr', None)!r} "
                 # Dynamic angr/codegen compatibility boundary.
                 f"proto={prototype!r} guessed={getattr(func, 'is_prototype_guessed', None)!r} "
-                f"caller_use={_return_compat_function_caller_return_use_8616(func)!r} "
-                f"source_void={source_decl_is_void} switch_void={has_switch_loop_exit_void_evidence} "
-                f"unused_guess={has_unused_guessed_return_evidence} "
-                f"default_scalar_no_use={has_unobserved_default_scalar_return_evidence} "
-                f"proven_void={has_proven_void_return_type}",
+                f"source_void={source_decl_is_void} switch_void={has_switch_loop_exit_void_evidence} ",
                 file=sys.stderr,
                 flush=True,
             )
@@ -3028,9 +3015,6 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
             os.environ.get("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "").strip().lower() not in {"1", "true", "yes", "on"}
             and not source_decl_is_void
             and not has_switch_loop_exit_void_evidence
-            and not has_unused_guessed_return_evidence
-            and not has_unobserved_default_scalar_return_evidence
-            and not has_proven_void_return_type
         ):
             return False
 
@@ -3045,8 +3029,6 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
             if (
                 not source_decl_is_void
                 and not has_switch_loop_exit_void_evidence
-                and not has_unused_guessed_return_evidence
-                and not has_unobserved_default_scalar_return_evidence
             ):
                 return False
             return_nodes = []
@@ -3057,24 +3039,10 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
         changed = False
         value_returns = 0
         return_shapes: set[str] = set()
-        unobserved_call_return_ids: set[int] = set()
 
         for ret in return_nodes:
             retval = getattr(ret, "retval", None)
             if retval is None:
-                continue
-            if (
-                (has_unused_guessed_return_evidence or has_unobserved_default_scalar_return_evidence)
-                and _return_value_is_unresolved_synthetic_carrier_8616(retval)
-            ):
-                ret.retval = None
-                changed = True
-                continue
-            if has_unobserved_default_scalar_return_evidence and isinstance(retval, CFunctionCall):
-                # A guessed default AX return can surface the final callee's AX
-                # as ``return call()``. All binary callers prove that value is
-                # unobserved; the void-pruning pass preserves the call itself.
-                unobserved_call_return_ids.add(id(ret))
                 continue
             value_returns += 1
             shape = _return_value_shape_8616(retval)
@@ -3088,21 +3056,12 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
             if shape is not None:
                 return_shapes.add(shape)
 
-        has_value_return = (
-            False
-            if has_proven_void_return_type
-            else any(
-                getattr(ret, "retval", None) is not None and id(ret) not in unobserved_call_return_ids
-                for ret in return_nodes
-            )
-        )
+        has_value_return = any(getattr(ret, "retval", None) is not None for ret in return_nodes)
         if (
             not has_value_return
             and not return_nodes
             and source_shape is None
             and not source_decl_is_void
-            and not has_unused_guessed_return_evidence
-            and not has_unobserved_default_scalar_return_evidence
         ):
             return changed
 
@@ -3139,25 +3098,6 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
         return True
 
     return _impl()
-
-
-def _function_has_unused_guessed_return_evidence_8616(func: object) -> bool:
-    """Return whether binary caller analysis proves a guessed return is unused."""
-
-    # Dynamic angr/codegen compatibility boundary.
-    if not bool(getattr(func, "is_prototype_guessed", True)):
-        return False
-    return _return_compat_function_caller_return_use_8616(func) is False
-
-
-def _function_has_unobserved_default_scalar_return_evidence_8616(func: object, prototype: object) -> bool:
-    """Return whether a default scalar return has no proven caller consumer."""
-
-    # Dynamic angr/codegen compatibility boundary.
-    returnty = getattr(prototype, "returnty", None)
-    if type(returnty) is not SimTypeShort:
-        return False
-    return _return_compat_function_caller_return_use_8616(func) is False
 
 
 def _resolve_codegen_function_and_prototype_8616(
@@ -3951,6 +3891,9 @@ def _sync_arg_list_from_annotations_8616(
                 cast(SimpleNamespace, project),
                 getattr(getattr(codegen, "cfunc", None), "addr", getattr(func, "addr", None)),
             )
+        source_pointer_flags = align_pointer_flags_to_stack_argument_widths_8616(
+            tuple(source_pointer_flags), tuple(arg_offsets), inferred_arg_widths
+        )
         if os.environ.get("INERTIA_DEBUG_X87_PROTO") == "1":
             print(
                 f"[dbg-x87-proto] sync_annotations source_pointer_flags={source_pointer_flags!r}",
@@ -4001,7 +3944,10 @@ def _sync_arg_list_from_annotations_8616(
                     scalar_materialized = True
             if not promote_near_pointers:
                 continue
-            if not _stack_arg_has_pointer_evidence_8616(codegen, variable):
+            aligned_pointer_evidence = (
+                index < len(source_pointer_flags) and source_pointer_flags[index]
+            )
+            if not aligned_pointer_evidence and not _stack_arg_has_pointer_evidence_8616(codegen, variable):
                 continue
             if getattr(resolved_arg, "variable_type", None) != pointer_type:
                 cast(Any, resolved_arg).variable_type = pointer_type

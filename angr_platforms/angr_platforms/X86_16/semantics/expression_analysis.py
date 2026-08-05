@@ -14,6 +14,7 @@ from enum import Enum
 from typing import Any
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_variable import SimTemporaryVariable
 
 
 class VirtualValueIdentityKind8616(Enum):
@@ -23,6 +24,7 @@ class VirtualValueIdentityKind8616(Enum):
     AIL_EXPRESSION_INDEX = "idx"
     CODEGEN_EXPRESSION_INDEX = "expr_idx"
     OBJECT_ID = "oident"
+    TEMPORARY_ID = "tmp_id"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,13 +71,20 @@ def _mk_fp_components(expr: object) -> tuple[int, int] | None:
 
 
 def describe_virtual_value_identity_8616(expr: object) -> VirtualValueIdentity8616 | None:
-    """Return the strongest structured identity for an angr dirty expression.
+    """Return the strongest structured identity for an angr virtual value.
 
     Names and rendered text are intentionally excluded: only explicit AIL or
     codegen identity fields may prove that two virtual-value occurrences are
     the same SSA carrier.
     """
     expr = _unwrap_c_casts(expr)
+    if isinstance(expr, structured_c.CVariable) and isinstance(
+        expr.variable, SimTemporaryVariable
+    ):
+        return VirtualValueIdentity8616(
+            kind=VirtualValueIdentityKind8616.TEMPORARY_ID,
+            value=expr.variable.tmp_id,
+        )
     if not isinstance(expr, structured_c.CDirtyExpression):
         return None
     dirty = expr.dirty

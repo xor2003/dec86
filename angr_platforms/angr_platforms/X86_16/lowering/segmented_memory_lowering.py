@@ -13,32 +13,29 @@ from __future__ import annotations
 
 import builtins
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol, Sequence, TypeAlias, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimType, SimTypeFunction, SimTypePointer, SimTypeShort
+from angr.sim_type import SimType, SimTypeChar, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
-from capstone.x86_const import (
-    X86_INS_ADD,
-    X86_INS_CALL,
-    X86_INS_LCALL,
-    X86_INS_MOV,
-    X86_OP_MEM,
-    X86_OP_REG,
-    X86_REG_BP,
-    X86_REG_INVALID,
-)
+from archinfo import Arch
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _replace_c_children_8616, _same_c_expression_8616
 from ..ir.core import MemSpace
 from ..widening.segmented_load_identity import SegmentedLoadIdentity8616, segmented_load_tags_8616
+from .near_pointer_argument import (
+    NearPointerArgumentFact8616,
+    collect_near_pointer_argument_facts_8616,
+)
+from .near_pointer_type import near_pointer_type_8616, with_near_pointer_parameter_8616
+from .positive_bp_arguments import materialize_positive_bp_arguments_8616
 from .real_mode_linear import (
     RealModeLinearStackAccess8616,
     _canonical_stack_offset_8616,
     _decompose_linear_global_terms_8616,
-    _has_stack_alias_fact_for_displacement_8616,
+    _has_stack_storage_evidence_for_displacement_8616,
     _known_bp_stack_offsets_8616,
     _segment_base_name_8616,
     _single_assignment_rhs_8616,
@@ -46,13 +43,25 @@ from .real_mode_linear import (
     _stack_offset_from_expr_8616,
     stack_cvar_for_stable_ss_linear_access_8616,
 )
+from .segment_access_policy import (
+    instruction_addrs_from_node_8616,
+    may_lower_codegen_access_to_entry_ds_object_8616,
+)
 from .segment_register_state import (
     SegmentRegisterStateLoweringStats8616,
     lower_architectural_segment_register_state_8616,
     runtime_segment_push_source_cvar_8616,
 )
+from .semantic_cast import CSemanticCast8616
 from .stack_argument_identity import unify_positive_bp_argument_identity_8616
-from .stack_prototype_materialization import materialize_exact_trailing_stack_argument_8616
+from .stack_pointer_snapshot import (
+    StackPointerSnapshotStats8616,
+    StackPointerSnapshotTracker8616,
+)
+from .stack_prototype_materialization import (
+    materialize_annotated_stack_prototype_8616,
+    materialize_exact_trailing_stack_argument_8616,
+)
 
 _CarrierKey8616: TypeAlias = tuple[str, int | str]
 
@@ -61,6 +70,12 @@ class _AngrFunctionTypeBoundary8616(Protocol):
     """Typed view of dynamic angr function-type metadata at the codegen boundary."""
 
     args: Sequence[object] | None
+
+
+class _AngrFunctionMetadataBoundary8616(Protocol):
+    """Typed prototype field on the dynamic angr function boundary."""
+
+    prototype: object
 
 
 class _AngrCFunctionBoundary8616(Protocol):
@@ -77,16 +92,10 @@ def _replace_cfunc_statements_root_8616(cfunc: _AngrCFunctionBoundary8616, root:
     cfunc.statements = root
 
 
-class _AngrArchBoundary8616(Protocol):
-    """Typed view of dynamic angr architecture metadata at the codegen boundary."""
-
-    registers: dict[str, tuple[int, int]]
-
-
 class _AngrProjectBoundary8616(Protocol):
     """Typed view of dynamic angr project state at the codegen boundary."""
 
-    arch: _AngrArchBoundary8616
+    arch: Arch
 
 
 class _AngrCodegenBoundary8616(Protocol):
@@ -103,6 +112,7 @@ class _AngrCodegenBoundary8616(Protocol):
     _inertia_near_pointer_argument_materialized_offsets_8616: set[int]
     _inertia_near_pointer_argument_refusals_8616: list[NearPointerArgumentRefusal8616]
     _inertia_near_pointer_argument_stats_8616: NearPointerArgumentStats8616
+    _inertia_stack_pointer_snapshot_stats_8616: StackPointerSnapshotStats8616
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,16 +124,6 @@ class SegmentedMemoryExpr:
     offset_expr: object
     width_bits: int
     access: str
-
-
-@dataclass(frozen=True, slots=True)
-class NearPointerArgumentFact8616:
-    """Binary proof that one BP argument is dereferenced as a near pointer."""
-
-    stack_offset: int
-    carrier_load_ins_addr: int
-    dereference_ins_addr: int
-    access_width_bytes: int
 
 
 class NearPointerArgumentRefusalReason8616(StrEnum):
@@ -336,9 +336,10 @@ def _is_near_pointer_arg_cvar_8616(cvar: object, codegen: _AngrCodegenBoundary86
 def _pointer_element_width_bits_8616(pointer_type: SimTypePointer) -> int | None:
     """Return the pointee width in bits when angr exposes a complete type."""
     try:
-        return pointer_type.pts_to.size
+        width = pointer_type.pts_to.size
     except (AttributeError, ValueError):
         return None
+    return width if isinstance(width, int) and width > 0 else None
 
 
 def _active_function_for_codegen_8616(codegen: _AngrCodegenBoundary8616) -> object | None:
@@ -351,84 +352,18 @@ def _active_function_for_codegen_8616(codegen: _AngrCodegenBoundary8616) -> obje
     except AttributeError:
         pass
     try:
-        return typing.cast(typing.Any, codegen.project).kb.functions.get(codegen.cfunc.addr)
+        function: object = typing.cast(typing.Any, codegen.project).kb.functions.get(codegen.cfunc.addr)
+        return function
     except (AttributeError, KeyError, TypeError):
         return None
-
-
-def _collect_near_pointer_argument_facts_8616(function: object) -> tuple[NearPointerArgumentFact8616, ...]:
-    """Collect BP-argument loads that feed exact register-indirect accesses."""
-    if function is None:
-        return ()
-    try:
-        blocks = tuple(typing.cast(typing.Any, function).blocks)
-    except (AttributeError, TypeError):
-        return ()
-    facts: list[NearPointerArgumentFact8616] = []
-    seen: set[tuple[int, int, int]] = set()
-    for block in sorted(blocks, key=lambda candidate: int(candidate.addr)):
-        carriers: dict[int, tuple[int, int]] = {}
-        try:
-            wrapped_insns = tuple(block.capstone.insns)
-        except AttributeError:
-            continue
-        for wrapped in wrapped_insns:
-            insn = wrapped.insn
-            operands = tuple(insn.operands)
-            insn_addr = int(insn.address)
-            for operand in operands:
-                if operand.type != X86_OP_MEM:
-                    continue
-                base_register = int(operand.mem.base)
-                if base_register not in carriers:
-                    continue
-                stack_offset, carrier_load_ins_addr = carriers[base_register]
-                access_width = int(operand.size)
-                if access_width <= 0:
-                    continue
-                key = (stack_offset, insn_addr, access_width)
-                if key in seen:
-                    continue
-                seen.add(key)
-                facts.append(
-                    NearPointerArgumentFact8616(
-                        stack_offset=stack_offset,
-                        carrier_load_ins_addr=carrier_load_ins_addr,
-                        dereference_ins_addr=insn_addr,
-                        access_width_bytes=access_width,
-                    )
-                )
-            if insn.id in {X86_INS_CALL, X86_INS_LCALL}:
-                carriers.clear()
-                continue
-            if not operands or operands[0].type != X86_OP_REG:
-                continue
-            destination_register = int(operands[0].reg)
-            if insn.id == X86_INS_ADD and destination_register in carriers:
-                continue
-            if insn.id != X86_INS_MOV or len(operands) != 2:
-                carriers.pop(destination_register, None)
-                continue
-            source = operands[1]
-            if (
-                source.type == X86_OP_MEM
-                and int(source.mem.base) == X86_REG_BP
-                and int(source.mem.index) == X86_REG_INVALID
-                and int(source.mem.disp) >= 4
-                and int(source.size) == 2
-            ):
-                carriers[destination_register] = (int(source.mem.disp), insn_addr)
-                continue
-            if source.type == X86_OP_REG and int(source.reg) in carriers:
-                carriers[destination_register] = carriers[int(source.reg)]
-                continue
-            carriers.pop(destination_register, None)
-    return tuple(sorted(facts, key=lambda fact: (fact.dereference_ins_addr, fact.stack_offset)))
 
 
 def _materialize_binary_proven_near_pointer_argument_8616(
     matched: SegmentedMemoryExpr,
     codegen: _AngrCodegenBoundary8616 | None,
+    *,
+    segment_identity_proven: bool = False,
+    proven_stack_offset: int | None = None,
 ) -> structured_c.CVariable | None:
     """Promote only the BP argument proven by binary register-indirect use."""
     if matched.space != "DS" or codegen is None or codegen.cfunc is None or codegen.project is None:
@@ -442,6 +377,19 @@ def _materialize_binary_proven_near_pointer_argument_8616(
         if indexed is not None:
             cvar, _index = indexed
     stack_offset = _stack_offset_for_cvar_8616(cvar)
+    if proven_stack_offset is not None:
+        if isinstance(stack_offset, int) and stack_offset != proven_stack_offset:
+            return None
+        stack_offset = proven_stack_offset
+        canonical_matches = tuple(
+            argument
+            for argument in tuple(codegen.cfunc.arg_list or ())
+            if isinstance(argument, structured_c.CVariable)
+            and _stack_offset_for_cvar_8616(argument) == stack_offset
+        )
+        if len(canonical_matches) != 1:
+            return None
+        cvar = canonical_matches[0]
     if cvar is None or not isinstance(stack_offset, int):
         return None
     try:
@@ -454,6 +402,15 @@ def _materialize_binary_proven_near_pointer_argument_8616(
         if fact.stack_offset == stack_offset and fact.access_width_bytes * 8 == matched.width_bits
     )
     if not matching_facts:
+        return None
+    if not segment_identity_proven and not may_lower_codegen_access_to_entry_ds_object_8616(
+        codegen,
+        matched,
+        instruction_addrs=frozenset(fact.dereference_ins_addr for fact in matching_facts),
+        segment_register="ds",
+        offset=None,
+        width=matched.width_bits // 8,
+    ):
         return None
     arguments = tuple(codegen.cfunc.arg_list or ())
     argument_matches = tuple(
@@ -474,7 +431,14 @@ def _materialize_binary_proven_near_pointer_argument_8616(
         return None
     typed_prototype = cast(SimTypeFunction, prototype)
     prototype_args: tuple[SimType, ...] = tuple(typed_prototype.args or ())
-    pointer_type = SimTypePointer(SimTypeShort(False)).with_arch(codegen.project.arch)  # type: ignore[arg-type]
+    pointee_type = {
+        8: SimTypeChar(False),
+        16: SimTypeShort(False),
+        32: SimTypeLong(False),
+    }.get(matched.width_bits)
+    if pointee_type is None:
+        return None
+    pointer_type = near_pointer_type_8616(pointee_type, codegen.project.arch)
     if not argument_matches:
         materialized_argument = materialize_exact_trailing_stack_argument_8616(
             codegen.project,
@@ -531,14 +495,24 @@ def _materialize_binary_proven_near_pointer_argument_8616(
         cvar.variable.size = 2
     if isinstance(argument.variable, SimStackVariable):
         argument.variable.size = 2
-    updated_args: list[SimType] = list(prototype_args)
-    updated_args[argument_index] = pointer_type
-    codegen.cfunc.functy = SimTypeFunction(
-        updated_args,
-        typed_prototype.returnty,
-        arg_names=tuple(typed_prototype.arg_names or ()),
-        variadic=typed_prototype.variadic,
-    ).with_arch(codegen.project.arch)  # type: ignore[arg-type]
+    updated_prototype = with_near_pointer_parameter_8616(
+        typed_prototype, argument_index, pointer_type, codegen.project.arch
+    )
+    if updated_prototype is None:
+        return None
+    codegen.cfunc.functy = updated_prototype
+    active_function = _active_function_for_codegen_8616(codegen)
+    if active_function is not None:
+        typed_function = cast(_AngrFunctionMetadataBoundary8616, active_function)
+        try:
+            function_prototype = typed_function.prototype
+        except AttributeError:
+            function_prototype = None
+        canonical_prototype = with_near_pointer_parameter_8616(
+            function_prototype, argument_index, pointer_type, codegen.project.arch
+        )
+        if canonical_prototype is not None:
+            typed_function.prototype = canonical_prototype
     codegen._inertia_near_pointer_argument_materialized_offsets_8616.add(stack_offset)
     return cvar
 
@@ -547,25 +521,34 @@ def _rematerialize_binary_proven_near_pointer_types_8616(
     codegen: _AngrCodegenBoundary8616,
 ) -> bool:
     """Restore pointer parameter types after prior lowering consumed helper AST."""
-    if codegen.cfunc is None:
+    cfunc = codegen.cfunc
+    if cfunc is None:
+        return False
+    try:
+        arguments = tuple(cfunc.arg_list or ())
+        pointer_facts = codegen._inertia_near_pointer_argument_facts_8616
+    except AttributeError:
+        # Dynamic angr/codegen boundary: pointer replay is optional when the
+        # codegen has no argument or evidence surface.
         return False
     changed = False
-    for argument in tuple(codegen.cfunc.arg_list or ()):
+    for argument in arguments:
         if not isinstance(argument, structured_c.CVariable):
             continue
         stack_offset = _stack_offset_for_cvar_8616(argument)
         widths = {
             fact.access_width_bytes
-            for fact in codegen._inertia_near_pointer_argument_facts_8616
+            for fact in pointer_facts
             if fact.stack_offset == stack_offset
         }
-        if widths != {2}:
+        if len(widths) != 1 or not widths <= {1, 2, 4}:
             continue
+        access_width = next(iter(widths))
         matched = SegmentedMemoryExpr(
             space="DS",
             segment_expr=argument,
             offset_expr=argument,
-            width_bits=16,
+            width_bits=access_width * 8,
             access="read",
         )
         changed = (
@@ -599,7 +582,11 @@ def _lower_binary_proven_pointer_argument_helpers_8616(
             width_bits=width_bytes * 8,
             access="read",
         )
-        pointer_access = _near_pointer_arg_access_8616(matched, codegen)
+        pointer_access = _near_pointer_arg_access_8616(
+            matched,
+            codegen,
+            provenance_node=node,
+        )
         if pointer_access is None:
             return node
         changed = True
@@ -610,12 +597,150 @@ def _lower_binary_proven_pointer_argument_helpers_8616(
     return changed
 
 
+def _lower_typed_pointer_register_carrier_stores_8616(
+    codegen: _AngrCodegenBoundary8616,
+) -> bool:
+    """Consume exact register copies from typed pointer arguments into stores."""
+    cfunc = codegen.cfunc
+    project = codegen.project
+    if cfunc is None or project is None:
+        return False
+    try:
+        facts = codegen._inertia_near_pointer_argument_facts_8616
+    except AttributeError:
+        return False
+
+    roots_by_id: dict[int, structured_c.CStatements] = {}
+    for attribute in ("body", "statements", "stmt"):
+        root = builtins.getattr(cfunc, attribute, None)
+        if root is None:
+            continue
+        for node in _iter_c_nodes_deep_8616(root):
+            if isinstance(node, structured_c.CStatements):
+                roots_by_id[id(node)] = node
+
+    changed = False
+    for root in roots_by_id.values():
+        statements = list(root.statements)
+        consumed_setups: set[int] = set()
+        for setup_index, setup in enumerate(statements):
+            if not isinstance(setup, structured_c.CAssignment):
+                continue
+            carrier = _strip_casts_8616(setup.lhs)
+            pointer = _strip_casts_8616(setup.rhs)
+            carrier_variable = carrier.variable if isinstance(carrier, structured_c.CVariable) else None
+            if not isinstance(carrier_variable, SimRegisterVariable):
+                continue
+            if not isinstance(pointer, structured_c.CVariable):
+                continue
+            pointer_type = _near_pointer_arg_type_8616(pointer, codegen)
+            stack_offset = _stack_offset_for_cvar_8616(pointer)
+            if pointer_type is None or not isinstance(stack_offset, int):
+                continue
+            carrier_key = _carrier_key_8616(carrier)
+            if carrier_key is None:
+                continue
+            for use_index in range(setup_index + 1, len(statements)):
+                use = statements[use_index]
+                if not isinstance(use, structured_c.CAssignment):
+                    break
+                carrier_uses = tuple(
+                    node
+                    for node in _iter_c_nodes_deep_8616(use)
+                    if isinstance(node, structured_c.CVariable) and _carrier_key_8616(node) == carrier_key
+                )
+                if not carrier_uses:
+                    continue
+                helper_name = _runtime_segment_helper_name_8616(use.lhs)
+                helper_width = _runtime_segment_helper_width_8616(helper_name)
+                helper_args = _runtime_segment_helper_args_8616(use.lhs)
+                if (
+                    len(carrier_uses) != 1
+                    or helper_width is None
+                    or helper_args is None
+                    or _carrier_key_8616(helper_args[1]) != carrier_key
+                    or _pointer_element_width_bits_8616(pointer_type) != helper_width * 8
+                ):
+                    break
+                matching_facts = tuple(
+                    fact
+                    for fact in facts
+                    if fact.stack_offset == stack_offset and fact.access_width_bytes == helper_width
+                )
+                if not matching_facts:
+                    break
+                source_addrs = instruction_addrs_from_node_8616(use.lhs)
+                if source_addrs and not any(fact.dereference_ins_addr in source_addrs for fact in matching_facts):
+                    break
+                use.lhs = structured_c.CIndexedVariable(
+                    pointer,
+                    structured_c.CConstant(0, SimTypeShort(False).with_arch(project.arch), codegen=codegen),
+                    codegen=codegen,
+                    tags={
+                        "inertia_source_instruction_addrs": tuple(
+                            sorted(fact.dereference_ins_addr for fact in matching_facts)
+                        )
+                    },
+                )
+                consumed_setups.add(setup_index)
+                changed = True
+                break
+        if consumed_setups:
+            root.statements = [
+                statement
+                for index, statement in enumerate(statements)
+                if index not in consumed_setups
+            ]
+    return changed
+
+
 def _near_pointer_arg_access_8616(
     matched: SegmentedMemoryExpr,
     codegen: _AngrCodegenBoundary8616 | None,
+    *,
+    provenance_node: object | None = None,
 ) -> structured_c.CIndexedVariable | None:
     if matched.space != "DS":
         return None
+    fact_cvar = _zero_plus_cvar_8616(matched.offset_expr)
+    if fact_cvar is None and matched.width_bits % 8 == 0:
+        indexed_fact_cvar = _cvar_plus_scaled_index_8616(
+            matched.offset_expr,
+            matched.width_bits // 8,
+        )
+        if indexed_fact_cvar is not None:
+            fact_cvar, _fact_index = indexed_fact_cvar
+    fact_stack_offset = _stack_offset_for_cvar_8616(fact_cvar)
+    try:
+        available_facts = codegen._inertia_near_pointer_argument_facts_8616 if codegen is not None else ()
+    except AttributeError:
+        available_facts = ()
+    width_facts = tuple(
+        fact
+        for fact in available_facts
+        if fact.access_width_bytes * 8 == matched.width_bits
+    )
+    proven_stack_offset: int | None
+    if isinstance(fact_stack_offset, int):
+        facts = tuple(fact for fact in width_facts if fact.stack_offset == fact_stack_offset)
+        proven_stack_offset = fact_stack_offset
+    else:
+        source_addrs = instruction_addrs_from_node_8616(provenance_node)
+        facts = tuple(fact for fact in width_facts if fact.dereference_ins_addr in source_addrs)
+        proven_offsets: set[int] = {fact.stack_offset for fact in facts}
+        proven_stack_offset = next(iter(proven_offsets)) if len(proven_offsets) == 1 else None
+        if proven_stack_offset is None:
+            facts = ()
+    if codegen is not None and not may_lower_codegen_access_to_entry_ds_object_8616(
+        codegen,
+        provenance_node if provenance_node is not None else matched,
+        instruction_addrs=frozenset(fact.dereference_ins_addr for fact in facts),
+        segment_register="ds",
+        offset=None,
+        width=matched.width_bits // 8 if matched.width_bits % 8 == 0 else None,
+    ):
+        return None
+    provenance_stack_offset = proven_stack_offset if not isinstance(fact_stack_offset, int) else None
     if matched.width_bits % 8 == 0:
         indexed = _cvar_plus_scaled_index_8616(
             matched.offset_expr,
@@ -628,6 +753,8 @@ def _near_pointer_arg_access_8616(
                 materialized_pointer = _materialize_binary_proven_near_pointer_argument_8616(
                     matched,
                     codegen,
+                    segment_identity_proven=True,
+                    proven_stack_offset=provenance_stack_offset,
                 )
                 if materialized_pointer is not None:
                     pointer_arg = materialized_pointer
@@ -638,6 +765,11 @@ def _near_pointer_arg_access_8616(
                     pointer_arg,
                     index,
                     codegen=codegen,
+                    tags={
+                        "inertia_source_instruction_addrs": tuple(
+                            sorted(fact.dereference_ins_addr for fact in facts)
+                        )
+                    },
                 )
     pointer_arg = _zero_plus_pointer_arg_8616(matched.offset_expr, codegen)
     if pointer_arg is None:
@@ -647,7 +779,12 @@ def _near_pointer_arg_access_8616(
         # becoming pointer[0].
         if _zero_plus_cvar_8616(matched.offset_expr) is None:
             return None
-        pointer_arg = _materialize_binary_proven_near_pointer_argument_8616(matched, codegen)
+        pointer_arg = _materialize_binary_proven_near_pointer_argument_8616(
+            matched,
+            codegen,
+            segment_identity_proven=True,
+            proven_stack_offset=provenance_stack_offset,
+        )
     if pointer_arg is None:
         return None
     pointer_type = _near_pointer_arg_type_8616(pointer_arg, codegen)
@@ -657,11 +794,16 @@ def _near_pointer_arg_access_8616(
     index_type = SimTypeShort(False)
     arch = codegen.project.arch if codegen is not None and codegen.project is not None else None
     if arch is not None and hasattr(index_type, "with_arch"):
-        index_type = index_type.with_arch(arch)  # type: ignore[arg-type]
+        index_type = index_type.with_arch(arch)
     return structured_c.CIndexedVariable(
         pointer_arg,
         structured_c.CConstant(0, index_type, codegen=codegen),
         codegen=codegen,
+        tags={
+            "inertia_source_instruction_addrs": tuple(
+                sorted(fact.dereference_ins_addr for fact in facts)
+            )
+        },
     )
 
 
@@ -750,7 +892,11 @@ def _single_assignment_carrier_rhs_8616(
         return None
     seen.add(name)
     node = _strip_casts_8616(node)
-    rhs = _single_assignment_rhs_8616(codegen, node) if isinstance(node, structured_c.CVariable) else None
+    rhs: object | None = (
+        _single_assignment_rhs_8616(codegen, node)
+        if isinstance(node, structured_c.CVariable)
+        else None
+    )
     if rhs is None:
         rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, name)
     if rhs is not None:
@@ -894,7 +1040,7 @@ def _match_segmented_memory_expr_8616(
 
         segment_name = None
         segment_expr = None
-        offset_terms: list[tuple[int, object]] = []
+        linear_offset_terms: list[tuple[int, object]] = []
         for sign, term in _flatten_signed_terms_8616(base_expr):
             local_name, local_expr = _extract_segment_scale_8616(term, project, codegen=codegen)
             if local_name is not None:
@@ -903,14 +1049,14 @@ def _match_segmented_memory_expr_8616(
                 segment_name = local_name.upper()
                 segment_expr = local_expr
                 continue
-            offset_terms.append((sign, term))
+            linear_offset_terms.append((sign, term))
 
         if segment_name not in {"DS", "ES", "SS"} or segment_expr is None:
             return None
         return SegmentedMemoryExpr(
             space=segment_name,
             segment_expr=segment_expr,
-            offset_expr=_build_offset_expr_8616(tuple(offset_terms), codegen),
+            offset_expr=_build_offset_expr_8616(tuple(linear_offset_terms), codegen),
             width_bits=int(width_bits),
             access=access,
         )
@@ -970,9 +1116,13 @@ def _exact_segmented_load_tags_8616(
     matched: SegmentedMemoryExpr,
     codegen: _AngrCodegenBoundary8616 | None,
     macro: str,
+    provenance_node: object,
 ) -> dict[str, object]:
     """Retain an exact segmented scalar identity when lowering proves one."""
     tags: dict[str, object] = {"inertia_x86_16_runtime_segment_helper": macro}
+    source_addrs = instruction_addrs_from_node_8616(provenance_node)
+    if source_addrs:
+        tags["inertia_source_instruction_addrs"] = tuple(sorted(source_addrs))
     offset = _constant_value_8616(matched.offset_expr)
     space = {
         "DS": MemSpace.DS,
@@ -984,7 +1134,9 @@ def _exact_segmented_load_tags_8616(
     region = cfunc.addr if cfunc is not None and isinstance(cfunc.addr, int) else None
     if offset is None or space is None:
         return tags
-    return segmented_load_tags_8616(
+    return cast(
+        dict[str, object],
+        segmented_load_tags_8616(
         SegmentedLoadIdentity8616(
             space=space,
             offset=offset & 0xFFFF,
@@ -992,6 +1144,7 @@ def _exact_segmented_load_tags_8616(
             region=region,
         ),
         existing=tags,
+        ),
     )
 
 
@@ -1035,34 +1188,85 @@ def _is_proven_ss_stack_access_8616(
     if not isinstance(displacement, int):
         return False
     width = max(int(matched.width_bits or 16) // 8, 1)
-    return _has_stack_alias_fact_for_displacement_8616(
+    return _has_stack_storage_evidence_for_displacement_8616(
         codegen, displacement, width
     ) or displacement in _known_bp_stack_offsets_8616(codegen)
 
 
-def lower_runtime_segment_access_8616(expr: object, *, target: str) -> object | None:
+def lower_runtime_segment_access_8616(
+    expr: object,
+    *,
+    target: str,
+    snapshot_tracker: StackPointerSnapshotTracker8616 | None = None,
+) -> object | None:
     """Lower a proven segmented dereference to a runtime helper or pointer access."""
     codegen = cast(_AngrCodegenBoundary8616 | None, _dynamic_angr_attr_8616(expr, "codegen", None))
+    if snapshot_tracker is not None and isinstance(expr, structured_c.CIndexedVariable):
+        adjusted_access = snapshot_tracker.materialize_indexed_access(
+            expr,
+            source_instruction_addrs=instruction_addrs_from_node_8616(expr),
+            codegen=codegen,
+        )
+        if adjusted_access is not expr:
+            return cast(object, adjusted_access)
+    if (
+        snapshot_tracker is not None
+        and isinstance(expr, structured_c.CFunctionCall)
+        and isinstance(expr.callee_target, str)
+        and expr.callee_target in {"SEG_U8", "SEG_U16", "SEG_U32"}
+        and len(expr.args) >= 2
+    ):
+        adjusted_offset = snapshot_tracker.materialize(
+            expr.args[1],
+            source_instruction_addrs=instruction_addrs_from_node_8616(expr),
+            provenance_node=expr,
+            codegen=codegen,
+        )
+        if adjusted_offset is not expr.args[1]:
+            return cast(
+                object,
+                structured_c.CFunctionCall(
+                    expr.callee_target,
+                    expr.callee_func,
+                    [expr.args[0], adjusted_offset, *expr.args[2:]],
+                    show_demangled_name=expr.show_demangled_name,
+                    show_disambiguated_name=expr.show_disambiguated_name,
+                    tags=dict(expr.tags),
+                    codegen=codegen,
+                ),
+            )
     project = _dynamic_angr_attr_8616(codegen, "project", None)
     if project is None:
         return None
     matched = _match_segmented_memory_expr_8616(expr, project=project, access="read")
     if matched is None:
         return None
+    if snapshot_tracker is not None:
+        adjusted_offset = snapshot_tracker.materialize(
+            matched.offset_expr,
+            source_instruction_addrs=instruction_addrs_from_node_8616(expr),
+            provenance_node=expr,
+            codegen=codegen,
+        )
+        if adjusted_offset is not matched.offset_expr:
+            matched = replace(matched, offset_expr=adjusted_offset)
     if matched.space == "SS" and _is_proven_ss_stack_access_8616(matched, codegen=codegen, project=project):
         return None
-    pointer_access = _near_pointer_arg_access_8616(matched, codegen)
+    pointer_access = _near_pointer_arg_access_8616(matched, codegen, provenance_node=expr)
     if pointer_access is not None:
-        return pointer_access
+        return cast(object, pointer_access)
     macro = _seg_macro_for_width_bits_8616(matched.width_bits)
     if macro is None:
         return None
-    return structured_c.CFunctionCall(
-        macro,
-        None,
-        [matched.segment_expr, matched.offset_expr],
-        codegen=codegen,
-        tags=_exact_segmented_load_tags_8616(matched, codegen, macro),
+    return cast(
+        object,
+        structured_c.CFunctionCall(
+            macro,
+            None,
+            [matched.segment_expr, matched.offset_expr],
+            codegen=codegen,
+            tags=_exact_segmented_load_tags_8616(matched, codegen, macro, expr),
+        ),
     )
 
 
@@ -1077,12 +1281,15 @@ def lower_runtime_segment_address_8616(expr: object, *, target: str) -> object |
         return None
     if matched.space not in {"DS", "ES"}:
         return None
-    return structured_c.CFunctionCall(
-        "MK_FP",
-        None,
-        [matched.segment_expr, matched.offset_expr],
-        codegen=codegen,
-        tags={"inertia_x86_16_runtime_segment_helper": "MK_FP"},
+    return cast(
+        object,
+        structured_c.CFunctionCall(
+            "MK_FP",
+            None,
+            [matched.segment_expr, matched.offset_expr],
+            codegen=codegen,
+            tags={"inertia_x86_16_runtime_segment_helper": "MK_FP"},
+        ),
     )
 
 
@@ -1133,7 +1340,10 @@ def _same_runtime_segment_address_helper_8616(lhs: object, rhs: object) -> bool:
     rhs_args = _runtime_segment_helper_args_8616(rhs)
     if lhs_args is None or rhs_args is None:
         return False
-    return _same_c_expression_8616(lhs_args[0], rhs_args[0]) and _same_c_expression_8616(lhs_args[1], rhs_args[1])
+    return bool(
+        _same_c_expression_8616(lhs_args[0], rhs_args[0])
+        and _same_c_expression_8616(lhs_args[1], rhs_args[1])
+    )
 
 
 def _direct_global_offsets_for_segment_proof_8616(
@@ -1257,7 +1467,7 @@ def _runtime_helper_segment_proof_8616(
     displacement = _stack_offset_from_expr_8616(offset_expr, project, codegen)
     canonical_displacement = _canonical_stack_offset_8616(displacement)
     if isinstance(canonical_displacement, int) and (
-        _has_stack_alias_fact_for_displacement_8616(codegen, canonical_displacement, width)
+        _has_stack_storage_evidence_for_displacement_8616(codegen, canonical_displacement, width)
         or canonical_displacement in _known_bp_stack_offsets_8616(codegen)
     ):
         return key, "SS"
@@ -1324,29 +1534,31 @@ def materialize_runtime_helper_segment_carriers_8616(
 
     def transform(node: object) -> object:
         nonlocal changed, materialized_count, refused_count
-        node = _strip_casts_8616(node)
-        helper_name = _runtime_segment_helper_name_8616(node)
+        original = node
+        helper = _strip_casts_8616(node)
+        preserved = original if isinstance(original, CSemanticCast8616) else helper
+        helper_name = _runtime_segment_helper_name_8616(helper)
         if _runtime_segment_helper_width_8616(helper_name) is None:
-            return node
-        args = _runtime_segment_helper_args_8616(node)
+            return preserved
+        args = _runtime_segment_helper_args_8616(helper)
         if args is None:
-            return node
+            return preserved
         terminal_segment = _terminal_carrier_expr_8616(args[0], typed_codegen)
         key = _carrier_key_8616(terminal_segment)
         proof = carrier_proofs.get(key) if key is not None and key not in ambiguous else None
         if proof is None:
             refused_count += 1
-            return node
+            return preserved
         segment_expr = _register_segment_expr_8616(typed_codegen, project, proof)
         if segment_expr is None:
             refused_count += 1
-            return node
+            return preserved
         changed = True
         materialized_count += 1
-        args_list = _dynamic_angr_attr_8616(node, "args", None)
+        args_list = _dynamic_angr_attr_8616(helper, "args", None)
         if isinstance(args_list, list):
             args_list[0] = segment_expr
-        return node
+        return preserved
 
     if _replace_c_children_8616(root, transform):
         changed = True
@@ -1429,12 +1641,12 @@ def lower_runtime_ss_segment_helper_to_stack_8616(
         return None
     known_offsets = _known_bp_stack_offsets_8616(codegen)
     if (
-        not _has_stack_alias_fact_for_displacement_8616(codegen, displacement, width)
+        not _has_stack_storage_evidence_for_displacement_8616(codegen, displacement, width)
         and displacement not in known_offsets
     ):
         return None
     access = RealModeLinearStackAccess8616(displacement=displacement, width=width)
-    return stack_cvar_for_stable_ss_linear_access_8616(codegen, access)
+    return cast(object, stack_cvar_for_stable_ss_linear_access_8616(codegen, access))
 
 
 def lower_runtime_ss_segment_helpers_to_stack_8616(
@@ -1442,7 +1654,7 @@ def lower_runtime_ss_segment_helpers_to_stack_8616(
     *,
     project: object | None = None,
 ) -> bool:
-    """Convert all proven SS runtime helpers in a function body to stack variables."""
+    """Convert proven SS helpers after invalidating mutable offset evidence caches."""
     typed_codegen = cast(_AngrCodegenBoundary8616, codegen)
     if project is None:
         project = typed_codegen.project
@@ -1452,6 +1664,9 @@ def lower_runtime_ss_segment_helpers_to_stack_8616(
     root = cfunc.statements
     if root is None:
         return False
+
+    typed_codegen._inertia_stack_offset_cache = {}
+    typed_codegen._inertia_assignment_maps = None
 
     candidate_count = 0
     materialized_count = 0
@@ -1505,7 +1720,9 @@ def apply_runtime_segment_lowering_8616(
     typed_codegen._inertia_stack_offset_cache = {}
     typed_codegen._inertia_assignment_maps = None
     active_function = _active_function_for_codegen_8616(typed_codegen)
-    facts = _collect_near_pointer_argument_facts_8616(active_function)
+    facts = collect_near_pointer_argument_facts_8616(active_function, project=project)
+    snapshot_tracker = StackPointerSnapshotTracker8616(facts)
+    snapshot_tracker.bind_unique_untagged_helpers(root)
     typed_codegen._inertia_near_pointer_argument_facts_8616 = facts
     typed_codegen._inertia_near_pointer_argument_classified_offsets_8616 = set()
     typed_codegen._inertia_near_pointer_argument_materialized_offsets_8616 = set()
@@ -1517,7 +1734,11 @@ def apply_runtime_segment_lowering_8616(
 
     def transform(node: object) -> object:
         nonlocal changed
-        lowered_access = lower_runtime_segment_access_8616(node, target=target)
+        lowered_access = lower_runtime_segment_access_8616(
+            node,
+            target=target,
+            snapshot_tracker=snapshot_tracker,
+        )
         if lowered_access is not None:
             changed = True
             return lowered_access
@@ -1538,7 +1759,13 @@ def apply_runtime_segment_lowering_8616(
     typed_codegen._inertia_assignment_maps = None
     if materialize_runtime_helper_segment_carriers_8616(codegen, project=project):
         changed = True
+    if _lower_typed_pointer_register_carrier_stores_8616(typed_codegen):
+        changed = True
     if _lower_binary_proven_pointer_argument_helpers_8616(typed_codegen):
+        changed = True
+    if materialize_annotated_stack_prototype_8616(project, typed_codegen):
+        changed = True
+    if materialize_positive_bp_arguments_8616(project, typed_codegen):
         changed = True
     if unify_positive_bp_argument_identity_8616(typed_codegen):
         changed = True
@@ -1572,6 +1799,8 @@ def apply_runtime_segment_lowering_8616(
         failure_count=max(classified_count - materialized_count, 0),
         refusals=tuple(typed_codegen._inertia_near_pointer_argument_refusals_8616),
     )
+    typed_codegen._inertia_stack_pointer_snapshot_stats_8616 = snapshot_tracker.stats
+    snapshot_tracker.assert_closed()
     return changed
 
 

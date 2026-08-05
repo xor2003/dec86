@@ -52,6 +52,34 @@ int main(void)
     assert result["functions"][0]["source_contract"]["passed"] is True
 
 
+def test_sortdemo_status_joins_numeric_worker_c_to_source_contract():
+    result = parse_status_text(
+        """
+[dbg] recovery worker: start 0x10554 InitBars mode=lst recovery_timeout=240s
+/* function: 0x10554 sub_10554 */
+/* decompiling... */
+/* == function 0x10560 InitBars == */
+/* failure family: status=ok stage=not_set fallback=file_sweep validation=passed */
+/* info: function 0x10560 InitBars attempt=decompiled validation=passed */
+/* -- c -- */
+void sub_10560(void)
+{
+    unsigned short vc;
+    sub_11402(sub_1132c(SEG_PTR(inertia_ds, 0)));
+    sub_12ac8(&vc);
+    sub_11414();
+    sub_10678();
+}
+""",
+        check_source_contracts=True,
+    )
+
+    assert result["summary"] == {"total": 1, "passed": 1}
+    assert result["source_contract_summary"] == {"total": 1, "passed": 1, "failed": 0}
+    assert result["functions"][0]["name"] == "InitBars"
+    assert result["functions"][0]["leakage"]["raw_segmented_access"] == 1
+
+
 def test_sortdemo_source_call_contract_accepts_generated_integer_type_footer():
     result = parse_status_text(
         """
@@ -188,6 +216,32 @@ void InsertionSort(void)
     abarWork[iRowTmp] = abarWork[iRowTmp - 1];
     DrawBar(iRowTmp);
     DrawTime(iRowTmp);
+}
+"""
+
+    result = sortdemo_decompiler_status._evaluate_source_contract(
+        contract,
+        emitted_c,
+    )
+
+    assert result.passed is True
+    assert result.missing_control_flow == ()
+
+
+def test_insertionsort_source_contract_accepts_proven_binary_exit_guard() -> None:
+    contract = SORTDEMO_SOURCE_CALL_CONTRACTS["InsertionSort"]
+    emitted_c = """
+unsigned short g_0B4C[1];
+void InsertionSort(void)
+{
+    unsigned short local_4;
+    unsigned short local_6;
+    if ((g_0B4C[local_4 - 1] & 255) <= local_6)
+        break;
+    DrawBar(local_4);
+    DrawTime(local_4);
+    DrawBar(local_4);
+    DrawTime(local_4);
 }
 """
 
@@ -416,6 +470,29 @@ def test_sortdemo_decompiler_status_parser_keeps_validation_failure_before_retry
     assert function["validation"] == "failed"
     assert function["timeout_seconds"] == 7.0
     assert function["timeout_message"].startswith("[dbg] non-optimized fallback unavailable")
+
+
+def test_sortdemo_decompiler_status_parser_accepts_validated_retry_after_protocol_error():
+    result = parse_status_text(
+        """
+/* == function 0x107b8 Swaps == */
+/* failure family: status=error stage=clean_process_protocol sidecar=not_attempted nonopt=not_attempted fallback=file_sweep validation=failed */
+[05:09:06] /* retry lane: recovered validation-passed candidate */
+/* info: function 0x107b8 Swaps attempt=decompiled validation=passed */
+/* -- c -- */
+void Swaps(unsigned short *bar1, unsigned short *bar2) { bar1[0] = bar2[0]; }
+"""
+    )
+
+    assert result["summary"] == {"total": 1, "passed": 1}
+    assert result["failure_stages"] == {}
+    function = result["functions"][0]
+    assert function["failure_status"] == "ok"
+    assert function["failure_stage"] is None
+    assert function["attempt"] == "decompiled"
+    assert function["validation"] == "passed"
+    assert function["validation_passed"] is True
+    assert function["validation_failed"] is False
 
 
 def test_sortdemo_decompiler_status_parser_refuses_passed_source_backed_leakage():

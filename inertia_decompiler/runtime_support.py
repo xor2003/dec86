@@ -28,6 +28,7 @@ import weakref
 from collections import deque
 from collections.abc import Callable, Iterator, MutableMapping
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as _FuturesTimeoutError
 from concurrent.futures.thread import _threads_queues, _worker
 from datetime import datetime
 
@@ -2933,11 +2934,23 @@ def run_with_timeout_in_daemon_thread(
     thread_name_prefix: str,
 ) -> _TimeoutResultT:
     """Run a nullary callable in one daemon worker with a bounded wait."""
-    try:
-        executor = DaemonThreadPoolExecutor(max_workers=1, thread_name_prefix=thread_name_prefix)
-    except Exception:
-        return func()
-    future = executor.submit(func)
+    timeout_seconds = max(1, timeout)
+    completed = threading.Event()
+    result_box: dict[str, object] = {}
+
+    def _runner() -> None:
+        try:
+            result_box["result"] = func()
+            result_box["kind"] = "ok"
+        except BaseException as ex:  # noqa: BLE001
+            result_box["kind"] = "err"
+            result_box["error"] = ex
+            result_box["traceback"] = traceback.format_exc()
+        finally:
+            completed.set()
+
+    thread = threading.Thread(target=_runner, daemon=True, name=thread_name_prefix)
+    thread.start()
     stack_dump_sec = None
     stack_dump_raw = os.environ.get("INERTIA_THREAD_STACK_DUMP_SEC", "").strip()
     if stack_dump_raw:
@@ -2948,13 +2961,22 @@ def run_with_timeout_in_daemon_thread(
                 faulthandler.enable(file=stack_dump_file, all_threads=True)
                 faulthandler.dump_traceback_later(stack_dump_sec, repeat=True, file=stack_dump_file)
     try:
-        return future.result(timeout=max(1, timeout))
+        if not completed.wait(timeout_seconds):
+            raise _FuturesTimeoutError(f"Timed out after {timeout_seconds}s.")
+        if result_box.get("kind") == "err":
+            error = result_box.get("error")
+            if isinstance(error, BaseException):
+                raise error
+            raise RuntimeError(f"daemon thread failed: {result_box.get('traceback')}")
+        if "result" not in result_box:
+            raise RuntimeError(f"daemon thread completed without result after {timeout_seconds}s")
+        return typing.cast(_TimeoutResultT, result_box["result"])
     finally:
         if stack_dump_sec is not None:
             with contextlib.suppress(Exception):
                 faulthandler.cancel_dump_traceback_later()
-        finished = future.done()
-        executor.shutdown(wait=finished, cancel_futures=not finished)
+        with contextlib.suppress(Exception):
+            thread.join(0)
 
 
 def run_with_timeout_in_fork(

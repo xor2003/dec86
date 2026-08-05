@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from angr.sim_type import SimTypeShort
+from angr.sim_variable import SimMemoryVariable
+from angr_platforms.X86_16.codegen_metadata import (
+    GlobalDeclarationArrayExtent8616,
+)
+
+from inertia_decompiler.cli_c_ast_rewrites import _attach_cod_global_declaration_types
 from inertia_decompiler.cli_decompilation import (
     _emit_c_stage_trace,
     _get_layer_dump_state,
@@ -68,6 +75,30 @@ def test_materialize_codegen_global_externs_inserts_used_scalar():
     assert updated.index("extern unsigned short cRow;") < updated.index("void ReInitBars()")
 
 
+def test_materialize_codegen_global_externs_preserves_unknown_array_extent():
+    codegen = SimpleNamespace(
+        _inertia_global_declaration_specs_8616=(
+            (
+                "unsigned char",
+                "_S101_g_table",
+                GlobalDeclarationArrayExtent8616.UNKNOWN,
+            ),
+        )
+    )
+    c_text = (
+        "short sum(void)\n"
+        "{\n"
+        "    short total;\n"
+        "    total = total + _S101_g_table[i];\n"
+        "    return total;\n"
+        "}\n"
+    )
+
+    updated = _materialize_codegen_global_externs_text_8616(c_text, codegen)
+
+    assert "extern unsigned char _S101_g_table[];" in updated
+
+
 def test_materialize_codegen_global_externs_ignores_struct_member_name_specs():
     codegen = SimpleNamespace(
         _inertia_global_declaration_specs_8616=(
@@ -132,6 +163,44 @@ def test_materialize_codegen_global_externs_orders_struct_definition_before_depe
         "extern struct abarWork_entry { unsigned char field_0; unsigned char field_1; } abarWork[1];"
     )
     assert updated.index(struct_decl) < updated.index("int Swaps(")
+
+
+def test_materialize_codegen_global_externs_is_idempotent_for_named_types():
+    regs_definition = "typedef union REGS { unsigned short ax; } REGS;"
+    codegen = SimpleNamespace(
+        _inertia_global_declaration_specs_8616=(("REGS", "rin", None),),
+        _inertia_named_type_definitions_8616=(regs_definition,),
+    )
+    c_text = "void call_dos(void)\n{\n    rin.ax = 1;\n}\n"
+
+    first = _materialize_codegen_global_externs_text_8616(c_text, codegen)
+    second = _materialize_codegen_global_externs_text_8616(first, codegen)
+
+    assert second == first
+    assert second.count(regs_definition) == 1
+    assert "extern REGS rin;" in second
+
+
+def test_cli_cod_global_typer_refuses_name_based_aggregate_recovery():
+    variable = SimMemoryVariable(0x7000, 14)
+    cvariable = SimpleNamespace(variable_type=None, unified_variable=None)
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(
+            variables_in_use={variable: cvariable},
+            unified_local_vars={},
+        ),
+        cexterns=(),
+    )
+
+    changed = _attach_cod_global_declaration_types(
+        codegen,
+        {0x7000: ("$S424_rin", 14)},
+    )
+
+    assert changed is True
+    assert variable.size == 2
+    assert isinstance(cvariable.variable_type, SimTypeShort)
+    assert variable.name != "rin"
 
 
 def test_dump_layer_state_uses_next_attempt_when_present(tmp_path):

@@ -32,9 +32,9 @@ class LayerModuleRecord:
 LAYER_MODULE_RECORDS: tuple[LayerModuleRecord, ...] = (
     LayerModuleRecord(
         "angr_platforms.X86_16.validation.canonicalize",
-        LayerModuleAdmission.TEST_ONLY_PROTOTYPE,
+        LayerModuleAdmission.PRODUCTION_WIRED,
         "validation",
-        "Equivalence canonicalizer prototype; not used to mutate or validate production output yet.",
+        "Validation-only expression canonicalizer consumed by production control-flow checks.",
     ),
     LayerModuleRecord(
         "angr_platforms.X86_16.alias.state",

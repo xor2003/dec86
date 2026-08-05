@@ -94,6 +94,27 @@ def _dedupe_msc_runtime_typedefs_8616(text: str) -> str:
     return "".join(kept)
 
 
+def _strip_msc_dos_header_aggregate_typedefs_8616(text: str) -> str:
+    """Remove emitted DOS aggregate definitions already supplied by DOS.H.
+
+    This is target compile hygiene only. The checked emitted payload retains
+    its self-contained definitions, while the MS C compiler input uses the
+    canonical target-header definitions and preserves source line numbers.
+    """
+    cleaned = str(text or "")
+    for kind, name in (("union", "REGS"), ("struct", "SREGS")):
+        pattern = re.compile(
+            rf"(?ms)^[ \t]*typedef[ \t]+{kind}[ \t]+{name}[ \t]*\{{"
+            rf".*?^[ \t]*\}}[ \t]*{name}[ \t]*;[ \t]*(?:\r?\n)?"
+        )
+        alias = f"typedef {kind} {name} {name};\n"
+        cleaned = pattern.sub(
+            lambda match: alias + "\n" * max(0, match.group(0).count("\n") - 1),
+            cleaned,
+        )
+    return cleaned
+
+
 @dataclass(frozen=True, slots=True)
 class RecompileCheckResult:
     """Result from one emitted-C recompilation check."""
@@ -129,6 +150,7 @@ def _timeout_stream_text(value: str | bytes | None) -> str:
 def _compile_input_payload_8616(c_text: str, *, target: str) -> str:
     header_payload = _with_runtime_header_8616(c_text, target=target)
     if target == "msc-dos":
+        header_payload = _strip_msc_dos_header_aggregate_typedefs_8616(header_payload)
         header_payload = _dedupe_msc_runtime_typedefs_8616(header_payload)
         header_payload = _sanitize_c99_line_comments_for_msc_8616(header_payload)
     sanitized = _sanitize_nested_block_comments(header_payload)

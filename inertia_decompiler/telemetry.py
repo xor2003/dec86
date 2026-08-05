@@ -88,7 +88,7 @@ class _OtelProvider(Protocol):
         """Register a span processor."""
         ...
 
-    def force_flush(self, _timeout_millis: int) -> None:
+    def force_flush(self, *, timeout_millis: int) -> None:  # noqa: V107 - OpenTelemetry keyword contract
         """Flush queued spans."""
         ...
 
@@ -918,7 +918,7 @@ def _flush_and_shutdown_otel() -> None:
     _STATE.otel_shutdown = True
     timeout_ms = max(1, _env_int(TRACE_FORCE_FLUSH_MS_ENV, 3000))
     try:
-        provider.force_flush(timeout_ms)
+        provider.force_flush(timeout_millis=timeout_ms)
     except Exception as ex:
         _STATE.otel_export_status = f"flush_failed:{type(ex).__name__}"
     try:

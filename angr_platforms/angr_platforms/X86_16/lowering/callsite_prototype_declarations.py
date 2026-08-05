@@ -23,11 +23,12 @@ from angr.analyses.decompiler.structured_codegen.c import CFunctionCall, CUnaryO
 from angr.knowledge_plugins.functions import Function
 from angr.sim_type import SimStruct, SimType, SimTypeArray, SimTypeBottom, SimTypeFixedSizeArray, SimTypePointer
 
-from ..analysis_helpers import _canonicalize_x86_16_padding_call_target_8616
+from ..analysis_helpers import canonicalize_x86_16_padding_call_target_8616
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..callsite_summary import (
     CallsiteSummary8616,
     caller_return_use_evidence_by_addr_8616,
+    callsite_summary_inventory_8616,
 )
 from ..codegen_metadata import get_codegen_sequence_attr, set_codegen_sequence_attr
 from ..pipeline.errors import PipelineHardError
@@ -36,6 +37,17 @@ from .c_runtime_header import (
     is_lowered_runtime_macro_8616,
     runtime_helper_declaration_8616,
 )
+from .callee_argument_count_evidence import (
+    CalleeArgumentCountVerdict8616,
+    collect_callee_argument_count_evidence_8616,
+)
+from .callee_global_object_type_surface import resolved_type_8616
+from .callee_pointer_evidence import callee_pointer_argument_is_proven_8616
+from .callsite_pointer_tables import (
+    callsite_pointer_table_argument_type_8616,
+    materialize_callsite_pointer_table_types_8616,
+)
+from .dos_interrupt_abi import dos_interrupt_prototype_declaration_8616
 from .return_type_evidence import caller_return_use_evidence_proves_unused_8616
 
 __all__ = [
@@ -307,7 +319,7 @@ def canonicalize_callsite_target_identities_8616(
             stats.normalized_fact_count += 1
             decisions.append((current_addr, summary.target_addr, "already-canonical"))
             continue
-        canonical_addr = _canonicalize_x86_16_padding_call_target_8616(
+        canonical_addr = canonicalize_x86_16_padding_call_target_8616(
             project,
             current_addr,
         )
@@ -371,12 +383,12 @@ def _summary_arg_widths_8616(summary: CallsiteSummary8616) -> tuple[int, ...] | 
     """Return exact logical argument widths or refuse an incomplete summary."""
     if not isinstance(summary.arg_count, int) or summary.arg_count < 0:
         return None
-    logical = summary.logical_arg_widths
+    logical = cast(tuple[int, ...], summary.logical_arg_widths)
     if logical:
         if not all(isinstance(width, int) and width > 0 for width in logical):
             return None
         return logical
-    widths = summary.arg_widths
+    widths = cast(tuple[int, ...], summary.arg_widths)
     if len(widths) != summary.arg_count or not all(isinstance(width, int) and width > 0 for width in widths):
         return None
     return widths
@@ -391,37 +403,57 @@ def _scalar_decl_for_width_8616(width: int, name: str) -> str:
     return f"unsigned short {name}"
 
 
-def _argument_type_8616(argument: object) -> object:
+def _argument_type_8616(argument: object, *, codegen: object | None = None) -> object:
     """Return the explicit or structured-reference argument type."""
+    if codegen is not None:
+        pointer_table_type = callsite_pointer_table_argument_type_8616(codegen, argument)
+        if pointer_table_type is not None:
+            return pointer_table_type
     try:
         argument_type = cast(_TypedExpressionSurface8616, argument).type
     except AttributeError:
         argument_type = None
-    if isinstance(argument, CUnaryOp) and argument.op == "Reference" and not isinstance(argument_type, SimTypePointer):
+    if isinstance(argument, CUnaryOp) and argument.op == "Reference":
         try:
             referent_type = cast(_TypedExpressionSurface8616, argument.operand).type
         except AttributeError:
             referent_type = None
+        if isinstance(referent_type, SimType) and isinstance(resolved_type_8616(referent_type), SimStruct):
+            return SimTypePointer(referent_type)
+        if isinstance(argument_type, SimTypePointer):
+            return argument_type
         return SimTypePointer(referent_type if isinstance(referent_type, SimType) else SimTypeBottom())
     return argument_type
 
 
-def _argument_decl_8616(argument: object, width: int, index: int) -> str:
+def _argument_decl_8616(
+    codegen: object,
+    argument: object,
+    width: int,
+    index: int,
+    *,
+    pointer_proven: bool,
+) -> str:
     """Render pointer class from typed AST evidence, otherwise summary width."""
-    argument_type = _argument_type_8616(argument)
+    argument_type = _argument_type_8616(argument, codegen=codegen)
     if isinstance(argument_type, SimTypePointer):
-        return cast(SimType, argument_type).c_repr(name=f"a{index}")
+        pointee = resolved_type_8616(argument_type.pts_to)
+        if isinstance(pointee, SimStruct) and isinstance(pointee.name, str):
+            return f"struct {pointee.name} *a{index}"
+        return cast(str, cast(SimType, argument_type).c_repr(name=f"a{index}"))
     if isinstance(argument_type, (SimTypeArray, SimTypeFixedSizeArray)):
-        return cast(SimType, argument_type).c_repr(name=f"a{index}")
+        return cast(str, SimTypePointer(argument_type.elem_type).c_repr(name=f"a{index}"))
+    if pointer_proven:
+        return f"void *a{index}"
     return _scalar_decl_for_width_8616(width, f"a{index}")
 
 
-def _argument_forward_declarations_8616(argument: object) -> tuple[str, ...]:
+def _argument_forward_declarations_8616(codegen: object, argument: object) -> tuple[str, ...]:
     """Return file-scope tag declarations required by one typed argument."""
-    argument_type = _argument_type_8616(argument)
+    argument_type = _argument_type_8616(argument, codegen=codegen)
     if not isinstance(argument_type, SimTypePointer):
         return ()
-    pointee = argument_type.pts_to
+    pointee = resolved_type_8616(argument_type.pts_to)
     if not isinstance(pointee, SimStruct) or not isinstance(pointee.name, str):
         return ()
     if _C_IDENTIFIER_RE_8616.fullmatch(pointee.name) is None:
@@ -448,6 +480,27 @@ def _joined_return_type_8616(
     summaries: Sequence[CallsiteSummary8616],
 ) -> str | None:
     """Join caller-use evidence for one exact target or refuse ABI conflict."""
+    evidence = (
+        caller_return_use_evidence_by_addr_8616(project).get(summary.target_addr)
+        if isinstance(summary.target_addr, int)
+        else None
+    )
+    if os.environ.get("INERTIA_DEBUG_RETURN_TYPE_EVIDENCE") == "1":
+        _LOGGER.warning(
+            "callsite return declaration evidence: target=%s verdict=%s raw=%d classified=%d "
+            "materialized=%d failures=%d",
+            hex(summary.target_addr) if isinstance(summary.target_addr, int) else None,
+            evidence.verdict.value if evidence is not None else "missing",
+            evidence.raw_fact_count if evidence is not None else 0,
+            evidence.classified_fact_count if evidence is not None else 0,
+            evidence.materialized_count if evidence is not None else 0,
+            evidence.failure_count if evidence is not None else 0,
+        )
+    if evidence is not None and caller_return_use_evidence_proves_unused_8616(evidence):
+        # Closed caller evidence disproves a local AX-use heuristic, but an
+        # ignored result does not prove that the callee itself returns void.
+        return "int"
+
     if isinstance(summary.target_addr, int):
         related = tuple(candidate for candidate in summaries if candidate.target_addr == summary.target_addr)
     else:
@@ -460,24 +513,6 @@ def _joined_return_type_8616(
     if _CallsiteReturnClass8616.UNKNOWN in used_classes or len(used_classes) > 1:
         return None
     if not used_classes:
-        evidence = (
-            caller_return_use_evidence_by_addr_8616(project).get(summary.target_addr)
-            if isinstance(summary.target_addr, int)
-            else None
-        )
-        if os.environ.get("INERTIA_DEBUG_RETURN_TYPE_EVIDENCE") == "1":
-            _LOGGER.warning(
-                "callsite return declaration evidence: target=%s verdict=%s raw=%d classified=%d "
-                "materialized=%d failures=%d",
-                hex(summary.target_addr) if isinstance(summary.target_addr, int) else None,
-                evidence.verdict.value if evidence is not None else "missing",
-                evidence.raw_fact_count if evidence is not None else 0,
-                evidence.classified_fact_count if evidence is not None else 0,
-                evidence.materialized_count if evidence is not None else 0,
-                evidence.failure_count if evidence is not None else 0,
-            )
-        if evidence is not None and caller_return_use_evidence_proves_unused_8616(evidence):
-            return "void"
         return "int"
     return next(iter(used_classes)).value
 
@@ -513,6 +548,8 @@ def _compatible_summary_8616(
 
 
 def _prototype_decl_8616(
+    project: object,
+    codegen: object,
     node: CFunctionCall,
     summary: CallsiteSummary8616,
     return_type: str,
@@ -524,10 +561,38 @@ def _prototype_decl_8616(
     if name is None or widths is None or len(arguments) != len(widths):
         return None
     args = "void" if not arguments else ", ".join(
-        _argument_decl_8616(argument, width, index)
+        _argument_decl_8616(
+            codegen,
+            argument,
+            width,
+            index,
+            pointer_proven=callee_pointer_argument_is_proven_8616(
+                project,
+                name,
+                index,
+            ),
+        )
         for index, (argument, width) in enumerate(zip(arguments, widths, strict=True))
     )
     return f"{return_type} {name}({args});"
+
+
+def _program_arity_conflict_decl_8616(
+    project: object,
+    summary: CallsiteSummary8616,
+    name: str,
+    return_type: str,
+) -> str | None:
+    """Return an unprototyped declaration for a proven cross-caller arity conflict."""
+    if not isinstance(summary.target_addr, int):
+        return None
+    evidence = collect_callee_argument_count_evidence_8616(
+        project,
+        summary.target_addr,
+    )
+    if evidence.verdict is not CalleeArgumentCountVerdict8616.CONFLICT:
+        return None
+    return f"{return_type} {name}();"
 
 
 def _declaration_name_8616(declaration: str) -> str | None:
@@ -558,14 +623,29 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
         summaries = _typed_summary_map_8616(surface._inertia_callsite_summaries)
     except AttributeError:
         return False
-    if root is None or not summaries:
+    inventory = callsite_summary_inventory_8616(codegen)
+    all_summaries = tuple({summary.callsite_addr: summary for summary in (*summaries.values(), *inventory.values())}.values())
+    if root is None or not all_summaries:
         if os.environ.get("INERTIA_DEBUG_CALLSITE_PROTOTYPE_DECLS") == "1":
             _LOGGER.warning(
-                "callsite declaration lowering unavailable: root=%s summaries=%d",
+                "callsite declaration lowering unavailable: root=%s summaries=%d inventory=%d",
                 root is not None,
                 len(summaries),
+                len(inventory),
             )
         return False
+    call_nodes = tuple(node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CFunctionCall))
+    resolved_calls: list[tuple[CFunctionCall, CallsiteSummary8616 | None]] = []
+    for node in call_nodes:
+        summary = _summary_for_call_8616(project, node, summaries)
+        if summary is None:
+            summary = _summary_for_call_8616(project, node, inventory)
+        resolved_calls.append((node, summary))
+    materialize_callsite_pointer_table_types_8616(
+        project,
+        codegen,
+        ((node, summary) for node, summary in resolved_calls if summary is not None and not summary.stack_probe_helper),
+    )
     existing = get_codegen_sequence_attr(codegen, surface.cfunc, "_inertia_callsite_prototype_decls")
     desired_by_name: dict[str, str] = {}
     fallback_declarations_by_name: dict[str, set[str]] = {}
@@ -573,12 +653,16 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
     ambiguous_names: set[str] = set()
     call_count = 0
     matched_count = 0
-    for node in _iter_c_nodes_deep_8616(root):
-        if not isinstance(node, CFunctionCall):
-            continue
+    for node, summary in resolved_calls:
         call_count += 1
-        summary = _summary_for_call_8616(project, node, summaries)
         if summary is None or summary.stack_probe_helper:
+            if summary is None and os.environ.get("INERTIA_DEBUG_CALLSITE_PROTOTYPE_DECLS") == "1":
+                _LOGGER.warning(
+                    "callsite declaration unmatched: name=%s callsite=%s callee=%s",
+                    _call_name_8616(node),
+                    _callsite_addr_8616(node),
+                    _callee_addr_8616(node),
+                )
             continue
         matched_count += 1
         if os.environ.get("INERTIA_DEBUG_CALLSITE_PROTOTYPE_DECLS") == "1":
@@ -599,7 +683,7 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
         call_name = _call_name_8616(node)
         if call_name is not None and is_lowered_runtime_macro_8616(call_name):
             continue
-        inferred_return_type = _joined_return_type_8616(project, summary, tuple(summaries.values()))
+        inferred_return_type = _joined_return_type_8616(project, summary, all_summaries)
         return_type = (
             KNOWN_EXTERNAL_RETURN_TYPES_8616.get(call_name, inferred_return_type)
             if call_name is not None
@@ -610,9 +694,27 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
             if call_name is not None
             else None
         )
-        declaration = runtime_declaration
+        abi_declaration = dos_interrupt_prototype_declaration_8616(call_name)
+        declaration = abi_declaration or runtime_declaration
         if declaration is None and return_type is not None:
-            declaration = _prototype_decl_8616(node, summary, return_type)
+            declaration = (
+                _program_arity_conflict_decl_8616(
+                    project,
+                    summary,
+                    call_name,
+                    return_type,
+                )
+                if call_name is not None
+                else None
+            )
+            if declaration is None:
+                declaration = _prototype_decl_8616(
+                    project,
+                    codegen,
+                    node,
+                    summary,
+                    return_type,
+                )
         if declaration is None:
             if os.environ.get("INERTIA_DEBUG_CALLSITE_PROTOTYPE_DECLS") == "1":
                 _LOGGER.warning(
@@ -624,7 +726,7 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
                 )
             continue
         for argument in tuple(cast(Sequence[object], node.args or ())):
-            required_forward_decls.update(_argument_forward_declarations_8616(argument))
+            required_forward_decls.update(_argument_forward_declarations_8616(codegen, argument))
         name = _declaration_name_8616(declaration)
         if name is None or name in ambiguous_names:
             continue

@@ -15,7 +15,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 
 DECOMPILATION_CACHE_SCHEMA: int = 5
 DECOMPILATION_CACHE_DIR: Path = _ROOT / ".inertia_decomp_cache"
-RECOVERY_CACHE_SOURCE_FILES: tuple[Path, ...] = (
+BASE_RECOVERY_CACHE_SOURCE_FILES: tuple[Path, ...] = (
     _ROOT / "decompile.py",
     _ROOT / "inertia_decompiler" / "cli.py",
     _ROOT / "inertia_decompiler" / "cli_core.py",
@@ -52,7 +52,7 @@ SIDECAR_METADATA_CACHE_SOURCE_FILES: tuple[Path, ...] = (
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "lst_extract.py",
     _ROOT / "angr_platforms" / "angr_platforms" / "X86_16" / "turbo_debug_tdinfo.py",
 )
-DECOMPILATION_CACHE_SOURCE_FILES: tuple[Path, ...] = (
+BASE_DECOMPILATION_CACHE_SOURCE_FILES: tuple[Path, ...] = (
     _ROOT / "decompile.py",
     _ROOT / "inertia_decompiler" / "cli.py",
     _ROOT / "inertia_decompiler" / "cli_decompilation.py",
@@ -107,6 +107,31 @@ DECOMPILATION_CACHE_SOURCE_FILES: tuple[Path, ...] = (
     _ROOT / "inertia_decompiler" / "cli_access_object_hints.py",
     _ROOT / "inertia_decompiler" / "cli_access_profiles.py",
     _ROOT / "inertia_decompiler" / "cli_access_traits.py",
+)
+
+
+def _production_decompiler_source_files() -> tuple[Path, ...]:
+    """Return every production Python module that can affect decompilation."""
+    package_roots = (
+        _ROOT / "inertia_decompiler",
+        _ROOT / "angr_platforms" / "angr_platforms" / "X86_16",
+    )
+    discovered = {
+        path
+        for package_root in package_roots
+        for path in package_root.rglob("*.py")
+        if "__pycache__" not in path.parts
+    }
+    discovered.add(_ROOT / "decompile.py")
+    return tuple(sorted(discovered))
+
+
+_PRODUCTION_DECOMPILER_SOURCE_FILES: tuple[Path, ...] = _production_decompiler_source_files()
+RECOVERY_CACHE_SOURCE_FILES: tuple[Path, ...] = tuple(
+    sorted(set((*BASE_RECOVERY_CACHE_SOURCE_FILES, *_PRODUCTION_DECOMPILER_SOURCE_FILES)))
+)
+DECOMPILATION_CACHE_SOURCE_FILES: tuple[Path, ...] = tuple(
+    sorted(set((*BASE_DECOMPILATION_CACHE_SOURCE_FILES, *_PRODUCTION_DECOMPILER_SOURCE_FILES)))
 )
 
 

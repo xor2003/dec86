@@ -174,6 +174,14 @@ def build_compare_condition_8616(lhs: object, rhs: object, update_flags: object)
     lhs_value = _condition_value_from_operand(lhs, size_hint=target_size)
     rhs_value = _condition_value_from_operand(rhs, size_hint=target_size)
     lhs_value, rhs_value = harmonize_condition_args_8616(lhs_value, rhs_value, size=target_size)
+    if name in {"update_eflags_inc", "update_eflags_dec"}:
+        boundary = (1 << (max(1, target_size) * 8)) - 1 if name.endswith("_inc") else 1
+        return build_condition_ir_8616(
+            "compare",
+            lhs_value,
+            IRValue(MemSpace.CONST, const=boundary, size=max(1, target_size), expr=(name, "zero_boundary")),
+            expr=(name,),
+        )
     if name == "update_eflags_sub":
         if _same_condition_operand_8616(lhs, rhs):
             return build_condition_ir_8616(
@@ -336,12 +344,17 @@ def masked_shift_count(
     mask: int = 0x1F,
 ) -> _SymbolicValue8616:
     """Mask an x86 shift count to the architecturally active bits."""
-    count_v = (
-        emu.constant(count, type_for_bits(width_bits))
-        if isinstance(count, int)
-        else count.cast_to(type_for_bits(width_bits))
-    )
-    return count_v & emu.constant(mask, type_for_bits(width_bits))
+    value_type = type_for_bits(width_bits)
+    if isinstance(count, int):
+        return emu.constant(count & mask, value_type)
+    try:
+        constant_count = count.value
+    except (AttributeError, ValueError):
+        constant_count = None
+    if isinstance(constant_count, int):
+        return emu.constant(constant_count & mask, value_type)
+    count_v = count.cast_to(value_type)
+    return count_v & emu.constant(mask, value_type)
 
 
 def rotate_count(

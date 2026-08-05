@@ -74,6 +74,31 @@ _SELECTED_RE = re.compile(r"selected (?P<count>\d+) function\(s\) for decompilat
 _ATTEMPTED_RE = re.compile(r"decompilation attempted for (?P<attempted>\d+)/(?P<selected>\d+) selected function")
 _SUMMARY_RE = re.compile(r"summary: decompiled (?P<decompiled>\d+)/(?P<selected>\d+) selected functions")
 _TIMEOUT_SIGNAL_RE = re.compile(r"(?:Decompilation timeout|c \([^)]*partial timeout[^)]*\))", re.IGNORECASE)
+_WORD_TYPE_RE = r"(?:unsigned\s+)?short"
+_RUNMENU_ADDR = 0x102E0
+_RUNMENU_SIGNATURE_RE = re.compile(rf"\b{_WORD_TYPE_RE}\s+sub_102e0\s*\(\s*void\s*\)")
+_RUNMENU_EXIT_CASE_RE = re.compile(r"\bcase\s+27\s*:\s*return\s+[^;\n]+;")
+_DRAWTIME_ADDR = 0x10498
+_DRAWTIME_SIGNATURE_RE = re.compile(
+    rf"\bshort\s+sub_10498\s*\(\s*{_WORD_TYPE_RE}\s+[A-Za-z_]\w*\s*\)"
+)
+_BEEP_ADDR = 0x10E70
+_BEEP_SIGNATURE_RE = re.compile(
+    rf"\b{_WORD_TYPE_RE}\s+sub_10e70\s*\(\s*{_WORD_TYPE_RE}\s+[A-Za-z_]\w*\s*,\s*"
+    rf"{_WORD_TYPE_RE}\s+[A-Za-z_]\w*\s*\)"
+)
+_UNINITIALIZED_BP4_LOCAL_RE = re.compile(r"^[^/\n;]+;\s*//\s*\[bp\+0x4\]", re.MULTILINE)
+
+
+def _function_transcript_segment(transcript: str, address: int) -> str:
+    """Return one function's marker-delimited transcript segment."""
+    matches = tuple(_FUNCTION_RE.finditer(transcript))
+    for index, match in enumerate(matches):
+        if int(match.group("addr"), 16) != address:
+            continue
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(transcript)
+        return transcript[match.start() : end]
+    return ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +207,17 @@ def evaluate_sortd_transcript(
             "required decompiled function regressions: "
             + ", ".join(f"{address:#x}" for address in missing_decompiled_addrs)
         )
+    runmenu_segment = _function_transcript_segment(transcript, _RUNMENU_ADDR)
+    if not _RUNMENU_SIGNATURE_RE.search(runmenu_segment) or not _RUNMENU_EXIT_CASE_RE.search(
+        runmenu_segment
+    ):
+        violations.append("RunMenu lacks its scalar binary-proven ESC return case")
+    drawtime_segment = _function_transcript_segment(transcript, _DRAWTIME_ADDR)
+    if not _DRAWTIME_SIGNATURE_RE.search(drawtime_segment) or _UNINITIALIZED_BP4_LOCAL_RE.search(drawtime_segment):
+        violations.append("DrawTime lacks its canonical scalar-return positive-BP signature")
+    beep_segment = _function_transcript_segment(transcript, _BEEP_ADDR)
+    if not _BEEP_SIGNATURE_RE.search(beep_segment) or _UNINITIALIZED_BP4_LOCAL_RE.search(beep_segment):
+        violations.append("Beep lacks its scalar two-argument positive-BP signature")
     if empty_count > maximum_empty:
         violations.append(f"empty function count {empty_count} exceeds {maximum_empty}")
     if timeout_count > maximum_timeouts:
@@ -228,6 +264,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=REPO_ROOT / "angr_platforms" / ".cache" / "test_pipeline" / "sortd_sidecar_free.json",
     )
+    parser.add_argument("--function-c-dir", type=Path)
     parser.add_argument("--run-timeout", type=int, default=1200)
     parser.add_argument("--minimum-decompiled", type=int, default=DEFAULT_MINIMUM_DECOMPILED)
     parser.add_argument("--maximum-empty", type=int, default=DEFAULT_MAXIMUM_EMPTY)
@@ -243,6 +280,12 @@ def main(argv: list[str] | None = None) -> int:
     args.transcript_out.parent.mkdir(parents=True, exist_ok=True)
     args.report_out.parent.mkdir(parents=True, exist_ok=True)
     env = default_decompiler_environment()
+    if args.function_c_dir is not None:
+        args.function_c_dir.mkdir(parents=True, exist_ok=True)
+        if any(args.function_c_dir.glob("*.c")):
+            print(f"function C artifact directory must be empty: {args.function_c_dir}")
+            return 2
+        env["INERTIA_OUTPUT_C_DIR"] = str(args.function_c_dir)
 
     with tempfile.TemporaryDirectory(prefix="inertia-sortd-sidecar-free-") as temp_dir:
         isolated_binary = Path(temp_dir) / "SORTD.EXE"

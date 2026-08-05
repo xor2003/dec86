@@ -107,6 +107,15 @@ def test_branch_target_return_effect_classifies_return():
     assert effect.kind is BranchTargetReturnEffectKind8616.RETURN
 
 
+def test_branch_target_return_effect_classifies_conditional_control_boundary():
+    effect = branch_target_return_effect_8616(
+        _Insn("jne", [_imm_operand(0x1234)]),
+        _no_target,
+    )
+
+    assert effect.kind is BranchTargetReturnEffectKind8616.CONTROL_BOUNDARY
+
+
 def test_branch_target_return_effect_refuses_unrelated_instruction():
     effect = branch_target_return_effect_8616(
         _Insn("mov", [_reg_operand(4), _imm_operand(1)]),
@@ -120,6 +129,18 @@ def test_terminal_ax_return_effect_classifies_call_clobber():
     effect = terminal_ax_return_effect_8616(_Insn("call"))
 
     assert effect.kind is TerminalAxReturnEffectKind8616.CALL_CLOBBER
+
+
+def test_terminal_ax_return_effect_classifies_software_interrupt_clobber():
+    effect = terminal_ax_return_effect_8616(_Insn("int", [_imm_operand(0x33)]))
+
+    assert effect.kind is TerminalAxReturnEffectKind8616.CALL_CLOBBER
+
+
+def test_terminal_ax_return_effect_excludes_microsoft_x87_interrupt_escape():
+    effect = terminal_ax_return_effect_8616(_Insn("int", [_imm_operand(0x34)]))
+
+    assert effect.kind is TerminalAxReturnEffectKind8616.OTHER
 
 
 def test_terminal_ax_return_effect_classifies_clear_ah_to_zero():
@@ -148,6 +169,17 @@ def test_terminal_ax_return_effect_classifies_stack_load():
     assert effect.kind is TerminalAxReturnEffectKind8616.MOV_REG_STACK
     assert effect.dst_reg == "al"
     assert effect.mem_disp == 5
+    assert effect.mem_size == 1
+
+
+def test_terminal_ax_return_effect_classifies_high_byte_stack_load():
+    effect = terminal_ax_return_effect_8616(
+        _Insn("mov", [_reg_operand(4), _mem_operand(base=3, disp=7, size=1)]),
+    )
+
+    assert effect.kind is TerminalAxReturnEffectKind8616.MOV_REG_STACK
+    assert effect.dst_reg == "ah"
+    assert effect.mem_disp == 7
     assert effect.mem_size == 1
 
 
@@ -217,6 +249,16 @@ def test_terminal_ax_return_effect_classifies_ax_or_cx():
 
     assert effect.kind is TerminalAxReturnEffectKind8616.AX_OR_CX
     assert effect.op == "Or"
+
+
+def test_terminal_ax_return_effect_classifies_ax_add_dx_register_value():
+    effect = terminal_ax_return_effect_8616(_Insn("add", [_reg_operand(1), _reg_operand(2)]))
+
+    assert effect.kind is TerminalAxReturnEffectKind8616.REG_ALU_VALUE
+    assert effect.dst_reg == "ax"
+    assert effect.rhs_kind is TerminalAxReturnOperandKind8616.REGISTER
+    assert effect.rhs_reg == "dx"
+    assert effect.op == "Add"
 
 
 def test_terminal_ax_return_effect_classifies_al_alu_immediate_value():
@@ -289,7 +331,7 @@ def test_terminal_ax_return_effect_refuses_indexed_alu_memory_value():
 
 def test_terminal_ax_return_effect_refuses_unrelated_instruction():
     effect = terminal_ax_return_effect_8616(
-        _Insn("sub", [_reg_operand(1), _reg_operand(1)]),
+        _Insn("sub", [_reg_operand(3), _reg_operand(3)]),
     )
 
     assert effect.kind is TerminalAxReturnEffectKind8616.OTHER

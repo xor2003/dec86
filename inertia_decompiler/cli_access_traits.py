@@ -306,16 +306,17 @@ def _collect_access_traits(
                 if const_value is not None:
                     offset += const_value
                     continue
-
                 if isinstance(inner, structured_c.CBinaryOp) and inner.op in {"Mul", "Shl"}:
                     for maybe_index, maybe_stride in ((inner.lhs, inner.rhs), (inner.rhs, inner.lhs)):
                         stride_value = c_constant_value(unwrap_c_casts(maybe_stride))
-                        if inner.op == "Shl" and isinstance(stride_value, int):
+                        if inner.op == "Shl":
+                            if not isinstance(stride_value, int):
+                                continue
                             stride = 1 << stride_value
                         else:
+                            if stride_value is None:
+                                continue
                             stride = stride_value
-                        if stride is None:
-                            continue
                         index = unwrap_c_casts(maybe_index)
                         index_key = expr_index_key(index)
                         if index_key is not None:

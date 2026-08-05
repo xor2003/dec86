@@ -42,9 +42,9 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CWhileLoop,
 )
 from angr.sim_type import SimType, SimTypePointer, SimTypeShort
-from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimTemporaryVariable
 
-from .analysis_helpers import _canonicalize_x86_16_padding_call_target_8616
+from .call_target_identity import normalize_x86_16_call_target_addr_8616
 from .callee_name_normalization import normalize_callee_name_8616
 from .callsite_summary import summarize_x86_16_callsite as _summarize_x86_16_callsite_fallback
 from .decompiler_postprocess_utils import (
@@ -58,6 +58,7 @@ from .lowering.segment_register_state import runtime_segment_name_for_variable_8
 from .lowering.segmented_global_loads import IndexedSegmentedGlobalStoreEvidence8616
 from .lowering.stack_variable_binding import StackVariableBinding
 from .lowering.structured_intrinsics import lower_structured_insert_call_8616
+from .validation_aggregate_storage import aggregate_field_storage_8616
 
 __all__ = [
     "TAIL_VALIDATION_FINGERPRINT_VERSION",
@@ -78,7 +79,7 @@ __all__ = [
 ]
 
 
-TAIL_VALIDATION_FINGERPRINT_VERSION: int = 32
+TAIL_VALIDATION_FINGERPRINT_VERSION: int = 34
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log: logging.Logger = logging.getLogger(__name__)
 _EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 50000
@@ -2271,6 +2272,9 @@ def _expr_fingerprint(node: object, project: object, _seen: set[int] | None = No
             return _cached(f"const:{node.value!r}")
         if isinstance(node, CVariable):
             return _cached(_location_fingerprint(node, project))
+        aggregate_storage = aggregate_field_storage_8616(node)
+        if aggregate_storage is not None:
+            return _cached(f"global:{aggregate_storage.offset:#x}")
         indexed_global_field_deref = _global_indexed_field_ds_deref_fingerprint_8616(
             node,
             project,
@@ -2359,7 +2363,7 @@ def _expr_fingerprint(node: object, project: object, _seen: set[int] | None = No
 
 def _call_target_name(node: CFunctionCall, project: object) -> str:
     def _addr_token(addr: int) -> str:
-        canonical = _canonicalize_x86_16_padding_call_target_8616(project, addr)
+        canonical = normalize_x86_16_call_target_addr_8616(project, addr)
         return f"addr:{canonical:#x}" if isinstance(canonical, int) else f"addr:{addr:#x}"
 
     callee = _dynamic_tail_validation_getattr_8616(node, "callee_target", None)
@@ -2560,7 +2564,7 @@ def _canonical_contextual_call_target_8616(project: object, target_addr: int | N
     """Canonicalize one summary target for contextual identity matching."""
     if not isinstance(target_addr, int):
         return None
-    canonical = _canonicalize_x86_16_padding_call_target_8616(project, target_addr)
+    canonical = normalize_x86_16_call_target_addr_8616(project, target_addr)
     return canonical if isinstance(canonical, int) else target_addr
 
 
@@ -2794,6 +2798,8 @@ def _location_fingerprint(
 
 
 def _cvariable_location_fingerprint_8616(node: Any, project: Any, *, _seen: set[int], resolve_copy_alias: bool) -> str | None:
+    """Return a terminating storage identity for an angr structured-C variable."""
+
     def _impl() -> Any:
         variable = _dynamic_tail_validation_getattr_8616(node, "variable", None)
         codegen = _dynamic_tail_validation_getattr_8616(node, "codegen", None)
@@ -2836,7 +2842,11 @@ def _cvariable_location_fingerprint_8616(node: Any, project: Any, *, _seen: set[
             if isinstance(addr, int) and addr < 0:
                 return f"stack:{addr:+#x}"
             return f"global:{addr:#x}" if isinstance(addr, int) else "global:unknown"
-        return None
+        if isinstance(variable, SimTemporaryVariable):
+            return f"virtual:tmp_{variable.tmp_id}"
+        if isinstance(name, str) and name:
+            return f"virtual:{name}"
+        return f"virtual:{type(variable).__name__}:unknown"
 
     return _impl()
 

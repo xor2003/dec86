@@ -89,6 +89,20 @@ def unify_positive_bp_argument_identity_8616(
         return False
     if cfunc is None:
         return False
+    # angr and focused codegen adapters may omit optional C-function indexes.
+    # Normalize that dynamic boundary before applying owned identity contracts.
+    try:
+        argument_list = tuple(cfunc.arg_list or ())
+    except AttributeError:
+        argument_list = ()
+    try:
+        variables_in_use = cfunc.variables_in_use
+    except AttributeError:
+        variables_in_use = None
+    try:
+        unified_local_vars = cfunc.unified_local_vars
+    except AttributeError:
+        unified_local_vars = None
     try:
         if typed_codegen._inertia_return_selector_materialized_8616:
             return False
@@ -96,7 +110,7 @@ def unify_positive_bp_argument_identity_8616(
         pass
 
     arguments_by_identity: dict[object, list[structured_c.CVariable]] = {}
-    for candidate in tuple(cfunc.arg_list or ()):
+    for candidate in argument_list:
         if not isinstance(candidate, structured_c.CVariable):
             continue
         variable = _positive_stack_variable_8616(candidate)
@@ -149,7 +163,6 @@ def unify_positive_bp_argument_identity_8616(
     canonical_variables = {
         argument.variable for argument in canonical_by_identity.values()
     }
-    variables_in_use = cfunc.variables_in_use
     if isinstance(variables_in_use, dict):
         for variable, cvar in tuple(variables_in_use.items()):
             if not isinstance(variable, SimStackVariable):
@@ -166,7 +179,6 @@ def unify_positive_bp_argument_identity_8616(
             del variables_in_use[variable]
             changed = True
 
-    unified_local_vars = cfunc.unified_local_vars
     if isinstance(unified_local_vars, dict):
         for variable in tuple(unified_local_vars):
             if not isinstance(variable, SimStackVariable):

@@ -65,16 +65,18 @@ from .decompiler_postprocess_utils import (
 )
 from .ir.condition_ir import ConditionIR
 from .ir.core import (
-    SEGMENTED_LOAD_ADDRESS_TAG_8616,
-    AddressStatus,
-    IRAddress,
     IRBinaryValue,
     IRValue,
     MemSpace,
-    SegmentOrigin,
 )
 from .pipeline.contracts import SemanticLaneState
-from .structuring.condition_lowering import condition_origin_tags_8616
+from .structuring.condition_lowering import (
+    attach_condition_segment_access_provenance_8616,
+    condition_origin_tags_8616,
+    condition_segment_access_tags_8616,
+    materialize_indexed_segmented_condition_value_8616,
+    stable_stack_condition_binding_tags_8616,
+)
 from .tail_validation_fingerprint import _expr_fingerprint
 
 __all__ = [
@@ -219,7 +221,7 @@ def _build_segmented_operand_expr_8616(project: object, operand: IRValue, codege
     segment_name = space_to_segment.get(operand.space)
     if segment_name is None:
         return None
-    width = int(operand.size or 2)
+    width = int(operand.memory_access_size or operand.size or 2)
     helper = {1: "SEG_U8", 2: "SEG_U16", 4: "SEG_U32"}.get(width)
     if helper is None:
         return None
@@ -232,16 +234,7 @@ def _build_segmented_operand_expr_8616(project: object, operand: IRValue, codege
         None,
         [segment, offset],
         codegen=codegen,
-        tags={
-            "inertia_x86_16_runtime_segment_helper": helper,
-            SEGMENTED_LOAD_ADDRESS_TAG_8616: IRAddress(
-                space=operand.space,
-                offset=int(operand.offset) & 0xFFFF,
-                size=width,
-                status=AddressStatus.STABLE,
-                segment_origin=SegmentOrigin.PROVEN,
-            ),
-        },
+        tags=condition_segment_access_tags_8616(operand, helper),
     )
 
 
@@ -250,47 +243,17 @@ def _build_indexed_segmented_operand_expr_8616(
     operand: IRValue,
     codegen: object,
 ) -> CFunctionCall | None:
-    expr = tuple(operand.expr or ())
-    if len(expr) != 6 or expr[0] != "cmp-ds-indexed":
-        return None
-    _kind, base, offset_text, size_text, shift_text, access_size_text = expr
-    try:
-        stack_offset = int(offset_text)
-        stack_size = max(1, int(size_text))
-        shift = int(shift_text)
-        access_size = max(1, int(access_size_text))
-    except (TypeError, ValueError):
-        return None
-    if base not in {"bp", "sp"}:
-        return None
-    index = _build_stack_operand_expr_8616(
-        IRValue(MemSpace.SS, name=base, offset=stack_offset, size=stack_size),
-        codegen,
-    )
-    if index is None:
+    if operand.index is None:
         return None
     segment = _build_reg_var(project, "ds", codegen, size=2)
     if segment is None:
         return None
-    offset = CConstant(int(operand.offset) & 0xFFFF, SimTypeShort(signed=False), codegen=codegen)
-    if shift > 0:
-        index = CBinaryOp(
-            "Shl",
-            index,
-            CConstant(shift, SimTypeShort(signed=False), codegen=codegen),
-            codegen=codegen,
-        )
-    if shift < 0:
-        return None
-    indexed_offset = CBinaryOp("Add", offset, index, codegen=codegen)
-    helper = {1: "SEG_U8", 2: "SEG_U16", 4: "SEG_U32"}.get(access_size)
-    if helper is None:
-        return None
-    return CFunctionCall(
-        helper,
-        None,
-        [segment, indexed_offset],
-        codegen=codegen,
+    return materialize_indexed_segmented_condition_value_8616(
+        operand,
+        segment,
+        codegen,
+        lambda value: cast(Any, _build_c_expr_for_operand(project, value, codegen)),
+        condition_segment_access_tags_8616,
     )
 
 
@@ -309,7 +272,12 @@ def _build_stack_operand_expr_8616(
     prefix = "arg" if base == "bp" and offset > 0 else "local"
     name = f"{prefix}_{abs(offset):x}"
     variable = SimStackVariable(offset, max(size, 1), base=base, name=name)
-    return CVariable(variable, variable_type=_type_for_operand_size_8616(size, signed=signed), codegen=codegen)
+    return CVariable(
+        variable,
+        variable_type=_type_for_operand_size_8616(size, signed=signed),
+        codegen=codegen,
+        tags=stable_stack_condition_binding_tags_8616(offset, max(size, 1), name=name),
+    )
 
 
 def _clone_stack_expr_with_condition_signedness_8616(expr: object, cond: ConditionIR | None, codegen: object) -> object:
@@ -1035,7 +1003,9 @@ def _build_c_condition_expr(project: object, cond: ConditionIR, codegen: object)
     if structured_op is None:
         return None
 
-    return CBinaryOp(structured_op, lhs_expr, rhs_expr, codegen=codegen, tags=condition_origin_tags_8616(cond))
+    expression = CBinaryOp(structured_op, lhs_expr, rhs_expr, codegen=codegen, tags=condition_origin_tags_8616(cond))
+    attach_condition_segment_access_provenance_8616(expression, cond)
+    return expression
 
 
 def _condition_key_from_tags(node: object) -> tuple[int, int] | None:

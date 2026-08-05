@@ -11,6 +11,7 @@ from typing import Protocol
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
+from angr_platforms.X86_16.postprocess.optimization.local_liveness import local_liveness_key_8616
 
 _PURE_GENERATED_HELPER_CALLEES = frozenset(
     {
@@ -118,6 +119,9 @@ def _prune_dead_local_assignments(
                         storage_key = describe_alias_storage(node).identity
                         if storage_key is not None:
                             keys.add(("storage", storage_key))
+                        liveness_key = local_liveness_key_8616(node)
+                        if liveness_key is not None:
+                            keys.add(("liveness", liveness_key))
                 return
 
             if isinstance(node, structured_c.CAssignment):
@@ -333,13 +337,12 @@ def _prune_dead_local_assignments(
         return isinstance(stmt, control_flow_types)
 
     changed = False
-    dropped_unread_only = False
     seen_prune_nodes: set[int] = set()
     prune_visit_count = 0
     max_prune_visits = 20000
 
     def prune(node: object) -> None:
-        nonlocal changed, dropped_unread_only, prune_visit_count
+        nonlocal changed, prune_visit_count
         if not structured_codegen_node(node):
             return
         marker = id(node)
@@ -356,7 +359,7 @@ def _prune_dead_local_assignments(
             return
 
         if isinstance(node, structured_c.CStatements):
-            new_statements = []
+            new_statements: list[object | None] = []
             pending_assignment_indices: dict[tuple[object, ...], int] = {}
             statements = list(node.statements)
             for index, stmt in enumerate(statements):
@@ -398,11 +401,11 @@ def _prune_dead_local_assignments(
                     storage_key = describe_alias_storage(stmt.lhs).identity
                     if storage_key is not None:
                         lhs_keys.add(("storage", storage_key))
+                    liveness_key = local_liveness_key_8616(stmt.lhs)
+                    if liveness_key is not None:
+                        lhs_keys.add(("liveness", liveness_key))
                     protected_direct_stack_move_lhs = bool(
                         lhs_keys and not lhs_keys.isdisjoint(direct_stack_move_protected_keys)
-                    )
-                    unread_register_local = isinstance(lhs_variable, SimRegisterVariable) and lhs_exact_keys.isdisjoint(
-                        reads
                     )
                     self_referential_rhs = bool(lhs_keys) and not lhs_keys.isdisjoint(rhs_reads)
                     if protected_direct_stack_move_lhs:
@@ -424,8 +427,7 @@ def _prune_dead_local_assignments(
                         prune(stmt)
                         new_statements.append(stmt)
                         continue
-                    if unread_register_local or (lhs_keys.isdisjoint(reads) and not self_referential_rhs):
-                        dropped_unread_only = True
+                    if lhs_keys.isdisjoint(reads) and not self_referential_rhs:
                         continue
                     for key in lhs_keys:
                         if key in pending_assignment_indices:

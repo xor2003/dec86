@@ -18,6 +18,7 @@ from angr_platforms.X86_16 import (
     widening,
 )
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.lowering import segment_global_materialization
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 
 
@@ -711,11 +712,14 @@ def test_x86_16_decompiler_structuring_stage_exports():
     assert "apply_x86_16_decompiler_structuring" in decompiler_structuring_stage.__all__
     assert "DirectInstructionMaterializationResult8616" in decompiler_structuring_stage.__all__
     assert "run_direct_instruction_materialization_8616" in decompiler_structuring_stage.__all__
-    assert "SegmentGlobalMaterializationResult8616" in decompiler_structuring_stage.__all__
-    assert "run_segment_global_materialization_8616" in decompiler_structuring_stage.__all__
     assert "prune_redundant_loop_break_carriers_after_lowering_8616" in decompiler_structuring_stage.__all__
     assert "finalize_seqnode_switch_replay_after_replacement_8616" in decompiler_structuring_stage.__all__
     assert "run_structuring_condition_cleanup_8616" in decompiler_structuring_stage.__all__
+
+
+def test_x86_16_segment_global_materialization_exports_lowering_contracts():
+    assert "SegmentGlobalMaterializationResult8616" in segment_global_materialization.__all__
+    assert "run_segment_global_materialization_8616" in segment_global_materialization.__all__
 
 
 def test_x86_16_decompiler_structuring_stage_description():

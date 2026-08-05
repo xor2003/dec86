@@ -41,6 +41,7 @@ dev = [
 ]
 mypyc = [
     "mypy",
+    "mypyc",
 ]
 
 [project.scripts]
@@ -103,7 +104,7 @@ convention = "google"
 "angr_platforms/angr_platforms/X86_16/render_compat.py" = ["D"]
 "angr_platforms/angr_platforms/X86_16/type_array_matching.py" = ["D"]
 "angr_platforms/angr_platforms/X86_16/stack_probe_fact_trace.py" = ["ANN", "D"]
-"inertia_decompiler/cli.py" = ["D"]
+"inertia_decompiler/cli.py" = ["D", "F822"] # Lazy exports are resolved by the typed module boundary.
 "inertia_decompiler/cli_c_text_postprocess.py" = ["ANN", "D"]
 "inertia_decompiler/cli_decompilation.py" = ["ANN", "D"]
 "inertia_decompiler/runtime_support.py" = ["ANN", "D"]
@@ -115,14 +116,17 @@ convention = "google"
 python_version = "3.11"
 files = [
     "angr_platforms/angr_platforms/X86_16",
-    "angr_platforms/tests/test_x86_16_smoketest.py",
-    "angr_platforms/tests/test_x86_16_cod_samples.py",
-    "angr_platforms/tests/test_x86_16_dos_mz_loader.py",
-    "angr_platforms/tests/test_x86_16_sample_matrix.py",
-    "angr_platforms/tests/test_x86_16_runtime_samples.py",
-    "angr_platforms/tests/test_x86_16_compare_semantics.py",
-    "angr_platforms/tests/conftest.py",
+    "inertia_decompiler",
+    "scripts",
+    "decompile.py",
+    "monkeytype_config.py",
+    "omf_pat.py",
 ]
+strict = true
+follow_imports = "skip"
+no_site_packages = true
+incremental = true
+cache_dir = ".mypy_cache"
 ignore_missing_imports = true
 check_untyped_defs = true
 pretty = true
