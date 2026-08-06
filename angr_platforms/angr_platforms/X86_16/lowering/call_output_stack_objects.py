@@ -343,6 +343,8 @@ def _wide_condition_stack_cvar_8616(
     low_expr: CExpression,
 ) -> CVariable | None:
     """Return the existing four-byte stack object proven by adjacent word views."""
+    high_expr = _strip_condition_casts_8616(high_expr)
+    low_expr = _strip_condition_casts_8616(low_expr)
     if not isinstance(low_expr, CVariable) or not isinstance(high_expr, CVariable):
         return None
     low_variable = low_expr.variable

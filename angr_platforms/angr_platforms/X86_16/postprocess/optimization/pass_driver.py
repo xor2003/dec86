@@ -19,6 +19,7 @@ from ...widening.widening_memory_fold_8616 import _widening_store_to_load_forwar
 from .const_prop import _constant_propagation_8616
 from .dce import _dead_code_elimination_8616
 from .dead_setup import _prune_dead_setup_carriers_8616
+from .local_declarations import dedupe_equivalent_stack_local_declarations_8616
 from .trivial_copy import prune_adjacent_temporary_copy_assignments_8616
 
 __all__ = [
@@ -70,6 +71,11 @@ class OptimizationPassSpec:
 
 
 OPTIMIZATION_PASSES: tuple[OptimizationPassSpec, ...] = (
+    OptimizationPassSpec(
+        "equivalent_stack_local_declarations",
+        dedupe_equivalent_stack_local_declarations_8616,
+        "Remove equivalent duplicate stack-local declarations",
+    ),
     OptimizationPassSpec(
         "const_prop",
         _constant_propagation_8616,

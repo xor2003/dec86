@@ -195,7 +195,7 @@ def record_global_declaration_spec_8616(
 def replace_global_declaration_spec_from_stronger_typed_evidence_8616(
     codegen: object,
     *,
-    ctype: GlobalDeclarationCType8616 | NamedAggregateDeclarationCType8616,
+    ctype: GlobalDeclarationCType8616 | NamedAggregateDeclarationCType8616 | str,
     name: str,
     array_len: GlobalDeclarationArrayLength8616,
 ) -> None:
@@ -223,13 +223,14 @@ def replace_global_declaration_spec_from_stronger_typed_evidence_8616(
         if old_name != name
     )
     normalized_len = _normalize_global_array_len_8616(array_len)
+    ctype_name = " ".join(ctype.split()) if isinstance(ctype, str) else ctype.c_name
     typed_codegen._inertia_global_declaration_specs_8616 = (
         *retained,
-        (ctype.c_name, name, normalized_len),
+        (ctype_name, name, normalized_len),
     )
     _record_strong_global_declaration_spec_8616(
         typed_codegen,
-        ctype=ctype.c_name,
+        ctype=ctype_name,
         name=name,
         array_len=normalized_len,
     )

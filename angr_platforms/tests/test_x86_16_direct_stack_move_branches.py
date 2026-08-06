@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CExpressionStatement,
+    CForLoop,
     CIfElse,
     CStatements,
     CVariable,
 )
-from angr.sim_variable import SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimStackVariable
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
 from angr_platforms.X86_16.lowering import real_mode_linear
@@ -20,10 +22,12 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     DirectStackMoveFact8616,
     DirectStackMoveSourceKind8616,
 )
+from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.structuring.condition_replay import (
     StructuringConditionReplayFact8616,
 )
 from angr_platforms.X86_16.structuring.direct_stack_move_branches import (
+    finalize_direct_stack_move_branch_ownership_8616,
     materialize_direct_stack_move_branch_ownership_8616,
     place_direct_stack_move_assignment_8616,
     recover_direct_stack_move_branch_facts_8616,
@@ -183,8 +187,21 @@ def _surface(
     return project, function, codegen, root, taken_body, assignment
 
 
-def test_moves_assignment_into_binary_proven_branch_and_is_idempotent() -> None:
+def test_tagged_typed_immediate_assignment_uses_proven_branch_owner() -> None:
     project, function, codegen, root, body, assignment = _surface()
+    assignment.rhs = CVariable(
+        SimMemoryVariable(0x10, 2, name="inc_one"),
+        codegen=codegen,
+    )
+    codegen._inertia_direct_stack_move_facts_8616 = (
+        DirectStackMoveFact8616(
+            dst_offset=-4,
+            width=2,
+            source_kind=DirectStackMoveSourceKind8616.IMMEDIATE,
+            source_value=0x10,
+            ins_addr=0x10BAD,
+        ),
+    )
 
     assert materialize_direct_stack_move_branch_ownership_8616(project, codegen, function)
     assert root.statements == [root.statements[0]]
@@ -276,6 +293,27 @@ def test_replay_fact_places_only_taken_assignment_into_empty_body() -> None:
     )
     assert root.statements == [root.statements[0]]
     assert body.statements == [assignment]
+
+
+def test_counts_exact_tagged_loop_iterator_as_materialized_branch_write() -> None:
+    """Structuring may preserve a branch-tail write as a for-loop iterator."""
+    project, function, codegen, root, _body, assignment = _surface()
+    branch = root.statements[0]
+    root.statements[:] = [
+        CForLoop(
+            None,
+            CVariable(SimStackVariable(-4, 2, base="bp", name="minimum"), codegen=codegen),
+            assignment,
+            CStatements([branch], codegen=codegen),
+            codegen=codegen,
+        )
+    ]
+
+    assert not materialize_direct_stack_move_branch_ownership_8616(project, codegen, function)
+    stats = codegen._inertia_direct_stack_move_branch_placement_8616
+    assert stats.materialized_count == 1
+    assert stats.already_materialized_count == 1
+    assert stats.failure_count == 0
 
 
 def test_lowering_uses_branch_service_when_generic_fallback_is_disabled(
@@ -380,8 +418,26 @@ def test_refuses_assignment_relocation_without_condition_provenance() -> None:
     )
 
     assert not materialize_direct_stack_move_branch_ownership_8616(project, codegen, function)
+    assert not finalize_direct_stack_move_branch_ownership_8616(project, codegen, function)
     assert root.statements[-1] is assignment
     assert len(body.statements) == 2
+    stats = codegen._inertia_direct_stack_move_branch_placement_8616
+    assert stats.normalized_fact_count == 1
+    assert stats.classified_fact_count == 0
+    assert stats.materialized_count == 0
+    assert stats.failure_count == 1
+
+
+def test_finalizer_fails_when_proven_branch_assignment_is_absent() -> None:
+    project, function, codegen, root, _body, assignment = _surface()
+    assignment.lhs = CVariable(
+        SimStackVariable(-6, 2, base="bp", name="wrong_destination"),
+        codegen=codegen,
+    )
+
+    with pytest.raises(PipelineHardError, match="classified direct stack move branch"):
+        finalize_direct_stack_move_branch_ownership_8616(project, codegen, function)
+
     stats = codegen._inertia_direct_stack_move_branch_placement_8616
     assert stats.classified_fact_count == 1
     assert stats.materialized_count == 0

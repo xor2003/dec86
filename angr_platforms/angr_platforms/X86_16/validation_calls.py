@@ -783,6 +783,34 @@ def _canonical_required_summary_items_8616(
     return tuple(canonical)
 
 
+def _call_matches_summary_identity_8616(
+    node: CFunctionCall,
+    summary_key: int,
+    summary: CallsiteSummary8616,
+    project: object,
+) -> bool:
+    """Accept an object-ID match only with corroborating callsite evidence."""
+    if id(node) != summary_key:
+        return False
+    node_callsite = _callsite_addr_8616(node)
+    if node_callsite is not None:
+        summary_callsite = summary.callsite_addr
+        return isinstance(summary_callsite, int) and node_callsite == summary_callsite
+    node_target = _callee_addr_8616(node)
+    if node_target is None:
+        return False
+    summary_target = summary.target_addr
+    normalized_node_target: int | None = normalize_x86_16_call_target_addr_8616(
+        project,
+        node_target,
+    )
+    normalized_summary_target: int | None = normalize_x86_16_call_target_addr_8616(
+        project,
+        summary_target if isinstance(summary_target, int) else None,
+    )
+    return normalized_node_target == normalized_summary_target
+
+
 def _required_call_matches_8616(
     codegen: object,
     root: object,
@@ -816,7 +844,19 @@ def _required_call_matches_8616(
         required,
         key=lambda item: (item[1].callsite_addr, item[1].target_addr or -1, item[0]),
     ):
-        match_index = next((index for index, node in enumerate(available) if id(node) == summary_key), None)
+        match_index = next(
+            (
+                index
+                for index, node in enumerate(available)
+                if _call_matches_summary_identity_8616(
+                    node,
+                    summary_key,
+                    summary,
+                    project,
+                )
+            ),
+            None,
+        )
         if match_index is None:
             match_index = next(
                 (

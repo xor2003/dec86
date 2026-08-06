@@ -5516,6 +5516,7 @@ def _decompile_function(
                 ),
                 materialize_stack_reloads=False,
                 include_callee_saved_spill_prune=False,
+                enforce_direct_stack_branch_contract=True,
             )
             if bounded_stack_result.changed:
                 changed = True

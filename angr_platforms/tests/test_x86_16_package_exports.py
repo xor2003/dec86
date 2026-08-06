@@ -206,7 +206,10 @@ def test_x86_16_decompiler_postprocess_registry_order():
     assert pass_names.index("_repair_switch_loop_exit_returns_from_evidence_final_8616") < pass_names.index(
         "_dead_code_elimination_final_cleanup_8616"
     )
-    assert pass_names[-1] == "_dead_code_elimination_final_cleanup_8616"
+    assert pass_names.index("_dead_code_elimination_final_cleanup_8616") < pass_names.index(
+        "_dedupe_equivalent_stack_local_declarations_final_8616"
+    )
+    assert pass_names[-1] == "_dedupe_equivalent_stack_local_declarations_final_8616"
 
 
 def test_x86_16_decompiler_postprocess_registry_requires_rebuild_contract():

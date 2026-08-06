@@ -35,6 +35,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_decompiler_architecture_check.py",
     "angr_platforms/tests/test_test_pipeline.py",
     "angr_platforms/tests/test_check_sortd_sidecar_free.py",
+    "angr_platforms/tests/test_compare_ghidra_function_coverage.py",
     "angr_platforms/tests/test_generated_c_artifacts.py",
     "angr_platforms/tests/test_generated_translation_unit_assembly.py",
     "angr_platforms/tests/test_generated_translation_unit_gate.py",
@@ -457,6 +458,8 @@ def _sortd_sidecar_free_lane(args: argparse.Namespace) -> LaneResult:
             "scripts/check_sortd_generated_sort_core.py",
             "--transcript",
             str(args.sortd_transcript_out),
+            "--function-c-dir",
+            str(function_c_dir),
         ]
         behavior_result = _run_command("sortd-generated-sort-core", behavior_cmd)
     elapsed = round(

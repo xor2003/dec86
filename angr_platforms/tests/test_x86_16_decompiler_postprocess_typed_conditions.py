@@ -12,6 +12,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CReturn,
     CStatements,
     CSwitchCase,
+    CTypeCast,
     CUnaryOp,
     CVariable,
 )
@@ -199,10 +200,10 @@ def test_build_c_condition_expr_preserves_signed_register_resolved_stack_operand
     expr = _build_c_condition_expr(project, cond, codegen)
 
     assert isinstance(expr, CBinaryOp)
-    assert isinstance(expr.lhs, CVariable)
-    assert expr.lhs.variable is stack_arg.variable
-    assert expr.lhs is not stack_arg
-    assert expr.lhs.variable_type.signed is True
+    assert isinstance(expr.lhs, CTypeCast)
+    assert isinstance(expr.lhs.expr, CVariable)
+    assert expr.lhs.expr.variable is stack_arg.variable
+    assert expr.lhs.dst_type.signed is True
     assert stack_arg.variable_type.signed is False
 
 

@@ -2,7 +2,7 @@
 
 Layer: CLI/fallback/reporting.
 Responsibility: identify whole-file jobs that require bounded-memory serial
-execution without owning decompiler semantics.
+or parallel clean-process execution without owning decompiler semantics.
 """
 
 from __future__ import annotations
@@ -34,13 +34,13 @@ class FunctionWorkerPolicy8616:
     workers: int
 
 
-def requires_serial_function_decompilation(
+def requires_isolated_function_decompilation(
     *,
     architecture: str,
     binary_suffix: str,
     address_requested: bool,
 ) -> bool:
-    """Return whether a whole-file x86-16 executable must use serial workers."""
+    """Return whether a whole-file x86-16 executable needs isolated workers."""
     return not address_requested and binary_suffix.lower() == ".exe" and architecture == "86_16"
 
 
@@ -58,7 +58,7 @@ def clean_process_override_8616(value: str | None) -> CleanProcessOverride8616:
 
 def select_function_worker_policy_8616(
     *,
-    serial_required: bool,
+    isolation_required: bool,
     sidecar_available: bool,
     full_sweep: bool,
     include_library_functions: bool,
@@ -67,8 +67,8 @@ def select_function_worker_policy_8616(
     shared_worker_count: int,
     clean_process_override: CleanProcessOverride8616,
 ) -> FunctionWorkerPolicy8616:
-    """Select clean serial interpreters where shared state is unsafe."""
-    if not serial_required:
+    """Select bounded clean interpreters where shared state is unsafe."""
+    if not isolation_required:
         return FunctionWorkerPolicy8616(
             FunctionWorkerMode8616.SHARED,
             max(1, min(function_count or 1, shared_worker_count)),
@@ -81,4 +81,7 @@ def select_function_worker_policy_8616(
     )
     if not clean_process_selected:
         return FunctionWorkerPolicy8616(FunctionWorkerMode8616.SHARED, 1)
-    return FunctionWorkerPolicy8616(FunctionWorkerMode8616.CLEAN_PROCESS, 1)
+    return FunctionWorkerPolicy8616(
+        FunctionWorkerMode8616.CLEAN_PROCESS,
+        max(1, min(function_count or 1, shared_worker_count)),
+    )

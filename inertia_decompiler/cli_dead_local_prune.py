@@ -11,7 +11,10 @@ from typing import Protocol
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
-from angr_platforms.X86_16.postprocess.optimization.local_liveness import local_liveness_key_8616
+from angr_platforms.X86_16.postprocess.optimization.local_liveness import (
+    local_liveness_key_8616,
+    stack_storage_liveness_key_8616,
+)
 
 _PURE_GENERATED_HELPER_CALLEES = frozenset(
     {
@@ -234,14 +237,22 @@ def _prune_dead_local_assignments(
             variable = node.variable
             if _stack_variable_offset(variable) not in protected_stack_offsets:
                 continue
-            protected_keys.add(("var", id(variable)))
+            node_keys = {("var", id(variable))}
             unified = node.unified_variable
             if unified is not None:
-                protected_keys.add(("unified", id(unified)))
+                node_keys.add(("unified", id(unified)))
             storage_key = describe_alias_storage(node).identity
             if storage_key is not None:
-                protected_keys.add(("storage", storage_key))
-        return {key for key in protected_keys if key in reads}
+                node_keys.add(("storage", storage_key))
+            liveness_key = local_liveness_key_8616(node)
+            if liveness_key is not None:
+                node_keys.add(("liveness", liveness_key))
+            if not node_keys.isdisjoint(reads):
+                protected_keys.update(node_keys)
+                physical_key = stack_storage_liveness_key_8616(node)
+                if physical_key is not None:
+                    protected_keys.add(("physical", physical_key))
+        return protected_keys
 
     direct_stack_move_protected_keys = collect_direct_stack_move_protected_keys()
 
@@ -404,6 +415,10 @@ def _prune_dead_local_assignments(
                     liveness_key = local_liveness_key_8616(stmt.lhs)
                     if liveness_key is not None:
                         lhs_keys.add(("liveness", liveness_key))
+                    if _stack_variable_offset(lhs_variable) in protected_stack_offsets:
+                        physical_key = stack_storage_liveness_key_8616(stmt.lhs)
+                        if physical_key is not None:
+                            lhs_keys.add(("physical", physical_key))
                     protected_direct_stack_move_lhs = bool(
                         lhs_keys and not lhs_keys.isdisjoint(direct_stack_move_protected_keys)
                     )

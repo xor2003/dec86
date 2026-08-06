@@ -80,6 +80,52 @@ void sub_10560(void)
     assert result["functions"][0]["leakage"]["raw_segmented_access"] == 1
 
 
+def test_sortdemo_status_joins_deferred_canonical_definition_to_contract():
+    result = parse_status_text(
+        """
+/* == function 0x10f38 Sleep == */
+/* info: function 0x10f38 Sleep attempt=decompiled validation=passed */
+unsigned short Sleep(long wait)
+{
+    while (clock() < wait) {
+    }
+    return clock();
+}
+""",
+        check_source_contracts=True,
+    )
+
+    assert result["summary"] == {"total": 1, "passed": 1}
+    assert result["source_contract_summary"] == {"total": 1, "passed": 1, "failed": 0}
+    assert result["functions"][0]["generated_c_marker"] == "normal"
+
+
+def test_sortdemo_status_keeps_canonical_type_prelude_with_definition():
+    result = parse_status_text(
+        """
+/* == function 0x107b8 Swaps == */
+/* info: function 0x107b8 Swaps attempt=decompiled validation=passed */
+/* info: decompilation attempted for 1/1 selected function(s) */
+typedef struct g_08F0_entry {
+    char field_0;
+    char field_1;
+} g_08F0_entry;
+short Swaps(g_08F0_entry *bar1, g_08F0_entry *bar2)
+{
+    g_08F0_entry temporary;
+    temporary = bar1[0];
+    bar1[0] = bar2[0];
+    bar2[0] = temporary;
+    return 0;
+}
+""",
+        check_source_contracts=True,
+    )
+
+    assert result["summary"] == {"total": 1, "passed": 1}
+    assert result["source_contract_summary"] == {"total": 1, "passed": 1, "failed": 0}
+
+
 def test_sortdemo_source_call_contract_accepts_generated_integer_type_footer():
     result = parse_status_text(
         """

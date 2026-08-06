@@ -315,6 +315,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_argument_type_facts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_argument_types.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_scalar_types.py \
+	angr_platforms/angr_platforms/X86_16/lowering/condition_stack_operands.py \
 	angr_platforms/angr_platforms/X86_16/lowering/c_runtime_header.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_saved_frame.py \
 	angr_platforms/angr_platforms/X86_16/lowering/dead_register_carriers.py \
@@ -348,6 +349,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py \
+	angr_platforms/angr_platforms/X86_16/lowering/call_argument_stack_sources.py \
 	angr_platforms/angr_platforms/X86_16/lowering/structured_intrinsics.py \
 	angr_platforms/angr_platforms/X86_16/lowering/terminal_call_return_types.py \
 	angr_platforms/angr_platforms/X86_16/lowering/terminal_register_return_values.py \
@@ -379,6 +381,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_walk.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_liveness.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_declarations.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_setup.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_condition_carriers.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/pass_driver.py \
@@ -482,6 +485,9 @@ QA_TYPED_FILES := \
 	inertia_decompiler/segment_program_layout_reporting.py \
 	inertia_decompiler/function_worker_policy.py \
 	inertia_decompiler/generated_c_artifacts.py \
+	inertia_decompiler/cli_batch_c_output.py \
+	inertia_decompiler/generated_c_function_extraction.py \
+	inertia_decompiler/generated_translation_unit_assembly.py \
 	inertia_decompiler/cli_decompilation.py \
 	inertia_decompiler/cli_c_ast_rewrites.py \
 	inertia_decompiler/cli_c_text_postprocess.py \
@@ -568,6 +574,7 @@ QA_TYPED_FILES := \
 	scripts/agent_test_focus.py \
 	scripts/batch_decompile_procs.py \
 	scripts/build_msc6_examples.py \
+	scripts/compare_ghidra_function_coverage.py \
 	scripts/check_sortd_sidecar_free.py \
 	scripts/check_generated_translation_unit.py \
 	scripts/generated_translation_unit_assembly.py \
@@ -829,6 +836,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_argument_type_facts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_argument_types.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_scalar_types.py \
+	angr_platforms/angr_platforms/X86_16/lowering/condition_stack_operands.py \
 	angr_platforms/angr_platforms/X86_16/lowering/c_runtime_header.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_saved_frame.py \
 	angr_platforms/angr_platforms/X86_16/lowering/dead_register_carriers.py \
@@ -862,6 +870,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py \
+	angr_platforms/angr_platforms/X86_16/lowering/call_argument_stack_sources.py \
 	angr_platforms/angr_platforms/X86_16/lowering/structured_intrinsics.py \
 	angr_platforms/angr_platforms/X86_16/lowering/terminal_call_return_types.py \
 	angr_platforms/angr_platforms/X86_16/lowering/terminal_register_return_values.py \
@@ -893,6 +902,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_walk.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_liveness.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_declarations.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_setup.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_condition_carriers.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/pass_driver.py \
@@ -995,6 +1005,9 @@ QA_RUFF_TARGETS := \
 	inertia_decompiler/discovery_cache_contract.py \
 	inertia_decompiler/segment_program_layout_reporting.py \
 	inertia_decompiler/generated_c_artifacts.py \
+	inertia_decompiler/cli_batch_c_output.py \
+	inertia_decompiler/generated_c_function_extraction.py \
+	inertia_decompiler/generated_translation_unit_assembly.py \
 	inertia_decompiler/cli_decompilation.py \
 	inertia_decompiler/cli_c_ast_rewrites.py \
 	inertia_decompiler/cli_c_text_postprocess.py \
@@ -1081,6 +1094,7 @@ QA_RUFF_TARGETS := \
 	scripts/agent_test_focus.py \
 	scripts/batch_decompile_procs.py \
 	scripts/build_msc6_examples.py \
+	scripts/compare_ghidra_function_coverage.py \
 	scripts/check_changed_non_test_types.py \
 	scripts/check_decompiler_architecture.py \
 	scripts/check_sortd_sidecar_free.py \
@@ -1095,6 +1109,7 @@ QA_RUFF_TARGETS := \
 	decompile.py \
 	angr_platforms/tests/test_agent_context_check.py \
 	angr_platforms/tests/test_check_changed_non_test_types.py \
+	angr_platforms/tests/test_cli_batch_c_output.py \
 	angr_platforms/tests/test_x86_16_cr.py \
 	angr_platforms/tests/test_x86_16_exception.py \
 	angr_platforms/tests/test_x86_16_hardware.py \
@@ -1239,6 +1254,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_stack_lowering_contracts.py \
 	angr_platforms/tests/test_x86_16_decompilation_cache_surface.py \
 	angr_platforms/tests/test_check_sortd_sidecar_free.py \
+	angr_platforms/tests/test_compare_ghidra_function_coverage.py \
 	angr_platforms/tests/test_test_pipeline.py \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py \
 	angr_platforms/tests/test_x86_16_generated_c_acceptance.py \
@@ -1259,6 +1275,7 @@ QA_RUFF_TARGETS := \
 QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_agent_context_check.py \
 	angr_platforms/tests/test_check_changed_non_test_types.py \
+	angr_platforms/tests/test_cli_batch_c_output.py \
 	angr_platforms/tests/test_cli_direct_argument_evidence_context.py \
 	angr_platforms/tests/test_generated_c_artifacts.py \
 	angr_platforms/tests/test_generated_translation_unit_assembly.py \
@@ -1333,6 +1350,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_decompilation_quality.py \
 	angr_platforms/tests/test_cli_regeneration.py \
 	angr_platforms/tests/test_check_sortd_sidecar_free.py \
+	angr_platforms/tests/test_compare_ghidra_function_coverage.py \
 	angr_platforms/tests/test_agent_test_focus.py \
 	angr_platforms/tests/test_test_pipeline.py \
 	angr_platforms/tests/test_test_ownership_manifest.py \

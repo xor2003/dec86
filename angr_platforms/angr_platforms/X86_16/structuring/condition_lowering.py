@@ -27,6 +27,7 @@ from ..ir.core import (
     MemSpace,
     SegmentOrigin,
 )
+from ..lowering.condition_stack_operands import materialize_typed_condition_stack_operand_8616
 from ..lowering.stack_variable_binding import StackVariableBinding, stable_stack_binding_tags_8616
 from ..widening.segmented_load_identity import segmented_load_identity_8616
 from .indexed_condition_values import materialize_indexed_segmented_condition_value_8616
@@ -42,6 +43,7 @@ __all__ = [
     "condition_segment_access_tags_8616",
     "attach_condition_segment_access_provenance_8616",
     "materialize_indexed_segmented_condition_value_8616",
+    "materialize_typed_condition_stack_operand_8616",
     "stable_stack_condition_binding_tags_8616",
 ]
 

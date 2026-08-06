@@ -59,6 +59,23 @@ class ManifestViolation:
 
 TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     TestOwnershipRule(
+        owner="generated-translation-unit-assembly",
+        paths=(
+            "inertia_decompiler/cli_batch_c_output.py",
+            "inertia_decompiler/generated_translation_unit_assembly.py",
+            "scripts/generated_translation_unit_assembly.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_cli_batch_c_output.py",
+            "angr_platforms/tests/test_generated_translation_unit_assembly.py",
+        ),
+    ),
+    TestOwnershipRule(
+        owner="ghidra-function-coverage-diagnostics",
+        paths=("scripts/compare_ghidra_function_coverage.py",),
+        tests=("angr_platforms/tests/test_compare_ghidra_function_coverage.py",),
+    ),
+    TestOwnershipRule(
         owner="test-pipeline",
         paths=("scripts/check_sortd_sidecar_free.py", "scripts/test_pipeline.py"),
         tests=(
@@ -909,6 +926,15 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         ),
         tests=(
             "angr_platforms/tests/test_x86_16_validation_calls.py",
+            "angr_platforms/tests/test_x86_16_validation_call_argument_sources.py",
+        ),
+    ),
+    TestOwnershipRule(
+        owner="x86-16-call-argument-stack-sources",
+        paths=(
+            "angr_platforms/angr_platforms/X86_16/lowering/call_argument_stack_sources.py",
+        ),
+        tests=(
             "angr_platforms/tests/test_x86_16_validation_call_argument_sources.py",
         ),
     ),

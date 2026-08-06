@@ -12,41 +12,28 @@ import argparse
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
-DEFAULT_TRANSCRIPT: Path = (
-    REPO_ROOT
-    / "angr_platforms"
-    / ".cache"
-    / "test_pipeline"
-    / "sortd_sidecar_free.txt"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from inertia_decompiler.generated_c_function_extraction import (  # noqa: E402
+    generated_function_definition_span,
+    load_generated_function_artifacts,
 )
-DEFAULT_BUILD_DIR: Path = (
-    REPO_ROOT
-    / "angr_platforms"
-    / ".cache"
-    / "test_pipeline"
-    / "sortd_generated_sort_core"
-)
-DEFAULT_HARNESS: Path = (
-    REPO_ROOT
-    / "angr_platforms"
-    / "tests"
-    / "fixtures"
-    / "sortd_generated_sort_core_harness.c"
-)
+
+DEFAULT_TRANSCRIPT: Path = REPO_ROOT / "angr_platforms/.cache/test_pipeline/sortd_sidecar_free.txt"
+DEFAULT_BUILD_DIR: Path = REPO_ROOT / "angr_platforms/.cache/test_pipeline/sortd_generated_sort_core"
+DEFAULT_HARNESS: Path = REPO_ROOT / "angr_platforms/tests/fixtures/sortd_generated_sort_core_harness.c"
 SORT_FUNCTIONS: tuple[int, ...] = (
-    0x107B8,
-    0x10808,
-    0x108D0,
-    0x10970,
-    0x109E8,
-    0x10A88,
-    0x10B50,
-    0x10C18,
-    0x10CE0,
+    0x10060, 0x101F0, 0x102E0, 0x10498,
+    0x10560, 0x10678, 0x106C8, 0x10768,
+    0x107B8, 0x10808, 0x108D0, 0x10970,
+    0x109E8, 0x10A88, 0x10B50, 0x10C18,
+    0x10CE0, 0x10E70, 0x10F38,
 )
 _FUNCTION_MARKER_RE = re.compile(
     r"/\* == function (?P<addr>0x[0-9a-f]+) (?P<name>[A-Za-z_][A-Za-z0-9_]*) == \*/",
@@ -110,46 +97,30 @@ def _function_name_from_address(address: int) -> str:
 
 def _definition_end(source: str, function_name: str) -> int:
     """Return the end offset of one generated C function definition."""
-    signature = re.search(
-        rf"(?m)^[ \t]*[A-Za-z_][^\n;]*\b{re.escape(function_name)}"
-        r"\s*\([^;\n]*\)\s*\n\s*\{",
-        source,
-    )
-    if signature is None:
-        raise ValueError(f"missing generated definition for {function_name}")
-    brace_start = source.find("{", signature.start())
-    depth = 0
-    for index in range(brace_start, len(source)):
-        character = source[index]
-        if character == "{":
-            depth += 1
-        elif character == "}":
-            depth -= 1
-            if depth == 0:
-                return index + 1
-    raise ValueError(f"unterminated generated definition for {function_name}")
+    return int(generated_function_definition_span(source, function_name)[1])
 
 
 def _extract_generated_functions_plain(transcript: str) -> dict[int, GeneratedFunction]:
     """Extract functions from transcripts without the legacy function markers."""
-    functions: dict[int, GeneratedFunction] = {}
-    cursor = 0
+    spans: dict[int, tuple[int, int]] = {}
     for address in SORT_FUNCTIONS:
-        name = _function_name_from_address(address)
-        pattern = "(?m)^[ \\t]*[A-Za-z_][^\\n;]*\\b{0}\\s*\\("
-        signature = re.compile(pattern.format(re.escape(name)), re.IGNORECASE).search(
-            transcript,
-            cursor,
-        )
-        if signature is None:
+        try:
+            spans[address] = generated_function_definition_span(
+                transcript,
+                _function_name_from_address(address),
+            )
+        except ValueError:
             continue
-        declaration_start = transcript.rfind("#include <DOS.H>", cursor, signature.start())
-        if declaration_start < 0:
-            declaration_start = cursor
-        generated = transcript[declaration_start:]
-        generated = generated[: _definition_end(generated, name)].strip() + "\n"
+    if not spans:
+        return {}
+    first_definition = min(start for start, _end in spans.values())
+    declaration_start = transcript.rfind("#include", 0, first_definition)
+    prelude = transcript[max(0, declaration_start) : first_definition]
+    functions: dict[int, GeneratedFunction] = {}
+    for address, (start, end) in spans.items():
+        name = _function_name_from_address(address)
+        generated = f"{prelude}{transcript[start:end]}".strip() + "\n"
         functions[address] = GeneratedFunction(address, name, generated)
-        cursor = declaration_start + len(generated)
     return functions
 
 
@@ -188,6 +159,7 @@ def _map_binary_globals(source: str) -> str:
 
     def replace_array(match: re.Match[str]) -> str:
         value_type = " ".join(match.group("type").split())
+        value_type = {"long": "inertia_i32", "unsigned long": "inertia_u32"}.get(value_type, value_type)
         offset = int(match.group("offset"), 16)
         return (
             f"#define {match.group('name')} "
@@ -196,6 +168,7 @@ def _map_binary_globals(source: str) -> str:
 
     def replace_scalar(match: re.Match[str]) -> str:
         value_type = " ".join(match.group("type").split())
+        value_type = {"long": "inertia_i32", "unsigned long": "inertia_u32"}.get(value_type, value_type)
         offset = int(match.group("offset"), 16)
         return (
             f"#define {match.group('name')} "
@@ -213,6 +186,9 @@ def _runtime_header() -> str:
     return """#include <stdbool.h>
 #include <stdint.h>
 
+typedef int32_t inertia_i32 __attribute__((aligned(1)));
+typedef uint32_t inertia_u32 __attribute__((aligned(1)));
+
 extern uint8_t inertia_memory[];
 extern uint16_t inertia_cs;
 extern uint16_t inertia_ds;
@@ -226,10 +202,10 @@ extern uint16_t inertia_ss;
 #define SEG_PTR(seg, off)    (&inertia_memory[SEG_LINEAR((seg), (off))])
 #define SEG_U8(seg, off)     (*(uint8_t *)&inertia_memory[SEG_LINEAR((seg), (off))])
 #define SEG_U16(seg, off)    (*(uint16_t *)&inertia_memory[SEG_LINEAR((seg), (off))])
-#define SEG_U32(seg, off)    (*(uint32_t *)&inertia_memory[SEG_LINEAR((seg), (off))])
+#define SEG_U32(seg, off)    (*(inertia_u32 *)&inertia_memory[SEG_LINEAR((seg), (off))])
 #define MEM_U8(ptr)          (*(uint8_t *)(ptr))
 #define MEM_U16(ptr)         (*(uint16_t *)(ptr))
-#define MEM_U32(ptr)         (*(uint32_t *)(ptr))
+#define MEM_U32(ptr)         (*(inertia_u32 *)(ptr))
 """
 
 
@@ -239,11 +215,19 @@ def build_and_run(
     *,
     compiler: str,
     harness_path: Path,
+    function_c_dir: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Build generated sort functions and execute the source-derived harness."""
-    functions = extract_generated_functions(
-        transcript_path.read_text(encoding="utf-8", errors="replace")
-    )
+    if function_c_dir is None:
+        functions = extract_generated_functions(
+            transcript_path.read_text(encoding="utf-8", errors="replace")
+        )
+    else:
+        artifacts = load_generated_function_artifacts(function_c_dir, SORT_FUNCTIONS)
+        functions = {
+            address: GeneratedFunction(address, _function_name_from_address(address), source)
+            for address, source in artifacts.items()
+        }
     missing = tuple(address for address in SORT_FUNCTIONS if address not in functions)
     if missing:
         formatted = ", ".join(f"{address:#x}" for address in missing)
@@ -264,6 +248,7 @@ def build_and_run(
     harness = build_dir / "harness.c"
     shutil.copyfile(harness_path, harness)
     sources.append(harness)
+    sources.append(harness_path.with_name("sortd_generated_behavior_runtime.c"))
 
     executable = build_dir / "sortd_generated_sort_core"
     compile_process = subprocess.run(
@@ -305,6 +290,7 @@ def main() -> int:
     parser.add_argument("--transcript", type=Path, default=DEFAULT_TRANSCRIPT)
     parser.add_argument("--build-dir", type=Path, default=DEFAULT_BUILD_DIR)
     parser.add_argument("--harness", type=Path, default=DEFAULT_HARNESS)
+    parser.add_argument("--function-c-dir", type=Path)
     parser.add_argument("--compiler", default="gcc")
     args = parser.parse_args()
 
@@ -314,6 +300,7 @@ def main() -> int:
             args.build_dir,
             compiler=args.compiler,
             harness_path=args.harness,
+            function_c_dir=args.function_c_dir,
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:
         print(f"[sortd-generated-sort-core] failed error={error}")

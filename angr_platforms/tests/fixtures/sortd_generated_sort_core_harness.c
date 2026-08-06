@@ -1,27 +1,42 @@
 #include <stdint.h>
 #include <string.h>
 
-uint8_t inertia_memory[65536];
-uint16_t inertia_cs;
-uint16_t inertia_ds;
-uint16_t inertia_es;
-uint16_t inertia_ss;
+extern uint8_t inertia_memory[65536];
+extern uint16_t inertia_ss;
+extern unsigned long fake_clock;
+extern int clock_calls;
+extern unsigned short output_ports[8];
+extern unsigned short output_values[8];
+extern int output_calls;
+extern unsigned short cursor_rows[8];
+extern unsigned short cursor_columns[8];
+extern int cursor_calls;
+extern int text_calls;
+extern int color_calls;
+extern unsigned short last_color;
+extern unsigned short colors[8];
+extern unsigned short last_divisor;
+extern int background_calls;
+extern int key_calls;
+extern int display_cursor_calls;
+extern int config_calls;
+void reset_runtime_observation(void);
 
-void sub_10768(unsigned short first, unsigned short second)
-{
-    (void)first;
-    (void)second;
-}
+short sub_10060(void);
+short sub_102e0(void);
+short sub_10560(void);
+unsigned short sub_10768(unsigned short first, unsigned short second);
 
-void sub_10498(unsigned short row)
-{
-    (void)row;
-}
+short sub_101f0(
+    unsigned short top,
+    unsigned short left,
+    unsigned short width,
+    short height);
 
-void sub_106c8(unsigned short row)
-{
-    (void)row;
-}
+short sub_10498(unsigned short row);
+
+short sub_106c8(unsigned short row);
+short sub_10678(void);
 
 int sub_10794(unsigned short first, unsigned short second)
 {
@@ -42,6 +57,8 @@ void sub_10a88(short maximum);
 void sub_10b50(void);
 void sub_10c18(void);
 void sub_10ce0(short low, short high);
+short sub_10e70(unsigned short frequency, short duration);
+unsigned short sub_10f38(long wait);
 
 int sub_10a61(unsigned short maximum)
 {
@@ -135,6 +152,163 @@ int main(void)
     sub_10ce0(0, 4);
     if (!sorted())
         return 9;
+
+    reset_runtime_observation();
+    sub_101f0(1, 2, 5, 3);
+    if (cursor_calls != 4 || text_calls != 4)
+        return 10;
+    if (cursor_rows[0] != 1 || cursor_rows[1] != 2 ||
+        cursor_rows[2] != 3 || cursor_rows[3] != 4)
+        return 11;
+    if (cursor_columns[0] != 2 || cursor_columns[1] != 2 ||
+        cursor_columns[2] != 2 || cursor_columns[3] != 2)
+        return 12;
+
+    reset_runtime_observation();
+    set_rows(5, 3, 4, 1, 2);
+    sub_106c8(2);
+    if (cursor_calls != 1 || text_calls != 1 || color_calls != 1)
+        return 13;
+    if (cursor_rows[0] != 3 || cursor_columns[0] != 0 || last_color != 3)
+        return 14;
+
+    reset_runtime_observation();
+    set_rows(5, 3, 4, 1, 2);
+    sub_10768(1, 2);
+    if (!lengths_equal(5, 3, 4, 1, 2))
+        return 15;
+    if (cursor_calls != 3 || text_calls != 3 || color_calls != 3)
+        return 16;
+    if (cursor_rows[0] != 2 || cursor_rows[1] != 3 ||
+        colors[0] != 2 || colors[1] != 3)
+        return 17;
+    if (last_color != 15 || clock_calls != 3)
+        return 18;
+
+    reset_runtime_observation();
+    set_rows(5, 3, 4, 1, 2);
+    {
+        uint32_t pause = 42;
+        memcpy(&inertia_memory[0x0132], &pause, sizeof(pause));
+    }
+    sub_10498(3);
+    if (cursor_calls != 1 || text_calls != 1 || color_calls != 1)
+        return 19;
+    if (last_color != 15 || clock_calls != 45 || output_calls != 0)
+        return 20;
+
+    reset_runtime_observation();
+    {
+        uint16_t sound = 1;
+        uint32_t pause = 75;
+        memcpy(&inertia_memory[0x0B46], &sound, sizeof(sound));
+        memcpy(&inertia_memory[0x0132], &pause, sizeof(pause));
+    }
+    sub_10498(3);
+    if (output_calls != 5 || last_divisor != 180 || clock_calls != 80)
+        return 21;
+
+    reset_runtime_observation();
+    sub_10f38(17);
+    if (clock_calls != 19 || fake_clock != 19)
+        return 22;
+
+    reset_runtime_observation();
+    sub_10e70(0, 30);
+    if (clock_calls != 32 || output_calls != 0)
+        return 23;
+
+    reset_runtime_observation();
+    sub_10e70(120, 30);
+    if (clock_calls != 77 || output_calls != 5)
+        return 24;
+    if (output_ports[0] != 67 || output_values[0] != 182)
+        return 25;
+    if (output_ports[1] != 66 || output_ports[2] != 66)
+        return 26;
+    if (output_ports[3] != 97 || output_values[3] != 0x33)
+        return 27;
+    if (output_ports[4] != 97 || output_values[4] != 0x30)
+        return 28;
+
+    set_rows(5, 3, 4, 1, 2);
+    memcpy(&inertia_memory[0x08F0], &inertia_memory[0x0B4C], 10);
+    memset(&inertia_memory[0x0B4C], 0, 10);
+    reset_runtime_observation();
+    sub_10678();
+    if (!lengths_equal(5, 3, 4, 1, 2))
+        return 29;
+    if (cursor_calls != 5 || text_calls != 5 || color_calls != 5)
+        return 30;
+    if (clock_calls != 1 || cursor_rows[4] != 5 || colors[4] != 5)
+        return 31;
+
+    memset(inertia_memory, 0, sizeof(inertia_memory));
+    {
+        uint16_t menu_count = 2;
+        uint16_t sound = 1;
+        uint32_t pause = 30;
+        memcpy(&inertia_memory[0x0160], &menu_count, sizeof(menu_count));
+        memcpy(&inertia_memory[0x0B46], &sound, sizeof(sound));
+        memcpy(&inertia_memory[0x0132], &pause, sizeof(pause));
+    }
+    reset_runtime_observation();
+    sub_10060();
+    if (color_calls != 1 || last_color != 15 || background_calls != 1)
+        return 32;
+    if (cursor_calls != 9 || text_calls != 9)
+        return 33;
+
+    memset(inertia_memory, 0, sizeof(inertia_memory));
+    {
+        uint16_t menu_count = 2;
+        uint32_t pause = 30;
+        memcpy(&inertia_memory[0x0160], &menu_count, sizeof(menu_count));
+        memcpy(&inertia_memory[0x0132], &pause, sizeof(pause));
+    }
+    reset_runtime_observation();
+    sub_102e0();
+    {
+        uint16_t sound;
+        uint32_t pause;
+        memcpy(&sound, &inertia_memory[0x0B46], sizeof(sound));
+        memcpy(&pause, &inertia_memory[0x0132], sizeof(pause));
+        if (key_calls != 4 || display_cursor_calls != 8)
+            return 34;
+        if (sound != 1 || pause != 30)
+            return 35;
+    }
+
+    memset(inertia_memory, 0, sizeof(inertia_memory));
+    {
+        uint16_t row_count = 5;
+        memcpy(&inertia_memory[0x0BA2], &row_count, sizeof(row_count));
+    }
+    reset_runtime_observation();
+    sub_10560();
+    {
+        uint16_t sound;
+        uint32_t pause;
+        int seen[6] = {0};
+        int index;
+        memcpy(&sound, &inertia_memory[0x0B46], sizeof(sound));
+        memcpy(&pause, &inertia_memory[0x0132], sizeof(pause));
+        if (sound != 1 || pause != 30 || config_calls != 1)
+            return 36;
+        for (index = 0; index < 5; ++index) {
+            unsigned int length = inertia_memory[0x08F0 + index * 2];
+            if (length < 1 || length > 5 || inertia_memory[0x08F1 + index * 2] != 7)
+                return 37;
+            seen[length]++;
+        }
+        for (index = 1; index <= 5; ++index)
+            if (seen[index] != 1)
+                return 38;
+        if (memcmp(&inertia_memory[0x08F0], &inertia_memory[0x0B4C], 10) != 0)
+            return 39;
+        if (cursor_calls != 5 || text_calls != 5 || color_calls != 5)
+            return 40;
+    }
 
     return 0;
 }

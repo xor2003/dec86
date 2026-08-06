@@ -226,9 +226,11 @@ def _pretest_initializer_sites_8616(
                         comparable_address_8616(project, address, evidence.move_addr)
                         for address in _tree_tag_addresses_8616(body)
                     }
-                    owns_condition = bool(
-                        condition_addresses
-                        & set(evidence.condition_branch_addrs)
+                    owns_condition = any(
+                        evidence.condition_entry_addr
+                        <= address
+                        <= max(evidence.condition_branch_addrs)
+                        for address in condition_addresses
                     )
                     owns_body = any(
                         branch_addr < address < evidence.backedge_addr

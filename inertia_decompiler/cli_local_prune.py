@@ -11,6 +11,9 @@ from typing import Callable, Iterable, Protocol
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr_platforms.X86_16.postprocess.optimization.local_declarations import (
+    dedupe_equivalent_stack_local_declarations_8616,
+)
 
 _LINEAR_TEMP_NAME_RE = re.compile(r"(?:v\d+|vvar_\d+)")
 
@@ -108,6 +111,8 @@ def _prune_unused_local_declarations(
         if cfunc is None:
             return False
 
+        changed = dedupe_equivalent_stack_local_declarations_8616(codegen)
+
         used_variables: set[int] = set()
         used_storage_identities: set[tuple[object, ...]] = set()
         for node in iter_c_nodes_deep(cfunc.statements):
@@ -124,8 +129,6 @@ def _prune_unused_local_declarations(
             storage_identity = describe_alias_storage(node).identity
             if storage_identity is not None:
                 used_storage_identities.add(storage_identity)
-
-        changed = False
 
         variables_in_use = cfunc.variables_in_use
         if isinstance(variables_in_use, dict):

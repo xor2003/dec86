@@ -16,6 +16,7 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     DirectStackMoveFact8616,
     DirectStackMoveSourceKind8616,
 )
+from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
 from angr_platforms.X86_16.structuring.direct_stack_move_pretest_initializers import (
     materialize_direct_stack_move_pretest_initializers_8616,
     place_direct_stack_move_pretest_initializer_assignment_8616,
@@ -107,10 +108,17 @@ def _surface(
     )
     condition = CBinaryOp(
         "CmpLE",
-        destination if condition_reads_destination else source,
+        CSemanticCast8616(
+            SimTypeShort(False),
+            SimTypeShort(True),
+            destination,
+            codegen=codegen,
+        )
+        if condition_reads_destination
+        else source,
         limit,
         codegen=codegen,
-        tags={"ins_addr": 0x10268},
+        tags={"ins_addr": 0x10265},
     )
     iterator = CAssignment(
         destination,
@@ -134,7 +142,7 @@ def _surface(
     return project, _function(), codegen, body, loop, assignment
 
 
-def test_moves_binary_proven_initializer_before_pretest_loop() -> None:
+def test_moves_compare_tagged_initializer_before_pretest_loop() -> None:
     project, function, codegen, body, loop, assignment = _surface()
 
     assert materialize_direct_stack_move_pretest_initializers_8616(

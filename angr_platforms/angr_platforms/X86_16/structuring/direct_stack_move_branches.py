@@ -26,7 +26,7 @@ import logging
 import os
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, cast
+from typing import Any, Iterable, Iterator, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimStackVariable
@@ -37,6 +37,7 @@ from ..lowering.real_mode_linear import (
     DirectStackMoveFact8616,
     DirectStackMoveSourceKind8616,
 )
+from ..pipeline.errors import PipelineHardError
 from .condition_replay import (
     StructuringConditionReplayFact8616,
     condition_replay_facts_8616,
@@ -81,6 +82,7 @@ class _DirectStackMovePlacementSite8616:
 
     statements: list[Any]
     start_index: int
+    bounded_owner: bool
 
 
 _BRANCH_OWNED_SOURCE_KINDS_8616 = frozenset(
@@ -222,9 +224,8 @@ def _node_tag_addresses_8616(node: object) -> frozenset[int]:
     )
 
 
-def _tree_tag_addresses_8616(root: object) -> frozenset[int]:
-    """Collect instruction-origin tags from one structured expression tree."""
-    addresses: set[int] = set()
+def _tree_nodes_8616(root: object) -> Iterator[object]:
+    """Yield each node in one dynamic angr structured-expression tree once."""
     seen: set[int] = set()
     stack = [root]
     while stack:
@@ -235,7 +236,7 @@ def _tree_tag_addresses_8616(root: object) -> frozenset[int]:
             stack.extend(node)
             continue
         seen.add(id(node))
-        addresses.update(_node_tag_addresses_8616(node))
+        yield node
         for attribute in (
             "lhs",
             "rhs",
@@ -246,6 +247,8 @@ def _tree_tag_addresses_8616(root: object) -> frozenset[int]:
             "body",
             "else_node",
             "statements",
+            "initializer",
+            "iterator",
         ):
             child = getattr(node, attribute, None)
             if child is not None:
@@ -258,6 +261,13 @@ def _tree_tag_addresses_8616(root: object) -> frozenset[int]:
         if pairs:
             for condition, body in _boundary_tuple_8616(pairs):
                 stack.extend((condition, body))
+
+
+def _tree_tag_addresses_8616(root: object) -> frozenset[int]:
+    """Collect instruction-origin tags from one structured expression tree."""
+    addresses: set[int] = set()
+    for node in _tree_nodes_8616(root):
+        addresses.update(_node_tag_addresses_8616(node))
     return frozenset(addresses)
 
 
@@ -301,6 +311,34 @@ def _stack_variable_offset_8616(node: object) -> int | None:
     return offset - 0x10000 if offset >= 0x8000 else offset
 
 
+def _indexed_stack_offsets_8616(node: object) -> tuple[int, int] | None:
+    """Return the base and index BP offsets of one typed indexed stack access."""
+    while isinstance(node, structured_c.CTypeCast):
+        node = node.expr
+    if not isinstance(node, structured_c.CIndexedVariable):
+        return None
+    base_offset = _stack_variable_offset_8616(node.variable)
+    index_offset = _stack_variable_offset_8616(node.index)
+    if not isinstance(base_offset, int) or not isinstance(index_offset, int):
+        return None
+    return base_offset, index_offset
+
+
+def _assignment_destination_matches_stack_move_fact_8616(
+    assignment: object,
+    move_fact: DirectStackMoveFact8616,
+) -> bool:
+    """Return whether an assignment writes the fact's exact stack object."""
+    if not isinstance(assignment, structured_c.CAssignment):
+        return False
+    if isinstance(move_fact.dst_index_stack_offset, int):
+        return _indexed_stack_offsets_8616(assignment.lhs) == (
+            move_fact.dst_offset,
+            move_fact.dst_index_stack_offset,
+        )
+    return bool(_stack_variable_offset_8616(assignment.lhs) == move_fact.dst_offset)
+
+
 def _assignment_matches_stack_move_fact_8616(
     assignment: object,
     fact: DirectStackMoveBranchFact8616,
@@ -309,13 +347,26 @@ def _assignment_matches_stack_move_fact_8616(
     """Join a tagless typed assignment to one exact stack-store fact."""
     if (
         not isinstance(assignment, structured_c.CAssignment)
-        or _stack_variable_offset_8616(assignment.lhs) != move_fact.dst_offset
         or fact.move_ins_addr != move_fact.ins_addr
+        or not _assignment_destination_matches_stack_move_fact_8616(
+            assignment,
+            move_fact,
+        )
     ):
         return False
     if move_fact.source_kind is DirectStackMoveSourceKind8616.STACK_SLOT:
         return isinstance(move_fact.source_offset, int) and (
             _stack_variable_offset_8616(assignment.rhs) == move_fact.source_offset
+        )
+    if move_fact.source_kind is DirectStackMoveSourceKind8616.STACK_AGGREGATE_ELEMENT:
+        return (
+            isinstance(move_fact.source_aggregate_base_offset, int)
+            and isinstance(move_fact.source_index_offset, int)
+            and _indexed_stack_offsets_8616(assignment.rhs)
+            == (
+                move_fact.source_aggregate_base_offset,
+                move_fact.source_index_offset,
+            )
         )
     return bool(
         move_fact.source_kind is DirectStackMoveSourceKind8616.IMMEDIATE
@@ -358,6 +409,20 @@ def _condition_branch_site_8616(
         if node is None or id(node) in seen:
             return
         seen.add(id(node))
+        if isinstance(node, (structured_c.CForLoop, structured_c.CWhileLoop)):
+            condition = node.condition
+            branch_addresses = set(_candidate_addresses_8616(project, fact.condition_ins_addr))
+            if isinstance(fact.condition_producer_insn, int):
+                branch_addresses.update(
+                    _candidate_addresses_8616(project, fact.condition_producer_insn)
+                )
+            body_statements = getattr(node.body, "statements", None)
+            if (
+                _tree_tag_addresses_8616(condition) & branch_addresses
+                and has_taken_provenance(node.body)
+                and isinstance(body_statements, list)
+            ):
+                candidates.append(_DirectStackMovePlacementSite8616(body_statements, 0, True))
         pairs = getattr(node, "condition_and_nodes", None)
         if pairs:
             for condition, body in _boundary_tuple_8616(pairs):
@@ -393,6 +458,7 @@ def _condition_branch_site_8616(
                                 _DirectStackMovePlacementSite8616(
                                     arm_statements,
                                     0,
+                                    True,
                                 )
                             )
                     elif (
@@ -406,6 +472,7 @@ def _condition_branch_site_8616(
                                 _DirectStackMovePlacementSite8616(
                                     owner,
                                     start_index,
+                                    False,
                                 )
                             )
                 visit(body)
@@ -435,14 +502,25 @@ def _ordered_arm_insertion_index_8616(
     insertion_index: int | None = None
     saw_after = False
     for index, statement in enumerate(ordered_statements):
-        addresses = sorted(
+        tagged_addresses = sorted(
             candidate
             for tagged_addr in _tree_tag_addresses_8616(statement)
             for candidate in _candidate_addresses_8616(project, tagged_addr)
+        )
+        addresses = [
+            candidate
+            for candidate in tagged_addresses
             if fact.arm_start <= candidate < fact.merge_addr
             and candidate != move_addr
-        )
+        ]
         if not addresses:
+            if _empty_statement_wrapper_8616(statement):
+                continue
+            if tagged_addresses and min(tagged_addresses) >= fact.merge_addr:
+                saw_after = True
+                if insertion_index is None:
+                    insertion_index = index
+                continue
             return None
         if addresses[0] < move_addr < addresses[-1]:
             return None
@@ -457,6 +535,25 @@ def _ordered_arm_insertion_index_8616(
             continue
         return None
     return len(ordered_statements) if insertion_index is None else insertion_index
+
+
+def _empty_statement_wrapper_8616(node: object) -> bool:
+    """Return whether an angr statement wrapper is recursively empty."""
+    if not isinstance(node, structured_c.CStatements):
+        return False
+    return all(_empty_statement_wrapper_8616(statement) for statement in node.statements)
+
+
+def _site_suffix_owns_assignment_8616(
+    site: _DirectStackMovePlacementSite8616,
+    assignment: structured_c.CAssignment,
+) -> bool:
+    """Return whether a proven arm suffix recursively contains an assignment."""
+    return any(
+        node is assignment
+        for statement in site.statements[site.start_index :]
+        for node in _tree_nodes_8616(statement)
+    )
 
 
 def place_direct_stack_move_assignment_8616(
@@ -543,6 +640,7 @@ def materialize_direct_stack_move_branch_ownership_8616(
         direct_stack_move_instruction_targets_8616(project, function, conditions),
     )
     changed = False
+    classified = 0
     materialized = 0
     already_materialized = 0
     failures = 0
@@ -572,6 +670,7 @@ def materialize_direct_stack_move_branch_ownership_8616(
                     fact.condition_producer_insn,
                 )
             continue
+        classified += 1
         target_statements = placement_site.statements
         candidate_addrs = _candidate_addresses_8616(project, fact.move_ins_addr)
         locations = [
@@ -581,14 +680,28 @@ def materialize_direct_stack_move_branch_ownership_8616(
             if (
                 (assignment := _transparent_assignment_8616(statement))
                 is not None
-                and _assignment_matches_stack_move_fact_8616(
+                and _assignment_destination_matches_stack_move_fact_8616(
                     assignment,
-                    fact,
                     move_fact,
                 )
                 and bool(_tree_tag_addresses_8616(statement) & candidate_addrs)
+                )
+            ]
+        detached_tagged = tuple(
+            assignment
+            for node in _tree_nodes_8616(root)
+            if (assignment := _transparent_assignment_8616(node)) is not None
+            and _assignment_destination_matches_stack_move_fact_8616(
+                assignment,
+                move_fact,
             )
-        ]
+            and bool(_tree_tag_addresses_8616(node) & candidate_addrs)
+            and all(assignment is not statement for statements in _statement_lists_8616(root) for statement in statements)
+        )
+        if not locations and len(detached_tagged) == 1:
+            already_materialized += 1
+            materialized += 1
+            continue
         if not locations:
             locations = [
                 (statements, index, statement)
@@ -608,12 +721,28 @@ def materialize_direct_stack_move_branch_ownership_8616(
             failures += 1
             if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
                 log.warning(
-                    "[direct-stack-move-branch] assignment-count move=%#x count=%d",
+                    "[direct-stack-move-branch] assignment-count move=%#x count=%d move_fact=%r",
                     fact.move_ins_addr,
                     len(locations),
+                    move_fact,
                 )
             continue
         owner, index, assignment = locations[0]
+        if (
+            owner is target_statements
+            and index >= placement_site.start_index
+            and placement_site.bounded_owner
+        ):
+            already_materialized += 1
+            materialized += 1
+            continue
+        if owner is not target_statements and _site_suffix_owns_assignment_8616(
+            placement_site,
+            assignment,
+        ):
+            already_materialized += 1
+            materialized += 1
+            continue
         ordered_target = tuple(
             statement
             for statement in target_statements[placement_site.start_index :]
@@ -625,6 +754,17 @@ def materialize_direct_stack_move_branch_ownership_8616(
             fact,
         )
         if relative_insertion_index is None:
+            if os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
+                log.warning(
+                    "[direct-stack-move-branch] insertion-refused move=%#x owner_is_target=%s "
+                    "index=%d start=%d assignment_tags=%r target_tags=%r",
+                    fact.move_ins_addr,
+                    owner is target_statements,
+                    index,
+                    placement_site.start_index,
+                    getattr(assignment, "tags", None),
+                    tuple(_tree_tag_addresses_8616(statement) for statement in target_statements),
+                )
             failures += 1
             continue
         insertion_index = placement_site.start_index + relative_insertion_index
@@ -655,7 +795,7 @@ def materialize_direct_stack_move_branch_ownership_8616(
     stats = DirectStackMoveBranchStats8616(
         raw_fact_count=len(move_facts),
         normalized_fact_count=len(branch_facts),
-        classified_fact_count=len(branch_facts),
+        classified_fact_count=classified,
         materialized_count=materialized,
         failure_count=failures,
         already_materialized_count=already_materialized,
@@ -669,4 +809,20 @@ def materialize_direct_stack_move_branch_ownership_8616(
         cfunc.statements = root
     with contextlib.suppress(Exception):
         cfunc.stmt = root
+    return changed
+
+
+def finalize_direct_stack_move_branch_ownership_8616(
+    project: object,
+    codegen: object,
+    function: object,
+) -> bool:
+    """Materialize final branch writes and enforce the closed evidence contract."""
+    changed = materialize_direct_stack_move_branch_ownership_8616(project, codegen, function)
+    try:
+        stats = cast(Any, codegen)._inertia_direct_stack_move_branch_placement_8616
+    except AttributeError:
+        return changed
+    if stats.classified_fact_count > 0 and stats.materialized_count == 0:
+        raise PipelineHardError("classified direct stack move branch was not materialized")
     return changed

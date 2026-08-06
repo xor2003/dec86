@@ -10,7 +10,7 @@ import math
 import sys
 
 _MEDIUM_FUNCTION_TIMEOUT_FLOOR: int = 150
-_LARGE_FUNCTION_TIMEOUT_FLOOR: int = 180
+_LARGE_FUNCTION_TIMEOUT_FLOOR: int = 240
 
 
 def _default_recovery_timeout(configured_timeout: int, *, explicit_timeout: bool) -> int:

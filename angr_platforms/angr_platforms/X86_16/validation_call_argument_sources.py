@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from angr.analyses.decompiler.structured_codegen.c import CVariable
+from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CTypeCast, CVariable
 from angr.sim_variable import SimStackVariable
 
 from .c_ast_utils import _iter_c_nodes_deep_8616
@@ -95,6 +95,10 @@ def _stack_offsets_from_push_source_8616(source: object) -> tuple[int, ...]:
 
 def _stack_offsets_from_c_argument_8616(argument: object) -> tuple[int, ...]:
     """Collect direct BP-relative storage identities from a final C argument."""
+    projected_offset = _stack_byte_projection_offset_8616(argument)
+    if projected_offset is not None:
+        return (projected_offset,)
+
     offsets: set[int] = set()
     for node in _iter_c_nodes_deep_8616(argument):
         if not isinstance(node, CVariable):
@@ -107,6 +111,36 @@ def _stack_offsets_from_c_argument_8616(argument: object) -> tuple[int, ...]:
         ):
             offsets.add(variable.offset)
     return tuple(sorted(offsets))
+
+
+def _stack_byte_projection_offset_8616(argument: object) -> int | None:
+    """Return the exact BP byte selected by a whole-argument right shift."""
+    while isinstance(argument, CTypeCast):
+        argument = argument.expr
+    if not isinstance(argument, CBinaryOp) or argument.op != "Shr":
+        return None
+    shift = argument.rhs
+    if not isinstance(shift, CConstant) or not isinstance(shift.value, int):
+        return None
+    if shift.value < 0 or shift.value % 8 != 0:
+        return None
+
+    source = argument.lhs
+    while isinstance(source, CTypeCast):
+        source = source.expr
+    if not isinstance(source, CVariable):
+        return None
+    variable = source.variable
+    byte_index = shift.value // 8
+    if (
+        not isinstance(variable, SimStackVariable)
+        or variable.base != "bp"
+        or not isinstance(variable.offset, int)
+        or not isinstance(variable.size, int)
+        or byte_index >= variable.size
+    ):
+        return None
+    return variable.offset + byte_index
 
 
 def call_argument_source_stack_dependencies_8616(

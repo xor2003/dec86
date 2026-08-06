@@ -3,7 +3,7 @@
 Goal: decompile the executable-only SORTD image to validated, recompilable C
 without `.COD`, `.LST`, `.MAP`, appended debug data, or source substitution.
 
-Current baseline (2026-08-05):
+Current baseline (2026-08-06):
 
 - discovery evidence: raw=20, normalized=20, classified=20, materialized=20,
   failures=0
@@ -16,21 +16,30 @@ Current baseline (2026-08-05):
 - empty C: 0/20; former empty results `0x102e0` and `0x10560` are accepted
 - timeout count: 0; traceback count: 0
 - generated translation unit: 20 functions, zero compiler errors/warnings
-- generated nine-function sort core: compilation passed and behavior passed
+- generated source-selftested application set: 19/19 functions compile and
+  pass behavior checks; `main` remains compile- and validation-covered because
+  the source has no function-selftest contract for it
 - source-aware SORTDEMO: 20/20 accepted, 20/20 source contracts, 20/20
   validation, zero fallback
-- pytest verification uses `pytest -n 7`; independent process fan-out remains
-  bounded by a 2 GiB aggregate RSS budget, while mutable per-binary fallback
-  rebuilds remain serial until their state is isolated
+- pytest verification uses `pytest -n 7`; default sidecar-free decompilation
+  uses N-1 clean processes (seven here), one function per process, bounded by a
+  2 GiB aggregate RSS budget; mutable per-binary fallback rebuilds remain
+  serial until their state is isolated
+- fresh default N-1 sidecar-free canonical-output run: 20/20
+  validation-clean, zero fallback, strict GCC passed, 4:36.36 wall time, 478%
+  CPU, and 305,748 KiB peak RSS
 - focused declaration/global regressions: 191/191 passed under
   `pytest -n 7 --dist loadgroup`
-- default pipeline: 3/3 lanes passed, including all seven MS C fixtures compiling,
+- default pipeline: 3/3 lanes passed on 2026-08-06, including 1,788 focused
+  tests, four Ultra QuickC fixtures, and all seven MS C fixtures compiling,
   running, decompiling with clean validation, recompiling, and returning the
   expected DOS exit code `255`
-- expanded pipeline: 5/5 lanes passed; current artifact is
+- expanded pipeline: 5/5 lanes passed after fresh source-aware and
+  executable-only 20-function runs; current artifact is
   `angr_platforms/.cache/test_pipeline/summary.json`
-- performance debt remains visible: the expanded `unit-focused` lane passed in
-  44.38s against its advisory 30s budget; semantic status is unaffected
+- performance debt remains visible: the latest default `unit-focused` lane
+  passed in 46.53s against its advisory 30s budget; semantic status is
+  unaffected
 - the eight promoted production/tooling owners changed by the final
   call-argument closure pass scoped `make check-files`: Ruff, mypy,
   type/doc/access, architecture, context, ownership, and selected tests pass;
@@ -59,7 +68,7 @@ Final update-only global declaration closure and per-step DoD:
 4. Prove real output and full behavior.
    Definition of done: sidecar-free `sub_107b8` has one external `g_0BA4` and no
    shadowing local; validation passes; the 20-function translation unit and
-   nine-function behavior harness pass; default and expanded pipelines pass.
+   19-function behavior harness pass; default and expanded pipelines pass.
 
 Final QuickC call-argument determinism closure and per-step DoD (complete):
 
@@ -429,15 +438,14 @@ Definition of done:
 
 ## 8. Prove Generated-C Behavior
 
-Status: in progress: the current nine-function sort-core milestone is complete;
-expansion to every source-selftested function remains.
+Status: complete for every source-selftested non-library function.
 
 Progress:
 
 - the MS C DOS source oracle passes all `SORTDEMO.C` function selftests and
   returns the required success exit code 255
-- the generated gate extracts nine binary-addressed sort functions, keeps their
-  generated bodies unchanged, maps only binary DS storage and external runtime
+- the generated gate extracts 19 binary-addressed application functions, keeps
+  their generated bodies unchanged, maps only binary DS storage and external runtime
   interfaces, compiles with AddressSanitizer and UndefinedBehaviorSanitizer,
   and checks the same source-derived primitive and sorting outcomes
 - Types/Lowering proves InitBars' indexed stack range, while Structuring owns
@@ -453,25 +461,33 @@ Progress:
 - PercolateDown's exact loopback owns its recurrence assignment inside the
   constant-true loop. Focused InitBars, QuickSort, and PercolateDown runs are
   validation-clean and close their evidence censuses.
-- The current 20/20 executable-only transcript feeds the unchanged nine-function
-  sanitizer gate, which reports `functions=9 compile=passed behavior=passed`.
+- The current 20/20 executable-only artifacts feed the unchanged 19-function
+  sanitizer gate, which reports `functions=19 compile=passed behavior=passed`.
+- The source-status gate resolves deferred canonical bodies with their exact
+  declaration preludes before leakage and call-contract checks; the fresh
+  expanded run reports 20/20 source contracts passed rather than treating
+  marker-free batch definitions as missing.
+- RunMenu Escape and command dispatch, DrawTime timing/sound arguments, Beep
+  output-port arguments, ReInitBars wide copies, and InitMenu pointer-table
+  traversal are covered in addition to all nine sort functions.
 
 Work:
 
-- expand from the sort core to every source-selftested function
+- no remaining function-level source-selftest expansion; whole-program scenarios
+  remain owned by section 9.5
 
 Definition of done:
 
 - the source oracle passes under MS C and DOS execution
 - generated InsertionSort preserves the binary-proven signed low-byte conversion
-- all generated sort functions compile together with sanitizers enabled
-- every generated sort produces the source-derived result and exit code
+- all 19 source-selftested generated functions compile together with sanitizers enabled
+- every source-selftested generated function produces the source-derived result
 - the gate fails on missing functions, compile errors, sanitizer failures, or
   behavioral mismatch
 - the expanded test pipeline runs this gate serially after producing a fresh
   20/20 sidecar-free transcript
 - the final candidate covers all source-selftested functions; no claim of
-  whole-program equivalence is made from sort-core evidence alone
+  whole-program equivalence is made without a source `main` scenario
 
 ## 9. Whole-Application Generated-C Quality
 
@@ -482,11 +498,11 @@ coverage, pass-level profiling, and intermediate analysis caches remain open.
 
 Remaining baseline:
 
-- the current exact sidecar-free cold run takes 645 seconds; validated warm
+- the current exact sidecar-free N-1 cold run takes 273.96 seconds; validated warm
   whole-function reuse takes 14 seconds, while uncached pass-level costs for
   InitBars, RunMenu, QuickSort, and InitMenu still require focused profiling
-- the nine-function generated sort-core sanitizer gate passes, while behavior
-  coverage for the remaining source-selftested functions is still absent
+- the 19-function generated sanitizer gate covers every source-selftested
+  non-library function; whole-program `main` scenarios remain absent
 
 Current acceptance:
 
@@ -496,8 +512,8 @@ Current acceptance:
   materialized counts all 20 and zero discovery failures, validation failures,
   empty outputs, timeouts, tracebacks, or violations
 - the exact combined translation unit reports compiler exit 0, 0 errors, and
-  0 warnings; the unchanged nine-function generated sort-core reports compile
-  and behavior passed
+  0 warnings; the unchanged 19-function generated set reports compile and
+  behavior passed
 
 ### 9.1 Close Semantic False Greens
 
@@ -1082,12 +1098,15 @@ Order and per-step definition of done:
 
 ### 9.5 Expand Behavioral Equivalence
 
+Status: complete for function-level source self-tests; whole-program scenarios
+remain pending.
+
 Owner: test pipeline and DOS/native harnesses; the harness may adapt runtime and
 storage interfaces but must not replace generated function logic.
 
-Work:
+Completed work:
 
-- expand the current nine-function gate to every source-selftested function
+- expand the current gate to every source-selftested function
 - add RunMenu ESC, DrawTime, and Beep behavior cases
 - retain sanitizer-backed native checks and MS C DOS oracle comparison
 

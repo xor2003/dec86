@@ -106,7 +106,7 @@ def _tree_reads_stack_offset_8616(root: object, offset: int) -> bool:
             continue
         if _stack_offset_8616(node) == offset:
             return True
-        for attr in ("lhs", "rhs", "operand", "operands", "condition"):
+        for attr in ("lhs", "rhs", "expr", "operand", "operands", "condition"):
             child = _ast_field_8616(node, attr)
             if child is not None:
                 stack.append(child)

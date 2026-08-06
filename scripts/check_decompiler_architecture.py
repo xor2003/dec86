@@ -42,6 +42,9 @@ _POSTPROCESS_LEGACY_IMPORT_ALLOWLIST: dict[str, frozenset[str]] = {
             # Compatibility-only edges: logical call-shape reconciliation and
             # indirect-call parameter recovery remain owned by Types/Lowering.
             ".lowering.call_argument_shape",
+            # Compatibility-only edge: the legacy call bridge consumes typed
+            # stack objects selected by Lowering; it must not discover them.
+            ".lowering.call_argument_stack_sources",
             ".lowering.function_pointer_parameters",
             ".lowering.real_mode_linear",
             ".lowering.segmented_global_loads",
@@ -1442,6 +1445,9 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/near_pointer_type.py",
     "scripts/check_generated_translation_unit.py",
     "scripts/generated_translation_unit_assembly.py",
+    "inertia_decompiler/cli_batch_c_output.py",
+    "inertia_decompiler/generated_c_function_extraction.py",
+    "inertia_decompiler/generated_translation_unit_assembly.py",
     "scripts/check_sortd_generated_sort_core.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_cleanup_carriers.py",
     "angr_platforms/angr_platforms/X86_16/lowering/runtime_segment_access.py",
@@ -1451,6 +1457,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/condition_argument_type_facts.py",
     "angr_platforms/angr_platforms/X86_16/lowering/condition_argument_types.py",
     "angr_platforms/angr_platforms/X86_16/lowering/condition_scalar_types.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/condition_stack_operands.py",
     "angr_platforms/angr_platforms/X86_16/lowering/c_runtime_header.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_saved_frame.py",
     "angr_platforms/angr_platforms/X86_16/lowering/dead_register_carriers.py",
@@ -1485,6 +1492,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/call_argument_stack_sources.py",
     "angr_platforms/angr_platforms/X86_16/lowering/structured_intrinsics.py",
     "angr_platforms/angr_platforms/X86_16/lowering/terminal_call_return_types.py",
     "angr_platforms/angr_platforms/X86_16/lowering/terminal_register_return_values.py",
@@ -1516,6 +1524,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_walk.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_liveness.py",
+    "angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_declarations.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_setup.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_condition_carriers.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/pass_driver.py",

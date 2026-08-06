@@ -7,6 +7,7 @@ import io
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections import defaultdict
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -9746,7 +9747,7 @@ def test_main_serial_whole_binary_path_does_not_wrap_function_work_items_in_exec
     assert "summary: decompiled 2/2 shown functions" in out
 
 
-def test_main_full_pure_binary_uses_clean_serial_process_lane_by_default(
+def test_main_full_pure_binary_uses_parallel_clean_process_lane_by_default(
     monkeypatch,
     tmp_path,
     capsys,
@@ -9766,11 +9767,13 @@ def test_main_full_pure_binary_uses_clean_serial_process_lane_by_default(
     ]
     seen = []
     clean_process_calls = []
+    parallel_gate = threading.Barrier(2)
 
     monkeypatch.setattr(cli_core, "_build_project", lambda *_args, **_kwargs: project)
     monkeypatch.setattr(cli_core, "_load_lst_metadata", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_core, "_apply_binary_specific_annotations", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli_core, "_prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(cli_core, "_choose_function_parallelism", lambda count: min(2, count))
     monkeypatch.setattr(cli_core, "_load_catalog_address_cache", lambda *_args, **_kwargs: [0x10010, 0x10020])
     monkeypatch.setattr(cli_core, "_recover_cached_function_pairs", lambda *_args, **_kwargs: list(recovered_pairs))
     monkeypatch.setattr(
@@ -9788,6 +9791,7 @@ def test_main_full_pure_binary_uses_clean_serial_process_lane_by_default(
                 item.recovery_addr,
             )
         )
+        parallel_gate.wait(timeout=2)
         return cli_core.FunctionWorkResult(
             index=item.index,
             status="ok",
@@ -9801,7 +9805,8 @@ def test_main_full_pure_binary_uses_clean_serial_process_lane_by_default(
     monkeypatch.setattr(cli_core, "_run_serial_clean_process_work_item_8616", _fake_clean_process)
 
     rc = cli_core.main([str(binary), "--timeout", "2"])
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
+    out = captured.out
 
     assert rc == 0, out
     assert sorted(seen) == [
@@ -9812,8 +9817,8 @@ def test_main_full_pure_binary_uses_clean_serial_process_lane_by_default(
         (project, 0x10010, 0x10010, 2),
         (project, 0x10020, 0x10020, 2),
     ]
-    assert "/* parallel function decompilation: disabled; using one clean serial process at a time */" in out
-    assert "[dbg] clean serial function worker: start 0x10010 sub_10010" in out
+    assert "/* parallel function decompilation: 2 clean processes, one function per process */" in out
+    assert "[dbg] clean parallel function worker: start 0x10010 sub_10010" in captured.err
 
 
 def test_prepare_ranked_binary_preview_items_uses_fork_lane_on_main_thread(monkeypatch):
@@ -10748,6 +10753,93 @@ def test_choose_function_parallelism_honors_forced_serial_env(monkeypatch):
     assert decompile._choose_function_parallelism(8) == 1
 
 
+def test_choose_function_parallelism_uses_n_minus_one_with_two_gib_budget(monkeypatch):
+    monkeypatch.delenv("INERTIA_FORCE_SERIAL_FUNCTION_DECOMPILATION", raising=False)
+    monkeypatch.setattr(runtime_support, "prefer_low_memory_path", lambda: False)
+    monkeypatch.setattr(runtime_support, "memory_available_mb", lambda: 4096)
+    monkeypatch.setattr(runtime_support.os, "cpu_count", lambda: 8)
+
+    assert runtime_support.choose_function_parallelism(20) == 7
+
+
+def test_batch_function_timeout_preserves_complex_sortd_budget(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    function = SimpleNamespace(project=project)
+    context = SimpleNamespace(
+        args=SimpleNamespace(timeout=120, addr=None),
+        timeout_was_explicit=False,
+        remaining_sweep_budget_sec=lambda: None,
+    )
+    model = cli_core._AdaptivePerByteTimeoutModel(120, explicit_timeout=False, margin=1.5)
+    monkeypatch.setattr(cli_core, "_function_complexity", lambda _function: (42, 438))
+    monkeypatch.setattr(
+        cli_core,
+        "_effective_decompile_timeout_8616",
+        lambda _project, timeout, **_kwargs: timeout,
+    )
+    monkeypatch.setattr(
+        cli_core,
+        "_enforce_function_timeout_cap",
+        lambda timeout, **_kwargs: timeout,
+    )
+
+    timeout = cli_core._batch_function_decompile_timeout_8616(context, function, model)
+
+    assert timeout == 240
+
+
+def test_batch_function_timeout_covers_large_sortd_validation_overhead(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    function = SimpleNamespace(project=project)
+    context = SimpleNamespace(
+        args=SimpleNamespace(timeout=60, addr=None),
+        timeout_was_explicit=False,
+        remaining_sweep_budget_sec=lambda: None,
+    )
+    model = cli_core._AdaptivePerByteTimeoutModel(60, explicit_timeout=False, margin=1.5)
+    monkeypatch.setattr(cli_core, "_function_complexity", lambda _function: (76, 459))
+    monkeypatch.setattr(
+        cli_core,
+        "_effective_decompile_timeout_8616",
+        lambda _project, timeout, **_kwargs: timeout,
+    )
+    monkeypatch.setattr(
+        cli_core,
+        "_enforce_function_timeout_cap",
+        lambda timeout, **_kwargs: timeout,
+    )
+
+    timeout = cli_core._batch_function_decompile_timeout_8616(context, function, model)
+
+    assert timeout == 240
+
+
+def test_batch_function_timeout_promotes_project_large_floor_for_clean_finalization(monkeypatch):
+    project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
+    function = SimpleNamespace(project=project)
+    context = SimpleNamespace(
+        args=SimpleNamespace(timeout=60, addr=None),
+        timeout_was_explicit=False,
+        remaining_sweep_budget_sec=lambda: None,
+    )
+    model = cli_core._AdaptivePerByteTimeoutModel(60, explicit_timeout=False, margin=1.5)
+    monkeypatch.setattr(cli_core, "_function_complexity", lambda _function: (20, 200))
+    monkeypatch.setattr(
+        cli_core,
+        "_effective_decompile_timeout_8616",
+        lambda _project, _timeout, **_kwargs: 180,
+    )
+    monkeypatch.setattr(
+        cli_core,
+        "_enforce_function_timeout_cap",
+        lambda timeout, **_kwargs: timeout,
+    )
+
+    timeout = cli_core._batch_function_decompile_timeout_8616(context, function, model)
+
+    assert timeout == 240
+
+
 def test_daemon_thread_pool_executor_detaches_non_waiting_workers_from_atexit_registry():
     executor = decompile.DaemonThreadPoolExecutor(max_workers=1, thread_name_prefix="detach-test")
     future = executor.submit(time.sleep, 0.5)
@@ -11678,7 +11770,7 @@ def test_main_parallel_keeps_timeout_after_deadline(monkeypatch, tmp_path, capsy
     )
     monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "select_function_worker_policy_8616", lambda **_kwargs: SimpleNamespace(mode=decompile.FunctionWorkerMode8616.SHARED, workers=2))
-    monkeypatch.setattr(decompile, "requires_serial_function_decompilation", lambda **_kwargs: False)
+    monkeypatch.setattr(decompile, "requires_isolated_function_decompilation", lambda **_kwargs: False)
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(decompile, "DaemonThreadPoolExecutor", _FakeExecutor)
     monkeypatch.setattr(decompile, "wait", lambda pending, **_kwargs: (set(), set(pending)))
@@ -11752,7 +11844,7 @@ def test_main_parallel_does_not_promote_late_partial_after_deadline(monkeypatch,
     )
     monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "select_function_worker_policy_8616", lambda **_kwargs: SimpleNamespace(mode=decompile.FunctionWorkerMode8616.SHARED, workers=2))
-    monkeypatch.setattr(decompile, "requires_serial_function_decompilation", lambda **_kwargs: False)
+    monkeypatch.setattr(decompile, "requires_isolated_function_decompilation", lambda **_kwargs: False)
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(decompile, "DaemonThreadPoolExecutor", _FakeExecutor)
     monkeypatch.setattr(decompile, "wait", lambda pending, **_kwargs: (set(), set(pending)))
@@ -11828,7 +11920,7 @@ def test_main_parallel_promotes_done_future_at_deadline(monkeypatch, tmp_path, c
     )
     monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "select_function_worker_policy_8616", lambda **_kwargs: SimpleNamespace(mode=decompile.FunctionWorkerMode8616.SHARED, workers=2))
-    monkeypatch.setattr(decompile, "requires_serial_function_decompilation", lambda **_kwargs: False)
+    monkeypatch.setattr(decompile, "requires_isolated_function_decompilation", lambda **_kwargs: False)
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(decompile, "DaemonThreadPoolExecutor", _FakeExecutor)
     monkeypatch.setattr(decompile, "wait", lambda pending, **_kwargs: (set(), set(pending)))
@@ -11916,7 +12008,7 @@ def test_main_parallel_promotes_future_completed_during_late_collection(monkeypa
     )
     monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "select_function_worker_policy_8616", lambda **_kwargs: SimpleNamespace(mode=decompile.FunctionWorkerMode8616.SHARED, workers=2))
-    monkeypatch.setattr(decompile, "requires_serial_function_decompilation", lambda **_kwargs: False)
+    monkeypatch.setattr(decompile, "requires_isolated_function_decompilation", lambda **_kwargs: False)
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(decompile, "DaemonThreadPoolExecutor", _FakeExecutor)
     monkeypatch.setattr(decompile, "wait", _fake_wait)

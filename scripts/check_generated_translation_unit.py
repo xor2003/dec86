@@ -25,8 +25,10 @@ if str(REPO_ROOT) not in sys.path:
 # Direct script execution needs the repository root before project imports.
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616  # noqa: E402
 
+from inertia_decompiler.generated_translation_unit_assembly import (  # noqa: E402
+    assemble_generated_translation_unit,
+)
 from scripts.check_sortd_sidecar_free import EXPECTED_SORTD_FUNCTION_ADDRS  # noqa: E402
-from scripts.generated_translation_unit_assembly import assemble_generated_translation_unit  # noqa: E402
 
 _ARTIFACT_NAME_RE = re.compile(r"^(?P<address>[0-9a-fA-F]{8})-.+\.c$")
 _GCC_DIAGNOSTIC_RE = re.compile(

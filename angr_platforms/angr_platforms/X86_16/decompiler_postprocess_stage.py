@@ -174,6 +174,7 @@ from .pipeline.invariants import format_invariant_report_8616, validate_before_r
 from .postprocess.optimization.dce import _dead_code_elimination_8616
 from .postprocess.optimization.dead_condition_carriers import prune_unread_pure_condition_carriers_8616
 from .postprocess.optimization.dead_setup import _count_dead_setup_escaped_8616
+from .postprocess.optimization.local_declarations import dedupe_equivalent_stack_local_declarations_8616
 from .postprocess.optimization.pass_driver import (
     OPTIMIZATION_PASSES,
     _normalize_cfunc_root_for_optimization_8616,
@@ -8321,6 +8322,11 @@ def _build_decompiler_postprocess_passes() -> tuple[DecompilerPostprocessPassSpe
         DecompilerPostprocessPassSpec(
             "_dead_code_elimination_final_cleanup_8616",
             _dead_code_elimination_final_cleanup_8616,
+            False,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_dedupe_equivalent_stack_local_declarations_final_8616",
+            dedupe_equivalent_stack_local_declarations_8616,
             False,
         ),
     )

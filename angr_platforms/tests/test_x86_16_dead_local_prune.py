@@ -132,6 +132,33 @@ def test_prune_dead_local_assignments_keeps_direct_stack_move_evidence_destinati
     assert codegen._inertia_dead_local_prune_protected_direct_stack_move_count_8616 == 1
 
 
+def test_prune_keeps_read_argument_move_across_regenerated_stack_regions() -> None:
+    """BP-relative identity remains stable when angr rebuilds variable objects."""
+    codegen = _FakeCodegen()
+    assigned_var = SimStackVariable(6, 2, base="bp", name="duration", region=0x10E70)
+    read_var = SimStackVariable(6, 2, base="bp", name="duration", region=None)
+    assigned = structured_c.CVariable(assigned_var, variable_type=SimTypeShort(False), codegen=codegen)
+    read = structured_c.CVariable(read_var, variable_type=SimTypeShort(False), codegen=codegen)
+    assignment = structured_c.CAssignment(
+        assigned,
+        structured_c.CConstant(75, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen._inertia_direct_stack_move_evidence_8616 = (
+        (("dst_offset", 6), ("width", 2), ("source_value", 75), ("ins_addr", 0x10E8D)),
+    )
+    codegen.cfunc = SimpleNamespace(
+        statements=structured_c.CStatements(
+            [assignment, structured_c.CReturn(read, codegen=codegen)],
+            codegen=codegen,
+        ),
+        variables_in_use={assigned_var: assigned, read_var: read},
+    )
+
+    assert decompile._prune_dead_local_assignments(codegen) is False
+    assert codegen.cfunc.statements.statements[0] is assignment
+
+
 def test_prune_dead_local_assignments_drops_unread_direct_stack_move_evidence_destination() -> None:
     codegen = _FakeCodegen()
     source_var = SimStackVariable(-8, 2, base="bp", name="barTemp", region=0x1000)

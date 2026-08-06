@@ -19,6 +19,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from inertia_decompiler.generated_c_function_extraction import (  # noqa: E402
+    generated_function_definition_span,
+)
+
 EXPECTED_SORTD_FUNCTION_ADDRS: tuple[int, ...] = (
     0x10010,
     0x10060,
@@ -84,14 +91,19 @@ _DRAWTIME_SIGNATURE_RE = re.compile(
 )
 _BEEP_ADDR = 0x10E70
 _BEEP_SIGNATURE_RE = re.compile(
-    rf"\b{_WORD_TYPE_RE}\s+sub_10e70\s*\(\s*{_WORD_TYPE_RE}\s+[A-Za-z_]\w*\s*,\s*"
-    rf"{_WORD_TYPE_RE}\s+[A-Za-z_]\w*\s*\)"
+    rf"\b{_WORD_TYPE_RE}\s+sub_10e70\s*\(\s*{_WORD_TYPE_RE}\s+(?P<frequency>[A-Za-z_]\w*)\s*,\s*"
+    rf"{_WORD_TYPE_RE}\s+(?P<duration>[A-Za-z_]\w*)\s*\)"
 )
 _UNINITIALIZED_BP4_LOCAL_RE = re.compile(r"^[^/\n;]+;\s*//\s*\[bp\+0x4\]", re.MULTILINE)
 
 
 def _function_transcript_segment(transcript: str, address: int) -> str:
-    """Return one function's marker-delimited transcript segment."""
+    """Return one function body from canonical C or a legacy marker segment."""
+    try:
+        start, end = generated_function_definition_span(transcript, f"sub_{address:04x}")
+        return transcript[start:end]
+    except ValueError:
+        pass
     matches = tuple(_FUNCTION_RE.finditer(transcript))
     for index, match in enumerate(matches):
         if int(match.group("addr"), 16) != address:
@@ -216,8 +228,11 @@ def evaluate_sortd_transcript(
     if not _DRAWTIME_SIGNATURE_RE.search(drawtime_segment) or _UNINITIALIZED_BP4_LOCAL_RE.search(drawtime_segment):
         violations.append("DrawTime lacks its canonical scalar-return positive-BP signature")
     beep_segment = _function_transcript_segment(transcript, _BEEP_ADDR)
-    if not _BEEP_SIGNATURE_RE.search(beep_segment) or _UNINITIALIZED_BP4_LOCAL_RE.search(beep_segment):
+    beep_signature = _BEEP_SIGNATURE_RE.search(beep_segment)
+    if beep_signature is None or _UNINITIALIZED_BP4_LOCAL_RE.search(beep_segment):
         violations.append("Beep lacks its scalar two-argument positive-BP signature")
+    elif re.search(rf"\bif\s*\(\s*{re.escape(beep_signature.group('duration'))}\s*<\s*75\s*\)", beep_segment) is None:
+        violations.append("Beep lacks its binary-proven minimum-duration guard")
     if empty_count > maximum_empty:
         violations.append(f"empty function count {empty_count} exceeds {maximum_empty}")
     if timeout_count > maximum_timeouts:

@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CBinaryOp,
     CConstant,
     CFunctionCall,
     CIndexedVariable,
@@ -10,6 +11,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
+from angr_platforms.X86_16.lowering.call_argument_stack_sources import containing_stack_cvariable_8616
 from angr_platforms.X86_16.validation_calls import validate_call_argument_classes_8616
 from archinfo import ArchX86
 
@@ -18,6 +20,7 @@ class _Codegen:
     def __init__(self) -> None:
         self._next_index = 0
         self._inertia_callsite_summaries: dict[int, CallsiteSummary8616] = {}
+        self.cstyle_null_cmp = False
         self.project = SimpleNamespace(arch=ArchX86())
 
     def next_idx(self, _kind: str) -> int:
@@ -43,6 +46,22 @@ def _summary() -> CallsiteSummary8616:
         return_register="ax",
         return_used=True,
         push_arg_sources=(("imm", 104), ("seg_indirect", "ds", 2, address_source)),
+        logical_arg_classes=(),
+    )
+
+
+def _byte_source_summary() -> CallsiteSummary8616:
+    return CallsiteSummary8616(
+        callsite_addr=0x1030,
+        target_addr=0x2000,
+        return_addr=0x1033,
+        kind="direct_near",
+        arg_count=1,
+        arg_widths=(2,),
+        stack_cleanup=2,
+        return_register="ax",
+        return_used=False,
+        push_arg_sources=(("bp", 5, 1),),
         logical_arg_classes=(),
     )
 
@@ -96,4 +115,156 @@ def test_call_argument_source_validation_refuses_recycled_constant_pointer() -> 
     assert report.issue_tokens() == (
         "call-argument-source:stack-dependency-mismatch:callsite=0x1010:"
         "target=0x2000:arg=0:expected-bp=-0x2,+0x6:actual-bp=none",
+    )
+
+
+def test_call_argument_source_validation_refuses_recycled_call_node_id() -> None:
+    codegen = _Codegen()
+    short_type = SimTypeShort(False)
+    pointer_type = SimTypePointer(short_type).with_arch(codegen.project.arch)
+    wrong_call = CFunctionCall(
+        "consume",
+        None,
+        [CConstant(104, short_type, codegen=codegen), CConstant(104, short_type, codegen=codegen)],
+        tags={"ins_addr": 0x1020},
+        codegen=codegen,
+    )
+    argument = CVariable(
+        SimStackVariable(6, 2, base="bp", name="arg_5"),
+        variable_type=pointer_type,
+        codegen=codegen,
+    )
+    index = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local_2"),
+        variable_type=short_type,
+        codegen=codegen,
+    )
+    right_call = CFunctionCall(
+        "consume",
+        None,
+        [CIndexedVariable(argument, index, variable_type=short_type, codegen=codegen), CConstant(104, short_type, codegen=codegen)],
+        tags={"ins_addr": 0x1010},
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries[id(wrong_call)] = _summary()
+
+    report = validate_call_argument_classes_8616(
+        codegen,
+        CStatements([wrong_call, right_call], codegen=codegen),
+    )
+
+    assert report.passed
+    assert report.classified_fact_count == 1
+    assert report.materialized_count == 1
+
+
+def test_containing_stack_source_sees_object_created_during_same_call_pass() -> None:
+    codegen = _Codegen()
+    codegen.cfunc = SimpleNamespace(arg_list=(), statements=None, variables_in_use={})
+    argument = CVariable(
+        SimStackVariable(4, 2, base="bp", name="arg_4"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+
+    selected = containing_stack_cvariable_8616(codegen, {4: argument}, offset=5, size_hint=2)
+
+    assert selected is argument
+
+
+def test_containing_stack_source_sees_declared_function_argument() -> None:
+    codegen = _Codegen()
+    argument = CVariable(
+        SimStackVariable(4, 2, base="bp", name="arg_4"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(arg_list=(argument,), statements=None, variables_in_use={})
+
+    selected = containing_stack_cvariable_8616(codegen, {}, offset=5, size_hint=2)
+
+    assert selected is argument
+
+
+def test_containing_stack_source_prefers_exact_word_over_wider_overlap() -> None:
+    codegen = _Codegen()
+    argument = CVariable(
+        SimStackVariable(4, 2, base="bp", name="arg_4"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    overlapping = CVariable(
+        SimStackVariable(2, 4, base="bp", name="local_2"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        arg_list=(argument,),
+        statements=None,
+        variables_in_use={overlapping.variable: overlapping},
+    )
+
+    selected = containing_stack_cvariable_8616(codegen, {}, offset=4, size_hint=2)
+
+    assert selected is argument
+
+
+def test_call_argument_source_validation_accepts_high_byte_projection() -> None:
+    codegen = _Codegen()
+    short_type = SimTypeShort(False)
+    argument = CVariable(
+        SimStackVariable(4, 2, base="bp", name="arg_4"),
+        variable_type=short_type,
+        codegen=codegen,
+    )
+    high_byte = CBinaryOp(
+        "Shr",
+        argument,
+        CConstant(8, short_type, codegen=codegen),
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        "consume",
+        None,
+        [high_byte],
+        tags={"ins_addr": 0x1030},
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries[id(call)] = _byte_source_summary()
+
+    report = validate_call_argument_classes_8616(codegen, CStatements([call], codegen=codegen))
+
+    assert report.passed
+    assert report.materialized_count == 1
+
+
+def test_call_argument_source_validation_refuses_wrong_high_byte_projection() -> None:
+    codegen = _Codegen()
+    short_type = SimTypeShort(False)
+    overlapping = CVariable(
+        SimStackVariable(2, 4, base="bp", name="local_2"),
+        variable_type=short_type,
+        codegen=codegen,
+    )
+    wrong_high_byte = CBinaryOp(
+        "Shr",
+        overlapping,
+        CConstant(8, short_type, codegen=codegen),
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        "consume",
+        None,
+        [wrong_high_byte],
+        tags={"ins_addr": 0x1030},
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries[id(call)] = _byte_source_summary()
+
+    report = validate_call_argument_classes_8616(codegen, CStatements([call], codegen=codegen))
+
+    assert report.passed is False
+    assert report.issue_tokens() == (
+        "call-argument-source:stack-dependency-mismatch:callsite=0x1030:"
+        "target=0x2000:arg=0:expected-bp=+0x5:actual-bp=+0x3",
     )

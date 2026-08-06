@@ -21,7 +21,10 @@ def _passing_transcript() -> str:
     required_bodies = {
         0x102E0: "short sub_102e0(void) { switch (ax) { case 27: return 0; } }",
         0x10498: "short sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return 0; }",
-        0x10E70: "short sub_10e70(unsigned short arg, short arg_6) { return arg + arg_6; }",
+        0x10E70: (
+            "short sub_10e70(unsigned short arg, short arg_6) "
+            "{ if (arg_6 < 75) { arg_6 = 75; } return arg + arg_6; }"
+        ),
     }
     function_rows = "\n".join(
         f"/* == function {addr:#x} sub_{addr:x} == */\n"
@@ -200,6 +203,22 @@ def test_sidecar_free_ratchet_rejects_beep_void_return() -> None:
 
     assert not result.passed
     assert "Beep lacks its scalar two-argument positive-BP signature" in result.violations
+
+
+def test_sidecar_free_ratchet_rejects_beep_without_duration_guard() -> None:
+    transcript = _passing_transcript().replace("if (arg_6 < 75) { arg_6 = 75; } ", "")
+
+    result = evaluate_sortd_transcript(
+        transcript,
+        decompiler_returncode=2,
+        minimum_decompiled=DEFAULT_MINIMUM_DECOMPILED,
+        maximum_empty=0,
+        maximum_timeouts=0,
+        maximum_tracebacks=0,
+    )
+
+    assert not result.passed
+    assert "Beep lacks its binary-proven minimum-duration guard" in result.violations
 
 
 def test_sidecar_free_ratchet_rejects_drawtime_void_return() -> None:

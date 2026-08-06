@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from inertia_decompiler.cli_batch_c_output import (
+    BatchCOutputStatus8616,
+    build_batch_c_output_8616,
+)
 from scripts.generated_translation_unit_assembly import (
     DeclarationContractKind,
     assemble_generated_translation_unit,
@@ -22,6 +26,19 @@ void second(unsigned short value) { (void)value; }
     assert result.source.count("typedef struct Row") == 1
     assert result.source.count("void second(unsigned short value)") == 2
     assert "int second(" not in result.source
+    assert result.conflicts == ()
+
+
+def test_assembler_drops_redundant_aggregate_forward_declaration() -> None:
+    result = assemble_generated_translation_unit(
+        (
+            "struct Row;\nvoid first(void) {}\n",
+            "typedef struct Row { int value; } Row;\nvoid second(void) {}\n",
+        )
+    )
+
+    assert result.source.count("typedef struct Row") == 1
+    assert "struct Row;" not in result.source
     assert result.conflicts == ()
 
 
@@ -74,3 +91,42 @@ def test_assembler_refuses_incompatible_external_parameter_contracts() -> None:
     assert result.conflicts[0].kind is DeclarationContractKind.EXTERNAL_FUNCTION
     assert result.conflicts[0].name == "helper"
     assert result.source.count("helper(") == 2
+
+
+def test_batch_output_builds_one_canonical_complete_unit() -> None:
+    result = build_batch_c_output_8616(
+        (
+            "typedef struct Row { int value; } Row;\nvoid first(void) {}\n",
+            "typedef struct Row { int value; } Row;\nvoid second(void) {}\n",
+        ),
+        expected_function_count=2,
+    )
+
+    assert result.status is BatchCOutputStatus8616.READY
+    assert result.function_count == 2
+    assert result.source.count("typedef struct Row") == 1
+
+
+def test_batch_output_retains_partial_c_without_claiming_complete_unit() -> None:
+    result = build_batch_c_output_8616(
+        ("void first(void) {}\n",),
+        expected_function_count=2,
+    )
+
+    assert result.status is BatchCOutputStatus8616.INCOMPLETE
+    assert result.source == "void first(void) {}\n"
+    assert not result.failed
+
+
+def test_batch_output_refuses_complete_conflicting_declarations() -> None:
+    result = build_batch_c_output_8616(
+        (
+            "extern int shared;\nvoid first(void) {}\n",
+            "extern char shared;\nvoid second(void) {}\n",
+        ),
+        expected_function_count=2,
+    )
+
+    assert result.status is BatchCOutputStatus8616.CONFLICT
+    assert result.source == ""
+    assert result.failed

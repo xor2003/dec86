@@ -1131,6 +1131,10 @@ def _materialize_cfg_single_branch_expr_8616(
         return None
     oriented = materialized if orientation else _invert_structured_condition_8616(materialized, codegen)
     lowering = lower_call_output_stack_fields_in_condition_8616(codegen, oriented, (condition,))
+    true_target = condition.taken_target if orientation else condition.fallthrough_target
+    false_target = condition.fallthrough_target if orientation else condition.taken_target
+    if isinstance(true_target, int) and isinstance(false_target, int):
+        record_condition_replay_fact_8616(codegen, condition, true_target, false_target)
     return lowering.expression
 
 

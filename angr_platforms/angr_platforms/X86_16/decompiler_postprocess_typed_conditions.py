@@ -48,6 +48,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CExpression,
     CFunctionCall,
     CIfElse,
     CReturn,
@@ -75,6 +76,7 @@ from .structuring.condition_lowering import (
     condition_origin_tags_8616,
     condition_segment_access_tags_8616,
     materialize_indexed_segmented_condition_value_8616,
+    materialize_typed_condition_stack_operand_8616,
     stable_stack_condition_binding_tags_8616,
 )
 from .tail_validation_fingerprint import _expr_fingerprint
@@ -262,7 +264,7 @@ def _build_stack_operand_expr_8616(
     codegen: object,
     *,
     signed: bool = False,
-) -> CVariable | None:
+) -> CExpression | None:
     """Build a stack CVariable preserving signed ConditionIR operand evidence."""
     if operand.space != MemSpace.SS:
         return None
@@ -271,33 +273,35 @@ def _build_stack_operand_expr_8616(
     size = int(operand.size or 2)
     prefix = "arg" if base == "bp" and offset > 0 else "local"
     name = f"{prefix}_{abs(offset):x}"
-    variable = SimStackVariable(offset, max(size, 1), base=base, name=name)
-    return CVariable(
-        variable,
-        variable_type=_type_for_operand_size_8616(size, signed=signed),
-        codegen=codegen,
+    return materialize_typed_condition_stack_operand_8616(
+        codegen,
+        base=base,
+        offset=offset,
+        size=max(size, 1),
+        name=name,
+        signed=signed,
         tags=stable_stack_condition_binding_tags_8616(offset, max(size, 1), name=name),
     )
 
 
 def _clone_stack_expr_with_condition_signedness_8616(expr: object, cond: ConditionIR | None, codegen: object) -> object:
-    """Clone stack CVariables with signed types when ConditionIR proves signed comparison."""
+    """Build a signed expression view when ConditionIR proves signed comparison."""
     if cond is None or not cond.is_signed or not isinstance(expr, CVariable):
         return expr
     variable = _dynamic_typed_condition_getattr_8616(expr, "variable", None)
     if not isinstance(variable, SimStackVariable):
         return expr
     size = int(_dynamic_typed_condition_getattr_8616(variable, "size", 0) or _type_size_bytes_8616(_dynamic_typed_condition_getattr_8616(expr, "variable_type", None)))
-    clone = CVariable(
-        variable,
-        variable_type=_type_for_operand_size_8616(size, signed=True),
-        codegen=codegen,
+    return materialize_typed_condition_stack_operand_8616(
+        codegen,
+        base=variable.base,
+        offset=variable.offset,
+        size=max(size, 1),
+        name=expr.name,
+        signed=True,
+        tags=dict(expr.tags),
+        preferred=expr,
     )
-    with contextlib.suppress(Exception):
-        typing.cast(typing.Any, clone).name = _dynamic_typed_condition_getattr_8616(expr, "name")
-    with contextlib.suppress(Exception):
-        clone.tags = dict(_dynamic_typed_condition_getattr_8616(expr, "tags", {}) or {})
-    return clone
 
 
 def _build_c_expr_for_operand(

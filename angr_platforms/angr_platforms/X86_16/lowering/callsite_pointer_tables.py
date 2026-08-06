@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import Protocol, TypeAlias, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CFunctionCall, CIndexedVariable, CVariable
 from angr.sim_type import SimType, SimTypeArray, SimTypeFixedSizeArray, SimTypePointer
@@ -22,8 +22,13 @@ from angr.sim_variable import SimMemoryVariable
 from archinfo import Arch
 
 from ..callsite_summary import CallsitePushSourceKind8616, CallsiteSummary8616
+from ..codegen_metadata import GlobalDeclarationArrayExtent8616
 from ..pipeline.errors import PipelineHardError
-from .global_declarations import record_global_declaration_spec_8616
+from .global_declarations import (
+    replace_global_declaration_spec_from_stronger_typed_evidence_8616,
+)
+
+CallsitePushSource8616: TypeAlias = tuple[object, ...]
 
 __all__ = [
     "CallsitePointerTableStats8616",
@@ -73,7 +78,7 @@ class _PointerTableCandidate8616:
     node: CIndexedVariable
     base: CVariable
     name: str
-    array_len: int
+    array_len: GlobalDeclarationArrayExtent8616
     base_offset: int
 
 
@@ -96,14 +101,17 @@ def _pointer_anchor_pointee_8616(argument: object) -> SimType | None:
     return None
 
 
-def _source_kind_8616(source: tuple | None) -> str | None:
+def _source_kind_8616(source: CallsitePushSource8616 | None) -> str | None:
     """Return the typed source-kind field from one binary push fact."""
     if not isinstance(source, tuple) or not source or not isinstance(source[0], str):
         return None
     return source[0]
 
 
-def _has_segment_companion_8616(sources: tuple[tuple | None, ...], index: int) -> bool:
+def _has_segment_companion_8616(
+    sources: tuple[CallsitePushSource8616 | None, ...],
+    index: int,
+) -> bool:
     """Return whether the following source argument is an exact segment push."""
     companion_index = index + 1
     if companion_index >= len(sources):
@@ -121,7 +129,7 @@ def _has_segment_companion_8616(sources: tuple[tuple | None, ...], index: int) -
 
 def _indexed_global_candidate_8616(
     argument: object,
-    source: tuple | None,
+    source: CallsitePushSource8616 | None,
 ) -> _PointerTableCandidate8616 | None:
     """Join one structured global index with its exact binary push source."""
     if not isinstance(argument, CIndexedVariable):
@@ -141,7 +149,13 @@ def _indexed_global_candidate_8616(
     name = base.name
     if not isinstance(name, str) or not name:
         return None
-    return _PointerTableCandidate8616(argument, base, name, 1, base_offset & 0xFFFF)
+    return _PointerTableCandidate8616(
+        argument,
+        base,
+        name,
+        GlobalDeclarationArrayExtent8616.UNKNOWN,
+        base_offset & 0xFFFF,
+    )
 
 
 def _compatible_pointee_8616(types: Sequence[SimType]) -> SimType | None:
@@ -198,7 +212,10 @@ def materialize_callsite_pointer_table_types_8616(
 
     for call, summary in resolved_calls:
         args = tuple(cast(Sequence[object], call.args or ()))
-        push_sources = tuple(reversed(summary.push_arg_sources))
+        push_sources = cast(
+            tuple[CallsitePushSource8616 | None, ...],
+            tuple(reversed(summary.push_arg_sources)),
+        )
         stats.raw_fact_count += len(args)
         if not isinstance(summary.target_addr, int) or len(push_sources) != len(args):
             stats.failure_count += 1
@@ -244,7 +261,7 @@ def materialize_callsite_pointer_table_types_8616(
             materialized_facts.append(
                 CallsitePointerTableTypeFact8616(candidate.base_offset, candidate.name, pointer_type)
             )
-            record_global_declaration_spec_8616(
+            replace_global_declaration_spec_from_stronger_typed_evidence_8616(
                 codegen,
                 ctype=ctype,
                 name=candidate.name,

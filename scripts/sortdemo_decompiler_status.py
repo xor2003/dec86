@@ -17,10 +17,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pycparser import c_ast, c_parser
 from pycparser.c_parser import ParseError
+
+REPO_ROOT: Path = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from inertia_decompiler.generated_c_function_extraction import (  # noqa: E402
+    generated_function_definition_span,
+)
 
 _FUNCTION_HEADER_RE = re.compile(r"/\*\s*==\s*function\s+(0x[0-9a-fA-F]+)\s+(.+?)\s*==\s*\*/")
 _DIRECT_FUNCTION_HEADER_RE = re.compile(r"/\*\s*function:\s+(0x[0-9a-fA-F]+)\s+(.+?)\s*\*/")
@@ -537,9 +545,12 @@ class FunctionStatus:
     timeout_seconds: float | None = None
     timeout_message: str | None = None
     source_contract: SourceContractResult | None = None
+    generated_c: str | None = None
 
     def generated_c_marker(self) -> GeneratedCMarker | None:
         """Return the clean generated-C marker present in this record."""
+        if self.generated_c is not None:
+            return GeneratedCMarker.NORMAL
         return next(
             (
                 marker
@@ -551,7 +562,7 @@ class FunctionStatus:
 
     def leakage_counts(self) -> dict[str, int]:
         """Count unresolved-output markers in this function block."""
-        text = _leakage_count_text(self.lines)
+        text = self.generated_c or _leakage_count_text(self.lines)
         counts = {name: len(pattern.findall(text)) for name, pattern in _LEAKAGE_PATTERNS}
         for match in _SOURCE_QUALITY_REASON_RE.finditer(text):
             markers = tuple(marker.strip() for marker in match.group("markers").split(","))
@@ -844,17 +855,24 @@ def _parse_run_summary_line(run_summary: dict[str, Any], line: str) -> None:
         run_summary["tail_validation_uncollected"] = uncollected
 
 
-class _DeclarationTypeCollector(c_ast.NodeVisitor):
+def _node_children(node: c_ast.Node) -> tuple[c_ast.Node, ...]:
+    """Return typed children across pycparser's dynamic node boundary."""
+    children = cast("tuple[tuple[str, c_ast.Node], ...]", node.children())
+    return tuple(child for _name, child in children)
+
+
+class _DeclarationTypeCollector:
     """Collect declared C types needed for pointer/value argument classification."""
 
     def __init__(self) -> None:
         self.types_by_name: dict[str, c_ast.Node] = {}
 
-    def visit_Decl(self, node: c_ast.Decl) -> None:  # noqa: N802
-        """Record named object declarations and continue into nested declarations."""
-        if isinstance(node.name, str):
+    def visit(self, node: c_ast.Node) -> None:
+        """Record named object declarations and recurse through children."""
+        if isinstance(node, c_ast.Decl) and isinstance(node.name, str):
             self.types_by_name[node.name] = node.type
-        self.generic_visit(node)
+        for child in _node_children(node):
+            self.visit(child)
 
 
 def _resolved_expression_type(
@@ -925,7 +943,7 @@ def _argument_class(
     return ArgumentClass.VALUE
 
 
-class _FunctionCallCollector(c_ast.NodeVisitor):
+class _FunctionCallCollector:
     """Collect direct calls and argument classes from one generated function body."""
 
     def __init__(self, declared_types: dict[str, c_ast.Node]) -> None:
@@ -933,22 +951,26 @@ class _FunctionCallCollector(c_ast.NodeVisitor):
         self.observations: list[CallObservation] = []
         self.null_arguments: dict[int, tuple[bool, ...]] = {}
 
-    def visit_FuncCall(self, node: c_ast.FuncCall) -> None:  # noqa: N802
-        """Record one direct call, retaining null-constant evidence by observation index."""
-        name = node.name.name if isinstance(node.name, c_ast.ID) else "<indirect>"
-        if name in _GENERATED_MEMORY_INTRINSICS:
-            self.generic_visit(node)
-            return
-        arguments = () if node.args is None else tuple(node.args.exprs)
-        observation_index = len(self.observations)
-        self.observations.append(
-            CallObservation(
-                name=name,
-                argument_classes=tuple(_argument_class(argument, self.declared_types) for argument in arguments),
-            )
-        )
-        self.null_arguments[observation_index] = tuple(_expression_is_null_constant(argument) for argument in arguments)
-        self.generic_visit(node)
+    def visit(self, node: c_ast.Node) -> None:
+        """Record direct calls, retaining null-constant evidence by observation index."""
+        if isinstance(node, c_ast.FuncCall):
+            name = node.name.name if isinstance(node.name, c_ast.ID) else "<indirect>"
+            if name not in _GENERATED_MEMORY_INTRINSICS:
+                arguments = () if node.args is None else tuple(node.args.exprs)
+                observation_index = len(self.observations)
+                self.observations.append(
+                    CallObservation(
+                        name=name,
+                        argument_classes=tuple(
+                            _argument_class(argument, self.declared_types) for argument in arguments
+                        ),
+                    )
+                )
+                self.null_arguments[observation_index] = tuple(
+                    _expression_is_null_constant(argument) for argument in arguments
+                )
+        for child in _node_children(node):
+            self.visit(child)
 
 
 def _is_direct_break_body(node: c_ast.Node) -> bool:
@@ -969,34 +991,34 @@ def _array_base_name(node: c_ast.Node) -> str | None:
     return current.name if isinstance(current, c_ast.ID) else None
 
 
-class _ConditionShapeCollector(c_ast.NodeVisitor):
+class _ConditionShapeCollector:
     """Collect identifiers and array roots from one generated-C condition."""
 
     def __init__(self) -> None:
         self.identifiers: set[str] = set()
         self.arrays: set[str] = set()
 
-    def visit_ID(self, node: c_ast.ID) -> None:  # noqa: N802
-        """Record one identifier."""
-        self.identifiers.add(node.name)
+    def visit(self, node: c_ast.Node) -> None:
+        """Record identifiers and array roots, then recurse through children."""
+        if isinstance(node, c_ast.ID):
+            self.identifiers.add(node.name)
+        elif isinstance(node, c_ast.ArrayRef):
+            base_name = _array_base_name(node)
+            if base_name is not None:
+                self.arrays.add(base_name)
+        for child in _node_children(node):
+            self.visit(child)
 
-    def visit_ArrayRef(self, node: c_ast.ArrayRef) -> None:  # noqa: N802
-        """Record one array root and visit its index and field expressions."""
-        base_name = _array_base_name(node)
-        if base_name is not None:
-            self.arrays.add(base_name)
-        self.generic_visit(node)
 
-
-class _ConditionalBreakCollector(c_ast.NodeVisitor):
+class _ConditionalBreakCollector:
     """Collect if conditions whose taken branch contains a break."""
 
     def __init__(self) -> None:
         self.observations: list[ConditionalBreakObservation] = []
 
-    def visit_If(self, node: c_ast.If) -> None:  # noqa: N802
-        """Record a conditional break and continue into nested branches."""
-        if _is_direct_break_body(node.iftrue):
+    def visit(self, node: c_ast.Node) -> None:
+        """Record conditional breaks and recurse through nested branches."""
+        if isinstance(node, c_ast.If) and _is_direct_break_body(node.iftrue):
             shape = _ConditionShapeCollector()
             shape.visit(node.cond)
             condition = node.cond
@@ -1014,11 +1036,14 @@ class _ConditionalBreakCollector(c_ast.NodeVisitor):
                     arrays=frozenset(shape.arrays),
                 )
             )
-        self.generic_visit(node)
+        for child in _node_children(node):
+            self.visit(child)
 
 
 def _emitted_c_for_record(record: FunctionStatus) -> str | None:
     """Extract the generated C payload from one transcript function record."""
+    if record.generated_c is not None:
+        return record.generated_c
     marker_index = next(
         (
             index
@@ -1198,18 +1223,18 @@ def _evaluate_source_contract(
         if name not in expected_names and name not in contract.allowed_extra_calls
     )
     missing_control_flow: list[str] = []
-    for requirement in contract.conditional_breaks:
+    for condition_requirement in contract.conditional_breaks:
         matched = any(
-            _conditional_break_matches(requirement, observation)
+            _conditional_break_matches(condition_requirement, observation)
             for observation in conditional_breaks
         )
         if matched:
             continue
         missing_control_flow.append(
             "conditional-break:"
-            f"ops={','.join(sorted(requirement.comparison_ops))}:"
-            f"ids={','.join(sorted(requirement.required_identifiers))}:"
-            f"arrays={','.join(sorted(requirement.required_arrays))}"
+            f"ops={','.join(sorted(condition_requirement.comparison_ops))}:"
+            f"ids={','.join(sorted(condition_requirement.required_identifiers))}:"
+            f"arrays={','.join(sorted(condition_requirement.required_arrays))}"
         )
     failures = (
         missing_calls,
@@ -1238,6 +1263,34 @@ def _apply_sortdemo_source_contracts(records: list[FunctionStatus]) -> None:
                 _emitted_c_for_record(record),
                 call_name_aliases=_SORTDEMO_BINARY_CALL_ALIASES,
             )
+
+
+def _attach_canonical_generated_definitions(
+    records: list[FunctionStatus],
+    transcript: str,
+) -> None:
+    """Associate deferred canonical definitions with their function records."""
+    deferred: list[tuple[int, int, FunctionStatus]] = []
+    for record in records:
+        if record.generated_c_marker() is not None:
+            continue
+        numeric_name = f"sub_{int(record.addr, 16):04x}"
+        for function_name in (record.name, numeric_name):
+            try:
+                start, end = generated_function_definition_span(transcript, function_name)
+            except ValueError:
+                continue
+            deferred.append((start, end, record))
+            break
+    if not deferred:
+        return
+    deferred.sort(key=lambda item: item[0])
+    summary_start = transcript.rfind("/* info: decompilation attempted", 0, deferred[0][0])
+    previous_end = transcript.find("\n", summary_start) + 1 if summary_start >= 0 else None
+    for start, end, record in deferred:
+        record.generated_c = transcript[previous_end if previous_end is not None else start : end]
+        if previous_end is not None:
+            previous_end = end
 
 
 def parse_status_text(text: str, *, check_source_contracts: bool = False) -> dict[str, Any]:
@@ -1289,6 +1342,7 @@ def parse_status_text(text: str, *, check_source_contracts: bool = False) -> dic
         records.append(current)
 
     records = _merge_duplicate_proc_records(records)
+    _attach_canonical_generated_definitions(records, text)
     if check_source_contracts:
         _apply_sortdemo_source_contracts(records)
     summary: dict[str, int] = {"total": len(records)}
@@ -1357,7 +1411,7 @@ def _build_triage(records: list[FunctionStatus]) -> dict[str, list[dict[str, Any
         status = record.terminal_status()
         if status not in {TerminalStatus.TIMEOUT, TerminalStatus.ERROR}:
             continue
-        row = {
+        row: dict[str, Any] = {
             "addr": record.addr,
             "name": record.name,
             "stage": record.failure_stage,

@@ -6,6 +6,7 @@ from angr.sim_type import SimTypeChar, SimTypeFixedSizeArray, SimTypePointer, Si
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsitePushSourceKind8616, CallsiteSummary8616
+from angr_platforms.X86_16.codegen_metadata import GlobalDeclarationArrayExtent8616
 from angr_platforms.X86_16.lowering.callsite_pointer_tables import (
     callsite_pointer_table_argument_type_8616,
     materialize_callsite_pointer_table_types_8616,
@@ -105,7 +106,9 @@ def test_materializes_global_pointer_table_from_same_slot_stack_anchor() -> None
     assert isinstance(pointer_type, SimTypePointer)
     assert isinstance(pointer_type.pts_to, SimTypeChar)
     assert isinstance(candidate.variable.type, SimTypeShort)
-    assert codegen._inertia_global_declaration_specs_8616 == (("char *", "g_table", 1),)
+    assert codegen._inertia_global_declaration_specs_8616 == (
+        ("char *", "g_table", GlobalDeclarationArrayExtent8616.UNKNOWN),
+    )
     stats = codegen._inertia_callsite_pointer_table_stats_8616
     assert (
         stats.raw_fact_count,

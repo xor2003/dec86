@@ -67,6 +67,7 @@ from inertia_decompiler.cache import (
     _store_cache_json,
 )
 from inertia_decompiler.cli_arg_parser import CliArguments, parse_cli_arguments
+from inertia_decompiler.cli_batch_c_output import build_batch_c_output_8616
 from inertia_decompiler.cli_c_text_postprocess import _prune_invalid_simple_function_prototypes_text
 from inertia_decompiler.cli_output import (
     _print_asm_fallback_text,
@@ -95,7 +96,7 @@ from inertia_decompiler.discovery_cache_contract import (
 from inertia_decompiler.function_worker_policy import (
     FunctionWorkerMode8616,
     clean_process_override_8616,
-    requires_serial_function_decompilation,
+    requires_isolated_function_decompilation,
     select_function_worker_policy_8616,
 )
 from inertia_decompiler.generated_c_artifacts import write_generated_function_c
@@ -126,7 +127,6 @@ from inertia_decompiler.runtime_support import (
 )
 from inertia_decompiler.runtime_support import (
     DaemonThreadPoolExecutor,
-    PreforkJobPool,
 )
 from inertia_decompiler.runtime_support import (
     apply_memory_limit as _apply_memory_limit,
@@ -755,7 +755,7 @@ def _bounded_non_optimized_timeout(timeout: int) -> int:
     return min(max(1, timeout), 60)
 
 
-_DEFAULT_FUNCTION_TIMEOUT_CAP = 180
+_DEFAULT_FUNCTION_TIMEOUT_CAP = 240
 
 
 def _parse_env_timeout_cap() -> int | None:
@@ -3314,13 +3314,14 @@ def _emit_function_result(
                         name=function.name,
                         payload=result.payload,
                     )
-                _emit_optional_source_sidecar_c_block(
-                    args.binary,
-                    function.name,
-                    result.payload,
-                    alternate_source_c=bool(args.alternate_source_c),
-                    c_header="/* -- c -- */",
-                )
+                if args.addr is not None:
+                    _emit_optional_source_sidecar_c_block(
+                        args.binary,
+                        function.name,
+                        result.payload,
+                        alternate_source_c=bool(args.alternate_source_c),
+                        c_header="/* -- c -- */",
+                    )
                 return decompiled_local, failed_local
             if result.status == "ok":
                 validation_status = _tail_validation_display_status(result_tail_validation)
@@ -5370,7 +5371,11 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         preserved_candidate = _preserve_acceptance_candidate_or_best_failure(direct_acceptance, direct_result)
         direct_payload = direct_acceptance.gcc_checked_payload
     else:
-        direct_payload = direct_acceptance.gcc_checked_payload
+        direct_payload = (
+            direct_acceptance.gcc_checked_payload
+            if direct_status is WorkItemStatus.OK
+            else direct_result.payload
+        )
         preserved_candidate = direct_result.partial_payload
     direct_result = replace(
         direct_result,
@@ -6467,6 +6472,57 @@ class _BatchCliContext8616:
         return max(0, int(self.sweep_deadline - time.monotonic()))
 
 
+def _batch_function_decompile_timeout_8616(
+    context: _BatchCliContext8616,
+    function: _AngrFunction,
+    adaptive_timeout_model: _AdaptivePerByteTimeoutModel,
+) -> int:
+    """Return one complexity-aware timeout shared by serial and parallel lanes."""
+    args = context.args
+    block_count, byte_count = _function_complexity(function)
+    decompile_timeout = adaptive_timeout_model.timeout_for_byte_count(byte_count)
+    decompile_timeout = _effective_decompile_timeout_8616(
+        function.project,
+        decompile_timeout,
+        block_count=block_count,
+        byte_count=byte_count,
+    )
+    try:
+        architecture = function.project.arch.name
+    except AttributeError:
+        architecture = ""
+    if architecture == "86_16":
+        if block_count >= 72 or byte_count >= 520:
+            decompile_timeout = max(decompile_timeout, args.timeout + 120, 240)
+        elif block_count >= 56 or byte_count >= 420:
+            decompile_timeout = max(decompile_timeout, args.timeout + 90, 240)
+        elif block_count >= 36 or byte_count >= 300:
+            decompile_timeout = max(decompile_timeout, args.timeout + 60)
+    if args.addr is None:
+        decompile_timeout = max(decompile_timeout, 16)
+    if args.addr is None and context.timeout_was_explicit:
+        decompile_timeout = max(1, min(decompile_timeout, args.timeout))
+    remaining_sweep_budget = context.remaining_sweep_budget_sec()
+    if remaining_sweep_budget is not None:
+        decompile_timeout = max(1, min(decompile_timeout, remaining_sweep_budget))
+    bounded_timeout = _enforce_function_timeout_cap(
+        decompile_timeout,
+        context="sweep decompile timeout",
+        explicit_timeout_floor=args.timeout if context.timeout_was_explicit else None,
+    )
+    if (
+        architecture == "86_16"
+        and args.addr is None
+        and not context.timeout_was_explicit
+        and bounded_timeout >= 180
+    ):
+        return _enforce_function_timeout_cap(
+            max(bounded_timeout, 240),
+            context="sweep large-function finalization timeout",
+        )
+    return bounded_timeout
+
+
 def _transfer_caller_return_use_evidence_8616(
     source_project: object,
     destination_project: object,
@@ -6853,33 +6909,10 @@ def _run_serial_function_8616(
                     failed += f
                     emitted_indexes.add(item.index)
                 return _SerialFunctionOutcome8616(decompiled=decompiled, failed=failed)
-            _block_count, byte_count = _function_complexity(active_function)
-            decompile_timeout = adaptive_timeout_model.timeout_for_byte_count(byte_count)
-            decompile_timeout = _effective_decompile_timeout_8616(
-                active_function.project,
-                decompile_timeout,
-                block_count=_block_count,
-                byte_count=byte_count,
-            )
-            if getattr(getattr(active_function.project, "arch", None), "name", "") == "86_16":
-                if _block_count >= 72 or byte_count >= 520:
-                    decompile_timeout = max(int(decompile_timeout), int(args.timeout) + 120)
-                elif _block_count >= 56 or byte_count >= 420:
-                    decompile_timeout = max(int(decompile_timeout), int(args.timeout) + 90)
-                elif _block_count >= 36 or byte_count >= 300:
-                    decompile_timeout = max(int(decompile_timeout), int(args.timeout) + 60)
-            if args.addr is None:
-                decompile_timeout = max(int(decompile_timeout), 16)
-            if args.addr is None and timeout_was_explicit:
-                # Respect explicit user caps for whole-file sweeps.
-                decompile_timeout = max(1, min(int(decompile_timeout), int(args.timeout)))
-            remaining_sweep_budget = _remaining_sweep_budget_sec()
-            if remaining_sweep_budget is not None:
-                decompile_timeout = max(1, min(int(decompile_timeout), remaining_sweep_budget))
-            decompile_timeout = _enforce_function_timeout_cap(
-                int(decompile_timeout),
-                context="sweep decompile timeout",
-                explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
+            decompile_timeout = _batch_function_decompile_timeout_8616(
+                context,
+                active_function,
+                adaptive_timeout_model,
             )
             if use_serial_fork_per_function:
                 hard_timeout = _serial_clean_worker_outer_timeout_8616(decompile_timeout)
@@ -7063,6 +7096,22 @@ def _finish_batch_cli_8616(
         existing = result_map.get(index)
         if existing is not None:
             result_map[index] = replace(existing, tail_validation=snapshot)
+    accepted_payloads = tuple(
+        result.payload
+        for item in function_tasks
+        if (result := result_map.get(item.index)) is not None
+        and result.status == WorkItemStatus.OK.value
+        and isinstance(result.payload, str)
+        and result.payload.strip()
+    )
+    batch_c_output = build_batch_c_output_8616(
+        accepted_payloads,
+        expected_function_count=shown_total,
+    )
+    if batch_c_output.source:
+        print(batch_c_output.source, end="" if batch_c_output.source.endswith("\n") else "\n")
+    if batch_c_output.failed:
+        print(f"generated C translation-unit export failed: {batch_c_output.detail}", file=sys.stderr)
     attach_segment_program_layout_8616(
         project,
         function_tasks,
@@ -7115,12 +7164,13 @@ def _finish_batch_cli_8616(
     )
     if _timing_output_enabled():
         _emit_function_timing_summary(function_tasks, result_map)
-    return _batch_exit_code_8616(
+    exit_code = _batch_exit_code_8616(
         attempted=attempted,
         decompiled=decompiled,
         failed=failed,
         total_shown=total_shown,
     )
+    return 2 if batch_c_output.failed else exit_code
 
 
 def _batch_exit_code_8616(
@@ -7907,7 +7957,8 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
     selection_target = "decompilation" if args.max_functions <= 0 and args.addr is None else "display"
     print(f"/* info: selected {shown_total} function(s) for {selection_target} */")
 
-    workers = _choose_function_parallelism(len(function_tasks))
+    requested_workers = _choose_function_parallelism(len(function_tasks))
+    workers = requested_workers
     if lst_metadata is not None and visible_code_labels:
         workers = 1
     if any(item.function_cfg is None for item in function_tasks):
@@ -7940,13 +7991,11 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
         and low_memory_path
     ):
         workers = 1
-    serial_function_decompilation_required = requires_serial_function_decompilation(
+    isolated_function_decompilation_required = requires_isolated_function_decompilation(
         architecture=project.arch.name,
         binary_suffix=args.binary.suffix,
         address_requested=args.addr is not None,
     )
-    if serial_function_decompilation_required:
-        workers = 1
     forced_serial_function_decomp = os.environ.get(_FORCE_SERIAL_FUNCTION_DECOMP_ENV, "").strip().lower() in {
         "1",
         "true",
@@ -7954,7 +8003,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
         "on",
     }
     worker_policy = select_function_worker_policy_8616(
-        serial_required=serial_function_decompilation_required,
+        isolation_required=isolated_function_decompilation_required,
         sidecar_available=lst_metadata is not None,
         full_sweep=(
             args.addr is None
@@ -7964,14 +8013,18 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
         include_library_functions=include_library_functions,
         posix_available=os.name == "posix",
         function_count=len(function_tasks),
-        shared_worker_count=workers,
+        shared_worker_count=(
+            requested_workers if isolated_function_decompilation_required else workers
+        ),
         clean_process_override=clean_process_override_8616(
             os.environ.get("INERTIA_ENABLE_SERIAL_FORK_PER_FUNCTION")
         ),
     )
     workers = worker_policy.workers
     use_serial_fork_per_function = worker_policy.mode is FunctionWorkerMode8616.CLEAN_PROCESS
-    if workers > 1:
+    if use_serial_fork_per_function and workers > 1:
+        print(f"/* parallel function decompilation: {workers} clean processes, one function per process */")
+    elif workers > 1:
         print(f"/* parallel function decompilation: {workers} workers, shared imports */")
     elif use_serial_fork_per_function:
         print("/* parallel function decompilation: disabled; using one clean serial process at a time */")
@@ -7979,7 +8032,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
         print("/* parallel function decompilation: disabled (forced serial) */")
     else:
         print("/* parallel function decompilation: disabled (RAM pressure or single function) */")
-    force_isolated_function_projects = serial_function_decompilation_required
+    force_isolated_function_projects = isolated_function_decompilation_required
     typing.cast(typing.Any, project)._inertia_fast_direct_probe = bool(
             args.addr is not None
             and os.environ.get("INERTIA_FAST_DIRECT_PROBE", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -8048,82 +8101,65 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
     failed = 0
     emitted_indexes: set[int] = set()
     allow_isolated_retry_for_parallel_tasks = interactive_stdout or args.max_functions <= 0 or args.addr is not None
-    use_prefork_function_pool = (
-        force_isolated_function_projects
-        and len(function_tasks) > 1
-        and os.name == "posix"
-        and threading.current_thread() is threading.main_thread()
-        and threading.active_count() == 1
-    )
-    if use_prefork_function_pool:
-        task_by_index = {item.index: item for item in function_tasks if item.function_cfg is not None}
-
-        def _prefork_worker(task_index: object) -> object:
-            if not isinstance(task_index, int):
-                raise TypeError("prefork function task index must be an int")
-            item = task_by_index[task_index]
-            return _run_function_work_item(
-                item,
-                timeout=args.timeout,
-                api_style=args.api_style,
-                binary_path=args.binary,
-                cod_metadata=cod_metadata,
-                synthetic_globals=synthetic_globals,
-                lst_metadata=lst_metadata,
-                enable_structured_simplify=True,
-                force_isolated_project=force_isolated_function_projects,
-                allow_isolated_retry=allow_isolated_retry_for_parallel_tasks,
-            )
-
-        pool = PreforkJobPool(
-            max_workers=workers,
-            worker_func=_prefork_worker,
-            name_prefix="func-prefork",
+    if use_serial_fork_per_function:
+        parallel_timeout_model = _AdaptivePerByteTimeoutModel(
+            args.timeout,
+            explicit_timeout=timeout_was_explicit,
+            margin=1.5,
         )
+        timeout_by_index = {
+            item.index: _batch_function_decompile_timeout_8616(
+                batch_context,
+                cast(_AngrFunction, item.function),
+                parallel_timeout_model,
+            )
+            for item in function_tasks
+            if item.function_cfg is not None
+        }
+        executor = DaemonThreadPoolExecutor(max_workers=workers, thread_name_prefix="func-clean")
         try:
-            for task_index, payload in pool.run_unordered(
-                [(item.index, item.index) for item in function_tasks if item.function_cfg is not None]
-            ):
-                if not isinstance(task_index, int):
+            future_by_index = {
+                item.index: executor.submit(
+                    _run_serial_clean_process_work_item_8616,
+                    batch_context,
+                    item,
+                    timeout=timeout_by_index[item.index],
+                )
+                for item in function_tasks
+                if item.function_cfg is not None
+            }
+            for item in function_tasks:
+                future = future_by_index.get(item.index)
+                if future is None:
                     continue
-                item = task_by_index[task_index]
-                if isinstance(payload, Exception):
-                    result_map[item.index] = FunctionWorkResult(
+                function = cast(_AngrFunction, item.function)
+                function_timeout = timeout_by_index[item.index]
+                worker_debug = (
+                    f"[dbg] clean parallel function worker: start "
+                    f"{_function_work_item_recovery_addr_8616(item):#x} {function.name} "
+                    f"requested_timeout={function_timeout}s "
+                    f"hard_timeout={_serial_clean_worker_outer_timeout_8616(function_timeout)}s\n"
+                )
+                try:
+                    result = future.result()
+                except Exception as ex:
+                    result = FunctionWorkResult(
                         index=item.index,
                         status="error",
-                        payload=str(payload),
-                        debug_output="",
+                        payload=f"Clean parallel worker failed: {_describe_exception(ex)}",
+                        debug_output=worker_debug,
                         function=item.function,
                         function_cfg=item.function_cfg,
-                        elapsed=float(args.timeout),
+                        elapsed=float(function_timeout),
                     )
                 else:
-                    result_map[item.index] = cast(FunctionWorkResult, payload)
-                result = result_map.get(item.index)
-                if result is not None and item.index not in emitted_indexes:
-                    d, f = _emit_function_result(
-                        item,
+                    result = replace(
                         result,
-                        project=project,
-                        args=args,
-                        lst_metadata=lst_metadata,
-                        cod_metadata=cod_metadata,
-                        synthetic_globals=synthetic_globals,
-                        precise_sidecar_regions=precise_sidecar_regions,
-                        allow_heavy_fallbacks=allow_heavy_fallbacks,
-                        interactive_stdout=interactive_stdout,
-                        use_serial_fork_per_function=use_serial_fork_per_function,
-                        fallback_tail_validation_by_index=fallback_tail_validation_by_index,
-                        result_state_by_index=result_map,
+                        debug_output=worker_debug + result.debug_output,
                     )
-                    decompiled += d
-                    failed += f
-                    emitted_indexes.add(item.index)
-                    if f and args.addr is not None:
-                        _emit_tail_validation_console_summary(function_tasks, result_map, binary_path=args.binary)
-                        return 2
+                result_map[item.index] = result
         finally:
-            pool.shutdown()
+            executor.shutdown(wait=True, cancel_futures=False)
     else:
         executor = DaemonThreadPoolExecutor(max_workers=workers, thread_name_prefix="func")
         try:

@@ -33,6 +33,7 @@ from angr_platforms.X86_16.lowering.call_output_stack_objects import (
     recover_call_output_stack_object_facts_8616,
     select_wide_call_return_condition_chain_8616,
 )
+from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
 
 
 class _Types:
@@ -401,8 +402,16 @@ def _wide_condition_fixture(*, include_summary=True, ast_high_offset=-2):
     return codegen, expression, conditions, call, wide
 
 
-def test_wide_call_return_condition_joins_typed_dx_ax_and_stack_pair():
+@pytest.mark.parametrize("cast_high_view", (False, True))
+def test_wide_call_return_condition_joins_typed_dx_ax_and_stack_pair(cast_high_view):
     codegen, expression, conditions, call, wide = _wide_condition_fixture()
+    if cast_high_view:
+        expression.lhs.rhs = CSemanticCast8616(
+            SimTypeShort(False),
+            SimTypeShort(True),
+            expression.lhs.rhs,
+            codegen=codegen,
+        )
 
     result = lower_wide_call_return_condition_chain_8616(codegen, expression, conditions)
 

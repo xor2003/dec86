@@ -124,6 +124,7 @@ from .structuring.condition_provenance import (
     replay_codegen_structured_condition_segment_provenance_8616,
 )
 from .structuring.direct_stack_move_branches import (
+    finalize_direct_stack_move_branch_ownership_8616,
     materialize_direct_stack_move_branch_ownership_8616,
     place_direct_stack_move_assignment_8616,
 )
@@ -778,6 +779,7 @@ def run_direct_instruction_materialization_8616(
     source_kinds: frozenset[DirectStackMoveSourceKind8616] | None = None,
     materialize_stack_reloads: bool = True,
     include_callee_saved_spill_prune: bool = True,
+    enforce_direct_stack_branch_contract: bool = False,
 ) -> DirectInstructionMaterializationResult8616:
     """Run direct stack/global instruction materializers in stage-owned order."""
     current_function = function if function is not None else _current_structuring_function_8616(project, codegen)
@@ -826,8 +828,13 @@ def run_direct_instruction_materialization_8616(
         )
     )
     if current_function is not None:
+        branch_materializer = (
+            finalize_direct_stack_move_branch_ownership_8616
+            if enforce_direct_stack_branch_contract
+            else materialize_direct_stack_move_branch_ownership_8616
+        )
         direct_stack_mov_changed = (
-            materialize_direct_stack_move_branch_ownership_8616(
+            branch_materializer(
                 project,
                 codegen,
                 current_function,

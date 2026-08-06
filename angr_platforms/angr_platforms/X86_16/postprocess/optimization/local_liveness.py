@@ -16,7 +16,23 @@ from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
 LocalLivenessKey8616: TypeAlias = tuple[str, Hashable]
 
-__all__ = ["LocalLivenessKey8616", "local_liveness_key_8616"]
+__all__ = [
+    "LocalLivenessKey8616",
+    "local_liveness_key_8616",
+    "stack_storage_liveness_key_8616",
+]
+
+
+def stack_storage_liveness_key_8616(
+    node: structured_c.CVariable,
+) -> LocalLivenessKey8616 | None:
+    """Return physical BP-relative identity for a proven stack variable."""
+    variable = node.variable
+    if not isinstance(variable, SimStackVariable):
+        return None
+    if not isinstance(variable.offset, int) or not isinstance(variable.size, int):
+        return None
+    return ("stack_storage", (variable.base, variable.offset, variable.size))
 
 
 def local_liveness_key_8616(

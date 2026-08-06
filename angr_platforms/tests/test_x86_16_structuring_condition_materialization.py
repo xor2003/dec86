@@ -1016,6 +1016,8 @@ def test_structuring_single_branch_uses_taken_condition_for_taken_owned_body(mon
     assert replacement.op == "CmpNE"
     assert replacement.tags["inertia_structuring_single_branch_materialized_8616"] is True
     assert replacement.tags["inertia_structuring_condition_cfg_materialized_8616"] is True
+    assert condition_materialization.condition_replay_facts_8616(codegen)[0].true_target == 0x1012
+    assert condition_materialization.condition_replay_facts_8616(codegen)[0].false_target == 0x1004
 
     changed_again = condition_materialization.materialize_structuring_condition_chains_8616(project, codegen)
 
@@ -1256,6 +1258,8 @@ def test_structuring_single_branch_inverts_condition_for_fallthrough_owned_body(
     assert changed is True
     replacement = root.statements[0].condition_and_nodes[0][0]
     assert replacement.op == "CmpEQ"
+    assert condition_materialization.condition_replay_facts_8616(codegen)[0].true_target == 0x2010
+    assert condition_materialization.condition_replay_facts_8616(codegen)[0].false_target == 0x2020
 
 
 def test_structuring_single_branch_refuses_shared_body_reachability(monkeypatch):

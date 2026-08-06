@@ -121,6 +121,10 @@ from .lowering.call_argument_shape import (
     exact_caller_stack_object_shape_evidence_8616,
     reconcile_materialized_call_argument_shape_8616,
 )
+from .lowering.call_argument_stack_sources import (
+    containing_stack_cvariable_8616,
+    iter_stack_cvariable_candidates_8616,
+)
 from .lowering.function_pointer_parameters import materialize_function_pointer_parameters_8616
 from .lowering.real_mode_linear import (
     RealModeLinearStackAccess8616,
@@ -6019,50 +6023,16 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         return 4
 
     def _iter_stack_cvar_candidates() -> StructuredAstValue:
-        yielded: set[int] = set()
-        variables_in_use = getattr(getattr(codegen, "cfunc", None), "variables_in_use", None)
-        if isinstance(variables_in_use, dict):
-            for variable, cvar in variables_in_use.items():
-                if isinstance(variable, SimStackVariable) and isinstance(cvar, structured_c.CVariable):
-                    yielded.add(id(cvar))
-                    yield cvar
-        root = getattr(getattr(codegen, "cfunc", None), "statements", None)
-        if root is not None:
-            for node in _iter_c_nodes_deep_8616(root):
-                if not isinstance(node, structured_c.CVariable):
-                    continue
-                variable = node.variable
-                if not isinstance(variable, SimStackVariable):
-                    continue
-                if id(node) in yielded:
-                    continue
-                yielded.add(id(node))
-                yield node
+        yield from iter_stack_cvariable_candidates_8616(codegen, synthetic_stack_cvars)
 
     def _existing_containing_stack_cvar_8616(offset: int, *, size_hint: int = 1) -> StructuredAstValue:
-        best = None
-        best_score = None
-        for cvar in _iter_stack_cvar_candidates():
-            variable = getattr(cvar, "variable", None)
-            if not isinstance(variable, SimStackVariable):
-                continue
-            base_offset = variable.offset
-            size = variable.size
-            if not isinstance(base_offset, int) or not isinstance(size, int):
-                continue
-            if size < max(int(size_hint), 1) or not (base_offset <= offset < base_offset + size):
-                continue
-            name = variable.name or getattr(cvar, "name", None)
-            score = (_stack_name_preference(name), size, -abs(base_offset - offset))
-            if best_score is None or score > best_score:
-                best = cvar
-                best_score = score
-        if best is None:
-            return None
-        best_name = getattr(getattr(best, "variable", None), "name", None) or getattr(best, "name", None)
-        if _stack_name_preference(best_name) <= 1:
-            return None
-        return _clone_c_ast_tree(best)
+        cvar = containing_stack_cvariable_8616(
+            codegen,
+            synthetic_stack_cvars,
+            offset=offset,
+            size_hint=size_hint,
+        )
+        return _clone_c_ast_tree(cvar) if cvar is not None else None
 
     def _stack_cvar_for_offset(
         offset: int, *, size_hint: int = 2, allow_best_match: bool = True
@@ -6136,7 +6106,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             return _clone_c_ast_tree(exact_match)
 
         best = None
-        best_score = None
+        best_score: tuple[int, int, int, int, int, int] | None = None
         if allow_best_match:
             for cvar in _iter_stack_cvar_candidates():
                 variable = getattr(cvar, "variable", None)
@@ -6157,7 +6127,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                     continue
                 name = variable.name or getattr(cvar, "name", None)
                 name_pref = _stack_name_preference(name)
-                score = (
+                candidate_score = (
                     1 if name_pref >= 3 else 0,
                     relation,
                     name_pref,
@@ -6165,9 +6135,9 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
                     size,
                     -abs(base_offset - offset),
                 )
-                if best_score is None or score > best_score:
+                if best_score is None or candidate_score > best_score:
                     best = cvar
-                    best_score = score
+                    best_score = candidate_score
 
         if best is not None:
             best_name = getattr(getattr(best, "variable", None), "name", None) or getattr(best, "name", None)

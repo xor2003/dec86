@@ -10,7 +10,7 @@ from inertia_decompiler.function_worker_policy import (
 
 def _policy(**overrides: object):
     inputs: dict[str, object] = {
-        "serial_required": True,
+        "isolation_required": True,
         "sidecar_available": False,
         "full_sweep": True,
         "include_library_functions": False,
@@ -23,11 +23,11 @@ def _policy(**overrides: object):
     return select_function_worker_policy_8616(**inputs)  # type: ignore[arg-type]
 
 
-def test_pure_binary_whole_file_uses_clean_serial_processes_by_default() -> None:
+def test_pure_binary_whole_file_uses_bounded_clean_processes_by_default() -> None:
     policy = _policy()
 
     assert policy.mode is FunctionWorkerMode8616.CLEAN_PROCESS
-    assert policy.workers == 1
+    assert policy.workers == 7
 
 
 def test_sidecar_whole_file_preserves_shared_serial_default() -> None:
@@ -44,7 +44,7 @@ def test_explicit_clean_process_override_supports_sidecar_runs() -> None:
     )
 
     assert policy.mode is FunctionWorkerMode8616.CLEAN_PROCESS
-    assert policy.workers == 1
+    assert policy.workers == 7
 
 
 def test_explicit_disable_preserves_single_shared_worker() -> None:
@@ -54,13 +54,13 @@ def test_explicit_disable_preserves_single_shared_worker() -> None:
     assert policy.workers == 1
 
 
-def test_clean_process_mode_remains_serial_for_many_functions() -> None:
-    assert _policy(function_count=2).workers == 1
-    assert _policy(function_count=200).workers == 1
+def test_clean_process_mode_is_bounded_by_functions_and_cpu_budget() -> None:
+    assert _policy(function_count=2).workers == 2
+    assert _policy(function_count=200).workers == 7
 
 
 def test_non_x86_policy_preserves_shared_worker_selection() -> None:
-    policy = _policy(serial_required=False, function_count=3, shared_worker_count=7)
+    policy = _policy(isolation_required=False, function_count=3, shared_worker_count=7)
 
     assert policy.mode is FunctionWorkerMode8616.SHARED
     assert policy.workers == 3
