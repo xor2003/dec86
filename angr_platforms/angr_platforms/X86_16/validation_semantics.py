@@ -31,14 +31,6 @@ class KnownCallArgKind8616(Enum):
 
 
 _KNOWN_CALL_ARG_KINDS_8616: dict[str, dict[int, KnownCallArgKind8616]] = {
-    "PercolateUp": {0: KnownCallArgKind8616.VALUE},
-    "_PercolateUp": {0: KnownCallArgKind8616.VALUE},
-    "PercolateDown": {0: KnownCallArgKind8616.VALUE},
-    "_PercolateDown": {0: KnownCallArgKind8616.VALUE},
-    "SwapBars": {0: KnownCallArgKind8616.VALUE, 1: KnownCallArgKind8616.VALUE},
-    "_SwapBars": {0: KnownCallArgKind8616.VALUE, 1: KnownCallArgKind8616.VALUE},
-    "Swaps": {0: KnownCallArgKind8616.POINTER, 1: KnownCallArgKind8616.POINTER},
-    "_Swaps": {0: KnownCallArgKind8616.POINTER, 1: KnownCallArgKind8616.POINTER},
 }
 
 _CALL_STMT_RE_8616 = re.compile(r"^(?P<name>[A-Za-z_]\w*)\s*\((?P<args>.*)\)\s*;\s*$")
