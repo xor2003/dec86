@@ -335,7 +335,10 @@ def tail_validation_snapshot_for_fallback(
     forced_snapshot = _dynamic_cli_attr(project, "_inertia_forced_tail_validation_snapshot", None)
     if isinstance(forced_snapshot, dict):
         typing.cast(typing.Any, project)._inertia_forced_tail_validation_snapshot = None
-        return extract_x86_16_tail_validation_snapshot({"x86_16_tail_validation": forced_snapshot})
+        return cast(
+            dict[str, object],
+            extract_x86_16_tail_validation_snapshot({"x86_16_tail_validation": forced_snapshot}),
+        )
 
     current_snapshot = _dynamic_cli_attr(project, "_inertia_partial_tail_validation_snapshot", None)
     if isinstance(current_snapshot, dict):
@@ -343,12 +346,15 @@ def tail_validation_snapshot_for_fallback(
         return dict(current_snapshot)
     snapshot = extract_x86_16_tail_validation_snapshot(_as_mapping(_dynamic_cli_attr(function, "info", None)))
     if snapshot:
-        return snapshot
+        return cast(dict[str, object], snapshot)
     if not allow_project_fallback:
         return {}
     fallback_snapshot = _dynamic_cli_attr(project, "_inertia_last_tail_validation_snapshot", None)
     if isinstance(fallback_snapshot, dict):
-        return extract_x86_16_tail_validation_snapshot({"x86_16_tail_validation": fallback_snapshot})
+        return cast(
+            dict[str, object],
+            extract_x86_16_tail_validation_snapshot({"x86_16_tail_validation": fallback_snapshot}),
+        )
     return {}
 
 
@@ -357,7 +363,7 @@ def tail_validation_fallback_allows_project_snapshot(kind: str) -> bool:
     return kind in TAIL_VALIDATION_FALLBACK_PROJECT_SNAPSHOT_KINDS
 
 
-@trace_function(name="tail_validation.summary")
+@cast(typing.Callable[..., typing.Any], trace_function(name="tail_validation.summary"))
 def emit_tail_validation_console_summary(
     function_tasks: Sequence[object],
     result_map: Mapping[int, object],

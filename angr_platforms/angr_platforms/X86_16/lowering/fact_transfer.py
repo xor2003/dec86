@@ -194,8 +194,8 @@ def collect_normalized_semantic_alias_facts_from_project_8616(
         normalized = normalize_semantic_accesses_8616(raw_accesses, frame)
         assert_no_unresolved_stable_ss_before_alias_8616(normalized)
 
-        facts = []
-        failures = []
+        facts: list[object] = []
+        failures: list[object] = []
 
         for acc in normalized:
             addr = acc[1]
@@ -254,7 +254,7 @@ def collect_semantic_alias_facts_from_project_8616(project: object, func_addr: i
             unique.append(fact)
 
     # Deterministic sort: stack facts by offset, then others
-    def _sort_key(fact: object) -> tuple:
+    def _sort_key(fact: object) -> tuple[str, int, int]:
         identity = fact.identity if isinstance(fact, AliasStorageFacts) else None
         if identity is None:
             return ("z", 0, 0)

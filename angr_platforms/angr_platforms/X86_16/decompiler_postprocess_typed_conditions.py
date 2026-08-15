@@ -264,6 +264,7 @@ def _build_stack_operand_expr_8616(
     codegen: object,
     *,
     signed: bool = False,
+    cond: ConditionIR | None = None,
 ) -> CExpression | None:
     """Build a stack CVariable preserving signed ConditionIR operand evidence."""
     if operand.space != MemSpace.SS:
@@ -271,6 +272,10 @@ def _build_stack_operand_expr_8616(
     base = operand.name if operand.name in {"bp", "sp"} else "bp"
     offset = int(operand.offset)
     size = int(operand.size or 2)
+    if cond is not None and isinstance(cond.width_bits, int) and cond.width_bits > 0:
+        condition_size = max(1, (cond.width_bits + 7) // 8)
+        if size > condition_size:
+            size = condition_size
     prefix = "arg" if base == "bp" and offset > 0 else "local"
     name = f"{prefix}_{abs(offset):x}"
     return materialize_typed_condition_stack_operand_8616(
@@ -280,6 +285,7 @@ def _build_stack_operand_expr_8616(
         size=max(size, 1),
         name=name,
         signed=signed,
+        prefer_signed_local_storage=signed,
         tags=stable_stack_condition_binding_tags_8616(offset, max(size, 1), name=name),
     )
 
@@ -299,6 +305,7 @@ def _clone_stack_expr_with_condition_signedness_8616(expr: object, cond: Conditi
         size=max(size, 1),
         name=expr.name,
         signed=True,
+        prefer_signed_local_storage=True,
         tags=dict(expr.tags),
         preferred=expr,
     )
@@ -324,10 +331,10 @@ def _build_c_expr_for_operand(
             }.get(operand.op)
             if lhs is None or rhs is None or structured_op is None:
                 return None
-            return CBinaryOp(structured_op, lhs, rhs, codegen=codegen)
+            return cast(object, CBinaryOp(structured_op, lhs, rhs, codegen=codegen))
         if isinstance(operand, IRValue):
             if operand.space == MemSpace.CONST:
-                return CConstant(int(operand.const or 0), SimTypeInt(signed=False, label="int"), codegen=codegen)
+                return cast(object, CConstant(int(operand.const or 0), SimTypeInt(signed=False, label="int"), codegen=codegen))
             if operand.space == MemSpace.REG and isinstance(operand.name, str) and operand.name:
                 bind_addr = cond.operand_bind_insn if cond is not None else None
                 if not isinstance(bind_addr, int):
@@ -347,20 +354,21 @@ def _build_c_expr_for_operand(
             if operand.space in {MemSpace.DS, MemSpace.ES}:
                 indexed_expr = _build_indexed_segmented_operand_expr_8616(project, operand, codegen)
                 if indexed_expr is not None:
-                    return indexed_expr
+                    return cast(object, indexed_expr)
                 return _build_segmented_operand_expr_8616(project, operand, codegen)
             if operand.space == MemSpace.SS:
                 stack_expr = _build_stack_operand_expr_8616(
                     operand,
                     codegen,
                     signed=bool(cond is not None and cond.is_signed),
+                    cond=cond,
                 )
                 return stack_expr if stack_expr is not None else _build_segmented_operand_expr_8616(project, operand, codegen)
             return None
         if isinstance(operand, str):
             return _build_reg_var(project, operand, codegen)
         if isinstance(operand, int):
-            return CConstant(int(operand), SimTypeInt(signed=False, label="int"), codegen=codegen)
+            return cast(object, CConstant(int(operand), SimTypeInt(signed=False, label="int"), codegen=codegen))
         # Compatibility lane: some condition facts still carry raw VexValue-like
         # wrappers. Resolve register/const evidence if present.
         try:
@@ -368,7 +376,7 @@ def _build_c_expr_for_operand(
         except Exception:
             value_const = None
         if isinstance(value_const, int):
-            return CConstant(int(value_const), SimTypeInt(signed=False, label="int"), codegen=codegen)
+            return cast(object, CConstant(int(value_const), SimTypeInt(signed=False, label="int"), codegen=codegen))
         try:
             reg_name = _dynamic_typed_condition_getattr_8616(operand, "reg_name", None)
         except Exception:
@@ -1044,9 +1052,9 @@ def _condition_key_from_tags(node: object) -> tuple[int, int] | None:
     return _walk(node)
 
 
-def _index_conditions_by_tag(conditions: list[ConditionIR]) -> dict[tuple, ConditionIR]:
+def _index_conditions_by_tag(conditions: list[ConditionIR]) -> dict[tuple[Any, ...], ConditionIR]:
     """Index ConditionIR objects by their (ins_addr, block_addr) key."""
-    index: dict[tuple, ConditionIR] = {}
+    index: dict[tuple[Any, ...], ConditionIR] = {}
     for cond in conditions:
         if not isinstance(cond.src_insn, int) or not isinstance(cond.block_addr, int):
             continue
@@ -1056,7 +1064,7 @@ def _index_conditions_by_tag(conditions: list[ConditionIR]) -> dict[tuple, Condi
 
 
 def _resolve_condition_by_tag_with_delta(
-    project: object, index: dict[tuple, ConditionIR], key: tuple | None
+    project: object, index: dict[tuple[Any, ...], ConditionIR], key: tuple[Any, ...] | None
 ) -> ConditionIR | None:
     def _impl() -> ConditionIR | None:
         if key is None:
@@ -1133,7 +1141,7 @@ def _is_flag_based_condition_node(node: object) -> bool:
     return _impl()
 
 
-def _debug_condition_candidate_8616(label: str, cond: object, key: tuple | None, flag_based: bool) -> None:
+def _debug_condition_candidate_8616(label: str, cond: object, key: tuple[Any, ...] | None, flag_based: bool) -> None:
     if not os.environ.get("INERTIA_DEBUG_TYPED_CONDITIONS"):
         return
     try:
@@ -1225,7 +1233,8 @@ def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: S
         return False
 
     changed = False
-    matched_condition_keys: set[tuple] = set()
+    matched_condition_keys: set[tuple[Any, ...]] = set()
+    visited_nodes: set[int] = set()
 
     def _is_literal_condition(expr: object) -> bool:
         node = expr
@@ -1239,15 +1248,13 @@ def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: S
         key = _condition_key_from_tags(cond)
         flag_based = _is_flag_based_condition_node(cond)
         cite_carrier = key is not None and _contains_cite_node_8616(cond)
-        _debug_condition_candidate_8616("replacement", cond, key, flag_based or cite_carrier)
-        if (
+        typed_comparison = (
             isinstance(cond, CBinaryOp)
             and str(cond.op).startswith("Cmp")
-            and not (flag_based or cite_carrier)
-            and not _contains_flag_mask_operator_8616(cond)
-        ):
-            return None
-        if not (flag_based or cite_carrier):
+            and key is not None
+        )
+        _debug_condition_candidate_8616("replacement", cond, key, flag_based or cite_carrier)
+        if not (flag_based or cite_carrier or typed_comparison):
             return None
         if key is None:
             return None
@@ -1265,7 +1272,9 @@ def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: S
             return None
         if _same_c_expression_8616(new_cond.lhs, new_cond.rhs):
             return None
-        if _expr_fingerprint(new_cond.lhs, project) == _expr_fingerprint(new_cond.rhs, project):
+        if _expr_fingerprint(new_cond, project) == _expr_fingerprint(cond, project):
+            return None
+        if _same_c_expression_8616(new_cond, cond):
             return None
         carrier_polarity = _typed_condition_carrier_polarity_8616(cond)
         if carrier_polarity is False:
@@ -1273,7 +1282,7 @@ def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: S
         record_materialized_condition_trace_8616(project, codegen, key, new_cond)
         if key is not None:
             matched_condition_keys.add(key)
-        return new_cond
+        return cast(object, new_cond)
 
     def _walk_statements(statements_obj: object) -> None:
         nonlocal changed
@@ -1290,6 +1299,10 @@ def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: S
         nonlocal changed
         if node is None or not _structured_codegen_node_8616(node):
             return
+        node_id = id(node)
+        if node_id in visited_nodes:
+            return
+        visited_nodes.add(node_id)
 
         # Replace condition in if statements
         if isinstance(node, CIfElse):
@@ -1328,7 +1341,13 @@ def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: S
         # Replace condition in loops
         if hasattr(node, "condition") and not isinstance(node, CIfElse):
             cond = _dynamic_typed_condition_getattr_8616(node, "condition", None)
-            if _is_flag_based_condition_node(cond):
+            condition_key = _condition_key_from_tags(cond)
+            typed_comparison = (
+                isinstance(cond, CBinaryOp)
+                and str(cond.op).startswith("Cmp")
+                and condition_key is not None
+            )
+            if _is_flag_based_condition_node(cond) or typed_comparison:
                 new_cond = _replacement_for_condition_node(cond)
                 if new_cond is not None:
                     typing.cast(typing.Any, node).condition = new_cond

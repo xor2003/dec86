@@ -479,7 +479,10 @@ def _lookup_prior_register_stack_load_8616(
         mem = operands[1].mem
         if not mem.base or str(insn.reg_name(mem.base)).lower() != "bp":
             continue
-        return _bp_operand_stack_expr_8616(codegen, int(mem.disp), int(getattr(operands[1], "size", 0) or size))
+        return cast(
+            object | None,
+            _bp_operand_stack_expr_8616(codegen, int(mem.disp), int(getattr(operands[1], "size", 0) or size)),
+        )
     return None
 
 
@@ -487,7 +490,7 @@ def _wide_stack_pair_expr_8616(codegen: Any, hi_expr: object, lo_expr: object) -
     lo_offset = proven_wide_stack_pair_low_offset_8616(hi_expr, lo_expr)
     if lo_offset is None:
         return None
-    return _stack_slot_expr_8616(codegen, lo_offset, 4)
+    return cast(object | None, _stack_slot_expr_8616(codegen, lo_offset, 4))
 
 
 def _expr_is_register_8616(project: Any, expr: object, reg_name: str) -> bool:
@@ -538,7 +541,7 @@ def _wide_call_return_pair_expr_8616(
         pass
     if debug_jcc:
         _log.warning("[jcc-rewrite] wide-call-return materialized ins_addr=%#x expr=%r", int(ins_addr), call_expr)
-    return call_expr
+    return cast(object | None, call_expr)
 
 
 def _wide_call_return_pair_operands_8616(
@@ -886,7 +889,7 @@ def _function_insns_for_codegen_8616(project: Any, codegen: Any) -> tuple[Any, .
                 break
             addr += size
         insns.extend(tuple(linear_insns))
-    by_addr = {}
+    by_addr: dict[int, Any] = {}
     for insn in insns:
         by_addr.setdefault(int(getattr(insn, "address", 0) or 0), insn)
     result = tuple(sorted(by_addr.values(), key=lambda item: int(getattr(item, "address", 0) or 0)))
@@ -897,8 +900,8 @@ def _function_insns_for_codegen_8616(project: Any, codegen: Any) -> tuple[Any, .
     return result
 
 
-def _merge_unique_insns_by_addr_8616(*groups: tuple) -> tuple:
-    by_addr = {}
+def _merge_unique_insns_by_addr_8616(*groups: tuple[Any, ...]) -> tuple[Any, ...]:
+    by_addr: dict[int, Any] = {}
     for group in groups:
         for insn in tuple(group or ()):
             addr = int(getattr(insn, "address", 0) or 0)
@@ -1494,16 +1497,19 @@ def _resolve_cmp_operand_expr_8616(
             reg_offset = _reg_offset_8616(project, reg_name)
             reg_size = int(getattr(operand, "size", 0) or 2)
             if reg_offset is not None:
-                return CVariable(SimRegisterVariable(reg_offset, reg_size, name=reg_name), codegen=codegen)
+                return cast(object | None, CVariable(SimRegisterVariable(reg_offset, reg_size, name=reg_name), codegen=codegen))
             return None
         if op_type == 2:
-            return _const_8616(int(operand.imm), codegen)
+            return cast(object | None, _const_8616(int(operand.imm), codegen))
         if op_type == 3 and getattr(operand, "mem", None) is not None:
             mem = operand.mem
             if mem.base:
                 base_reg_name = reg_name_fn(mem.base).lower()
                 if base_reg_name == "bp":
-                    return _bp_operand_stack_expr_8616(codegen, int(mem.disp), int(getattr(operand, "size", 0) or 2))
+                    return cast(
+                        object | None,
+                        _bp_operand_stack_expr_8616(codegen, int(mem.disp), int(getattr(operand, "size", 0) or 2)),
+                    )
                 base_expr = reg_state.get(base_reg_name)
                 if base_expr is None:
                     return None
@@ -2160,11 +2166,11 @@ def _translate_cmp_jcc_guard_8616(
                     reg_state_fp[key] = _expr_fingerprint(value, project)
                 except Exception:
                     reg_state_fp[key] = repr(value)
-            for key, value in stack_slots.items():
+            for slot_key, slot_value in stack_slots.items():
                 try:
-                    stack_slots_fp[key] = _expr_fingerprint(value, project)
+                    stack_slots_fp[slot_key] = _expr_fingerprint(slot_value, project)
                 except Exception:
-                    stack_slots_fp[key] = repr(value)
+                    stack_slots_fp[slot_key] = repr(slot_value)
             _log.warning(
                 "[jcc-rewrite] decoded block=%#x jcc=%#x mnemonic=%s op=%s lhs=%r rhs=%r reg_state=%r stack_slots=%r reg_state_fp=%r stack_slots_fp=%r",
                 block_addr,
@@ -2196,7 +2202,7 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
 
         changed = False
         materialized_count = 0
-        key_signature_plan: dict[tuple[int, int], tuple] = {}
+        key_signature_plan: dict[tuple[int, int], tuple[Any, ...]] = {}
         key_decoded_plan: dict[tuple[int, int], _DecodedCmpGuard8616] = {}
         key_conflicts: set[tuple[int, int]] = set()
         unknown_polarity_refused_keys: set[tuple[int, int]] = set()
@@ -2742,15 +2748,15 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
                     flattened.append(stmt)
                 return tuple(flattened)
             if isinstance(root, (list, tuple)):
-                flattened: list[object] = []
+                flattened_list: list[object] = []
                 for stmt in root:
                     if type(stmt).__name__ == "CStatements":
                         nested = getattr(stmt, "statements", None)
                         if nested is not None:
-                            flattened.extend(tuple(nested or ()))
+                            flattened_list.extend(tuple(nested or ()))
                             continue
-                    flattened.append(stmt)
-                return tuple(flattened)
+                    flattened_list.append(stmt)
+                return tuple(flattened_list)
             return ()
 
         def _assignment_rhs_has_real_call_8616(stmt: object) -> bool:
@@ -3509,7 +3515,7 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
         def _prune_consumed_low_guard_node_8616(node: Any) -> tuple[Any | None, bool]:
             if isinstance(node, CStatements):
                 local_changed = False
-                rebuilt = []
+                rebuilt: list[object] = []
                 for stmt in tuple(node.statements or ()):
                     replacement, stmt_changed = _prune_consumed_low_guard_node_8616(stmt)
                     local_changed = local_changed or stmt_changed
@@ -3684,7 +3690,7 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
             seen.add(marker)
             local_changed = False
             if isinstance(root, CStatements):
-                rebuilt = []
+                rebuilt: list[object] = []
                 for stmt in tuple(root.statements or ()):
                     if _prune_duplicate_raw_jcc_ifbreaks_8616(stmt, seen):
                         local_changed = True

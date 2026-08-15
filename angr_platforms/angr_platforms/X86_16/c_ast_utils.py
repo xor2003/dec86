@@ -238,7 +238,7 @@ def _structured_slot_names_8616(value: object) -> tuple[str, ...]:
     if child_attrs is not None:
         return child_attrs
 
-    base_attrs = _structured_slot_names_for_type_8616(type(value))
+    base_attrs = _structured_slot_names_for_type_8616(cast(typing.Hashable, type(value)))
     if not hasattr(value, "__dict__"):
         return base_attrs
 
@@ -499,11 +499,13 @@ def _same_c_expression_8616(lhs: object, rhs: object) -> bool:
 
     def _same_stack_variable_8616(lvar: SimStackVariable, rvar: SimStackVariable) -> bool:
         """Compare stack variables across the dynamic third-party angr boundary."""
-        return (
+        return bool(
+            (
             lvar.offset == rvar.offset
             and lvar.size == rvar.size
             and lvar.base == rvar.base
             and lvar.region == rvar.region
+            )
         )
 
     def _dirty_identity_8616(node: CDirtyExpression) -> tuple[str, object] | None:
@@ -543,7 +545,7 @@ def _same_c_expression_8616(lhs: object, rhs: object) -> bool:
         return False
     if isinstance(lhs, CConstant):
         rhs_constant = cast(CConstant, rhs)
-        return lhs.value == rhs_constant.value
+        return bool(lhs.value == rhs_constant.value)
     if isinstance(lhs, CTypeCast):
         rhs_cast = cast(CTypeCast, rhs)
         return _same_c_expression_8616(lhs.expr, rhs_cast.expr)
@@ -592,10 +594,10 @@ def _same_c_expression_8616(lhs: object, rhs: object) -> bool:
         if type(lvar) is not type(rvar):
             return False
         if isinstance(lvar, SimRegisterVariable):
-            return lvar.reg == cast(SimRegisterVariable, rvar).reg
+            return bool(lvar.reg == cast(SimRegisterVariable, rvar).reg)
         if isinstance(lvar, SimMemoryVariable):
             rhs_memory = cast(SimMemoryVariable, rvar)
-            return lvar.addr == rhs_memory.addr and lvar.size == rhs_memory.size
+            return bool(lvar.addr == rhs_memory.addr and lvar.size == rhs_memory.size)
         if isinstance(lvar, SimStackVariable):
             if not isinstance(rvar, SimStackVariable):
                 return False

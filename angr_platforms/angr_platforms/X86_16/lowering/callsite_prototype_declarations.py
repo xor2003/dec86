@@ -21,9 +21,17 @@ from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CFunctionCall, CUnaryOp
 from angr.knowledge_plugins.functions import Function
-from angr.sim_type import SimStruct, SimType, SimTypeArray, SimTypeBottom, SimTypeFixedSizeArray, SimTypePointer
+from angr.sim_type import (
+    SimStruct,
+    SimType,
+    SimTypeArray,
+    SimTypeBottom,
+    SimTypeFixedSizeArray,
+    SimTypeFunction,
+    SimTypePointer,
+)
 
-from ..analysis_helpers import canonicalize_x86_16_padding_call_target_8616
+from ..analysis_helpers import canonicalize_x86_16_padding_call_target_8616, preferred_known_helper_signature_decl
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..callsite_summary import (
     CallsiteSummary8616,
@@ -108,6 +116,12 @@ class _ProjectSurface8616(Protocol):
     """Minimal project surface used for exact target lookup."""
 
     kb: _KnowledgeBaseSurface8616
+
+
+class _PrototypeFunctionSurface8616(Protocol):
+    """Typed callee prototype boundary used by declaration lowering."""
+
+    prototype: object | None
 
 
 class _TargetProjectSurface8616(Protocol):
@@ -211,7 +225,7 @@ def _summary_for_call_8616(
                 callsite_addr = value
                 break
     if not isinstance(callsite_addr, int):
-        matches = ()
+        matches: tuple[CallsiteSummary8616, ...] = ()
     else:
         matches = tuple(summary for summary in summaries.values() if summary.callsite_addr == callsite_addr)
     compatible = _compatible_summary_8616(matches)
@@ -383,15 +397,17 @@ def _summary_arg_widths_8616(summary: CallsiteSummary8616) -> tuple[int, ...] | 
     """Return exact logical argument widths or refuse an incomplete summary."""
     if not isinstance(summary.arg_count, int) or summary.arg_count < 0:
         return None
-    logical = cast(tuple[int, ...], summary.logical_arg_widths)
+    logical = summary.logical_arg_widths
     if logical:
-        if not all(isinstance(width, int) and width > 0 for width in logical):
+        normalized_logical = tuple(width for width in logical if isinstance(width, int) and width > 0)
+        if len(normalized_logical) != len(logical):
             return None
-        return logical
-    widths = cast(tuple[int, ...], summary.arg_widths)
-    if len(widths) != summary.arg_count or not all(isinstance(width, int) and width > 0 for width in widths):
+        return normalized_logical
+    widths = summary.arg_widths
+    normalized_widths = tuple(width for width in widths if isinstance(width, int) and width > 0)
+    if len(normalized_widths) != summary.arg_count or len(normalized_widths) != len(widths):
         return None
-    return widths
+    return normalized_widths
 
 
 def _scalar_decl_for_width_8616(width: int, name: str) -> str:
@@ -480,6 +496,22 @@ def _joined_return_type_8616(
     summaries: Sequence[CallsiteSummary8616],
 ) -> str | None:
     """Join caller-use evidence for one exact target or refuse ABI conflict."""
+    if isinstance(summary.target_addr, int):
+        try:
+            function = cast(_ProjectSurface8616, project).kb.functions.function(
+                addr=summary.target_addr,
+                create=False,
+            )
+            prototype = (
+                cast(_PrototypeFunctionSurface8616, function).prototype
+                if function is not None
+                else None
+            )
+        except (AttributeError, KeyError, TypeError):
+            prototype = None
+        if isinstance(prototype, SimTypeFunction) and isinstance(prototype.returnty, SimTypeBottom):
+            if prototype.returnty.label == "void":
+                return "void"
     evidence = (
         caller_return_use_evidence_by_addr_8616(project).get(summary.target_addr)
         if isinstance(summary.target_addr, int)
@@ -577,6 +609,20 @@ def _prototype_decl_8616(
     return f"{return_type} {name}({args});"
 
 
+def _has_typed_aggregate_pointer_argument_8616(node: CFunctionCall) -> bool:
+    """Prefer inferred declarations when a call carries a proven struct pointer."""
+    for argument in tuple(cast(Sequence[object], node.args or ())):
+        try:
+            argument_type = cast(_TypedExpressionSurface8616, argument).type
+        except AttributeError:
+            continue
+        if not isinstance(argument_type, SimTypePointer):
+            continue
+        if isinstance(argument_type.pts_to, SimStruct):
+            return True
+    return False
+
+
 def _program_arity_conflict_decl_8616(
     project: object,
     summary: CallsiteSummary8616,
@@ -599,6 +645,18 @@ def _declaration_name_8616(declaration: str) -> str | None:
     """Return the outer function name from a generated C declaration."""
     match = _DECLARATION_NAME_RE_8616.match(declaration)
     return match.group("name") if match is not None else None
+
+
+def _declaration_with_call_name_8616(declaration: str, call_name: str) -> str:
+    """Spell a known helper declaration with the emitted call identifier."""
+    match = _DECLARATION_NAME_RE_8616.match(declaration)
+    if match is None:
+        return declaration
+    return (
+        declaration[: match.start("name")]
+        + call_name
+        + declaration[match.end("name") :]
+    )
 
 
 def _project_c_target_8616(project: object) -> str | None:
@@ -694,27 +752,45 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
             if call_name is not None
             else None
         )
+        known_helper_declaration = (
+            preferred_known_helper_signature_decl(call_name)
+            if call_name is not None
+            else None
+        )
         abi_declaration = dos_interrupt_prototype_declaration_8616(call_name)
-        declaration = abi_declaration or runtime_declaration
+        inferred_declaration = (
+            _prototype_decl_8616(project, codegen, node, summary, return_type)
+            if return_type is not None
+            else None
+        )
+        declaration = (
+            inferred_declaration
+            if inferred_declaration is not None and _has_typed_aggregate_pointer_argument_8616(node)
+            else abi_declaration or runtime_declaration or known_helper_declaration
+        )
+        if (
+            isinstance(known_helper_declaration, str)
+            and declaration == known_helper_declaration
+            and isinstance(call_name, str)
+            and call_name
+            and _declaration_name_8616(declaration) != call_name
+        ):
+            declaration = _declaration_with_call_name_8616(declaration, call_name)
         if declaration is None and return_type is not None:
-            declaration = (
-                _program_arity_conflict_decl_8616(
-                    project,
-                    summary,
-                    call_name,
-                    return_type,
-                )
-                if call_name is not None
-                else None
-            )
+            declaration = inferred_declaration if summary.logical_arg_widths else None
             if declaration is None:
-                declaration = _prototype_decl_8616(
-                    project,
-                    codegen,
-                    node,
-                    summary,
-                    return_type,
+                declaration = (
+                    _program_arity_conflict_decl_8616(
+                        project,
+                        summary,
+                        call_name,
+                        return_type,
+                    )
+                    if call_name is not None
+                    else None
                 )
+            if declaration is None:
+                declaration = _prototype_decl_8616(project, codegen, node, summary, return_type)
         if declaration is None:
             if os.environ.get("INERTIA_DEBUG_CALLSITE_PROTOTYPE_DECLS") == "1":
                 _LOGGER.warning(

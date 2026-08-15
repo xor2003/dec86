@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from angr_platforms.X86_16.segment_program_layout_contract import SegmentProgramFunctionEvidence8616
@@ -104,8 +104,8 @@ class FunctionDecompileTask:
     """Inputs needed to decompile one discovered function."""
 
     index: int
-    cfg: object
-    function: object
+    cfg: Any
+    function: Any
 
 
 @dataclass(frozen=True)
@@ -128,8 +128,8 @@ class FunctionWorkItem:
     """
 
     index: int
-    function_cfg: object
-    function: object
+    function_cfg: Any
+    function: Any
     recovery_addr: int | None = None
 
 
@@ -141,8 +141,8 @@ class FunctionWorkResult:
     status: str
     payload: str
     debug_output: str
-    function: object
-    function_cfg: object
+    function: Any
+    function_cfg: Any
     partial_payload: str | None = None
     tail_validation: dict[str, object] | None = None
     skip_heavy_fallbacks: bool = False

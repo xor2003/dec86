@@ -83,7 +83,8 @@ def convert_otlp_jsonl_text(text: str) -> str:
     otel = summary.get("otel_export", "?") if summary else "?"
     if otel == "disabled":
         otel = "off"
-    errors = summary.get("errors", []) if summary else []
+    raw_errors = summary.get("errors", []) if summary else []
+    errors = raw_errors if isinstance(raw_errors, list) else []
 
     lines = [f"summary total_ms={total} spans={len(rows)} otel={otel} errors={len(errors)}"]
     name_ids = _name_dictionary(rows)

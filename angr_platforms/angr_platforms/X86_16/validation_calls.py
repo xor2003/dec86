@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol, Sequence, cast
+from typing import Any, Protocol, Sequence, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CFunctionCall
 from angr.sim_type import (
@@ -33,6 +33,9 @@ from .callsite_summary import (
     CallsiteArgumentClass8616,
     CallsiteSummary8616,
     caller_return_use_evidence_by_addr_8616,
+    callsite_target_name_for_project_8616,
+    known_helper_abi_widths_8616,
+    known_helper_is_variadic_8616,
 )
 from .lowering.call_argument_shape import accounted_target_prototype_shape_evidence_8616
 from .lowering.near_pointer_argument import NearPointerArgumentFact8616
@@ -811,6 +814,60 @@ def _call_matches_summary_identity_8616(
     return normalized_node_target == normalized_summary_target
 
 
+def _call_matches_resolved_target_name_8616(
+    node: CFunctionCall,
+    summary: CallsiteSummary8616,
+    project: object,
+) -> bool:
+    """Match a detached call node only through resolved target name and arity."""
+    target_addr = summary.target_addr
+    if not isinstance(target_addr, int):
+        return False
+    target_name: str | None = None
+    projects = [project]
+    # Dynamic angr project metadata boundary: the original project is optional.
+    original_project = getattr(project, "_inertia_original_project", None)
+    if original_project is not None and original_project is not project:
+        projects.append(original_project)
+    for candidate_project in projects:
+        try:
+            normalized_target = normalize_x86_16_call_target_addr_8616(
+                candidate_project,
+                target_addr,
+            )
+            if not isinstance(normalized_target, int):
+                continue
+            function = cast(Any, candidate_project).kb.functions.function(
+                addr=normalized_target,
+                create=False,
+            )
+            candidate_name = cast(Any, function).name
+        except (AttributeError, TypeError):
+            continue
+        if isinstance(candidate_name, str):
+            target_name = candidate_name
+            break
+    if target_name is None:
+        target_name = callsite_target_name_for_project_8616(project, target_addr)
+    if target_name is None:
+        return False
+    node_surface = cast(Any, node)
+    node_name = node_surface.callee_target
+    if not isinstance(node_name, str):
+        callee = node_surface.callee_func
+        # Dynamic angr C-AST boundary: detached callees expose optional names.
+        node_name = getattr(callee, "name", None)
+    args = node_surface.args
+    return (
+        isinstance(target_name, str)
+        and isinstance(node_name, str)
+        and node_name == target_name
+        and isinstance(args, Sequence)
+        and not isinstance(args, (str, bytes))
+        and len(args) == summary.arg_count
+    )
+
+
 def _required_call_matches_8616(
     codegen: object,
     root: object,
@@ -884,6 +941,52 @@ def _required_call_matches_8616(
                 None,
             )
         if match_index is None:
+            named_matches = [
+                index
+                for index, node in enumerate(available)
+                if _call_matches_resolved_target_name_8616(node, summary, project)
+            ]
+            if len(named_matches) == 1:
+                match_index = named_matches[0]
+            if len(named_matches) > 1:
+                same_target_callsites = {
+                    other_summary.callsite_addr
+                    for _other_key, other_summary in required
+                    if other_summary.target_addr == summary.target_addr
+                }
+                untagged_matches = [
+                    index
+                    for index in named_matches
+                    if _callsite_addr_8616(available[index]) is None
+                ]
+                tagged_matches = {
+                    _callsite_addr_8616(available[index])
+                    for index in named_matches
+                    if _callsite_addr_8616(available[index]) is not None
+                }
+                if (
+                    len(untagged_matches) == 1
+                    and summary.callsite_addr not in tagged_matches
+                    and tagged_matches <= same_target_callsites
+                ):
+                    match_index = untagged_matches[0]
+        if match_index is None:
+            established_names = {
+                cast(Any, match.call).callee_target
+                for match in matches
+                if match.call is not None
+                and match.summary.target_addr == summary.target_addr
+                and isinstance(cast(Any, match.call).callee_target, str)
+            }
+            named_matches = [
+                index
+                for index, node in enumerate(available)
+                if cast(Any, node).callee_target in established_names
+                and len(tuple(cast(Any, node).args or ())) == summary.arg_count
+            ]
+            if len(named_matches) == 1:
+                match_index = named_matches[0]
+        if match_index is None:
             matches.append(_RequiredCallMatch8616(summary_key, summary, None))
             continue
         matches.append(_RequiredCallMatch8616(summary_key, summary, available.pop(match_index)))
@@ -922,6 +1025,41 @@ def _expected_argument_count_8616(summary: CallsiteSummary8616) -> int | None:
     # dword or far-pointer C argument may consume two such pushes, so they are
     # not proof of final logical arity.
     return None
+
+
+def _expected_call_argument_count_8616(
+    summary: CallsiteSummary8616,
+    call: CFunctionCall,
+    project: object | None = None,
+) -> int | None:
+    """Return typed logical arity before falling back to physical push evidence."""
+    callee = call.callee_func
+    if callee is None and project is not None and isinstance(summary.target_addr, int):
+        try:
+            functions = cast(Any, cast(Any, project).kb).functions
+            callee = functions.function(addr=summary.target_addr, create=False)
+        except (AttributeError, TypeError):
+            callee = None
+    name = call.callee_target
+    if not isinstance(name, str) and callee is not None:
+        # Dynamic angr C-AST boundary: callee function names are optional.
+        name = getattr(callee, "name", None)
+    helper_widths = known_helper_abi_widths_8616(name if isinstance(name, str) else None)
+    if helper_widths is None and project is not None and isinstance(summary.target_addr, int):
+        metadata_name = callsite_target_name_for_project_8616(project, summary.target_addr)
+        helper_widths = known_helper_abi_widths_8616(metadata_name)
+    if helper_widths is not None:
+        return len(helper_widths)
+    if known_helper_is_variadic_8616(name if isinstance(name, str) else None):
+        return None
+    if callee is not None:
+        try:
+            prototype = cast(Any, callee).prototype
+            if isinstance(prototype, SimTypeFunction) and isinstance(prototype.args, Sequence):
+                return len(prototype.args)
+        except AttributeError:
+            pass
+    return _expected_argument_count_8616(summary)
 
 
 def _materialized_argument_count_8616(call: CFunctionCall) -> int | None:
@@ -975,9 +1113,17 @@ def _materialized_argument_widths_8616(
 def _target_prototype_argument_widths_8616(
     call: CFunctionCall,
     project: object,
+    target_addr: int | None = None,
 ) -> tuple[int, ...] | None:
     """Return exact byte widths from the materialized call target prototype."""
     callee = call.callee_func
+    if callee is None:
+        if isinstance(target_addr, int):
+            try:
+                functions = cast(Any, cast(Any, project).kb).functions
+                callee = functions.function(addr=target_addr, create=False)
+            except (AttributeError, TypeError):
+                callee = None
     if callee is None:
         return None
     try:
@@ -1004,6 +1150,18 @@ def _materialized_arguments_8616(call: CFunctionCall) -> tuple[object, ...] | No
     if isinstance(args, Sequence) and not isinstance(args, (str, bytes)):
         return tuple(args)
     return None
+
+
+def _contains_wide_nested_call_8616(call: CFunctionCall, project: object) -> bool:
+    """Return whether a final argument contains a typed multiword call result."""
+    for argument in _materialized_arguments_8616(call) or ():
+        for node in _iter_c_nodes_deep_8616(argument):
+            if not isinstance(node, CFunctionCall) or node is call:
+                continue
+            width = _type_width_bytes_8616(node.type, project)
+            if width is not None and width > 2:
+                return True
+    return False
 
 
 def _materialized_argument_class_8616(
@@ -1131,17 +1289,21 @@ def validate_call_interfaces_8616(
     """Refuse final direct calls whose arity contradicts typed binary facts."""
     raw_fact_count, matches = _required_call_matches_8616(codegen, root)
     matched = tuple(match for match in matches if match.call is not None)
-    classified: list[tuple[_RequiredCallMatch8616, int]] = []
-    for match in matched:
-        expected_count = _expected_argument_count_8616(match.summary)
-        if expected_count is not None:
-            classified.append((match, expected_count))
-    issues: list[CallInterfaceIssue8616] = []
-    materialized_count = 0
     try:
         project = cast(_CodegenProjectSurface8616, codegen).project
     except AttributeError:
         project = None
+    classified: list[tuple[_RequiredCallMatch8616, int]] = []
+    for match in matched:
+        expected_count = (
+            _expected_call_argument_count_8616(match.summary, match.call, project)
+            if match.call is not None
+            else _expected_argument_count_8616(match.summary)
+        )
+        if expected_count is not None:
+            classified.append((match, expected_count))
+    issues: list[CallInterfaceIssue8616] = []
+    materialized_count = 0
     for match, expected_count in classified:
         assert match.call is not None
         actual_count = _materialized_argument_count_8616(match.call)
@@ -1161,7 +1323,38 @@ def validate_call_interfaces_8616(
             continue
         if actual_count != expected_count:
             live_widths = _materialized_argument_widths_8616(match.call, project)
-            prototype_widths = _target_prototype_argument_widths_8616(match.call, project)
+            prototype_widths = _target_prototype_argument_widths_8616(
+                match.call,
+                project,
+                target_addr,
+            )
+            physical_widths = tuple(
+                width for width in match.summary.arg_widths if isinstance(width, int) and width > 0
+            )
+            if (
+                live_widths is not None
+                and len(live_widths) == actual_count
+                and len(physical_widths) == expected_count
+                and len(live_widths) < len(physical_widths)
+                and sum(live_widths) == sum(physical_widths)
+                and (
+                    prototype_widths is None
+                    or live_widths == prototype_widths
+                    or (
+                        prototype_widths is None
+                        and _contains_wide_nested_call_8616(match.call, project)
+                        and expected_count - actual_count == 1
+                    )
+                )
+            ):
+                materialized_count += 1
+                continue
+            if (
+                expected_count - actual_count == 1
+                and _contains_wide_nested_call_8616(match.call, project)
+            ):
+                materialized_count += 1
+                continue
             grouped_evidence = (
                 accounted_target_prototype_shape_evidence_8616(
                     match.summary,

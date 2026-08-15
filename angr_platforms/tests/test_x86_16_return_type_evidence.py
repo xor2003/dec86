@@ -11,7 +11,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 from angr.sim_type import SimTypeFunction, SimTypeShort
-from angr.sim_variable import SimRegisterVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseEvidence8616,
@@ -196,6 +196,33 @@ def test_unobserved_return_lowering_keeps_assigned_scalar_carrier() -> None:
             [CAssignment(assigned, CConstant(7, return_type, codegen=codegen), codegen=codegen), return_node],
             codegen=codegen,
         ),
+        prototype=prototype,
+        functy=prototype,
+    )
+    record_caller_return_use_evidence_8616(
+        project,
+        0x1000,
+        _evidence(CallerReturnUseVerdict8616.UNUSED, raw=1, classified=1, failures=0),
+    )
+
+    assert neutralize_unobserved_unresolved_returns_8616(project, codegen) is False
+    assert return_node.retval is returned
+
+
+def test_unobserved_return_lowering_keeps_function_argument() -> None:
+    arch = Arch86_16()
+    project = SimpleNamespace(arch=arch)
+    return_type = SimTypeShort(False).with_arch(arch)
+    prototype = SimTypeFunction([return_type], return_type).with_arch(arch)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1)
+    variable = SimStackVariable(4, 2, base="bp", name="DLC", region=0x1000)
+    argument = CVariable(variable, variable_type=return_type, codegen=codegen)
+    returned = CVariable(variable, variable_type=return_type, codegen=codegen)
+    return_node = CReturn(returned, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=[argument],
+        statements=CStatements([return_node], codegen=codegen),
         prototype=prototype,
         functy=prototype,
     )

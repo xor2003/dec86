@@ -118,7 +118,7 @@ def disasm_x86(data: bytes, addr: int, count: int = 20, arch: str = "x86") -> li
 # ---------------------------------------------------------------------------
 
 
-class GDBTUIApp(App):
+class GDBTUIApp(App):  # type: ignore[misc, unused-ignore] # dynamic Textual UI base
     """GDB client TUI – insight.124 inspired layout."""
 
     CSS = """
@@ -212,7 +212,7 @@ class GDBTUIApp(App):
         self._arch = arch
         self._client: Optional[GDBClient] = None
         self._regs: dict[str, int] = {}
-        self._bps: dict[int, dict] = {}
+        self._bps: dict[int, dict[str, object]] = {}
         self._helper_info: dict[str, object] = {}
         self._current_ip: int = 0
         self._mem_addr: int = 0

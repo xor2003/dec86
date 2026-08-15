@@ -191,7 +191,7 @@ class StructureFieldMerger:
             Dictionary mapping struct name to StructType
         """
         # Stage 1: Group patterns by base pointer
-        by_base = {}
+        by_base: dict[str, list[FieldAccessPattern]] = {}
         for pattern in patterns:
             if pattern.struct_base not in by_base:
                 by_base[pattern.struct_base] = []

@@ -1284,7 +1284,11 @@ def test_materialize_wide_call_return_rebinds_later_low_half_condition_read():
     assert isinstance(stmt, CAssignment)
     assert isinstance(stmt.lhs.variable, SimStackVariable)
     assert stmt.lhs.variable.size == 4
-    assert loop.condition.rhs is stmt.lhs
+    assert isinstance(loop.condition.rhs, CBinaryOp)
+    assert loop.condition.rhs.op == "And"
+    assert isinstance(loop.condition.rhs.lhs, CVariable)
+    assert loop.condition.rhs.lhs.variable is stmt.lhs.variable
+    assert loop.condition.rhs.lhs.variable.size == 4
 
 
 def test_materialize_direct_global_inc_instruction_from_binary_evidence():

@@ -73,7 +73,8 @@ def install_structured_codegen_sort_compat_8616() -> bool:
         )
         return reg_vars + stack_vars + mem_vars
 
-    _sort_local_vars._inertia_x86_16_stable_sort = True
+    dynamic_sort_local_vars = typing.cast(typing.Any, _sort_local_vars)
+    dynamic_sort_local_vars._inertia_x86_16_stable_sort = True
     cfunc_cls.sort_local_vars = staticmethod(_sort_local_vars)
     return True
 
@@ -129,7 +130,7 @@ def _kb_function_for_addr_8616(project: object, addr: int) -> object | None:
         return None
     for create in (False, True):
         try:
-            return kb_functions.function(addr=addr, create=create)
+            return typing.cast(object, kb_functions.function(addr=addr, create=create))
         except Exception:
             continue
     return None

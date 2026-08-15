@@ -317,7 +317,8 @@ def test_xlat_lifts_as_table_lookup():
 
     assert block.vex.jumpkind == "Ijk_Boring"
     assert "LDle:I8" in vex_text
-    assert "PUT(ax)" in vex_text
+    assert "PUT(al)" in vex_text
+    assert "PUT(ax)" not in vex_text
 
 
 def test_esc_memory_form_lifts_as_a_harmless_fpu_escape():
@@ -607,7 +608,17 @@ def test_compiler_conditional_decomp_simplifies_bool_ite():
 
     assert dec.codegen is not None
     assert "? 0 : 1" not in dec.codegen.text
-    assert "if (arg > 2)" in dec.codegen.text
+    assert any(
+        condition in dec.codegen.text
+        for condition in (
+            "if (arg > 2)",
+            "if ((short)arg > 2)",
+            "if (arg <= 2)",
+            "if ((short)arg <= 2)",
+        )
+    )
+    assert dec.codegen.text.count("return 0;") == 1
+    assert dec.codegen.text.count("return 1;") == 1
     assert "return 0;" in dec.codegen.text
     assert "return 1;" in dec.codegen.text
 

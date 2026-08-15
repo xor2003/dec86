@@ -43,16 +43,20 @@ def test_unit_lane_promotes_type_object_recovery_contracts():
     assert "angr_platforms/tests/test_x86_16_struct_merging.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
 
 
-def test_unit_lane_promotes_architecture_contract_guard():
-    assert "angr_platforms/tests/test_decompiler_architecture_check.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
+def test_repository_architecture_guard_runs_as_a_separate_hard_gate():
+    assert "angr_platforms/tests/test_decompiler_architecture_check.py" not in test_pipeline.FOCUSED_PYTEST_TARGETS
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "decompiler-check-fast: architecture-check" in makefile
 
 
 def test_unit_lane_promotes_pipeline_self_contract():
     assert "angr_platforms/tests/test_test_pipeline.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
 
 
-def test_unit_lane_promotes_test_ownership_manifest_contract():
-    assert "angr_platforms/tests/test_test_ownership_manifest.py" in test_pipeline.FOCUSED_PYTEST_TARGETS
+def test_repository_ownership_manifest_runs_as_a_separate_hard_gate():
+    assert "angr_platforms/tests/test_test_ownership_manifest.py" not in test_pipeline.FOCUSED_PYTEST_TARGETS
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "decompiler-check-fast: architecture-check agent-context-check test-ownership-check" in makefile
 
 
 def test_unit_lane_promotes_corpus_scan_timeout_contract():

@@ -252,7 +252,7 @@ def prune_adjacent_temporary_copy_assignments_8616(codegen: object) -> bool:
         seen_statement_lists.add(list_id)
         suffix_keys = _suffix_temporary_keys(statements)
 
-        pruned: list = []
+        pruned: list[object] = []
         idx = 0
         while idx < len(statements):
             stmt = statements[idx]

@@ -72,6 +72,26 @@ class _CodegenSurface8616(Protocol):
     _inertia_codegen_decl_refresh_required_8616: bool
 
 
+class _FunctionManagerSurface8616(Protocol):
+    """angr function lookup used at the third-party project boundary."""
+
+    def function(self, *, addr: int, create: bool) -> _FunctionSurface8616 | None:
+        """Return an existing function without creating a new one."""
+
+
+class _KnowledgeBaseSurface8616(Protocol):
+    """angr knowledge-base surface required by interface lowering."""
+
+    functions: _FunctionManagerSurface8616
+
+
+class _ProjectSurface8616(Protocol):
+    """angr project fields consumed by typed interface lowering."""
+
+    arch: object
+    kb: _KnowledgeBaseSurface8616
+
+
 class _FunctionSurface8616(Protocol):
     """angr function prototype fields updated by typed Lowering."""
 
@@ -124,6 +144,7 @@ def materialize_callee_pointer_codegen_interface_8616(
     evidence: _PointerEvidenceSurface8616,
 ) -> CalleePointerInterfaceResult8616:
     """Materialize exact binary-proven BP pointer slots in the active C header."""
+    typed_project = cast(_ProjectSurface8616, project)
     typed_codegen = cast(_CodegenSurface8616, codegen)
     cfunc = typed_codegen.cfunc
     if len(evidence.pointer_argument_indices) != len(evidence.pointer_stack_offsets):
@@ -149,16 +170,7 @@ def materialize_callee_pointer_codegen_interface_8616(
             0,
             max(1, evidence.failure_count, classified_count),
         )
-    try:
-        arch = cast(object, project).arch  # type: ignore[attr-defined]
-    except AttributeError:
-        return CalleePointerInterfaceResult8616(
-            evidence.raw_fact_count,
-            evidence.normalized_fact_count,
-            classified_count,
-            0,
-            classified_count,
-        )
+    arch = typed_project.arch
     pointer_type = near_pointer_type_8616(SimTypeShort(False), arch)
     changed = False
     materialized_count = 0
@@ -238,10 +250,7 @@ def materialize_callee_pointer_prefix_prototype_8616(
         argument_types.extend(
             SimTypeShort(False) for _ in range(required_count - len(argument_types))
         )
-    try:
-        arch = cast(object, project).arch  # type: ignore[attr-defined]
-    except AttributeError:
-        return 0
+    arch = cast(_ProjectSurface8616, project).arch
     pointer_type = near_pointer_type_8616(SimTypeShort(False), arch)
     for index in indices:
         argument_types[index] = pointer_type
@@ -261,10 +270,10 @@ def materialize_callee_pointer_prefix_prototype_8616(
 def _function_for_address_8616(project: object, address: int) -> _FunctionSurface8616 | None:
     """Resolve one existing angr function through the third-party boundary."""
     try:
-        function = cast(object, project).kb.functions.function(addr=address, create=False)  # type: ignore[attr-defined]
-    except (AttributeError, KeyError):
+        function = cast(_ProjectSurface8616, project).kb.functions.function(addr=address, create=False)
+    except KeyError:
         return None
-    return cast(_FunctionSurface8616, function) if function is not None else None
+    return function
 
 
 def _materialize_zero_argument_interface_8616(
@@ -276,10 +285,7 @@ def _materialize_zero_argument_interface_8616(
     current = cfunc.functy
     return_type = current.returnty if isinstance(current, SimTypeFunction) else SimTypeShort(False)
     prototype = SimTypeFunction([], return_type)
-    try:
-        prototype = prototype.with_arch(cast(object, project).arch)  # type: ignore[attr-defined,assignment]
-    except AttributeError:
-        pass
+    prototype = prototype.with_arch(cast(_ProjectSurface8616, project).arch)
     changed = bool(cfunc.arg_list)
     if cfunc.arg_list:
         cfunc.arg_list = []

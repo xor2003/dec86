@@ -211,6 +211,7 @@ def check_segment_linearization_laundering_8616(c_text: str) -> str | None:
         if _dangerous_segment_linearization_expr_8616(rhs, tainted_names):
             return "segment register value escaped into linearized arithmetic"
         tainted_names.discard(lhs.lower())
+    return None
 
 
 def _record_issue_8616(

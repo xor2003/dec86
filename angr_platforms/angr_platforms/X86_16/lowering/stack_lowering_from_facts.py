@@ -29,7 +29,7 @@ import logging
 import os
 import typing
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, Protocol, cast, overload
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimType, SimTypeInt, SimTypePointer
@@ -156,12 +156,12 @@ def attach_cod_stack_alias_annotations_8616(project: object, func_addr: int, cod
     stack_vars = annotations.setdefault("stack_vars", {})
     if not isinstance(stack_vars, dict):
         return False
-    normalized_specs: dict[int, dict[object, object]] = {}
+    normalized_specs: dict[int, dict[str, object]] = {}
     for bp_disp, alias in sorted(stack_aliases.items()):
         if not isinstance(bp_disp, int) or not isinstance(alias, str) or not alias:
             continue
         stack_offset = bp_disp - 2 if bp_disp > 0 else bp_disp
-        spec: dict[object, object] = {"name": alias}
+        spec: dict[str, object] = {"name": alias}
         normalized_specs[stack_offset] = spec
     if not normalized_specs:
         return False
@@ -172,7 +172,7 @@ def attach_cod_stack_alias_annotations_8616(project: object, func_addr: int, cod
     annotate_function(
         project,
         func_addr,
-        stack_vars=cast(dict[int, str | dict[object, object]], normalized_specs),
+        stack_vars=cast(dict[int, str | dict[str, object]], normalized_specs),
     )
     return changed
 
@@ -245,7 +245,7 @@ def build_stack_variable_bindings_from_alias_facts_8616(
             return []
 
         return cast(
-            list[StackVariableBinding],
+            list[Any],
             build_stack_variable_bindings_8616(
                 sorted(address_sizes.items()),
                 preferred_names=preferred_names,

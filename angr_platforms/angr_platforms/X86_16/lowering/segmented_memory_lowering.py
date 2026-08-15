@@ -33,7 +33,6 @@ from .near_pointer_type import near_pointer_type_8616, with_near_pointer_paramet
 from .positive_bp_arguments import materialize_positive_bp_arguments_8616
 from .real_mode_linear import (
     RealModeLinearStackAccess8616,
-    _canonical_stack_offset_8616,
     _decompose_linear_global_terms_8616,
     _has_stack_storage_evidence_for_displacement_8616,
     _known_bp_stack_offsets_8616,
@@ -54,6 +53,7 @@ from .segment_register_state import (
 )
 from .semantic_cast import CSemanticCast8616
 from .stack_argument_identity import unify_positive_bp_argument_identity_8616
+from .stack_lowering_from_facts import _canonical_stack_offset_8616
 from .stack_pointer_snapshot import (
     StackPointerSnapshotStats8616,
     StackPointerSnapshotTracker8616,
@@ -654,34 +654,73 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                 helper_name = _runtime_segment_helper_name_8616(use.lhs)
                 helper_width = _runtime_segment_helper_width_8616(helper_name)
                 helper_args = _runtime_segment_helper_args_8616(use.lhs)
+                pointer_width_bits = _pointer_element_width_bits_8616(pointer_type)
                 if (
                     len(carrier_uses) != 1
                     or helper_width is None
                     or helper_args is None
-                    or _carrier_key_8616(helper_args[1]) != carrier_key
-                    or _pointer_element_width_bits_8616(pointer_type) != helper_width * 8
+                    or _pointer_store_byte_index_8616(helper_args[1], carrier_key) is None
+                    or pointer_width_bits is None
+                    or pointer_width_bits < helper_width * 8
                 ):
                     break
                 matching_facts = tuple(
                     fact
                     for fact in facts
-                    if fact.stack_offset == stack_offset and fact.access_width_bytes == helper_width
+                    if fact.stack_offset == stack_offset
+                    and fact.access_width_bytes >= helper_width
                 )
                 if not matching_facts:
                     break
                 source_addrs = instruction_addrs_from_node_8616(use.lhs)
                 if source_addrs and not any(fact.dereference_ins_addr in source_addrs for fact in matching_facts):
                     break
-                use.lhs = structured_c.CIndexedVariable(
-                    pointer,
-                    structured_c.CConstant(0, SimTypeShort(False).with_arch(project.arch), codegen=codegen),
-                    codegen=codegen,
-                    tags={
-                        "inertia_source_instruction_addrs": tuple(
-                            sorted(fact.dereference_ins_addr for fact in matching_facts)
+                byte_index = _pointer_store_byte_index_8616(helper_args[1], carrier_key)
+                if byte_index is None or byte_index < 0:
+                    break
+                proven_width = max(fact.access_width_bytes for fact in matching_facts)
+                if _pointer_element_width_bits_8616(pointer_type) != proven_width * 8:
+                    break
+                pair: list[tuple[structured_c.CAssignment, int]] = [(use, byte_index)]
+                if proven_width > helper_width:
+                    if helper_width != 1:
+                        break
+                    for pair_index in range(use_index + 1, len(statements)):
+                        pair_statement = statements[pair_index]
+                        if not isinstance(pair_statement, structured_c.CAssignment):
+                            break
+                        pair_args = _runtime_segment_helper_args_8616(pair_statement.lhs)
+                        pair_width = _runtime_segment_helper_width_8616(
+                            _runtime_segment_helper_name_8616(pair_statement.lhs)
                         )
-                    },
-                )
+                        if pair_args is None or pair_width != helper_width:
+                            continue
+                        next_index = _pointer_store_byte_index_8616(pair_args[1], carrier_key)
+                        if next_index != byte_index + 1:
+                            continue
+                        pair_source_addrs = instruction_addrs_from_node_8616(pair_statement.lhs)
+                        if pair_source_addrs and not any(
+                            fact.dereference_ins_addr in pair_source_addrs
+                            for fact in matching_facts
+                        ):
+                            break
+                        pair.append((pair_statement, next_index))
+                        break
+                    if len(pair) != proven_width:
+                        break
+                index_type = SimTypeShort(False).with_arch(project.arch)
+                tags = {
+                    "inertia_source_instruction_addrs": tuple(
+                        sorted(fact.dereference_ins_addr for fact in matching_facts)
+                    )
+                }
+                for pair_statement, pair_index in pair:
+                    pair_statement.lhs = structured_c.CIndexedVariable(
+                        pointer,
+                        structured_c.CConstant(pair_index, index_type, codegen=codegen),
+                        codegen=codegen,
+                        tags=tags,
+                    )
                 consumed_setups.add(setup_index)
                 changed = True
                 break
@@ -867,6 +906,23 @@ def _carrier_key_8616(node: object) -> _CarrierKey8616 | None:
             return ("name", name)
         if variable is not None:
             return ("var", id(variable))
+    return None
+
+
+def _pointer_store_byte_index_8616(
+    offset: object,
+    carrier_key: _CarrierKey8616,
+) -> int | None:
+    """Return a proven byte offset from a register carrier expression."""
+    offset = _strip_casts_8616(offset)
+    if _carrier_key_8616(offset) == carrier_key:
+        return 0
+    if not isinstance(offset, structured_c.CBinaryOp) or offset.op != "Add":
+        return None
+    if _carrier_key_8616(offset.lhs) == carrier_key:
+        return _constant_value_8616(offset.rhs)
+    if _carrier_key_8616(offset.rhs) == carrier_key:
+        return _constant_value_8616(offset.lhs)
     return None
 
 
@@ -1134,8 +1190,7 @@ def _exact_segmented_load_tags_8616(
     region = cfunc.addr if cfunc is not None and isinstance(cfunc.addr, int) else None
     if offset is None or space is None:
         return tags
-    return cast(
-        dict[str, object],
+    return dict(
         segmented_load_tags_8616(
         SegmentedLoadIdentity8616(
             space=space,
@@ -1184,7 +1239,8 @@ def _is_proven_ss_stack_access_8616(
     if _expr_mentions_stack_variable_8616(matched.offset_expr):
         return True
     displacement = _stack_offset_from_expr_8616(matched.offset_expr, project, codegen)
-    displacement = _canonical_stack_offset_8616(displacement)
+    canonical_displacement = _canonical_stack_offset_8616(displacement)
+    displacement = canonical_displacement if isinstance(canonical_displacement, int) else None
     if not isinstance(displacement, int):
         return False
     width = max(int(matched.width_bits or 16) // 8, 1)
@@ -1208,7 +1264,8 @@ def lower_runtime_segment_access_8616(
             codegen=codegen,
         )
         if adjusted_access is not expr:
-            return cast(object, adjusted_access)
+            adjusted_object: object = adjusted_access
+            return adjusted_object
     if (
         snapshot_tracker is not None
         and isinstance(expr, structured_c.CFunctionCall)
@@ -1360,6 +1417,8 @@ def _direct_global_offsets_for_segment_proof_8616(
     try:
         from ..structuring.simple_loop_recovery import _function_instruction_summaries_8616
         from .segmented_global_loads import (
+            DirectSegmentedGlobalLoadEvidence8616,
+            DirectSegmentedGlobalStoreEvidence8616,
             _collect_direct_global_symbol_refs_8616,
             _collect_synthetic_direct_global_symbol_refs_8616,
             _merge_direct_global_symbol_refs_8616,
@@ -1373,7 +1432,9 @@ def _direct_global_offsets_for_segment_proof_8616(
     summaries = _function_instruction_summaries_8616(project, function) if function is not None else []
     anonymous_spaces_by_offset: dict[int, set[MemSpace]] = {}
     if function is not None:
-        anonymous_evidence = (
+        anonymous_evidence: tuple[
+            DirectSegmentedGlobalLoadEvidence8616 | DirectSegmentedGlobalStoreEvidence8616, ...
+        ] = (
             *recover_direct_segmented_global_load_evidence_8616(project, function),
             *recover_direct_segmented_global_store_evidence_8616(project, function),
         )
@@ -1636,7 +1697,8 @@ def lower_runtime_ss_segment_helper_to_stack_8616(
     if segment_name != "ss":
         return None
     displacement = _stack_offset_from_expr_8616(offset_expr, project, codegen)
-    displacement = _canonical_stack_offset_8616(displacement)
+    canonical_displacement = _canonical_stack_offset_8616(displacement)
+    displacement = canonical_displacement if isinstance(canonical_displacement, int) else None
     if not isinstance(displacement, int):
         return None
     known_offsets = _known_bp_stack_offsets_8616(codegen)

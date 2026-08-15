@@ -49,7 +49,7 @@ INTERRUPT_VECTOR_COUNT: int = INTERRUPT_CORE_VECTOR_COUNT
 
 def interrupt_addr(vector: int) -> int:
     """Return the synthetic linear interrupt target used by the DOS SimOS."""
-    return interrupt_core_addr_8616(vector & 0xFF)
+    return int(interrupt_core_addr_8616(vector & 0xFF))
 
 
 def runtime_interrupt_addr(vector: int) -> int:
@@ -57,7 +57,7 @@ def runtime_interrupt_addr(vector: int) -> int:
     return interrupt_addr(vector) & 0xFFFF
 
 
-class InterruptHandler(SimProcedure):
+class InterruptHandler(SimProcedure):  # type: ignore[misc, unused-ignore] # dynamic angr SimProcedure base
     """Base symbolic interrupt handler for DOS/BIOS interrupt vectors."""
 
     INT_VECTOR: ClassVar[int | None] = None
@@ -323,7 +323,7 @@ def get_interrupt_handler_class(vector: int) -> type[InterruptHandler]:
     return _HANDLER_CLASSES.setdefault(vector, _generic_interrupt_class(vector))
 
 
-class SimDOSintcall(SimCC):
+class SimDOSintcall(SimCC):  # type: ignore[misc, unused-ignore] # dynamic angr calling-convention base
     """Synthetic DOS interrupt calling convention."""
 
     ARG_REGS: ClassVar[list[str]] = ["ax", "bx", "cx", "dx"]
@@ -341,7 +341,7 @@ class SimDOSintcall(SimCC):
         return state.regs.ax
 
 
-class SimDOS86_16(SimOS):
+class SimDOS86_16(SimOS):  # type: ignore[misc, unused-ignore] # dynamic angr SimOS base
     """DOS SimOS that hooks every real-mode interrupt vector."""
 
     def __init__(self, project: Project, **kwargs: object) -> None:
@@ -359,7 +359,7 @@ class SimDOS86_16(SimOS):
                 self.project.hook(runtime_addr, handler_cls(), replace=True)
 
 
-class SimCC8616MSCsmall(SimCC):
+class SimCC8616MSCsmall(SimCC):  # type: ignore[misc, unused-ignore] # dynamic angr calling-convention base
     """Microsoft C small-model 16-bit calling convention."""
 
     ARG_REGS: ClassVar[list[str]] = []
@@ -373,7 +373,7 @@ class SimCC8616MSCsmall(SimCC):
     CALLEE_CLEANUP: ClassVar[bool] = True
 
 
-class SimCC8616MSCmedium(SimCC):
+class SimCC8616MSCmedium(SimCC):  # type: ignore[misc, unused-ignore] # dynamic angr calling-convention base
     """Microsoft C medium-model 16-bit calling convention."""
 
     ARG_REGS: ClassVar[list[str]] = []

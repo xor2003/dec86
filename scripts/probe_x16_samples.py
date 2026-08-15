@@ -27,7 +27,7 @@ DECOMPILE_SCRIPT = ROOT / "decompile.py"
 
 EXTS = {".COM", ".EXE", ".COD", ".BIN"}
 
-results = []
+results: list[dict[str, object]] = []
 
 for path in sorted(SAMPLES.rglob("*")):
     if path.is_dir():
@@ -73,7 +73,8 @@ with OUT_TXT.open("w") as f:
         f.write(f"Status: {r['status']}\n")
         f.write(f"Summary: {r['summary']}\n")
         f.write("--- snippet ---\n")
-        f.write(r.get("snippet", "")[:800])
+        report_snippet = r.get("snippet", "")
+        f.write(report_snippet[:800] if isinstance(report_snippet, str) else "")
         f.write("\n\n")
 
 print(f"Wrote: {OUT_JSON}\nWrote: {OUT_TXT}")

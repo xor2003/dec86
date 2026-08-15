@@ -137,6 +137,7 @@ __all__ = [
     "DecompilerPostprocessPassInventoryViolation",
     "DecompilerPostprocessPassSpec",
     "DecompilerStructuringPassSpec",
+    "function_effect_summary",
 ]
 
 from . import (  # noqa: F401  # noqa: F401
@@ -145,7 +146,6 @@ from . import (  # noqa: F401  # noqa: F401
     alias_model,
     alias_state,
     alias_transfer,
-    annotations,
     arch_86_16,
     calling_convention_compat,
     callsite_summary,
@@ -190,6 +190,9 @@ from . import (  # noqa: F401  # noqa: F401
     validation_manifest,
     widening_alias,
     widening_model,
+)
+from . import (
+    annotations as _annotations,  # noqa: F401  # keep package module export
 )
 from .addressing_helpers import (
     describe_x86_16_decode_width_matrix,  # noqa: F401

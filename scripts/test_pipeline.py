@@ -28,11 +28,12 @@ DEFAULT_MSC6_ROOT: Path = Path("/home/xor/inertia_player/dos_compilers/Microsoft
 DEFAULT_ULTRA_QUICKC_ROOT: Path = REPO_ROOT / "borrow" / "UltraDecompiler" / "QuickC"
 
 FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
+    "angr_platforms/tests/test_x86_16_smoketest.py",
     "angr_platforms/tests/test_build_msc6_examples.py",
+    "angr_platforms/tests/test_msc6_toolchain_lock.py",
     "angr_platforms/tests/test_check_changed_non_test_types.py",
     "angr_platforms/tests/test_import_ultra_quickc_fixtures.py",
     "angr_platforms/tests/test_omf_pat_lidata.py",
-    "angr_platforms/tests/test_decompiler_architecture_check.py",
     "angr_platforms/tests/test_test_pipeline.py",
     "angr_platforms/tests/test_check_sortd_sidecar_free.py",
     "angr_platforms/tests/test_compare_ghidra_function_coverage.py",
@@ -40,7 +41,6 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_generated_translation_unit_assembly.py",
     "angr_platforms/tests/test_generated_translation_unit_gate.py",
     "angr_platforms/tests/test_cli_direct_argument_evidence_context.py",
-    "angr_platforms/tests/test_test_ownership_manifest.py",
     "angr_platforms/tests/test_x86_16_corpus_scan_timeout.py",
     "angr_platforms/tests/test_decompilation_quality.py",
     "angr_platforms/tests/test_cli_regeneration.py",
@@ -48,7 +48,10 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_callsites.py",
     "angr_platforms/tests/test_x86_16_protected_call_arguments.py",
     "angr_platforms/tests/test_x86_16_condition_lowering.py",
+    "angr_platforms/tests/test_x86_16_condition_register_carriers.py",
     "angr_platforms/tests/test_x86_16_condition_transfer.py",
+    "angr_platforms/tests/test_x86_16_frontend_condition_evidence.py",
+    "angr_platforms/tests/test_x86_16_frontend_instruction_reachability.py",
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_typed_conditions.py",
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_jcc.py",
     "angr_platforms/tests/test_x86_16_stack_lowering_contracts.py",
@@ -66,6 +69,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_array_matching.py",
     "angr_platforms/tests/test_x86_16_struct_merging.py",
     "angr_platforms/tests/test_x86_16_structuring_condition_materialization.py",
+    "angr_platforms/tests/test_x86_16_structuring_multi_arm_condition_ownership.py",
     "angr_platforms/tests/test_x86_16_structuring_loop_body_repair.py",
     "angr_platforms/tests/test_x86_16_dce_optimization.py",
     "angr_platforms/tests/test_x86_16_trivial_copy_optimization.py",
@@ -79,11 +83,13 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_segment_state.py",
     "angr_platforms/tests/test_x86_16_vex_import.py",
     "angr_platforms/tests/test_x86_16_cod_global_identity.py",
+    "angr_platforms/tests/test_x86_16_cod_module_caller_evidence.py",
     "angr_platforms/tests/test_x86_16_segmented_global_loads.py",
     "angr_platforms/tests/test_x86_16_segmented_lowering.py",
     "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py",
     "angr_platforms/tests/test_x86_16_direct_stack_move_loop_entries.py",
     "angr_platforms/tests/test_x86_16_decompilation_cache_surface.py",
+    "angr_platforms/tests/test_x86_16_return_compat_counters.py",
 )
 
 MSC6_TINY_CONSTRUCTS: tuple[str, ...] = (

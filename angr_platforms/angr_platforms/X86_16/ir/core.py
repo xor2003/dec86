@@ -180,6 +180,12 @@ class IRCondition:
     op: str
     args: tuple["IRAtom", ...]
     expr: tuple[str, ...] | None = None
+    width_bits: int | None = field(default=None, compare=False)
+
+    @property
+    def is_signed(self) -> bool:
+        """Return whether this condition uses signed ordering semantics."""
+        return self.op in {"slt", "sle", "sgt", "sge"}
 
     def to_dict(self) -> dict[str, object]:
         """Serialize this typed IR condition for diagnostics and artifacts."""
@@ -188,6 +194,7 @@ class IRCondition:
             "op": self.op,
             "args": [_atom_to_dict(arg) for arg in self.args],
             "expr": self.expr,
+            "width_bits": self.width_bits,
         }
 
 

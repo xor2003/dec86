@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
 
-DECOMPILATION_CACHE_SCHEMA: int = 5
+DECOMPILATION_CACHE_SCHEMA: int = 6
 DECOMPILATION_CACHE_DIR: Path = _ROOT / ".inertia_decomp_cache"
 BASE_RECOVERY_CACHE_SOURCE_FILES: tuple[Path, ...] = (
     _ROOT / "decompile.py",
@@ -161,6 +163,14 @@ def _cache_file_fingerprint(path: Path | None) -> dict[str, object] | None:
     }
 
 
+def _cache_content_fingerprint(path: Path | None) -> dict[str, object] | None:
+    """Return path-independent identity for content-addressed cache inputs."""
+    fingerprint = _cache_file_fingerprint(path)
+    if fingerprint is None:
+        return None
+    return {key: fingerprint[key] for key in ("size", "sha256")}
+
+
 def _cache_sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -225,12 +235,28 @@ def _load_cache_json(namespace: str, key: dict[str, object]) -> dict[str, object
 
 
 def _store_cache_json(namespace: str, key: dict[str, object], payload: dict[str, object]) -> dict[str, object] | None:
+    """Store one cache record with an atomic final-path replacement."""
     path = _cache_json_path(namespace, key)
+    temporary_path: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, sort_keys=True))
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary_path = Path(stream.name)
+            json.dump(payload, stream, sort_keys=True)
+            stream.write("\n")
+        os.replace(temporary_path, path)
     except OSError:
         return None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
     return None
 
 
@@ -243,7 +269,7 @@ def _function_decompilation_cache_key(
     enable_structured_simplify: bool,
     enable_postprocess: bool,
 ) -> dict[str, object] | None:
-    binary_fingerprint = _cache_file_fingerprint(binary_path)
+    binary_fingerprint = _cache_content_fingerprint(binary_path)
     if binary_fingerprint is None:
         return None
     return {
@@ -266,7 +292,7 @@ def _recovery_cache_key(
     kind: str,
     extra: dict[str, object] | None = None,
 ) -> dict[str, object] | None:
-    binary_fingerprint = _cache_file_fingerprint(binary_path)
+    binary_fingerprint = _cache_content_fingerprint(binary_path)
     if binary_fingerprint is None:
         return None
     payload = {

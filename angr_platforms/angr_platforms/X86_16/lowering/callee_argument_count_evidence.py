@@ -80,6 +80,8 @@ class _ProjectSurface8616(Protocol):
     _inertia_original_linear_delta: int
     _inertia_caller_function_ranges_8616: tuple[tuple[int, int], ...]
     _inertia_caller_target_aliases_8616: tuple[int, ...]
+    _inertia_caller_evidence_project_8616: object
+    _inertia_caller_evidence_target_8616: int
     _inertia_callee_argument_count_evidence_8616: dict[int, CalleeArgumentCountEvidence8616]
 
 
@@ -139,8 +141,9 @@ def _logical_argument_count_8616(summary: CallsiteSummary8616) -> int | None:
     """Project one summary to logical arity without splitting wide values."""
     if summary.logical_arg_widths:
         return len(summary.logical_arg_widths)
-    if summary.arg_count == 0:
-        return 0
+    argument_count = summary.arg_count
+    if isinstance(argument_count, int) and argument_count in {0, 1} and len(summary.arg_widths) == argument_count:
+        return argument_count
     if not isinstance(summary.arg_count, int) or summary.arg_count < 0:
         return None
     widths = logical_argument_widths_from_callsite_8616(
@@ -159,6 +162,14 @@ def _project_target_pairs_8616(project: object, target_addr: int) -> tuple[tuple
     """Return active/original project targets across exact-slice rebasing."""
     active = cast(_ProjectSurface8616, project)
     pairs: list[tuple[object, int]] = [(project, target_addr)]
+    try:
+        caller_evidence_project = active._inertia_caller_evidence_project_8616
+        caller_evidence_target = active._inertia_caller_evidence_target_8616
+    except AttributeError:
+        caller_evidence_project = None
+        caller_evidence_target = None
+    if caller_evidence_project is not None and isinstance(caller_evidence_target, int):
+        pairs.append((caller_evidence_project, caller_evidence_target))
     try:
         aliases = active._inertia_caller_target_aliases_8616
     except AttributeError:

@@ -67,6 +67,26 @@ def test_callee_argument_count_evidence_preserves_one_push_per_logical_argument(
     assert evidence.argument_count == 2
 
 
+def test_callee_argument_count_evidence_accepts_one_unknown_source_word(monkeypatch) -> None:
+    project = _project()
+    target = SimpleNamespace(callsite_addr=0x110, target_addr=0x200, return_addr=0x113, kind="near")
+    summary = _summary(0x110, 0x200, 1)
+    summary = CallsiteSummary8616(
+        **{
+            **summary.to_dict(),
+            "push_arg_sources": (None,),
+        }
+    )
+    monkeypatch.setattr(evidence_module, "collect_neighbor_call_targets", lambda _function: [target])
+    monkeypatch.setattr(evidence_module, "summarize_x86_16_callsite", lambda _function, _addr: summary)
+
+    evidence = collect_callee_argument_count_evidence_8616(project, 0x200)
+
+    assert evidence.verdict is CalleeArgumentCountVerdict8616.CONSISTENT
+    assert evidence.argument_count == 1
+    assert evidence.failure_count == 0
+
+
 def test_callee_argument_count_evidence_uses_active_project_entry_aliases(monkeypatch) -> None:
     project = _project()
     project._inertia_caller_target_aliases_8616 = (0x200, 0x1F0)

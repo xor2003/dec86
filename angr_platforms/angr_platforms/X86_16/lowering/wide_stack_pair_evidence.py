@@ -13,11 +13,51 @@ instruction shapes.
 
 from __future__ import annotations
 
+from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.analyses.decompiler.structured_codegen.c import CVariable
 from angr.sim_variable import SimStackVariable
 
 from ..ir.core import IRValue, MemSpace
 from .real_mode_linear import proven_wide_stack_pair_low_offset_8616
+
+
+def _word_projection_source_8616(expression: object, shift: int) -> CVariable | None:
+    """Recover one masked word projection of a proven wide stack C variable."""
+    if not isinstance(expression, structured_c.CBinaryOp) or expression.op != "And":
+        return None
+    mask = expression.rhs
+    if not isinstance(mask, structured_c.CConstant) or mask.value != 0xFFFF:
+        return None
+    source = expression.lhs
+    if shift:
+        if not isinstance(source, structured_c.CBinaryOp) or source.op != "Shr":
+            return None
+        shift_node = source.rhs
+        if not isinstance(shift_node, structured_c.CConstant) or shift_node.value != shift:
+            return None
+        source = source.lhs
+    return source if isinstance(source, CVariable) else None
+
+
+def _proven_projected_wide_pair_8616(
+    high_expression: object,
+    low_expression: object,
+    low_offset: int,
+) -> bool:
+    """Accept low/high projections that share one four-byte stack declaration."""
+    high_source = _word_projection_source_8616(high_expression, 16)
+    low_source = _word_projection_source_8616(low_expression, 0)
+    if high_source is None or low_source is None:
+        return False
+    high_variable = high_source.variable
+    low_variable = low_source.variable
+    return (
+        isinstance(high_variable, SimStackVariable)
+        and isinstance(low_variable, SimStackVariable)
+        and high_variable == low_variable
+        and high_variable.size == 4
+        and high_variable.offset == low_offset
+    )
 
 
 def proven_wide_stack_ir_pair_8616(
@@ -38,6 +78,12 @@ def proven_wide_stack_ir_pair_8616(
     ):
         return False
     if proven_wide_stack_pair_low_offset_8616(high_expression, low_expression) == low_value.offset:
+        return True
+    if _proven_projected_wide_pair_8616(
+        high_expression,
+        low_expression,
+        low_value.offset,
+    ):
         return True
     if not isinstance(high_expression, CVariable) or not isinstance(low_expression, CVariable):
         return False

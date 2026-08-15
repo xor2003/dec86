@@ -435,7 +435,9 @@ def test_collect_typed_conditions_refuses_stale_block_generations():
     assert stats.normalized_fact_count == 4
     assert stats.classified_fact_count == 1
     assert stats.materialized_count == 1
-    assert stats.failure_count == 3
+    # The liveness pass also refuses the synthetic fixture's incomplete CFG
+    # topology, in addition to the three stale condition generations.
+    assert stats.failure_count == 4
 
 
 def test_record_typed_condition_deduplicates_module_cache():

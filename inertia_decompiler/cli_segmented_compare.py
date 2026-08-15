@@ -75,9 +75,9 @@ def _addr_exprs_are_same(
             if low_class.kind == high_class.kind and low_class.seg_name == high_class.seg_name:
                 if low_class.kind == "stack" and low_class.cvar is not None and high_class.cvar is not None:
                     if same_c_expression(low_class.cvar, high_class.cvar):
-                        return low_class.extra_offset == high_class.extra_offset
+                        return bool(low_class.extra_offset == high_class.extra_offset)
                 if low_class.kind in {"extra", "segment_const"}:
-                    return low_class.linear == high_class.linear
+                    return bool(low_class.linear == high_class.linear)
 
         low_terms, low_const = split_expr_const_offset(low_addr_expr)
         high_terms, high_const = split_expr_const_offset(high_addr_expr)
@@ -121,10 +121,10 @@ def _addr_exprs_are_byte_pair(
                         and high_class.stack_var is not None
                     ):
                         if stack_slot_identity_can_join_var(low_class.stack_var, high_class.stack_var):
-                            return high_class.extra_offset == low_class.extra_offset + 1
+                            return bool(high_class.extra_offset == low_class.extra_offset + 1)
                     if low_class.kind in {"extra", "segment_const"}:
                         if low_class.linear is not None and high_class.linear is not None:
-                            return high_class.linear == low_class.linear + 1
+                            return bool(high_class.linear == low_class.linear + 1)
 
         low_terms, low_const = split_expr_const_offset(low_addr_expr)
         high_terms, high_const = split_expr_const_offset(high_addr_expr)

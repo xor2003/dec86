@@ -38,6 +38,7 @@ from inertia_decompiler.cli_c_text_postprocess import (  # noqa: E402
 from inertia_decompiler.flair_paths import default_flair_startup_root  # noqa: E402
 from inertia_decompiler.project_loading import _build_project  # noqa: E402
 from inertia_decompiler.sidecar_metadata import _load_lst_metadata  # noqa: E402
+from scripts.msc6_toolchain_lock import msc6_toolchain_lock  # noqa: E402
 from signature_catalog import build_signature_catalog  # noqa: E402
 
 DEFAULT_EXAMPLES_DIR: Path = REPO_ROOT / "examples" / "msc6_constructs"
@@ -792,7 +793,7 @@ def _extract_decompiled_function_definition(c_text: str, function_name: str) -> 
 def _written_storage_name_8616(node: c_ast.Node) -> str | None:
     """Return the root identifier written by one parsed C lvalue."""
     if isinstance(node, c_ast.ID):
-        return node.name
+        return cast(str, node.name)
     if isinstance(node, c_ast.ArrayRef):
         return _written_storage_name_8616(node.name)
     if isinstance(node, c_ast.StructRef):
@@ -800,7 +801,7 @@ def _written_storage_name_8616(node: c_ast.Node) -> str | None:
     return None
 
 
-class _GeneratedFunctionStorageCollector8616(c_ast.NodeVisitor):
+class _GeneratedFunctionStorageCollector8616(c_ast.NodeVisitor):  # type: ignore[misc]
     """Collect local declarations and direct storage writes from parsed C."""
 
     def __init__(self) -> None:
@@ -1167,7 +1168,7 @@ def _prepare_signature_catalog(
         f"unique_modules={result.unique_module_count} "
         f"duplicates={result.duplicate_module_count}"
     )
-    return result.output_path
+    return cast(Path, result.output_path)
 
 
 def _dos_safe_names(stem: str, counter: int | None = None) -> tuple[str, str, str, str]:
@@ -1235,11 +1236,11 @@ def _prepare_decompiled_source_for_c89(raw_c_text: str) -> str:
     with_decls = _normalize_function_signature_arg_names(with_decls)
     with_decls = _alias_generic_globals_to_existing_harness_globals(with_decls)
     with_decls = _drop_redundant_externs_for_defined_globals(with_decls)
-    return _materialize_missing_synthetic_global_declarations_text(
+    return str(_materialize_missing_synthetic_global_declarations_text(
         with_decls,
         metadata=None,
         synthetic_globals=None,
-    )
+    ))
 
 
 def _alias_generic_globals_to_existing_harness_globals(c_text: str) -> str:
@@ -1413,7 +1414,7 @@ def _lookup_sidecar_code_labels(binary_path: Path) -> dict[str, int]:
     return labels
 
 
-def _compile_and_link(
+def _compile_and_link_unlocked(
     source_path: Path,
     out_dir: Path,
     *,
@@ -1425,6 +1426,7 @@ def _compile_and_link(
     cod_name: str | None = None,
     runtime_support: bool = False,
 ) -> tuple[bool, str, str, str, str]:
+    """Compile and link while the caller owns the shared toolchain lock."""
     _ensure_msvc6_compat_headers(out_dir)
     artifact_names = [obj_name, exe_name, map_name]
     if cod_name is not None:
@@ -1523,6 +1525,33 @@ def _compile_and_link(
     )
 
 
+def _compile_and_link(
+    source_path: Path,
+    out_dir: Path,
+    *,
+    kvikdos: Path,
+    msc6_root: Path,
+    obj_name: str,
+    exe_name: str,
+    map_name: str,
+    cod_name: str | None = None,
+    runtime_support: bool = False,
+) -> tuple[bool, str, str, str, str]:
+    """Run one complete compiler/linker transaction without cross-worker overlap."""
+    with msc6_toolchain_lock(msc6_root):
+        return _compile_and_link_unlocked(
+            source_path,
+            out_dir,
+            kvikdos=kvikdos,
+            msc6_root=msc6_root,
+            obj_name=obj_name,
+            exe_name=exe_name,
+            map_name=map_name,
+            cod_name=cod_name,
+            runtime_support=runtime_support,
+        )
+
+
 def _run_example(
     exe_path: Path,
     out_dir: Path,
@@ -1583,15 +1612,15 @@ def _pick_main_proc_candidates_from_cod(
         return []
     for candidate in DECOMPILE_MAIN_NAMES:
         if candidate in proc_kinds and (not public_names or candidate in public_names):
-            kinds = sorted(proc_kinds[candidate])
-            selected: list[tuple[str, str | None, int | None]] = [(candidate, kinds[0], proc_addrs.get(candidate))]
+            selected_kinds = sorted(proc_kinds[candidate])
+            selected: list[tuple[str, str | None, int | None]] = [(candidate, selected_kinds[0], proc_addrs.get(candidate))]
             selected.extend(
-                (candidate, kind, proc_addrs.get(candidate)) for kind in kinds[1:]
+                (candidate, kind, proc_addrs.get(candidate)) for kind in selected_kinds[1:]
             )
             return selected
     if proc_kinds:
-        name, kinds = next(iter(sorted(proc_kinds.items())))
-        first = next(iter(sorted(kinds)))
+        name, candidate_kinds = next(iter(sorted(proc_kinds.items())))
+        first = next(iter(sorted(candidate_kinds)))
         return [(name, first, proc_addrs.get(name))]
     return []
 
@@ -1624,13 +1653,16 @@ def _resolve_main_candidates_from_metadata(
 
     if cod_path is not None and cod_path.is_file():
         proc_candidates = _pick_main_proc_candidates_from_cod(cod_path)
-        map_path = exe_path.with_suffix(".MAP")
-        if not map_path.exists():
+        map_path_candidate = exe_path.with_suffix(".MAP")
+        map_path: Path | None
+        if not map_path_candidate.exists():
             alt_map_path = exe_path.with_suffix(".map")
             if alt_map_path.exists():
                 map_path = alt_map_path
             else:
                 map_path = None
+        else:
+            map_path = map_path_candidate
 
         for candidate_name, candidate_kind, candidate_addr in proc_candidates:
             if candidate_name is None:
@@ -2031,10 +2063,11 @@ def _decompile_function_with_options(
     elapsed = time.perf_counter() - start
     profile = _parse_decompile_profile(_decompile_profile_text(proc.stdout, proc.stderr))
     acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, profile)
+    profile_reason = reason.value if reason is not None else None
     if acceptable and proc.returncode != 0:
-        reason = FocusedDecompileRetryReason.NONZERO_EXIT.value
+        profile_reason = FocusedDecompileRetryReason.NONZERO_EXIT.value
         acceptable = False
-    profile["acceptance_reason"] = None if acceptable else reason
+    profile["acceptance_reason"] = None if acceptable else profile_reason
     profile["process_timeout_seconds"] = process_timeout
     profile["analysis_timeout_seconds"] = decompile_timeout
     profile["wall_seconds"] = elapsed
@@ -2177,10 +2210,11 @@ def _build_from_function_decompiles(
             profile["returncode"] = result.get("returncode")
             profile["wall_seconds"] = result.get("wall_seconds")
             acceptable, reason = _is_decompile_output_acceptable(out_text, err_text, profile)
+            profile_reason = reason.value if reason is not None else None
             if acceptable and result.get("returncode") != 0:
                 acceptable = False
-                reason = FocusedDecompileRetryReason.NONZERO_EXIT.value
-            profile["acceptance_reason"] = None if acceptable else reason
+                profile_reason = FocusedDecompileRetryReason.NONZERO_EXIT.value
+            profile["acceptance_reason"] = None if acceptable else profile_reason
             function_debug.append((function_name, function_name, " ".join(cmd), profile))
             if not acceptable:
                 retry_reason = _focused_decompile_retry_reason(profile)
@@ -2554,13 +2588,16 @@ def _decompile(
             if isinstance(candidate_name, str) and candidate_name:
                 cmd_for_candidate.extend(["--proc", candidate_name, "--proc-kind", str(candidate_kind or "NEAR")])
             elif isinstance(candidate_cod_offset, int):
-                map_path = exe_path.with_suffix(".MAP")
-                if not map_path.exists():
+                map_path_candidate = exe_path.with_suffix(".MAP")
+                map_path: Path | None
+                if not map_path_candidate.exists():
                     alt_map_path = exe_path.with_suffix(".map")
                     if alt_map_path.exists():
                         map_path = alt_map_path
                     else:
                         map_path = None
+                else:
+                    map_path = map_path_candidate
                 mapped_addr = _resolve_cod_offset_to_exe_addr(
                     candidate_cod_offset,
                     map_path,
@@ -2661,7 +2698,7 @@ def _decompile(
                 "value": fallback_count,
             }
             fallback_cmd = _candidate_command(fallback_candidate)
-            fallback_attempt = {
+            fallback_attempt: dict[str, object] = {
                 "candidate": fallback_candidate,
                 "command": " ".join(fallback_cmd),
             }
@@ -3166,12 +3203,14 @@ def main() -> int:
     signature_inputs: list[Path] = [path for path in args.signature_input if isinstance(path, Path)]
     raw_signature_catalog = args.signature_catalog
     if isinstance(raw_signature_catalog, Path):
-        signature_catalog: Path | None = raw_signature_catalog
-        if not signature_catalog.is_absolute():
-            signature_catalog = (REPO_ROOT / signature_catalog).resolve()
+        resolved_signature_catalog: Path = raw_signature_catalog
+        if not resolved_signature_catalog.is_absolute():
+            resolved_signature_catalog = (REPO_ROOT / resolved_signature_catalog).resolve()
         if signature_inputs:
-            signature_inputs = [signature_catalog, *signature_inputs]
+            signature_inputs = [resolved_signature_catalog, *signature_inputs]
             signature_catalog = None
+        else:
+            signature_catalog = resolved_signature_catalog
     else:
         signature_catalog = None
 

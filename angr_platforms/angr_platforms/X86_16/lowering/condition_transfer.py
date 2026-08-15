@@ -37,6 +37,11 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from ..alias.condition_register_carriers import normalize_condition_register_carriers_8616
+from ..alias.condition_register_liveness import (
+    ConditionRegisterTopology8616,
+    normalize_condition_register_liveness_8616,
+)
 from ..condition_trace import record_classified_conditions_trace_8616
 from ..ir.condition_ir import (
     JCC_TO_COND_8616,
@@ -70,6 +75,7 @@ class _ConditionFunctionOwnership8616:
 
     decoded_block_addrs: frozenset[int]
     conditional_owners: dict[int, _ConditionBlockOwner8616]
+    register_topology: ConditionRegisterTopology8616
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,9 +205,66 @@ def _current_function_condition_ownership_8616(func: object) -> _ConditionFuncti
         if block_addr not in conflicting_owners:
             owners[block_addr] = owner
 
+    graph = _dynamic_boundary_attr_8616(func, "graph", None)
+    predecessors_by_block: dict[int, frozenset[int]] = {}
+    condition_only_blocks: set[int] = set()
+    for block in blocks:
+        block_addr = _dynamic_boundary_attr_8616(block, "addr", None)
+        capstone = _dynamic_boundary_attr_8616(block, "capstone", None)
+        wrappers = tuple(_dynamic_boundary_attr_8616(capstone, "insns", ()) or ())
+        if not isinstance(block_addr, int) or not wrappers:
+            continue
+        mnemonics = tuple(
+            str(
+                _dynamic_boundary_attr_8616(
+                    _dynamic_boundary_attr_8616(wrapper, "insn", wrapper),
+                    "mnemonic",
+                    "",
+                )
+                or ""
+            ).strip().lower()
+            for wrapper in wrappers
+        )
+        if all(item in JCC_TO_COND_8616 for item in mnemonics) or (
+            len(mnemonics) >= 2
+            and mnemonics[-1] in JCC_TO_COND_8616
+            and mnemonics[-2] == "cmp"
+            and all(item == "cmp" or item in JCC_TO_COND_8616 for item in mnemonics)
+        ):
+            condition_only_blocks.add(block_addr)
+    try:
+        graph_nodes = tuple(graph.nodes())
+    except (AttributeError, TypeError):
+        graph_nodes = ()
+    for node in graph_nodes:
+        node_addr = node if isinstance(node, int) else _dynamic_boundary_attr_8616(node, "addr", None)
+        if not isinstance(node_addr, int):
+            continue
+        try:
+            predecessor_nodes = tuple(graph.predecessors(node))
+        except (AttributeError, TypeError):
+            continue
+        predecessor_addrs = frozenset(
+            predecessor_addr
+            for predecessor in predecessor_nodes
+            if isinstance(
+                predecessor_addr := (
+                    predecessor
+                    if isinstance(predecessor, int)
+                    else _dynamic_boundary_attr_8616(predecessor, "addr", None)
+                ),
+                int,
+            )
+        )
+        predecessors_by_block[node_addr] = predecessor_addrs
+
     return _ConditionFunctionOwnership8616(
         decoded_block_addrs=frozenset(decoded_block_addrs),
         conditional_owners=owners,
+        register_topology=ConditionRegisterTopology8616(
+            predecessors_by_block,
+            frozenset(condition_only_blocks),
+        ),
     )
 
 
@@ -210,7 +273,7 @@ def _expected_condition_op_for_owner_8616(
     owner: _ConditionBlockOwner8616,
 ) -> str | None:
     """Return the condition operator implied by the current decoded JCC."""
-    expected = JCC_TO_COND_8616.get(owner.mnemonic)
+    expected = typing.cast(str | None, JCC_TO_COND_8616.get(owner.mnemonic))
     if expected is None:
         return None
     source_kind = cond.source[0] if cond.source else None
@@ -242,20 +305,53 @@ def _filter_conditions_to_current_function_8616(
     ownership: _ConditionFunctionOwnership8616,
 ) -> tuple[list[ConditionIR], _ConditionOwnershipStats8616]:
     """Retain conditions proven to match the current function's decoded blocks."""
-    resolution = resolve_condition_fact_conflicts_8616(conditions)
-    normalized = list(resolution.conditions)
+    carrier_resolution = normalize_condition_register_carriers_8616(conditions)
+    resolution = resolve_condition_fact_conflicts_8616(carrier_resolution.conditions)
+    liveness_resolution = normalize_condition_register_liveness_8616(
+        resolution.conditions,
+        ownership.register_topology,
+    )
+    if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+        log.warning(
+            "[condition-transfer] register-liveness topology=%s stats=%s",
+            ownership.register_topology.predecessors_by_block,
+            liveness_resolution.stats,
+        )
+        log.warning(
+            "[condition-transfer] register-liveness conditions=%s",
+            tuple(
+                (
+                    condition.block_addr,
+                    condition.src_insn,
+                    condition.lhs.space.value if isinstance(condition.lhs, IRValue) else type(condition.lhs).__name__,
+                    condition.lhs.offset if isinstance(condition.lhs, IRValue) else None,
+                    condition.rhs.space.value if isinstance(condition.rhs, IRValue) else type(condition.rhs).__name__,
+                    condition.rhs.offset if isinstance(condition.rhs, IRValue) else None,
+                )
+                for condition in liveness_resolution.conditions
+            ),
+        )
+    normalized = list(liveness_resolution.conditions)
     if not ownership.decoded_block_addrs:
         return normalized, _ConditionOwnershipStats8616(
             raw_fact_count=len(conditions),
             normalized_fact_count=len(normalized),
             classified_fact_count=0,
             materialized_count=len(normalized),
-            failure_count=resolution.failure_count,
+            failure_count=(
+                resolution.failure_count
+                + carrier_resolution.stats.failure_count
+                + liveness_resolution.stats.failure_count
+            ),
         )
 
     retained: list[ConditionIR] = []
     classified = 0
-    failures = resolution.failure_count
+    failures = (
+        resolution.failure_count
+        + carrier_resolution.stats.failure_count
+        + liveness_resolution.stats.failure_count
+    )
     for cond in normalized:
         block_addr = cond.block_addr
         if not isinstance(block_addr, int) or block_addr not in ownership.decoded_block_addrs:
@@ -301,7 +397,7 @@ def _decode_first_insn_at_addr_8616(project: object, addr: int) -> object | None
     insns = tuple(_dynamic_boundary_attr_8616(capstone, "insns", ()) or ())
     if not insns:
         return None
-    return insns[0]
+    return typing.cast(object, insns[0])
 
 
 def _condition_from_pending_source_8616(
@@ -327,6 +423,7 @@ def _condition_from_pending_source_8616(
             src_insn=src_insn,
             block_addr=block_addr,
             producer_insn=source.addr,
+            producer_semantics=source.semantics,
         )
     elif source.kind == "test":
         lhs = source.normalized_lhs if source.normalized_lhs is not None else source.lhs
@@ -340,6 +437,7 @@ def _condition_from_pending_source_8616(
             block_addr=block_addr,
             producer_insn=source.addr,
             operand_bind_insn=src_insn if source.bind_operand_at_jcc else None,
+            producer_semantics=source.semantics,
         )
     else:
         return None
@@ -506,11 +604,22 @@ def _collect_typed_condition_artifacts_8616(
             module_cache = {}
             pending_sources = {}
 
-        cached_block_count = sum(1 for block_addr in block_addrs if isinstance(module_cache.get(block_addr, None), list))
-        if cached_block_count != len(block_addrs):
+        condition_block_addrs = sorted(ownership.conditional_owners) or block_addrs
+        cached_block_count = sum(
+            1 for block_addr in condition_block_addrs if isinstance(module_cache.get(block_addr, None), list)
+        )
+        if cached_block_count != len(condition_block_addrs):
             if "Instruction_ANY" in locals():
                 _reset_affine_condition_state_8616(Instruction_ANY)
-            _relift_blocks_for_condition_cache_8616(project, block_addrs)
+            missing_blocks = [
+                block_addr
+                for block_addr in condition_block_addrs
+                if not isinstance(module_cache.get(block_addr, None), list)
+            ]
+            relift_blocks = missing_blocks if ownership.conditional_owners else block_addrs
+            _relift_blocks_for_condition_cache_8616(project, relift_blocks)
+            for block_addr in missing_blocks:
+                module_cache.setdefault(block_addr, [])
         if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
             cache_keys = tuple(sorted(k for k in module_cache.keys() if isinstance(k, int)))
             pending_keys = tuple(sorted(k for k in pending_sources.keys() if isinstance(k, int)))
@@ -579,7 +688,7 @@ def collect_typed_condition_artifacts_8616(
 
 
 def transfer_typed_conditions_from_emulator_8616(
-    instructions: list,
+    instructions: list[object],
     codegen: object,
 ) -> int:
     """Transfer typed conditions from lifted instruction emulators to codegen.

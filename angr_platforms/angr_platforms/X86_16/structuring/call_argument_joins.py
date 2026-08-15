@@ -30,7 +30,11 @@ from angr.sim_type import SimTypeShort
 
 from ..alias.callsite_stack_merge import CallsiteRegisterJoin8616
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
-from ..callsite_summary import CallsiteSummary8616
+from ..callsite_summary import (
+    CallsiteSummary8616,
+    callsite_summary_inventory_8616,
+    structured_callsite_addr_8616,
+)
 from ..pipeline.errors import PipelineHardError
 from .call_argument_join_conditions import (
     conditional_call_argument_join_expression_8616,
@@ -55,6 +59,7 @@ class _CallArgumentJoinCodegen8616(Protocol):
 
     cfunc: _CallArgumentJoinCFunction8616
     _inertia_callsite_summaries: dict[int, CallsiteSummary8616]
+    _inertia_callsite_summary_inventory_8616: dict[int, CallsiteSummary8616]
     _inertia_call_argument_join_stats_8616: CallArgumentJoinStats8616
 
 
@@ -154,30 +159,34 @@ def _assignments_of_value_8616(node: object, value: int) -> tuple[CAssignment, .
 
 def _branch_carrier_8616(branch: CIfElse, values: tuple[int, int]) -> CVariable | None:
     """Return the unique lvalue assigned the two incoming values by both arms."""
-    if len(branch.condition_and_nodes) != 1 or branch.else_node is None:
+    arms = tuple(node for _condition, node in branch.condition_and_nodes if node is not None)
+    if branch.else_node is not None:
+        arms += (branch.else_node,)
+    if len(arms) < 2:
         return None
-    true_node = branch.condition_and_nodes[0][1]
-    false_node = branch.else_node
-    if true_node is None:
+    assignments_by_value = tuple(
+        tuple(
+            (arm_index, assignment)
+            for arm_index, arm in enumerate(arms)
+            for assignment in _assignments_of_value_8616(arm, value)
+        )
+        for value in values
+    )
+    if any(len(assignments) != 1 for assignments in assignments_by_value):
         return None
-    candidates: list[CVariable] = []
-    for true_value, false_value in (values, tuple(reversed(values))):
-        true_assignments = _assignments_of_value_8616(true_node, true_value)
-        false_assignments = _assignments_of_value_8616(false_node, false_value)
-        if len(true_assignments) != 1 or len(false_assignments) != 1:
-            continue
-        true_lhs = true_assignments[0].lhs
-        false_lhs = false_assignments[0].lhs
-        if not isinstance(true_lhs, CVariable) or not isinstance(false_lhs, CVariable):
-            continue
-        if _same_c_expression_8616(true_lhs, false_lhs):
-            candidates.append(true_lhs)
-    unique = [
-        candidate
-        for index, candidate in enumerate(candidates)
-        if not any(_same_c_expression_8616(candidate, prior) for prior in candidates[:index])
-    ]
-    return unique[0] if len(unique) == 1 else None
+    (left_arm, left_assignment), (right_arm, right_assignment) = (
+        assignments[0] for assignments in assignments_by_value
+    )
+    left_lhs = left_assignment.lhs
+    right_lhs = right_assignment.lhs
+    if (
+        left_arm == right_arm
+        or not isinstance(left_lhs, CVariable)
+        or not isinstance(right_lhs, CVariable)
+        or not _same_c_expression_8616(left_lhs, right_lhs)
+    ):
+        return None
+    return left_lhs
 
 
 def _unique_branch_carrier_8616(root: object, values: tuple[int, int]) -> tuple[CIfElse, CVariable] | None:
@@ -265,12 +274,16 @@ def materialize_call_argument_joins_8616(project: object, codegen: object) -> bo
         return False
     if not isinstance(summary_map, dict):
         raise TypeError("structured callsite summary map must be a dict")
+    summary_inventory = callsite_summary_inventory_8616(typed_codegen)
 
     grouped: dict[int, list[tuple[CFunctionCall, CallsiteSummary8616]]] = {}
     for node in _iter_c_nodes_deep_8616(root):
         if not isinstance(node, CFunctionCall):
             continue
         summary = summary_map.get(id(node))
+        if not isinstance(summary, CallsiteSummary8616):
+            callsite_addr = structured_callsite_addr_8616(node)
+            summary = summary_inventory.get(callsite_addr) if callsite_addr is not None else None
         if not isinstance(summary, CallsiteSummary8616):
             continue
         merge = summary.predecessor_stack_merge

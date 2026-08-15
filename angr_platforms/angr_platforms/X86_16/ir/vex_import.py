@@ -10,7 +10,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from ..analysis.alias import storage_of
 from ..analysis.stack_frame_ir import build_x86_16_ir_frame_access_artifact
@@ -165,7 +165,7 @@ class _CodegenBoundary(Protocol):
 
 def _external_int(value: object) -> int:
     """Coerce external pyvex/angr integer-like values without owning their type."""
-    return int(value)  # type: ignore[arg-type]
+    return int(cast(Any, value))
 
 
 def _expr_tag(expr: object | None) -> str:
@@ -247,7 +247,7 @@ def _expr_result_size(expr: object | None) -> object | None:
     if isinstance(result_size, int):
         return result_size
     try:
-        return cast(_VexResultSizeBoundary, result_size).value
+        return result_size.value
     except AttributeError:
         return result_size
 

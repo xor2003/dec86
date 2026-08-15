@@ -26,7 +26,7 @@ import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
-from typing import TextIO
+from typing import Any, Iterator, TextIO
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MAX_MEMORY_MB = 1024
@@ -100,7 +100,7 @@ class _ThreadBoundTextIO(io.TextIOBase):
         self._local = threading.local()
 
     @contextlib.contextmanager
-    def target(self, stream: TextIO):
+    def target(self, stream: TextIO) -> Iterator[None]:
         previous = getattr(self._local, "stream", None)
         self._local.stream = stream
         try:
@@ -130,14 +130,14 @@ class _ThreadBoundTextIO(io.TextIOBase):
         return bool(getattr(target, "isatty", lambda: False)())
 
     @property
-    def encoding(self):  # noqa: ANN201
+    def encoding(self) -> str:  # type: ignore[override]
         return getattr(self._stream(), "encoding", getattr(self._fallback, "encoding", "utf-8"))
 
     @property
-    def errors(self):  # noqa: ANN201
+    def errors(self) -> str:  # type: ignore[override]
         return getattr(self._stream(), "errors", getattr(self._fallback, "errors", "strict"))
 
-    def __getattr__(self, item):  # noqa: ANN001
+    def __getattr__(self, item: str) -> Any:
         return getattr(self._stream(), item)
 
 
@@ -386,7 +386,7 @@ def _stdout_is_cacheable_success(stdout_text: str) -> bool:
 
 
 def _load_success_cache(item: CodWorkItem, *, timeout: int, max_memory_mb: int) -> CodWorkResult | None:
-    def _impl():
+    def _impl() -> CodWorkResult | None:
         key = _success_cache_key(item, timeout=timeout, max_memory_mb=max_memory_mb)
         if key is None:
             return None
@@ -506,7 +506,7 @@ def _output_looks_like_memory_pressure(text: str) -> bool:
 def _describe_returncode(
     returncode: int | None, stdout_text: str, stderr_text: str, *, subprocess_timed_out: bool = False
 ) -> tuple[str, str]:
-    def _impl():
+    def _impl() -> tuple[str, str]:
         if subprocess_timed_out:
             return "subprocess_timeout", "worker-side subprocess timed out before the CLI returned"
         if returncode is None:
@@ -573,7 +573,7 @@ def _describe_scan_safe_result(item: CodWorkItem, scan_result: FunctionScanResul
 
 
 def _render_scan_safe_block(result: CodWorkResult, scan_result: FunctionScanResult) -> str:
-    def _impl():
+    def _impl() -> str:
         parts = [
             f"/* == scan-safe {result.proc_index}/{result.proc_total} {result.cod_path.name}",
         ]
@@ -674,14 +674,14 @@ class CodFileWriter:
         return self.received_count >= self.proc_total and not self.pending_blocks and self.next_index > self.proc_total
 
 
-def _iter_cod_files(root: Path):
+def _iter_cod_files(root: Path) -> Iterator[Path]:
     for path in sorted(root.rglob("*")):
         if path.is_file() and path.suffix.lower() == ".cod":
             yield path
 
 
 def _resolve_selected_cod_files(cod_dir: Path, selectors: list[str] | None) -> list[Path]:
-    def _impl():
+    def _impl() -> list[Path]:
         all_files = list(_iter_cod_files(cod_dir))
         if not selectors:
             return all_files
@@ -812,14 +812,18 @@ def _make_executor(max_workers: int, worker_memory_limit_mb: int) -> ProcessPool
         mp_context = mp.get_context("fork")
     except ValueError:
         mp_context = None
-    kwargs = {
-        "max_workers": max_workers,
-        "initializer": _worker_initializer,
-        "initargs": (worker_memory_limit_mb,),
-    }
-    if mp_context is not None:
-        kwargs["mp_context"] = mp_context
-    return ProcessPoolExecutor(**kwargs)
+    if mp_context is None:
+        return ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=_worker_initializer,
+            initargs=(worker_memory_limit_mb,),
+        )
+    return ProcessPoolExecutor(
+        max_workers=max_workers,
+        mp_context=mp_context,
+        initializer=_worker_initializer,
+        initargs=(worker_memory_limit_mb,),
+    )
 
 
 def _iter_task_batches(
@@ -880,7 +884,7 @@ def _run_decompiler_child(
 
 
 def _run_work_item(item: CodWorkItem, *, timeout: int, max_memory_mb: int) -> CodWorkResult:
-    def _impl():
+    def _impl() -> CodWorkResult:
         cached_result = _load_success_cache(item, timeout=timeout, max_memory_mb=max_memory_mb)
         if cached_result is not None:
             return cached_result
@@ -964,7 +968,8 @@ def _run_work_item(item: CodWorkItem, *, timeout: int, max_memory_mb: int) -> Co
                         )
                     )
                 tail_validation_records = tuple(enriched_records)
-            tail_validation_scanned = int(tail_validation_payload.get("scanned", 0) or 0)
+            raw_scanned = tail_validation_payload.get("scanned", 0)
+            tail_validation_scanned = raw_scanned if isinstance(raw_scanned, int) else 0
 
         result = CodWorkResult(
             cod_path=item.cod_path,
@@ -1015,7 +1020,7 @@ def _strip_nonsemantic_fallback_markers(body: str) -> str:
 
 
 def _render_result_block(result: CodWorkResult) -> str:
-    def _impl():
+    def _impl() -> str:
         raw_output = result.stdout_path.read_text(encoding="utf-8", errors="replace")
         stderr_text = _coerce_output_text(result.stderr)
         if result.exit_kind == "ok":

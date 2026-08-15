@@ -111,7 +111,7 @@ def _prune_unused_local_declarations(
         if cfunc is None:
             return False
 
-        changed = dedupe_equivalent_stack_local_declarations_8616(codegen)
+        changed = bool(dedupe_equivalent_stack_local_declarations_8616(codegen))
 
         used_variables: set[int] = set()
         used_storage_identities: set[tuple[object, ...]] = set()

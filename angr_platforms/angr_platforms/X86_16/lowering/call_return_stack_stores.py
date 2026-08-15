@@ -54,6 +54,8 @@ def classify_call_return_stack_store_8616(
     """Classify one exact value-return summary stored into a BP local."""
     destination = summary.return_store_destination
     width = summary.return_store_width
+    if not isinstance(width, int):
+        return None
     source_register = {1: "al", 2: "ax"}.get(width)
     if (
         not isinstance(summary.target_addr, int)

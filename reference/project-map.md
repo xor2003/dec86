@@ -28,10 +28,10 @@ Rewrite and `decompiler_postprocess_*.py` are cleanup bridges only. Do not add a
 - General work: `AGENTS.md`, then `reference/project-map.md`.
 - Decompiler work: add `reference/decompiler-map.md` and `reference/agent-rules.md`.
 - DOS execution work: add `reference/dosunit-execution-spec.md` and the matching DoD file.
-- SORTDEMO work: read `SORTDEMO_HANDOFF.md` before touching ReInitBars, SwapBars, or HeapSort.
-- Executable-only SORTD work: follow `SORTD_PLAN.md` and
-  `SORTD_GHIDRA_PLAN.md`; their per-step DoD and bounded-worker memory rule are
-  mandatory.
+- SORTDEMO/SORTD work: read `SORTD_GHIDRA_PLAN.md` before touching ReInitBars,
+  SwapBars, HeapSort, or the executable-only comparison baseline.
+- Executable-only SORTD work: follow `SORTD_GHIDRA_PLAN.md`; its per-step DoD
+  and bounded-worker memory rule are mandatory.
 - Telemetry/performance work: read `reference/telemetry.md`.
 
 ## Fallback Discovery Flow

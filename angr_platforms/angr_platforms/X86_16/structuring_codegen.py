@@ -412,10 +412,12 @@ class StructuringCodegenPass:
         switch_candidates = _metadata_sequence_8616(region.metadata.get("switch_candidates"))
         case_values = _metadata_sequence_8616(region.metadata.get("switch_case_values"))
         if len(case_values) == len(switch_candidates):
-            case_targets = {str(value): target for value, target in zip(case_values, switch_candidates, strict=True)}
+            raw_case_targets = {
+                str(value): target for value, target in zip(case_values, switch_candidates, strict=True)
+            }
         else:
-            case_targets = {f"0x{i:x}": target for i, target in enumerate(switch_candidates)}
-        case_targets = {label: target for label, target in case_targets.items() if isinstance(target, Region)}
+            raw_case_targets = {f"0x{i:x}": target for i, target in enumerate(switch_candidates)}
+        case_targets = {label: target for label, target in raw_case_targets.items() if isinstance(target, Region)}
         uses_goto = _metadata_bool_8616(region.metadata.get("uses_goto"))
         switch_lhs = region.metadata.get("switch_condition_lhs")
         switch_expr = _metadata_str_8616(region.metadata.get("switch_expr")) or _metadata_str_8616(
@@ -464,7 +466,7 @@ def _typed_edge_switch_regions_8616(graph: RegionGraph | None) -> tuple[Region, 
         artifact = region.metadata.get("typed_edge_switch_region_artifact")
         if isinstance(artifact, dict):
             return artifact.get("status") == "ready"
-        return region.metadata.get("switch_detection") == "typed_condition_edge_cascade"
+        return bool(region.metadata.get("switch_detection") == "typed_condition_edge_cascade")
 
     return tuple(
         region
@@ -2012,7 +2014,7 @@ def coalesce_shared_call_side_effect_statements_8616(codegen: object) -> bool:
             if previous_occurrence is None:
                 seen_call_locations[call_location] = (statement, call, summary)
             else:
-                previous_statement, previous_call, previous_summary = previous_occurrence
+                previous_statement, previous_call, previous_summary_optional = previous_occurrence
                 stats.raw_fact_count += 1
                 stats.normalized_fact_count += 1
                 debug_duplicates.append(
@@ -2034,13 +2036,13 @@ def coalesce_shared_call_side_effect_statements_8616(codegen: object) -> bool:
                     continue
                 if (
                     summary is not None
-                    and previous_summary is not None
+                    and previous_summary_optional is not None
                     and summary.return_used is True
                     and isinstance(summary.callsite_addr, int)
                     and _same_callsite_statement_effect_8616(
                         previous_statement,
                         previous_call,
-                        previous_summary,
+                        previous_summary_optional,
                         statement,
                         call,
                         summary,

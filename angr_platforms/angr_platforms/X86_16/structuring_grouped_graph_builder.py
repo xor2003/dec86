@@ -351,13 +351,13 @@ def _condition_ir_support_by_region_id_8616(codegen: object) -> dict[int, dict[s
             for edge in edge_evidence:
                 if not isinstance(edge, ConditionEdgeEvidence):
                     continue
-                region_ids = [edge.edge_block_addr]
+                edge_region_ids: list[int] = [edge.edge_block_addr]
                 target_region_id = _edge_jump_target_region_id_8616(codegen, edge.edge_block_addr)
                 if isinstance(target_region_id, int):
-                    region_ids.append(target_region_id)
+                    edge_region_ids.append(target_region_id)
                 condition = edge.condition
                 producer_semantics = _edge_producer_semantics_payload_8616(edge)
-                for region_id in dict.fromkeys(region_ids):
+                for region_id in dict.fromkeys(edge_region_ids):
                     entry = support.setdefault(
                         region_id,
                         {

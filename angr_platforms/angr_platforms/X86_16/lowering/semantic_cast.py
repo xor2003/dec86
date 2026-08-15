@@ -19,7 +19,9 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 
 
-class CSemanticCast8616(structured_c.CTypeCast):
+class CSemanticCast8616(
+    structured_c.CTypeCast,  # type: ignore[misc]  # dynamic angr codegen base
+):
     """Structured-C cast that remains visible when cosmetic casts are hidden."""
 
     def c_repr_chunks(

@@ -115,8 +115,8 @@ class GDBServer:
         self.project = project
         self.port = port
         self.host = host
-        self.socket = None
-        self.client = None
+        self.socket: socket.socket | None = None
+        self.client: socket.socket | None = None
         self.running = False
 
         # Simulation state
@@ -144,7 +144,7 @@ class GDBServer:
                     name = _dynamic_angr_attr(proc, "display_name", None)
                     if isinstance(name, str) and name:
                         return name
-                    return proc.__class__.__name__
+                    return str(proc.__class__.__name__)
 
             kb = _dynamic_angr_attr(self.project, "kb", None)
             functions = _dynamic_angr_attr(kb, "functions", None)
@@ -194,10 +194,11 @@ class GDBServer:
 
     def start(self) -> None:
         """Start listening for GDB client connections."""
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.socket.bind((self.host, self.port))
-        self.socket.listen(1)
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket = listener
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind((self.host, self.port))
+        listener.listen(1)
         self.running = True
 
         print(f"[GDB] Listening on {self.host}:{self.port}")

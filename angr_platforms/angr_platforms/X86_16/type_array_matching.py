@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import typing
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, Set, cast
+from typing import TYPE_CHECKING, Any, Optional, Set, TypeVar, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -44,9 +44,13 @@ if TYPE_CHECKING:
 
 logger: logging.Logger = logging.getLogger(__name__)
 MAX_TYPED_ARRAY_CANDIDATES: int = 64
+_MappingKey = TypeVar("_MappingKey")
+_MappingValue = TypeVar("_MappingValue")
 
 
-def _limit_sorted_mapping_8616(mapping: dict, limit: int) -> dict:
+def _limit_sorted_mapping_8616(
+    mapping: dict[_MappingKey, _MappingValue], limit: int
+) -> dict[_MappingKey, _MappingValue]:
     if limit <= 0 or len(mapping) <= limit:
         return mapping
     return dict(list(mapping.items())[:limit])
@@ -378,9 +382,12 @@ def _extract_break_guard_8616(stmt: object) -> object | None:
             return None
         # Dynamic angr boundary: CIfElse/CIfBreak expose variant-specific children outside a common typed base.
         cond_nodes = getattr(stmt, "condition_and_nodes", None) or ()
-        if len(cond_nodes) != 1:
+        if not isinstance(cond_nodes, (tuple, list)) or len(cond_nodes) != 1:
             return None
-        cond, body = cond_nodes[0]
+        cond_body = cond_nodes[0]
+        if not isinstance(cond_body, (tuple, list)) or len(cond_body) != 2:
+            return None
+        cond, body = cond_body
         if not isinstance(body, CStatements) or len(body.statements or ()) != 1:
             return None
         if not isinstance(body.statements[0], CBreak):
@@ -389,7 +396,7 @@ def _extract_break_guard_8616(stmt: object) -> object | None:
         else_node = getattr(stmt, "else_node", None)
         if else_node is not None and not (isinstance(else_node, CStatements) and not else_node.statements):
             return None
-        return cond
+        return cast(object, cond)
 
     return _impl()
 
@@ -422,7 +429,7 @@ def _extract_monotonic_update_8616(stmt: object) -> tuple[CVariable, int] | None
 
 def _cond_uses_var_8616(node: object, target: object) -> bool:
     if isinstance(node, CVariable):
-        return _same_c_expression_8616(node, target)
+        return bool(_same_c_expression_8616(node, target))
     target_key = _expr_index_key_8616(target)
     if target_key is not None and _expr_index_key_8616(node) == target_key:
         return True
@@ -494,7 +501,7 @@ def _unwrap_double_negation_8616(node: object) -> object | None:
         and isinstance(node.operand, CUnaryOp)
         and node.operand.op == "Not"
     ):
-        return node.operand.operand
+        return cast(object, node.operand.operand)
     return None
 
 
@@ -558,14 +565,14 @@ def _profile_induction_match_8616(codegen: object, loop_var: object) -> Inductio
         for summary in summaries:
             if summary.index_key != index_key:
                 continue
-            score = (
+            summary_score: tuple[int, int, int] = (
                 int(summary.count),
                 abs(int(summary.stride)),
                 int(summary.width),
             )
-            if best_summary_score is None or score > best_summary_score:
+            if best_summary_score is None or summary_score > best_summary_score:
                 best_summary = summary
-                best_summary_score = score
+                best_summary_score = summary_score
         if best_summary is not None:
             var_name = variable.name if isinstance(variable, SimRegisterVariable) else "reg_unknown"
             return InductionVariable(
@@ -598,15 +605,15 @@ def _profile_induction_match_8616(codegen: object, loop_var: object) -> Inductio
             candidate = infer_induction_variable(profile)
             if candidate is None or candidate.index_key != index_key:
                 continue
-            score = (
+            candidate_score: tuple[int, int, int, int] = (
                 int(candidate.count),
                 abs(int(candidate.stride)),
                 int(candidate.width),
                 1 if profile_key == index_key else 0,
             )
-            if best_score is None or score > best_score:
+            if best_score is None or candidate_score > best_score:
                 best_match = _access_trait_induction_var_8616(candidate, variable)
-                best_score = score
+                best_score = candidate_score
         return best_match
 
     return _impl()

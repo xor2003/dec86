@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Protocol, Sequence, cast
+from typing import Any, Protocol, Sequence, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimType, SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeShort
@@ -100,7 +100,8 @@ def _canonical_argument_name_8616(candidate: structured_c.CVariable) -> str:
 def _function_for_codegen_8616(project: object, address: int) -> _FunctionSurface8616 | None:
     """Resolve an existing angr function through its dynamic project boundary."""
     try:
-        function = cast(object, project).kb.functions.function(addr=address, create=False)  # type: ignore[attr-defined]
+        project_dynamic = cast(Any, project)
+        function = project_dynamic.kb.functions.function(addr=address, create=False)
     except (AttributeError, KeyError):
         return None
     return cast(_FunctionSurface8616, function) if function is not None else None
@@ -147,7 +148,8 @@ def _portable_word_argument_type_8616(project: object, argument_type: SimType) -
         return argument_type
     normalized = SimTypeShort(argument_type.signed)
     try:
-        return normalized.with_arch(cast(object, project).arch)  # type: ignore[attr-defined,no-any-return]
+        project_dynamic = cast(Any, project)
+        return cast(SimType, normalized.with_arch(project_dynamic.arch))
     except AttributeError:
         return normalized
 
@@ -162,7 +164,8 @@ def _argument_type_for_proven_stack_width_8616(
     if proven_width == 2 and isinstance(argument_type, SimTypeChar):
         word_type = SimTypeShort(argument_type.signed)
         try:
-            return word_type.with_arch(cast(object, project).arch)  # type: ignore[attr-defined,no-any-return]
+            project_dynamic = cast(Any, project)
+            return cast(SimType, word_type.with_arch(project_dynamic.arch))
         except AttributeError:
             return word_type
     return _portable_word_argument_type_8616(project, argument_type)
@@ -283,7 +286,7 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
             raw_fact_count=raw_count,
             normalized_fact_count=normalized_count,
         )
-        return interface_result.changed
+        return bool(interface_result.changed)
 
     interface_result = reconcile_callee_argument_interface_8616(
         project,
@@ -296,7 +299,7 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
             normalized_fact_count=normalized_count,
             failure_count=candidate_count,
         )
-        return interface_result.changed
+        return bool(interface_result.changed)
 
     existing_args = existing_arg_list
     if (
@@ -308,7 +311,7 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
             normalized_fact_count=normalized_count,
             failure_count=len(existing_args) - len(desired),
         )
-        return interface_result.changed
+        return bool(interface_result.changed)
 
     classified_count = candidate_count
 
@@ -333,7 +336,8 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
         candidate.variable_type = argument_type
     new_prototype = SimTypeFunction(argument_types, return_type, arg_names=desired_names, variadic=variadic)
     try:
-        new_prototype = new_prototype.with_arch(cast(object, project).arch)  # type: ignore[attr-defined,assignment]
+        project_dynamic = cast(Any, project)
+        new_prototype = cast(SimTypeFunction, new_prototype.with_arch(project_dynamic.arch))
     except AttributeError:
         pass
 

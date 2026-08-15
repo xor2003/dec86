@@ -12,7 +12,7 @@ from __future__ import annotations
 import functools
 import re
 from collections.abc import MutableMapping
-from typing import Protocol, cast
+from typing import Protocol, TypeAlias, cast
 
 from angr.sim_type import SimTypeFunction
 from angr.utils.library import convert_cproto_to_py
@@ -102,7 +102,7 @@ def _source_prototype_calling_convention_8616(project: object) -> SimCC8616MSCsm
     arch = getattr(project, "arch", None)
     if not isinstance(arch, Arch86_16):
         return None
-    return SimCC8616MSCsmall(cast(Arch86_16, arch))
+    return SimCC8616MSCsmall(arch)
 
 
 _C_TYPE_KEYWORDS_8616 = {
@@ -124,6 +124,7 @@ _C_TYPE_KEYWORDS_8616 = {
     "void",
     "volatile",
 }
+AnnotationSpec8616: TypeAlias = str | dict[str, object]
 
 _SOURCE_DECL_RE_8616 = re.compile(
     r"^(?P<prefix>(?:(?:extern|static|inline|const|volatile|unsigned|signed|struct|union|enum|long|short|int|char|_Bool|[A-Za-z_]\w*)|\s|\*)+?)"
@@ -161,7 +162,7 @@ def _opaque_typedef_headers_for_c_decl_8616(c_decl: str) -> tuple[str, ...]:
 def _converted_c_prototype_or_none_8616(source: str) -> tuple[str, SimTypeFunction, str] | None:
     converted = convert_cproto_to_py(source)
     if len(converted) >= 2 and converted[1] is not None:
-        return converted
+        return cast(tuple[str, SimTypeFunction, str], converted)
     return None
 
 
@@ -305,9 +306,9 @@ def annotate_function(
     prototype: SimTypeFunction | None = None,
     calling_convention: object | None = None,
     arg_names: list[str] | tuple[str, ...] | None = None,
-    stack_vars: dict[int, str | dict] | None = None,
-    bp_stack_vars: dict[int, str | dict] | None = None,
-    global_vars: dict[int, str | dict] | None = None,
+    stack_vars: dict[int, AnnotationSpec8616] | None = None,
+    bp_stack_vars: dict[int, AnnotationSpec8616] | None = None,
+    global_vars: dict[int, AnnotationSpec8616] | None = None,
 ) -> object:
     """Attach optional annotation labels, prototypes, and names to a function."""
 
@@ -379,9 +380,10 @@ def annotate_function(
                     label = spec
                 elif isinstance(spec, dict):
                     global_entry = dict(spec)
-                    label = global_entry.get("name")
-                    if not isinstance(label, str):
+                    candidate_label = global_entry.get("name")
+                    if not isinstance(candidate_label, str):
                         raise ValueError(f"Global annotation for {addr:#x} must include a string name.")
+                    label = candidate_label
                 else:
                     raise TypeError(f"Unsupported global annotation spec for {addr:#x}: {type(spec).__name__}")
                 global_annotations[addr] = global_entry
@@ -554,9 +556,9 @@ def decompile_function(project: object, func_addr: int, **annotations: object) -
             prototype=cast(SimTypeFunction | None, annotations.get("prototype")),
             calling_convention=annotations.get("calling_convention"),
             arg_names=cast(list[str] | tuple[str, ...] | None, annotations.get("arg_names")),
-            stack_vars=cast(dict[int, str | dict] | None, annotations.get("stack_vars")),
-            bp_stack_vars=cast(dict[int, str | dict] | None, annotations.get("bp_stack_vars")),
-            global_vars=cast(dict[int, str | dict] | None, annotations.get("global_vars")),
+            stack_vars=cast(dict[int, AnnotationSpec8616] | None, annotations.get("stack_vars")),
+            bp_stack_vars=cast(dict[int, AnnotationSpec8616] | None, annotations.get("bp_stack_vars")),
+            global_vars=cast(dict[int, AnnotationSpec8616] | None, annotations.get("global_vars")),
         )
         func = decompile_project.kb.functions[func_addr]
     apply_x86_16_metadata_annotations(

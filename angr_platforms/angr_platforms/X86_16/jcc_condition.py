@@ -43,11 +43,11 @@ class _ConditionExpr(Protocol):
         """Return a bitwise conjunction expression."""
         ...
 
-    def __eq__(self, _other: object) -> object:
+    def __eq__(self, _other: object) -> object:  # type: ignore[override] # symbolic VEX comparison boundary
         """Return an equality comparison expression."""
         ...
 
-    def __ne__(self, _other: object) -> object:
+    def __ne__(self, _other: object) -> object:  # type: ignore[override] # symbolic VEX comparison boundary
         """Return an inequality comparison expression."""
         ...
 

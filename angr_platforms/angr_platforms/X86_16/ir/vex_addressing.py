@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias, cast
+from typing import Any, Protocol, TypeAlias, cast
 
 from .core import AddressStatus, IRAddress, IRCondition, IRValue, MemSpace, SegmentOrigin
 
@@ -97,7 +97,7 @@ def _vex_tag(expr: object) -> str:
 
 def _external_int(value: object, default: int = 0) -> int:
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(cast(Any, value))
     except (TypeError, ValueError):
         return default
 
@@ -140,7 +140,7 @@ def block_segment_hints(block: object) -> SegmentHintMap:
     hints: SegmentHintMap = {}
     for insn in insns:
         try:
-            mnemonic = cast(_CapstoneInsnBoundary, insn).mnemonic
+            mnemonic = insn.mnemonic
         except AttributeError:
             mnemonic = ""
         family = _parse_string_family(str(mnemonic))

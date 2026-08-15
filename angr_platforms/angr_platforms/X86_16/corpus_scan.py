@@ -556,7 +556,14 @@ def _classify_ugly_cluster(result: FunctionScanResult) -> str | None:
 def _classify_readability_cluster(result: FunctionScanResult, text: str | None) -> tuple[str | None, str | None]:
     if not result.ok or result.fallback_kind not in (None, "none"):
         return None, None
-    return classify_readability_cluster(text)
+    classification = classify_readability_cluster(text)
+    if (
+        isinstance(classification, tuple)
+        and len(classification) == 2
+        and all(item is None or isinstance(item, str) for item in classification)
+    ):
+        return classification
+    return None, None
 
 
 def _scan_cfg(project: angr.Project, code_len: int) -> object:
@@ -833,16 +840,16 @@ def _scan_has_fallback_kind_8616(result: FunctionScanResult) -> bool:
     return result.fallback_kind not in (None, "none")
 
 
-def _sorted_top_8616(counter: Counter, key_name: str) -> list[dict[str, object]]:
+def _sorted_top_8616(counter: Counter[Any], key_name: str) -> list[dict[str, object]]:
     return [
         {key_name: key, "count": count} for key, count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))
     ]
 
 
-def _sorted_top_tuples_8616(counter: Counter, field_names: tuple[str, ...]) -> list[dict[str, object]]:
+def _sorted_top_tuples_8616(counter: Counter[Any], field_names: tuple[str, ...]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for keys, count in sorted(counter.items(), key=lambda item: (-item[1], item[0])):
-        row = {field: value for field, value in zip(field_names, keys, strict=False)}
+        row: dict[str, object] = {field: value for field, value in zip(field_names, keys, strict=False)}
         row["count"] = count
         rows.append(row)
     return rows

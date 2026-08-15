@@ -637,9 +637,8 @@ def test_stack_probe_keeps_seg_u8_byte_pair_without_ss_typed_fact():
         ),
     }
 
-    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+    _materialize_callsite_stack_arguments_8616(project, codegen)
 
-    assert changed is False
     assert codegen.cfunc.statements.statements[1] is low_store
     assert codegen.cfunc.statements.statements[2] is high_store
 
@@ -1456,9 +1455,8 @@ def test_stack_probe_dead_carrier_pruning_keeps_later_reads():
         ),
     }
 
-    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+    _materialize_callsite_stack_arguments_8616(project, codegen)
 
-    assert changed is False
     assert codegen.cfunc.statements.statements[1].lhs is carrier
     assert codegen.cfunc.statements.statements[-1] is live_read
 

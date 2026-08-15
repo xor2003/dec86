@@ -274,7 +274,9 @@ def main(argv: list[str] | None = None) -> int:
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(payload, indent=2, sort_keys=True))
-        print(f"wrote {args.output} combos={len(payload['combos'])} files={used_files}")
+        combos = payload.get("combos")
+        combo_count = len(combos) if isinstance(combos, dict) else 0
+        print(f"wrote {args.output} combos={combo_count} files={used_files}")
         return 0
 
     return _impl()

@@ -6,6 +6,7 @@ from angr_platforms.X86_16.semantics import terminal_register_returns
 from angr_platforms.X86_16.semantics.branch_target_return import TerminalAxReturnEffectKind8616
 from angr_platforms.X86_16.semantics.terminal_register_returns import (
     TerminalAxReturnLane8616,
+    collect_terminal_ax_return_evidence_8616,
     terminal_ax_return_lane_states_8616,
 )
 
@@ -50,3 +51,38 @@ def test_terminal_ax_paths_start_at_function_entry_and_follow_call_fallthrough(m
     states = terminal_ax_return_lane_states_8616(project, function)
 
     assert states == frozenset({TerminalAxReturnLane8616.WORD})
+
+
+def test_terminal_ax_evidence_closes_mixed_defined_and_undefined_return_paths(monkeypatch) -> None:
+    branch = _insn(0x1000, "je", size=2, target=0x1010)
+    write_ax = _insn(0x1002, "mov")
+    value_jump = _insn(0x1003, "jmp", target=0x1020)
+    empty_jump = _insn(0x1010, "jmp", target=0x1020)
+    terminal = _insn(0x1020, "ret")
+    blocks = {
+        0x1000: SimpleNamespace(capstone=SimpleNamespace(insns=(branch,))),
+        0x1002: SimpleNamespace(capstone=SimpleNamespace(insns=(write_ax, value_jump))),
+        0x1010: SimpleNamespace(capstone=SimpleNamespace(insns=(empty_jump,))),
+        0x1020: SimpleNamespace(capstone=SimpleNamespace(insns=(terminal,))),
+    }
+    project = SimpleNamespace(factory=_Factory(blocks))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set=set(blocks))
+
+    monkeypatch.setattr(
+        terminal_register_returns,
+        "terminal_ax_return_effect_8616",
+        lambda insn: SimpleNamespace(
+            kind=TerminalAxReturnEffectKind8616.OTHER,
+            dst_reg="ax" if insn is write_ax else None,
+        ),
+    )
+
+    evidence = collect_terminal_ax_return_evidence_8616(project, function)
+
+    assert evidence.states == frozenset({TerminalAxReturnLane8616.NONE, TerminalAxReturnLane8616.WORD})
+    assert evidence.raw_fact_count == 2
+    assert evidence.normalized_fact_count == 2
+    assert evidence.classified_fact_count == 2
+    assert evidence.materialized_count == 2
+    assert evidence.failure_count == 0
+    assert evidence.proves_missing_value_path is True

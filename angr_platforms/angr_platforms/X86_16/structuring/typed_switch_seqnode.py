@@ -18,6 +18,7 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
+from typing import cast
 
 from angr.analyses.decompiler.structuring.structurer_nodes import SequenceNode
 
@@ -174,12 +175,15 @@ def _register_expression_8616(project: object | None, payload: object) -> object
     except ImportError:
         return None
     bits = size * 8
-    return Expr.Register(
-        None,
-        SimRegisterVariable(offset, size, name=name),
-        offset,
-        bits,
-        reg_name=name,
+    return cast(
+        object | None,
+        Expr.Register(
+            None,
+            SimRegisterVariable(offset, size, name=name),
+            offset,
+            bits,
+            reg_name=name,
+        ),
     )
 
 

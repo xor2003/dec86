@@ -23,13 +23,46 @@ import zipfile
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from omf_pat import _find_pat_matches, _hyperscan, load_cached_pat_regex_specs  # noqa: E402
+
+
+def _object_int(value: object, default: int = 0) -> int:
+    """Convert JSON/object input to an integer without trusting its runtime type."""
+    parsed = _parse_int_like(value)
+    return default if parsed is None else parsed
+
+
+def _object_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            pass
+    return default
+
+
+def _object_strings(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple, set)):
+        return ()
+    return tuple(str(item) for item in value)
+
+
+def _object_pairs(value: object) -> tuple[tuple[object, object], ...]:
+    if not isinstance(value, (list, tuple)):
+        return ()
+    return tuple((item[0], item[1]) for item in value if isinstance(item, (list, tuple)) and len(item) >= 2)
+
+
+def _weighted_most_common(scores: dict[str, float]) -> list[tuple[str, float]]:
+    return sorted(scores.items(), key=lambda item: item[1], reverse=True)
 
 
 def _load_image(binary_path: Path, *, use_angr: bool = False) -> tuple[int, bytes]:
@@ -190,7 +223,10 @@ def _strip_json_comments(text: str) -> str:
 
 def _load_jsonc(path: Path) -> dict[str, object]:
     raw = path.read_text(encoding="utf-8", errors="ignore")
-    return json.loads(_strip_json_comments(raw))
+    payload = json.loads(_strip_json_comments(raw))
+    if not isinstance(payload, dict):
+        raise ValueError(f"JSONC root must be an object: {path}")
+    return {str(key): value for key, value in payload.items()}
 
 
 def _parse_int_like(v: object) -> int | None:
@@ -281,9 +317,9 @@ def _spec_weight(public_names: tuple[str, ...]) -> float:
 
 
 def _is_non_library_function_entry(entry: dict[str, object]) -> bool:
-    if isinstance(entry.get("source_paths", ()), (list, tuple, set)):
-        if any(_is_library_like_source_path(str(path)) for path in entry.get("source_paths", ())):
-            return False
+    source_paths = entry.get("source_paths", ())
+    if any(_is_library_like_source_path(path) for path in _object_strings(source_paths)):
+        return False
     source_path = str(entry.get("source", ""))
     if _is_library_like_source_path(source_path):
         return False
@@ -416,7 +452,7 @@ def _flag_marginals(flag_scores: list[tuple[str, float]], top_k: int = 32) -> li
     total = sum(w for _, w in shifted)
     if total <= 0:
         return []
-    marg: Counter[str] = Counter()
+    marg: dict[str, float] = defaultdict(float)
     for combo, w in shifted:
         p = w / total
         for tok in combo.split():
@@ -514,7 +550,7 @@ def _row_vote_weight(row: dict[str, object]) -> float:
     if not isinstance(top, list) or not top:
         return 0.0
     top1 = float(top[0][1]) if isinstance(top[0], (list, tuple)) and len(top[0]) > 1 else 0.0
-    gap = float(row.get("gap", 0.0))
+    gap = _object_float(row.get("gap", 0.0))
     if top1 < 0.72 or gap < 0.025:
         return 0.0
     return max(0.0, (top1 - 0.70)) * 2.0 + max(0.0, (gap - 0.02)) * 10.0
@@ -536,7 +572,7 @@ def _marginal_flag_set(row: dict[str, object], threshold: float = 0.55) -> str:
 
 
 def _aggregate_flag_sets(function_flag_report: list[dict[str, object]]) -> list[tuple[str, float]]:
-    counts: Counter[str] = Counter()
+    counts: dict[str, float] = defaultdict(float)
     for row in function_flag_report:
         if str(row.get("confidence", "low")) == "low":
             continue
@@ -546,11 +582,11 @@ def _aggregate_flag_sets(function_flag_report: list[dict[str, object]]) -> list[
         w = _row_vote_weight(row)
         if w > 0:
             counts[combo] += w
-    return counts.most_common()
+    return _weighted_most_common(counts)
 
 
 def _aggregate_flag_support(function_flag_report: list[dict[str, object]]) -> list[tuple[str, float]]:
-    support: Counter[str] = Counter()
+    support: dict[str, float] = defaultdict(float)
     total = 0.0
     for row in function_flag_report:
         if str(row.get("confidence", "low")) == "low":
@@ -623,7 +659,7 @@ def _best_rc_shift(
         if not function_rows or not rc_entries:
             return None, 0
         rc_begins = {off for off, _ in rc_entries}
-        row_offsets = [int(r.get("offset", 0)) for r in function_rows if isinstance(r.get("offset"), int)]
+        row_offsets = [offset for r in function_rows if isinstance(offset := r.get("offset"), int)]
         if not row_offsets:
             return None, 0
         # Prefer MZ-derived candidates first when available.
@@ -680,7 +716,7 @@ def _map_flags_to_rc_functions(
                 "rc_begin": rc_off,
                 "local_offset": off,
                 "confidence": str(row.get("confidence", "low")),
-                "gap": float(row.get("gap", 0.0)),
+                "gap": _object_float(row.get("gap", 0.0)),
                 "best_combo": best_combo,
             }
         )
@@ -729,16 +765,16 @@ def _build_per_function_flag_report(
         report: list[dict[str, object]] = []
         if not function_entries or not flag_profiles:
             return report
-        sorted_entries = sorted(function_entries, key=lambda e: int(e.get("offset", 0)))
+        sorted_entries = sorted(function_entries, key=lambda e: _object_int(e.get("offset", 0)))
         for idx, entry in enumerate(sorted_entries[: max(1, limit * 6)]):
             fname = str(entry.get("function", ""))
-            off = int(entry.get("offset", 0))
-            module_len = int(entry.get("module_length", 0))
+            off = _object_int(entry.get("offset", 0))
+            module_len = _object_int(entry.get("module_length", 0))
             if not _is_non_library_function_entry(entry):
                 continue
             # Prefer real function boundaries: until next function entry, bounded.
             next_off = (
-                int(sorted_entries[idx + 1].get("offset", off + 256))
+                _object_int(sorted_entries[idx + 1].get("offset", off + 256), off + 256)
                 if idx + 1 < len(sorted_entries)
                 else off + max(64, module_len, 256)
             )
@@ -746,7 +782,7 @@ def _build_per_function_flag_report(
             # Skip tiny regions that tend to be stubs/thunks and add noise.
             if region < 96:
                 continue
-            local = Counter()
+            local: Counter[str] = Counter()
             dis_local, _ok = _extract_capstone_features(image_bytes, [off])
             local.update(dis_local)
             local.update(_extract_byte_ngram_features_window(raw_bytes, off, size=region))
@@ -773,7 +809,7 @@ def _build_per_function_flag_report(
         report.sort(
             key=lambda r: (
                 0 if r.get("confidence") == "high" else 1 if r.get("confidence") == "medium" else 2,
-                -float(r.get("gap", 0.0)),
+                    -_object_float(r.get("gap", 0.0)),
             )
         )
         return report
@@ -850,14 +886,17 @@ def _cache_key(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
-def _load_cached_result(cache_path: Path) -> dict | None:
+def _load_cached_result(cache_path: Path) -> dict[str, object] | None:
     try:
-        return json.loads(cache_path.read_text())
+        payload = json.loads(cache_path.read_text())
+        if not isinstance(payload, dict):
+            return None
+        return {str(key): value for key, value in payload.items()}
     except Exception:
         return None
 
 
-def _store_cached_result(cache_path: Path, payload: dict) -> None:
+def _store_cached_result(cache_path: Path, payload: dict[str, object]) -> None:
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(json.dumps(payload, separators=(",", ":"), sort_keys=True))
@@ -865,7 +904,7 @@ def _store_cached_result(cache_path: Path, payload: dict) -> None:
         pass
 
 
-def _resolve_catalog_input(catalog_input: Path) -> tuple[Path, Path, tuple]:
+def _resolve_catalog_input(catalog_input: Path) -> tuple[Path, Path, tuple[object, ...]]:
     """
     Resolve catalog input (PAT file or bundle zip) into:
       - effective catalog path
@@ -902,7 +941,7 @@ def _resolve_catalog_input(catalog_input: Path) -> tuple[Path, Path, tuple]:
         raise SystemExit(f"zip catalog has no .pat: {catalog_input}")
     effective_catalog = pat_candidates[0]
     effective_cache_dir = extract_root / ".signature_catalog_cache"
-    preloaded_specs: tuple = ()
+    preloaded_specs: tuple[object, ...] = ()
     snapshot_path = extract_root / "catalog_specs.pickle"
     if snapshot_path.exists():
         try:
@@ -914,12 +953,12 @@ def _resolve_catalog_input(catalog_input: Path) -> tuple[Path, Path, tuple]:
     return effective_catalog, effective_cache_dir, preloaded_specs
 
 
-def _iter_chunks(items: list, size: int) -> Iterable[list]:
+def _iter_chunks(items: list[Any], size: int) -> Iterable[list[Any]]:
     for i in range(0, len(items), size):
         yield items[i : i + size]
 
 
-def _scan_hyperscan_chunk(image_bytes: bytes, specs_chunk: list, chunk_offset: int) -> set[int]:
+def _scan_hyperscan_chunk(image_bytes: bytes, specs_chunk: list[Any], chunk_offset: int) -> set[int]:
     unique_indexes: set[int] = set()
     if not specs_chunk:
         return unique_indexes
@@ -963,19 +1002,19 @@ def _emit_progress(done: int, total: int, state: dict[str, int], lock: threading
             state["next"] += 5
 
 
-def _find_unique_matches_batch_hyperscan(image_bytes: bytes, specs: list, chunk_size: int, jobs: int) -> set[int]:
+def _find_unique_matches_batch_hyperscan(image_bytes: bytes, specs: list[Any], chunk_size: int, jobs: int) -> set[int]:
     if _hyperscan is None:
         return set()
     chunks = [(chunk, chunk_idx * chunk_size) for chunk_idx, chunk in enumerate(_iter_chunks(specs, chunk_size))]
     if jobs <= 1:
-        merged: set[int] = set()
+        serial_merged: set[int] = set()
         total = len(chunks)
         progress_state = {"next": 5}
         progress_lock = threading.Lock()
         for done, (chunk, offset) in enumerate(chunks, 1):
-            merged.update(_scan_hyperscan_chunk(image_bytes, chunk, offset))
+            serial_merged.update(_scan_hyperscan_chunk(image_bytes, chunk, offset))
             _emit_progress(done, total, progress_state, progress_lock)
-        return merged
+        return serial_merged
     merged: set[int] = set()
     total = len(chunks)
     done = 0
@@ -990,7 +1029,7 @@ def _find_unique_matches_batch_hyperscan(image_bytes: bytes, specs: list, chunk_
     return merged
 
 
-def _scan_fallback_chunk(image_bytes: bytes, specs_chunk: list, chunk_offset: int) -> set[int]:
+def _scan_fallback_chunk(image_bytes: bytes, specs_chunk: list[Any], chunk_offset: int) -> set[int]:
     unique_indexes: set[int] = set()
     for local_idx, spec in enumerate(specs_chunk):
         hits = _find_pat_matches(image_bytes, spec, backend="python_regex")
@@ -999,17 +1038,17 @@ def _scan_fallback_chunk(image_bytes: bytes, specs_chunk: list, chunk_offset: in
     return unique_indexes
 
 
-def _find_unique_matches_fallback_parallel(image_bytes: bytes, specs: list, chunk_size: int, jobs: int) -> set[int]:
+def _find_unique_matches_fallback_parallel(image_bytes: bytes, specs: list[Any], chunk_size: int, jobs: int) -> set[int]:
     chunks = [(chunk, chunk_idx * chunk_size) for chunk_idx, chunk in enumerate(_iter_chunks(specs, chunk_size))]
     if jobs <= 1:
-        merged: set[int] = set()
+        serial_merged: set[int] = set()
         total = len(chunks)
         progress_state = {"next": 5}
         progress_lock = threading.Lock()
         for done, (chunk, offset) in enumerate(chunks, 1):
-            merged.update(_scan_fallback_chunk(image_bytes, chunk, offset))
+            serial_merged.update(_scan_fallback_chunk(image_bytes, chunk, offset))
             _emit_progress(done, total, progress_state, progress_lock)
-        return merged
+        return serial_merged
     merged: set[int] = set()
     total = len(chunks)
     done = 0
@@ -1109,7 +1148,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         flag_profiles = _load_flag_profiles(profile_path)
 
-        specs = preloaded_specs or load_cached_pat_regex_specs(catalog_path, cache_dir)
+        specs: list[Any] = list(preloaded_specs or load_cached_pat_regex_specs(catalog_path, cache_dir))
         if not specs:
             raise SystemExit("no PAT specs loaded")
 
@@ -1124,37 +1163,46 @@ def main(argv: list[str] | None = None) -> int:
         result_cache_path = cache_dir / f"report_compiler_matches-{key}.json"
         cached_payload = _load_cached_result(result_cache_path)
         raw_bytes = binary_path.read_bytes()
+        compiler_match_counts: Counter[str] = Counter()
+        weighted_compiler_scores: dict[str, float] = {}
+        function_match_counts: Counter[str] = Counter()
+        function_compilers: defaultdict[str, set[str]] = defaultdict(set)
+        function_flag_report: list[dict[str, object]] = []
         if cached_payload is not None:
-            compiler_items = cached_payload.get("compiler_match_counts", [])
-            function_items = cached_payload.get("function_match_counts", [])
+            compiler_items = _object_pairs(cached_payload.get("compiler_match_counts", []))
+            function_items = _object_pairs(cached_payload.get("function_match_counts", []))
             function_compilers_items = cached_payload.get("function_compilers", {})
-            matched_specs = int(cached_payload.get("matched_specs", 0))
+            matched_specs = _object_int(cached_payload.get("matched_specs", 0))
             use_batch = bool(cached_payload.get("use_batch", False))
-            compiler_match_counts = Counter({name: int(count) for name, count in compiler_items})
-            weighted_compiler_scores = Counter(
-                {name: float(score) for name, score in cached_payload.get("weighted_compiler_scores", [])}
-            )
+            compiler_match_counts = Counter({str(name): _object_int(count) for name, count in compiler_items})
+            cached_weighted_scores = cached_payload.get("weighted_compiler_scores", [])
+            if isinstance(cached_weighted_scores, list):
+                weighted_compiler_scores = {
+                    str(name): _object_float(score)
+                    for item in cached_weighted_scores
+                    if isinstance(item, (list, tuple)) and len(item) >= 2
+                    for name, score in [item[:2]]
+                }
             linker_family = str(cached_payload.get("linker_family", "unknown"))
-            function_match_counts = Counter({name: int(count) for name, count in function_items})
-            function_compilers = defaultdict(set)
-            for name, compilers in function_compilers_items.items():
-                function_compilers[name].update(compilers)
-            function_flag_report = cached_payload.get("function_flag_report", [])
+            function_match_counts = Counter({str(name): _object_int(count) for name, count in function_items})
+            if isinstance(function_compilers_items, dict):
+                for name, compilers in function_compilers_items.items():
+                    function_compilers[str(name)].update(_object_strings(compilers))
+            cached_function_flag_report = cached_payload.get("function_flag_report", [])
+            if isinstance(cached_function_flag_report, list):
+                function_flag_report = [
+                    row for row in cached_function_flag_report if isinstance(row, dict)
+                ]
         else:
             _, image_bytes = _load_image(binary_path)
             ms_runtime_hits = _detect_ms_runtime_libraries(raw_bytes)
             linker_family = _linker_family_from_raw(raw_bytes)
 
-            compiler_match_counts: Counter[str] = Counter()
-            weighted_compiler_scores: Counter[str] = Counter()
-            function_match_counts: Counter[str] = Counter()
-            function_compilers: dict[str, set[str]] = defaultdict(set)
             matched_specs = 0
             matched_code_offsets: list[int] = []
             function_offset_records: dict[int, dict[str, object]] = {}
             disasm_feature_count = 0
             disasm_backend_ok = False
-            function_flag_report: list[dict[str, object]] = []
 
             if _hyperscan is not None:
                 unique_indexes = _find_unique_matches_batch_hyperscan(
@@ -1190,7 +1238,7 @@ def main(argv: list[str] | None = None) -> int:
                 shared = max(1, len(compiler_names))
                 for compiler_name in compiler_names:
                     compiler_match_counts[compiler_name] += 1
-                    weighted_compiler_scores[compiler_name] += weight / shared
+                    weighted_compiler_scores[compiler_name] = weighted_compiler_scores.get(compiler_name, 0.0) + weight / shared
                 if (not args.compilers_only) or args.detect_flags_msc51:
                     for name in public_names:
                         function_match_counts[name] += 1
@@ -1211,7 +1259,7 @@ def main(argv: list[str] | None = None) -> int:
                                     rec = {
                                         "offset": entry_off,
                                         "function": str(pub.name),
-                                        "module_length": int(getattr(spec, "module_length", 0)),
+                            "module_length": _object_int(getattr(spec, "module_length", 0)),
                                         "compilers": list(compiler_names),
                                         "source_paths": {str(getattr(spec, "source_path", ""))},
                                     }
@@ -1221,12 +1269,13 @@ def main(argv: list[str] | None = None) -> int:
                                     new_name = str(pub.name)
                                     if not cur_name and new_name:
                                         rec["function"] = new_name
-                                    if int(getattr(spec, "module_length", 0)) > int(rec.get("module_length", 0)):
-                                        rec["module_length"] = int(getattr(spec, "module_length", 0))
-                                    existing = set(str(x) for x in rec.get("compilers", []))
+                                    spec_module_length = _object_int(getattr(spec, "module_length", 0))
+                                    if spec_module_length > _object_int(rec.get("module_length", 0)):
+                                        rec["module_length"] = spec_module_length
+                                    existing = set(_object_strings(rec.get("compilers", [])))
                                     existing.update(str(x) for x in compiler_names)
                                     rec["compilers"] = sorted(existing)
-                                    existing_sources = set(str(x) for x in rec.get("source_paths", ()))
+                                    existing_sources = set(_object_strings(rec.get("source_paths", ())))
                                     if src := str(getattr(spec, "source_path", "")):
                                         existing_sources.add(src)
                                     rec["source_paths"] = existing_sources
@@ -1247,24 +1296,24 @@ def main(argv: list[str] | None = None) -> int:
                     limit=max(64, args.per_function_flags_top * 12),
                 )
                 for raw_entry in raw_entries:
-                    off = int(raw_entry.get("offset", -1))
+                    off = _object_int(raw_entry.get("offset", -1), -1)
                     if off < 0:
                         continue
                     matched = function_offset_records.get(off)
                     if not matched:
                         continue
                     if compilers := matched.get("compilers"):
-                        raw_entry["compilers"] = sorted(set(str(x) for x in raw_entry.get("compilers", ())) | set(compilers))
+                        raw_entry["compilers"] = sorted(set(_object_strings(raw_entry.get("compilers", ()))) | set(_object_strings(compilers)))
                     if module_length := matched.get("module_length"):
-                        raw_entry["module_length"] = max(int(raw_entry.get("module_length", 0)), int(module_length))
+                        raw_entry["module_length"] = max(_object_int(raw_entry.get("module_length", 0)), _object_int(module_length))
                     if source_paths := matched.get("source_paths"):
-                        raw_entry["source_paths"] = list(dict.fromkeys([str(x) for x in source_paths]))
+                        raw_entry["source_paths"] = list(dict.fromkeys(_object_strings(source_paths)))
                     if function_name := str(matched.get("function", "")):
                         if function_name:
                             raw_entry["function"] = function_name
                             raw_entry["source"] = str(matched.get("source", ""))
                             if source_paths:
-                                raw_entry["source"] = str(next(iter(source_paths), ""))
+                                raw_entry["source"] = _object_strings(source_paths)[0]
                 function_flag_report = _build_per_function_flag_report(
                     image_bytes=image_bytes,
                     raw_bytes=raw_bytes,
@@ -1279,7 +1328,7 @@ def main(argv: list[str] | None = None) -> int:
                 for bonus_key, bonus_value in runtime_bonuses.items():
                     key_lower = bonus_key.lower()
                     if key_lower in lower or lower in key_lower:
-                        weighted_compiler_scores[compiler_name] += bonus_value
+                        weighted_compiler_scores[compiler_name] = weighted_compiler_scores.get(compiler_name, 0.0) + bonus_value
             for bonus_key, bonus_value in runtime_bonuses.items():
                 if bonus_key not in weighted_compiler_scores:
                     weighted_compiler_scores[bonus_key] = bonus_value
@@ -1292,7 +1341,7 @@ def main(argv: list[str] | None = None) -> int:
                     "ms_runtime_hits": ms_runtime_hits,
                     "linker_family": linker_family,
                     "compiler_match_counts": compiler_match_counts.most_common(),
-                    "weighted_compiler_scores": weighted_compiler_scores.most_common(),
+                    "weighted_compiler_scores": _weighted_most_common(weighted_compiler_scores),
                     "function_match_counts": function_match_counts.most_common(),
                     "function_compilers": {k: sorted(v) for k, v in function_compilers.items()},
                     "disasm_feature_count": int(disasm_feature_count),
@@ -1301,8 +1350,8 @@ def main(argv: list[str] | None = None) -> int:
                 },
             )
         if cached_payload is not None:
-            ms_runtime_hits = list(cached_payload.get("ms_runtime_hits", []))
-            disasm_feature_count = int(cached_payload.get("disasm_feature_count", 0))
+            ms_runtime_hits = list(_object_strings(cached_payload.get("ms_runtime_hits", [])))
+            disasm_feature_count = _object_int(cached_payload.get("disasm_feature_count", 0))
             disasm_backend_ok = bool(cached_payload.get("disasm_backend_ok", False))
 
         alias_path = (
@@ -1391,11 +1440,13 @@ def main(argv: list[str] | None = None) -> int:
                         for row in function_flag_report:
                             if shown >= max(1, args.per_function_flags_top):
                                 break
-                            flags_txt = ", ".join(f"{tok}:{prob:.2f}" for tok, prob in row.get("top_flags", []))
+                            flags_txt = ", ".join(
+                                f"{tok}:{_object_float(prob):.2f}" for tok, prob in _object_pairs(row.get("top_flags", []))
+                            )
                             print(
-                                f"    {row.get('function')} @0x{int(row.get('offset', 0)):x} "
-                                f"[{row.get('confidence')}, gap={float(row.get('gap', 0.0)):.3f}] "
-                                f"{_format_top_combo_flags([(_pretty_combo_for_output(str(c)), s) for c, s in list(row.get('top_combos', []))])} ; flags: {flags_txt}"
+                                f"    {row.get('function')} @0x{_object_int(row.get('offset', 0)):x} "
+                                f"[{row.get('confidence')}, gap={_object_float(row.get('gap', 0.0)):.3f}] "
+                                f"{_format_top_combo_flags([(_pretty_combo_for_output(str(c)), _object_float(s)) for c, s in _object_pairs(row.get('top_combos', []))])} ; flags: {flags_txt}"
                             )
                             shown += 1
                     if args.rc_json:
@@ -1414,8 +1465,8 @@ def main(argv: list[str] | None = None) -> int:
                                 print("  Mapped functions:")
                                 for row in mapped:
                                     print(
-                                        f"    {row['rc_name']} @rc 0x{int(row['rc_begin']):x} "
-                                        f"(local 0x{int(row['local_offset']):x}) [{row['confidence']}, gap={row['gap']:.3f}] "
+                                        f"    {row['rc_name']} @rc 0x{_object_int(row['rc_begin']):x} "
+                                        f"(local 0x{_object_int(row['local_offset']):x}) [{row['confidence']}, gap={_object_float(row['gap']):.3f}] "
                                         f"{row['best_combo']}"
                                     )
                             else:
@@ -1425,7 +1476,7 @@ def main(argv: list[str] | None = None) -> int:
                     print("  Result: no profile match (or no profiles loaded)")
             if args.verbose:
                 print("Raw probable compilers weighted (debug):")
-                for compiler_name, score in weighted_compiler_scores.most_common(10):
+                for compiler_name, score in _weighted_most_common(weighted_compiler_scores)[:10]:
                     print(f"  {score:7.2f}  {compiler_name}")
         if not args.compilers_only:
             print(f"binary: {binary_path}")
@@ -1442,7 +1493,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"linker_detector: {linker_family}")
             print()
             print("probable_compilers_weighted:")
-            for compiler_name, score in weighted_compiler_scores.most_common(10):
+            for compiler_name, score in _weighted_most_common(weighted_compiler_scores)[:10]:
                 print(f"  {score:7.2f}  {compiler_name}")
             print()
             print("likely_compiler_versions:")

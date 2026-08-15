@@ -151,7 +151,7 @@ current `SORTDEMO.EXE` handoff.
 
 Before restarting SORTDEMO work, read:
 
-- `SORTDEMO_HANDOFF.md`
+- `SORTD_GHIDRA_PLAN.md`
 - `reference/project-map.md`
 - `reference/decompiler-map.md`
 - `reference/dosunit-execution-spec.md`
@@ -162,7 +162,7 @@ Before restarting SORTDEMO work, read:
 
 Requirements:
 
-- Read `SORTDEMO_HANDOFF.md`.
+- Read `SORTD_GHIDRA_PLAN.md`.
 - Check for and avoid stale concurrent `SORTDEMO` decompile processes.
 - Run the focused decompile command from the handoff for the active function.
 - Capture tail-validation status, generated C shape, required calls, and any

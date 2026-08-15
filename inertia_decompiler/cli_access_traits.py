@@ -388,7 +388,10 @@ def _collect_access_traits(
             cache = {}
             # Dynamic compatibility boundary: project cache is attached to the third-party angr Project.
             project._inertia_access_traits = cache
-        cache[cfunc.addr] = traits
+        if any(isinstance(bucket, dict) and bucket for bucket in traits.values()):
+            cache[cfunc.addr] = traits
+        else:
+            cache.pop(cfunc.addr, None)
         return rewrite_for_loop_conditions_from_access_traits(
             cast(InductionProjectLike, project),
             codegen,

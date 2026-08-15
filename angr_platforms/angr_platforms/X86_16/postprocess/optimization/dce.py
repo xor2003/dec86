@@ -122,7 +122,7 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
 
     def _safe_attr(node: object, attr: str, default: object | None = None) -> object | None:
         try:
-            return _dynamic_dce_getattr_8616(node, attr, default)
+            return typing.cast(object | None, _dynamic_dce_getattr_8616(node, attr, default))
         except (TypeError, ValueError):
             return default
 
@@ -1445,7 +1445,7 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
         ):
             evidence = _dynamic_dce_getattr_8616(codegen, attr, ()) or ()
             for item in evidence:
-                pairs = ()
+                pairs: tuple[object, ...] = ()
                 if isinstance(item, dict):
                     pairs = tuple(item.items())
                 elif isinstance(item, (tuple, list)):
@@ -1453,6 +1453,8 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
                 for pair in pairs:
                     if not isinstance(pair, (tuple, list)) or len(pair) != 2:
                         continue
+                    key: object
+                    value: object
                     key, value = pair
                     if key == offset_key and isinstance(value, int):
                         protected.add(("stack", int(value)))

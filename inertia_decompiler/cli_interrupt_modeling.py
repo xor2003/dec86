@@ -381,9 +381,9 @@ def _interrupt_wrapper_record_register_write(
         elif field_path == ("h", "al"):
             al = value & 0xFF
             regs[("h", "al")] = al
-            ah = regs.get(("h", "ah"))
-            if ah is not None:
-                regs[("x", "ax")] = ((ah & 0xFF) << 8) | (al & 0xFF)
+            high_ah = regs.get(("h", "ah"))
+            if high_ah is not None:
+                regs[("x", "ax")] = ((high_ah & 0xFF) << 8) | (al & 0xFF)
         elif field_path == ("h", "bh"):
             regs[("h", "bh")] = value & 0xFF
         elif field_path == ("h", "bl"):
@@ -479,7 +479,7 @@ def _interrupt_wrapper_helper_call_expr(
         if helper_name.endswith("getvect"):
             helper_args.append(structured_c.CConstant(0x21, SimTypeShort(False), codegen=codegen))
 
-        return structured_c.CFunctionCall(helper_name, None, helper_args, codegen=codegen)
+        return cast(object, structured_c.CFunctionCall(helper_name, None, helper_args, codegen=codegen))
 
     return _impl()
 
@@ -497,7 +497,7 @@ def _interrupt_wrapper_result_helper_expr(helper_expr: object, codegen: _Codegen
 
     # Dynamic codegen boundary: CFunctionCall args may be absent on synthetic nodes.
     helper_args = list(getattr(helper_expr, "args", ()) or ())
-    return structured_c.CFunctionCall(helper_name, None, helper_args, codegen=codegen)
+    return cast(object, structured_c.CFunctionCall(helper_name, None, helper_args, codegen=codegen))
 
 
 def _interrupt_wrapper_result_extract_expr(
@@ -521,16 +521,16 @@ def _interrupt_wrapper_result_extract_expr(
 
         if access.base_name == "outregs" and access.field_path in {("x", "bx"), ("x", "cx"), ("x", "dx")}:
             if "getvect" in str(helper_name) and access.field_path == ("x", "bx"):
-                return structured_c.CFunctionCall(
+                return cast(object, structured_c.CFunctionCall(
                     "FP_OFF",
                     None,
                     [helper_call],
                     codegen=codegen,
-                )
+                ))
             return helper_call
 
         if access.base_name == "outregs" and access.field_path == ("h", "ah"):
-            return structured_c.CBinaryOp(
+            return cast(object, structured_c.CBinaryOp(
                 "And",
                 structured_c.CBinaryOp(
                     "Shr",
@@ -540,24 +540,24 @@ def _interrupt_wrapper_result_extract_expr(
                 ),
                 structured_c.CConstant(0xFF, SimTypeShort(), codegen=codegen),
                 codegen=codegen,
-            )
+            ))
 
         if access.base_name == "outregs" and access.field_path == ("h", "al"):
-            return structured_c.CBinaryOp(
+            return cast(object, structured_c.CBinaryOp(
                 "And",
                 helper_call,
                 structured_c.CConstant(0xFF, SimTypeShort(), codegen=codegen),
                 codegen=codegen,
-            )
+            ))
 
         if "getvect" in str(helper_name):
             if access.base_name == "sregs" and access.field_path == ("es",):
-                return structured_c.CFunctionCall(
+                return cast(object, structured_c.CFunctionCall(
                     "FP_SEG",
                     None,
                     [helper_call],
                     codegen=codegen,
-                )
+                ))
 
         if access.base_name == "sregs" and access.field_path == ("es",):
             return helper_call
@@ -630,14 +630,14 @@ def _interrupt_wrapper_result_expr_replacement(
                     and high_access.field_path == ("h", "ah")
                     and low_access.field_path == ("h", "al")
                 ):
-                    return structured_c.CFunctionCall(
+                    return cast(object, structured_c.CFunctionCall(
                         helper_name,
                         # Dynamic codegen boundary: helper calls may carry callee_func.
                         getattr(helper_expr, "callee_func", None),
                         # Dynamic codegen boundary: CFunctionCall args may be absent on synthetic nodes.
                         list(getattr(helper_expr, "args", ()) or ()),
                         codegen=codegen,
-                    )
+                    ))
 
         return None
 

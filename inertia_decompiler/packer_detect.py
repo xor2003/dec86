@@ -42,7 +42,7 @@ class PackerDetection:
     confidence: float  # 0.0-1.0 (1.0 = certain, 0.5 = unsure)
 
 
-def _parse_dos_header(data: bytes) -> dict:
+def _parse_dos_header(data: bytes) -> dict[str, int]:
     """Extract key fields from DOS MZ header.
 
     Returns: {

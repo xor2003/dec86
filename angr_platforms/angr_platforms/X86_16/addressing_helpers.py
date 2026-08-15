@@ -339,9 +339,15 @@ class ResolvedMemoryOperand:
                 MemSpace.ES: MemSpace.ES,
                 MemSpace.UNKNOWN: MemSpace.UNKNOWN,
             }
-            space = space_map.get(self.segment, MemSpace.UNKNOWN)
+            segment = self.segment
+            space = (
+                space_map.get(segment, MemSpace.UNKNOWN)
+                if isinstance(segment, (sgreg_t, MemSpace))
+                else MemSpace.UNKNOWN
+            )
             explicit_segment = isinstance(self.segment, (sgreg_t, MemSpace)) and space != MemSpace.UNKNOWN
             stable = explicit_segment and space in {MemSpace.SS, MemSpace.DS, MemSpace.ES}
+            base: tuple[str, ...]
             if isinstance(self.segment, sgreg_t):
                 base = (self.segment.name.lower(),)
             elif isinstance(self.segment, MemSpace) and self.segment != MemSpace.UNKNOWN:

@@ -21,7 +21,7 @@ except ImportError:
     _keystone = None
 
 try:
-    import unicorn as _unicorn  # type: ignore[reportMissingImports]
+    import unicorn as _unicorn
 except ImportError:
     _unicorn = None
 
@@ -31,7 +31,7 @@ from archinfo.arch import Arch, Register, register_arch
 __all__ = ("Arch86_16",)
 
 
-class Arch86_16(Arch):
+class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo base
     """16-bit x86 archinfo definition for real-mode DOS lifting and runtime setup."""
 
     def __init__(self, endness: Endness = Endness.LE) -> None:
@@ -42,8 +42,8 @@ class Arch86_16(Arch):
         super().__init__(endness)
         self_any = cast(Any, self)
         self_any.endness = "Iend_LE"
-        self.reg_blacklist = []
-        self.reg_blacklist_offsets = []
+        self.reg_blacklist: list[str] = []
+        self.reg_blacklist_offsets: list[int] = []
         self.vex_archinfo = None
         self.vex_cc_regs = None
         self.vex_to_unicorn_map = None
@@ -91,7 +91,7 @@ class Arch86_16(Arch):
     sizeof = {"short": 16, "int": 16, "long": 32, "long long": 32}
     ld_linux_name = None
     linux_name = None
-    lib_paths = []
+    lib_paths: list[str] = []
     # max_inst_bytes = 4
     # ip_offset = 0x80000000
     # sp_offset = 16

@@ -142,6 +142,10 @@ exclude = [
 testpaths = [
     "angr_platforms/tests",
 ]
+addopts = [
+    "--durations=10",
+    "--durations-min=1.0",
+]
 
 [tool.pyright]
 include = [

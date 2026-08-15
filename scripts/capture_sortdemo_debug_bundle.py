@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "angr_platforms"))
@@ -36,13 +37,13 @@ from angr_platforms.X86_16.lowering.stack_probe_return_facts import (  # noqa: E
 from angr_platforms.X86_16.segmented_memory_reasoning import apply_x86_16_segmented_memory_reasoning  # noqa: E402
 
 import inertia_decompiler.cli_function_discovery as function_discovery  # noqa: E402
+from inertia_decompiler.cli_c_ast_rewrites import _rewrite_ss_stack_byte_offsets  # noqa: E402
 from inertia_decompiler.cli_decompilation import (  # noqa: E402
     _function_complexity,
     _function_decompilation_profile,
     _preferred_decompiler_options,
     _prepare_function_for_decompilation,
     _regenerate_codegen_text_safely,
-    _rewrite_ss_stack_byte_offsets,
     _snapshot_codegen_text,
 )
 from inertia_decompiler.disassembly_helpers import _format_asm_range, _format_first_block_asm  # noqa: E402
@@ -133,7 +134,8 @@ def _focused_codegen_stage_dump(project: object, function: object) -> tuple[dict
         wrapper_like=bool(profile.get("wrapper_like")),
         tiny_single_call_helper=bool(profile.get("tiny_single_call_helper")),
     )
-    dec = project.analyses.Decompiler(function, cfg=None, options=options, generate_code=True)
+    # Dynamic angr boundary: project.analyses is supplied by the loaded angr project.
+    dec = cast(Any, project).analyses.Decompiler(function, cfg=None, options=options, generate_code=True)
     if dec.codegen is None:
         return (
             {
@@ -164,9 +166,10 @@ def _focused_codegen_stage_dump(project: object, function: object) -> tuple[dict
         if rewrite():
             callsite_changed = True
     summary["callsite_pass_changed"] = callsite_changed
+    function_addr = cast(Any, function).addr
     outputs["10_after_callsite_facts.c"], _ = _regenerate_codegen_text_safely(
         dec.codegen,
-        context=f"{function.addr:#x} after callsite facts",
+        context=f"{function_addr:#x} after callsite facts",
     )
 
     stack_lowering_changed = run_stack_lowering_pass_8616(
@@ -178,7 +181,7 @@ def _focused_codegen_stage_dump(project: object, function: object) -> tuple[dict
     summary["stack_lowering_changed"] = stack_lowering_changed
     outputs["20_after_stack_lowering.c"], _ = _regenerate_codegen_text_safely(
         dec.codegen,
-        context=f"{function.addr:#x} after stack lowering",
+        context=f"{function_addr:#x} after stack lowering",
     )
     return summary, outputs
 

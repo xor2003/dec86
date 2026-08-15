@@ -13,7 +13,7 @@ import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum, IntEnum
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from .condition_ir import build_condition_ir_8616, harmonize_condition_args_8616, normalize_condition_op_8616
 from .core import IRCondition, IRValue
@@ -140,7 +140,7 @@ def _expr_iffalse(expr: object) -> object | None:
 
 def _external_int(value: object) -> int:
     """Coerce pyvex integer-like boundary values without owning their type."""
-    return int(value)  # type: ignore[arg-type]
+    return int(cast(Any, value))
 
 
 class _FlagBit(IntEnum):
@@ -294,7 +294,7 @@ def _is_flags_expr(expr: object, tmp_exprs: _TmpExprs | None) -> bool:
     resolved = _resolve_tmp_expr(expr, tmp_exprs)
     tag = _expr_tag(resolved)
     if tag == "Iex_Get":
-        return register_name_from_offset(_expr_offset(resolved)) == "flags"
+        return bool(register_name_from_offset(_expr_offset(resolved)) == "flags")
     if tag == "Iex_Unop":
         args = _expr_args(resolved)
         return bool(args) and _is_flags_expr(args[0], tmp_exprs)

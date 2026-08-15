@@ -221,7 +221,7 @@ class DTRegister:
 
 
 # Processor class
-class Processor(Eflags, CR):
+class Processor(Eflags, CR):  # type: ignore[misc, unused-ignore] # dynamic frontend mixins
     """Concrete/VEX processor register model used by the X86_16 frontend."""
 
     def __init__(self) -> None:
@@ -316,7 +316,7 @@ class Processor(Eflags, CR):
 
     @staticmethod
     def _reg8_is_high(reg: reg8_t) -> bool:
-        return reg.value >= 4
+        return bool(reg.value >= 4)
 
     def get_ip(self) -> RegisterValue:
         """Return the 16-bit instruction pointer view."""
@@ -353,7 +353,7 @@ class Processor(Eflags, CR):
                 if self.vex_offsets is None:
                     raise ValueError("vex_offsets not initialized for lifting mode")
                 offset = self.vex_offsets.get(name, 0)
-                return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, TYPES[cast(type[RegisterName], type(n))]))
+                return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, TYPES[type(n)]))
             # concrete mode
             if isinstance(n, reg32_t):
                 idx = n.value
@@ -446,8 +446,10 @@ class Processor(Eflags, CR):
             return
         self.set_gpreg(reg16_t.IP, value)
 
-    def set_gpreg(self, n: reg8_t | reg16_t | reg32_t, value: object) -> None:
+    def set_gpreg(self, n: object, value: object) -> None:
         """Set a general-purpose register in concrete or VEX lifting mode."""
+        if not isinstance(n, (reg8_t, reg16_t, reg32_t)):
+            raise TypeError(f"Unsupported general-purpose register {n!r}")
 
         def _impl() -> None:
             nonlocal value
@@ -479,7 +481,7 @@ class Processor(Eflags, CR):
                     raise ValueError("vex_offsets not initialized for lifting mode")
                 offset = self.vex_offsets.get(name, 0)
                 if isinstance(value, int):
-                    value = self.constant(value, TYPES[cast(type[RegisterName], type(n))])
+                    value = self.constant(value, TYPES[type(n)])
                 if isinstance(value, VexValue):
                     value = value.rdt
                 self.lifter_instruction._append_stmt(Put(cast(Any, value), offset))
@@ -551,10 +553,10 @@ class Processor(Eflags, CR):
         result = self.get_gpreg(n)
         if self.lifter_instruction is not None:
             if isinstance(value, int):
-                value = self.constant(value, TYPES[cast(type[RegisterName], type(n))])
+                value = self.constant(value, TYPES[type(n)])
             elif not isinstance(value, VexValue):
                 value = VexValue(self.lifter_instruction, self.lifter_instruction._settmp(value))
-            result = result + value
+            result = result + cast(VexValue, value)
         else:
             if not isinstance(result, int) or not isinstance(value, int):
                 raise TypeError("Concrete register update requires concrete integer values")

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any, cast
 
 from inertia_decompiler import cli
 from inertia_decompiler.project_loading import _build_project, _is_blob_only_input
@@ -18,7 +19,7 @@ UPSTREAM_DECOMPILER_PATH = (
 )
 
 
-def _format_variables(variable_manager: object) -> list[str]:
+def _format_variables(variable_manager: Any) -> list[str]:  # noqa: ANN401
     try:
         variables = list(variable_manager.get_variables())
     except Exception as ex:  # noqa: BLE001
@@ -47,7 +48,7 @@ def _format_variables(variable_manager: object) -> list[str]:
     return rendered
 
 
-def _stack_variables_by_offset(variable_manager: object) -> dict[int, object]:
+def _stack_variables_by_offset(variable_manager: Any) -> dict[int, object]:  # noqa: ANN401
     by_offset: dict[int, object] = {}
     for variable in variable_manager.get_variables():
         offset = getattr(variable, "offset", None)
@@ -57,15 +58,16 @@ def _stack_variables_by_offset(variable_manager: object) -> dict[int, object]:
 
 
 def _probe_decompiler(
-    project: object,
-    function: object,
-    decompiler_options: object,
+    project: Any,  # noqa: ANN401
+    function: Any,  # noqa: ANN401
+    decompiler_options: Any,  # noqa: ANN401
     *,
     generate_code: bool,
     regen_clinic: bool | None = None,
-) -> object:
-    with cli._guard_angr_peephole_expr_bitwidth_assertion():
-        with cli._guard_angr_variable_recovery_binop_sub_size_mismatch():
+) -> Any:  # noqa: ANN401
+    cli_runtime: Any = cast(Any, cli)
+    with cli_runtime._guard_angr_peephole_expr_bitwidth_assertion():
+        with cli_runtime._guard_angr_variable_recovery_binop_sub_size_mismatch():
             kwargs = {"cfg": None, "options": decompiler_options, "generate_code": generate_code}
             if regen_clinic is not None:
                 kwargs["regen_clinic"] = regen_clinic
@@ -84,15 +86,16 @@ def main() -> int:
         parser.add_argument("--entry-point", type=lambda value: int(value, 0), default=0x100)
         args = parser.parse_args()
 
-        project = _build_project(
+        project: Any = _build_project(
             args.binary,
             force_blob=_is_blob_only_input(args.binary),
             base_addr=args.base_addr,
             entry_point=args.entry_point,
         )
-        region = cli._infer_x86_16_linear_region(project, args.addr, window=args.window)
-        cfg, function = cli._pick_function(project, args.addr, regions=[region], data_references=True)
-        cli._prepare_function_for_decompilation(project, function)
+        cli_runtime: Any = cast(Any, cli)
+        region = cli_runtime._infer_x86_16_linear_region(project, args.addr, window=args.window)
+        cfg, function = cli_runtime._pick_function(project, args.addr, regions=[region], data_references=True)
+        cli_runtime._prepare_function_for_decompilation(project, function)
 
         print(f"binary={args.binary}")
         print(f"function={function.addr:#x} {function.name}")
@@ -105,9 +108,9 @@ def main() -> int:
         else:
             print("clinic_without_guards=ok")
 
-        block_count, byte_count = cli._function_complexity(function)
-        profile = cli._function_decompilation_profile(function, block_count, byte_count)
-        decompiler_options = cli._preferred_decompiler_options(
+        block_count, byte_count = cli_runtime._function_complexity(function)
+        profile = cli_runtime._function_decompilation_profile(function, block_count, byte_count)
+        decompiler_options = cli_runtime._preferred_decompiler_options(
             block_count,
             byte_count,
             wrapper_like=bool(profile.get("wrapper_like")),

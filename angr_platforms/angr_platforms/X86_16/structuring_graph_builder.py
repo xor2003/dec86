@@ -25,7 +25,7 @@ def resolve_clinic_from_codegen(codegen: object) -> object | None:
     """Resolve the clinic object across the dynamic third-party angr/codegen boundary."""
     clinic = getattr(codegen, "_clinic", None)
     if clinic is not None:
-        return clinic
+        return cast(object, clinic)
 
     project = getattr(codegen, "project", None)
     cfunc = getattr(codegen, "cfunc", None)
@@ -36,7 +36,7 @@ def resolve_clinic_from_codegen(codegen: object) -> object | None:
     func = project.kb.functions.function(addr=func_addr, create=False)
     if func is None:
         return None
-    return getattr(func, "_clinic", None)
+    return cast(object | None, getattr(func, "_clinic", None))
 
 
 def _statement_addr_8616(stmt: object) -> int | None:

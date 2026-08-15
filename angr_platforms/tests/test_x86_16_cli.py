@@ -1187,7 +1187,7 @@ def test_explicit_direct_addr_timeout_disables_hidden_validation_retries():
             timeout_was_explicit=False,
             args_timeout=60,
         )
-        == 2
+        == 0
     )
     assert cli_core._direct_addr_robust_retry_enabled_8616(timeout_was_explicit=True) is False
     assert cli_core._direct_addr_robust_retry_enabled_8616(timeout_was_explicit=False) is True
@@ -1723,6 +1723,16 @@ def _run_decompile_proc(
     analysis_timeout: int = 10,
     subprocess_timeout: int = 30,
 ) -> subprocess.CompletedProcess[str]:
+    raw_scale = os.environ.get("INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE", "").strip()
+    if not raw_scale and os.environ.get("PYTEST_XDIST_WORKER"):
+        raw_scale = "1.5"
+    try:
+        scale = float(raw_scale) if raw_scale else 1.0
+    except ValueError:
+        scale = 1.0
+    if scale > 1.0:
+        analysis_timeout = max(analysis_timeout, int(round(analysis_timeout * scale)))
+        subprocess_timeout = max(subprocess_timeout, int(round(subprocess_timeout * scale)))
     return subprocess.run(
         [
             sys.executable,
@@ -3187,7 +3197,7 @@ def test_rank_exe_function_seeds_uses_recovery_labels_when_visible_catalog_is_em
     assert ranked == []
 
 
-def test_discover_ranked_binary_offsets_auto_prefers_rizin_when_no_sidecar_evidence(monkeypatch, tmp_path):
+def test_discover_ranked_binary_offsets_auto_merges_conservative_rizin_seeds(monkeypatch, tmp_path):
     binary = tmp_path / "sample.exe"
     code = b"\x90" * 0x200
     binary.write_bytes(code)
@@ -3251,8 +3261,8 @@ def test_discover_ranked_binary_offsets_auto_prefers_rizin_when_no_sidecar_evide
 
     result = cli_core._discover_ranked_binary_offsets(project, args=args)
 
-    assert result == [0x1200]
-    assert rank_calls["count"] == 0
+    assert result == [0x9000, 0x1200]
+    assert rank_calls["count"] == 1
 
 
 def test_discover_ranked_binary_offsets_auto_falls_back_to_angr_when_rizin_unavailable(monkeypatch, tmp_path):
@@ -4631,13 +4641,12 @@ def test_fresh_sidecar_retry_disables_rebased_exact_slice_after_sliced_failure(m
     recovered_cfg = SimpleNamespace()
     seen = {}
 
-    monkeypatch.setenv("INERTIA_ENABLE_REBASED_EXACT_SLICE", "1")
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: fresh_project)
     monkeypatch.setattr(decompile, "attach_lst_metadata_to_project", lambda *_args, **_kwargs: None)
 
     def _fake_recover_lst_function(project_arg, metadata_arg, offset, name, **_kwargs):  # noqa: ANN001
         seen["recover"] = (project_arg, metadata_arg, offset, name)
-        seen["rebased_exact_slice_env"] = decompile.os.environ.get("INERTIA_ENABLE_REBASED_EXACT_SLICE")
+        seen["allow_rebased_exact_slice"] = _kwargs.get("allow_rebased_exact_slice")
         return recovered_cfg, recovered_function
 
     monkeypatch.setattr(decompile, "_recover_lst_function", _fake_recover_lst_function)
@@ -4653,8 +4662,7 @@ def test_fresh_sidecar_retry_disables_rebased_exact_slice_after_sliced_failure(m
     assert retry_item.function is recovered_function
     assert retry_item.function_cfg is recovered_cfg
     assert seen["recover"] == (fresh_project, metadata, 0x10CE0, "QuickSort")
-    assert seen["rebased_exact_slice_env"] == "0"
-    assert decompile.os.environ.get("INERTIA_ENABLE_REBASED_EXACT_SLICE") == "1"
+    assert seen["allow_rebased_exact_slice"] is False
     assert fresh_project._inertia_rebased_exact_slice_retry_disabled_8616 is True
 
 
@@ -9116,6 +9124,7 @@ def test_main_reports_uncapped_cached_function_count(monkeypatch, tmp_path, caps
 
 
 def test_main_decompiles_all_functions_by_default_without_sidecar(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("INERTIA_ENABLE_SERIAL_FORK_PER_FUNCTION", "0")
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
     project = SimpleNamespace(
@@ -9145,6 +9154,7 @@ def test_main_decompiles_all_functions_by_default_without_sidecar(monkeypatch, t
         lambda _project, pairs, addrs, **_kwargs: (pairs, addrs),
     )
     monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_fork", lambda fn, *, timeout: fn())
     monkeypatch.setattr(
         decompile,
         "_store_catalog_address_cache",
@@ -9186,6 +9196,7 @@ def test_main_decompiles_all_functions_by_default_without_sidecar(monkeypatch, t
 
 
 def test_main_does_not_auto_cap_noninteractive_stdout_without_sidecar(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("INERTIA_ENABLE_SERIAL_FORK_PER_FUNCTION", "0")
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
     project = SimpleNamespace(
@@ -9215,6 +9226,7 @@ def test_main_does_not_auto_cap_noninteractive_stdout_without_sidecar(monkeypatc
         lambda _project, pairs, addrs, **_kwargs: (pairs, addrs),
     )
     monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_fork", lambda fn, *, timeout: fn())
     monkeypatch.setattr(decompile, "_store_catalog_address_cache", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         decompile,
@@ -11930,8 +11942,8 @@ def test_main_parallel_promotes_done_future_at_deadline(monkeypatch, tmp_path, c
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert "/* -- c -- */" in out
-    assert "int _start(void) { return 0; }" in out
+    assert "int _start(void)\n{" in out
+    assert "return 0;" in out
     assert "Timed out after 2s." not in out
 
 
@@ -12018,8 +12030,8 @@ def test_main_parallel_promotes_future_completed_during_late_collection(monkeypa
     out = capsys.readouterr().out
 
     assert rc == 0
-    assert "/* -- c -- */" in out
-    assert "int _start(void) { return 0; }" in out
+    assert "int _start(void)\n{" in out
+    assert "return 0;" in out
     assert "Timed out after 2s." not in out
 
 
@@ -14194,6 +14206,53 @@ def test_parse_ida_map_metadata_prefers_segment_class_over_loc_name(tmp_path):
     assert data_labels[0x10022] == "word_10022"
 
 
+def test_ida_lst_segment_offset_does_not_double_count_map_org(tmp_path):
+    map_path = tmp_path / "sample.map"
+    map_path.write_text(
+        " Start  Stop   Length Name Class\n"
+        " 03F93H 0B2C3H 07331H seg03f9 CODE\n"
+        " Address Publics by Value\n"
+        " 03F9:0003 _main\n"
+    )
+    lst_path = tmp_path / "sample.lst"
+    lst_path.write_text("seg03f9:0003 _main proc near\n")
+
+    code_labels, _data_labels, segment_offsets = decompile._parse_ida_map_metadata(
+        map_path,
+        load_base_linear=0x10000,
+    )
+    lst_labels = decompile._parse_ida_lst_proc_metadata(
+        lst_path,
+        load_base_linear=0x10000,
+        segment_offsets=segment_offsets,
+    )
+
+    assert segment_offsets == {"seg03f9": 0x3F90}
+    assert code_labels[0x13F93] == "main"
+    assert lst_labels == {0x13F93: "main"}
+
+
+def test_segmented_ida_lst_does_not_publish_raw_offset_duplicate(tmp_path):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    binary.with_suffix(".lst").write_text("seg03f9:0003 _main proc near\n")
+    code_labels: dict[int, str] = {}
+    source_formats: list[str] = []
+
+    sidecar_metadata._load_lst_sidecar(
+        binary,
+        load_base_linear=0x10000,
+        segment_offsets={"seg03f9": 0x3F90},
+        code_labels=code_labels,
+        data_labels={},
+        code_ranges={},
+        source_formats=source_formats,
+    )
+
+    assert code_labels == {0x13F93: "main"}
+    assert source_formats == ["ida_lst"]
+
+
 def test_parse_ida_map_metadata_classifies_msvc_data_segments(tmp_path):
     map_path = tmp_path / "demo.MAP"
     map_path.write_text(
@@ -15537,21 +15596,20 @@ def test_decompile_cli_recovers_sethook_branch_logic():
 def test_decompile_cli_recovers_setgear_guard_logic():
     result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "CARR.COD", "_SetGear")
 
-    if result.returncode == 4:
-        _assert_explicit_partial_or_fallback_failure(result)
-        return
     assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _SetGear" in result.stdout
-    assert "unsigned short _SetGear(unsigned short G)" in result.stdout or "void _SetGear(int G)" in result.stdout
+    assert "void _SetGear(unsigned short G)" in result.stdout or "void _SetGear(int G)" in result.stdout
     assert "/* COD annotations:" not in result.stdout
-    assert "ejected" in result.stdout
-    assert "Knots" in result.stdout
-    assert "Status" in result.stdout
-    assert "return" in result.stdout
-    assert "if (...)" not in result.stdout
+    assert "if (!ejected)" in result.stdout
+    assert result.stdout.count("if (!G)") == 1
+    assert "else if (G == 1)" in result.stdout
+    assert "else if (Knots <= 350)" in result.stdout
+    assert "Status = Status | 1;" in result.stdout and "Status = Status & -2;" in result.stdout
     assert "28674" not in result.stdout
     assert "28682" not in result.stdout
     assert "\n        sub_102f();" not in result.stdout
+    assert "asm fallback" not in result.stdout
+    assert "Message(ax, 2);" in result.stdout
     assert "whole-tail validation clean" in result.stderr
 
 
@@ -15836,13 +15894,14 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            (
-                "function: 0x1000 _SetHook",
-                "return 1;",
-                "HookDown == Hook",
-                "HookDown = ax;",
-                "return Message((!Hook ? 28676 : 28674), 5);",
-            ),
+                (
+                    "function: 0x1000 _SetHook",
+                    "return 1;",
+                    "HookDown == Hook",
+                    "HookDown = ax;",
+                    "Message(ax_2, 5);",
+                    "return 0;",
+                ),
             ("Message(28674, 28674)", "Message(28676, 28676)"),
         ),
         (
@@ -15851,17 +15910,17 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             "NEAR",
             10,
             30,
-            (
-                "function: 0x1000 _SetGear",
-                "unsigned short _SetGear(unsigned short G)",
-                "if (!(ejected))",
-                "if (!G)",
-                "if (Knots <= 350)",
-                "Status = Status | 1;",
-                "Status = Status & -2;",
-                'Message ("Landing gear lowered",RIO_MSG);',
-                "return v13;",
-            ),
+                (
+                    "function: 0x1000 _SetGear",
+                    "void _SetGear(unsigned short G)",
+                    "if (!ejected)",
+                    "if (!G)",
+                    "else if (G == 1)",
+                    "else if (Knots <= 350)",
+                    "Status = Status | 1;",
+                    "Status = Status & -2;",
+                    "Message(ax, 2);",
+                ),
             (),
         ),
         (
@@ -16011,6 +16070,8 @@ def test_decompile_cli_small_cod_logic_batch(
         assert "timeout" in result.stdout.lower()
         return
     if result.returncode == 4:
+        if proc == "_InBoxLng":
+            pytest.fail("_InBoxLng must pass whole-tail validation after wide predicate recovery")
         _assert_explicit_partial_or_fallback_failure(result)
         return
 

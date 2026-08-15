@@ -234,7 +234,7 @@ def materialize_terminal_register_return_value_8616(
             TerminalRegisterReturnValueRefusal8616.NOT_APPLICABLE,
         )
 
-    functions = cast(_FunctionManagerSurface8616, project_surface.kb.functions)
+    functions = project_surface.kb.functions
     function = functions.function(addr=cfunc.addr, create=False)
     if function is None:
         return _result_8616(

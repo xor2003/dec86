@@ -410,11 +410,11 @@ def test_collect_access_traits_refuses_segment_stride_without_proven_base():
 
     _decompile._collect_access_traits(project, codegen)
 
-    traits = project._inertia_access_traits[0x1000]
-    assert traits["base_stride"] == {}
-    assert traits["base_stride_widths"] == {}
-    assert traits["stride_evidence"] == {}
-    assert traits["array_evidence"] == {}
+    traits = project._inertia_access_traits.get(0x1000, {})
+    assert traits.get("base_stride", {}) == {}
+    assert traits.get("base_stride_widths", {}) == {}
+    assert traits.get("stride_evidence", {}) == {}
+    assert traits.get("array_evidence", {}) == {}
 
 
 def test_attach_pointer_member_names_ignores_segment_stride_without_proven_base():

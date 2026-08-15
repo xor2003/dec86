@@ -1031,7 +1031,7 @@ def test_byteops_cod_main_refuses_unresolved_generic_stack_base():
     function = cfg.functions[project.entry]
     cod_metadata = decompile.extract_cod_proc_metadata(proc_path, "_main", "NEAR")
 
-    with pytest.raises(PipelineHardError, match="function leaked unresolved stack locals into final C"):
+    with pytest.raises(PipelineHardError, match="function recovery omitted exact instructions") as error:
         decompile._decompile_function(
             project,
             cfg,
@@ -1042,6 +1042,12 @@ def test_byteops_cod_main_refuses_unresolved_generic_stack_base():
             cod_metadata=cod_metadata,
             synthetic_globals=synthetic_globals,
         )
+    assert error.value.layer == "recovery:exact_instruction_coverage"
+    assert isinstance(error.value.details, dict)
+    assert error.value.details["raw_fact_count"] == len(entries)
+    assert error.value.details["materialized_count"] == 4
+    assert error.value.details["excluded_unreachable_count"] == 1
+    assert error.value.details["failure_count"] == len(entries) - 5
 
 
 def test_strlen_cod_sample_resolves_direct_stack_loads_to_annotated_slots():
@@ -1216,8 +1222,9 @@ def test_dosfunc_cod_sample_deduplicates_stack_local_names():
     text = result.stdout
 
     assert text.count("return err;") == 1
-    assert "sub_1038(28690, segment, err);" in text
-    assert "sub_1038();" not in text
+    assert "intdosx(&rin, &rout, &sreg);" in text
+    assert 'ERROR("dos_free: error freeing segment 0x%x: error 0x%x", segment, err);' in text
+    assert "ERROR();" not in text
     assert "err_2" not in text
 
 
@@ -1277,7 +1284,7 @@ def test_bios_cod_sample_decompilation():
         dec.codegen.text,
         (
             "inertia_es = 0",
-            "SEG_U8(inertia_es, 1047) = 0",
+            "SEG_U8(inertia_es, 1047) = inertia_es",
             "SEG_U8(inertia_es, 1048) = inertia_es >> 8",
             "return",
         ),

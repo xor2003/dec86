@@ -21,6 +21,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Iterator
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -85,7 +86,23 @@ class DecompileRunResult:
     @property
     def quality_aggregate(self) -> dict[str, object]:
         """Return aggregate quality for the complete run."""
-        return measure_x86_16_function_quality_8616([item.quality for item in self.artifacts])
+        return dict(measure_x86_16_function_quality_8616([item.quality for item in self.artifacts]))
+
+
+def _aggregate_int(aggregate: dict[str, object], name: str) -> int:
+    """Read one required integer quality metric from a typed aggregate boundary."""
+    value = aggregate.get(name)
+    if not isinstance(value, int):
+        raise TypeError(f"quality aggregate field {name!r} is not an integer")
+    return value
+
+
+def _aggregate_float(aggregate: dict[str, object], name: str) -> float:
+    """Read one required numeric quality metric from a typed aggregate boundary."""
+    value = aggregate.get(name)
+    if not isinstance(value, (int, float)):
+        raise TypeError(f"quality aggregate field {name!r} is not numeric")
+    return float(value)
 
 
 def _parse_validation_status(stdout: str, stderr: str) -> ValidationStatus:
@@ -164,7 +181,7 @@ def _iter_repo_extension_modules(repo_root: Path) -> tuple[Path, ...]:
 
 
 @contextlib.contextmanager
-def _disable_repo_extension_modules(repo_root: Path):
+def _disable_repo_extension_modules(repo_root: Path) -> Iterator[None]:
     """Temporarily rename local .so files so pure-Python imports are used."""
     modules = _iter_repo_extension_modules(repo_root)
     moved: list[tuple[Path, Path]] = []
@@ -219,17 +236,11 @@ def _run_decompile(
     env.setdefault("INERTIA_ENABLE_TAIL_VALIDATION", "1")
 
     start = time.perf_counter()
+    context: contextlib.AbstractContextManager[None]
     if mode is DecompileMode.PURE_PYTHON:
         context = _disable_repo_extension_modules(repo_root)
     else:
-        class _NoopContext:
-            def __enter__(self):
-                return None
-
-            def __exit__(self, exc_type, exc, tb):
-                return False
-
-        context = _NoopContext()
+        context = contextlib.nullcontext()
 
     with context:
         proc = subprocess.run(
@@ -295,32 +306,32 @@ def _compare_quality(
     baseline_total = baseline.quality_aggregate
     candidate_total = candidate.quality_aggregate
 
-    if candidate_total["total_tmp_conditions"] > baseline_total["total_tmp_conditions"] + aggregate_allow_increase:
+    if _aggregate_int(candidate_total, "total_tmp_conditions") > _aggregate_int(baseline_total, "total_tmp_conditions") + aggregate_allow_increase:
         failures.append(
             "candidate total_tmp_conditions increased "
             f"{baseline_total['total_tmp_conditions']} -> {candidate_total['total_tmp_conditions']}"
         )
-    if candidate_total["total_raw_flag_conditions"] > baseline_total["total_raw_flag_conditions"] + aggregate_allow_increase:
+    if _aggregate_int(candidate_total, "total_raw_flag_conditions") > _aggregate_int(baseline_total, "total_raw_flag_conditions") + aggregate_allow_increase:
         failures.append(
             "candidate total_raw_flag_conditions increased "
             f"{baseline_total['total_raw_flag_conditions']} -> {candidate_total['total_raw_flag_conditions']}"
         )
-    if candidate_total["total_raw_ss_linear_exprs"] > baseline_total["total_raw_ss_linear_exprs"] + aggregate_allow_increase:
+    if _aggregate_int(candidate_total, "total_raw_ss_linear_exprs") > _aggregate_int(baseline_total, "total_raw_ss_linear_exprs") + aggregate_allow_increase:
         failures.append(
             "candidate total_raw_ss_linear_exprs increased "
             f"{baseline_total['total_raw_ss_linear_exprs']} -> {candidate_total['total_raw_ss_linear_exprs']}"
         )
-    if candidate_total["total_asm_fallbacks"] > baseline_total["total_asm_fallbacks"] + aggregate_allow_increase:
+    if _aggregate_int(candidate_total, "total_asm_fallbacks") > _aggregate_int(baseline_total, "total_asm_fallbacks") + aggregate_allow_increase:
         failures.append(
             "candidate total_asm_fallbacks increased "
             f"{baseline_total['total_asm_fallbacks']} -> {candidate_total['total_asm_fallbacks']}"
         )
-    if candidate_total["total_validation_uncollected"] > baseline_total["total_validation_uncollected"] + aggregate_allow_increase:
+    if _aggregate_int(candidate_total, "total_validation_uncollected") > _aggregate_int(baseline_total, "total_validation_uncollected") + aggregate_allow_increase:
         failures.append(
             "candidate total_validation_uncollected increased "
             f"{baseline_total['total_validation_uncollected']} -> {candidate_total['total_validation_uncollected']}"
         )
-    if candidate_total["avg_quality_score"] < baseline_total["avg_quality_score"] - 1e-9:
+    if _aggregate_float(candidate_total, "avg_quality_score") < _aggregate_float(baseline_total, "avg_quality_score") - 1e-9:
         failures.append(
             "candidate avg_quality_score decreased "
             f"{baseline_total['avg_quality_score']} -> {candidate_total['avg_quality_score']}"

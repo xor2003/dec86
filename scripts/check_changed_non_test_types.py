@@ -11,6 +11,7 @@ import ast
 import subprocess
 import sys
 from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TypeAlias
 
@@ -299,6 +300,7 @@ def _changed_computed_dunder_all(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     diagnostics: list[str] = []
     for stmt in tree.body:
+        targets: Sequence[ast.expr]
         if isinstance(stmt, ast.Assign):
             targets = stmt.targets
             value: ast.AST | None = stmt.value

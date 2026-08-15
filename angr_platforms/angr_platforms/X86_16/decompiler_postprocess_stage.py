@@ -539,10 +539,10 @@ class _PostprocessValidationBlockingReason8616(Enum):
     def coerce(cls: StructuredAstValue, value: StructuredAstValue) -> "_PostprocessValidationBlockingReason8616 | None":
         """Convert stored validation-reason values into the typed enum."""
         if isinstance(value, cls):
-            return value
+            return cast(_PostprocessValidationBlockingReason8616, value)
         if isinstance(value, str):
             with contextlib.suppress(ValueError):
-                return cls(value)
+                return cast(_PostprocessValidationBlockingReason8616, cls(value))
         return None
 
 
@@ -882,7 +882,7 @@ class _PostprocessFunctionComplexity8616:
     @property
     def is_expensive_for_local_validation(self: StructuredAstValue) -> bool:
         """Return whether bounded per-pass validation exceeds the local budget."""
-        return self.block_count >= 40 or self.byte_count >= 640 or (self.block_count >= 36 and self.byte_count >= 360)
+        return bool(self.block_count >= 40 or self.byte_count >= 640 or (self.block_count >= 36 and self.byte_count >= 360))
 
 
 @dataclass
@@ -950,7 +950,7 @@ _POSTPROCESS_METADATA_SNAPSHOT_MAX_ITEMS_8616 = 512
 
 
 def _debug_dump_calls_8616(label: str, ctext: str, function_addr: int) -> None:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> None:
         if not os.environ.get("INERTIA_DEBUG_CALL_MUTATION"):
             return
         target_text = os.environ.get("INERTIA_DEBUG_CALL_MUTATION_ADDR")
@@ -984,7 +984,7 @@ def _debug_heap_call_lines_8616(label: str, c_text: str, function_addr: int) -> 
 
 
 def _debug_stack_noise_8616(label: str, c_text: str, function_addr: int) -> None:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> None:
         if not os.environ.get("INERTIA_DEBUG_STACK_NOISE"):
             return
         target_text = os.environ.get("INERTIA_DEBUG_STACK_NOISE_ADDR")
@@ -1035,12 +1035,12 @@ def _normalize_pointer_high_byte_shifts_8616(codegen: StructuredAstValue) -> boo
     if new_root is not root:
         codegen.cfunc.statements = new_root
         root = new_root
-    _post._replace_c_children_8616(root, _transform)
+    cast(Any, _post)._replace_c_children_8616(root, _transform)
     return changed
 
 
 def _bind_codegen_variable_types_to_arch_8616(codegen: StructuredAstValue) -> None:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> None:
         project = getattr(codegen, "project", None)
         arch = getattr(project, "arch", None)
         if arch is None:
@@ -7055,7 +7055,7 @@ def _materialize_missing_terminal_ax_return_8616(project: StructuredAstValue, co
         )
         return False
     replaced_fingerprint = None
-    replaced_return_keys = frozenset()
+    replaced_return_keys: frozenset[StructuredAstValue] = frozenset()
     if replace_artifact_return and artifact_return is not None:
         replaced_return_keys = _c_variables_read_by_expr_8616(getattr(artifact_return, "retval", None))
         with contextlib.suppress(Exception):
@@ -8436,6 +8436,10 @@ def _decompiler_postprocess_passes_for_function(
                     "_rewrite_decoded_jcc_conditions_after_calls_8616",
                 }
             )
+        if getattr(codegen, "_inertia_pre_validation_return_address_pruned_8616", False):
+            skip_names.add("_prune_return_address_stack_arguments_8616")
+        if getattr(codegen, "_inertia_pre_validation_stack_prototype_primed", False):
+            skip_names.add("_promote_stack_prototype_from_bp_loads_8616")
         # Evidence-driven default: keep callsite summary/materialization enabled.
         # Disabling it drops proven call-argument facts and can erase semantics.
         callsite_rewrite_enabled = _truthy_env_8616("INERTIA_ENABLE_CALLSITE_REWRITE", default=True)
@@ -8726,7 +8730,7 @@ def _snapshot_inertia_metadata_value_8616(
         return cloned_tuple
 
     if isinstance(value, list):
-        cloned_list = []
+        cloned_list: list[StructuredAstValue] = []
         memo[value_id] = cloned_list
         if len(value) > _POSTPROCESS_METADATA_SNAPSHOT_MAX_ITEMS_8616:
             cloned_list.extend(value)
@@ -8735,7 +8739,7 @@ def _snapshot_inertia_metadata_value_8616(
         return cloned_list
 
     if isinstance(value, dict):
-        cloned_dict = {}
+        cloned_dict: dict[StructuredAstValue, StructuredAstValue] = {}
         memo[value_id] = cloned_dict
         items = tuple(value.items())
         if len(items) > _POSTPROCESS_METADATA_SNAPSHOT_MAX_ITEMS_8616:
@@ -8903,7 +8907,7 @@ def _snapshot_c_ast_value_for_validation_8616(
         return cloned_count
 
     if isinstance(value, list):
-        cloned_list = []
+        cloned_list: list[StructuredAstValue] = []
         memo[value_id] = cloned_list
         cloned_list.extend(_snapshot_c_ast_value_for_validation_8616(item, memo) for item in value)
         return cloned_list
@@ -8914,7 +8918,7 @@ def _snapshot_c_ast_value_for_validation_8616(
         return cloned_tuple
 
     if isinstance(value, dict):
-        cloned_dict = {}
+        cloned_dict: dict[StructuredAstValue, StructuredAstValue] = {}
         memo[value_id] = cloned_dict
         for key, item in value.items():
             cloned_key = _snapshot_c_ast_value_for_validation_8616(key, memo)
@@ -9126,7 +9130,7 @@ def _attach_tail_validation_widened_carrier_provenance_8616(
         return {"offset": slot_offset, "size": slot_size, "carrier_size": carrier_size, "source": source}
 
     def _record_proof(
-        carrier_map: dict,
+        carrier_map: dict[StructuredAstValue, StructuredAstValue],
         variable: StructuredAstValue,
         cvar: StructuredAstValue,
         carrier_size: int,
@@ -9142,7 +9146,7 @@ def _attach_tail_validation_widened_carrier_provenance_8616(
         if isinstance(variable_offset, int):
             carrier_map[(variable_offset, carrier_size)] = proof
 
-    def _collect_recurrence_proofs(carrier_map: dict) -> None:
+    def _collect_recurrence_proofs(carrier_map: dict[StructuredAstValue, StructuredAstValue]) -> None:
         recurrence_state = getattr(codegen, "_inertia_recurrence_state", None)
         if recurrence_state is None or not hasattr(recurrence_state, "resolve_known_copy_alias_expr"):
             return
@@ -9175,7 +9179,10 @@ def _attach_tail_validation_widened_carrier_provenance_8616(
                 _proof_for_slot(slot_offset, slot_size, carrier_size, "recurrence_state_resolved_expr"),
             )
 
-    def _collect_assignment_map_proofs(carrier_map: dict, variables_in_use: dict) -> None:
+    def _collect_assignment_map_proofs(
+        carrier_map: dict[StructuredAstValue, StructuredAstValue],
+        variables_in_use: dict[StructuredAstValue, StructuredAstValue],
+    ) -> None:
         try:
             var_id_map, name_map, _reg_map, _multi_var, _multi_name, _multi_reg, first_name_map, _first_reg_map = (
                 _ensure_assignment_maps_8616(codegen)
@@ -9373,7 +9380,7 @@ def _prepare_tail_validation_baseline_clone_8616(
 def _debug_tail_validation_baseline_condition_8616(
     project: StructuredAstValue, codegen: StructuredAstValue, *, function_addr: int, label: str
 ) -> None:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> None:
         if not os.environ.get("INERTIA_DEBUG_TV_BASELINE"):
             return
         try:
@@ -9836,7 +9843,14 @@ def _prime_stack_semantics_before_validation_baseline_8616(
 def _prime_stack_prototype_before_validation_baseline_8616(
     project: StructuredAstValue, codegen: StructuredAstValue
 ) -> bool:
-    """Materialize prototypes through dynamic codegen state before validation baseline capture."""
+    """Materialize stack interface state before validation baseline capture.
+
+    Return-address pruning changes angr's declaration maps and therefore must
+    precede ConditionIR operand materialization.  The implementation remains
+    a compatibility bridge until the typed stack-interface owner absorbs it;
+    running it here prevents a late cleanup pass from invalidating typed
+    condition projections.
+    """
     if getattr(codegen, "_inertia_pre_validation_stack_prototype_primed", False):
         return False
     changed = False
@@ -9849,6 +9863,9 @@ def _prime_stack_prototype_before_validation_baseline_8616(
         # prototype/argument surface that typed-condition signedness must fix.
         with span("x86_16.decompile.prime_stack.prototype_bp_loads"):
             changed = bool(_post._promote_stack_prototype_from_bp_loads_8616(project, codegen)) or changed
+        with span("x86_16.decompile.prime_stack.return_address"):
+            changed = bool(_post._prune_return_address_stack_arguments_8616(project, codegen)) or changed
+        codegen._inertia_pre_validation_return_address_pruned_8616 = True
         if changed:
             with span("x86_16.decompile.prime_stack.prototype.invalidate_after"):
                 _invalidate_tail_validation_derived_caches_8616(codegen)
@@ -10037,7 +10054,7 @@ def _prime_typed_conditions_before_validation_baseline_8616(
 def _postprocess_runtime_config_8616(
     project: StructuredAstValue, codegen: StructuredAstValue, pass_specs: StructuredAstValue
 ) -> tuple[int | None, bool, bool, set[str], StructuredAstValue]:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> tuple[int | None, bool, bool, set[str], StructuredAstValue]:
         func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
         delta = getattr(project, "_inertia_original_linear_delta", None)
         func_addr_candidates: set[int] = set()
@@ -10095,7 +10112,16 @@ def _postprocess_runtime_config_8616(
             except ValueError:
                 reject_budget = _PASS_REJECT_BUDGET_DEFAULT_8616
         pass_timeout_seconds: int | None = None
-        pass_timeout_raw = os.environ.get("INERTIA_POSTPROCESS_PASS_TIMEOUT_SEC", "").strip() or "6"
+        # Expensive functions already use one final whole-tail validation rather
+        # than per-pass validation. Keep their optional rewrite passes bounded
+        # more tightly too; otherwise a long sequence of individually bounded
+        # passes can consume the entire function budget under xdist contention.
+        # One second is too small for an evidence-backed pass when several
+        # decompiler workers share the host. A bounded two-second budget
+        # avoids false validation failures without making optional rewrites
+        # unbounded or changing the caller's outer function deadline.
+        default_pass_timeout = "2" if large_function_for_per_pass_tv else "6"
+        pass_timeout_raw = os.environ.get("INERTIA_POSTPROCESS_PASS_TIMEOUT_SEC", "").strip() or default_pass_timeout
         if pass_timeout_raw:
             try:
                 parsed = float(pass_timeout_raw)
@@ -10225,9 +10251,9 @@ def _postprocess_pass_has_local_evidence_8616(pass_name: str, codegen: Structure
         if function is None:
             codegen._inertia_direct_stack_update_local_evidence_count_8616 = 0
             return False
-        facts = _direct_stack_update_instruction_facts_8616(project, function)
-        codegen._inertia_direct_stack_update_local_evidence_count_8616 = len(facts)
-        return bool(facts)
+        update_facts = _direct_stack_update_instruction_facts_8616(project, function)
+        codegen._inertia_direct_stack_update_local_evidence_count_8616 = len(update_facts)
+        return bool(update_facts)
     if pass_name not in _CALLSITE_STACK_ARGUMENT_PASS_NAMES_8616:
         return False
     complexity = getattr(codegen, "_inertia_postprocess_function_complexity_8616", None)
@@ -11754,7 +11780,7 @@ def _regenerate_text_safely(codegen: StructuredAstValue, *, context: str) -> boo
                 codegen._inertia_postprocess_regeneration_disabled = True
                 suppressed_contexts = _boundary_set_8616(
                     getattr(codegen, "_inertia_regeneration_suppressed_contexts", ())
-                )  # type: ignore[arg-type]
+                )
                 if context not in suppressed_contexts:
                     logger.warning(
                         "Skipping 86_16 postprocess regeneration for %s after %s: %s",
@@ -13697,9 +13723,10 @@ def _condition_token_from_control_effect_8616(token: StructuredAstValue) -> str 
         base_prefix = prefix[: -len("-body-calls")]
         if base_prefix not in _TAIL_VALIDATION_CONTROL_CONDITION_PREFIXES_8616:
             return None
-        condition_token = _condition_token_from_body_calls_control_effect_8616(condition_token)
-        if condition_token is None:
+        body_condition_token = _condition_token_from_body_calls_control_effect_8616(condition_token)
+        if body_condition_token is None:
             return None
+        condition_token = body_condition_token
     elif prefix not in _TAIL_VALIDATION_CONTROL_CONDITION_PREFIXES_8616:
         return None
     return _normalize_validation_condition_token_8616(condition_token)
@@ -15133,7 +15160,7 @@ def _has_recovered_source_calls_in_codegen_8616(
 
 
 def _present_call_names_from_cfunc_8616(cfunc: StructuredAstValue) -> set[str]:
-    def _impl() -> StructuredAstValue:
+    def _impl() -> set[str]:
         root = getattr(cfunc, "body", None) or getattr(cfunc, "statements", None) or cfunc
         present: set[str] = set()
         for node in _iter_c_nodes_deep_8616(root):
@@ -15391,7 +15418,7 @@ class CallsiteStackFactMaterializationResult8616:
     @property
     def changed(self: StructuredAstValue) -> bool:
         """Return True when any callsite consumer changed the C AST or facts."""
-        return (
+        return bool(
             self.attach_summaries_changed
             or self.stack_probe_facts_changed
             or self.prototypes_changed
@@ -15441,10 +15468,24 @@ def run_callsite_stack_fact_materialization_8616(
                 lambda: _materialize_callsite_stack_arguments_with_target_identity_8616(project, codegen),
             )
         )
+    def _refresh_callsite_prototypes_after_args() -> bool:
+        """Refresh legacy call prototypes and the lowering-owned declarations."""
+        changed = bool(_calls._materialize_callsite_prototypes_8616(project, codegen))
+        cfunc = getattr(codegen, "cfunc", None)
+        if cfunc is None or not hasattr(cfunc, "functy"):
+            return changed
+        return bool(reconcile_callsite_interface_declarations_8616(project, codegen)) or changed
+
+    prototypes_after_args_changed = bool(
+        guarded_rewrite_runner(
+            "_materialize_callsite_prototypes_after_args_8616",
+            _refresh_callsite_prototypes_after_args,
+        )
+    )
     result = CallsiteStackFactMaterializationResult8616(
         attach_summaries_changed=attach_changed,
         stack_probe_facts_changed=stack_probe_changed,
-        prototypes_changed=prototypes_changed,
+        prototypes_changed=prototypes_changed or prototypes_after_args_changed,
         stack_arguments_changed=stack_arguments_changed,
     )
     try:
@@ -15473,7 +15514,7 @@ class LateAstCleanupResult8616:
     @property
     def requires_dce_after_cleanup(self: StructuredAstValue) -> bool:
         """Return True when cleanup exposed a DCE follow-up."""
-        return self.adjacent_temporary_copy_changed
+        return bool(self.adjacent_temporary_copy_changed)
 
 
 @dataclass(frozen=True, slots=True)
@@ -15636,7 +15677,7 @@ class PostSwitchCleanupResult8616:
     @property
     def requires_dce_after_cleanup(self: StructuredAstValue) -> bool:
         """Return True when cleanup exposed a DCE follow-up."""
-        return self.adjacent_temporary_copy_changed
+        return bool(self.adjacent_temporary_copy_changed)
 
 
 def run_post_switch_cleanup_after_seqnode_replacement_8616(
@@ -15857,7 +15898,7 @@ def _decompile_8616(self: StructuredAstValue) -> None:
         _orig_decompiler_decompile = getattr(_decompile_8616, "_orig_decompiler_decompile", None)
         if _orig_decompiler_decompile is None:
             _orig_decompiler_decompile = Decompiler._decompile
-            _decompile_8616._orig_decompiler_decompile = _orig_decompiler_decompile
+            cast(Any, _decompile_8616)._orig_decompiler_decompile = _orig_decompiler_decompile
         core_started = time.perf_counter()
         self.project._inertia_decompiler_stage = "core"
         with span(
@@ -17745,5 +17786,5 @@ def apply_x86_16_decompiler_postprocess() -> None:
     """Install the x86-16 decompiler postprocess wrapper once per process."""
     if _decompiler_wrapper_chain_contains_8616(Decompiler._decompile, "_decompile_8616"):
         return
-    _decompile_8616._orig_decompiler_decompile = Decompiler._decompile
+    cast(Any, _decompile_8616)._orig_decompiler_decompile = Decompiler._decompile
     Decompiler._decompile = _decompile_8616

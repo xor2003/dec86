@@ -454,6 +454,11 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         )
         if cmp_sem is not None:
             return cmp_sem
+        if mnemonic == "test" and self._next_instruction_is_simple_jcc_from_bytes_8616():
+            if dst_abs_mem8 is not None and src_imm8 is not None:
+                return ("test_abs_imm8", dst_abs_mem8, src_imm8)
+            if dst_abs_mem is not None and src_imm is not None:
+                return ("test_abs_imm16", dst_abs_mem, src_imm)
         if mnemonic in {"shl", "sal"} and dst_reg and src_imm is not None and src_imm == 1:
             return ("shl_reg_imm16", dst_reg, src_imm)
         if (
@@ -730,6 +735,33 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             return True
 
         return _impl()
+
+    def _lift_simple_test_8616(self, kind: str) -> bool:
+        """Lift a direct-memory TEST into typed masked-condition evidence."""
+        if kind not in {"test_abs_imm8", "test_abs_imm16"}:
+            return False
+        _kind, offset, immediate = cast(tuple[str, int, int], self.simple_semantics)
+        width_bits = 8 if kind == "test_abs_imm8" else 16
+        value = self._load_abs8(offset) if width_bits == 8 else self._load_abs16(offset)
+        mask = self.constant(immediate, Type.int_8) if width_bits == 8 else self._const16(immediate)
+        result = value & mask
+        typed_value = self._condition_direct_ds_value_8616(offset, width_bits=width_bits)
+        typed_mask = self._condition_const_value_8616(immediate, width_bits=width_bits)
+        normalized = IRBinaryValue(op="and", lhs=typed_value, rhs=typed_mask, size=width_bits // 8)
+        self._record_test_condition_source(
+            result,
+            width_bits=width_bits,
+            normalized_value=normalized,
+            producer_semantics=(kind, offset, immediate),
+        )
+        self.emu.set_last_condition(
+            IRCondition(op="masked_zero", args=(typed_value, typed_mask), expr=(kind,))
+        )
+        if width_bits == 8:
+            self._update_logical_flags8(result)
+        else:
+            self._update_binop_flags16("and", value, mask, result)
+        return True
 
     def _reg8_name(self, operand: Any) -> str | None:
         if operand.type != 1 or operand.size != 1:
@@ -1609,6 +1641,13 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             lhs = self._condition_reg_value_8616(lhs_reg, width_bits=16)
             rhs = self._condition_const_value_8616(imm, width_bits=16)
             return (lhs, rhs) if lhs is not None else None
+        if kind == "dec_reg16":
+            _, lhs_reg, dec_count = semantics
+            lhs = self._condition_proven_reg_value_8616(
+                lhs_reg, width_bits=16
+            ) or self._condition_reg_value_8616(lhs_reg, width_bits=16)
+            rhs = self._condition_const_value_8616(dec_count, width_bits=16)
+            return (lhs, rhs) if lhs is not None else None
         return None
 
     def _condition_reg_affine_state_8616(
@@ -2326,6 +2365,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     producer_insn=source.addr,
                     taken_target=target_addr,
                     fallthrough_target=fallthrough_addr,
+                    producer_semantics=source.semantics,
                 )
             elif source.kind == "test":
                 cond_ir = build_condition_from_test_8616(
@@ -2338,6 +2378,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     taken_target=target_addr,
                     fallthrough_target=fallthrough_addr,
                     operand_bind_insn=self.addr if source.bind_operand_at_jcc else None,
+                    producer_semantics=source.semantics,
                 )
             else:
                 cond_ir = ConditionFailure(
@@ -2419,6 +2460,8 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 )
             if self._lift_simple_cmp_8616(kind):
                 return
+            if self._lift_simple_test_8616(kind):
+                return
             if self._lift_simple_jcc_8616(kind):
                 return
             if kind == "nop":
@@ -2466,7 +2509,8 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             if kind == "inc_reg16":
                 _, reg_name = semantics
                 self.put(self._get_reg16(reg_name) + self._const16(1), reg_name)
-                self._update_condition_reg_affine_offset_8616(reg_name, -1, width_bits=16)
+                if _affine_switch_conditions_enabled_8616():
+                    self._update_condition_reg_affine_offset_8616(reg_name, -1, width_bits=16)
                 self._clear_condition_index_reg_state_8616(reg_name)
                 self._clear_condition_reg_value_state_8616(reg_name)
                 return
@@ -2493,6 +2537,8 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                             dec_count,
                             width_bits=16,
                         )
+                        if _affine_switch_conditions_enabled_8616()
+                        else None
                     )
                     if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
                         logger.warning(
@@ -2516,7 +2562,8 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                         producer_semantics=("dec_reg16", reg_name, dec_count),
                     )
                 self.put(value - self._const16(1), reg_name)
-                self._update_condition_reg_affine_offset_8616(reg_name, 1, width_bits=16)
+                if _affine_switch_conditions_enabled_8616():
+                    self._update_condition_reg_affine_offset_8616(reg_name, 1, width_bits=16)
                 self._clear_condition_index_reg_state_8616(reg_name)
                 self._clear_condition_reg_value_state_8616(reg_name)
                 return

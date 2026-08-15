@@ -149,7 +149,7 @@ class Eflags:
         if isinstance(v, int):
             return v & 0xFF
         try:
-            return v.value & 0xFF
+            return cast(int, v.value & 0xFF)
         except (AttributeError, ValueError):
             return None
 

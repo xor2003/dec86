@@ -245,15 +245,23 @@ def replay_codegen_structured_condition_segment_provenance_8616(
     """
     boundary = cast(Any, codegen)  # metadata and cfunc are an angr plugin boundary
     try:
+        root = boundary.cfunc.statements
         conditions = tuple(
             condition
             for condition in boundary._inertia_typed_conditions
             if isinstance(condition, ConditionIR)
         )
-        root = boundary.cfunc.statements
     except (AttributeError, TypeError):
         conditions = ()
         root = None
+    replay_key = (id(root), len(conditions))
+    # Dynamic angr codegen metadata boundary: replay cache fields are optional.
+    if getattr(boundary, "_inertia_structured_condition_provenance_replay_key_8616", None) == replay_key:
+        # Dynamic angr codegen metadata boundary: cached stats are optional.
+        cached = getattr(boundary, "_inertia_structured_condition_provenance_stats_8616", None)
+        if isinstance(cached, StructuredConditionProvenanceStats8616):
+            return cached
     stats = transport_structured_condition_segment_provenance_8616(root, conditions)
     boundary._inertia_structured_condition_provenance_stats_8616 = stats
+    boundary._inertia_structured_condition_provenance_replay_key_8616 = replay_key
     return stats

@@ -319,9 +319,15 @@ _CLI_ALLOWED_X86_16_IMPORTS = frozenset(
         "angr_platforms.X86_16.pipeline.architecture_guard",
         "angr_platforms.X86_16.pipeline.contracts",
         "angr_platforms.X86_16.pipeline.errors",
+        # CLI submits a recovery-owned closed census to this hard gate; neither
+        # expected instruction identity nor CFG ownership is derived in CLI.
+        "angr_platforms.X86_16.pipeline.recovery_coverage_guard",
         "angr_platforms.X86_16.pipeline.render_authority",
         "angr_platforms.X86_16.postprocess.optimization.dce",
         "angr_platforms.X86_16.render_compat",
+        # CLI invokes the read-only recovery census producer before semantic
+        # passes; instruction identity and CFG ownership remain X86_16-owned.
+        "angr_platforms.X86_16.recovery_instruction_coverage",
         "angr_platforms.X86_16.segmented_memory_reasoning",
         "angr_platforms.X86_16.stack_probe_fact_trace",
         # CLI orchestrates already-owned structuring helpers; semantic ownership remains in X86_16/decompiler_structuring_stage.py.
@@ -627,6 +633,11 @@ _RECOVERY_REPORTING_HEADER_MARKERS: dict[str, tuple[str, ...]] = {
         "Layer: Recovery/reporting",
         "summarize typed IR recovery counters from existing pipeline artifacts",
         "mutating IR, fabricating facts, or treating missing summaries as success",
+    ),
+    "recovery_instruction_coverage.py": (
+        "Layer: Recovery/reporting",
+        "classify exact instruction identity against CFG function ownership",
+        "semantic recovery, validation acceptance, postprocess ownership",
     ),
     "layer_module_status.py": (
         "Layer: Recovery/reporting",
@@ -1075,12 +1086,11 @@ _ARCHITECTURE_UNIQUE_STRING_SET_TABLES = frozenset(
     }
 )
 
-_LEGACY_SCRIPT_RESPONSIBILITY_DEBT = frozenset()
+_LEGACY_SCRIPT_RESPONSIBILITY_DEBT: frozenset[str] = frozenset()
 
-_LEGACY_INERTIA_RESPONSIBILITY_DEBT = frozenset()
+_LEGACY_INERTIA_RESPONSIBILITY_DEBT: frozenset[str] = frozenset()
 
 _ACTIVE_REFERENCE_PATHS = (
-    "SORTDEMO_HANDOFF.md",
     "reference/dosunit-execution-spec.md",
     "reference/telemetry.md",
     "reference/layer-module-status.md",
@@ -1215,6 +1225,8 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/alias/alias_model.py",
     "angr_platforms/angr_platforms/X86_16/alias/alias_model_impl.py",
     "angr_platforms/angr_platforms/X86_16/alias/callsite_stack_merge.py",
+    "angr_platforms/angr_platforms/X86_16/alias/condition_register_carriers.py",
+    "angr_platforms/angr_platforms/X86_16/alias/condition_register_liveness.py",
     "angr_platforms/angr_platforms/X86_16/alias/domains.py",
     "angr_platforms/angr_platforms/X86_16/alias/state.py",
     "angr_platforms/angr_platforms/X86_16/alias/stack_lowering.py",
@@ -1278,6 +1290,8 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/corpus_scan.py",
     "angr_platforms/angr_platforms/X86_16/milestone_report.py",
     "angr_platforms/angr_platforms/X86_16/exact_region_diagnostics.py",
+    "angr_platforms/angr_platforms/X86_16/frontend_instruction_reachability.py",
+    "angr_platforms/angr_platforms/X86_16/recovery_instruction_coverage.py",
     "angr_platforms/angr_platforms/X86_16/flair_extract.py",
     "angr_platforms/angr_platforms/X86_16/fast_tracer.py",
     "angr_platforms/angr_platforms/X86_16/jcc_condition.py",
@@ -1365,6 +1379,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/interrupt.py",
     "angr_platforms/angr_platforms/X86_16/stack_compat.py",
     "angr_platforms/angr_platforms/X86_16/typehoon_compat.py",
+    "angr_platforms/angr_platforms/X86_16/type_clinic_return_compat.py",
     "angr_platforms/angr_platforms/X86_16/stack_helpers.py",
     "angr_platforms/angr_platforms/X86_16/correctness_goals.py",
     "angr_platforms/angr_platforms/X86_16/readability_set.py",
@@ -1433,6 +1448,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/signed_global_declarations.py",
     "angr_platforms/angr_platforms/X86_16/lowering/project_global_signedness.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_argument_count_evidence.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/callee_argument_width_evidence.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_argument_interface.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_collection.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_evidence.py",
@@ -1484,6 +1500,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/semantic_cast.py",
     "angr_platforms/angr_platforms/X86_16/lowering/return_type_evidence.py",
     "angr_platforms/angr_platforms/X86_16/lowering/unobserved_returns.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/unused_void_return_types.py",
     "angr_platforms/angr_platforms/X86_16/lowering/scalar_return_types.py",
     "angr_platforms/angr_platforms/X86_16/validation_condition_precision.py",
     "angr_platforms/angr_platforms/X86_16/lowering/segment_register_state.py",
@@ -1553,6 +1570,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/structuring/call_return_conditions.py",
     "angr_platforms/angr_platforms/X86_16/structuring/control_flow.py",
     "angr_platforms/angr_platforms/X86_16/structuring/condition_materialization.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/multi_arm_condition_ownership.py",
     "angr_platforms/angr_platforms/X86_16/structuring/clinic_option_policy.py",
     "angr_platforms/angr_platforms/X86_16/structuring/loop_condition_materialization.py",
     "angr_platforms/angr_platforms/X86_16/structuring/condition_binding.py",
@@ -1564,6 +1582,8 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/structuring/total_return_suffixes.py",
     "angr_platforms/angr_platforms/X86_16/structuring/wide_call_return_guard_chains.py",
     "angr_platforms/angr_platforms/X86_16/structuring/wide_stack_condition_chains.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/wide_stack_predicate_graphs.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/wide_stack_return_predicates.py",
     "angr_platforms/angr_platforms/X86_16/structuring/wide_stack_single_branches.py",
     "angr_platforms/angr_platforms/X86_16/structuring/condition_lowering.py",
     "angr_platforms/angr_platforms/X86_16/structuring/indexed_condition_values.py",
@@ -1613,11 +1633,13 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/pipeline/errors.py",
     "angr_platforms/angr_platforms/X86_16/pipeline/invariants.py",
     "angr_platforms/angr_platforms/X86_16/pipeline/linear_guard.py",
+    "angr_platforms/angr_platforms/X86_16/pipeline/recovery_coverage_guard.py",
     "angr_platforms/angr_platforms/X86_16/pipeline/render_authority.py",
     "inertia_decompiler/__init__.py",
     "inertia_decompiler/acceptance_scorecard.py",
     "inertia_decompiler/architecture_runtime_guard.py",
     "inertia_decompiler/project_evidence_transport.py",
+    "inertia_decompiler/cod_module_caller_evidence.py",
     "inertia_decompiler/c_text_cleanup.py",
     "inertia_decompiler/cache.py",
     "inertia_decompiler/cli.py",
@@ -1734,9 +1756,7 @@ _DECOMPILER_ANNOTATION_ROOTS = (
 _DECOMPILER_ANNOTATION_DEBT_BASELINE: dict[str, tuple[int, str]] = {}
 
 _FOCUSED_PYTEST_MARKERS = (
-    "angr_platforms/tests/test_decompiler_architecture_check.py",
     "angr_platforms/tests/test_test_pipeline.py",
-    "angr_platforms/tests/test_test_ownership_manifest.py",
     "angr_platforms/tests/test_check_changed_non_test_types.py",
     "angr_platforms/tests/test_cli_regeneration.py",
     "angr_platforms/tests/test_x86_16_condition_lowering.py",
@@ -1794,9 +1814,7 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "cli-regeneration": ("inertia_decompiler/cli_decompilation.py",),
     "x86-16-alias-model-impl": ("angr_platforms/angr_platforms/X86_16/alias/alias_model_impl.py",),
     "x86-16-lowering-fact-transfer": ("angr_platforms/angr_platforms/X86_16/lowering/fact_transfer.py",),
-    "x86-16-lowering-segmented": (
-        "angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py",
-    ),
+    "x86-16-lowering-segmented": ("angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py",),
     "x86-16-lowering-segmented-runtime": (
         "angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py",
     ),
@@ -1804,12 +1822,8 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "x86-16-structuring-condition-materialization": (
         "angr_platforms/angr_platforms/X86_16/structuring/condition_materialization.py",
     ),
-    "x86-16-structuring-loop-body-repair": (
-        "angr_platforms/angr_platforms/X86_16/structuring/loop_body_repair.py",
-    ),
-    "x86-16-structuring-loop-break-jcc": (
-        "angr_platforms/angr_platforms/X86_16/structuring/loop_break_jcc.py",
-    ),
+    "x86-16-structuring-loop-body-repair": ("angr_platforms/angr_platforms/X86_16/structuring/loop_body_repair.py",),
+    "x86-16-structuring-loop-break-jcc": ("angr_platforms/angr_platforms/X86_16/structuring/loop_break_jcc.py",),
     "x86-16-structuring-simple-loop-recovery": (
         "angr_platforms/angr_platforms/X86_16/structuring/simple_loop_recovery.py",
     ),
@@ -1824,25 +1838,20 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
         "angr_platforms/angr_platforms/X86_16/validation_dataflow.py",
         "angr_platforms/angr_platforms/X86_16/validation_predicates.py",
     ),
-    "x86-16-validation-semantic-failures": (
-        "angr_platforms/angr_platforms/X86_16/validation_semantic_failures.py",
-    ),
+    "x86-16-validation-semantic-failures": ("angr_platforms/angr_platforms/X86_16/validation_semantic_failures.py",),
     "x86-16-validation-calls": ("angr_platforms/angr_platforms/X86_16/validation_calls.py",),
     "x86-16-validation-control-flow": (
         "angr_platforms/angr_platforms/X86_16/validation_condition_identity.py",
         "angr_platforms/angr_platforms/X86_16/validation_control_flow.py",
     ),
-    "x86-16-validation-storage": (
-        "angr_platforms/angr_platforms/X86_16/validation_storage.py",
-    ),
+    "x86-16-validation-storage": ("angr_platforms/angr_platforms/X86_16/validation_storage.py",),
     "x86-16-callsite-prototype-declarations": (
         "angr_platforms/angr_platforms/X86_16/lowering/callsite_prototype_declarations.py",
     ),
-    "x86-16-return-type-evidence": (
-        "angr_platforms/angr_platforms/X86_16/lowering/return_type_evidence.py",
-    ),
+    "x86-16-return-type-evidence": ("angr_platforms/angr_platforms/X86_16/lowering/return_type_evidence.py",),
     "x86-16-unobserved-return-lowering": (
         "angr_platforms/angr_platforms/X86_16/lowering/unobserved_returns.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/unused_void_return_types.py",
     ),
     "x86-16-terminal-return-lowering": (
         "angr_platforms/angr_platforms/X86_16/lowering/terminal_register_return_values.py",
@@ -1855,22 +1864,12 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     ),
     "x86-16-validation-semantics": ("angr_platforms/angr_platforms/X86_16/validation_semantics.py",),
     "x86-16-widening-copyprop": ("angr_platforms/angr_platforms/X86_16/widening/widening_copyprop_8616.py",),
-    "x86-16-widening-memory-fold": (
-        "angr_platforms/angr_platforms/X86_16/widening/widening_memory_fold_8616.py",
-    ),
+    "x86-16-widening-memory-fold": ("angr_platforms/angr_platforms/X86_16/widening/widening_memory_fold_8616.py",),
     "x86-16-widening-rules": ("angr_platforms/angr_platforms/X86_16/widening/widening_rules.py",),
-    "x86-16-semantics-expression-analysis": (
-        "angr_platforms/angr_platforms/X86_16/semantics/expression_analysis.py",
-    ),
-    "x86-16-semantics-alias-query": (
-        "angr_platforms/angr_platforms/X86_16/semantics/alias_query.py",
-    ),
-    "x86-16-semantics-alu": (
-        "angr_platforms/angr_platforms/X86_16/semantics/alu_semantics.py",
-    ),
-    "x86-16-semantics-condition-recovery": (
-        "angr_platforms/angr_platforms/X86_16/semantics/condition_recovery.py",
-    ),
+    "x86-16-semantics-expression-analysis": ("angr_platforms/angr_platforms/X86_16/semantics/expression_analysis.py",),
+    "x86-16-semantics-alias-query": ("angr_platforms/angr_platforms/X86_16/semantics/alias_query.py",),
+    "x86-16-semantics-alu": ("angr_platforms/angr_platforms/X86_16/semantics/alu_semantics.py",),
+    "x86-16-semantics-condition-recovery": ("angr_platforms/angr_platforms/X86_16/semantics/condition_recovery.py",),
     "x86-16-semantics-stack-frame-recovery": (
         "angr_platforms/angr_platforms/X86_16/semantics/stack_frame_recovery.py",
     ),
@@ -1880,27 +1879,17 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "x86-16-lowering-storage-identity-facts": (
         "angr_platforms/angr_platforms/X86_16/lowering/storage_identity_facts.py",
     ),
-    "x86-16-lowering-ss-bp-substitution": (
-        "angr_platforms/angr_platforms/X86_16/lowering/ss_bp_substitution.py",
-    ),
-    "x86-16-lowering-object-lowering": (
-        "angr_platforms/angr_platforms/X86_16/lowering/object_lowering.py",
-    ),
+    "x86-16-lowering-ss-bp-substitution": ("angr_platforms/angr_platforms/X86_16/lowering/ss_bp_substitution.py",),
+    "x86-16-lowering-object-lowering": ("angr_platforms/angr_platforms/X86_16/lowering/object_lowering.py",),
     "x86-16-lowering-pointer-memory-idioms": (
         "angr_platforms/angr_platforms/X86_16/lowering/pointer_memory_idioms.py",
     ),
-    "x86-16-lowering-condition-transfer": (
-        "angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py",
-    ),
+    "x86-16-lowering-condition-transfer": ("angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py",),
     "x86-16-lowering-call-return-selectors": (
         "angr_platforms/angr_platforms/X86_16/lowering/call_return_selectors.py",
     ),
-    "x86-16-lowering-stack-coordinator": (
-        "angr_platforms/angr_platforms/X86_16/lowering/stack_lowering.py",
-    ),
-    "x86-16-lowering-stack-from-facts": (
-        "angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_from_facts.py",
-    ),
+    "x86-16-lowering-stack-coordinator": ("angr_platforms/angr_platforms/X86_16/lowering/stack_lowering.py",),
+    "x86-16-lowering-stack-from-facts": ("angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_from_facts.py",),
 }
 
 _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
@@ -1919,30 +1908,18 @@ _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
         "angr_platforms/tests/test_x86_16_validation_predicates.py",
         "angr_platforms/tests/test_x86_16_validation_virtual_carriers.py",
     ),
-    "x86-16-validation-semantic-failures": (
-        "angr_platforms/tests/test_x86_16_validation_semantic_failures.py",
-    ),
-    "x86-16-lowering-call-return-selectors": (
-        "angr_platforms/tests/test_x86_16_call_return_selectors.py",
-    ),
+    "x86-16-validation-semantic-failures": ("angr_platforms/tests/test_x86_16_validation_semantic_failures.py",),
+    "x86-16-lowering-call-return-selectors": ("angr_platforms/tests/test_x86_16_call_return_selectors.py",),
     "x86-16-validation-calls": ("angr_platforms/tests/test_x86_16_validation_calls.py",),
-    "x86-16-validation-control-flow": (
-        "angr_platforms/tests/test_x86_16_validation_control_flow.py",
-    ),
-    "x86-16-validation-storage": (
-        "angr_platforms/tests/test_x86_16_validation_storage.py",
-    ),
+    "x86-16-validation-control-flow": ("angr_platforms/tests/test_x86_16_validation_control_flow.py",),
+    "x86-16-validation-storage": ("angr_platforms/tests/test_x86_16_validation_storage.py",),
     "x86-16-lowering-storage-identity-facts": (
         "angr_platforms/tests/test_x86_16_validation_storage.py",
         "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
         "test_materialize_direct_global_inc_instruction_from_binary_evidence",
     ),
-    "x86-16-callsite-prototype-declarations": (
-        "angr_platforms/tests/test_x86_16_callsite_prototype_declarations.py",
-    ),
-    "x86-16-return-type-evidence": (
-        "angr_platforms/tests/test_x86_16_return_type_evidence.py",
-    ),
+    "x86-16-callsite-prototype-declarations": ("angr_platforms/tests/test_x86_16_callsite_prototype_declarations.py",),
+    "x86-16-return-type-evidence": ("angr_platforms/tests/test_x86_16_return_type_evidence.py",),
     "x86-16-validation-semantics": ("angr_platforms/tests/test_x86_16_validation_semantics.py",),
 }
 
@@ -2188,6 +2165,17 @@ def _literal_string_value(node: ast.AST) -> str | None:
     return None
 
 
+def _assignment_targets_and_value(
+    statement: ast.Assign | ast.AnnAssign | ast.AugAssign,
+) -> tuple[tuple[ast.expr, ...], ast.expr | None]:
+    """Normalize assignment target shapes for static architecture scans."""
+    if isinstance(statement, ast.Assign):
+        return tuple(statement.targets), statement.value
+    if isinstance(statement, ast.AnnAssign):
+        return (statement.target,), statement.value
+    return (statement.target,), None
+
+
 def _dict_literal_duplicate_string_keys(
     tree: ast.Module,
     *,
@@ -2197,14 +2185,9 @@ def _dict_literal_duplicate_string_keys(
 
     duplicates: list[tuple[str, str, int]] = []
     for stmt in tree.body:
-        if isinstance(stmt, ast.Assign):
-            targets = stmt.targets
-            value = stmt.value
-        elif isinstance(stmt, ast.AnnAssign):
-            targets = (stmt.target,)
-            value = stmt.value
-        else:
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
             continue
+        targets, value = _assignment_targets_and_value(stmt)
         table_name = next((target.id for target in targets if isinstance(target, ast.Name)), None)
         if table_name not in table_names or not isinstance(value, ast.Dict):
             continue
@@ -2230,14 +2213,9 @@ def _module_string_set_duplicate_values(
 
     duplicates: list[tuple[str, str, int]] = []
     for stmt in tree.body:
-        if isinstance(stmt, ast.Assign):
-            targets = stmt.targets
-            value = stmt.value
-        elif isinstance(stmt, ast.AnnAssign):
-            targets = (stmt.target,)
-            value = stmt.value
-        else:
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
             continue
+        targets, value = _assignment_targets_and_value(stmt)
         table_name = next((target.id for target in targets if isinstance(target, ast.Name)), None)
         if table_name not in table_names:
             continue
@@ -2269,14 +2247,9 @@ def _dict_literal_tuple_values(
 
     values: list[tuple[str, str, tuple[str, ...], int]] = []
     for stmt in tree.body:
-        if isinstance(stmt, ast.Assign):
-            targets = stmt.targets
-            value = stmt.value
-        elif isinstance(stmt, ast.AnnAssign):
-            targets = (stmt.target,)
-            value = stmt.value
-        else:
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
             continue
+        targets, value = _assignment_targets_and_value(stmt)
         table_name = next((target.id for target in targets if isinstance(target, ast.Name)), None)
         if table_name not in table_names or not isinstance(value, ast.Dict):
             continue
@@ -2299,14 +2272,9 @@ def _dict_literal_string_values(
 
     values: list[tuple[str, str, str, int]] = []
     for stmt in tree.body:
-        if isinstance(stmt, ast.Assign):
-            targets = stmt.targets
-            value = stmt.value
-        elif isinstance(stmt, ast.AnnAssign):
-            targets = (stmt.target,)
-            value = stmt.value
-        else:
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
             continue
+        targets, value = _assignment_targets_and_value(stmt)
         table_name = next((target.id for target in targets if isinstance(target, ast.Name)), None)
         if table_name not in table_names or not isinstance(value, ast.Dict):
             continue
@@ -2325,14 +2293,9 @@ def _module_frozenset_string_constant(tree: ast.Module, name: str) -> frozenset[
     """Return a module-level frozenset string constant, if it is literal."""
 
     for stmt in tree.body:
-        if isinstance(stmt, ast.Assign):
-            targets = stmt.targets
-            value = stmt.value
-        elif isinstance(stmt, ast.AnnAssign):
-            targets = (stmt.target,)
-            value = stmt.value
-        else:
+        if not isinstance(stmt, (ast.Assign, ast.AnnAssign)):
             continue
+        targets, value = _assignment_targets_and_value(stmt)
         if not any(isinstance(target, ast.Name) and target.id == name for target in targets):
             continue
         if not (
@@ -2517,10 +2480,13 @@ def _check_cli_imports(path: Path) -> tuple[ArchitectureViolation, ...]:
                     f"{module!r} is not in the CLI orchestration compatibility allowlist",
                 )
             )
-    forbidden_imports = _imported_names_from_module(
-        tree,
-        "angr_platforms.X86_16.decompiler_postprocess_calls",
-    ) & _CLI_FORBIDDEN_SEMANTIC_CALLS
+    forbidden_imports = (
+        _imported_names_from_module(
+            tree,
+            "angr_platforms.X86_16.decompiler_postprocess_calls",
+        )
+        & _CLI_FORBIDDEN_SEMANTIC_CALLS
+    )
     for name in sorted(forbidden_imports):
         violations.append(
             ArchitectureViolation(
@@ -2585,7 +2551,10 @@ def _check_cli_fallback_source_body_recovery(path: Path) -> tuple[ArchitectureVi
     tree = _parse_python(path)
     violations: list[ArchitectureViolation] = []
     for node in _walk_ast(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in _BANNED_CLI_FALLBACK_SOURCE_HELPERS:
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name in _BANNED_CLI_FALLBACK_SOURCE_HELPERS
+        ):
             violations.append(
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
@@ -2605,9 +2574,8 @@ def _check_cli_fallback_source_body_recovery(path: Path) -> tuple[ArchitectureVi
                 )
             )
             break
-        uses_banned_name = (
-            (isinstance(node, ast.Name) and node.id in _BANNED_CLI_FALLBACK_SOURCE_HELPERS)
-            or (isinstance(node, ast.Attribute) and node.attr in _BANNED_CLI_FALLBACK_SOURCE_HELPERS)
+        uses_banned_name = (isinstance(node, ast.Name) and node.id in _BANNED_CLI_FALLBACK_SOURCE_HELPERS) or (
+            isinstance(node, ast.Attribute) and node.attr in _BANNED_CLI_FALLBACK_SOURCE_HELPERS
         )
         if uses_banned_name:
             violations.append(
@@ -2684,8 +2652,7 @@ def _check_cli_acceptance_not_source_evidence_gated(path: Path) -> tuple[Archite
 
     for node in _walk_ast(tree):
         imports_source_sidecar = (
-            isinstance(node, ast.ImportFrom)
-            and (node.module or "") == "inertia_decompiler.source_sidecar"
+            isinstance(node, ast.ImportFrom) and (node.module or "") == "inertia_decompiler.source_sidecar"
         )
         if imports_source_sidecar:
             violations.append(
@@ -2766,9 +2733,8 @@ def _check_cli_not_source_backed_quality_gated(path: Path) -> tuple[Architecture
     expected_globals = _find_function(tree, "_candidate_expected_global_names_8616")
     if expected_globals is not None:
         for node in _walk_ast(expected_globals):
-            if (
-                (isinstance(node, ast.Attribute) and node.attr == "global_names")
-                or (isinstance(node, ast.Constant) and node.value == "global_names")
+            if (isinstance(node, ast.Attribute) and node.attr == "global_names") or (
+                isinstance(node, ast.Constant) and node.value == "global_names"
             ):
                 return (
                     ArchitectureViolation(
@@ -3023,16 +2989,14 @@ def _body_without_leading_docstring(body: list[ast.stmt]) -> list[ast.stmt]:
     if not body:
         return body
     first = body[0]
-    if (
-        isinstance(first, ast.Expr)
-        and isinstance(first.value, ast.Constant)
-        and isinstance(first.value.value, str)
-    ):
+    if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
         return body[1:]
     return body
 
 
-def _check_cli_cod_stack_alias_rewrites_inert(ast_path: Path, text_postprocess_path: Path) -> tuple[ArchitectureViolation, ...]:
+def _check_cli_cod_stack_alias_rewrites_inert(
+    ast_path: Path, text_postprocess_path: Path
+) -> tuple[ArchitectureViolation, ...]:
     violations: list[ArchitectureViolation] = []
     if ast_path.exists():
         tree = _parse_python(ast_path)
@@ -3136,9 +3100,7 @@ def _check_source_annotations_do_not_materialize_types(path: Path) -> tuple[Arch
     guarded_functions = {"_apply_source_prototype_annotations_8616", "_source_function_pointer_local_types_8616"}
     banned_calls = {"annotate_function", "_parse_c_prototype_8616", "_source_args_from_cod_source_lines"}
 
-    def _function_returns_only_constant(
-        function: ast.FunctionDef | ast.AsyncFunctionDef | None, value: object
-    ) -> bool:
+    def _function_returns_only_constant(function: ast.FunctionDef | ast.AsyncFunctionDef | None, value: object) -> bool:
         if function is None:
             return False
         body = _body_without_leading_docstring(function.body)
@@ -3207,20 +3169,14 @@ def _check_source_annotations_do_not_materialize_types(path: Path) -> tuple[Arch
         for child in _walk_ast(apply_metadata):
             uses_banned_metadata = (
                 (isinstance(child, ast.Attribute) and child.attr in {"stack_aliases", "source_lines", "call_names"})
-                or (
-                    isinstance(child, ast.Constant)
-                    and child.value in {"stack_aliases", "source_lines", "call_names"}
-                )
+                or (isinstance(child, ast.Constant) and child.value in {"stack_aliases", "source_lines", "call_names"})
                 or (isinstance(child, ast.Name) and child.id in {"stack_aliases", "source_lines", "call_names"})
             )
-            calls_semantic_materializer = (
-                isinstance(child, ast.Call)
-                and (
-                    (isinstance(child.func, ast.Name) and child.func.id in {"annotate_function", "known_cod_object_spec"})
-                    or (
-                        isinstance(child.func, ast.Attribute)
-                        and child.func.attr in {"annotate_function", "known_cod_object_spec"}
-                    )
+            calls_semantic_materializer = isinstance(child, ast.Call) and (
+                (isinstance(child.func, ast.Name) and child.func.id in {"annotate_function", "known_cod_object_spec"})
+                or (
+                    isinstance(child.func, ast.Attribute)
+                    and child.func.attr in {"annotate_function", "known_cod_object_spec"}
                 )
             )
             if uses_banned_metadata or calls_semantic_materializer:
@@ -3326,8 +3282,7 @@ def _check_validation_ownership_headers(root: Path) -> tuple[ArchitectureViolati
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     "validation-ownership-header",
-                    f"{path.name} missing ownership markers: "
-                    f"{', '.join(repr(marker) for marker in missing_markers)}",
+                    f"{path.name} missing ownership markers: {', '.join(repr(marker) for marker in missing_markers)}",
                 )
             )
     return tuple(violations)
@@ -3346,8 +3301,7 @@ def _check_recompilable_ownership_headers(root: Path) -> tuple[ArchitectureViola
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     "recompilable-ownership-header",
-                    f"{path.name} missing ownership markers: "
-                    f"{', '.join(repr(marker) for marker in missing_markers)}",
+                    f"{path.name} missing ownership markers: {', '.join(repr(marker) for marker in missing_markers)}",
                 )
             )
     return tuple(violations)
@@ -3366,8 +3320,7 @@ def _check_root_structuring_ownership_headers(root: Path) -> tuple[ArchitectureV
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     "root-structuring-ownership-header",
-                    f"{path.name} missing ownership markers: "
-                    f"{', '.join(repr(marker) for marker in missing_markers)}",
+                    f"{path.name} missing ownership markers: {', '.join(repr(marker) for marker in missing_markers)}",
                 )
             )
     return tuple(violations)
@@ -3386,8 +3339,7 @@ def _check_optional_evidence_ownership_headers(root: Path) -> tuple[Architecture
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     "optional-evidence-ownership-header",
-                    f"{path.name} missing ownership markers: "
-                    f"{', '.join(repr(marker) for marker in missing_markers)}",
+                    f"{path.name} missing ownership markers: {', '.join(repr(marker) for marker in missing_markers)}",
                 )
             )
     return tuple(violations)
@@ -3406,8 +3358,7 @@ def _check_recovery_reporting_ownership_headers(root: Path) -> tuple[Architectur
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     "recovery-reporting-ownership-header",
-                    f"{path.name} missing ownership markers: "
-                    f"{', '.join(repr(marker) for marker in missing_markers)}",
+                    f"{path.name} missing ownership markers: {', '.join(repr(marker) for marker in missing_markers)}",
                 )
             )
     return tuple(violations)
@@ -3426,8 +3377,7 @@ def _check_frontend_runtime_ownership_headers(root: Path) -> tuple[ArchitectureV
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     "frontend-runtime-ownership-header",
-                    f"{path.name} missing ownership markers: "
-                    f"{', '.join(repr(marker) for marker in missing_markers)}",
+                    f"{path.name} missing ownership markers: {', '.join(repr(marker) for marker in missing_markers)}",
                 )
             )
     return tuple(violations)
@@ -3446,8 +3396,7 @@ def _check_recovery_metadata_ownership_headers(root: Path) -> tuple[Architecture
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     "recovery-metadata-ownership-header",
-                    f"{path.name} missing ownership markers: "
-                    f"{', '.join(repr(marker) for marker in missing_markers)}",
+                    f"{path.name} missing ownership markers: {', '.join(repr(marker) for marker in missing_markers)}",
                 )
             )
     return tuple(violations)
@@ -3466,8 +3415,7 @@ def _check_helper_boundary_ownership_headers(root: Path) -> tuple[ArchitectureVi
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     "helper-boundary-ownership-header",
-                    f"{path.name} missing ownership markers: "
-                    f"{', '.join(repr(marker) for marker in missing_markers)}",
+                    f"{path.name} missing ownership markers: {', '.join(repr(marker) for marker in missing_markers)}",
                 )
             )
     return tuple(violations)
@@ -3662,8 +3610,7 @@ def _check_identical_assignment_arm_structuring_ownership(
             "_materialize_structuring_return_chains_8616",
         )
         has_collapse_call = stage_function is not None and any(
-            isinstance(node, ast.Call) and _call_name(node.func) == collapse_name
-            for node in _walk_ast(stage_function)
+            isinstance(node, ast.Call) and _call_name(node.func) == collapse_name for node in _walk_ast(stage_function)
         )
         if not has_collapse_call:
             violations.append(
@@ -3733,9 +3680,7 @@ def _check_terminal_call_result_structuring_ownership(
                     f"Structuring owner must define {materializer_name}",
                 )
             )
-        owner_classes = {
-            node.name for node in ast.walk(owner_tree) if isinstance(node, ast.ClassDef)
-        }
+        owner_classes = {node.name for node in ast.walk(owner_tree) if isinstance(node, ast.ClassDef)}
         for class_name in owner_class_names:
             if class_name not in owner_classes:
                 violations.append(
@@ -4295,11 +4240,7 @@ def _check_postprocess_calls_source_evidence_is_inert(path: Path) -> tuple[Archi
         if function is None or len(function.body) != 1:
             return False
         stmt = function.body[0]
-        return (
-            isinstance(stmt, ast.Return)
-            and isinstance(stmt.value, ast.Tuple)
-            and len(stmt.value.elts) == 0
-        )
+        return isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Tuple) and len(stmt.value.elts) == 0
 
     gate = _find_function(tree, "_source_call_floor_enabled_8616")
     if gate is None:
@@ -4494,12 +4435,18 @@ def _check_postprocess_return_shape_not_source_backed(path: Path) -> tuple[Archi
                 )
             for child in _walk_ast(node):
                 if (
-                    (isinstance(child, ast.Attribute) and child.attr in {"source_lines", "source_return_lines", "stack_aliases"})
+                    (
+                        isinstance(child, ast.Attribute)
+                        and child.attr in {"source_lines", "source_return_lines", "stack_aliases"}
+                    )
                     or (
                         isinstance(child, ast.Constant)
                         and child.value in {"source_lines", "source_return_lines", "stack_aliases"}
                     )
-                    or (isinstance(child, ast.Name) and child.id in {"source_lines", "source_return_lines", "stack_aliases"})
+                    or (
+                        isinstance(child, ast.Name)
+                        and child.id in {"source_lines", "source_return_lines", "stack_aliases"}
+                    )
                 ):
                     return (
                         ArchitectureViolation(
@@ -4684,7 +4631,9 @@ def _check_tail_validation_fingerprint_not_cod_backed(path: Path) -> tuple[Archi
     return ()
 
 
-def _check_recompilable_source_evidence_inert(source_path: Path, bridge_path: Path) -> tuple[ArchitectureViolation, ...]:
+def _check_recompilable_source_evidence_inert(
+    source_path: Path, bridge_path: Path
+) -> tuple[ArchitectureViolation, ...]:
     violations: list[ArchitectureViolation] = []
 
     if source_path.exists():
@@ -4694,7 +4643,9 @@ def _check_recompilable_source_evidence_inert(source_path: Path, bridge_path: Pa
             inert = False
             if len(builder.body) == 1:
                 stmt = builder.body[0]
-                inert = isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Constant) and stmt.value.value is None
+                inert = (
+                    isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Constant) and stmt.value.value is None
+                )
             if not inert:
                 violations.append(
                     ArchitectureViolation(
@@ -4730,12 +4681,12 @@ def _check_recompilable_source_evidence_inert(source_path: Path, bridge_path: Pa
     if bridge_path.exists():
         tree = _parse_python(bridge_path)
         for node in _walk_ast(tree):
-            imports_source_evidence = isinstance(node, ast.ImportFrom) and (
-                node.module or ""
-            ).endswith("recompilable_source_evidence")
-            imports_storage_fallback = isinstance(node, ast.ImportFrom) and (
-                node.module or ""
-            ).endswith("recompilable_storage_fallback")
+            imports_source_evidence = isinstance(node, ast.ImportFrom) and (node.module or "").endswith(
+                "recompilable_source_evidence"
+            )
+            imports_storage_fallback = isinstance(node, ast.ImportFrom) and (node.module or "").endswith(
+                "recompilable_storage_fallback"
+            )
             if imports_source_evidence or imports_storage_fallback:
                 violations.append(
                     ArchitectureViolation(
@@ -4764,9 +4715,7 @@ def _check_recompilable_source_evidence_inert(source_path: Path, bridge_path: Pa
     return tuple(violations)
 
 
-def _function_returns_only_constant(
-    function: ast.FunctionDef | ast.AsyncFunctionDef | None, value: object
-) -> bool:
+def _function_returns_only_constant(function: ast.FunctionDef | ast.AsyncFunctionDef | None, value: object) -> bool:
     if function is None:
         return False
     body = _body_without_leading_docstring(function.body)
@@ -4969,9 +4918,16 @@ def _check_promoted_typed_public_assign_annotations(repo_root: Path = REPO_ROOT)
 def _iter_public_contract_defs(tree: ast.Module) -> tuple[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef, ...]:
     """Return public top-level and class-member definitions in a module."""
 
+    def is_overload_stub(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        return any(_decorator_name(decorator) == "overload" for decorator in node.decorator_list)
+
     public_defs: list[ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef] = []
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and not node.name.startswith("_"):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and not node.name.startswith("_")
+            and not is_overload_stub(node)
+        ) or (isinstance(node, ast.ClassDef) and not node.name.startswith("_")):
             public_defs.append(node)
         if isinstance(node, ast.ClassDef):
             public_defs.extend(
@@ -4979,6 +4935,10 @@ def _iter_public_contract_defs(tree: ast.Module) -> tuple[ast.FunctionDef | ast.
                 for stmt in node.body
                 if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
                 and not stmt.name.startswith("_")
+                and not (
+                    isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and is_overload_stub(stmt)
+                )
             )
     return tuple(public_defs)
 
@@ -5041,9 +5001,7 @@ class _AnnotationDebtVisitor(ast.NodeVisitor):
         """Record one function's gaps and recurse into nested definitions."""
 
         qualified_name = ".".join((*self.scope, node.name))
-        self.slots.extend(
-            f"{qualified_name}:{label}" for label in _function_missing_annotation_labels(node)
-        )
+        self.slots.extend(f"{qualified_name}:{label}" for label in _function_missing_annotation_labels(node))
         self.scope.append(node.name)
         self.generic_visit(node)
         self.scope.pop()
@@ -5207,7 +5165,9 @@ def _check_promoted_typed_enum_values(repo_root: Path = REPO_ROOT) -> tuple[Arch
         if not path.exists():
             continue
         for node in _walk_ast(_parse_python(path)):
-            if not isinstance(node, ast.ClassDef) or not (_class_has_base(node, "Enum") or _class_has_base(node, "StrEnum")):
+            if not isinstance(node, ast.ClassDef) or not (
+                _class_has_base(node, "Enum") or _class_has_base(node, "StrEnum")
+            ):
                 continue
             for stmt in node.body:
                 if not isinstance(stmt, ast.Assign):
@@ -5251,17 +5211,9 @@ def _check_promoted_typed_literal_dunder_all(repo_root: Path = REPO_ROOT) -> tup
             continue
         tree = _parse_python(path)
         for node in _walk_ast(tree):
-            if isinstance(node, ast.Assign):
-                targets = node.targets
-                value = node.value
-            elif isinstance(node, ast.AnnAssign):
-                targets = (node.target,)
-                value = node.value
-            elif isinstance(node, ast.AugAssign):
-                targets = (node.target,)
-                value = None
-            else:
+            if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
                 continue
+            targets, value = _assignment_targets_and_value(node)
             if not any(isinstance(target, ast.Name) and target.id == "__all__" for target in targets):
                 continue
             if value is not None and _literal_dunder_all_names(value) is not None:
@@ -5285,11 +5237,7 @@ def _dynamic_attr_access_has_boundary_reason(lines: list[str], line_no: int) -> 
         if separator:
             nearby_comments.append(comment.strip().lower())
     reason = " ".join(nearby_comments)
-    return (
-        "dynamic" in reason
-        and "boundary" in reason
-        and any(term in reason for term in _DYNAMIC_ATTR_BOUNDARY_TERMS)
-    )
+    return "dynamic" in reason and "boundary" in reason and any(term in reason for term in _DYNAMIC_ATTR_BOUNDARY_TERMS)
 
 
 def _dynamic_attr_docstring_has_boundary_reason(tree: ast.Module, line_no: int) -> bool:
@@ -5313,11 +5261,7 @@ def _dynamic_attr_docstring_has_boundary_reason(tree: ast.Module, line_no: int) 
             owner = node
     reason = (ast.get_docstring(owner) if owner is not None else None) or ""
     reason = reason.lower()
-    return (
-        "dynamic" in reason
-        and "boundary" in reason
-        and any(term in reason for term in _DYNAMIC_ATTR_BOUNDARY_TERMS)
-    )
+    return "dynamic" in reason and "boundary" in reason and any(term in reason for term in _DYNAMIC_ATTR_BOUNDARY_TERMS)
 
 
 def _static_setattr_field(node: ast.Call) -> str | None:
@@ -5670,9 +5614,8 @@ def _check_makefile_gate_targets(repo_root: Path = REPO_ROOT) -> tuple[Architect
                     f"Pyright-only promoted file {filename!r} must be included in QA_TYPED_FILES",
                 )
             )
-    full_promotion_debt_files = (
-        frozenset(_INERTIA_TYPED_PROMOTION_DEBT_FILES)
-        | frozenset(_X86_16_TYPED_PROMOTION_DEBT_FILES)
+    full_promotion_debt_files: frozenset[str] = (
+        frozenset(_INERTIA_TYPED_PROMOTION_DEBT_FILES) | frozenset(_X86_16_TYPED_PROMOTION_DEBT_FILES)
     ) - frozenset(_PYRIGHT_ONLY_TYPED_PROMOTION_FILES)
     for filename in sorted(full_promotion_debt_files & typed_targets):
         violations.append(
@@ -5742,7 +5685,7 @@ def _check_inertia_decompiler_typed_promotion_coverage(
     if not package_root.exists():
         return ()
     promoted = frozenset(filename for filename in _PROMOTED_TYPED_FILES if filename.startswith("inertia_decompiler/"))
-    debt = frozenset(_INERTIA_TYPED_PROMOTION_DEBT_FILES)
+    debt: frozenset[str] = frozenset(_INERTIA_TYPED_PROMOTION_DEBT_FILES)
     pyright_only = frozenset(_PYRIGHT_ONLY_TYPED_PROMOTION_FILES)
     violations: list[ArchitectureViolation] = []
 
@@ -5817,7 +5760,7 @@ def _check_x86_16_typed_promotion_coverage(
     promoted = frozenset(
         filename for filename in _PROMOTED_TYPED_FILES if filename.startswith("angr_platforms/angr_platforms/X86_16/")
     )
-    debt = frozenset(_X86_16_TYPED_PROMOTION_DEBT_FILES)
+    debt: frozenset[str] = frozenset(_X86_16_TYPED_PROMOTION_DEBT_FILES)
     violations: list[ArchitectureViolation] = []
 
     for filename in sorted(debt & promoted):
@@ -5902,14 +5845,9 @@ def _pipeline_tier_literals(tree: ast.Module) -> dict[str, tuple[str, ...]]:
     """Return literal PIPELINE_TIERS entries from the curated pipeline script."""
 
     for node in tree.body:
-        if isinstance(node, ast.Assign):
-            targets = node.targets
-            value = node.value
-        elif isinstance(node, ast.AnnAssign):
-            targets = (node.target,)
-            value = node.value
-        else:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
+        targets, value = _assignment_targets_and_value(node)
         if not any(isinstance(target, ast.Name) and target.id == "PIPELINE_TIERS" for target in targets):
             continue
         if not isinstance(value, ast.Dict):
@@ -5930,14 +5868,9 @@ def _focused_pytest_literals(tree: ast.Module) -> tuple[str, ...]:
     """Return literal FOCUSED_PYTEST_TARGETS entries from the pipeline script."""
 
     for node in tree.body:
-        if isinstance(node, ast.Assign):
-            targets = node.targets
-            value = node.value
-        elif isinstance(node, ast.AnnAssign):
-            targets = (node.target,)
-            value = node.value
-        else:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
+        targets, value = _assignment_targets_and_value(node)
         if any(isinstance(target, ast.Name) and target.id == "FOCUSED_PYTEST_TARGETS" for target in targets):
             return _ordered_tuple_string_constants(value)
     return ()
@@ -6093,7 +6026,11 @@ def _check_test_pipeline_fast_targets(repo_root: Path = REPO_ROOT) -> tuple[Arch
             )
     typed_conditions = "angr_platforms/tests/test_x86_16_decompiler_postprocess_typed_conditions.py"
     jcc = "angr_platforms/tests/test_x86_16_decompiler_postprocess_jcc.py"
-    if typed_conditions in focused_targets and jcc in focused_targets and focused_targets.index(typed_conditions) > focused_targets.index(jcc):
+    if (
+        typed_conditions in focused_targets
+        and jcc in focused_targets
+        and focused_targets.index(typed_conditions) > focused_targets.index(jcc)
+    ):
         violations.append(
             ArchitectureViolation(
                 _relative(pipeline_path, repo_root),
@@ -6272,8 +6209,8 @@ def _check_ownership_manifest_contract(repo_root: Path = REPO_ROOT) -> tuple[Arc
                         _relative(manifest_path, repo_root),
                         "ownership-manifest-required-rule",
                         f"{owner!r} must cover {required_path!r}",
+                    )
                 )
-            )
     for owner, required_tests in _OWNERSHIP_MANIFEST_REQUIRED_TESTS.items():
         tests = tests_by_owner.get(owner, frozenset())
         for required_test in required_tests:
@@ -6685,7 +6622,9 @@ def _check_dynamic_attr_boundary_terms_match_changed_file_ratchet(
     changed_ratchet_path = repo_root / "scripts" / "check_changed_non_test_types.py"
     if not architecture_path.exists() or not changed_ratchet_path.exists():
         return ()
-    architecture_terms = _module_frozenset_string_constant(_parse_python(architecture_path), "_DYNAMIC_ATTR_BOUNDARY_TERMS")
+    architecture_terms = _module_frozenset_string_constant(
+        _parse_python(architecture_path), "_DYNAMIC_ATTR_BOUNDARY_TERMS"
+    )
     changed_ratchet_terms = _module_frozenset_string_constant(
         _parse_python(changed_ratchet_path),
         "_DYNAMIC_ATTR_BOUNDARY_TERMS",
@@ -7248,7 +7187,10 @@ def _check_stack_lowering_binding_dot_access(path: Path) -> tuple[ArchitectureVi
     if not path.exists():
         return ()
     tree = _parse_python(path)
-    for function_name in ("build_stack_variable_bindings_from_alias_facts_8616", "lower_stack_accesses_from_alias_facts_8616"):
+    for function_name in (
+        "build_stack_variable_bindings_from_alias_facts_8616",
+        "lower_stack_accesses_from_alias_facts_8616",
+    ):
         lowering = _find_function(tree, function_name)
         if lowering is None:
             continue
@@ -7429,9 +7371,7 @@ def _check_stack_lowering_result_typed_status(path: Path) -> tuple[ArchitectureV
         return ()
     for node in _walk_ast(lowering):
         if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "StackLoweringResult"
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "StackLoweringResult"
         ):
             continue
         for keyword in node.keywords:
@@ -7505,9 +7445,7 @@ def _isinstance_type_names(node: ast.AST) -> tuple[str, ...]:
     return (name,) if name is not None else ()
 
 
-def _common_narrowed_fields(
-    type_names: tuple[str, ...], class_fields: dict[str, set[str]]
-) -> set[str]:
+def _common_narrowed_fields(type_names: tuple[str, ...], class_fields: dict[str, set[str]]) -> set[str]:
     """Return fields owned by every class in one isinstance narrowing."""
 
     field_sets = tuple(class_fields.get(type_name) for type_name in type_names)
@@ -7520,11 +7458,7 @@ def _positive_isinstance_narrowings(test: ast.AST) -> tuple[tuple[str, tuple[str
     """Collect type narrowings guaranteed by a positive ``if`` condition."""
 
     if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
-        return tuple(
-            narrowing
-            for condition in test.values
-            for narrowing in _positive_isinstance_narrowings(condition)
-        )
+        return tuple(narrowing for condition in test.values for narrowing in _positive_isinstance_narrowings(condition))
     if not (
         isinstance(test, ast.Call)
         and _qualified_ast_name(test.func) == "isinstance"
@@ -7631,9 +7565,7 @@ def _check_terminating_guard_narrowed_fields_use_dot(
         return ()
     tree = _parse_python(path)
 
-    def _find_getattr(
-        node: ast.AST, narrowed: dict[str, tuple[str, ...]]
-    ) -> tuple[str, str, str] | None:
+    def _find_getattr(node: ast.AST, narrowed: dict[str, tuple[str, ...]]) -> tuple[str, str, str] | None:
         for child in _walk_ast(node):
             if not (
                 isinstance(child, ast.Call)
@@ -8451,10 +8383,7 @@ def _check_call_recovery_summary_dot_access(path: Path) -> tuple[ArchitectureVio
                     ArchitectureViolation(
                         _relative(path, REPO_ROOT),
                         "call-recovery-summary-dot-access",
-                        (
-                            "call recovery must narrow CallsiteSummary8616 and use "
-                            f"summary.{field_name}, not getattr"
-                        ),
+                        (f"call recovery must narrow CallsiteSummary8616 and use summary.{field_name}, not getattr"),
                     ),
                 )
     return ()
@@ -8922,8 +8851,12 @@ def check_decompiler_architecture(
         )
     )
     violations.extend(_check_project_awareness_docs(repo_root))
-    violations.extend(_check_status_reporting_not_source_backed(repo_root / "scripts" / "sortdemo_decompiler_status.py"))
-    violations.extend(_check_sortdemo_status_reporting_typed_state(repo_root / "scripts" / "sortdemo_decompiler_status.py"))
+    violations.extend(
+        _check_status_reporting_not_source_backed(repo_root / "scripts" / "sortdemo_decompiler_status.py")
+    )
+    violations.extend(
+        _check_sortdemo_status_reporting_typed_state(repo_root / "scripts" / "sortdemo_decompiler_status.py")
+    )
     violations.extend(
         _check_decompilation_quality_not_source_backed_named(
             repo_root / "inertia_decompiler" / "decompilation_quality.py"
@@ -8947,19 +8880,13 @@ def check_decompiler_architecture(
     violations.extend(_check_script_module_docstrings(repo_root))
     violations.extend(_check_legacy_responsibility_debt_is_current(repo_root))
     violations.extend(
-        _check_cli_decompilation_narrowed_fields_use_dot(
-            repo_root / "inertia_decompiler" / "cli_decompilation.py"
-        )
+        _check_cli_decompilation_narrowed_fields_use_dot(repo_root / "inertia_decompiler" / "cli_decompilation.py")
     )
     violations.extend(
-        _check_cli_c_ast_rewrites_narrowed_fields_use_dot(
-            repo_root / "inertia_decompiler" / "cli_c_ast_rewrites.py"
-        )
+        _check_cli_c_ast_rewrites_narrowed_fields_use_dot(repo_root / "inertia_decompiler" / "cli_c_ast_rewrites.py")
     )
     violations.extend(
-        _check_cli_dead_local_narrowed_fields_use_dot(
-            repo_root / "inertia_decompiler" / "cli_dead_local_prune.py"
-        )
+        _check_cli_dead_local_narrowed_fields_use_dot(repo_root / "inertia_decompiler" / "cli_dead_local_prune.py")
     )
     violations.extend(
         _check_python_module_layer_headers(
@@ -8984,9 +8911,7 @@ def check_decompiler_architecture(
     violations.extend(_check_type_structure_merging_typed_ir_dot_access(root / "type_structure_merging.py"))
     violations.extend(_check_structuring_alias_failure_dot_access(root / "decompiler_structuring_stage.py"))
     violations.extend(_check_structuring_stage_narrowed_fields_use_dot(root / "decompiler_structuring_stage.py"))
-    violations.extend(
-        _check_loop_body_repair_narrowed_fields_use_dot(root / "structuring" / "loop_body_repair.py")
-    )
+    violations.extend(_check_loop_body_repair_narrowed_fields_use_dot(root / "structuring" / "loop_body_repair.py"))
     violations.extend(_check_fact_transfer_alias_fact_dot_access(root / "lowering" / "fact_transfer.py"))
     violations.extend(_check_semantic_evidence_context_ownership(root / "semantics" / "evidence_cache.py"))
     stack_lowering_from_facts = root / "lowering" / "stack_lowering_from_facts.py"
@@ -9005,9 +8930,7 @@ def check_decompiler_architecture(
     violations.extend(_check_postprocess_jcc_narrowed_fields_use_dot(root / "decompiler_postprocess_jcc.py"))
     violations.extend(_check_postprocess_stage_narrowed_fields_use_dot(root / "decompiler_postprocess_stage.py"))
     violations.extend(_check_return_compat_narrowed_fields_use_dot(root / "decompiler_return_compat.py"))
-    violations.extend(
-        _check_stack_lowering_impl_narrowed_fields_use_dot(root / "lowering" / "stack_lowering_impl.py")
-    )
+    violations.extend(_check_stack_lowering_impl_narrowed_fields_use_dot(root / "lowering" / "stack_lowering_impl.py"))
     violations.extend(_check_stack_lowering_impl_binding_dot_access(root / "lowering" / "stack_lowering_impl.py"))
     violations.extend(_check_stack_lowering_impl_alias_fact_dot_access(root / "lowering" / "stack_lowering_impl.py"))
     violations.extend(_check_stack_lowering_impl_binding_dot_access(root / "lowering" / "real_mode_linear.py"))

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 
@@ -525,7 +525,7 @@ def _find_cfunc_root_8616(cfunc: object) -> object | None:
     for attr in ("body", "statements", "stmt"):
         value = _dynamic_attr_8616(cfunc, attr, None)
         if value is not None:
-            return value
+            return cast(object | None, value)
     return None
 
 

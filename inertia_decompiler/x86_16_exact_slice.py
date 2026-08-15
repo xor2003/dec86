@@ -75,9 +75,9 @@ def function_original_addr(function: object) -> int:
     # dynamic angr compatibility boundary: recovered Function objects expose optional info.
     info = getattr(function, "info", None)
     if isinstance(info, dict):
-        original_addr = info.get("inertia_original_addr")
-        if isinstance(original_addr, int):
-            return original_addr
+        info_original_addr = info.get("inertia_original_addr")
+        if isinstance(info_original_addr, int):
+            return info_original_addr
     # dynamic angr compatibility boundary: recovered Function objects expose optional addr.
     addr = getattr(function, "addr", 0)
     return addr if isinstance(addr, int) else 0

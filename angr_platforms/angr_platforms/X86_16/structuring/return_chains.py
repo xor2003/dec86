@@ -1712,7 +1712,7 @@ def first_conditional_jcc_8616(block: object) -> object | None:
     for insn in insns:
         mnemonic = str(getattr(insn, "mnemonic", "")).lower()
         if mnemonic.startswith("j") and mnemonic not in {"jmp", "ljmp"}:
-            return insn
+            return cast(object, insn)
     return None
 
 
@@ -1911,7 +1911,7 @@ def combine_dx_ax_return_expr_8616(
         value = (high << 16) | low
         if value & 0x80000000:
             value -= 0x100000000
-        return CConstant(value, SimTypeLong(True), codegen=codegen)
+        return cast(object, CConstant(value, SimTypeLong(True), codegen=codegen))
     return ax_value
 
 
@@ -2076,6 +2076,7 @@ def ordered_32bit_conditional_return_pairs_from_cfg_8616(
             mnemonic = str(getattr(insn, "mnemonic", "")).lower()
             if not mnemonic.startswith("j") or mnemonic in {"jmp", "ljmp"}:
                 continue
+            target: int | None = None
             target_pair = selector_targets_from_32bit_jcc_chain_8616(
                 int(block_addr),
                 insn,
@@ -2093,7 +2094,8 @@ def ordered_32bit_conditional_return_pairs_from_cfg_8616(
                     callbacks.branch_target_imm,
                     callbacks.next_unconditional_target_after_jcc,
                 )
-                target = equality_target
+                if isinstance(equality_target, int):
+                    target = equality_target
             if target is None:
                 target = inequality_target_from_32bit_jcc_chain_8616(
                     int(block_addr),
@@ -2806,7 +2808,10 @@ def single_if_return_8616(stmt: object) -> tuple[object, object] | None:
     cond_nodes = stmt.condition_and_nodes or ()
     if len(cond_nodes) != 1:
         return None
-    cond, body = cond_nodes[0]
+    cond_body = tuple(cond_nodes)[0]
+    if len(cond_body) != 2:
+        return None
+    cond, body = cond_body
     if isinstance(body, CStatements):
         body_statements = list(body.statements or ())
     elif isinstance(body, CReturn):
@@ -3182,7 +3187,10 @@ def surplus_empty_guard_condition_8616(
     cond_nodes = stmt.condition_and_nodes or ()
     if len(cond_nodes) != 1:
         return None
-    cond, body = cond_nodes[0]
+    cond_body = tuple(cond_nodes)[0]
+    if len(cond_body) != 2:
+        return None
+    cond, body = cond_body
     if node_contains_call_8616(cond, callbacks):
         return None
     if not is_empty_return_statement_8616(body):
@@ -3203,7 +3211,10 @@ def identical_assignment_arm_condition_8616(
     cond_nodes = stmt.condition_and_nodes or ()
     if len(cond_nodes) != 1:
         return None
-    cond, body = cond_nodes[0]
+    cond_body = tuple(cond_nodes)[0]
+    if len(cond_body) != 2:
+        return None
+    cond, body = cond_body
     if any(
         isinstance(node, CFunctionCall)
         for node in (cond, *callbacks.iter_c_nodes_deep(cond))
@@ -3225,8 +3236,8 @@ def identical_assignment_arm_condition_8616(
         )
     ):
         return None
-    body_assignments = cast(tuple[CAssignment, ...], body_statements)
-    else_assignments = cast(tuple[CAssignment, ...], else_statements)
+    body_assignments = body_statements
+    else_assignments = else_statements
     try:
         body_fingerprint = tuple(
             (
@@ -3337,11 +3348,11 @@ def collapse_surplus_identical_assignment_arms_8616(
     for block, replacements in replacements_by_block.values():
         rebuilt: list[object] = []
         for index, statement in enumerate(tuple(block.statements or ())):
-            replacement = replacements.get(index)
-            if replacement is None:
+            replacement_for_index = replacements.get(index)
+            if replacement_for_index is None:
                 rebuilt.append(statement)
                 continue
-            rebuilt.extend(replacement)
+            rebuilt.extend(replacement_for_index)
             materialized += 1
         block.statements = rebuilt
 

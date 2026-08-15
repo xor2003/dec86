@@ -11,7 +11,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from .core import IRInstr, IRValue, MemSpace
 
@@ -41,7 +41,7 @@ def _constant_target_8616(expr: object) -> int | None:
     """Return an exact integer target from a VEX constant expression."""
     try:
         value = cast(_VexConstantExpression8616, expr).con.value
-        return int(value)  # type: ignore[arg-type]
+        return int(cast(Any, value))
     except (AttributeError, TypeError, ValueError):
         return None
 

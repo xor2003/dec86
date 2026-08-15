@@ -48,6 +48,8 @@ from .structuring_region import (
 )
 from .structuring_sequences import merge_would_hide_cycle, sequence_merge_is_safe
 
+__all__ = ["Region", "RegionGraph", "RegionType", "RegionBasedStructuringPass"]
+
 if TYPE_CHECKING:
     pass
 
@@ -301,9 +303,12 @@ def _branch_split_partition_evidence_8616(
     partitioned_successors: list[dict[str, object]] = []
     for item in base_successors:
         region_id = item.get("region_id")
-        normalized_values = [value for value in item.get("normalized_case_values", ()) if isinstance(value, int)]
+        raw_values = item.get("normalized_case_values", ())
+        raw_region_ids = item.get("normalized_case_region_ids", ())
+        normalized_values = [value for value in raw_values if isinstance(value, int)] if isinstance(raw_values, (tuple, list)) else []
         normalized_region_ids = [
-            region_id for region_id in item.get("normalized_case_region_ids", ()) if isinstance(region_id, int)
+            region_id for region_id in raw_region_ids if isinstance(region_id, int)
+        ] if isinstance(raw_region_ids, (tuple, list)) else [
         ]
         predicate_op = explicit_op if region_id == explicit_region_id else implicit_op
         matching_values: list[int] = []
@@ -606,7 +611,7 @@ def _edge_guard_normalization_readiness_8616(summary: dict[str, object]) -> dict
 
 def _same_lhs_8616(lhs: object | None, guard: ConditionIR) -> object | None:
     if lhs is None:
-        return guard.lhs
+        return cast(object, guard.lhs)
     return lhs if guard.lhs == lhs else None
 
 
@@ -711,7 +716,7 @@ def _collect_edge_guard_decision_tree_cases_8616(
             if current_cases and len(graph.successors(succ)) > 1 and not _region_is_eq_switch_head_8616(graph, succ):
                 normalization_branch_split_count += 1
                 successor_regions = tuple(graph.successors(succ))
-                split_record = {
+                split_record: dict[str, object] = {
                     "from_region_id": current.region_id if isinstance(current.region_id, int) else None,
                     "split_region_id": succ.region_id if isinstance(succ.region_id, int) else None,
                     "current_case_region_ids": [
@@ -1669,12 +1674,13 @@ class StructureAnalysis:
     def _compute_loop_body(self, header: Region, back_edges: list[Region]) -> set[Region]:
         if self.dominators is None:
             return set()
-        return compute_loop_body(self.graph, self.dominators, header, back_edges)
+        body = compute_loop_body(self.graph, self.dominators, header, back_edges)
+        return {region for region in body if isinstance(region, Region)}
 
     def _is_well_structured_multi_exit(
         self, body_regions: set[Region], exit_edges: list[tuple[Region, Region]]
     ) -> bool:
-        return is_well_structured_multi_exit(body_regions, exit_edges)
+        return bool(is_well_structured_multi_exit(body_regions, exit_edges))
 
     def _compute_loop_confidence(
         self,
@@ -1684,13 +1690,13 @@ class StructureAnalysis:
         exit_edges: list[tuple[Region, Region]],
         is_reducible: bool,
     ) -> float:
-        return compute_loop_confidence(
+        return float(compute_loop_confidence(
             header,
             back_edges,
             body_regions,
             exit_edges,
             is_reducible,
-        )
+        ))
 
     def _process_unresolved_regions(self) -> None:
         """Apply refinement strategies for unstructured regions.

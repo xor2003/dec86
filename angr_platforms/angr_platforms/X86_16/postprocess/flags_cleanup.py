@@ -99,7 +99,7 @@ def _c_variable_register_offset_8616(node: object) -> int | None:
     for attr in ("variable", "unified_variable"):
         variable = _dynamic_attr_8616(node, attr, None)
         if isinstance(variable, SimRegisterVariable) and isinstance(_dynamic_attr_8616(variable, "reg", None), int):
-            return variable.reg
+            return cast(int | None, variable.reg)
     return None
 
 
@@ -172,7 +172,7 @@ def _unwrap_inverted_flag_test_node_8616(node: object) -> tuple[object, bool]:
 def _extract_direct_flag_and_match_8616(node: object, invert: bool) -> FlagTestInfo8616 | None:
     def _flag_operand_candidate_8616(value: object) -> object | None:
         if isinstance(value, CVariable):
-            return value
+            return cast(object | None, value)
         if type(value).__name__ == "CDirtyExpression" and _c_register_offset_8616(value) is not None:
             return value
         return None
@@ -198,7 +198,7 @@ def _extract_mask_and_zero_8616(lhs: object, rhs: object) -> CBinaryOp | None:
 def _extract_and_bit_and_var_8616(expr: object) -> FlagMaskValueInfo8616 | None:
     def _flag_operand_candidate_8616(value: object) -> object | None:
         if isinstance(value, CVariable):
-            return value
+            return cast(object | None, value)
         if type(value).__name__ == "CDirtyExpression" and _c_register_offset_8616(value) is not None:
             return value
         return None
@@ -259,9 +259,9 @@ def _extract_flag_predicate_from_expr_8616(node: object, bit: int) -> object | N
                 lhs_const = _c_constant_value_8616(_unwrap_c_casts_8616(node.lhs))
                 rhs_const = _c_constant_value_8616(_unwrap_c_casts_8616(node.rhs))
                 if lhs_const == 1:
-                    return node.rhs
+                    return cast(object | None, node.rhs)
                 if rhs_const == 1:
-                    return node.lhs
+                    return cast(object | None, node.lhs)
 
         if isinstance(node, CBinaryOp):
             if node.op == "Shl":
@@ -275,9 +275,9 @@ def _extract_flag_predicate_from_expr_8616(node: object, bit: int) -> object | N
                     return lhs
             if node.op == "Mul":
                 if isinstance(node.lhs, CConstant) and node.lhs.value == bit:
-                    return node.rhs
+                    return cast(object | None, node.rhs)
                 if isinstance(node.rhs, CConstant) and node.rhs.value == bit:
-                    return node.lhs
+                    return cast(object | None, node.lhs)
             if node.op in {"Or", "And"}:
                 lhs = _extract_flag_predicate_from_expr_8616(node.lhs, bit)
                 if lhs is not None:
@@ -385,7 +385,7 @@ def _rewrite_flag_bit_value_uses_8616(codegen: object) -> bool:
     def _is_flags_assignment(stmt: object) -> bool:
         if flags_offset is None or not isinstance(stmt, CAssignment) or not isinstance(stmt.lhs, CVariable):
             return False
-        return _c_variable_register_offset_8616(stmt.lhs) == flags_offset
+        return bool(_c_variable_register_offset_8616(stmt.lhs) == flags_offset)
 
     def _rewrite_expr(node: object, assignments: Assignments8616) -> object:
         nonlocal changed
@@ -449,12 +449,12 @@ def _recover_signed_condition_8616(expr: object, bit1: int, bit2: int, codegen: 
     if sf_predicate is None or of_predicate is None:
         return None
 
-    return CBinaryOp(
+    return cast(object | None, CBinaryOp(
         "CmpNE",
         sf_predicate,
         of_predicate,
         codegen=codegen,
-    )
+    ))
 
 
 def _recover_ordering_condition_from_flag_mask_8616(
@@ -479,7 +479,7 @@ def _recover_ordering_condition_from_flag_mask_8616(
     if predicate is None:
         return None
     if negate_predicate:
-        return CUnaryOp("Not", cast(CExpression, predicate), codegen=codegen)
+        return cast(object | None, CUnaryOp("Not", cast(CExpression, predicate), codegen=codegen))
     return predicate
 
 
@@ -571,13 +571,13 @@ def _recover_combined_signed_flag_condition_8616(
                 replacement_op = "CmpNE"
         if replacement_op is None:
             return None
-        return CBinaryOp(
+        return cast(object | None, CBinaryOp(
             replacement_op,
             lhs_cmp_lhs,
             lhs_cmp_rhs,
             codegen=codegen,
             tags=_dynamic_attr_8616(node, "tags", None),
-        )
+        ))
 
     return _impl()
 
@@ -760,20 +760,20 @@ def _normalize_bool_compare_guard_8616(node: object, codegen: object) -> object 
     info = _extract_bool_compare_term_8616(node)
     if info is None:
         if isinstance(node, CBinaryOp) and node.op in {"CmpGT", "CmpGE", "CmpLT", "CmpLE"}:
-            return node
+            return cast(object | None, node)
         if isinstance(node, CUnaryOp) and node.op == "Not" and isinstance(node.operand, CBinaryOp):
             inverted = _invert_cmp_op_8616(node.operand.op)
             if inverted is not None:
-                return CBinaryOp(
+                return cast(object | None, CBinaryOp(
                     inverted,
                     node.operand.lhs,
                     node.operand.rhs,
                     codegen=codegen,
                     tags=_dynamic_attr_8616(node.operand, "tags", None),
-                )
+                ))
         return None
     compare, negated, _template = info
-    return _make_bool_expr_from_compare_8616(compare, negated, codegen)
+    return cast(object | None, _make_bool_expr_from_compare_8616(compare, negated, codegen))
 
 
 def _same_compare_direction_family_8616(lhs: CBinaryOp, rhs: CBinaryOp) -> bool:
@@ -877,7 +877,7 @@ def _c_expr_uses_var_8616(node: object, target: object) -> bool:
         if node is None:
             return False
         if isinstance(node, CVariable):
-            return _same_c_expression_8616(node, target)
+                return bool(_same_c_expression_8616(node, target))
         for attr in (
             "lhs",
             "rhs",
@@ -933,7 +933,7 @@ def _rewrite_flag_condition_pairs_8616(codegen: object) -> bool:
     def _is_flags_assignment(stmt: object) -> bool:
         if flags_offset is None or not isinstance(stmt, CAssignment) or not isinstance(stmt.lhs, CVariable):
             return False
-        return _c_variable_register_offset_8616(stmt.lhs) == flags_offset
+        return bool(_c_variable_register_offset_8616(stmt.lhs) == flags_offset)
 
     def _rewrite_condition_with_assignments(cond: object, assignments: Assignments8616) -> object:
         nonlocal changed
@@ -1003,7 +1003,7 @@ def _rewrite_flag_condition_pairs_8616(codegen: object) -> bool:
                 cond_nodes = _condition_body_pairs_8616(_dynamic_attr_8616(next_stmt, "condition_and_nodes", None))
                 if cond_nodes:
                     pair_changed = False
-                    new_pairs: list[tuple[CExpression, CStatement | None]] = []
+                    rewritten_pairs: list[tuple[CExpression, CStatement | None]] = []
                     for cond, body in cond_nodes:
                         new_cond, cond_changed = _rewrite_flag_condition_expr_8616(
                             cond,
@@ -1012,9 +1012,9 @@ def _rewrite_flag_condition_pairs_8616(codegen: object) -> bool:
                             codegen,
                         )
                         pair_changed = pair_changed or cond_changed
-                        new_pairs.append((cast(CExpression, new_cond), body))
+                        rewritten_pairs.append((cast(CExpression, new_cond), body))
                     if pair_changed:
-                        next_stmt.condition_and_nodes = new_pairs
+                        next_stmt.condition_and_nodes = rewritten_pairs
                         changed = True
                         later_uses = _c_expr_uses_var_8616(next_stmt, assign_stmt.lhs) or any(
                             _c_expr_uses_var_8616(rest, assign_stmt.lhs) for rest in statements[i + 2 :]

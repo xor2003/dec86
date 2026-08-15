@@ -23,6 +23,7 @@ LOWERED_RUNTIME_HELPER_DECLARATIONS_8616: dict[str, str] = {
     "rand": "int rand(void);",
     "srand": "void srand(unsigned int seed);",
     "time": "time_t time(time_t *out);",
+    "strcpy": "char *strcpy(char *dst, const char *src);",
 }
 
 KNOWN_EXTERNAL_DECLARATIONS_8616: dict[str, str] = {
@@ -46,6 +47,8 @@ KNOWN_EXTERNAL_RETURN_TYPES_8616: dict[str, str] = {
     "getvideoconfig": "unsigned short",
     "memset": "void *",
     "outtext": "void",
+    "intdos": "int",
+    "intdosx": "int",
 }
 
 _MSC_COMPILER_RUNTIME_HELPER_DECLARATIONS_8616: tuple[str, ...] = (
@@ -179,7 +182,7 @@ def render_c_runtime_header_8616(target: str | None) -> str:
             "\n"
             "#define SEG_LINEAR(seg, off) ((((uint32_t)(uintptr_t)(seg)) << 4) + ((uint16_t)(uintptr_t)(off)))\n"
             "#define MK_FP(seg, off)      (&inertia_memory[SEG_LINEAR((seg), (off))])\n"
-            "#define SEG_PTR(seg, off)    (&inertia_memory[SEG_LINEAR((seg), (off))])\n"
+            "#define SEG_PTR(seg, off)    ((char *)&inertia_memory[SEG_LINEAR((seg), (off))])\n"
             "#define SEG_U8(seg, off)     (*(uint8_t  *)&inertia_memory[SEG_LINEAR((seg), (off))])\n"
             "#define SEG_U16(seg, off)    (*(uint16_t *)&inertia_memory[SEG_LINEAR((seg), (off))])\n"
             "#define SEG_U32(seg, off)    (*(uint32_t *)&inertia_memory[SEG_LINEAR((seg), (off))])\n"

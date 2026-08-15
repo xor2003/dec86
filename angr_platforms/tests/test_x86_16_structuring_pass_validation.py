@@ -20,6 +20,7 @@ from angr_platforms.X86_16.lowering.segmented_global_loads import (
 from angr_platforms.X86_16.structuring.loop_break_jcc import (
     LoopHeaderDuplicateGuardRemovalFact8616,
 )
+from angr_platforms.X86_16.tail_validation import loop_exit_return_guard_repair_delta_8616
 
 
 def test_structuring_return_shape_materializes_void_return_ast_after_classification(monkeypatch):
@@ -552,7 +553,7 @@ def test_structuring_stage_transfers_typed_conditions_before_final_validation_ba
     monkeypatch.setattr(
         stage,
         "_materialize_structuring_return_chains_8616",
-        lambda *_args: calls.append("return_chains") and False,
+        lambda *_args, **_kwargs: calls.append("return_chains") and False,
     )
     monkeypatch.setattr(
         stage,
@@ -690,7 +691,7 @@ def test_structuring_return_chain_materialization_triggers_regeneration_before_f
     monkeypatch.setattr(stage, "_structuring_codegen_8616", lambda *_args: False)
     monkeypatch.setattr(stage, "_apply_structuring_direct_stack_materialization_8616", lambda *_args: False)
     monkeypatch.setattr(stage, "_materialize_structuring_selector_return_branches_8616", lambda *_args: False)
-    monkeypatch.setattr(stage, "_materialize_structuring_return_chains_8616", lambda *_args: True)
+    monkeypatch.setattr(stage, "_materialize_structuring_return_chains_8616", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(stage, "_repair_structuring_loop_exit_return_guards_8616", lambda *_args: False)
     monkeypatch.setattr(stage, "_repair_structuring_unresolved_function_exit_gotos_8616", lambda *_args: False)
     monkeypatch.setattr(stage, "_materialize_structuring_unconsumed_loop_break_jcc_8616", lambda *_args: False)
@@ -1743,6 +1744,7 @@ def test_structuring_validation_prime_refreshes_conditions_after_final_lowering_
         "segment",
         "consumed-push",
         "carrier-prune",
+        "condition-refresh",
         "widening",
         "carrier-prune",
     ]
@@ -2093,6 +2095,73 @@ def test_structuring_pass_validation_refreshes_conditions_before_lowering_and_fi
     assert events[:4] == ["conditions", "lowering", "switch-exit", "fingerprint"]
 
 
+def test_structuring_call_return_materialization_accepts_direct_call_delta_without_condition_change() -> None:
+    codegen = SimpleNamespace(
+        _inertia_call_return_condition_stats_8616=SimpleNamespace(
+            classified_fact_count=4,
+            materialized_count=4,
+            failure_count=0,
+        )
+    )
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("addr:0x10040", "addr:0x10040", "addr:0x1006f"),
+                "removed": (
+                    "missing-callsite:addr:0x10040",
+                    "missing-callsite:addr:0x10040",
+                    "missing-callsite:addr:0x1006f",
+                ),
+            },
+            "conditions": {"added": (), "removed": ()},
+            "control_flow_effects": {
+                "added": ("if-else-body-calls:else:addr:0x10040,addr:0x1006f",),
+                "removed": (),
+            },
+        }
+    }
+
+    assert stage._is_structuring_call_chain_materialization_delta_8616(codegen, validation) is True
+
+
+def test_structuring_call_return_materialization_accepts_missing_callsite_delta():
+    codegen = SimpleNamespace(
+        _inertia_call_return_condition_stats_8616=SimpleNamespace(
+            classified_fact_count=2,
+            materialized_count=2,
+            failure_count=0,
+        )
+    )
+    validation = {
+        "delta": {
+            "helper_calls": {
+                "added": ("addr:0x10010", "addr:0x10010"),
+                "removed": ("missing-callsite:addr:0x10010", "missing-callsite:addr:0x10010"),
+            },
+            "conditions": {
+                "added": (
+                    "CmpNE(call:addr:0x10010(arg_a),const:0)",
+                    "CmpNE(call:addr:0x10010(arg_b),const:0)",
+                ),
+                "removed": ("CmpNE(const:1,const:0)",),
+            },
+            "control_flow_effects": {
+                "added": ("for-body-calls:loop:addr:0x10010", "if:call:addr:0x10010"),
+                "removed": ("for-body-calls:loop:addr:0x106d6", "if:CmpNE(const:1,const:0)"),
+            },
+        }
+    }
+
+    assert stage._is_structuring_call_chain_materialization_delta_8616(codegen, validation) is True
+
+    codegen._inertia_call_return_condition_stats_8616 = SimpleNamespace(
+        classified_fact_count=2,
+        materialized_count=1,
+        failure_count=1,
+    )
+    assert stage._is_structuring_call_chain_materialization_delta_8616(codegen, validation) is False
+
+
 def test_structuring_validation_accepts_evidenced_direct_stack_update_delta():
     project = SimpleNamespace(kb=SimpleNamespace(functions=None))
     codegen = SimpleNamespace(
@@ -2214,6 +2283,86 @@ def test_structuring_validation_restricts_loop_guard_removal_to_owning_pass():
         codegen,
         validation,
         spec_name="_structuring_codegen_8616",
+    )
+
+    assert accepted is False
+    assert validation["changed"] is True
+    assert "delta" in validation
+
+
+def test_structuring_validation_accepts_proven_loop_exit_return_to_break_delta():
+    project = SimpleNamespace(kb=SimpleNamespace(functions=None))
+    condition = "CmpGT(call:addr:0x1137e(),stack_slot:SS:BP-0x4:size4)"
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x4010),
+        _inertia_loop_exit_guard_stats_8616={"repaired": 1},
+    )
+    validation = {
+        "changed": True,
+        "status": "changed",
+        "mode": "live_out",
+        "delta": {
+            "returns": {"added": (), "removed": ("none",)},
+            "control_flow_effects": {
+                "added": (f"ifbreak:{condition}",),
+                "removed": (f"if:{condition}",),
+            },
+        },
+    }
+
+    accepted = stage._try_accept_structuring_validation_delta_from_evidence_8616(
+        project,
+        codegen,
+        validation,
+        spec_name="_loop_exit_return_guard_repair_8616",
+    )
+
+    assert accepted is True
+    assert validation["changed"] is False
+    assert validation["status"] == "stable"
+    assert "delta" not in validation
+    assert codegen._inertia_structuring_loop_exit_return_guard_validation_accepts_8616 == 1
+
+
+def test_structuring_validation_accepts_live_empty_return_fingerprint():
+    validation = {
+        "changed": True,
+        "delta": {
+            "returns": {"added": (), "removed": ("return",)},
+            "control_flow_effects": {
+                "added": ("ifbreak:CmpGT(call:clock())",),
+                "removed": ("if:CmpGT(call:clock())", "return"),
+            },
+        },
+    }
+
+    assert loop_exit_return_guard_repair_delta_8616(1, validation)
+
+
+def test_structuring_validation_refuses_loop_exit_return_delta_with_condition_change():
+    project = SimpleNamespace(kb=SimpleNamespace(functions=None))
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x4010),
+        _inertia_loop_exit_guard_stats_8616={"repaired": 1},
+    )
+    validation = {
+        "changed": True,
+        "status": "changed",
+        "mode": "live_out",
+        "delta": {
+            "returns": {"added": (), "removed": ("none",)},
+            "control_flow_effects": {
+                "added": ("ifbreak:CmpGT(call:addr:0x1137e(),stack_slot:SS:BP-0x4:size4)",),
+                "removed": ("if:CmpGT(call:addr:0x1137e(),stack_slot:SS:BP-0x5:size4)",),
+            },
+        },
+    }
+
+    accepted = stage._try_accept_structuring_validation_delta_from_evidence_8616(
+        project,
+        codegen,
+        validation,
+        spec_name="_loop_exit_return_guard_repair_8616",
     )
 
     assert accepted is False

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
@@ -23,6 +24,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CConstant,
     CDirtyExpression,
     CFakeVariable,
+    CIndexedVariable,
     CReturn,
     CTypeCast,
     CUnaryOp,
@@ -74,6 +76,7 @@ class _ReturnCFunctionSurface8616(Protocol):
     """Typed view of the active angr C function needed by this pass."""
 
     addr: object
+    arg_list: Iterable[object]
     statements: object
     functy: _ReturnPrototypeSurface8616 | None
     prototype: _ReturnPrototypeSurface8616 | None
@@ -109,6 +112,13 @@ def _pure_return_expr_state_8616(expr: object, *, depth: int = 0) -> tuple[bool,
         return _pure_return_expr_state_8616(expr.expr, depth=depth + 1)
     if isinstance(expr, CUnaryOp):
         return _pure_return_expr_state_8616(expr.operand, depth=depth + 1)
+    if isinstance(expr, CIndexedVariable):
+        variable_state = _pure_return_expr_state_8616(expr.variable, depth=depth + 1)
+        index_state = _pure_return_expr_state_8616(expr.index, depth=depth + 1)
+        return (
+            variable_state[0] and index_state[0],
+            variable_state[1] or index_state[1],
+        )
     if isinstance(expr, CBinaryOp):
         states = tuple(
             _pure_return_expr_state_8616(item, depth=depth + 1)
@@ -188,6 +198,20 @@ def _unassigned_return_carrier_8616(
     return identity is not None and identity not in assigned_carriers
 
 
+def _unobserved_stack_local_return_carrier_8616(
+    retval: object,
+    argument_carriers: frozenset[_CarrierIdentity8616],
+) -> bool:
+    """Recognize a pure local stack result whose caller contract is unused."""
+    if not isinstance(retval, CVariable):
+        return False
+    variable = retval.variable
+    if not isinstance(variable, SimStackVariable) or variable.base != "bp" or variable.offset >= 0:
+        return False
+    identity = _carrier_identity_8616(retval)
+    return identity is None or identity not in argument_carriers
+
+
 def neutralize_unobserved_unresolved_returns_8616(project: object, codegen: object) -> bool:
     """Materialize typed zeroes for proven-unobserved unusable return values."""
     boundary = cast(_ReturnCodegenSurface8616, codegen)
@@ -208,6 +232,15 @@ def neutralize_unobserved_unresolved_returns_8616(project: object, codegen: obje
         if isinstance(node, CAssignment)
         if (identity := _carrier_identity_8616(node.lhs)) is not None
     )
+    try:
+        argument_carriers = frozenset(
+            identity
+            for argument in cfunc.arg_list
+            if (identity := _carrier_identity_8616(argument)) is not None
+        )
+    except (AttributeError, TypeError):
+        argument_carriers = frozenset()
+    defined_carriers = assigned_carriers | argument_carriers
     raw_count = len(return_nodes)
     classified = 0
     materialized = 0
@@ -234,7 +267,8 @@ def neutralize_unobserved_unresolved_returns_8616(project: object, codegen: obje
         for return_node in return_nodes:
             if not (
                 return_value_needs_neutralization_8616(return_node.retval, return_type)
-                or _unassigned_return_carrier_8616(return_node.retval, assigned_carriers)
+                or _unassigned_return_carrier_8616(return_node.retval, defined_carriers)
+                or _unobserved_stack_local_return_carrier_8616(return_node.retval, argument_carriers)
             ):
                 continue
             classified += 1

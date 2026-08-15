@@ -452,7 +452,7 @@ def _coalesce_segmented_word_store_statements(
                 return bool(allows())
             except Exception:
                 return False
-        return _dynamic_attr_8616(classified, "assoc_kind", "unknown") != "over"
+        return bool(_dynamic_attr_8616(classified, "assoc_kind", "unknown") != "over")
 
     def _stable_segment_const_byte_pair(low_class: object, high_class: object) -> bool:
         if not _is_segmented_access_8616(low_class) or not _is_segmented_access_8616(high_class):

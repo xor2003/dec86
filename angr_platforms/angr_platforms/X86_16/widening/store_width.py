@@ -84,8 +84,8 @@ def _extract_dereference_addr_expr(node: object) -> object | None:
         return None
     operand = node.operand
     if isinstance(operand, structured_c.CTypeCast):
-        return operand.expr
-    return operand
+        return cast(object, operand.expr)
+    return cast(object, operand)
 
 
 def _safe_type_bits(node: object) -> int | None:

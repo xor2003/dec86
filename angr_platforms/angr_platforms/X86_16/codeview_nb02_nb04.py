@@ -22,6 +22,7 @@ import struct
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
+from typing import Any
 
 from . import codeview_nb00 as _nb00
 
@@ -89,7 +90,7 @@ class CodeViewSymbol:
     segment: int | None
     length: int | None = None  # For procedures
     data_type: int | None = None  # Type index
-    extra: dict = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def is_procedure(self) -> bool:
         """Return whether this symbol describes a 16-bit procedure."""
@@ -306,7 +307,7 @@ def _parse_subsection_directory(
     data: bytes,
     debug_base: int,
     directory_offset: int,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Parse subsection directory entries."""
     entries = []
 

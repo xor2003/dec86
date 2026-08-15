@@ -62,8 +62,8 @@ def _structured_root_8616(codegen: object) -> object | None:
         return None
     statements = _dynamic_codegen_attr_8616(cfunc, "statements", None)
     if statements is not None:
-        return statements
-    return _dynamic_codegen_attr_8616(cfunc, "body", None)
+        return cast(object, statements)
+    return cast(object, _dynamic_codegen_attr_8616(cfunc, "body", None))
 
 
 def _recovered_bp_frame_extent_8616(root: object) -> int:

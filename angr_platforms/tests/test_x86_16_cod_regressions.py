@@ -639,16 +639,18 @@ def test_cod_dos_loadprogram_wrapper_keeps_err_guard_and_segment_stores():
     _assert_has_all(
         result.stdout,
         (
-            "if (err) return err;",
-            "*cs = exeLoadParams.cs;",
-            "*ss = exeLoadParams.ss;",
+            "if (err)\n        return err;",
+            "cs[0] = ax_2;",
+            "cs[1] = ax_2 >> 8;",
+            "ss[0] = ax_3;",
+            "ss[1] = ax_3 >> 8;",
         ),
     )
     _assert_has_none(
         result.stdout,
         (
             "MK_FP(ds,",
-            "if (err)\n    return err;",
+            "SEG_U8(inertia_ss,",
         ),
     )
 
@@ -1399,7 +1401,15 @@ def test_decompiler_return_compat_refuses_ax_inference_for_source_proven_void():
         ReturnMaker._handle_Return = original_handle_return
 
 
-def test_decompiler_return_compat_preserves_proven_scalar_ax_in_multiblock_function():
+@pytest.mark.parametrize(
+    ("intervening_conditional", "expected_return_count"),
+    ((False, 1), (True, 0)),
+    ids=("terminal-scalar", "branched-stale-scalar"),
+)
+def test_decompiler_return_compat_requires_unbranched_scalar_for_unused_caller(
+    intervening_conditional: bool,
+    expected_return_count: int,
+):
     original_handle_return = ReturnMaker._handle_Return
     fallback_calls: list[tuple[int, object, object]] = []
 
@@ -1425,9 +1435,21 @@ def test_decompiler_return_compat_preserves_proven_scalar_ax_in_multiblock_funct
         value = ailment.Expr.Const(1, None, 75, 16, ins_addr=0x10517)
         ax = ailment.Expr.Register(2, None, arch.registers["ax"][0], 16, reg_name="ax", ins_addr=0x10517)
         assignment = ailment.Stmt.Assignment(3, ax, value, ins_addr=0x10517)
+        condition = ailment.Expr.Const(4, None, 1, 1, ins_addr=0x10519)
+        true_target = ailment.Expr.Const(5, None, 0x1051F, 16, ins_addr=0x10519)
+        false_target = ailment.Expr.Const(6, None, 0x1051D, 16, ins_addr=0x10519)
+        conditional = ailment.Stmt.ConditionalJump(
+            7,
+            condition,
+            true_target,
+            false_target,
+            ins_addr=0x10519,
+        )
         ret_stmt = ailment.Stmt.Return(4, [], ins_addr=0x1051F)
         pred_block = SimpleNamespace(statements=[assignment])
-        ret_block = SimpleNamespace(statements=[assignment, ret_stmt])
+        ret_block = SimpleNamespace(
+            statements=[assignment, *([conditional] if intervening_conditional else []), ret_stmt]
+        )
         function = SimpleNamespace(
             addr=0x1000,
             prototype=SimpleNamespace(returnty=SimTypeShort(False)),
@@ -1443,17 +1465,22 @@ def test_decompiler_return_compat_preserves_proven_scalar_ax_in_multiblock_funct
             _new_block=None,
         )
 
-        result = ReturnMaker._handle_Return(fake_self, 1, ret_stmt, ret_block)
+        result = ReturnMaker._handle_Return(fake_self, len(ret_block.statements) - 1, ret_stmt, ret_block)
 
         assert isinstance(result, ailment.Stmt.Return)
-        assert len(result.ret_exprs) == 1
-        assert isinstance(result.ret_exprs[0], ailment.Expr.Const)
-        assert result.ret_exprs[0].value == 75
-        assert result.ret_exprs[0].bits == 16
+        assert len(result.ret_exprs) == expected_return_count
+        if expected_return_count:
+            assert isinstance(result.ret_exprs[0], ailment.Expr.Const)
+            assert result.ret_exprs[0].value == 75
+            assert result.ret_exprs[0].bits == 16
         assert fallback_calls == []
         assert isinstance(function.prototype.returnty, SimTypeShort)
         assert function.is_prototype_guessed is True
         assert getattr(function, "_inertia_return_compat_guessed_scalar_void_promoted_count", 0) == 0
+        assert (
+            getattr(function, "_inertia_return_compat_unused_caller_proven_return_materialized_count", 0)
+            == expected_return_count
+        )
     finally:
         ReturnMaker._handle_Return = original_handle_return
 

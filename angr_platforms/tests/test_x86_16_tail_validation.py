@@ -193,7 +193,14 @@ def _project():
 
 def _postprocess_cfunc(**fields):
     """Build the complete cfunc boundary required by postprocess-stage tests."""
-    return SimpleNamespace(functy=None, statements=None, body=None, **fields)
+    return SimpleNamespace(
+        functy=None,
+        statements=None,
+        body=None,
+        variables_in_use={},
+        unified_local_vars={},
+        **fields,
+    )
 
 
 def test_conditional_continue_guard_repair_delta_accepts_removed_ifbreak_and_condition():
@@ -6980,6 +6987,7 @@ def test_postprocess_codegen_refuses_large_function_semantic_pass_without_local_
     )
     codegen = SimpleNamespace(cfunc=_postprocess_cfunc(addr=0x1234), project=project, text="int f(void) { return 0; }")
     calls: list[str] = []
+    monkeypatch.setenv("INERTIA_DISABLE_POSTPROCESS_OPT", "1")
     monkeypatch.setenv(
         "INERTIA_SKIP_POSTPROCESS_PASSES",
         ",".join(
@@ -7039,6 +7047,7 @@ def test_postprocess_codegen_refuses_large_function_final_simplifier_without_loc
     )
     codegen = SimpleNamespace(cfunc=_postprocess_cfunc(addr=0x1234), project=project, text="int f(void) { return 0; }")
     calls: list[str] = []
+    monkeypatch.setenv("INERTIA_DISABLE_POSTPROCESS_OPT", "1")
     monkeypatch.setenv(
         "INERTIA_SKIP_POSTPROCESS_PASSES",
         ",".join(
@@ -7511,6 +7520,7 @@ def test_postprocess_codegen_refuses_byte_heavy_function_semantic_pass_without_l
         ),
     )
     calls: list[str] = []
+    monkeypatch.setenv("INERTIA_DISABLE_POSTPROCESS_OPT", "1")
     monkeypatch.setenv(
         "INERTIA_SKIP_POSTPROCESS_PASSES",
         ",".join(
@@ -7583,6 +7593,7 @@ def test_postprocess_codegen_refuses_semantic_pass_after_expensive_validation_ba
         ),
     )
     calls: list[str] = []
+    monkeypatch.setenv("INERTIA_DISABLE_POSTPROCESS_OPT", "1")
 
     def _semantic_pass(_codegen):
         calls.append("semantic")
@@ -7865,6 +7876,10 @@ def test_dword_global_zero_test_precision_accepts_exact_condition_and_calls():
     evidence = (DwordGlobalZeroTestEvidence8616(0x132, 0x132, 0x134, "ax"),)
 
     assert dword_global_zero_test_precision_delta_8616(1, evidence, validation)
+    control_only_validation = {
+        "delta": {"control_flow_effects": validation["delta"]["control_flow_effects"]}
+    }
+    assert dword_global_zero_test_precision_delta_8616(1, evidence, control_only_validation)
 
     changed_calls = {
         "delta": {

@@ -169,7 +169,8 @@ def _proven_source(state: SegmentRegisterState | None) -> str | None:
     """Return a physical source only from a proven must-state."""
     if state is None or state.origin is not SegmentOrigin.PROVEN:
         return None
-    return state.source
+    source = state.source
+    return source if isinstance(source, str) else None
 
 
 def _state_before(
@@ -312,7 +313,11 @@ def build_x86_16_segment_function_contract(
         )
     )
     facts = (*accesses, *writes, *instruction_states)
-    classified_count = sum(fact.verdict is SegmentFactVerdict.PROVEN for fact in facts)
+    classified_count = (
+        sum(fact.verdict is SegmentFactVerdict.PROVEN for fact in accesses)
+        + sum(fact.verdict is SegmentFactVerdict.PROVEN for fact in writes)
+        + sum(fact.verdict is SegmentFactVerdict.PROVEN for fact in instruction_states)
+    )
     return SegmentFunctionContract(
         function_addr=artifact.function_addr,
         entry_requirements=tuple(sorted(entry_requirements)),

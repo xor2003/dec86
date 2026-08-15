@@ -32,7 +32,7 @@ def _same_expr(left: object, right: object) -> bool:
         if type(left) is not type(right):
             return False
         if isinstance(left, structured_c.CConstant) and isinstance(right, structured_c.CConstant):
-            return left.value == right.value
+            return bool(left.value == right.value)
         if isinstance(left, structured_c.CVariable) and isinstance(right, structured_c.CVariable):
             # Dynamic codegen boundary: CVariable payloads are optional in angr structured C.
             left_var = getattr(left, "variable", None)

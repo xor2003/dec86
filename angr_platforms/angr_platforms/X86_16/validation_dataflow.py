@@ -15,6 +15,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any, TypeAlias
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -29,6 +30,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CFunctionCall,
     CIfElse,
     CIndexedVariable,
+    CReturn,
     CStatements,
     CSwitchCase,
     CUnaryOp,
@@ -55,6 +57,12 @@ __all__ = [
     "DefUseValidationReport8616",
     "validate_structured_def_use_8616",
 ]
+
+
+# The node is an angr structured-codegen object.  Keep this dynamic only at
+# the third-party AST boundary; mypyc cannot import a dataclass field typed as
+# the builtin ``object`` in this package.
+OpaqueValidationNode8616: TypeAlias = Any
 
 
 class DefUseStorageKind8616(StrEnum):
@@ -122,7 +130,7 @@ class _DefUsePredicate8616:
 class _DefUseValueRead8616:
     """One evaluated C node and its normalized storage identity."""
 
-    node: object
+    node: OpaqueValidationNode8616
     storage: DefUseStorageKey8616
 
 
@@ -132,12 +140,14 @@ class _DefUseFlowState8616:
 
     defined: set[_DefUseStorageByte8616]
     guarded: dict[_DefUsePredicate8616, set[_DefUseStorageByte8616]]
+    falls_through: bool = True
 
     def copy(self) -> _DefUseFlowState8616:
         """Return an independent state for one structured control-flow path."""
         return _DefUseFlowState8616(
             defined=set(self.defined),
             guarded={predicate: set(definitions) for predicate, definitions in self.guarded.items()},
+            falls_through=self.falls_through,
         )
 
 
@@ -686,6 +696,11 @@ def _intersect_flow_states_8616(
     fallback: _DefUseFlowState8616,
 ) -> _DefUseFlowState8616:
     """Merge structured paths using definite and guarded intersections."""
+    states = [state for state in states if state.falls_through]
+    if not states:
+        terminated = fallback.copy()
+        terminated.falls_through = False
+        return terminated
     return _DefUseFlowState8616(
         defined=_intersect_defined_8616(
             [state.defined for state in states],
@@ -695,6 +710,7 @@ def _intersect_flow_states_8616(
             [state.guarded for state in states],
             fallback.guarded,
         ),
+        falls_through=True,
     )
 
 
@@ -914,6 +930,8 @@ def validate_structured_def_use_8616(
             return state
         if isinstance(node, CStatements):
             for index, statement in enumerate(node.statements):
+                if not state.falls_through:
+                    break
                 state = _walk(statement, state, context=f"{context}.stmt{index}")
             return state
         if isinstance(node, CAssignment):
@@ -961,6 +979,11 @@ def validate_structured_def_use_8616(
         if isinstance(node, CExpressionStatement):
             _check_reads(node.expr, state.defined, context=f"{context}.expr")
             _apply_call_output_definitions(node.expr, state, context=f"{context}.expr")
+            return state
+        if isinstance(node, CReturn):
+            _check_reads(node, state.defined, context=context)
+            _apply_call_output_definitions(node, state, context=context)
+            state.falls_through = False
             return state
         if isinstance(node, CBreak):
             if break_exit_scopes and break_exit_scopes[-1] is not None:

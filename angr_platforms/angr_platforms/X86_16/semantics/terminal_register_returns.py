@@ -11,6 +11,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import IntFlag
 from typing import Any, Protocol, cast
 
@@ -18,7 +19,12 @@ from angr.errors import SimTranslationError
 
 from .branch_target_return import TerminalAxReturnEffectKind8616, terminal_ax_return_effect_8616
 
-__all__ = ["TerminalAxReturnLane8616", "terminal_ax_return_lane_states_8616"]
+__all__ = [
+    "TerminalAxReturnEvidence8616",
+    "TerminalAxReturnLane8616",
+    "collect_terminal_ax_return_evidence_8616",
+    "terminal_ax_return_lane_states_8616",
+]
 
 _CONDITIONAL_BRANCHES_8616 = frozenset(
     {
@@ -69,6 +75,34 @@ class TerminalAxReturnLane8616(IntFlag):
     LOW = 1
     HIGH = 2
     WORD = LOW | HIGH
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalAxReturnEvidence8616:
+    """Closed accounting for entry-reachable binary terminal AX paths."""
+
+    states: frozenset[TerminalAxReturnLane8616]
+    raw_fact_count: int
+    normalized_fact_count: int
+    classified_fact_count: int
+    materialized_count: int
+    failure_count: int
+
+    @property
+    def complete(self) -> bool:
+        """Return whether every discovered terminal-path fact was classified."""
+        return (
+            self.raw_fact_count > 0
+            and self.normalized_fact_count == self.raw_fact_count
+            and self.classified_fact_count == self.raw_fact_count
+            and self.materialized_count == self.classified_fact_count
+            and self.failure_count == 0
+        )
+
+    @property
+    def proves_missing_value_path(self) -> bool:
+        """Return whether a complete census includes a path with no AX definition."""
+        return self.complete and TerminalAxReturnLane8616.NONE in self.states
 
 
 class _FunctionSurface8616(Protocol):
@@ -155,11 +189,11 @@ def _instruction_fallthrough_8616(insn: object) -> int | None:
     return address + size
 
 
-def terminal_ax_return_lane_states_8616(
+def collect_terminal_ax_return_evidence_8616(
     project: object,
     function: object,
-) -> frozenset[TerminalAxReturnLane8616]:
-    """Collect AX lane states along bounded entry-reachable paths to returns."""
+) -> TerminalAxReturnEvidence8616:
+    """Collect closed AX lane evidence along bounded paths to binary returns."""
     function_surface = cast(_FunctionSurface8616, function)
     try:
         block_addrs = frozenset(int(addr) for addr in (function_surface.block_addrs_set or ()))
@@ -172,9 +206,29 @@ def terminal_ax_return_lane_states_8616(
     if not isinstance(entry_addr, int):
         entry_addr = min(block_addrs, default=None)
     if not isinstance(entry_addr, int) or entry_addr not in block_addrs:
-        return frozenset()
+        return TerminalAxReturnEvidence8616(frozenset(), 1, 0, 0, 0, 1)
     project_dynamic = cast(Any, project)
     terminal_states: set[TerminalAxReturnLane8616] = set()
+    raw_fact_count = 0
+    normalized_fact_count = 0
+    classified_fact_count = 0
+    materialized_count = 0
+    failure_count = 0
+
+    def _record_terminal(lanes: TerminalAxReturnLane8616) -> None:
+        """Materialize one classified terminal-path state into the evidence set."""
+        nonlocal raw_fact_count, normalized_fact_count, classified_fact_count, materialized_count
+        raw_fact_count += 1
+        normalized_fact_count += 1
+        classified_fact_count += 1
+        materialized_count += 1
+        terminal_states.add(lanes)
+
+    def _record_failure() -> None:
+        """Record one reachable control-flow fact that could not be classified."""
+        nonlocal raw_fact_count, failure_count
+        raw_fact_count += 1
+        failure_count += 1
 
     def _scan(block_addr: int, lanes: TerminalAxReturnLane8616, path: frozenset[int]) -> None:
         """Follow one entry-reachable path without crossing cycles."""
@@ -183,37 +237,62 @@ def terminal_ax_return_lane_states_8616(
         try:
             block = project_dynamic.factory.block(block_addr, opt_level=0)
         except (KeyError, SimTranslationError, ValueError):
+            _record_failure()
             return
         # Dynamic angr/capstone compatibility boundary.
         insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
+        if not insns:
+            _record_failure()
+            return
         for insn in insns:
             effect = terminal_ax_return_effect_8616(insn)
             if effect.kind is TerminalAxReturnEffectKind8616.CALL_CLOBBER:
                 lanes = TerminalAxReturnLane8616.NONE
             else:
                 written = _written_lane_8616(insn, effect.dst_reg)
-                lanes = written if written is TerminalAxReturnLane8616.WORD else lanes | written
+                lanes = written if written == TerminalAxReturnLane8616.WORD else lanes | written
             # Dynamic capstone compatibility boundary.
             mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
             if mnemonic in {"ret", "retf", "iret"}:
-                terminal_states.add(lanes)
+                _record_terminal(lanes)
                 return
             if mnemonic in {"jmp", "ljmp"}:
                 target = _direct_jump_target_8616(insn)
                 if isinstance(target, int) and target in block_addrs:
                     _scan(target, lanes, path | {block_addr})
+                else:
+                    _record_failure()
                 return
             if mnemonic in _CONDITIONAL_BRANCHES_8616:
                 target = _direct_jump_target_8616(insn)
                 fallthrough = _instruction_fallthrough_8616(insn)
-                for successor in (target, fallthrough):
+                successors = tuple(dict.fromkeys((target, fallthrough)))
+                for successor in successors:
                     if isinstance(successor, int) and successor in block_addrs:
                         _scan(successor, lanes, path | {block_addr})
+                    else:
+                        _record_failure()
                 return
-        if insns:
-            fallthrough = _instruction_fallthrough_8616(insns[-1])
-            if isinstance(fallthrough, int) and fallthrough in block_addrs:
-                _scan(fallthrough, lanes, path | {block_addr})
+        fallthrough = _instruction_fallthrough_8616(insns[-1])
+        if isinstance(fallthrough, int) and fallthrough in block_addrs:
+            _scan(fallthrough, lanes, path | {block_addr})
+        else:
+            _record_failure()
 
     _scan(entry_addr, TerminalAxReturnLane8616.NONE, frozenset())
-    return frozenset(terminal_states)
+    return TerminalAxReturnEvidence8616(
+        states=frozenset(terminal_states),
+        raw_fact_count=raw_fact_count,
+        normalized_fact_count=normalized_fact_count,
+        classified_fact_count=classified_fact_count,
+        materialized_count=materialized_count,
+        failure_count=failure_count,
+    )
+
+
+def terminal_ax_return_lane_states_8616(
+    project: object,
+    function: object,
+) -> frozenset[TerminalAxReturnLane8616]:
+    """Return the compatibility lane-state view of closed terminal evidence."""
+    return collect_terminal_ax_return_evidence_8616(project, function).states

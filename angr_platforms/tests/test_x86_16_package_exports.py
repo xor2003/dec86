@@ -324,12 +324,13 @@ def test_callsite_stack_fact_materialization_facade_sequences_consumers(monkeypa
     assert result.stack_probe_facts_changed is True
     assert result.prototypes_changed is False
     assert result.stack_arguments_changed is True
-    assert calls == ["attach", "stack-probe", "prototypes", "stack-args", "target-identity"]
+    assert calls == ["attach", "stack-probe", "prototypes", "stack-args", "target-identity", "prototypes"]
     assert runner_calls == [
         "_attach_callsite_summaries_8616",
         "build_typed_stack_probe_return_facts_8616",
         "_materialize_callsite_prototypes_8616",
         "_materialize_callsite_stack_arguments_8616",
+        "_materialize_callsite_prototypes_after_args_8616",
     ]
     assert codegen._inertia_callsite_stack_fact_materialization_8616 == {
         "attach_summaries_changed": True,
@@ -402,11 +403,12 @@ def test_callsite_stack_fact_materialization_facade_skips_completed_stack_argume
 
     assert result.changed is False
     assert result.stack_arguments_changed is False
-    assert calls == ["attach", "stack-probe", "prototypes"]
+    assert calls == ["attach", "stack-probe", "prototypes", "prototypes"]
     assert runner_calls == [
         "_attach_callsite_summaries_8616",
         "build_typed_stack_probe_return_facts_8616",
         "_materialize_callsite_prototypes_8616",
+        "_materialize_callsite_prototypes_after_args_8616",
     ]
     assert codegen._inertia_callsite_stack_fact_stack_arguments_skipped_complete_8616 == 1
 

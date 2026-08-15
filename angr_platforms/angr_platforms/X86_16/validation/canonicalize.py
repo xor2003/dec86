@@ -483,7 +483,7 @@ def _smt_equivalent(lhs: object, rhs: object, *, timeout_ms: int = 500) -> bool:
         s.set("timeout", timeout_ms)
         s.add(lhs_smt != rhs_smt)
         result = s.check()
-        return result == z3.unsat
+        return bool(result == z3.unsat)
     except Exception:
         return False
 
@@ -499,21 +499,21 @@ def _to_z3_expr(expr: object, _depth: int = 0) -> object | None:
             return None
 
         if isinstance(expr, int):
-            return z3.IntVal(expr)
+            return cast(object, z3.IntVal(expr))
         if isinstance(expr, bool):
-            return z3.BoolVal(expr)
+            return cast(object, z3.BoolVal(expr))
 
         if isinstance(expr, _HasValue) and isinstance(expr.value, int):
-            return z3.IntVal(expr.value)
+            return cast(object, z3.IntVal(expr.value))
 
         # Named variable
         if isinstance(expr, _HasName) and isinstance(expr.name, str) and expr.name:
-            return z3.Int(expr.name)
+            return cast(object, z3.Int(expr.name))
 
         # Register-like
         reg = _reg_for_expr(expr)
         if isinstance(reg, int):
-            return z3.Int(f"reg_{reg}")
+            return cast(object, z3.Int(f"reg_{reg}"))
 
         # Binary op
         if isinstance(expr, _BinaryExpr):

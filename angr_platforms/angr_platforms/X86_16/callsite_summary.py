@@ -49,6 +49,9 @@ __all__ = [
     "caller_return_use_evidence_by_addr_8616",
     "collect_caller_return_use_evidence_8616",
     "logical_argument_widths_from_callsite_8616",
+    "known_helper_abi_widths_8616",
+    "known_helper_is_variadic_8616",
+    "callsite_target_name_for_project_8616",
     "record_caller_return_use_evidence_8616",
     "structured_call_kind_8616",
     "structured_callsite_addr_8616",
@@ -57,6 +60,47 @@ __all__ = [
 
 log: logging.Logger = logging.getLogger(__name__)
 _DynamicCallsiteValue8616: TypeAlias = Any
+_CallsiteTuple8616: TypeAlias = tuple[object, ...]
+
+# These helpers have ABI shapes that cannot be recovered from a generic near
+# pointer prototype.  Keep the physical widths with callsite evidence so
+# every later layer sees the same logical argument contract.
+_KNOWN_HELPER_ABI_WIDTHS_8616: dict[str, tuple[int, ...]] = {
+    "getvideoconfig": (4,),
+    "_getvideoconfig": (4,),
+    "outtext": (4,),
+    "_outtext": (4,),
+    "outtextxy": (2, 2, 4),
+    "_outtextxy": (2, 2, 4),
+    "loadprog": (2, 2, 2, 4),
+    "_loadprog": (2, 2, 2, 4),
+    "setbkcolor": (4,),
+    "_setbkcolor": (4,),
+    "anldiv": (4, 4),
+    "_anldiv": (4, 4),
+}
+
+_VARIADIC_HELPERS_8616 = {"sprintf", "_sprintf"}
+
+
+def known_helper_abi_widths_8616(symbol_name: str | None) -> tuple[int, ...] | None:
+    """Return explicit logical ABI widths for a known runtime helper."""
+    normalized = normalize_callee_name_8616(symbol_name)
+    if not isinstance(normalized, str):
+        return None
+    canonical = normalized.casefold()
+    return _KNOWN_HELPER_ABI_WIDTHS_8616.get(canonical) or _KNOWN_HELPER_ABI_WIDTHS_8616.get(
+        canonical.lstrip("_")
+    )
+
+
+def known_helper_is_variadic_8616(symbol_name: str | None) -> bool:
+    """Return whether a known runtime helper has an open-ended argument list."""
+    normalized = normalize_callee_name_8616(symbol_name)
+    return isinstance(normalized, str) and (
+        normalized.casefold() in _VARIADIC_HELPERS_8616
+        or normalized.casefold().lstrip("_") in _VARIADIC_HELPERS_8616
+    )
 
 
 def _dynamic_callsite_getattr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
@@ -294,11 +338,11 @@ class CallsiteSummary8616:
     helper_return_width: int | None = None
     helper_return_address_kind: str = "none"
     return_shape: str | None = None
-    push_arg_sources: tuple[tuple | None, ...] = field(default=(), compare=False)
+    push_arg_sources: tuple[_CallsiteTuple8616 | None, ...] = field(default=(), compare=False)
     push_arg_instruction_addrs: tuple[int, ...] = field(default=(), compare=False)
     return_store_destination: tuple[str, int] | None = None
     return_store_width: int | None = None
-    target_source: tuple | None = None
+    target_source: _CallsiteTuple8616 | None = None
     return_use_kind: CallsiteReturnUseKind8616 | None = None
     logical_arg_widths: tuple[int, ...] = field(default=(), compare=False)
     logical_arg_classes: tuple[CallsiteArgumentClass8616, ...] = field(default=(), compare=False)
@@ -562,7 +606,13 @@ def _logical_arg_widths_for_target_8616(function: object, target_addr: int | Non
 
 
 def _is_stack_probe_target_name_8616(name: str | None) -> bool:
-    return is_x86_16_stack_probe_name_8616(name)
+    return bool(is_x86_16_stack_probe_name_8616(name))
+
+
+def _evidence_name_8616(evidence: object) -> str | None:
+    """Read a typed helper-evidence name from the dynamic compiler-helper boundary."""
+    name = _dynamic_callsite_getattr_8616(evidence, "name", None)
+    return name if isinstance(name, str) else None
 
 
 def _lookup_target_name_8616(function: object, target_addr: int | None) -> str | None:
@@ -607,7 +657,7 @@ def _lookup_target_name_8616(function: object, target_addr: int | None) -> str |
                             or normalized.startswith("sub_")
                             or normalized.startswith("loc_")
                         ):
-                            return evidence.name
+                            return _evidence_name_8616(evidence)
                         if _is_stack_probe_target_name_8616(name):
                             return name
                         generic_name = name
@@ -635,15 +685,20 @@ def _lookup_target_name_8616(function: object, target_addr: int | None) -> str |
                                 or normalized.startswith("sub_")
                                 or normalized.startswith("loc_")
                             ):
-                                return evidence.name
+                                return _evidence_name_8616(evidence)
                         return label
                 if evidence is not None:
-                    return evidence.name
+                    return _evidence_name_8616(evidence)
                 if generic_name is not None:
                     return generic_name
         return None
 
     return _impl()
+
+
+def callsite_target_name_for_project_8616(project: object, target_addr: int | None) -> str | None:
+    """Resolve a call target name from the project metadata and address evidence."""
+    return _lookup_target_name_8616(SimpleNamespace(project=project), target_addr)
 
 
 def _mnemonic(insn: object) -> str:
@@ -790,7 +845,7 @@ def _instruction_op_str_8616(insn: object) -> str:
     return str(op_str or "")
 
 
-def _find_call_index(insns: tuple, callsite_addr: int) -> int | None:
+def _find_call_index(insns: tuple[object, ...], callsite_addr: int) -> int | None:
     for idx, insn in enumerate(insns):
         insn_addr = _instruction_address_8616(insn)
         if insn_addr == callsite_addr and _mnemonic(insn).startswith("call"):
@@ -815,7 +870,7 @@ def _block_insns_for_callsite(function: object, callsite_addr: int) -> tuple[obj
 
         debug = bool(os.environ.get("INERTIA_DEBUG_CALLSITE_SUMMARY"))
 
-        def _debug_insns(label: str, insns: tuple) -> None:
+        def _debug_insns(label: str, insns: tuple[object, ...]) -> None:
             if not debug:
                 return
             rendered = ", ".join(
@@ -824,7 +879,7 @@ def _block_insns_for_callsite(function: object, callsite_addr: int) -> tuple[obj
             )
             log.warning("[callsite-window] callsite=%#x %s count=%d %s", callsite_addr, label, len(insns), rendered)
 
-        def _decode_linear_window(start_addr: int) -> tuple:
+        def _decode_linear_window(start_addr: int) -> tuple[object, ...]:
             if not isinstance(start_addr, int) or start_addr > callsite_addr:
                 return ()
             size = max(callsite_addr - start_addr + 16, 16)
@@ -978,7 +1033,7 @@ def _follow_insns_after_call_8616(
         return follow_insns
     call_insn = insns[idx] if 0 <= idx < len(insns) else None
     return_addr = _call_return_addr_from_insn_8616(call_insn)
-    decoded: tuple = ()
+    decoded: tuple[object, ...] = ()
     if isinstance(return_addr, int):
         decoded = _decode_linear_insns_at_8616(function, return_addr, limit=limit - len(follow_insns))
         existing_addrs = {_instruction_address_8616(insn) for insn in follow_insns}
@@ -1011,7 +1066,8 @@ def _direct_call_target_for_insn_8616(function: object, insn: object) -> int | N
     if project is None or not isinstance(callsite_addr, int):
         return None
     try:
-        return resolve_direct_call_target_from_block(project, callsite_addr)
+        target = resolve_direct_call_target_from_block(project, callsite_addr)
+        return target if isinstance(target, int) else None
     except Exception:
         return None
 
@@ -1249,7 +1305,7 @@ def _callee_saved_frame_push_addresses_8616(function: object) -> frozenset[int]:
                     scan -= 1
                     continue
                 if reg_name in callee_saved:
-                    restored.add(cast(str, reg_name))
+                    restored.add(reg_name)
                     scan -= 1
                     continue
             if mnemonic == "leave":
@@ -1284,16 +1340,16 @@ def _callee_saved_frame_push_addresses_8616(function: object) -> frozenset[int]:
         reg_name = _operand_reg_name(insn, operands[0])
         address = _instruction_address_8616(insn)
         if reg_name in restored_on_all_paths and isinstance(address, int):
-            push_by_register.setdefault(cast(str, reg_name), address)
+            push_by_register.setdefault(reg_name, address)
     return frozenset(push_by_register.values())
 
 
 def _filter_callee_saved_frame_pushes_8616(
     function: object,
     widths: tuple[int, ...],
-    sources: tuple[tuple | None, ...],
+    sources: tuple[_CallsiteTuple8616 | None, ...],
     instruction_addrs: tuple[int, ...],
-) -> tuple[tuple[int, ...], tuple[tuple | None, ...], tuple[int, ...]]:
+) -> tuple[tuple[int, ...], tuple[_CallsiteTuple8616 | None, ...], tuple[int, ...]]:
     """Remove only push/pop-proven frame saves from physical call arguments."""
     if not widths or len(widths) != len(sources) or len(widths) != len(instruction_addrs):
         return widths, sources, instruction_addrs
@@ -1357,7 +1413,7 @@ def _collect_push_args_before_call(
     return _impl()
 
 
-def _push_arg_source(insn: object) -> tuple | None:
+def _push_arg_source(insn: object) -> _CallsiteTuple8616 | None:
     operands = _instruction_operands(insn)
     if len(operands) != 1:
         return None
@@ -1387,7 +1443,7 @@ def _push_arg_source(insn: object) -> tuple | None:
     return None
 
 
-def _call_target_source_8616(insn: object) -> tuple | None:
+def _call_target_source_8616(insn: object) -> _CallsiteTuple8616 | None:
     operands = _instruction_operands(insn)
     if len(operands) != 1:
         return None
@@ -1409,7 +1465,7 @@ def _call_target_source_8616(insn: object) -> tuple | None:
     return None
 
 
-def _source_from_bp_mem_operand_8616(insn: object, operand: object, *, address: bool) -> tuple | None:
+def _source_from_bp_mem_operand_8616(insn: object, operand: object, *, address: bool) -> _CallsiteTuple8616 | None:
     mem = _operand_mem_value_8616(operand)
     if mem is None:
         return None
@@ -1429,7 +1485,7 @@ def _source_from_bp_mem_operand_8616(insn: object, operand: object, *, address: 
     return None
 
 
-def _source_from_mov_operand(insn: object, operand: object) -> tuple | None:
+def _source_from_mov_operand(insn: object, operand: object) -> _CallsiteTuple8616 | None:
     imm = _operand_imm_value(operand)
     if isinstance(imm, int):
         return (CallsitePushSourceKind8616.IMMEDIATE.value, imm)
@@ -1454,7 +1510,7 @@ def _source_from_mov_operand(insn: object, operand: object) -> tuple | None:
     return None
 
 
-def _ax_immediate_before_one_operand_mul_8616(insns: tuple, mul_idx: int) -> int | None:
+def _ax_immediate_before_one_operand_mul_8616(insns: tuple[object, ...], mul_idx: int) -> int | None:
     scan = mul_idx - 1
     skipped = 0
     while scan >= 0 and skipped < 4:
@@ -1472,11 +1528,11 @@ def _ax_immediate_before_one_operand_mul_8616(insns: tuple, mul_idx: int) -> int
     return None
 
 
-def _source_from_lea_operand_8616(insn: object, operand: object) -> tuple | None:
+def _source_from_lea_operand_8616(insn: object, operand: object) -> _CallsiteTuple8616 | None:
     return _source_from_bp_mem_operand_8616(insn, operand, address=True)
 
 
-def _indexed_global_source_from_mov_operand_8616(insns: tuple[object, ...], mov_idx: int, insn: object, operand: object) -> tuple | None:
+def _indexed_global_source_from_mov_operand_8616(insns: tuple[object, ...], mov_idx: int, insn: object, operand: object) -> _CallsiteTuple8616 | None:
     mem = _operand_mem_value_8616(operand)
     if mem is None:
         return None
@@ -1544,7 +1600,7 @@ def _segmented_indirect_source_from_operand_8616(
     operand_idx: int,
     insn: object,
     operand: object,
-) -> tuple | None:
+) -> _CallsiteTuple8616 | None:
     """Describe a memory value loaded through a proven register address.
 
     The returned source preserves segmented-memory identity instead of
@@ -1592,7 +1648,7 @@ def _segmented_indirect_source_from_operand_8616(
     )
 
 
-def _register_source_from_context_8616(insns: tuple, idx: int, reg_name: str, *, depth: int = 0) -> tuple | None:
+def _register_source_from_context_8616(insns: tuple[object, ...], idx: int, reg_name: str, *, depth: int = 0) -> _CallsiteTuple8616 | None:
     if depth > 4 or reg_name in {"sp", "bp", "ss", "ds", "es", "cs"}:
         return None
     scan = idx - 1
@@ -1714,7 +1770,7 @@ def _register_source_from_context_8616(insns: tuple, idx: int, reg_name: str, *,
     return None
 
 
-def _zeroing_register_source_8616(insn: object, source_regs: set[str]) -> tuple | None:
+def _zeroing_register_source_8616(insn: object, source_regs: set[str]) -> _CallsiteTuple8616 | None:
     operands = _instruction_operands(insn)
     if len(operands) != 2:
         return None
@@ -1890,7 +1946,7 @@ def _stable_stack_return_store_source_8616(
     return (CallsitePushSourceKind8616.BP_VALUE.value, destination)
 
 
-def _return_register_push_source_from_context_8616(function: object, insns: tuple[object, ...], idx: int, pushed_reg: str) -> tuple | None:
+def _return_register_push_source_from_context_8616(function: object, insns: tuple[object, ...], idx: int, pushed_reg: str) -> _CallsiteTuple8616 | None:
     if pushed_reg not in {"ax", "dx"}:
         return None
     call_idx = idx - 1
@@ -2010,8 +2066,8 @@ def _zero_extended_byte_push_source_8616(
 
 def _push_arg_source_from_context(
     function: object, insns: tuple[object, ...], idx: int
-) -> tuple | None:
-    def _impl() -> tuple | None:
+) -> _CallsiteTuple8616 | None:
+    def _impl() -> _CallsiteTuple8616 | None:
         source = _push_arg_source(insns[idx])
         if source is not None:
             return source
@@ -2208,9 +2264,9 @@ def _collect_push_arg_sources_before_call(
     insns: tuple[object, ...],
     idx: int,
     cleanup: int | None = None,
-) -> tuple[tuple | None, ...]:
-    def _impl() -> tuple[tuple | None, ...]:
-        sources: list[tuple | None] = []
+) -> tuple[_CallsiteTuple8616 | None, ...]:
+    def _impl() -> tuple[_CallsiteTuple8616 | None, ...]:
+        sources: list[_CallsiteTuple8616 | None] = []
         scan = idx - 1
         skipped_transparents = 0
         skipped_call_segment = False
@@ -2316,7 +2372,7 @@ def _push_scan_reaches_block_entry_8616(
 
 def _unresolved_entry_push_register_8616(
     insns: tuple[object, ...],
-    sources: tuple[tuple | None, ...],
+    sources: tuple[_CallsiteTuple8616 | None, ...],
     instruction_addrs: tuple[int, ...],
 ) -> tuple[str, int] | None:
     """Return a block-entry register PUSH whose source needs CFG joining."""
@@ -2390,7 +2446,8 @@ def _predecessor_stack_merge_8616(
         predecessor_insns = tuple(
             insn
             for insn in predecessor_insns
-            if (address := _instruction_address_8616(insn)) is not None and address < sink_addr
+            if (address := _instruction_address_8616(insn)) is not None
+            and (predecessor_addr >= sink_addr or address < sink_addr)
         )
         if debug:
             log.warning(
@@ -2467,15 +2524,15 @@ def _trim_push_args_to_stack_cleanup(arg_widths: tuple[int, ...], cleanup: int |
 
 def _trim_push_arg_sources_to_stack_cleanup(
     arg_widths: tuple[int, ...],
-    arg_sources: tuple[tuple | None, ...],
+    arg_sources: tuple[_CallsiteTuple8616 | None, ...],
     cleanup: int | None,
-) -> tuple[tuple | None, ...]:
+) -> tuple[_CallsiteTuple8616 | None, ...]:
     if not isinstance(cleanup, int) or cleanup <= 0 or not arg_widths or not arg_sources:
         return arg_sources
     if len(arg_widths) != len(arg_sources):
         return arg_sources
     total = 0
-    kept: list[tuple | None] = []
+    kept: list[_CallsiteTuple8616 | None] = []
     for width, source in reversed(tuple(zip(arg_widths, arg_sources))):
         if total + width > cleanup:
             break
@@ -2508,11 +2565,11 @@ def _trim_push_arg_instruction_addrs_to_stack_cleanup(
     return instruction_addrs
 
 
-def _push_arg_source_known_count_8616(arg_sources: tuple[tuple | None, ...]) -> int:
+def _push_arg_source_known_count_8616(arg_sources: tuple[_CallsiteTuple8616 | None, ...]) -> int:
     return sum(1 for source in arg_sources if source is not None)
 
 
-def _push_arg_sources_have_unknown_8616(arg_sources: tuple[tuple | None, ...]) -> bool:
+def _push_arg_sources_have_unknown_8616(arg_sources: tuple[_CallsiteTuple8616 | None, ...]) -> bool:
     return any(source is None for source in arg_sources)
 
 
@@ -3247,10 +3304,16 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
             cleanup,
         )
         arg_count = len(arg_widths)
-        logical_arg_widths, logical_arg_classes = _logical_arg_interface_for_target_8616(
-            function,
-            target_addr,
-        )
+        helper_abi_widths = known_helper_abi_widths_8616(target_name)
+        logical_arg_classes: tuple[CallsiteArgumentClass8616, ...] = ()
+        if helper_abi_widths is not None:
+            logical_arg_widths = helper_abi_widths
+            logical_arg_classes = ()
+        else:
+            logical_arg_widths, logical_arg_classes = _logical_arg_interface_for_target_8616(
+                function,
+                target_addr,
+            )
         if sum(logical_arg_widths) != sum(arg_widths):
             logical_arg_widths = ()
             logical_arg_classes = ()

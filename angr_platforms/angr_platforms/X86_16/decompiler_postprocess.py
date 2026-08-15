@@ -65,6 +65,10 @@ from .decompiler_postprocess_utils import (
     _structured_codegen_node_8616,
 )
 from .decompiler_return_compat import x86_16_msvc_x87_scalar_stack_args
+from .lowering.return_type_evidence import (
+    FunctionReturnClass8616,
+    proven_function_return_class_8616,
+)
 from .lowering.stack_c_ast_matching import _stack_variable_read_offsets_8616
 from .lowering.stack_lowering_from_facts import _stack_object_name
 from .lowering.stack_prototype_materialization import align_pointer_flags_to_stack_argument_widths_8616
@@ -163,7 +167,7 @@ def _unwrap_synthetic_wide_return_8616(retval: object) -> object | None:
     if not isinstance(retval, CBinaryOp):
         return None
 
-    candidates = []
+    candidates: list[tuple[object, object]] = []
     if retval.op == "Or":
         candidates.extend(((retval.lhs, retval.rhs), (retval.rhs, retval.lhs)))
     elif retval.op == "Concat":
@@ -928,7 +932,7 @@ def _dedupe_codegen_variable_names_8616(codegen: Any) -> bool:
         ordered_items = list(variables_in_use.items()) if isinstance(variables_in_use, dict) else []
         if isinstance(unified_locals, dict):
             for variable, cvars in unified_locals.items():
-                if variable not in variables_in_use and cvars:
+                if isinstance(variables_in_use, dict) and variable not in variables_in_use and cvars:
                     ordered_items.append((variable, next(iter(cvars))[0]))
 
         ordered_items.sort(key=sort_key)
@@ -1655,7 +1659,7 @@ def _collect_stack_promotion_inputs_8616(
             maybe_annotations = info.get(ANNOTATION_KEY)
             if isinstance(maybe_annotations, dict):
                 annotations = maybe_annotations
-        prototype_pointer_flags = ()
+        prototype_pointer_flags: tuple[bool, ...] = ()
         # Dynamic angr/codegen compatibility boundary.
         if getattr(func, "is_prototype_guessed", True) is False:
             prototype_pointer_flags = _prototype_pointer_flags_8616(getattr(func, "prototype", None))
@@ -2315,9 +2319,10 @@ def _materialize_pointer_arg_indirect_loads_8616(
             continue
         if not isinstance(rhs, CVariable):
             continue
-        offset = _stack_offset_for_cvariable_8616(rhs)
-        if not isinstance(offset, int):
+        candidate_offset = _stack_offset_for_cvariable_8616(rhs)
+        if not isinstance(candidate_offset, int):
             continue
+        offset = candidate_offset
         if offset not in pointer_args_by_offset:
             continue
         if not _assignment_lhs_accepts_pointer_load_value_8616(stmt.lhs):
@@ -2397,7 +2402,8 @@ def _x87_scalar_stack_arg_types_8616(
                     file=sys.stderr,
                     flush=True,
                 )
-            return result
+            result_dict: dict[int, object] = {int(key): value for key, value in result.items()}
+            return result_dict
         if os.environ.get("INERTIA_DEBUG_X87_PROTO") == "1":
             print(
                 "[dbg-x87-proto] "
@@ -2434,7 +2440,7 @@ def _promote_from_annotated_args_8616(
     func: object,
     prototype: object,
     arg_names: list[str],
-    existing_args: list,
+    existing_args: list[Any],
     annotated_args: list[tuple[int, str | None]],
     source_pointer_flags: tuple[bool, ...],
     promote_near_pointers: bool,
@@ -2458,7 +2464,7 @@ def _promote_from_annotated_args_8616(
             existing_name = arg_names[index] if index < len(arg_names) else None
             desired_names.append(annotated_name or existing_name)
         normalized_names = _normalize_arg_names_8616(desired_names, target_arg_count)
-        stack_cvars_by_offset = {}
+        stack_cvars_by_offset: dict[int, object] = {}
         for variable, cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
             if isinstance(variable, SimStackVariable):
                 stack_cvars_by_offset.setdefault(variable.offset, cvar)
@@ -2476,9 +2482,12 @@ def _promote_from_annotated_args_8616(
         x87_scalar_arg_types = _x87_scalar_stack_arg_types_8616(project, func, codegen=codegen)
         for index in range(target_arg_count):
             annotated_offset = annotated_args[index][0] if index < len(annotated_args) else None
-            resolved_arg = (
-                existing_args[index] if index < len(existing_args) else stack_cvars_by_offset.get(annotated_offset)
-            )
+            if index < len(existing_args):
+                resolved_arg = existing_args[index]
+            elif isinstance(annotated_offset, int):
+                resolved_arg = stack_cvars_by_offset.get(annotated_offset)
+            else:
+                resolved_arg = None
             resolved_args.append(resolved_arg)
             inferred_width = (
                 inferred_arg_widths.get(annotated_offset, 2) if isinstance(annotated_offset, int) else 2
@@ -2996,6 +3005,24 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
             return False
 
         source_decl_is_void = _function_has_void_return_prototype_8616(func)
+        function_addr = getattr(func, "addr", None)
+        proven_value_return = (
+            isinstance(function_addr, int)
+            and proven_function_return_class_8616(project, function_addr) is FunctionReturnClass8616.VALUE
+        )
+        if (
+            source_decl_is_void
+            and proven_value_return
+        ):
+            source_decl_is_void = False
+        existing_returnty = getattr(prototype, "returnty", None)
+        if (
+            not source_decl_is_void
+            and func is not None
+            and not bool(getattr(func, "is_prototype_guessed", True))
+            and not (proven_value_return and _is_void_return_type_8616(existing_returnty))
+        ):
+            return False
         has_switch_loop_exit_void_evidence = bool(
             # Dynamic angr/codegen compatibility boundary.
             getattr(codegen, "_inertia_switch_loop_exit_return_materialized_8616", False)
@@ -3015,6 +3042,7 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
             os.environ.get("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "").strip().lower() not in {"1", "true", "yes", "on"}
             and not source_decl_is_void
             and not has_switch_loop_exit_void_evidence
+            and not proven_value_return
         ):
             return False
 
@@ -3025,15 +3053,16 @@ def _classify_return_shape_8616(project: SimpleNamespace, codegen: SimpleNamespa
             if isinstance(node, CReturn) and id(node) not in ignored_unreachable_returns
         ]
         if not return_nodes:
-            source_shape = None
+            source_shape = "scalar" if proven_value_return else None
             if (
                 not source_decl_is_void
                 and not has_switch_loop_exit_void_evidence
+                and not proven_value_return
             ):
                 return False
             return_nodes = []
         else:
-            source_shape = None
+            source_shape = "scalar" if proven_value_return else None
 
         tiny_function = _is_tiny_function_8616(project, func)
         changed = False
@@ -3522,6 +3551,7 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
                     binding,
                     stack_specs=stack_specs,
                 )
+            candidate_offsets: tuple[int, ...]
             if offset < 0:
                 candidate_offsets = (offset, offset + 2, offset - 2)
             else:
@@ -3536,7 +3566,7 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
         def _materialize_stack_cvar(offset: int, type_: object) -> object | None:
             existing = materialized_stack_cvars.get(offset)
             if existing is not None:
-                return existing
+                return cast(object | None, existing)
 
             size = max((getattr(type_, "size", None) or 8) // 8, 1)
             spec = _stack_spec_for_offset(offset, size)
@@ -3562,18 +3592,18 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
                 }
 
             stack_vars_by_offset[offset] = cvar
-            return cvar
+            return cast(object | None, cvar)
 
         def resolve_stack_cvar(offset: int) -> object | None:
+            # A normalized positive stack map starts after the architectural
+            # near return word.  BP+2 is therefore never a source variable;
+            # do not let an angr declaration-only return carrier win an exact
+            # stack binding lookup.
+            if positive_specs_are_normalized and offset == 2:
+                return None
             direct = stack_vars_by_offset.get(offset)
             if direct is not None:
-                return direct
-
-            normalized_offset = offset - 2
-            if normalized_offset != offset:
-                direct = stack_vars_by_offset.get(normalized_offset)
-                if direct is not None:
-                    return direct
+                return cast(object | None, direct)
 
             # Positive stack slots are arguments in the x86-16 calling
             # convention model we use here. If we have no exact materialization
@@ -3597,7 +3627,7 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
                         best = cvar
                         best_size = size
             if best is not None:
-                return best
+                return cast(object | None, best)
             return _materialize_stack_cvar(offset, None)
 
         rename_changed = _rename_stack_variables_from_specs_8616(
@@ -3688,6 +3718,7 @@ def _rename_stack_variables_from_specs_8616(
 
         def spec_name_for(variable: SimStackVariable) -> tuple[str | None, object | None]:
             offset = variable.offset
+            candidate_offsets: tuple[int, ...]
             if offset > 0:
                 if positive_specs_are_normalized:
                     candidate_offsets = (offset - 2, offset)

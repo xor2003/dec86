@@ -798,10 +798,10 @@ def _parse_tdinfo_members(
             )
             next_enum_owner += 1
             for member in sequence:
-                key = (member.name, member.type_index)
-                if key in enum_seen:
+                enum_key = (member.name, member.type_index)
+                if enum_key in enum_seen:
                     continue
-                enum_seen.add(key)
+                enum_seen.add(enum_key)
                 enum_members.append(
                     TDInfoEnumMember(
                         name=member.name,

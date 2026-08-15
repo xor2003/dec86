@@ -6,7 +6,7 @@ Forbidden: decompiler storage recovery, alias ownership, or segment-flattening s
 
 from __future__ import annotations
 
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from bitstring import ConstBitStream
 from pyvex.expr import Binop, Const, RdTmp
@@ -100,7 +100,8 @@ class Memory:
         """Read a 32-bit value through active VEX frontend memory."""
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
-        rdt = self.lifter_instruction._irsb_c.load(addr.rdt, Type.int_32)
+        addr_value = cast(VexValue, addr)
+        rdt = self.lifter_instruction._irsb_c.load(addr_value.rdt, Type.int_32)
         return VexValue(cast(IRSBCustomizer, self.lifter_instruction), rdt)
 
     def read_mem16(self, addr: object) -> object:
@@ -111,11 +112,14 @@ class Memory:
             addr = VexValue(cast(IRSBCustomizer, self.lifter_instruction), cast(RdTmp | Const, addr))
         else:
             addr = VexValue(cast(IRSBCustomizer, self.lifter_instruction), addr.rdt)
-        low = VexValue(cast(IRSBCustomizer, self.lifter_instruction), self.lifter_instruction._irsb_c.load(addr.rdt, Type.int_8))
+        addr = cast(VexValue, addr)
+        addr_dynamic = cast(Any, addr)
         one = self.lifter_instruction.constant(1, Type.int_32)
+        one_dynamic = cast(Any, one)
+        low = VexValue(cast(IRSBCustomizer, self.lifter_instruction), self.lifter_instruction._irsb_c.load(addr_dynamic.rdt, Type.int_8))
         high_addr = VexValue(
             cast(IRSBCustomizer, self.lifter_instruction),
-            self.lifter_instruction._settmp(Binop("Iop_Add32", [addr.rdt, one.rdt])),
+            self.lifter_instruction._settmp(Binop("Iop_Add32", [addr_dynamic.rdt, one_dynamic.rdt])),
         )
         high = VexValue(cast(IRSBCustomizer, self.lifter_instruction), self.lifter_instruction._irsb_c.load(high_addr.rdt, Type.int_8))
         low16 = cast(VexValue, low.cast_to(Type.int_16))
@@ -126,7 +130,8 @@ class Memory:
         """Read an 8-bit value through active VEX frontend memory."""
         if isinstance(addr, int):
             addr = self.lifter_instruction.constant(addr, Type.int_32)
-        rdt = self.lifter_instruction._irsb_c.load(addr.rdt, Type.int_8)
+        addr_value = cast(VexValue, addr)
+        rdt = self.lifter_instruction._irsb_c.load(addr_value.rdt, Type.int_8)
         return VexValue(cast(IRSBCustomizer, self.lifter_instruction), rdt)
 
     def write_mem32(self, addr: int | VexValue, value: int | VexValue) -> None:
@@ -160,15 +165,18 @@ class Memory:
         if _dirty_input_value(value):
             value = self.lifter_instruction.constant(0xFFFF & ((1 << 16) - 1), Type.int_16)
 
-        low = cast(VexValue, value.cast_to(Type.int_8))
+        value_dynamic = cast(Any, value)
+        addr_dynamic = cast(Any, addr)
+        low = cast(VexValue, value_dynamic.cast_to(Type.int_8))
         one = self.lifter_instruction.constant(1, Type.int_32)
+        one_dynamic = cast(Any, one)
         high_addr = VexValue(
             cast(IRSBCustomizer, self.lifter_instruction),
-            self.lifter_instruction._settmp(Binop("Iop_Add32", [addr.rdt, one.rdt])),
+            self.lifter_instruction._settmp(Binop("Iop_Add32", [addr_dynamic.rdt, one_dynamic.rdt])),
         )
-        high_source = cast(VexValue, value >> 8)
+        high_source = cast(VexValue, value_dynamic >> 8)
         high = cast(VexValue, high_source.cast_to(Type.int_8))
-        self.lifter_instruction._irsb_c.store(addr.rdt, low.rdt)
+        self.lifter_instruction._irsb_c.store(addr_dynamic.rdt, low.rdt)
         self.lifter_instruction._irsb_c.store(high_addr.rdt, high.rdt)
 
     def write_mem8(self, addr: int | VexValue, value: int | VexValue) -> None:

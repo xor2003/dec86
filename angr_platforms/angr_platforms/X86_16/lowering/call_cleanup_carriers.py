@@ -82,7 +82,7 @@ def _decode_instruction_8616(project: object, address: int) -> object | None:
                 getattr(getattr(block, "capstone", None), "insns", ()) or ()
             )
             if wrappers:
-                return getattr(wrappers[0], "insn", wrappers[0])
+                return cast(object, getattr(wrappers[0], "insn", wrappers[0]))
     return None
 
 

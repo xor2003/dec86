@@ -16,6 +16,10 @@ from pathlib import Path
 
 from .cache import _load_cache_json, _recovery_cache_key, _store_cache_json
 
+_RIZIN_FUNCTION_ANALYSIS_COMMAND = "aa;aflj"
+_RIZIN_DISCOVERY_POLICY_SCHEMA = 4
+_DOS_MZ_LOAD_BASE = 0x10000
+
 __all__ = [
     "RizinDiscoveryStatus",
     "RizinDiscoveryResult",
@@ -71,12 +75,31 @@ def _score_aflj_entry(entry: dict[str, object]) -> tuple[int, int]:
     return score, -offset
 
 
+def _rizin_offset_to_inertia_addr(binary_path: Path, offset: int) -> int:
+    """Translate a Rizin load-module offset into Inertia's DOS MZ address space.
+
+    Rizin's MZ backend reports ``aflj`` offsets relative to the DOS load module,
+    while :class:`DOSMZ` maps that module at ``0x10000``.  Non-MZ offsets are
+    already addresses in their loader's coordinate space and remain unchanged.
+    """
+    try:
+        is_mz = binary_path.read_bytes()[:2] == b"MZ"
+    except OSError:
+        return offset
+    return _DOS_MZ_LOAD_BASE + offset if is_mz else offset
+
+
 def _cache_key(binary_path: Path, *, timeout_sec: int, max_count: int | None) -> dict[str, object] | None:
-    return _recovery_cache_key(
+    key = _recovery_cache_key(
         binary_path=binary_path,
         kind="rizin_aflj_function_seeds",
-        extra={"timeout_sec": timeout_sec, "max_count": max_count or 0},
+        extra={
+            "policy_schema": _RIZIN_DISCOVERY_POLICY_SCHEMA,
+            "timeout_sec": timeout_sec,
+            "max_count": max_count or 0,
+        },
     )
+    return key if isinstance(key, dict) else None
 
 
 def _run_rizin_json(binary_path: Path, command: str, *, timeout_sec: int) -> object:
@@ -218,7 +241,11 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
                             (time.perf_counter() - started) * 1000.0,
                             f"cache_hit:{cached_detail or cached_status_raw}",
                         )
-    cmd = ["rizin", "-2", "-q", "-c", "aaa;aflj", str(binary_path)]
+    # Rizin's aggressive ``aaa`` analysis is not segment-safe for DOS MZ files:
+    # a 16-bit offset from one segment can be followed into another segment's
+    # data at the same numeric address.  Keep Rizin's conservative entry/xref
+    # analysis as optional seed evidence and let Inertia build the real CFG.
+    cmd = ["rizin", "-2", "-q", "-c", _RIZIN_FUNCTION_ANALYSIS_COMMAND, str(binary_path)]
     try:
         completed = subprocess.run(
             cmd,
@@ -291,6 +318,29 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
             )
         return error_result
     candidates: list[dict[str, object]] = [item for item in payload if isinstance(item, dict)]
+    # Rizin may merge a large 16-bit segmented call graph into one function even
+    # though its xref engine still identifies the direct CALL destinations.  A
+    # direct call target is a stronger function-entry seed than the resulting
+    # oversized ``aflj`` container, so retain both sources for Inertia.
+    xrefs_payload = _run_rizin_json(binary_path, "aa;axlj", timeout_sec=timeout_sec)
+    if isinstance(xrefs_payload, list):
+        for item in xrefs_payload:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("type", "")).strip().upper() != "CALL":
+                continue
+            target = _json_int(item.get("to"), default=-1)
+            if target < 0:
+                continue
+            candidates.append(
+                {
+                    "offset": target,
+                    "name": "rizin.call_target",
+                    "size": 0,
+                    "nbbs": 0,
+                    "ncallrefs": 0,
+                }
+            )
     if not candidates:
         mz_fallback, fallback_detail = _mz_linear_candidates_from_prologues(binary_path)
         if mz_fallback:
@@ -326,7 +376,10 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
     dedup: set[int] = set()
     offsets: list[int] = []
     for item in ordered:
-        offset = _json_int(item.get("offset"))
+        raw_offset = _json_int(item.get("offset"))
+        if raw_offset < 0:
+            continue
+        offset = _rizin_offset_to_inertia_addr(binary_path, raw_offset)
         if offset <= 0 or offset in dedup:
             continue
         dedup.add(offset)

@@ -74,7 +74,7 @@ class MZSegmentSpan:
     evidence: tuple[str, ...]
 
 
-class DOSMZ(Blob):
+class DOSMZ(Blob):  # type: ignore[misc, unused-ignore] # dynamic CLE backend base
     """Minimal DOS MZ loader for 16-bit real-mode executables.
 
     The loaded image is mapped starting at linear address 0 so segment-relative
@@ -111,6 +111,7 @@ class DOSMZ(Blob):
             base_addr=load_base,
             **kwargs,
         )
+        self._max_addr = int(getattr(self, "_max_addr", 0))
 
         relocation_entries = self._read_relocation_entries(stream, header)
         self._apply_relocations(relocation_entries, load_base, load_segment)

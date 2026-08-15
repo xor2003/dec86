@@ -100,6 +100,10 @@ from .loop_condition_materialization import (
     LoopConditionMaterializationStats8616,
     materialize_typed_loop_continuation_conditions_8616,
 )
+from .multi_arm_condition_ownership import (
+    materialize_multi_arm_condition_owners_8616,
+    select_multi_arm_condition_owners_8616,
+)
 from .multi_arm_return_chains import (
     MultiArmReturnChainStatus8616,
     is_materialized_multi_arm_return_chain_8616,
@@ -304,7 +308,7 @@ def _cfg_node_addr_8616(node: object) -> int | None:
         return None
 
 
-def _condition_chain_successors_8616(project: object, codegen: object) -> dict[int, tuple[int, ...]]:
+def condition_chain_successors_8616(project: object, codegen: object) -> dict[int, tuple[int, ...]]:
     """Return in-function CFG successors keyed by block address."""
     try:
         cfunc = cast(_ConditionMaterializationCFunction8616, cast(_ConditionMaterializationCodegen8616, codegen).cfunc)
@@ -369,6 +373,16 @@ def _first_tagged_block_addr_8616(node: object) -> int | None:
         if isinstance(block_addr, int):
             addresses.append(block_addr)
     return min(addresses) if addresses else None
+
+
+def _first_tagged_cfg_target_8616(node: object) -> int | None:
+    """Return the CFG block identity before falling back to an instruction tag.
+
+    ConditionIR successors are block-address keyed.  Structured arms often
+    start with a later instruction in the same VEX block, which is not a valid
+    successor key and can make a terminal branch look disconnected.
+    """
+    return _first_tagged_block_addr_8616(node) or _first_tagged_ins_addr_8616(node)
 
 
 def _cfg_reaches_address_8616(
@@ -624,12 +638,12 @@ def _materialize_cfg_condition_chain_expr_8616(
     def prove_wide_pair(high_value: IRValue, low_value: IRValue) -> bool:
         high_expression = lower_ir_value_to_c_expr_8616(high_value, project, codegen)
         low_expression = lower_ir_value_to_c_expr_8616(low_value, project, codegen)
-        return proven_wide_stack_ir_pair_8616(
+        return bool(proven_wide_stack_ir_pair_8616(
             high_value,
             low_value,
             high_expression,
             low_expression,
-        )
+        ))
 
     wide_result = recover_wide_stack_condition_chain_8616(
         root_condition,
@@ -1054,8 +1068,10 @@ def _materialize_cfg_single_branch_expr_8616(
             """Require active stack-object evidence for one high/low pair."""
             high_expression = lower_ir_value_to_c_expr_8616(high_value, project, codegen)
             low_expression = lower_ir_value_to_c_expr_8616(low_value, project, codegen)
-            return proven_wide_stack_ir_pair_8616(
-                high_value, low_value, high_expression, low_expression
+            return bool(
+                proven_wide_stack_ir_pair_8616(
+                    high_value, low_value, high_expression, low_expression
+                )
             )
 
         proofs: list[tuple[ConditionIR, CExpression]] = []
@@ -1069,7 +1085,7 @@ def _materialize_cfg_single_branch_expr_8616(
                 recovered = exit_expressions.get(target)
                 if recovered is None:
                     return None
-                return _same_c_expression_8616(recovered, candidate)
+                return bool(_same_c_expression_8616(recovered, candidate))
 
             wide_result = recover_wide_stack_single_body_condition_8616(
                 condition,
@@ -1372,7 +1388,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
         and isinstance(item.taken_target, int)
         and isinstance(item.fallthrough_target, int)
     )
-    successors = _condition_chain_successors_8616(project, codegen)
+    successors = condition_chain_successors_8616(project, codegen)
     _debug_condition_chain_8616(
         "typed-cfg-surface",
         conditions=tuple(
@@ -1460,6 +1476,79 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             candidate_raw_count = (
                 len(condition_and_nodes) if node.else_node is not None else 1
             )
+            duplicate_origins = all(key is not None for key in keys) and len(
+                set(keys)
+            ) < len(keys)
+            root_source_fact = source_facts[0] if source_facts else None
+            node_ins_addr = _direct_tagged_ins_addr_8616(node)
+            if (
+                duplicate_origins
+                and root_source_fact is not None
+                and successors
+                and _structured_node_owns_condition_fact_8616(
+                    node_ins_addr,
+                    root_source_fact,
+                    successors,
+                    condition_blocks,
+                )
+            ):
+                ownership = select_multi_arm_condition_owners_8616(
+                    tuple(
+                        _first_tagged_ins_addr_8616(body)
+                        for _condition, body in condition_and_nodes
+                    ),
+                    targeted,
+                    root=root_source_fact,
+                    successors=successors,
+                )
+                if ownership.selected:
+                    owned_arms = materialize_multi_arm_condition_owners_8616(
+                        cast(
+                            tuple[tuple[CExpression, object], ...],
+                            condition_and_nodes,
+                        ),
+                        ownership,
+                        lambda fact: materialize_condition_ir_expression_8616(
+                            project,
+                            codegen,
+                            fact,
+                        ),
+                    )
+                    raw_count += owned_arms.raw_fact_count
+                    classified_count += owned_arms.classified_fact_count
+                    materialized_count += owned_arms.materialized_count
+                    failure_count += owned_arms.failure_count
+                    if owned_arms.materialized_count:
+                        for (before, _body), (after, _replacement_body) in zip(
+                            condition_and_nodes,
+                            owned_arms.condition_and_nodes,
+                            strict=True,
+                        ):
+                            record_condition_precision_evidence_8616(
+                                project,
+                                codegen,
+                                before,
+                                after,
+                            )
+                        node.condition_and_nodes = list(
+                            owned_arms.condition_and_nodes
+                        )
+                        changed = True
+                        _debug_condition_chain_8616(
+                            "multi-arm-owner-materialized",
+                            arm_count=owned_arms.materialized_count,
+                            fact_sources=tuple(
+                                fact.src_insn for fact in ownership.facts
+                            ),
+                        )
+                    else:
+                        _debug_condition_chain_8616(
+                            "multi-arm-owner-materialization-refused",
+                            fact_sources=tuple(
+                                fact.src_insn for fact in ownership.facts
+                            ),
+                        )
+                    continue
             if not successors or any(fact is None for fact in exact_facts):
                 raw_count += candidate_raw_count
                 _debug_condition_chain_8616(
@@ -1471,15 +1560,17 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                 failure_count += 1
                 continue
             proven_facts = cast(tuple[ConditionIR, ...], exact_facts)
-            root_fact = proven_facts[0]
-            node_ins_addr = _direct_tagged_ins_addr_8616(node)
+            multi_arm_root_fact = proven_facts[0]
             if not _structured_node_owns_condition_fact_8616(
-                node_ins_addr, root_fact, successors, condition_blocks
+                node_ins_addr,
+                multi_arm_root_fact,
+                successors,
+                condition_blocks,
             ):
                 _debug_condition_chain_8616(
                     "multi-arm-owner-mismatch",
-                    fact_block=root_fact.block_addr,
-                    fact_src=root_fact.src_insn,
+                    fact_block=multi_arm_root_fact.block_addr,
+                    fact_src=multi_arm_root_fact.src_insn,
                     node_ins_addr=node_ins_addr,
                 )
                 raw_count += candidate_raw_count
@@ -1563,7 +1654,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             replacement = _materialize_cfg_shared_body_condition_chain_expr_8616(
                 project,
                 codegen,
-                root_fact,
+                multi_arm_root_fact,
                 proven_facts,
                 conditions_by_block,
                 successors,
@@ -1573,19 +1664,21 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                 _debug_condition_chain_8616(
                     "multi-arm-replacement-refused",
                     body_target=body_target,
-                    fact_block=root_fact.block_addr,
-                    fact_src=root_fact.src_insn,
+                    fact_block=multi_arm_root_fact.block_addr,
+                    fact_src=multi_arm_root_fact.src_insn,
                 )
                 failure_count += 1
                 continue
             classified_count += 1
             tags = _copied_condition_tags_8616(first_condition)
-            if isinstance(root_fact.src_insn, int):
-                tags["ins_addr"] = root_fact.src_insn
-            if isinstance(root_fact.block_addr, int):
-                tags["vex_block_addr"] = root_fact.block_addr
-            if isinstance(root_fact.producer_insn, int):
-                tags["condition_producer_insn"] = root_fact.producer_insn
+            if isinstance(multi_arm_root_fact.src_insn, int):
+                tags["ins_addr"] = multi_arm_root_fact.src_insn
+            if isinstance(multi_arm_root_fact.block_addr, int):
+                tags["vex_block_addr"] = multi_arm_root_fact.block_addr
+            if isinstance(multi_arm_root_fact.producer_insn, int):
+                tags["condition_producer_insn"] = (
+                    multi_arm_root_fact.producer_insn
+                )
             tags["inertia_structuring_condition_cfg_materialized_8616"] = True
             tags["inertia_structuring_shared_body_condition_chain_materialized_8616"] = True
             replacement.tags = tags
@@ -1599,8 +1692,8 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             _debug_condition_chain_8616(
                 "multi-arm-materialized",
                 body_target=body_target,
-                fact_block=root_fact.block_addr,
-                fact_src=root_fact.src_insn,
+                fact_block=multi_arm_root_fact.block_addr,
+                fact_src=multi_arm_root_fact.src_insn,
             )
             continue
         condition, body = node.condition_and_nodes[0]
@@ -1611,6 +1704,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
         node_fact = conditions_by_src.get(node_ins_addr) if node_ins_addr is not None else None
         node_owner_overrode_condition_origin = False
         semantic_owner_proven = False
+        root_fact: ConditionIR | None
         if node_fact is not None and node_fact is not condition_fact:
             node_owner_overrode_condition_origin = True
             root_fact = node_fact
@@ -1782,8 +1876,8 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                     )
             marker = "inertia_structuring_single_branch_materialized_8616"
         else:
-            true_target = _first_tagged_ins_addr_8616(body)
-            false_target = _first_tagged_ins_addr_8616(node.else_node)
+            true_target = _first_tagged_cfg_target_8616(body)
+            false_target = _first_tagged_cfg_target_8616(node.else_node)
             replacement = (
                 _materialize_cfg_condition_chain_expr_8616(
                     project,
@@ -1921,7 +2015,7 @@ def materialize_structuring_conditions_8616(
         root,
         codegen,
         typed_conditions,
-        _condition_chain_successors_8616(project, codegen),
+        condition_chain_successors_8616(project, codegen),
         lambda condition: materialize_condition_ir_expression_8616(project, codegen, condition),
     )
     metadata_codegen._inertia_typed_loop_condition_stats_8616 = loop_stats

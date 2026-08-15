@@ -50,7 +50,7 @@ def test_sortd_beep_sidecar_free_materializes_both_value_arguments(tmp_path: Pat
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
     signature = re.search(
-        r"(?:unsigned )?short sub_10e70\((?:unsigned )?short (\w+), (?:unsigned )?short (\w+)\)",
+        r"void sub_10e70\((?:unsigned )?short (\w+), (?:unsigned )?short (\w+)\)",
         result.stdout,
     )
     assert signature is not None, combined

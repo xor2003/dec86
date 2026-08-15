@@ -30,11 +30,11 @@ def test_pure_binary_whole_file_uses_bounded_clean_processes_by_default() -> Non
     assert policy.workers == 7
 
 
-def test_sidecar_whole_file_preserves_shared_serial_default() -> None:
+def test_sidecar_whole_file_uses_clean_processes_to_bound_native_state() -> None:
     policy = _policy(sidecar_available=True)
 
-    assert policy.mode is FunctionWorkerMode8616.SHARED
-    assert policy.workers == 1
+    assert policy.mode is FunctionWorkerMode8616.CLEAN_PROCESS
+    assert policy.workers == 7
 
 
 def test_explicit_clean_process_override_supports_sidecar_runs() -> None:

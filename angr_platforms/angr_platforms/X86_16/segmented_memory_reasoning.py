@@ -251,7 +251,7 @@ class SegmentAssociationAnalyzer:
             assignments: List of SegmentAssignment throughout binary
         """
         # Group by segment register
-        by_segment = {}
+        by_segment: dict[SegmentRegister, list[SegmentAssignment]] = {}
         for assignment in assignments:
             if assignment.segment_reg not in by_segment:
                 by_segment[assignment.segment_reg] = []
@@ -473,7 +473,7 @@ def _existing_stack_cvar_for_offset_8616(codegen: object, offset: int) -> object
         variable_region = variable.region
         if isinstance(region, int) and isinstance(variable_region, int) and variable_region != region:
             continue
-        return cvar
+        return cast(object, cvar)
     return None
 
 
@@ -520,7 +520,7 @@ def _recover_stack_slot_from_segmented_operand_8616(node: object, codegen: objec
         if isinstance(unified_locals, dict):
             unified_locals[stack_var] = {(cvar, getattr(cvar, "variable_type", None) or getattr(node, "type", None))}
 
-        return cvar
+        return cast(object, cvar)
 
     return _impl()
 

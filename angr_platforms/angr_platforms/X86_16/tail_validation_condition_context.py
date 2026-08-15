@@ -63,7 +63,7 @@ def _dynamic_attr_8616(obj: object, name: str, default: object = None) -> Any:  
 def _last_assignment_in_stmt(stmt: object) -> object | None:
     """Return a statement when it is a direct assignment."""
     if isinstance(stmt, CAssignment):
-        return stmt
+        return cast(object, stmt)
     return None
 
 
@@ -88,7 +88,7 @@ def _contextual_condition_fingerprint(assign_stmt: object, cond: object, project
     info = _extract_flag_test_info_8616(cond)
     if info is None:
         return None
-    flag_info = cast(FlagTestInfo8616, info)
+    flag_info = info
     if len(flag_info) == 3:
         flag_var, bit, negate_predicate = flag_info
     else:
@@ -101,7 +101,8 @@ def _contextual_condition_fingerprint(assign_stmt: object, cond: object, project
         return None
     if negate_predicate:
         predicate = CUnaryOp("Not", cast(CExpression, predicate), codegen=_dynamic_attr_8616(cond, "codegen", None))
-    return _expr_fingerprint(predicate, project)
+    fingerprint = _expr_fingerprint(predicate, project)
+    return fingerprint if isinstance(fingerprint, str) else None
 
 
 def _owned_materialized_condition_fingerprint_8616(cond: object, project: object) -> str | None:
@@ -128,7 +129,8 @@ def _owned_materialized_condition_fingerprint_8616(cond: object, project: object
     )
     if not any(tags.get(marker) is True for marker in materialized_markers):
         return None
-    fingerprint = _expr_fingerprint(cond, project)
+    raw_fingerprint = _expr_fingerprint(cond, project)
+    fingerprint = raw_fingerprint if isinstance(raw_fingerprint, str) else ""
     if any(isinstance(current, CFunctionCall) for current in _iter_c_nodes_deep_8616(cond)):
         return fingerprint
     if _fingerprint_contains_raw_register_8616(fingerprint) or "virtual:" in fingerprint:

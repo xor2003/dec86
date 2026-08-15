@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from types import SimpleNamespace
 from typing import Protocol, cast
 
 from angr.sim_type import SimType, SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypeShort
@@ -151,7 +152,7 @@ def seed_physical_callsite_prototype_8616(
     callsite_addr: int,
 ) -> CallsitePrototypeSeedResult8616:
     """Summarize one callsite and seed its callee before C structuring runs."""
-    summary = summarize_x86_16_callsite(caller, callsite_addr)
+    summary = summarize_x86_16_callsite(cast(SimpleNamespace, caller), callsite_addr)
     if summary is None:
         return CallsitePrototypeSeedResult8616(
             CallsitePrototypeSeedDecision8616.NO_SUMMARY,

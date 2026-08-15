@@ -13,39 +13,11 @@ parameters proven to be 16-bit near pointers.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from angr.sim_type import SimType, SimTypeFunction, SimTypePointer
 from archinfo import Arch
 
-if TYPE_CHECKING:
 
-    class _SimTypePointerBase8616:
-        """Typed static surface for angr's runtime pointer base class."""
-
-        pts_to: SimType
-        label: str | None
-        offset: int
-        qualifier: object
-        disposition: object
-        _arch: Arch | None
-
-        def __init__(
-            self,
-            pts_to: SimType,
-            label: str | None = None,
-            offset: int = 0,
-            *,
-            qualifier: object = None,
-            disposition: object = None,
-        ) -> None:
-            """Describe the third-party constructor used at runtime."""
-
-else:
-    _SimTypePointerBase8616 = SimTypePointer
-
-
-class SimTypeNearPointer16_8616(_SimTypePointerBase8616):
+class SimTypeNearPointer16_8616(SimTypePointer):  # type: ignore[misc]
     """Angr pointer type with the fixed 16-bit width of a real-mode near pointer."""
 
     @property

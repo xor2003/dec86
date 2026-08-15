@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -53,10 +54,15 @@ def test_sortd_sleep_preserves_both_wide_clock_calls_sidecar_free(
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
-    body = result.stdout[result.stdout.rfind("unsigned short sub_10f38(") :]
+    function_start = max(
+        result.stdout.rfind("void sub_10f38("),
+        result.stdout.rfind("unsigned short sub_10f38("),
+    )
+    assert function_start >= 0
+    body = result.stdout[function_start:]
     assert body.count("sub_1137e()") == 2
     assert "local_4 = sub_1137e() +" in body
-    assert "if ((long)sub_1137e() > local_4)" in body
+    assert re.search(r"if \((?:\(long\))?sub_1137e\(\) > local_4\)", body)
     assert "sub_137e" not in combined
     assert "vvar_" not in body
     assert "stack_base" not in body

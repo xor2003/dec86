@@ -69,7 +69,7 @@ def _unbound_opcode_handler(func: OpcodeRegistrationHandler) -> OpcodeExecHandle
     return cast(OpcodeExecHandler, func)
 
 
-class InstrBase(ExecInstr, ParseInstr, EmuInstr):
+class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-ignore] # dynamic frontend mixins
     """Provide shared byte-width opcode semantics for the x86 frontend runtime."""
 
     _base_opcode_template_instrfuncs: list[OpcodeExecHandler | None] | None = None
@@ -82,6 +82,8 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         super(ParseInstr, self).__init__(emu, instr, mode32)  # EmuInstr
         self.emu = emu
         # Keep opcode tables in fixed-size arrays for fast indexed access.
+        self.instrfuncs: list[OpcodeExecHandler | None]
+        self.chk: list[int | InstrFlags]
         if not isinstance(self.instrfuncs, list) or len(self.instrfuncs) != MAX_OPCODE:
             self.instrfuncs = [None] * MAX_OPCODE
         if not isinstance(self.chk, list) or len(self.chk) != MAX_OPCODE:
@@ -860,7 +862,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         """Execute decoded ``RETF_IMM16`` semantics through frontend emulator effects."""
         return_far16(self._active_stack_emulator(), self.instr.imm16)
 
-    def retf(self) -> None:
+    def retf(self, _instr: dict[str, object] | None = None) -> None:
         """Execute decoded ``RETF`` semantics through frontend emulator effects."""
         return_far16(self._active_stack_emulator())
 
@@ -891,7 +893,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):
         self.emu.set_gpreg(reg16_t.IP, self.emu.constant(self.instr.imm8, Type.int_16))
         lifter_instruction.jump(None, interrupt_core_addr_8616(self.instr.imm8), JumpKind.Call)
 
-    def iret(self) -> None:
+    def iret(self, _instr: dict[str, object] | None = None) -> None:
         """Execute decoded ``IRET`` semantics through frontend emulator effects."""
         return_interrupt16(self._active_stack_emulator())
 

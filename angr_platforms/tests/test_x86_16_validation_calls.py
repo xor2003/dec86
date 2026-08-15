@@ -443,6 +443,23 @@ def test_required_callsite_validation_matches_rebased_slice_target_identity() ->
     assert report.materialized_count == 1
 
 
+def test_required_callsite_validation_uses_metadata_name_without_ast_target() -> None:
+    codegen = _Codegen()
+    codegen.project._inertia_lst_metadata = SimpleNamespace(code_labels={0x2000: "apply_twice"})
+    args = (
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        CConstant(2, SimTypeShort(False), codegen=codegen),
+    )
+    call = CFunctionCall("apply_twice", None, args, tags={}, codegen=codegen)
+    root = CStatements([call], codegen=codegen)
+    codegen._inertia_callsite_summaries = {1: _summary()}
+
+    report = validate_required_callsites_8616(codegen, root)
+
+    assert report.passed
+    assert report.materialized_count == 1
+
+
 def test_required_callsite_validation_refuses_unrelated_rebased_slice_target() -> None:
     codegen = _Codegen()
     original_project = SimpleNamespace(
@@ -546,6 +563,39 @@ def test_call_interface_validation_accepts_binary_proven_arity() -> None:
     assert report.classified_fact_count == 1
     assert report.materialized_count == 1
     assert report.failure_count == 0
+
+
+def test_call_interface_validation_uses_project_target_name_for_helper_arity() -> None:
+    codegen = _Codegen()
+    codegen.project.kb = SimpleNamespace(labels={0x2000: "__aNldiv"})
+    long_type = SimTypeLong(False).with_arch(codegen.project.arch)
+    call = CFunctionCall(
+        "sub_2000",
+        None,
+        [CConstant(1, long_type, codegen=codegen), CConstant(2, long_type, codegen=codegen)],
+        tags={"ins_addr": 0x1010},
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x1010,
+            target_addr=0x2000,
+            return_addr=0x1013,
+            kind="direct_near",
+            arg_count=4,
+            arg_widths=(2, 2, 2, 2),
+            stack_cleanup=8,
+            return_register="ax",
+            return_used=True,
+            logical_arg_widths=(),
+        )
+    }
+
+    report = validate_call_interfaces_8616(codegen, CStatements([call], codegen=codegen))
+
+    assert report.passed
+    assert report.classified_fact_count == 1
+    assert report.materialized_count == 1
 
 
 def test_call_interface_validation_accepts_accounted_dword_prototype_grouping() -> None:

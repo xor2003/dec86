@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
-from typing import Protocol, TypeAlias
+from typing import Protocol, TypeAlias, cast
 
 from pyvex.lifting.util.syntax_wrapper import VexValue
 
@@ -18,6 +18,7 @@ from .addressing_helpers import (
     resolve_modrm16_address,
     resolve_modrm32_address,
 )
+from .emulator import Emulator
 from .instruction import InstrData, X86Instruction
 from .processor import RegisterValue
 from .regs import coerce_reg8_t, coerce_reg16_t, coerce_reg32_t, coerce_sgreg_t, reg8_t, reg16_t, reg32_t, sgreg_t
@@ -78,12 +79,14 @@ class _ExecEmulatorHooks(Protocol):
 OpcodeExecHandler: TypeAlias = Callable[["ExecInstr"], None]
 
 
-class ExecInstr(X86Instruction):
+class ExecInstr(X86Instruction):  # type: ignore[misc, unused-ignore]  # dynamic frontend base contract
     """Execute decoded frontend instructions through emulator register/memory hooks."""
 
     def __init__(self, emu: _ExecEmulatorHooks, instr: InstrData | None = None, mode32: bool = False) -> None:
         """Initialize opcode dispatch state while preserving legacy MRO construction."""
-        self.emu = emu
+        # The base instruction slot is typed as the full emulator; execution only
+        # requires this narrower structural hook surface at the runtime boundary.
+        self.emu = cast(Emulator, emu)
         if instr is not None:
             self.instr = instr
             self.mode32 = mode32

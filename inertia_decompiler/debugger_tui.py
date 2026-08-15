@@ -13,7 +13,7 @@ Uses textual library for UI components:
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import angr
 from textual.app import ComposeResult
@@ -25,8 +25,12 @@ from textual.widgets import (
     Static,
 )
 
+if TYPE_CHECKING:
+    from inertia_decompiler.debugger_gdb import GDBServer
 
-class RegisterPane(Static):
+
+# Textual's widget base is dynamically typed in the installed package.
+class RegisterPane(Static):  # type: ignore[misc]
     """Display CPU registers (general purpose, segment, flags)."""
 
     registers: ClassVar[Reactive[dict[str, int]]] = reactive({})
@@ -59,7 +63,7 @@ class RegisterPane(Static):
         return "\n".join(lines)
 
 
-class BreakpointPane(Static):
+class BreakpointPane(Static):  # type: ignore[misc]
     """Display active breakpoints."""
 
     breakpoints: ClassVar[Reactive[list[dict[str, int | bool]]]] = reactive([])
@@ -78,7 +82,7 @@ class BreakpointPane(Static):
         return "\n".join(lines)
 
 
-class MemoryPane(Static):
+class MemoryPane(Static):  # type: ignore[misc]
     """Display memory/stack contents."""
 
     memory_dump: ClassVar[Reactive[str]] = reactive("")
@@ -88,10 +92,10 @@ class MemoryPane(Static):
         if not self.memory_dump:
             return "╔════ MEMORY VIEW ════╗\n(select address)\n╚════════════════════╝"
 
-        return self.memory_dump
+        return cast(str, self.memory_dump)
 
 
-class StackPane(Static):
+class StackPane(Static):  # type: ignore[misc]
     """Display stack contents."""
 
     stack_data: ClassVar[Reactive[list[tuple[int, int]]]] = reactive([])
@@ -109,7 +113,7 @@ class StackPane(Static):
         return "\n".join(lines)
 
 
-class DisassemblyPane(Static):
+class DisassemblyPane(Static):  # type: ignore[misc]
     """Display disassembled code."""
 
     disassembly: ClassVar[Reactive[str]] = reactive("")
@@ -132,7 +136,7 @@ class DisassemblyPane(Static):
         return "\n".join(lines)
 
 
-class DebuggerTUI(Static):
+class DebuggerTUI(Static):  # type: ignore[misc]
     """Main debugger TUI layout."""
 
     def compose(self) -> ComposeResult:
@@ -171,14 +175,14 @@ class DebuggerApp:
         self.gdb_host = gdb_host
 
         # GDB server (to be created when needed)
-        self.gdb_server = None
+        self.gdb_server: GDBServer | None = None
 
         # UI state
-        self.registers = {}
-        self.breakpoints = []
+        self.registers: dict[str, int] = {}
+        self.breakpoints: list[dict[str, int | bool]] = []
         self.disassembly = ""
         self.memory_dump = ""
-        self.stack_data = []
+        self.stack_data: list[tuple[int, int]] = []
         self.current_ip = 0
 
     def start_gdb_server(self) -> None:

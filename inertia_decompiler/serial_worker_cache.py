@@ -21,6 +21,7 @@ from pathlib import Path
 
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.segment_program_layout_codec import segment_program_function_evidence_from_record_8616
+from angr_platforms.X86_16.tail_validation import x86_16_tail_validation_snapshot_passed
 
 from inertia_decompiler.cache import (
     DECOMPILATION_CACHE_DIR,
@@ -30,7 +31,6 @@ from inertia_decompiler.cache import (
     _recovery_cache_key,
 )
 from inertia_decompiler.cli_arg_parser import CliArguments
-from inertia_decompiler.tail_validation import x86_16_tail_validation_snapshot_passed
 
 SERIAL_WORKER_CACHE_NAMESPACE_8616: str = "serial_clean_worker"
 SERIAL_WORKER_CACHE_SCHEMA_8616: int = 1
@@ -137,7 +137,7 @@ def serial_worker_cache_inputs_8616(
 def build_serial_worker_cache_key_8616(inputs: SerialWorkerCacheInputs8616) -> dict[str, object] | None:
     """Build the content key for an immutable clean-worker result."""
     signature_fingerprint = _cache_file_fingerprint(inputs.signature_catalog)
-    return _recovery_cache_key(
+    cache_key = _recovery_cache_key(
         binary_path=inputs.binary_path,
         kind="serial_clean_worker_result",
         extra={
@@ -164,6 +164,9 @@ def build_serial_worker_cache_key_8616(inputs: SerialWorkerCacheInputs8616) -> d
             },
         },
     )
+    if not isinstance(cache_key, dict):
+        return None
+    return {str(key): value for key, value in cache_key.items()}
 
 
 def _validated_result_record_8616(

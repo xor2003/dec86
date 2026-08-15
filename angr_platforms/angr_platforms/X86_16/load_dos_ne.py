@@ -90,7 +90,7 @@ class NESegmentMapping:
     min_alloc: int
 
 
-class DOSNE(Blob):
+class DOSNE(Blob):  # type: ignore[misc, unused-ignore] # dynamic CLE backend base
     """Minimal segmented NE loader for smoke testing.
 
     NE uses selector indexes in its entry/stack fields rather than DOS real-mode
@@ -138,6 +138,7 @@ class DOSNE(Blob):
             base_addr=load_base,
             **kwargs,
         )
+        self._max_addr = int(getattr(self, "_max_addr", 0))
 
         for mapping in segment_mappings:
             if mapping.file_offset == 0 and mapping.length > 0:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from types import CodeType
+from typing import cast
 
 from monkeytype.config import DefaultConfig  # pyright: ignore[reportMissingImports]
 from monkeytype.db.base import CallTraceStore  # pyright: ignore[reportMissingImports]
@@ -16,7 +17,7 @@ from monkeytype.db.sqlite import SQLiteStore  # pyright: ignore[reportMissingImp
 from inertia_decompiler.monkeytype_tools import MONKEYTYPE_DB_PATH, ensure_monkeytype_dirs, monkeytype_code_filter
 
 
-class InertiaMonkeyTypeConfig(DefaultConfig):
+class InertiaMonkeyTypeConfig(DefaultConfig):  # type: ignore[misc]  # MonkeyType ships an untyped base class.
     """MonkeyType config bound to the repository-local trace database."""
 
     def trace_store(self) -> CallTraceStore:
@@ -26,7 +27,7 @@ class InertiaMonkeyTypeConfig(DefaultConfig):
 
     def code_filter(self) -> Callable[[CodeType], bool]:
         """Return the repository-local code filter for trace collection."""
-        return monkeytype_code_filter
+        return cast(Callable[[CodeType], bool], monkeytype_code_filter)
 
 
 CONFIG: InertiaMonkeyTypeConfig = InertiaMonkeyTypeConfig()

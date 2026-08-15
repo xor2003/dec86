@@ -261,10 +261,13 @@ def exact_caller_stack_object_shape_evidence_8616(
         end = index + 1
         while end < len(physical_widths) and owned_slices[end] == owner:
             end += 1
-        slices = sorted(
-            (int(sources[position][1]), physical_widths[position])
-            for position in range(index, end)
-        )
+        slice_rows: list[tuple[int, int]] = []
+        for position in range(index, end):
+            source = sources[position]
+            if not isinstance(source, tuple) or len(source) < 2 or not isinstance(source[1], int):
+                return None
+            slice_rows.append((source[1], physical_widths[position]))
+        slices = sorted(slice_rows)
         cursor = owner.offset
         for slice_offset, slice_width in slices:
             if slice_offset != cursor:

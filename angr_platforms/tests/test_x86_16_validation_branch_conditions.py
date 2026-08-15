@@ -263,6 +263,61 @@ def test_materialized_branch_accepts_exact_bound_call_return_predicate() -> None
     assert report.materialized_count == 1
 
 
+def test_materialized_branch_accepts_bound_call_return_comparison_with_nonzero_constant() -> None:
+    """A call replacing AX remains equivalent when the branch compares with one."""
+    fact = ConditionIR(
+        "ne",
+        IRValue(MemSpace.REG, name="ax", offset=8, size=2),
+        IRValue(MemSpace.CONST, const=1, size=2),
+        src_insn=0x4015,
+        block_addr=0x4010,
+    )
+    codegen = _Codegen(fact)
+    callee = SimpleNamespace(addr=0x4000, name="sub_4000", prototype=None)
+    call = CFunctionCall("sub_4000", callee, [], codegen=codegen)
+    summary = CallsiteSummary8616(
+        callsite_addr=0x400D,
+        target_addr=0x4000,
+        return_addr=0x4010,
+        kind="near",
+        arg_count=0,
+        arg_widths=(),
+        stack_cleanup=0,
+        return_register="ax",
+        return_used=True,
+        return_use_kind=CallsiteReturnUseKind8616.CONDITION,
+    )
+    bind_structured_callsite_identity_8616(call, summary)
+    codegen._inertia_callsite_summaries = {id(call): summary}
+    condition = CBinaryOp(
+        "CmpNE",
+        call,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+        tags={
+            "ins_addr": 0x4015,
+            "vex_block_addr": 0x4010,
+            "inertia_structuring_condition_cfg_materialized_8616": True,
+        },
+    )
+    root = CStatements(
+        [CIfElse([(condition, CStatements([], codegen=codegen))], codegen=codegen)],
+        codegen=codegen,
+    )
+
+    report = validate_materialized_branch_conditions_8616(
+        codegen,
+        root,
+        condition_fingerprint=lambda expression: (
+            "CmpNE(call:addr:0x4000,const:1)" if expression is condition else _fingerprint(expression)
+        ),
+        condition_ir_fingerprint=lambda _condition: "CmpNE(reg:ax,const:1)",
+    )
+
+    assert report.passed
+    assert report.materialized_count == 1
+
+
 def test_materialized_branch_condition_accepts_exact_jcc_precision_evidence() -> None:
     codegen = _Codegen(_fact())
     codegen._inertia_condition_precision_evidence_8616 = (

@@ -103,6 +103,15 @@ def _load_structured_c() -> object:
     return structured_codegen.c
 
 
+def _load_cod_extract_attr(name: str) -> object:
+    """Load explicit X86_16 COD extraction compatibility exports."""
+    from angr_platforms.X86_16.cod_extract import join_cod_entries_with_synthetic_globals
+
+    if name == "join_cod_entries_with_synthetic_globals":
+        return join_cod_entries_with_synthetic_globals
+    raise AttributeError(name)
+
+
 def _load_widening_attr(name: str) -> _WideningAttr:
     from angr_platforms.X86_16.widening.register_widening import (
         can_join_adjacent_register_slices,
@@ -120,10 +129,10 @@ def _load_widening_attr(name: str) -> _WideningAttr:
 
 
 def _load_angr_sim_types(name: str) -> object:
-    if name in {"SimTypePointer", "SimTypeShort"}:
-        from angr.sim_type import SimTypePointer, SimTypeShort
+    if name in {"SimTypeChar", "SimTypePointer", "SimTypeShort"}:
+        from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 
-        return SimTypePointer if name == "SimTypePointer" else SimTypeShort
+        return {"SimTypeChar": SimTypeChar, "SimTypePointer": SimTypePointer, "SimTypeShort": SimTypeShort}[name]
     if name in {"SimMemoryVariable", "SimRegisterVariable", "SimStackVariable"}:
         from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
@@ -154,12 +163,16 @@ def _resolve_proxy_attr(name: str) -> object:
         value = _load_structured_c()
         globals()[name] = value
         return value
+    if name == "join_cod_entries_with_synthetic_globals":
+        value = _load_cod_extract_attr(name)
+        globals()[name] = value
+        return value
     if name.startswith("Sim"):
         value = _load_angr_sim_types(name)
         globals()[name] = value
         return value
-    if name in {"SimTypePointer", "SimTypeShort", "_AccessTraitEvidenceProfile", "_AccessTraitStrideEvidence", "describe_alias_storage"}:
-        if name in {"SimTypePointer", "SimTypeShort"}:
+    if name in {"SimTypeChar", "SimTypePointer", "SimTypeShort", "_AccessTraitEvidenceProfile", "_AccessTraitStrideEvidence", "describe_alias_storage"}:
+        if name in {"SimTypeChar", "SimTypePointer", "SimTypeShort"}:
             value = _load_angr_sim_types(name)
         elif name in {"_AccessTraitEvidenceProfile", "_AccessTraitStrideEvidence"}:
             value = _load_access_profile_attr(name)

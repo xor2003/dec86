@@ -6,14 +6,17 @@ Responsibility: compile emitted C as validation evidence without repairing gener
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
 
@@ -136,6 +139,24 @@ _DEFAULT_MSC51_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v
 _MSC51_MIRROR_CACHE: dict[Path, Path] = {}
 _DEFAULT_RECOMPILE_TIMEOUT_SEC = 20
 _MSC51_TRANSIENT_RETRY_LIMIT = 5
+_MSC51_COMPILER_LOCK_PATH = Path(tempfile.gettempdir()) / "inertia-msc51-kvikdos.lock"
+
+
+@contextmanager
+def _msc51_compiler_lock_8616() -> Iterator[None]:
+    """Serialize KvikDOS/MS C invocations shared by parallel test workers.
+
+    KvikDOS and the DOS compiler use shared emulator state, so concurrent
+    processes can produce false compiler errors.  This lock covers only the
+    external compiler call; payload preparation and GCC validation stay
+    parallel.
+    """
+    with _MSC51_COMPILER_LOCK_PATH.open("a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _timeout_stream_text(value: str | bytes | None) -> str:
@@ -333,33 +354,36 @@ def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileChec
             r"c:\GEN.C",
         )
         attempts: list[subprocess.CompletedProcess[str]] = []
-        for _attempt_index in range(_MSC51_TRANSIENT_RETRY_LIMIT):
-            try:
-                proc = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                    timeout=_recompile_timeout_sec(),
-                )
-            except subprocess.TimeoutExpired as ex:
-                return RecompileCheckResult(
-                    passed=False,
-                    target=target,
-                    exit_code=124,
-                    compiler=str(kvikdos),
-                    stdout=_timeout_stream_text(ex.stdout),
-                    stderr=_timeout_stream_text(ex.stderr) + "\nrecompile timeout (msc-dos)",
-                    command=command,
-                    checked_payload=checked_payload,
-                    checked_payload_hash=checked_hash,
-                    source_path=str(src_path),
-                )
-            attempts.append(proc)
-            if not _msc51_transient_emulator_failure_8616(proc.stdout or "", proc.stderr or "", proc.returncode):
-                break
-        else:
-            proc = attempts[-1]
+        with _msc51_compiler_lock_8616():
+            for _attempt_index in range(_MSC51_TRANSIENT_RETRY_LIMIT):
+                try:
+                    proc = subprocess.run(
+                        command,
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=_recompile_timeout_sec(),
+                    )
+                except subprocess.TimeoutExpired as ex:
+                    return RecompileCheckResult(
+                        passed=False,
+                        target=target,
+                        exit_code=124,
+                        compiler=str(kvikdos),
+                        stdout=_timeout_stream_text(ex.stdout),
+                        stderr=_timeout_stream_text(ex.stderr) + "\nrecompile timeout (msc-dos)",
+                        command=command,
+                        checked_payload=checked_payload,
+                        checked_payload_hash=checked_hash,
+                        source_path=str(src_path),
+                    )
+                attempts.append(proc)
+                if not _msc51_transient_emulator_failure_8616(
+                    proc.stdout or "", proc.stderr or "", proc.returncode
+                ):
+                    break
+            else:
+                proc = attempts[-1]
         stderr_text = proc.stderr or ""
         stdout_text = proc.stdout or ""
         combined_text = f"{stderr_text}\n{stdout_text}".lower()

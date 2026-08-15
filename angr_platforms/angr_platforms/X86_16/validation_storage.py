@@ -740,6 +740,7 @@ def _registered_named_global_copy_type_matches_8616(
         for named_fact in named_global_facts
         if named_fact.global_name == copy.source_global_name
         and named_fact.struct_type == fact.struct_type
+        and isinstance(named_fact.array_len, int)
         and named_fact.array_len > 0
     )
     struct_name = fact.struct_type.name
@@ -775,7 +776,7 @@ def _registered_named_global_copy_type_matches_8616(
             registered_type,
             fact.struct_type,
         )
-    return matched
+    return bool(matched)
 
 
 def _final_stack_index_identity_8616(
@@ -1165,18 +1166,18 @@ def validate_storage_identities_8616(
 
     conflicting_stack_bases: set[int] = set()
     stack_facts_by_base: dict[int, list[StackAggregateObjectFact8616]] = {}
-    for fact in stack_facts:
-        stack_facts_by_base.setdefault(fact.base_offset, []).append(fact)
+    for stack_fact in stack_facts:
+        stack_facts_by_base.setdefault(stack_fact.base_offset, []).append(stack_fact)
     for base_offset, base_facts in stack_facts_by_base.items():
         shapes = {
-            (fact.byte_size, fact.element_width)
-            for fact in base_facts
+            (stack_fact.byte_size, stack_fact.element_width)
+            for stack_fact in base_facts
         }
         if len(shapes) <= 1:
             continue
         conflicting_stack_bases.add(base_offset)
         classified_fact_count += len(base_facts)
-        representative = min(
+        stack_representative = min(
             base_facts,
             key=lambda fact: (
                 fact.byte_size,
@@ -1188,42 +1189,42 @@ def validate_storage_identities_8616(
         issues.append(
             StackAggregateObjectIssue8616(
                 kind=StackAggregateObjectIssueKind8616.CONFLICTING_EVIDENCE_SHAPE,
-                base_offset=representative.base_offset,
-                expected_byte_size=representative.byte_size,
-                expected_element_width=representative.element_width,
-                evidence_kind=representative.evidence_kind,
-                indexed_offsets=representative.indexed_offsets,
+                base_offset=stack_representative.base_offset,
+                expected_byte_size=stack_representative.byte_size,
+                expected_element_width=stack_representative.element_width,
+                evidence_kind=stack_representative.evidence_kind,
+                indexed_offsets=stack_representative.indexed_offsets,
                 evidence_shapes=tuple(sorted(shapes)),
             )
         )
 
-    for fact in stack_facts:
-        if fact.base_offset in conflicting_stack_bases:
+    for stack_fact in stack_facts:
+        if stack_fact.base_offset in conflicting_stack_bases:
             continue
         classified_fact_count += 1
-        if not _stack_aggregate_fact_is_valid_8616(fact):
+        if not _stack_aggregate_fact_is_valid_8616(stack_fact):
             issues.append(
                 StackAggregateObjectIssue8616(
                     kind=StackAggregateObjectIssueKind8616.INVALID_EVIDENCE_SHAPE,
-                    base_offset=fact.base_offset,
-                    expected_byte_size=fact.byte_size,
-                    expected_element_width=fact.element_width,
-                    evidence_kind=fact.evidence_kind,
-                    indexed_offsets=fact.indexed_offsets,
+                    base_offset=stack_fact.base_offset,
+                    expected_byte_size=stack_fact.byte_size,
+                    expected_element_width=stack_fact.element_width,
+                    evidence_kind=stack_fact.evidence_kind,
+                    indexed_offsets=stack_fact.indexed_offsets,
                 )
             )
             continue
         actual_shapes = _stack_aggregate_candidate_shapes_8616(
             root_variables,
-            fact.base_offset,
+            stack_fact.base_offset,
         )
         matching_width_shapes = tuple(
             shape
             for shape in actual_shapes
-            if shape[1] == fact.byte_size
+            if shape[1] == stack_fact.byte_size
         )
         if any(
-            shape[2] == fact.element_width
+            shape[2] == stack_fact.element_width
             for shape in matching_width_shapes
         ):
             materialized_count += 1
@@ -1239,11 +1240,11 @@ def validate_storage_identities_8616(
         issues.append(
             StackAggregateObjectIssue8616(
                 kind=issue_kind,
-                base_offset=fact.base_offset,
-                expected_byte_size=fact.byte_size,
-                expected_element_width=fact.element_width,
-                evidence_kind=fact.evidence_kind,
-                indexed_offsets=fact.indexed_offsets,
+                base_offset=stack_fact.base_offset,
+                expected_byte_size=stack_fact.byte_size,
+                expected_element_width=stack_fact.element_width,
+                evidence_kind=stack_fact.evidence_kind,
+                indexed_offsets=stack_fact.indexed_offsets,
                 actual_shapes=actual_shapes,
             )
         )
@@ -1253,16 +1254,16 @@ def validate_storage_identities_8616(
         tuple[str, int, str, int],
         list[StackAggregateFieldProjectionFact8616],
     ] = {}
-    for fact in field_facts:
+    for field_fact in field_facts:
         identity = (
-            fact.source_base,
-            fact.source_offset,
-            fact.destination_base,
-            fact.destination_offset,
+            field_fact.source_base,
+            field_fact.source_offset,
+            field_fact.destination_base,
+            field_fact.destination_offset,
         )
-        field_facts_by_identity.setdefault(identity, []).append(fact)
+        field_facts_by_identity.setdefault(identity, []).append(field_fact)
     for identity, identity_facts in field_facts_by_identity.items():
-        variants = {
+        field_variants = {
             (
                 fact.field_offset,
                 fact.struct_type,
@@ -1271,11 +1272,11 @@ def validate_storage_identities_8616(
             )
             for fact in identity_facts
         }
-        if len(variants) <= 1:
+        if len(field_variants) <= 1:
             continue
         conflicting_field_identities.add(identity)
         classified_fact_count += len(identity_facts)
-        representative = min(
+        field_representative = min(
             identity_facts,
             key=lambda fact: (
                 fact.field_offset,
@@ -1284,7 +1285,7 @@ def validate_storage_identities_8616(
         )
         issues.append(
             _stack_field_projection_issue_8616(
-                representative,
+                field_representative,
                 StackFieldProjectionIssueKind8616.CONFLICTING_EVIDENCE,
                 evidence_projections=tuple(
                     sorted(
@@ -1300,29 +1301,29 @@ def validate_storage_identities_8616(
             )
         )
 
-    for fact in field_facts:
+    for field_fact in field_facts:
         identity = (
-            fact.source_base,
-            fact.source_offset,
-            fact.destination_base,
-            fact.destination_offset,
+            field_fact.source_base,
+            field_fact.source_offset,
+            field_fact.destination_base,
+            field_fact.destination_offset,
         )
         if identity in conflicting_field_identities:
             continue
         classified_fact_count += 1
-        if not _stack_field_projection_fact_is_valid_8616(fact):
+        if not _stack_field_projection_fact_is_valid_8616(field_fact):
             issues.append(
                 _stack_field_projection_issue_8616(
-                    fact,
+                    field_fact,
                     StackFieldProjectionIssueKind8616.INVALID_EVIDENCE,
                 )
             )
             continue
-        actual = _final_stack_field_projections_8616(root, fact)
+        actual = _final_stack_field_projections_8616(root, field_fact)
         if not actual:
             issues.append(
                 _stack_field_projection_issue_8616(
-                    fact,
+                    field_fact,
                     StackFieldProjectionIssueKind8616.MISSING_PROJECTION,
                 )
             )
@@ -1330,13 +1331,13 @@ def validate_storage_identities_8616(
         source_matches = tuple(
             projection
             for projection in actual
-            if projection.source_base == fact.source_base
-            and projection.source_offset == fact.source_offset
+            if projection.source_base == field_fact.source_base
+            and projection.source_offset == field_fact.source_offset
         )
         if not source_matches:
             issues.append(
                 _stack_field_projection_issue_8616(
-                    fact,
+                    field_fact,
                     StackFieldProjectionIssueKind8616.SOURCE_IDENTITY_MISMATCH,
                     actual=actual,
                 )
@@ -1345,24 +1346,24 @@ def validate_storage_identities_8616(
         field_matches = tuple(
             projection
             for projection in source_matches
-            if projection.field_offset == fact.field_offset
+            if projection.field_offset == field_fact.field_offset
         )
         if not field_matches:
             issues.append(
                 _stack_field_projection_issue_8616(
-                    fact,
+                    field_fact,
                     StackFieldProjectionIssueKind8616.FIELD_OFFSET_MISMATCH,
                     actual=source_matches,
                 )
             )
             continue
         if not any(
-            projection.struct_type == fact.struct_type
+            projection.struct_type == field_fact.struct_type
             for projection in field_matches
         ):
             issues.append(
                 _stack_field_projection_issue_8616(
-                    fact,
+                    field_fact,
                     StackFieldProjectionIssueKind8616.STRUCT_TYPE_MISMATCH,
                     actual=field_matches,
                 )
@@ -1375,150 +1376,150 @@ def validate_storage_identities_8616(
         tuple[int, int],
         list[IndexedGlobalStackAggregateCopyFact8616],
     ] = {}
-    for fact in copy_facts:
+    for copy_fact in copy_facts:
         copy_facts_by_evidence.setdefault(
-            (fact.load_ins_addr, fact.store_ins_addr),
+            (copy_fact.load_ins_addr, copy_fact.store_ins_addr),
             [],
-        ).append(fact)
-    for evidence_identity, evidence_facts in copy_facts_by_evidence.items():
-        variants = {
+        ).append(copy_fact)
+    for evidence_identity, copy_evidence_facts in copy_facts_by_evidence.items():
+        copy_variants = {
             (
-                fact.source_global_offset,
-                fact.source_index_base,
-                fact.source_index_offset,
-                fact.source_index_adjustment,
-                fact.destination_base,
-                fact.destination_offset,
-                fact.width,
-                fact.struct_type,
+                copy_evidence_fact.source_global_offset,
+                copy_evidence_fact.source_index_base,
+                copy_evidence_fact.source_index_offset,
+                copy_evidence_fact.source_index_adjustment,
+                copy_evidence_fact.destination_base,
+                copy_evidence_fact.destination_offset,
+                copy_evidence_fact.width,
+                copy_evidence_fact.struct_type,
             )
-            for fact in evidence_facts
+            for copy_evidence_fact in copy_evidence_facts
         }
-        if len(variants) <= 1:
+        if len(copy_variants) <= 1:
             continue
         conflicting_copy_evidence.add(evidence_identity)
-        classified_fact_count += len(evidence_facts)
-        representative = min(
-            evidence_facts,
-            key=lambda fact: (
-                fact.source_global_offset,
-                fact.source_index_offset,
-                fact.source_index_adjustment,
-                fact.destination_offset,
-                fact.width,
-                _struct_name_8616(fact.struct_type),
+        classified_fact_count += len(copy_evidence_facts)
+        copy_representative = min(
+            copy_evidence_facts,
+            key=lambda copy_evidence_fact: (
+                copy_evidence_fact.source_global_offset,
+                copy_evidence_fact.source_index_offset,
+                copy_evidence_fact.source_index_adjustment,
+                copy_evidence_fact.destination_offset,
+                copy_evidence_fact.width,
+                _struct_name_8616(copy_evidence_fact.struct_type),
             ),
         )
         issues.append(
             _indexed_global_stack_copy_issue_8616(
-                representative,
+                copy_representative,
                 IndexedGlobalStackAggregateCopyIssueKind8616.CONFLICTING_EVIDENCE,
                 evidence_variants=tuple(
                     sorted(
                         {
                             (
-                                fact.source_global_offset,
-                                fact.source_index_offset,
-                                fact.source_index_adjustment,
-                                fact.destination_offset,
-                                _struct_name_8616(fact.struct_type),
+                                copy_evidence_fact.source_global_offset,
+                                copy_evidence_fact.source_index_offset,
+                                copy_evidence_fact.source_index_adjustment,
+                                copy_evidence_fact.destination_offset,
+                                _struct_name_8616(copy_evidence_fact.struct_type),
                             )
-                            for fact in evidence_facts
+                            for copy_evidence_fact in copy_evidence_facts
                         }
                     )
                 ),
             )
         )
 
-    for fact in copy_facts:
-        evidence_identity = (fact.load_ins_addr, fact.store_ins_addr)
+    for copy_fact in copy_facts:
+        evidence_identity = (copy_fact.load_ins_addr, copy_fact.store_ins_addr)
         if evidence_identity in conflicting_copy_evidence:
             continue
         classified_fact_count += 1
-        if not _indexed_global_stack_copy_fact_is_valid_8616(fact):
+        if not _indexed_global_stack_copy_fact_is_valid_8616(copy_fact):
             issues.append(
                 _indexed_global_stack_copy_issue_8616(
-                    fact,
+                    copy_fact,
                     IndexedGlobalStackAggregateCopyIssueKind8616.INVALID_EVIDENCE,
                 )
             )
             continue
-        actual = _final_indexed_global_stack_copies_8616(root, fact)
-        if not actual:
+        copy_actual = _final_indexed_global_stack_copies_8616(root, copy_fact)
+        if not copy_actual:
             issues.append(
                 _indexed_global_stack_copy_issue_8616(
-                    fact,
+                    copy_fact,
                     IndexedGlobalStackAggregateCopyIssueKind8616.MISSING_COPY,
                 )
             )
             continue
-        source_matches = tuple(
+        copy_source_matches = tuple(
             copy
-            for copy in actual
-            if copy.source_global_offset == fact.source_global_offset
+            for copy in copy_actual
+            if copy.source_global_offset == copy_fact.source_global_offset
         )
-        if not source_matches:
+        if not copy_source_matches:
             issues.append(
                 _indexed_global_stack_copy_issue_8616(
-                    fact,
+                    copy_fact,
                     IndexedGlobalStackAggregateCopyIssueKind8616.SOURCE_IDENTITY_MISMATCH,
-                    actual=actual,
+                    actual=copy_actual,
                 )
             )
             continue
-        index_matches = tuple(
+        copy_index_matches = tuple(
             copy
-            for copy in source_matches
-            if copy.source_index_base == fact.source_index_base
-            and copy.source_index_offset == fact.source_index_offset
+            for copy in copy_source_matches
+            if copy.source_index_base == copy_fact.source_index_base
+            and copy.source_index_offset == copy_fact.source_index_offset
             and copy.source_index_adjustment
-            == fact.source_index_adjustment
+            == copy_fact.source_index_adjustment
         )
-        if not index_matches:
+        if not copy_index_matches:
             issues.append(
                 _indexed_global_stack_copy_issue_8616(
-                    fact,
+                    copy_fact,
                     IndexedGlobalStackAggregateCopyIssueKind8616.SOURCE_INDEX_MISMATCH,
-                    actual=source_matches,
+                    actual=copy_source_matches,
                 )
             )
             continue
-        width_matches = tuple(
+        copy_width_matches = tuple(
             copy
-            for copy in index_matches
-            if copy.source_width == fact.width
-            and copy.destination_width == fact.width
+            for copy in copy_index_matches
+            if copy.source_width == copy_fact.width
+            and copy.destination_width == copy_fact.width
         )
-        if not width_matches:
+        if not copy_width_matches:
             issues.append(
                 _indexed_global_stack_copy_issue_8616(
-                    fact,
+                    copy_fact,
                     IndexedGlobalStackAggregateCopyIssueKind8616.WIDTH_MISMATCH,
-                    actual=index_matches,
+                    actual=copy_index_matches,
                 )
             )
             continue
         if not any(
             (
-                copy.source_struct_type == fact.struct_type
+                copy.source_struct_type == copy_fact.struct_type
                 or (
                     copy.source_struct_type is None
                     and _registered_named_global_copy_type_matches_8616(
                         codegen,
-                        fact,
+                        copy_fact,
                         copy,
                         named_global_facts,
                     )
                 )
             )
-            and copy.destination_struct_type == fact.struct_type
-            for copy in width_matches
+            and copy.destination_struct_type == copy_fact.struct_type
+            for copy in copy_width_matches
         ):
             issues.append(
                 _indexed_global_stack_copy_issue_8616(
-                    fact,
+                    copy_fact,
                     IndexedGlobalStackAggregateCopyIssueKind8616.STRUCT_TYPE_MISMATCH,
-                    actual=width_matches,
+                    actual=copy_width_matches,
                 )
             )
             continue

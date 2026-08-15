@@ -1,3 +1,9 @@
+"""Layer: DOS execution backend.
+
+Responsibility: build isolated DOS harnesses and execute them through Kvikdos
+without changing dosunit observation or comparison semantics.
+"""
+
 from __future__ import annotations
 
 import ctypes
@@ -29,6 +35,8 @@ CAPTURE_STUB_RESERVE = 0x80 + OBS_SIZE
 
 @dataclass(frozen=True)
 class MzImage:
+    """Parsed MZ image and relocation records used by a harness."""
+
     image: bytes
     relocs: tuple[tuple[int, int], ...]
     minalloc: int
@@ -37,16 +45,23 @@ class MzImage:
 
 @dataclass(frozen=True)
 class Harness:
+    """Executable image plus the linear address of captured observations."""
+
     exe_bytes: bytes
     observation_linear: int
 
 
 class KvikdosBackendError(DosUnitError):
+    """Raised when the Kvikdos execution backend cannot complete a request."""
+
     pass
 
 
 class KvikdosSession:
-    def __init__(self, *, kvikdos_path: Path | None = None):
+    """Own one reusable in-process Kvikdos VM and its temporary harness files."""
+
+    def __init__(self, *, kvikdos_path: Path | None = None) -> None:
+        """Create an inactive session; enter the context to allocate the VM."""
         self.kvikdos_path = kvikdos_path
         self._lib: ctypes.CDLL | None = None
         self._vm: ctypes.c_void_p | None = None
@@ -54,6 +69,7 @@ class KvikdosSession:
         self._counter = 0
 
     def __enter__(self) -> KvikdosSession:
+        """Allocate the native VM and return this active session."""
         self._lib = _load_libkvikdos()
         create = self._lib.dosvm_create
         create.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p]
@@ -67,6 +83,7 @@ class KvikdosSession:
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        """Destroy the native VM and remove session-local temporary files."""
         if self._lib is not None and self._vm is not None:
             destroy = self._lib.dosvm_destroy
             destroy.argtypes = [ctypes.c_void_p]
@@ -79,6 +96,7 @@ class KvikdosSession:
         self._tmp = None
 
     def run_harness(self, exe_bytes: bytes) -> bytes:
+        """Run an executable harness and return its captured memory dump."""
         if self._lib is None or self._vm is None or self._tmp is None:
             raise KvikdosBackendError("KvikdosSession is not active")
         tmp_path = Path(self._tmp.name)
@@ -97,6 +115,7 @@ class KvikdosSession:
         return dump_path.read_bytes()
 
     def snapshot_create(self) -> int:
+        """Create and return a native VM snapshot handle."""
         if self._lib is None or self._vm is None:
             raise KvikdosBackendError("KvikdosSession is not active")
         create = self._lib.dosvm_snapshot_create
@@ -109,6 +128,7 @@ class KvikdosSession:
         return int(snapshot.value)
 
     def snapshot_restore(self, snapshot: int) -> None:
+        """Restore a previously created native VM snapshot."""
         if self._lib is None or self._vm is None:
             raise KvikdosBackendError("KvikdosSession is not active")
         restore = self._lib.dosvm_snapshot_restore
@@ -119,6 +139,7 @@ class KvikdosSession:
             raise KvikdosBackendError(f"dosvm_snapshot_restore failed with status {status}")
 
     def snapshot_destroy(self, snapshot: int) -> None:
+        """Release a native VM snapshot handle."""
         if self._lib is None:
             raise KvikdosBackendError("KvikdosSession is not active")
         destroy = self._lib.dosvm_snapshot_destroy
@@ -127,6 +148,7 @@ class KvikdosSession:
         destroy(ctypes.c_void_p(snapshot))
 
     def read_memory(self, linear: int, size: int) -> bytes:
+        """Read a byte range from the active guest memory image."""
         if self._lib is None or self._vm is None:
             raise KvikdosBackendError("KvikdosSession is not active")
         out = (ctypes.c_ubyte * size)()
@@ -139,6 +161,7 @@ class KvikdosSession:
         return bytes(out)
 
     def write_memory(self, linear: int, data: bytes) -> None:
+        """Write bytes into the active guest memory image."""
         if self._lib is None or self._vm is None:
             raise KvikdosBackendError("KvikdosSession is not active")
         buf = (ctypes.c_ubyte * len(data)).from_buffer_copy(data)
@@ -159,6 +182,7 @@ def execute_vector(
     kvikdos_path: Path | None = None,
     session: KvikdosSession | None = None,
 ) -> dict[str, Any]:
+    """Execute one vector and return its normalized register observation."""
     normalized_backend = backend.lower()
     harness = build_harness(vector, exe_path=exe_path, functions_catalog=functions_catalog)
     if normalized_backend == "libkvikdos" and session is not None:
@@ -189,6 +213,7 @@ def build_harness(
     exe_path: Path,
     functions_catalog: dict[str, Any] | None = None,
 ) -> Harness:
+    """Build a DOS harness that invokes the vector's selected function."""
     original = _read_mz(exe_path)
     function = vector.get("function", {})
     if not isinstance(function, dict):
@@ -737,15 +762,21 @@ int dosunit_kvikdos_run(const char *prog_filename, const char *dump_filename) {{
     if not wrapper.exists() or wrapper.read_text() != source:
         wrapper.write_text(source)
     cc = os.environ.get("CC", "cc")
-    result = subprocess.run(
-        [cc, "-shared", "-fPIC", "-O2", "-w", "-o", str(shared), str(wrapper)],
-        check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise KvikdosBackendError(f"failed to build libkvikdos wrapper: {result.stderr.strip()}")
+    with tempfile.NamedTemporaryFile(prefix="libdosunit_kvikdos.", suffix=".tmp", dir=cache, delete=False) as handle:
+        temporary_shared = Path(handle.name)
+    try:
+        result = subprocess.run(
+            [cc, "-shared", "-fPIC", "-O2", "-w", "-o", str(temporary_shared), str(wrapper)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise KvikdosBackendError(f"failed to build libkvikdos wrapper: {result.stderr.strip()}")
+        os.replace(temporary_shared, shared)
+    finally:
+        temporary_shared.unlink(missing_ok=True)
     _LIB = ctypes.CDLL(str(shared))
     return _LIB
 

@@ -75,7 +75,7 @@ def _render_c_expr_8616(expr: object) -> str | None:
     if expr is None:
         return None
     try:
-        return cast(Any, expr).c_repr(indent=0)
+        return cast(str, cast(Any, expr).c_repr(indent=0))
     except Exception:  # noqa: BLE001
         return str(expr)
 

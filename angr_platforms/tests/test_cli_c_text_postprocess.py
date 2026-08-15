@@ -1128,6 +1128,77 @@ void main(void)
     assert "void main(void)" not in rewritten
 
 
+def test_normalize_portable_flat_main_signature_text_rejects_recovered_nonstandard_args():
+    c_text = "int main(unsigned short arg)\n{\n    return 255;\n}\n"
+    function = SimpleNamespace(name="main")
+
+    rewritten = _normalize_portable_flat_main_signature_text(
+        c_text,
+        function,
+        c_target="portable-flat",
+    )
+
+    assert "int main(void)" in rewritten
+    assert "unsigned short arg" not in rewritten
+
+
+def test_normalize_portable_flat_main_signature_text_normalizes_void_call_return():
+    c_text = (
+        "void setvideomode(int mode);\n"
+        "unsigned short main(void)\n"
+        "{\n"
+        "    return setvideomode(65535);\n"
+        "}\n"
+    )
+    function = SimpleNamespace(name="main")
+
+    rewritten = _normalize_portable_flat_main_signature_text(
+        c_text,
+        function,
+        c_target="portable-flat",
+    )
+
+    assert "int main(void)" in rewritten
+    assert "setvideomode(65535);" in rewritten
+    assert "return 0;" in rewritten
+    assert "return setvideomode" not in rewritten
+
+
+def test_normalize_portable_flat_main_signature_text_normalizes_non_int_call_return():
+    c_text = (
+        "int setvideomode(int mode);\n"
+        "unsigned short main(void)\n"
+        "{\n"
+        "    return setvideomode(65535);\n"
+        "}\n"
+    )
+    function = SimpleNamespace(name="main")
+
+    rewritten = _normalize_portable_flat_main_signature_text(
+        c_text,
+        function,
+        c_target="portable-flat",
+    )
+
+    assert "int main(void)" in rewritten
+    assert "setvideomode(65535);" in rewritten
+    assert "return 0;" in rewritten
+    assert "return setvideomode" not in rewritten
+
+
+def test_normalize_portable_flat_main_signature_text_keeps_standard_args():
+    c_text = "int main(int argc, char **argv)\n{\n    return argc;\n}\n"
+    function = SimpleNamespace(name="main")
+
+    rewritten = _normalize_portable_flat_main_signature_text(
+        c_text,
+        function,
+        c_target="portable-flat",
+    )
+
+    assert "int main(int argc, char **argv)" in rewritten
+
+
 def test_materialize_annotated_cod_declarations_text_ignores_source_prototypes_for_called_functions():
     c_text = """
 int main(void)

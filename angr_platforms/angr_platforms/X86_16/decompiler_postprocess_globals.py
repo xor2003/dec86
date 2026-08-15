@@ -126,7 +126,7 @@ def _coalesce_word_global_loads_8616(project: object, codegen: object) -> set[in
     if cfunc is None:
         return set()
 
-    created = {}
+    created: dict[int, CVariable] = {}
     changed_addrs: set[int] = set()
 
     def make_word_global(addr: int) -> CVariable:

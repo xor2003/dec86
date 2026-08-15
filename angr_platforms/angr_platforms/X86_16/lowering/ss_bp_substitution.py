@@ -52,7 +52,7 @@ def substitute_ss_bp_dereferences_with_variables(
         r"(0x[0-9a-fA-F]+|\d+)"
     )
 
-    def replacer(m: re.Match) -> str:
+    def replacer(m: re.Match[str]) -> str:
         sign_str = m.group(1).strip()
         offset_str = m.group(2).strip()
         offset_value = int(offset_str, 16 if offset_str.startswith("0x") else 10)
@@ -64,7 +64,7 @@ def substitute_ss_bp_dereferences_with_variables(
             leading_space = full_match[: len(full_match) - len(full_match.lstrip())]
             is_deref = full_match.lstrip().startswith("*")
             return f"{leading_space}{name}" if is_deref else f"{leading_space}&{name}"
-        return m.group(0)
+        return str(m.group(0))
 
     result = pattern.sub(replacer, c_text)
 

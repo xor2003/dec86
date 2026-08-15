@@ -35,7 +35,7 @@ def _size_bits_from_solver(size: object, solver: _DirtyIOSolver) -> int:
     return 32
 
 
-class X86DirtyIN(SimProcedure):
+class X86DirtyIN(SimProcedure):  # type: ignore[misc, unused-ignore] # dynamic angr SimProcedure base
     """SimProcedure for x86g_dirtyhelper_IN used by the x86-16 lifter.
 
     Returns a deterministic default value when no port device is registered.
@@ -55,7 +55,7 @@ class X86DirtyIN(SimProcedure):
         return solver.BVV(0xFFFFFFFF, 32)
 
 
-class X86DirtyOUT(SimProcedure):
+class X86DirtyOUT(SimProcedure):  # type: ignore[misc, unused-ignore] # dynamic angr SimProcedure base
     """SimProcedure stub for x86g_dirtyhelper_OUT used by the x86-16 lifter.
 
     Signature (size_bits, port, value)

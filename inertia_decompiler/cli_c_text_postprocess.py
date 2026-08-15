@@ -242,8 +242,8 @@ def _prune_weaker_conflicting_prototypes_text(c_text: str) -> str:
                 continue
             name = match.group("name")
             score = _score(match.group("ret"), match.group("args"), stripped, name)
-            prev = best_score_by_name.get(name)
-            if prev is None or score > prev:
+            prev_score: tuple[int, int] | None = best_score_by_name.get(name)
+            if prev_score is None or score > prev_score:
                 best_score_by_name[name] = score
                 best_by_name[name] = stripped
 
@@ -370,7 +370,7 @@ def _helper_name(project: angr.Project, addr: int) -> str | None:
     name = _dynamic_text_attr(proc, "display_name", None)
     if isinstance(name, str) and name:
         return name
-    return proc.__class__.__name__
+    return str(proc.__class__.__name__)
 
 
 def _normalize_anonymous_call_targets(c_text: str) -> str:
@@ -457,38 +457,38 @@ def _prune_void_function_return_values_text(c_text: str) -> str:
                 index += 1
                 continue
 
-            brace_index = None
+            brace_index_scan: int | None = None
             scan_index = index + 1
             is_forward_decl = False
-            while scan_index < line_count and brace_index is None:
+            while scan_index < line_count and brace_index_scan is None:
                 header_line = lines[scan_index]
                 header_lines.append(header_line)
                 if "{" in header_line:
-                    brace_index = scan_index
+                    brace_index_scan = scan_index
                     break
                 if ";" in header_line:
                     is_forward_decl = True
                     break
                 scan_index += 1
 
-            if is_forward_decl and brace_index is None:
+            if is_forward_decl and brace_index_scan is None:
                 out_lines.extend(header_lines)
                 index = scan_index
                 continue
 
-            if brace_index is None:
+            if brace_index_scan is None:
                 out_lines.extend(header_lines)
                 index = scan_index
                 continue
 
-            if ";" in lines[brace_index] and "{" not in lines[brace_index]:
+            if ";" in lines[brace_index_scan] and "{" not in lines[brace_index_scan]:
                 out_lines.extend(header_lines)
-                index = brace_index + 1
+                index = brace_index_scan + 1
                 continue
 
             out_lines.extend(header_lines)
             brace_depth = sum(part.count("{") - part.count("}") for part in header_lines)
-            index = brace_index + 1
+            index = brace_index_scan + 1
 
             while index < line_count and brace_depth > 0:
                 body_line = lines[index]
@@ -1659,7 +1659,7 @@ def _prototype_for_direct_call(
         if isinstance(helper_arg_count, int) and isinstance(observed_arg_count, int):
             if helper_arg_count != observed_arg_count:
                 return _return_only_helper_decl_8616(name, helper_decl)
-        return helper_decl.rstrip(";").strip() + ";"
+        return str(helper_decl).rstrip(";").strip() + ";"
     return f"int {name}();"
 
 
@@ -2397,12 +2397,15 @@ def _normalize_portable_flat_main_signature_text(
     header_re = re.compile(
         r"^(?P<indent>\s*)(?P<ret>[A-Za-z_][\w\s\*\[\]]*?)\s+main\s*\((?P<args>[^()]*)\)\s*(?P<suffix>[{;]?)\s*$"
     )
-    header_index = _normalize_main_header_args(lines, header_re)
-    if header_index is None:
+    header_result = _normalize_main_header_args(lines, header_re)
+    if header_result is None:
         return _join_with_original_trailing_newline(lines, c_text)
+    header_index, nonportable_return_type = header_result
     bounds = _find_function_body_bounds(lines, header_index)
     if bounds is None:
         return _join_with_original_trailing_newline(lines, c_text)
+    if nonportable_return_type:
+        _normalize_nonportable_main_void_call_returns(lines, bounds)
     _ensure_main_returns_zero(lines, bounds[0], bounds[1])
     return _join_with_original_trailing_newline(lines, c_text)
 
@@ -2414,11 +2417,17 @@ def _join_with_original_trailing_newline(lines: list[str], original_text: str) -
     return normalized
 
 
-def _normalize_main_header_args(lines: list[str], header_re: re.Pattern[str]) -> int | None:
+def _normalize_main_header_args(
+    lines: list[str], header_re: re.Pattern[str]
+) -> tuple[int, bool] | None:
     header_index: int | None = None
+    nonportable_return_type = False
     for index, line in enumerate(lines):
         match = header_re.match(line)
-        if match is None or match.group("args").strip() not in {"", "void"}:
+        if match is None or (
+            _is_portable_main_argument_list(match.group("args"))
+            and match.group("ret").strip() == "int"
+        ):
             continue
         replacement_header = f"{match.group('indent')}int main(void)"
         suffix = match.group("suffix")
@@ -2427,11 +2436,42 @@ def _normalize_main_header_args(lines: list[str], header_re: re.Pattern[str]) ->
         elif suffix == ";":
             replacement_header += ";"
         lines[index] = replacement_header
+        nonportable_return_type = match.group("ret").strip() != "int"
         if header_index is not None:
             continue
         if suffix != ";" or _has_open_brace_in_lookahead(lines, index + 1):
             header_index = index
-    return header_index
+    return None if header_index is None else (header_index, nonportable_return_type)
+
+
+def _is_portable_main_argument_list(args_text: str) -> bool:
+    """Return whether an emitted main parameter list has a portable C ABI."""
+    normalized = re.sub(r"\s+", " ", args_text.strip())
+    if normalized in {"", "void"}:
+        return True
+    return bool(
+        re.fullmatch(
+            r"int [A-Za-z_]\w*, char \*\s*\*[A-Za-z_]\w*",
+            normalized,
+        )
+        or re.fullmatch(
+            r"int [A-Za-z_]\w*, char \*[A-Za-z_]\w*\[\]",
+            normalized,
+        )
+    )
+
+
+def _normalize_nonportable_main_void_call_returns(
+    lines: list[str], bounds: tuple[int, int]
+) -> None:
+    """Turn a returned call in a nonportable entry into a statement."""
+    return_re = re.compile(r"^(?P<indent>\s*)return\s+(?P<name>[A-Za-z_]\w*)\s*(?P<args>\([^;]+\));\s*$")
+    for index in range(bounds[0], min(bounds[1], len(lines))):
+        match = return_re.match(lines[index])
+        if match is None:
+            continue
+        indent = match.group("indent")
+        lines[index] = f"{indent}{match.group('name')}{match.group('args')};"
 
 
 def _has_open_brace_in_lookahead(lines: list[str], start_index: int) -> bool:
@@ -2783,11 +2823,14 @@ def _rewrite_or_prune_duplicate_locals(
                 for entry in entries:
                     unique_name = _make_unique_identifier(name, used_names)
                     old_line = lines[entry.line_index]
+                    def replace_decl(match: re.Match[str]) -> str:
+                        return (
+                            f"{match.group('indent')}{match.group('type')} {unique_name}{match.group('array') or ''};"
+                            + (f" {match.group('comment')}" if match.group("comment") else "")
+                        )
+
                     lines[entry.line_index] = decl_re.sub(
-                        lambda m, un=unique_name: (
-                            f"{m.group('indent')}{m.group('type')} {un}{m.group('array') or ''};"
-                            + (f" {m.group('comment')}" if m.group("comment") else "")
-                        ),
+                        replace_decl,
                         old_line,
                         count=1,
                     )
@@ -3870,17 +3913,17 @@ def _annotate_cod_lines_with_aliases_8616(
                 disp = int(match.group(2), 16)
                 if match.group(1) == "-":
                     disp = -disp
-                alias = _cod_stack_alias_for_disp(disp, metadata, positive_aliases=positive_aliases)
+                stack_alias = _cod_stack_alias_for_disp(disp, metadata, positive_aliases=positive_aliases)
                 if disp > 0 and "<missing-type>" in line:
                     continue
-                if alias is not None and not line.rstrip().endswith(f" {alias}"):
-                    line = f"{line} {alias}"
+                if stack_alias is not None and not line.rstrip().endswith(f" {stack_alias}"):
+                    line = f"{line} {stack_alias}"
                 declaration_part = line.split("//", 1)[0]
                 decl_match = re.search(r"(?P<name>[A-Za-z_][\w$?@]*)\s*;\s*$", declaration_part.strip())
                 if decl_match is not None:
                     current_name = decl_match.group("name")
-                    if isinstance(alias, str) and alias and generic_stack_name_re.fullmatch(current_name):
-                        alias_replacements.setdefault(current_name, alias)
+                    if isinstance(stack_alias, str) and stack_alias and generic_stack_name_re.fullmatch(current_name):
+                        alias_replacements.setdefault(current_name, stack_alias)
             lines.append(line)
         if not alias_replacements:
             return lines

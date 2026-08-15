@@ -25,7 +25,8 @@ from textual.widgets import Static
 # ---------------------------------------------------------------------------
 
 
-class RegisterWidget(Static):
+# Textual supplies the runtime widget base dynamically.
+class RegisterWidget(Static):  # type: ignore[misc]
     """Display CPU registers with change highlighting."""
 
     registers: ClassVar[Reactive[dict[str, int]]] = reactive({})
@@ -77,7 +78,7 @@ class RegisterWidget(Static):
     def watch_registers(self, new_regs: dict[str, int]) -> None:
         """Track prior registers before Textual updates the reactive value."""
         del new_regs
-        self._previous = dict(self.registers)
+        self._previous = dict(self.registers)  # type: ignore[misc]
         self.refresh()
 
     @staticmethod
@@ -135,7 +136,7 @@ class RegisterWidget(Static):
 # ---------------------------------------------------------------------------
 
 
-class DisasmWidget(Static):
+class DisasmWidget(Static):  # type: ignore[misc]
     """Disassembly listing with current-IP highlight."""
 
     lines: ClassVar[Reactive[list[tuple[int, str, str]]]] = reactive([])
@@ -182,7 +183,7 @@ class DisasmWidget(Static):
 # ---------------------------------------------------------------------------
 
 
-class MemoryWidget(Static):
+class MemoryWidget(Static):  # type: ignore[misc]
     """Hex memory dump viewer."""
 
     address: ClassVar[Reactive[int]] = reactive(0)
@@ -214,7 +215,7 @@ class MemoryWidget(Static):
 # ---------------------------------------------------------------------------
 
 
-class StackWidget(Static):
+class StackWidget(Static):  # type: ignore[misc]
     """Stack memory viewer."""
 
     esp: ClassVar[Reactive[int]] = reactive(0)
@@ -245,7 +246,7 @@ class StackWidget(Static):
 # ---------------------------------------------------------------------------
 
 
-class BreakpointWidget(Static):
+class BreakpointWidget(Static):  # type: ignore[misc]
     """Breakpoint list."""
 
     breakpoints: ClassVar[Reactive[dict[int, dict[str, bool | int]]]] = reactive({})
@@ -279,7 +280,7 @@ class BreakpointWidget(Static):
 # ---------------------------------------------------------------------------
 
 
-class HelperWidget(Static):
+class HelperWidget(Static):  # type: ignore[misc]
     """Current helper/signature metadata."""
 
     helper_info: ClassVar[Reactive[dict[str, object]]] = reactive({})
@@ -328,7 +329,7 @@ class HelperWidget(Static):
 # ---------------------------------------------------------------------------
 
 
-class ConsoleWidget(Static):
+class ConsoleWidget(Static):  # type: ignore[misc]
     """GDB console output log."""
 
     output: ClassVar[Reactive[str]] = reactive("")

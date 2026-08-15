@@ -2185,6 +2185,26 @@ def test_structuring_scan_branch_target_return_block_uses_semantic_effects():
     assert calls == [("combine", 5, 0)]
 
 
+def test_structuring_scan_branch_target_return_block_recovers_register_self_clear():
+    result = scan_branch_target_return_block_8616(
+        _block(
+            _Insn("sub", [_reg_operand(1), _reg_operand(1)]),
+            _Insn("ret"),
+        ),
+        BranchTargetReturnScanCallbacks8616(
+            branch_target_imm=lambda _insn: None,
+            combine_return_expr=lambda ax_value, _dx_value: ax_value,
+            materialize_reg_imm=lambda raw_imm: raw_imm,
+            materialize_stack_load=lambda offset, size: ("stack", offset, size),
+            materialize_direct_global_load=lambda offset, size: ("global", offset, size),
+            materialize_ax_alu_imm=lambda _ax_value, _op, _raw_imm: None,
+            materialize_ax_incdec=lambda _ax_value, _op: None,
+        ),
+    )
+
+    assert result == BranchTargetReturnBlockResult8616(expr=0)
+
+
 def test_structuring_return_epilogue_block_accepts_frame_teardown_return():
     block = _block(
         _Insn("nop"),

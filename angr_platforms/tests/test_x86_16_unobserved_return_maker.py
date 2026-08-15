@@ -29,8 +29,8 @@ class _SingleBlockGraph:
         return []
 
 
-def test_proven_unobserved_empty_return_does_not_gain_ax_carrier(monkeypatch) -> None:
-    """Keep an empty AIL return when no binary AX result was materialized."""
+def test_proven_unobserved_return_keeps_binary_ax_value(monkeypatch) -> None:
+    """Preserve the proven terminal AX value even when current callers ignore it."""
     monkeypatch.setattr(ReturnMaker, "_handle_Return", lambda *_args: "fallback")
     apply_x86_16_decompiler_return_compatibility()
 
@@ -69,5 +69,7 @@ def test_proven_unobserved_empty_return_does_not_gain_ax_carrier(monkeypatch) ->
     result = ReturnMaker._handle_Return(maker, 1, ret_stmt, block)
 
     assert isinstance(result, ailment.Stmt.Return)
-    assert result.ret_exprs == []
+    assert len(result.ret_exprs) == 1
+    assert isinstance(result.ret_exprs[0], ailment.Expr.Const)
+    assert result.ret_exprs[0].value == 75
     assert isinstance(function.prototype.returnty, SimTypeShort)

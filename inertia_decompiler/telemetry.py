@@ -25,7 +25,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import ParamSpec, Protocol, TypeVar, cast
+from typing import ParamSpec, Protocol, TypeVar, cast, overload
 
 TRACE_ENABLE_ENV: str = "INERTIA_OTEL_SPANS"
 TRACE_FILE_ENV: str = "INERTIA_OTEL_SPAN_FILE"
@@ -587,6 +587,30 @@ def span_here(**attrs: object) -> contextlib.AbstractContextManager[None]:
     if not _STATE.enabled:
         return contextlib.nullcontext()
     return span(caller_span_name(stacklevel=2), **attrs)
+
+
+@overload  # noqa: D418
+def trace_function(  # noqa: D418
+    func: None = None,
+    *,
+    name: str | None = None,
+    attrs: dict[str, object] | None = None,
+    attr_factory: Callable[_P, dict[str, object] | None] | None = None,
+) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:  # noqa: D418
+    """Return a decorator configured for a function discovered later."""
+    ...
+
+
+@overload  # noqa: D418
+def trace_function(  # noqa: D418
+    func: Callable[_P, _R],
+    *,
+    name: str | None = None,
+    attrs: dict[str, object] | None = None,
+    attr_factory: Callable[_P, dict[str, object] | None] | None = None,
+) -> Callable[_P, _R]:  # noqa: D418
+    """Decorate an already supplied function with an optional telemetry span."""
+    ...
 
 
 def trace_function(

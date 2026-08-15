@@ -45,7 +45,7 @@ class CompilerHelperEvidence8616:
     matched_bytes: int
 
 
-class X86_16MscStackProbeSimProcedure8616(SimProcedure):
+class X86_16MscStackProbeSimProcedure8616(SimProcedure):  # type: ignore[misc, unused-ignore] # dynamic angr SimProcedure base
     """Microsoft C 16-bit stack probe: pop return, allocate AX bytes, jump back."""
 
     NO_RET = False
@@ -261,7 +261,7 @@ def is_x86_16_registered_stack_probe_target_8616(arch: object, target: int | Non
     if not isinstance(target, int):
         return False
     # Dynamic boundary: arch is an angr Arch object carrying optional runtime metadata.
-    targets = getattr(arch, "_inertia_stack_probe_helper_targets_8616", frozenset())
+    targets: frozenset[int] = getattr(arch, "_inertia_stack_probe_helper_targets_8616", frozenset())
     return target in targets or (target & 0xFFFF) in targets
 
 

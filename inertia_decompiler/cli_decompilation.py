@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 import angr
 from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -133,8 +133,10 @@ from angr_platforms.X86_16.pipeline.architecture_guard import (
 )
 from angr_platforms.X86_16.pipeline.contracts import assert_pipeline_contracts_8616
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
+from angr_platforms.X86_16.pipeline.recovery_coverage_guard import assert_exact_instruction_coverage_8616
 from angr_platforms.X86_16.pipeline.render_authority import CodegenRenderAuthority8616
 from angr_platforms.X86_16.postprocess.optimization.dce import _dead_code_elimination_8616
+from angr_platforms.X86_16.recovery_instruction_coverage import collect_exact_instruction_coverage_8616
 from angr_platforms.X86_16.render_compat import repair_cfunctioncall_render_targets_8616
 from angr_platforms.X86_16.segmented_memory_reasoning import apply_x86_16_segmented_memory_reasoning
 from angr_platforms.X86_16.stack_probe_fact_trace import (
@@ -443,7 +445,7 @@ def _apply_binary_specific_annotations(
             lst_metadata=lst_metadata,
             synthetic_globals=synthetic_globals,
         )
-    return changed
+    return bool(changed)
 
 
 def _apply_function_annotations_for_active_and_original_8616(
@@ -521,7 +523,7 @@ def _apply_function_annotations_for_active_and_original_8616(
                 file=sys.stderr,
                 flush=True,
             )
-    return changed
+    return bool(changed)
 
 
 def _sync_recovered_function_metadata_from_kb_8616(project: angr.Project, function: object) -> bool:
@@ -703,14 +705,21 @@ def _evidence_recovery_has_better_source_abi_8616(formatted: str, evidence_recov
     return evidence_count < formatted_count and _has_synthetic_split_signature_args_8616(formatted)
 
 
-def _select_evidence_recovered_c_8616(formatted: str, evidence_recovered_c: str | None) -> str:
-    """Select structured binary-evidence recovery when the formatted ABI is split."""
+def _select_evidence_recovered_c_8616(
+    formatted: str,
+    evidence_recovered_c: str | None,
+    *,
+    prefer_proven_evidence: bool = False,
+) -> str:
+    """Select proven source-shaped recovery when the structured output is incomplete."""
     if not isinstance(evidence_recovered_c, str) or not evidence_recovered_c.strip():
         return formatted
     if not isinstance(formatted, str) or not formatted.strip():
         return evidence_recovered_c
     quality = assess_decompiled_c_text(formatted)
     if quality.reject_as_decompiled:
+        return evidence_recovered_c
+    if prefer_proven_evidence:
         return evidence_recovered_c
     if _evidence_recovery_has_better_source_abi_8616(formatted, evidence_recovered_c):
         return evidence_recovered_c
@@ -775,6 +784,17 @@ class _LayerDumpStatus(str, Enum):
     failed = "failed"
 
 
+class _LayerDumpState(TypedDict):
+    """Typed state shared by opt-in per-layer diagnostic snapshots."""
+
+    attempt: int
+    function_addr: int
+    function_name: str
+    root: Path
+    manifest: Path
+    index: int
+
+
 def _layer_dump_enabled(project: angr.Project) -> bool:
     enabled = bool(getattr(project, "_inertia_dump_layers", False))
     if not enabled:
@@ -813,19 +833,21 @@ def _safe_path_component(text: str) -> str:
     return cleaned or "x"
 
 
-def _get_layer_dump_state(project: angr.Project, function: object) -> dict | None:
+def _get_layer_dump_state(project: angr.Project, function: object) -> _LayerDumpState | None:
     if not _layer_dump_enabled(project):
         return None
     with _LAYER_DUMP_MUTEX:
         states = getattr(project, _LAYER_DUMP_STATE_ATTR, None)
         if not isinstance(states, dict):
-            states = {}
+            states = cast(dict[int, _LayerDumpState], {})
             setattr(project, _LAYER_DUMP_STATE_ATTR, states)
+        states = cast(dict[int, _LayerDumpState], states)
 
         attempts = getattr(project, "_inertia_dump_layer_attempts", None)
         if not isinstance(attempts, dict):
-            attempts = {}
+            attempts = cast(dict[int, int], {})
             typing.cast(typing.Any, project)._inertia_dump_layer_attempts = attempts
+        attempts = cast(dict[int, int], attempts)
 
         display_addr = function_original_addr(function)
         key = int(display_addr)
@@ -847,7 +869,7 @@ def _get_layer_dump_state(project: angr.Project, function: object) -> dict | Non
 
         fn_root.mkdir(parents=True, exist_ok=True)
 
-        state = {
+        state: _LayerDumpState = {
             "attempt": attempt,
             "function_addr": key,
             "function_name": display_name,
@@ -865,11 +887,11 @@ def _record_layer_dump(
     stage_name: str,
     text: str,
     *,
-    layer_dump_state: dict | None = None,
+    layer_dump_state: _LayerDumpState | None = None,
 ) -> None:
     if not _layer_dump_enabled(project):
         return
-    if not bool(layer_dump_state):
+    if layer_dump_state is None:
         return
     if not _layer_dump_accepts_label(project, stage_name):
         return
@@ -919,7 +941,10 @@ def _record_layer_dump(
         pass
 
 
-def _latest_layer_dump_text_8616(layer_dump_state: dict | None, labels: tuple[str, ...]) -> str | None:
+def _latest_layer_dump_text_8616(
+    layer_dump_state: _LayerDumpState | None,
+    labels: tuple[str, ...],
+) -> str | None:
     if not layer_dump_state or not labels:
         return None
     manifest_path = Path(layer_dump_state.get("manifest", ""))
@@ -972,10 +997,10 @@ def _raw_asm_for_stage_bundle_8616(
     region = _lst_code_region(lst_metadata, display_addr) if lst_metadata is not None else None
     try:
         if region is not None:
-            return _format_asm_range(project, region[0], region[1])
+            return str(_format_asm_range(project, region[0], region[1]))
         # Dynamic angr/codegen compatibility boundary.
         start, end = _infer_linear_disassembly_window(project, getattr(function, "addr", display_addr))
-        return _format_asm_range(project, start, end)
+        return str(_format_asm_range(project, start, end))
     except Exception:
         return None
 
@@ -991,7 +1016,7 @@ def _emit_direct_addr_stage_bundle_8616(
     lane: str,
     detail: str,
     repeat_reason: str | None,
-    layer_dump_state: dict | None,
+    layer_dump_state: _LayerDumpState | None,
     messages: tuple[str, ...] = (),
 ) -> None:
     if repeat_reason is None:
@@ -1046,7 +1071,7 @@ def _emit_c_stage_trace(
     label: str,
     c_text: str,
     *,
-    layer_dump_state: dict | None = None,
+    layer_dump_state: _LayerDumpState | None = None,
 ) -> None:
     """Emit opt-in C snapshot headers to stderr.
 
@@ -1953,7 +1978,7 @@ def _replay_named_segmented_global_lowering_after_regen_8616(codegen: object) ->
         synthetic_globals,
         cod_metadata=cod_metadata,
     ).changed
-    return provenance_changed or lowering_changed
+    return bool(provenance_changed or lowering_changed)
 
 
 def _replay_stack_address_lowering_after_regen_8616(codegen: object) -> bool:
@@ -1976,7 +2001,7 @@ def _replay_runtime_segment_lowering_after_regen_8616(codegen: object) -> bool:
     except AttributeError:
         target = "portable-flat"
     try:
-        return apply_runtime_segment_lowering_8616(codegen, target=target)
+        return bool(apply_runtime_segment_lowering_8616(codegen, target=target))
     except AttributeError:
         return False
 
@@ -2024,7 +2049,7 @@ def _finalize_typed_call_interfaces_before_render_8616(codegen: object) -> bool:
     except AttributeError:
         replay_count = 0
     dynamic_codegen._inertia_stack_aggregate_decay_render_replay_count_8616 = int(replay_count or 0) + 1
-    return changed
+    return bool(changed)
 
 
 def _replay_direct_stack_mov_after_regen_8616(codegen: object) -> bool:
@@ -2078,7 +2103,7 @@ def _replay_direct_stack_updates_after_regen_8616(codegen: object) -> bool:
         include_direct_stack_mov=False,
         include_direct_global_incdec=False,
     )
-    return result.direct_stack_incdec_changed
+    return bool(result.direct_stack_incdec_changed)
 
 
 def _replay_direct_stack_semantics_after_regen_8616(codegen: object) -> bool:
@@ -2710,7 +2735,7 @@ def _format_minimal_codegen_output(
     forced = _forced_function_template(getattr(function, "name", None), binary_path, api_style)
     if forced is not None:
         return forced
-    return formatted
+    return str(formatted)
 
 
 def _apply_known_cod_object_annotations(
@@ -2898,7 +2923,7 @@ def _render_refresh_replay_preserves_live_out_8616(
     )
     # Dynamic angr/codegen compatibility boundary.
     typing.cast(typing.Any, codegen)._inertia_render_refresh_semantic_replay_evidence_8616 = evidence
-    return passed
+    return bool(passed)
 
 
 def _render_refresh_lost_stack_writes_are_validated_materialization_8616(
@@ -3114,7 +3139,7 @@ def _validated_payload_cache_tail_validation_passed_8616(project: object) -> boo
     if not _tail_validation_runtime_enabled(project):
         return True
     snapshot = getattr(project, "_inertia_last_tail_validation_snapshot", None)
-    return x86_16_tail_validation_snapshot_passed(snapshot)
+    return bool(x86_16_tail_validation_snapshot_passed(snapshot))
 
 
 _REPLACEMENT_RECOMPILE_CACHE_8616: dict[tuple[str, str], bool] = {}
@@ -3128,7 +3153,7 @@ def _partial_timeout_payload_is_validated_8616(project: object, payload: str | N
     if not _tail_validation_runtime_enabled(project):
         return True
     snapshot = getattr(project, "_inertia_last_tail_validation_snapshot", None)
-    return x86_16_tail_validation_snapshot_passed(snapshot)
+    return bool(x86_16_tail_validation_snapshot_passed(snapshot))
 
 
 def _validated_payload_replacement_recompiles_8616(validated_payload: str) -> bool:
@@ -3600,7 +3625,7 @@ def _preserve_source_label_for_same_addr_function_8616(
     return True
 
 
-@trace_function(name="function.decompile")
+@cast(Callable[..., Any], trace_function(name="function.decompile"))
 def _decompile_function(
     project: angr.Project,
     cfg: Any,
@@ -3637,9 +3662,17 @@ def _decompile_function(
             binary_path,
             lst_metadata,
         )
-        evidence_recovered_c = recover_counted_stack_loop_c_8616(project, function) or recover_32bit_compare_c_8616(
-            project, function
+        recovery_coverage = collect_exact_instruction_coverage_8616(
+            project,
+            function,
+            effective_cod_metadata,
         )
+        assert_exact_instruction_coverage_8616(recovery_coverage)
+        evidence_recovered_c = recover_counted_stack_loop_c_8616(project, function)
+        evidence_recovery_is_proven = False
+        if evidence_recovered_c is None:
+            evidence_recovered_c = recover_32bit_compare_c_8616(project, function)
+            evidence_recovery_is_proven = evidence_recovered_c is not None
         fast_forced = _forced_function_template(getattr(function, "name", None), binary_path, api_style)
         if (
             getattr(function, "name", None)
@@ -3953,7 +3986,7 @@ def _decompile_function(
                 function_original_addr(function),
                 function.name,
             )
-            return _decompile_function(
+            return cast(tuple[str, str] | None, _decompile_function(
                 isolated_project,
                 isolated_cfg,
                 isolated_function,
@@ -3968,7 +4001,7 @@ def _decompile_function(
                 allow_isolated_retry=False,
                 deadline=deadline,
                 failure_family_state=failure_family_state,
-            )
+            ))
 
         def _debug_cli_stage_marker_8616(label: str) -> None:
             if os.environ.get("INERTIA_DEBUG_CLI_STAGE_MARKERS") != "1":
@@ -4145,7 +4178,15 @@ def _decompile_function(
                 detail = None
             if detail is None:
                 return "timeout", f"Timed out after {timeout}s."
-            return "timeout", f"Timed out after {timeout}s {detail}."
+            timeout_payload = f"Timed out after {timeout}s {detail}."
+            if timeout_stage == "structuring" or (
+                isinstance(timeout_stage, str) and timeout_stage.startswith("structuring:")
+            ):
+                # A structurer timeout means no validated C contract exists;
+                # make that state explicit instead of exposing a bare timing
+                # sentence that callers could mistake for a usable fallback.
+                timeout_payload += " Decompiler produced unresolved IR-shaped C."
+            return "timeout", timeout_payload
         except Exception as ex:
             typing.cast(typing.Any, project)._inertia_partial_codegen_text = None
             return "error", str(ex)
@@ -4648,7 +4689,7 @@ def _decompile_function(
 
         def _run_runtime_segment_lowering_pass() -> bool:
             target = str(getattr(project, "_inertia_c_target", "portable-flat") or "portable-flat")
-            return apply_runtime_segment_lowering_8616(dec.codegen, target=target)
+            return bool(apply_runtime_segment_lowering_8616(dec.codegen, target=target))
 
         def _run_fact_backed_stack_rewrite_pass() -> bool:
             if large_x86_16_function:
@@ -4717,17 +4758,17 @@ def _decompile_function(
         def _run_materialize_missing_stack_local_declarations_pass() -> bool:
             if getattr(dec.codegen, "_inertia_has_rebound_materialized_recurrence", False):
                 return False
-            return _materialize_missing_stack_local_declarations(dec.codegen)
+            return bool(_materialize_missing_stack_local_declarations(dec.codegen))
 
         def _run_materialize_missing_register_local_declarations_pass() -> bool:
             if getattr(dec.codegen, "_inertia_has_rebound_materialized_recurrence", False):
                 return False
-            return _materialize_missing_register_local_declarations(dec.codegen)
+            return bool(_materialize_missing_register_local_declarations(dec.codegen))
 
         def _run_simplify_structured_c_expressions_pass() -> bool:
             if getattr(dec.codegen, "_inertia_has_rebound_materialized_recurrence", False):
                 return False
-            return _simplify_structured_c_expressions(dec.codegen)
+            return bool(_simplify_structured_c_expressions(dec.codegen))
 
         def _run_evidence_dce_pass() -> bool:
             had_attr = hasattr(dec.codegen, "_inertia_allow_large_function_flag_dce_after_seqnode_replacement_8616")
@@ -4794,7 +4835,7 @@ def _decompile_function(
             return True
 
         def _run_materialize_missing_terminal_ax_return_pass() -> bool:
-            return _materialize_missing_terminal_ax_return_8616(project, dec.codegen)
+            return bool(_materialize_missing_terminal_ax_return_8616(project, dec.codegen))
 
         postprocess_semantic_contract_active = bool(
             getattr(dec.codegen, "_inertia_return_selector_materialized_8616", False)
@@ -4828,7 +4869,7 @@ def _decompile_function(
                     )
 
         rewrite_codegen: Any = dec.codegen
-        rewrite_passes = (
+        rewrite_passes: tuple[Callable[[], Any], ...] = (
             lambda: _attach_dos_pseudo_callees(project, function, rewrite_codegen, api_style),
             lambda: _attach_interrupt_wrapper_callees(project, rewrite_codegen, api_style),
             lambda: _lower_interrupt_wrapper_result_reads(project, rewrite_codegen, api_style),
@@ -5975,7 +6016,11 @@ def _decompile_function(
             formatted = _preserve_return_chain_text_8616(project, function, dec.codegen, formatted)
             if not tail_validation_complete_for_rewrite_gate:
                 formatted = _prune_trailing_generic_return_text(formatted)
-        formatted = _select_evidence_recovered_c_8616(formatted, evidence_recovered_c)
+        formatted = _select_evidence_recovered_c_8616(
+            formatted,
+            evidence_recovered_c,
+            prefer_proven_evidence=evidence_recovery_is_proven,
+        )
         formatted = _normalize_unary_not_shift_precedence_text(formatted)
         formatted = _normalize_boolean_conditions(formatted)
         formatted = _materialize_codegen_global_externs_text_8616(formatted, dec.codegen)
@@ -6169,7 +6214,7 @@ def _direct_call_stub_filter_regions(
 
 
 def _is_stack_probe_name_8616(name: str | None) -> bool:
-    return is_x86_16_stack_probe_name_8616(name)
+    return bool(is_x86_16_stack_probe_name_8616(name))
 
 
 def _is_known_noreturn_name_8616(name: str | None) -> bool:
@@ -6199,7 +6244,7 @@ def _sidecar_enclosing_label_8616(metadata: LSTMetadata, addr: int) -> str | Non
             typing.cast(typing.Any, metadata)._inertia_code_label_regions_8616 = cached_regions
     for start, end, label in cached_regions:
         if start <= addr < end:
-            return label
+            return str(label)
     return None
 
 
@@ -6606,12 +6651,12 @@ def _seed_direct_callee_prototype_from_original_project_8616(
             return False
         if not min_addr <= candidate <= max_addr:
             return False
-        return seed_wide_stack_prototype_from_binary_address_8616(
+        return bool(seed_wide_stack_prototype_from_binary_address_8616(
             project,
             stub,
             stub,
             candidate,
-        )
+        ))
     # Dynamic exact-slice project extension boundary.
     original_delta = getattr(project, "_inertia_original_linear_delta", None)
     targets = [candidate]
@@ -7115,10 +7160,14 @@ def _is_compiler_stack_probe_call_target_8616(project: angr.Project, target: int
     """Memoize stack-probe helper classification per (project, target)."""
     if not isinstance(target, int):
         return False
-    cache = _STACK_PROBE_CALL_TARGET_CACHE_8616.get(project)
-    if cache is None:
+    try:
+        cache = _STACK_PROBE_CALL_TARGET_CACHE_8616.get(project)
+    except TypeError:
         cache = {}
-        _STACK_PROBE_CALL_TARGET_CACHE_8616[project] = cache
+    else:
+        if cache is None:
+            cache = {}
+            _STACK_PROBE_CALL_TARGET_CACHE_8616[project] = cache
     cached = cache.get(target)
     if cached is not None:
         return cached
@@ -7283,7 +7332,7 @@ def _preferred_expr_collapse_depth(
     return 16
 
 
-@trace_function(name="function.decompile_with_stats")
+@cast(Callable[..., Any], trace_function(name="function.decompile_with_stats"))
 def _decompile_function_with_stats(
     project: angr.Project,
     cfg: Any,

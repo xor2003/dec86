@@ -863,7 +863,7 @@ def apply_x86_16_calling_convention_compatibility() -> None:
             arch_dynamic = cast(Any, arch)
             if arch_dynamic.name == "86_16":
                 return True
-            return cast(Any, _orig_is_sane_register_variable)(arch, reg_offset, reg_size, def_cc=def_cc)
+            return bool(cast(Any, _orig_is_sane_register_variable)(arch, reg_offset, reg_size, def_cc=def_cc))
 
         cast(Any, _cc_utils).is_sane_register_variable = _is_sane_register_variable_8616
         cast(Any, _cc_analysis).is_sane_register_variable = _is_sane_register_variable_8616

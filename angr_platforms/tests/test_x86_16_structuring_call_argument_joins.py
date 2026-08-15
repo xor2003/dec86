@@ -156,6 +156,25 @@ def test_materializes_unique_branch_carrier_in_c_argument_order() -> None:
     assert stats.decisions == (CallArgumentJoinDecision8616.MATERIALIZED,)
 
 
+def test_materializes_join_from_two_condition_arms_before_terminal_else() -> None:
+    """An else-if branch may carry both join values while its final else exits."""
+    codegen, call, carrier_variable, branch = _surface()
+    true_body = branch.condition_and_nodes[0][1]
+    false_body = branch.else_node
+    branch.condition_and_nodes = [
+        (_constant(1, codegen), true_body),
+        (_constant(0, codegen), false_body),
+    ]
+    branch.else_node = CStatements([CReturn(None, codegen=codegen)], codegen=codegen)
+
+    assert materialize_call_argument_joins_8616(codegen.project, codegen)
+
+    assert isinstance(call.args[0], CVariable)
+    assert call.args[0].variable is carrier_variable
+    assert isinstance(call.args[1], CConstant)
+    assert call.args[1].value == 5
+
+
 def test_accepts_an_already_materialized_join_without_ast_churn() -> None:
     """A repeated structuring replay counts consumed evidence but stays unchanged."""
     codegen, call, carrier_variable, _branch_node = _surface()
@@ -169,6 +188,21 @@ def test_accepts_an_already_materialized_join_without_ast_churn() -> None:
     stats = codegen._inertia_call_argument_join_stats_8616
     assert stats.materialized_count == 1
     assert stats.decisions == (CallArgumentJoinDecision8616.ALREADY_MATERIALIZED,)
+
+
+def test_recovers_regenerated_call_identity_from_authoritative_inventory() -> None:
+    """AST regeneration must not disconnect a call from its machine summary."""
+    codegen, call, carrier_variable, _branch_node = _surface()
+    summary = codegen._inertia_callsite_summaries.pop(id(call))
+    codegen._inertia_callsite_summary_inventory_8616 = {summary.callsite_addr: summary}
+    call.tags = {"ins_addr": summary.callsite_addr}
+
+    assert materialize_call_argument_joins_8616(codegen.project, codegen)
+
+    assert isinstance(call.args[0], CVariable)
+    assert call.args[0].variable is carrier_variable
+    assert isinstance(call.args[1], CConstant)
+    assert call.args[1].value == 5
 
 
 def test_refuses_ambiguous_structured_branch_carriers() -> None:

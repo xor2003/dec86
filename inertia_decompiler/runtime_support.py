@@ -670,7 +670,7 @@ def _materialize_loop_break_default_switch_8616(
         loop_mapping=mapping,
         materialization_plan=plan,
     )
-    return result.as_runtime_record()
+    return typing.cast(DynamicRecord, result.as_runtime_record())
 
 
 def _maybe_materialize_pre_codegen_typed_switch_8616(
@@ -1742,7 +1742,7 @@ def _graphregion_node_at_path_8616(region: object, path: object) -> object | Non
         if index < 0 or index >= len(children):
             return None
         current, active_graph = children[index]
-    return current
+    return typing.cast(object, current)
 
 
 def _graphregion_owner_node_summary_8616(region: object, owner_paths: DynamicRecord) -> DynamicRecord:
@@ -2514,9 +2514,9 @@ def guard_angr_clinic_stage_markers(project: AngrProjectSurface) -> Iterator[Non
                 if not isinstance(counts, dict):
                     counts = {}
                     project._inertia_clinic_peephole_counts = counts
-                key = int(key_addr) if isinstance(key_addr, int) else -1
-                count = int(counts.get(key, 0)) + 1
-                counts[key] = count
+                peephole_key = int(key_addr) if isinstance(key_addr, int) else -1
+                count = int(counts.get(peephole_key, 0)) + 1
+                counts[peephole_key] = count
                 if count > cap:
                     if os.environ.get("INERTIA_DEBUG_CLINIC_FLAGS"):
                         print(
@@ -2567,11 +2567,11 @@ def guard_angr_clinic_stage_markers(project: AngrProjectSurface) -> Iterator[Non
                     stats = {}
                     project._inertia_debug_peephole_stats = stats
                 addr, _name, slice_addr = _project_current_function_context(project)
-                key = (addr if isinstance(addr, int) else -1, slice_addr if isinstance(slice_addr, int) else -1)
-                calls, total = stats.get(key, (0, 0.0))
+                stats_key = (addr if isinstance(addr, int) else -1, slice_addr if isinstance(slice_addr, int) else -1)
+                calls, total = stats.get(stats_key, (0, 0.0))
                 calls = int(calls) + 1
                 total = float(total) + float(elapsed)
-                stats[key] = (calls, total)
+                stats[stats_key] = (calls, total)
                 if calls in (1, 10, 50, 100, 200, 500, 1000):
                     print(
                         "[dbg] clinic:peephole-stats "
@@ -2588,8 +2588,8 @@ def guard_angr_clinic_stage_markers(project: AngrProjectSurface) -> Iterator[Non
 
     class _NoPropagationResult:
         def __init__(self) -> None:
-            self.replacements = {}
-            self.dead_vvar_ids = set()
+            self.replacements: dict[object, object] = {}
+            self.dead_vvar_ids: set[object] = set()
             self.model = self
 
     def _compute_propagation_guarded(
@@ -2695,11 +2695,11 @@ def guard_angr_fast_post_ssa_8616(project: AngrProjectSurface) -> Iterator[None]
         c = _counter.get(id(self), 0)
         _counter[id(self)] = c + 1
         if getattr(project, "_inertia_tiny_core_aggressive_simplify", False) and c >= 1:
-            return
+            return None
         # Calls 0-2 are earlier stages; calls 3 and 4 are the 3rd and 4th
         # post-SSA whole-graph rounds that 86_16 does not need.
         if c in (3, 4):
-            return
+            return None
         return orig_simplify_function(self, ail_graph, **kwargs)
 
     clinic_cls._simplify_function = _fast_simplify_function
@@ -2776,12 +2776,12 @@ class ThreadBoundTextIO(io.TextIOBase):
         return self._stream().isatty()
 
     @property
-    def encoding(self) -> str:
+    def encoding(self) -> str:  # type: ignore[override]
         """Expose the active stream encoding with a stable fallback."""
         return self._stream().encoding or self._fallback.encoding or "utf-8"
 
     @property
-    def errors(self) -> str | None:
+    def errors(self) -> str | None:  # type: ignore[override]
         """Expose the active stream error policy."""
         return self._stream().errors or self._fallback.errors or "strict"
 
@@ -2811,6 +2811,7 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
         num_threads = len(executor._threads)
         if num_threads < executor._max_workers:
             thread_name = "%s_%d" % (executor._thread_name_prefix or self, num_threads)
+            worker_args: tuple[object, ...]
             if hasattr(executor, "_create_worker_context"):
                 worker_args = (
                     weakref.ref(self, weakref_cb),
@@ -2900,7 +2901,7 @@ def _faulthandler_output_file() -> typing.TextIO | None:
             stream.fileno()
         except Exception:
             continue
-        return stream
+        return typing.cast(typing.TextIO, stream)
     return None
 
 
@@ -3007,6 +3008,7 @@ def run_with_timeout_in_fork(
                         if stack_dump_file is not None:
                             faulthandler.enable(file=stack_dump_file, all_threads=True)
                             faulthandler.dump_traceback_later(stack_dump_sec, repeat=True, file=stack_dump_file)
+                payload: tuple[object, ...]
                 try:
                     payload = ("ok", func())
                 except BaseException as ex:  # noqa: BLE001
@@ -3034,7 +3036,7 @@ def run_with_timeout_in_fork(
                     else f"SIG={sig}"
                 )
                 try:
-                    sig_name = signal.strsignal(sig)  # type: ignore[attr-defined]
+                    sig_name = signal.strsignal(sig)
                 except Exception:
                     sig_name = f"signal={sig}"
                 return f"killed_by={sig_name}"
@@ -3058,22 +3060,22 @@ def run_with_timeout_in_fork(
                 _pid, _status = os.waitpid(pid, 0)
                 raise RuntimeError(f"fork child exited without result ({_child_exit_detail(pid, _status)})")
             expected = int.from_bytes(header, "little")
-            data = bytearray()
-            while len(data) < expected:
-                chunk = os.read(read_fd, min(65536, expected - len(data)))
+            framed_data = bytearray()
+            while len(framed_data) < expected:
+                chunk = os.read(read_fd, min(65536, expected - len(framed_data)))
                 if not chunk:
                     break
-                data.extend(chunk)
+                framed_data.extend(chunk)
             _pid, _status = os.waitpid(pid, 0)
-            if len(data) != expected:
+            if len(framed_data) != expected:
                 raise RuntimeError(
                     f"fork child returned incomplete result (expected={expected}B got={len(data)}B {_child_exit_detail(pid, _status)})"
                 )
-            payload = pickle.loads(bytes(data))
+            payload = typing.cast(tuple[object, ...], pickle.loads(bytes(framed_data)))
             if not isinstance(payload, tuple) or not payload:
                 raise RuntimeError(f"fork child returned invalid payload ({_child_exit_detail(pid, _status)})")
             if payload[0] == "ok":
-                return payload[1]
+                return typing.cast(_TimeoutResultT, payload[1])
             if payload[0] == "err":
                 if payload[1] in {"TimeoutError", "AnalysisTimeout"}:
                     raise TimeoutError(payload[2] or f"Timed out after {timeout}s.")
@@ -3346,7 +3348,8 @@ def guard_angr_structurer_codegen_timing(project: AngrProjectSurface) -> Iterato
         print("[dbg] stage-time: structurer:recursive start")
         sys.stderr.flush()
         try:
-            return orig_rs_init(self, *args, **kwargs)
+            orig_rs_init(self, *args, **kwargs)
+            return None
         finally:
             _elapsed = _time.perf_counter() - _t0
             print(f"[dbg] stage-time: structurer:recursive done elapsed={_elapsed:.2f}s")
@@ -3357,7 +3360,8 @@ def guard_angr_structurer_codegen_timing(project: AngrProjectSurface) -> Iterato
         print("[dbg] stage-time: region_simplifier start")
         sys.stderr.flush()
         try:
-            return orig_ri_init(self, *args, **kwargs)
+            orig_ri_init(self, *args, **kwargs)
+            return None
         finally:
             _elapsed = _time.perf_counter() - _t0
             print(f"[dbg] stage-time: region_simplifier done elapsed={_elapsed:.2f}s")
@@ -3368,7 +3372,8 @@ def guard_angr_structurer_codegen_timing(project: AngrProjectSurface) -> Iterato
         print("[dbg] stage-time: codegen:C start")
         sys.stderr.flush()
         try:
-            return orig_codegen_init(self, *args, **kwargs)
+            orig_codegen_init(self, *args, **kwargs)
+            return None
         finally:
             _elapsed = _time.perf_counter() - _t0
             print(f"[dbg] stage-time: codegen:C done elapsed={_elapsed:.2f}s")
@@ -3485,8 +3490,9 @@ def guard_angr_structuring_codegen_internal_timing() -> Iterator[None]:
     _orig_rml_sl = None
     _rml_timed_out = [False]  # mutable cell so _timed_rml closure can write
     try:
-        import angr_platforms.X86_16.lowering.real_mode_linear as _rml_mod
+        import angr_platforms.X86_16.lowering.real_mode_linear as _rml_module
 
+        _rml_mod = typing.cast(AngrPatchSurface, _rml_module)
         _orig_rml = _rml_mod.lower_stable_ss_linear_stack_dereferences_8616
         _BOUNDED_STAGE_SECONDS = 30
 
@@ -3520,15 +3526,17 @@ def guard_angr_structuring_codegen_internal_timing() -> Iterator[None]:
         # Also patch the import-time reference in stack_lowering.py that
         # bypasses the module-level monkey-patch (see issue with
         # "from .real_mode_linear import lower_stable_ss..." at module load).
-        import angr_platforms.X86_16.lowering.stack_lowering as _sl_mod
+        import angr_platforms.X86_16.lowering.stack_lowering as _sl_module
 
+        _sl_mod = typing.cast(AngrPatchSurface, _sl_module)
         _orig_rml_sl = _sl_mod.lower_stable_ss_linear_stack_dereferences_8616
         _sl_mod.lower_stable_ss_linear_stack_dereferences_8616 = _timed_rml
     except Exception:
         pass
     try:
-        import angr_platforms.X86_16.lowering.stack_lowering_from_facts as _slf_mod
+        import angr_platforms.X86_16.lowering.stack_lowering_from_facts as _slf_module
 
+        _slf_mod = typing.cast(AngrPatchSurface, _slf_module)
         _orig_slf = _slf_mod.lower_stack_accesses_from_alias_facts_8616
 
         def _timed_slf(

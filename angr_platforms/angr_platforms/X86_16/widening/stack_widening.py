@@ -41,7 +41,7 @@ class WideningCandidate:
 
     def is_joinable_with(self, other: "WideningCandidate") -> bool:
         """Return whether this candidate's domain and view can join another."""
-        return self.domain.can_join(other.domain) and self.view.can_join(other.view)
+        return bool(self.domain.can_join(other.domain) and self.view.can_join(other.view))
 
     @classmethod
     def from_expr(cls, expr: object) -> "WideningCandidate":
@@ -118,15 +118,15 @@ class StorageJoinAnalysis:
 
     def same_domain(self) -> bool:
         """Return whether both slices describe the same storage domain."""
-        return self.left.same_domain(self.right)
+        return bool(self.left.same_domain(self.right))
 
     def compatible_view(self) -> bool:
         """Return whether both slices have join-compatible storage views."""
-        return self.left.compatible_view(self.right)
+        return bool(self.left.compatible_view(self.right))
 
     def needs_synthesis(self) -> bool:
         """Return whether either side lacks concrete storage evidence."""
-        return self.left.needs_synthesis() or self.right.needs_synthesis()
+        return bool(self.left.needs_synthesis() or self.right.needs_synthesis())
 
 
 @dataclass(frozen=True)
@@ -150,7 +150,8 @@ def _register_version_for_expr(expr: object, state: AliasState | None) -> int | 
     pair_name = register_pair_name(name)
     if pair_name is None:
         return None
-    return state.version_of(DomainKey("reg", pair_name.upper()))
+    version = state.version_of(DomainKey("reg", pair_name.upper()))
+    return version if isinstance(version, int) else None
 
 
 def prove_adjacent_storage_slices(
@@ -364,19 +365,19 @@ def can_join_adjacent_storage_slices(
             high_candidate = None
         if low_candidate is not None and high_candidate is not None:
             if alias_state is None:
-                return low_candidate.is_joinable_with(high_candidate)
-            return can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state, proof=proof)
+                return bool(low_candidate.is_joinable_with(high_candidate))
+            return bool(can_join_adjacent_register_slices(low_expr, high_expr, alias_state=alias_state, proof=proof))
 
         try:
-            low_candidate = WideningCandidate.from_expr(low_expr)
-            high_candidate = WideningCandidate.from_expr(high_expr)
+            low_storage_candidate = WideningCandidate.from_expr(low_expr)
+            high_storage_candidate = WideningCandidate.from_expr(high_expr)
         except ValueError:
             return False
-        if low_candidate.domain.is_unknown() or high_candidate.domain.is_unknown():
+        if low_storage_candidate.domain.is_unknown() or high_storage_candidate.domain.is_unknown():
             return False
-        if low_candidate.domain.is_mixed() or high_candidate.domain.is_mixed():
+        if low_storage_candidate.domain.is_mixed() or high_storage_candidate.domain.is_mixed():
             return False
-        if not low_candidate.is_joinable_with(high_candidate):
+        if not low_storage_candidate.is_joinable_with(high_storage_candidate):
             return False
         return True
 
@@ -394,6 +395,9 @@ def merge_storage_slice_domains(
 
 
 __all__ = [
+    "RegisterWideningCandidate",
+    "_StorageDomainSignature",
+    "can_join_adjacent_register_slices",
     "StorageJoinAnalysis",
     "StorageSubviewProof",
     "WideningCandidate",

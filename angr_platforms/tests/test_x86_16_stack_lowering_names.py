@@ -12,7 +12,9 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     _apply_annotation_names_to_existing_stack_cvars_8616,
     stack_cvar_for_stable_ss_linear_access_8616,
 )
-from angr_platforms.X86_16.lowering.stack_lowering_from_facts import _materialize_stack_cvar_at_offset
+from angr_platforms.X86_16.lowering.stack_lowering_from_facts import (
+    materialize_stack_cvar_at_offset_from_facts_8616,
+)
 from angr_platforms.X86_16.lowering.stack_variable_binding import (
     StackVariableBinding,
     select_normalized_stack_argument_annotation_spec_8616,
@@ -135,7 +137,7 @@ def test_fact_stack_lowering_preserves_annotated_function_pointer_local_type():
     codegen.cfunc.variables_in_use[variable] = cvar
     codegen.cfunc.unified_local_vars[variable] = {(cvar, fn_ptr_type)}
 
-    resolved = _materialize_stack_cvar_at_offset(codegen, -2, size=2, preferred_name="fn")
+    resolved = materialize_stack_cvar_at_offset_from_facts_8616(codegen, -2, size=2, preferred_name="fn")
 
     assert resolved is cvar
     assert resolved.variable_type is fn_ptr_type
@@ -154,7 +156,7 @@ def test_fact_stack_lowering_preserves_existing_signed_arg_surface():
     codegen.cfunc.arg_list = [arg_cvar]
     codegen.cfunc.variables_in_use[stale_var] = stale_cvar
 
-    resolved = _materialize_stack_cvar_at_offset(codegen, 4, size=2, preferred_name="arg_4")
+    resolved = materialize_stack_cvar_at_offset_from_facts_8616(codegen, 4, size=2, preferred_name="arg_4")
 
     assert resolved is arg_cvar
     assert resolved.variable.name == "a"

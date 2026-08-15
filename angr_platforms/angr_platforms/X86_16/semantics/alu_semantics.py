@@ -113,13 +113,13 @@ def _condition_value_from_operand(value: object, *, size_hint: int = 0) -> IRVal
                 MemSpace.REG, name=reg_name, offset=reg_offset, size=size, expr=(_type_name_for_operand(value),)
             )
 
-        reg_name = _dynamic_vex_attr_8616(value, "reg_name")
-        if isinstance(reg_name, str) and reg_name:
+        dynamic_reg_name = _dynamic_vex_attr_8616(value, "reg_name")
+        if isinstance(dynamic_reg_name, str) and dynamic_reg_name:
             size = _size_bytes_from_operand(value) or hinted_size
             reg_offset = _dynamic_vex_attr_8616(value, "offset")
             return IRValue(
                 MemSpace.REG,
-                name=reg_name.lower(),
+                name=dynamic_reg_name.lower(),
                 offset=int(reg_offset) if isinstance(reg_offset, int) else 0,
                 size=size,
                 expr=(_type_name_for_operand(value),),

@@ -240,8 +240,8 @@ def _write_abi_manifest(
     catalog = json.loads(functions_path.read_text(encoding="utf-8"))
     oracle_stats = _ssa_function_stats(oracle_ssa_path)
     candidate_stats = _ssa_function_stats(candidate_ssa_path)
-    functions = []
-    skipped = []
+    functions: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
     for function in catalog.get("functions", []) or []:
         if not isinstance(function, dict):
             continue

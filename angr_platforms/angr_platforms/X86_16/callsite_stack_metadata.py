@@ -73,8 +73,8 @@ def _is_assignment_node_8616(node: object) -> bool:
     )
 
 
-def _assignment_nodes_8616(stmt: object) -> tuple:
-    candidates = []
+def _assignment_nodes_8616(stmt: object) -> tuple[object, ...]:
+    candidates: list[object] = []
     if _is_assignment_node_8616(stmt):
         candidates.append(stmt)
     for node in _iter_c_nodes_deep_8616(stmt):
@@ -557,7 +557,7 @@ def _prune_dead_stack_carrier_assignments_8616(block: object, codegen: object | 
     return _impl()
 
 
-def _prune_trailing_segment_metadata_8616(statements: list, project: object) -> bool:
+def _prune_trailing_segment_metadata_8616(statements: list[object], project: object) -> bool:
     changed = False
     removed_store = False
     while statements:

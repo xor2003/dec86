@@ -19,7 +19,7 @@ import sys
 import typing
 from collections.abc import Iterator, Mapping
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
@@ -82,7 +82,7 @@ __all__ = [
 TAIL_VALIDATION_FINGERPRINT_VERSION: int = 34
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log: logging.Logger = logging.getLogger(__name__)
-_EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 50000
+_EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 500000
 _TEMPORARY_FINGERPRINT_NODE_IDS_8616: set[int] = set()
 _ExprFingerprintCacheKey8616 = tuple[object, int, str]
 
@@ -156,7 +156,7 @@ def _first_codegen_8616(*nodes: Any) -> object | None:
     for node in nodes:
         codegen = _dynamic_tail_validation_getattr_8616(node, "codegen", None)
         if codegen is not None:
-            return codegen
+            return cast(object | None, codegen)
     return None
 
 
@@ -675,9 +675,9 @@ def _validation_alias_rhs_lookup_8616(*, variable: Any, variable_id: int, name: 
 def _acceptable_stack_alias_rhs_8616(value: object) -> object | None:
     value = _strip_validation_casts(value)
     if isinstance(value, (CVariable, CIndexedVariable)):
-        return value
+        return cast(object | None, value)
     if isinstance(value, CUnaryOp) and value.op in {"Dereference", "Reference"}:
-        return value
+        return cast(object | None, value)
     return None
 
 
@@ -695,10 +695,10 @@ def _dirty_virtual_name_8616(node: Any) -> str | None:
 def _acceptable_validation_expr_rhs_8616(value: object) -> object | None:
     value = _strip_validation_casts(value)
     if isinstance(value, (CConstant, CVariable, CIndexedVariable, CDirtyExpression)):
-        return value
+        return cast(object | None, value)
     if isinstance(value, CUnaryOp):
         if value.op in {"Dereference", "Reference"}:
-            return value
+            return cast(object | None, value)
         operand = _acceptable_validation_expr_rhs_8616(value.operand)
         return value if operand is not None else None
     if isinstance(value, CBinaryOp):
@@ -771,7 +771,7 @@ def _debug_tail_stack_alias_8616(
     binding: str | None = None,
     final: str | None = None,
 ) -> None:
-    def _impl() -> Any:
+    def _impl() -> None:
         if not os.environ.get("INERTIA_DEBUG_TAIL_STACK_ALIAS"):
             return
         cfunc = _dynamic_tail_validation_getattr_8616(codegen, "cfunc", None) if codegen is not None else None
@@ -813,7 +813,7 @@ def _debug_tail_stack_alias_indexed_8616(
     selected: Any = None,
     note: str,
 ) -> None:
-    def _impl() -> Any:
+    def _impl() -> None:
         if not os.environ.get("INERTIA_DEBUG_TAIL_STACK_ALIAS"):
             return
         cfunc = _dynamic_tail_validation_getattr_8616(codegen, "cfunc", None) if codegen is not None else None
@@ -1098,7 +1098,7 @@ def _source_arg_stack_slot_fingerprint_8616(offset: int, codegen: Any, *, size: 
     if source_match is not None:
         source_name, source_offset, source_size = source_match
     else:
-        source_name = _cfunc_source_arg_names_by_offset_8616(cfunc).get(offset)
+        source_name = _cfunc_source_arg_names_by_offset_8616(cfunc).get(offset) or ""
         source_offset = offset
         source_size = _cfunc_source_arg_sizes_by_offset_8616(cfunc).get(offset, size)
     if not isinstance(source_name, str) or not source_name:
@@ -1155,7 +1155,7 @@ def _debug_source_arg_stack_slot_8616(
 
 
 def _canonical_or_unresolved_stack_fingerprint_8616(offset: int, codegen: Any, *, source: str, node: Any = None) -> str:
-    def _impl() -> Any:
+    def _impl() -> str:
         if source == "stack_var":
             variable = _dynamic_tail_validation_getattr_8616(node, "variable", None)
             size = _dynamic_tail_validation_getattr_8616(variable, "size", None)
@@ -1223,7 +1223,7 @@ def _canonical_or_unresolved_stack_fingerprint_8616(offset: int, codegen: Any, *
 
 
 def _resolve_stack_alias_base_offset_8616(base_expr: Any, codegen: Any, *, seen: set[int] | None = None) -> int | None:
-    def _impl() -> Any:
+    def _impl() -> int | None:
         nonlocal base_expr, seen
         if seen is None:
             seen = set()
@@ -1414,18 +1414,13 @@ def _global_word_pair_from_proven_byte_8616(node: object, project: object) -> st
 
 
 def _proven_global_byte_offset_8616(node: object, project: object) -> int | None:
+    """Return only directly proven global-byte storage, never recurse via a fingerprint."""
     offset = _materialized_global_byte_offset_8616(node)
     if isinstance(offset, int):
         return offset
     offset = _global_byte_offset_from_expr_8616(node, project)
     if isinstance(offset, int):
         return offset
-    fingerprint = _expr_fingerprint(node, project, set())
-    if isinstance(fingerprint, str) and fingerprint.startswith("global:"):
-        try:
-            return int(fingerprint[len("global:") :], 16)
-        except ValueError:
-            return None
     return None
 
 
@@ -1577,7 +1572,7 @@ def _global_byte_offset_from_scaled_expr_8616(node: object, project: object) -> 
 
 
 def _stack_byte_offset_from_expr_8616(node: Any, project: Any) -> int | None:
-    def _impl() -> Any:
+    def _impl() -> int | None:
         nonlocal node
         node = _strip_validation_casts_and_dirty_aliases_8616(node)
         if isinstance(node, CVariable):
@@ -1607,7 +1602,8 @@ def _stack_byte_offset_from_expr_8616(node: Any, project: Any) -> int | None:
             indexed_offset = _resolve_stack_offset_from_indexed_8616(node.operand, project)
             if isinstance(indexed_offset, int):
                 return indexed_offset
-            return _match_bp_stack_dereference_8616(node, project)
+            matched_offset = _match_bp_stack_dereference_8616(node, project)
+            return matched_offset if isinstance(matched_offset, int) else None
         indexed_offset = _resolve_stack_offset_from_indexed_8616(node, project)
         if isinstance(indexed_offset, int):
             return indexed_offset
@@ -1782,7 +1778,7 @@ def _validation_stack_cvar_offset_8616(cvar: object) -> int | None:
 
 
 def _indexed_location_alias_or_fallback_8616(*, node: Any, base: Any, index_value: int, codegen: Any) -> str | None:
-    def _impl() -> Any:
+    def _impl() -> str | None:
         canonical_offset = _resolve_stack_alias_base_offset_8616(base, codegen) if codegen is not None else None
         if isinstance(canonical_offset, int):
             _debug_tail_stack_alias_indexed_8616(
@@ -1872,7 +1868,7 @@ def _extract_deref_scaled_node(node: object, *, scale: int) -> CUnaryOp | None:
 
 
 def _bool_projection_fingerprint(node: Any, project: Any) -> str | None:
-    def _impl() -> Any:
+    def _impl() -> str | None:
         nonlocal node
         while isinstance(node, CTypeCast):
             node = node.expr
@@ -1908,9 +1904,9 @@ def _extract_same_zero_compare_expr_8616(node: object) -> object | None:
     if not isinstance(node, CBinaryOp) or node.op != "CmpEQ":
         return None
     if _c_constant_int_value(node.rhs) == 0:
-        return node.lhs
+        return cast(object | None, node.lhs)
     if _c_constant_int_value(node.lhs) == 0:
-        return node.rhs
+        return cast(object | None, node.rhs)
     return None
 
 
@@ -2607,7 +2603,7 @@ def _function_for_call_context_8616(root: Any, project: Any) -> Any:
 
 
 def _collect_direct_capstone_callsite_addrs_8616(function: Any) -> tuple[int, ...]:
-    def _impl() -> Any:
+    def _impl() -> tuple[int, ...]:
         project = _dynamic_tail_validation_getattr_8616(function, "project", None)
         factory = _dynamic_tail_validation_getattr_8616(project, "factory", None)
         if project is None or factory is None:
@@ -2800,7 +2796,7 @@ def _location_fingerprint(
 def _cvariable_location_fingerprint_8616(node: Any, project: Any, *, _seen: set[int], resolve_copy_alias: bool) -> str | None:
     """Return a terminating storage identity for an angr structured-C variable."""
 
-    def _impl() -> Any:
+    def _impl() -> str | None:
         variable = _dynamic_tail_validation_getattr_8616(node, "variable", None)
         codegen = _dynamic_tail_validation_getattr_8616(node, "codegen", None)
         name = _dynamic_tail_validation_getattr_8616(node, "name", None) or _dynamic_tail_validation_getattr_8616(variable, "name", None)

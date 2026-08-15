@@ -14,7 +14,7 @@ from .processor import Processor
 __all__ = ["Hardware"]
 
 
-class Hardware(Processor, Memory, IO):
+class Hardware(Processor, Memory, IO):  # type: ignore[misc, unused-ignore] # intentional frontend mixin state
     """Frontend runtime state composed from processor, memory, and IO surfaces."""
 
     def __init__(self, size: int = 0) -> None:

@@ -8,6 +8,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CFunctionCall,
     CIfElse,
     CIndexedVariable,
+    CReturn,
     CStatements,
     CSwitchCase,
     CUnaryOp,
@@ -552,6 +553,27 @@ def test_def_use_accepts_assignment_on_both_branches():
         codegen=codegen,
     )
     root = CStatements([conditional, local], codegen=codegen)
+
+    report = validate_structured_def_use_8616(root)
+
+    assert report.passed
+    assert report.materialized_count == 1
+
+
+def test_def_use_ignores_terminated_branch_when_joining_definitions():
+    codegen = _codegen()
+    carrier = _register_carrier(0, codegen, "joined_ax")
+    conditional = CIfElse(
+        [
+            (
+                _const(1, codegen),
+                CStatements([CAssignment(carrier, _const(2, codegen), codegen=codegen)], codegen=codegen),
+            )
+        ],
+        else_node=CStatements([CReturn(None, codegen=codegen)], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([conditional, carrier], codegen=codegen)
 
     report = validate_structured_def_use_8616(root)
 

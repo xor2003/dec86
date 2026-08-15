@@ -13,14 +13,19 @@ assembly, or rendered C text.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any, TypeAlias
+
+# Opaque angr structured-codegen values are intentionally dynamic at this
+# boundary; mypyc cannot import dataclass fields annotated as builtin object.
+OpaqueCodegenValue8616: TypeAlias = Any
 
 
 @dataclass(frozen=True, slots=True)
 class ProtectedCallArgument8616:
     """One quality-ranked argument tied to its original structured call."""
 
-    call: object
-    expression: object
+    call: OpaqueCodegenValue8616
+    expression: OpaqueCodegenValue8616
     score: int
 
 
@@ -30,12 +35,18 @@ class ProtectedCallArgumentStore8616:
 
     entries: dict[tuple[int, int], ProtectedCallArgument8616] = field(default_factory=dict)
 
-    def get(self, call: object, argument_index: int) -> ProtectedCallArgument8616 | None:
+    def get(self, call: OpaqueCodegenValue8616, argument_index: int) -> ProtectedCallArgument8616 | None:
         """Return an entry only when the retained call is the exact live object."""
         entry = self.entries.get((id(call), argument_index))
         return entry if entry is not None and entry.call is call else None
 
-    def remember(self, call: object, argument_index: int, expression: object, score: int) -> None:
+    def remember(
+        self,
+        call: OpaqueCodegenValue8616,
+        argument_index: int,
+        expression: OpaqueCodegenValue8616,
+        score: int,
+    ) -> None:
         """Retain the highest-quality expression for one exact live call argument."""
         current = self.get(call, argument_index)
         if current is None or score >= current.score:
@@ -45,7 +56,7 @@ class ProtectedCallArgumentStore8616:
                 score=score,
             )
 
-    def discard_call(self, call: object) -> None:
+    def discard_call(self, call: OpaqueCodegenValue8616) -> None:
         """Discard every protected argument owned by one exact call object."""
         for key, entry in tuple(self.entries.items()):
             if entry.call is call:

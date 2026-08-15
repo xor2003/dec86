@@ -47,6 +47,17 @@ def test_branch_target_return_effect_classifies_mov_register_immediate():
     assert effect.imm == 0xFFFF
 
 
+def test_branch_target_return_effect_classifies_register_self_clear():
+    effect = branch_target_return_effect_8616(
+        _Insn("sub", [_reg_operand(1), _reg_operand(1)]),
+        _no_target,
+    )
+
+    assert effect.kind is BranchTargetReturnEffectKind8616.MOV_REG_IMM
+    assert effect.dst_reg == "ax"
+    assert effect.imm == 0
+
+
 def test_branch_target_return_effect_classifies_stack_load():
     effect = branch_target_return_effect_8616(
         _Insn("mov", [_reg_operand(2), _mem_operand(base=3, disp=-4, size=2)]),

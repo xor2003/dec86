@@ -232,7 +232,7 @@ def _sole_bound_stack_cvar_8616(
     if isinstance(resolved, structured_c.CVariable) and isinstance(
         getattr(resolved, "variable", None), SimStackVariable
     ):
-        return resolved
+        return cast(object | None, resolved)
     return None
 
 
@@ -588,7 +588,7 @@ def _materialize_stack_cvar_at_offset(
         with contextlib.suppress(Exception):
             sort_local_vars()
 
-    return cvar
+    return cast(object | None, cvar)
 
 
 def _canonicalize_stack_cvar_expr(
@@ -608,7 +608,6 @@ def _canonicalize_stack_cvar_expr(
             active_expr_ids = set()
         if analysis_context is None:
             analysis_context = {}
-        analysis_context = cast(dict[str, object], analysis_context)
         context = analysis_context
         codegen_dynamic = cast(Any, codegen)
         # dynamic-boundary: stack-lowering telemetry is attached to angr
@@ -663,7 +662,7 @@ def _canonicalize_stack_cvar_expr(
 
         synthetic_sp_anchor = None
         synthetic_bp_anchor = None
-        inferred_stack_base_alias = ...
+        inferred_stack_base_alias: object = ...
 
         def _iter_statement_nodes(root: object) -> Iterator[object]:
             stack = [root]
@@ -749,7 +748,7 @@ def _canonicalize_stack_cvar_expr(
         def _infer_stack_base_alias_from_bp_slots() -> tuple[object, int] | None:
             nonlocal inferred_stack_base_alias
             if inferred_stack_base_alias is not ...:
-                return inferred_stack_base_alias
+                return cast(tuple[object, int] | None, inferred_stack_base_alias)
 
             root = getattr(getattr(codegen, "cfunc", None), "statements", None)
             if root is None:
@@ -959,7 +958,7 @@ def _canonicalize_stack_cvar_expr(
         def _single_assignment_expr_for_cvar(node_cvar: object) -> object | None:
             cache_key = id(node_cvar)
             if cache_key in cvar_single_assignment_cache:
-                return cvar_single_assignment_cache[cache_key]
+                return cast(object | None, cvar_single_assignment_cache[cache_key])
 
             root = getattr(getattr(codegen, "cfunc", None), "statements", None)
             if root is None or not isinstance(node_cvar, structured_c.CVariable):
@@ -1467,7 +1466,7 @@ def _canonicalize_stack_cvar_expr(
                 if binding_offset != offset:
                     continue
                 if binding.size > 0:
-                    return binding.size
+                    return cast(int | None, binding.size)
             return None
 
         def _alias_fact_bp_offsets_8616() -> set[int]:
@@ -1481,7 +1480,8 @@ def _canonicalize_stack_cvar_expr(
             cached = getattr(codegen, "_inertia_stack_base_bp_bias_evidence_8616", None)
             cache_key = getattr(getattr(codegen, "cfunc", None), "statements", None)
             if isinstance(cached, StackBaseBpBiasEvidence8616) and cached.statement_root is cache_key:
-                return cached.inferred_bias
+                    inferred_bias = cached.inferred_bias
+                    return inferred_bias if isinstance(inferred_bias, int) else None
             return None
 
         def _alias_rebased_stack_offset_8616(offset: int) -> int | None:
@@ -1522,7 +1522,7 @@ def _canonicalize_stack_cvar_expr(
                     )
                     + 1
                 )
-                return resolved
+                return cast(object | None, resolved)
             if not callable(materialize_stack_cvar_at_offset):
                 return None
             materialized_size = preferred_size if isinstance(preferred_size, int) and preferred_size > 0 else 2
@@ -1541,7 +1541,7 @@ def _canonicalize_stack_cvar_expr(
                     )
                     + 1
                 )
-                return materialized
+                return cast(object | None, materialized)
             return None
 
         if isinstance(expr, structured_c.CVariable):
@@ -1735,7 +1735,9 @@ def _canonicalize_stack_cvar_expr(
                     alias_state = _resolve_stack_pointer_alias_expr(deref_operand)
                     alias_base_expr = alias_state[0] if alias_state is not None else None
                     alias_base_var = getattr(alias_base_expr, "variable", None)
-                    resolved_offset = getattr(alias_base_var, "offset", None)
+                    candidate_offset = getattr(alias_base_var, "offset", None)
+                    if isinstance(candidate_offset, int):
+                        resolved_offset = candidate_offset
                     if isinstance(resolved_offset, int) and alias_state is not None:
                         displacement = resolved_offset + alias_state[1]
                 if isinstance(displacement, int):
@@ -1800,7 +1802,9 @@ def _canonicalize_stack_cvar_expr(
                         if alias_state is not None:
                             alias_base_expr, alias_offset = alias_state
                             alias_base_var = getattr(alias_base_expr, "variable", None)
-                            resolved_offset = getattr(alias_base_var, "offset", None)
+                            candidate_offset = getattr(alias_base_var, "offset", None)
+                            if isinstance(candidate_offset, int):
+                                resolved_offset = candidate_offset
                             if isinstance(resolved_offset, int):
                                 resolved_offset += alias_offset
                         else:

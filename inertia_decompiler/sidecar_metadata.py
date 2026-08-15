@@ -183,20 +183,25 @@ def _load_lst_sidecar(
         try:
             metadata = extract_lst_metadata(lst_path)
             if metadata.code_labels or metadata.data_labels:
-                if metadata.absolute_addrs:
-                    code_labels.update(metadata.code_labels)
-                    data_labels.update(metadata.data_labels)
-                    code_ranges.update(metadata.code_ranges)
-                else:
-                    for offset, name in metadata.data_labels.items():
-                        data_labels.setdefault(load_base_linear + offset, name)
-                    for offset, name in metadata.code_labels.items():
-                        code_labels.setdefault(load_base_linear + offset, name)
-                    for offset, span in metadata.code_ranges.items():
-                        code_ranges.setdefault(
-                            load_base_linear + offset, (load_base_linear + span[0], load_base_linear + span[1])
-                        )
-                source_formats.append(metadata.source_format)
+                segmented_ida_listing = metadata.source_format == "ida_lst" and bool(segment_offsets)
+                if not segmented_ida_listing:
+                    if metadata.absolute_addrs:
+                        code_labels.update(metadata.code_labels)
+                        data_labels.update(metadata.data_labels)
+                        code_ranges.update(metadata.code_ranges)
+                    else:
+                        for offset, name in metadata.data_labels.items():
+                            data_labels.setdefault(load_base_linear + offset, name)
+                        for offset, name in metadata.code_labels.items():
+                            code_labels.setdefault(load_base_linear + offset, name)
+                        for offset, span in metadata.code_ranges.items():
+                            code_ranges.setdefault(
+                                load_base_linear + offset, (load_base_linear + span[0], load_base_linear + span[1])
+                            )
+                    source_formats.append(metadata.source_format)
+                # The generic IDA LST extractor retains only the offset part of
+                # ``segment:offset`` labels.  The segment-aware parser below
+                # owns those addresses and prevents duplicate low functions.
         except Exception as exc:
             print(f"[dbg] failed to parse source listing {lst_path}: {exc}")
         try:
@@ -1001,7 +1006,8 @@ def _lst_data_label(metadata: LSTMetadata | None, offset: int | None) -> str | N
     if metadata is None or offset is None:
         return None
     metadata_obj = cast(LSTMetadata, metadata)
-    return metadata_obj.data_labels.get(offset)
+    data_labels = cast(dict[int, str], metadata_obj.data_labels)
+    return data_labels.get(offset)
 
 
 def _lst_code_label(metadata: LSTMetadata | None, addr: int | None, code_base: int | None) -> str | None:
@@ -1012,7 +1018,7 @@ def _lst_code_label(metadata: LSTMetadata | None, addr: int | None, code_base: i
     lookup_addr = addr if absolute_addrs else addr - code_base if code_base is not None else None
     if lookup_addr is None:
         return None
-    code_labels = metadata_obj.code_labels
+    code_labels = cast(dict[int, str], metadata_obj.code_labels)
     if not isinstance(code_labels, dict):
         return None
     label = code_labels.get(lookup_addr)
@@ -1028,7 +1034,7 @@ def _lst_code_region(metadata: LSTMetadata | None, addr: int | None) -> tuple[in
     def _impl() -> tuple[int, int] | None:
         if metadata is None or addr is None:
             return None
-        code_ranges = metadata.code_ranges
+        code_ranges = cast(dict[int, tuple[int, int]], metadata.code_ranges)
         span = code_ranges.get(addr)
         if span is not None:
             return span

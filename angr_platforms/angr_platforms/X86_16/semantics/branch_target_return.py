@@ -173,6 +173,19 @@ def branch_target_return_effect_8616(
     # Dynamic third-party capstone boundary: operands are decoded by capstone wrappers.
     operands = tuple(getattr(insn, "operands", ()) or ())
     if (
+        mnemonic in {"sub", "xor"}
+        and len(operands) == 2
+        and _operand_kind_8616(operands[0]) == 1
+        and _operand_kind_8616(operands[1]) == 1
+    ):
+        dst_reg = _register_name_8616(insn, operands[0])
+        if dst_reg in {"ax", "dx"} and dst_reg == _register_name_8616(insn, operands[1]):
+            return BranchTargetReturnEffect8616(
+                BranchTargetReturnEffectKind8616.MOV_REG_IMM,
+                dst_reg=dst_reg,
+                imm=0,
+            )
+    if (
         mnemonic == "mov"
         and len(operands) == 2
         and _operand_kind_8616(operands[0]) == 1
@@ -388,13 +401,13 @@ def terminal_ax_return_effect_8616(insn: object) -> TerminalAxReturnEffect8616:
         value_operand = _terminal_value_operand_8616(insn, operands[1])
         if value_operand is None:
             return TerminalAxReturnEffect8616(TerminalAxReturnEffectKind8616.OTHER)
-        rhs_kind, imm, mem_disp, mem_size, rhs_reg = value_operand
+        rhs_kind, rhs_imm, mem_disp, mem_size, rhs_reg = value_operand
         return TerminalAxReturnEffect8616(
             TerminalAxReturnEffectKind8616.REG_ALU_VALUE,
             dst_reg="al",
             rhs_kind=rhs_kind,
             rhs_reg=rhs_reg,
-            imm=imm,
+            imm=rhs_imm,
             op={"add": "Add", "sub": "Sub", "xor": "Xor"}[mnemonic],
             mem_disp=mem_disp,
             mem_size=mem_size,
@@ -408,13 +421,13 @@ def terminal_ax_return_effect_8616(insn: object) -> TerminalAxReturnEffect8616:
         value_operand = _terminal_value_operand_8616(insn, operands[1])
         if value_operand is None or value_operand[0] is TerminalAxReturnOperandKind8616.IMM:
             return TerminalAxReturnEffect8616(TerminalAxReturnEffectKind8616.OTHER, dst_reg="ax")
-        rhs_kind, imm, mem_disp, mem_size, rhs_reg = value_operand
+        rhs_kind, rhs_imm, mem_disp, mem_size, rhs_reg = value_operand
         return TerminalAxReturnEffect8616(
             TerminalAxReturnEffectKind8616.REG_ALU_VALUE,
             dst_reg="ax",
             rhs_kind=rhs_kind,
             rhs_reg=rhs_reg,
-            imm=imm,
+            imm=rhs_imm,
             op={"add": "Add", "sub": "Sub"}[mnemonic],
             mem_disp=mem_disp,
             mem_size=mem_size,
@@ -423,18 +436,25 @@ def terminal_ax_return_effect_8616(insn: object) -> TerminalAxReturnEffect8616:
         value_operand = _terminal_value_operand_8616(insn, operands[0])
         if value_operand is None:
             return TerminalAxReturnEffect8616(TerminalAxReturnEffectKind8616.OTHER)
-        rhs_kind, imm, mem_disp, mem_size, rhs_reg = value_operand
+        rhs_kind, rhs_imm, mem_disp, mem_size, rhs_reg = value_operand
         return TerminalAxReturnEffect8616(
             TerminalAxReturnEffectKind8616.AX_MUL_VALUE,
             rhs_kind=rhs_kind,
             rhs_reg=rhs_reg,
-            imm=imm,
+            imm=rhs_imm,
             op="Mul",
             mem_disp=mem_disp,
             mem_size=mem_size,
         )
-    dst_reg = _register_name_8616(insn, operands[0]) if operands and _operand_kind_8616(operands[0]) == 1 else None
-    return TerminalAxReturnEffect8616(TerminalAxReturnEffectKind8616.OTHER, dst_reg=dst_reg)
+    fallback_dst_reg = (
+        _register_name_8616(insn, operands[0])
+        if operands and _operand_kind_8616(operands[0]) == 1
+        else None
+    )
+    return TerminalAxReturnEffect8616(
+        TerminalAxReturnEffectKind8616.OTHER,
+        dst_reg=fallback_dst_reg,
+    )
 
 
 __all__ = [

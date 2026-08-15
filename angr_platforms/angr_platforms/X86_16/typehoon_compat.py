@@ -38,7 +38,7 @@ from angr.sim_type import (
 )
 
 try:
-    _typehoon_lifter = importlib.import_module("angr.analyses.typehoon.lifter")
+    _typehoon_lifter: Any | None = importlib.import_module("angr.analyses.typehoon.lifter")
 except ImportError:
     _typehoon_lifter = None
 
@@ -56,7 +56,7 @@ def apply_x86_16_typehoon_compatibility() -> None:
         state = cast(Any, self)
         if state.arch.bits == 16:
             return (offset + 0x7FFE) & 0xFFFF
-        return cast(Any, _orig_stack_addr_from_offset)(self, offset)
+        return int(cast(Any, _orig_stack_addr_from_offset)(self, offset))
 
     if (
         getattr(_variable_recovery_base.VariableRecoveryStateBase.stack_addr_from_offset, "__name__", "")
@@ -78,7 +78,7 @@ def apply_x86_16_typehoon_compatibility() -> None:
     ):
         cast(Any, _rd_state.ReachingDefinitionsState)._initial_stack_pointer = _initial_stack_pointer_8616
 
-    class Pointer16(Pointer, TCInt16):
+    class Pointer16(Pointer, TCInt16):  # type: ignore[misc, unused-ignore] # dynamic Typehoon bases
         """16-bit Typehoon pointer constant installed into angr's runtime lattice."""
 
         def __init__(self, basetype: TypeConstant | None = None, name: str | None = None) -> None:
@@ -109,9 +109,9 @@ def apply_x86_16_typehoon_compatibility() -> None:
         if solver.bits == 16:
             return Pointer16
         if solver.bits == 32:
-            return Pointer32
+            return cast(type[object], Pointer32)
         if solver.bits == 64:
-            return Pointer64
+            return cast(type[object], Pointer64)
         raise NotImplementedError(f"Unsupported bits {solver.bits}")
 
     solver_dynamic.SimpleSolver._pointer_class = _pointer_class_16
@@ -130,7 +130,7 @@ def apply_x86_16_typehoon_compatibility() -> None:
         constraints_payload = cast(Any, constraints)
         typevars_payload = cast(Any, typevars)
         if bits != 16:
-            return cast(Any, _orig_simple_solver_init)(
+            cast(Any, _orig_simple_solver_init)(
                 self,
                 bits,
                 constraints_payload,
@@ -138,6 +138,7 @@ def apply_x86_16_typehoon_compatibility() -> None:
                 constraint_set_degradation_threshold=constraint_set_degradation_threshold,
                 stackvar_max_sizes=stackvar_max_sizes,
             )
+            return None
 
         threshold_raw = os.environ.get("INERTIA_X86_16_TYPEHOON_DEGRADE_THRESHOLD", "").strip()
         if threshold_raw:

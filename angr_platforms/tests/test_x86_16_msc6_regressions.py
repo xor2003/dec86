@@ -405,6 +405,7 @@ def test_msc6_pointer_swap_preserves_loaded_temp_across_pointer_store() -> None:
 @pytest.mark.skipif(not CMP16_EXE.is_file(), reason="CMP16 example binary is not available in this workspace.")
 @pytest.mark.skipif(not KVIKDOS_PATH.is_file(), reason="kvikdos is not available in this workspace.")
 @pytest.mark.skipif(not MSC6_ROOT.is_dir(), reason="MS C 6 root is not available in this workspace.")
+@pytest.mark.xdist_group("msc6-runtime-gate")
 @pytest.mark.parametrize(
     ("example_name", "exe_path"),
     [

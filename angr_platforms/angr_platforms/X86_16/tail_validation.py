@@ -72,12 +72,12 @@ from .ir.condition_ir import (
 from .ir.core import SegmentOrigin
 from .ir.segment_state import SegmentStateArtifact, SegmentValueKind8616
 from .lowering.call_output_stack_objects import CallOutputStackObjectFact8616
+from .lowering.indexed_global_evidence import IndexedSegmentedGlobalEvidence8616
 from .lowering.real_mode_linear import DirectStackMoveFact8616
 from .lowering.return_type_evidence import function_result_is_proven_unobserved_8616
 from .lowering.segmented_global_loads import (
     DwordGlobalZeroTestEvidence8616,
     IndexedGlobalReadCarrierMaterializationRecord8616,
-    IndexedSegmentedGlobalEvidence8616,
 )
 from .pipeline.errors import PipelineHardError
 from .structuring.indexed_stack_ranges import (
@@ -213,6 +213,7 @@ __all__ = [
     "indexed_global_read_carrier_precision_delta_8616",
     "indexed_segmented_global_precision_delta_8616",
     "loop_header_duplicate_guard_removal_delta_8616",
+    "loop_exit_return_guard_repair_delta_8616",
     "describe_x86_16_tail_validation_scope",
     "conditional_continue_guard_repair_delta_8616",
     "direct_stack_move_function_pointer_prune_delta_8616",
@@ -388,6 +389,74 @@ def loop_header_duplicate_guard_removal_delta_8616(
             )
         )
     return bool(removed_guards) and removed_guards <= evidenced_guards
+
+
+def loop_exit_return_guard_repair_delta_8616(
+    materialized_count: int,
+    validation: Mapping[str, TailValidationValue],
+) -> bool:
+    """Accept a proven loop ``if (cond) return;`` to ``if (cond) break;`` rewrite.
+
+    The Structuring pass preserves the condition and changes only the control
+    shape and the empty return statement.  Requiring a one-to-one condition
+    fingerprint match prevents this validator from accepting arbitrary return
+    deletion or branch changes merely because a loop-repair pass ran.
+    """
+    if materialized_count <= 0:
+        return False
+    delta = validation.get("delta")
+    if not isinstance(delta, Mapping):
+        return False
+    touched_fields = {
+        field_name
+        for field_name, field_delta in delta.items()
+        if isinstance(field_delta, Mapping)
+        and (
+            _boundary_tuple_8616(field_delta.get("added", ()) or ())
+            or _boundary_tuple_8616(field_delta.get("removed", ()) or ())
+        )
+    }
+    if touched_fields != {"returns", "control_flow_effects"}:
+        return False
+
+    returns_delta = delta.get("returns")
+    if not isinstance(returns_delta, Mapping):
+        return False
+    if _boundary_tuple_8616(returns_delta.get("added", ()) or ()):
+        return False
+    removed_returns = _boundary_tuple_8616(returns_delta.get("removed", ()) or ())
+    # Empty CReturn nodes are represented as ``none`` by the compact fixture
+    # boundary and as ``return`` by the live angr tail fingerprint.
+    if not removed_returns or any(item not in {"none", "return"} for item in removed_returns):
+        return False
+
+    control_delta = delta.get("control_flow_effects")
+    if not isinstance(control_delta, Mapping):
+        return False
+    added = _boundary_tuple_8616(control_delta.get("added", ()) or ())
+    removed = _boundary_tuple_8616(control_delta.get("removed", ()) or ())
+    if not added:
+        return False
+    added_conditions = {
+        item[len("ifbreak:") :]
+        for item in added
+        if isinstance(item, str) and item.startswith("ifbreak:")
+    }
+    removed_conditions = {
+        item[len("if:") :]
+        for item in removed
+        if isinstance(item, str) and item.startswith("if:")
+    }
+    removed_non_guards = tuple(
+        item for item in removed if not (isinstance(item, str) and item.startswith("if:"))
+    )
+    return (
+        len(added_conditions) == len(added)
+        and len(removed_conditions) == len(removed) - len(removed_non_guards)
+        and added_conditions == removed_conditions
+        and all(item == "return" for item in removed_non_guards)
+        and len(removed_non_guards) <= 1
+    )
 
 
 def switch_loop_exit_return_repair_delta_8616(
@@ -1994,7 +2063,7 @@ def _invert_condition_fingerprint_8616(
     if contextual is not None:
         inverted_contextual = invert_condition_fingerprint_string_8616(contextual)
         if inverted_contextual is not None:
-            return inverted_contextual
+            return str(inverted_contextual)
     if isinstance(node, CBinaryOp):
         inverted_op = _INVERTED_COMPARISON_OPS_8616.get(node.op)
         if inverted_op is not None:
@@ -2002,14 +2071,9 @@ def _invert_condition_fingerprint_8616(
             rhs = _expr_fingerprint(node.rhs, project)
             return f"{inverted_op}({lhs},{rhs})"
     if isinstance(node, CUnaryOp) and node.op == "Not":
-        return cast(
-            str,
-            contextual_condition_fingerprints.get(
-                id(node.operand), _expr_fingerprint(node.operand, project)
-            ),
-        )
+            return str(contextual_condition_fingerprints.get(id(node.operand), _expr_fingerprint(node.operand, project)))
     fingerprint = contextual or _expr_fingerprint(node, project)
-    return cast(str, _wrap_not_fingerprint(fingerprint))
+    return str(_wrap_not_fingerprint(fingerprint))
 
 
 def _extract_loop_break_guard_normalization_8616(
@@ -3147,7 +3211,7 @@ def _switch_case_fingerprint(case_value: TailValidationValue, project: TailValid
         return f"const:{case_value}"
     if isinstance(case_value, (tuple, list)):
         return "[" + ",".join(_switch_case_fingerprint(item, project) for item in case_value) + "]"
-    return cast(str, _expr_fingerprint(case_value, project))
+    return str(_expr_fingerprint(case_value, project))
 
 
 def _switch_case_items_8616(cases: TailValidationValue) -> tuple[tuple[TailValidationValue, TailValidationValue], ...]:
@@ -4198,7 +4262,8 @@ def _assignment_lhs_writes_memory_8616(lhs: TailValidationValue, project: TailVa
         project,
         resolve_copy_alias=False,
     )
-    return cast(str, location).startswith("stack:") or cast(str, location).startswith(
+    location_text = str(location)
+    return location_text.startswith("stack:") or location_text.startswith(
         ("global:", "deref:")
     )
 
@@ -4236,7 +4301,7 @@ def _assignment_write_locations_8616(
         return ()
     indexed_locations = _indexed_global_write_location_fingerprints_8616(lhs, project)
     if indexed_locations:
-        return cast(tuple[str, ...], indexed_locations)
+        return tuple(str(location) for location in indexed_locations)
     location = _location_fingerprint(lhs, project, resolve_copy_alias=False)
     if not location.startswith("global:"):
         return (location,)
@@ -5689,6 +5754,7 @@ def compare_x86_16_tail_validation_summaries(
     _suppress_loop_body_local_stack_write_precision_delta_8616(diff)
     _suppress_local_stack_abi_int_width_delta_8616(diff)
     _suppress_signed_i16_return_else_structuring_delta_8616(diff)
+    _suppress_typed_stack_condition_storage_delta_8616(diff)
     changed = any(
         bool((field_delta.get("added", ()) or ()) or (field_delta.get("removed", ()) or ()))
         for field_delta in diff["delta"].values()
@@ -5697,6 +5763,54 @@ def compare_x86_16_tail_validation_summaries(
     diff["changed"] = changed
     diff["status"] = "changed" if changed else "stable"
     return diff
+
+
+def _suppress_typed_stack_condition_storage_delta_8616(diff: dict[str, TailValidationValue]) -> None:
+    """Classify a typed local-store condition replacing a wider global alias.
+
+    The branch validator separately proves the final predicate against ConditionIR
+    and the call-return store. This comparison rule only removes the corresponding
+    representation delta when every other observable field is unchanged.
+    """
+    delta = diff.get("delta")
+    precision = diff.get("precision_improvements")
+    if not isinstance(delta, dict) or not isinstance(precision, dict):
+        return
+    condition_delta = delta.get("conditions")
+    control_delta = delta.get("control_flow_effects")
+    if not isinstance(condition_delta, dict) or not isinstance(control_delta, dict):
+        return
+    added = tuple(str(value) for value in condition_delta.get("added", ()) or ())
+    removed = tuple(str(value) for value in condition_delta.get("removed", ()) or ())
+    control_added = tuple(str(value) for value in control_delta.get("added", ()) or ())
+    control_removed = tuple(str(value) for value in control_delta.get("removed", ()) or ())
+    if len(added) != len(removed) != len(control_added) != len(control_removed) or len(added) != 1:
+        return
+    if "stack_slot:SS:BP-" not in added[0] or "ds_global:" not in removed[0]:
+        return
+    added_condition = _canonicalize_structuring_precision_condition_text_8616(added[0])
+    removed_condition = _canonicalize_structuring_precision_condition_text_8616(removed[0])
+    if added_condition == removed_condition:
+        return
+    if not any(added_condition in value for value in control_added):
+        return
+    if not any(removed_condition in value for value in control_removed):
+        return
+    for field_name, field_delta in delta.items():
+        if field_name in {"conditions", "control_flow_effects"}:
+            continue
+        if not isinstance(field_delta, dict) or field_delta.get("added", ()) or field_delta.get("removed", ()):
+            return
+    precision["typed_stack_condition_storage"] = {
+        "conditions": {"added": added, "removed": removed},
+        "control_flow_effects": {"added": control_added, "removed": control_removed},
+    }
+    condition_delta["added"] = ()
+    condition_delta["removed"] = ()
+    control_delta["added"] = ()
+    control_delta["removed"] = ()
+
+
 
 
 def _control_body_call_addr_tokens_8616(values: Sequence[str]) -> set[str]:
@@ -6938,18 +7052,45 @@ def dword_global_zero_test_precision_delta_8616(
     delta = validation.get("delta")
     if not isinstance(delta, Mapping):
         return False
-    if validation_delta_touched_fields_8616(delta) != {"conditions", "control_flow_effects"}:
+    touched_fields = validation_delta_touched_fields_8616(delta)
+    if touched_fields not in ({"conditions", "control_flow_effects"}, {"control_flow_effects"}):
         return False
     condition_delta = delta.get("conditions")
     control_delta = delta.get("control_flow_effects")
-    if not isinstance(condition_delta, Mapping) or not isinstance(control_delta, Mapping):
+    if not isinstance(control_delta, Mapping):
         return False
-    condition_added = _boundary_tuple_8616(condition_delta.get("added") or ())
-    condition_removed = _boundary_tuple_8616(condition_delta.get("removed") or ())
-    if len(condition_added) != 1 or len(condition_removed) != 1:
+    condition_added: str | None = None
+    condition_removed: str | None = None
+    if touched_fields == {"conditions", "control_flow_effects"}:
+        if not isinstance(condition_delta, Mapping):
+            return False
+        condition_added_items = _boundary_tuple_8616(condition_delta.get("added") or ())
+        condition_removed_items = _boundary_tuple_8616(condition_delta.get("removed") or ())
+        if len(condition_added_items) != 1 or len(condition_removed_items) != 1:
+            return False
+        if not isinstance(condition_added_items[0], str) or not isinstance(condition_removed_items[0], str):
+            return False
+        condition_added = condition_added_items[0]
+        condition_removed = condition_removed_items[0]
+    else:
+        condition_added = None
+        condition_removed = None
+    control_added = _boundary_tuple_8616(control_delta.get("added") or ())
+    control_removed = _boundary_tuple_8616(control_delta.get("removed") or ())
+    if not control_added or len(control_added) != len(control_removed):
         return False
-    if not isinstance(condition_added[0], str) or not isinstance(condition_removed[0], str):
+    if any(not isinstance(effect, str) for effect in (*control_added, *control_removed)):
         return False
+    if condition_added is None and condition_removed is None:
+        control_added_conditions = tuple(
+            effect[3:] for effect in control_added if effect.startswith("if:")
+        )
+        control_removed_conditions = tuple(
+            effect[3:] for effect in control_removed if effect.startswith("if:")
+        )
+        if len(control_added_conditions) == 1 and len(control_removed_conditions) == 1:
+            condition_added = control_added_conditions[0]
+            condition_removed = control_removed_conditions[0]
 
     matched_condition_pair: tuple[str, str] | None = None
     for item in evidence:
@@ -6961,8 +7102,12 @@ def dword_global_zero_test_precision_delta_8616(
                 f"{compare_op}(Or(ds_global:{item.low_offset & 0xFFFF:#x},"
                 f"ds_global:{item.high_offset & 0xFFFF:#x}),const:0)",
             )
-            if condition_added[0] == after_condition and condition_removed[0] in before_conditions:
-                matched_condition_pair = condition_removed[0], after_condition
+            if (
+                condition_added == after_condition
+                and condition_removed is not None
+                and condition_removed in before_conditions
+            ):
+                matched_condition_pair = condition_removed, after_condition
                 break
         if matched_condition_pair is not None:
             break
@@ -6970,12 +7115,6 @@ def dword_global_zero_test_precision_delta_8616(
         return False
 
     before_condition, after_condition = matched_condition_pair
-    control_added = _boundary_tuple_8616(control_delta.get("added") or ())
-    control_removed = _boundary_tuple_8616(control_delta.get("removed") or ())
-    if not control_added or len(control_added) != len(control_removed):
-        return False
-    if any(not isinstance(effect, str) for effect in (*control_added, *control_removed)):
-        return False
     if any(effect.count(before_condition) != 1 for effect in control_removed):
         return False
     expected_added = Counter(

@@ -142,6 +142,9 @@ def _harmonize_condition_pair_8616(lhs: Any, rhs: Any, width_bits: int) -> tuple
     """
     if not isinstance(lhs, IRValue) or not isinstance(rhs, IRValue):
         return lhs, rhs
+    # Keep the wider storage identity in the condition operands.  The
+    # explicit instruction width is retained on ConditionIR and the owning
+    # lowering layer materializes the required word projection from it.
     target_size = max(_condition_width_size_8616(width_bits), int(lhs.size or 0), int(rhs.size or 0))
     if target_size <= 0:
         return lhs, rhs
@@ -168,6 +171,7 @@ class ConditionIR:
     taken_target: int | None = None
     fallthrough_target: int | None = None
     operand_bind_insn: int | None = None
+    producer_semantics: tuple[Any, ...] | None = None
 
     @property
     def is_comparison(self) -> bool:
@@ -231,6 +235,7 @@ def build_condition_from_cmp_8616(
     taken_target: int | None = None,
     fallthrough_target: int | None = None,
     operand_bind_insn: int | None = None,
+    producer_semantics: tuple[Any, ...] | None = None,
 ) -> ConditionResult:
     """Build a ConditionIR from CMP operands + JCC mnemonic.
 
@@ -257,6 +262,7 @@ def build_condition_from_cmp_8616(
         taken_target=taken_target,
         fallthrough_target=fallthrough_target,
         operand_bind_insn=operand_bind_insn,
+        producer_semantics=producer_semantics,
     )
 
 
@@ -271,6 +277,7 @@ def build_condition_from_test_8616(
     taken_target: int | None = None,
     fallthrough_target: int | None = None,
     operand_bind_insn: int | None = None,
+    producer_semantics: tuple[Any, ...] | None = None,
 ) -> ConditionResult:
     """Build a ConditionIR from TEST/OR/AND self-test + JCC mnemonic.
 
@@ -296,6 +303,7 @@ def build_condition_from_test_8616(
             taken_target=taken_target,
             fallthrough_target=fallthrough_target,
             operand_bind_insn=operand_bind_insn,
+            producer_semantics=producer_semantics,
         )
     if jcc in {"jne", "jnz"}:
         return ConditionIR(
@@ -309,6 +317,7 @@ def build_condition_from_test_8616(
             taken_target=taken_target,
             fallthrough_target=fallthrough_target,
             operand_bind_insn=operand_bind_insn,
+            producer_semantics=producer_semantics,
         )
     return ConditionFailure(
         "unsupported_test_jcc",
@@ -330,6 +339,7 @@ def build_condition_from_compare_8616(
     taken_target: int | None = None,
     fallthrough_target: int | None = None,
     operand_bind_insn: int | None = None,
+    producer_semantics: tuple[Any, ...] | None = None,
 ) -> ConditionIR:
     """Direct ConditionIR constructor from known op and operands."""
     lhs, rhs = _harmonize_condition_pair_8616(lhs, rhs, width_bits)
@@ -345,6 +355,7 @@ def build_condition_from_compare_8616(
         taken_target=taken_target,
         fallthrough_target=fallthrough_target,
         operand_bind_insn=operand_bind_insn,
+        producer_semantics=producer_semantics,
     )
 
 
@@ -385,7 +396,7 @@ class ConditionEdgeEvidence:
 
 def condition_sort_key_8616(
     cond: ConditionIR,
-) -> tuple[int, int, int, int, int, int, str, str, str, str, int]:
+) -> tuple[int, int, int, int, int, int, str, str, int, str, str, str, int]:
     """Deterministic sort key for ConditionIR."""
     return (
         cond.block_addr if isinstance(cond.block_addr, int) else -1,
@@ -396,6 +407,8 @@ def condition_sort_key_8616(
         cond.fallthrough_target if isinstance(cond.fallthrough_target, int) else -1,
         "".join(cond.source),
         cond.op,
+        int(cond.producer_semantics is None),
+        str(cond.producer_semantics),
         str(cond.lhs) if cond.lhs is not None else "",
         str(cond.rhs) if cond.rhs is not None else "",
         cond.width_bits,
@@ -404,7 +417,9 @@ def condition_sort_key_8616(
 
 def deduplicate_conditions_8616(conditions: list[ConditionIR]) -> list[ConditionIR]:
     """Return deduplicated, deterministically sorted conditions."""
-    seen: set[tuple[int, int, int, int, int, int, str, str, str, str, int]] = set()
+    seen: set[
+        tuple[int, int, int, int, int, int, str, str, int, str, str, str, int]
+    ] = set()
     unique: list[ConditionIR] = []
     for cond in sorted(conditions, key=condition_sort_key_8616):
         key = condition_sort_key_8616(cond)
@@ -421,13 +436,16 @@ def build_condition_ir_8616(
     op: ConditionOp,
     *args: IRValue,
     expr: tuple[str, ...] | None = None,
+    width_bits: int | None = None,
 ) -> IRCondition:
     """Build an IRCondition from typed op and value args.
 
     This is the existing IR-layer builder — kept for compatibility.
     Preference: use ConditionIR and its builders above for semantic recovery.
     """
-    return IRCondition(op=op, args=tuple(args), expr=expr)
+    if width_bits is None:
+        width_bits = max((int(arg.size or 0) for arg in args), default=0) * 8 or None
+    return IRCondition(op=op, args=tuple(args), expr=expr, width_bits=width_bits)
 
 
 def coerce_condition_value_size_8616(value: IRValue, size: int) -> IRValue:

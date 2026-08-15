@@ -33,7 +33,7 @@ class _TableHost:
 
     def set_funcflag(self, opcode: int, func: object, flags: int) -> None:
         """Delegate opcode registration to the canonical instruction helper."""
-        return InstrBase.set_funcflag(self, opcode, func, flags)
+        InstrBase.set_funcflag(self, opcode, func, flags)
 
 
 def _dummy_handler() -> None:

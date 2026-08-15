@@ -11,7 +11,7 @@ import contextlib
 import logging
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -700,8 +700,8 @@ def interrupt_service_addr(call: InterruptCall) -> int:
     """Return the synthetic hook address for a recovered interrupt service."""
     if call.vector == 0x21:
         service = call.ah & 0xFF if call.ah is not None else 0
-        return DOS_SERVICE_BASE_ADDR + service
-    return INTERRUPT_SERVICE_BASE_ADDR + _interrupt_service_key(call)
+        return int(DOS_SERVICE_BASE_ADDR) + service
+    return int(INTERRUPT_SERVICE_BASE_ADDR) + _interrupt_service_key(call)
 
 
 def interrupt_service_name(call: InterruptCall, api_style: str = "pseudo") -> str:
@@ -1130,31 +1130,31 @@ def collect_interrupt_calls(
                     regs[f"{reg_name[0]}h"] = (None, None)
                     regs[f"{reg_name[0]}l"] = (None, None)
             elif reg_name in {"ah", "al"}:
-                high, _ = regs["ah"]
-                low, _ = regs["al"]
-                if high is not None and low is not None:
-                    regs["ax"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
+                high_byte, _ = regs["ah"]
+                low_byte, _ = regs["al"]
+                if high_byte is not None and low_byte is not None:
+                    regs["ax"] = (((high_byte & 0xFF) << 8) | (low_byte & 0xFF), None)
                 else:
                     regs["ax"] = (None, None)
             elif reg_name in {"bh", "bl"}:
-                high, _ = regs["bh"]
-                low, _ = regs["bl"]
-                if high is not None and low is not None:
-                    regs["bx"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
+                high_byte, _ = regs["bh"]
+                low_byte, _ = regs["bl"]
+                if high_byte is not None and low_byte is not None:
+                    regs["bx"] = (((high_byte & 0xFF) << 8) | (low_byte & 0xFF), None)
                 else:
                     regs["bx"] = (None, None)
             elif reg_name in {"ch", "cl"}:
-                high, _ = regs["ch"]
-                low, _ = regs["cl"]
-                if high is not None and low is not None:
-                    regs["cx"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
+                high_byte, _ = regs["ch"]
+                low_byte, _ = regs["cl"]
+                if high_byte is not None and low_byte is not None:
+                    regs["cx"] = (((high_byte & 0xFF) << 8) | (low_byte & 0xFF), None)
                 else:
                     regs["cx"] = (None, None)
             elif reg_name in {"dh", "dl"}:
-                high, _ = regs["dh"]
-                low, _ = regs["dl"]
-                if high is not None and low is not None:
-                    regs["dx"] = (((high & 0xFF) << 8) | (low & 0xFF), None)
+                high_byte, _ = regs["dh"]
+                low_byte, _ = regs["dl"]
+                if high_byte is not None and low_byte is not None:
+                    regs["dx"] = (((high_byte & 0xFF) << 8) | (low_byte & 0xFF), None)
                 else:
                     regs["dx"] = (None, None)
 
@@ -1484,9 +1484,9 @@ def _render_simple_interrupt_call(call: InterruptCall, api_style: str) -> str:
 
         name = interrupt_service_name(call, api_style)
         if call.vector == 0x16:
-            selector = _dos_arg(call.ah, call.ah_expr)
-            if selector is not None:
-                return f"{name}({selector})"
+            dos_selector = _dos_arg(call.ah, call.ah_expr)
+            if dos_selector is not None:
+                return f"{name}({dos_selector})"
             return f"{name}()"
         if call.vector == 0x10 and api_style in {"dos", "msc", "compiler"}:
             return f"{name}(0x10)"
@@ -1570,7 +1570,7 @@ def _absolute_mem_disp(operand: object) -> int | None:
         return None
     if _dynamic_analysis_getattr_8616(mem, "base", 0) != 0 or _dynamic_analysis_getattr_8616(mem, "index", 0) != 0:
         return None
-    return _dynamic_analysis_getattr_8616(mem, "disp", 0) & 0xFFFF
+    return int(_dynamic_analysis_getattr_8616(mem, "disp", 0)) & 0xFFFF
 
 
 def _initial_cs_linear_base(project: object) -> int | None:
@@ -1579,7 +1579,7 @@ def _initial_cs_linear_base(project: object) -> int | None:
     if not isinstance(initial_regs, Mapping):
         return None
     cs = initial_regs.get("cs")
-    if cs is None:
+    if not isinstance(cs, int):
         return None
     return (cs & 0xFFFF) << 4
 
@@ -1587,7 +1587,7 @@ def _initial_cs_linear_base(project: object) -> int | None:
 def _x86_16_project_for_function_8616(function: object) -> object | None:
     project = _dynamic_analysis_getattr_8616(function, "project", None)
     if _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(project, "arch", None), "name", None) == "86_16":
-        return project
+        return cast(object, project)
     return None
 
 
@@ -1682,17 +1682,19 @@ def _direct_call_insn_from_block(project: object, block_addr: int) -> object | N
             continue
         mnemonic = str(_dynamic_analysis_getattr_8616(insn, "mnemonic", "") or "").lower()
         if mnemonic in {"call", "lcall"}:
-            return insn
+            return cast(object, insn)
 
     last = insns[-1]
     mnemonic = str(_dynamic_analysis_getattr_8616(last, "mnemonic", "") or "").lower()
     if mnemonic in {"call", "lcall"}:
-        return last
+        return cast(object, last)
     return None
 
 
 def _resolve_direct_call_target_from_insn(project: object, insn: object) -> int | None:
-    operands = _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(insn, "insn", None), "operands", ()) or ()
+    operands: tuple[Any, ...] = tuple(
+        _dynamic_analysis_getattr_8616(_dynamic_analysis_getattr_8616(insn, "insn", None), "operands", ()) or ()
+    )
     mnemonic = str(_dynamic_analysis_getattr_8616(insn, "mnemonic", "") or "").lower()
 
     if mnemonic == "lcall" and len(operands) == 2 and all(_dynamic_analysis_getattr_8616(op, "type", None) == 2 for op in operands):
@@ -1797,7 +1799,9 @@ def resolve_direct_jump_target_from_block(project: object, block_addr: int) -> i
 
         last = insns[-1]
         capstone_insn = _dynamic_analysis_getattr_8616(last, "insn", None)
-        operands = _dynamic_analysis_getattr_8616(capstone_insn, "operands", ()) if capstone_insn is not None else ()
+        operands: tuple[Any, ...] = tuple(
+            _dynamic_analysis_getattr_8616(capstone_insn, "operands", ()) if capstone_insn is not None else ()
+        )
 
         if last.mnemonic == "ljmp" and len(operands) == 2 and all(op.type == 2 for op in operands):
             seg = operands[0].imm & 0xFFFF
@@ -1928,7 +1932,9 @@ def resolve_stored_near_call_target_from_function(function: object, callsite_add
             return None
         last = insns[-1]
         capstone_insn = _dynamic_analysis_getattr_8616(last, "insn", None)
-        operands = _dynamic_analysis_getattr_8616(capstone_insn, "operands", ()) if capstone_insn is not None else ()
+        operands: tuple[Any, ...] = tuple(
+            _dynamic_analysis_getattr_8616(capstone_insn, "operands", ()) if capstone_insn is not None else ()
+        )
         if last.mnemonic != "call" or len(operands) != 1 or operands[0].type != 3:
             return None
 
@@ -1951,7 +1957,7 @@ def resolve_stored_near_call_target_from_function(function: object, callsite_add
             ins_any = cast(Any, ins)
             if ins_any.address >= callsite_addr:
                 continue
-            opers = _dynamic_analysis_getattr_8616(ins_any.insn, "operands", ())
+            opers: tuple[Any, ...] = tuple(_dynamic_analysis_getattr_8616(ins_any.insn, "operands", ()) or ())
             if ins_any.mnemonic != "mov" or len(opers) != 2:
                 continue
             dst, src = opers
@@ -1985,7 +1991,9 @@ def resolve_stored_near_jump_target_from_function(function: object, jump_addr: i
             return None
         last = insns[-1]
         capstone_insn = _dynamic_analysis_getattr_8616(last, "insn", None)
-        operands = _dynamic_analysis_getattr_8616(capstone_insn, "operands", ()) if capstone_insn is not None else ()
+        operands: tuple[Any, ...] = tuple(
+            _dynamic_analysis_getattr_8616(capstone_insn, "operands", ()) if capstone_insn is not None else ()
+        )
         if last.mnemonic != "jmp" or len(operands) != 1 or operands[0].type != 3:
             return None
 
@@ -2008,7 +2016,7 @@ def resolve_stored_near_jump_target_from_function(function: object, jump_addr: i
             ins_any = cast(Any, ins)
             if ins_any.address >= jump_addr:
                 continue
-            opers = _dynamic_analysis_getattr_8616(ins_any.insn, "operands", ())
+            opers: tuple[Any, ...] = tuple(_dynamic_analysis_getattr_8616(ins_any.insn, "operands", ()) or ())
             if ins_any.mnemonic != "mov" or len(opers) != 2:
                 continue
             dst, src = opers
@@ -2119,12 +2127,12 @@ def collect_neighbor_call_targets(function: object) -> list[CallTargetSeed]:
         block_addr_set = set(block_addrs)
         for block_addr in block_addrs:
             jump_target = resolve_direct_jump_target_from_block(project, block_addr)
-            kind = _direct_tail_jump_kind_8616(project, block_addr)
+            tail_kind: CallTargetKind8616 | None = _direct_tail_jump_kind_8616(project, block_addr)
             if jump_target is None:
                 jump_target = resolve_stored_near_jump_target_from_function(function, block_addr)
                 if jump_target is not None:
-                    kind = CallTargetKind8616.STORED_NEAR_TAIL_JUMP
-            if jump_target is None or kind is None:
+                    tail_kind = CallTargetKind8616.STORED_NEAR_TAIL_JUMP
+            if jump_target is None or tail_kind is None:
                 continue
             function_addr = _analysis_function_addr_8616(function)
             if jump_target in block_addr_set or jump_target == function_addr:
@@ -2140,7 +2148,7 @@ def collect_neighbor_call_targets(function: object) -> list[CallTargetSeed]:
                     callsite_addr=block_addr,
                     target_addr=jump_target,
                     return_addr=None,
-                    kind=kind,
+                    kind=tail_kind,
                 )
             )
 
@@ -2185,11 +2193,14 @@ def seed_calling_conventions(cfg: object) -> None:
     from .lowering.terminal_call_return_types import apply_terminal_call_return_type_evidence_8616
     from .lowering.terminal_register_return_types import apply_terminal_register_return_type_evidence_8616
 
+    apply_x86_16_stack_byte_prototype_evidence: Callable[[object, object], bool] | None
+    apply_x86_16_wide_stack_prototype_evidence: Callable[[object, object], bool] | None
     try:
-        from .calling_convention_compat import (
-            apply_x86_16_stack_byte_prototype_evidence,
-            apply_x86_16_wide_stack_prototype_evidence,
-        )
+        from .calling_convention_compat import apply_x86_16_stack_byte_prototype_evidence as _stack_byte_evidence
+        from .calling_convention_compat import apply_x86_16_wide_stack_prototype_evidence as _wide_stack_evidence
+
+        apply_x86_16_stack_byte_prototype_evidence = _stack_byte_evidence
+        apply_x86_16_wide_stack_prototype_evidence = _wide_stack_evidence
     except Exception:  # pragma: no cover - compatibility fallback during partial imports
         apply_x86_16_stack_byte_prototype_evidence = None
         apply_x86_16_wide_stack_prototype_evidence = None
@@ -2410,7 +2421,7 @@ def extend_cfg_for_far_calls(
         if callee is not None:
             callee._init_prototype_and_calling_convention()
     seed_calling_conventions(cfg)
-    return cfg
+    return cast(object, cfg)
 
 
 # ── Function discovery ranking ──
@@ -2562,6 +2573,6 @@ def extend_cfg_for_neighbor_calls(
             if callee is not None:
                 callee._init_prototype_and_calling_convention()
         seed_calling_conventions(cfg)
-        return cfg
+        return cast(object, cfg)
 
     return _impl()

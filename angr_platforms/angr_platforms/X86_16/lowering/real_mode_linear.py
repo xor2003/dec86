@@ -112,6 +112,7 @@ from ..widening.stack_widening import prove_adjacent_storage_slices
 from .c_runtime_header import LOWERED_ZERO_ARG_RUNTIME_HELPER_DECLARATIONS_8616
 from .call_return_stack_stores import recover_zero_arg_call_return_stack_store_8616
 from .callee_saved_frame import callee_saved_frame_pairs_8616
+from .condition_stack_operands import materialize_typed_condition_stack_operand_8616
 from .frame_prologue_carriers import (
     canonical_frame_instruction_addresses_8616,
     is_exact_push_bp_carrier_8616,
@@ -274,7 +275,8 @@ def _record_direct_stack_update_lane_8616(codegen: StructuredAstValue, stats: Ma
 
 
 def _dirty_reg_offset_8616(dirty: StructuredAstValue) -> int | None:
-    return physical_register_offset_8616(dirty)
+    offset = physical_register_offset_8616(dirty)
+    return offset if isinstance(offset, int) else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1078,7 +1080,8 @@ def _preferred_stack_object_name_8616(
     known_bindings: tuple[StackVariableBinding, ...] | None = None,
 ) -> str:
     """Return an annotation name only for the matching proven stack object."""
-    default_name = _stack_object_name(offset, codegen=codegen)
+    raw_default_name = _stack_object_name(offset, codegen=codegen)
+    default_name = str(raw_default_name)
     cfunc = codegen.cfunc if codegen is not None else None
     try:
         func = codegen._func if codegen is not None else None
@@ -1137,7 +1140,9 @@ def _preferred_stack_object_name_8616(
         known_bindings=bindings,
     )
     if selected is not None and selected.name is not None:
-        return selected.name
+        selected_name = selected.name
+        if isinstance(selected_name, str):
+            return selected_name
     return default_name
 
 
@@ -1324,17 +1329,17 @@ def _known_bp_stack_offsets_8616(codegen: StructuredAstValue) -> set[int]:
         for variable in variables_in_use:
             if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
                 continue
-            offset = _canonical_stack_offset_8616(getattr(variable, "offset", None))
-            if isinstance(offset, int):
-                offsets.add(offset)
+            candidate_offset = _canonical_stack_offset_8616(getattr(variable, "offset", None))
+            if isinstance(candidate_offset, int):
+                offsets.add(candidate_offset)
 
     for arg in arg_list:
         variable = getattr(arg, "variable", None)
         if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
             continue
-        offset = _canonical_stack_offset_8616(getattr(variable, "offset", None))
-        if isinstance(offset, int):
-            offsets.add(offset)
+        candidate_offset = _canonical_stack_offset_8616(getattr(variable, "offset", None))
+        if isinstance(candidate_offset, int):
+            offsets.add(candidate_offset)
 
     offsets.update(_prototype_bp_stack_offsets_8616(codegen))
     offsets.update(_bp_memory_operand_offsets_from_function_blocks_8616(codegen))
@@ -1627,7 +1632,8 @@ def _infer_stack_base_bp_bias_8616(codegen: StructuredCodegenValue) -> int | Non
     except AttributeError:
         cached = None
     if isinstance(cached, StackBaseBpBiasEvidence8616) and cached.matches(root, displacements, known_offsets):
-        return cached.inferred_bias
+        cached_bias = cached.inferred_bias
+        return cached_bias if isinstance(cached_bias, int) else None
 
     inferred: int | None = None
 
@@ -1739,7 +1745,7 @@ def _segment_base_name_8616_impl(
         if isinstance(node, structured_c.CVariable):
             variable = node.variable
             runtime_segment_name = runtime_segment_name_for_variable_8616(variable)
-            if runtime_segment_name is not None:
+            if isinstance(runtime_segment_name, str):
                 return runtime_segment_name
             if isinstance(variable, SimRegisterVariable):
                 reg_name = getattr(project.arch, "register_names", {}).get(variable.reg)
@@ -1833,7 +1839,7 @@ def _flatten_signed_terms_8616(
 
         return tuple(terms)
 
-    return _impl()
+    return cast(tuple[tuple[int, Any], ...], _impl())
 
 
 def _decompose_linear_global_terms_8616(
@@ -1980,7 +1986,7 @@ def _global_size_from_displacement_8616(codegen: StructuredCodegenValue, displac
                     return size
         return None
 
-    return _impl()
+    return cast(int | None, _impl())
 
 
 def _cvar_has_array_type_8616(cvar: StructuredAstValue) -> bool:
@@ -2068,7 +2074,7 @@ def _same_variable_storage_8616(lhs: StructuredAstValue, rhs: StructuredAstValue
             and getattr(lhs_var, "size", None) == getattr(rhs_var, "size", None)
         )
 
-    return _impl()
+    return bool(_impl())
 
 
 # ── Precomputed maps (built once per lowering pass) ──
@@ -2083,12 +2089,12 @@ def _build_assignment_maps_8616(codegen: StructuredCodegenValue) -> StructuredAs
 
         var_id_map: dict[int, StructuredAstValue] = {}
         name_map: dict[str, StructuredAstValue] = {}
-        reg_map: dict[tuple, StructuredAstValue] = {}
+        reg_map: dict[tuple[Any, ...], StructuredAstValue] = {}
         multi_var: set[int] = set()
         multi_name: set[str] = set()
-        multi_reg: set[tuple] = set()
+        multi_reg: set[tuple[Any, ...]] = set()
         first_name_map: dict[str, StructuredAstValue] = {}
-        first_reg_map: dict[tuple, StructuredAstValue] = {}
+        first_reg_map: dict[tuple[Any, ...], StructuredAstValue] = {}
 
         for stmt in _iter_statement_nodes_8616(root):
             if not isinstance(stmt, structured_c.CAssignment):
@@ -2168,14 +2174,14 @@ def _build_assignment_maps_8616(codegen: StructuredCodegenValue) -> StructuredAs
     return _impl()
 
 
-def _ensure_assignment_maps_8616(codegen: StructuredCodegenValue) -> tuple:
+def _ensure_assignment_maps_8616(codegen: StructuredCodegenValue) -> tuple[Any, ...]:
     """Return cached maps or build and cache them on codegen."""
     cached = getattr(codegen, "_inertia_assignment_maps", None)
     if cached is not None:
-        return cached
+        return cast(tuple[Any, ...], cached)
     maps = _build_assignment_maps_8616(codegen)
     codegen._inertia_assignment_maps = maps
-    return maps
+    return cast(tuple[Any, ...], maps)
 
 
 def _single_virtual_carrier_offset_observation_8616(expr: StructuredAstValue) -> tuple[int, int] | None:
@@ -2449,7 +2455,7 @@ def _ensure_vvar_carrier_delta_map_8616(codegen: StructuredCodegenValue) -> dict
     """Return cached vvar_deltas or build and cache them on codegen."""
     cached = getattr(codegen, "_inertia_vvar_carrier_deltas", None)
     if cached is not None:
-        return cached
+        return cast(dict[int, int], cached)
     deltas = _build_vvar_carrier_delta_map_8616(codegen)
     codegen._inertia_vvar_carrier_deltas = deltas
     return deltas
@@ -2833,7 +2839,7 @@ def _is_unresolved_segment_scale_candidate_8616(node: StructuredAstValue) -> boo
     if not isinstance(node, structured_c.CBinaryOp):
         return False
     if node.op == "Mul":
-        pairs = ((node.lhs, node.rhs), (node.rhs, node.lhs))
+        pairs: tuple[tuple[Any, Any], ...] = ((node.lhs, node.rhs), (node.rhs, node.lhs))
         expected_scale = 16
     elif node.op == "Shl":
         pairs = ((node.lhs, node.rhs),)
@@ -2956,7 +2962,7 @@ def _resolve_stack_offset_from_binary_8616(
             return None
         return lhs + rhs if node.op == "Add" else lhs - rhs
 
-    return _impl()
+    return cast(int | None, _impl())
 
 
 def _stack_offset_from_expr_8616(
@@ -3029,7 +3035,7 @@ def _stack_offset_from_expr_8616(
         offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
         return None
 
-    return _impl()
+    return cast(int | None, _impl())
 
 
 def _log_refusal_8616(codegen: StructuredCodegenValue, kind: str, /, **details: StructuredAstValue) -> None:
@@ -3192,7 +3198,7 @@ def match_stable_ss_linear_stack_access_8616(
             return None
         return RealModeLinearStackAccess8616(displacement=displacement, width=width)
 
-    return _impl()
+    return cast(RealModeLinearStackAccess8616 | None, _impl())
 
 
 def match_stable_ds_es_linear_global_access_8616(
@@ -3241,7 +3247,7 @@ def match_stable_ds_es_linear_global_access_8616(
             width=width,
         )
 
-    return _impl()
+    return cast(RealModeLinearGlobalAddress8616 | None, _impl())
 
 
 def _address_projection_term_is_safe_8616(node: StructuredAstValue) -> bool:
@@ -3405,7 +3411,7 @@ def _op_reg_id_8616(insn: StructuredAstValue, index: int) -> int | None:
 def _is_mov_sp_bp_8616(insn: StructuredAstValue) -> bool:
     if getattr(insn, "id", None) != X86_INS_MOV:
         return False
-    return _op_reg_id_8616(insn, 0) == X86_REG_SP and _op_reg_id_8616(insn, 1) == X86_REG_BP
+    return bool(_op_reg_id_8616(insn, 0) == X86_REG_SP and _op_reg_id_8616(insn, 1) == X86_REG_BP)
 
 
 def _decode_function_insns_at_8616(
@@ -3761,7 +3767,7 @@ def _remove_callee_saved_stack_spills_8616(
 
     changed = False
 
-    def rewrite_statement_list(statements: list) -> None:
+    def rewrite_statement_list(statements: list[Any]) -> None:
         nonlocal changed
         kept = []
         for stmt in statements:
@@ -5043,6 +5049,9 @@ def _direct_stack_move_segmented_source_for_register_8616(
                     and base_value.source_op is DirectStackMoveExpressionOp8616.SHL
                 ):
                     index_offset = base_value.stack_offset
+                    if base_value.source_immediate is None:
+                        _direct_stack_move_forget_register_8616(reg_state, dst_name)
+                        continue
                     index_shift = base_value.source_immediate
                 else:
                     _direct_stack_move_forget_register_8616(reg_state, dst_name)
@@ -5331,10 +5340,10 @@ def _previous_stack_index_for_register_8616(
             amount = operands[1]
             if getattr(amount, "type", None) != X86_OP_IMM or getattr(amount, "imm", None) != 1:
                 return None
-            loaded = _previous_stack_index_for_register_8616(insns, cursor, reg_id)
-            if loaded is None:
+            previous_loaded = _previous_stack_index_for_register_8616(insns, cursor, reg_id)
+            if previous_loaded is None:
                 return None
-            return replace(loaded, byte_scale=loaded.byte_scale * 2)
+            return replace(previous_loaded, byte_scale=previous_loaded.byte_scale * 2)
         return None
     return None
 
@@ -6437,8 +6446,8 @@ def _direct_stack_move_instruction_facts_8616(
                         )
                     )
                     continue
-                segmented_source = _direct_stack_move_segmented_source_for_register_8616(insns, index, reg_id)
-                if segmented_source is None:
+                register_segmented_source = _direct_stack_move_segmented_source_for_register_8616(insns, index, reg_id)
+                if register_segmented_source is None:
                     continue
                 append_destination_fact(
                     DirectStackMoveFact8616(
@@ -6446,12 +6455,12 @@ def _direct_stack_move_instruction_facts_8616(
                         width,
                         DirectStackMoveSourceKind8616.SEGMENTED_MEMORY,
                         ins_addr,
-                        source_segment_name=segmented_source.segment_name,
-                        source_displacement=segmented_source.displacement,
-                        source_index_offset=segmented_source.index_stack_offset,
-                        source_index_shift=segmented_source.index_shift,
-                        source_access_width=segmented_source.access_width,
-                        source_sign_extend=segmented_source.sign_extend,
+                        source_segment_name=register_segmented_source.segment_name,
+                        source_displacement=register_segmented_source.displacement,
+                        source_index_offset=register_segmented_source.index_stack_offset,
+                        source_index_shift=register_segmented_source.index_shift,
+                        source_access_width=register_segmented_source.access_width,
+                        source_sign_extend=register_segmented_source.sign_extend,
                     )
                 )
                 continue
@@ -9433,13 +9442,24 @@ def _rebind_low_half_stack_reads_to_wide_cvar_8616(root: StructuredAstValue, wid
     seen: set[int] = set()
 
     def transform(node: StructuredAstValue) -> StructuredAstValue:
-        """Replace matching low-half stack reads with the proven wide cvar."""
+        """Replace matching low-half reads with a typed wide-owner projection."""
         nonlocal changed_count
         if node is wide_cvar:
             return node
         if isinstance(node, structured_c.CVariable) and _same_stack_low_half_cvar_8616(node, wide_cvar):
-            changed_count += 1
-            return wide_cvar
+            projected = materialize_typed_condition_stack_operand_8616(
+                getattr(wide_cvar, "codegen", None),
+                base="bp",
+                offset=int(getattr(node.variable, "offset", 0)),
+                size=2,
+                storage_size=4,
+                name=str(getattr(wide_cvar, "name", "stack")),
+                signed=False,
+                preferred=wide_cvar,
+            )
+            if projected is not None:
+                changed_count += 1
+                return projected
         return node
 
     def visit(node: StructuredAstValue) -> None:
@@ -9631,7 +9651,7 @@ def _same_stack_move_rhs_8616(lhs: StructuredAstValue, rhs: StructuredAstValue) 
     if lhs_identity is not None or rhs_identity is not None:
         return lhs_identity is not None and lhs_identity == rhs_identity
     if isinstance(lhs, structured_c.CConstant) and isinstance(rhs, structured_c.CConstant):
-        return lhs.value == rhs.value
+        return bool(lhs.value == rhs.value)
     return lhs is rhs
 
 
@@ -10606,12 +10626,12 @@ def _preceding_instruction_addr_in_node_8616(
     if seen is None:
         seen = set()
     if isinstance(node, (list, tuple)):
-        candidates = [
+        nested_candidates = [
             candidate
             for item in tuple(node)
             if (candidate := _preceding_instruction_addr_in_node_8616(item, project, ins_addr, seen)) is not None
         ]
-        return max(candidates) if candidates else None
+        return max(nested_candidates) if nested_candidates else None
     node_id = id(node)
     if node_id in seen:
         return None
@@ -10831,7 +10851,7 @@ def _is_consumed_push_stack_carrier_lhs_8616(
         return False
     variable = lhs.variable
     if isinstance(variable, SimStackVariable):
-        return variable.base == "bp"
+        return bool(variable.base == "bp")
     if not isinstance(variable, SimRegisterVariable):
         return False
     sp_register = project.arch.registers.get("sp")
@@ -15271,13 +15291,6 @@ def materialize_direct_stack_mov_instructions_8616(
         1 for candidate in facts if candidate.source_kind is DirectStackMoveSourceKind8616.SIGNED_IDIV_REMAINDER
     )
     for fact in facts:
-        if debug_stack_noise:
-            log.warning(
-                "[direct-stack-mov] fact ins=%#x dst=%s source_kind=%s",
-                fact.ins_addr,
-                fact.dst_offset,
-                fact.source_kind.name,
-            )
         root._inertia_stack_mov_assignment_already_present_8616 = False
         fact_key = _direct_stack_move_fact_key_8616(fact)
         dst_cvar = _resolve_direct_stack_update_cvar_8616(codegen, fact.dst_offset, fact.width)
@@ -16603,7 +16616,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(
         return tuple(terms)
 
     def _signed_16bit_term_value_8616(sign: int, value: int) -> int:
-        return _canonical_stack_offset_8616((int(sign) * int(value)) & 0xFFFF)
+        return int(_canonical_stack_offset_8616((int(sign) * int(value)) & 0xFFFF))
 
     def _stack_cvar_displacement_8616(node: StructuredAstValue) -> int | None:
         node = _strip_casts_8616(node)

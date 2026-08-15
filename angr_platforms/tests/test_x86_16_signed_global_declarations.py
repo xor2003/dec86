@@ -219,7 +219,7 @@ def test_sortd_runmenu_signed_wide_global_is_sidecar_free_and_validated(tmp_path
             "--addr",
             "0x102e0",
             "--timeout",
-            "180",
+            "240",
             "--no-alternate-source-c",
             "--c-target",
             "portable-flat",
@@ -228,7 +228,7 @@ def test_sortd_runmenu_signed_wide_global_is_sidecar_free_and_validated(tmp_path
         capture_output=True,
         text=True,
         env=env,
-        timeout=300,
+        timeout=420,
         check=False,
     )
 

@@ -237,7 +237,7 @@ def _prune_dead_local_assignments(
             variable = node.variable
             if _stack_variable_offset(variable) not in protected_stack_offsets:
                 continue
-            node_keys = {("var", id(variable))}
+            node_keys: set[tuple[object, ...]] = {("var", id(variable))}
             unified = node.unified_variable
             if unified is not None:
                 node_keys.add(("unified", id(unified)))

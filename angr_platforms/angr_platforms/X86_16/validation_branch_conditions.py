@@ -20,8 +20,10 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CFunctionCall,
     CIfBreak,
     CIfElse,
+    CVariable,
     CWhileLoop,
 )
+from angr.sim_variable import SimStackVariable
 
 from .c_ast_utils import _iter_c_nodes_deep_8616
 from .callsite_summary import (
@@ -187,18 +189,17 @@ def _proven_call_return_condition_8616(
     fact: ConditionIR,
     candidate: object,
 ) -> bool:
-    """Prove a bound call predicate equivalent to its AX-family zero test."""
+    """Prove a bound call predicate equivalent to its AX-family comparison."""
     if (
         not isinstance(candidate, CBinaryOp)
         or candidate.op not in {"CmpEQ", "CmpNE"}
-        or fact.op not in {"eq", "ne", "zero", "nonzero"}
+        or fact.op not in {"eq", "ne"}
     ):
         return False
     operands = (candidate.lhs, candidate.rhs)
     calls = tuple(operand for operand in operands if isinstance(operand, CFunctionCall))
-    if len(calls) != 1 or not any(
-        isinstance(operand, CConstant) and operand.value == 0 for operand in operands
-    ):
+    constants = tuple(operand for operand in operands if isinstance(operand, CConstant))
+    if len(calls) != 1 or len(constants) != 1 or not isinstance(constants[0].value, int):
         return False
     surface = cast(_TypedConditionCodegen8616, codegen)
     callsite_addr = structured_callsite_addr_8616(calls[0])
@@ -228,15 +229,48 @@ def _proven_call_return_condition_8616(
         and (int(value.offset), int(value.size or register[1])) == (int(register[0]), int(register[1]))
         for value in values
     )
-    zero_matches = any(
+    constant_matches = any(
         isinstance(value, IRValue)
         and value.space is MemSpace.CONST
-        and value.const == 0
+        and value.const == constants[0].value
         for value in values
     )
-    if not register_matches or fact.op in {"eq", "ne"} and not zero_matches:
+    if not register_matches or not constant_matches:
         return False
     return True
+
+
+def _proven_stored_call_return_condition_8616(
+    codegen: object,
+    fact: ConditionIR,
+    candidate: object,
+) -> bool:
+    """Accept a condition bound to the exact stack store of a call return."""
+    if not isinstance(candidate, CBinaryOp) or candidate.op not in {"CmpEQ", "CmpNE"}:
+        return False
+    surface = cast(_TypedConditionCodegen8616, codegen)
+    stack_nodes = tuple(
+        node
+        for node in _iter_c_nodes_deep_8616(candidate)
+        if isinstance(node, CVariable)
+        and isinstance(node.variable, SimStackVariable)
+        and node.variable.base == "bp"
+    )
+    if len(stack_nodes) != 1:
+        return False
+    variable = stack_nodes[0].variable
+    offset = variable.offset
+    size = variable.size
+    if not isinstance(offset, int) or not isinstance(size, int):
+        return False
+    for summary in surface._inertia_callsite_summary_inventory_8616.values():
+        if not isinstance(summary, CallsiteSummary8616) or summary.return_use_kind is not CallsiteReturnUseKind8616.VALUE:
+            continue
+        if summary.return_addr != fact.block_addr or summary.return_store_destination != ("bp", offset):
+            continue
+        if summary.return_store_width == size and summary.return_used is True:
+            return True
+    return False
 
 
 def _normalized_fingerprint_8616(
@@ -354,6 +388,7 @@ def validate_materialized_branch_conditions_8616(
             actual in {expected, inverted}
             or precision_after == {actual}
             or _proven_call_return_condition_8616(codegen, facts[0], candidates[0])
+            or _proven_stored_call_return_condition_8616(codegen, facts[0], candidates[0])
         ):
             materialized_count += 1
             continue

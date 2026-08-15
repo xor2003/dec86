@@ -833,7 +833,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                 continue
             if not _same_signed_term_multiset_8616(low_terms, high_terms):
                 continue
-            return _make_word_deref_from_addr_expr_8616(low_addr_expr)
+            return cast(object | None, _make_word_deref_from_addr_expr_8616(low_addr_expr))
         return None
 
     def _is_power_of_two_minus_one_8616(value: int) -> bool:
@@ -858,9 +858,9 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
         if not isinstance(expr, CBinaryOp) or expr.op != "CmpEQ":
             return None
         if _is_c_constant_int_8616(expr.rhs, 0):
-            return expr.lhs
+            return cast(object | None, expr.lhs)
         if _is_c_constant_int_8616(expr.lhs, 0):
-            return expr.rhs
+            return cast(object | None, expr.rhs)
         return None
 
     def _extract_zero_flag_source_expr_8616(expr: object) -> object | None:
@@ -947,11 +947,11 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
         if not isinstance(expr, CBinaryOp):
             return None
         if expr.op == "Shl" and _is_c_constant_int_8616(expr.rhs, 8):
-            return expr.lhs
+            return cast(object | None, expr.lhs)
         if expr.op == "Mul" and _is_c_constant_int_8616(expr.rhs, 0x100):
-            return expr.lhs
+            return cast(object | None, expr.lhs)
         if expr.op == "Mul" and _is_c_constant_int_8616(expr.lhs, 0x100):
-            return expr.rhs
+            return cast(object | None, expr.rhs)
         return None
 
     def _or_terms_8616(expr: object) -> list[object]:
@@ -1058,7 +1058,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                 proof=proof,
             )
             if widened_register is not None:
-                return widened_register
+                return cast(object | None, widened_register)
             if isinstance(low_expr.variable, SimRegisterVariable) or isinstance(
                 high_expr.variable, SimRegisterVariable
             ):
@@ -1086,7 +1086,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                 name=_stack_object_name(offset, codegen=codegen),
                 region=stack_slot.region if stack_slot.region is not None else region,
             )
-            return CVariable(variable, variable_type=vartype, codegen=codegen)
+            return cast(object | None, CVariable(variable, variable_type=vartype, codegen=codegen))
 
         if joined.space == "memory":
             # Keep structuring-stage guard operands in register form.
@@ -1106,7 +1106,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                 return None
             addr = min(low_addr, high_addr)
             variable = SimMemoryVariable(addr, 2, name=f"g_{addr:x}", region=region)
-            return CVariable(variable, variable_type=vartype, codegen=codegen)
+            return cast(object | None, CVariable(variable, variable_type=vartype, codegen=codegen))
 
         if joined.space == "register":
             low_var = low_expr.variable
@@ -1119,7 +1119,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                 return None
             reg = min(low_reg, high_reg)
             variable = SimRegisterVariable(reg, 2, name=low_var.name or high_var.name)
-            return CVariable(variable, variable_type=vartype, codegen=codegen)
+            return cast(object | None, CVariable(variable, variable_type=vartype, codegen=codegen))
 
         return None
 
@@ -1150,7 +1150,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
             return source_expr
         lhs = _unwrap_c_casts_8616(source_expr.lhs)
         if not isinstance(lhs, CUnaryOp) or lhs.op != "Not":
-            return source_expr
+            return cast(object | None, source_expr)
         shift = source_expr.rhs
         restored_shift = CBinaryOp(
             source_expr.op,
@@ -1159,13 +1159,13 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
             codegen=codegen,
             tags=source_expr.tags,
         )
-        return CBinaryOp(
+        return cast(object | None, CBinaryOp(
             "CmpEQ",
             restored_shift,
             CConstant(0, SimTypeShort(False), codegen=codegen),
             codegen=codegen,
             tags=lhs.tags or source_expr.tags,
-        )
+        ))
 
     def _restore_not_shift_condition_expr_8616(expr: object) -> tuple[object, bool]:
         expr = _unwrap_c_casts_8616(expr)
@@ -1317,6 +1317,17 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
             if isinstance(operand, CBinaryOp):
                 inverted = _invert_cmp_op_8616(operand.op)
                 if inverted is not None:
+                    # Some angr C types have no architecture attached after
+                    # snapshot/restore.  Constructing a replacement binary
+                    # node makes angr compute a common type and raises from
+                    # ``SimType.size``.  Keep the original typed condition;
+                    # this is a cleanup-only inversion, not semantic proof.
+                    try:
+                        for operand_type in (operand.lhs.type, operand.rhs.type):
+                            if operand_type is not None:
+                                operand_type.size
+                    except ValueError:
+                        return node
                     return CBinaryOp(
                         inverted,
                         operand.lhs,
@@ -1453,7 +1464,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
         ) -> bool:
             left_resolved = _resolve_copy_alias_expr_8616(left, aliases, used)
             right_resolved = _resolve_copy_alias_expr_8616(right, aliases, used)
-            return _same_c_expression_8616(left_resolved, right_resolved)
+            return bool(_same_c_expression_8616(left_resolved, right_resolved))
 
         def _contains_unresolved_virtual_expr_8616(expr: object) -> bool:
             if expr is None:
@@ -1695,7 +1706,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
 
         def _rewrite_statement_list_8616(statements: list[object]) -> list[object]:
             nonlocal changed_local
-            new_statements = []
+            new_statements: list[object] = []
             i = 0
             while i < len(statements):
                 stmt = statements[i]

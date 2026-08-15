@@ -24,6 +24,8 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CExpression,
     CFunctionCall,
     CIfElse,
+    CReturn,
+    CStatements,
     CUnaryOp,
     CVariable,
 )
@@ -307,6 +309,7 @@ def _materialize_stored_return_condition_8616(
     codegen: object,
     root: object,
     expression: CExpression,
+    body: object,
     summary: CallsiteSummary8616,
     register_slice: tuple[int, int],
     summary_map: dict[int, CallsiteSummary8616],
@@ -322,11 +325,31 @@ def _materialize_stored_return_condition_8616(
     if assignment is None:
         return None
     if _is_exact_stack_destination_8616(assignment.lhs, evidence):
+        destination = assignment.lhs
+        if not isinstance(destination, CVariable):
+            return None
+        changed = False
+        if _expression_return_register_count_8616(expression, register_slice) == 1:
+            expression = _replace_return_register_8616(expression, register_slice, destination)
+            changed = True
+        elif _expression_return_register_count_8616(expression, register_slice) != 0:
+            return None
+        for node in _iter_c_nodes_deep_8616(root):
+            if not isinstance(node, CReturn):
+                continue
+            retval = node.retval
+            if not isinstance(retval, CVariable) or not isinstance(retval.variable, SimRegisterVariable):
+                continue
+            variable = retval.variable
+            if (int(variable.reg), int(variable.size)) == register_slice:
+                node.retval = destination
+                changed = True
         if _stack_destination_count_8616(expression, evidence) != 1:
             return None
+        _remove_redundant_return_bridge_8616(root, destination, register_slice, assignment)
         bind_structured_callsite_identity_8616(call, summary)
         summary_map[id(call)] = summary
-        return expression, False
+        return expression, changed
     old_lhs = assignment.lhs
     if not isinstance(old_lhs, CVariable) or not isinstance(old_lhs.variable, SimRegisterVariable):
         return None
@@ -338,7 +361,9 @@ def _materialize_stored_return_condition_8616(
         for node in _iter_c_nodes_deep_8616(root)
         if isinstance(node, CAssignment)
         and isinstance(node.lhs, CVariable)
-        and node.lhs.variable is old_variable
+        and isinstance(node.lhs.variable, SimRegisterVariable)
+        and (int(node.lhs.variable.reg), int(node.lhs.variable.size)) == register_slice
+        and any(candidate is call for candidate in _iter_c_nodes_deep_8616(node.rhs))
     )
     if definitions != 1 or _expression_return_register_count_8616(expression, register_slice) != 1:
         return None
@@ -346,17 +371,35 @@ def _materialize_stored_return_condition_8616(
         codegen,
         evidence.dst_offset,
         evidence.width,
+        preferred_name="err",
     )
     if not isinstance(destination, CVariable):
         return None
 
-    def replace_exact_carrier(node: object) -> object:
-        """Replace only references to the assignment's exact SSA variable."""
-        if isinstance(node, CVariable) and node.variable is old_variable:
+    def replace_return_slice(node: object) -> object:
+        """Replace a cloned AX carrier in the condition or return branch."""
+        if not isinstance(node, CVariable) or not isinstance(node.variable, SimRegisterVariable):
+            return node
+        variable = node.variable
+        if (int(variable.reg), int(variable.size)) == register_slice:
             return destination
         return node
 
-    changed = _replace_c_children_8616(root, replace_exact_carrier)
+    assignment.lhs = destination
+    changed = True
+    changed = _replace_c_children_8616(expression, replace_return_slice) or changed
+    def replace_return_statement(node: object) -> object:
+        """Replace only return statements carrying this proven call result."""
+        if not isinstance(node, CReturn):
+            return node
+        retval = node.retval
+        if isinstance(retval, CVariable) and isinstance(retval.variable, SimRegisterVariable):
+            variable = retval.variable
+            if (int(variable.reg), int(variable.size)) == register_slice:
+                node.retval = destination
+        return node
+
+    changed = _replace_c_children_8616(root, replace_return_statement) or changed
     remaining_registers = _expression_return_register_count_8616(expression, register_slice)
     if remaining_registers == 1:
         expression = _replace_return_register_8616(expression, register_slice, destination)
@@ -367,9 +410,46 @@ def _materialize_stored_return_condition_8616(
         return None
     if _stack_destination_count_8616(expression, evidence) != 1:
         return None
+    _remove_redundant_return_bridge_8616(root, destination, register_slice, assignment)
     bind_structured_callsite_identity_8616(call, summary)
     summary_map[id(call)] = summary
     return expression, True
+
+
+def _remove_redundant_return_bridge_8616(
+    root: object,
+    destination: CVariable,
+    register_slice: tuple[int, int],
+    call_assignment: CAssignment,
+) -> None:
+    """Remove a stale stack-to-register bridge after binding a call return."""
+    for container in (root, *_iter_c_nodes_deep_8616(root)):
+        if not isinstance(container, CStatements):
+            continue
+        statements = list(container.statements or ())
+        filtered: list[object] = []
+        for statement in statements:
+            if statement is call_assignment or not isinstance(statement, CAssignment):
+                filtered.append(statement)
+                continue
+            if not isinstance(statement.lhs, CVariable) or not isinstance(statement.rhs, CVariable):
+                filtered.append(statement)
+                continue
+            lhs_variable = statement.lhs.variable
+            if (
+                not isinstance(lhs_variable, SimStackVariable)
+                or lhs_variable.base != destination.variable.base
+                or lhs_variable.offset != destination.variable.offset
+                or lhs_variable.size != destination.variable.size
+            ):
+                filtered.append(statement)
+                continue
+            variable = statement.rhs.variable
+            if not isinstance(variable, SimRegisterVariable) or (int(variable.reg), int(variable.size)) != register_slice:
+                filtered.append(statement)
+                continue
+        if len(filtered) != len(statements):
+            container.statements = filtered
 
 
 def materialize_call_return_conditions_8616(project: object, codegen: object) -> bool:
@@ -442,6 +522,7 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
                 codegen,
                 root,
                 expression,
+                body,
                 summary,
                 register_slice,
                 summary_map,

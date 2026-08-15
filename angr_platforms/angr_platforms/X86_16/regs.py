@@ -117,18 +117,15 @@ def register_name_8616(value: object) -> str:
     if isinstance(value, Enum):
         return value.name.lower()
     try:
-        coerced = _coerce_enum(reg32_t, value)
-        return coerced.name.lower()
+        return _coerce_enum(reg32_t, value).name.lower()
     except Exception:
         pass
     try:
-        coerced = _coerce_enum(reg16_t, value)
-        return coerced.name.lower()
+        return _coerce_enum(reg16_t, value).name.lower()
     except Exception:
         pass
     try:
-        coerced = _coerce_enum(reg8_t, value)
-        return coerced.name.lower()
+        return _coerce_enum(reg8_t, value).name.lower()
     except Exception:
         pass
     raise ValueError(f"Register {value!r} does not exist")

@@ -129,7 +129,12 @@ def _parse_ida_map_metadata(
                 start = int(match.group(1), 16)
                 segment_name = match.group(2)
                 segment_class = match.group(3).upper()
-                segment_offsets[segment_name] = start
+                # IDA's MAP segment start includes any leading ``org`` bytes,
+                # while LST ``segment:offset`` addresses already include that
+                # offset.  Retain the paragraph base or the leading bytes are
+                # counted twice (for example 03F93 + 0003 instead of
+                # 03F90 + 0003).
+                segment_offsets[segment_name] = start & ~0xF
                 segment_classes[start >> 4] = segment_class
             continue
         match = _IDA_MAP_PUBLIC_RE.match(stripped)

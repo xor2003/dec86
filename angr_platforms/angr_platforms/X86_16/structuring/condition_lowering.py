@@ -87,7 +87,7 @@ def stable_stack_condition_binding_tags_8616(
 ) -> dict[str, object]:
     """Return exact stack-slot tags for one proven ConditionIR operand."""
     binding = StackVariableBinding(bp_offset, size, var_name=name)
-    return stable_stack_binding_tags_8616(binding)
+    return {str(key): value for key, value in stable_stack_binding_tags_8616(binding).items()}
 
 
 def condition_origin_tags_8616(condition: ConditionIR | IRCondition) -> dict[str, object]:
@@ -202,6 +202,8 @@ def _ir_value_to_cvar_8616(
     codegen: object,
     *,
     resolve_register_name: bool = False,
+    signed: bool = False,
+    condition_width_bits: int | None = None,
 ) -> object:
     """Convert an IRValue to a CVariable node for structured codegen."""
     from angr.analyses.decompiler.structured_codegen.c import CVariable
@@ -220,9 +222,27 @@ def _ir_value_to_cvar_8616(
         return CVariable(variable=var, codegen=codegen)
 
     if value.space == MemSpace.SS:
-        var = SimStackVariable(offset=value.offset, size=value.size or 2, base="bp")
-        tags = stable_stack_condition_binding_tags_8616(int(value.offset), int(value.size or 2))
-        return CVariable(variable=var, codegen=codegen, tags=tags)
+        size = max(1, int(value.size or 2))
+        if isinstance(condition_width_bits, int) and condition_width_bits > 0:
+            condition_size = max(1, (condition_width_bits + 7) // 8)
+            if size > condition_size:
+                size = condition_size
+        tags = stable_stack_condition_binding_tags_8616(int(value.offset), size)
+        lowered = materialize_typed_condition_stack_operand_8616(
+            codegen,
+            base="bp",
+            offset=int(value.offset),
+            size=size,
+            name=f"stack_{abs(int(value.offset)):x}",
+            signed=signed,
+            prefer_signed_local_storage=signed,
+            tags=tags,
+        )
+        return lowered if lowered is not None else CVariable(
+            variable=SimStackVariable(offset=value.offset, size=size, base="bp"),
+            codegen=codegen,
+            tags=tags,
+        )
 
     # Fallback: unnamed register variable
     var = SimRegisterVariable(0, value.size or 2)
@@ -262,16 +282,22 @@ def _lower_condition_ir_to_c_expr_8616(
         if op == "zero":
             if not condition.args or not isinstance(condition.args[0], IRValue):
                 return None
-            lhs = _ir_value_to_cvar_8616(condition.args[0], project, codegen)
+            lhs = _ir_value_to_cvar_8616(
+                condition.args[0], project, codegen, signed=condition.is_signed,
+                condition_width_bits=condition.width_bits,
+            )
             zero = _make_c_constant_8616(0, codegen)
-            return CBinaryOp("CmpEQ", lhs, zero, codegen=codegen, tags=condition_origin_tags_8616(condition))
+            return cast(object, CBinaryOp("CmpEQ", lhs, zero, codegen=codegen, tags=condition_origin_tags_8616(condition)))
 
         if op == "nonzero":
             if not condition.args or not isinstance(condition.args[0], IRValue):
                 return None
-            lhs = _ir_value_to_cvar_8616(condition.args[0], project, codegen)
+            lhs = _ir_value_to_cvar_8616(
+                condition.args[0], project, codegen, signed=condition.is_signed,
+                condition_width_bits=condition.width_bits,
+            )
             zero = _make_c_constant_8616(0, codegen)
-            return CBinaryOp("CmpNE", lhs, zero, codegen=codegen, tags=condition_origin_tags_8616(condition))
+            return cast(object, CBinaryOp("CmpNE", lhs, zero, codegen=codegen, tags=condition_origin_tags_8616(condition)))
 
         # Binary comparisons
         if (
@@ -283,13 +309,19 @@ def _lower_condition_ir_to_c_expr_8616(
             sym = condition_compare_symbol_8616(op)
             if sym is None:
                 return None
-            lhs = _ir_value_to_cvar_8616(condition.args[0], project, codegen)
-            rhs = _ir_value_to_cvar_8616(condition.args[1], project, codegen)
+            lhs = _ir_value_to_cvar_8616(
+                condition.args[0], project, codegen, signed=condition.is_signed,
+                condition_width_bits=condition.width_bits,
+            )
+            rhs = _ir_value_to_cvar_8616(
+                condition.args[1], project, codegen, signed=condition.is_signed,
+                condition_width_bits=condition.width_bits,
+            )
             # Map to angr structured-codegen CBinaryOp operator names
             angr_op = _condition_ir_op_to_angr_binary_op_8616(sym)
             if angr_op is None:
                 return None
-            return CBinaryOp(angr_op, lhs, rhs, codegen=codegen, tags=condition_origin_tags_8616(condition))
+            return cast(object, CBinaryOp(angr_op, lhs, rhs, codegen=codegen, tags=condition_origin_tags_8616(condition)))
 
         # Not
         if op == "not" and len(condition.args) >= 1:
@@ -297,12 +329,12 @@ def _lower_condition_ir_to_c_expr_8616(
             if isinstance(inner, IRCondition):
                 inner_expr = _lower_condition_ir_to_c_expr_8616(inner, project, codegen)
                 if inner_expr is not None:
-                    return CUnaryOp(
+                    return cast(object, CUnaryOp(
                         "Not",
                         cast("CExpression", inner_expr),
                         codegen=codegen,
                         tags=condition_origin_tags_8616(condition),
-                    )
+                    ))
             return None
 
         # Compare (generic)
@@ -312,9 +344,15 @@ def _lower_condition_ir_to_c_expr_8616(
             and isinstance(condition.args[0], IRValue)
             and isinstance(condition.args[1], IRValue)
         ):
-            lhs = _ir_value_to_cvar_8616(condition.args[0], project, codegen)
-            rhs = _ir_value_to_cvar_8616(condition.args[1], project, codegen)
-            return CBinaryOp("CmpNE", lhs, rhs, codegen=codegen, tags=condition_origin_tags_8616(condition))
+            lhs = _ir_value_to_cvar_8616(
+                condition.args[0], project, codegen, signed=condition.is_signed,
+                condition_width_bits=condition.width_bits,
+            )
+            rhs = _ir_value_to_cvar_8616(
+                condition.args[1], project, codegen, signed=condition.is_signed,
+                condition_width_bits=condition.width_bits,
+            )
+            return cast(object, CBinaryOp("CmpNE", lhs, rhs, codegen=codegen, tags=condition_origin_tags_8616(condition)))
 
         return None
 

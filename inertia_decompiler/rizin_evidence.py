@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+_RIZIN_FUNCTION_ANALYSIS_COMMAND = "aa;aflj"
+
 
 class RizinEvidenceStatus(Enum):
     """Status of one optional rizin evidence collection attempt."""
@@ -147,7 +149,9 @@ def collect_rizin_evidence(binary_path: Path, *, timeout_sec: int = 8) -> RizinE
             calling_conventions=(),
         )
     try:
-        fn_payload = _run_json(binary_path, "aaa;aflj", timeout_sec=timeout_sec)
+        # Aggressive Rizin analysis is not segment-safe for DOS MZ binaries.
+        # Collect conservative function facts; they remain optional evidence.
+        fn_payload = _run_json(binary_path, _RIZIN_FUNCTION_ANALYSIS_COMMAND, timeout_sec=timeout_sec)
         xref_payload = _run_json(binary_path, "axtj", timeout_sec=timeout_sec)
         str_payload = _run_json(binary_path, "izj", timeout_sec=timeout_sec)
         sym_payload = _run_json(binary_path, "isj", timeout_sec=timeout_sec)

@@ -24,7 +24,7 @@ import struct
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 
 if TYPE_CHECKING:
     import angr
@@ -113,21 +113,21 @@ def find_ne_header(data: bytes) -> Optional[int]:
             return None
 
         if data[ne_offset : ne_offset + 2] == b"NE":
-            return ne_offset
+            return cast(int, ne_offset)
     except (struct.error, IndexError):
         pass
 
     return None
 
 
-def parse_ne_header(data: bytes, ne_offset: int) -> tuple[dict, int]:
+def parse_ne_header(data: bytes, ne_offset: int) -> tuple[dict[str, int | str], int]:
     """Parse NE header structure.
 
     Returns:
         (header_dict, resident_names_offset): Header fields and offset to resident names table
     """
     try:
-        header = {}
+        header: dict[str, int | str] = {}
         # Read fixed portion of NE header (0x40 bytes minimum for older versions)
         if ne_offset + 0x40 > len(data):
             return {}, 0
@@ -166,7 +166,10 @@ def parse_ne_header(data: bytes, ne_offset: int) -> tuple[dict, int]:
         else:
             header["target_os"] = 0
 
-        return header, ne_offset + header["resident_names_off"]
+        resident_names_off = header.get("resident_names_off")
+        if not isinstance(resident_names_off, int):
+            return {}, 0
+        return header, ne_offset + resident_names_off
 
     except (struct.error, IndexError):
         return {}, 0
@@ -178,7 +181,7 @@ def parse_ne_resident_names(data: bytes, offset: int, max_len: int) -> dict[int,
     Format: zero-terminated list of (length, name, ordinal) tuples
     Returns: {ordinal: name_string}
     """
-    names = {}
+    names: dict[int, str] = {}
     pos = offset
     end = offset + max_len
 
@@ -215,7 +218,7 @@ def parse_ne_segment_table(data: bytes, ne_offset: int, seg_table_off: int, seg_
 
     Each entry is 8 bytes (offset, length, flags, min_alloc)
     """
-    segments = []
+    segments: list[NESegment] = []
     pos = ne_offset + seg_table_off
 
     try:
@@ -362,23 +365,29 @@ def parse_ne_exe(
     if not header:
         return info
 
-    info.target_os = header.get("target_os", 0)
+    def header_int(name: str) -> int:
+        value = header.get(name, 0)
+        return value if isinstance(value, int) else 0
+
+    info.target_os = header_int("target_os")
 
     # Parse resident names table (function names)
-    resident_names_offset = ne_offset + header.get("resident_names_off", 0)
-    module_ref_offset = ne_offset + header.get("module_ref_off", 0)
+    resident_names_offset = ne_offset + header_int("resident_names_off")
+    module_ref_offset = ne_offset + header_int("module_ref_off")
     max_resident_len = module_ref_offset - resident_names_offset if module_ref_offset > resident_names_offset else 256
 
     ordinal_names = parse_ne_resident_names(data, resident_names_offset, max_resident_len)
     info.entry_points = ordinal_names
 
     # Parse segment table
-    segments = parse_ne_segment_table(data, ne_offset, header.get("segment_table_off", 0), header.get("seg_count", 0))
+    segments = parse_ne_segment_table(
+        data, ne_offset, header_int("segment_table_off"), header_int("seg_count")
+    )
     info.segments = segments
 
     # Parse entry table to map ordinals to addresses
     ordinal_offsets = parse_ne_entry_table(
-        data, ne_offset, header.get("entry_table_off", 0), header.get("entry_table_len", 0), ordinal_names, segments
+        data, ne_offset, header_int("entry_table_off"), header_int("entry_table_len"), ordinal_names, segments
     )
 
     # Calculate linear addresses from segment:offset

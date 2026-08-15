@@ -48,6 +48,7 @@ from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
 from ..ir.condition_ir import inverted_comparison_op_8616
 from ..semantics.alias_query import describe_alias_storage
+from .loop_break_jcc import loop_branch_guard_facts_8616
 from .simple_loop_recovery import InsnSummary8616, _function_instruction_summaries_8616, _summarize_capstone_insn_8616
 
 log: logging.Logger = logging.getLogger(__name__)
@@ -1018,7 +1019,11 @@ def repair_pretest_loop_break_guards_from_evidence_8616(project: object, codegen
     """Invert pretest body-edge break guards using binary branch evidence."""
     stats = PretestLoopGuardRepairStats8616()
     function = _active_function_8616(project, codegen)
-    evidence = recover_pretest_loop_guard_evidence_8616(project, function) if function is not None else ()
+    recovered_evidence = recover_pretest_loop_guard_evidence_8616(project, function) if function is not None else ()
+    typed_evidence = _typed_pretest_loop_guard_evidence_8616(codegen)
+    evidence_by_branch = {item.branch_addr: item for item in recovered_evidence}
+    evidence_by_branch.update({item.branch_addr: item for item in typed_evidence})
+    evidence = tuple(evidence_by_branch.values())
     stats.raw_fact_count = len(evidence)
     stats.normalized_fact_count = len(evidence)
     stats.classified_fact_count = len(evidence)
@@ -1184,7 +1189,7 @@ def _resolve_exact_carrier_definition_8616(
             definitions[:definition_index],
             active=active | {marker},
         )
-    return expression
+    return cast(object, expression)
 
 
 def _canonical_comparisons_are_equivalent_8616(
@@ -1212,7 +1217,9 @@ def _carrier_expressions_are_equivalent_8616(left: object, right: object) -> boo
             and left_facts.domain.space == right_facts.domain.space
         )
     if isinstance(left, CConstant) and isinstance(right, CConstant):
-        return left.value == right.value
+        left_value = cast(object, left.value)
+        right_value = cast(object, right.value)
+        return bool(left_value == right_value)
     if isinstance(left, CUnaryOp) and isinstance(right, CUnaryOp):
         return left.op == right.op and _carrier_expressions_are_equivalent_8616(left.operand, right.operand)
     if isinstance(left, CBinaryOp) and isinstance(right, CBinaryOp):
@@ -1378,7 +1385,7 @@ def _active_function_8616(project: object, codegen: object) -> object | None:
         return None
     prepared = getattr(project, "_inertia_current_decompile_function_8616", None)
     if prepared is not None and getattr(prepared, "addr", None) == addr:
-        return prepared
+        return cast(object, prepared)
     functions = getattr(getattr(project, "kb", None), "functions", None)
     if functions is None:
         return SimpleNamespace(addr=addr, size=getattr(cfunc, "size", None), name=getattr(cfunc, "name", None))
@@ -1387,7 +1394,7 @@ def _active_function_8616(project: object, codegen: object) -> object | None:
     except Exception:
         function = None
     if function is not None:
-        return function
+        return cast(object, function)
     return SimpleNamespace(addr=addr, size=getattr(cfunc, "size", None), name=getattr(cfunc, "name", None))
 
 
@@ -1645,6 +1652,46 @@ def _pretest_body_edge_op_8616(evidence: PretestLoopGuardEvidence8616) -> str | 
     return _JCC_TAKEN_COMPARISON_OPS_8616.get(mnemonic)
 
 
+def _typed_pretest_loop_guard_evidence_8616(codegen: object) -> tuple[PretestLoopGuardEvidence8616, ...]:
+    """Adapt exact loop JCC facts into pretest guard evidence."""
+    condition_ops = {
+        "eq": "CmpEQ",
+        "ne": "CmpNE",
+        "slt": "CmpLT",
+        "sle": "CmpLE",
+        "sgt": "CmpGT",
+        "sge": "CmpGE",
+        "ult": "CmpLT",
+        "ule": "CmpLE",
+        "ugt": "CmpGT",
+        "uge": "CmpGE",
+    }
+    recovered: list[PretestLoopGuardEvidence8616] = []
+    for fact in loop_branch_guard_facts_8616(codegen):
+        condition_ir = fact.condition_ir
+        condition_op = getattr(condition_ir, "op", None)
+        if not isinstance(condition_op, str):
+            continue
+        body_condition_op = condition_ops.get(condition_op)
+        if body_condition_op is None:
+            continue
+        if not all(
+            isinstance(value, int)
+            for value in (fact.jcc_addr, fact.body_target, fact.false_target)
+        ):
+            continue
+        recovered.append(
+            PretestLoopGuardEvidence8616(
+                branch_addr=fact.jcc_addr,
+                body_target=fact.body_target,
+                exit_target=fact.false_target,
+                mnemonic="typed-jcc",
+                body_condition_op=body_condition_op,
+            )
+        )
+    return tuple(recovered)
+
+
 def _pretest_guard_already_exit_edge_8616(
     condition: object,
     evidence: PretestLoopGuardEvidence8616,
@@ -1657,7 +1704,8 @@ def _pretest_guard_already_exit_edge_8616(
     body_op = _pretest_body_edge_op_8616(evidence)
     if body_op is None:
         return False
-    return condition.op == _complementary_cmp_op_8616(body_op)
+    condition_op = cast(str, condition.op)
+    return bool(condition_op == _complementary_cmp_op_8616(body_op))
 
 
 def _store_conditional_continue_stats_8616(codegen: object, stats: ConditionalContinueRepairStats8616) -> None:
@@ -2052,9 +2100,7 @@ def _repair_pretest_loop_guard_in_node_8616(
             changed = _repair_pretest_loop_guard_in_node_8616(body, evidence, stats, codegen) or changed
         changed = _repair_pretest_loop_guard_in_node_8616(node.else_node, evidence, stats, codegen) or changed
         return changed
-    if isinstance(node, CForLoop):
-        return _repair_pretest_loop_guard_in_node_8616(node.body, evidence, stats, codegen)
-    if not isinstance(node, (CWhileLoop, CDoWhileLoop)):
+    if not isinstance(node, (CForLoop, CWhileLoop, CDoWhileLoop)):
         return False
     body = node.body
     if not isinstance(body, CStatements):
@@ -2914,7 +2960,7 @@ def _flatten_direct_statement_wrappers_8616(statements: list[object]) -> tuple[l
 
 def _ifbreak_condition_8616(node: object) -> object | None:
     if isinstance(node, CIfBreak):
-        return node.condition
+        return cast(object, node.condition)
     if not isinstance(node, CIfElse):
         return None
     if node.else_node is not None:
@@ -2928,12 +2974,12 @@ def _ifbreak_condition_8616(node: object) -> object | None:
     condition = pair[0]
     body = pair[1]
     if isinstance(body, CBreak) or _is_void_return_8616(body):
-        return condition
+        return cast(object, condition)
     if not isinstance(body, CStatements):
         return None
     statements = _dynamic_sequence_8616(body.statements)
     if len(statements) == 1 and (isinstance(statements[0], CBreak) or _is_void_return_8616(statements[0])):
-        return condition
+        return cast(object, condition)
     return None
 
 
@@ -2948,7 +2994,7 @@ def _single_ifelse_condition_8616(node: object) -> object | None:
     pair = condition_and_nodes[0]
     if not isinstance(pair, tuple) or len(pair) < 2:
         return None
-    return pair[0]
+    return cast(object, pair[0])
 
 
 def _conditions_are_complementary_8616(left: object, right: object) -> bool:
@@ -2982,7 +3028,7 @@ def _conditions_are_complementary_8616(left: object, right: object) -> bool:
             _debug_c_expr_string_8616(left_rhs),
             _debug_c_expr_string_8616(right_rhs),
         )
-    return same_operands
+    return bool(same_operands)
 
 
 def _debug_c_expr_string_8616(expr: object) -> str:

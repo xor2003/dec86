@@ -14,7 +14,7 @@ import pytest
 import decompile as decompile_entrypoint
 from inertia_decompiler import cli as decompiler_cli
 from inertia_decompiler import cli_function_discovery as function_discovery
-from inertia_decompiler.function_worker_policy import requires_serial_function_decompilation
+from inertia_decompiler.function_worker_policy import requires_isolated_function_decompilation
 from scripts import batch_decompile_procs
 from scripts import import_ultra_quickc_fixtures as ultra_qc
 
@@ -38,13 +38,13 @@ def test_entrypoint_facade_monkeypatch_reaches_owner_module(monkeypatch: pytest.
     assert function_discovery._rank_exe_function_seeds is replacement
 
 
-def test_whole_file_x86_16_executable_requires_serial_workers() -> None:
-    assert requires_serial_function_decompilation(
+def test_whole_file_x86_16_executable_requires_isolated_workers() -> None:
+    assert requires_isolated_function_decompilation(
         architecture="86_16",
         binary_suffix=".EXE",
         address_requested=False,
     )
-    assert not requires_serial_function_decompilation(
+    assert not requires_isolated_function_decompilation(
         architecture="86_16",
         binary_suffix=".EXE",
         address_requested=True,

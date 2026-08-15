@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimStackVariable, SimTemporaryVariable
@@ -62,7 +63,7 @@ def _first_unsafe_scalar_node_8616(
         return None
     if isinstance(expression, structured_c.CVariable):
         if isinstance(expression.variable, SimTemporaryVariable) or physical_register_view_8616(expression) is not None:
-            return expression
+            return cast(object, expression)
         return None
     if isinstance(expression, structured_c.CBinaryOp):
         unsafe_lhs = _first_unsafe_scalar_node_8616(expression.lhs, child_path)
@@ -71,11 +72,11 @@ def _first_unsafe_scalar_node_8616(
         return _first_unsafe_scalar_node_8616(expression.expr, child_path)
     if isinstance(expression, structured_c.CUnaryOp):
         if expression.op not in {"BitwiseNeg", "LogicalNot", "Neg"}:
-            return expression
+            return cast(object, expression)
         return _first_unsafe_scalar_node_8616(expression.operand, child_path)
     if isinstance(expression, structured_c.CFunctionCall):
         if _call_is_effectful_8616(expression):
-            return expression
+            return cast(object, expression)
         for argument in tuple(expression.args or ()):
             unsafe_argument = _first_unsafe_scalar_node_8616(argument, child_path)
             if unsafe_argument is not None:

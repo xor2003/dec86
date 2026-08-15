@@ -153,7 +153,7 @@ def angr_terminal_call_path_callbacks_8616(
         block_builder = _dynamic_attr_8616(project_surface.factory, "block", None)
         if not callable(block_builder):
             return None
-        return block_builder(block_addr, size=block_size)
+        return cast(object | None, block_builder(block_addr, size=block_size))
 
     def _successor_addrs(block_addr: int) -> tuple[int, ...]:
         """Return exact in-function successor addresses or raise on ambiguity."""

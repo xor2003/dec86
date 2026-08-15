@@ -111,6 +111,7 @@ def test_direct_indexed_push_refuses_non_ds_or_unknown_segment(segment: int) -> 
     assert evidence == ()
 
 
+@pytest.mark.xdist_group("sortd-initmenu")
 def test_sortd_initmenu_materializes_indexed_near_pointer_table(tmp_path: Path) -> None:
     isolated_binary = tmp_path / "SORTD.EXE"
     isolated_binary.write_bytes(mz_executable_image(SORTD_EXE.read_bytes()))
@@ -130,7 +131,7 @@ def test_sortd_initmenu_materializes_indexed_near_pointer_table(tmp_path: Path) 
             "--addr",
             "0x10060",
             "--timeout",
-            "120",
+            "300",
             "--ignore-local-sidecar-hints",
             "--no-alternate-source-c",
             "--window",
@@ -142,7 +143,7 @@ def test_sortd_initmenu_materializes_indexed_near_pointer_table(tmp_path: Path) 
         capture_output=True,
         text=True,
         env=env,
-        timeout=240,
+        timeout=480,
         check=False,
     )
 

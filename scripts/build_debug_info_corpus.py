@@ -456,7 +456,7 @@ def _build_ms_wine(
     else:
         linker_dos = "e:\\" + _dos_join(spec.bin_dir, spec.linker)
         library_dos = "e:\\" + _dos_join(spec.lib_dir, spec.library)
-        link_cmd = (
+        link_command = (
             _kvikdos_base(kvikdos, out_dir, real_root)
             + [
                 f"--prog={linker_dos}",
@@ -465,7 +465,7 @@ def _build_ms_wine(
                 f"c:\\DBG.OBJ,c:\\DBG.EXE,c:\\DBG.MAP,{library_dos};",
             ]
         )
-        link_proc = _run(link_cmd, timeout=90)
+        link_proc = _run(link_command, timeout=90)
     built = (out_dir / "DBG.EXE").exists() and compile_proc.returncode == 0 and link_proc.returncode == 0
     return built, compile_proc.stdout + compile_proc.stderr, link_proc.stdout + link_proc.stderr
 

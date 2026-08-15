@@ -10,7 +10,7 @@ import contextlib
 import re
 import typing
 from collections.abc import Callable, Iterable
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypeGuard
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeBottom
@@ -469,7 +469,7 @@ def _dedupe_codegen_variable_names_8616(
         def is_generic_name(name: object) -> bool:
             return isinstance(name, str) and re.fullmatch(r"(?:v\d+|vvar_\d+)", name) is not None
 
-        def is_identifier(name: object) -> bool:
+        def is_identifier(name: object) -> TypeGuard[str]:
             return isinstance(name, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is not None
 
         def preferred_name(variable: object, cvar: object) -> str | None:

@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
@@ -89,7 +89,7 @@ def _rewrite_ss_stack_byte_offsets(
 
     def _safe_dirty_attr_8616(obj: object, attr: str) -> object | None:
         try:
-            return _dynamic_codegen_attr(obj, attr, None)
+            return cast(object, _dynamic_codegen_attr(obj, attr, None))
         except (AttributeError, TypeError, ValueError):
             return None
 
@@ -767,14 +767,14 @@ def _rewrite_ss_stack_byte_offsets(
     def _effective_deref_bits(node: object) -> int | None:
         type_ = _dynamic_codegen_attr(node, "type", None)
         bits = _dynamic_codegen_attr(type_, "size", None)
-        if bits in {8, 16}:
+        if isinstance(bits, int) and bits in {8, 16}:
             return bits
         operand = _dynamic_codegen_attr(node, "operand", None)
         cast_type = _dynamic_codegen_attr(operand, "type", None)
         if isinstance(cast_type, SimTypePointer):
             pointee = _dynamic_codegen_attr(cast_type, "pts_to", None)
             pointee_bits = _dynamic_codegen_attr(pointee, "size", None)
-            if pointee_bits in {8, 16}:
+            if isinstance(pointee_bits, int) and pointee_bits in {8, 16}:
                 return pointee_bits
         return None
 

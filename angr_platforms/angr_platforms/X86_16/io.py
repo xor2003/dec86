@@ -6,7 +6,7 @@ Forbidden: decompiler helper recovery, source-backed IO semantics, or validation
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Protocol, TypeAlias
 
 from pyvex.expr import Const as PyVexConst
 from pyvex.lifting.util.vex_helper import Type
@@ -31,7 +31,7 @@ class _DirtyEmitter(Protocol):
         """Emit a VEX dirty helper call."""
 
 
-_PortArg = int | PyVexConst | _CastablePortArg
+_PortArg: TypeAlias = int | PyVexConst | _CastablePortArg
 
 
 class IO:
@@ -86,7 +86,7 @@ class IO:
         if isinstance(addr, int):
             return addr
         if isinstance(addr, PyVexConst):
-            return addr.con.value
+            return int(addr.con.value)
         return None
 
     def in_io32(self, addr: _PortArg) -> object:
@@ -150,17 +150,17 @@ class IO:
     def read_memio32(self, base: int, offset: int) -> int:
         """Read a 32-bit value from a registered memory-mapped device."""
         assert base in self.mem_io
-        return self.mem_io[base].read32(offset)
+        return int(self.mem_io[base].read32(offset))
 
     def read_memio16(self, base: int, offset: int) -> int:
         """Read a 16-bit value from a registered memory-mapped device."""
         assert base in self.mem_io
-        return self.mem_io[base].read16(offset)
+        return int(self.mem_io[base].read16(offset))
 
     def read_memio8(self, base: int, offset: int) -> int:
         """Read an 8-bit value from a registered memory-mapped device."""
         assert base in self.mem_io
-        return self.mem_io[base].read8(offset)
+        return int(self.mem_io[base].read8(offset))
 
     def write_memio32(self, base: int, offset: int, value: int) -> None:
         """Write a 32-bit value to a registered memory-mapped device."""

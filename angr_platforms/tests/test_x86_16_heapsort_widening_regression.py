@@ -210,11 +210,14 @@ def test_sortd_swaps_caller_uses_one_proven_aggregate_family(
     assert "function: 0x108d0 sub_108d0" in result.stdout
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
+    # SORTDEMO.C declares Swaps as void and every caller uses it for side
+    # effects only.  A raw AX value left by the binary is not a value-return
+    # contract, so the generated aggregate interface must remain void.
     assert (
-        "int sub_107b8(struct g_08F0_entry *a0, struct g_08F0_entry *a1);"
+        "void sub_107b8(struct g_08F0_entry *a0, struct g_08F0_entry *a1);"
         in result.stdout
     )
-    assert "void sub_107b8" not in result.stdout
+    assert "int sub_107b8" not in result.stdout
     assert "extern g_08F0_entry g_0B4C[];" in result.stdout
     assert "sub_107b8(&g_0B4C[local_2], &g_0B4C[local_2 + 1]);" in result.stdout
     assert "g_0B4E" not in result.stdout

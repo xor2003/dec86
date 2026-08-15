@@ -20,6 +20,7 @@ from pathlib import Path
 
 import angr
 from angr_platforms.X86_16.cod_extract import CODProcMetadata
+from angr_platforms.X86_16.lst_extract import LSTMetadata
 
 from inertia_decompiler import cli_string_timeout_fallback as _cli_string_timeout_fallback
 from inertia_decompiler.cli_decompilation import (
@@ -56,7 +57,6 @@ from inertia_decompiler.runtime_support import (
     run_with_timeout_in_fork as _run_with_timeout_in_fork,
 )
 from inertia_decompiler.sidecar_metadata import (
-    LSTMetadata,
     _lst_code_region,
 )
 from inertia_decompiler.slice_recovery import (
@@ -84,6 +84,19 @@ print: Callable[..., None] = _timestamped_print
 
 _SIDECAR_SLICE_DECOMPILE_TIMEOUT_CAP_8616 = 24
 _SIDECAR_SLICE_RUNNER_TIMEOUT_CAP_8616 = 30
+
+# Imported decompilation entry point: keep its public result contract explicit
+# when global mypy checks this CLI module without following every import. The
+# forwarding function intentionally resolves the module global on each call so
+# tests and integrations can replace the decompilation boundary.
+_DecompileFunctionWithStats = Callable[..., tuple[str, str, str | None, int, int, float]]
+
+
+def _call_decompile_function_with_stats(
+    *args: object, **kwargs: object
+) -> tuple[str, str, str | None, int, int, float]:
+    decompile_function = typing.cast(_DecompileFunctionWithStats, _decompile_function_with_stats)
+    return decompile_function(*args, **kwargs)
 
 __all__ = [
     "NonOptimizedSliceOutcome",
@@ -186,7 +199,7 @@ def _try_decompile_sidecar_slice(
                     typing.cast(typing.Any, slice_project)._inertia_disable_complex_expr_scan = True
                     # Dynamic angr boundary: slice projects carry runtime metadata for downstream angr passes.
                     typing.cast(typing.Any, slice_project)._inertia_fast_block_peephole = True
-                status, payload, *_ = _decompile_function_with_stats(
+                status, payload, *_ = _call_decompile_function_with_stats(
                     slice_project,
                     cfg,
                     func,
@@ -447,7 +460,7 @@ def _try_decompile_non_optimized_slice(
                     block_count=block_count,
                     byte_count=byte_count,
                 )
-                status, payload, partial_payload, *_ = _decompile_function_with_stats(
+                status, payload, partial_payload, *_ = _call_decompile_function_with_stats(
                     slice_project,
                     cfg,
                     func,
@@ -615,12 +628,12 @@ def _try_decompile_non_optimized_slice(
                         attempt_failures=tuple(failure_details),
                         verdict=best_partial.verdict,
                     )
-                failure_detail = "; ".join(failure_details[:3]) if failure_details else None
+                summary_detail: str | None = "; ".join(failure_details[:3]) if failure_details else None
                 return NonOptimizedSliceOutcome(
                     rendered=None,
                     status="error",
-                    payload=failure_detail or f"{label}: non-optimized slice recovery did not run",
-                    failure_detail=failure_detail,
+                    payload=summary_detail or f"{label}: non-optimized slice recovery did not run",
+                    failure_detail=summary_detail,
                     attempt_failures=tuple(failure_details),
                     verdict=final_verdict,
                 )
@@ -759,7 +772,7 @@ def _try_decompile_non_optimized_known_function(
         block_count=block_count,
         byte_count=byte_count,
     )
-    status, payload, partial_payload, *_ = _decompile_function_with_stats(
+    status, payload, partial_payload, *_ = _call_decompile_function_with_stats(
         project,
         cfg,
         function,
@@ -848,7 +861,8 @@ def _try_emit_string_intrinsic_c(
         return None
     if fallback is None:
         return None
-    return fallback.c_text
+    c_text = fallback.c_text
+    return c_text if isinstance(c_text, str) else None
 
 
 def _mark_helper_fallback_tail_validation_passed(project: angr.Project, *, reason: str) -> None:

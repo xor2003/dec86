@@ -15,6 +15,7 @@ import statistics
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, cast
 
 from inertia_decompiler.project_loading import _build_project
 
@@ -49,7 +50,9 @@ def _bench(
             project = project_builder()
         for addr in addrs:
             t0 = time.perf_counter()
-            _ = project.factory.block(addr).vex
+            # Dynamic angr project boundary: the benchmark only needs its factory/block surface.
+            project_dynamic = cast(Any, project)
+            _ = project_dynamic.factory.block(addr).vex
             dt = (time.perf_counter() - t0) * 1000.0
             timings_ms.append(dt)
             per_addr[addr].append(dt)

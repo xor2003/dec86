@@ -14,6 +14,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -54,7 +55,8 @@ def _load_project(binary: Path, use_sidecar: bool, *, include_library_functions:
 
 
 def _discovery_image_end(project: object) -> int:
-    main_object = getattr(project.loader, "main_object", None)
+    loader = getattr(project, "loader", None)
+    main_object = getattr(loader, "main_object", None)
     if main_object is None:
         return 0
     linked_base = getattr(main_object, "linked_base", None)
@@ -104,14 +106,17 @@ def _discover_angr(
                 limit=limit_value,
             )
         else:
-            recovered = _recover_seeded_exe_functions(
-                project,
-                timeout=timeout_seconds,
-                limit=limit_value,
-                region_span=0x120,
-                per_function_timeout=1,
-                return_addrs=False,
-                include_library_functions=include_library_functions,
+            recovered = cast(
+                list[tuple[Any, Any]],
+                _recover_seeded_exe_functions(
+                    project,
+                    timeout=timeout_seconds,
+                    limit=limit_value,
+                    region_span=0x120,
+                    per_function_timeout=1,
+                    return_addrs=False,
+                    include_library_functions=include_library_functions,
+                ),
             )
     except Exception as ex:  # noqa: BLE001
         return [], 0.0, f"failed: {ex}"
@@ -333,15 +338,15 @@ def _run_compare(
     args: argparse.Namespace,
     *,
     backend_override: str | None = None,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     project = _load_project(
         binary,
         use_sidecar=args.use_sidecar,
         include_library_functions=args.include_library_functions,
     )
-    outputs: dict[str, object] = {"binary": str(binary)}
+    outputs: dict[str, Any] = {"binary": str(binary)}
     results: dict[str, list[FunctionRecord]] = {}
-    metrics: dict[str, dict[str, object]] = {}
+    metrics: dict[str, dict[str, Any]] = {}
 
     backend = (backend_override or str(args.backends)).strip().lower()
     run_angr = backend in {"angr", "hybrid", "all"}
@@ -480,7 +485,7 @@ def main() -> None:
     args = parser.parse_args()
 
     binaries = _parse_binary_list(args.binaries)
-    results = []
+    results: list[dict[str, Any]] = []
     for binary in binaries:
         selected_backend = args.backends
         if selected_backend == "auto":

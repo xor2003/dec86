@@ -68,6 +68,7 @@ def select_function_worker_policy_8616(
     clean_process_override: CleanProcessOverride8616,
 ) -> FunctionWorkerPolicy8616:
     """Select bounded clean interpreters where shared state is unsafe."""
+    del sidecar_available
     if not isolation_required:
         return FunctionWorkerPolicy8616(
             FunctionWorkerMode8616.SHARED,
@@ -75,9 +76,8 @@ def select_function_worker_policy_8616(
         )
 
     clean_process_eligible = full_sweep and not include_library_functions and posix_available
-    clean_process_selected = clean_process_eligible and (
-        clean_process_override is CleanProcessOverride8616.ENABLED
-        or (clean_process_override is CleanProcessOverride8616.DEFAULT and not sidecar_available)
+    clean_process_selected = (
+        clean_process_eligible and clean_process_override is not CleanProcessOverride8616.DISABLED
     )
     if not clean_process_selected:
         return FunctionWorkerPolicy8616(FunctionWorkerMode8616.SHARED, 1)

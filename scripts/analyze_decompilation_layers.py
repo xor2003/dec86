@@ -177,7 +177,10 @@ def _print_json(summaries: list[LayerDumpSummary], only_failures: bool) -> int:
             }
         )
     print(json.dumps(payload, sort_keys=True, indent=2))
-    return sum(1 for summary in payload if summary["failed"] > 0)
+    return sum(
+        isinstance(failed := summary.get("failed"), int) and failed > 0
+        for summary in payload
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:

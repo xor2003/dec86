@@ -258,7 +258,7 @@ class LinearRecurrenceState:
     def build_binary_op_or_none(self, op: str, lhs: CExpr, rhs: CExpr, *, codegen: _CodegenLike | None = None) -> CExpr | None:
         """Build a binary C expression, refusing known unarched-type rebuild failures."""
         try:
-            return structured_c.CBinaryOp(op, lhs, rhs, codegen=codegen or self.codegen)
+            return cast(CExpr, structured_c.CBinaryOp(op, lhs, rhs, codegen=codegen or self.codegen))
         except ValueError as ex:
             if "Can't tell my size without an arch" in str(ex):
                 self._record_recurrence_reason("binary_rebuild_unarched_type")

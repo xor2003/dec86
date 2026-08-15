@@ -10,8 +10,6 @@ CLI/reporting evidence.
 
 from __future__ import annotations
 
-from typing import cast
-
 from ..alias.alias_model_impl import AliasStorageFacts
 from ..c_ast_utils import _unwrap_statements_8616
 from ..semantics.alias_query import describe_alias_storage
@@ -213,14 +211,14 @@ def _is_same_expr(a: object, b: object) -> bool:
     if isinstance(a, structured_c.CConstant):
         return getattr(a, "value", None) == getattr(b, "value", None)
     if isinstance(a, structured_c.CBinaryOp):
-        rhs_binary = cast(object, b)
+        rhs_binary = b
         return (
             a.op == getattr(rhs_binary, "op", None)
             and _is_same_expr(a.lhs, getattr(rhs_binary, "lhs", None))
             and _is_same_expr(a.rhs, getattr(rhs_binary, "rhs", None))
         )
     if isinstance(a, structured_c.CUnaryOp):
-        rhs_unary = cast(object, b)
+        rhs_unary = b
         return a.op == getattr(rhs_unary, "op", None) and _is_same_expr(
             a.operand, getattr(rhs_unary, "operand", None)
         )

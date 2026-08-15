@@ -192,7 +192,7 @@ def _structured_slot_names_8616(value: object) -> tuple[str, ...]:
         if child_attrs is not None:
             return child_attrs
 
-        base_attrs = _structured_slot_names_for_type_8616(type(value))
+        base_attrs = _structured_slot_names_for_type_8616(cast(Any, type(value)))
         if not hasattr(value, "__dict__"):
             return base_attrs
 
@@ -622,7 +622,7 @@ def _make_word_global_8616(codegen: Any, addr: int) -> CVariable:
 
 def _same_c_expression_8616(lhs: object, rhs: object) -> bool:
     def _same_stack_variable_8616(lvar: SimStackVariable, rvar: SimStackVariable) -> bool:
-        return (
+        return bool(
             _dynamic_c_ast_getattr_8616(lvar, "offset", None) == _dynamic_c_ast_getattr_8616(rvar, "offset", None)
             and _dynamic_c_ast_getattr_8616(lvar, "size", None) == _dynamic_c_ast_getattr_8616(rvar, "size", None)
             and _dynamic_c_ast_getattr_8616(lvar, "base", None) == _dynamic_c_ast_getattr_8616(rvar, "base", None)
@@ -666,7 +666,7 @@ def _same_c_expression_8616(lhs: object, rhs: object) -> bool:
             return False
         rhs_node = cast(Any, rhs)
         if isinstance(lhs, CConstant):
-            return lhs.value == rhs_node.value
+            return bool(lhs.value == rhs_node.value)
         if isinstance(lhs, CTypeCast):
             return _same_c_expression_8616(lhs.expr, rhs_node.expr)
         if isinstance(lhs, CUnaryOp):
@@ -707,11 +707,17 @@ def _same_c_expression_8616(lhs: object, rhs: object) -> bool:
             if type(lvar) is not type(rvar):
                 return False
             if isinstance(lvar, SimRegisterVariable):
-                return _dynamic_c_ast_getattr_8616(lvar, "reg", None) == _dynamic_c_ast_getattr_8616(rvar, "reg", None)
+                return bool(
+                    _dynamic_c_ast_getattr_8616(lvar, "reg", None)
+                    == _dynamic_c_ast_getattr_8616(rvar, "reg", None)
+                )
             if isinstance(lvar, SimMemoryVariable):
-                return _dynamic_c_ast_getattr_8616(lvar, "addr", None) == _dynamic_c_ast_getattr_8616(rvar, "addr", None) and _dynamic_c_ast_getattr_8616(
-                    lvar, "size", None
-                ) == _dynamic_c_ast_getattr_8616(rvar, "size", None)
+                return bool(
+                    _dynamic_c_ast_getattr_8616(lvar, "addr", None)
+                    == _dynamic_c_ast_getattr_8616(rvar, "addr", None)
+                    and _dynamic_c_ast_getattr_8616(lvar, "size", None)
+                    == _dynamic_c_ast_getattr_8616(rvar, "size", None)
+                )
             if isinstance(lvar, SimStackVariable) and isinstance(rvar, SimStackVariable):
                 return _same_stack_variable_8616(lvar, rvar)
         return lhs is rhs
@@ -728,8 +734,11 @@ def _same_call_target_8616(lhs: CFunctionCall, rhs: CFunctionCall) -> bool:
         lhs_addr = _dynamic_c_ast_getattr_8616(lhs_func, "addr", None)
         rhs_addr = _dynamic_c_ast_getattr_8616(rhs_func, "addr", None)
         if isinstance(lhs_addr, int) or isinstance(rhs_addr, int):
-            return lhs_addr == rhs_addr
-        return _dynamic_c_ast_getattr_8616(lhs_func, "name", None) == _dynamic_c_ast_getattr_8616(rhs_func, "name", None)
+            return bool(lhs_addr == rhs_addr)
+        return bool(
+            _dynamic_c_ast_getattr_8616(lhs_func, "name", None)
+            == _dynamic_c_ast_getattr_8616(rhs_func, "name", None)
+        )
     lhs_target = _dynamic_c_ast_getattr_8616(lhs, "callee_target", None)
     rhs_target = _dynamic_c_ast_getattr_8616(rhs, "callee_target", None)
     if lhs_target is None or rhs_target is None:

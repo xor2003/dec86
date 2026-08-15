@@ -239,7 +239,7 @@ def _effective_clobbers(
             before = len(current)
             for fact in facts:
                 if fact.target_addr in effective:
-                    current.update(effective[cast(int, fact.target_addr)])
+                    current.update(effective[fact.target_addr])
             changed = changed or len(current) != before
     return effective
 
@@ -306,7 +306,7 @@ def _function_for_contract(project: object, function_addr: int) -> object | None
     try:
         active = boundary._inertia_active_structuring_function_8616
         if cast(_FunctionSurface8616, active).addr == function_addr:
-            return active
+            return cast(object, active)
     except (AttributeError, TypeError):
         pass
     try:

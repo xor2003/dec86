@@ -14,6 +14,7 @@ Verifies:
 import pytest
 from angr_platforms.X86_16.ir.condition_ir import (
     ConditionIR,
+    build_condition_from_cmp_8616,
     build_condition_from_test_8616,
     build_condition_ir_8616,
     canonicalize_condition_storage_fingerprint_8616,
@@ -57,6 +58,27 @@ class TestConditionIRConstruction:
         op = IRValue(MemSpace.REG, name="cx", offset=1, size=2)
         cond = build_condition_ir_8616("nonzero", op, expr=("test_self",))
         assert cond.op == "nonzero"
+
+    def test_cmp_width_preserves_word_view_of_wider_storage(self):
+        storage = IRValue(
+            MemSpace.SS,
+            offset=-2,
+            size=4,
+            memory_access_size=2,
+        )
+        limit = IRValue(MemSpace.CONST, const=10, size=2)
+
+        condition = build_condition_from_cmp_8616(
+            storage,
+            limit,
+            "jbe",
+            width_bits=16,
+        )
+
+        assert isinstance(condition, ConditionIR)
+        assert condition.lhs.size == 4
+        assert condition.lhs.memory_access_size == 2
+        assert condition.rhs.size == 4
 
     def test_unsigned_lt_condition(self):
         lhs = IRValue(MemSpace.REG, name="ax", size=2)

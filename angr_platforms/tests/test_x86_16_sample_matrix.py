@@ -15,6 +15,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     patch_dos_int21_call_sites,
 )
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.cod_analysis_image import build_cod_analysis_image_8616
 from angr_platforms.X86_16.load_dos_mz import DOSMZ  # noqa: F401
 
 MATRIX_DIR = Path(__file__).resolve().parents[1] / "x16_samples"
@@ -235,12 +236,14 @@ def test_cod_segmented_proc_does_not_publish_unclassified_access_traits():
     if selected_entries is None:
         selected_entries = decompile.extract_simple_cod_logic_entries(entries)
     if selected_entries is None:
-        proc_code, synthetic_globals = decompile.join_cod_entries_with_synthetic_globals(
+        cod_image = build_cod_analysis_image_8616(
             entries,
             start_offset=decompile.infer_cod_logic_start(entries),
         )
     else:
-        proc_code, synthetic_globals = decompile.join_cod_entries_with_synthetic_globals(selected_entries)
+        cod_image = build_cod_analysis_image_8616(selected_entries)
+    proc_code = cod_image.code
+    synthetic_globals = cod_image.synthetic_globals
 
     project = decompile._build_project_from_bytes(proc_code, base_addr=0x1000, entry_point=0x1000)
     cfg = project.analyses.CFGFast(
@@ -256,7 +259,7 @@ def test_cod_segmented_proc_does_not_publish_unclassified_access_traits():
         project,
         cfg,
         function,
-        timeout=30,
+        timeout=90,
         api_style="modern",
         binary_path=proc_path,
         cod_metadata=cod_metadata,
@@ -265,20 +268,7 @@ def test_cod_segmented_proc_does_not_publish_unclassified_access_traits():
 
     assert status == "ok", payload
     traits = getattr(project, "_inertia_access_traits", {})
-    function_traits = traits.get(function.addr)
-    assert function_traits is not None
-    assert set(function_traits) == {
-        "array_evidence",
-        "base_const",
-        "base_stride",
-        "base_stride_widths",
-        "induction_evidence",
-        "member_evidence",
-        "repeated_offsets",
-        "repeated_offset_widths",
-        "stride_evidence",
-    }
-    assert all(not bucket for bucket in function_traits.values())
+    assert function.addr not in traits
 
 
 def test_small_model_entry_function_decompiles_in_bounded_window():

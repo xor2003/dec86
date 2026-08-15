@@ -173,7 +173,7 @@ def _extract_if_return_guard_8616(stmt: object) -> object | None:
         return None
 
     _log("extract-if-guard accepted")
-    return cond
+    return cast(object | None, cond)
 
 
 def _has_callable_after_guard_8616(

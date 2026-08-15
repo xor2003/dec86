@@ -34,6 +34,11 @@ from angr.sim_variable import SimStackVariable
 from ..annotations import ANNOTATION_KEY
 from ..calling_convention_compat import collect_wide_stack_argument_width_evidence_8616
 from ..widening.stack_argument_widths import WideStackArgumentWidthEvidence8616
+from .callee_argument_width_evidence import (
+    CalleeArgumentWidthEvidence8616,
+    CalleeArgumentWidthVerdict8616,
+    collect_callee_argument_width_evidence_8616,
+)
 from .stack_lowering_from_facts import canonical_stack_offset_8616
 
 __all__ = [
@@ -85,6 +90,7 @@ class _StackPrototypeCodegen8616(Protocol):
     _inertia_annotated_stack_prototype_materialized_8616: int
     _inertia_authoritative_zero_arg_prototype_8616: bool
     _inertia_callsite_summaries: object
+    _inertia_callee_argument_width_evidence_8616: CalleeArgumentWidthEvidence8616
     _inertia_codegen_decl_refresh_required_8616: bool
     _inertia_function_parameter_width_facts_8616: tuple[FunctionParameterWidthFact8616, ...]
     _inertia_stack_prototype_width_stats_8616: StackPrototypeWidthStats8616
@@ -311,9 +317,13 @@ def _reconciled_positive_arg_name_8616(
             and candidate
             and candidate != "local"
             and not candidate.startswith("local_")
+            and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", candidate) is not None
         ):
             return candidate
-    return f"arg_{variable.offset:x}"
+    offset = canonical_stack_offset_8616(variable.offset)
+    if not isinstance(offset, int):
+        return "arg_unknown"
+    return f"arg_{offset:x}" if offset >= 0 else f"arg_n{abs(offset):x}"
 
 
 def _abi_word_size_8616(arch: object | None) -> int:
@@ -764,6 +774,17 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
     previous_end = 4
     callsite_widths = _callsite_stack_arg_widths_8616(codegen)
     func = _function_for_codegen_8616(project, codegen)
+    incoming_width_evidence = (
+        CalleeArgumentWidthEvidence8616(-1, CalleeArgumentWidthVerdict8616.UNKNOWN)
+        if func is None
+        else collect_callee_argument_width_evidence_8616(project, typed_cfunc.addr)
+    )
+    typed_codegen._inertia_callee_argument_width_evidence_8616 = incoming_width_evidence
+    incoming_widths = (
+        dict(incoming_width_evidence.widths_by_offset)
+        if incoming_width_evidence.verdict is CalleeArgumentWidthVerdict8616.CONSISTENT
+        else {}
+    )
     wide_evidence = (
         WideStackArgumentWidthEvidence8616(0, 0, ())
         if func is None
@@ -773,7 +794,8 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
     conflicting_offsets = {
         offset
         for offset, width in body_widths.items()
-        if offset in callsite_widths and callsite_widths[offset] != width
+        if (offset in callsite_widths and callsite_widths[offset] != width)
+        or (offset in incoming_widths and incoming_widths[offset] != width)
     }
     if conflicting_offsets:
         typed_codegen._inertia_wide_stack_argument_width_evidence_8616 = wide_evidence
@@ -801,7 +823,10 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
             variable,
             SimStackVariable,
         ) and isinstance(canonical_offset, int):
-            exact_width = body_widths.get(canonical_offset, callsite_widths.get(canonical_offset, exact_width))
+            exact_width = body_widths.get(
+                canonical_offset,
+                incoming_widths.get(canonical_offset, callsite_widths.get(canonical_offset, exact_width)),
+            )
         if (
             not isinstance(arg_type, SimType)
             or not isinstance(variable, SimStackVariable)
@@ -1007,13 +1032,13 @@ def materialize_annotated_stack_prototype_8616(project: object, codegen: object)
             arg_type = _with_arch_8616(arg_type, arch)
         if not isinstance(arg_type, SimType):
             arg_type = SimTypeShort(False)
-        slot_width = annotated_object_widths.get(offset)
+        slot_width = (
+            normalized_header_widths[index]
+            if index < len(normalized_header_widths)
+            else annotated_object_widths.get(offset)
+        )
         if slot_width is None:
-            slot_width = (
-                normalized_header_widths[index]
-                if index < len(normalized_header_widths)
-                else _exact_stack_slot_width_8616(codegen, offset, arch=arch)
-            )
+            slot_width = _exact_stack_slot_width_8616(codegen, offset, arch=arch)
         exact_existing_types = tuple(
             cvar.variable_type
             for cvar in _iter_existing_stack_cvars_at_offset_8616(codegen, offset)

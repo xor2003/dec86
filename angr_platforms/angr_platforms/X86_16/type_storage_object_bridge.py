@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import cast
 
 from inertia_decompiler.cli_access_object_hints import BaseKey, _build_stable_access_object_hints
 from inertia_decompiler.cli_access_profiles import build_access_trait_evidence_profiles
@@ -172,9 +173,12 @@ def _artifact_to_bridge(
 def _build_storage_object_hints(
     traits: dict[str, dict[BaseKey, object]],
 ) -> StableHints:
-    return _build_stable_access_object_hints(
-        traits,
-        build_access_trait_evidence_profiles=build_access_trait_evidence_profiles,
+    return cast(
+        StableHints,
+        _build_stable_access_object_hints(
+            traits,
+            build_access_trait_evidence_profiles=build_access_trait_evidence_profiles,
+        ),
     )
 
 

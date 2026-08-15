@@ -106,7 +106,7 @@ def _attach_access_trait_field_names(
                 pass
             else:
                 changed = True
-        return cvar
+        return typing.cast(object, cvar)
 
     def transform(node: object) -> object:
         if isinstance(node, structured_c.CVariable):
@@ -161,7 +161,10 @@ def _attach_pointer_member_names(
                 return ()
             if hint.kind not in {"member", "array", "induction"}:
                 return ()
-            return hint.candidate_field_names(access_trait_field_name=access_trait_field_name)
+            return typing.cast(
+                tuple[str, ...],
+                hint.candidate_field_names(access_trait_field_name=access_trait_field_name),
+            )
 
         changed = False
         assigned_names: dict[int, str] = {}
@@ -238,7 +241,9 @@ def _attach_pointer_member_names(
                     pass
                 else:
                     changed = True
-            return cvar
+            renamed_cvar = typing.cast(object, cvar)
+            return renamed_cvar
+            return None
 
         def transform(node: object) -> object:
             if isinstance(node, structured_c.CVariable):

@@ -67,7 +67,7 @@ class _JumpEmitter(Protocol):
         ...
 
 
-class DataAccess(Hardware):
+class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic frontend base contract
     """Frontend access surface that keeps execution and semantic addresses separate."""
 
     def __init__(self, size: int = 0) -> None:
@@ -232,17 +232,17 @@ class DataAccess(Hardware):
     def get_code8(self, offset: int) -> int:
         """Read an 8-bit immediate from the instruction bitstream."""
         assert offset == 0
-        return self.bitstream.read("uint:8")
+        return cast(int, self.bitstream.read("uint:8"))
 
     def get_code16(self, offset: int) -> int:
         """Read a 16-bit immediate from the instruction bitstream."""
         assert offset == 0
-        return self.bitstream.read("uintle:16")
+        return cast(int, self.bitstream.read("uintle:16"))
 
     def get_code32(self, offset: int) -> int:
         """Read a 32-bit immediate from the instruction bitstream."""
         assert offset == 0
-        return self.bitstream.read("uintle:32")
+        return cast(int, self.bitstream.read("uintle:32"))
 
     def get_data16(self, seg: object, addr: object) -> object:
         """Read 16-bit segmented data for instruction helpers."""

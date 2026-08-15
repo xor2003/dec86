@@ -146,13 +146,13 @@ def load_moo_cases(path: Path) -> tuple[str, list[dict[str, Any]]]:
     """Parse one MOO or gzipped MOO file into CPU name and case dictionaries."""
     parser = _load_moo_parser()
     with gzip.open(path, "rb") if path.suffix == ".gz" else path.open("rb") as f:
-        return parser.parse_moo_bytes(f.read())
+        return cast(tuple[str, list[dict[str, Any]]], parser.parse_moo_bytes(f.read()))
 
 
 def case_linear_ip(case: dict[str, Any]) -> int:
     """Return the real-mode linear address for a case's initial CS:IP."""
     regs = case["initial"]["regs"]
-    return ((regs["cs"] & 0xFFFF) << 4) + (regs["ip"] & 0xFFFF)
+    return int(((regs["cs"] & 0xFFFF) << 4) + (regs["ip"] & 0xFFFF))
 
 
 def real_mode_linear(cs: int, ip: int) -> int:
@@ -627,7 +627,7 @@ def _current_fetch_byte(state: _AngrState) -> int:
 def _expected_reg(case: dict[str, Any], reg: str) -> int:
     initial_regs = case["initial"].get("regs", {})
     final_regs = case["final"].get("regs", {})
-    return final_regs.get(reg, initial_regs[reg])
+    return int(final_regs.get(reg, initial_regs[reg]))
 
 
 def _maybe_execute_terminating_halt(project: angr.Project, state: _AngrState, case: dict[str, Any]) -> tuple[_AngrState, bool]:
