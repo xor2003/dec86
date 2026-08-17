@@ -47,6 +47,7 @@ from .ir.condition_ir import (
     build_condition_from_test_8616,
     condition_sort_key_8616,
 )
+from .ir.condition_register_bindings import snapshot_condition_register_bindings_8616
 from .ir.core import AddressStatus, IRAddress, IRBinaryValue, IRCondition, IRValue, MemSpace, SegmentOrigin
 from .jcc_condition import _direct_jcc_condition_from_last_condition_8616
 from .parse import CHSZ_AD, CHSZ_OP
@@ -2151,6 +2152,11 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             width_bits=width_bits,
             addr=self.addr,
             block_addr=block_addr if isinstance(block_addr, int) else None,
+            register_bindings=snapshot_condition_register_bindings_8616(
+                Instruction_ANY._inertia_condition_reg_value_state_8616,
+                block_addr if isinstance(block_addr, int) else None,
+                self.addr,
+            ),
         )
         cast(Any, self.emu)._inertia_last_condition_source = source
 
@@ -2175,6 +2181,11 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             addr=self.addr,
             block_addr=block_addr if isinstance(block_addr, int) else None,
             bind_operand_at_jcc=bind_operand_at_jcc,
+            register_bindings=snapshot_condition_register_bindings_8616(
+                Instruction_ANY._inertia_condition_reg_value_state_8616,
+                block_addr if isinstance(block_addr, int) else None,
+                self.addr,
+            ),
         )
         cast(Any, self.emu)._inertia_last_condition_source = source
 
@@ -2340,6 +2351,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                         addr=source.addr,
                         block_addr=source.block_addr,
                         bind_operand_at_jcc=source.bind_operand_at_jcc,
+                        register_bindings=source.register_bindings,
                     )
                 if isinstance(target_addr, int) and target_addr not in {int(self.addr), fallthrough_addr}:
                     Instruction_ANY._inertia_pending_condition_sources_by_addr[target_addr] = ConditionSource(
@@ -2353,6 +2365,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                         addr=source.addr,
                         block_addr=source.block_addr,
                         bind_operand_at_jcc=source.bind_operand_at_jcc,
+                        register_bindings=source.register_bindings,
                     )
             if source.kind == "cmp":
                 cond_ir = build_condition_from_cmp_8616(
@@ -2366,6 +2379,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     taken_target=target_addr,
                     fallthrough_target=fallthrough_addr,
                     producer_semantics=source.semantics,
+                    register_bindings=source.register_bindings,
                 )
             elif source.kind == "test":
                 cond_ir = build_condition_from_test_8616(
@@ -2379,6 +2393,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     fallthrough_target=fallthrough_addr,
                     operand_bind_insn=self.addr if source.bind_operand_at_jcc else None,
                     producer_semantics=source.semantics,
+                    register_bindings=source.register_bindings,
                 )
             else:
                 cond_ir = ConditionFailure(

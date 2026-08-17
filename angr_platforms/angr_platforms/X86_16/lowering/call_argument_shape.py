@@ -28,6 +28,7 @@ __all__ = [
     "ProtectedCallArgument8616",
     "ProtectedCallArgumentStore8616",
     "accounted_target_prototype_shape_evidence_8616",
+    "carry_forward_logical_call_argument_shape_8616",
     "exact_caller_stack_object_for_word_pair_8616",
     "exact_caller_stack_object_shape_evidence_8616",
     "reconcile_materialized_call_argument_shape_8616",
@@ -87,6 +88,55 @@ class CallsiteArgumentShapeReconciliation8616:
 def _valid_widths_8616(widths: tuple[int, ...]) -> bool:
     """Return whether every supplied width is a positive integer."""
     return all(isinstance(width, int) and not isinstance(width, bool) and width > 0 for width in widths)
+
+
+def carry_forward_logical_call_argument_shape_8616(
+    fresh_summary: CallsiteSummary8616,
+    previous_summary: CallsiteSummary8616,
+) -> CallsiteSummary8616:
+    """Carry a proven logical projection across an identical physical summary rebuild."""
+    logical_widths = previous_summary.logical_arg_widths
+    if fresh_summary.logical_arg_widths or not _valid_widths_8616(logical_widths):
+        return fresh_summary
+    if (
+        fresh_summary.callsite_addr != previous_summary.callsite_addr
+        or fresh_summary.target_addr != previous_summary.target_addr
+        or fresh_summary.return_addr != previous_summary.return_addr
+        or fresh_summary.kind != previous_summary.kind
+        or fresh_summary.arg_count != previous_summary.arg_count
+        or fresh_summary.arg_widths != previous_summary.arg_widths
+        or fresh_summary.stack_cleanup != previous_summary.stack_cleanup
+        or fresh_summary.push_arg_sources != previous_summary.push_arg_sources
+        or fresh_summary.push_arg_instruction_addrs
+        != previous_summary.push_arg_instruction_addrs
+        or fresh_summary.stack_cleanup_instruction_addr
+        != previous_summary.stack_cleanup_instruction_addr
+    ):
+        return fresh_summary
+
+    physical_widths = fresh_summary.arg_widths
+    if not _valid_widths_8616(physical_widths):
+        return fresh_summary
+    physical_total = sum(physical_widths)
+    cleanup = fresh_summary.stack_cleanup
+    complete_physical_shape = (
+        isinstance(cleanup, int) and cleanup > 0 and cleanup == physical_total
+    ) or (
+        len(fresh_summary.push_arg_sources) == len(physical_widths)
+        and bool(fresh_summary.push_arg_sources)
+        and all(source is not None for source in fresh_summary.push_arg_sources)
+    )
+    if not complete_physical_shape or sum(logical_widths) != physical_total:
+        return fresh_summary
+
+    logical_classes = previous_summary.logical_arg_classes
+    if len(logical_classes) != len(logical_widths):
+        logical_classes = ()
+    return replace(
+        fresh_summary,
+        logical_arg_widths=logical_widths,
+        logical_arg_classes=logical_classes,
+    )
 
 
 def accounted_target_prototype_shape_evidence_8616(

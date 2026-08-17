@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+from threading import Barrier, Lock
 
 import pytest
 
@@ -1179,3 +1180,93 @@ def test_runtime_gate_links_generic_runtime_support(monkeypatch, tmp_path):
 
     assert rebuilt.name == "TESTRT.EXE"
     assert seen["runtime_support"] is True
+
+
+def test_runtime_gate_decompiles_functions_with_bounded_parallelism(monkeypatch, tmp_path):
+    exe = tmp_path / "TEST.EXE"
+    exe.write_bytes(b"MZ")
+    kvikdos = tmp_path / "kvikdos"
+    kvikdos.write_text("#!/bin/sh\n", encoding="utf-8")
+    msc6_root = tmp_path / "msc6"
+    msc6_root.mkdir()
+    example = runtime_gate.ExampleSpec(
+        name="parallel-test",
+        exe=exe,
+        output_stem="TESTRT",
+        functions=(runtime_gate.FunctionSpec("first"), runtime_gate.FunctionSpec("second")),
+        harness_main="int main(void) { return 255; }",
+    )
+    barrier = Barrier(2)
+    state_lock = Lock()
+    state = {"active": 0, "max_active": 0}
+
+    def fake_decompile(spec, **_kwargs):
+        with state_lock:
+            state["active"] += 1
+            state["max_active"] = max(state["max_active"], state["active"])
+        barrier.wait(timeout=2.0)
+        with state_lock:
+            state["active"] -= 1
+        return subprocess.CompletedProcess(
+            args=[spec.name],
+            returncode=0,
+            stdout=f"int {spec.name}(void)\n{{\n    return 0;\n}}\n",
+            stderr="[tail-validation] whole-tail validation clean across 1 functions\n",
+        )
+
+    def fake_compile_and_link(source_path, out_dir, **kwargs):
+        (out_dir / kwargs["exe_name"]).write_bytes(b"MZ")
+        source = source_path.read_text(encoding="utf-8")
+        assert source.index("int first(void)") < source.index("int second(void)")
+        return True, "", "", "", ""
+
+    monkeypatch.delenv("INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS", raising=False)
+    monkeypatch.setattr(runtime_gate, "_run_decompile", fake_decompile)
+    monkeypatch.setattr(runtime_gate, "_compile_and_link", fake_compile_and_link)
+    monkeypatch.setattr(runtime_gate, "_run_example", lambda *_args, **_kwargs: (True, 255, "", ""))
+
+    runtime_gate._verify_example(
+        example,
+        out_dir=tmp_path / "out",
+        kvikdos=kvikdos,
+        msc6_root=msc6_root,
+        decompile_py=tmp_path / "decompile.py",
+        expected_exit_code=255,
+        timeout=60,
+    )
+
+    assert state["max_active"] == 2
+
+
+def test_runtime_gate_decompile_worker_count_is_bounded(monkeypatch):
+    monkeypatch.delenv("INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS", raising=False)
+    assert runtime_gate._runtime_decompile_workers(1) == 1
+    assert runtime_gate._runtime_decompile_workers(10) == 2
+
+    monkeypatch.setenv("INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS", "1")
+    assert runtime_gate._runtime_decompile_workers(10) == 1
+    monkeypatch.setenv("INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS", "99")
+    assert runtime_gate._runtime_decompile_workers(10) == 2
+    monkeypatch.setenv("INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS", "invalid")
+    with pytest.raises(runtime_gate.RuntimeGateError, match="invalid INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS"):
+        runtime_gate._runtime_decompile_workers(10)
+
+
+def test_runtime_gate_worker_control_is_not_forwarded_to_decompiler(monkeypatch, tmp_path):
+    captured_env: dict[str, str] = {}
+
+    def fake_run(*_args, **kwargs):
+        captured_env.update(kwargs["env"])
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+    monkeypatch.setenv("INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS", "1")
+    monkeypatch.setattr(runtime_gate.subprocess, "run", fake_run)
+
+    runtime_gate._run_decompile(
+        runtime_gate.FunctionSpec("example", proc_kind="NEAR"),
+        exe_path=tmp_path / "EXAMPLE.EXE",
+        decompile_py=tmp_path / "decompile.py",
+        timeout=60,
+    )
+
+    assert "INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS" not in captured_env

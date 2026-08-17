@@ -41,6 +41,7 @@ def test_try_decompile_non_optimized_slice_uses_exact_slice_postprocess_policy(m
     monkeypatch.setattr(cli, "_pick_function_lean", lambda *_args, **_kwargs: (SimpleNamespace(), function))
     monkeypatch.setattr(cli, "_inherit_tail_validation_runtime_policy", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli, "_prepare_function_for_decompilation", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "_run_with_timeout_in_fork", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(cli, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
 
     def _fake_decompile(*_args, **kwargs):

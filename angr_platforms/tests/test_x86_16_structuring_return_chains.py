@@ -4,12 +4,14 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
+    CBinaryOp,
     CConstant,
     CExpressionStatement,
     CFunctionCall,
     CIfElse,
     CReturn,
     CStatements,
+    CTypeCast,
     CVariable,
 )
 from angr.sim_type import SimTypeShort
@@ -116,6 +118,7 @@ from angr_platforms.X86_16.structuring.return_chains import (
     surplus_empty_guard_condition_8616,
     tail_call_from_statement_8616,
     tail_call_payload_from_statement_8616,
+    terminal_ax_fallback_supports_widths_8616,
     terminal_value_block_addrs_8616,
 )
 
@@ -2094,10 +2097,18 @@ def test_structuring_combine_dx_ax_return_expr_prefers_adjacent_wide_stack_slot(
     assert expr is wide_expr
 
 
-def test_structuring_combine_dx_ax_return_expr_keeps_ax_when_dx_is_unmergeable():
+def test_structuring_combine_dx_ax_return_expr_preserves_nonconstant_dx_ax_pair():
     codegen = _DummyCodegen()
-    ax_expr = object()
-    dx_expr = object()
+    ax_expr = CVariable(
+        SimRegisterVariable(0, 2, name="ax"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    dx_expr = CVariable(
+        SimRegisterVariable(6, 2, name="dx"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
 
     expr = combine_dx_ax_return_expr_8616(
         ax_expr,
@@ -2107,7 +2118,22 @@ def test_structuring_combine_dx_ax_return_expr_keeps_ax_when_dx_is_unmergeable()
         lambda _offset, _size: None,
     )
 
-    assert expr is ax_expr
+    assert isinstance(expr, CBinaryOp)
+    assert expr.op == "Or"
+    assert isinstance(expr.lhs, CBinaryOp)
+    assert expr.lhs.op == "Shl"
+    assert isinstance(expr.lhs.lhs, CTypeCast)
+    assert expr.lhs.lhs.expr is dx_expr
+    assert isinstance(expr.rhs, CTypeCast)
+    assert expr.rhs.expr is ax_expr
+
+
+def test_terminal_ax_fallback_accepts_only_known_single_register_widths():
+    assert terminal_ax_fallback_supports_widths_8616((8,))
+    assert terminal_ax_fallback_supports_widths_8616((16, 16))
+    assert not terminal_ax_fallback_supports_widths_8616((16, 32))
+    assert not terminal_ax_fallback_supports_widths_8616((None,))
+    assert not terminal_ax_fallback_supports_widths_8616(())
 
 
 def test_structuring_branch_target_return_expr_follows_callback_jump_target():

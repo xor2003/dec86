@@ -11,6 +11,8 @@ Do not perform alias-state ownership, widening, type/materialization recovery, r
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -90,6 +92,22 @@ class _CodegenSurface8616(Protocol):
     _inertia_wide_stack_return_predicate_result_8616: WideStackReturnPredicateResult8616
 
 
+def _record_result_8616(
+    boundary: _CodegenSurface8616,
+    result: WideStackReturnPredicateResult8616,
+) -> WideStackReturnPredicateResult8616:
+    """Persist one typed result and optionally expose its evidence accounting."""
+    boundary._inertia_wide_stack_return_predicate_result_8616 = result
+    if os.environ.get("INERTIA_DEBUG_WIDE_STACK_RETURN_PREDICATE") == "1":
+        logging.getLogger(__name__).warning(
+            "[wide-stack-return-predicate] status=%s stats=%r wide_conditions=%d",
+            result.status.value,
+            result.stats,
+            result.wide_condition_count,
+        )
+    return result
+
+
 def _refused_8616(
     status: WideStackReturnPredicateStatus8616,
     raw_count: int,
@@ -165,8 +183,7 @@ def materialize_wide_stack_return_predicate_8616(
             WideStackReturnPredicateStatus8616.EFFECTS_UNPROVEN,
             raw_count,
         )
-        boundary._inertia_wide_stack_return_predicate_result_8616 = result
-        return result
+        return _record_result_8616(boundary, result)
     return_cache: dict[int, CExpression | None] = {}
 
     def returned(target: int) -> CExpression | None:
@@ -182,8 +199,7 @@ def materialize_wide_stack_return_predicate_8616(
             WideStackReturnPredicateStatus8616.RETURN_PROOF_FAILED,
             raw_count,
         )
-        boundary._inertia_wide_stack_return_predicate_result_8616 = result
-        return result
+        return _record_result_8616(boundary, result)
     unique_returns: list[CExpression] = []
     for _target, expression in returns:
         assert expression is not None
@@ -194,8 +210,7 @@ def materialize_wide_stack_return_predicate_8616(
             WideStackReturnPredicateStatus8616.RETURN_PROOF_FAILED,
             raw_count,
         )
-        boundary._inertia_wide_stack_return_predicate_result_8616 = result
-        return result
+        return _record_result_8616(boundary, result)
     selected_return, alternate_return = unique_returns
 
     def classify_exit(target: int) -> bool | None:
@@ -220,8 +235,7 @@ def materialize_wide_stack_return_predicate_8616(
             raw_count,
             normalized_count=graph.wide_condition_count,
         )
-        boundary._inertia_wide_stack_return_predicate_result_8616 = result
-        return result
+        return _record_result_8616(boundary, result)
     materialized = _materialize_predicate_8616(
         graph.expression,
         materialize_condition,
@@ -234,8 +248,7 @@ def materialize_wide_stack_return_predicate_8616(
             normalized_count=graph.wide_condition_count,
             classified_count=raw_count,
         )
-        boundary._inertia_wide_stack_return_predicate_result_8616 = result
-        return result
+        return _record_result_8616(boundary, result)
     materialized.tags = {
         **dict(materialized.tags or {}),
         "inertia_structuring_wide_stack_return_predicate_8616": True,
@@ -270,8 +283,7 @@ def materialize_wide_stack_return_predicate_8616(
         ),
         graph.wide_condition_count,
     )
-    boundary._inertia_wide_stack_return_predicate_result_8616 = result
-    return result
+    return _record_result_8616(boundary, result)
 
 
 def wide_stack_return_predicate_validation_delta_is_proven_8616(

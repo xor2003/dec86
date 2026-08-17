@@ -2004,9 +2004,16 @@ def _call_node_is_stack_probe_helper_8616(
 
 
 def _callsite_expected_fingerprint_8616(
-    function: TailValidationValue, project: TailValidationValue, callsite_addr: int
+    function: TailValidationValue,
+    project: TailValidationValue,
+    callsite_addr: int,
+    summary_inventory: Mapping[int, CallsiteSummary8616] | None = None,
 ) -> str | None:
-    summary = summarize_x86_16_callsite(function, callsite_addr)
+    summary = (
+        summary_inventory.get(callsite_addr)
+        if summary_inventory is not None
+        else summarize_x86_16_callsite(function, callsite_addr)
+    )
     if _summary_is_stack_probe_helper_8616(summary):
         return None
     target_addr = _call_summary_target_addr_8616(project, summary)
@@ -2031,7 +2038,10 @@ def _function_callsite_addrs_for_validation_8616(function: TailValidationValue) 
 
 
 def _append_missing_contextual_callsite_fingerprints_8616(
-    root: TailValidationValue, project: TailValidationValue, helper_calls: list[str]
+    root: TailValidationValue,
+    project: TailValidationValue,
+    helper_calls: list[str],
+    summary_inventory: Mapping[int, CallsiteSummary8616] | None = None,
 ) -> None:
     """Append missing contextual callsite fingerprints to helper-call tokens."""
     function = _function_for_call_context_8616(root, project)
@@ -2039,7 +2049,12 @@ def _append_missing_contextual_callsite_fingerprints_8616(
         return
     expected: list[str] = []
     for callsite_addr in _function_callsite_addrs_for_validation_8616(function):
-        fingerprint = _callsite_expected_fingerprint_8616(function, project, callsite_addr)
+        fingerprint = _callsite_expected_fingerprint_8616(
+            function,
+            project,
+            callsite_addr,
+            summary_inventory,
+        )
         if fingerprint is not None:
             expected.append(_normalize_helper_call_fingerprint_8616(project, fingerprint) or fingerprint)
     if not expected:
@@ -2347,14 +2362,21 @@ def _call_effect_fingerprint_8616(
 
 
 def _expected_helper_call_counts_for_validation_8616(
-    root: TailValidationValue, project: TailValidationValue
+    root: TailValidationValue,
+    project: TailValidationValue,
+    summary_inventory: Mapping[int, CallsiteSummary8616] | None = None,
 ) -> Counter[str]:
     function = _function_for_call_context_8616(root, project)
     if function is None:
         return Counter()
     counts: Counter[str] = Counter()
     for callsite_addr in _function_callsite_addrs_for_validation_8616(function):
-        fingerprint = _callsite_expected_fingerprint_8616(function, project, callsite_addr)
+        fingerprint = _callsite_expected_fingerprint_8616(
+            function,
+            project,
+            callsite_addr,
+            summary_inventory,
+        )
         normalized = _normalize_helper_call_fingerprint_8616(project, fingerprint)
         if isinstance(normalized, str) and normalized:
             counts[_canonicalize_helper_call_fingerprint_for_compare_8616(normalized)] += 1
@@ -2494,7 +2516,9 @@ def _call_node_has_nonprobe_target_evidence_8616(project: TailValidationValue, n
 
 
 def _ordered_contextual_call_pairs_8616(
-    root: TailValidationValue, project: TailValidationValue
+    root: TailValidationValue,
+    project: TailValidationValue,
+    summary_inventory: Mapping[int, CallsiteSummary8616] | None = None,
 ) -> list[tuple[CFunctionCall, int]]:
     def _impl() -> list[tuple[CFunctionCall, int]]:
         function = _function_for_call_context_8616(root, project)
@@ -2533,7 +2557,11 @@ def _ordered_contextual_call_pairs_8616(
         )
         available_nodes = list(remaining_nodes)
         for callsite_addr in unmatched_callsites:
-            summary = summarize_x86_16_callsite(function, callsite_addr)
+            summary = (
+                summary_inventory.get(callsite_addr)
+                if summary_inventory is not None
+                else summarize_x86_16_callsite(function, callsite_addr)
+            )
             matched_index = None
             if summary is not None:
                 for idx, node in enumerate(available_nodes):
@@ -3244,10 +3272,19 @@ def fingerprint_x86_16_tail_validation_boundary(
     project._inertia_tail_validation_active_codegen = codegen
     # Dynamic angr/codegen compatibility boundary.
     func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+    summary_inventory = callsite_summary_inventory_8616(codegen) or None
     with span("x86_16.tail_validation.boundary.contextual_calls", function=func_addr):
-        contextual_call_fingerprints = build_x86_16_contextual_call_fingerprints(root, project)
+        contextual_call_fingerprints = build_x86_16_contextual_call_fingerprints(
+            root,
+            project,
+            summary_inventory=summary_inventory,
+        )
     with span("x86_16.tail_validation.boundary.call_summaries", function=func_addr):
-        contextual_call_summaries = _build_contextual_call_summary_map(root, project)
+        contextual_call_summaries = _build_contextual_call_summary_map(
+            root,
+            project,
+            summary_inventory,
+        )
     with span("x86_16.tail_validation.boundary.contextual_conditions", function=func_addr):
         contextual_condition_fingerprints = build_x86_16_contextual_condition_fingerprints(root, project)
     previous_condition_fingerprints = getattr(
@@ -4136,7 +4173,9 @@ def _split_tail_return_call_fingerprints_8616(
 
 
 def _build_contextual_call_summary_map(
-    root: TailValidationValue, project: TailValidationValue
+    root: TailValidationValue,
+    project: TailValidationValue,
+    summary_inventory: Mapping[int, CallsiteSummary8616] | None = None,
 ) -> dict[int, TailValidationValue]:
     """Map each observable call to the strongest available callsite summary.
 
@@ -4183,11 +4222,19 @@ def _build_contextual_call_summary_map(
         function = _function_for_call_context_8616(root, project)
         if function is None:
             return summary_map
-        ordered_pairs = _ordered_contextual_call_pairs_8616(root, project)
+        ordered_pairs = _ordered_contextual_call_pairs_8616(
+            root,
+            project,
+            summary_inventory,
+        )
         for node, callsite_addr in ordered_pairs:
             if id(node) in summary_map:
                 continue
-            summary = summarize_x86_16_callsite(function, callsite_addr)
+            summary = (
+                summary_inventory.get(callsite_addr)
+                if summary_inventory is not None
+                else summarize_x86_16_callsite(function, callsite_addr)
+            )
             target_addr = _call_summary_target_addr_8616(project, summary)
             if summary is not None and target_addr is not None:
                 if isinstance(summary, Mapping):
@@ -5413,6 +5460,7 @@ def collect_x86_16_tail_validation_summary(
             try:
                 # Dynamic angr/codegen compatibility boundary.
                 func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
+                summary_inventory = callsite_summary_inventory_8616(codegen) or None
                 with span("x86_16.tail_validation.summary.observed_locations", function=func_addr):
                     observed_locations = _collect_observed_locations(root, project, mode)
                 with span(
@@ -5429,13 +5477,25 @@ def collect_x86_16_tail_validation_summary(
                             int(getattr(codegen, "_inertia_tail_validation_boundary_context_reused_8616", 0) or 0) + 1
                         )
                     else:
-                        contextual_call_fingerprints = build_x86_16_contextual_call_fingerprints(root, project)
-                        contextual_call_summaries = _build_contextual_call_summary_map(root, project)
+                        contextual_call_fingerprints = build_x86_16_contextual_call_fingerprints(
+                            root,
+                            project,
+                            summary_inventory=summary_inventory,
+                        )
+                        contextual_call_summaries = _build_contextual_call_summary_map(
+                            root,
+                            project,
+                            summary_inventory,
+                        )
                         contextual_condition_fingerprints = build_x86_16_contextual_condition_fingerprints(
                             root, project
                         )
                 with span("x86_16.tail_validation.summary.expected_helper_counts", function=func_addr):
-                    expected_helper_call_counts = _expected_helper_call_counts_for_validation_8616(root, project)
+                    expected_helper_call_counts = _expected_helper_call_counts_for_validation_8616(
+                        root,
+                        project,
+                        summary_inventory,
+                    )
                 with span("x86_16.tail_validation.summary.prunable_segment_writes", function=func_addr):
                     prunable_segment_write_ids = (
                         _prunable_live_out_segment_write_ids_8616(root, project, contextual_call_summaries)
@@ -5496,7 +5556,12 @@ def collect_x86_16_tail_validation_summary(
                     returns.discard("none")
                     returns.update(split_tail_return_call_fingerprints)
                 with span("x86_16.tail_validation.summary.finalize", function=func_addr):
-                    _append_missing_contextual_callsite_fingerprints_8616(root, project, helper_calls)
+                    _append_missing_contextual_callsite_fingerprints_8616(
+                        root,
+                        project,
+                        helper_calls,
+                        summary_inventory,
+                    )
                     canonical_segmented_writes = _canonicalize_segmented_write_aliases_8616(
                         segmented_writes,
                         global_writes,

@@ -21,6 +21,11 @@ import claripy
 from angr import SimProcedure
 from angr.sim_type import SimTypeFunction
 
+from .helper_abi import (
+    known_helper_abi_8616,
+    known_helper_signature_declarations_8616,
+    preferred_known_helper_abi_8616,
+)
 from .interrupt_contract import (
     DOS_SERVICE_BASE_ADDR,
     INTERRUPT_CORE_VECTOR_BASE,
@@ -256,51 +261,7 @@ def _analysis_function_call_return_8616(function: object, callsite_addr: int) ->
     return None
 
 
-KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = {
-    "aNchkstk": "void aNchkstk(void);",
-    "__aNchkstk": "void __aNchkstk(void);",
-    "_abort": "void _abort(void);",
-    "_DEBUG": "int _DEBUG(const char *fmt, ...);",
-    "_ERROR": "int _ERROR(const char *fmt, ...);",
-    "_INFO": "int _INFO(const char *fmt, ...);",
-    "aNldiv": "long aNldiv(long dividend, long divisor);",
-    "_fflush": "int _fflush(FILE *f);",
-    "_fprintf": "int _fprintf(FILE *f, const char *fmt, ...);",
-    "_intdos": "int _intdos(union REGS *in, union REGS *out);",
-    "_intdosx": "int _intdosx(union REGS *in, union REGS *out, struct SREGS *sreg);",
-    "_dos_getProcessId": "unsigned short _dos_getProcessId(void);",
-    "_dos_setProcessId": "int _dos_setProcessId(const unsigned short pid);",
-    "intdos": "int intdos(union REGS *in, union REGS *out);",
-    "intdosx": "int intdosx(union REGS *in, union REGS *out, struct SREGS *sreg);",
-    "loadprog": "int loadprog(const char *file, unsigned short segment, unsigned short mode, const char *cmdline);",
-    "clearRect": "void clearRect(void *dst, unsigned short left, unsigned short top, unsigned short right, unsigned short bottom);",
-    "clock": "clock_t clock(void);",
-    "settextrows": "int settextrows(int rows);",
-    "clearscreen": "void clearscreen(int mode);",
-    "displaycursor": "void displaycursor(int mode);",
-    "getvideoconfig": "int getvideoconfig(void *config);",
-    "setvideomode": "void setvideomode(int mode);",
-    "_setbkcolor": "long _setbkcolor(long color);",
-    "setbkcolor": "long setbkcolor(long color);",
-    "settextcolor": "int settextcolor(int color);",
-    "settextposition": "void settextposition(int row, int col);",
-    "outtext": "int outtext(const char *text);",
-    "sprintf": "int sprintf(char *buf, const char *fmt, ...);",
-    "_sprintf": "int _sprintf(char *buf, const char *fmt, ...);",
-    "strcpy": "char *strcpy(char *dst, const char *src);",
-    "exit": "void exit(int status);",
-    "memset": "void *memset(void *dst, int ch, unsigned long count);",
-    "inp": "unsigned char inp(unsigned short port);",
-    "openFile": "int openFile(const char *path, unsigned short mode);",
-    "_openFile": "int _openFile(const char *path, unsigned short mode);",
-    "readchar": "unsigned char readchar(void);",
-    "readcharat": "unsigned char readcharat(unsigned short rowcol);",
-    "setcursorpos": "void setcursorpos(unsigned short rowcol);",
-    "writecharat": "void writecharat(unsigned short rowcol, unsigned char ch);",
-    "writestringat": "void writestringat(unsigned short rowcol, const char *s);",
-    "dispdigit": "void dispdigit(unsigned char digit);",
-    "dispnum": "void dispnum(unsigned short value);",
-}
+KNOWN_HELPER_SIGNATURE_DECLS: dict[str, str] = known_helper_signature_declarations_8616()
 
 
 @dataclass(frozen=True)
@@ -920,26 +881,14 @@ def describe_x86_16_interrupt_lowering_boundary() -> dict[str, object]:
 
 def known_helper_signature_decl(name: str) -> str | None:
     """Return a known helper declaration by exact helper name."""
-    return KNOWN_HELPER_SIGNATURE_DECLS.get(name)
+    abi = known_helper_abi_8616(name)
+    return None if abi is None else abi.declaration
 
 
 def preferred_known_helper_signature_decl(name: str) -> str | None:
     """Return the preferred declaration for a helper name or underscore variant."""
-    if not isinstance(name, str) or not name:
-        return None
-    stripped = name.lstrip("_")
-    underscored = f"_{stripped}" if stripped else name
-    if underscored in KNOWN_HELPER_SIGNATURE_DECLS:
-        return KNOWN_HELPER_SIGNATURE_DECLS[underscored]
-    if name in KNOWN_HELPER_SIGNATURE_DECLS:
-        return KNOWN_HELPER_SIGNATURE_DECLS[name]
-    if not name.startswith("_"):
-        underscored = f"_{name}"
-        if underscored in KNOWN_HELPER_SIGNATURE_DECLS:
-            return KNOWN_HELPER_SIGNATURE_DECLS[underscored]
-    if stripped != name:
-        return KNOWN_HELPER_SIGNATURE_DECLS.get(stripped)
-    return None
+    abi = preferred_known_helper_abi_8616(name)
+    return None if abi is None else abi.declaration
 
 
 def describe_x86_16_known_helper_signatures() -> dict[str, object]:

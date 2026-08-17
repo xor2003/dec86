@@ -13,17 +13,21 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from angr_platforms.X86_16.segment_program_layout_contract import SegmentProgramFunctionEvidence8616
 
+    from inertia_decompiler.direct_addr_failure_family import FailureFamilySnapshot
+
+from inertia_decompiler.sidecar_cache import lst_metadata_content_digest_8616
 from inertia_decompiler.tail_validation import (
     emit_tail_validation_console_summary,
     tail_validation_display_status,
     tail_validation_runtime_enabled,
     tail_validation_snapshot_for_fallback,
 )
+from inertia_decompiler.x86_16_exact_slice import function_original_addr
 
 
 class WorkItemStatus(StrEnum):
@@ -132,6 +136,51 @@ class FunctionWorkItem:
     function: Any
     recovery_addr: int | None = None
 
+    @property
+    def c_target(self) -> str:
+        """Return the compiler target attached at the dynamic angr boundary."""
+        try:
+            target = self.function.project._inertia_c_target
+        except AttributeError:
+            return "portable-flat"
+        return target if isinstance(target, str) and target else "portable-flat"
+
+    @property
+    def name(self) -> str | None:
+        """Return the function label exposed by the dynamic angr boundary."""
+        try:
+            name = self.function.name
+        except AttributeError:
+            return None
+        return name if isinstance(name, str) and name else None
+
+    @property
+    def active_addr(self) -> int:
+        """Return the address used by the active recovered function project."""
+        try:
+            active_addr = self.function.addr
+        except AttributeError:
+            return 0
+        return active_addr if isinstance(active_addr, int) else 0
+
+    @property
+    def original_addr(self) -> int:
+        """Return the function address in the original binary address space."""
+        original_addr: int = function_original_addr(cast(object, self.function))
+        return original_addr
+
+    @property
+    def sidecar_metadata_digest(self) -> str | None:
+        """Return content identity for sidecar evidence attached to the project."""
+        try:
+            metadata = self.function.project._inertia_lst_metadata
+        except AttributeError:
+            return None
+        if metadata is None:
+            return None
+        metadata_digest: str = lst_metadata_content_digest_8616(metadata)
+        return metadata_digest
+
 
 @dataclass(frozen=True)
 class FunctionWorkResult:
@@ -156,6 +205,7 @@ class FunctionWorkResult:
     validated_payload_hash: str | None = None
     gcc_checked_payload_hash: str | None = None
     segment_program_function_evidence: SegmentProgramFunctionEvidence8616 | None = None
+    failure_family_snapshot: FailureFamilySnapshot | None = None
 
 
 def emit_tail_validation_for_function_run_or_uncollected(

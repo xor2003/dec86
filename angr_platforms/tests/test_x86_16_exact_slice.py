@@ -10,7 +10,7 @@ from angr_platforms.X86_16.callsite_summary import (
 )
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 
-from inertia_decompiler import cli, cli_function_discovery
+from inertia_decompiler import cli, cli_function_discovery, x86_16_exact_slice
 from inertia_decompiler.x86_16_exact_slice import (
     SAFE_X86_16_SLICE_BASE,
     function_original_addr,
@@ -38,6 +38,16 @@ def test_function_original_addr_prefers_marked_original() -> None:
     function = SimpleNamespace(addr=0x1000, info={})
     mark_function_original_addr(function, 0x109E8)
     assert function_original_addr(function) == 0x109E8
+
+
+def test_function_original_addr_refuses_nonweakrefable_identity_collision(monkeypatch) -> None:
+    original = SimpleNamespace(addr=0x1000)
+    replacement = SimpleNamespace(addr=0x2000)
+    monkeypatch.setattr(x86_16_exact_slice, "id", lambda _function: 1, raising=False)
+
+    mark_function_original_addr(original, 0x109E8)
+
+    assert function_original_addr(replacement) == 0x2000
 
 
 def test_caller_return_use_collection_checks_label_and_prologue_aliases(monkeypatch) -> None:

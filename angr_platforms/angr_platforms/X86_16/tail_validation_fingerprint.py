@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import builtins
 import contextlib
+import contextvars
 import logging
 import os
 import re
@@ -46,7 +47,12 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 
 from .call_target_identity import normalize_x86_16_call_target_addr_8616
 from .callee_name_normalization import normalize_callee_name_8616
-from .callsite_summary import summarize_x86_16_callsite as _summarize_x86_16_callsite_fallback
+from .callsite_summary import (
+    CallsiteSummary8616,
+)
+from .callsite_summary import (
+    summarize_x86_16_callsite as _summarize_x86_16_callsite_fallback,
+)
 from .decompiler_postprocess_utils import (
     _match_bp_stack_dereference_8616,
     _match_segmented_dereference_8616,
@@ -83,7 +89,9 @@ TAIL_VALIDATION_FINGERPRINT_VERSION: int = 34
 _SUB_TARGET_RE = re.compile(r"^(?:sub_|0x)(?P<addr>[0-9a-fA-F]+)$")
 log: logging.Logger = logging.getLogger(__name__)
 _EXPR_FINGERPRINT_CACHE_LIMIT_8616 = 500000
-_TEMPORARY_FINGERPRINT_NODE_IDS_8616: set[int] = set()
+_TEMPORARY_FINGERPRINT_NODES_8616: contextvars.ContextVar[dict[int, object] | None] = (
+    contextvars.ContextVar("temporary_fingerprint_nodes_8616", default=None)
+)
 _ExprFingerprintCacheKey8616 = tuple[object, int, str]
 
 
@@ -160,6 +168,14 @@ def _first_codegen_8616(*nodes: Any) -> object | None:
     return None
 
 
+def _remember_temporary_fingerprint_node_8616(node: object) -> None:
+    """Retain a temporary AST node within the current fingerprint operation."""
+
+    temporary_nodes = _TEMPORARY_FINGERPRINT_NODES_8616.get()
+    if temporary_nodes is not None:
+        temporary_nodes[id(node)] = node
+
+
 def _safe_rebuild_binary_8616(op: str, lhs: object, rhs: object, template: object) -> object:
     if lhs is _dynamic_tail_validation_getattr_8616(template, "lhs", None) and rhs is _dynamic_tail_validation_getattr_8616(template, "rhs", None):
         return template
@@ -167,7 +183,7 @@ def _safe_rebuild_binary_8616(op: str, lhs: object, rhs: object, template: objec
     if codegen is None:
         return template
     rebuilt = CBinaryOp(op, lhs, rhs, codegen=codegen)
-    _TEMPORARY_FINGERPRINT_NODE_IDS_8616.add(id(rebuilt))
+    _remember_temporary_fingerprint_node_8616(rebuilt)
     return rebuilt
 
 
@@ -178,7 +194,7 @@ def _safe_rebuild_unary_8616(op: str, operand: object, template: object) -> obje
     if codegen is None or not isinstance(operand, CExpression):
         return template
     rebuilt = CUnaryOp(op, operand, codegen=codegen)
-    _TEMPORARY_FINGERPRINT_NODE_IDS_8616.add(id(rebuilt))
+    _remember_temporary_fingerprint_node_8616(rebuilt)
     return rebuilt
 
 
@@ -2213,7 +2229,10 @@ def _expr_fingerprint(node: object, project: object, _seen: set[int] | None = No
             type(node).__name__,
         )
         snapshot_cache_active = bool(_dynamic_tail_validation_getattr_8616(project, "_inertia_tail_validation_snapshot_expr_cache_enabled_8616", False))
-        temporary_fingerprint_node = id(node) in _TEMPORARY_FINGERPRINT_NODE_IDS_8616
+        temporary_nodes = _TEMPORARY_FINGERPRINT_NODES_8616.get()
+        temporary_fingerprint_node = (
+            temporary_nodes is not None and temporary_nodes.get(id(node)) is node
+        )
         cacheable = (
             not temporary_fingerprint_node
             and (snapshot_cache_active or not _contains_bp_stack_location_expr_8616(node))
@@ -2354,7 +2373,17 @@ def _expr_fingerprint(node: object, project: object, _seen: set[int] | None = No
             return _cached(f"call:{callee}({args})")
         return _cached(type(node).__name__)
 
-    return _impl()
+    owns_temporary_scope = _seen is None
+    temporary_scope_token = (
+        _TEMPORARY_FINGERPRINT_NODES_8616.set({})
+        if owns_temporary_scope
+        else None
+    )
+    try:
+        return _impl()
+    finally:
+        if temporary_scope_token is not None:
+            _TEMPORARY_FINGERPRINT_NODES_8616.reset(temporary_scope_token)
 
 
 def _call_target_name(node: CFunctionCall, project: object) -> str:
@@ -2488,7 +2517,12 @@ def _summarize_x86_16_callsite_for_fingerprint_8616(function: Any, callsite_addr
     return _summarize_x86_16_callsite_fallback(function, callsite_addr)
 
 
-def build_x86_16_contextual_call_fingerprints(root: object, project: object) -> dict[int, str]:
+def build_x86_16_contextual_call_fingerprints(
+    root: object,
+    project: object,
+    *,
+    summary_inventory: Mapping[int, CallsiteSummary8616] | None = None,
+) -> dict[int, str]:
     """Build evidence-matched callsite fingerprints keyed by C call identity.
 
     Structured-C traversal order is not machine instruction order after
@@ -2512,7 +2546,11 @@ def build_x86_16_contextual_call_fingerprints(root: object, project: object) -> 
                 callsite_addrs = _collect_direct_capstone_callsite_addrs_8616(function)
             contextual_calls: list[tuple[int, int | None]] = []
             for callsite_addr in callsite_addrs:
-                summary = _summarize_x86_16_callsite_for_fingerprint_8616(function, callsite_addr)
+                summary = (
+                    summary_inventory.get(callsite_addr)
+                    if summary_inventory is not None
+                    else _summarize_x86_16_callsite_for_fingerprint_8616(function, callsite_addr)
+                )
                 target_addr = _fingerprint_target_addr_from_summary_8616(summary)
                 contextual_calls.append((callsite_addr, _canonical_contextual_call_target_8616(project, target_addr)))
 

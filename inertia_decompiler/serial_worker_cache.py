@@ -12,8 +12,6 @@ compiler-acceptance hashes.
 from __future__ import annotations
 
 import hashlib
-import json
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -26,25 +24,19 @@ from angr_platforms.X86_16.tail_validation import x86_16_tail_validation_snapsho
 from inertia_decompiler.cache import (
     DECOMPILATION_CACHE_DIR,
     _cache_file_fingerprint,
-    _cache_json_path,
+    _cache_key_lock,
     _load_cache_json,
     _recovery_cache_key,
+    _store_cache_json,
+    is_non_semantic_cache_environment_name,
 )
 from inertia_decompiler.cli_arg_parser import CliArguments
+from inertia_decompiler.direct_addr_failure_family import FailureFamilySnapshot
 
 SERIAL_WORKER_CACHE_NAMESPACE_8616: str = "serial_clean_worker"
-SERIAL_WORKER_CACHE_SCHEMA_8616: int = 1
+SERIAL_WORKER_CACHE_SCHEMA_8616: int = 2
 SERIAL_WORKER_CACHE_MAX_ENTRIES_8616: int = 256
-
-_NON_SEMANTIC_ENV_PREFIXES_8616: tuple[str, ...] = ("INERTIA_OTEL_",)
-_WORKER_TRANSPORT_ENV_8616: frozenset[str] = frozenset(
-    {
-        "INERTIA_ARCHITECTURE_GUARD_VERIFIED_PARENT_PID",
-        "INERTIA_SERIAL_CLEAN_WORKER_EVIDENCE",
-        "INERTIA_SERIAL_CLEAN_WORKER_RESULT",
-    }
-)
-
+SERIAL_WORKER_CACHE_ANALYSIS_TIMEOUT_FIELD_8616: str = "cache_analysis_timeout"
 
 class SerialWorkerCacheVerdict8616(str, Enum):
     """Typed outcome of a serial clean-worker cache lookup."""
@@ -53,6 +45,17 @@ class SerialWorkerCacheVerdict8616(str, Enum):
     MISS = "miss"
     REFUSED = "refused"
     DISABLED = "disabled"
+
+
+class SerialWorkerCacheReason8616(str, Enum):
+    """Structured reason for a serial clean-worker cache verdict."""
+
+    DIAGNOSTICS = "diagnostics"
+    NO_KEY = "no_key"
+    NOT_FOUND = "not_found"
+    INSUFFICIENT_ANALYSIS_BUDGET = "insufficient_analysis_budget"
+    ACCEPTANCE_PROOF = "acceptance_proof"
+    VALIDATED = "validated"
 
 
 @dataclass(frozen=True)
@@ -83,7 +86,8 @@ class SerialWorkerCacheLookup8616:
     verdict: SerialWorkerCacheVerdict8616
     key: dict[str, object] | None
     record: dict[str, object] | None
-    reason: str
+    reason: SerialWorkerCacheReason8616
+    requested_timeout: int
 
 
 def semantic_worker_environment_8616(environment: Mapping[str, str]) -> tuple[tuple[str, str], ...]:
@@ -93,8 +97,7 @@ def semantic_worker_environment_8616(environment: Mapping[str, str]) -> tuple[tu
             (name, value)
             for name, value in environment.items()
             if name.startswith("INERTIA_")
-            and name not in _WORKER_TRANSPORT_ENV_8616
-            and not name.startswith(_NON_SEMANTIC_ENV_PREFIXES_8616)
+            and not is_non_semantic_cache_environment_name(name)
         )
     )
 
@@ -145,7 +148,6 @@ def build_serial_worker_cache_key_8616(inputs: SerialWorkerCacheInputs8616) -> d
             "result_schema": inputs.result_schema,
             "requested_addr": inputs.requested_addr,
             "recovery_addr": inputs.recovery_addr,
-            "timeout": inputs.timeout,
             "window": inputs.window,
             "base_addr": inputs.base_addr,
             "entry_point": inputs.entry_point,
@@ -189,6 +191,8 @@ def _validated_result_record_8616(
         return None
     if not isinstance(tail_validation, Mapping) or not x86_16_tail_validation_snapshot_passed(tail_validation):
         return None
+    if FailureFamilySnapshot.from_record(record.get("failure_family_snapshot")) is None:
+        return None
     try:
         segment_evidence = segment_program_function_evidence_from_record_8616(
             record.get("segment_program_function_evidence")
@@ -207,13 +211,40 @@ def load_serial_worker_cache_8616(
 ) -> SerialWorkerCacheLookup8616:
     """Load one exact validated result or return an explicit miss/refusal."""
     if not enabled:
-        return SerialWorkerCacheLookup8616(SerialWorkerCacheVerdict8616.DISABLED, None, None, "diagnostics")
+        return SerialWorkerCacheLookup8616(
+            SerialWorkerCacheVerdict8616.DISABLED,
+            None,
+            None,
+            SerialWorkerCacheReason8616.DIAGNOSTICS,
+            inputs.timeout,
+        )
     key = build_serial_worker_cache_key_8616(inputs)
     if key is None:
-        return SerialWorkerCacheLookup8616(SerialWorkerCacheVerdict8616.DISABLED, None, None, "no_key")
+        return SerialWorkerCacheLookup8616(
+            SerialWorkerCacheVerdict8616.DISABLED,
+            None,
+            None,
+            SerialWorkerCacheReason8616.NO_KEY,
+            inputs.timeout,
+        )
     cached = _load_cache_json(SERIAL_WORKER_CACHE_NAMESPACE_8616, key)
     if cached is None:
-        return SerialWorkerCacheLookup8616(SerialWorkerCacheVerdict8616.MISS, key, None, "not_found")
+        return SerialWorkerCacheLookup8616(
+            SerialWorkerCacheVerdict8616.MISS,
+            key,
+            None,
+            SerialWorkerCacheReason8616.NOT_FOUND,
+            inputs.timeout,
+        )
+    cached_timeout = cached.get(SERIAL_WORKER_CACHE_ANALYSIS_TIMEOUT_FIELD_8616)
+    if not isinstance(cached_timeout, int) or isinstance(cached_timeout, bool) or cached_timeout < inputs.timeout:
+        return SerialWorkerCacheLookup8616(
+            SerialWorkerCacheVerdict8616.MISS,
+            key,
+            None,
+            SerialWorkerCacheReason8616.INSUFFICIENT_ANALYSIS_BUDGET,
+            inputs.timeout,
+        )
     record = _validated_result_record_8616(
         cached,
         result_schema=inputs.result_schema,
@@ -224,9 +255,17 @@ def load_serial_worker_cache_8616(
             SerialWorkerCacheVerdict8616.REFUSED,
             key,
             None,
-            "acceptance_proof",
+            SerialWorkerCacheReason8616.ACCEPTANCE_PROOF,
+            inputs.timeout,
         )
-    return SerialWorkerCacheLookup8616(SerialWorkerCacheVerdict8616.HIT, key, record, "validated")
+    record.pop(SERIAL_WORKER_CACHE_ANALYSIS_TIMEOUT_FIELD_8616, None)
+    return SerialWorkerCacheLookup8616(
+        SerialWorkerCacheVerdict8616.HIT,
+        key,
+        record,
+        SerialWorkerCacheReason8616.VALIDATED,
+        inputs.timeout,
+    )
 
 
 def _prune_serial_worker_cache_8616(max_entries: int) -> None:
@@ -260,14 +299,31 @@ def store_serial_worker_cache_8616(
     validated = _validated_result_record_8616(record, result_schema=result_schema)
     if validated is None:
         return False
-    path = _cache_json_path(SERIAL_WORKER_CACHE_NAMESPACE_8616, lookup.key)
-    if not path.exists():
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-            temporary_path.write_text(json.dumps(validated, sort_keys=True), encoding="utf-8")
-            os.replace(temporary_path, path)
-        except OSError:
-            return False
+    validated[SERIAL_WORKER_CACHE_ANALYSIS_TIMEOUT_FIELD_8616] = lookup.requested_timeout
+    try:
+        with _cache_key_lock(SERIAL_WORKER_CACHE_NAMESPACE_8616, lookup.key):
+            existing = _load_cache_json(SERIAL_WORKER_CACHE_NAMESPACE_8616, lookup.key)
+            existing_timeout = (
+                existing.get(SERIAL_WORKER_CACHE_ANALYSIS_TIMEOUT_FIELD_8616)
+                if existing is not None
+                else None
+            )
+            existing_validated = (
+                _validated_result_record_8616(existing, result_schema=result_schema)
+                if existing is not None
+                else None
+            )
+            if (
+                isinstance(existing_timeout, int)
+                and not isinstance(existing_timeout, bool)
+                and existing_timeout >= lookup.requested_timeout
+                and existing_validated is not None
+            ):
+                return True
+            _store_cache_json(SERIAL_WORKER_CACHE_NAMESPACE_8616, lookup.key, validated)
+            if _load_cache_json(SERIAL_WORKER_CACHE_NAMESPACE_8616, lookup.key) != validated:
+                return False
+    except (OSError, TimeoutError):
+        return False
     _prune_serial_worker_cache_8616(max_entries)
     return True

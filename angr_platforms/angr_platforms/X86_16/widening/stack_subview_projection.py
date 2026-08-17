@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_variable import SimStackVariable
 
 from ..c_ast_utils import _clone_c_ast_tree_8616, _replace_c_children_8616
 from ..pipeline.errors import PipelineHardError
@@ -102,6 +103,44 @@ def _stack_subview_candidate_8616(node: object) -> _StackSubviewCandidate8616 | 
     return None
 
 
+def _exact_word_owner_for_byte_pair_8616(
+    cfunc: object,
+    candidate: _StackSubviewCandidate8616,
+) -> structured_c.CVariable | None:
+    """Return the unique storage-equivalent word owner for adjacent byte views."""
+    low_variable = candidate.container.variable
+    high_variable = candidate.subview.variable
+    if (
+        not isinstance(low_variable, SimStackVariable)
+        or not isinstance(high_variable, SimStackVariable)
+        or low_variable.size != 1
+        or high_variable.size != 1
+    ):
+        return None
+    variables_in_use = _dynamic_attr_8616(cfunc, "variables_in_use", None)
+    if not isinstance(variables_in_use, dict):
+        return None
+    owners: list[structured_c.CVariable] = []
+    for variable, cvar in variables_in_use.items():
+        if not isinstance(variable, SimStackVariable) or variable.size != 2:
+            continue
+        if not isinstance(cvar, structured_c.CVariable):
+            continue
+        low_proof = prove_contained_stack_subview(cvar, candidate.container, expected_bit_offset=0)
+        high_proof = prove_contained_stack_subview(cvar, candidate.subview, expected_bit_offset=8)
+        if low_proof.ok and high_proof.ok:
+            owners.append(cvar)
+    if not owners:
+        return None
+    return min(
+        owners,
+        key=lambda owner: (
+            str(_dynamic_attr_8616(owner.variable, "name", "")),
+            str(_dynamic_attr_8616(owner, "name", "")),
+        ),
+    )
+
+
 def _increment_codegen_counter_8616(codegen: object, name: str, amount: int) -> None:
     """Accumulate evidence on the dynamic third-party codegen boundary."""
     current = _dynamic_attr_8616(codegen, name, 0)
@@ -128,17 +167,21 @@ def materialize_contained_stack_subviews_8616(codegen: object) -> bool:
             stats.failure_count += 1
             return node
         stats.normalized_fact_count += 1
+        container = candidate.container
         proof = prove_contained_stack_subview(
-            candidate.container,
+            container,
             candidate.subview,
             expected_bit_offset=8,
         )
         if not proof.ok:
-            stats.failure_count += 1
-            return node
+            word_owner = _exact_word_owner_for_byte_pair_8616(cfunc, candidate)
+            if word_owner is None:
+                stats.failure_count += 1
+                return node
+            container = word_owner
         stats.classified_fact_count += 1
         stats.materialized_count += 1
-        return _clone_c_ast_tree_8616(candidate.container)
+        return _clone_c_ast_tree_8616(container)
 
     def should_process_child(parent: object, attr: str) -> bool:
         """Keep assignment lvalues outside this rvalue materialization pass."""

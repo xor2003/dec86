@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import angr_platforms.X86_16.decompiler_postprocess_calls as postprocess_calls
@@ -794,7 +795,7 @@ def test_attach_callsite_summaries_sets_summary_and_binds_callee(monkeypatch):
     )
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, callsite_addr: CallsiteSummary8616(
+        lambda _function, callsite_addr, *, target_inventory=None: CallsiteSummary8616(
             callsite_addr=callsite_addr,
             target_addr=0x1544,
             return_addr=0x4015,
@@ -825,6 +826,45 @@ def test_attach_callsite_summaries_sets_summary_and_binds_callee(monkeypatch):
     assert call.callee_target == "InitBars"
 
 
+def test_attach_callsite_summaries_preserves_proven_logical_projection(monkeypatch):
+    project = SimpleNamespace()
+    codegen = _DummyCodegen(project)
+    call = CFunctionCall("load", None, [], tags={"ins_addr": 0x4012}, codegen=codegen)
+    root = CStatements([call], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    function = SimpleNamespace(addr=0x4010, get_call_sites=lambda: [0x4012])
+    callee = SimpleNamespace(addr=0x1544, name="load")
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(
+            function=lambda addr, create=False: function if addr == 0x4010 else callee if addr == 0x1544 else None
+        )
+    )
+    fresh = CallsiteSummary8616(
+        callsite_addr=0x4012,
+        target_addr=0x1544,
+        return_addr=0x4015,
+        kind="direct_near",
+        arg_count=5,
+        arg_widths=(2, 2, 2, 2, 2),
+        stack_cleanup=10,
+        return_register="ax",
+        return_used=True,
+        push_arg_sources=(("bp", 8), ("bp", 6), ("imm", 1), ("imm", 0), ("bp", 4)),
+    )
+    previous = replace(fresh, logical_arg_widths=(2, 2, 2, 4))
+    codegen._inertia_callsite_summary_inventory_8616 = {fresh.callsite_addr: previous}
+    monkeypatch.setattr(
+        postprocess_calls,
+        "summarize_x86_16_callsite",
+        lambda _function, _callsite_addr, *, target_inventory=None: fresh,
+    )
+
+    _attach_callsite_summaries_8616(project, codegen)
+
+    assert codegen._inertia_callsite_summary_inventory_8616[0x4012].logical_arg_widths == (2, 2, 2, 4)
+    assert codegen._inertia_callsite_summaries[id(call)].logical_arg_widths == (2, 2, 2, 4)
+
+
 def test_attach_callsite_summaries_retains_unrepresented_binary_callsite(monkeypatch):
     project = SimpleNamespace()
     codegen = _DummyCodegen(project)
@@ -851,7 +891,7 @@ def test_attach_callsite_summaries_retains_unrepresented_binary_callsite(monkeyp
         )
     )
 
-    def _summary_for_callsite(_function, callsite_addr):
+    def _summary_for_callsite(_function, callsite_addr, *, target_inventory=None):
         return CallsiteSummary8616(
             callsite_addr,
             0x2000,
@@ -920,7 +960,7 @@ def test_attach_callsite_summaries_recovers_empty_direct_callsite_inventory_from
     )
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, callsite_addr: CallsiteSummary8616(
+        lambda _function, callsite_addr, *, target_inventory=None: CallsiteSummary8616(
             callsite_addr=callsite_addr,
             target_addr=0x1544,
             return_addr=0x4015,
@@ -963,7 +1003,7 @@ def test_attach_callsite_summaries_prefers_call_tags_over_ast_zip_order(monkeypa
         )
     )
 
-    def _fake_summary(_function, callsite_addr):
+    def _fake_summary(_function, callsite_addr, *, target_inventory=None):
         if callsite_addr == 0x4012:
             return CallsiteSummary8616(0x4012, 0x1544, 0x4015, "direct_near", 0, (), None, None, False)
         return CallsiteSummary8616(0x4015, 0x1666, 0x4018, "direct_near", 0, (), None, None, False)
@@ -1026,7 +1066,7 @@ def test_attach_callsite_summaries_covers_regenerated_nodes_with_same_call_tag(m
     )
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, _callsite_addr: summary,
+        lambda _function, _callsite_addr, *, target_inventory=None: summary,
     )
 
     changed = _attach_callsite_summaries_8616(project, codegen)
@@ -1060,7 +1100,7 @@ def test_attach_callsite_summaries_does_not_shift_duplicate_target_names(monkeyp
         labels={},
     )
 
-    def _summary_for_callsite(_function, callsite_addr):
+    def _summary_for_callsite(_function, callsite_addr, *, target_inventory=None):
         return CallsiteSummary8616(
             callsite_addr=callsite_addr,
             target_addr=0x2000,
@@ -1111,7 +1151,7 @@ def test_attach_callsite_summaries_does_not_bind_unproved_source_name_to_known_t
         labels={},
     )
 
-    def _summary_for_callsite(_function, callsite_addr):
+    def _summary_for_callsite(_function, callsite_addr, *, target_inventory=None):
         return CallsiteSummary8616(
             callsite_addr=callsite_addr,
             target_addr=0x2000,
@@ -1291,7 +1331,7 @@ def test_ordered_callsite_pairs_refuses_single_mismatched_named_node(monkeypatch
 
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, callsite_addr: CallsiteSummary8616(
+        lambda _function, callsite_addr, *, target_inventory=None: CallsiteSummary8616(
             callsite_addr=callsite_addr,
             target_addr=0x105D2,
             return_addr=0x10063,
@@ -1340,7 +1380,7 @@ def test_ordered_callsite_pairs_refuses_tagged_stack_probe_for_normal_summary(mo
 
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, callsite_addr: CallsiteSummary8616(
+        lambda _function, callsite_addr, *, target_inventory=None: CallsiteSummary8616(
             callsite_addr=callsite_addr,
             target_addr=0x109E8,
             return_addr=0x1028,
@@ -1791,7 +1831,7 @@ def test_attach_callsite_summaries_recovers_multiple_mid_block_direct_calls(monk
         )
     )
 
-    def _fake_summary(_function, callsite_addr):
+    def _fake_summary(_function, callsite_addr, *, target_inventory=None):
         if callsite_addr == 0x4013:
             return CallsiteSummary8616(0x4013, 0x1544, 0x4016, "direct_near", 0, (), None, None, False)
         return CallsiteSummary8616(0x4018, 0x1666, 0x401B, "direct_near", 0, (), None, None, False)
@@ -1835,7 +1875,7 @@ def test_attach_callsite_summaries_binds_original_project_callee_for_rebased_exa
     )
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, callsite_addr: CallsiteSummary8616(
+        lambda _function, callsite_addr, *, target_inventory=None: CallsiteSummary8616(
             callsite_addr=callsite_addr,
             target_addr=0x106C8,
             return_addr=0x1011,
@@ -1873,7 +1913,7 @@ def test_attach_callsite_summaries_replaces_conflicting_empty_stub_name_with_sid
 
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, callsite_addr: CallsiteSummary8616(
+        lambda _function, callsite_addr, *, target_inventory=None: CallsiteSummary8616(
             callsite_addr=callsite_addr,
             target_addr=0x1666,
             return_addr=0x401B,
@@ -1928,7 +1968,7 @@ def test_attach_callsite_summaries_ignores_cod_source_call_order_for_repeated_no
     }
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, callsite_addr: summaries[callsite_addr],
+        lambda _function, callsite_addr, *, target_inventory=None: summaries[callsite_addr],
     )
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls._cod_metadata_for_function_8616",
@@ -1972,7 +2012,7 @@ def test_attach_callsite_summaries_ignores_source_order_for_zero_arg_stale_name(
 
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, _callsite_addr: CallsiteSummary8616(
+        lambda _function, _callsite_addr, *, target_inventory=None: CallsiteSummary8616(
             callsite_addr=0x4018,
             target_addr=0x10060,
             return_addr=0x401B,
@@ -2031,7 +2071,7 @@ def test_attach_callsite_summaries_rebinds_non_entry_direct_target_to_containing
 
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, _callsite_addr: CallsiteSummary8616(
+        lambda _function, _callsite_addr, *, target_inventory=None: CallsiteSummary8616(
             callsite_addr=0x4018,
             target_addr=0x166B,
             return_addr=0x401B,
@@ -2068,7 +2108,7 @@ def test_attach_callsite_summaries_does_not_use_source_call_order_to_identify_ta
 
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, _callsite_addr: CallsiteSummary8616(
+        lambda _function, _callsite_addr, *, target_inventory=None: CallsiteSummary8616(
             callsite_addr=0x401B,
             target_addr=0x166B,
             return_addr=0x401E,
@@ -2274,7 +2314,7 @@ def test_callsite_stats_count_stale_target_rejection(monkeypatch):
 
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, _callsite_addr: CallsiteSummary8616(
+        lambda _function, _callsite_addr, *, target_inventory=None: CallsiteSummary8616(
             callsite_addr=0x401B,
             target_addr=0x166B,
             return_addr=0x401E,

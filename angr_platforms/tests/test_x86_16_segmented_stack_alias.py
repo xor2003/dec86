@@ -2704,7 +2704,7 @@ def test_missing_terminal_ax_return_replaces_return_value_without_dropping_state
     codegen.cfunc = SimpleNamespace(
         addr=0x4010,
         statements=root,
-        functy=SimpleNamespace(returnty=SimTypeShort(False)),
+        functy=SimpleNamespace(returnty=SimTypeShort(False).with_arch(project.arch)),
     )
     codegen._inertia_current_function_8616 = function
 

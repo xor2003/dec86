@@ -956,12 +956,14 @@ def reconcile_callsite_interface_declarations_8616(project: object, codegen: obj
     entry point instead of independently ordering width and declaration passes.
     """
     from .callsite_prototype_declarations import materialize_callsite_prototype_declarations_8616
+    from .helper_call_interfaces import materialize_known_helper_call_interfaces_8616
 
     prototype_changed = reconcile_exact_stack_argument_prototype_8616(project, codegen)
+    helper_changed = materialize_known_helper_call_interfaces_8616(project, codegen)
     materialize_callsite_prototype_declarations_8616(project, codegen)
     # Declaration metadata does not mutate the C AST and must not activate a
     # stage semantic-validation delta by itself.
-    return prototype_changed
+    return prototype_changed or helper_changed
 
 
 def materialize_annotated_stack_prototype_8616(project: object, codegen: object) -> bool:

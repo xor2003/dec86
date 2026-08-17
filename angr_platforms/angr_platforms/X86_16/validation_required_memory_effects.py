@@ -6,9 +6,10 @@ Consumes alias, widening, lowering, and typed binary facts.
 Do not recover semantics from COD, source, assembly, or rendered C text.
 Forbidden: semantic recovery, source/COD/assembly/rendered-C inspection.
 
-This guard never mutates C. It matches exact segment spaces, byte ranges, and
-write multiplicity. One word assignment or two byte assignments may cover one
-binary word store, while one final write cannot cover repeated binary writes.
+This guard never mutates C. It matches exact segment spaces, runtime segment
+sources, byte ranges, and write multiplicity. One word assignment or two byte
+assignments may cover one binary word store, while one final write cannot cover
+repeated binary writes.
 
 Dynamic boundary: angr C nodes and codegen containers expose version-dependent
 child and tag attributes. Dynamic access is restricted to those third-party
@@ -26,7 +27,7 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable
 from archinfo import Arch
 
-from .ir.core import MemSpace
+from .ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from .lowering.runtime_segment_access import runtime_segment_access_space_8616
 from .lowering.segmented_global_loads import DirectSegmentedGlobalStoreEvidence8616
 from .validation_aggregate_storage import aggregate_field_storage_8616
@@ -111,6 +112,7 @@ class _FinalSegmentedWrite8616:
     space: MemSpace
     offset: int
     width: int
+    segment_source: IRAddress | int | None = None
 
 
 class _ProjectArchBoundary8616(Protocol):
@@ -174,26 +176,46 @@ def _helper_width_8616(call: structured_c.CFunctionCall) -> int | None:
     )
 
 
+def _segment_source_identity_8616(node: object) -> IRAddress | int | None:
+    """Return an exact nested segment value used by a runtime helper."""
+    constant = _constant_int_8616(node)
+    if constant is not None:
+        return constant & 0xFFFF
+    identity = segmented_load_identity_8616(_strip_casts_8616(node))
+    if identity is None:
+        return None
+    return IRAddress(
+        space=identity.space,
+        offset=identity.offset & 0xFFFF,
+        size=identity.width,
+        status=AddressStatus.STABLE,
+        segment_origin=SegmentOrigin.PROVEN,
+    )
+
+
 def _segmented_lvalue_location_8616(
     project: object,
     codegen: object,
     lvalue: object,
-) -> tuple[MemSpace, int, int] | None:
+) -> tuple[MemSpace, int, int, IRAddress | int | None] | None:
     """Classify one final assignment lvalue without parsing rendered text."""
     node = _strip_casts_8616(lvalue)
     aggregate_storage = aggregate_field_storage_8616(node)
     if aggregate_storage is not None:
-        return aggregate_storage.space, aggregate_storage.offset, aggregate_storage.width
+        return aggregate_storage.space, aggregate_storage.offset, aggregate_storage.width, None
     identity = segmented_load_identity_8616(node)
     if identity is not None:
-        return identity.space, identity.offset, identity.width
+        args = _boundary_tuple_8616(node.args or ()) if isinstance(node, structured_c.CFunctionCall) else ()
+        source = _segment_source_identity_8616(args[0]) if len(args) == 2 else None
+        return identity.space, identity.offset, identity.width, source
     if isinstance(node, structured_c.CFunctionCall):
         width = _helper_width_8616(node)
         args = _boundary_tuple_8616(node.args or ())
         offset = _constant_int_8616(args[1]) if len(args) == 2 else None
         space = runtime_segment_access_space_8616(project, codegen, node)
         if width is not None and offset is not None and space is not None:
-            return space, offset & 0xFFFF, width
+            source = _segment_source_identity_8616(args[0]) if len(args) == 2 else None
+            return space, offset & 0xFFFF, width, source
         return None
     if isinstance(node, structured_c.CVariable):
         variable = node.variable
@@ -216,7 +238,7 @@ def _segmented_lvalue_location_8616(
                         and size_bits % byte_width == 0
                     ):
                         width = max(width, size_bits // byte_width)
-            return MemSpace.DS, int(variable.addr) & 0xFFFF, width
+            return MemSpace.DS, int(variable.addr) & 0xFFFF, width, None
         return None
     if not isinstance(node, structured_c.CIndexedVariable):
         return None
@@ -228,7 +250,7 @@ def _segmented_lvalue_location_8616(
     if not isinstance(variable, SimMemoryVariable):
         return None
     width = int(variable.size)
-    return MemSpace.DS, (int(variable.addr) + index * width) & 0xFFFF, width
+    return MemSpace.DS, (int(variable.addr) + index * width) & 0xFFFF, width, None
 
 
 def _final_segmented_writes_8616(
@@ -244,7 +266,7 @@ def _final_segmented_writes_8616(
         location = _segmented_lvalue_location_8616(project, codegen, node.lhs)
         if location is None:
             continue
-        space, offset, width = location
+        space, offset, width, segment_source = location
         if width <= 0:
             continue
         writes.append(
@@ -252,6 +274,7 @@ def _final_segmented_writes_8616(
                 space=space,
                 offset=offset,
                 width=width,
+                segment_source=segment_source,
             )
         )
     return tuple(writes)
@@ -300,20 +323,34 @@ def validate_required_memory_effects_8616(
         )
     )
     writes = _final_segmented_writes_8616(project, codegen, root)
-    available_bytes: Counter[tuple[MemSpace, int]] = Counter()
+    available_bytes: Counter[tuple[MemSpace, int, IRAddress | int | None]] = Counter()
     for write in writes:
         available_bytes.update(
-            (write.space, (write.offset + index) & 0xFFFF)
+            (write.space, (write.offset + index) & 0xFFFF, write.segment_source)
             for index in range(write.width)
         )
     missing_items: list[RequiredMemoryEffectIssue8616] = []
     for effect in normalized:
-        required_bytes = tuple(
-            (effect.space, (effect.offset + index) & 0xFFFF)
-            for index in range(effect.width)
-        )
-        if all(available_bytes[byte] > 0 for byte in required_bytes):
-            available_bytes.subtract(required_bytes)
+        required_source: IRAddress | int | None = effect.segment_source or effect.segment_value
+        selected: list[tuple[MemSpace, int, IRAddress | int | None]] = []
+        for index in range(effect.width):
+            address = (effect.offset + index) & 0xFFFF
+            matching = next(
+                (
+                    key
+                    for key, count in available_bytes.items()
+                    if count > 0
+                    and key[0] is effect.space
+                    and key[1] == address
+                    and (required_source is None or key[2] == required_source)
+                ),
+                None,
+            )
+            if matching is None:
+                break
+            selected.append(matching)
+        if len(selected) == effect.width:
+            available_bytes.subtract(selected)
             continue
         missing_items.append(
             RequiredMemoryEffectIssue8616(

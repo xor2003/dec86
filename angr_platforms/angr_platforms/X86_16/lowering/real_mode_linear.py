@@ -93,7 +93,7 @@ from ..alias.alias_model import _stack_storage_facts_for_segmented_address_8616
 from ..alias.alias_model_impl import AliasStorageFacts, _StackSlotIdentity
 from ..analysis_helpers import canonicalize_x86_16_padding_call_target_8616
 from ..annotations import ANNOTATION_KEY
-from ..c_ast_utils import _iter_c_nodes_deep_8616
+from ..c_ast_utils import _iter_c_nodes_deep_8616, _iter_c_statement_nodes_8616
 from ..callee_name_normalization import normalize_callee_name_8616
 from ..callsite_summary import (
     CallsiteSummary8616,
@@ -1994,44 +1994,6 @@ def _cvar_has_array_type_8616(cvar: StructuredAstValue) -> bool:
     return "Array" in type_name
 
 
-def _iter_statement_nodes_8616(root: StructuredAstValue) -> StructuredAstValue:
-    """Yield structured-C statement-like nodes reachable from root."""
-    stack = [root]
-    seen: set[int] = set()
-    while stack:
-        current = stack.pop()
-        if current is None or not type(current).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
-            continue
-        current_id = id(current)
-        if current_id in seen:
-            continue
-        seen.add(current_id)
-        yield current
-        for attr in (
-            "statements",
-            "body",
-            "else_node",
-            "condition_and_nodes",
-            "condition",
-            "init",
-            "iteration",
-            "switch",
-            "cases",
-            "default",
-        ):
-            value = getattr(current, attr, None)
-            if value is None:
-                continue
-            if isinstance(value, list | tuple):
-                for item in reversed(tuple(value)):
-                    if isinstance(item, tuple):
-                        stack.extend(reversed(item))
-                    else:
-                        stack.append(item)
-            else:
-                stack.append(value)
-
-
 def _iter_structured_c_nodes_8616(root: StructuredAstValue) -> Iterator[StructuredAstValue]:
     """Yield every structured-C node through the shared angr-boundary walker."""
     for node in _iter_c_nodes_deep_8616(root):
@@ -2096,7 +2058,7 @@ def _build_assignment_maps_8616(codegen: StructuredCodegenValue) -> StructuredAs
         first_name_map: dict[str, StructuredAstValue] = {}
         first_reg_map: dict[tuple[Any, ...], StructuredAstValue] = {}
 
-        for stmt in _iter_statement_nodes_8616(root):
+        for stmt in _iter_c_statement_nodes_8616(root):
             if not isinstance(stmt, structured_c.CAssignment):
                 continue
             lhs = stmt.lhs
@@ -2392,7 +2354,7 @@ def _build_vvar_carrier_delta_map_8616(codegen: StructuredAstValue) -> dict[int,
                     return True
             return None
 
-        for stmt in _iter_statement_nodes_8616(root):
+        for stmt in _iter_c_statement_nodes_8616(root):
             if not isinstance(stmt, structured_c.CAssignment):
                 continue
             lhs_id = _extract_vvar_id_8616(stmt.lhs)
@@ -2409,7 +2371,7 @@ def _build_vvar_carrier_delta_map_8616(codegen: StructuredAstValue) -> dict[int,
         changed = True
         while changed:
             changed = False
-            for stmt in _iter_statement_nodes_8616(root):
+            for stmt in _iter_c_statement_nodes_8616(root):
                 if not isinstance(stmt, structured_c.CAssignment):
                     continue
                 lhs_id = _extract_vvar_id_8616(stmt.lhs)
@@ -7378,23 +7340,23 @@ def _is_same_stack_update_assignment_8616(
     return _same_stack_move_rhs_8616(rhs.rhs, source_expr)
 
 
-def _stack_update_assignment_has_rendered_owner_8616(
+def _rendered_stack_update_assignment_ids_8616(
     root: StructuredAstValue,
-    assignment: StructuredAstValue,
-) -> bool:
-    """Return whether an update occupies a structured-C position rendered as code."""
+) -> frozenset[int]:
+    """Index updates occupying structured-C positions rendered as code."""
+    rendered_ids: set[int] = set()
     for owner in _iter_structured_c_nodes_8616(root):
         if isinstance(owner, structured_c.CStatements):
-            if any(statement is assignment for statement in tuple(owner.statements or ())):
-                return True
+            rendered_ids.update(id(statement) for statement in tuple(owner.statements or ()))
             continue
         if not isinstance(owner, structured_c.CForLoop):
             continue
         # Third-party angr versions expose this field as either name.
         for attr in ("iterator", "iteration"):
-            if getattr(owner, attr, None) is assignment:
-                return True
-    return False
+            assignment = getattr(owner, attr, None)
+            if assignment is not None:
+                rendered_ids.add(id(assignment))
+    return frozenset(rendered_ids)
 
 
 def _has_existing_stack_update_assignment_8616(
@@ -7410,11 +7372,12 @@ def _has_existing_stack_update_assignment_8616(
     matching_assignment_ids: set[int] = set()
     tagged_destination_ids: set[int] = set()
     tagged_match = False
+    rendered_assignment_ids = _rendered_stack_update_assignment_ids_8616(root)
     for node in _iter_structured_c_nodes_8616(root):
         if (
             isinstance(node, structured_c.CAssignment)
             and _assignment_lhs_stack_offset_8616(node) == fact.offset
-            and _stack_update_assignment_has_rendered_owner_8616(root, node)
+            and id(node) in rendered_assignment_ids
             and _node_has_instruction_address_8616(node, project, fact.ins_addr)
         ):
             tagged_destination_ids.add(id(node))
@@ -7426,7 +7389,7 @@ def _has_existing_stack_update_assignment_8616(
             operation=fact.operation,
         ):
             continue
-        if not _stack_update_assignment_has_rendered_owner_8616(root, node):
+        if id(node) not in rendered_assignment_ids:
             continue
         matching_assignment_ids.add(id(node))
         if _node_has_instruction_address_8616(node, project, fact.ins_addr):
@@ -15063,6 +15026,15 @@ def materialize_direct_stack_incdec_instructions_8616(
             ) + removed_count
             fact_changed = removed_count > 0 or fact_changed
 
+        rendered_assignment_ids: frozenset[int] | None = None
+
+        def has_rendered_owner(node: StructuredAstValue) -> bool:
+            """Use one ownership index for this mutable replacement attempt."""
+            nonlocal rendered_assignment_ids
+            if rendered_assignment_ids is None:
+                rendered_assignment_ids = _rendered_stack_update_assignment_ids_8616(root)
+            return id(node) in rendered_assignment_ids
+
         def already_materialized_predicate(
             node: StructuredAstValue,
             _cvar: StructuredAstValue = cvar,
@@ -15070,9 +15042,7 @@ def materialize_direct_stack_incdec_instructions_8616(
             _source_expr: StructuredAstValue = source_expr,
             _operation: StructuredAstValue = fact.operation,
         ) -> bool:
-            return _stack_update_assignment_has_rendered_owner_8616(
-                root, node
-            ) and _is_same_stack_update_assignment_8616(
+            return has_rendered_owner(node) and _is_same_stack_update_assignment_8616(
                 node, _cvar, _delta, _source_expr, operation=_operation
             )
 
@@ -15098,9 +15068,7 @@ def materialize_direct_stack_incdec_instructions_8616(
                 remove_duplicate_tagged_assignments=True,
                 already_materialized_predicate=already_materialized_predicate,
                 already_materialized_attr="_inertia_stack_update_assignment_already_present_8616",
-                candidate_position_predicate=lambda node: _stack_update_assignment_has_rendered_owner_8616(
-                    root, node
-                ),
+                candidate_position_predicate=has_rendered_owner,
             )
             fact_changed = materialized
         if not materialized:

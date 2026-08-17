@@ -39,6 +39,7 @@ from .physical_registers import physical_register_view_8616
 from .terminal_return_expressions import (
     contains_effectful_call_8616,
     resolve_linear_virtual_return_expression_8616,
+    return_expression_has_wide_word_composition_8616,
     return_expression_requires_materialization_8616,
 )
 
@@ -313,7 +314,7 @@ def materialize_terminal_register_return_value_8616(
     return_index = next(
         index for index, statement in enumerate(statements) if statement is return_node
     )
-    if not return_expression_requires_materialization_8616(
+    if return_expression_has_wide_word_composition_8616(return_node.retval) or not return_expression_requires_materialization_8616(
         statements[:return_index],
         return_node.retval,
     ):

@@ -44,11 +44,12 @@ class CallReturnSelectorBindingResult8616:
     classified_fact_count: int = 0
     materialized_count: int = 0
     failure_count: int = 0
+    changed_count: int = 0
 
     @property
     def changed(self) -> bool:
-        """Return whether at least one proven selector identity was bound."""
-        return self.materialized_count > 0
+        """Return whether this invocation changed a structured identity."""
+        return self.changed_count > 0
 
 
 def _register_cvar_8616(node: object) -> structured_c.CVariable | None:
@@ -135,9 +136,10 @@ def _selector_after_call_8616(
 def _structured_return_variable_8616(
     summary: CallsiteSummary8616,
     register: structured_c.CVariable,
+    selector: structured_c.CVariable,
     function_addr: int,
 ) -> SimRegisterVariable:
-    """Build deterministic register-SSA identity from one exact callsite fact."""
+    """Reuse or build deterministic register-SSA identity from one exact callsite fact."""
     variable = register.variable
     assert isinstance(variable, SimRegisterVariable)
     name = (
@@ -145,6 +147,16 @@ def _structured_return_variable_8616(
         if isinstance(summary.return_register, str) and summary.return_register
         else variable.name
     )
+    for candidate in (variable, selector.variable):
+        if (
+            isinstance(candidate, SimRegisterVariable)
+            and candidate.reg == variable.reg
+            and candidate.size == variable.size
+            and candidate.ident == f"call-return-{summary.callsite_addr:x}"
+            and candidate.name == name
+            and candidate.region == function_addr
+        ):
+            return candidate
     return SimRegisterVariable(
         variable.reg,
         variable.size,
@@ -157,10 +169,16 @@ def _structured_return_variable_8616(
 def _bind_cvar_identity_8616(
     cvar: structured_c.CVariable,
     variable: SimRegisterVariable,
-) -> None:
-    """Bind both concrete and unified views to one proven storage identity."""
-    cvar.variable = variable
-    cvar.unified_variable = variable
+) -> bool:
+    """Bind both C-variable views and report only a fresh identity mutation."""
+    changed = False
+    if cvar.variable is not variable:
+        cvar.variable = variable
+        changed = True
+    if cvar.unified_variable is not variable:
+        cvar.unified_variable = variable
+        changed = True
+    return changed
 
 
 def bind_call_return_switch_selectors_8616(
@@ -198,6 +216,7 @@ def bind_call_return_switch_selectors_8616(
     classified_fact_count = 0
     materialized_count = 0
     failure_count = 0
+    changed_count = 0
     visited_calls: set[int] = set()
 
     for node in _iter_c_nodes_deep_8616(root):
@@ -230,10 +249,11 @@ def bind_call_return_switch_selectors_8616(
                 failure_count += 1
                 continue
             classified_fact_count += 1
-            identity = _structured_return_variable_8616(summary, register, function_addr)
-            _bind_cvar_identity_8616(register, identity)
-            _bind_cvar_identity_8616(selector, identity)
+            identity = _structured_return_variable_8616(summary, register, selector, function_addr)
+            identity_changed = _bind_cvar_identity_8616(register, identity)
+            identity_changed = _bind_cvar_identity_8616(selector, identity) or identity_changed
             materialized_count += 1
+            changed_count += int(identity_changed)
 
     return CallReturnSelectorBindingResult8616(
         raw_fact_count=raw_fact_count,
@@ -241,6 +261,7 @@ def bind_call_return_switch_selectors_8616(
         classified_fact_count=classified_fact_count,
         materialized_count=materialized_count,
         failure_count=failure_count,
+        changed_count=changed_count,
     )
 
 

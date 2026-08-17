@@ -14,7 +14,7 @@ Incomplete or effectful forms are retained; rewrite and CLI must not hide them.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Protocol, cast
@@ -223,22 +223,12 @@ def lower_structured_insert_intrinsics_8616(codegen: object) -> bool:
 
 
 def _cvariable_is_unread_elsewhere_8616(
-    root: object,
     lhs: structured_c.CVariable,
+    identity_occurrence_counts: Mapping[int, int],
 ) -> bool:
     """Return whether one exact variable identity has no other AST occurrence."""
     identity = lhs.unified_variable or lhs.variable
-    skipped_definition = False
-    for node in _iter_c_node_occurrences_8616(root):
-        if not isinstance(node, structured_c.CVariable):
-            continue
-        if node is lhs and not skipped_definition:
-            skipped_definition = True
-            continue
-        candidate_identity = node.unified_variable or node.variable
-        if node is lhs or candidate_identity is identity:
-            return False
-    return True
+    return identity_occurrence_counts.get(id(identity), 0) <= 1
 
 
 def _iter_c_node_occurrences_8616(
@@ -269,7 +259,7 @@ def _iter_c_node_occurrences_8616(
 
 def _unused_insert_statement_8616(
     statement: object,
-    root: object,
+    identity_occurrence_counts: Mapping[int, int],
 ) -> structured_c.CFunctionCall | None:
     """Return a pure standalone Insert intrinsic, otherwise refuse it."""
     if isinstance(statement, structured_c.CExpressionStatement):
@@ -277,7 +267,7 @@ def _unused_insert_statement_8616(
     elif (
         isinstance(statement, structured_c.CAssignment)
         and isinstance(statement.lhs, structured_c.CVariable)
-        and _cvariable_is_unread_elsewhere_8616(root, statement.lhs)
+        and _cvariable_is_unread_elsewhere_8616(statement.lhs, identity_occurrence_counts)
     ):
         expression = statement.rhs
     else:
@@ -308,6 +298,12 @@ def prune_unused_structured_insert_intrinsics_8616(codegen: object) -> bool:
     classified_count = 0
     materialized_count = 0
     changed = False
+    identity_occurrence_counts: dict[int, int] = {}
+    for node in _iter_c_node_occurrences_8616(root):
+        if isinstance(node, structured_c.CVariable):
+            identity = node.unified_variable or node.variable
+            identity_id = id(identity)
+            identity_occurrence_counts[identity_id] = identity_occurrence_counts.get(identity_id, 0) + 1
     statement_lists: list[structured_c.CStatements] = []
     seen_statement_list_ids: set[int] = set()
     for node in (root, *_iter_c_nodes_deep_8616(root)):
@@ -327,7 +323,7 @@ def prune_unused_structured_insert_intrinsics_8616(codegen: object) -> bool:
                 expression = statement
             if is_structured_insert_intrinsic_8616(expression):
                 raw_count += 1
-            intrinsic = _unused_insert_statement_8616(statement, root)
+            intrinsic = _unused_insert_statement_8616(statement, identity_occurrence_counts)
             if intrinsic is None:
                 new_statements.append(statement)
                 continue

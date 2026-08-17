@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import angr_platforms.X86_16.tail_validation as tail_validation_module
 import angr_platforms.X86_16.tail_validation_condition_context as condition_context_module
 import angr_platforms.X86_16.tail_validation_fingerprint as tail_validation_fingerprint_module
+import pytest
 from angr.ailment.expression import VirtualVariable, VirtualVariableCategory
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
@@ -2384,7 +2385,7 @@ def test_contextual_call_completion_normalizes_observed_names_before_counting(mo
     monkeypatch.setattr(
         tail_validation_module,
         "_callsite_expected_fingerprint_8616",
-        lambda _function, _project, _callsite: "addr:0x1137e",
+        lambda _function, _project, _callsite, _summary_inventory=None: "addr:0x1137e",
     )
     monkeypatch.setattr(
         tail_validation_module,
@@ -3662,14 +3663,17 @@ def test_tail_validation_uses_callsite_summary_target_for_unknown_direct_call(mo
         codegen_stub,
     )
 
+    codegen._inertia_callsite_summary_inventory_8616 = {
+        0x4012: _callsite_summary(0x4012, 0x104D),
+    }
     monkeypatch.setattr(
         tail_validation_module,
         "summarize_x86_16_callsite",
-        lambda _function, callsite_addr: _callsite_summary(callsite_addr, 0x104D),
+        lambda *_args, **_kwargs: pytest.fail("owned callsite inventory was not consumed"),
     )
     summary = collect_x86_16_tail_validation_summary(project, codegen, mode="live_out")
 
-    assert summary.helper_calls in {("callsite:0x4012",), ("addr:0x104d",)}
+    assert summary.helper_calls == ("addr:0x104d",)
 
 
 def test_tail_validation_context_ignores_wrapper_assignment_before_outer_condition():

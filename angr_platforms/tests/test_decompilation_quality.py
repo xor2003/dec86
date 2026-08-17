@@ -88,12 +88,19 @@ def test_assess_decompiled_c_text_rejects_stack_base_address_escape() -> None:
 
 
 def test_assess_final_generated_c_text_rejects_unresolved_temporaries() -> None:
-    assessment = assess_final_generated_c_text(
-        "void SwapBars(void)\n{\n    int v1;\n    int *vvar_18;\n    vvar_18 = &v1;\n}\n"
-    )
+    assessment = assess_final_generated_c_text("int SwapBars(void)\n{\n    return vvar_18;\n}\n")
 
     assert assessment.reject_as_decompiled is True
     assert "unresolved-vvar" in assessment.markers
+
+
+def test_assess_final_generated_c_text_accepts_declared_generic_temporary() -> None:
+    assessment = assess_final_generated_c_text(
+        "int SwapBars(void)\n{\n    int vvar_18;\n    vvar_18 = 1;\n    return vvar_18;\n}\n"
+    )
+
+    assert assessment.reject_as_decompiled is False
+    assert "unresolved-vvar" not in assessment.markers
 
 
 def test_assess_final_generated_c_text_rejects_raw_segmented_globals() -> None:

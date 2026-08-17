@@ -3,6 +3,7 @@ from __future__ import annotations
 import angr_platforms.X86_16  # noqa: F401
 import pyvex.block
 import pyvex.const as pyvex_const
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from pyvex.lifting.util import vex_helper
 
 from inertia_decompiler.project_loading import _build_project_from_bytes
@@ -12,6 +13,18 @@ def test_pyvex_runtime_compatibility_is_applied() -> None:
     assert hasattr(pyvex_const.get_type_size, "cache_info")
     assert hasattr(pyvex_const.get_type_spec_size, "cache_info")
     assert vex_helper.Type.int_16 == vex_helper.Type.int_16
+
+
+def test_arch_register_layout_is_stable_across_instances() -> None:
+    first = Arch86_16()
+    first_layout = {register.name: (register.vex_offset, register.size) for register in first.register_list}
+    second = Arch86_16()
+    second_layout = {register.name: (register.vex_offset, register.size) for register in second.register_list}
+
+    assert second_layout == first_layout
+    assert second.registers == first.registers
+    ordered_spans = sorted((offset, offset + size, name) for name, (offset, size) in second_layout.items())
+    assert all(left_end <= right_start for (_, left_end, _), (right_start, _, _) in zip(ordered_spans, ordered_spans[1:]))
 
 
 def test_pyvex_runtime_compatibility_avoids_eager_irsb_stringification(monkeypatch) -> None:

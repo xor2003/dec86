@@ -6,6 +6,8 @@ Responsibility: persist optional sidecar metadata without turning debug evidence
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -361,6 +363,16 @@ def _serialize_lst_metadata(metadata: LSTMetadata) -> dict[str, object]:
         "cod_path": metadata.cod_path,
         "cod_proc_kinds": sorted(metadata.cod_proc_kinds.items()),
     }
+
+
+def lst_metadata_content_digest_8616(metadata: LSTMetadata) -> str:
+    """Return deterministic identity for all attached sidecar evidence fields."""
+    encoded = json.dumps(
+        _serialize_lst_metadata(metadata),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _payload_sequence(payload: dict[str, object], key: str) -> PayloadSequence:

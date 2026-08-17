@@ -854,8 +854,9 @@ def test_condition_refresh_skips_after_transfer_materialization(monkeypatch):
         lambda *_args: calls.append("materialize") or True,
     )
 
-    stage._refresh_structuring_condition_semantics_8616(project, codegen)
+    changed = stage._refresh_structuring_condition_semantics_8616(project, codegen)
 
+    assert changed is False
     assert calls == []
 
 
@@ -887,8 +888,9 @@ def test_condition_refresh_replays_after_structured_root_replacement(monkeypatch
         lambda *_args, **_kwargs: calls.append("segment-global")
         or SimpleNamespace(changed=True),
     )
-    stage._refresh_structuring_condition_semantics_8616(project, codegen)
+    changed = stage._refresh_structuring_condition_semantics_8616(project, codegen)
 
+    assert changed is True
     assert calls == ["materialize", "segment-global"]
     assert codegen._inertia_structuring_conditions_materialized_root_8616 is replacement_statements
     assert codegen._inertia_codegen_decl_refresh_required_8616 is True
@@ -921,11 +923,37 @@ def test_condition_refresh_replays_after_in_place_branch_surface_mutation(monkey
         "structuring_condition_surface_token_8616",
         lambda _codegen: (("after",),),
     )
-    stage._refresh_structuring_condition_semantics_8616(project, codegen)
+    changed = stage._refresh_structuring_condition_semantics_8616(project, codegen)
 
+    assert changed is True
     assert calls == ["materialize"]
     assert codegen._inertia_structuring_conditions_materialized_root_8616 is statements
     assert codegen._inertia_structuring_conditions_materialized_surface_8616 == (("after",),)
+
+
+@pytest.mark.parametrize(
+    ("refresh_changed", "expected_calls"),
+    [(False, ["refresh"]), (True, ["refresh", "lowering"])],
+)
+def test_condition_refresh_gates_structuring_lowering_replay(monkeypatch, refresh_changed, expected_calls):
+    calls: list[str] = []
+    project = SimpleNamespace()
+    codegen = SimpleNamespace()
+    monkeypatch.setattr(
+        stage,
+        "_refresh_structuring_condition_semantics_8616",
+        lambda *_args: calls.append("refresh") or refresh_changed,
+    )
+    monkeypatch.setattr(
+        stage,
+        "_replay_structuring_lowering_before_validation_8616",
+        lambda *_args: calls.append("lowering") or False,
+    )
+
+    changed = stage._replay_structuring_lowering_after_condition_refresh_8616(project, codegen)
+
+    assert changed is refresh_changed
+    assert calls == expected_calls
 
 
 def test_typed_switch_finalizer_replays_after_replacement(monkeypatch):
@@ -1666,6 +1694,7 @@ def test_structuring_validation_prime_refreshes_conditions_after_final_lowering_
 
     def condition_refresh(*_args, **_kwargs):
         calls.append("condition-refresh")
+        return True
 
     def widening_replay(*_args, **_kwargs):
         calls.append("widening")

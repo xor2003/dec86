@@ -203,6 +203,7 @@ from .tail_validation import (
 from .validation_condition_precision import condition_precision_validation_delta_8616
 from .validation_semantic_failures import TailSemanticFailureScope8616
 from .widening.segmented_load_widening import apply_segmented_load_widening_8616
+from .widening.stack_subview_projection import materialize_contained_stack_subviews_8616
 from .widening.widening_copyprop_8616 import _widening_copy_propagation_8616
 
 # angr project/codegen objects are plugin surfaces whose compatibility
@@ -341,7 +342,9 @@ def _install_function_interface_surface_reporting_only_8616(project: AngrProject
 
 def _run_structuring_widening_copy_propagation_8616(codegen: AngrCodegenSurface) -> bool:
     """Consume alias-proven copies before structuring interprets conditions."""
-    return bool(_widening_copy_propagation_8616(codegen, enable_nested=True))
+    subviews_changed = materialize_contained_stack_subviews_8616(codegen)
+    copies_changed = _widening_copy_propagation_8616(codegen, enable_nested=True)
+    return bool(subviews_changed or copies_changed)
 
 
 def _run_structuring_codegen_with_lowering_replay_8616(
@@ -570,15 +573,16 @@ def _condition_evidence_transfer_8616(project: AngrProjectSurface, codegen: Angr
     return materialization_changed
 
 
-def prepare_typed_edge_switch_artifacts_8616(codegen: AngrCodegenSurface) -> None:
+def prepare_typed_edge_switch_artifacts_8616(codegen: AngrCodegenSurface, *, force: bool = False) -> None:
     """Prepare typed switch artifacts for diagnostics or guarded replacement.
 
     This is structuring orchestration, not semantic recovery: condition
     evidence must already exist on the codegen/project, and grouped
     structuring plus replacement-safety analysis only materialize structured
-    facts for later guarded C AST replacement.
+    facts for later guarded C AST replacement. Replacement orchestration uses
+    ``force`` instead of mutating process-global diagnostic configuration.
     """
-    if os.environ.get("INERTIA_ENABLE_TYPED_SWITCH_AST_ARTIFACTS") != "1":
+    if not force and os.environ.get("INERTIA_ENABLE_TYPED_SWITCH_AST_ARTIFACTS") != "1":
         return
     if getattr(codegen, "_inertia_grouped_structuring_stats_8616", None) is not None:
         return
@@ -613,8 +617,7 @@ def apply_typed_edge_switch_ast_replacement_if_enabled_8616(codegen: AngrCodegen
     """
     if os.environ.get("INERTIA_ENABLE_TYPED_SWITCH_AST_REPLACEMENT") != "1":
         return False
-    os.environ.setdefault("INERTIA_ENABLE_TYPED_SWITCH_AST_ARTIFACTS", "1")
-    prepare_typed_edge_switch_artifacts_8616(codegen)
+    prepare_typed_edge_switch_artifacts_8616(codegen, force=True)
     project = getattr(codegen, "project", None)
     cfunc = getattr(codegen, "cfunc", None)
     root = getattr(cfunc, "statements", None) if cfunc is not None else None
@@ -2136,11 +2139,10 @@ def _prime_structuring_validation_semantics_8616(project: AngrProjectSurface, co
         # subtrees after the early condition cleanup. Refresh exact owned
         # condition facts last so the validation baseline cannot retain stale
         # register carriers or pre-materialization guard expressions.
-        _refresh_structuring_condition_semantics_8616(project, codegen)
+        changed = bool(_replay_structuring_lowering_after_condition_refresh_8616(project, codegen)) or changed
         # The refresh above may rebuild a condition from its typed CFG fact and
         # reintroduce pre-lowering stack or segment carriers. Match the
         # per-pass finalizer's refresh-then-Lowering order before fingerprinting.
-        changed = bool(_replay_structuring_lowering_before_validation_8616(project, codegen)) or changed
         # The final Lowering replay can create a proven wide stack owner after
         # the preceding condition refresh. Rebind typed conditions once more
         # so their 16-bit projections consume that owner before fingerprinting.
@@ -2178,11 +2180,11 @@ def _prime_structuring_validation_semantics_8616(project: AngrProjectSurface, co
         codegen._inertia_structuring_validation_semantics_primed = True
 
 
-def _refresh_structuring_condition_semantics_8616(project: AngrProjectSurface, codegen: AngrCodegenSurface) -> None:
-    """Replay typed conditions and lower any segment carriers they recreate."""
+def _refresh_structuring_condition_semantics_8616(project: AngrProjectSurface, codegen: AngrCodegenSurface) -> bool:
+    """Replay typed conditions and report whether their C surface changed."""
     func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
     if not isinstance(func_addr, int):
-        return
+        return False
     try:
         current_root = getattr(codegen.cfunc, "statements", None)
         materialized_root = getattr(codegen, "_inertia_structuring_conditions_materialized_root_8616", None)
@@ -2197,11 +2199,11 @@ def _refresh_structuring_condition_semantics_8616(project: AngrProjectSurface, c
             and materialized_root is current_root
             and materialized_surface == current_surface
         ):
-            return
+            return False
         if not getattr(codegen, "_inertia_typed_conditions_transferred", False):
             transfer_typed_conditions_to_codegen_8616(project, func_addr, codegen)
             codegen._inertia_typed_conditions_transferred = True
-        _structuring_conditions.apply_structuring_condition_materialization_8616(project, codegen)
+        changed = bool(_structuring_conditions.apply_structuring_condition_materialization_8616(project, codegen))
         synthetic_globals = getattr(
             codegen,
             "_inertia_synthetic_globals",
@@ -2216,19 +2218,35 @@ def _refresh_structuring_condition_semantics_8616(project: AngrProjectSurface, c
                 codegen,
             ),
         )
-        if materialization.changed:
+        changed = bool(materialization.changed) or changed
+        if changed:
             codegen._inertia_codegen_decl_refresh_required_8616 = True
         codegen._inertia_structuring_conditions_materialized_after_transfer_8616 = True
         codegen._inertia_structuring_conditions_materialized_root_8616 = current_root
         codegen._inertia_structuring_conditions_materialized_surface_8616 = (
             _structuring_conditions.structuring_condition_surface_token_8616(codegen)
         )
+        return changed
+    except PipelineHardError:
+        raise
     except Exception as ex:
         logging.getLogger(__name__).debug(
             "Structuring condition semantic refresh failed function=%#x: %s",
             func_addr,
             ex,
         )
+        return False
+
+
+def _replay_structuring_lowering_after_condition_refresh_8616(
+    project: AngrProjectSurface,
+    codegen: AngrCodegenSurface,
+) -> bool:
+    """Replay Lowering only when condition materialization changed the AST."""
+    changed = _refresh_structuring_condition_semantics_8616(project, codegen)
+    if not changed:
+        return False
+    return bool(_replay_structuring_lowering_before_validation_8616(project, codegen)) or changed
 
 
 def run_structuring_condition_cleanup_8616(project: AngrProjectSurface, codegen: AngrCodegenSurface, func_addr: int) -> bool:

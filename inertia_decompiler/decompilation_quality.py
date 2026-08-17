@@ -59,11 +59,17 @@ _RAW_IR_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 
 _FINAL_OUTPUT_LEAKAGE_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("unresolved-vvar", re.compile(r"\bvvar_\d+\b")),
     ("expr-cycle", re.compile(r"\bexpr_cycle\b")),
     ("raw-ds-segmented-access", re.compile(r"\b(?:SEG_PTR|SEG_U8|SEG_U16|SEG_U32|MK_FP)\s*\(\s*ds\s*,")),
     ("raw-ss-segmented-access", re.compile(r"\b(?:SEG_PTR|SEG_U8|SEG_U16|SEG_U32|MK_FP)\s*\(\s*ss\s*,")),
     ("raw-memory-symbol", re.compile(r"\bmem_[0-9a-fA-F]{4,}\b")),
+)
+
+_VIRTUAL_TEMP_RE = re.compile(r"\bvvar_\d+\b")
+_VIRTUAL_TEMP_DECL_RE = re.compile(
+    r"^\s*(?!(?:return|case|goto|if|while|for|switch)\b)"
+    r"(?:[A-Za-z_]\w*\s+)+(?:\*+\s*)?(?P<name>vvar_\d+)"
+    r"(?:\s*\[[^\]]+\])?\s*(?:=[^;]*)?;\s*$"
 )
 
 _BP_STACK_LOCAL_DECL_RE = re.compile(
@@ -116,6 +122,17 @@ def _code_only_text(rendered_text: str) -> str:
     return "\n".join(code_lines)
 
 
+def _unresolved_virtual_temporaries(code_only_text: str) -> tuple[str, ...]:
+    """Return virtual-temp names referenced without an emitted C declaration."""
+    referenced = set(_VIRTUAL_TEMP_RE.findall(code_only_text))
+    declared = {
+        match.group("name")
+        for line in code_only_text.splitlines()
+        if (match := _VIRTUAL_TEMP_DECL_RE.match(line)) is not None
+    }
+    return tuple(sorted(referenced - declared))
+
+
 def assess_decompiled_c_text(rendered_text: str) -> DecompilationQualityAssessment:
     """Classify emitted C text as acceptable or unresolved IR-shaped output."""
 
@@ -150,8 +167,9 @@ def assess_final_generated_c_text(rendered_text: str) -> DecompilationQualityAss
 
     The generic quality gate intentionally allows some ugly but honest C during
     intermediate diagnostics. Final emitted C cannot expose unresolved
-    temporaries, raw segmented accesses, or named stack locals whose stores were
-    not materialized before rewrite.
+    undeclared temporaries, raw segmented accesses, or named stack locals whose
+    stores were not materialized before rewrite. Declared generic temporaries
+    remain readability debt, but cannot suppress validated recompilable C.
     """
     base = assess_decompiled_c_text(rendered_text)
     if base.reject_as_decompiled:
@@ -161,6 +179,8 @@ def assess_final_generated_c_text(rendered_text: str) -> DecompilationQualityAss
 
     code_only_text = _code_only_text(rendered_text)
     markers = list(label for label, pattern in _FINAL_OUTPUT_LEAKAGE_MARKERS if pattern.search(code_only_text))
+    if _unresolved_virtual_temporaries(code_only_text):
+        markers.append("unresolved-vvar")
     if _bp_stack_locals_read_without_assignment(rendered_text):
         markers.append("unassigned-stack-local")
     return DecompilationQualityAssessment(

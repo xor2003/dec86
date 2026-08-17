@@ -230,6 +230,10 @@ def _current_function_condition_ownership_8616(func: object) -> _ConditionFuncti
             and mnemonics[-1] in JCC_TO_COND_8616
             and mnemonics[-2] == "cmp"
             and all(item == "cmp" or item in JCC_TO_COND_8616 for item in mnemonics)
+        ) or (
+            len(mnemonics) == 2
+            and mnemonics[0] == "dec"
+            and mnemonics[1] in JCC_TO_COND_8616
         ):
             condition_only_blocks.add(block_addr)
     try:
@@ -424,6 +428,7 @@ def _condition_from_pending_source_8616(
             block_addr=block_addr,
             producer_insn=source.addr,
             producer_semantics=source.semantics,
+            register_bindings=source.register_bindings,
         )
     elif source.kind == "test":
         lhs = source.normalized_lhs if source.normalized_lhs is not None else source.lhs
@@ -438,6 +443,7 @@ def _condition_from_pending_source_8616(
             producer_insn=source.addr,
             operand_bind_insn=src_insn if source.bind_operand_at_jcc else None,
             producer_semantics=source.semantics,
+            register_bindings=source.register_bindings,
         )
     else:
         return None

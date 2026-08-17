@@ -7,6 +7,16 @@ PARALLEL_JOBS ?= $(shell count=$(CPU_COUNT); if [ "$$count" -gt 1 ]; then expr "
 PYRIGHT_WATCH ?= $(if $(CI),0,1)
 PYRIGHT_STATS ?= 0
 PYTEST_ARGS ?= -n $(PARALLEL_JOBS) --dist loadgroup --durations=5
+PYTEST_FOCUSED_MARKER_EXPR ?= not repository_contract
+PYTEST_PROFILE_ARGS ?= -q -n $(PARALLEL_JOBS) --dist loadgroup --durations=25
+PYTEST_PROFILE_JSON ?= .cache/pytest/profile.json
+PYTEST_PROFILE_TARGETS ?= $(QA_PYTEST_TARGETS)
+PYTEST_INVENTORY_JSON ?= .cache/pytest/collection-inventory.json
+PYTEST_ALL_WORKERS ?= $(PARALLEL_JOBS)
+PYTEST_ALL_HEAVY_WORKERS ?= $(if $(filter 1,$(PARALLEL_JOBS)),1,2)
+PYTEST_ALL_HEAVY_SHARDS ?= 16
+PYTEST_ALL_MAX_RSS_MIB ?= 2048
+PYTEST_ALL_SUMMARY_JSON ?= .cache/pytest/partitioned-summary.json
 FOCUSED_TEST_DECOMPILE_TIMEOUT_SCALE ?= 1.5
 FULL_TEST_DECOMPILE_TIMEOUT_SCALE ?= 4
 AGENT_TEST_JSON ?=
@@ -31,6 +41,10 @@ LINTERS_DEV_MYPY_FILES ?= \
 	inertia_decompiler/decompile_file_summary.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callsite_prototype_declarations.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callsite_prototype_seeding.py \
+	angr_platforms/angr_platforms/X86_16/lowering/helper_call_interfaces.py \
+	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_materialization.py \
+	angr_platforms/angr_platforms/X86_16/lowering/register_constant_segmented_store.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_prototype_materialization.py \
 	angr_platforms/angr_platforms/X86_16/lowering/terminal_return_expressions.py \
 	angr_platforms/angr_platforms/X86_16/lowering/terminal_call_return_types.py \
@@ -53,12 +67,14 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_argument_width_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_type_surface.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_argument_interface.py \
+	angr_platforms/angr_platforms/X86_16/function_evidence_inventory.py \
+	angr_platforms/angr_platforms/X86_16/helper_abi.py \
 	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py \
 	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_type.py
 
 LINTERS_DEV_RADON_PATHS ?= inertia_decompiler/decompile_file_summary.py
 
-.PHONY: quality quality-dev quality-fast quality-hard decompiler-check decompiler-check-fast decompiler-check-expanded architecture-check agent-context-check test-ownership-check linters linters-hard linters-dev linters-dev-locked linters-files check-files check-all pytest pytest-files pytest-all ruff ruff-files ruff-all pyright pyright-files pyright-all mypy mypy-dev mypy-files mypy-all mypyc mypyc-smoke type-ratchet-files type-ratchet-changed vulture radon radon-dev test-pipeline test-pipeline-fast test-pipeline-expanded test-layer test-agent-confidence msc6-examples sortdemo-selftest monkeytype-trace monkeytype-stubs monkeytype-apply decomp-opt-regression decomp-opt-regression-suite decomp-opt-regression-thread types
+.PHONY: quality quality-dev quality-fast quality-hard decompiler-check decompiler-check-fast decompiler-check-expanded architecture-check agent-context-check test-ownership-check linters linters-hard linters-dev linters-dev-locked linters-files check-files check-all pytest pytest-profile pytest-inventory pytest-inventory-check pytest-files pytest-all ruff ruff-files ruff-all pyright pyright-files pyright-all mypy mypy-dev mypy-files mypy-all mypyc mypyc-smoke type-ratchet-files type-ratchet-changed vulture radon radon-dev test-pipeline test-pipeline-fast test-pipeline-expanded test-layer test-agent-confidence msc6-examples sortdemo-selftest monkeytype-trace monkeytype-stubs monkeytype-apply decomp-opt-regression decomp-opt-regression-suite decomp-opt-regression-thread types
 
 quality: linters type-ratchet-changed decompiler-check decomp-opt-regression-suite
 
@@ -134,9 +150,12 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/annotations.py \
 	angr_platforms/angr_platforms/X86_16/condition_ir.py \
 	angr_platforms/angr_platforms/X86_16/condition_trace.py \
+	angr_platforms/angr_platforms/X86_16/function_evidence_inventory.py \
+	angr_platforms/angr_platforms/X86_16/helper_abi.py \
 	angr_platforms/angr_platforms/X86_16/regs.py \
 	angr_platforms/angr_platforms/X86_16/ir/__init__.py \
 	angr_platforms/angr_platforms/X86_16/ir/address_ir.py \
+	angr_platforms/angr_platforms/X86_16/ir/condition_register_bindings.py \
 	angr_platforms/angr_platforms/X86_16/ir/condition_ir.py \
 	angr_platforms/angr_platforms/X86_16/ir/core.py \
 	angr_platforms/angr_platforms/X86_16/ir/effects.py \
@@ -164,6 +183,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/function_interface_surface.py \
 	angr_platforms/angr_platforms/X86_16/function_summary.py \
 	angr_platforms/angr_platforms/X86_16/function_state_summary.py \
+	angr_platforms/angr_platforms/X86_16/callsite_target_inventory.py \
 	angr_platforms/angr_platforms/X86_16/callsite_summary.py \
 	angr_platforms/angr_platforms/X86_16/call_target_identity.py \
 	angr_platforms/angr_platforms/X86_16/callsite_stack_metadata.py \
@@ -350,6 +370,10 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_type_surface.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_pointer_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_global_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/helper_call_interfaces.py \
+	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_materialization.py \
+	angr_platforms/angr_platforms/X86_16/lowering/register_constant_segmented_store.py \
 	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py \
 	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_type.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py \
@@ -525,6 +549,8 @@ QA_TYPED_FILES := \
 	inertia_decompiler/cod_module_caller_evidence.py \
 	inertia_decompiler/c_text_cleanup.py \
 	inertia_decompiler/cache.py \
+	inertia_decompiler/cache_io.py \
+	inertia_decompiler/cache_lock.py \
 	inertia_decompiler/cli.py \
 	inertia_decompiler/cli_core.py \
 	inertia_decompiler/serial_clean_worker_cli.py \
@@ -587,6 +613,8 @@ QA_TYPED_FILES := \
 	inertia_decompiler/discovery_evidence_project.py \
 	inertia_decompiler/disassembly_helpers.py \
 	inertia_decompiler/flair_paths.py \
+	inertia_decompiler/fork_timeout.py \
+	inertia_decompiler/function_cache_context.py \
 	inertia_decompiler/gdb_client.py \
 	inertia_decompiler/gdb_tui.py \
 	inertia_decompiler/library_function_classifier.py \
@@ -621,7 +649,10 @@ QA_TYPED_FILES := \
 	scripts/agent_context_check.py \
 	scripts/agent_test_focus.py \
 	scripts/batch_decompile_procs.py \
+	scripts/build_debug_info_corpus.py \
 	scripts/build_msc6_examples.py \
+	scripts/msc6_runtime_gate_artifacts.py \
+	scripts/verify_msc_example_runtime_gate.py \
 	scripts/compare_ghidra_function_coverage.py \
 	scripts/check_sortd_sidecar_free.py \
 	scripts/check_generated_translation_unit.py \
@@ -631,6 +662,25 @@ QA_TYPED_FILES := \
 	scripts/generated_c_contracts.py \
 	scripts/import_ultra_quickc_fixtures.py \
 	scripts/msc6_toolchain_lock.py \
+	scripts/pytest_profile.py \
+	scripts/pytest_assertion_facts.py \
+	scripts/pytest_call_hints.py \
+	scripts/pytest_cache_events.py \
+	scripts/pytest_inventory_review.py \
+	scripts/pytest_inventory_check.py \
+	scripts/pytest_partition_execution.py \
+	scripts/pytest_dynamic_schedule.py \
+	scripts/pytest_partition_plugin.py \
+	scripts/pytest_partitioned.py \
+	scripts/pytest_test_inventory.py \
+	scripts/pytest_test_record.py \
+	scripts/pytest_process_metrics.py \
+	scripts/pytest_resource_history.py \
+	scripts/pytest_resource_scheduler.py \
+	scripts/pytest_profile_merge.py \
+	scripts/pytest_profile_rankings.py \
+	scripts/pytest_source_state.py \
+	scripts/pytest_source_index.py \
 	scripts/test_pipeline.py \
 	scripts/test_ownership_manifest.py \
 	scripts/check_changed_non_test_types.py \
@@ -668,9 +718,12 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/annotations.py \
 	angr_platforms/angr_platforms/X86_16/condition_ir.py \
 	angr_platforms/angr_platforms/X86_16/condition_trace.py \
+	angr_platforms/angr_platforms/X86_16/function_evidence_inventory.py \
+	angr_platforms/angr_platforms/X86_16/helper_abi.py \
 	angr_platforms/angr_platforms/X86_16/regs.py \
 	angr_platforms/angr_platforms/X86_16/ir/__init__.py \
 	angr_platforms/angr_platforms/X86_16/ir/address_ir.py \
+	angr_platforms/angr_platforms/X86_16/ir/condition_register_bindings.py \
 	angr_platforms/angr_platforms/X86_16/ir/condition_ir.py \
 	angr_platforms/angr_platforms/X86_16/ir/core.py \
 	angr_platforms/angr_platforms/X86_16/ir/effects.py \
@@ -698,6 +751,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/function_interface_surface.py \
 	angr_platforms/angr_platforms/X86_16/function_summary.py \
 	angr_platforms/angr_platforms/X86_16/function_state_summary.py \
+	angr_platforms/angr_platforms/X86_16/callsite_target_inventory.py \
 	angr_platforms/angr_platforms/X86_16/callsite_summary.py \
 	angr_platforms/angr_platforms/X86_16/call_target_identity.py \
 	angr_platforms/angr_platforms/X86_16/callsite_stack_metadata.py \
@@ -884,6 +938,10 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_type_surface.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_pointer_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_global_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/helper_call_interfaces.py \
+	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_materialization.py \
+	angr_platforms/angr_platforms/X86_16/lowering/register_constant_segmented_store.py \
 	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py \
 	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_type.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py \
@@ -1059,6 +1117,8 @@ QA_RUFF_TARGETS := \
 	inertia_decompiler/cod_module_caller_evidence.py \
 	inertia_decompiler/c_text_cleanup.py \
 	inertia_decompiler/cache.py \
+	inertia_decompiler/cache_io.py \
+	inertia_decompiler/cache_lock.py \
 	inertia_decompiler/cli.py \
 	inertia_decompiler/cli_core.py \
 	inertia_decompiler/serial_clean_worker_cli.py \
@@ -1120,6 +1180,8 @@ QA_RUFF_TARGETS := \
 	inertia_decompiler/discovery_evidence_project.py \
 	inertia_decompiler/disassembly_helpers.py \
 	inertia_decompiler/flair_paths.py \
+	inertia_decompiler/fork_timeout.py \
+	inertia_decompiler/function_cache_context.py \
 	inertia_decompiler/gdb_client.py \
 	inertia_decompiler/gdb_tui.py \
 	inertia_decompiler/library_function_classifier.py \
@@ -1154,7 +1216,10 @@ QA_RUFF_TARGETS := \
 	scripts/agent_context_check.py \
 	scripts/agent_test_focus.py \
 	scripts/batch_decompile_procs.py \
+	scripts/build_debug_info_corpus.py \
 	scripts/build_msc6_examples.py \
+	scripts/msc6_runtime_gate_artifacts.py \
+	scripts/verify_msc_example_runtime_gate.py \
 	scripts/compare_ghidra_function_coverage.py \
 	scripts/check_changed_non_test_types.py \
 	scripts/check_decompiler_architecture.py \
@@ -1165,21 +1230,47 @@ QA_RUFF_TARGETS := \
 	scripts/generated_c_contracts.py \
 	scripts/import_ultra_quickc_fixtures.py \
 	scripts/msc6_toolchain_lock.py \
+	scripts/pytest_profile.py \
+	scripts/pytest_assertion_facts.py \
+	scripts/pytest_call_hints.py \
+	scripts/pytest_cache_events.py \
+	scripts/pytest_inventory_review.py \
+	scripts/pytest_inventory_check.py \
+	scripts/pytest_partition_execution.py \
+	scripts/pytest_dynamic_schedule.py \
+	scripts/pytest_partition_plugin.py \
+	scripts/pytest_partitioned.py \
+	scripts/pytest_test_inventory.py \
+	scripts/pytest_test_record.py \
+	scripts/pytest_process_metrics.py \
+	scripts/pytest_resource_history.py \
+	scripts/pytest_resource_scheduler.py \
+	scripts/pytest_profile_merge.py \
+	scripts/pytest_profile_rankings.py \
+	scripts/pytest_source_state.py \
+	scripts/pytest_source_index.py \
 	scripts/sortdemo_decompiler_status.py \
 	scripts/test_pipeline.py \
 	scripts/test_ownership_manifest.py \
 	decompile.py \
 	angr_platforms/tests/test_agent_context_check.py \
+	angr_platforms/tests/test_cache_lock.py \
 	angr_platforms/tests/test_check_changed_non_test_types.py \
+	angr_platforms/tests/test_cli_core_clinic_policy.py \
+	angr_platforms/tests/test_fork_timeout.py \
+	angr_platforms/tests/test_function_cache_context.py \
 	angr_platforms/tests/test_cli_batch_c_output.py \
+	angr_platforms/tests/test_x86_16_cli.py \
 	angr_platforms/tests/test_x86_16_cr.py \
 	angr_platforms/tests/test_x86_16_exception.py \
 	angr_platforms/tests/test_x86_16_hardware.py \
 	angr_platforms/tests/test_x86_16_simprocs_io.py \
+	angr_platforms/tests/test_x86_16_debug_info_real_compilers.py \
 	angr_platforms/tests/test_x86_16_debug.py \
 	angr_platforms/tests/test_x86_16_dev_io.py \
 	angr_platforms/tests/test_x86_16_io.py \
 	angr_platforms/tests/test_x86_16_emulator.py \
+	angr_platforms/tests/test_x86_16_pyvex_compat.py \
 	angr_platforms/tests/test_x86_16_memory.py \
 	angr_platforms/tests/test_x86_16_interrupt.py \
 	angr_platforms/tests/test_x86_16_lowered_register_carriers.py \
@@ -1232,6 +1323,15 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_decompile_entrypoint_determinism.py \
 	angr_platforms/tests/test_import_ultra_quickc_fixtures.py \
 	angr_platforms/tests/test_project_loading_cache.py \
+	angr_platforms/tests/test_function_work_item_contract.py \
+	angr_platforms/tests/test_pytest_profile.py \
+	angr_platforms/tests/test_parallel_job_defaults.py \
+	angr_platforms/tests/test_pytest_partitioned.py \
+	angr_platforms/tests/test_pytest_dynamic_schedule.py \
+	angr_platforms/tests/test_pytest_process_metrics.py \
+	angr_platforms/tests/test_pytest_resource_scheduler.py \
+	angr_platforms/tests/test_pytest_source_state.py \
+	angr_platforms/tests/test_pytest_source_index.py \
 	angr_platforms/tests/test_decompiler_architecture_check.py \
 	angr_platforms/tests/test_rizin_discovery.py \
 		angr_platforms/tests/test_decompilation_quality.py \
@@ -1411,6 +1511,12 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_decompile_entrypoint_determinism.py \
 	angr_platforms/tests/test_import_ultra_quickc_fixtures.py \
 	angr_platforms/tests/test_project_loading_cache.py \
+	angr_platforms/tests/test_pytest_profile.py \
+	angr_platforms/tests/test_parallel_job_defaults.py \
+	angr_platforms/tests/test_pytest_partitioned.py \
+	angr_platforms/tests/test_pytest_process_metrics.py \
+	angr_platforms/tests/test_pytest_resource_scheduler.py \
+	angr_platforms/tests/test_pytest_source_index.py \
 	angr_platforms/tests/test_omf_pat_lidata.py \
 	angr_platforms/tests/test_decompiler_architecture_check.py \
 	angr_platforms/tests/test_rizin_discovery.py \
@@ -1521,11 +1627,8 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_decompilation_cache_surface.py \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_sortdemo_heapsort_materializes_call_arguments_without_stack_leaks \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_sortdemo_percolateup_materializes_parent_once_and_preserves_calls \
-	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_sortdemo_percolateup_anchor_no_longer_crashes_on_vexvalue_register_resolution \
-	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_sortdemo_acceptance_scorecards_capture_main_sleep_and_percolateup_state \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_sortdemo_reinitbars_preserves_clock_store_loop_and_validation_contract \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_sortdemo_drawtime_materializes_clock_return_to_clfinish_once \
-	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_reinitbars_stable_stack_slot_irow_materialized \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_initbars_getvideoconfig_far_pointer_call_has_no_stack_setup_remnants \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_initmenu_pause_zero_guard_has_no_raw_flag_carrier \
 	angr_platforms/tests/test_x86_16_sortdemo_regressions.py::test_insertionsort_word_stores_materialized_without_raw_high_byte_memory \
@@ -1604,7 +1707,18 @@ QA_CHANGED_TYPED_FILES := $(filter $(QA_TYPED_FILES),$(PY_CHANGED_FILES))
 TYPE_RATCHET_SELECTED_FILES := $(PY_FILES)
 
 pytest:
-	INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE=$${INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE:-$(FOCUSED_TEST_DECOMPILE_TIMEOUT_SCALE)} $(PYTHON) -m pytest -q $(PYTEST_ARGS) $(QA_PYTEST_TARGETS)
+	INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE=$${INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE:-$(FOCUSED_TEST_DECOMPILE_TIMEOUT_SCALE)} $(PYTHON) -m pytest -q $(PYTEST_ARGS) -m "$(PYTEST_FOCUSED_MARKER_EXPR)" $(QA_PYTEST_TARGETS)
+
+pytest-profile:
+	INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE=$${INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE:-$(FULL_TEST_DECOMPILE_TIMEOUT_SCALE)} $(PYTHON) scripts/pytest_profile.py $(PYTEST_PROFILE_ARGS) -m "$(PYTEST_FOCUSED_MARKER_EXPR)" --profile-json $(PYTEST_PROFILE_JSON) $(PYTEST_PROFILE_TARGETS)
+
+pytest-inventory:
+	$(PYTHON) scripts/pytest_profile.py --profile-json $(PYTEST_INVENTORY_JSON) --collect-only -q >/dev/null
+	$(PYTHON) scripts/pytest_inventory_check.py $(PYTEST_INVENTORY_JSON)
+	@echo "pytest inventory: $(PYTEST_INVENTORY_JSON)"
+
+pytest-inventory-check:
+	$(PYTHON) scripts/pytest_inventory_check.py $(PYTEST_INVENTORY_JSON)
 
 pytest-files:
 	@manifest_tests="$$( $(PYTHON) scripts/test_ownership_manifest.py $(PY_FILES) )"; \
@@ -1614,13 +1728,20 @@ pytest-files:
 		done | sort -u | tr '\n' ' ' \
 	)"; \
 	if [ -n "$$(echo "$$selected_tests" | tr -d '[:space:]')" ]; then \
-		INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE=$${INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE:-$(FOCUSED_TEST_DECOMPILE_TIMEOUT_SCALE)} $(PYTHON) -m pytest -q $(PYTEST_ARGS) $$selected_tests; \
+		INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE=$${INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE:-$(FOCUSED_TEST_DECOMPILE_TIMEOUT_SCALE)} $(PYTHON) -m pytest -q $(PYTEST_ARGS) -m "$(PYTEST_FOCUSED_MARKER_EXPR)" $$selected_tests; \
 	else \
 		echo "pytest-files: no test files selected"; \
 	fi
 
-pytest-all:
-	INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE=$${INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE:-$(FULL_TEST_DECOMPILE_TIMEOUT_SCALE)} $(PYTHON) -m pytest -q $(PYTEST_ARGS)
+pytest-all: pytest-inventory
+	INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE=$${INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE:-$(FULL_TEST_DECOMPILE_TIMEOUT_SCALE)} $(PYTHON) scripts/pytest_partitioned.py \
+		--inventory-json $(PYTEST_INVENTORY_JSON) \
+		--history-json $(PYTEST_ALL_SUMMARY_JSON) \
+		--summary-json $(PYTEST_ALL_SUMMARY_JSON) \
+		--workers $(PYTEST_ALL_WORKERS) \
+		--heavy-workers $(PYTEST_ALL_HEAVY_WORKERS) \
+		--heavy-shards $(PYTEST_ALL_HEAVY_SHARDS) \
+		--max-rss-mib $(PYTEST_ALL_MAX_RSS_MIB)
 
 architecture-check:
 	$(PYTHON) scripts/check_decompiler_architecture.py

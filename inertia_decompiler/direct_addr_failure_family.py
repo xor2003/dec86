@@ -10,6 +10,7 @@ verdict.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -55,6 +56,48 @@ class FailureFamilySnapshot:
         return (
             f"status={status} stage={stage} sidecar={sidecar} "
             f"nonopt={nonopt} fallback={fallback} validation={validation}"
+        )
+
+    def to_record(self) -> dict[str, str]:
+        """Serialize the complete diagnostic snapshot for cache transport."""
+        return {
+            "status": self.status,
+            "failure_stage": self.failure_stage,
+            "sidecar_verdict": self.sidecar_verdict,
+            "non_optimized_verdict": self.non_optimized_verdict,
+            "fallback_kind": self.fallback_kind,
+            "tail_validation_verdict": self.tail_validation_verdict,
+            "artifact_path": self.artifact_path,
+        }
+
+    @classmethod
+    def from_record(cls, record: object) -> FailureFamilySnapshot | None:
+        """Deserialize a complete snapshot, refusing missing or non-text fields."""
+        if not isinstance(record, Mapping):
+            return None
+        field_names = (
+            "status",
+            "failure_stage",
+            "sidecar_verdict",
+            "non_optimized_verdict",
+            "fallback_kind",
+            "tail_validation_verdict",
+            "artifact_path",
+        )
+        values: dict[str, str] = {}
+        for field_name in field_names:
+            value = record.get(field_name)
+            if not isinstance(value, str) or not value:
+                return None
+            values[field_name] = value
+        return cls(
+            status=values["status"],
+            failure_stage=values["failure_stage"],
+            sidecar_verdict=values["sidecar_verdict"],
+            non_optimized_verdict=values["non_optimized_verdict"],
+            fallback_kind=values["fallback_kind"],
+            tail_validation_verdict=values["tail_validation_verdict"],
+            artifact_path=values["artifact_path"],
         )
 
 

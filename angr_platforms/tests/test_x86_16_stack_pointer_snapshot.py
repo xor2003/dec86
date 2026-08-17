@@ -14,6 +14,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.lowering import near_pointer_argument as near_pointer_argument_module
 from angr_platforms.X86_16.lowering.near_pointer_argument import (
     NearPointerArgumentFact8616,
     collect_near_pointer_argument_facts_8616,
@@ -149,6 +150,47 @@ def test_collect_near_pointer_fact_ignores_update_to_other_stack_slot() -> None:
     assert len(facts) == 1
     assert facts[0].source_version_delta == 0
     assert facts[0].source_update_ins_addrs == ()
+
+
+def test_collect_near_pointer_facts_reuses_project_request_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    function = _function(
+        _instruction(0x100A, X86_INS_MOV, _reg(X86_REG_BX), _mem(X86_REG_BP, displacement=4)),
+        _instruction(0x1010, X86_INS_CMP, _mem(X86_REG_BX, size=1), _imm(0)),
+    )
+    project = SimpleNamespace()
+    decode_count = 0
+
+    monkeypatch.setattr(
+        near_pointer_argument_module,
+        "_direct_global_update_blocks_8616",
+        lambda _project, selected_function: tuple(selected_function.blocks),
+    )
+
+    def decoded_instructions(_project: object, block: SimpleNamespace) -> tuple[SimpleNamespace, ...]:
+        nonlocal decode_count
+        decode_count += 1
+        return tuple(block.capstone.insns)
+
+    monkeypatch.setattr(
+        near_pointer_argument_module,
+        "_capstone_insns_for_direct_global_update_8616",
+        decoded_instructions,
+    )
+
+    first = collect_near_pointer_argument_facts_8616(function, project=project)
+    second = collect_near_pointer_argument_facts_8616(function, project=project)
+
+    assert second is first
+    assert decode_count == 1
+
+    original_block = function.blocks[0]
+    function.blocks = (SimpleNamespace(addr=0x2000, capstone=original_block.capstone),)
+    third = collect_near_pointer_argument_facts_8616(function, project=project)
+
+    assert third == first
+    assert decode_count == 2
 
 
 def test_unique_untagged_helper_join_materializes_saved_pointer_value() -> None:

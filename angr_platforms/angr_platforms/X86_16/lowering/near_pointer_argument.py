@@ -34,6 +34,10 @@ from capstone.x86_const import (
     X86_REG_INVALID,
 )
 
+from ..function_evidence_inventory import (
+    FunctionEvidenceKind8616,
+    collect_function_binary_evidence_8616,
+)
 from .real_mode_linear import (
     _capstone_insns_for_direct_global_update_8616,
     _direct_global_update_blocks_8616,
@@ -174,12 +178,11 @@ def _direct_stack_write_delta_8616(
     return offset, None
 
 
-def collect_near_pointer_argument_facts_8616(
+def _collect_near_pointer_argument_facts_uncached_8616(
+    project: object | None,
     function: object,
-    *,
-    project: object | None = None,
 ) -> tuple[NearPointerArgumentFact8616, ...]:
-    """Collect BP-argument loads that feed exact register-indirect accesses."""
+    """Collect BP-argument facts from one decoded binary function surface."""
     if function is None:
         return ()
     if project is not None:
@@ -261,3 +264,17 @@ def collect_near_pointer_argument_facts_8616(
                 continue
             carriers.pop(destination_register, None)
     return tuple(sorted(facts, key=lambda fact: (fact.dereference_ins_addr, fact.stack_offset)))
+
+
+def collect_near_pointer_argument_facts_8616(
+    function: object,
+    *,
+    project: object | None = None,
+) -> tuple[NearPointerArgumentFact8616, ...]:
+    """Collect or reuse BP-argument facts for one decoded binary surface."""
+    return collect_function_binary_evidence_8616(
+        project,
+        function,
+        kind=FunctionEvidenceKind8616.NEAR_POINTER_ARGUMENTS,
+        builder=_collect_near_pointer_argument_facts_uncached_8616,
+    )

@@ -320,7 +320,11 @@ def test_sortdemo_sleep_anchor_eliminates_raw_flag_guard_and_keeps_validation_cl
     assert "(&s_" not in result.stdout
     assert "*(&" not in result.stdout
     assert not re.search(r"\breturn (?!0;)[^;]+;", sleep_body)
+    assert scorecard.source_present is True
+    assert scorecard.raw_ss_linear_count == 0
     assert scorecard.validation_verdict == "stable"
+    assert "else if" not in result.stdout
+    assert "if (clock() <= goal)" not in result.stdout
 
 
 def test_sortdemo_sleep_proc_pipeline_declares_lowered_runtime_calls() -> None:
@@ -366,6 +370,16 @@ def test_sortdemo_reinitbars_preserves_clock_store_loop_and_validation_contract(
     assert "ds << 4" not in combined
     assert "es << 4" not in combined
     assert "ss << 4" not in combined
+    scorecard = build_acceptance_scorecard(
+        "ReInitBars",
+        combined,
+        source_text=render_local_source_sidecar_function(SORTDEMO_EXE, "ReInitBars"),
+    )
+    assert scorecard.source_present is True
+    assert scorecard.recovery_mode == "decompiled"
+    assert scorecard.validation_verdict == "stable"
+    assert scorecard.raw_ds_linear_count == 0
+    assert scorecard.raw_ss_linear_count == 0
 
 
 def test_sortdemo_drawtime_materializes_clock_return_to_clfinish_once():
@@ -418,13 +432,23 @@ def test_sortdemo_swapbars_materializes_arguments_without_dead_setup_artifacts()
     assert "void SwapBars(int iRow1, int *iRow2)" not in result.stdout
     assert "s_2 = &s_2 + 2;" not in result.stdout
     assert "vvar_16 = &s_6;" not in result.stdout
+    scorecard = build_acceptance_scorecard(
+        "SwapBars",
+        combined,
+        source_text=render_local_source_sidecar_function(SORTDEMO_EXE, "SwapBars"),
+    )
+    assert scorecard.source_present is True
+    assert scorecard.recovery_mode == "decompiled"
+    assert scorecard.validation_verdict == "stable"
+    assert scorecard.raw_ds_linear_count == 0
+    assert scorecard.anonymous_sub_count == 0
 
 
 def test_sortdemo_swaps_preserves_binary_proven_global_increment_and_pointer_swap():
     result = _run_decompile_addr(
         SORTDEMO_EXE,
         0x107B8,
-        analysis_timeout=10,
+        analysis_timeout=30,
         subprocess_timeout=60,
         extra_args=("--c-target", "portable-flat"),
     )
@@ -447,6 +471,15 @@ def test_sortdemo_swaps_preserves_binary_proven_global_increment_and_pointer_swa
     )
     assert "bar1[0] = bar2[0];" in final_body
     assert "bar2[0] = local_2;" in final_body or "bar2[0] = barTmp;" in final_body
+    scorecard = build_acceptance_scorecard(
+        "Swaps",
+        combined,
+        source_text=render_local_source_sidecar_function(SORTDEMO_EXE, "Swaps"),
+    )
+    assert scorecard.source_present is True
+    assert scorecard.recovery_mode == "decompiled"
+    assert scorecard.validation_verdict == "stable"
+    assert scorecard.raw_ds_linear_count == 0
 
 
 def test_sortdemo_bubblesort_direct_path_validates_and_preserves_array_calls():
@@ -997,9 +1030,25 @@ def test_sortdemo_percolateup_materializes_parent_once_and_preserves_calls():
     assert "SwapBars(iParent, i);" in executable_lines
     assert "SEG_U8(ds," not in final_body
     assert "SEG_PTR(ds," not in final_body
+    assert "stack_bp_" not in final_body
+    assert "(&s_fffa)[" not in final_body
+    assert "flags & 64" not in final_body
     assert sum(1 for line in executable_lines if line.startswith("Swaps(")) == 1
     assert sum(1 for line in executable_lines if line.startswith("SwapBars(")) == 1
     assert "flsbuf" not in final_body
+    assert "Non-constant VexValue has no value property" not in combined
+    assert "Function recovery failed" not in combined
+    assert "arg_6" not in final_body
+    assert "SwapBars(arg_6" not in final_body
+    scorecard = build_acceptance_scorecard(
+        "PercolateUp",
+        combined,
+        source_text=render_local_source_sidecar_function(SORTDEMO_EXE, "PercolateUp"),
+    )
+    assert scorecard.source_present is True
+    assert scorecard.raw_ds_linear_count == 0
+    assert scorecard.raw_ss_linear_count == 0
+    assert scorecard.validation_verdict == "stable"
 
 
 def test_sortdemo_main_uses_portable_flat_int_main_signature():
@@ -1021,6 +1070,16 @@ def test_sortdemo_main_uses_portable_flat_int_main_signature():
     assert "setvideomode(65535);" in result.stdout
     assert "return setvideomode(65535);" not in result.stdout
     assert result.stdout.count("return 0;") == 1
+    assert "InitMenu(" in result.stdout
+    scorecard = build_acceptance_scorecard(
+        "main",
+        combined,
+        source_text=render_local_source_sidecar_function(SORTDEMO_EXE, "main"),
+    )
+    assert scorecard.source_present is True
+    assert scorecard.raw_ss_linear_count == 0
+    assert scorecard.anonymous_sub_count == 0
+    assert scorecard.validation_verdict == "stable"
 
 
 def test_sortdemo_nfree_does_not_emit_undeclared_vvar_carrier():
@@ -1154,42 +1213,18 @@ def test_sortdemo_heapsort_anchor_no_longer_prunes_local_lane_after_repeated_emp
     )
     assert scorecard.source_present is True
     assert scorecard.recovery_mode in {"asm_fallback", "decompiled"}
+    assert scorecard.validation_verdict in {"changed", "stable", "unknown", "uncollected"}
     if scorecard.recovery_mode == "decompiled":
         assert "ss << 4" not in result.stdout
         assert "!(!(" not in result.stdout
+        assert scorecard.raw_ss_linear_count == 0
+        assert scorecard.anonymous_sub_count == 0
     else:
         assert (
             "shared-project slice full-with-refs: empty" in result.stdout
             or "Function recovery timed out; using sidecar-bounded asm fallback." in result.stdout
         )
         assert "/* == asm fallback == */" in result.stdout
-
-
-def test_sortdemo_percolateup_anchor_no_longer_crashes_on_vexvalue_register_resolution():
-    result = _run_decompile_addr(SORTDEMO_EXE, 0x109E8, analysis_timeout=30, subprocess_timeout=90)
-
-    combined = _combined_output(result)
-
-    assert result.returncode == 0, combined
-    assert "Non-constant VexValue has no value property" not in combined
-    assert "Function recovery failed" not in combined
-    assert "function: 0x109e8 PercolateUp" in result.stdout
-    assert "PercolateUp(" in result.stdout
-    final_body = "PercolateUp" + result.stdout.rsplit("PercolateUp", 1)[-1]
-    assert "stack_bp_" not in final_body
-    assert "(&s_fffa)[" not in final_body
-    assert "flags & 64" not in final_body
-    assert "SEG_U8(ds," not in final_body
-    assert "SEG_PTR(ds," not in final_body
-    assert (
-        "abarWork[i] <= abarWork[local_2]" in final_body
-        or "MEM_U8(&abarWork[i]) <= MEM_U8(&abarWork[local_2])" in final_body
-        or "abarWork[i] > abarWork[iParent]" in final_body
-        or "abarWork[i].field_0 > abarWork[iParent].field_0" in final_body
-        or "MEM_U8(&abarWork[i]) > MEM_U8(&abarWork[iParent])" in final_body
-        or "abarWork[i].field_0 <= abarWork[iParent].field_0" in final_body
-    )
-    assert "Swaps(&abarWork[local_2], &abarWork[i]);" in final_body or "Swaps(&abarWork[iParent], &abarWork[i]);" in final_body
 
 
 def test_sortdemo_quicksort_preserves_pivot_swaps_and_recursive_calls():
@@ -1228,129 +1263,15 @@ def test_sortdemo_quicksort_preserves_pivot_swaps_and_recursive_calls():
     first_scan = first_scan_match.start()
     assert do_body.index("iUp = iLow;") < first_scan
     assert do_body.index("iDown = iHigh;") < first_scan
-
-
-def test_sortdemo_acceptance_scorecards_capture_main_sleep_and_percolateup_state():
-    main_result = _run_decompile_addr(SORTDEMO_EXE, 0x10010, analysis_timeout=12, subprocess_timeout=120)
-    sleep_result = _run_decompile_addr(SORTDEMO_EXE, 0x10F28, analysis_timeout=12, subprocess_timeout=120)
-    percolate_result = _run_decompile_addr(
-        SORTDEMO_EXE,
-        0x109E8,
-        analysis_timeout=12,
-        subprocess_timeout=120,
-    )
-
-    assert main_result.returncode == 0, main_result.stderr + main_result.stdout
-    assert sleep_result.returncode in {0, 4}, sleep_result.stderr + sleep_result.stdout
-    assert percolate_result.returncode in {0, 4}, percolate_result.stderr + percolate_result.stdout
-    assert "InitMenu(" in main_result.stdout
-
-    main_scorecard = build_acceptance_scorecard(
-        "main",
-        _combined_output(main_result),
-        source_text=render_local_source_sidecar_function(SORTDEMO_EXE, "main"),
-    )
-    sleep_scorecard = build_acceptance_scorecard(
-        "Sleep",
-        _combined_output(sleep_result),
-        source_text=render_local_source_sidecar_function(SORTDEMO_EXE, "Sleep"),
-    )
-    percolate_scorecard = build_acceptance_scorecard(
-        "PercolateUp",
-        _combined_output(percolate_result),
-        source_text=render_local_source_sidecar_function(SORTDEMO_EXE, "PercolateUp"),
-    )
-
-    assert main_scorecard.source_present is True
-    assert main_scorecard.raw_ss_linear_count == 0
-    assert main_scorecard.anonymous_sub_count == 0
-    assert main_scorecard.validation_verdict == "stable"
-    assert sleep_scorecard.source_present is True
-    assert "flags_2 = ...;" not in sleep_result.stdout
-    assert "(flags_3 & 128) == (flags_3 & 0x800)" not in sleep_result.stdout
-    assert "else if" not in sleep_result.stdout
-    assert "if (clock() <= goal)" not in sleep_result.stdout
-    assert (
-        re.search(r"\bif\s*\(\s*clock\(\)\s*>\s*[A-Za-z_]\w*\s*\)", sleep_result.stdout)
-        or re.search(r"\bif\s*\(\s*!\(\s*clock\(\)\s*<=\s*[A-Za-z_]\w*\s*\)\s*\)", sleep_result.stdout)
-        or re.search(
-            r"\bwhile\s*\(\s*clock\(\)\s*<=\s*[A-Za-z_]\w*\s*\)",
-            sleep_result.stdout,
-        )
-    )
-    assert sleep_scorecard.raw_ss_linear_count == 0
-    assert sleep_scorecard.validation_verdict in {"stable", "failed", "changed"}
-    if percolate_result.returncode == 0:
-        assert percolate_scorecard.source_present is True
-        assert percolate_scorecard.raw_ds_linear_count == 0
-        assert percolate_scorecard.raw_ss_linear_count == 0
-    assert percolate_scorecard.validation_verdict == "stable"
-    for marker in ("int PercolateUp(", "short PercolateUp(", "void PercolateUp("):
-        if marker in percolate_result.stdout:
-            percolate_body = marker + percolate_result.stdout.rsplit(marker, 1)[-1]
-            break
-    else:
-        percolate_body = percolate_result.stdout
-    assert "arg_6" not in percolate_body
-    assert "SwapBars(arg_6" not in percolate_body
-
-
-@pytest.mark.parametrize(
-    ("function_name", "addr", "analysis_timeout", "subprocess_timeout"),
-    (
-        pytest.param("HeapSort", 0x109D8, 60, 180, id="heapsort"),
-        pytest.param("QuickSort", 0x10CE0, 180, 420, id="quicksort"),
-        pytest.param("RunMenu", 0x102E0, 180, 420, id="runmenu"),
-        pytest.param("Beep", 0x10E70, 30, 120, id="beep"),
-    ),
-)
-def test_sortdemo_acceptance_scorecards_capture_heapsort_quicksort_runmenu_and_beep_state(
-    function_name,
-    addr,
-    analysis_timeout,
-    subprocess_timeout,
-):
-    result = _run_decompile_addr(
-        SORTDEMO_EXE,
-        addr,
-        analysis_timeout=analysis_timeout,
-        subprocess_timeout=subprocess_timeout,
-    )
-    if function_name == "HeapSort":
-        assert result.returncode in {0, 1, 4}, result.stderr + result.stdout
-    else:
-        assert result.returncode in {0, 4}, result.stderr + result.stdout
     scorecard = build_acceptance_scorecard(
-        function_name,
-        _combined_output(result),
-        source_text=render_local_source_sidecar_function(SORTDEMO_EXE, function_name),
+        "QuickSort",
+        combined,
+        source_text=render_local_source_sidecar_function(SORTDEMO_EXE, "QuickSort"),
     )
-
     assert scorecard.source_present is True
-    if function_name == "HeapSort":
-        if result.returncode == 1:
-            assert "Swaps missing argument 1" in _combined_output(result)
-            assert "validation=passed" not in _combined_output(result)
-        else:
-            assert scorecard.recovery_mode in {"asm_fallback", "decompiled"}
-            assert scorecard.validation_verdict in {"changed", "stable", "unknown", "uncollected"}
-        if result.returncode == 0 and scorecard.recovery_mode == "decompiled":
-            assert scorecard.raw_ss_linear_count == 0
-            assert scorecard.anonymous_sub_count == 0
-    elif function_name == "QuickSort":
-        assert scorecard.recovery_mode in {"asm_fallback", "decompiled", "unknown"}
-        assert scorecard.validation_verdict in {"changed", "failed", "stable", "unknown", "uncollected"}
-        if scorecard.recovery_mode == "decompiled":
-            assert scorecard.raw_flags_count == 0
-    elif function_name == "RunMenu":
-        assert scorecard.recovery_mode in {"asm_fallback", "decompiled", "unknown"}
-        assert scorecard.validation_verdict in {"changed", "failed", "stable", "unknown", "uncollected"}
-        if scorecard.recovery_mode == "decompiled":
-            assert scorecard.raw_ss_linear_count >= 0
-    else:
-        assert function_name == "Beep"
-        assert scorecard.raw_ss_linear_count == 0
-        assert scorecard.validation_verdict in {"changed", "failed", "stable", "unknown", "uncollected"}
+    assert scorecard.recovery_mode == "decompiled"
+    assert scorecard.validation_verdict == "stable"
+    assert scorecard.raw_flags_count == 0
 
 
 def test_sortdemo_runmenu_typed_switch_artifacts_are_safe_and_materialized():
@@ -1479,6 +1400,15 @@ def test_sortdemo_runmenu_default_direct_path_validates_without_temp_carrier_fal
     assert body.count("displaycursor(") == 2
     assert body.count("toupper(") == 1
     assert body.count("InitMenu(") == 3
+    scorecard = build_acceptance_scorecard(
+        "RunMenu",
+        combined,
+        source_text=render_local_source_sidecar_function(SORTDEMO_EXE, "RunMenu"),
+    )
+    assert scorecard.source_present is True
+    assert scorecard.recovery_mode == "decompiled"
+    assert scorecard.validation_verdict == "stable"
+    assert scorecard.raw_ss_linear_count == 0
 
 
 def test_sortd_runmenu_sidecar_free_preserves_binary_escape_exit(tmp_path: Path) -> None:
@@ -1510,69 +1440,6 @@ def test_sortd_runmenu_sidecar_free_preserves_binary_escape_exit(tmp_path: Path)
     assert re.search(r"case 27:\s*return 0;", body)
     for case_value in (27, 60, 62, 66, 69, 72, 73, 81, 83, 84):
         assert f"case {case_value}:" in body
-
-
-def test_sortdemo_acceptance_scorecards_capture_swaps_swapbars_and_reinitbars_state():
-    function_specs = {
-        "Swaps": (0x107B8, 30),
-        "SwapBars": (0x10768, 30),
-        "ReInitBars": (0x10678, 90),
-    }
-    scorecards = {}
-    for function_name, (addr, subprocess_timeout) in function_specs.items():
-        result = _run_decompile_addr(
-            SORTDEMO_EXE,
-            addr,
-            analysis_timeout=30,
-            subprocess_timeout=subprocess_timeout,
-        )
-        assert result.returncode in {0, 4, 6}, result.stderr + result.stdout
-        scorecards[function_name] = build_acceptance_scorecard(
-            function_name,
-            _combined_output(result),
-            source_text=render_local_source_sidecar_function(SORTDEMO_EXE, function_name),
-        )
-
-    assert scorecards["Swaps"].source_present is True
-    assert scorecards["Swaps"].recovery_mode in {"asm_fallback", "decompiled", "unknown"}
-    assert scorecards["Swaps"].validation_verdict in {"changed", "stable", "unknown", "uncollected"}
-    if scorecards["Swaps"].recovery_mode == "decompiled":
-        assert scorecards["Swaps"].raw_ds_linear_count == 0
-    assert scorecards["SwapBars"].source_present is True
-    assert scorecards["SwapBars"].recovery_mode in {"asm_fallback", "decompiled", "unknown"}
-    assert scorecards["SwapBars"].validation_verdict in {"changed", "stable", "unknown", "uncollected"}
-    if scorecards["SwapBars"].recovery_mode == "decompiled":
-        assert scorecards["SwapBars"].raw_ds_linear_count == 0
-        assert scorecards["SwapBars"].anonymous_sub_count == 0
-    assert scorecards["ReInitBars"].source_present is True
-    assert scorecards["ReInitBars"].recovery_mode == "decompiled"
-    assert scorecards["ReInitBars"].validation_verdict == "stable"
-    assert scorecards["ReInitBars"].raw_ds_linear_count == 0
-    assert scorecards["ReInitBars"].raw_ss_linear_count == 0
-
-
-def test_reinitbars_stable_stack_slot_irow_materialized():
-    result = _run_decompile_addr(
-        SORTDEMO_EXE,
-        0x10678,
-        extra_args=("--c-target", "portable-flat"),
-        analysis_timeout=12,
-        subprocess_timeout=45,
-    )
-
-    combined = _combined_output(result)
-    assert result.returncode in {0, 4}, combined
-    assert "function: 0x10678 ReInitBars" in result.stdout
-    assert "validation=passed" in combined or "whole-tail validation clean across 1 functions" in combined
-    assert "gcc syntax check failed:" not in combined
-    assert "abarWork[local_2] = abarPerm[local_2];" in result.stdout or "abarWork[iRow] = abarPerm[iRow];" in result.stdout
-    assert "DrawBar(local_2);" in result.stdout or "DrawBar(iRow);" in result.stdout
-    assert "ss << 4" not in combined
-    assert (
-        "for (local_2 = 0; cRow > local_2; local_2 += 1)" in result.stdout
-        or "for (iRow = 0; cRow > iRow; iRow += 1)" in result.stdout
-        or "for (iRow = 0; cRow > iRow; iRow = iRow + 1)" in result.stdout
-    )
 
 
 def test_initbars_getvideoconfig_far_pointer_call_has_no_stack_setup_remnants():
@@ -1763,6 +1630,15 @@ def test_beep_direct_path_validates_without_high_byte_contract_fallback():
         assert re.search(r"if \(!frequency\)\s+return(?: 0)?;", result.stdout)
         assert first_guard < control_definition < sleep_call < zero_guard < control_read
     assert re.search(r"(?m)^(?:void|int|unsigned short) Sleep\(unsigned long a0\);$", result.stdout)
+    scorecard = build_acceptance_scorecard(
+        "Beep",
+        combined,
+        source_text=render_local_source_sidecar_function(SORTDEMO_EXE, "Beep"),
+    )
+    assert scorecard.source_present is True
+    assert scorecard.recovery_mode == "decompiled"
+    assert scorecard.validation_verdict == "stable"
+    assert scorecard.raw_ss_linear_count == 0
 
 
 def test_insertionsort_word_stores_materialized_without_raw_high_byte_memory():

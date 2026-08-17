@@ -267,8 +267,7 @@ def test_cod_segmented_proc_does_not_publish_unclassified_access_traits():
     )
 
     assert status == "ok", payload
-    traits = getattr(project, "_inertia_access_traits", {})
-    assert function.addr not in traits
+    assert function.addr not in vars(project).get("_inertia_access_traits", {})
 
 
 def test_small_model_entry_function_decompiles_in_bounded_window():

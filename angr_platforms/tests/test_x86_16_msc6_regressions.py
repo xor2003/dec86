@@ -8,6 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from scripts.msc6_runtime_gate_artifacts import (
+    MSC6RuntimeGateArtifacts,
+    MSC6RuntimeGateInputs,
+    load_or_run_msc6_runtime_gate,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CMP16_EXE = REPO_ROOT / "examples" / "build_msc6" / "CMP16.EXE"
 CMP32_EXE = REPO_ROOT / "examples" / "build_msc6" / "COMP32.EXE"
@@ -20,37 +26,25 @@ CLI_PATH = REPO_ROOT / "decompile.py"
 RUNTIME_GATE_PATH = REPO_ROOT / "scripts" / "verify_msc_example_runtime_gate.py"
 KVIKDOS_PATH = Path("/home/xor/kvikdos/kvikdos")
 MSC6_ROOT = Path("/home/xor/inertia_player/dos_compilers/Microsoft C v6ax")
-
-
-def _run_decompile_proc(
-    function_name: str,
-    *,
-    proc_kind: str = "NEAR",
-    exe_path: Path = CMP16_EXE,
-    timeout: int = 90,
-) -> subprocess.CompletedProcess[str]:
-    env = dict(os.environ)
-    env.setdefault("INERTIA_ENABLE_TAIL_VALIDATION", "1")
-    return subprocess.run(
-        [
-            sys.executable,
-            str(CLI_PATH),
-            "--alternate-source-c",
-            "--proc",
-            function_name,
-            "--proc-kind",
-            proc_kind,
-            "--timeout",
-            "60",
-            str(exe_path),
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=timeout,
-        check=False,
-    )
+MSC6_RUNTIME_EXAMPLES = (
+    ("simple_control", SIMPLE_EXE),
+    ("cmp16", CMP16_EXE),
+    ("cmp32", CMP32_EXE),
+    ("fptr", FPTR_EXE),
+    ("loops_jumps", LOOPS_EXE),
+    ("pointer_memory", POINT_EXE),
+    ("scalar_types_io", TYPES_EXE),
+)
+MSC6_RUNTIME_OUTPUT_STEMS = {
+    "simple_control": "SIMPLERT",
+    "cmp16": "CMP16RT",
+    "cmp32": "CMP32RT",
+    "fptr": "FPTRRT",
+    "loops_jumps": "LOOPSRT",
+    "pointer_memory": "POINTRT",
+    "scalar_types_io": "TYPESRT",
+}
+pytestmark = [pytest.mark.xdist_group("msc6-runtime-gate"), pytest.mark.resource_serial]
 
 
 def _run_decompile_addr(
@@ -100,16 +94,30 @@ def _extract_emitted_function_8616(output: str, function_name: str) -> str:
     return function_text if end < 0 else function_text[: end + 3]
 
 
-def _combined_output_8616(result: subprocess.CompletedProcess[str]) -> str:
-    return f"{result.stderr}{result.stdout}"
+def _runtime_decompile_output_8616(
+    artifacts: MSC6RuntimeGateArtifacts,
+    example_name: str,
+    function_name: str,
+) -> str:
+    """Load one decompile already accepted by the complete runtime gate."""
+    result = artifacts.results[example_name]
+    assert not isinstance(result, subprocess.TimeoutExpired), str(result)
+    assert result is not None
+    assert result.returncode == 0, f"{result.stderr}\n{result.stdout}"
+
+    stdout_path = artifacts.output_root / f"{example_name}_runtime_gate" / (
+        f"{MSC6_RUNTIME_OUTPUT_STEMS[example_name]}_{function_name}.dec.txt"
+    )
+    stderr_path = stdout_path.with_name(stdout_path.name.replace(".dec.txt", ".dec.err.txt"))
+    assert stdout_path.is_file() and stderr_path.is_file(), (stdout_path, stderr_path)
+    return stderr_path.read_text(encoding="utf-8") + stdout_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(not CMP16_EXE.is_file(), reason="CMP16 example binary is not available in this workspace.")
-def test_msc6_cmp16_rel_i16_keeps_recovered_signature_and_avoids_implicit_arg_placeholders() -> None:
-    result = _run_decompile_proc("rel_i16", proc_kind="NEAR")
-    combined = _combined_output_8616(result)
-
-    assert result.returncode == 0, combined
+def test_msc6_cmp16_rel_i16_keeps_recovered_signature_and_avoids_implicit_arg_placeholders(
+    msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
+) -> None:
+    combined = _runtime_decompile_output_8616(msc6_runtime_gate_artifacts, "cmp16", "rel_i16")
 
     emitted_body = _extract_emitted_function_8616(combined, "rel_i16")
     assert emitted_body, combined
@@ -142,7 +150,7 @@ def test_msc6_cmp16_rel_i16_keeps_recovered_signature_and_avoids_implicit_arg_pl
 @pytest.mark.skipif(not CMP16_EXE.is_file(), reason="CMP16 example binary is not available in this workspace.")
 def test_msc6_cmp16_main_preserves_all_guarded_return_chain_values() -> None:
     result = _run_decompile_addr("0x101a7")
-    combined = _combined_output_8616(result)
+    combined = f"{result.stderr}{result.stdout}"
 
     assert result.returncode == 0, combined
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
@@ -169,11 +177,12 @@ def test_msc6_cmp16_main_preserves_all_guarded_return_chain_values() -> None:
 
 
 @pytest.mark.skipif(not SIMPLE_EXE.is_file(), reason="SIMPLE example binary is not available in this workspace.")
-def test_msc6_simple_switch_fold_direct_output_uses_source_argument_identity() -> None:
-    result = _run_decompile_proc("switch_fold", proc_kind="NEAR", exe_path=SIMPLE_EXE)
-    combined = _combined_output_8616(result)
-
-    assert result.returncode == 0, combined
+def test_msc6_simple_switch_fold_direct_output_uses_source_argument_identity(
+    msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
+) -> None:
+    combined = _runtime_decompile_output_8616(
+        msc6_runtime_gate_artifacts, "simple_control", "switch_fold"
+    )
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
 
     emitted_body = _extract_emitted_function_8616(combined, "switch_fold")
@@ -190,11 +199,12 @@ def test_msc6_simple_switch_fold_direct_output_uses_source_argument_identity() -
 
 
 @pytest.mark.skipif(not TYPES_EXE.is_file(), reason="TYPES example binary is not available in this workspace.")
-def test_msc6_scalar_add_sc_keeps_byte_arg_source_identity_through_cli_regeneration() -> None:
-    result = _run_decompile_proc("add_sc", proc_kind="NEAR", exe_path=TYPES_EXE)
-    combined = _combined_output_8616(result)
-
-    assert result.returncode == 0, combined
+def test_msc6_scalar_add_sc_keeps_byte_arg_source_identity_through_cli_regeneration(
+    msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
+) -> None:
+    combined = _runtime_decompile_output_8616(
+        msc6_runtime_gate_artifacts, "scalar_types_io", "add_sc"
+    )
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
     assert "MS C 5.1 msc-dos syntax check failed" not in combined
 
@@ -206,11 +216,12 @@ def test_msc6_scalar_add_sc_keeps_byte_arg_source_identity_through_cli_regenerat
 
 
 @pytest.mark.skipif(not TYPES_EXE.is_file(), reason="TYPES example binary is not available in this workspace.")
-def test_msc6_scalar_sub_ss_keeps_straight_line_subtraction() -> None:
-    result = _run_decompile_proc("sub_ss", proc_kind="NEAR", exe_path=TYPES_EXE)
-    combined = _combined_output_8616(result)
-
-    assert result.returncode == 0, combined
+def test_msc6_scalar_sub_ss_keeps_straight_line_subtraction(
+    msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
+) -> None:
+    combined = _runtime_decompile_output_8616(
+        msc6_runtime_gate_artifacts, "scalar_types_io", "sub_ss"
+    )
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
 
     emitted_body = _extract_emitted_function_8616(combined, "sub_ss")
@@ -222,11 +233,12 @@ def test_msc6_scalar_sub_ss_keeps_straight_line_subtraction() -> None:
 
 
 @pytest.mark.skipif(not TYPES_EXE.is_file(), reason="TYPES example binary is not available in this workspace.")
-def test_msc6_scalar_sub_ulong_emits_consistent_wide_signature_without_probe_artifacts() -> None:
-    result = _run_decompile_proc("sub_ulong", proc_kind="NEAR", exe_path=TYPES_EXE)
-    combined = _combined_output_8616(result)
-
-    assert result.returncode == 0, combined
+def test_msc6_scalar_sub_ulong_emits_consistent_wide_signature_without_probe_artifacts(
+    msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
+) -> None:
+    combined = _runtime_decompile_output_8616(
+        msc6_runtime_gate_artifacts, "scalar_types_io", "sub_ulong"
+    )
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
     assert "MS C 5.1 msc-dos syntax check failed" not in combined
 
@@ -282,13 +294,11 @@ def test_msc6_scalar_sub_ulong_emits_consistent_wide_signature_without_probe_art
     ],
 )
 def test_msc6_cmp16_all_helper_functions_pass_tail_validation_and_msc_recompile(
+    msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
     function_name: str,
     required_fragments: tuple[str, ...],
 ) -> None:
-    result = _run_decompile_proc(function_name, proc_kind="NEAR")
-    combined = _combined_output_8616(result)
-
-    assert result.returncode == 0, combined
+    combined = _runtime_decompile_output_8616(msc6_runtime_gate_artifacts, "cmp16", function_name)
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
     assert "MS C 5.1 msc-dos syntax check failed" not in combined
 
@@ -305,11 +315,12 @@ def test_msc6_cmp16_all_helper_functions_pass_tail_validation_and_msc_recompile(
 
 
 @pytest.mark.skipif(not FPTR_EXE.is_file(), reason="FPTR example binary is not available in this workspace.")
-def test_msc6_fptr_select_and_apply_materializes_branch_function_pointer_targets() -> None:
-    result = _run_decompile_proc("select_and_apply", proc_kind="NEAR", exe_path=FPTR_EXE)
-    combined = _combined_output_8616(result)
-
-    assert result.returncode == 0, combined
+def test_msc6_fptr_select_and_apply_materializes_branch_function_pointer_targets(
+    msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
+) -> None:
+    combined = _runtime_decompile_output_8616(
+        msc6_runtime_gate_artifacts, "fptr", "select_and_apply"
+    )
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
 
     emitted_body = _extract_emitted_function_8616(combined, "select_and_apply")
@@ -330,13 +341,11 @@ def test_msc6_fptr_select_and_apply_materializes_branch_function_pointer_targets
     ],
 )
 def test_msc6_fptr_leaf_functions_materialize_terminal_ax_returns(
+    msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
     function_name: str,
     required_fragment: str,
 ) -> None:
-    result = _run_decompile_proc(function_name, proc_kind="NEAR", exe_path=FPTR_EXE)
-    combined = _combined_output_8616(result)
-
-    assert result.returncode == 0, combined
+    combined = _runtime_decompile_output_8616(msc6_runtime_gate_artifacts, "fptr", function_name)
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
 
     emitted_body = _extract_emitted_function_8616(combined, function_name)
@@ -346,11 +355,10 @@ def test_msc6_fptr_leaf_functions_materialize_terminal_ax_returns(
 
 
 @pytest.mark.skipif(not FPTR_EXE.is_file(), reason="FPTR example binary is not available in this workspace.")
-def test_msc6_fptr_apply_twice_consumes_stack_probe_call_artifacts() -> None:
-    result = _run_decompile_proc("apply_twice", proc_kind="NEAR", exe_path=FPTR_EXE)
-    combined = _combined_output_8616(result)
-
-    assert result.returncode == 0, combined
+def test_msc6_fptr_apply_twice_consumes_stack_probe_call_artifacts(
+    msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
+) -> None:
+    combined = _runtime_decompile_output_8616(msc6_runtime_gate_artifacts, "fptr", "apply_twice")
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
 
     emitted_body = _extract_emitted_function_8616(combined, "apply_twice")
@@ -369,11 +377,12 @@ def test_msc6_fptr_apply_twice_consumes_stack_probe_call_artifacts() -> None:
 
 
 @pytest.mark.skipif(not LOOPS_EXE.is_file(), reason="LOOPS example binary is not available in this workspace.")
-def test_msc6_loops_nested_materializes_stack_counter_loop() -> None:
-    result = _run_decompile_proc("nested_loops", proc_kind="NEAR", exe_path=LOOPS_EXE)
-    combined = _combined_output_8616(result)
-
-    assert result.returncode == 0, combined
+def test_msc6_loops_nested_materializes_stack_counter_loop(
+    msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
+) -> None:
+    combined = _runtime_decompile_output_8616(
+        msc6_runtime_gate_artifacts, "loops_jumps", "nested_loops"
+    )
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
 
     emitted_body = _extract_emitted_function_8616(combined, "nested_loops")
@@ -388,11 +397,12 @@ def test_msc6_loops_nested_materializes_stack_counter_loop() -> None:
 
 
 @pytest.mark.skipif(not POINT_EXE.is_file(), reason="POINT example binary is not available in this workspace.")
-def test_msc6_pointer_swap_preserves_loaded_temp_across_pointer_store() -> None:
-    result = _run_decompile_proc("swap_ptrs", proc_kind="NEAR", exe_path=POINT_EXE)
-    combined = _combined_output_8616(result)
-
-    assert result.returncode == 0, combined
+def test_msc6_pointer_swap_preserves_loaded_temp_across_pointer_store(
+    msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
+) -> None:
+    combined = _runtime_decompile_output_8616(
+        msc6_runtime_gate_artifacts, "pointer_memory", "swap_ptrs"
+    )
     assert "[tail-validation] whole-tail validation clean across 1 functions" in combined
 
     emitted_body = _extract_emitted_function_8616(combined, "swap_ptrs")
@@ -405,48 +415,37 @@ def test_msc6_pointer_swap_preserves_loaded_temp_across_pointer_store() -> None:
 @pytest.mark.skipif(not CMP16_EXE.is_file(), reason="CMP16 example binary is not available in this workspace.")
 @pytest.mark.skipif(not KVIKDOS_PATH.is_file(), reason="kvikdos is not available in this workspace.")
 @pytest.mark.skipif(not MSC6_ROOT.is_dir(), reason="MS C 6 root is not available in this workspace.")
-@pytest.mark.xdist_group("msc6-runtime-gate")
-@pytest.mark.parametrize(
-    ("example_name", "exe_path"),
-    [
-        ("simple_control", SIMPLE_EXE),
-        ("cmp16", CMP16_EXE),
-        ("cmp32", CMP32_EXE),
-        ("fptr", FPTR_EXE),
-        ("loops_jumps", LOOPS_EXE),
-        ("pointer_memory", POINT_EXE),
-        ("scalar_types_io", TYPES_EXE),
-    ],
-)
+@pytest.mark.parametrize(("example_name", "exe_path"), MSC6_RUNTIME_EXAMPLES)
 def test_msc6_rebuilt_comparison_executable_runs_success_sentinel(
-    tmp_path: Path,
+    msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
     example_name: str,
     exe_path: Path,
 ) -> None:
     if not exe_path.is_file():
         pytest.skip(f"{example_name} example binary is not available in this workspace.")
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(RUNTIME_GATE_PATH),
-            "--example",
-            example_name,
-            "--expected-exit-code",
-            "255",
-            "--timeout",
-            "60",
-            "--out-dir",
-            str(tmp_path / f"{example_name}_runtime_gate"),
-            "--clean",
-        ],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=300,
-        check=False,
-    )
+    result = msc6_runtime_gate_artifacts.results[example_name]
+    assert not isinstance(result, subprocess.TimeoutExpired), str(result)
+    assert result is not None
     combined = f"{result.stderr}\n{result.stdout}"
     assert result.returncode == 0, combined
     assert "status=passed" in combined
     assert "run_exit=255" in combined
+
+
+@pytest.fixture(scope="module")
+def msc6_runtime_gate_artifacts(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> MSC6RuntimeGateArtifacts:
+    """Load verified evidence or run each complete runtime gate once."""
+    return load_or_run_msc6_runtime_gate(
+        MSC6RuntimeGateInputs(
+            repo_root=REPO_ROOT,
+            cache_root=REPO_ROOT / ".cache" / "pytest" / "msc6-runtime-gate",
+            fallback_output_root=tmp_path_factory.mktemp("msc6_runtime_gate"),
+            runtime_gate_path=RUNTIME_GATE_PATH,
+            kvikdos_path=KVIKDOS_PATH,
+            msc6_root=MSC6_ROOT,
+            examples=MSC6_RUNTIME_EXAMPLES,
+        )
+    )

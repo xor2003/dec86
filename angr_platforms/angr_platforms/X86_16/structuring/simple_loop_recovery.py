@@ -14,6 +14,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from ..function_evidence_inventory import (
+    FunctionEvidenceKind8616,
+    collect_function_binary_evidence_8616,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class InsnSummary8616:
@@ -263,7 +268,18 @@ def _function_instruction_summaries_8616(project: object, function: object) -> l
     # This recognizer only needs Capstone operands. Using project.factory.block()
     # here invokes the full x86-16 lifter for every block and can dominate
     # decompilation time for functions that do not match this narrow pattern.
-    return _linear_instruction_summaries_8616(project, function, max_size=0x300)
+    return list(
+        collect_function_binary_evidence_8616(
+            project,
+            function,
+            kind=FunctionEvidenceKind8616.INSTRUCTION_SUMMARIES,
+            builder=lambda evidence_project, evidence_function: _linear_instruction_summaries_8616(
+                evidence_project,
+                evidence_function,
+                max_size=0x300,
+            ),
+        )
+    )
 
 
 def _capstone_instruction_summaries_from_bytes_8616(

@@ -1,15 +1,30 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
-from scripts.build_debug_info_corpus import build_one, selected_specs
+from scripts.build_debug_info_corpus import _run_with_env, build_one, selected_specs
 
 KVIKDOS = Path("/home/xor/kvikdos/kvikdos")
 DOSBOX = Path("/opt/dosbox-staging/dosbox") if Path("/opt/dosbox-staging/dosbox").exists() else Path("/usr/bin/dosbox")
 COMPILERS = Path("/home/xor/inertia_player/dos_compilers")
+
+
+def test_external_tool_timeout_is_a_structured_build_failure(monkeypatch) -> None:
+    def raise_timeout(*_args, **_kwargs) -> None:
+        raise subprocess.TimeoutExpired(["tool"], 7, output=b"partial out", stderr=b"partial err")
+
+    monkeypatch.setattr(subprocess, "run", raise_timeout)
+
+    result = _run_with_env(["tool"], timeout=7)
+
+    assert result.returncode == 124
+    assert result.stdout == "partial out"
+    assert result.stderr == "partial err\ntimed out after 7 seconds\n"
 
 
 def _real_compiler_matrix_available() -> bool:
@@ -24,11 +39,17 @@ def _real_compiler_matrix_available() -> bool:
 
 
 @pytest.mark.skipif(not _real_compiler_matrix_available(), reason="DOS compiler matrix is not available")
+@pytest.mark.resource_serial
 def test_real_compiler_debug_info_corpus_representative_formats(tmp_path):
-    results = {
-        spec.name: build_one(spec, tmp_path, kvikdos=KVIKDOS, dosbox=DOSBOX, compilers_root=COMPILERS)
-        for spec in selected_specs("msc5,msc6,msc8,tc2")
-    }
+    specs = selected_specs("msc5,msc6,msc8,tc2")
+    compiler_output_root = tmp_path / ("partitioned-runner-" + "long-path-" * 12)
+
+    def build_spec(spec):
+        return build_one(spec, compiler_output_root, kvikdos=KVIKDOS, dosbox=DOSBOX, compilers_root=COMPILERS)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        built = executor.map(build_spec, specs)
+        results = {spec.name: result for spec, result in zip(specs, built, strict=True)}
 
     assert results["msc5"]["built"]
     nb00 = results["msc5"]["debug"]["nb00"]
@@ -48,8 +69,7 @@ def test_real_compiler_debug_info_corpus_representative_formats(tmp_path):
     assert nb0204["type_record_names"][:3] == ["pair_s", "left", "right"]
     assert "global_counter" in nb0204["debug_identifiers"]
 
-    if not results["msc8"]["built"]:
-        pytest.skip("Microsoft C v8 debug-info sample did not build in this local compiler matrix")
+    assert results["msc8"]["built"], results["msc8"]
     nb09 = results["msc8"]["debug"]["nb0204"]
     assert nb09["version"] == "NB09"
     assert nb09["line_count"] == 13

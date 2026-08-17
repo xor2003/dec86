@@ -10,7 +10,24 @@ import weakref
 from dataclasses import dataclass
 
 SAFE_X86_16_SLICE_BASE: int = 0x1000
-_ORIGINAL_ADDR_BY_FUNCTION_ID: dict[int, tuple[weakref.ReferenceType[object] | None, int]] = {}
+
+
+@dataclass(frozen=True)
+class _OriginalAddrRecord:
+    """Bind an original address to the exact function object that owns it."""
+
+    function_ref: weakref.ReferenceType[object] | None
+    strong_function: object | None
+    original_addr: int
+
+    def owns(self, function: object) -> bool:
+        """Return whether this record belongs to ``function`` rather than a reused id."""
+        if self.function_ref is not None:
+            return self.function_ref() is function
+        return self.strong_function is function
+
+
+_ORIGINAL_ADDR_BY_FUNCTION_ID: dict[int, _OriginalAddrRecord] = {}
 
 
 @dataclass(frozen=True)
@@ -68,9 +85,8 @@ def function_original_addr(function: object) -> int:
     """Return a function's original address, accounting for rebased exact slices."""
     original_record = _ORIGINAL_ADDR_BY_FUNCTION_ID.get(id(function))
     if original_record is not None:
-        function_ref, original_addr = original_record
-        if function_ref is None or function_ref() is function:
-            return original_addr
+        if original_record.owns(function):
+            return original_record.original_addr
         _ORIGINAL_ADDR_BY_FUNCTION_ID.pop(id(function), None)
     # dynamic angr compatibility boundary: recovered Function objects expose optional info.
     info = getattr(function, "info", None)
@@ -86,10 +102,16 @@ def function_original_addr(function: object) -> int:
 def mark_function_original_addr(function: object, original_addr: int) -> None:
     """Attach an original address to a recovered or rebased function object."""
     try:
-        function_ref: weakref.ReferenceType[object] | None = weakref.ref(function)
+        function_ref = weakref.ref(function)
+        strong_function: object | None = None
     except TypeError:
         function_ref = None
-    _ORIGINAL_ADDR_BY_FUNCTION_ID[id(function)] = (function_ref, original_addr)
+        strong_function = function
+    _ORIGINAL_ADDR_BY_FUNCTION_ID[id(function)] = _OriginalAddrRecord(
+        function_ref=function_ref,
+        strong_function=strong_function,
+        original_addr=original_addr,
+    )
     # dynamic angr compatibility boundary: recovered Function objects expose optional info.
     info = getattr(function, "info", None)
     if not isinstance(info, dict):

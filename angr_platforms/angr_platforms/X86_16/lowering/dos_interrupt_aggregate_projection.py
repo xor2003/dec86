@@ -15,9 +15,9 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.analyses.decompiler.structured_codegen.c import unpack_typeref
 from angr.sim_type import SimStruct, SimType, TypeRef
 from angr.sim_variable import SimMemoryVariable
+from angr.utils.types import unpack_typeref
 
 from .cod_global_identity import CodGlobalIdentityFact8616
 from .dos_interrupt_abi import DosInterruptAbiArgumentKind8616, DosInterruptAggregateTypes8616
@@ -241,33 +241,51 @@ def project_dos_interrupt_global_access_8616(
     surface = _access_surface_8616(node)
     if surface is None:
         return None
-    candidates: list[
-        tuple[DosInterruptAggregateObjectFact8616, tuple[tuple[SimStruct, int, str], ...]]
-    ] = []
-    for fact in objects:
-        widths = {surface.width}
-        if isinstance(node, structured_c.CVariable) and _name_matches_object_8616(surface.name, fact):
-            widths.update(
-                item.width
-                for item in evidence
-                if item.base_offset == surface.offset and item.name in fact.canonical_names
-            )
-            widths.update(
-                item.width
-                for item in identities
-                if item.offset == surface.offset and item.source_alias == fact.display_name
-            )
-        for width in widths:
-            candidate = _GlobalAccessSurface8616(surface.offset, width, surface.name)
-            if not _evidence_matches_object_8616(candidate, fact, evidence, identities):
-                continue
-            path = _projection_path_8616(fact, surface.offset, width, types)
-            if path is not None:
-                candidates.append((fact, path))
-    unique = tuple(dict.fromkeys(candidates))
-    if len(unique) != 1:
+
+    def collect_candidates(
+        *,
+        alternate_evidence_widths: bool,
+    ) -> tuple[
+        tuple[DosInterruptAggregateObjectFact8616, tuple[tuple[SimStruct, int, str], ...]], ...
+    ]:
+        """Collect unique projections for exact or fallback width evidence."""
+        candidates: list[
+            tuple[DosInterruptAggregateObjectFact8616, tuple[tuple[SimStruct, int, str], ...]]
+        ] = []
+        for fact in objects:
+            widths = {surface.width}
+            if alternate_evidence_widths:
+                widths = set()
+                if isinstance(node, structured_c.CVariable) and _name_matches_object_8616(
+                    surface.name, fact
+                ):
+                    widths.update(
+                        item.width
+                        for item in evidence
+                        if item.base_offset == surface.offset and item.name in fact.canonical_names
+                    )
+                    widths.update(
+                        item.width
+                        for item in identities
+                        if item.offset == surface.offset and item.source_alias == fact.display_name
+                    )
+                widths.discard(surface.width)
+            for width in widths:
+                candidate = _GlobalAccessSurface8616(surface.offset, width, surface.name)
+                if not _evidence_matches_object_8616(candidate, fact, evidence, identities):
+                    continue
+                path = _projection_path_8616(fact, surface.offset, width, types)
+                if path is not None:
+                    candidates.append((fact, path))
+        return tuple(dict.fromkeys(candidates))
+
+    exact = collect_candidates(alternate_evidence_widths=False)
+    if len(exact) > 1:
         return None
-    fact, path = unique[0]
+    candidates = exact or collect_candidates(alternate_evidence_widths=True)
+    if len(candidates) != 1:
+        return None
+    fact, path = candidates[0]
     result: structured_c.CExpression = _aggregate_base_8616(codegen, fact, types)
     for container, offset, field_name in path:
         result = structured_c.CVariableField(

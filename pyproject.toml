@@ -142,6 +142,10 @@ exclude = [
 testpaths = [
     "angr_platforms/tests",
 ]
+markers = [
+    "repository_contract: validates current whole-repository state and runs as an explicit hard gate outside focused pytest lanes",
+    "resource_serial: requires an exclusive partitioned-suite wave because external tools or shared resources become unreliable under heavy contention",
+]
 addopts = [
     "--durations=10",
     "--durations-min=1.0",

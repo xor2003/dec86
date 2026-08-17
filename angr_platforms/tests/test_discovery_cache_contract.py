@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,7 @@ from angr_platforms.X86_16.callsite_summary import (
 )
 
 import inertia_decompiler.cache as recovery_cache
+import inertia_decompiler.cli_function_discovery as function_discovery
 from inertia_decompiler.cli_function_discovery import (
     DisplayCatalogCachePolicy8616,
     SourceRegionCatalogEvidence8616,
@@ -20,6 +22,8 @@ from inertia_decompiler.cli_function_discovery import (
     _load_catalog_address_cache,
     _source_region_catalog_evidence_8616,
     _store_catalog_address_cache,
+    _store_catalog_address_cache_addrs_8616,
+    record_direct_target_caller_return_use_evidence_8616,
 )
 from inertia_decompiler.discovery_cache_contract import (
     caller_return_use_evidence_record_8616,
@@ -99,6 +103,111 @@ def test_display_catalog_cache_restores_exact_discovery_evidence(monkeypatch, tm
     assert caller_return_use_evidence_by_addr_8616(destination_project) == {0x10560: evidence}
     assert _source_region_catalog_evidence_8616(destination_project) == source_region
     assert _evidence_digest(destination_project) == _evidence_digest(source_project)
+
+
+def test_direct_target_reuses_closed_display_catalog_evidence(monkeypatch, tmp_path):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    source_project = SimpleNamespace(entry=0x1100, arch=SimpleNamespace(name="86_16"))
+    destination_project = SimpleNamespace(entry=0x1100, arch=SimpleNamespace(name="86_16"))
+    pair = (SimpleNamespace(), SimpleNamespace(addr=0x10560))
+    evidence = _return_use_evidence()
+    record_caller_return_use_evidence_8616(source_project, evidence.target_addr, evidence)
+    monkeypatch.setattr(recovery_cache, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(recovery_cache, "_cache_source_digest", lambda _paths: "discovery-digest")
+    _configure_display_catalog_cache_policy_8616(source_project, _cache_policy())
+    _configure_display_catalog_cache_policy_8616(destination_project, _cache_policy())
+    _store_catalog_address_cache(source_project, binary, [pair])
+
+    restored = record_direct_target_caller_return_use_evidence_8616(
+        destination_project,
+        evidence.target_addr,
+        binary_path=binary,
+    )
+
+    assert restored == evidence
+    assert caller_return_use_evidence_by_addr_8616(destination_project) == {
+        evidence.target_addr: evidence,
+    }
+
+
+def test_direct_target_publishes_collected_evidence(monkeypatch, tmp_path):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    project = SimpleNamespace()
+    evidence = _return_use_evidence()
+    stored: list[tuple[int, ...]] = []
+    monkeypatch.setattr(function_discovery, "_load_catalog_address_cache", lambda *_args: [])
+    monkeypatch.setattr(
+        function_discovery,
+        "isolated_discovery_evidence_project_8616",
+        lambda source: source,
+    )
+    monkeypatch.setattr(
+        function_discovery,
+        "_rank_pre_entry_source_function_seeds_8616",
+        lambda _project: [evidence.target_addr],
+    )
+    monkeypatch.setattr(
+        function_discovery,
+        "_binary_padding_entry_aliases_8616",
+        lambda _project, address: (address,),
+    )
+    monkeypatch.setattr(
+        function_discovery,
+        "_pre_entry_source_function_ranges_8616",
+        lambda *_args: ((0x1000, 0x1010),),
+    )
+    monkeypatch.setattr(
+        function_discovery,
+        "_collect_caller_return_use_for_entry_aliases_8616",
+        lambda *_args: evidence,
+    )
+    monkeypatch.setattr(
+        function_discovery,
+        "_store_catalog_address_cache_addrs_8616",
+        lambda _project, _binary, addrs: stored.append(addrs),
+    )
+
+    result = record_direct_target_caller_return_use_evidence_8616(
+        project,
+        evidence.target_addr,
+        binary_path=binary,
+    )
+
+    assert result == evidence
+    assert stored == [(evidence.target_addr,)]
+    assert caller_return_use_evidence_by_addr_8616(project) == {
+        evidence.target_addr: evidence,
+    }
+
+
+def test_catalog_store_merges_independent_target_evidence(monkeypatch, tmp_path):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    first_project = SimpleNamespace(entry=0x1100, arch=SimpleNamespace(name="86_16"))
+    second_project = SimpleNamespace(entry=0x1100, arch=SimpleNamespace(name="86_16"))
+    destination_project = SimpleNamespace(entry=0x1100, arch=SimpleNamespace(name="86_16"))
+    first = _return_use_evidence()
+    second = replace(first, target_addr=0x10570)
+    monkeypatch.setattr(recovery_cache, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
+    monkeypatch.setattr(recovery_cache, "_cache_source_digest", lambda _paths: "discovery-digest")
+    for project in (first_project, second_project, destination_project):
+        _configure_display_catalog_cache_policy_8616(project, _cache_policy())
+    record_caller_return_use_evidence_8616(first_project, first.target_addr, first)
+    record_caller_return_use_evidence_8616(second_project, second.target_addr, second)
+
+    _store_catalog_address_cache_addrs_8616(first_project, binary, (first.target_addr,))
+    _store_catalog_address_cache_addrs_8616(second_project, binary, (second.target_addr,))
+
+    assert _load_catalog_address_cache(destination_project, binary) == [
+        first.target_addr,
+        second.target_addr,
+    ]
+    assert caller_return_use_evidence_by_addr_8616(destination_project) == {
+        first.target_addr: first,
+        second.target_addr: second,
+    }
 
 
 def test_display_catalog_cache_refuses_legacy_address_only_payload(monkeypatch, tmp_path):

@@ -888,7 +888,7 @@ def test_scan_safe_skips_tiny_guard_call_helpers():
 @pytest.mark.parametrize("proc_name", ["_dos_alloc", "_dos_resize", "_dos_mcbInfo"])
 def test_scan_safe_keeps_short_dos_memory_helpers_in_bounded_recovery(proc_name: str):
     repo_root = Path(__file__).resolve().parents[2]
-    cod_path = repo_root / ".codex_automation" / "evidence_subset" / "cod" / "DOSFUNC.COD"
+    cod_path = repo_root / "cod" / "DOSFUNC.COD"
     if not cod_path.exists():
         pytest.skip(f"{cod_path} fixture is not available")
     funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}
@@ -954,7 +954,7 @@ def test_scan_safe_keeps_known_hotspots_in_conservative_recovery(cod_name: str, 
 )
 def test_scan_safe_3dplanes_oversized_functions_stay_in_lift_only_recovery(proc_name: str, expected_len: int):
     repo_root = Path(__file__).resolve().parents[2]
-    cod_path = repo_root / ".codex_automation" / "evidence_subset" / "cod" / "f14" / "3DPLANES.COD"
+    cod_path = repo_root / "cod" / "f14" / "3DPLANES.COD"
     if not cod_path.exists():
         pytest.skip(f"{cod_path} fixture is not available")
     funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}
@@ -984,7 +984,7 @@ def test_scan_safe_3dplanes_oversized_functions_stay_in_lift_only_recovery(proc_
 @pytest.mark.parametrize("proc_name", ["_DrawRegBoat", "_shape_only_regression"])
 def test_scan_safe_call_heavy_helper_classification_is_shape_based(proc_name: str):
     repo_root = Path(__file__).resolve().parents[2]
-    cod_path = repo_root / ".codex_automation" / "evidence_subset" / "cod" / "f14" / "3DPLANES.COD"
+    cod_path = repo_root / "cod" / "f14" / "3DPLANES.COD"
     if not cod_path.exists():
         pytest.skip(f"{cod_path} fixture is not available")
     funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}
@@ -1014,7 +1014,7 @@ def test_scan_safe_call_heavy_helper_classification_is_shape_based(proc_name: st
 @pytest.mark.parametrize("proc_name", ["_Release3DMemory", "_shape_only_release"])
 def test_scan_safe_tiny_guard_call_helper_bypass_is_shape_based(proc_name: str):
     repo_root = Path(__file__).resolve().parents[2]
-    cod_path = repo_root / ".codex_automation" / "evidence_subset" / "cod" / "f14" / "3DLOADER.COD"
+    cod_path = repo_root / "cod" / "f14" / "3DLOADER.COD"
     if not cod_path.exists():
         pytest.skip(f"{cod_path} fixture is not available")
     funcs = {name: (kind, code) for name, kind, code in extract_cod_functions(cod_path)}

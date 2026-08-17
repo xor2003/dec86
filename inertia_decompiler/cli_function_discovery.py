@@ -51,6 +51,7 @@ from angr_platforms.X86_16.frontend_instruction_reachability import (
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 
 from inertia_decompiler.cache import (
+    _cache_key_lock,
     _load_cache_json,
     _recovery_cache_key,
     _store_cache_json,
@@ -2269,29 +2270,55 @@ def _catalog_address_cache_key_8616(
     ))
 
 
+def _store_catalog_address_cache_addrs_8616(
+    project: angr.Project,
+    binary_path: Path,
+    addrs: tuple[int, ...],
+) -> None:
+    """Persist exact catalog addresses and their currently closed evidence."""
+    cache_key = _catalog_address_cache_key_8616(project, binary_path)
+    if cache_key is None:
+        return
+    with _cache_key_lock("recovery", cache_key):
+        merged_addrs = addrs
+        merged_evidence = caller_return_use_evidence_by_addr_8616(project)
+        source_region = _source_region_catalog_evidence_8616(project)
+        cached = _load_cache_json("recovery", cache_key)
+        try:
+            cached_payload = display_catalog_cache_payload_from_record_8616(cached)
+        except ValueError:
+            pass
+        else:
+            merged_addrs = tuple(dict.fromkeys((*cached_payload.addrs, *addrs)))
+            merged_evidence = {
+                **cached_payload.caller_return_use_by_addr(),
+                **merged_evidence,
+            }
+            if source_region is None:
+                source_region = cached_payload.source_region
+        try:
+            payload = display_catalog_cache_record_8616(
+                merged_addrs,
+                merged_evidence,
+                source_region,
+            )
+        except ValueError:
+            return
+        _store_cache_json("recovery", cache_key, payload)
+
+
 def _store_catalog_address_cache(
     project: angr.Project,
     binary_path: Path,
     function_cfg_pairs: list[_FunctionCfgPair],
 ) -> None:
-    """Persist addresses with the exact typed evidence that can affect workers."""
-    cache_key = _catalog_address_cache_key_8616(project, binary_path)
-    if cache_key is None:
-        return
+    """Persist recovered function addresses with their exact typed evidence."""
     addrs = tuple(
         function_addr
         for _cfg, function in function_cfg_pairs
         if isinstance((function_addr := _dynamic_attr(function, "addr", None)), int)
     )
-    try:
-        payload = display_catalog_cache_record_8616(
-            addrs,
-            caller_return_use_evidence_by_addr_8616(project),
-            _source_region_catalog_evidence_8616(project),
-        )
-    except ValueError:
-        return
-    _store_cache_json("recovery", cache_key, payload)
+    _store_catalog_address_cache_addrs_8616(project, binary_path, addrs)
 
 
 def _load_catalog_address_cache(project: angr.Project, binary_path: Path) -> list[int]:
@@ -3188,15 +3215,24 @@ def _pre_entry_source_function_ranges_8616(
 def record_direct_target_caller_return_use_evidence_8616(
     project: angr.Project,
     target_addr: int,
+    *,
+    binary_path: Path | None = None,
 ) -> CallerReturnUseEvidence8616 | None:
     """Record closed caller-use evidence for one sidecar-free direct target.
 
     Caller discovery is bounded to framed functions in the startup-proven
     application region. An exact direct callee may live outside that catalog.
+    When available, the exact display-catalog cache restores the same typed
+    evidence before binary analysis is repeated.
     """
     existing = caller_return_use_evidence_by_addr_8616(project).get(target_addr)
     if isinstance(existing, CallerReturnUseEvidence8616):
         return existing
+    if binary_path is not None:
+        _load_catalog_address_cache(project, binary_path)
+        existing = caller_return_use_evidence_by_addr_8616(project).get(target_addr)
+        if isinstance(existing, CallerReturnUseEvidence8616):
+            return existing
     evidence_project = isolated_discovery_evidence_project_8616(project)
     source_seeds = tuple(_rank_pre_entry_source_function_seeds_8616(evidence_project))
     canonical_target = next(
@@ -3227,6 +3263,12 @@ def record_direct_target_caller_return_use_evidence_8616(
             project,
             evidence_target,
             replace(evidence, target_addr=evidence_target),
+        )
+    if binary_path is not None:
+        _store_catalog_address_cache_addrs_8616(
+            project,
+            binary_path,
+            source_seeds,
         )
     return replace(evidence, target_addr=target_addr)
 

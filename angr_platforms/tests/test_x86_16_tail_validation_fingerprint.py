@@ -973,6 +973,28 @@ def test_expr_fingerprint_cache_requires_same_retained_node_identity():
     )
 
 
+def test_expr_fingerprint_scope_refuses_reused_temporary_node_identity():
+    codegen = _DummyCodegen()
+    project = codegen.project
+    current = _const(1, codegen)
+    stale = _const(2978, codegen)
+    key = (None, id(current), type(current).__name__)
+    project._inertia_tail_validation_expr_fingerprint_cache_8616 = {key: "const:2978"}
+    project._inertia_tail_validation_expr_fingerprint_cache_nodes_8616 = {key: stale}
+    token = tail_validation_fingerprint_module._TEMPORARY_FINGERPRINT_NODES_8616.set(
+        {id(current): stale}
+    )
+    try:
+        assert _expr_fingerprint(current, project) == "const:1"
+        assert tail_validation_fingerprint_module._TEMPORARY_FINGERPRINT_NODES_8616.get() == {
+            id(current): stale
+        }
+    finally:
+        tail_validation_fingerprint_module._TEMPORARY_FINGERPRINT_NODES_8616.reset(token)
+
+    assert project._inertia_tail_validation_expr_fingerprint_cache_nodes_8616[key] is current
+
+
 def test_runtime_segment_helper_matches_raw_dereference_fingerprint():
     codegen = _DummyCodegen()
     project = codegen.project

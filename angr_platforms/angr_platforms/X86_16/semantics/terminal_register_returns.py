@@ -17,6 +17,7 @@ from typing import Any, Protocol, cast
 
 from angr.errors import SimTranslationError
 
+from ..frontend_instruction_reachability import decoded_block_instructions_8616
 from .branch_target_return import TerminalAxReturnEffectKind8616, terminal_ax_return_effect_8616
 
 __all__ = [
@@ -235,12 +236,10 @@ def collect_terminal_ax_return_evidence_8616(
         if block_addr in path:
             return
         try:
-            block = project_dynamic.factory.block(block_addr, opt_level=0)
+            insns = decoded_block_instructions_8616(project_dynamic, block_addr, opt_level=0)
         except (KeyError, SimTranslationError, ValueError):
             _record_failure()
             return
-        # Dynamic angr/capstone compatibility boundary.
-        insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
         if not insns:
             _record_failure()
             return

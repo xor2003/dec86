@@ -12,7 +12,7 @@ from angr_platforms.X86_16.load_dos_ne import DOSNE, DOSNEHeader  # noqa: F401
 import decompile
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MZ_EXPLODE_ARCHIVE = REPO_ROOT / "mz-explode" / "test" / "testdata.tar.gz"
+MZ_EXPLODE_ARCHIVE = REPO_ROOT / "borrow" / "mz-explode" / "test" / "testdata.tar.gz"
 PROGMAN_MEMBER = "testdata/ne/progman.cc"
 
 

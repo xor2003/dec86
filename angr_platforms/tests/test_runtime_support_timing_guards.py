@@ -1,8 +1,33 @@
 from __future__ import annotations
 
-import angr_platforms.X86_16.lowering.stack_lowering_from_facts as stack_lowering_from_facts
+import threading
+import time
 
-from inertia_decompiler.runtime_support import guard_angr_structuring_codegen_internal_timing
+import angr_platforms.X86_16.decompiler_structuring_stage as decompiler_structuring_stage
+import angr_platforms.X86_16.lowering.stack_lowering_from_facts as stack_lowering_from_facts
+import angr_platforms.X86_16.tail_validation as tail_validation
+import pytest
+
+from inertia_decompiler.runtime_support import (
+    AnalysisTimeout,
+    guard_angr_structuring_codegen_internal_timing,
+    guard_angr_tail_validation_collection_timing,
+    run_with_timeout_in_daemon_thread,
+)
+
+
+def test_process_alarm_timeout_does_not_leave_daemon_work_running():
+    thread_name = "process-alarm-timeout-regression"
+
+    with pytest.raises(AnalysisTimeout):
+        run_with_timeout_in_daemon_thread(
+            lambda: time.sleep(60),
+            timeout=1,
+            thread_name_prefix=thread_name,
+            prefer_process_alarm=True,
+        )
+
+    assert all(thread.name != thread_name for thread in threading.enumerate())
 
 
 def test_guard_structuring_timing_preserves_stack_lowering_from_facts_signature(monkeypatch):
@@ -27,3 +52,35 @@ def test_guard_structuring_timing_preserves_stack_lowering_from_facts_signature(
 
     assert result == "ok"
     assert recorded == [("cg", (["fact"],), {"validation_clone": True})]
+
+
+def test_tail_validation_timing_guard_forwards_boundary_fingerprint(monkeypatch):
+    recorded: list[tuple[object, object, str, str | None]] = []
+    original_stage_collect = decompiler_structuring_stage.collect_x86_16_tail_validation_summary
+
+    def _fake_collect(
+        project: object,
+        codegen: object,
+        *,
+        mode: str,
+        boundary_fingerprint: str | None = None,
+    ) -> str:
+        recorded.append((project, codegen, mode, boundary_fingerprint))
+        return "summary"
+
+    monkeypatch.setenv("INERTIA_DEBUG_TIMING", "1")
+    monkeypatch.setattr(tail_validation, "collect_x86_16_tail_validation_summary", _fake_collect)
+    project = object()
+    codegen = object()
+
+    with guard_angr_tail_validation_collection_timing():
+        result = decompiler_structuring_stage.collect_x86_16_tail_validation_summary(
+            project,
+            codegen,
+            mode="live_out",
+            boundary_fingerprint="boundary-1",
+        )
+
+    assert result == "summary"
+    assert recorded == [(project, codegen, "live_out", "boundary-1")]
+    assert decompiler_structuring_stage.collect_x86_16_tail_validation_summary is original_stage_collect

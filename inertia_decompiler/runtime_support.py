@@ -32,6 +32,7 @@ from concurrent.futures import TimeoutError as _FuturesTimeoutError
 from concurrent.futures.thread import _threads_queues, _worker
 from datetime import datetime
 
+from .fork_timeout import run_with_timeout_in_fork as run_with_timeout_in_fork
 from .variable_recovery_sub_guard import (
     build_guarded_handle_binop_mul_8616,
     build_guarded_handle_binop_sub_8616,
@@ -40,7 +41,6 @@ from .variable_recovery_sub_guard import (
 DEFAULT_FREE_RAM_BUDGET_FRACTION: float = 0.45
 DEFAULT_WORKER_MEMORY_FLOOR_MB: int = 256
 FORCE_SERIAL_FUNCTION_DECOMP_ENV: str = "INERTIA_FORCE_SERIAL_FUNCTION_DECOMPILATION"
-_FORK_CHILD_PID: int | None = None
 
 START_TIME: float = time.perf_counter()
 LAST_STEP_TIME: float = START_TIME
@@ -140,6 +140,7 @@ def _block_has_pathologically_complex_expr(
     block: object,
     limit: int = PEEPHOLE_COMPLEX_EXPR_NODE_LIMIT,
 ) -> bool:
+    """Return whether an AIL block contains an expression too deep to simplify safely."""
     cache: dict[int, int] = {}
     for stmt in getattr(block, "statements", ()) or ():
         for expr in _stmt_expr_children(stmt):
@@ -2912,9 +2913,8 @@ def analysis_timeout(timeout: int) -> typing.Iterator[None]:
         yield
         return
     if threading.current_thread() is not threading.main_thread():
-        if _FORK_CHILD_PID != os.getpid():
-            yield
-            return
+        yield
+        return
 
     old_handler = signal.signal(signal.SIGALRM, raise_timeout)
     signal.alarm(timeout)
@@ -2933,9 +2933,17 @@ def run_with_timeout_in_daemon_thread(
     *,
     timeout: int,
     thread_name_prefix: str,
+    prefer_process_alarm: bool = False,
 ) -> _TimeoutResultT:
-    """Run a nullary callable in one daemon worker with a bounded wait."""
+    """Run a callable with a process alarm or daemon-thread bounded wait.
+
+    Main-thread callers may request the process alarm when timed-out work must
+    stop instead of continuing in an abandoned daemon thread.
+    """
     timeout_seconds = max(1, timeout)
+    if prefer_process_alarm and threading.current_thread() is threading.main_thread():
+        with analysis_timeout(timeout_seconds):
+            return func()
     completed = threading.Event()
     result_box: dict[str, object] = {}
 
@@ -2978,114 +2986,6 @@ def run_with_timeout_in_daemon_thread(
                 faulthandler.cancel_dump_traceback_later()
         with contextlib.suppress(Exception):
             thread.join(0)
-
-
-def run_with_timeout_in_fork(
-    func: Callable[[], _TimeoutResultT],
-    *,
-    timeout: int,
-) -> _TimeoutResultT:
-    """Run a nullary callable in an isolated POSIX child with a bounded wait."""
-    def _impl() -> _TimeoutResultT:
-        if os.name != "posix" or not hasattr(os, "fork"):
-            raise RuntimeError("fork unavailable")
-        if threading.current_thread() is not threading.main_thread():
-            raise RuntimeError("fork-only supported from main thread")
-        if threading.active_count() != 1:
-            raise RuntimeError("fork-only supported without extra live threads")
-
-        read_fd, write_fd = os.pipe()
-        pid = os.fork()
-        if pid == 0:
-            _FORK_CHILD_PID = os.getpid()
-            try:
-                os.close(read_fd)
-                stack_dump_raw = os.environ.get("INERTIA_FORK_STACK_DUMP_SEC", "").strip()
-                if stack_dump_raw:
-                    with contextlib.suppress(Exception):
-                        stack_dump_sec = max(1, int(float(stack_dump_raw)))
-                        stack_dump_file = _faulthandler_output_file()
-                        if stack_dump_file is not None:
-                            faulthandler.enable(file=stack_dump_file, all_threads=True)
-                            faulthandler.dump_traceback_later(stack_dump_sec, repeat=True, file=stack_dump_file)
-                payload: tuple[object, ...]
-                try:
-                    payload = ("ok", func())
-                except BaseException as ex:  # noqa: BLE001
-                    payload = ("err", type(ex).__name__, str(ex) + "\n" + traceback.format_exc())
-                try:
-                    data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
-                except BaseException as ex:  # noqa: BLE001
-                    payload = ("err", type(ex).__name__, f"fork result is not pickleable: {ex}")
-                    data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
-                os.write(write_fd, len(data).to_bytes(8, "little"))
-                os.write(write_fd, data)
-            finally:
-                with contextlib.suppress(OSError):
-                    os.close(write_fd)
-                os._exit(0)
-
-        def _child_exit_detail(p: int, status: int) -> str:
-            if os.WIFEXITED(status):
-                return f"exitcode={os.WEXITSTATUS(status)}"
-            if os.WIFSIGNALED(status):
-                sig = os.WTERMSIG(status)
-                sig_name = (
-                    getattr(signal, "Signals", lambda x: f"SIG={x}")(sig)
-                    if hasattr(signal, "strsignal")
-                    else f"SIG={sig}"
-                )
-                try:
-                    sig_name = signal.strsignal(sig)
-                except Exception:
-                    sig_name = f"signal={sig}"
-                return f"killed_by={sig_name}"
-            return f"exit_status_raw={int(status)}"
-
-        os.close(write_fd)
-        try:
-            ready, _, _ = select.select([read_fd], [], [], max(1, timeout))
-            if not ready:
-                with contextlib.suppress(ProcessLookupError):
-                    os.kill(pid, signal.SIGKILL)
-                _pid, _status = os.waitpid(pid, 0)
-                raise TimeoutError(f"Timed out after {timeout}s (child {_child_exit_detail(pid, _status)}).")
-            header = b""
-            while len(header) < 8:
-                chunk = os.read(read_fd, 8 - len(header))
-                if not chunk:
-                    break
-                header += chunk
-            if len(header) != 8:
-                _pid, _status = os.waitpid(pid, 0)
-                raise RuntimeError(f"fork child exited without result ({_child_exit_detail(pid, _status)})")
-            expected = int.from_bytes(header, "little")
-            framed_data = bytearray()
-            while len(framed_data) < expected:
-                chunk = os.read(read_fd, min(65536, expected - len(framed_data)))
-                if not chunk:
-                    break
-                framed_data.extend(chunk)
-            _pid, _status = os.waitpid(pid, 0)
-            if len(framed_data) != expected:
-                raise RuntimeError(
-                    f"fork child returned incomplete result (expected={expected}B got={len(data)}B {_child_exit_detail(pid, _status)})"
-                )
-            payload = typing.cast(tuple[object, ...], pickle.loads(bytes(framed_data)))
-            if not isinstance(payload, tuple) or not payload:
-                raise RuntimeError(f"fork child returned invalid payload ({_child_exit_detail(pid, _status)})")
-            if payload[0] == "ok":
-                return typing.cast(_TimeoutResultT, payload[1])
-            if payload[0] == "err":
-                if payload[1] in {"TimeoutError", "AnalysisTimeout"}:
-                    raise TimeoutError(payload[2] or f"Timed out after {timeout}s.")
-                raise RuntimeError(f"{payload[1]}: {payload[2]} ({_child_exit_detail(pid, _status)})")
-            raise RuntimeError(f"fork child returned unknown status ({_child_exit_detail(pid, _status)})")
-        finally:
-            with contextlib.suppress(OSError):
-                os.close(read_fd)
-
-    return _impl()
 
 
 def _read_framed_pickle(fd: int) -> typing.Any:
@@ -3403,34 +3303,48 @@ def guard_angr_tail_validation_collection_timing() -> Iterator[None]:
         fingerprint_x86_16_tail_validation_boundary,
     )
 
-    orig_fingerprint = fingerprint_x86_16_tail_validation_boundary
-    orig_collect = collect_x86_16_tail_validation_summary
+    wrapped_fingerprint = fingerprint_x86_16_tail_validation_boundary
+    wrapped_collect = collect_x86_16_tail_validation_summary
+
+    import angr_platforms.X86_16.decompiler_structuring_stage as _ds_mod
+
+    orig_fingerprint = _ds_mod.fingerprint_x86_16_tail_validation_boundary
+    orig_collect = _ds_mod.collect_x86_16_tail_validation_summary
 
     def _timed_fingerprint(project: object, codegen: object, *, mode: str) -> object:
         _t0 = _time.perf_counter()
         print("[dbg] stage-time: tail_validation:fingerprint:before start")
         sys.stderr.flush()
         try:
-            return orig_fingerprint(project, codegen, mode=mode)
+            return wrapped_fingerprint(project, codegen, mode=mode)
         finally:
             _elapsed = _time.perf_counter() - _t0
             print(f"[dbg] stage-time: tail_validation:fingerprint:before done elapsed={_elapsed:.2f}s")
             sys.stderr.flush()
 
-    def _timed_collect(project: object, codegen: object, *, mode: str) -> object:
+    def _timed_collect(
+        project: object,
+        codegen: object,
+        *,
+        mode: str,
+        boundary_fingerprint: str | None = None,
+    ) -> object:
         _t0 = _time.perf_counter()
         print("[dbg] stage-time: tail_validation:collect:before start")
         sys.stderr.flush()
         try:
-            return orig_collect(project, codegen, mode=mode)
+            return wrapped_collect(
+                project,
+                codegen,
+                mode=mode,
+                boundary_fingerprint=boundary_fingerprint,
+            )
         finally:
             _elapsed = _time.perf_counter() - _t0
             print(f"[dbg] stage-time: tail_validation:collect:before done elapsed={_elapsed:.2f}s")
             sys.stderr.flush()
 
-    # Patch the module that _decompile_structuring_8616 imports from
-    import angr_platforms.X86_16.decompiler_structuring_stage as _ds_mod
-
+    # Patch the module that _decompile_structuring_8616 imports from.
     _ds_mod.fingerprint_x86_16_tail_validation_boundary = _timed_fingerprint
     _ds_mod.collect_x86_16_tail_validation_summary = _timed_collect
     try:

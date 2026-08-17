@@ -8,9 +8,13 @@ Responsibility: map changed files to focused fast ownership tests.
 from __future__ import annotations
 
 import argparse
-import ast
 from dataclasses import dataclass
 from pathlib import Path
+
+if __package__:
+    from .pytest_source_index import PytestSourceIndex, load_pytest_source_index
+else:
+    from pytest_source_index import PytestSourceIndex, load_pytest_source_index
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 VALID_OWNERSHIP_TIERS: frozenset[str] = frozenset({"fast"})
@@ -90,8 +94,37 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     ),
     TestOwnershipRule(
         owner="test-ownership-manifest",
-        paths=("scripts/test_ownership_manifest.py",),
-        tests=("angr_platforms/tests/test_test_ownership_manifest.py",),
+        paths=(
+            "scripts/pytest_assertion_facts.py",
+            "scripts/pytest_source_index.py",
+            "scripts/test_ownership_manifest.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_pytest_source_index.py",
+            "angr_platforms/tests/test_test_ownership_manifest.py",
+        ),
+    ),
+    TestOwnershipRule(
+        owner="pytest-performance-profile",
+        paths=(
+            "scripts/pytest_inventory_check.py",
+            "scripts/pytest_inventory_review.py",
+            "scripts/pytest_partition_execution.py",
+            "scripts/pytest_partition_plugin.py",
+            "scripts/pytest_partitioned.py",
+            "scripts/pytest_process_metrics.py",
+            "scripts/pytest_profile.py",
+            "scripts/pytest_resource_history.py",
+            "scripts/pytest_resource_scheduler.py",
+            "scripts/pytest_test_inventory.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_pytest_inventory_check.py",
+            "angr_platforms/tests/test_pytest_partitioned.py",
+            "angr_platforms/tests/test_pytest_process_metrics.py",
+            "angr_platforms/tests/test_pytest_profile.py",
+            "angr_platforms/tests/test_pytest_resource_scheduler.py",
+        ),
     ),
     TestOwnershipRule(
         owner="type-ratchet",
@@ -148,6 +181,28 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/tests/test_serial_clean_worker_cache.py",
             "angr_platforms/tests/test_segment_program_layout_reporting.py",
         ),
+    ),
+    TestOwnershipRule(
+        owner="function-decompilation-cache-context",
+        paths=(
+            "inertia_decompiler/cache.py",
+            "inertia_decompiler/cache_lock.py",
+            "inertia_decompiler/function_cache_context.py",
+            "inertia_decompiler/work_items.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_cache_lock.py",
+            "angr_platforms/tests/test_function_cache_context.py",
+            "angr_platforms/tests/test_x86_16_decompilation_cache_surface.py",
+        ),
+    ),
+    TestOwnershipRule(
+        owner="cli-fork-timeout",
+        paths=(
+            "inertia_decompiler/fork_timeout.py",
+            "inertia_decompiler/runtime_support.py",
+        ),
+        tests=("angr_platforms/tests/test_fork_timeout.py",),
     ),
     TestOwnershipRule(
         owner="cli-project-loading",
@@ -766,6 +821,24 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         tests=("angr_platforms/tests/test_msc6_toolchain_lock.py",),
     ),
     TestOwnershipRule(
+        owner="msc6-runtime-gate",
+        paths=(
+            "scripts/msc6_runtime_gate_artifacts.py",
+            "scripts/verify_msc_example_runtime_gate.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_msc6_runtime_gate_artifacts.py",
+            "angr_platforms/tests/test_build_msc6_examples.py::"
+            "test_runtime_gate_links_generic_runtime_support",
+            "angr_platforms/tests/test_build_msc6_examples.py::"
+            "test_runtime_gate_decompiles_functions_with_bounded_parallelism",
+            "angr_platforms/tests/test_build_msc6_examples.py::"
+            "test_runtime_gate_decompile_worker_count_is_bounded",
+            "angr_platforms/tests/test_build_msc6_examples.py::"
+            "test_runtime_gate_worker_control_is_not_forwarded_to_decompiler",
+        ),
+    ),
+    TestOwnershipRule(
         owner="x86-16-cod-module-caller-evidence",
         paths=(
             "angr_platforms/angr_platforms/X86_16/lowering/callee_argument_width_evidence.py",
@@ -1293,6 +1366,14 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         tests=("angr_platforms/tests/test_x86_16_structuring_grouping_report.py",),
     ),
     TestOwnershipRule(
+        owner="x86-16-structuring-stage-boundary",
+        paths=("angr_platforms/angr_platforms/X86_16/decompiler_structuring_stage.py",),
+        tests=(
+            "angr_platforms/tests/test_x86_16_structuring_stage_environment.py",
+            "angr_platforms/tests/test_x86_16_structuring_pass_validation.py",
+        ),
+    ),
+    TestOwnershipRule(
         owner="x86-16-structuring-grouped-refusal-report",
         paths=("angr_platforms/angr_platforms/X86_16/structuring_grouped_refusal_report.py",),
         tests=("angr_platforms/tests/test_x86_16_structuring_grouped_refusal_report.py",),
@@ -1349,6 +1430,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         ),
         tests=(
             "angr_platforms/tests/test_decompiler_architecture_check.py",
+            "angr_platforms/tests/test_x86_16_jcc_instruction_reuse.py",
             "angr_platforms/tests/test_x86_16_jcc_typed_condition_order.py",
             "angr_platforms/tests/test_x86_16_decompiler_postprocess_utils.py",
         ),
@@ -1434,90 +1516,6 @@ def select_tests_for_files(files: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(selected)
 
 
-def _pytest_nodes_for_file(path: Path) -> set[str]:
-    """Return top-level and class-contained pytest node names for a test file."""
-
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    except SyntaxError:
-        return set()
-    nodes: set[str] = set()
-    for item in tree.body:
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            nodes.add(item.name)
-        elif isinstance(item, ast.ClassDef):
-            nodes.add(item.name)
-            for child in item.body:
-                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    nodes.add(f"{item.name}::{child.name}")
-    return nodes
-
-
-def _target_node_exists(test_path: Path, node_id: str) -> bool:
-    """Return whether a pytest node id names a test object in a file."""
-
-    node_parts = tuple(part for part in node_id.split("::") if part)
-    if not node_parts:
-        return True
-    node_name = "::".join(node_parts)
-    return node_name in _pytest_nodes_for_file(test_path)
-
-
-def _target_ast_node(test_path: Path, node_id: str) -> ast.AST | None:
-    """Return the AST subtree selected by a pytest target."""
-
-    try:
-        tree = ast.parse(test_path.read_text(encoding="utf-8"), filename=str(test_path))
-    except SyntaxError:
-        return None
-    node_parts = tuple(part for part in node_id.split("::") if part)
-    if not node_parts:
-        return tree
-    body: list[ast.stmt] = tree.body
-    selected: ast.AST | None = None
-    for part in node_parts:
-        selected = next(
-            (
-                item
-                for item in body
-                if isinstance(item, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) and item.name == part
-            ),
-            None,
-        )
-        if selected is None:
-            return None
-        body = selected.body if isinstance(selected, ast.ClassDef) else []
-    return selected
-
-
-def _dotted_attribute_name(node: ast.expr) -> str | None:
-    """Return a dotted name for simple pytest marker/call expressions."""
-
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        parent = _dotted_attribute_name(node.value)
-        if parent is None:
-            return node.attr
-        return f"{parent}.{node.attr}"
-    return None
-
-
-def _target_skip_xfail_lines(test_path: Path, node_id: str) -> tuple[int, ...]:
-    """Return skip/xfail call lines inside the selected fast pytest target."""
-
-    node = _target_ast_node(test_path, node_id)
-    if node is None:
-        return ()
-    lines: list[int] = []
-    for child in ast.walk(node):
-        if not isinstance(child, ast.Call):
-            continue
-        if _dotted_attribute_name(child.func) in FAST_PYTEST_SKIP_CALLS:
-            lines.append(child.lineno)
-    return tuple(lines)
-
-
 def _manifest_path_format_reason(path: str) -> str | None:
     """Return a validation reason when a manifest path is not repo-relative POSIX."""
 
@@ -1558,6 +1556,7 @@ def validate_manifest_targets(rules: tuple[TestOwnershipRule, ...] | None = None
     rules = TEST_OWNERSHIP_RULES if rules is None else rules
     violations: list[ManifestViolation] = []
     seen_owners: set[str] = set()
+    source_indexes: dict[Path, PytestSourceIndex] = {}
     for rule in rules:
         owner = rule.owner.strip()
         if not owner:
@@ -1689,7 +1688,11 @@ def validate_manifest_targets(rules: tuple[TestOwnershipRule, ...] | None = None
                     )
                 )
                 continue
-            if node_id and not _target_node_exists(absolute_test_path, node_id):
+            source_index = source_indexes.get(absolute_test_path)
+            if source_index is None:
+                source_index = load_pytest_source_index(absolute_test_path, FAST_PYTEST_SKIP_CALLS)
+                source_indexes[absolute_test_path] = source_index
+            if node_id and not source_index.has_node(node_id):
                 violations.append(
                     ManifestViolation(
                         owner=rule.owner,
@@ -1698,7 +1701,7 @@ def validate_manifest_targets(rules: tuple[TestOwnershipRule, ...] | None = None
                     )
                 )
             if rule.tier == "fast":
-                for line_no in _target_skip_xfail_lines(absolute_test_path, node_id):
+                for line_no in source_index.skip_xfail_lines(node_id):
                     violations.append(
                         ManifestViolation(
                             owner=rule.owner,

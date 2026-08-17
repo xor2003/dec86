@@ -14,9 +14,11 @@ from angr_platforms.X86_16.semantics.terminal_register_returns import (
 class _Factory:
     def __init__(self, blocks: dict[int, object]) -> None:
         self.blocks = blocks
+        self.calls: list[int] = []
 
     def block(self, address: int, *, opt_level: int) -> object:
         assert opt_level == 0
+        self.calls.append(address)
         return self.blocks[address]
 
 
@@ -86,3 +88,9 @@ def test_terminal_ax_evidence_closes_mixed_defined_and_undefined_return_paths(mo
     assert evidence.materialized_count == 2
     assert evidence.failure_count == 0
     assert evidence.proves_missing_value_path is True
+
+    repeated = collect_terminal_ax_return_evidence_8616(project, function)
+
+    assert repeated == evidence
+    assert len(project.factory.calls) == len(blocks)
+    assert set(project.factory.calls) == set(blocks)

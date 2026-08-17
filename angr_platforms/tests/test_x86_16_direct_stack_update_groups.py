@@ -13,6 +13,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.lowering import real_mode_linear
 from angr_platforms.X86_16.lowering.real_mode_linear import (
     DirectStackUpdateFact8616,
     _has_existing_stack_update_assignment_8616,
@@ -94,6 +95,29 @@ def test_existing_stack_update_group_accepts_exact_instruction_tag() -> None:
         one,
         expected_semantic_count=2,
     )
+
+
+def test_existing_stack_update_indexes_rendered_owners_once(monkeypatch) -> None:
+    project, root, fact, cvar, one = _stack_increment_fixture(count=20)
+    original_iter = real_mode_linear._iter_structured_c_nodes_8616
+    traversal_count = 0
+
+    def _counted_iter(node):
+        nonlocal traversal_count
+        traversal_count += 1
+        yield from original_iter(node)
+
+    monkeypatch.setattr(real_mode_linear, "_iter_structured_c_nodes_8616", _counted_iter)
+
+    assert _has_existing_stack_update_assignment_8616(
+        root,
+        project,
+        fact,
+        cvar,
+        one,
+        expected_semantic_count=20,
+    )
+    assert traversal_count == 2
 
 
 def _materialize_existing_iterator_with_conflict(

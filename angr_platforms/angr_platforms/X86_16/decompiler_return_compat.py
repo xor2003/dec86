@@ -40,6 +40,7 @@ from angr.sim_type import (
 )
 from angr.sim_variable import SimStackVariable
 
+from .calling_convention_compat import collect_wide_stack_argument_width_evidence_8616
 from .callsite_summary import (
     CallerReturnUseEvidence8616,
     CallerReturnUseVerdict8616,
@@ -441,7 +442,11 @@ def _strip_ail_convert_8616(expr: object) -> object:
 
 
 def _bp_offset_expr_8616(self: object, expr: object) -> int | None:
+    """Return the BP-relative offset represented by one canonical AIL address."""
     expr = _strip_ail_convert_8616(expr)
+    if isinstance(expr, BasePointerOffset):
+        offset = expr.offset
+        return offset if expr.base == "bp" and isinstance(offset, int) else None
     if _ail_register_name_8616(self, expr) == "bp":
         return 0
     if not isinstance(expr, ailment.Expr.BinaryOp):
@@ -1691,11 +1696,39 @@ def _make_return_combo_expr_8616(
 
     expr = parts[0]
     for part in parts[1:]:
+        high_stack_offset = (
+            _bp_offset_from_linear_stack_addr_8616(self, expr.addr)
+            if isinstance(expr, ailment.Expr.Load)
+            else None
+        )
+        low_stack_offset = (
+            _bp_offset_from_linear_stack_addr_8616(self, part.addr)
+            if isinstance(part, ailment.Expr.Load)
+            else None
+        )
+        function = getattr(self, "function", None)
+        project = _return_compat_function_project_8616(function)
+        wide_offsets = (
+            collect_wide_stack_argument_width_evidence_8616(project, function).classified_offsets
+            if project is not None and function is not None
+            else ()
+        )
+        wide_stack_owner = None
+        if (
+            isinstance(high_stack_offset, int)
+            and isinstance(low_stack_offset, int)
+            and high_stack_offset == low_stack_offset + 2
+            and low_stack_offset in wide_offsets
+        ):
+            candidate_owner = _make_bp_stack_load_expr_8616(self, stmt, bp_disp=low_stack_offset, size=4)
+            if isinstance(candidate_owner, Expression):
+                wide_stack_owner = candidate_owner
         expr = combine_word_return_sources_8616(
             expr,
             part,
             next_atom=self_dynamic._next_atom,
             ins_addr=stmt_dynamic.tags["ins_addr"],
+            wide_stack_owner=wide_stack_owner,
         )
     return cast(object, expr)
 

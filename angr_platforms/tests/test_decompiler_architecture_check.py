@@ -211,6 +211,7 @@ def _fast_skip_policy_source() -> str:
     )
 
 
+@pytest.mark.repository_contract
 def test_current_decompiler_architecture_contract_is_clean():
     assert arch_check.check_decompiler_architecture() == ()
 
@@ -261,6 +262,28 @@ def test_annotation_debt_ratchet_rejects_untracked_debt(tmp_path, monkeypatch):
     violations = arch_check._check_decompiler_annotation_debt(tmp_path)
 
     assert any(item.rule == "decompiler-annotation-debt-new" for item in violations)
+
+
+def test_annotation_debt_tracks_nested_definitions_in_statement_bodies(tmp_path):
+    module = tmp_path / "nested.py"
+    module.write_text(
+        "if True:\n"
+        "    class Owner:\n"
+        "        async def method(self, value):\n"
+        "            def nested(item):\n"
+        "                return item\n"
+        "            return nested(value)\n",
+        encoding="utf-8",
+    )
+
+    slots = arch_check._annotation_debt_slots(arch_check._parse_python(module))
+
+    assert slots == (
+        "Owner.method.nested:item",
+        "Owner.method.nested:return",
+        "Owner.method:return",
+        "Owner.method:value",
+    )
 
 
 def test_annotation_debt_ratchet_rejects_stale_entry_after_cleanup(tmp_path, monkeypatch):
@@ -5877,6 +5900,24 @@ def test_architecture_check_rejects_missing_makefile_qa_targets(tmp_path):
 
     assert any(
         item.rule == "makefile-missing-qa-target" and "test_missing_contract.py" in item.detail
+        for item in violations
+    )
+
+
+def test_architecture_check_rejects_missing_makefile_qa_nodes(tmp_path):
+    test_path = tmp_path / "angr_platforms" / "tests" / "test_contract.py"
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text("def test_present():\n    pass\n", encoding="utf-8")
+    (tmp_path / "Makefile").write_text(
+        "QA_PYTEST_TARGETS := "
+        "angr_platforms/tests/test_contract.py::test_missing\n",
+        encoding="utf-8",
+    )
+
+    violations = arch_check._check_makefile_gate_targets(tmp_path)
+
+    assert any(
+        item.rule == "makefile-missing-qa-node" and "test_missing" in item.detail
         for item in violations
     )
 

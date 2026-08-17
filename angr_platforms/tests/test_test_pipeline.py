@@ -47,6 +47,7 @@ def test_repository_architecture_guard_runs_as_a_separate_hard_gate():
     assert "angr_platforms/tests/test_decompiler_architecture_check.py" not in test_pipeline.FOCUSED_PYTEST_TARGETS
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     assert "decompiler-check-fast: architecture-check" in makefile
+    assert 'pytest -q $(PYTEST_ARGS) -m "$(PYTEST_FOCUSED_MARKER_EXPR)"' in makefile
 
 
 def test_unit_lane_promotes_pipeline_self_contract():
@@ -57,6 +58,19 @@ def test_repository_ownership_manifest_runs_as_a_separate_hard_gate():
     assert "angr_platforms/tests/test_test_ownership_manifest.py" not in test_pipeline.FOCUSED_PYTEST_TARGETS
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     assert "decompiler-check-fast: architecture-check agent-context-check test-ownership-check" in makefile
+    assert 'pytest_profile.py $(PYTEST_PROFILE_ARGS) -m "$(PYTEST_FOCUSED_MARKER_EXPR)"' in makefile
+
+
+def test_complete_pytest_target_keeps_repository_contracts():
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+
+    pytest_all_recipe = makefile.split("pytest-all:", maxsplit=1)[1].split("architecture-check:", maxsplit=1)[0]
+    assert "PYTEST_FOCUSED_MARKER_EXPR" not in pytest_all_recipe
+    assert "pytest-all: pytest-inventory" in makefile
+    assert "scripts/pytest_partitioned.py" in pytest_all_recipe
+    assert "--inventory-json $(PYTEST_INVENTORY_JSON)" in pytest_all_recipe
+    assert "--heavy-shards $(PYTEST_ALL_HEAVY_SHARDS)" in pytest_all_recipe
+    assert "--max-rss-mib $(PYTEST_ALL_MAX_RSS_MIB)" in pytest_all_recipe
 
 
 def test_unit_lane_promotes_corpus_scan_timeout_contract():

@@ -27,10 +27,17 @@ from .alias.callsite_stack_merge import (
 )
 from .analysis_helpers import collect_neighbor_call_targets, resolve_direct_call_target_from_block
 from .callee_name_normalization import normalize_callee_name_8616
+from .callsite_target_inventory import CallsiteTargetInventory8616
 from .compiler_helpers import (
     identify_x86_16_compiler_helper_at_8616,
     is_x86_16_registered_stack_probe_target_8616,
     is_x86_16_stack_probe_name_8616,
+)
+from .helper_abi import (
+    known_helper_is_variadic_8616 as _catalog_helper_is_variadic_8616,
+)
+from .helper_abi import (
+    known_helper_logical_argument_widths_8616,
 )
 from .pipeline.errors import PipelineHardError
 
@@ -41,6 +48,7 @@ __all__ = [
     "CallsiteMachineFrameKind8616",
     "CallsiteStackCleanupEvidence8616",
     "CallsiteSummary8616",
+    "CallsiteTargetInventory8616",
     "StructuredCallKind8616",
     "bind_structured_callsite_identity_8616",
     "build_callsite_summary_inventory_8616",
@@ -62,45 +70,16 @@ log: logging.Logger = logging.getLogger(__name__)
 _DynamicCallsiteValue8616: TypeAlias = Any
 _CallsiteTuple8616: TypeAlias = tuple[object, ...]
 
-# These helpers have ABI shapes that cannot be recovered from a generic near
-# pointer prototype.  Keep the physical widths with callsite evidence so
-# every later layer sees the same logical argument contract.
-_KNOWN_HELPER_ABI_WIDTHS_8616: dict[str, tuple[int, ...]] = {
-    "getvideoconfig": (4,),
-    "_getvideoconfig": (4,),
-    "outtext": (4,),
-    "_outtext": (4,),
-    "outtextxy": (2, 2, 4),
-    "_outtextxy": (2, 2, 4),
-    "loadprog": (2, 2, 2, 4),
-    "_loadprog": (2, 2, 2, 4),
-    "setbkcolor": (4,),
-    "_setbkcolor": (4,),
-    "anldiv": (4, 4),
-    "_anldiv": (4, 4),
-}
-
-_VARIADIC_HELPERS_8616 = {"sprintf", "_sprintf"}
-
-
 def known_helper_abi_widths_8616(symbol_name: str | None) -> tuple[int, ...] | None:
     """Return explicit logical ABI widths for a known runtime helper."""
     normalized = normalize_callee_name_8616(symbol_name)
-    if not isinstance(normalized, str):
-        return None
-    canonical = normalized.casefold()
-    return _KNOWN_HELPER_ABI_WIDTHS_8616.get(canonical) or _KNOWN_HELPER_ABI_WIDTHS_8616.get(
-        canonical.lstrip("_")
-    )
+    return known_helper_logical_argument_widths_8616(normalized)
 
 
 def known_helper_is_variadic_8616(symbol_name: str | None) -> bool:
     """Return whether a known runtime helper has an open-ended argument list."""
     normalized = normalize_callee_name_8616(symbol_name)
-    return isinstance(normalized, str) and (
-        normalized.casefold() in _VARIADIC_HELPERS_8616
-        or normalized.casefold().lstrip("_") in _VARIADIC_HELPERS_8616
-    )
+    return _catalog_helper_is_variadic_8616(normalized)
 
 
 def _dynamic_callsite_getattr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
@@ -484,11 +463,16 @@ def build_callsite_summary_inventory_8616(
 ) -> dict[int, CallsiteSummary8616]:
     """Build the authoritative typed summary inventory for exact callsites."""
     typed_function = cast(SimpleNamespace, function)
+    target_inventory = CallsiteTargetInventory8616.collect(function)
     inventory: dict[int, CallsiteSummary8616] = {}
     for callsite_addr in sorted(set(callsite_addrs)):
         if not isinstance(callsite_addr, int):
             raise TypeError("callsite summary inventory addresses must be integers")
-        summary = summarize_x86_16_callsite(typed_function, callsite_addr)
+        summary = summarize_x86_16_callsite(
+            typed_function,
+            callsite_addr,
+            target_inventory=target_inventory,
+        )
         if summary is not None:
             inventory[callsite_addr] = summary
     return inventory
@@ -3138,7 +3122,12 @@ def _return_shape_after_call(
     return None
 
 
-def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> CallsiteSummary8616 | None:
+def summarize_x86_16_callsite(
+    function: SimpleNamespace,
+    callsite_addr: int,
+    *,
+    target_inventory: CallsiteTargetInventory8616 | None = None,
+) -> CallsiteSummary8616 | None:
     """Summarize argument, cleanup, and return-use facts for one callsite."""
 
     def _impl() -> CallsiteSummary8616 | None:
@@ -3146,16 +3135,25 @@ def summarize_x86_16_callsite(function: SimpleNamespace, callsite_addr: int) -> 
         if project is None or _dynamic_callsite_getattr_8616(_dynamic_callsite_getattr_8616(project, "arch", None), "name", None) != "86_16":
             return None
 
-        target_addr = None
-        return_addr = None
-        kind = None
-        for seed in collect_neighbor_call_targets(function):
-            if seed.callsite_addr != callsite_addr:
-                continue
+        seed = (
+            target_inventory.seed_for_callsite(callsite_addr)
+            if target_inventory is not None
+            else next(
+                (
+                    candidate
+                    for candidate in collect_neighbor_call_targets(function)
+                    if candidate.callsite_addr == callsite_addr
+                ),
+                None,
+            )
+        )
+        target_addr: int | None = None
+        return_addr: int | None = None
+        kind: str | None = None
+        if seed is not None:
             target_addr = seed.target_addr
             return_addr = seed.return_addr
             kind = seed.kind
-            break
 
         insns = _block_insns_for_callsite(function, callsite_addr)
         target_name = _lookup_target_name_8616(function, target_addr)

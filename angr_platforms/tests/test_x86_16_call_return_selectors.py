@@ -93,6 +93,8 @@ def test_call_return_selector_binding_materializes_one_structured_identity() -> 
     assert result.classified_fact_count == 1
     assert result.materialized_count == 1
     assert result.failure_count == 0
+    assert result.changed_count == 1
+    assert result.changed
     assignment_variable = assignment.lhs.variable
     selector_variable = switch.switch.variable
     assert assignment_variable is selector_variable
@@ -101,6 +103,15 @@ def test_call_return_selector_binding_materializes_one_structured_identity() -> 
     assert assignment_variable.region == 0x4010
     assert codegen._inertia_call_return_selector_replayer_8616 is replay_call_return_switch_selectors_8616
     assert validate_structured_def_use_8616(root).passed
+
+    repeated = bind_call_return_switch_selectors_8616(codegen)
+
+    assert repeated.materialized_count == 1
+    assert repeated.failure_count == 0
+    assert repeated.changed_count == 0
+    assert not repeated.changed
+    assert assignment.lhs.variable is assignment_variable
+    assert switch.switch.variable is assignment_variable
 
 
 def test_call_return_selector_binding_refuses_intervening_ax_clobber() -> None:
@@ -124,6 +135,7 @@ def test_call_return_selector_binding_refuses_intervening_ax_clobber() -> None:
     assert result.classified_fact_count == 0
     assert result.materialized_count == 0
     assert result.failure_count == 1
+    assert result.changed_count == 0
     assert assignment.lhs.variable.ident is None
     assert switch.switch.variable.ident is None
 
@@ -155,5 +167,6 @@ def test_call_return_selector_binding_refuses_unproven_return_shape() -> None:
 
     assert result.raw_fact_count == 0
     assert result.materialized_count == 0
+    assert result.changed_count == 0
     assert assignment.lhs.variable.ident is None
     assert switch.switch.variable.ident is None

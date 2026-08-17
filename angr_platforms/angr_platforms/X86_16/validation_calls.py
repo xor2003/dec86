@@ -34,8 +34,10 @@ from .callsite_summary import (
     CallsiteSummary8616,
     caller_return_use_evidence_by_addr_8616,
     callsite_target_name_for_project_8616,
-    known_helper_abi_widths_8616,
+)
+from .helper_abi import (
     known_helper_is_variadic_8616,
+    known_helper_logical_argument_widths_8616,
 )
 from .lowering.call_argument_shape import accounted_target_prototype_shape_evidence_8616
 from .lowering.near_pointer_argument import NearPointerArgumentFact8616
@@ -1044,14 +1046,21 @@ def _expected_call_argument_count_8616(
     if not isinstance(name, str) and callee is not None:
         # Dynamic angr C-AST boundary: callee function names are optional.
         name = getattr(callee, "name", None)
-    helper_widths = known_helper_abi_widths_8616(name if isinstance(name, str) else None)
+    helper_name = name if isinstance(name, str) else None
+    helper_widths = known_helper_logical_argument_widths_8616(helper_name)
+    metadata_name: str | None = None
     if helper_widths is None and project is not None and isinstance(summary.target_addr, int):
         metadata_name = callsite_target_name_for_project_8616(project, summary.target_addr)
-        helper_widths = known_helper_abi_widths_8616(metadata_name)
+        helper_widths = known_helper_logical_argument_widths_8616(metadata_name)
     if helper_widths is not None:
         return len(helper_widths)
-    if known_helper_is_variadic_8616(name if isinstance(name, str) else None):
-        return None
+    if known_helper_is_variadic_8616(helper_name) or known_helper_is_variadic_8616(
+        metadata_name
+    ):
+        return _expected_argument_count_8616(summary)
+    logical_argument_count = _expected_argument_count_8616(summary)
+    if logical_argument_count is not None:
+        return logical_argument_count
     if callee is not None:
         try:
             prototype = cast(Any, callee).prototype
@@ -1059,7 +1068,7 @@ def _expected_call_argument_count_8616(
                 return len(prototype.args)
         except AttributeError:
             pass
-    return _expected_argument_count_8616(summary)
+    return None
 
 
 def _materialized_argument_count_8616(call: CFunctionCall) -> int | None:

@@ -35,6 +35,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CReturn,
     CStatement,
     CStatements,
+    CTypeCast,
     CVariable,
     CWhileLoop,
 )
@@ -42,6 +43,9 @@ from angr.sim_type import SimTypeLong, SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 
 from ..callsite_summary import CallerReturnUseVerdict8616
+from ..lowering.terminal_return_expressions import (
+    return_expression_has_wide_word_composition_8616 as return_expression_has_wide_word_composition_8616,
+)
 from ..semantics.branch_target_return import (
     BranchTargetReturnEffectKind8616 as BranchTargetReturnEffectKind8616,
 )
@@ -1894,7 +1898,7 @@ def combine_dx_ax_return_expr_8616(
     stack_offset: Callable[[object], int | None],
     wide_stack_expr: Callable[[int, int], object | None],
 ) -> object | None:
-    """Combine DX:AX carriers from a dynamic boundary: angr codegen C constants."""
+    """Compose a proven DX:AX return without discarding either word."""
     if ax_value is None:
         return None
     if dx_value is None:
@@ -1912,7 +1916,22 @@ def combine_dx_ax_return_expr_8616(
         if value & 0x80000000:
             value -= 0x100000000
         return cast(object, CConstant(value, SimTypeLong(True), codegen=codegen))
-    return ax_value
+    long_type = SimTypeLong(False)
+    low = CTypeCast(None, long_type, ax_value, codegen=codegen)
+    high = CTypeCast(None, long_type, dx_value, codegen=codegen)
+    shifted_high = CBinaryOp(
+        "Shl",
+        high,
+        CConstant(16, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    return cast(object, CBinaryOp("Or", shifted_high, low, codegen=codegen))
+
+
+def terminal_ax_fallback_supports_widths_8616(return_widths: Iterable[int | None]) -> bool:
+    """Return whether AX alone satisfies every owned return-width projection."""
+    widths = tuple(return_widths)
+    return bool(widths) and all(isinstance(bits, int) and 0 < bits <= 16 for bits in widths)
 
 
 def branch_target_return_expr_8616(

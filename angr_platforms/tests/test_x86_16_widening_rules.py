@@ -242,6 +242,34 @@ def test_contained_stack_high_byte_recomposition_materializes_to_word():
     assert codegen._inertia_stack_subview_failure_count == 0
 
 
+def test_adjacent_stack_bytes_materialize_through_exact_word_owner() -> None:
+    codegen = _DummyCodegen()
+    word = _stack_var(-6, 2, "local_6", codegen)
+    low_byte = _stack_var(-6, 1, "local_6_low", codegen)
+    high_byte = _stack_var(-5, 1, "local_5", codegen)
+    recomposed = CBinaryOp(
+        "Or",
+        low_byte,
+        CBinaryOp("Shl", high_byte, _constant(8, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    destination = CVariable(SimpleNamespace(name="inertia_es"), codegen=codegen)
+    assignment = CAssignment(destination, recomposed, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(
+        statements=CStatements([assignment], codegen=codegen),
+        variables_in_use={word.variable: word, low_byte.variable: low_byte, high_byte.variable: high_byte},
+    )
+
+    changed = materialize_contained_stack_subviews_8616(codegen)
+
+    assert changed is True
+    assert isinstance(assignment.rhs, CVariable)
+    assert assignment.rhs.variable.offset == -6
+    assert assignment.rhs.variable.size == 2
+    assert codegen._inertia_stack_subview_materialized_count == 1
+    assert codegen._inertia_stack_subview_failure_count == 0
+
+
 def test_contained_stack_high_byte_recomposition_refuses_wrong_region_and_scale():
     codegen = _DummyCodegen()
     word = _stack_var(-4, 2, "local_4", codegen)

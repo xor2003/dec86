@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path
 
 from pytest import MonkeyPatch
@@ -22,13 +23,94 @@ def test_build_mypyc_defaults_to_cpu_count_minus_one(monkeypatch: MonkeyPatch) -
     assert parsed.jobs == 7
 
 
-def test_make_parallel_defaults_share_cpu_count_minus_one() -> None:
-    """Keep pytest, linters, pipelines, and mypyc on one shared default."""
+def test_build_mypyc_uses_public_angr_platform_module_identity() -> None:
+    """Compile the runtime package name while resolving its nested source tree."""
+    assert not any(module.startswith("angr_platforms.angr_platforms.") for module in build_mypyc.TARGET_MODULES)
+    assert build_mypyc._module_to_path("angr_platforms.X86_16.validation_calls") == (
+        "angr_platforms/angr_platforms/X86_16/validation_calls.py"
+    )
+
+
+def test_build_mypyc_rejects_nested_alias_target() -> None:
+    """Refuse native modules that would duplicate public runtime type identity."""
+    try:
+        build_mypyc._module_to_path("angr_platforms.angr_platforms.X86_16.validation_calls")
+    except ValueError as exc:
+        assert "split runtime type identity" in str(exc)
+    else:
+        raise AssertionError("nested mypyc target unexpectedly accepted")
+
+
+def test_build_mypyc_requires_main_and_native_helper_artifacts(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Treat a half-written separate mypyc extension pair as stale."""
+    monkeypatch.setattr(build_mypyc, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(build_mypyc, "MYPYC_LIB_DIR", Path("native-lib"))
+    source_path = tmp_path / "inertia_decompiler" / "sample.py"
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text("value = 1\n", encoding="utf-8")
+    state = build_mypyc.ModuleState(
+        module="inertia_decompiler.sample",
+        source_path=source_path,
+        marker_path=tmp_path / "sample.stamp",
+    )
+    target_dir = tmp_path / "native-lib" / "inertia_decompiler"
+    target_dir.mkdir(parents=True)
+    suffix = EXTENSION_SUFFIXES[0]
+    (target_dir / f"sample{suffix}").write_bytes(b"main")
+
+    assert len(build_mypyc._module_artifact_candidates(state)) == 1
+    assert build_mypyc._build_stale([state]) == [state]
+
+    (target_dir / f"sample__mypyc{suffix}").write_bytes(b"native")
+    state.marker_path.write_text("ready\n", encoding="utf-8")
+    newest = max(path.stat().st_mtime for path in build_mypyc._module_artifact_candidates(state))
+    os.utime(state.marker_path, (newest + 1, newest + 1))
+    assert build_mypyc._build_stale([state]) == []
+
+
+def test_build_mypyc_resets_native_cache_when_module_cohort_changes(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Do not reuse extensions linked against a removed experimental module."""
+    monkeypatch.setattr(build_mypyc, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(build_mypyc, "MYPYC_CACHE_DIR", Path("native-cache"))
+
+    build_mypyc._ensure_build_layout(["example.alpha"])
+    sentinel = tmp_path / "native-cache" / "old-extension.so"
+    sentinel.write_bytes(b"native")
+    build_mypyc._ensure_build_layout(["example.alpha"])
+    assert sentinel.is_file()
+
+    build_mypyc._ensure_build_layout(["example.beta"])
+    assert not sentinel.exists()
+    assert (tmp_path / "native-cache" / "build-schema.txt").read_text(encoding="utf-8") == (
+        f"{build_mypyc.MYPYC_BUILD_SCHEMA}\nexample.beta\n"
+    )
+
+
+def test_make_parallel_defaults_share_cpu_budget() -> None:
+    """Keep tools on N-1 CPUs while bounding memory-heavy pytest workers."""
     make_fragment = """print-parallel:
-	@printf '%s\\n' '$(PARALLEL_JOBS)' '$(PYTEST_ARGS)' '$(LINT_JOBS)' '$(MYPYC_JOBS)' '$(PIPELINE_WORKERS)'
+	@printf '%s\\n' '$(PARALLEL_JOBS)' '$(PYTEST_ARGS)' '$(PYTEST_ALL_WORKERS)' '$(PYTEST_ALL_HEAVY_WORKERS)' '$(PYTEST_ALL_HEAVY_SHARDS)' '$(LINT_JOBS)' '$(MYPYC_JOBS)' '$(PIPELINE_WORKERS)'
 """
     env = {**os.environ, "PYTEST_ADDOPTS": ""}
-    for inherited_make_variable in ("MAKEFLAGS", "MFLAGS", "MAKELEVEL", "PYTEST_ARGS"):
+    for inherited_make_variable in (
+        "MAKEFLAGS",
+        "MFLAGS",
+        "MAKELEVEL",
+        "LINT_JOBS",
+        "MYPYC_JOBS",
+        "PARALLEL_JOBS",
+        "PIPELINE_WORKERS",
+        "PYTEST_ALL_HEAVY_SHARDS",
+        "PYTEST_ALL_HEAVY_WORKERS",
+        "PYTEST_ALL_WORKERS",
+        "PYTEST_ARGS",
+    ):
         env.pop(inherited_make_variable, None)
     result = subprocess.run(
         [
@@ -50,6 +132,9 @@ def test_make_parallel_defaults_share_cpu_count_minus_one() -> None:
     assert result.stdout.splitlines() == [
         "7",
         "-n 7 --dist loadgroup --durations=5",
+        "7",
+        "2",
+        "16",
         "7",
         "7",
         "7",

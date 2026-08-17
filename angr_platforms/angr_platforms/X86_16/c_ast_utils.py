@@ -42,6 +42,7 @@ __all__ = [
     "_c_ast_cycle_path_8616",
     "_clone_c_ast_tree_8616",
     "_iter_c_nodes_deep_8616",
+    "_iter_c_statement_nodes_8616",
     "_replace_c_children_8616",
     "_safe_assign_cfunc_statements_8616",
     "_same_c_expression_8616",
@@ -298,6 +299,32 @@ def _iter_c_node_children_8616(value: object, seen_values: set[int] | None = Non
             with suppress(Exception):
                 stack.extend(tuple(current))
             continue
+
+
+def _iter_c_statement_nodes_8616(root: object) -> Iterator[object]:
+    """Iterate control-flow containers without descending into expressions."""
+    stack = [root]
+    seen: set[int] = set()
+    while stack:
+        current = stack.pop()
+        if not _structured_codegen_node_8616(current):
+            continue
+        current_id = id(current)
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+        yield current
+        for attr in ("statements", "body", "else_node", "condition_and_nodes", "cases", "default"):
+            with suppress(Exception):
+                value = getattr(current, attr)
+                if isinstance(value, (list, tuple)):
+                    for item in reversed(tuple(value)):
+                        if isinstance(item, tuple):
+                            stack.extend(reversed(item))
+                        else:
+                            stack.append(item)
+                else:
+                    stack.append(value)
 
 
 def _replace_c_children_8616(

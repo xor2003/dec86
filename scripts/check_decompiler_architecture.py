@@ -15,6 +15,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+if __package__:
+    from .pytest_source_index import load_pytest_source_index
+else:
+    from pytest_source_index import load_pytest_source_index
+
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 X86_16_ROOT: Path = REPO_ROOT / "angr_platforms" / "angr_platforms" / "X86_16"
 CLI_DECOMPILATION: Path = REPO_ROOT / "inertia_decompiler" / "cli_decompilation.py"
@@ -850,6 +855,11 @@ _RECOVERY_METADATA_HEADER_MARKERS: dict[str, tuple[str, ...]] = {
         "provide helper metadata and interrupt surfaces consumed by recovery/reporting",
         "source/COD-backed semantic proof, validation acceptance, or emitted-C repair",
     ),
+    "helper_abi.py": (
+        "Layer: Recovery metadata",
+        "own typed declarations and ABI shape metadata for known helpers",
+        "using helper names as call-identity proof, substituting helper bodies",
+    ),
     "callee_name_normalization.py": (
         "Layer: Recovery metadata",
         "normalize recovered callee labels for comparison and reporting",
@@ -1246,10 +1256,13 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/annotations.py",
     "angr_platforms/angr_platforms/X86_16/condition_ir.py",
     "angr_platforms/angr_platforms/X86_16/condition_trace.py",
+    "angr_platforms/angr_platforms/X86_16/function_evidence_inventory.py",
+    "angr_platforms/angr_platforms/X86_16/helper_abi.py",
     "angr_platforms/angr_platforms/X86_16/regs.py",
     "angr_platforms/angr_platforms/X86_16/ir/__init__.py",
     "angr_platforms/angr_platforms/X86_16/ir/address_ir.py",
     "angr_platforms/angr_platforms/X86_16/ir/condition_ir.py",
+    "angr_platforms/angr_platforms/X86_16/ir/condition_register_bindings.py",
     "angr_platforms/angr_platforms/X86_16/ir/core.py",
     "angr_platforms/angr_platforms/X86_16/ir/effects.py",
     "angr_platforms/angr_platforms/X86_16/ir/ir_canonicalize_8616.py",
@@ -1276,6 +1289,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/function_interface_surface.py",
     "angr_platforms/angr_platforms/X86_16/function_summary.py",
     "angr_platforms/angr_platforms/X86_16/function_state_summary.py",
+    "angr_platforms/angr_platforms/X86_16/callsite_target_inventory.py",
     "angr_platforms/angr_platforms/X86_16/callsite_summary.py",
     "angr_platforms/angr_platforms/X86_16/call_target_identity.py",
     "angr_platforms/angr_platforms/X86_16/callsite_stack_metadata.py",
@@ -1457,6 +1471,10 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_type_surface.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_pointer_evidence.py",
     "angr_platforms/angr_platforms/X86_16/lowering/indexed_global_evidence.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/helper_call_interfaces.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_evidence.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_materialization.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/register_constant_segmented_store.py",
     "angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py",
     "angr_platforms/angr_platforms/X86_16/lowering/near_pointer_type.py",
     "scripts/check_generated_translation_unit.py",
@@ -1642,6 +1660,8 @@ _PROMOTED_TYPED_FILES = (
     "inertia_decompiler/cod_module_caller_evidence.py",
     "inertia_decompiler/c_text_cleanup.py",
     "inertia_decompiler/cache.py",
+    "inertia_decompiler/cache_io.py",
+    "inertia_decompiler/cache_lock.py",
     "inertia_decompiler/cli.py",
     "inertia_decompiler/cli_core.py",
     "inertia_decompiler/serial_clean_worker_cli.py",
@@ -1701,6 +1721,8 @@ _PROMOTED_TYPED_FILES = (
     "inertia_decompiler/discovery_evidence_project.py",
     "inertia_decompiler/disassembly_helpers.py",
     "inertia_decompiler/flair_paths.py",
+    "inertia_decompiler/fork_timeout.py",
+    "inertia_decompiler/function_cache_context.py",
     "inertia_decompiler/gdb_client.py",
     "inertia_decompiler/gdb_tui.py",
     "inertia_decompiler/library_function_classifier.py",
@@ -2072,6 +2094,19 @@ _BANNED_CLI_FALLBACK_SOURCE_HELPERS = frozenset(
 _PYTHON_AST_CACHE: dict[Path, tuple[tuple[int, int], ast.Module]] = {}
 _TEXT_CACHE: dict[Path, tuple[tuple[int, int], str]] = {}
 _AST_WALK_CACHE: dict[int, tuple[ast.AST, ...]] = {}
+_FIXED_NAME_GETATTR_CACHE: dict[ast.AST, tuple[tuple[str, str], ...]] = {}
+_ASSIGNED_AST_NAMES_CACHE: dict[ast.stmt, frozenset[str]] = {}
+_DYNAMIC_BOUNDARY_DOCSTRING_CACHE: dict[
+    ast.Module,
+    tuple[bool, tuple[tuple[int, int, bool], ...]],
+] = {}
+_DEFINITION_INDEX_CACHE: dict[
+    ast.Module,
+    tuple[
+        dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
+        dict[str, ast.ClassDef],
+    ],
+] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -2126,6 +2161,30 @@ def _string_constant(node: ast.AST) -> str | None:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     return None
+
+
+def _fixed_name_getattr_calls(node: ast.AST) -> tuple[tuple[str, str], ...]:
+    """Return ordered fixed-field getattr calls below one AST node."""
+
+    cached = _FIXED_NAME_GETATTR_CACHE.get(node)
+    if cached is not None:
+        return cached
+    calls: list[tuple[str, str]] = []
+    for child in _walk_ast(node):
+        if not (
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id == "getattr"
+            and len(child.args) >= 2
+            and isinstance(child.args[0], ast.Name)
+        ):
+            continue
+        field_name = _string_constant(child.args[1])
+        if field_name is not None:
+            calls.append((child.args[0].id, field_name))
+    result = tuple(calls)
+    _FIXED_NAME_GETATTR_CACHE[node] = result
+    return result
 
 
 def _relative(path: Path, root: Path) -> str:
@@ -2324,20 +2383,41 @@ def _read_text_if_present(path: Path) -> str | None:
     return text
 
 
-def _find_function(tree: ast.Module, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+def _definition_index(
+    tree: ast.Module,
+) -> tuple[
+    dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
+    dict[str, ast.ClassDef],
+]:
+    """Return first definitions by name from one cached module traversal."""
+
+    cached = _DEFINITION_INDEX_CACHE.get(tree)
+    if cached is not None:
+        return cached
+    functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    classes: dict[str, ast.ClassDef] = {}
     for node in _walk_ast(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
-            return node
-    return None
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            functions.setdefault(node.name, node)
+        elif isinstance(node, ast.ClassDef):
+            classes.setdefault(node.name, node)
+    result = functions, classes
+    _DEFINITION_INDEX_CACHE[tree] = result
+    return result
+
+
+def _find_function(tree: ast.Module, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """Return the first function definition with the requested name."""
+
+    functions, _classes = _definition_index(tree)
+    return functions.get(name)
 
 
 def _find_class(tree: ast.Module, name: str) -> ast.ClassDef | None:
     """Return the first class definition with the requested name."""
 
-    for node in _walk_ast(tree):
-        if isinstance(node, ast.ClassDef) and node.name == name:
-            return node
-    return None
+    _functions, classes = _definition_index(tree)
+    return classes.get(name)
 
 
 def _is_protected_import(module: str) -> bool:
@@ -3680,7 +3760,7 @@ def _check_terminal_call_result_structuring_ownership(
                     f"Structuring owner must define {materializer_name}",
                 )
             )
-        owner_classes = {node.name for node in ast.walk(owner_tree) if isinstance(node, ast.ClassDef)}
+        owner_classes = {node.name for node in _walk_ast(owner_tree) if isinstance(node, ast.ClassDef)}
         for class_name in owner_class_names:
             if class_name not in owner_classes:
                 violations.append(
@@ -3763,18 +3843,13 @@ def _check_terminal_call_result_structuring_ownership(
 
     for path in postprocess_paths:
         tree = _parse_python(path)
-        defined_names = {
-            node.name
-            for node in ast.walk(tree)
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-        }
-        imported_owner_names = {
-            alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-            for alias in node.names
-            if alias.name in owner_names
-        }
+        defined_names: set[str] = set()
+        imported_owner_names: set[str] = set()
+        for node in _walk_ast(tree):
+            if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+                defined_names.add(node.name)
+            elif isinstance(node, ast.ImportFrom):
+                imported_owner_names.update(alias.name for alias in node.names if alias.name in owner_names)
         forbidden_names = sorted((defined_names | imported_owner_names).intersection(owner_names))
         for name in forbidden_names:
             violations.append(
@@ -4983,46 +5058,29 @@ def _function_missing_annotation_labels(node: ast.FunctionDef | ast.AsyncFunctio
     return tuple(missing)
 
 
-class _AnnotationDebtVisitor(ast.NodeVisitor):
-    """Collect exact qualified annotation gaps, including nested definitions."""
-
-    def __init__(self) -> None:
-        self.scope: list[str] = []
-        self.slots: list[str] = []
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        """Visit a class while preserving its qualified scope."""
-
-        self.scope.append(node.name)
-        self.generic_visit(node)
-        self.scope.pop()
-
-    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        """Record one function's gaps and recurse into nested definitions."""
-
-        qualified_name = ".".join((*self.scope, node.name))
-        self.slots.extend(f"{qualified_name}:{label}" for label in _function_missing_annotation_labels(node))
-        self.scope.append(node.name)
-        self.generic_visit(node)
-        self.scope.pop()
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        """Visit a synchronous function definition."""
-
-        self._visit_function(node)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """Visit an asynchronous function definition."""
-
-        self._visit_function(node)
-
-
 def _annotation_debt_slots(tree: ast.Module) -> tuple[str, ...]:
     """Return sorted qualified annotation gaps for one module."""
 
-    visitor = _AnnotationDebtVisitor()
-    visitor.visit(tree)
-    return tuple(sorted(visitor.slots))
+    slots: list[str] = []
+
+    def _visit_statements(statements: list[ast.stmt], scope: tuple[str, ...]) -> None:
+        for statement in statements:
+            if isinstance(statement, ast.ClassDef):
+                _visit_statements(statement.body, (*scope, statement.name))
+                continue
+            if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
+                qualified_name = ".".join((*scope, statement.name))
+                slots.extend(
+                    f"{qualified_name}:{label}" for label in _function_missing_annotation_labels(statement)
+                )
+                _visit_statements(statement.body, (*scope, statement.name))
+                continue
+            nested_statements = [child for child in ast.iter_child_nodes(statement) if isinstance(child, ast.stmt)]
+            if nested_statements:
+                _visit_statements(nested_statements, scope)
+
+    _visit_statements(tree.body, ())
+    return tuple(sorted(slots))
 
 
 def _annotation_debt_fingerprint(slots: tuple[str, ...]) -> str:
@@ -5240,28 +5298,62 @@ def _dynamic_attr_access_has_boundary_reason(lines: list[str], line_no: int) -> 
     return "dynamic" in reason and "boundary" in reason and any(term in reason for term in _DYNAMIC_ATTR_BOUNDARY_TERMS)
 
 
-def _dynamic_attr_docstring_has_boundary_reason(tree: ast.Module, line_no: int) -> bool:
-    """Return whether an enclosing docstring explains a dynamic attribute boundary."""
+def _dynamic_boundary_reason_text_is_valid(reason: str) -> bool:
+    """Return whether text documents a supported dynamic ownership boundary."""
 
-    module_reason = (ast.get_docstring(tree) or "").lower()
-    if (
-        "dynamic" in module_reason
-        and "boundary" in module_reason
-        and any(term in module_reason for term in _DYNAMIC_ATTR_BOUNDARY_TERMS)
-    ):
-        return True
-    owner: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | None = None
+    normalized = reason.lower()
+    return (
+        "dynamic" in normalized
+        and "boundary" in normalized
+        and any(term in normalized for term in _DYNAMIC_ATTR_BOUNDARY_TERMS)
+    )
+
+
+def _dynamic_boundary_docstring_index(
+    tree: ast.Module,
+) -> tuple[bool, tuple[tuple[int, int, bool], ...]]:
+    """Index module and nearest-definition dynamic-boundary documentation."""
+
+    cached = _DYNAMIC_BOUNDARY_DOCSTRING_CACHE.get(tree)
+    if cached is not None:
+        return cached
+    module_reason = _dynamic_boundary_reason_text_is_valid(ast.get_docstring(tree) or "")
+    if module_reason:
+        result: tuple[bool, tuple[tuple[int, int, bool], ...]] = (True, ())
+        _DYNAMIC_BOUNDARY_DOCSTRING_CACHE[tree] = result
+        return result
+    definitions: list[tuple[int, int, bool]] = []
     for node in _walk_ast(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             continue
         end_lineno = node.end_lineno if node.end_lineno is not None else node.lineno
-        if not (node.lineno <= line_no <= end_lineno):
+        definitions.append(
+            (
+                node.lineno,
+                end_lineno,
+                _dynamic_boundary_reason_text_is_valid(ast.get_docstring(node) or ""),
+            )
+        )
+    result = module_reason, tuple(definitions)
+    _DYNAMIC_BOUNDARY_DOCSTRING_CACHE[tree] = result
+    return result
+
+
+def _dynamic_attr_docstring_has_boundary_reason(tree: ast.Module, line_no: int) -> bool:
+    """Return whether an enclosing docstring explains a dynamic attribute boundary."""
+
+    module_reason, definitions = _dynamic_boundary_docstring_index(tree)
+    if module_reason:
+        return True
+    owner_start = -1
+    owner_reason = False
+    for start, end, reason in definitions:
+        if not (start <= line_no <= end):
             continue
-        if owner is None or node.lineno >= owner.lineno:
-            owner = node
-    reason = (ast.get_docstring(owner) if owner is not None else None) or ""
-    reason = reason.lower()
-    return "dynamic" in reason and "boundary" in reason and any(term in reason for term in _DYNAMIC_ATTR_BOUNDARY_TERMS)
+        if start >= owner_start:
+            owner_start = start
+            owner_reason = reason
+    return owner_reason
 
 
 def _static_setattr_field(node: ast.Call) -> str | None:
@@ -5654,6 +5746,7 @@ def _check_makefile_gate_targets(repo_root: Path = REPO_ROOT) -> tuple[Architect
                         f"fast pipeline pytest target {target!r} must also be included in QA_PYTEST_TARGETS",
                     )
                 )
+    pytest_skip_calls = _fast_pytest_skip_calls(repo_root)
     for variable_name in ("QA_PYTEST_TARGETS", "QA_RUFF_TARGETS", "QA_TYPED_FILES"):
         targets = _makefile_variable_words(makefile_text, variable_name)
         for target in _duplicate_items(targets):
@@ -5674,6 +5767,20 @@ def _check_makefile_gate_targets(repo_root: Path = REPO_ROOT) -> tuple[Architect
                         f"{variable_name} target {target!r} does not exist",
                     )
                 )
+            elif variable_name == "QA_PYTEST_TARGETS" and "::" in target:
+                node_exists, _skip_lines = _fast_pytest_target_contract(
+                    repo_root,
+                    target,
+                    pytest_skip_calls,
+                )
+                if not node_exists:
+                    violations.append(
+                        ArchitectureViolation(
+                            _relative(makefile_path, repo_root),
+                            "makefile-missing-qa-node",
+                            f"{variable_name} node {target!r} does not exist",
+                        )
+                    )
     return tuple(violations)
 
 
@@ -5876,19 +5983,6 @@ def _focused_pytest_literals(tree: ast.Module) -> tuple[str, ...]:
     return ()
 
 
-def _dotted_attribute_name(node: ast.expr) -> str | None:
-    """Return a dotted name for simple attribute/name expressions."""
-
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        parent = _dotted_attribute_name(node.value)
-        if parent is None:
-            return node.attr
-        return f"{parent}.{node.attr}"
-    return None
-
-
 def _fast_pytest_skip_calls(repo_root: Path = REPO_ROOT) -> frozenset[str]:
     """Return the ownership-manifest source of truth for forbidden fast-test skips."""
 
@@ -5899,53 +5993,20 @@ def _fast_pytest_skip_calls(repo_root: Path = REPO_ROOT) -> frozenset[str]:
     return frozenset() if calls is None else calls
 
 
-def _skip_xfail_lines_in_ast(node: ast.AST, skip_calls: frozenset[str]) -> tuple[int, ...]:
-    """Return lines where an AST subtree uses pytest skip/xfail control flow."""
-
-    lines: list[int] = []
-    for child in ast.walk(node):
-        if not isinstance(child, ast.Call):
-            continue
-        call_name = _dotted_attribute_name(child.func)
-        if call_name in skip_calls:
-            lines.append(child.lineno)
-    return tuple(lines)
-
-
-def _find_pytest_target_node(tree: ast.Module, selectors: tuple[str, ...]) -> ast.AST | None:
-    """Return the AST node named by a simple pytest target selector."""
-
-    if not selectors:
-        return tree
-    current_body: list[ast.stmt] = tree.body
-    current_node: ast.AST | None = None
-    for selector in selectors:
-        current_node = next(
-            (
-                node
-                for node in current_body
-                if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) and node.name == selector
-            ),
-            None,
-        )
-        if current_node is None:
-            return None
-        current_body = current_node.body if isinstance(current_node, ast.ClassDef) else []
-    return current_node
-
-
-def _fast_test_skip_xfail_lines(repo_root: Path, target: str, skip_calls: frozenset[str]) -> tuple[int, ...]:
-    """Return skip/xfail lines for one fast pytest target string."""
+def _fast_pytest_target_contract(
+    repo_root: Path,
+    target: str,
+    skip_calls: frozenset[str],
+) -> tuple[bool, tuple[int, ...]]:
+    """Return node existence and skip/xfail lines for one fast target."""
 
     path_text, *selectors = target.split("::")
     target_path = repo_root / path_text
     if not target_path.exists():
-        return ()
-    tree = _parse_python(target_path)
-    target_node = _find_pytest_target_node(tree, tuple(selectors))
-    if target_node is None:
-        return ()
-    return _skip_xfail_lines_in_ast(target_node, skip_calls)
+        return False, ()
+    index = load_pytest_source_index(target_path, skip_calls)
+    selector = "::".join(selectors)
+    return index.has_node(selector), index.skip_xfail_lines(selector)
 
 
 def _check_test_pipeline_fast_targets(repo_root: Path = REPO_ROOT) -> tuple[ArchitectureViolation, ...]:
@@ -6006,8 +6067,8 @@ def _check_test_pipeline_fast_targets(repo_root: Path = REPO_ROOT) -> tuple[Arch
                 )
             )
             continue
-        target_node = _find_pytest_target_node(_parse_python(target_path), tuple(selectors))
-        if target_node is None:
+        target_exists, skip_xfail_lines = _fast_pytest_target_contract(repo_root, target, skip_calls)
+        if not target_exists:
             violations.append(
                 ArchitectureViolation(
                     _relative(pipeline_path, repo_root),
@@ -6016,7 +6077,7 @@ def _check_test_pipeline_fast_targets(repo_root: Path = REPO_ROOT) -> tuple[Arch
                 )
             )
             continue
-        for line_no in _fast_test_skip_xfail_lines(repo_root, target, skip_calls):
+        for line_no in skip_xfail_lines:
             violations.append(
                 ArchitectureViolation(
                     _relative(target_path, repo_root),
@@ -6224,7 +6285,8 @@ def _check_ownership_manifest_contract(repo_root: Path = REPO_ROOT) -> tuple[Arc
                 )
     for target in sorted(_ownership_manifest_fast_test_targets(manifest_tree)):
         target_path = repo_root / target.split("::", 1)[0]
-        for line_no in _fast_test_skip_xfail_lines(repo_root, target, skip_calls):
+        _target_exists, skip_xfail_lines = _fast_pytest_target_contract(repo_root, target, skip_calls)
+        for line_no in skip_xfail_lines:
             violations.append(
                 ArchitectureViolation(
                     _relative(target_path, repo_root),
@@ -6522,8 +6584,8 @@ def _check_architecture_table_unique_keys(repo_root: Path = REPO_ROOT) -> tuple[
                     )
                 )
                 continue
-            target_node = _find_pytest_target_node(_parse_python(target_path), tuple(selectors))
-            if target_node is None:
+            target_exists, skip_xfail_lines = _fast_pytest_target_contract(repo_root, required_test, skip_calls)
+            if not target_exists:
                 violations.append(
                     ArchitectureViolation(
                         _relative(architecture_path, repo_root),
@@ -6532,7 +6594,7 @@ def _check_architecture_table_unique_keys(repo_root: Path = REPO_ROOT) -> tuple[
                     )
                 )
                 continue
-            for skip_line in _skip_xfail_lines_in_ast(target_node, skip_calls):
+            for skip_line in skip_xfail_lines:
                 violations.append(
                     ArchitectureViolation(
                         _relative(target_path, repo_root),
@@ -7401,17 +7463,7 @@ def _check_named_narrowed_fields_use_dot(
     if not path.exists():
         return ()
     tree = _parse_python(path)
-    for node in _walk_ast(tree):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "getattr"
-            and len(node.args) >= 2
-            and isinstance(node.args[0], ast.Name)
-        ):
-            continue
-        target_name = node.args[0].id
-        field_name = _string_constant(node.args[1])
+    for target_name, field_name in _fixed_name_getattr_calls(tree):
         if field_name not in narrowed_fields.get(target_name, set()):
             continue
         return (
@@ -7488,17 +7540,9 @@ def _check_isinstance_narrowed_fields_use_dot(
             if not owned_fields:
                 continue
             for statement in branch.body:
-                for node in _walk_ast(statement):
-                    if not (
-                        isinstance(node, ast.Call)
-                        and isinstance(node.func, ast.Name)
-                        and node.func.id == "getattr"
-                        and len(node.args) >= 2
-                        and isinstance(node.args[0], ast.Name)
-                        and node.args[0].id == target_name
-                    ):
+                for call_target_name, field_name in _fixed_name_getattr_calls(statement):
+                    if call_target_name != target_name:
                         continue
-                    field_name = _string_constant(node.args[1])
                     if field_name not in owned_fields:
                         continue
                     return (
@@ -7537,11 +7581,14 @@ def _statement_body_terminates(body: list[ast.stmt]) -> bool:
     return bool(body) and isinstance(body[-1], (ast.Return, ast.Raise, ast.Continue, ast.Break))
 
 
-def _assigned_ast_names(statement: ast.stmt) -> set[str]:
+def _assigned_ast_names(statement: ast.stmt) -> frozenset[str]:
     """Collect names directly rebound by a statement for narrowing invalidation."""
 
     if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        return set()
+        return frozenset()
+    cached = _ASSIGNED_AST_NAMES_CACHE.get(statement)
+    if cached is not None:
+        return cached
     names: set[str] = set()
     for node in _walk_ast(statement):
         if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
@@ -7549,7 +7596,9 @@ def _assigned_ast_names(statement: ast.stmt) -> set[str]:
         targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
         for target in targets:
             names.update(child.id for child in _walk_ast(target) if isinstance(child, ast.Name))
-    return names
+    result = frozenset(names)
+    _ASSIGNED_AST_NAMES_CACHE[statement] = result
+    return result
 
 
 def _check_terminating_guard_narrowed_fields_use_dot(
@@ -7566,18 +7615,10 @@ def _check_terminating_guard_narrowed_fields_use_dot(
     tree = _parse_python(path)
 
     def _find_getattr(node: ast.AST, narrowed: dict[str, tuple[str, ...]]) -> tuple[str, str, str] | None:
-        for child in _walk_ast(node):
-            if not (
-                isinstance(child, ast.Call)
-                and isinstance(child.func, ast.Name)
-                and child.func.id == "getattr"
-                and len(child.args) >= 2
-                and isinstance(child.args[0], ast.Name)
-            ):
-                continue
-            target_name = child.args[0].id
+        if not narrowed:
+            return None
+        for target_name, field_name in _fixed_name_getattr_calls(node):
             type_names = narrowed.get(target_name, ())
-            field_name = _string_constant(child.args[1])
             if field_name in _common_narrowed_fields(type_names, class_fields):
                 return target_name, " | ".join(type_names), field_name
         return None
@@ -7625,9 +7666,10 @@ def _check_terminating_guard_narrowed_fields_use_dot(
                 guard = None
             if found is not None:
                 return found
-            for name in _assigned_ast_names(statement):
-                if guard is None or guard[0] != name:
-                    narrowed.pop(name, None)
+            if narrowed:
+                for name in _assigned_ast_names(statement):
+                    if guard is None or guard[0] != name:
+                        narrowed.pop(name, None)
         return None
 
     found = _scan_statements(tree.body, {})
@@ -8729,7 +8771,7 @@ def _check_semantic_evidence_context_ownership(path: Path) -> tuple[Architecture
     if tree is None:
         return ()
     violations: list[ArchitectureViolation] = []
-    for node in ast.walk(tree):
+    for node in _walk_ast(tree):
         name: str | None = None
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             name = node.name

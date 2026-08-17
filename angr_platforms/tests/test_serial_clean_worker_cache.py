@@ -16,6 +16,7 @@ from angr_platforms.X86_16.segment_program_layout_codec import (
 import inertia_decompiler.cache as cache_module
 import inertia_decompiler.cli_core as cli_core
 import inertia_decompiler.serial_worker_cache as worker_cache
+from inertia_decompiler.direct_addr_failure_family import build_failure_family_snapshot
 
 
 def _stable_tail_validation() -> dict[str, object]:
@@ -40,6 +41,13 @@ def _result_record(payload: str) -> dict[str, object]:
         "skip_heavy_fallbacks": False,
         "same_family_retry_stops": 0,
         "fallback_family_labels": [],
+        "failure_family_snapshot": build_failure_family_snapshot(
+            status="ok",
+            failure_stage=None,
+            fallback_kind="direct_addr",
+            tail_validation_verdict="passed",
+            artifact_path="0x1000:sub_1000",
+        ).to_record(),
         "validated_payload_hash": digest,
         "gcc_checked_payload_hash": digest,
         "segment_program_function_evidence": _segment_evidence_record(),
@@ -140,6 +148,19 @@ def test_serial_worker_cache_reuses_only_closed_acceptance(monkeypatch, tmp_path
         result_schema=cli_core._SERIAL_CLEAN_WORKER_RESULT_SCHEMA_8616,
     )
 
+    missing_diagnostics = dict(record)
+    missing_diagnostics.pop("failure_family_snapshot")
+    missing_diagnostics_inputs = _cache_inputs(binary, addr=0x1014)
+    missing_diagnostics_miss = worker_cache.load_serial_worker_cache_8616(
+        missing_diagnostics_inputs,
+        enabled=True,
+    )
+    assert not worker_cache.store_serial_worker_cache_8616(
+        missing_diagnostics_miss,
+        missing_diagnostics,
+        result_schema=cli_core._SERIAL_CLEAN_WORKER_RESULT_SCHEMA_8616,
+    )
+
 
 def test_serial_worker_cache_key_tracks_evidence_and_semantic_environment(tmp_path):
     binary = tmp_path / "sample.exe"
@@ -153,6 +174,7 @@ def test_serial_worker_cache_key_tracks_evidence_and_semantic_environment(tmp_pa
     assert worker_cache.semantic_worker_environment_8616(
         {
             "INERTIA_EXPERIMENT": "1",
+            "INERTIA_ALLOW_PARALLEL_MSC6_WORKERS": "1",
             "INERTIA_OTEL_SPANS": "1",
             "INERTIA_SERIAL_CLEAN_WORKER_RESULT": "/tmp/result.json",
         }
@@ -228,6 +250,13 @@ def test_clean_worker_parent_reuses_validated_result_without_second_process(monk
                 tail_validation=_stable_tail_validation(),
                 validated_payload_hash=digest,
                 gcc_checked_payload_hash=digest,
+                failure_family_snapshot=build_failure_family_snapshot(
+                    status="ok",
+                    failure_stage=None,
+                    fallback_kind="direct_addr",
+                    tail_validation_verdict="passed",
+                    artifact_path="0x1000:sub_1000",
+                ),
                 segment_program_function_evidence=segment_program_function_evidence_from_record_8616(
                     _segment_evidence_record()
                 ),
@@ -244,13 +273,68 @@ def test_clean_worker_parent_reuses_validated_result_without_second_process(monk
     )
 
     first = cli_core._run_serial_clean_process_work_item_8616(context, item, timeout=60)
+    cached_only = cli_core._run_serial_clean_process_work_item_8616(
+        context,
+        item,
+        timeout=60,
+        cache_only=True,
+    )
+    missing_only = cli_core._run_serial_clean_process_work_item_8616(
+        context,
+        item,
+        timeout=61,
+        cache_only=True,
+    )
     second = cli_core._run_serial_clean_process_work_item_8616(context, item, timeout=60)
 
     assert first.status == "ok"
     assert not first.from_cache
+    assert cached_only is not None
+    assert cached_only.from_cache
+    assert missing_only is None
     assert second.status == "ok"
     assert second.from_cache
     assert second.payload == first.payload
+    assert second.failure_family_snapshot == first.failure_family_snapshot
     assert "cache hit" in second.debug_output
     assert process_count == 1
     assert os.environ[cli_core._SERIAL_CLEAN_WORKER_RESULT_ENV_8616]
+
+
+def test_canonical_clean_cache_preflight_refuses_miss_without_emitting(monkeypatch, capsys):
+    canonical = cli_core.DirectAddrCanonicalization8616(
+        requested_addr=0x10554,
+        canonical_addr=0x10560,
+        region=(0x10554, 0x10672),
+        name="InitBars",
+    )
+    monkeypatch.setattr(
+        cli_core,
+        "_run_serial_clean_process_work_item_8616",
+        lambda *_args, **_kwargs: None,
+    )
+
+    status = cli_core._run_canonicalized_direct_clean_worker_8616(
+        SimpleNamespace(),
+        SimpleNamespace(timeout=60),
+        SimpleNamespace(),
+        canonical,
+        function_label="InitBars",
+        cache_only=True,
+    )
+
+    captured = capsys.readouterr()
+    assert status is None
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_serial_clean_worker_bypasses_parent_owned_direct_lock(monkeypatch):
+    lock_key = {"kind": "direct_addr_work", "addr": 0x102E0}
+    monkeypatch.delenv(cli_core._SERIAL_CLEAN_WORKER_RESULT_ENV_8616, raising=False)
+
+    assert cli_core._direct_addr_work_requires_parent_lock_8616(lock_key)
+
+    monkeypatch.setenv(cli_core._SERIAL_CLEAN_WORKER_RESULT_ENV_8616, "/tmp/worker-result.json")
+
+    assert not cli_core._direct_addr_work_requires_parent_lock_8616(lock_key)

@@ -330,7 +330,7 @@ def test_otlp_export_uses_provider_without_collector(monkeypatch, tmp_path):
 def test_otlp_export_can_be_enabled_from_cli_arg(monkeypatch, tmp_path):
     reset_telemetry_for_tests()
     monkeypatch.setenv("INERTIA_OTEL_SPANS", "1")
-    monkeypatch.delenv("INERTIA_OTEL_EXPORT_OTLP", raising=False)
+    monkeypatch.setenv("INERTIA_OTEL_EXPORT_OTLP", "0")
     monkeypatch.setenv("INERTIA_OTEL_STDERR", "0")
     monkeypatch.setenv("INERTIA_OTEL_MIN_MS", "0")
 

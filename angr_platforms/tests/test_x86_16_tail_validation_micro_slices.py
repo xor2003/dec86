@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 import angr_platforms.X86_16.tail_validation as tail_validation_module
 import angr_platforms.X86_16.tail_validation_fingerprint as tail_validation_fingerprint_module
 from angr.analyses.decompiler.structured_codegen.c import (
@@ -443,12 +445,13 @@ def test_contextual_call_fingerprints_match_targets_not_structured_order(monkeyp
     monkeypatch.setattr(
         tail_validation_fingerprint_module,
         "_summarize_x86_16_callsite_for_fingerprint_8616",
-        lambda _function, callsite_addr: summaries[callsite_addr],
+        lambda *_args: pytest.fail("owned callsite inventory was not consumed"),
     )
 
     fingerprints = tail_validation_fingerprint_module.build_x86_16_contextual_call_fingerprints(
         wrapped.cfunc.body,
         project,
+        summary_inventory=summaries,
     )
 
     assert fingerprints[id(call_a)] == "addr:0x5100"

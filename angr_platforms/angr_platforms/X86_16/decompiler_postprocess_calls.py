@@ -91,6 +91,7 @@ from .callsite_summary import (
     CallsitePushExprOp8616,
     CallsitePushSourceKind8616,
     CallsiteSummary8616,
+    CallsiteTargetInventory8616,
     StructuredCallKind8616,
     bind_structured_callsite_identity_8616,
     known_helper_abi_widths_8616,
@@ -119,6 +120,7 @@ from .lowering.call_argument_shape import (
     LogicalArgumentShapeEvidenceSource8616,
     ProtectedCallArgumentStore8616,
     accounted_target_prototype_shape_evidence_8616,
+    carry_forward_logical_call_argument_shape_8616,
     exact_caller_stack_object_for_word_pair_8616,
     exact_caller_stack_object_shape_evidence_8616,
     reconcile_materialized_call_argument_shape_8616,
@@ -4134,10 +4136,22 @@ def _attach_callsite_summaries_8616(project: StructuredAstValue, codegen: Struct
         callsite_addrs = _all_function_callsite_addrs_8616(project, function)
         if not callsite_addrs:
             return False
+        target_inventory = CallsiteTargetInventory8616.collect(function)
+        previous_summary_inventory = _callsite_summary_inventory_8616(codegen)
         summary_inventory: dict[int, CallsiteSummary8616] = {}
         for callsite_addr in callsite_addrs:
-            summary = summarize_x86_16_callsite(function, callsite_addr)
+            summary = summarize_x86_16_callsite(
+                function,
+                callsite_addr,
+                target_inventory=target_inventory,
+            )
             if summary is not None:
+                previous_summary = previous_summary_inventory.get(callsite_addr)
+                if previous_summary is not None:
+                    summary = carry_forward_logical_call_argument_shape_8616(
+                        summary,
+                        previous_summary,
+                    )
                 summary_inventory[callsite_addr] = summary
         codegen._inertia_callsite_summary_inventory_8616 = summary_inventory
         if not call_nodes:
@@ -4199,6 +4213,7 @@ def _attach_callsite_summaries_8616(project: StructuredAstValue, codegen: Struct
             call_nodes=call_nodes,
             callsite_addrs=callsite_addrs,
             node_callsite_addr_resolver=_node_callsite_addr,
+            summary_inventory=summary_inventory,
         )
 
         if measure_single_function_context:
@@ -4284,11 +4299,23 @@ def _ordered_callsite_pairs_8616(
     project: StructuredAstValue,
     function: StructuredAstValue,
     root: StructuredAstValue,
-    call_nodes: StructuredAstValue,
-    callsite_addrs: StructuredAstValue,
-    node_callsite_addr_resolver: StructuredAstValue,
-) -> StructuredAstValue:
-    def _impl() -> StructuredAstValue:
+    call_nodes: list[CFunctionCall],
+    callsite_addrs: tuple[int, ...],
+    node_callsite_addr_resolver: Callable[[StructuredAstValue], int | None],
+    summary_inventory: Mapping[int, CallsiteSummary8616] | None = None,
+) -> list[tuple[CFunctionCall, int]]:
+    """Pair structured calls with the authoritative recovery inventory."""
+
+    def _impl() -> list[tuple[CFunctionCall, int]]:
+        active_summary_inventory = summary_inventory
+        if active_summary_inventory is None:
+            local_inventory: dict[int, CallsiteSummary8616] = {}
+            for callsite_addr in callsite_addrs:
+                summary = summarize_x86_16_callsite(function, callsite_addr)
+                if summary is not None:
+                    local_inventory[callsite_addr] = summary
+            active_summary_inventory = local_inventory
+
         def _node_contains_target(parent: StructuredAstValue, target_id: int) -> bool:
             if id(parent) == target_id:
                 return True
@@ -4379,7 +4406,7 @@ def _ordered_callsite_pairs_8616(
             except Exception:
                 target_addr = None
             if not isinstance(target_addr, int):
-                summary = summarize_x86_16_callsite(function, callsite_addr)
+                summary = active_summary_inventory.get(callsite_addr)
                 target_addr = summary.target_addr if summary is not None else None
             if not isinstance(target_addr, int):
                 return None
@@ -4392,9 +4419,9 @@ def _ordered_callsite_pairs_8616(
         nodes_by_callsite: dict[int, list[CFunctionCall]] = {}
         remaining_nodes: list[CFunctionCall] = []
         for node in call_nodes:
-            callsite_addr = node_callsite_addr_resolver(node)
-            if isinstance(callsite_addr, int):
-                nodes_by_callsite.setdefault(callsite_addr, []).append(node)
+            node_callsite_addr = node_callsite_addr_resolver(node)
+            if isinstance(node_callsite_addr, int):
+                nodes_by_callsite.setdefault(node_callsite_addr, []).append(node)
             else:
                 remaining_nodes.append(node)
 
@@ -4406,7 +4433,7 @@ def _ordered_callsite_pairs_8616(
             if not matched_nodes:
                 unmatched_callsites.append(callsite_addr)
                 continue
-            summary = summarize_x86_16_callsite(function, callsite_addr)
+            summary = active_summary_inventory.get(callsite_addr)
             chosen_index = None
             if len(matched_nodes) == 1:
                 if _call_node_can_take_summary_8616(project, matched_nodes[0], summary):
@@ -4442,7 +4469,7 @@ def _ordered_callsite_pairs_8616(
                     tuple(_call_node_name_8616(node) for node in available_nodes[:16]),
                 )
             for callsite_addr in unmatched_callsites:
-                summary = summarize_x86_16_callsite(function, callsite_addr)
+                summary = active_summary_inventory.get(callsite_addr)
                 matched_index = None
                 if summary is not None:
                     for idx, node in enumerate(available_nodes):
@@ -5292,6 +5319,9 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
     signature = _callsite_materialization_signature_8616(codegen)
     previous_signature = getattr(codegen, "_inertia_callsite_materialization_signature_8616", None)
     previous_complete = bool(getattr(codegen, "_inertia_callsite_materialization_complete_8616", False))
+    selector_materialized_before = int(
+        getattr(codegen, "_inertia_call_return_switch_selector_materialized_8616", 0) or 0
+    )
     codegen._inertia_callsite_unmaterialized_arg_gaps_8616 = ()
     if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
         log.warning(
@@ -6835,6 +6865,15 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         ax_expr = _register_expr_from_name_8616("ax")
         if ax_expr is None:
             return _debug_refuse("missing-ax-expr")
+        existing_lhs = getattr(stmt, "lhs", None) if is_assignment_call else None
+        existing_variable = getattr(existing_lhs, "variable", None)
+        if (
+            isinstance(existing_variable, SimRegisterVariable)
+            and isinstance(ax_expr.variable, SimRegisterVariable)
+            and existing_variable.reg == ax_expr.variable.reg
+            and existing_variable.size == ax_expr.variable.size
+        ):
+            return stmt
         if os.environ.get("INERTIA_DEBUG_CALL_MATERIALIZATION"):
             log.warning(
                 "[call-return-selector] materialize target=%r stmt=%s following=%r",
@@ -10613,6 +10652,18 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
         if summary_map.get(id(call)) is not updated:
             summary_map[id(call)] = updated
             changed = True
+        summary_inventory = _callsite_summary_inventory_8616(codegen)
+        inventory_summary = summary_inventory.get(updated.callsite_addr)
+        if inventory_summary is None:
+            summary_inventory[updated.callsite_addr] = updated
+            codegen._inertia_callsite_summary_inventory_8616 = summary_inventory
+        else:
+            projected_inventory_summary = carry_forward_logical_call_argument_shape_8616(
+                inventory_summary,
+                updated,
+            )
+            if projected_inventory_summary is not inventory_summary:
+                summary_inventory[updated.callsite_addr] = projected_inventory_summary
 
     def _record_prunable_segment_metadata_ids(
         call: StructuredAstValue, statements: list[StructuredAstValue], consumed_indices: list[int]
@@ -16575,7 +16626,7 @@ def _materialize_callsite_stack_arguments_8616(project: StructuredAstValue, code
             )
     codegen._inertia_materialized_callsite_metadata_ids = materialized_callsite_metadata_ids
     codegen._inertia_callsite_summaries = summary_map
-    if int(getattr(codegen, "_inertia_call_return_switch_selector_materialized_8616", 0) or 0) > 0:
+    if int(getattr(codegen, "_inertia_call_return_switch_selector_materialized_8616", 0) or 0) > selector_materialized_before:
         changed = True
     with span("x86_16.call_args.prune_segment_metadata"):
         if prune_materialized_callsite_segment_metadata_8616(project, codegen):

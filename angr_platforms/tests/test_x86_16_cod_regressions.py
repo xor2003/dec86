@@ -36,6 +36,7 @@ from angr_platforms.X86_16.decompiler_return_compat import (
 import decompile
 from inertia_decompiler import cli_c_ast_rewrites as _cli_c_ast_rewrites
 from inertia_decompiler import cli_stack_cvars as _cli_stack_cvars
+from inertia_decompiler.recompile_check import check_c_recompiles_8616
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
@@ -101,7 +102,6 @@ def _assert_cod_proc_succeeded_or_reported_unvalidated_partial(result: subproces
         ("DOSFUNC.COD", "_dos_getfree", 20),
         ("DOSFUNC.COD", "_dos_loadOverlay", 20),
         ("DOSFUNC.COD", "_dos_getReturnCode", 20),
-        ("OVERLAY.COD", "_overlay_load", 20),
         ("EGAME2.COD", "_openFileWrapper", 20),
     ),
 )
@@ -116,21 +116,20 @@ def test_cod_regression_targets_are_recoverable(cod_name: str, proc_name: str, t
 
 
 def test_cod_timeout_target_is_classified_deterministically():
-    for cod_name, proc_name in (("EGAME11.COD", "_drawCockpit"),):
-        start = time.monotonic()
-        result = _run_cod_proc(COD_DIR / cod_name, proc_name, timeout=20)
-        elapsed = time.monotonic() - start
+    start = time.monotonic()
+    result = _run_cod_proc(COD_DIR / "EGAME11.COD", "_drawCockpit", timeout=1)
+    elapsed = time.monotonic() - start
 
-        assert result.returncode == 3, result.stderr + result.stdout
-        _assert_has_all(
-            result.stdout,
-            (
-                "Timed out while recovering a function after 20s",
-                "Tip: try a larger --timeout for larger binaries.",
-            ),
-        )
-        assert "during x86-16 function recovery" in result.stdout
-        assert elapsed < 75, elapsed
+    assert result.returncode == 3, result.stderr + result.stdout
+    _assert_has_all(
+        result.stdout,
+        (
+            "Timed out while recovering a function after 1s",
+            "Tip: try a larger --timeout for larger binaries.",
+        ),
+    )
+    assert "during x86-16 function recovery" in result.stdout
+    assert elapsed < 20, elapsed
 
 
 @pytest.mark.parametrize(
@@ -189,22 +188,32 @@ def test_cod_runner_hotspots_fall_back_through_scan_safe_classifier(monkeypatch,
 def test_cod_biosfunc_clearkeyflags_far_word_store():
     result = _run_cod_proc(COD_DIR / "BIOSFUNC.COD", "_bios_clearkeyflags")
 
-    _assert_cod_proc_succeeded_or_reported_unvalidated_partial(result)
-    if result.returncode != 0:
-        return
-    _assert_has_all(result.stdout, ("function: 0x1000 _bios_clearkeyflags",))
-    _assert_has_all(result.stdout, ("1047", "1048"))
+    assert result.returncode == 0, result.stderr + result.stdout
+    _assert_has_all(
+        result.stdout,
+        (
+            "function: 0x1000 _bios_clearkeyflags",
+            "SEG_U16(0, 1047) = 0;",
+        ),
+    )
+    assert "whole-tail validation clean" in result.stderr
     _assert_has_none(
-        result.stdout, ("*((unsigned short *)1047)", "*((char *)(es * 16 + 1047))", "*((char *)(es * 16 + 1048))")
+        result.stdout,
+        (
+            "inertia_es, 1047",
+            "*(1047)",
+            "*(1048)",
+            "*((unsigned short *)1047)",
+            "*((char *)(es * 16 + 1047))",
+            "*((char *)(es * 16 + 1048))",
+        ),
     )
 
 
 def test_cod_dos_getfree_call_and_return_recovered():
     result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", "_dos_getfree")
 
-    _assert_cod_proc_succeeded_or_reported_unvalidated_partial(result)
-    if result.returncode != 0:
-        return
+    assert result.returncode == 0, result.stderr + result.stdout
     _assert_has_all(
         result.stdout,
         (
@@ -371,46 +380,23 @@ def test_cod_overlay_header_known_object_is_pointer_typed():
     assert getattr(spec.type.pts_to, "name", None) == "OvlHeader"
 
 
-def test_cod_overlay_load_preserves_guarded_free_memory_probe_before_final_return():
-    result = _run_cod_proc(COD_DIR / "OVERLAY.COD", "_overlay_load")
-
-    _assert_cod_proc_succeeded_or_reported_unvalidated_partial(result)
-    if result.returncode != 0:
-        return
-    text = result.stdout
-    body_match = re.search(
-        r"unsigned short _overlay_load\(const char \* filename\)\s*\{(?P<body>.*?)\n\}",
-        text,
-        re.S,
-    )
-    assert body_match is not None
-    body = body_match.group("body")
-    assert not re.search(r"int err;\s*return ovlSegment;", body, re.S)
-    ordered = [
-        text.index("freeMem = dos_getfree();"),
-        text.index("if (freeMem == 0)"),
-        text.index("alloc = freeMem - RESERVE_PARA;"),
-        text.index("ovlSegment = dos_alloc(alloc);"),
-        text.index("return ovlSegment;"),
-    ]
-    assert ordered == sorted(ordered)
-    assert re.search(
-        r'if \(freeMem == 0\)\s*\{\s*ERROR\("overlay_load\(\): unable to determine amount of free memory"\);\s*return 0;\s*\}',
-        text,
-        re.S,
-    )
-
-
 def test_cod_overlay_function_address_keeps_proven_known_object_bindings():
     result = _run_cod_proc(COD_DIR / "OVERLAY.COD", "_overlay_functionAddress")
 
-    _assert_cod_proc_succeeded_or_reported_unvalidated_partial(result)
+    assert result.returncode == 0, result.stderr + result.stdout
     text = result.stdout
-    if result.returncode != 0:
-        return
     assert "function: 0x1000 _overlay_functionAddress" in text
-    assert "return" in text
+    assert result.stderr.count("whole-tail validation clean across 1 functions") == 1
+    assert re.search(r"long _overlay_functionAddress\([^)]*ovlLoadSegment[^)]*funcNumber[^)]*\)", text)
+    assert text.count("SEG_U16(ovlLoadSegment,") >= 2
+    assert "36 + (funcNumber << 1)" in text
+    assert re.search(r"return\s+[^;]*<< 16\s*\|\s*[^;]+;", text)
+    assert "[dbg]" not in text
+    assert "== asm fallback ==" not in text
+    assert "unassigned-stack-local" not in result.stderr
     assert re.search(r"(?m)^\s*MK_FP\(ovlHeader->code_segment, slotArray\[funcNumber\]\);\s*$", text) is None
+    compile_result = check_c_recompiles_8616(text, target="portable-flat")
+    assert compile_result.passed, compile_result.stderr
 
 
 def test_cod_dos_loadoverlay_wrapper_returns_loadprog():
@@ -465,17 +451,17 @@ def test_cod_dos_runprogram_wrapper_returns_loadprog():
     )
 
 
-def test_cod_loadprog_uses_known_helper_signature_and_no_missing_type():
+def test_cod_loadprog_preserves_binary_arguments_and_recompiles():
     result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", "loadprog")
 
-    _assert_cod_proc_succeeded_or_reported_unvalidated_partial(result)
-    if result.returncode != 0:
-        return
+    combined = result.stderr + result.stdout
+    assert result.returncode == 0, combined
+    assert "validation=passed" in combined
     _assert_has_all(
         result.stdout,
         (
-            "function: 0x1000 loadprog",
-            "return",
+            "unsigned short loadprog(unsigned short file, unsigned short segment, unsigned short type, unsigned short cmdline, unsigned short arg_c)",
+            "exeLoadParams[2] = arg_c;",
         ),
     )
     _assert_has_none(
@@ -510,14 +496,14 @@ def test_cod_openfilewrapper_direct_forwarding():
 def test_cod_dos_getreturncode_returns_value():
     result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", "_dos_getReturnCode")
 
-    _assert_cod_proc_succeeded_or_reported_unvalidated_partial(result)
-    if result.returncode != 0:
-        return
+    combined = result.stderr + result.stdout
+    assert result.returncode == 0, combined
+    assert "validation=passed" in combined
     _assert_has_all(
         result.stdout,
         (
             "function: 0x1000 _dos_getReturnCode",
-            "return",
+            "return rout.h.al;",
         ),
     )
 

@@ -238,6 +238,8 @@ from .structuring.return_chains import (
     VoidTailCallSuffixDiamondStatus8616,
     compose_ax_byte_lanes_8616,
     ensure_return_chain_codegen_state_8616,
+    return_expression_has_wide_word_composition_8616,
+    terminal_ax_fallback_supports_widths_8616,
 )
 from .structuring.return_chains import (
     SurplusIfGuardKind8616 as _SurplusIfGuardKind8616,
@@ -6955,6 +6957,16 @@ def _materialize_missing_terminal_ax_return_8616(project: StructuredAstValue, co
             len(return_nodes),
             type(root).__name__,
         )
+    wide_return_nodes = [
+        node
+        for node in return_nodes
+        if return_expression_has_wide_word_composition_8616(getattr(node, "retval", None))
+    ]
+    if wide_return_nodes:
+        codegen._inertia_missing_terminal_ax_return_refused_wide_8616 = (
+            int(getattr(codegen, "_inertia_missing_terminal_ax_return_refused_wide_8616", 0) or 0) + 1
+        )
+        return False
     replace_artifact_return = False
     artifact_return = None
     if return_nodes:
@@ -7019,23 +7031,34 @@ def _materialize_missing_terminal_ax_return_8616(project: StructuredAstValue, co
             with contextlib.suppress(Exception):
                 function = project.kb.functions.function(addr=func_addr, create=False)
 
-    prototype = None
+    return_types: list[StructuredAstValue] = []
     for candidate in (
+        getattr(function, "prototype", None) if function is not None else None,
         getattr(cfunc, "functy", None),
         getattr(cfunc, "prototype", None),
-        getattr(function, "prototype", None) if function is not None else None,
     ):
-        if candidate is not None and getattr(candidate, "returnty", None) is not None:
-            prototype = candidate
-            break
+        candidate_return_type = getattr(candidate, "returnty", None)
+        if candidate_return_type is not None:
+            return_types.append(candidate_return_type)
 
-    return_type = getattr(prototype, "returnty", None)
-    if type(return_type) is SimTypeBottom and getattr(return_type, "label", None) == "void":
+    if any(type(return_type) is SimTypeBottom and getattr(return_type, "label", None) == "void" for return_type in return_types):
         codegen._inertia_missing_terminal_ax_return_refused_void_8616 = (
             int(getattr(codegen, "_inertia_missing_terminal_ax_return_refused_void_8616", 0) or 0) + 1
         )
         return False
-    if return_type is None or type(return_type) is SimTypeBottom:
+    concrete_return_types = tuple(return_type for return_type in return_types if type(return_type) is not SimTypeBottom)
+    if not concrete_return_types:
+        return False
+    return_widths: list[int | None] = []
+    for return_type in concrete_return_types:
+        try:
+            return_widths.append(return_type.size)
+        except (AttributeError, ValueError):
+            return_widths.append(None)
+    if not terminal_ax_fallback_supports_widths_8616(return_widths):
+        codegen._inertia_missing_terminal_ax_return_refused_width_8616 = (
+            int(getattr(codegen, "_inertia_missing_terminal_ax_return_refused_width_8616", 0) or 0) + 1
+        )
         return False
     if not isinstance(func_addr, int):
         return False

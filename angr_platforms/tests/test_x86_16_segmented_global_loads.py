@@ -111,6 +111,7 @@ from capstone.x86_const import (
     X86_INS_INC,
     X86_INS_MOV,
     X86_INS_SHL,
+    X86_INS_SUB,
     X86_OP_IMM,
     X86_OP_MEM,
     X86_OP_REG,
@@ -318,6 +319,10 @@ def test_segmented_global_load_materializes_named_ds_word_global():
     assert assignment.rhs.name == "g_rows"
     assert assignment.rhs.tags["inertia_source_instruction_addrs"] == (0x4010,)
     assert codegen._inertia_segmented_global_load_stats_8616.materialized_count == 1
+    materialized_rhs = assignment.rhs
+
+    assert materialize_named_segmented_global_loads_8616(project, codegen, {0x42: ("g_rows", 2)}) is False
+    assert assignment.rhs is materialized_rhs
 
 
 def test_direct_segmented_global_load_evidence_preserves_default_ds_and_es_override():
@@ -376,6 +381,41 @@ def test_direct_segmented_global_store_evidence_preserves_default_ds_and_es_over
     assert evidence == (
         DirectSegmentedGlobalStoreEvidence8616(0x0B46, 2, MemSpace.DS, 0x1057C, 1),
         DirectSegmentedGlobalStoreEvidence8616(0x0132, 2, MemSpace.ES, 0x10582, 30),
+    )
+
+
+def test_direct_segmented_global_store_evidence_tracks_constant_register_address_and_value():
+    project = SimpleNamespace(arch=Arch86_16())
+    clear_bx = SimpleNamespace(
+        address=0x1000,
+        id=X86_INS_SUB,
+        operands=(_reg_operand(X86_REG_BX), _reg_operand(X86_REG_BX)),
+    )
+    load_es = SimpleNamespace(
+        address=0x1002,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_ES), _reg_operand(X86_REG_BX)),
+    )
+    load_bx = SimpleNamespace(
+        address=0x1004,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_BX), _imm_operand(0x417, size=2)),
+    )
+    store = SimpleNamespace(
+        address=0x1007,
+        id=X86_INS_MOV,
+        operands=(
+            _mem_operand(X86_REG_BX, 0, segment=X86_REG_ES),
+            _reg_operand(X86_REG_ES),
+        ),
+    )
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=(clear_bx, load_es, load_bx, store)))
+    function = SimpleNamespace(blocks=(block,))
+
+    evidence = recover_direct_segmented_global_store_evidence_8616(project, function)
+
+    assert evidence == (
+        DirectSegmentedGlobalStoreEvidence8616(0x0417, 2, MemSpace.ES, 0x1007, 0, 0),
     )
 
 
@@ -485,6 +525,59 @@ def test_anonymous_direct_word_store_folds_exact_instruction_byte_pair_and_repla
     assert replay_stats.anonymous_direct_store_materialized_count == 1
     assert replay_stats.anonymous_direct_store_failure_count == 0
     assert replay_stats.refused_no_evidence == 0
+
+
+def test_anonymous_direct_word_store_uses_instruction_proven_unresolved_byte_pair():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    tags = {"ins_addr": 0x1014}
+    low = CAssignment(
+        _deref(_dirty(41, codegen), codegen),
+        CBinaryOp("Sub", _dirty(7, codegen), _dirty(7, codegen), codegen=codegen),
+        codegen=codegen,
+        tags=tags,
+    )
+    high = CAssignment(
+        _deref(_dirty(42, codegen), codegen),
+        CBinaryOp(
+            "Shr",
+            CBinaryOp("Sub", _dirty(7, codegen), _dirty(7, codegen), codegen=codegen),
+            _const(8, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+        tags=tags,
+    )
+    root = CStatements([low, high], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root, body=root)
+    evidence = (
+        DirectSegmentedGlobalStoreEvidence8616(0x0417, 2, MemSpace.ES, 0x1014, 0, 0),
+    )
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        (),
+        anonymous_direct_stores=evidence,
+        project=project,
+        stats=stats,
+    )
+
+    assert changed is True
+    assert len(root.statements) == 1
+    assignment = root.statements[0]
+    assert isinstance(assignment, CAssignment)
+    assert isinstance(assignment.lhs, CFunctionCall)
+    assert assignment.lhs.callee_target == "SEG_U16"
+    assert isinstance(assignment.lhs.args[0], CConstant)
+    assert assignment.lhs.args[0].value == 0
+    assert assignment.lhs.args[1].value == 0x0417
+    assert isinstance(assignment.rhs, CConstant)
+    assert assignment.rhs.value == 0
+    assert assignment.tags["ins_addr"] == 0x1014
+    assert stats.anonymous_direct_store_classified_fact_count == 1
+    assert stats.anonymous_direct_store_materialized_count == 1
+    assert stats.anonymous_direct_store_failure_count == 0
 
 
 def test_anonymous_direct_word_store_resolves_unique_dirty_byte_pair_source():
@@ -4981,10 +5074,14 @@ def test_collect_scalar_call_return_global_store_after_stack_cleanup(monkeypatch
     monkeypatch.setattr(
         segmented_global_loads_module,
         "build_callsite_summary_inventory_8616",
-        lambda *_args: {summary.callsite_addr: summary},
+        lambda *_args: pytest.fail("owned callsite summary should prevent recovery"),
     )
 
-    evidence = _collect_direct_global_call_return_store_evidence_8616(project, function)
+    evidence = _collect_direct_global_call_return_store_evidence_8616(
+        project,
+        function,
+        {summary.callsite_addr: summary},
+    )
 
     assert evidence == (
         DirectGlobalCallReturnStoreEvidence8616(

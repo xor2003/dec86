@@ -23,27 +23,29 @@ def test_monoprin_fimemset_emits_string_intrinsic_fallback_anchor():
                 "cod",
                 "--cod-file",
                 "f14/MONOPRIN.COD",
+                "--proc-name",
+                "__fimemset",
                 "--timeout",
                 "20",
+                "--max-workers",
+                "1",
             ],
             cwd=REPO_ROOT,
             env=env,
             text=True,
             capture_output=True,
-            timeout=90,
+            timeout=180,
             check=False,
         )
         assert result.returncode in {0, 1}
         rendered = MONOPRIN_DEC.read_text(encoding="utf-8", errors="replace")
-        assert "/* == 4/6 MONOPRIN.COD :: __fimemset [NEAR] == */" in rendered
-        section_start = rendered.index("/* == 4/6 MONOPRIN.COD :: __fimemset [NEAR] == */")
-        section_end = rendered.find("/* == end 4/6 MONOPRIN.COD :: __fimemset [NEAR] == */", section_start)
-        if section_end == -1:
-            section_end = rendered.find("/* == 5/6", section_start)
+        assert "/* == 1/1 MONOPRIN.COD :: __fimemset [NEAR] == */" in rendered
+        section_start = rendered.index("/* == 1/1 MONOPRIN.COD :: __fimemset [NEAR] == */")
+        section_end = rendered.find("/* == end 1/1 MONOPRIN.COD :: __fimemset [NEAR] == */", section_start)
         section = rendered[section_start : section_end if section_end != -1 else None]
         assert "/* == c (string intrinsic fallback) == */" not in section
         assert "/* -- c (string intrinsic fallback) -- */" not in section
-        assert "__x86_16_stos(2);" in rendered
+        assert "__x86_16_stos(2);" in section
     finally:
         if previous is None:
             if MONOPRIN_DEC.exists():

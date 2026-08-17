@@ -71,11 +71,20 @@ def _typed_storage_value_8616(value: object, width_bits: int) -> IRValue | None:
 def _semantic_register_operands_8616(
     condition: ConditionIR,
 ) -> tuple[tuple[str, object], ...]:
-    """Map typed CMP semantics to register operand positions."""
+    """Map typed condition-producer semantics to register operands."""
     semantics = condition.producer_semantics
     if not isinstance(semantics, tuple) or not semantics:
         return ()
     kind = semantics[0]
+    if kind in {"and_reg_reg16", "or_reg_reg16"}:
+        if (
+            len(semantics) >= 3
+            and isinstance(semantics[1], str)
+            and isinstance(semantics[2], str)
+            and semantics[1].lower() == semantics[2].lower()
+        ):
+            return ((semantics[1].lower(), condition.lhs),)
+        return ()
     if kind in {"cmp_reg_mem16", "cmp_reg_abs16", "cmp_reg_imm16"}:
         return ((str(semantics[1]).lower(), condition.lhs),)
     if kind in {"cmp_mem_reg16", "cmp_abs_reg16"}:
@@ -94,7 +103,11 @@ def _local_bindings_8616(
     """Extract exact register identities already proven at one CMP."""
     bindings: dict[str, IRValue] = {}
     failures = 0
-    for register_name, operand in _semantic_register_operands_8616(condition):
+    operands = (
+        *((binding.register_name, binding.value) for binding in condition.register_bindings),
+        *_semantic_register_operands_8616(condition),
+    )
+    for register_name, operand in operands:
         storage = _typed_storage_value_8616(operand, condition.width_bits)
         if storage is None:
             continue

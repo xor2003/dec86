@@ -1733,13 +1733,11 @@ def _canonicalize_stack_cvar_expr(
                     )
                 if displacement is None:
                     alias_state = _resolve_stack_pointer_alias_expr(deref_operand)
-                    alias_base_expr = alias_state[0] if alias_state is not None else None
-                    alias_base_var = getattr(alias_base_expr, "variable", None)
-                    candidate_offset = getattr(alias_base_var, "offset", None)
-                    if isinstance(candidate_offset, int):
-                        resolved_offset = candidate_offset
-                    if isinstance(resolved_offset, int) and alias_state is not None:
-                        displacement = resolved_offset + alias_state[1]
+                    if alias_state is not None:
+                        alias_base_var = getattr(alias_state[0], "variable", None)
+                        candidate_offset = getattr(alias_base_var, "offset", None)
+                        if isinstance(candidate_offset, int):
+                            displacement = candidate_offset + alias_state[1]
                 if isinstance(displacement, int):
                     type_bits = _safe_sim_type_size_bits(expr.type)
                     arch = getattr(getattr(codegen, "project", None), "arch", None)
@@ -1803,26 +1801,25 @@ def _canonicalize_stack_cvar_expr(
                             alias_base_expr, alias_offset = alias_state
                             alias_base_var = getattr(alias_base_expr, "variable", None)
                             candidate_offset = getattr(alias_base_var, "offset", None)
-                            if isinstance(candidate_offset, int):
-                                resolved_offset = candidate_offset
-                            if isinstance(resolved_offset, int):
-                                resolved_offset += alias_offset
+                            indexed_resolved_offset = (
+                                candidate_offset + alias_offset if isinstance(candidate_offset, int) else None
+                            )
                         else:
-                            resolved_offset = base_var.offset
-                        if isinstance(resolved_offset, int):
-                            resolved_offset += index_value
-                            resolved = resolve_stack_cvar_at_offset(codegen, resolved_offset, preferred_size=2)
+                            indexed_resolved_offset = base_var.offset
+                        if isinstance(indexed_resolved_offset, int):
+                            indexed_resolved_offset += index_value
+                            resolved = resolve_stack_cvar_at_offset(codegen, indexed_resolved_offset, preferred_size=2)
                             resolved = _prefer_bound_stack_cvar_8616(codegen, resolved, resolve_stack_cvar_at_offset)
                             resolved_var = getattr(resolved, "variable", None)
                             if (
                                 isinstance(resolved, structured_c.CVariable)
                                 and isinstance(resolved_var, SimStackVariable)
-                                and getattr(resolved_var, "offset", None) == resolved_offset
+                                and getattr(resolved_var, "offset", None) == indexed_resolved_offset
                             ):
                                 _record_stack_canonicalization_bridge_8616(
                                     codegen,
                                     expr=expr,
-                                    resolved_offset=resolved_offset,
+                                    resolved_offset=indexed_resolved_offset,
                                     kind="indexed_deref",
                                 )
                                 debug_stats["candidate_ast_match_count"] += 1
@@ -1833,12 +1830,12 @@ def _canonicalize_stack_cvar_expr(
                                 active_expr_ids.discard(expr_id)
                                 return resolved
                             if callable(materialize_stack_cvar_at_offset):
-                                materialized = materialize_stack_cvar_at_offset(codegen, resolved_offset, 2)
+                                materialized = materialize_stack_cvar_at_offset(codegen, indexed_resolved_offset, 2)
                                 materialized_var = getattr(materialized, "variable", None)
                                 if (
                                     isinstance(materialized, structured_c.CVariable)
                                     and isinstance(materialized_var, SimStackVariable)
-                                    and getattr(materialized_var, "offset", None) == resolved_offset
+                                    and getattr(materialized_var, "offset", None) == indexed_resolved_offset
                                 ):
                                     materialized = _prefer_bound_stack_cvar_8616(
                                         codegen, materialized, resolve_stack_cvar_at_offset
@@ -1846,7 +1843,7 @@ def _canonicalize_stack_cvar_expr(
                                     _record_stack_canonicalization_bridge_8616(
                                         codegen,
                                         expr=expr,
-                                        resolved_offset=resolved_offset,
+                                        resolved_offset=indexed_resolved_offset,
                                         kind="indexed_deref",
                                     )
                                     debug_stats["candidate_ast_match_count"] += 1

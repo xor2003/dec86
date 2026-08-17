@@ -9,14 +9,31 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
+from typing import cast
+
+from inertia_decompiler.cache_io import load_cache_json_path, store_cache_json_path
+from inertia_decompiler.cache_lock import cache_path_lock
 
 _ROOT = Path(__file__).resolve().parents[1]
 
-DECOMPILATION_CACHE_SCHEMA: int = 6
+DECOMPILATION_CACHE_SCHEMA: int = 9
 DECOMPILATION_CACHE_DIR: Path = _ROOT / ".inertia_decomp_cache"
+_CACHE_NON_SEMANTIC_ENVIRONMENT_NAMES: frozenset[str] = frozenset(
+    {
+        "INERTIA_ALLOW_PARALLEL_MSC6_WORKERS",
+        "INERTIA_ARCHITECTURE_GUARD_VERIFIED_PARENT_PID",
+        "INERTIA_ARCH_GUARD_VERIFIED_PARENT_PID",
+        "INERTIA_DISABLE_TIMING",
+        "INERTIA_SERIAL_CLEAN_WORKER_EVIDENCE",
+        "INERTIA_SERIAL_CLEAN_WORKER_RESULT",
+        "INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE",
+    }
+)
+_CACHE_NON_SEMANTIC_ENVIRONMENT_PREFIXES: tuple[str, ...] = ("INERTIA_OTEL_",)
 BASE_RECOVERY_CACHE_SOURCE_FILES: tuple[Path, ...] = (
     _ROOT / "decompile.py",
     _ROOT / "inertia_decompiler" / "cli.py",
@@ -171,6 +188,23 @@ def _cache_content_fingerprint(path: Path | None) -> dict[str, object] | None:
     return {key: fingerprint[key] for key in ("size", "sha256")}
 
 
+def is_non_semantic_cache_environment_name(name: str) -> bool:
+    """Return whether an Inertia variable controls transport or diagnostics only."""
+    return name in _CACHE_NON_SEMANTIC_ENVIRONMENT_NAMES or name.startswith(
+        _CACHE_NON_SEMANTIC_ENVIRONMENT_PREFIXES
+    )
+
+
+def _cache_runtime_environment() -> dict[str, str]:
+    """Capture runtime switches that can change recovery or emitted diagnostics."""
+    return {
+        name: value
+        for name, value in sorted(os.environ.items())
+        if name.startswith("INERTIA_")
+        and not is_non_semantic_cache_environment_name(name)
+    }
+
+
 def _cache_sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -226,37 +260,28 @@ def _cache_json_path(namespace: str, key: dict[str, object]) -> Path:
 
 
 def _load_cache_json(namespace: str, key: dict[str, object]) -> dict[str, object] | None:
-    path = _cache_json_path(namespace, key)
-    try:
-        payload = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    return payload if isinstance(payload, dict) else None
+    return cast(
+        dict[str, object] | None,
+        load_cache_json_path(namespace, _cache_json_path(namespace, key), key_context=key),
+    )
+
+
+@contextmanager
+def _cache_key_lock(
+    namespace: str,
+    key: dict[str, object],
+    *,
+    timeout_seconds: float = 600.0,
+) -> Iterator[None]:
+    """Serialize producers for one cache key while allowing readers to retry."""
+    lock_path = _cache_json_path(namespace, key).with_suffix(".lock")
+    with cache_path_lock(lock_path, timeout_seconds=timeout_seconds):
+        yield
 
 
 def _store_cache_json(namespace: str, key: dict[str, object], payload: dict[str, object]) -> dict[str, object] | None:
     """Store one cache record with an atomic final-path replacement."""
-    path = _cache_json_path(namespace, key)
-    temporary_path: Path | None = None
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as stream:
-            temporary_path = Path(stream.name)
-            json.dump(payload, stream, sort_keys=True)
-            stream.write("\n")
-        os.replace(temporary_path, path)
-    except OSError:
-        return None
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
+    store_cache_json_path(namespace, _cache_json_path(namespace, key), payload, key_context=key)
     return None
 
 
@@ -264,23 +289,42 @@ def _function_decompilation_cache_key(
     *,
     binary_path: Path | None,
     function_addr: int,
+    active_function_addr: int,
+    recovery_addr: int | None,
     function_name: str | None,
     api_style: str,
+    c_target: str,
+    sidecar_metadata_digest: str | None,
+    recovery_shape_digest: str,
+    annotation_evidence_digest: str,
+    project_evidence_digest: str,
     enable_structured_simplify: bool,
     enable_postprocess: bool,
 ) -> dict[str, object] | None:
     binary_fingerprint = _cache_content_fingerprint(binary_path)
     if binary_fingerprint is None:
         return None
+    sidecars = _cache_sidecar_fingerprints(binary_path)
+    environment = _cache_runtime_environment()
+    if not sidecars and sidecar_metadata_digest is None:
+        environment.pop("INERTIA_IGNORE_LOCAL_SIDECAR_HINTS_8616", None)
     return {
         "schema": DECOMPILATION_CACHE_SCHEMA,
         "kind": "function_decompile",
         "binary": binary_fingerprint,
-        "sidecars": _cache_sidecar_fingerprints(binary_path),
+        "sidecars": sidecars,
+        "environment": environment,
         "components": _cache_source_digest(DECOMPILATION_CACHE_SOURCE_FILES),
-        "addr": function_addr,
+        "function_addr": function_addr,
+        "active_function_addr": active_function_addr,
+        "recovery_addr": recovery_addr,
         "function_name": function_name,
         "api_style": api_style,
+        "c_target": c_target,
+        "sidecar_metadata_digest": sidecar_metadata_digest,
+        "recovery_shape_digest": recovery_shape_digest,
+        "annotation_evidence_digest": annotation_evidence_digest,
+        "project_evidence_digest": project_evidence_digest,
         "structured_simplify": enable_structured_simplify,
         "postprocess": enable_postprocess,
     }
@@ -292,18 +336,26 @@ def _recovery_cache_key(
     kind: str,
     extra: dict[str, object] | None = None,
 ) -> dict[str, object] | None:
+    """Build recovery identity, excluding sidecar policy when no sidecar exists."""
     binary_fingerprint = _cache_content_fingerprint(binary_path)
     if binary_fingerprint is None:
         return None
+    sidecars = _cache_sidecar_fingerprints(binary_path)
+    environment = _cache_runtime_environment()
+    normalized_extra = dict(extra or {})
+    if not sidecars:
+        environment.pop("INERTIA_IGNORE_LOCAL_SIDECAR_HINTS_8616", None)
+        if "ignore_local_sidecar_hints" in normalized_extra:
+            normalized_extra["ignore_local_sidecar_hints"] = False
     payload = {
         "schema": DECOMPILATION_CACHE_SCHEMA,
         "kind": kind,
         "binary": binary_fingerprint,
-        "sidecars": _cache_sidecar_fingerprints(binary_path),
+        "sidecars": sidecars,
+        "environment": environment,
         "components": _cache_source_digest(RECOVERY_CACHE_SOURCE_FILES),
     }
-    if extra:
-        payload.update(extra)
+    payload.update(normalized_extra)
     return payload
 
 

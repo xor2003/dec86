@@ -21,6 +21,7 @@ __all__ = (
     "ConditionFailure",
     "ConditionIR",
     "ConditionOp",
+    "ConditionRegisterBindingIR",
     "ConditionResult",
     "ConditionSource",
     "JCC_EQ_MNEMONICS_8616",
@@ -153,6 +154,14 @@ def _harmonize_condition_pair_8616(lhs: Any, rhs: Any, width_bits: int) -> tuple
 
 
 @dataclass(frozen=True, slots=True)
+class ConditionRegisterBindingIR:
+    """Bind one register to an exact typed value at a condition producer."""
+
+    register_name: str
+    value: IRValue | IRBinaryValue
+
+
+@dataclass(frozen=True, slots=True)
 class ConditionIR:
     """Typed condition IR object — the canonical form for branches.
 
@@ -172,6 +181,7 @@ class ConditionIR:
     fallthrough_target: int | None = None
     operand_bind_insn: int | None = None
     producer_semantics: tuple[Any, ...] | None = None
+    register_bindings: tuple[ConditionRegisterBindingIR, ...] = ()
 
     @property
     def is_comparison(self) -> bool:
@@ -236,6 +246,7 @@ def build_condition_from_cmp_8616(
     fallthrough_target: int | None = None,
     operand_bind_insn: int | None = None,
     producer_semantics: tuple[Any, ...] | None = None,
+    register_bindings: tuple[ConditionRegisterBindingIR, ...] = (),
 ) -> ConditionResult:
     """Build a ConditionIR from CMP operands + JCC mnemonic.
 
@@ -263,6 +274,7 @@ def build_condition_from_cmp_8616(
         fallthrough_target=fallthrough_target,
         operand_bind_insn=operand_bind_insn,
         producer_semantics=producer_semantics,
+        register_bindings=register_bindings,
     )
 
 
@@ -278,6 +290,7 @@ def build_condition_from_test_8616(
     fallthrough_target: int | None = None,
     operand_bind_insn: int | None = None,
     producer_semantics: tuple[Any, ...] | None = None,
+    register_bindings: tuple[ConditionRegisterBindingIR, ...] = (),
 ) -> ConditionResult:
     """Build a ConditionIR from TEST/OR/AND self-test + JCC mnemonic.
 
@@ -304,6 +317,7 @@ def build_condition_from_test_8616(
             fallthrough_target=fallthrough_target,
             operand_bind_insn=operand_bind_insn,
             producer_semantics=producer_semantics,
+            register_bindings=register_bindings,
         )
     if jcc in {"jne", "jnz"}:
         return ConditionIR(
@@ -318,6 +332,7 @@ def build_condition_from_test_8616(
             fallthrough_target=fallthrough_target,
             operand_bind_insn=operand_bind_insn,
             producer_semantics=producer_semantics,
+            register_bindings=register_bindings,
         )
     return ConditionFailure(
         "unsupported_test_jcc",
@@ -340,6 +355,7 @@ def build_condition_from_compare_8616(
     fallthrough_target: int | None = None,
     operand_bind_insn: int | None = None,
     producer_semantics: tuple[Any, ...] | None = None,
+    register_bindings: tuple[ConditionRegisterBindingIR, ...] = (),
 ) -> ConditionIR:
     """Direct ConditionIR constructor from known op and operands."""
     lhs, rhs = _harmonize_condition_pair_8616(lhs, rhs, width_bits)
@@ -356,6 +372,7 @@ def build_condition_from_compare_8616(
         fallthrough_target=fallthrough_target,
         operand_bind_insn=operand_bind_insn,
         producer_semantics=producer_semantics,
+        register_bindings=register_bindings,
     )
 
 
@@ -377,6 +394,7 @@ class ConditionSource:
     addr: int | None = None
     block_addr: int | None = None
     bind_operand_at_jcc: bool = False
+    register_bindings: tuple[ConditionRegisterBindingIR, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

@@ -1096,46 +1096,6 @@ def test_strlen_cod_sample_resolves_direct_stack_loads_to_annotated_slots():
     assert "&s_0 - 2" not in text
 
 
-def test_overlay_cod_sample_rewrites_far_pointer_stack_pair_to_mk_fp():
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(_ROOT / "decompile.py"),
-            "cod/OVERLAY.COD",
-            "--proc",
-            "_overlay_functionAddress",
-            "--timeout",
-            "20",
-        ],
-        cwd=_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode == 4:
-        assert (
-            "direct validation=failed" in result.stdout
-            or "== asm fallback ==" in result.stdout
-            or "whole-tail validation failed" in result.stderr
-        )
-        return
-    assert result.returncode == 0
-    text = result.stdout
-
-    assert re.search(
-        r"long _overlay_functionAddress\(const uint16 ovlLoadSegment, const uint16 funcNumber\)",
-        text,
-    )
-    assert "struct OvlHeader FAR *ovlHeader = MK_FP(ovlLoadSegment, 0);" in text
-    assert "uint16 FAR* slotArray=&(ovlHeader->slot);" in text
-    assert "return MK_FP(ovlHeader->code_segment, slotArray[funcNumber]);" in text
-    assert "[bp-0x8] = ovlHeader" in text
-    assert "[bp-0x4] = slotArray" in text
-    assert re.search(r"\bs_[0-9a-fA-F]+\b", text) is None
-    assert "return *((unsigned short *)(&s_2 - 4));" not in text
-    assert "return *((unsigned short *)(&s_0 - 4));" not in text
-
-
 def test_overlay_cod_sample_wrapper_returns_overlay_segment():
     result = subprocess.run(
         [
@@ -1154,6 +1114,7 @@ def test_overlay_cod_sample_wrapper_returns_overlay_segment():
     )
     if result.returncode == 3:
         assert "Direct decompilation timeout is terminal for this function" in result.stdout
+        assert "function: 0x1000 _overlay_load" in result.stdout
         return
     assert result.returncode == 0
     text = result.stdout
@@ -1284,8 +1245,7 @@ def test_bios_cod_sample_decompilation():
         dec.codegen.text,
         (
             "inertia_es = 0",
-            "SEG_U8(inertia_es, 1047) = inertia_es",
-            "SEG_U8(inertia_es, 1048) = inertia_es >> 8",
+            "SEG_U16(0, 1047) = 0",
             "return",
         ),
         "MK_FP(0x40, 0x17)",

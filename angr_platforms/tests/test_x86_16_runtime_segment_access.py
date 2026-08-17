@@ -4,9 +4,11 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
     CBinaryOp,
     CConstant,
     CFunctionCall,
+    CStatements,
     CVariable,
 )
 from angr.sim_type import SimTypeShort
@@ -19,6 +21,7 @@ from angr_platforms.X86_16.ir.segment_contract import (
     SegmentFunctionContract,
 )
 from angr_platforms.X86_16.lowering.runtime_segment_access import (
+    build_runtime_segment_access_context_8616,
     runtime_segment_access_offset_expr_8616,
 )
 from angr_platforms.X86_16.lowering.segmented_global_loads import (
@@ -97,6 +100,75 @@ def test_runtime_segment_access_refuses_wrong_space_or_width() -> None:
             expected_space=MemSpace.DS,
             width=width,
         ) is None
+
+
+def test_runtime_segment_access_context_skips_index_for_direct_segment(monkeypatch) -> None:
+    from angr_platforms.X86_16.lowering import runtime_segment_access
+
+    codegen = _Codegen()
+    calls = 0
+    original = runtime_segment_access._assignment_sources_8616
+
+    def _counted_sources(root: object):
+        nonlocal calls
+        calls += 1
+        return original(root)
+
+    monkeypatch.setattr(runtime_segment_access, "_assignment_sources_8616", _counted_sources)
+    context = build_runtime_segment_access_context_8616(codegen)
+    offset = CConstant(0xB4C, SimTypeShort(False), codegen=codegen)
+    store = _segmented_access(codegen, "ds", offset)
+
+    for _ in range(2):
+        assert runtime_segment_access_offset_expr_8616(
+            codegen.project,
+            codegen,
+            store,
+            expected_space=MemSpace.DS,
+            width=1,
+            context=context,
+        ) is offset
+
+    assert calls == 0
+
+
+def test_runtime_segment_access_context_reuses_index_for_copied_segment(monkeypatch) -> None:
+    from angr_platforms.X86_16.lowering import runtime_segment_access
+
+    codegen = _Codegen()
+    calls = 0
+    original = runtime_segment_access._assignment_sources_8616
+
+    def _counted_sources(root: object):
+        nonlocal calls
+        calls += 1
+        return original(root)
+
+    monkeypatch.setattr(runtime_segment_access, "_assignment_sources_8616", _counted_sources)
+    carrier = CVariable(
+        SimRegisterVariable(0x200, 2, name="segment_copy"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [CAssignment(carrier, _segment_variable(codegen, "ds"), codegen=codegen)],
+        codegen=codegen,
+    )
+    context = build_runtime_segment_access_context_8616(codegen)
+    offset = CConstant(0xB4C, SimTypeShort(False), codegen=codegen)
+    store = CFunctionCall("SEG_U8", None, [carrier, offset], codegen=codegen)
+
+    for _ in range(2):
+        assert runtime_segment_access_offset_expr_8616(
+            codegen.project,
+            codegen,
+            store,
+            expected_space=MemSpace.DS,
+            width=1,
+            context=context,
+        ) is offset
+
+    assert calls == 1
 
 
 def test_indexed_lowering_matches_affine_ds_segment_helper_store() -> None:

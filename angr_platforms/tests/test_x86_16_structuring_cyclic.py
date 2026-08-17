@@ -326,20 +326,6 @@ class TestNaturalLoopDetection:
         assert exit2 not in body, "Loop body should exclude exit regions"
 
 
-class TestLoopExitClassification:
-    """Tests for classifying loop exit patterns."""
-
-    def test_simple_while_loop_classification(self):
-        """Test classification of simple while(cond) pattern."""
-        # This test is preliminary - full classification in Phase 1.2
-        pass
-
-    def test_loop_with_break_classification(self):
-        """Test classification of loop with break statements."""
-        # This test is preliminary - full break detection in Phase 1.2
-        pass
-
-
 class TestConfidenceScoring:
     """Tests for confidence scoring in loop detection."""
 

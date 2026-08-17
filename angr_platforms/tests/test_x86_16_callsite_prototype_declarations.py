@@ -35,6 +35,7 @@ from angr_platforms.X86_16.lowering.call_argument_shape import (
     LogicalArgumentShapeEvidence8616,
     LogicalArgumentShapeEvidenceSource8616,
     accounted_target_prototype_shape_evidence_8616,
+    carry_forward_logical_call_argument_shape_8616,
     exact_caller_stack_object_for_word_pair_8616,
     exact_caller_stack_object_shape_evidence_8616,
     reconcile_materialized_call_argument_shape_8616,
@@ -393,6 +394,24 @@ def test_exact_caller_stack_object_groups_reversed_word_pushes() -> None:
         widths=(2, 2, 2, 4),
         source=LogicalArgumentShapeEvidenceSource8616.EXACT_CALLER_STACK_OBJECT,
     )
+
+
+def test_carry_forward_logical_shape_requires_identical_physical_call_facts() -> None:
+    fresh = replace(
+        _summary(0x1010, arg_count=5),
+        push_arg_sources=(("bp", 8), ("bp", 6), ("imm", 1), ("imm", 0), ("bp", 4)),
+    )
+    previous = replace(fresh, logical_arg_widths=(2, 2, 2, 4))
+
+    carried = carry_forward_logical_call_argument_shape_8616(fresh, previous)
+
+    assert carried.logical_arg_widths == (2, 2, 2, 4)
+    changed_physical_facts = replace(fresh, push_arg_sources=(("bp", 10),) + fresh.push_arg_sources[1:])
+    assert (
+        carry_forward_logical_call_argument_shape_8616(changed_physical_facts, previous)
+        is changed_physical_facts
+    )
+    assert changed_physical_facts.logical_arg_widths == ()
 
 
 def test_exact_caller_stack_object_identifies_low_high_word_owner() -> None:

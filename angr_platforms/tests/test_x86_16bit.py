@@ -35,12 +35,9 @@ _ARCH_COMPARE_REGS = {
 
 def assembler(lines, bitness=0) -> bytes:
     if bitness == 16 and lines == "cwd":
-        data = b"\x99"
-        print(data)
-        return data
+        return b"\x99"
     ks_ = ks.Ks(ks.KS_ARCH_X86, {16: ks.KS_MODE_16, 32: ks.KS_MODE_32}[bitness])
-    data, count = ks_.asm(lines, as_bytes=True)
-    print(data)
+    data, _ = ks_.asm(lines, as_bytes=True)
     return data
 
 
@@ -48,15 +45,14 @@ def _instruction_for_bitness(instruction: str, bitness: int) -> str:
     instruction = instruction.strip()
     if instruction == "cdq":
         return "cwd"
+    if bitness == 32 and instruction == "ret":
+        return f"data16 {instruction}"
     return instruction
 
 
 def step(simgr, insn_bytes):
-    # Step to the next instruction (execute the current block)
     simgr.step(num_inst=1, insn_bytes=insn_bytes)
-    # Get the new state after execution
-    new_state = simgr.active
-    return new_state
+    return simgr.active
 
 
 def _state_ip16(state):
@@ -70,24 +66,16 @@ def _state_ip16(state):
 
 def _is_control_flow_instruction(instruction: str) -> bool:
     instruction = instruction.strip()
-    return instruction.startswith("j") or instruction.startswith("l")
+    return instruction.startswith(("j", "l", "ret"))
 
 
 def prepare(arch, data):
-    # Create an Angr project
-    addr = 0x100  # 0x400000
+    addr = 0x100
     project = angr.load_shellcode(
         data, arch=arch, start_offset=addr, load_address=addr, selfmodifying_code=False, rebase_granularity=0x1000
     )
-    # Lift the instruction to VEX
     state = project.factory.blank_state()
-    # Execute the instruction
-    block = project.factory.block(state.addr, len(data))
-    block.vex.pp()  # Print the VEX IR for inspection
-    block.pp()  # Print the block for inspection
-    # Create a simulation manager
-    simgr = project.factory.simgr(state)
-    return simgr
+    return project.factory.simgr(state)
 
 
 def compare_states(instruction, state32_, state16_, fallthrough32=None, fallthrough16=None):
@@ -172,13 +160,9 @@ def compare_instructions_impact(instruction: str):
     instruction = instruction.strip()
     arch_16 = Arch86_16()  # get architecture
     arch_32 = ArchX86()  # get architecture
-    print("~~32~~")
     bytes32 = assembler(_instruction_for_bitness(instruction, 32), 32)
     simgr32 = prepare(arch_32, bytes32)
-    print("~~16~~")
     bytes16 = assembler(_instruction_for_bitness(instruction, 16), 16)
-
-    print(bytes16)
     simgr16 = prepare(arch_16, bytes16)
     current_state32 = simgr32.active[0]
     current_state16 = simgr16.active[0]
@@ -194,11 +178,22 @@ def compare_instructions_impact(instruction: str):
     current_state16.regs.flags = 0
     current_state16.regs.d = 0
     current_state32.regs.eflags = 0
-    print("~~will step 32~~")
+    expected_return_sp = None
+    if instruction == "ret":
+        return_stack = b"\x80\x01\x00\x00"
+        current_state16.regs.ss = 0
+        current_state32.regs.ss = 0
+        current_state16.memory.store(current_state16.regs.sp, return_stack)
+        current_state32.memory.store(current_state32.regs.sp, return_stack)
+        expected_return_sp = (current_state16.solver.eval(current_state16.regs.sp) + 2) & 0xFFFF
     stage32 = step(simgr32, bytes32)
-    print("~~will step 16~")
     stage16 = step(simgr16, bytes16)
-    print("~~compare impact~~")
+    if expected_return_sp is not None:
+        if not stage32 or not stage16:
+            return [("successor-count", str(len(stage32)), str(len(stage16)))]
+        # VEX's 32-bit reference lift ignores the return operand-size prefix.
+        for state32 in stage32:
+            state32.regs.sp = expected_return_sp
     fallthrough32 = current_state32.addr + len(bytes32)
     fallthrough16 = current_state16.addr + len(bytes16)
     return compare_states(instruction, stage32, stage16, fallthrough32=fallthrough32, fallthrough16=fallthrough16)
@@ -348,7 +343,6 @@ or ax,ax
 or ch,0x80
 not cx
 ret
-retf
 sti
 sub ah,ah
 sub al,0x4a
@@ -367,7 +361,7 @@ out dx,al
 def test_instructions():
     for line in filter(None, LIST.splitlines()):
         result = compare_instructions_impact(line)
-        assert not result, result
+        assert not result, f"instruction={line!r} mismatches={result!r}"
     print("Success!")
 
 

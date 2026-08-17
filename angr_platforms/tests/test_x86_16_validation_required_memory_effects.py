@@ -16,7 +16,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import SimStruct, SimTypeChar, SimTypeLong, SimTypeShort
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
-from angr_platforms.X86_16.ir.core import MemSpace
+from angr_platforms.X86_16.ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from angr_platforms.X86_16.lowering.segmented_global_loads import (
     DirectSegmentedGlobalStoreEvidence8616,
     materialize_direct_global_symbol_stores_from_evidence_8616,
@@ -27,6 +27,10 @@ from angr_platforms.X86_16.tail_validation import (
 )
 from angr_platforms.X86_16.validation_required_memory_effects import (
     validate_required_memory_effects_8616,
+)
+from angr_platforms.X86_16.widening.segmented_load_identity import (
+    SegmentedLoadIdentity8616,
+    segmented_load_tags_8616,
 )
 from archinfo import ArchX86
 
@@ -96,6 +100,40 @@ def _seg_store(
         CConstant(0, SimTypeShort(False), codegen=codegen),
         codegen=codegen,
         tags={"ins_addr": 0x10588},
+    )
+
+
+def _nested_segment_store(codegen: _Codegen, source_offset: int) -> CAssignment:
+    """Build one ES store whose exact runtime segment comes from DS memory."""
+    source = CFunctionCall(
+        "SEG_U16",
+        None,
+        [_segment_variable(codegen, "ds"), CConstant(source_offset, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+        tags=segmented_load_tags_8616(
+            SegmentedLoadIdentity8616(MemSpace.DS, source_offset, 2, codegen.cfunc.addr)
+        ),
+    )
+    lvalue = CFunctionCall(
+        "SEG_U16",
+        None,
+        [source, CConstant(2, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+        tags=segmented_load_tags_8616(
+            SegmentedLoadIdentity8616(MemSpace.ES, 2, 2, codegen.cfunc.addr)
+        ),
+    )
+    return CAssignment(lvalue, CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen)
+
+
+def _segment_source(offset: int) -> IRAddress:
+    """Build the typed DS source used by a required far-memory effect."""
+    return IRAddress(
+        MemSpace.DS,
+        offset=offset,
+        size=2,
+        status=AddressStatus.STABLE,
+        segment_origin=SegmentOrigin.PROVEN,
     )
 
 
@@ -377,6 +415,47 @@ def test_required_memory_effect_rejects_cross_segment_or_partial_coverage(
 
     assert report.passed is False
     assert report.materialized_count == 0
+
+
+def test_required_memory_effect_rejects_collapsed_runtime_segment_sources() -> None:
+    codegen = _Codegen()
+    codegen._inertia_required_direct_segmented_global_stores_8616 = (
+        DirectSegmentedGlobalStoreEvidence8616(
+            2, 2, MemSpace.ES, 0x1004, segment_source=_segment_source(0x700A)
+        ),
+        DirectSegmentedGlobalStoreEvidence8616(
+            2, 2, MemSpace.ES, 0x100F, segment_source=_segment_source(0x700C)
+        ),
+    )
+    codegen.cfunc.statements.statements.extend(
+        (_nested_segment_store(codegen, 0x700A), _nested_segment_store(codegen, 0x700A))
+    )
+
+    report = validate_required_memory_effects_8616(codegen.project, codegen, codegen.cfunc.statements)
+
+    assert report.passed is False
+    assert report.materialized_count == 1
+    assert report.failure_count == 1
+
+
+def test_required_memory_effect_accepts_distinct_runtime_segment_sources() -> None:
+    codegen = _Codegen()
+    codegen._inertia_required_direct_segmented_global_stores_8616 = (
+        DirectSegmentedGlobalStoreEvidence8616(
+            2, 2, MemSpace.ES, 0x1004, segment_source=_segment_source(0x700A)
+        ),
+        DirectSegmentedGlobalStoreEvidence8616(
+            2, 2, MemSpace.ES, 0x100F, segment_source=_segment_source(0x700C)
+        ),
+    )
+    codegen.cfunc.statements.statements.extend(
+        (_nested_segment_store(codegen, 0x700A), _nested_segment_store(codegen, 0x700C))
+    )
+
+    report = validate_required_memory_effects_8616(codegen.project, codegen, codegen.cfunc.statements)
+
+    assert report.passed is True
+    assert report.materialized_count == 2
 
 
 def test_final_semantic_refresh_persists_required_memory_effect_failure() -> None:

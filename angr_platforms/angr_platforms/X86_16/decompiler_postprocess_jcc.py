@@ -74,6 +74,7 @@ from .decompiler_postprocess_utils import (
     _same_c_expression_8616,
     _structured_codegen_node_8616,
 )
+from .frontend_instruction_reachability import decoded_block_instructions_8616
 from .ir.condition_ir import JCC_TO_COND_8616, ConditionIR
 from .ir.core import IRValue
 from .lowering.real_mode_linear import (
@@ -862,10 +863,10 @@ def _function_insns_for_codegen_8616(project: Any, codegen: Any) -> tuple[Any, .
     insns: list[object] = []
     for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
         try:
-            block = project.factory.block(block_addr, opt_level=0)
+            decoded = decoded_block_instructions_8616(project, block_addr, opt_level=0)
         except Exception:
             continue
-        insns.extend(tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ()))
+        insns.extend(decoded)
     func_size = int(getattr(function, "size", 0) or 0)
     linear_size = max(func_size, 0x400)
     if 0 < linear_size <= 0x4000:
@@ -874,10 +875,9 @@ def _function_insns_for_codegen_8616(project: Any, codegen: Any) -> tuple[Any, .
         linear_insns = []
         while addr < end_addr:
             try:
-                linear_block = project.factory.block(addr, num_inst=1, opt_level=0)
+                decoded = decoded_block_instructions_8616(project, addr, num_inst=1, opt_level=0)
             except Exception:
                 break
-            decoded = tuple(getattr(getattr(linear_block, "capstone", None), "insns", ()) or ())
             if not decoded:
                 break
             insn = decoded[0]
@@ -917,17 +917,24 @@ def _linear_insns_before_addr_8616(
     func_addr = getattr(cfunc, "addr", None)
     stop_addr = int(ins_addr)
     start_candidates: list[int] = []
-    if isinstance(func_addr, int):
+    if isinstance(func_addr, int) and 0 <= func_addr < stop_addr:
         start_candidates.append(int(func_addr))
     loader = getattr(project, "loader", None)
-    for owner in (loader, getattr(loader, "main_object", None)):
-        min_addr = getattr(owner, "min_addr", None)
-        if isinstance(min_addr, int):
-            start_candidates.append(int(min_addr))
+    main_object = getattr(loader, "main_object", None)
+    main_min_addr = getattr(main_object, "min_addr", None)
+    loader_min_addr = getattr(loader, "min_addr", None)
+    if isinstance(main_min_addr, int):
+        start_candidates.append(int(main_min_addr))
+    elif isinstance(loader_min_addr, int):
+        start_candidates.append(int(loader_min_addr))
     cache = getattr(codegen, "_inertia_jcc_function_insns_8616", None)
     if isinstance(cache, tuple):
         cached_addrs = sorted(
-            {int(getattr(insn, "address", -1)) for insn in cache if 0 <= int(getattr(insn, "address", -1)) < stop_addr}
+            {
+                int(getattr(insn, "address", -1))
+                for insn in cache
+                if 0 <= int(getattr(insn, "address", -1)) < stop_addr
+            }
         )
         if cached_addrs:
             start_candidates.append(cached_addrs[0])
@@ -942,15 +949,14 @@ def _linear_insns_before_addr_8616(
     insns: list[object] = []
     while addr < end_addr:
         try:
-            block = project.factory.block(addr, num_inst=1, opt_level=0)
+            decoded = decoded_block_instructions_8616(project, addr, num_inst=1, opt_level=0)
         except TypeError:
             try:
-                block = project.factory.block(addr, opt_level=0)
+                decoded = decoded_block_instructions_8616(project, addr, opt_level=0)
             except Exception:
                 break
         except Exception:
             break
-        decoded = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
         if not decoded:
             break
         insn = decoded[0]
@@ -1154,10 +1160,9 @@ def _decode_cmp_jcc_32bit_chain_8616(
         if mid_addr is None:
             return None
         try:
-            mid_block = project.factory.block(mid_addr, opt_level=0)
+            mid_insns = decoded_block_instructions_8616(project, mid_addr, opt_level=0)
         except Exception:
             return None
-        mid_insns = tuple(getattr(getattr(mid_block, "capstone", None), "insns", ()) or ())
 
         reg_state: dict[str, object] = {}
         stack_slots: dict[tuple[int, int], object] = {}
@@ -1269,10 +1274,9 @@ def _decode_cmp_jcc_32bit_chain_8616(
         if cmp2_addr is None:
             return None
         try:
-            low_block = project.factory.block(cmp2_addr, opt_level=0)
+            low_insns = decoded_block_instructions_8616(project, cmp2_addr, opt_level=0)
         except Exception:
             return None
-        low_insns = tuple(getattr(getattr(low_block, "capstone", None), "insns", ()) or ())
         if len(low_insns) < 2:
             return None
         cmp2_insn = low_insns[0]
@@ -1539,12 +1543,11 @@ def _decode_block_and_jcc_index_8616(
     project: Any, block_addr: int, jcc_addr: int, debug_jcc: bool
 ) -> tuple[tuple[Any, ...] | None, int | None]:
     try:
-        block = project.factory.block(block_addr, opt_level=0)
+        insns = decoded_block_instructions_8616(project, block_addr, opt_level=0)
     except Exception:
         if debug_jcc:
             _log.warning("[jcc-rewrite] block decode failed block=%#x jcc=%#x", block_addr, jcc_addr)
         return None, None
-    insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
     jcc_index = next((idx for idx, insn in enumerate(insns) if int(insn.address) == int(jcc_addr)), None)
     if jcc_index is None or jcc_index == 0:
         if debug_jcc:
@@ -1627,10 +1630,9 @@ def _decode_linear_insns_range_8616(project: Any, start_addr: int, stop_addr: in
     addr = int(start_addr)
     while addr < int(stop_addr):
         try:
-            block = project.factory.block(addr, num_inst=1, opt_level=0)
+            decoded = decoded_block_instructions_8616(project, addr, num_inst=1, opt_level=0)
         except Exception:
             break
-        decoded = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
         if not decoded:
             break
         insn = decoded[0]

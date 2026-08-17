@@ -2,13 +2,20 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CStatements, CVariable
+from angr.analyses.decompiler.structured_codegen.c import (
+    CBinaryOp,
+    CConstant,
+    CExpressionStatement,
+    CStatements,
+    CVariable,
+)
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.c_ast_utils import (
     _c_ast_cycle_path_8616,
     _clone_c_ast_tree_8616,
+    _iter_c_statement_nodes_8616,
 )
 
 
@@ -56,3 +63,16 @@ def test_clone_c_ast_tree_preserves_boundary_objects_without_sharing_nodes() -> 
     assert cloned.lhs.variable is variable
     assert cloned.codegen is codegen
     assert _c_ast_cycle_path_8616(cloned) == ()
+
+
+def test_statement_walk_does_not_descend_into_expression_trees() -> None:
+    codegen = _DummyCodegen()
+    constant = CConstant(1, SimTypeShort(False), codegen=codegen)
+    expression = CBinaryOp("Or", constant, constant, codegen=codegen)
+    statement = CExpressionStatement(expression, codegen=codegen)
+    root = CStatements([statement], codegen=codegen)
+
+    nodes = tuple(_iter_c_statement_nodes_8616(root))
+
+    assert nodes == (root, statement)
+    assert expression not in nodes

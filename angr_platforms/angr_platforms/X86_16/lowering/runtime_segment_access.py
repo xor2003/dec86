@@ -19,7 +19,9 @@ traversal and project architecture lookup.
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import TypeAlias
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -30,6 +32,7 @@ from ..widening.segmented_load_identity import segmented_load_identity_8616
 from .segment_register_state import runtime_segment_name_for_variable_8616
 
 _VariableKey8616: TypeAlias = tuple[str, object, object, object]
+_AssignmentSources8616: TypeAlias = Mapping[_VariableKey8616, tuple[object, ...]]
 _CHILD_ATTRIBUTES_8616 = (
     "statements",
     "lhs",
@@ -44,6 +47,21 @@ _CHILD_ATTRIBUTES_8616 = (
     "initializer",
     "iterator",
 )
+
+
+@dataclass(slots=True)
+class RuntimeSegmentAccessContext8616:
+    """Lazily indexed segment-carrier context for one structured C pass."""
+
+    root: object
+    _sources: _AssignmentSources8616 | None = field(default=None, init=False, repr=False)
+
+    @property
+    def assignment_sources(self) -> _AssignmentSources8616:
+        """Return the assignment-source index, building it at first use."""
+        if self._sources is None:
+            self._sources = MappingProxyType(_assignment_sources_8616(self.root))
+        return self._sources
 
 
 def _strip_casts_8616(node: object) -> object:
@@ -107,6 +125,13 @@ def _assignment_sources_8616(
     return {key: tuple(values) for key, values in mutable.items()}
 
 
+def build_runtime_segment_access_context_8616(codegen: object) -> RuntimeSegmentAccessContext8616:
+    """Build one reusable lazy segment-carrier context for the current C AST."""
+    cfunc = getattr(codegen, "cfunc", None)
+    root = getattr(cfunc, "statements", None)
+    return RuntimeSegmentAccessContext8616(root=root)
+
+
 def _direct_segment_space_8616(project: object, expression: object) -> MemSpace | None:
     """Resolve an explicit runtime-state or architectural segment variable."""
     expression = _strip_casts_8616(expression)
@@ -132,7 +157,7 @@ def _direct_segment_space_8616(project: object, expression: object) -> MemSpace 
 def _resolve_segment_space_8616(
     project: object,
     expression: object,
-    sources: dict[_VariableKey8616, tuple[object, ...]],
+    sources: _AssignmentSources8616,
     seen: frozenset[_VariableKey8616],
 ) -> MemSpace | None:
     """Resolve one segment carrier through an unambiguous bounded copy chain."""
@@ -156,6 +181,8 @@ def runtime_segment_access_space_8616(
     project: object,
     codegen: object,
     lvalue: object,
+    *,
+    context: RuntimeSegmentAccessContext8616 | None = None,
 ) -> MemSpace | None:
     """Return the proven space of a ``SEG_U*`` access, if any."""
     node = _strip_casts_8616(lvalue)
@@ -170,12 +197,15 @@ def runtime_segment_access_space_8616(
     args = tuple(node.args or ())
     if len(args) != 2:
         return None
-    cfunc = getattr(codegen, "cfunc", None)
-    root = getattr(cfunc, "statements", None)
+    direct = _direct_segment_space_8616(project, args[0])
+    if direct is not None:
+        return direct
+    if context is None:
+        context = build_runtime_segment_access_context_8616(codegen)
     return _resolve_segment_space_8616(
         project,
         args[0],
-        _assignment_sources_8616(root),
+        context.assignment_sources,
         frozenset(),
     )
 
@@ -187,6 +217,7 @@ def runtime_segment_access_offset_expr_8616(
     *,
     expected_space: MemSpace,
     width: int,
+    context: RuntimeSegmentAccessContext8616 | None = None,
 ) -> object | None:
     """Return a proven runtime access's structured offset expression."""
     node = _strip_casts_8616(access)
@@ -195,7 +226,7 @@ def runtime_segment_access_offset_expr_8616(
     expected_helper = {1: "SEG_U8", 2: "SEG_U16", 4: "SEG_U32"}.get(width)
     if expected_helper is None or _runtime_helper_name_8616(node) != expected_helper:
         return None
-    if runtime_segment_access_space_8616(project, codegen, node) is not expected_space:
+    if runtime_segment_access_space_8616(project, codegen, node, context=context) is not expected_space:
         return None
     args = tuple(node.args or ())
     return args[1] if len(args) == 2 else None

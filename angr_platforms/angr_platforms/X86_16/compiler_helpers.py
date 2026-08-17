@@ -25,6 +25,7 @@ __all__ = [
     "is_x86_16_registered_stack_probe_target_8616",
     "is_x86_16_stack_probe_name_8616",
     "transfer_x86_16_compiler_helper_evidence_8616",
+    "x86_16_compiler_helper_targets_8616",
 ]
 
 
@@ -263,6 +264,18 @@ def is_x86_16_registered_stack_probe_target_8616(arch: object, target: int | Non
     # Dynamic boundary: arch is an angr Arch object carrying optional runtime metadata.
     targets: frozenset[int] = getattr(arch, "_inertia_stack_probe_helper_targets_8616", frozenset())
     return target in targets or (target & 0xFFFF) in targets
+
+
+def x86_16_compiler_helper_targets_8616(project: object) -> frozenset[int]:
+    """Return binary-proven helper targets from a dynamic angr project."""
+    try:
+        arch = cast(_ProjectArchSurface8616, project).arch
+        targets = cast(_ArchWithStackProbeRegistry8616, arch)._inertia_stack_probe_helper_targets_8616
+    except AttributeError:
+        return frozenset()
+    if not isinstance(targets, frozenset) or not all(isinstance(target, int) for target in targets):
+        raise TypeError("compiler-helper target evidence must be a frozenset[int]")
+    return targets
 
 
 def transfer_x86_16_compiler_helper_evidence_8616(

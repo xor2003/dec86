@@ -29,6 +29,7 @@ from .runtime_memory_helpers import memory_pointer_helper_8616, segmented_memory
 __all__ = [
     "contains_effectful_call_8616",
     "resolve_linear_virtual_return_expression_8616",
+    "return_expression_has_wide_word_composition_8616",
     "return_expression_requires_materialization_8616",
     "uncollapse_safe_scalar_expression_8616",
 ]
@@ -224,6 +225,20 @@ def _uncollapse_materialized_expression_8616(expression: object) -> object:
         if isinstance(node, structured_c.CExpression):
             node.collapsed = False
     return expression
+
+
+def return_expression_has_wide_word_composition_8616(expression: object | None) -> bool:
+    """Return whether a C expression structurally preserves a 32-bit word pair."""
+    if not isinstance(expression, structured_c.CBinaryOp) or expression.op != "Or":
+        return False
+
+    def _is_high_word(node: object) -> bool:
+        if not isinstance(node, structured_c.CBinaryOp) or node.op != "Shl":
+            return False
+        shift = node.rhs
+        return isinstance(shift, structured_c.CConstant) and int(shift.value or 0) == 16
+
+    return _is_high_word(expression.lhs) or _is_high_word(expression.rhs)
 
 
 def return_expression_requires_materialization_8616(

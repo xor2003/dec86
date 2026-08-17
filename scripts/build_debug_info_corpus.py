@@ -15,6 +15,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -302,21 +303,28 @@ def _run_with_env(
     env: dict[str, str] | None = None,
     timeout: int = 60,
 ) -> subprocess.CompletedProcess[str]:
+    """Run an external tool and preserve timeouts as structured failures."""
+
     merged_env = os.environ.copy()
     if env:
         merged_env.update(env)
-    return subprocess.run(
-        cmd,
-        cwd=str(cwd) if cwd is not None else None,
-        env=merged_env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="latin1",
-        errors="replace",
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            cwd=str(cwd) if cwd is not None else None,
+            env=merged_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="latin1",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout.decode("latin1", "replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode("latin1", "replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        return subprocess.CompletedProcess(cmd, 124, stdout, f"{stderr}\ntimed out after {timeout} seconds\n")
 
 
 def _run_dosbox(cmd: list[str], *, timeout: int = 90) -> subprocess.CompletedProcess[str]:
@@ -412,6 +420,33 @@ def _build_ms_wine(
     kvikdos: Path,
     compilers_root: Path,
 ) -> tuple[bool, str, str]:
+    """Build through a short staging path required by the legacy Win32 compiler."""
+
+    with tempfile.TemporaryDirectory(prefix=f"inertia-{spec.name}-") as stage_name:
+        stage_dir = Path(stage_name)
+        shutil.copy2(out_dir / "DBG.C", stage_dir / "DBG.C")
+        result = _build_ms_wine_in_stage(
+            spec,
+            stage_dir,
+            kvikdos=kvikdos,
+            compilers_root=compilers_root,
+        )
+        for artifact_name in ("DBG.OBJ", "DBG.EXE", "DBG.MAP"):
+            artifact = stage_dir / artifact_name
+            if artifact.exists():
+                shutil.copy2(artifact, out_dir / artifact_name)
+        return result
+
+
+def _build_ms_wine_in_stage(
+    spec: CompilerSpec,
+    out_dir: Path,
+    *,
+    kvikdos: Path,
+    compilers_root: Path,
+) -> tuple[bool, str, str]:
+    """Run the Win32 compiler inside an already-short staging directory."""
+
     real_root = compilers_root / spec.root_rel
     root = out_dir / "_toolchain"
     if root.exists() or root.is_symlink():

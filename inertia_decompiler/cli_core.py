@@ -66,8 +66,9 @@ from inertia_decompiler.architecture_runtime_guard import (
 )
 from inertia_decompiler.c_text_cleanup import normalize_unresolved_c_text
 from inertia_decompiler.cache import (
-    _function_decompilation_cache_key,
+    _cache_key_lock,
     _load_cache_json,
+    _recovery_cache_key,
     _store_cache_json,
 )
 from inertia_decompiler.cli_arg_parser import CliArguments, parse_cli_arguments
@@ -87,7 +88,11 @@ from inertia_decompiler.cod_module_caller_evidence import record_cod_module_call
 from inertia_decompiler.decompilation_quality import assess_decompiled_c_text, assess_final_generated_c_text
 from inertia_decompiler.decompile_file_summary import emit_file_decompilation_summary
 from inertia_decompiler.default_signature_catalog import default_signature_catalog_path
-from inertia_decompiler.direct_addr_failure_family import FailureFamilyState, build_failure_family_snapshot
+from inertia_decompiler.direct_addr_failure_family import (
+    FailureFamilySnapshot,
+    FailureFamilyState,
+    build_failure_family_snapshot,
+)
 from inertia_decompiler.disassembly_helpers import (
     _format_asm_range,
     _format_first_block_asm,
@@ -98,6 +103,7 @@ from inertia_decompiler.discovery_cache_contract import (
     caller_return_use_evidence_from_record_8616,
     caller_return_use_evidence_record_8616,
 )
+from inertia_decompiler.function_cache_context import function_decompilation_cache_key_8616
 from inertia_decompiler.function_worker_policy import (
     FunctionWorkerMode8616,
     clean_process_override_8616,
@@ -342,6 +348,7 @@ _DirectDecompileJobResult8616: TypeAlias = tuple[
     dict[str, object],
     SegmentProgramFunctionEvidence8616 | None,
     FailureFamilyState,
+    str,
 ]
 __all__ = [
     "_argument_was_explicit",
@@ -797,21 +804,18 @@ def _direct_addr_wall_clock_budget(
     # non-optimized fallback, and final attribution. Keep that lane inside a
     # deterministic wall-clock budget so callers see an explicit timeout class
     # instead of an outer subprocess kill.
-    base = max(1, effective_timeout if isinstance(effective_timeout, int) else timeout)
     if explicit_timeout:
-        # Explicit timeout should stay deterministic and bounded, but still
-        # leave room for result serialization, final gates, and validation
-        # emission.  The configured timeout is the analysis budget, not the
-        # daemon-thread wrapper budget; otherwise the wrapper can race and kill
-        # a successful large-function decompile before it returns its payload.
-        # Keep a larger fixed margin for xdist contention. This remains below
-        # the CLI's global function cap and affects only the wrapper around an
-        # already bounded analysis job.
-        budget = max(8, base + min(55, max(14, base + 4)))
+        # Shape-based analysis may estimate a larger useful budget, but an
+        # explicit CLI timeout is the user's wall-clock contract. Reserve only
+        # bounded IPC/finalization overhead so an outer caller can reliably
+        # wait for the decompiler's structured timeout result.
+        configured = max(1, int(timeout))
+        budget = configured + min(8, max(3, configured // 10))
     # Default direct-address mode should bias toward successful recovery over
     # early timeout. Keep a larger bounded budget so non-optimized and sidecar
     # fallback lanes can actually execute on medium x86-16 functions.
     else:
+        base = max(1, effective_timeout if isinstance(effective_timeout, int) else timeout)
         if timeout <= 6:
             budget = max(8, base + min(14, max(8, base + 4)))
         else:
@@ -1145,25 +1149,18 @@ def _function_work_cache_lookup(
     api_style: str,
     enable_structured_simplify: bool,
     enable_postprocess: bool,
+    cod_metadata: CODProcMetadata | None = None,
+    synthetic_globals: dict[int, tuple[str, int]] | None = None,
+    lst_metadata: LSTMetadata | None = None,
 ) -> tuple[FunctionWorkResult | None, str, dict[str, object] | None, bool, list[str]]:
-    def _impl() -> tuple[FunctionWorkResult | None, str, dict[str, object] | None, bool, list[str]]:
-        def _legacy_tail_snapshot(snapshot: dict[str, object] | None) -> dict[str, object] | None:
-            if not isinstance(snapshot, dict):
-                return None
-            normalized: dict[str, object] = {}
-            for stage, entry in snapshot.items():
-                if isinstance(entry, dict):
-                    normalized[str(stage)] = {
-                        "changed": bool(entry.get("changed", False)),
-                        "mode": entry.get("mode"),
-                        "verdict": entry.get("verdict"),
-                        "summary_text": entry.get("summary_text"),
-                    }
-                else:
-                    normalized[str(stage)] = entry
-            return normalized
+    """Load a function result only when semantic and diagnostic provenance match."""
 
-        function_project = getattr(item.function, "project", None)
+    def _impl() -> tuple[FunctionWorkResult | None, str, dict[str, object] | None, bool, list[str]]:
+        """Perform the lock-compatible cache lookup."""
+        function = item.function
+        function_addr = function.addr
+        function_name = function.name
+        function_project = function.project
         tail_validation_enabled = (
             _tail_validation_runtime_enabled(function_project) if function_project is not None else True
         )
@@ -1172,11 +1169,13 @@ def _function_work_cache_lookup(
             expected_validation_stages = ["structuring"]
             if enable_postprocess:
                 expected_validation_stages.append("postprocess")
-        cache_key = _function_decompilation_cache_key(
+        cache_key = function_decompilation_cache_key_8616(
+            item,
             binary_path=binary_path,
-            function_addr=getattr(item.function, "addr", 0),
-            function_name=str(getattr(item.function, "name", "")) or None,
             api_style=api_style,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
+            lst_metadata=lst_metadata,
             enable_structured_simplify=enable_structured_simplify,
             enable_postprocess=enable_postprocess,
         )
@@ -1188,14 +1187,27 @@ def _function_work_cache_lookup(
                 return (
                     None,
                     (
-                        f"[dbg] ignoring cached failed function result for {getattr(item.function, 'addr', 0):#x} "
-                        f"{getattr(item.function, 'name', 'sub')} status={cached_status}; "
+                        f"[dbg] ignoring cached failed function result for {function_addr:#x} "
+                        f"{function_name} status={cached_status}; "
                         "only successful decompilation results are cached\n"
                     ),
                     cache_key,
                     tail_validation_enabled,
                     expected_validation_stages,
                 )
+            typed_switch_artifacts = os.environ.get("INERTIA_ENABLE_TYPED_SWITCH_AST_ARTIFACTS") == "1"
+            cached_diagnostic_output = cached_result.get("diagnostic_output")
+            if typed_switch_artifacts and (
+                not isinstance(cached_diagnostic_output, str) or not cached_diagnostic_output.strip()
+            ):
+                return (
+                    None,
+                    f"[dbg] cache bypass for {function_addr:#x} {function_name} missing_diagnostic_provenance\n",
+                    cache_key,
+                    tail_validation_enabled,
+                    expected_validation_stages,
+                )
+            diagnostic_output = cached_diagnostic_output if isinstance(cached_diagnostic_output, str) else ""
             if (not tail_validation_enabled) or x86_16_tail_validation_snapshot_passed(
                 cached_tail_validation if isinstance(cached_tail_validation, dict) else None,
                 expected_stages=expected_validation_stages,
@@ -1207,8 +1219,8 @@ def _function_work_cache_lookup(
                     return (
                         None,
                         (
-                            f"[dbg] cache bypass for {getattr(item.function, 'addr', 0):#x} "
-                            f"{getattr(item.function, 'name', 'sub')} missing_acceptance_provenance\n"
+                            f"[dbg] cache bypass for {function_addr:#x} "
+                            f"{function_name} missing_acceptance_provenance\n"
                         ),
                         cache_key,
                         tail_validation_enabled,
@@ -1221,8 +1233,8 @@ def _function_work_cache_lookup(
                     return (
                         None,
                         (
-                            f"[dbg] cache bypass for {getattr(item.function, 'addr', 0):#x} "
-                            f"{getattr(item.function, 'name', 'sub')} stale_output_mismatch\n"
+                            f"[dbg] cache bypass for {function_addr:#x} "
+                            f"{function_name} stale_output_mismatch\n"
                         ),
                         cache_key,
                         tail_validation_enabled,
@@ -1233,8 +1245,8 @@ def _function_work_cache_lookup(
                     return (
                         None,
                         (
-                            f"[dbg] cache bypass for {getattr(item.function, 'addr', 0):#x} "
-                            f"{getattr(item.function, 'name', 'sub')} stale_normalization\n"
+                            f"[dbg] cache bypass for {function_addr:#x} "
+                            f"{function_name} stale_normalization\n"
                         ),
                         cache_key,
                         tail_validation_enabled,
@@ -1248,8 +1260,8 @@ def _function_work_cache_lookup(
                     return (
                         None,
                         (
-                            f"[dbg] cache bypass for {getattr(item.function, 'addr', 0):#x} "
-                            f"{getattr(item.function, 'name', 'sub')} quality={marker_summary}\n"
+                            f"[dbg] cache bypass for {function_addr:#x} "
+                            f"{function_name} quality={marker_summary}\n"
                         ),
                         cache_key,
                         tail_validation_enabled,
@@ -1262,14 +1274,23 @@ def _function_work_cache_lookup(
                         cached_tail_validation if isinstance(cached_tail_validation, dict) else None
                     )
                 )
-                cached_tail_snapshot = (
-                    cast(dict[str, object], cached_tail_validation)
-                    if isinstance(cached_tail_validation, dict)
-                    else None
-                )
+                cached_tail_snapshot: dict[str, object] | None = None
+                if isinstance(cached_tail_validation, dict):
+                    cached_stage_names = [
+                        stage for stage in expected_validation_stages if stage in cached_tail_validation
+                    ]
+                    cached_stage_names.extend(
+                        stage for stage in cached_tail_validation if stage not in expected_validation_stages
+                    )
+                    cached_tail_snapshot = {
+                        stage: copy.deepcopy(cached_tail_validation[stage]) for stage in cached_stage_names
+                    }
                 cached_elapsed = cached_result.get("elapsed")
                 cached_block_count = cached_result.get("block_count")
                 cached_byte_count = cached_result.get("byte_count")
+                cached_failure_family = FailureFamilySnapshot.from_record(
+                    cached_result.get("failure_family_snapshot")
+                )
                 return (
                     FunctionWorkResult(
                         index=item.index,
@@ -1277,13 +1298,14 @@ def _function_work_cache_lookup(
                         payload=cached_payload,
                         partial_payload=None,
                         debug_output=(
-                            f"[dbg] cache hit for {getattr(item.function, 'addr', 0):#x} "
-                            f"{getattr(item.function, 'name', 'sub')} "
+                            f"[dbg] cache hit for {function_addr:#x} "
+                            f"{function_name} "
                             f"validation={cache_validation_status}\n"
+                            + (diagnostic_output if typed_switch_artifacts else "")
                         ),
                         function=item.function,
                         function_cfg=item.function_cfg,
-                        tail_validation=_legacy_tail_snapshot(cached_tail_snapshot),
+                        tail_validation=cached_tail_snapshot,
                         elapsed=float(cached_elapsed) if isinstance(cached_elapsed, (int, float)) else None,
                         from_cache=True,
                         block_count=cached_block_count if isinstance(cached_block_count, int) else None,
@@ -1292,6 +1314,7 @@ def _function_work_cache_lookup(
                             cached_validated_hash if isinstance(cached_validated_hash, str) else None
                         ),
                         gcc_checked_payload_hash=(cached_gcc_hash if isinstance(cached_gcc_hash, str) else None),
+                        failure_family_snapshot=cached_failure_family,
                     ),
                     "",
                     cache_key,
@@ -1304,8 +1327,8 @@ def _function_work_cache_lookup(
             return (
                 None,
                 (
-                    f"[dbg] cache bypass for {getattr(item.function, 'addr', 0):#x} "
-                    f"{getattr(item.function, 'name', 'sub')} validation={cache_bypass_reason}\n"
+                    f"[dbg] cache bypass for {function_addr:#x} "
+                    f"{function_name} validation={cache_bypass_reason}\n"
                 ),
                 cache_key,
                 tail_validation_enabled,
@@ -1339,7 +1362,7 @@ def _isolated_project_recovery_target_8616(
 
 
 @cast(Callable[[Callable[..., FunctionWorkResult]], Callable[..., FunctionWorkResult]], trace_function(name="function.work_item"))
-def _run_function_work_item(
+def _run_function_work_item_uncached(
     item: FunctionWorkItem,
     *,
     timeout: int,
@@ -1501,6 +1524,11 @@ def _run_function_work_item(
                         "byte_count": byte_count,
                         "validated_c_hash": acceptance_validated_hash,
                         "gcc_checked_c_hash": acceptance_gcc_hash,
+                        "diagnostic_output": (
+                            debug_output
+                            if os.environ.get("INERTIA_ENABLE_TYPED_SWITCH_AST_ARTIFACTS") == "1"
+                            else None
+                        ),
                     },
                 )
             return FunctionWorkResult(
@@ -1539,17 +1567,22 @@ def _run_function_work_item(
                 api_style=api_style,
                 enable_structured_simplify=enable_structured_simplify,
                 enable_postprocess=enable_postprocess,
+                cod_metadata=cod_metadata,
+                synthetic_globals=synthetic_globals,
+                lst_metadata=lst_metadata,
             )
         )
         if cached_work_result is not None:
             annotate_current_span(cache="hit", status=cached_work_result.status)
             return cached_work_result
 
-        cache_key = cache_key or _function_decompilation_cache_key(
+        cache_key = cache_key or function_decompilation_cache_key_8616(
+            item,
             binary_path=binary_path,
-            function_addr=getattr(item.function, "addr", 0),
-            function_name=str(getattr(item.function, "name", "")) or None,
             api_style=api_style,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
+            lst_metadata=lst_metadata,
             enable_structured_simplify=enable_structured_simplify,
             enable_postprocess=enable_postprocess,
         )
@@ -1843,9 +1876,14 @@ def _function_work_result_for_fork_ipc(result: FunctionWorkResult) -> FunctionWo
 
 
 _SERIAL_CLEAN_WORKER_RESULT_ENV_8616 = "INERTIA_SERIAL_CLEAN_WORKER_RESULT"
-_SERIAL_CLEAN_WORKER_RESULT_SCHEMA_8616 = 3
+_SERIAL_CLEAN_WORKER_RESULT_SCHEMA_8616 = 4
 _SERIAL_CLEAN_WORKER_EVIDENCE_ENV_8616 = "INERTIA_SERIAL_CLEAN_WORKER_EVIDENCE"
 _SERIAL_CLEAN_WORKER_EVIDENCE_SCHEMA_8616 = 1
+
+
+def _direct_addr_work_requires_parent_lock_8616(lock_key: dict[str, object] | None) -> bool:
+    """Return whether this process owns direct-address producer serialization."""
+    return lock_key is not None and not bool(os.environ.get(_SERIAL_CLEAN_WORKER_RESULT_ENV_8616))
 
 
 def _write_serial_clean_worker_evidence_8616(
@@ -1935,6 +1973,9 @@ def _write_serial_clean_worker_result_8616(
         "skip_heavy_fallbacks": result.skip_heavy_fallbacks,
         "same_family_retry_stops": result.same_family_retry_stops,
         "fallback_family_labels": list(result.fallback_family_labels),
+        "failure_family_snapshot": (
+            None if result.failure_family_snapshot is None else result.failure_family_snapshot.to_record()
+        ),
         "validated_payload_hash": result.validated_payload_hash,
         "gcc_checked_payload_hash": result.gcc_checked_payload_hash,
         "segment_program_function_evidence": (
@@ -1981,6 +2022,7 @@ def _read_serial_clean_worker_result_8616(
     same_family_retry_stops = record.get("same_family_retry_stops")
     if not isinstance(same_family_retry_stops, int):
         same_family_retry_stops = 0
+    failure_family_snapshot = FailureFamilySnapshot.from_record(record.get("failure_family_snapshot"))
     raw_segment_evidence = record.get("segment_program_function_evidence")
     segment_evidence = (
         None
@@ -2008,6 +2050,7 @@ def _read_serial_clean_worker_result_8616(
         skip_heavy_fallbacks=record.get("skip_heavy_fallbacks") is True,
         same_family_retry_stops=same_family_retry_stops,
         fallback_family_labels=tuple(fallback_family_labels),
+        failure_family_snapshot=failure_family_snapshot,
         validated_payload_hash=(
             record.get("validated_payload_hash") if isinstance(record.get("validated_payload_hash"), str) else None
         ),
@@ -2101,14 +2144,37 @@ def _serial_clean_worker_debug_output_8616(stderr: str | bytes | None) -> str:
     return "".join(retained_lines)
 
 
+@typing.overload
 def _run_serial_clean_process_work_item_8616(
     context: "_BatchCliContext8616",
     item: FunctionWorkItem,
     *,
     timeout: int,
     caller_return_evidence_by_addr: dict[int, CallerReturnUseEvidence8616] | None = None,
-) -> FunctionWorkResult:
-    """Run one function in a new interpreter without inherited module state."""
+    cache_only: typing.Literal[False] = False,
+) -> FunctionWorkResult: ...
+
+
+@typing.overload
+def _run_serial_clean_process_work_item_8616(
+    context: "_BatchCliContext8616",
+    item: FunctionWorkItem,
+    *,
+    timeout: int,
+    caller_return_evidence_by_addr: dict[int, CallerReturnUseEvidence8616] | None = None,
+    cache_only: typing.Literal[True],
+) -> FunctionWorkResult | None: ...
+
+
+def _run_serial_clean_process_work_item_8616(
+    context: "_BatchCliContext8616",
+    item: FunctionWorkItem,
+    *,
+    timeout: int,
+    caller_return_evidence_by_addr: dict[int, CallerReturnUseEvidence8616] | None = None,
+    cache_only: bool = False,
+) -> FunctionWorkResult | None:
+    """Load or produce one clean-worker result without inherited module state."""
     recovery_addr = _function_work_item_recovery_addr_8616(item)
     requested_addr = recovery_addr
     canonical = _canonicalize_direct_addr_from_sidecar_padding_8616(
@@ -2148,6 +2214,8 @@ def _run_serial_clean_process_work_item_8616(
                 debug_output=f"[dbg] clean serial function cache hit: {recovery_addr:#x}\n",
             )
             return replace(cached_result, from_cache=True)
+        if cache_only:
+            return None
         environment = os.environ.copy()
         environment[_SERIAL_CLEAN_WORKER_RESULT_ENV_8616] = str(result_path)
         environment[_SERIAL_CLEAN_WORKER_EVIDENCE_ENV_8616] = str(evidence_path)
@@ -2219,6 +2287,7 @@ def _run_serial_clean_process_work_item_8616(
             )
 
 
+@typing.overload
 def _run_canonicalized_direct_clean_worker_8616(
     project: angr.Project,
     args: CliArguments,
@@ -2227,7 +2296,33 @@ def _run_canonicalized_direct_clean_worker_8616(
     *,
     function_label: str | None,
     caller_return_evidence_by_addr: dict[int, CallerReturnUseEvidence8616] | None = None,
-) -> int:
+    cache_only: typing.Literal[False] = False,
+) -> int: ...
+
+
+@typing.overload
+def _run_canonicalized_direct_clean_worker_8616(
+    project: angr.Project,
+    args: CliArguments,
+    lst_metadata: LSTMetadata,
+    canonical: DirectAddrCanonicalization8616,
+    *,
+    function_label: str | None,
+    caller_return_evidence_by_addr: dict[int, CallerReturnUseEvidence8616] | None = None,
+    cache_only: typing.Literal[True],
+) -> int | None: ...
+
+
+def _run_canonicalized_direct_clean_worker_8616(
+    project: angr.Project,
+    args: CliArguments,
+    lst_metadata: LSTMetadata,
+    canonical: DirectAddrCanonicalization8616,
+    *,
+    function_label: str | None,
+    caller_return_evidence_by_addr: dict[int, CallerReturnUseEvidence8616] | None = None,
+    cache_only: bool = False,
+) -> int | None:
     """Decompile a sidecar-canonicalized entry in the pure-binary worker."""
     function = SimpleNamespace(
         addr=canonical.canonical_addr,
@@ -2243,12 +2338,23 @@ def _run_canonicalized_direct_clean_worker_8616(
         "_BatchCliContext8616",
         SimpleNamespace(args=args, project=project, lst_metadata=lst_metadata),
     )
-    result = _run_serial_clean_process_work_item_8616(
-        context,
-        item,
-        timeout=max(1, args.timeout),
-        caller_return_evidence_by_addr=caller_return_evidence_by_addr,
-    )
+    if cache_only:
+        result = _run_serial_clean_process_work_item_8616(
+            context,
+            item,
+            timeout=max(1, args.timeout),
+            caller_return_evidence_by_addr=caller_return_evidence_by_addr,
+            cache_only=True,
+        )
+    else:
+        result = _run_serial_clean_process_work_item_8616(
+            context,
+            item,
+            timeout=max(1, args.timeout),
+            caller_return_evidence_by_addr=caller_return_evidence_by_addr,
+        )
+    if result is None:
+        return None
     if result.debug_output:
         print(result.debug_output, file=sys.stderr, end="" if result.debug_output.endswith("\n") else "\n")
     if result.status == WorkItemStatus.OK.value:
@@ -2451,6 +2557,77 @@ def _collect_recompilation_payloads_8616(accepted_payload: str) -> tuple[list[tu
         return checked_payloads, None
 
     return _impl()
+
+
+def _run_function_work_item(
+    item: FunctionWorkItem,
+    *,
+    timeout: int,
+    api_style: str,
+    binary_path: Path | None,
+    cod_metadata: CODProcMetadata | None,
+    synthetic_globals: _SyntheticGlobals8616 | None,
+    lst_metadata: LSTMetadata | None,
+    enable_structured_simplify: bool,
+    enable_postprocess: bool = True,
+    force_isolated_project: bool = False,
+    process_isolated_worker: bool = False,
+    allow_isolated_retry: bool = True,
+) -> FunctionWorkResult:
+    """Run one function work item with per-key producer serialization."""
+    cache_key = function_decompilation_cache_key_8616(
+        item,
+        binary_path=binary_path,
+        api_style=api_style,
+        cod_metadata=cod_metadata,
+        synthetic_globals=synthetic_globals,
+        lst_metadata=lst_metadata,
+        enable_structured_simplify=enable_structured_simplify,
+        enable_postprocess=enable_postprocess,
+    )
+    if cache_key is None or not allow_isolated_retry:
+        return _run_function_work_item_uncached(
+            item,
+            timeout=timeout,
+            api_style=api_style,
+            binary_path=binary_path,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
+            lst_metadata=lst_metadata,
+            enable_structured_simplify=enable_structured_simplify,
+            enable_postprocess=enable_postprocess,
+            force_isolated_project=force_isolated_project,
+            process_isolated_worker=process_isolated_worker,
+            allow_isolated_retry=allow_isolated_retry,
+        )
+    with _cache_key_lock("function_decompile", cache_key):
+        cached_result, _debug, _key, _tail_enabled, _expected_stages = _function_work_cache_lookup(
+            item,
+            binary_path=binary_path,
+            timeout=timeout,
+            api_style=api_style,
+            enable_structured_simplify=enable_structured_simplify,
+            enable_postprocess=enable_postprocess,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
+            lst_metadata=lst_metadata,
+        )
+        if cached_result is not None:
+            return cached_result
+        return _run_function_work_item_uncached(
+            item,
+            timeout=timeout,
+            api_style=api_style,
+            binary_path=binary_path,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
+            lst_metadata=lst_metadata,
+            enable_structured_simplify=enable_structured_simplify,
+            enable_postprocess=enable_postprocess,
+            force_isolated_project=force_isolated_project,
+            process_isolated_worker=process_isolated_worker,
+            allow_isolated_retry=allow_isolated_retry,
+        )
 
 
 @cast(
@@ -4453,10 +4630,11 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         )
         direct_recovery_timeout = max(1, min(direct_recovery_timeout, _remaining_direct_addr_budget() or 1))
         cfg, func = _run_with_timeout_in_daemon_thread(
-                _recover_target_function,
-                timeout=direct_recovery_timeout,
-                thread_name_prefix="recovery",
-            )
+            _recover_target_function,
+            timeout=direct_recovery_timeout,
+            thread_name_prefix="recovery",
+            prefer_process_alarm=True,
+        )
     except _AnalysisTimeout:
         _enforce_direct_addr_budget_timeout()
         sidecar_region = _lst_code_region(lst_metadata, direct_addr) if lst_metadata is not None else None
@@ -4894,7 +5072,11 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         return 5
 
     if project.arch.name == "86_16":
-        record_direct_target_caller_return_use_evidence_8616(project, direct_addr)
+        record_direct_target_caller_return_use_evidence_8616(
+            project,
+            direct_addr,
+            binary_path=args.binary,
+        )
 
     if (
         precise_sidecar_regions
@@ -4965,7 +5147,11 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         )
         for call_target in collect_neighbor_call_targets(func):
             if call_target.return_addr is not None:
-                record_direct_target_caller_return_use_evidence_8616(project, call_target.target_addr)
+                record_direct_target_caller_return_use_evidence_8616(
+                    project,
+                    call_target.target_addr,
+                    binary_path=args.binary,
+                )
     _transfer_caller_return_use_evidence_8616(project, direct_project)
     typing.cast(typing.Any, direct_project)._inertia_trace_c_stages = bool(args.trace_c_stages)
     typing.cast(typing.Any, direct_project)._inertia_dump_layers = bool(args.dump_layers)
@@ -5020,7 +5206,8 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             return 0
         print(
             "[dbg] direct failure family: status=ok stage=helper_model sidecar=not_applicable "
-            "nonopt=not_needed fallback=direct_addr validation=passed"
+            "nonopt=not_needed fallback=direct_addr validation=passed",
+            file=sys.stderr,
         )
         _emit_tail_validation_snapshot_or_uncollected(
             cfg,
@@ -5045,11 +5232,36 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         api_style=args.api_style,
         enable_structured_simplify=True,
         enable_postprocess=True,
+        cod_metadata=cod_metadata,
+        synthetic_globals=synthetic_globals,
+        lst_metadata=lst_metadata,
     )
-    if direct_cache_result is not None:
+    if direct_cache_result is not None and direct_cache_result.failure_family_snapshot is not None:
         if direct_cache_debug:
             print(direct_cache_debug, file=sys.stderr, end="")
+        if direct_cache_result.debug_output:
+            print(direct_cache_result.debug_output, file=sys.stderr, end="")
+        cached_tail_snapshot = direct_cache_result.tail_validation
+        cached_statuses = (
+            {
+                key: value.get("status") if isinstance(value, dict) else type(value).__name__
+                for key, value in cached_tail_snapshot.items()
+            }
+            if isinstance(cached_tail_snapshot, dict)
+            else "N/A"
+        )
+        print(
+            "[dbg] direct_decompile_job snapshot: project_fb_stages=NOT_DICT "
+            f"func_info_tv_stages=None merged_stages={list(cached_tail_snapshot.keys()) if isinstance(cached_tail_snapshot, dict) else 'NOT_DICT'} "
+            f"merged_statuses={cached_statuses}",
+            file=sys.stderr,
+            flush=True,
+        )
         print("[dbg] direct function cache hit validation=passed", file=sys.stderr, flush=True)
+        print(
+            f"[dbg] direct failure family: {direct_cache_result.failure_family_snapshot.label()}",
+            file=sys.stderr,
+        )
         cached_direct_result = replace(
             direct_cache_result,
             function=func,
@@ -5078,6 +5290,24 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         )
         return 0
 
+    if (
+        canonical_direct_addr is not None
+        and canonical_direct_addr.requested_addr != canonical_direct_addr.canonical_addr
+        and not args.ignore_local_sidecar_hints
+    ):
+        assert lst_metadata is not None
+        cached_clean_status = _run_canonicalized_direct_clean_worker_8616(
+            project,
+            args,
+            lst_metadata,
+            canonical_direct_addr,
+            function_label=function_label,
+            caller_return_evidence_by_addr=clean_worker_caller_return_evidence_by_addr,
+            cache_only=True,
+        )
+        if cached_clean_status is not None:
+            return cached_clean_status
+
     print("/* decompiling... */", flush=True)
     direct_tail_validation_snapshot: dict[str, object] | None = None
     direct_segment_program_evidence: SegmentProgramFunctionEvidence8616 | None = None
@@ -5085,8 +5315,24 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
     direct_sidecar_verdict = "not_attempted"
     direct_nonoptimized_verdict = "not_attempted"
     direct_timeout_stage: str | None = None
+    direct_debug_output = ""
     _block_count, _byte_count = _function_complexity(func)
     _elapsed = 0.0
+
+    def _direct_failure_snapshot(result: FunctionWorkResult) -> FailureFamilySnapshot:
+        """Build the complete direct-address diagnostic snapshot for one result."""
+        return build_failure_family_snapshot(
+            status=result.status,
+            failure_stage=result.failure_stage,
+            sidecar_verdict=direct_sidecar_verdict,
+            non_optimized_verdict=direct_nonoptimized_verdict,
+            fallback_kind="direct_addr",
+            tail_validation_verdict=_tail_validation_display_status(
+                result.tail_validation,
+                fallback_kind="direct_addr" if result.status != "ok" else None,
+            ),
+            artifact_path=f"{func.addr:#x}:{func.name}",
+        )
 
     def _direct_analysis_timeout_for_shape(base_timeout: int, block_count: int, byte_count: int) -> int:
         boosted = _effective_decompile_timeout_8616(
@@ -5167,23 +5413,25 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                 typing.cast(typing.Any, direct_project)._inertia_fast_block_peephole = True
                 typing.cast(typing.Any, direct_project)._inertia_clinic_peephole_cap = 48
             try:
-                result = _decompile_function_with_stats(
-                    direct_project,
-                    cfg,
-                    func,
-                    direct_analysis_timeout,
-                    args.api_style,
-                    args.binary,
-                    cod_metadata=cod_metadata,
-                    synthetic_globals=synthetic_globals,
-                    lst_metadata=lst_metadata,
-                    # Direct-address mode must prefer deterministic single-lane
-                    # recovery. Isolated retries can re-run the full pipeline
-                    # multiple times and overwrite a valid candidate with a
-                    # later timeout lane.
-                    allow_isolated_retry=False,
-                    failure_family_state=direct_failure_family_state,
-                )
+                with _capture_thread_output() as (stdout_buf, stderr_buf):
+                    result = _decompile_function_with_stats(
+                        direct_project,
+                        cfg,
+                        func,
+                        direct_analysis_timeout,
+                        args.api_style,
+                        args.binary,
+                        cod_metadata=cod_metadata,
+                        synthetic_globals=synthetic_globals,
+                        lst_metadata=lst_metadata,
+                        # Direct-address mode must prefer deterministic single-lane
+                        # recovery. Isolated retries can re-run the full pipeline
+                        # multiple times and overwrite a valid candidate with a
+                        # later timeout lane.
+                        allow_isolated_retry=False,
+                        failure_family_state=direct_failure_family_state,
+                    )
+                debug_output = stdout_buf.getvalue() + stderr_buf.getvalue()
             finally:
                 if direct_clinic_guard or direct_fast_peephole_guard:
                     typing.cast(typing.Any, direct_project)._inertia_disable_ail_narrowing = prev_disable_narrowing
@@ -5236,6 +5484,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                     new_proof_seen=direct_failure_family_state.new_proof_seen,
                     repeat_detected=direct_failure_family_state.repeat_detected,
                 ),
+                debug_output,
             )
 
         # The inner decompilation path already enforces the analysis deadline.
@@ -5321,6 +5570,8 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                     direct_failure_family_state.candidate_snapshot = extra.candidate_snapshot
                     direct_failure_family_state.new_proof_seen = extra.new_proof_seen
                     direct_failure_family_state.repeat_detected = extra.repeat_detected
+                elif isinstance(extra, str):
+                    direct_debug_output = extra
     except FuturesTimeoutError:
         status = "timeout"
         payload = f"Timed out after {direct_decompile_timeout}s."
@@ -5341,7 +5592,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         index=1,
         status=status,
         payload=payload,
-        debug_output="",
+        debug_output=direct_debug_output,
         function=func,
         function_cfg=cfg,
         partial_payload=partial_payload,
@@ -5512,8 +5763,10 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                     partial_payload=None,
                     tail_validation=helper_tail_validation_snapshot,
                 )
-    if _complete_serial_clean_worker_result_8616(direct_result, project=direct_project):
-        return 0
+    if os.environ.get(_SERIAL_CLEAN_WORKER_RESULT_ENV_8616):
+        direct_result = replace(direct_result, failure_family_snapshot=_direct_failure_snapshot(direct_result))
+        if _complete_serial_clean_worker_result_8616(direct_result, project=direct_project):
+            return 0
     direct_timeout_payload = direct_result.payload
     _direct_blocks_for_timeout_guard, _direct_bytes_for_timeout_guard = _function_complexity(func)
     clinic_core_timeout = isinstance(direct_timeout_payload, str) and (
@@ -5581,26 +5834,13 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                     payload=robust_acceptance.gcc_checked_payload,
                     tail_validation=robust_snapshot,
                 )
-    direct_failure_family_snapshot = build_failure_family_snapshot(
-        status=direct_result.status,
-        failure_stage=direct_result.failure_stage,
-        sidecar_verdict=direct_sidecar_verdict,
-        non_optimized_verdict=direct_nonoptimized_verdict,
-        fallback_kind="direct_addr",
-        tail_validation_verdict=_tail_validation_display_status(
-            direct_result.tail_validation,
-            fallback_kind="direct_addr" if direct_result.status != "ok" else None,
-        ),
-        artifact_path=f"{func.addr:#x}:{func.name}",
-    )
+    direct_failure_family_snapshot = _direct_failure_snapshot(direct_result)
     budget_fallback_addr = function_original_addr(func)
     budget_fallback_name = func.name
-    direct_failure_family_snapshot = replace(
-        direct_failure_family_snapshot,
-        sidecar_verdict=direct_sidecar_verdict,
-        non_optimized_verdict=direct_nonoptimized_verdict,
-    )
-    print(f"[dbg] direct failure family: {direct_failure_family_snapshot.label()}")
+    direct_result = replace(direct_result, failure_family_snapshot=direct_failure_family_snapshot)
+    if direct_result.debug_output:
+        print(direct_result.debug_output, file=sys.stderr, end="")
+    print(f"[dbg] direct failure family: {direct_failure_family_snapshot.label()}", file=sys.stderr)
     if direct_result.status == "error":
         _print_stop_on_first_failure_8616(func, direct_result)
         return 6
@@ -5616,7 +5856,8 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             binary_name_upper = args.binary.name.upper()
             if binary_name_upper == "EGAME11.COD" and normalized_name == "drawcockpit":
                 _emit_timeout_and_exit(args.timeout, "during x86-16 function recovery")
-        print(f"\n/* Decompilation timeout: {direct_result.payload} */")
+        print(f"[dbg] direct decompilation timeout detail: {direct_result.payload}", file=sys.stderr)
+        print(f"\n/* Decompilation timeout: Timed out while recovering a function after {args.timeout}s. */")
         print("/* Direct decompilation timeout is terminal for this function; skipping fallback lanes. */")
         return 3
     if direct_result.status != "ok":
@@ -6441,6 +6682,12 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                 "byte_count": direct_result.byte_count,
                 "validated_c_hash": direct_result.validated_payload_hash,
                 "gcc_checked_c_hash": direct_result.gcc_checked_payload_hash,
+                "diagnostic_output": (
+                    direct_result.debug_output
+                    if os.environ.get("INERTIA_ENABLE_TYPED_SWITCH_AST_ARTIFACTS") == "1"
+                    else None
+                ),
+                "failure_family_snapshot": direct_failure_family_snapshot.to_record(),
             },
         )
     _write_serial_clean_worker_result_8616(direct_result, project=direct_project)
@@ -6696,6 +6943,9 @@ def _run_serial_function_8616(
                     api_style=args.api_style,
                     enable_structured_simplify=True,
                     enable_postprocess=True,
+                    cod_metadata=cod_metadata,
+                    synthetic_globals=synthetic_globals,
+                    lst_metadata=lst_metadata,
                 )
             )
             if cached_work_result is not None:
@@ -7344,22 +7594,40 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
     interactive_stdout = _stdout_is_interactive()
     precise_sidecar_regions = metadata_has_precise_code_regions(cast(Any, lst_metadata))
     if args.addr is not None:
-        return _run_direct_addr_cli_8616(
-            _DirectAddrCliContext8616(
-                args=args,
-                project=project,
-                function_label=function_label,
-                cod_metadata=cod_metadata,
-                synthetic_globals=synthetic_globals,
-                lst_metadata=lst_metadata,
-                prefer_fast_recovery=prefer_fast_recovery,
-                proc_resolved_to_linked_binary=proc_resolved_to_linked_binary,
-                low_memory_path=low_memory_path,
-                interactive_stdout=interactive_stdout,
-                precise_sidecar_regions=precise_sidecar_regions,
-                timeout_was_explicit=timeout_was_explicit,
-            )
+        direct_context = _DirectAddrCliContext8616(
+            args=args,
+            project=project,
+            function_label=function_label,
+            cod_metadata=cod_metadata,
+            synthetic_globals=synthetic_globals,
+            lst_metadata=lst_metadata,
+            prefer_fast_recovery=prefer_fast_recovery,
+            proc_resolved_to_linked_binary=proc_resolved_to_linked_binary,
+            low_memory_path=low_memory_path,
+            interactive_stdout=interactive_stdout,
+            precise_sidecar_regions=precise_sidecar_regions,
+            timeout_was_explicit=timeout_was_explicit,
         )
+        direct_lock_key = _recovery_cache_key(
+            binary_path=args.binary,
+            kind="direct_addr_work",
+            extra={
+                "addr": args.addr,
+                "api_style": args.api_style,
+                "alternate_source_c": bool(args.alternate_source_c),
+                "ignore_local_sidecar_hints": bool(args.ignore_local_sidecar_hints),
+                "window": args.window,
+                "c_target": args.c_target,
+                "signature_catalog": str(effective_signature_catalog)
+                if effective_signature_catalog is not None
+                else None,
+            },
+        )
+        if not _direct_addr_work_requires_parent_lock_8616(direct_lock_key):
+            return _run_direct_addr_cli_8616(direct_context)
+        assert direct_lock_key is not None
+        with _cache_key_lock("direct_addr_work", direct_lock_key):
+            return _run_direct_addr_cli_8616(direct_context)
 
     print("/* discovering likely functions... */", flush=True)
     typing.cast(typing.Any, project)._inertia_cached_catalog_mode = False

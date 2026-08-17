@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from scripts import test_ownership_manifest
 
 EXISTING_SOURCE_PATH = "scripts/test_ownership_manifest.py"
@@ -208,6 +210,7 @@ def test_selects_postprocess_stage_direct_stack_validation_tests_for_implementat
 
     assert selected == (
         "angr_platforms/tests/test_decompiler_architecture_check.py",
+        "angr_platforms/tests/test_x86_16_jcc_instruction_reuse.py",
         "angr_platforms/tests/test_x86_16_jcc_typed_condition_order.py",
         "angr_platforms/tests/test_x86_16_decompiler_postprocess_utils.py",
         "angr_platforms/tests/test_x86_16_postprocess_snapshot.py::"
@@ -226,6 +229,7 @@ def test_selects_postprocess_callsite_argument_tests_for_implementation_file():
 
     assert selected == (
         "angr_platforms/tests/test_decompiler_architecture_check.py",
+        "angr_platforms/tests/test_x86_16_jcc_instruction_reuse.py",
         "angr_platforms/tests/test_x86_16_jcc_typed_condition_order.py",
         "angr_platforms/tests/test_x86_16_decompiler_postprocess_utils.py",
         "angr_platforms/tests/test_x86_16_decompiler_postprocess_calls.py::"
@@ -828,6 +832,7 @@ def test_manifest_cli_check_fails_for_stale_manifest_rule(monkeypatch, capsys):
     assert "pytest file does not exist" in captured.out
 
 
+@pytest.mark.repository_contract
 def test_manifest_cli_check_passes_for_current_manifest(capsys):
     rc = test_ownership_manifest.main(["--check"])
 

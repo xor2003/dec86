@@ -35,7 +35,7 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
     """16-bit x86 archinfo definition for real-mode DOS lifting and runtime setup."""
 
     def __init__(self, endness: Endness = Endness.LE) -> None:
-        """Initialize register offsets and 16-bit architecture defaults."""
+        """Initialize the immutable register layout and 16-bit defaults."""
         import logging
 
         self.logger = logging.getLogger(__name__)
@@ -52,31 +52,9 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
         # Enforce 16-bit primary types
         self.bits = 16
 
-        offset = 0
-        for reg in self.register_list:
-            cast(Any, reg).vex_offset = offset
-            offset += reg.size // 8  # Bytes for VEX alignment
-            if reg.name in [
-                "ax",
-                "cx",
-                "dx",
-                "bx",
-                "sp",
-                "bp",
-                "si",
-                "di",
-                "ip",
-                "flags",
-                "cs",
-                "ds",
-                "es",
-                "fs",
-                "gs",
-                "ss",
-            ]:
-                offset += 2  # Ensure 2-byte alignment for 16-bit regs, skip artificial
-
-        self.logger.info("Arch86_16 init: Register offsets set (16-bit primary, sequential)")
+        # Arch builds ``registers`` during super().__init__. The offsets declared
+        # on register_list must therefore remain unchanged for every instance.
+        self.logger.info("Arch86_16 init: using declared 16-bit register offsets")
         for reg in self.register_list:
             self.logger.debug(f"Reg {reg.name}: size {reg.size}, vex_offset {reg.vex_offset}")
 

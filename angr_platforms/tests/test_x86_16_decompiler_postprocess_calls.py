@@ -483,7 +483,7 @@ def test_attach_callsite_summaries_does_not_upgrade_source_only_stack_probe_summ
     codegen.cfunc.body = codegen.cfunc.statements
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, _callsite_addr: CallsiteSummary8616(
+        lambda _function, _callsite_addr, **_kwargs: CallsiteSummary8616(
             callsite_addr=0x4012,
             target_addr=0x105D2,
             return_addr=0x4015,
@@ -535,7 +535,7 @@ def test_attach_callsite_summaries_upgrades_named_stack_probe_summary(monkeypatc
     codegen.cfunc.body = codegen.cfunc.statements
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, _callsite_addr: CallsiteSummary8616(
+        lambda _function, _callsite_addr, **_kwargs: CallsiteSummary8616(
             callsite_addr=0x4012,
             target_addr=0x105D2,
             return_addr=0x4015,
@@ -585,7 +585,7 @@ def test_attach_callsite_summaries_prefers_sidecar_labels_for_sub_targets(monkey
     codegen.cfunc.body = codegen.cfunc.statements
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, _callsite_addr: CallsiteSummary8616(
+        lambda _function, _callsite_addr, **_kwargs: CallsiteSummary8616(
             callsite_addr=0x4012,
             target_addr=0x104D,
             return_addr=0x4015,
@@ -622,8 +622,10 @@ def test_attach_callsite_summaries_matches_unaddressed_calls_by_target_instead_o
     call_probe = CFunctionCall("aNchkstk", SimpleNamespace(addr=0x1001, name="aNchkstk"), [], codegen=codegen)
     codegen.cfunc.statements = CStatements([call_outp, call_probe], addr=0x4010, codegen=codegen)
     codegen.cfunc.body = codegen.cfunc.statements
+    summarized_callsites: list[int] = []
 
-    def _summary_for_callsite(_function, callsite_addr):
+    def _summary_for_callsite(_function, callsite_addr, **_kwargs):
+        summarized_callsites.append(callsite_addr)
         if callsite_addr == 0x4010:
             return CallsiteSummary8616(
                 callsite_addr=0x4010,
@@ -663,6 +665,7 @@ def test_attach_callsite_summaries_matches_unaddressed_calls_by_target_instead_o
     assert changed is True
     assert call_probe.callee_target == "aNchkstk"
     assert call_outp.callee_target == "outp"
+    assert summarized_callsites == [0x4010, 0x4012]
     assert codegen._inertia_callsite_summaries[id(call_probe)].target_addr == 0x1001
     assert codegen._inertia_callsite_summaries[id(call_outp)].target_addr == 0x14A0
 
@@ -1102,7 +1105,7 @@ def test_recover_expected_calls_ignores_cod_call_names_over_rebased_target_guess
     }
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, callsite: summaries[callsite],
+        lambda _function, callsite, **_kwargs: summaries[callsite],
     )
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls._cod_source_call_names_8616",
@@ -1293,27 +1296,27 @@ def test_materialize_callsite_stack_arguments_groups_signed_stack_word_pushes_fo
     codegen.cfunc.unified_local_vars = {duration_slot: {(duration_var, duration_var.variable_type)}}
     codegen.cfunc.statements = CStatements([CExpressionStatement(call, codegen=codegen)], addr=0x4010, codegen=codegen)
     codegen.cfunc.body = codegen.cfunc.statements
-    codegen._inertia_callsite_summaries = {
-        id(call): CallsiteSummary8616(
-            callsite_addr=0x4012,
-            target_addr=0x1544,
-            return_addr=0x4015,
-            kind="direct_near",
-            arg_count=2,
-            arg_widths=(2, 2),
-            stack_cleanup=4,
-            return_register=None,
-            return_used=False,
-            push_arg_sources=(
-                (
-                    "expr",
-                    ("bp", 6),
-                    ((CallsitePushExprOp8616.SIGN_EXT_HI.value, 16),),
-                ),
+    summary = CallsiteSummary8616(
+        callsite_addr=0x4012,
+        target_addr=0x1544,
+        return_addr=0x4015,
+        kind="direct_near",
+        arg_count=2,
+        arg_widths=(2, 2),
+        stack_cleanup=4,
+        return_register=None,
+        return_used=False,
+        push_arg_sources=(
+            (
+                "expr",
                 ("bp", 6),
+                ((CallsitePushExprOp8616.SIGN_EXT_HI.value, 16),),
             ),
-        )
-    }
+            ("bp", 6),
+        ),
+    )
+    codegen._inertia_callsite_summaries = {id(call): summary}
+    codegen._inertia_callsite_summary_inventory_8616 = {summary.callsite_addr: summary}
 
     changed = _materialize_callsite_stack_arguments_8616(project, codegen)
 
@@ -1327,6 +1330,8 @@ def test_materialize_callsite_stack_arguments_groups_signed_stack_word_pushes_fo
     summary = codegen._inertia_callsite_summaries[id(call)]
     assert summary.arg_count == 2
     assert summary.arg_widths == (2, 2)
+    assert summary.logical_arg_widths == (4,)
+    assert codegen._inertia_callsite_summary_inventory_8616[0x4012].logical_arg_widths == (4,)
 
 
 def test_materialize_callsite_stack_arguments_ignores_source_width_over_generated_word_prototype(tmp_path):
@@ -8286,6 +8291,12 @@ def test_materialize_callsite_stack_arguments_rebinds_assignment_wrapped_ax_retu
     assert statements[1] is switch_stmt
     assert getattr(codegen, "_inertia_call_return_switch_selector_materialized_8616", 0) == 1
 
+    materialized_lhs = call_assignment.lhs
+    codegen._inertia_callsite_materialization_complete_8616 = False
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is False
+    assert call_assignment.lhs is materialized_lhs
+    assert getattr(codegen, "_inertia_call_return_switch_selector_materialized_8616", 0) == 1
+
 
 def test_materialize_callsite_stack_arguments_consumes_recorded_dx_ax_return_push_pair():
     project = _project()
@@ -10108,7 +10119,7 @@ def test_call_floor_recognizes_summary_proven_return_call_without_duplication(mo
     )
     monkeypatch.setattr(
         "angr_platforms.X86_16.decompiler_postprocess_calls.summarize_x86_16_callsite",
-        lambda _function, callsite: codegen._inertia_callsite_summaries[
+        lambda _function, callsite, **_kwargs: codegen._inertia_callsite_summaries[
             {
                 0x4012: id(first_draw),
                 0x4018: id(second_draw),

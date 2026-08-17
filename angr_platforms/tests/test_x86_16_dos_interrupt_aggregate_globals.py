@@ -71,6 +71,7 @@ def test_dos_interrupt_aggregate_materialization_projects_exact_overlapping_obje
     )
     rin = _global(codegen, 0x7000, 1, "rin")
     rout = _global(codegen, 0x7004, 2, "rout")
+    rout_al = _global(codegen, 0x7004, 1, "rout")
     rin_ah = structured_c.CIndexedVariable(
         rin,
         _constant(codegen, 1),
@@ -110,6 +111,7 @@ def test_dos_interrupt_aggregate_materialization_projects_exact_overlapping_obje
         structured_c.CAssignment(sreg, segment, codegen=codegen),
         structured_c.CAssignment(ax, call, codegen=codegen),
         structured_c.CAssignment(flag_copy, rout_cflag, codegen=codegen),
+        structured_c.CReturn(rout_al, codegen=codegen),
     ]
     root = structured_c.CStatements(statements, codegen=codegen)
     codegen.cfunc = SimpleNamespace(addr=0x1000, statements=root, body=root)
@@ -132,6 +134,7 @@ def test_dos_interrupt_aggregate_materialization_projects_exact_overlapping_obje
         IndexedSegmentedGlobalEvidence8616(0x7001, "_S424_rin", 1, 1),
         IndexedSegmentedGlobalEvidence8616(0x7002, "_S426_sreg", 0, 1),
         IndexedSegmentedGlobalEvidence8616(0x7002, "_S426_sreg", 0, 2),
+        IndexedSegmentedGlobalEvidence8616(0x7004, "_S425_rout", 0, 1),
         IndexedSegmentedGlobalEvidence8616(0x7004, "_S425_rout", 0, 2),
         IndexedSegmentedGlobalEvidence8616(0x7010, "_S425_rout", 12, 2),
     )
@@ -146,6 +149,7 @@ def test_dos_interrupt_aggregate_materialization_projects_exact_overlapping_obje
     assert _field_path(statements[0].lhs) == ("h", "ah")
     assert _field_path(statements[1].lhs) == ("es",)
     assert _field_path(statements[3].rhs) == ("x", "cflag")
+    assert _field_path(statements[4].retval) == ("h", "al")
     assert [argument.operand.variable.name for argument in call.args] == ["rin", "rout", "sreg"]
     assert {spec[0:2] for spec in codegen._inertia_global_declaration_specs_8616} == {
         ("REGS", "rin"),
@@ -162,7 +166,7 @@ def test_dos_interrupt_aggregate_materialization_projects_exact_overlapping_obje
         stats.failure_count,
     ) == (1, 1, 1, 1, 0)
     assert stats.argument_count == 3
-    assert stats.field_projection_count == 3
+    assert stats.field_projection_count == 4
     assert materialize_dos_interrupt_aggregate_globals_8616(codegen) is False
 
 

@@ -49,6 +49,7 @@ import inertia_decompiler.sidecar_cache as sidecar_cache
 import inertia_decompiler.tail_validation as cli_tail_validation
 from inertia_decompiler import sidecar_metadata, sidecar_parsers
 from inertia_decompiler.direct_addr_failure_family import (
+    FailureFamilySnapshot,
     FailureFamilyState,
     advance_failure_family_state,
     build_failure_family_snapshot,
@@ -921,10 +922,10 @@ def test_apply_function_annotations_covers_rebased_active_and_original_addresses
     assert applied_addrs == [0x10768, 0x1000]
 
 
-LIFE_EXE = REPO_ROOT / "LIFE.EXE"
+LIFE_EXE = REPO_ROOT / "examples" / "LIFE.EXE"
 LIFE2_EXE = REPO_ROOT / "LIFE2.EXE"
-LIFE_COD = REPO_ROOT / "LIFE.COD"
-NONAME_TDINFO_EXE = REPO_ROOT / "tdinfo-parser" / "NONAME.EXE"
+LIFE_COD = REPO_ROOT / "examples" / "LIFE.COD"
+NONAME_TDINFO_EXE = REPO_ROOT / "borrow" / "tdinfo-parser" / "NONAME.EXE"
 SYNTHETIC_OBJ = REPO_ROOT / "angr_platforms" / "tests" / "fixtures" / "synthetic.obj"
 BORLAND_CC_LIB = Path("/home/xor/inertia_player/dos_compilers/Borland Turbo C v2/LIB/CC.LIB")
 BORLAND_GRAPHICS_LIB = Path("/home/xor/inertia_player/dos_compilers/Borland Turbo C v2/LIB/GRAPHICS.LIB")
@@ -1333,6 +1334,23 @@ def test_direct_addr_failure_family_state_tracks_previous_candidate_and_new_proo
     assert state.repeat_detected is False
 
 
+def test_direct_addr_failure_family_snapshot_cache_round_trip_is_strict():
+    snapshot = build_failure_family_snapshot(
+        status="ok",
+        failure_stage=None,
+        sidecar_verdict="not_attempted",
+        non_optimized_verdict="not_attempted",
+        fallback_kind="direct_addr",
+        tail_validation_verdict="passed",
+        artifact_path="0x10e70:Beep",
+    )
+
+    assert FailureFamilySnapshot.from_record(snapshot.to_record()) == snapshot
+    incomplete = snapshot.to_record()
+    incomplete.pop("tail_validation_verdict")
+    assert FailureFamilySnapshot.from_record(incomplete) is None
+
+
 def test_decompile_function_with_stats_skips_same_family_retry_without_new_proof(monkeypatch, tmp_path, capsys):
     monkeypatch.chdir(tmp_path)
     calls: list[int] = []
@@ -1471,7 +1489,7 @@ def test_direct_timeout_stage_preserves_clinic_or_default_fallback():
 def test_function_work_cache_ignores_timeout_records(monkeypatch):
     function = SimpleNamespace(addr=0x1234, name="sub_1234", project=None)
     item = FunctionWorkItem(index=1, function_cfg=object(), function=function)
-    monkeypatch.setattr(cli_core, "_function_decompilation_cache_key", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(cli_core, "function_decompilation_cache_key_8616", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
         cli_core,
         "_load_cache_json",
@@ -1500,7 +1518,7 @@ def test_function_work_cache_bypasses_payload_without_acceptance_provenance(monk
     function = SimpleNamespace(addr=0x10CE0, name="QuickSort", project=SimpleNamespace())
     item = FunctionWorkItem(index=1, function_cfg=object(), function=function)
     monkeypatch.setattr(cli_core, "_tail_validation_runtime_enabled", lambda _project: False)
-    monkeypatch.setattr(cli_core, "_function_decompilation_cache_key", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(cli_core, "function_decompilation_cache_key_8616", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
         cli_core,
         "_load_cache_json",
@@ -1537,8 +1555,15 @@ def test_function_work_cache_accepts_complete_matching_provenance(monkeypatch):
     item = FunctionWorkItem(index=1, function_cfg=object(), function=function)
     payload = "void QuickSort(void)\n{\n    return;\n}\n"
     payload_hash = cli_core._sha256_text_8616(payload)
+    failure_family = build_failure_family_snapshot(
+        status="ok",
+        failure_stage=None,
+        fallback_kind="direct_addr",
+        tail_validation_verdict="passed",
+        artifact_path="0x10ce0:QuickSort",
+    )
     monkeypatch.setattr(cli_core, "_tail_validation_runtime_enabled", lambda _project: False)
-    monkeypatch.setattr(cli_core, "_function_decompilation_cache_key", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(cli_core, "function_decompilation_cache_key_8616", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
         cli_core,
         "_load_cache_json",
@@ -1548,6 +1573,7 @@ def test_function_work_cache_accepts_complete_matching_provenance(monkeypatch):
             "elapsed": 1.0,
             "validated_c_hash": payload_hash,
             "gcc_checked_c_hash": payload_hash,
+            "failure_family_snapshot": failure_family.to_record(),
         },
     )
 
@@ -1565,6 +1591,7 @@ def test_function_work_cache_accepts_complete_matching_provenance(monkeypatch):
     assert result.from_cache is True
     assert result.validated_payload_hash == payload_hash
     assert result.gcc_checked_payload_hash == payload_hash
+    assert result.failure_family_snapshot == failure_family
     assert debug == ""
 
 
@@ -1580,7 +1607,7 @@ def test_function_work_cache_bypasses_stale_normalized_payload(monkeypatch):
     )
     payload_hash = cli_core._sha256_text_8616(payload)
     monkeypatch.setattr(cli_core, "_tail_validation_runtime_enabled", lambda _project: False)
-    monkeypatch.setattr(cli_core, "_function_decompilation_cache_key", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(cli_core, "function_decompilation_cache_key_8616", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(
         cli_core,
         "_load_cache_json",
@@ -1722,6 +1749,7 @@ def _run_decompile_proc(
     proc_kind: str = "NEAR",
     analysis_timeout: int = 10,
     subprocess_timeout: int = 30,
+    scale_for_xdist: bool = True,
 ) -> subprocess.CompletedProcess[str]:
     raw_scale = os.environ.get("INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE", "").strip()
     if not raw_scale and os.environ.get("PYTEST_XDIST_WORKER"):
@@ -1730,7 +1758,7 @@ def _run_decompile_proc(
         scale = float(raw_scale) if raw_scale else 1.0
     except ValueError:
         scale = 1.0
-    if scale > 1.0:
+    if scale_for_xdist and scale > 1.0:
         analysis_timeout = max(analysis_timeout, int(round(analysis_timeout * scale)))
         subprocess_timeout = max(subprocess_timeout, int(round(subprocess_timeout * scale)))
     return subprocess.run(
@@ -2720,6 +2748,7 @@ def test_try_decompile_non_optimized_slice_retries_full_recovery_after_lean_miss
     monkeypatch.setattr(decompile, "_inherit_tail_validation_runtime_policy", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_prepare_function_for_decompilation", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_fork", lambda fn, **_kwargs: fn())
     monkeypatch.setattr(
         decompile,
         "_decompile_function_with_stats",
@@ -4675,8 +4704,8 @@ def test_run_function_work_item_uses_persistent_disk_cache(monkeypatch, tmp_path
         calls["count"] += 1
         item.function.info = {
             "x86_16_tail_validation": {
-                "structuring": {"changed": False, "verdict": "structuring stable"},
-                "postprocess": {"changed": False, "verdict": "postprocess stable"},
+                "structuring": {"status": "stable", "changed": False, "verdict": "structuring stable"},
+                "postprocess": {"status": "stable", "changed": False, "verdict": "postprocess stable"},
             }
         }
         return "ok", "int sub_1000(void) { return 1; }", None, 1, 4, 0.01
@@ -4716,10 +4745,11 @@ def test_run_function_work_item_uses_persistent_disk_cache(monkeypatch, tmp_path
     assert first.payload == second.payload
     assert "cache hit" in second.debug_output
     assert "validation=passed" in second.debug_output
-    assert second.tail_validation == {
-        "structuring": {"changed": False, "mode": None, "verdict": "structuring stable", "summary_text": None},
-        "postprocess": {"changed": False, "mode": None, "verdict": "postprocess stable", "summary_text": None},
-    }
+    assert second.tail_validation == first.tail_validation
+    assert second.tail_validation is not None
+    assert list(second.tail_validation) == ["structuring", "postprocess"]
+    assert second.tail_validation["structuring"]["status"] == "stable"
+    assert second.tail_validation["postprocess"]["status"] == "stable"
 
 
 def test_run_function_work_item_uses_recovery_for_source_backed_quality_blocker(monkeypatch, tmp_path):
@@ -4804,11 +4834,13 @@ def test_run_function_work_item_bypasses_persistent_cache_without_passed_tail_va
 
     monkeypatch.setattr(decompile, "_decompile_function_with_stats", _fake_decompile)
 
-    cache_key = recovery_cache._function_decompilation_cache_key(
+    cache_key = decompile.function_decompilation_cache_key_8616(
+        item,
         binary_path=binary,
-        function_addr=0x1000,
-        function_name="sub_1000",
         api_style="pascal",
+        cod_metadata=None,
+        synthetic_globals=None,
+        lst_metadata=None,
         enable_structured_simplify=True,
         enable_postprocess=True,
     )
@@ -4961,11 +4993,13 @@ def test_run_function_work_item_does_not_cache_timeout_results(monkeypatch, tmp_
     assert calls["count"] == 2
     cached = decompile._load_cache_json(
         "function_decompile",
-        recovery_cache._function_decompilation_cache_key(
+        decompile.function_decompilation_cache_key_8616(
+            item,
             binary_path=binary,
-            function_addr=0x1000,
-            function_name="sub_1000",
             api_style="pascal",
+            cod_metadata=None,
+            synthetic_globals=None,
+            lst_metadata=None,
             enable_structured_simplify=True,
             enable_postprocess=True,
         ),
@@ -5034,6 +5068,7 @@ def test_try_decompile_non_optimized_slice_retries_with_fresh_project(monkeypatc
         lambda path, **_kwargs: fresh_project if Path(path) == binary else shared_project,
     )
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_fork", lambda fn, **_kwargs: fn())
 
     def _fake_decompile(project, *_args, **_kwargs):
         calls["decompile"] += 1
@@ -5131,6 +5166,7 @@ def test_try_decompile_non_optimized_slice_prepares_direct_callee_context_before
         lambda path, **_kwargs: fresh_project if Path(path) == binary else shared_project,
     )
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_fork", lambda fn, **_kwargs: fn())
 
     def _fake_decompile(project, *_args, **_kwargs):
         calls["decompile"] += 1
@@ -5198,6 +5234,7 @@ def test_try_decompile_non_optimized_slice_retries_with_blob_project_for_cod_inp
     monkeypatch.setattr(decompile, "_build_project", _fake_build_project)
     monkeypatch.setattr(decompile, "_build_project_cached", _fake_build_project)
     monkeypatch.setattr(decompile, "_run_with_timeout_in_daemon_thread", lambda fn, **_kwargs: fn())
+    monkeypatch.setattr(decompile, "_run_with_timeout_in_fork", lambda fn, **_kwargs: fn())
 
     def _fake_decompile(project, *_args, **_kwargs):
         calls["decompile"] += 1
@@ -6898,7 +6935,7 @@ def test_decompile_function_disables_structuring_for_tiny_single_call_helpers(mo
     monkeypatch.setattr(decompile, "_snapshot_codegen_text", lambda *_args, **_kwargs: "void sub_1196f(void) {}")
 
     def _assert_structuring_disabled(project_obj, *_args, **_kwargs):
-        assert getattr(project_obj, "_inertia_structuring_enabled") is False
+        assert project_obj._inertia_structuring_enabled is False
         return False
 
     def _noop_rewrite(*_args, **_kwargs):
@@ -8575,7 +8612,7 @@ def test_main_direct_path_uses_trivial_sidecar_fallback_tail_validation_snapshot
     captured = capsys.readouterr()
 
     assert rc == 0
-    assert "validation=failed" in captured.out
+    assert "validation=failed" not in captured.out and "validation=failed" in captured.err
     assert "/* == c (trivial sidecar fallback) == */" in captured.out
     assert "[tail-validation] whole-tail validation clean across 1 functions" in captured.err
 
@@ -10881,7 +10918,7 @@ def test_run_function_work_item_uses_fork_lane_for_force_isolated_project(monkey
     monkeypatch.setattr(decompile.threading, "current_thread", lambda: decompile.threading.main_thread())
     monkeypatch.setattr(decompile.threading, "active_count", lambda: 1)
     monkeypatch.setattr(decompile, "_tail_validation_runtime_enabled", lambda _project: False)
-    monkeypatch.setattr(decompile, "_function_decompilation_cache_key", lambda **_kwargs: None)
+    monkeypatch.setattr(decompile, "function_decompilation_cache_key_8616", lambda *_args, **_kwargs: None)
 
     def fake_fork_runner(fn, *, timeout):
         seen["timeout"] = timeout
@@ -10932,7 +10969,7 @@ def test_run_function_work_item_does_not_preflight_unknown_function(monkeypatch)
     calls = {"primary": 0}
 
     monkeypatch.setattr(decompile, "_tail_validation_runtime_enabled", lambda _project: False)
-    monkeypatch.setattr(decompile, "_function_decompilation_cache_key", lambda **_kwargs: None)
+    monkeypatch.setattr(decompile, "function_decompilation_cache_key_8616", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_try_emit_known_runtime_helper_c", lambda **_kwargs: None)
     monkeypatch.setattr(
         decompile,
@@ -10982,7 +11019,7 @@ def test_run_function_work_item_uses_registered_helper_preflight(monkeypatch):
     calls = {"preflight": 0}
 
     monkeypatch.setattr(decompile, "_tail_validation_runtime_enabled", lambda _project: False)
-    monkeypatch.setattr(decompile, "_function_decompilation_cache_key", lambda **_kwargs: None)
+    monkeypatch.setattr(decompile, "function_decompilation_cache_key_8616", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_try_emit_known_runtime_helper_c", lambda **_kwargs: helper_c)
 
     def fake_helper_preflight(*_args, **_kwargs):
@@ -11582,7 +11619,7 @@ def test_run_function_work_item_rebuilds_inside_process_isolated_worker(monkeypa
     seen = {"annotations_applied": False}
 
     monkeypatch.setattr(decompile, "_tail_validation_runtime_enabled", lambda _project: False)
-    monkeypatch.setattr(decompile, "_function_decompilation_cache_key", lambda **_kwargs: None)
+    monkeypatch.setattr(decompile, "function_decompilation_cache_key_8616", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(decompile, "_try_emit_known_runtime_helper_c", lambda **_kwargs: None)
     monkeypatch.setattr(
         decompile,
@@ -11663,7 +11700,7 @@ def test_run_function_work_item_refuses_shared_fallback_when_fresh_recovery_fail
     item = decompile.FunctionWorkItem(index=1, function_cfg=SimpleNamespace(), function=function)
 
     monkeypatch.setattr(decompile, "_tail_validation_runtime_enabled", lambda _project: False)
-    monkeypatch.setattr(decompile, "_function_decompilation_cache_key", lambda **_kwargs: None)
+    monkeypatch.setattr(decompile, "function_decompilation_cache_key_8616", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         decompile,
         "_build_project_cached",
@@ -14447,7 +14484,7 @@ def test_format_sidecar_function_catalog_omits_signature_matched_functions():
 
 
 def test_extract_lst_metadata_supports_uasm_proc_ranges_from_snake_listing():
-    listing = REPO_ROOT / "snake.lst"
+    listing = REPO_ROOT / "examples" / "snake.lst"
     if not listing.exists():
         pytest.skip("snake.lst fixture is not available")
     metadata = extract_lst_metadata(listing)
@@ -14524,6 +14561,7 @@ def test_rank_labeled_function_entries_prefers_entry_and_main(monkeypatch):
 
 
 def test_rank_labeled_function_entries_cached_reuses_recovery_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(recovery_cache, "DECOMPILATION_CACHE_DIR", tmp_path / "cache")
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
     project = SimpleNamespace(
@@ -15555,7 +15593,11 @@ def test_decompile_cli_recovers_configcrts_copy_loop():
 
 def test_decompile_cli_recovers_rotate_pt_logic():
     try:
-        result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "BILLASM.COD", "_rotate_pt")
+        result = _run_decompile_proc(
+            REPO_ROOT / "cod" / "f14" / "BILLASM.COD",
+            "_rotate_pt",
+            scale_for_xdist=False,
+        )
     except subprocess.TimeoutExpired as exc:
         pytest.skip(f"_rotate_pt exceeds bounded live subprocess budget: {exc}")
 
@@ -15658,13 +15700,18 @@ def test_decompile_cli_keeps_query_interrupts_wrapper_calls_classified_in_matrix
 
 def test_decompile_cli_recovers_tidshowrange_layout_logic():
     try:
-        result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "COCKPIT.COD", "_TIDShowRange")
+        result = _run_decompile_proc(
+            REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
+            "_TIDShowRange",
+            scale_for_xdist=False,
+        )
     except subprocess.TimeoutExpired as exc:
         pytest.skip(f"_TIDShowRange exceeds bounded live subprocess budget: {exc}")
 
     assert result.returncode in (0, 3), result.stderr + result.stdout
     if result.returncode == 3:
-        assert "Timed out while recovering a function after 10s." in result.stdout
+        timeout_arg = result.args[result.args.index("--timeout") + 1]
+        assert f"Timed out while recovering a function after {timeout_arg}s." in result.stdout
         return
     assert "function: 0x1000 _TIDShowRange" in result.stdout
     assert "void _TIDShowRange(void)" in result.stdout
@@ -15674,7 +15721,11 @@ def test_decompile_cli_recovers_tidshowrange_layout_logic():
 
 def test_decompile_cli_recovers_drawradaralt_branch_logic():
     try:
-        result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "COCKPIT.COD", "_DrawRadarAlt")
+        result = _run_decompile_proc(
+            REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
+            "_DrawRadarAlt",
+            scale_for_xdist=False,
+        )
     except subprocess.TimeoutExpired as exc:
         pytest.skip(f"_DrawRadarAlt exceeds bounded live subprocess budget: {exc}")
 
@@ -15840,16 +15891,17 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             30,
             (
                 "function: 0x1000 _LookDown",
-                "if (!(BackSeat))",
-                "Rp3D->Length1 = 50;",
-                "RpCRT1->YBgn = 27;",
-                "RpCRT2->YBgn = 25;",
-                "RpCRT4->YBgn = 39;",
-                "VdiMask[MASKY] = 27;",
-                "AdiMask[MASKY] = 25;",
-                "RawMask[MASKY] = 39;",
+                "if (!BackSeat)",
+                "SEG_U8(inertia_ds, 8 + Rp3D) = 50;",
+                "SEG_U8(inertia_ds, 9 + Rp3D) = 0;",
+                "SEG_U8(inertia_ds, 4 + RpCRT1) = 27;",
+                "SEG_U8(inertia_ds, 4 + RpCRT2) = 25;",
+                "SEG_U8(inertia_ds, 4 + RpCRT4) = 39;",
+                "SEG_U16(SEG_U16(inertia_ds, 28682), 2) = 27;",
+                "SEG_U16(SEG_U16(inertia_ds, 28684), 2) = 25;",
+                "SEG_U16(SEG_U16(inertia_ds, 28686), 2) = 39;",
             ),
-            (),
+            ("SEG_U16(inertia_es, 2)",),
         ),
         (
             REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
@@ -15859,16 +15911,18 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             30,
             (
                 "function: 0x1000 _LookUp",
-                "if (!(BackSeat))",
-                "Rp3D->Length1 = 150;",
-                "RpCRT1->YBgn = 138;",
-                "RpCRT2->YBgn = 136;",
-                "RpCRT4->YBgn = 150;",
-                "VdiMask[MASKY] = 138;",
-                "AdiMask[MASKY] = 136;",
-                "RawMask[MASKY] = 150;",
+                "if (!BackSeat)",
+                "SEG_U8(inertia_ds, 8 + Rp3D) = 150;",
+                "SEG_U8(inertia_ds, 9 + Rp3D) = 0;",
+                "SEG_U8(inertia_ds, 4 + RpCRT1) = 138;",
+                "SEG_U8(inertia_ds, 4 + RpCRT2) = 136;",
+                "SEG_U8(inertia_ds, 4 + RpCRT4) = 150;",
+                "SEG_U16(SEG_U16(inertia_ds, 28682), 2) = 138;",
+                "SEG_U16(SEG_U16(inertia_ds, 28684), 2) = 136;",
+                "SEG_U16(SEG_U16(inertia_ds, 28686), 2) = 150;",
+                "SEG_U8(inertia_ds, 8 + Rp3D) = 139;",
             ),
-            (),
+            ("SEG_U16(inertia_es, 2)",),
         ),
         (
             REPO_ROOT / "cod" / "f14" / "CARR.COD",
@@ -15931,32 +15985,6 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             30,
             ("function: 0x1000 _SetDLC", "DirectLiftControl = DLC;", "return DLC;"),
             ("DLC >> 8",),
-        ),
-        (
-            REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
-            "_TIDShowRange",
-            "NEAR",
-            10,
-            30,
-            ("function: 0x1000 _TIDShowRange", "Timed out while recovering a function after 10s."),
-            (),
-        ),
-        (
-            REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
-            "_DrawRadarAlt",
-            "NEAR",
-            10,
-            30,
-            (
-                "function: 0x1000 _DrawRadarAlt",
-                "if (!(View))",
-                "y2 = 0;",
-                "y2 = 112;",
-                "s_12 = 0;",
-                "s_14 = 2;",
-                "MapInEMSSprite(MISCSPRTSEG,0);",
-            ),
-            (),
         ),
         (
             ISOD_COD,

@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
@@ -423,6 +424,7 @@ def _run_decompile(
     decompile_py: Path,
     timeout: int,
 ) -> subprocess.CompletedProcess[str]:
+    """Run one isolated function decompilation with gate-only controls removed."""
     cmd = [
         sys.executable,
         str(decompile_py),
@@ -437,6 +439,7 @@ def _run_decompile(
     cmd.append(str(exe_path))
 
     env = dict(os.environ)
+    env.pop("INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS", None)
     env.setdefault("INERTIA_ENABLE_TAIL_VALIDATION", "1")
     env.setdefault("INERTIA_ENABLE_REBASED_EXACT_SLICE", "1")
     env.setdefault("INERTIA_DISABLE_TIMING", "1")
@@ -449,6 +452,19 @@ def _run_decompile(
         timeout=timeout + 30,
         check=False,
     )
+
+
+def _runtime_decompile_workers(function_count: int) -> int:
+    """Return the bounded nested worker count for independent tiny functions."""
+    requested_text = os.environ.get("INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS", "2")
+    try:
+        requested = int(requested_text)
+    except ValueError as exc:
+        raise RuntimeGateError(
+            RuntimeGateStage.DECOMPILE,
+            f"invalid INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS={requested_text!r}",
+        ) from exc
+    return min(2, function_count, max(1, requested))
 
 
 def _assert_valid_decompile(spec: FunctionSpec, proc: subprocess.CompletedProcess[str]) -> str:
@@ -531,6 +547,7 @@ def _verify_example(
     expected_exit_code: int,
     timeout: int,
 ) -> Path:
+    """Decompile, rebuild, and execute one evidence-backed runtime example."""
     if not example.exe.is_file():
         raise RuntimeGateError(RuntimeGateStage.DECOMPILE, f"missing example executable: {example.exe}")
     if not kvikdos.is_file():
@@ -540,13 +557,21 @@ def _verify_example(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     bodies: list[str] = []
-    for function in example.functions:
-        proc = _run_decompile(
-            function,
-            exe_path=example.exe,
-            decompile_py=decompile_py,
-            timeout=timeout,
-        )
+    decompile_results: list[subprocess.CompletedProcess[str]] = []
+    if example.functions:
+        with ThreadPoolExecutor(max_workers=_runtime_decompile_workers(len(example.functions))) as executor:
+            futures = tuple(
+                executor.submit(
+                    _run_decompile,
+                    function,
+                    exe_path=example.exe,
+                    decompile_py=decompile_py,
+                    timeout=timeout,
+                )
+                for function in example.functions
+            )
+            decompile_results = [future.result() for future in futures]
+    for function, proc in zip(example.functions, decompile_results, strict=True):
         raw_path = out_dir / f"{example.output_stem}_{function.name}.dec.txt"
         err_path = out_dir / f"{example.output_stem}_{function.name}.dec.err.txt"
         raw_path.write_text(proc.stdout, encoding="utf-8")

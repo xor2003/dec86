@@ -660,6 +660,49 @@ def test_call_interface_validation_accepts_proven_nested_dword_argument() -> Non
     assert report.failure_count == 0
 
 
+def test_call_interface_validation_prefers_proven_logical_shape_to_stale_prototype() -> None:
+    codegen = _Codegen()
+    short_type = SimTypeShort(False).with_arch(codegen.project.arch)
+    long_type = SimTypeLong(False).with_arch(codegen.project.arch)
+    callee = SimpleNamespace(
+        addr=0x2000,
+        prototype=SimTypeFunction([short_type] * 5, short_type).with_arch(codegen.project.arch),
+    )
+    call = CFunctionCall(
+        "load",
+        callee,
+        [
+            CConstant(1, short_type, codegen=codegen),
+            CConstant(0, short_type, codegen=codegen),
+            CConstant(1, short_type, codegen=codegen),
+            CConstant(2, long_type, codegen=codegen),
+        ],
+        tags={"ins_addr": 0x1010},
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x1010,
+            target_addr=0x2000,
+            return_addr=0x1013,
+            kind="direct_near",
+            arg_count=5,
+            arg_widths=(2, 2, 2, 2, 2),
+            stack_cleanup=10,
+            return_register="ax",
+            return_used=True,
+            logical_arg_widths=(2, 2, 2, 4),
+        )
+    }
+
+    report = validate_call_interfaces_8616(codegen, CStatements([call], codegen=codegen))
+
+    assert report.passed
+    assert report.classified_fact_count == 1
+    assert report.materialized_count == 1
+    assert report.failure_count == 0
+
+
 def test_call_interface_validation_refuses_lost_arguments() -> None:
     codegen = _Codegen()
     call = CFunctionCall("apply_twice", None, [], tags={"ins_addr": 0x1010}, codegen=codegen)
