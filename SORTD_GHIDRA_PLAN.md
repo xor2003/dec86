@@ -148,6 +148,11 @@ isolation; the validated primary function jobs are already parallel.
 
 Status: complete.
 
+Reason: Independently valid function payloads can still form an invalid or
+semantically inconsistent translation unit when declarations are concatenated.
+The CLI/export owner must assemble one canonical whole-binary result without
+repairing function semantics.
+
 Definition of done:
 
 - normal whole-binary stdout is assembled from accepted typed function
@@ -159,9 +164,22 @@ Definition of done:
 - direct single-function output and `--output-c-dir` artifacts remain stable
 - focused export/CLI tests, Ruff `--fix`, types/docs, and architecture checks pass
 
+Definition of failure:
+
+- stdout contains duplicate or conflicting declarations, drops or changes a
+  function body, or requires postprocess semantic repair
+- an assembly conflict is hidden, emitted only as metadata, or exits successfully
+- any focused CLI/export, compilation, typing, documentation, or architecture
+  gate fails
+
 ### 2. Expand behavior proof beyond the sort core
 
 Status: complete for every source-selftested non-library function.
+
+Reason: Compilation and tail validation do not alone prove application-visible
+behavior. Executing generated bodies against independently derived outcomes
+catches lost calls, wrong argument classes, memory-effect drift, and incorrect
+control flow.
 
 Definition of done:
 
@@ -172,6 +190,14 @@ Definition of done:
 - the default or expanded pipeline fails on missing functions, sanitizer
   failures, behavioral differences, assembly fallback, or validation failure
 - no source text or name is used to recover semantics
+
+Definition of failure:
+
+- any source-selftested function lacks an unchanged generated-C harness or an
+  expected call, return, memory effect, or exit code differs
+- sanitizer, fallback, validation, or generated-function-presence failures do
+  not fail the default or expanded pipeline
+- source names, source text, or peer output participate in semantic recovery
 
 Measured closure: 19/19 generated function bodies compile and execute unchanged
 under ASan/UBSan against source-derived outcomes. The cases include RunMenu
@@ -186,6 +212,11 @@ results or bypass leakage/call-contract checks.
 
 Status: pending.
 
+Reason: Definition/callsite signature disagreement is evidence that the project
+has competing interprocedural truths. One binary-evidenced contract must own
+parameter, return, stack-delta, signedness, and pointer/value decisions before
+rendering or export.
+
 Definition of done:
 
 - each internal function has one binary-evidenced return/parameter contract
@@ -196,9 +227,22 @@ Definition of done:
 - closed evidence counters report every classified and materialized contract
 - focused negative tests prove refusal on conflicting or incomplete callers
 
+Definition of failure:
+
+- a contract is inferred from an incomplete caller census, guessed storage, a
+  function/source name, or rendered C
+- definitions and callsites receive different contracts, or CLI/postprocess
+  reconciles them after Lowering
+- evidence counters do not close, conflict/unknown cases are silently accepted,
+  or focused validation and behavior gates regress
+
 ### 4. Keep discovery and semantic-loss ratchets permanent
 
 Status: complete for the current 20-function baseline.
+
+Reason: The known-good 20-function corpus is a durable completeness boundary.
+Permanent discovery, materialization, fallback, and tiny-example ratchets stop
+later cleanup or performance work from silently dropping code or effects.
 
 Structuring now distinguishes machine facts from facts joined to one exact AST
 placement site. Exact instruction provenance plus exact stack destination
@@ -220,9 +264,21 @@ Definition of done:
 - all seven MS C tiny constructs compile, run, decompile without asm fallback,
   recompile, and match the required DOS exit code
 
+Definition of failure:
+
+- any expected application function disappears, aliases nondeterministically,
+  falls back to assembly/details, times out, or fails validation
+- a classified fact is not materialized and the pipeline still succeeds
+- any Beep, DrawFrame, Sleep, RunMenu, or MS C tiny regression escapes the
+  enforced pipeline
+
 ### 5. Improve readability only from proof
 
 Status: pending after recompilation and behavior gates.
+
+Reason: Stack locals, aggregates, signed conditions, and object names are useful
+only when they are projections of accepted Alias, Widening, Types, and
+Structuring facts. Readability must expose proof, not manufacture semantics.
 
 Definition of done:
 
@@ -233,9 +289,21 @@ Definition of done:
 - numeric function names remain valid when no symbol evidence exists
 - every readability change keeps validation and behavior gates green
 
+Definition of failure:
+
+- output becomes prettier by guessing a local, type, object, condition, name,
+  call argument, or control-flow shape
+- unresolved segmented identity is hidden or distinct address spaces are merged
+- recompilation, validation, call preservation, or behavior is worse than the
+  recorded baseline
+
 ### 6. Profile before further parallelization
 
 Status: primary N-1 execution complete; fallback work deferred.
+
+Reason: The validated primary path already uses available CPUs, while mutable
+fallback rebuilds may share project state and multiply memory. Profiling and
+isolation evidence are required before concurrency can safely reduce wall time.
 
 Definition of done:
 
@@ -245,10 +313,39 @@ Definition of done:
 - mutable fallback rebuilds remain serial until isolated-state and OOM tests
   prove bounded parallel execution
 
+Definition of failure:
+
+- concurrency is added without pass-level timing, isolated-state tests, and
+  aggregate memory measurements
+- output order or hashes become nondeterministic, worker RSS exceeds the 2 GiB
+  budget, or a worker failure is lost
+- measured wall time does not improve materially or semantic gates regress
+
 ### 7. Borrow Reko's proven quality mechanisms without its unsafe fallbacks
 
 Status: pending. The comparison artifact is
 `comparisons/reko/SORTD/reko-0.12.4/NON_LIBRARY_COMPARISON.md`.
+
+Reason: Reko demonstrates useful placement and iteration strategies for wide
+values, call storage, and aggregate typing, but its invalid placeholders and
+known SORTD losses violate Inertia's evidence contract. Borrowing must be
+mechanism-specific and independently implemented at Inertia's owning layers.
+
+Definition of done:
+
+- tasks 7.1 through 7.4 satisfy their individual DoD and refusal cases
+- independently implemented mechanisms improve the named SORTD functions while
+  preserving validation, calls, behavior, recompilation, and layer ownership
+- licensing review confirms that no incompatible Reko implementation was copied
+
+Definition of failure:
+
+- Reko output, source names, addresses, rendered text, or invalid placeholders
+  become semantic evidence or recovery fallbacks
+- an implementation copies incompatible code, bypasses Inertia's typed
+  contracts, or introduces semantic recovery in Rewrite/CLI/export
+- any closed gate in task 7.4 fails or a peer-looking result is accepted over
+  binary validation
 
 This step is about decompilation quality only. Reko 0.12.4 is not a better
 whole-function oracle: 14/20 corresponding application bodies contain
@@ -268,6 +365,10 @@ implementation must be independently expressed in Inertia's owned typed
 contracts and reviewed against this project's licensing requirements.
 
 #### 7.1 Re-run wide-value recovery at evidence-producing boundaries
+
+Reason: Split-word values become recoverable at several points after Alias,
+propagation, and call summaries. Re-running only affected Widening candidates
+can recover complete arithmetic and conditions without a late AST heuristic.
 
 Reko runs its `LongAddRewriter` immediately after register SSA, repeats it after
 value propagation, then eliminates condition codes and runs
@@ -304,7 +405,27 @@ Acceptance cases:
 - Negative tests reject cross-block joins with mismatched carry provenance,
   segment space, alias object, or branch target.
 
+Definition of done:
+
+- all listed Sleep, ReInitBars, and Beep acceptance cases pass with closed
+  Widening evidence counters and `validation=passed`
+- affected-candidate scheduling is deterministic and avoids whole-AST rescans
+- mismatched carrier, carry/borrow, segment, alias, definition, or CFG evidence
+  produces an explicit refusal and preserves the lower representation
+
+Definition of failure:
+
+- low/high halves are joined by adjacency, register shape, or rendered syntax
+  without exact identity and carry/borrow provenance
+- widening is introduced in Structuring, Rewrite, CLI, or export
+- any call argument, memory effect, comparison, validation verdict, or negative
+  refusal case regresses
+
 #### 7.2 Build one interprocedural storage contract, then bind calls exactly
+
+Reason: The largest remaining semantic risk is disagreement between function
+definitions and individual callsites. A whole-program storage contract makes
+every emitted argument and return traceable to its exact reaching definition.
 
 Reko first derives each procedure signature from program dataflow and only then
 rewrites calls and returns. Inputs include sequence registers, individual
@@ -347,7 +468,28 @@ Acceptance cases:
 - A negative fixture with incomplete caller coverage refuses a unified
   signature and emits no guessed argument.
 
+Definition of done:
+
+- every internal function has one deterministic SCC-aware contract consumed by
+  its definition and all callsites before C emission
+- all Beep, SwapBars, QuickSort, and incomplete-census acceptance cases pass,
+  including exact value-versus-pointer classes and recursive argument order
+- contract evidence counters close and transport preserves typed storage
+  identities across clean workers
+
+Definition of failure:
+
+- an argument or return is synthesized, selected from an arbitrary stack slot,
+  repaired in export, or accepted without reaching-definition proof
+- recursive or conflicting caller evidence is ignored, resolved by order, or
+  converges nondeterministically
+- any required call/argument is lost or an unknown/conflict does not refuse
+
 #### 7.3 Infer arrays and small structures from alias-equivalent accesses
+
+Reason: Proven aggregate identities can replace noisy segmented accesses and
+whole-object byte traffic with readable arrays and fields. The transformation
+is valid only after Alias, Widening, and bounded range evidence agree.
 
 Reko's type pipeline normalizes expressions, builds equivalence classes,
 collects constraints, builds aggregate types, replaces type variables, and only
@@ -390,7 +532,27 @@ Acceptance cases:
   inconsistent stride, overlap without union evidence, or have an unbounded
   index.
 
+Definition of done:
+
+- InitBars, `abarPerm`, `abarWork`, Swaps, and ReInitBars satisfy all listed
+  array/field/copy acceptance cases with every observed byte accounted for
+- the accepted aggregate contract is owned by Types/Lowering and its final
+  rendering introduces no new semantic fact
+- all cross-segment, inconsistent-stride, overlap, and unbounded-index fixtures
+  refuse materialization and retain explicit accesses
+
+Definition of failure:
+
+- arrays or structures are inferred from proximity, source shape, peer output,
+  default element counts, or accesses from different alias objects/spaces
+- overlapping or unbounded accesses are hidden by a guessed aggregate
+- pointer/value classes, copy widths, validation, or behavior regress
+
 #### 7.4 Closed evidence and gates
+
+Reason: Mechanism-specific improvements are not durable unless every fact is
+accounted for and the complete binary, compile, behavior, tiny-example, and
+architecture gates enforce the same contract.
 
 Each of the three mechanisms must report
 `raw_fact_count`, `normalized_fact_count`, `classified_fact_count`,
@@ -411,9 +573,39 @@ Definition of done:
   pattern participates in recovery;
 - no semantic work is added to postprocess, CLI, or export assembly.
 
+Definition of failure:
+
+- evidence counters are missing/inconsistent, or classified facts can reach
+  zero materialization without failing their owning stage
+- any focused function, 20-function corpus, GCC, behavior-harness, MS C tiny,
+  architecture, typing, documentation, or test-pipeline gate fails
+- recovery depends on source/peer text, names, address allowlists, rendered C,
+  or a late semantic repair layer
+
 ### 8. Borrow Ghidra's strongest mechanisms at their owning layers
 
 Status: source-mapped design work, implementation pending.
+
+Reason: Ghidra's strongest results come from memory SSA, storage trials, typed
+range propagation, split-value normalization, conservative CFG collapse, and
+bounded iteration. Inertia needs equivalent capabilities while retaining its
+stricter segmented-memory and validation contracts.
+
+Definition of done:
+
+- tasks 8.1 through 8.10 meet their individual DoD in pipeline order
+- each mechanism has one authoritative typed owner and replaces, rather than
+  duplicates, any superseded late semantic producer
+- the full task 8.7 closed gate passes and known Ghidra SORTD errors remain
+  explicit negative fixtures
+
+Definition of failure:
+
+- Ghidra output is treated as truth, known Ghidra guesses are reproduced, or
+  semantic work lands later than its owning layer
+- two active passes own the same fact, or migration removes durable behavior
+  before its typed replacement and tests exist
+- licensing review is skipped for copied/adapted code or any closed gate fails
 
 The useful Ghidra evidence is in its native decompiler core under
 `/home/xor/ghidra/Ghidra/Features/Decompiler/src/decompile/cpp/`. These are
@@ -427,6 +619,10 @@ of responsibilities rather than copying source. Any copied or closely adapted
 implementation still requires an explicit license and notice review.
 
 #### 8.1 Keep stack locations in SSA until locals can be proven
+
+Reason: Early conversion of stack storage into loosely related C temporaries
+loses definition, join, width, escape, and call-clobber evidence. Exact SS range
+SSA is required before a stack range can safely become one local or argument.
 
 Ghidra does not recover locals from rendered stack syntax. Its `Heritage`
 engine constructs SSA for disjoint memory locations, delays stack-memory SSA
@@ -459,7 +655,27 @@ DrawTime, and InitMenu without moving stack recovery into Rewrite. Negative
 tests must cover overlapping locals, SP changes on one branch, escaped stack
 addresses, and DS/SS offset collisions.
 
+Definition of done:
+
+- exact SS ranges have versioned definitions, phi joins, byte-accurate overlap
+  handling, and typed call delta/clobber effects in IR/Alias
+- DrawFrame, DrawTime, and InitMenu improve through Lowering-owned locals while
+  every listed overlap/SP/escape/segment fixture refuses unsafe materialization
+- evidence counters close and validation, behavior, and recompilation remain
+  green
+
+Definition of failure:
+
+- stack identity is reconstructed from rendered C, variable names, or raw
+  numeric proximity, or DS and SS storage are conflated
+- an unknown stack delta, overlap, escape, or clobber is silently ignored
+- locals are discovered in Structuring/Rewrite or any required effect regresses
+
 #### 8.2 Recover call and return contracts from storage trials
+
+Reason: Calls and returns cross function boundaries where local inference is
+insufficient. Typed storage trials allow a complete caller census to prove
+inputs, outputs, stack delta, and split returns without guessed signatures.
 
 Ghidra treats a call signature as an evolving dataflow contract. It checks
 candidate input storage against alias information over multiple passes, then
@@ -489,7 +705,29 @@ object address into a row value, and Beep lost an output-port argument. Those
 outputs become rejection fixtures for argument-class changes and incomplete
 trials. QuickSort's two recursive edges remain the fixed-point stress test.
 
+Definition of done:
+
+- candidate inputs/outputs retain exact storage, width, reaching-definition,
+  use, signedness, and pointer/value evidence through deterministic trials
+- one accepted contract is transactionally applied to the callee and every
+  callsite after complete-census agreement
+- PercolateUp and Beep reject the known bad transformations, while both
+  QuickSort recursive edges converge with all arguments preserved
+
+Definition of failure:
+
+- incomplete or conflicting trials produce a guessed argument, return, stack
+  delta, or export-time signature repair
+- split returns are joined without shared provenance or a pointer is converted
+  to a scalar value class without proof
+- fixed-point order changes the contract or any required call is lost
+
 #### 8.3 Propagate types through IR, aliases, and bounded object ranges
+
+Reason: Type information must follow value and alias provenance across the
+pipeline before memory expressions can become pointers, indexes, fields, or
+aggregates. Bounded range evidence prevents useful typing from becoming shape
+guessing.
 
 Ghidra initializes a temporary type from each operation, propagates only a
 more-specific type across p-code edges, propagates pointer target types to
@@ -521,7 +759,28 @@ at least four elements (`varmap.cc:1215-1219`). InitBars' wrong `% 0x60b`,
 uninitialized store, and DrawBar's wrong 34-byte object are mandatory negative
 fixtures. Array bounds must come from CFG/range evidence, not a default size.
 
+Definition of done:
+
+- deterministic specificity propagation is implemented across owned IR,
+  aliases, calls/returns, and exact object ranges
+- pointer/index/field and aggregate materialization requires proven base,
+  element width, stride, bounds, segment space, and complete access coverage
+- InitBars and DrawBar reject Ghidra's bad modulus, uninitialized value, default
+  count, and undersized-object outcomes while positive bounded cases improve
+
+Definition of failure:
+
+- a default element count, numeric proximity, unlocked range, or rendered
+  expression creates a pointer, array, structure, or field
+- conflicting aliases, address spaces, bounds, or overlaps are merged rather
+  than preserved explicitly
+- accepted types diverge between IR, contracts, diagnostics, rendering, or tests
+
 #### 8.4 Normalize split values and carry before type and structure recovery
+
+Reason: Split carriers and carry/borrow expressions obscure the single values
+needed by type propagation and explicit conditions. Widening must normalize
+them while exact Alias and definition provenance is still available.
 
 Ghidra has dedicated p-code rules for converting PIECE/extension forms,
 eliminating redundant carry expressions, combining low/high add-subtract
@@ -541,7 +800,26 @@ ReInitBars, DrawTime, and Beep are positive fixtures. Ghidra's remaining
 mismatched branch, carrier, segment, or definition must produce
 `UNKNOWN_REFUSE`.
 
+Definition of done:
+
+- Widening produces typed wide values with exact low/high slice, carry/borrow,
+  signedness, definition, and segment provenance before Types/Structuring
+- Sleep, ReInitBars, DrawTime, and Beep pass focused positive regressions and
+  closed evidence counters
+- every mismatched branch/carrier/segment/definition fixture produces
+  `UNKNOWN_REFUSE` and preserves the original lower representation
+
+Definition of failure:
+
+- split values are fused by shape, adjacency, register convention, or AST text
+- semantic normalization occurs in Structuring, Rewrite, CLI, or export
+- a slice, carry, memory effect, condition, or call argument changes incorrectly
+
 #### 8.5 Collapse CFG regions only after conditions are explicit
+
+Reason: Structured loops and branches are trustworthy only when their CFG
+boundaries and `Condition` provenance are already explicit. Conservative region
+collapse improves readability without inventing branch meaning.
 
 Ghidra first identifies loop backedges and nesting, then repeatedly collapses
 well-constrained graph regions into sequence, AND/OR, if, if/else, while,
@@ -563,7 +841,27 @@ loop update is the negative fixture proving that a pretty loop is not enough.
 When a region cannot be proven, retain a deterministic goto instead of
 inventing a loop or condition.
 
+Definition of done:
+
+- Structuring collapses regions in deterministic sequence/condition/loop/switch
+  order using only typed `Condition` objects and exact CFG topology
+- RunMenu and DrawFrame improve while preserving entry, exits, backedges,
+  polarity, calls, and validation
+- InitMenu's bad loop-update shape is rejected and every unproven region retains
+  a deterministic goto
+
+Definition of failure:
+
+- assembly or rendered-C shape supplies condition or loop semantics
+- a prettier region changes entry/exit/backedge/polarity or hides an unresolved
+  edge
+- unproven control flow is guessed instead of retained explicitly
+
 #### 8.6 Explicitly do not borrow Ghidra's function-start patterns
+
+Reason: Ghidra's pattern-driven discovery missed seven application functions
+that Inertia discovers and validates. Compiler patterns cannot replace binary
+CFG/call-target evidence or weaken the permanent completeness ratchet.
 
 Ghidra's pattern-driven discovery lives in
 `Ghidra/Features/BytePatterns/src/main/java/ghidra/app/analyzers/FunctionStartAnalyzer.java`.
@@ -573,7 +871,29 @@ Inertia's existing binary CFG/call-target discovery and permanent 20-function
 ratchet are stronger for this corpus. Compiler byte patterns may be optional
 evidence, but never a required or primary discovery mechanism.
 
+Definition of done:
+
+- binary CFG/call-target discovery remains authoritative and the sidecar-free
+  20-function address ratchet passes deterministically
+- any compiler pattern support is optional typed evidence with explicit
+  provenance, conflicts, and refusal behavior
+- fixtures prove that missing/wrong patterns cannot remove, rename, resize, or
+  create a required function
+
+Definition of failure:
+
+- a corpus/address allowlist or compiler byte pattern becomes the primary or
+  required function-discovery mechanism
+- any of the seven Ghidra-missed functions disappears or needs sidecar/pattern
+  evidence to survive
+- pattern disagreement is silently preferred over binary CFG evidence
+
 #### 8.7 Implementation order and closed gate
+
+Reason: The shortest reliable path follows ownership dependencies. Earlier
+storage and value facts must exist before contracts, types, and CFG structure
+can consume them, and every stage needs a closed regression boundary before the
+next stage expands the blast radius.
 
 Implement in pipeline order, not in order of visible C prettiness:
 
@@ -589,7 +909,27 @@ farther from `SORTDEMO.C`. Then run the sidecar-free 20-function gate, strict
 GCC translation-unit check, all 19 behavior harnesses, the seven MS C tiny
 constructs, and `make test-pipeline PYTHON=./.venv/bin/python`.
 
+Definition of done:
+
+- tasks execute in the stated IR/Alias, Widening, Types/Lowering, Structuring
+  order and each stage closes its evidence counters and focused tests first
+- before/after artifacts prove no call loss, correct argument classes,
+  `validation=passed`, and no result farther from the source oracle
+- the 20-function, GCC, 19-harness, seven-tiny-example, and test-pipeline gates
+  all pass from one recorded source state
+
+Definition of failure:
+
+- work advances past a failed/unknown earlier owner or introduces a downstream
+  repair for a missing upstream fact
+- before/after evidence is absent, stale, or taken from different source states
+- any required focused or full gate fails, is skipped, or is weakened
+
 #### 8.8 Concrete Inertia integration and migration map
+
+Reason: Existing proof surfaces must be extended instead of creating another
+parallel decompiler pipeline. A concrete producer/consumer migration map keeps
+one authoritative owner per fact and makes technical-debt removal enforceable.
 
 The source references above are sufficient to study Ghidra, but implementation
 must extend Inertia's existing proof surfaces rather than create duplicate
@@ -609,7 +949,29 @@ existing positive and refusal tests, then switch one downstream consumer to
 that contract, and only then remove the superseded late producer. Do not keep
 two semantic authorities active for the same fact.
 
+Definition of done:
+
+- every table row has an earlier typed producer, an explicitly migrated
+  consumer, focused positive/refusal tests, and removal of the superseded late
+  producer
+- imports and architecture checks enforce the documented owner boundaries
+- IR, typed contracts, consumers, diagnostics, documentation, and tests expose
+  one coherent representation of each migrated concept
+
+Definition of failure:
+
+- old and new producers remain simultaneously authoritative or disagree
+- semantic recovery is added to root compatibility, postprocess, CLI, export,
+  or another layer outside the map
+- a late producer is removed before its behavior survives in contracts, tests,
+  and documentation
+
 #### 8.9 The key Ghidra lesson is iteration, not one pass
+
+Reason: Alias, widening, contracts, types, conditions, and CFG structure depend
+on each other's accepted facts. A bounded typed worklist reaches the necessary
+fixed point without repeatedly rebuilding the whole decompiler or losing
+determinism.
 
 Ghidra's quality comes partly from repeatedly running mutually dependent
 analyses to a fixed point. Its main action order is visible in
@@ -634,7 +996,28 @@ The cache key for each fact must include function address, exact storage or CFG
 identity, input fact versions, and analysis version. Sorted worklists and typed
 status values preserve determinism across worker processes.
 
+Definition of done:
+
+- typed dependencies enqueue only affected facts and converge to the same
+  sorted fixed point across repeated and multi-process runs
+- cache keys include function, exact storage/CFG identity, input versions, and
+  analysis version
+- iteration exhaustion reports an explicit typed failure listing still-changing
+  fact identities; it never emits a partial success
+
+Definition of failure:
+
+- the implementation blindly repeats whole-program/AST passes or has an
+  unbounded worklist
+- worker count, scheduling, or cache warmth changes accepted facts or output
+- iteration limits, stale cache entries, or dependency cycles silently produce
+  incomplete materialization
+
 #### 8.10 Smallest high-impact implementation milestone
+
+Reason: One exact SS range exercised through IR, Alias, Widening, Lowering, and
+validation proves the cross-layer contracts before generalizing expensive
+memory SSA and interprocedural changes across the entire binary.
 
 Do not start by cloning all of Ghidra's Heritage or type system. The first
 vertical milestone should be one exact SS memory range flowing through the
@@ -655,7 +1038,44 @@ overlapping-width stack fixture and a branch with unknown SP delta as refusal
 cases. Once this vertical slice passes, generalize the same contracts to Beep
 call arguments, Sleep's wide clock value, and InitBars aggregate ranges.
 
+Definition of done:
+
+- all five vertical-slice actions are implemented with one exact stack-range
+  identity and no semantic discovery in postprocess
+- DrawFrame's initialized loop local passes as the positive case, while
+  overlapping-width and unknown-SP-delta fixtures refuse materialization
+- focused before/after validation, call/memory/control-flow checks, strict GCC,
+  and the required pipeline gates pass before generalization begins
+
+Definition of failure:
+
+- the range loses identity or provenance between layers, or a call clobber,
+  overlap, phi input, or unknown SP delta is ignored
+- postprocess/CLI reconstructs the local or wide value from rendered output
+- generalization starts before the positive and refusal vertical-slice gates pass
+
 ### 9. Direct decompilation-result comparison index
+
+Reason: Address-aligned, function-specific artifacts make quality changes
+reviewable and prevent subjective claims based on whichever peer output looks
+best. The index also records Ghidra discovery losses explicitly.
+
+Definition of done:
+
+- all 20 Inertia functions have current Inertia and available peer links mapped
+  by binary address, with missing peer functions labeled explicitly
+- each focused change records calls/argument classes, memory effects, control
+  flow/types, remaining debt, and validation verdict before and after
+- regenerated artifacts update line anchors in the same change and peers remain
+  diagnostic inputs rather than semantic truth
+
+Definition of failure:
+
+- links or addresses are stale, missing, or point to a different binary/source
+  state without disclosure
+- a comparison omits semantic calls, memory effects, argument classes, or
+  validation and reports only cosmetic similarity
+- Ghidra, Reko, or `SORTDEMO.C` output is used directly as recovery evidence
 
 Use these links immediately before and after each implementation change. They
 point to the current saved Inertia baseline, Ghidra C output, and Reko 0.12.4 C
