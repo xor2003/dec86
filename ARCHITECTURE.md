@@ -73,6 +73,7 @@ Applied in `_validated_generated_c_acceptance_8616()`:
 3. Quality guard: `assess_decompiled_c_text()` must not reject
 4. Tail validation: snapshot stages must not show failed/changed
 5. gcc syntax check: `-std=c99 -Wall -Werror -fsyntax-only`
+6. MS C 5.1 msc-dos syntax check through kvikdos; `--msc-dos-check optional` skips it only when that toolchain is unavailable (typed `RecompileCheckOutcome.TOOLCHAIN_UNAVAILABLE`), `off` disables it
 
 ## Key modules — inertia_decompiler
 
@@ -92,13 +93,14 @@ Applied in `_validated_generated_c_acceptance_8616()`:
 | `cli_local_rewrites.py` | Local variable rewrite coordination (16K) |
 | `cli_access_traits.py` / `cli_access_profiles.py` | Struct-like field access pattern detection (11K each) |
 | `tail_validation.py` | Tail-validation orchestration, env flags, snapshot caching |
-| `project_loading.py` | angr Project construction with LRU caching |
+| `project_loading.py` | angr Project construction with LRU caching; packed-EXE detection, unpacking (`X86_16/packed_mz_unpack.py`), and typed refusal |
+| `packer_detect.py` | Typed PKLITE/LZEXE/EXEPACK/UPX detection from MZ header and entry stub |
 | `cache.py` | JSON-based decompilation result cache (sha256 keys) |
 | `runtime_support.py` | Timeout guards, fork/thread pools, angr monkey-patches, memory limits (45K) |
 | `work_items.py` | FunctionWorkItem / FunctionWorkResult data types, tail-validation emission |
 | `sidecar_metadata.py` | LST/COD metadata extraction and code region mapping (19K) |
 | `sidecar_parsers.py` | IDA MAP file and TDINFO parsing (21K) |
-| `recompile_check.py` | gcc -std=c99 -Wall -Werror -fsyntax-only runner |
+| `recompile_check.py` | gcc -std=c99 -Wall -Werror -fsyntax-only runner, MS C 5.1 (kvikdos) runner, and the msc-dos check policy |
 | `acceptance_scorecard.py` | Per-function acceptance tracking |
 | `slice_recovery.py` | Bounded slice recovery for partial decompilation |
 | `decompilation_quality.py` | C text quality assessment (rejects unresolved IR-shaped output) |
