@@ -67,7 +67,7 @@ vextest/
 
 **AST then text**: Rewrites happen in two phases. First on the structured codegen AST (`cli_c_ast_rewrites.py`), then on the rendered C string (`cli_c_text_postprocess.py`). Text passes are only for presentation/compile-hygiene — if the output is missing stack variables or carries raw pointer chains, the fix belongs in AST rewrites or stack lowering, not text cleanup.
 
-**Acceptance gate**: A function is accepted only when `_validated_generated_c_acceptance_8616()` returns `("ok", None)`. This requires: status=ok, non-empty C, quality guard passed, tail validation passed, gcc syntax check passed (for portable-flat target).
+**Acceptance gate**: A function is accepted only when `_validated_generated_c_acceptance_8616()` returns `("ok", None)`. This requires: status=ok, non-empty C, quality guard passed, tail validation passed, gcc syntax check passed (portable-flat target), and the MS C 5.1 msc-dos syntax check unless `--msc-dos-check optional|off` relaxes it on hosts without kvikdos/MS C 5.1.
 
 **Facts are not success, bindings are not success**: Only these count:
 - emitted output materially improved and passed validation
@@ -109,6 +109,10 @@ INERTIA_DEBUG_TAIL_SNAPSHOT=1
 |----------|--------|
 | `INERTIA_ENABLE_TAIL_VALIDATION` | Force-enable/disable tail validation |
 | `INERTIA_FORCE_SERIAL_FUNCTION_DECOMPILATION` | Disable parallel decompilation |
+| `INERTIA_MSC_DOS_CHECK` | `required` (default), `optional`, or `off`: how a missing kvikdos/MS C 5.1 toolchain affects the msc-dos recompile check (`--msc-dos-check`) |
+| `INERTIA_KVIKDOS_PATH` / `INERTIA_MSC51_ROOT` | Location of the kvikdos DOS runner and the Microsoft C 5.1 tree used by the msc-dos recompile check |
+| `INERTIA_RECOMPILE_TIMEOUT_SEC` | Per-compiler timeout of the recompile checks (default 20) |
+| `INERTIA_CATALOG_TIMEOUT` | Quick function-catalog budget for whole-binary EXE runs (`--catalog-timeout`) |
 | `INERTIA_DECOMPILE_CACHE` | Cache directory override |
 | `INERTIA_DEBUG_C_TRACE` | Dump C stage traces to stderr |
 | `INERTIA_DEBUG_CALL_MUTATION` | Dump call-site before/after each pass |

@@ -122,12 +122,23 @@ from inertia_decompiler.non_optimized_fallback import (
 )
 from inertia_decompiler.project_evidence_transport import transfer_project_evidence_8616
 from inertia_decompiler.project_loading import (
+    PackedExecutableRefusedError,
     _build_project,
     _build_project_cached,
     _build_project_from_bytes,
     _describe_exception,
 )
-from inertia_decompiler.recompile_check import RecompileCheckResult, check_c_recompiles_8616
+from inertia_decompiler.recompile_check import (
+    MSC_DOS_CHECK_POLICY_ENV,
+    MSC_DOS_TARGET,
+    PORTABLE_FLAT_TARGET,
+    MscDosCheckPolicy,
+    RecompileCheckResult,
+    check_c_recompiles_8616,
+    msc_dos_check_policy_8616,
+    msc_dos_check_skip_reason_8616,
+    recompile_policy_notice_8616,
+)
 from inertia_decompiler.rizin_discovery import RizinDiscoveryStatus, discover_rizin_function_entries
 from inertia_decompiler.rizin_evidence import RizinEvidenceStatus, collect_rizin_evidence
 from inertia_decompiler.runtime_support import (
@@ -2515,11 +2526,21 @@ _RECOMPILE_RESULT_CACHE_LOCK_8616 = threading.Lock()
 
 
 def _collect_recompilation_payloads_8616(accepted_payload: str) -> tuple[list[tuple[str, str]], str | None]:
+    """Run every recompilation target and return ``(checked payloads, first failure detail)``.
+
+    The gcc portable-flat check is always required. The msc-dos check follows
+    ``MscDosCheckPolicy``: a check whose toolchain is unavailable is skipped under
+    ``OPTIONAL``, never attempted under ``OFF``, and fails the function under ``REQUIRED``.
+    """
+
     def _impl() -> tuple[list[tuple[str, str]], str | None]:
-        recompilation_targets = ("portable-flat", "msc-dos")
+        recompilation_targets = (PORTABLE_FLAT_TARGET, MSC_DOS_TARGET)
+        msc_dos_policy = msc_dos_check_policy_8616()
         checked_payloads: list[tuple[str, str]] = []
         payload_hash = hashlib.sha256(accepted_payload.encode("utf-8", errors="ignore")).hexdigest()
         for recomp_target in recompilation_targets:
+            if recomp_target == MSC_DOS_TARGET and msc_dos_policy is MscDosCheckPolicy.OFF:
+                continue
             cache_key = (recomp_target, payload_hash)
             with _RECOMPILE_RESULT_CACHE_LOCK_8616:
                 recompilation = _RECOMPILE_RESULT_CACHE_8616.get(cache_key)
@@ -2533,6 +2554,8 @@ def _collect_recompilation_payloads_8616(accepted_payload: str) -> tuple[list[tu
                     accepted_payload,
                 )
                 checked_payloads.append((recomp_target, checked_payload))
+                continue
+            if recomp_target == MSC_DOS_TARGET and msc_dos_check_skip_reason_8616(recompilation, msc_dos_policy):
                 continue
             combined = "\n".join(
                 part
@@ -4248,6 +4271,7 @@ def _prepare_main_cli_args_8616(argv: list[str] | None) -> tuple[CliArguments, b
         args.timeout = max(4, int(args.timeout))
     if bool(args.ignore_local_sidecar_hints):
         os.environ["INERTIA_IGNORE_LOCAL_SIDECAR_HINTS_8616"] = "1"
+    _publish_msc_dos_check_policy_8616(str(args.msc_dos_check))
 
     _lower_process_priority()
     _apply_memory_limit(args.max_memory_mb)
@@ -4256,6 +4280,48 @@ def _prepare_main_cli_args_8616(argv: list[str] | None) -> tuple[CliArguments, b
     if effective_signature_catalog is None:
         effective_signature_catalog = default_signature_catalog_path()
     return args, timeout_was_explicit, effective_signature_catalog
+
+
+_DEFAULT_CATALOG_BUDGET_CAP_SEC: int = 8
+EXIT_CODE_UNSUPPORTED_INPUT_8616: int = 7
+
+
+def _catalog_budget_seconds_8616(args: CliArguments) -> int:
+    """Return the quick-catalog recovery budget: ``--catalog-timeout`` or the legacy ``min(max(4, timeout), 8)``."""
+    if args.catalog_timeout is not None:
+        return max(1, int(args.catalog_timeout))
+    return min(max(4, int(args.timeout)), _DEFAULT_CATALOG_BUDGET_CAP_SEC)
+
+
+def _catalog_guard_seconds_8616(args: CliArguments) -> int:
+    """Return the daemon-thread guard around the seed catalog: inner budget plus two seconds."""
+    if args.catalog_timeout is not None:
+        return max(1, int(args.catalog_timeout)) + 2
+    return min(max(4, int(args.timeout) + 2), _DEFAULT_CATALOG_BUDGET_CAP_SEC)
+
+
+def _catalog_supplement_seconds_8616(args: CliArguments) -> int:
+    """Return the post-CFG seeded supplement budget: explicit catalog budget or the legacy half-timeout cap."""
+    if args.catalog_timeout is not None:
+        return max(1, int(args.catalog_timeout))
+    return min(max(4, int(args.timeout) // 2), _DEFAULT_CATALOG_BUDGET_CAP_SEC)
+
+
+def _publish_msc_dos_check_policy_8616(raw_policy: str) -> MscDosCheckPolicy:
+    """Publish the selected msc-dos recompile policy to worker processes through the environment.
+
+    The default policy leaves the variable unset so cache fingerprints of default runs
+    stay unchanged; unknown values collapse to the strict default.
+    """
+    try:
+        policy = MscDosCheckPolicy(raw_policy.strip().lower())
+    except ValueError:
+        policy = MscDosCheckPolicy.REQUIRED
+    if policy is MscDosCheckPolicy.REQUIRED:
+        os.environ.pop(MSC_DOS_CHECK_POLICY_ENV, None)
+    else:
+        os.environ[MSC_DOS_CHECK_POLICY_ENV] = policy.value
+    return policy
 
 
 def _resolve_cod_path_8616(binary_path: Path) -> Path | None:
@@ -7563,10 +7629,17 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
     args, timeout_was_explicit, effective_signature_catalog = _prepare_main_cli_args_8616(argv)
 
     print(f"/* loading: {args.binary} */", flush=True)
+    recompile_policy_notice = recompile_policy_notice_8616()
+    if recompile_policy_notice is not None:
+        print(recompile_policy_notice, flush=True)
     runtime_header = render_c_runtime_header_8616(args.c_target)
     if runtime_header:
         print(runtime_header, end="" if runtime_header.endswith("\n") else "\n", flush=True)
-    setup = _prepare_main_project_8616(args, effective_signature_catalog)
+    try:
+        setup = _prepare_main_project_8616(args, effective_signature_catalog)
+    except PackedExecutableRefusedError as ex:
+        print(f"/* refused: {ex} */", flush=True)
+        return EXIT_CODE_UNSUPPORTED_INPUT_8616
     project = setup.project
     function_label = setup.function_label
     cod_metadata = setup.cod_metadata
@@ -7589,8 +7662,10 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
             low_memory=low_memory_path,
             auto_rizin_policy=os.environ.get("INERTIA_AUTO_RIZIN_8616", "default"),
             signature_catalog=effective_signature_catalog,
+            catalog_timeout=args.catalog_timeout,
         ),
     )
+    catalog_budget_sec = _catalog_budget_seconds_8616(args)
     interactive_stdout = _stdout_is_interactive()
     precise_sidecar_regions = metadata_has_precise_code_regions(cast(Any, lst_metadata))
     if args.addr is not None:
@@ -7741,11 +7816,11 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                     seeded_recovery_result = _run_with_timeout_in_daemon_thread(
                         lambda: _recover_seeded_exe_functions(
                             project,
-                            timeout=min(max(4, args.timeout), 8),
+                            timeout=catalog_budget_sec,
                             limit=discovery_limit,
                             return_addrs=True,
                         ),
-                        timeout=min(max(4, args.timeout + 2), 8),
+                        timeout=_catalog_guard_seconds_8616(args),
                         thread_name_prefix="seed-catalog",
                     )
                     if isinstance(seeded_recovery_result, tuple) and len(seeded_recovery_result) == 2:
@@ -7774,7 +7849,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
             function_cfg_pairs = _recover_cached_function_pairs(
                 project,
                 addrs=cached_catalog_addrs,
-                timeout=min(max(4, args.timeout), 8),
+                timeout=catalog_budget_sec,
                 limit=discovery_limit,
             )
             if function_cfg_pairs:
@@ -7814,6 +7889,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                     window=args.window,
                     low_memory=low_memory_path,
                     limit=discovery_limit,
+                    catalog_timeout=args.catalog_timeout,
                 )
             except (_AnalysisTimeout, Exception) as ex:  # noqa: BLE001
                 catalog_error = ex
@@ -7901,7 +7977,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                 list[_FunctionCfgPair8616],
                 _recover_fast_seed_functions(
                     project,
-                    timeout=min(max(4, args.timeout), 8),
+                    timeout=catalog_budget_sec,
                     limit=discovery_limit,
                 ),
             )
@@ -7979,7 +8055,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
         if args.addr is None and args.binary.suffix.lower() == ".exe":
             _seeded_pairs_and_addrs = _recover_seeded_exe_functions(
                 project,
-                timeout=min(max(4, args.timeout // 2), 8),
+                timeout=_catalog_supplement_seconds_8616(args),
                 limit=None if (limit is None or defer_limit_until_after_seed_ranking) else max(0, limit - shown_total),
                 return_addrs=True,
             )
@@ -8278,6 +8354,18 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
             shown_total = len(function_tasks)
 
     selection_target = "decompilation" if args.max_functions <= 0 and args.addr is None else "display"
+    if (
+        args.addr is None
+        and args.max_functions <= 0
+        and lst_metadata is None
+        and direct_inventory_total is not None
+        and shown_total < direct_inventory_total
+    ):
+        print(
+            f"/* quick catalog covered {shown_total} of {direct_inventory_total} direct-binary function "
+            f"candidates within its {catalog_budget_sec}s budget; the remaining candidates are not queued. "
+            "Raise --catalog-timeout (INERTIA_CATALOG_TIMEOUT) to recover more. */"
+        )
     print(f"/* info: selected {shown_total} function(s) for {selection_target} */")
 
     requested_workers = _choose_function_parallelism(len(function_tasks))

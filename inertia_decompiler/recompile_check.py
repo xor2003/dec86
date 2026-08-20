@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Iterator
 
@@ -118,6 +119,27 @@ def _strip_msc_dos_header_aggregate_typedefs_8616(text: str) -> str:
     return cleaned
 
 
+class RecompileCheckOutcome(StrEnum):
+    """Typed outcome of one emitted-C recompilation check."""
+
+    PASSED = "passed"
+    FAILED = "failed"
+    TOOLCHAIN_UNAVAILABLE = "toolchain_unavailable"
+
+
+class MscDosCheckPolicy(StrEnum):
+    """How a missing MS C 5.1 / kvikdos toolchain affects the msc-dos recompile check."""
+
+    REQUIRED = "required"
+    OPTIONAL = "optional"
+    OFF = "off"
+
+
+MSC_DOS_CHECK_POLICY_ENV: str = "INERTIA_MSC_DOS_CHECK"
+PORTABLE_FLAT_TARGET: str = "portable-flat"
+MSC_DOS_TARGET: str = "msc-dos"
+
+
 @dataclass(frozen=True, slots=True)
 class RecompileCheckResult:
     """Result from one emitted-C recompilation check."""
@@ -132,6 +154,21 @@ class RecompileCheckResult:
     checked_payload: str
     checked_payload_hash: str
     source_path: str | None = None
+    outcome: RecompileCheckOutcome | None = None
+
+    def __post_init__(self) -> None:
+        """Derive the typed outcome from ``passed`` when a caller did not state it."""
+        if self.outcome is None:
+            derived = RecompileCheckOutcome.PASSED if self.passed else RecompileCheckOutcome.FAILED
+            object.__setattr__(self, "outcome", derived)
+            return
+        if self.passed != (self.outcome is RecompileCheckOutcome.PASSED):
+            raise ValueError(f"RecompileCheckResult passed={self.passed} contradicts outcome={self.outcome.value}")
+
+    @property
+    def toolchain_unavailable(self) -> bool:
+        """Return whether the check could not run because its toolchain is missing."""
+        return self.outcome is RecompileCheckOutcome.TOOLCHAIN_UNAVAILABLE
 
 
 _DEFAULT_KVIKDOS_PATH = Path("/home/xor/kvikdos/kvikdos")
@@ -249,6 +286,68 @@ def _resolve_msc51_root() -> Path | None:
     return candidate
 
 
+def msc_dos_check_policy_8616() -> MscDosCheckPolicy:
+    """Return the msc-dos recompile-check policy published through ``INERTIA_MSC_DOS_CHECK``.
+
+    Unknown values fall back to the strict default so a typo can never relax the gate.
+    """
+    raw = os.environ.get(MSC_DOS_CHECK_POLICY_ENV, "").strip().lower()
+    if not raw:
+        return MscDosCheckPolicy.REQUIRED
+    try:
+        return MscDosCheckPolicy(raw)
+    except ValueError:
+        return MscDosCheckPolicy.REQUIRED
+
+
+def msc_dos_toolchain_unavailable_reason_8616() -> str | None:
+    """Return why the MS C 5.1 toolchain cannot run on this host, or ``None`` when it can."""
+    if _resolve_kvikdos_path() is None:
+        return "kvikdos not found"
+    if _resolve_msc51_root() is None:
+        return "Microsoft C v5.1 root not found"
+    return None
+
+
+def msc_dos_check_skip_reason_8616(
+    result: RecompileCheckResult | None,
+    policy: MscDosCheckPolicy,
+) -> str | None:
+    """Return the reason an msc-dos check does not count as a failure under ``policy``.
+
+    ``OFF`` skips unconditionally; ``OPTIONAL`` skips only a check that could not run
+    because its toolchain is unavailable. A compiler that ran and rejected the C is never
+    skipped, and ``REQUIRED`` never skips.
+    """
+    if policy is MscDosCheckPolicy.OFF:
+        return "disabled by policy"
+    if policy is MscDosCheckPolicy.OPTIONAL and result is not None and result.toolchain_unavailable:
+        return result.stderr or "toolchain unavailable"
+    return None
+
+
+def recompile_policy_notice_8616() -> str | None:
+    """Describe the effective msc-dos recompile policy for the run header, or ``None`` when default and usable."""
+    policy = msc_dos_check_policy_8616()
+    reason = msc_dos_toolchain_unavailable_reason_8616()
+    if policy is MscDosCheckPolicy.OFF:
+        return "/* recompile policy: msc-dos check off; gcc portable-flat syntax check remains required */"
+    if policy is MscDosCheckPolicy.OPTIONAL:
+        if reason is None:
+            return "/* recompile policy: msc-dos check optional; MS C 5.1 toolchain is available, so it still runs */"
+        return (
+            f"/* recompile policy: msc-dos check optional; toolchain unavailable ({reason}), "
+            "msc-dos checks are skipped and the gcc portable-flat syntax check remains required */"
+        )
+    if reason is None:
+        return None
+    return (
+        f"/* recompile policy: msc-dos check required but toolchain unavailable ({reason}); "
+        "every function will fail acceptance. Use --msc-dos-check optional "
+        f"({MSC_DOS_CHECK_POLICY_ENV}=optional) on hosts without kvikdos/MS C 5.1 */"
+    )
+
+
 def _prepare_msc51_mirror_tree(source_root: Path) -> Path:
     def _impl() -> Path:
         cached = _MSC51_MIRROR_CACHE.get(source_root)
@@ -308,6 +407,7 @@ def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileChec
                 compiler=None,
                 stdout="",
                 stderr="kvikdos not found",
+                outcome=RecompileCheckOutcome.TOOLCHAIN_UNAVAILABLE,
                 command=("kvikdos",),
                 checked_payload=checked_payload,
                 checked_payload_hash=checked_hash,
@@ -324,6 +424,7 @@ def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileChec
                 compiler=str(kvikdos),
                 stdout="",
                 stderr="Microsoft C v5.1 root not found",
+                outcome=RecompileCheckOutcome.TOOLCHAIN_UNAVAILABLE,
                 command=(str(kvikdos),),
                 checked_payload=checked_payload,
                 checked_payload_hash=checked_hash,
@@ -430,6 +531,7 @@ def check_c_recompiles_8616(c_text: str, *, target: str = "portable-flat") -> Re
                 compiler=None,
                 stdout="",
                 stderr="gcc not found",
+                outcome=RecompileCheckOutcome.TOOLCHAIN_UNAVAILABLE,
                 command=("gcc", "-std=c99", "-Wall", "-Werror", "-fsyntax-only"),
                 checked_payload=checked_payload,
                 checked_payload_hash=checked_hash,

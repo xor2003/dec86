@@ -128,7 +128,7 @@ def _function_cfg_pair_object(value: object) -> _FunctionCfgPair:
     if isinstance(value, tuple) and len(value) == 2:
         return value[0], value[1]
     raise TypeError("function recovery did not return a CFG/function pair")
-_DISPLAY_CATALOG_CACHE_POLICY_SCHEMA_8616 = 2
+_DISPLAY_CATALOG_CACHE_POLICY_SCHEMA_8616 = 3
 _BINARY_EXACT_REGION_INFO_KEY_8616 = "x86_16_binary_exact_region"
 
 
@@ -154,6 +154,7 @@ class DisplayCatalogCachePolicy8616:
     signature_catalog_path: str | None
     signature_catalog_size: int | None
     signature_catalog_mtime_ns: int | None
+    catalog_timeout: int | None = None
 
     @classmethod
     def from_runtime(
@@ -170,8 +171,13 @@ class DisplayCatalogCachePolicy8616:
         low_memory: bool,
         auto_rizin_policy: str,
         signature_catalog: Path | None,
+        catalog_timeout: int | None = None,
     ) -> Self:
-        """Build a stable cache policy from the effective CLI discovery inputs."""
+        """Build a stable cache policy from the effective CLI discovery inputs.
+
+        ``catalog_timeout`` is the explicit quick-catalog budget (``--catalog-timeout``); it is part
+        of the key so a catalog truncated under a small budget never serves a larger-budget run.
+        """
         catalog_path: str | None = None
         catalog_size: int | None = None
         catalog_mtime_ns: int | None = None
@@ -199,6 +205,7 @@ class DisplayCatalogCachePolicy8616:
             signature_catalog_path=catalog_path,
             signature_catalog_size=catalog_size,
             signature_catalog_mtime_ns=catalog_mtime_ns,
+            catalog_timeout=None if catalog_timeout is None else max(1, int(catalog_timeout)),
         )
 
     def cache_fields(self) -> dict[str, object]:
@@ -218,6 +225,7 @@ class DisplayCatalogCachePolicy8616:
             "signature_catalog_path": self.signature_catalog_path,
             "signature_catalog_size": self.signature_catalog_size,
             "signature_catalog_mtime_ns": self.signature_catalog_mtime_ns,
+            "catalog_timeout": self.catalog_timeout,
         }
 
 
@@ -3451,7 +3459,13 @@ def _recover_fast_exe_catalog(
     window: int,
     low_memory: bool,
     limit: int | None,
+    catalog_timeout: int | None = None,
 ) -> list[_FunctionCfgPair]:
+    """Recover the quick function catalog of a sidecar-free EXE within a bounded budget.
+
+    ``catalog_timeout`` replaces the legacy candidate-recovery caps (8s seeds, 45s source seeds)
+    when the user sets ``--catalog-timeout``; the entry-function probe keeps its short bound.
+    """
     recovered: list[_FunctionCfgPair] = []
     seen_addrs: set[int] = set()
     source_seeds = _rank_pre_entry_source_function_seeds_8616(project)
@@ -3485,6 +3499,8 @@ def _recover_fast_exe_catalog(
     seed_start = time.perf_counter()
     if selected_source_seeds:
         source_budget = min(max(1, timeout), max(8, min(45, len(selected_source_seeds) * 2 + 5)))
+        if catalog_timeout is not None:
+            source_budget = max(1, int(catalog_timeout))
         seeded, source_evidence = _recover_pre_entry_source_catalog_8616(
             project,
             source_seeds=selected_source_seeds,
@@ -3498,7 +3514,7 @@ def _recover_fast_exe_catalog(
         seed_limit = None if limit is None else max(limit * 2, limit + 4)
         seeded = _recover_fast_seed_functions(
             project,
-            timeout=max(1, min(timeout, 8)),
+            timeout=max(1, min(timeout, 8)) if catalog_timeout is None else max(1, int(catalog_timeout)),
             limit=seed_limit,
         )
     print(

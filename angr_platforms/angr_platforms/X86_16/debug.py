@@ -10,6 +10,8 @@ import sys
 import traceback
 from typing import TextIO
 
+from pyvex.errors import LiftingException
+
 # Constants for debug message types
 F_ASSERT: int = 0
 F_ERROR: int = 1
@@ -24,6 +26,7 @@ __all__ = [
     "ASSERT",
     "DEBUG_MSG",
     "ERROR",
+    "X86_16FrontendFatalError",
     "F_ASSERT",
     "F_ERROR",
     "F_INFO",
@@ -37,6 +40,15 @@ __all__ = [
 ]
 
 _DebugCaller = tuple[str, str, int]
+
+
+class X86_16FrontendFatalError(LiftingException):  # type: ignore[misc]  # dynamic pyvex base
+    """Fatal frontend condition (unimplemented encoding, broken invariant) raised instead of exiting.
+
+    It subclasses pyvex's ``LiftingException`` so the block that hit it fails to lift and
+    CFG recovery continues with the rest of the program, instead of terminating the whole
+    decompiler process through ``sys.exit``.
+    """
 
 
 def _debug_caller() -> _DebugCaller:
@@ -68,20 +80,20 @@ def debug_print(
         if name:
             print(f"[{name}{f'_{level}' if level else ''}] ", end="", file=fp)
             print(f"{function} ({file}:{line}) ", end="", file=fp)
-        print(fmt % args, file=fp)
+        rendered = fmt % args
+        print(rendered, file=fp)
         if fatal:
-            traceback.print_stack()
-            sys.exit(-1)
+            raise X86_16FrontendFatalError(f"{name or 'FATAL'} {function} ({file}:{line}): {rendered.rstrip()}")
 
 
 def ASSERT(cond: object) -> None:
-    """Asserts a condition and prints an error message if it fails."""
+    """Assert a condition; a failure prints the message and raises ``X86_16FrontendFatalError``."""
     if not cond:
         debug_print(F_ASSERT, *_debug_caller(), 0, "assertion failed: %s", cond)
 
 
 def ERROR(fmt: str, *args: object) -> None:
-    """Prints an error message and terminates the program."""
+    """Print an error message and raise ``X86_16FrontendFatalError`` for the current block."""
     debug_print(F_ERROR, *_debug_caller(), 0, fmt, *args)
 
 

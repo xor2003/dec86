@@ -80,8 +80,18 @@ Useful options:
 - `--proc NAME`: extract one procedure from a `.COD` listing.
 - `--max-functions N`: cap whole-binary output.
 - `--timeout SEC`: bound analysis for a function or run.
+- `--catalog-timeout SEC` (or `INERTIA_CATALOG_TIMEOUT`): budget for the quick
+  function catalog of a whole-binary EXE run. Only catalogued functions are
+  decompiled; the auto budget `min(max(4, --timeout), 8)` covers only part of a
+  large binary, and the run reports how many candidates it covered.
 - `--window BYTES`: bound CFG recovery around a target address.
 - `--c-target portable-flat|msc-dos`: choose generated C target helpers.
+- `--msc-dos-check required|optional|off` (or `INERTIA_MSC_DOS_CHECK`): policy
+  for the MS C 5.1 recompile check that runs through `kvikdos`
+  (`INERTIA_KVIKDOS_PATH`, `INERTIA_MSC51_ROOT`). `required` (default) fails a
+  function when that toolchain is missing; `optional` skips the check only when
+  the toolchain is unavailable; `off` never runs it. The gcc portable-flat check
+  always stays required, and the run header states the effective policy.
 - `--api-style modern|dos|raw|pseudo|service|msc|compiler`: choose helper naming style.
 - `--show-asm`: print the first lifted block before C.
 - `--trace-c-stages`: print labeled generated-C snapshots.
@@ -115,6 +125,16 @@ Supported executable inputs:
 - 16-bit NE `.EXE` at smoke level
 - `.BIN` / `.RAW` blobs
 - `.COD` listings as direct procedure inputs
+
+Packed MZ executables (PKLITE, LZEXE, EXEPACK, UPX) are detected from their
+header and entry stub. LZEXE 0.91 is decoded in pure Python. Other packers are
+unpacked by emulating the 16-bit stub with the optional `unicorn` engine
+(`pip install ".[unpack]"`): the stub runs until it hands control to the
+decompressed program, two runs at different load segments recover the
+relocation table, and the result is cached under
+`angr_platforms/.cache/unpacked_exe/` and loaded through the normal MZ loader.
+Without the emulator the run refuses the input explicitly (exit code 7)
+instead of analysing the packer stub.
 
 Metadata sidecars are optional but useful:
 
