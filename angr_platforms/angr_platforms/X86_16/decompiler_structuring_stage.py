@@ -47,6 +47,7 @@ from . import type_array_matching as _array_match
 from . import type_equivalence_classes as _type_equiv
 from . import type_structure_merging as _struct_merge
 from .alias import segment_stack_restore as _segment_stack_restore
+from .alias import stack_memory_ssa as _stack_memory_ssa
 from .c_ast_utils import (
     _c_ast_cycle_path_8616,
     _iter_c_nodes_deep_8616,
@@ -119,6 +120,7 @@ from .lowering.segmented_memory_lowering import (
 from .lowering.signed_global_declarations import materialize_signed_global_declarations_8616
 from .lowering.software_interrupt_calls import materialize_software_interrupt_calls_8616
 from .lowering.stack_lowering_from_facts import lower_stack_accesses_from_alias_facts_8616
+from .lowering.stack_memory_ssa import lower_x86_16_stack_memory_ssa_alias_artifact
 from .lowering.stack_prototype_materialization import (
     materialize_annotated_stack_prototype_8616,
     reconcile_callsite_interface_declarations_8616,
@@ -130,6 +132,7 @@ from .lowering.structured_intrinsics import (
 from .lowering.unobserved_returns import neutralize_unobserved_unresolved_returns_8616
 from .lowering.wide_stack_pair_evidence import proven_wide_stack_ir_pair_8616
 from .pipeline.errors import PipelineHardError
+from .semantics.call_stack_effect_pipeline import apply_x86_16_call_stack_effects_8616
 from .structuring import condition_materialization as _structuring_conditions
 from .structuring.branch_return_expressions import (
     recover_branch_target_return_expression_8616,
@@ -202,6 +205,7 @@ from .tail_validation import (
 )
 from .validation_condition_precision import condition_precision_validation_delta_8616
 from .validation_semantic_failures import TailSemanticFailureScope8616
+from .widening.carry_borrow_pipeline import apply_carry_borrow_widening_pipeline_8616
 from .widening.segmented_load_widening import apply_segmented_load_widening_8616
 from .widening.stack_subview_projection import materialize_contained_stack_subviews_8616
 from .widening.widening_copyprop_8616 import _widening_copy_propagation_8616
@@ -435,6 +439,19 @@ def _build_decompiler_structuring_passes() -> tuple[DecompilerStructuringPassSpe
             "_vex_ir_artifact_8616",
             _vex_ir.apply_x86_16_vex_ir_artifact,
             True,
+        ),
+        DecompilerStructuringPassSpec(
+            "_call_stack_effect_semantics_8616",
+            apply_x86_16_call_stack_effects_8616,
+            True,
+        ),
+        DecompilerStructuringPassSpec(
+            "_stack_memory_ssa_alias_artifact_8616",
+            _stack_memory_ssa.apply_x86_16_stack_memory_ssa_alias_artifact,
+            True,
+        ),
+        DecompilerStructuringPassSpec(
+            "_carry_borrow_widening_artifact_8616", apply_carry_borrow_widening_pipeline_8616, True
         ),
         DecompilerStructuringPassSpec(
             "_segment_stack_restore_artifact_8616",
@@ -2000,16 +2017,22 @@ def _replay_structuring_lowering_before_validation_8616(
 
 
 def _apply_structuring_stable_stack_semantics_8616(project: AngrProjectSurface, codegen: AngrCodegenSurface) -> bool:
-    """Run structuring-owned stack alias and stable SS lowering before C structuring."""
+    """Orchestrate IR, Alias, and Lowering owners before C structuring."""
     changed = False
-    transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
-    # Dynamic boundary: legacy angr codegen carries transferred alias facts as optional metadata.
-    alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
-    if isinstance(alias_facts, list) and alias_facts:
-        before_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
-        lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
-        after_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
-        changed = changed or after_materialized > before_materialized
+    _vex_ir.apply_x86_16_vex_ir_artifact(project, codegen)
+    apply_x86_16_call_stack_effects_8616(project, codegen)
+    _stack_memory_ssa.apply_x86_16_stack_memory_ssa_alias_artifact(project, codegen)
+    apply_carry_borrow_widening_pipeline_8616(project, codegen)
+    before_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
+    memory_ssa_lowering = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
+    if memory_ssa_lowering is None:
+        transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
+        # Dynamic boundary: legacy codegen carries transferred Alias facts as optional metadata.
+        alias_facts = getattr(codegen, "_inertia_semantic_alias_facts", None)
+        if isinstance(alias_facts, list) and alias_facts:
+            lower_stack_accesses_from_alias_facts_8616(codegen, alias_facts)
+    after_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
+    changed = changed or after_materialized > before_materialized
     changed = bool(lower_runtime_ss_segment_helpers_to_stack_8616(codegen, project=project)) or changed
     changed = bool(lower_stable_ss_linear_stack_dereferences_8616(codegen, project=project)) or changed
     changed = bool(prune_unread_stack_lowered_register_carriers_8616(codegen)) or changed
@@ -2053,6 +2076,8 @@ def _prime_structuring_validation_semantics_8616(project: AngrProjectSurface, co
         return
     try:
         _vex_ir.apply_x86_16_vex_ir_artifact(project, codegen)
+        apply_x86_16_call_stack_effects_8616(project, codegen)
+        _stack_memory_ssa.apply_x86_16_stack_memory_ssa_alias_artifact(project, codegen)
         _segment_stack_restore.apply_x86_16_segment_stack_restore_artifact(project, codegen)
         _segment_state.apply_x86_16_segment_state_artifact(project, codegen)
         _segment_contract.apply_x86_16_segment_function_contract(project, codegen)

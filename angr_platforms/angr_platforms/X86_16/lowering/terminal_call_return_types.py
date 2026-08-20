@@ -25,10 +25,7 @@ from ..semantics.terminal_call_paths import (
     angr_terminal_call_path_callbacks_8616,
     prove_terminal_call_path_8616,
 )
-from ..semantics.terminal_register_returns import (
-    TerminalAxReturnLane8616,
-    terminal_ax_return_lane_states_8616,
-)
+from ..semantics.terminal_return_storage import TerminalReturnStorage8616, terminal_return_storage_8616
 from ..simos_86_16 import SimCC8616MSCsmall
 from .return_type_evidence import proven_function_result_observation_8616
 
@@ -153,8 +150,7 @@ def _scalar_callee_return_type_8616(
     callee_surface = cast(_FunctionSurface8616, callee)
     prototype = callee_surface.prototype
     if prototype is None or callee_surface.is_prototype_guessed:
-        states = terminal_ax_return_lane_states_8616(project, callee)
-        if states != frozenset({TerminalAxReturnLane8616.WORD}):
+        if terminal_return_storage_8616(project, callee) is not TerminalReturnStorage8616.AX:
             return None, None
         project_surface = cast(_ProjectSurface8616, project)
         return (

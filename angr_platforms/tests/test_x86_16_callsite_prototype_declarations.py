@@ -629,6 +629,53 @@ def test_keeps_conservative_return_type_when_all_callers_ignore_result() -> None
     )
 
 
+def test_internal_declaration_uses_whole_program_source_order_widths(monkeypatch) -> None:
+    codegen = _Codegen()
+    short_type = SimTypeShort(False).with_arch(codegen.project.arch)
+    call = CFunctionCall(
+        "mixed_widths",
+        None,
+        [
+            CConstant(1, short_type, codegen=codegen),
+            CConstant(2, short_type, codegen=codegen),
+        ],
+        tags={"ins_addr": 0x1010},
+        codegen=codegen,
+    )
+    root = CStatements([call], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root, body=root)
+    codegen._inertia_callsite_summaries = {
+        id(call): replace(
+            _summary(0x1010),
+            arg_widths=(2, 4),
+            stack_cleanup=6,
+        )
+    }
+    monkeypatch.setattr(
+        declaration_lowering,
+        "collect_callee_argument_width_evidence_8616",
+        lambda _project, _target: SimpleNamespace(
+            raw_fact_count=2,
+            closes_census=True,
+            argument_widths=(4, 2),
+            required_count_evidence=CalleeArgumentCountEvidence8616(
+                target_addr=0x2000,
+                verdict=CalleeArgumentCountVerdict8616.CONSISTENT,
+                argument_count=2,
+                raw_fact_count=2,
+                normalized_fact_count=2,
+                classified_fact_count=2,
+                materialized_count=2,
+            ),
+        ),
+    )
+
+    assert materialize_callsite_prototype_declarations_8616(codegen.project, codegen) is True
+    assert codegen._inertia_callsite_prototype_decls == (
+        "unsigned short mixed_widths(unsigned long a0, unsigned short a1);",
+    )
+
+
 def test_incomplete_whole_program_caller_evidence_keeps_conservative_int() -> None:
     codegen = _Codegen()
     call = CFunctionCall("probe", None, [], tags={"ins_addr": 0x1010}, codegen=codegen)
@@ -1215,8 +1262,13 @@ def test_program_arity_conflict_materializes_unprototyped_declaration(monkeypatc
     )
     monkeypatch.setattr(
         declaration_lowering,
-        "collect_callee_argument_count_evidence_8616",
-        lambda _project, _target_addr: evidence,
+        "collect_callee_argument_width_evidence_8616",
+        lambda _project, _target_addr: SimpleNamespace(
+            raw_fact_count=2,
+            closes_census=False,
+            argument_widths=(),
+            required_count_evidence=evidence,
+        ),
     )
 
     assert materialize_callsite_prototype_declarations_8616(

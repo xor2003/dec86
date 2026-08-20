@@ -53,6 +53,8 @@ class TerminalCallPathResult8616:
 
     status: TerminalCallPathStatus8616
     path_block_addrs: tuple[int, ...] = ()
+    call_target_addr: int | None = None
+    return_instruction_addr: int | None = None
 
 
 class _AngrProjectSurface8616(Protocol):
@@ -81,6 +83,19 @@ def _instruction_surface_8616(insn: object) -> object:
 def _instruction_operands_8616(insn: object) -> tuple[object, ...]:
     """Return normalized operands for one third-party instruction."""
     return _dynamic_tuple_8616(_dynamic_attr_8616(_instruction_surface_8616(insn), "operands", ()))
+
+
+def _direct_call_target_8616(insn: object) -> int | None:
+    """Return one unambiguous immediate target from a direct CALL boundary."""
+    mnemonic = str(_dynamic_attr_8616(insn, "mnemonic", "")).lower()
+    if mnemonic not in {"call", "lcall"}:
+        return None
+    immediates = tuple(
+        _dynamic_attr_8616(operand, "imm", None)
+        for operand in _instruction_operands_8616(insn)
+        if _dynamic_attr_8616(operand, "type", -1) == 2
+    )
+    return immediates[0] if len(immediates) == 1 and isinstance(immediates[0], int) else None
 
 
 def _register_name_8616(insn: object, operand: object) -> str:
@@ -211,6 +226,7 @@ def prove_terminal_call_path_8616(
     size_by_addr = dict(block_ranges)
     current_addr = containing[0][0]
     first_block = True
+    call_target_addr: int | None = None
     path: list[int] = []
     visited: set[int] = set()
     while current_addr not in visited and len(path) <= len(block_ranges):
@@ -240,11 +256,13 @@ def prove_terminal_call_path_8616(
                     TerminalCallPathStatus8616.CALL_INSTRUCTION_MISSING_OR_AMBIGUOUS,
                     tuple(path),
                 )
+            call_target_addr = _direct_call_target_8616(insns[exact_call_indexes[0]])
             scan_start = exact_call_indexes[0] + 1
             first_block = False
 
         saw_jump = False
         saw_return = False
+        return_instruction_addr: int | None = None
         jump_target: int | None = None
         for index, insn in enumerate(insns[scan_start:], start=scan_start):
             mnemonic = str(_dynamic_attr_8616(insn, "mnemonic", "")).lower()
@@ -255,6 +273,8 @@ def prove_terminal_call_path_8616(
                         tuple(path),
                     )
                 saw_return = True
+                decoded_return_addr = _dynamic_attr_8616(insn, "address", None)
+                return_instruction_addr = decoded_return_addr if isinstance(decoded_return_addr, int) else None
                 continue
             if mnemonic in {"jmp", "ljmp"}:
                 if index != len(insns) - 1:
@@ -285,8 +305,17 @@ def prove_terminal_call_path_8616(
         except Exception:
             return TerminalCallPathResult8616(TerminalCallPathStatus8616.CFG_PATH_AMBIGUOUS, tuple(path))
         if saw_return:
-            status = TerminalCallPathStatus8616.PROVEN if not successors else TerminalCallPathStatus8616.CFG_PATH_AMBIGUOUS
-            return TerminalCallPathResult8616(status, tuple(path))
+            status = (
+                TerminalCallPathStatus8616.PROVEN
+                if not successors and return_instruction_addr is not None
+                else TerminalCallPathStatus8616.CFG_PATH_AMBIGUOUS
+            )
+            return TerminalCallPathResult8616(
+                status,
+                tuple(path),
+                call_target_addr,
+                return_instruction_addr,
+            )
         if len(successors) != 1:
             status = (
                 TerminalCallPathStatus8616.RETURN_NOT_REACHED

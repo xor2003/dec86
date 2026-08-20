@@ -10,7 +10,7 @@ import builtins
 import contextlib
 import logging
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from enum import Enum, StrEnum
 from types import SimpleNamespace
 from typing import Any, Iterable, Protocol, TypeAlias, cast
@@ -27,6 +27,12 @@ from .alias.callsite_stack_merge import (
 )
 from .analysis_helpers import collect_neighbor_call_targets, resolve_direct_call_target_from_block
 from .callee_name_normalization import normalize_callee_name_8616
+from .caller_return_use_contracts import (
+    CallerReturnUseEvidence8616,
+    CallerReturnUseFact8616,
+    CallerReturnUseVerdict8616,
+    CallsiteReturnUseKind8616,
+)
 from .callsite_target_inventory import CallsiteTargetInventory8616
 from .compiler_helpers import (
     identify_x86_16_compiler_helper_at_8616,
@@ -40,9 +46,11 @@ from .helper_abi import (
     known_helper_logical_argument_widths_8616,
 )
 from .pipeline.errors import PipelineHardError
+from .semantics.terminal_stack_cleanup import terminal_stack_cleanup_at_address_8616
 
 __all__ = [
     "CallerReturnUseEvidence8616",
+    "CallerReturnUseFact8616",
     "CallerReturnUseVerdict8616",
     "CallsiteArgumentClass8616",
     "CallsiteMachineFrameKind8616",
@@ -73,13 +81,14 @@ _CallsiteTuple8616: TypeAlias = tuple[object, ...]
 def known_helper_abi_widths_8616(symbol_name: str | None) -> tuple[int, ...] | None:
     """Return explicit logical ABI widths for a known runtime helper."""
     normalized = normalize_callee_name_8616(symbol_name)
-    return known_helper_logical_argument_widths_8616(normalized)
+    widths = known_helper_logical_argument_widths_8616(normalized)
+    return None if widths is None else tuple(int(width) for width in widths)
 
 
 def known_helper_is_variadic_8616(symbol_name: str | None) -> bool:
     """Return whether a known runtime helper has an open-ended argument list."""
     normalized = normalize_callee_name_8616(symbol_name)
-    return _catalog_helper_is_variadic_8616(normalized)
+    return bool(_catalog_helper_is_variadic_8616(normalized))
 
 
 def _dynamic_callsite_getattr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
@@ -178,40 +187,6 @@ def structured_call_kind_8616(call: object) -> StructuredCallKind8616:
         if isinstance(candidate, str) and candidate.rsplit(".", 1)[-1].lstrip("_") == "INSERT":
             return StructuredCallKind8616.CODEGEN_INSERT_INTRINSIC
     return StructuredCallKind8616.MACHINE_CALL
-
-
-class CallsiteReturnUseKind8616(StrEnum):
-    """How the caller consumes a returned AX-family value."""
-
-    VALUE = "value"
-    CONDITION = "condition"
-    CLOBBERED = "clobbered"
-    FUNCTION_RETURN = "function_return"
-
-
-class CallerReturnUseVerdict8616(StrEnum):
-    """Whether binary callsites consume a function's AX-family return value."""
-
-    USED = "used"
-    UNUSED = "unused"
-    UNKNOWN = "unknown"
-
-
-@dataclass(frozen=True, slots=True)
-class CallerReturnUseEvidence8616:
-    """Closed evidence loop for binary caller return-use classification."""
-
-    target_addr: int
-    verdict: CallerReturnUseVerdict8616
-    raw_fact_count: int
-    normalized_fact_count: int
-    classified_fact_count: int
-    materialized_count: int
-    failure_count: int
-    used_callsite_count: int
-    unused_callsite_count: int
-    callsite_addrs: tuple[int, ...]
-    excluded_callsite_count: int = 0
 
 
 class _CallerReturnUseEvidenceOwner8616(Protocol):
@@ -1075,22 +1050,10 @@ def _callee_stack_cleanup_bytes_8616(function: object, insn: object) -> int | No
         if candidate_project is None:
             continue
         for candidate_addr in deduped_addrs:
-            try:
-                block = candidate_project.factory.block(candidate_addr, size=256, strict_block_end=False, opt_level=0)
-                callee_insns = tuple(_dynamic_callsite_getattr_8616(_dynamic_callsite_getattr_8616(block, "capstone", None), "insns", ()) or ())
-            except Exception as ex:
-                log.debug("callee cleanup decode failed target=%#x: %s", candidate_addr, ex)
-                continue
-            for callee_insn in callee_insns:
-                if not _mnemonic(callee_insn).startswith("ret"):
-                    continue
-                operands = _instruction_operands(callee_insn)
-                if not operands:
-                    return 0
-                cleanup = _operand_imm_value(operands[0])
-                if isinstance(cleanup, int) and 0 <= cleanup <= 128 and cleanup % 2 == 0:
-                    return cleanup
-                return None
+            evidence = terminal_stack_cleanup_at_address_8616(candidate_project, candidate_addr)
+            if evidence.complete:
+                cleanup = evidence.consistent_cleanup
+                return cleanup if isinstance(cleanup, int) else None
     return None
 
 
@@ -2588,6 +2551,14 @@ def _stack_cleanup_after_call(
 
 
 def _instruction_reads_return_reg(insn: object, reg_names: set[str]) -> bool:
+    """Return whether Capstone proves that an instruction reads a carrier."""
+    capstone_insn = _capstone_insn(insn)
+    try:
+        read_ids, _written_ids = capstone_insn.regs_access()
+        return any(capstone_insn.reg_name(reg_id).lower() in reg_names for reg_id in read_ids)
+    except Exception:
+        # Dynamic Capstone boundary: reduced test doubles may not expose regs_access().
+        pass
     operands = _instruction_operands(insn)
     if not operands:
         return False
@@ -2774,14 +2745,20 @@ def _global_dx_high_store_follows_8616(follow_insns: tuple[object, ...], low_idx
     return False
 
 
-def _return_value_feeds_divide_8616(insns: tuple[object, ...]) -> bool:
-    """Recognize a bounded AX-to-CWD-to-DIV value-use chain."""
+def _return_value_divide_witness_8616(insns: tuple[object, ...]) -> int | None:
+    """Return the exact CWD/CDQ witness for a bounded return-value divide use."""
     for index, insn in enumerate(insns[:8]):
         mnemonic = _mnemonic(insn)
         if mnemonic in {"cwd", "cdq"}:
-            return any(_mnemonic(candidate) in {"div", "idiv"} for candidate in insns[index + 1 : index + 3])
+            if any(
+                _mnemonic(candidate) in {"div", "idiv"}
+                for candidate in insns[index + 1 : index + 3]
+            ):
+                address = _instruction_address_8616(insn)
+                return address if isinstance(address, int) else None
+            return None
         if _instruction_writes_return_reg(insn, {"ax", "al", "ah"}):
-            return False
+            return None
         if mnemonic.startswith(("call", "j", "loop")) or mnemonic in {
             "int",
             "into",
@@ -2790,8 +2767,13 @@ def _return_value_feeds_divide_8616(insns: tuple[object, ...]) -> bool:
             "retf",
             "retw",
         }:
-            return False
-    return False
+            return None
+    return None
+
+
+def _return_value_feeds_divide_8616(insns: tuple[object, ...]) -> bool:
+    """Recognize a bounded AX-to-CWD-to-DIV value-use chain."""
+    return _return_value_divide_witness_8616(insns) is not None
 
 
 def _return_use_after_call(
@@ -2860,11 +2842,20 @@ def _linear_call_target_8616(insn: object) -> int | None:
 
 
 def _linear_return_use_after_call_8616(
-    insns: tuple[object, ...], call_idx: int
-) -> tuple[bool | None, CallsiteReturnUseKind8616 | None]:
-    """Classify AX use along a bounded decoded path after a direct call."""
+    insns: tuple[object, ...],
+    call_idx: int,
+    caller_addr: int,
+    callsite_addr: int,
+) -> CallerReturnUseFact8616:
+    """Retain one exact AX-use observation after a direct machine call."""
     if call_idx < 0 or call_idx >= len(insns):
-        return None, None
+        return CallerReturnUseFact8616(
+            caller_addr,
+            callsite_addr,
+            CallerReturnUseVerdict8616.UNKNOWN,
+            None,
+            None,
+        )
     addr_to_index = {
         int(addr): index
         for index, insn in enumerate(insns)
@@ -2873,8 +2864,17 @@ def _linear_return_use_after_call_8616(
     pending = [call_idx + 1]
     visited: set[int] = set()
     examined = 0
-    if _return_value_feeds_divide_8616(insns[call_idx + 1 : call_idx + 9]):
-        return True, CallsiteReturnUseKind8616.VALUE
+    divide_witness = _return_value_divide_witness_8616(
+        insns[call_idx + 1 : call_idx + 9]
+    )
+    if divide_witness is not None:
+        return CallerReturnUseFact8616(
+            caller_addr,
+            callsite_addr,
+            CallerReturnUseVerdict8616.USED,
+            CallsiteReturnUseKind8616.VALUE,
+            divide_witness,
+        )
     while pending and examined < 24:
         index = pending.pop()
         if index in visited or index < 0 or index >= len(insns):
@@ -2884,30 +2884,80 @@ def _linear_return_use_after_call_8616(
         examined += 1
         operands = _instruction_operands(insn)
         mnemonic = _mnemonic(insn)
+        instruction_addr = _instruction_address_8616(insn)
+        witness_addr = instruction_addr if isinstance(instruction_addr, int) else None
         if mnemonic == "add" and len(operands) == 2 and _operand_is_reg(insn, operands[0], {"sp", "esp"}):
             pending.append(index + 1)
             continue
         if _wide_return_condition_use_8616(insns, index):
-            return True, CallsiteReturnUseKind8616.CONDITION
-        if mnemonic not in {"cmp", "test"} and _instruction_writes_return_reg(insn, {"ax", "al", "ah"}):
-            return False, CallsiteReturnUseKind8616.CLOBBERED
-        if _instruction_reads_return_reg(insn, {"ax", "al", "ah"}):
+            return CallerReturnUseFact8616(
+                caller_addr,
+                callsite_addr,
+                CallerReturnUseVerdict8616.USED,
+                CallsiteReturnUseKind8616.CONDITION,
+                witness_addr,
+            )
+        return_registers = {"ax", "al", "ah"}
+        self_clearing_write = (
+            mnemonic in {"sub", "xor"}
+            and len(operands) == 2
+            and all(_operand_is_reg(insn, operand, return_registers) for operand in operands)
+        )
+        if not self_clearing_write and _instruction_reads_return_reg(insn, return_registers):
             kind = CallsiteReturnUseKind8616.CONDITION if mnemonic in {"cmp", "test"} else CallsiteReturnUseKind8616.VALUE
-            return True, kind
+            return CallerReturnUseFact8616(
+                caller_addr,
+                callsite_addr,
+                CallerReturnUseVerdict8616.USED,
+                kind,
+                witness_addr,
+            )
+        if mnemonic not in {"cmp", "test"} and _instruction_writes_return_reg(insn, return_registers):
+            return CallerReturnUseFact8616(
+                caller_addr,
+                callsite_addr,
+                CallerReturnUseVerdict8616.UNUSED,
+                CallsiteReturnUseKind8616.CLOBBERED,
+                witness_addr,
+            )
         if mnemonic in {"ret", "retf", "retw", "iret"}:
-            return True, CallsiteReturnUseKind8616.FUNCTION_RETURN
+            return CallerReturnUseFact8616(
+                caller_addr,
+                callsite_addr,
+                CallerReturnUseVerdict8616.USED,
+                CallsiteReturnUseKind8616.FUNCTION_RETURN,
+                witness_addr,
+            )
         if mnemonic in {"jmp", "jmpw", "ljmp"}:
             target = _direct_jump_target_8616(insn)
             target_index = addr_to_index.get(target) if isinstance(target, int) else None
             if target_index is None:
-                return None, None
+                return CallerReturnUseFact8616(
+                    caller_addr,
+                    callsite_addr,
+                    CallerReturnUseVerdict8616.UNKNOWN,
+                    None,
+                    witness_addr,
+                )
             pending.append(target_index)
             continue
         if _transparent_return_epilogue_insn_8616(insn):
             pending.append(index + 1)
             continue
-        return False, None
-    return None, None
+        return CallerReturnUseFact8616(
+            caller_addr,
+            callsite_addr,
+            CallerReturnUseVerdict8616.UNUSED,
+            None,
+            witness_addr,
+        )
+    return CallerReturnUseFact8616(
+        caller_addr,
+        callsite_addr,
+        CallerReturnUseVerdict8616.UNKNOWN,
+        None,
+        None,
+    )
 
 
 def collect_caller_return_use_evidence_8616(
@@ -2919,8 +2969,8 @@ def collect_caller_return_use_evidence_8616(
 ) -> CallerReturnUseEvidence8616:
     """Collect binary caller-use facts from independently proven function ranges.
 
-    Proven target aliases identify recursive calls whose caller-range entry
-    differs from the direct-call target because the target has an entry prelude.
+    Proven target aliases form one call-target census and identify recursive
+    terminal pass-throughs whose caller entry differs from the direct target.
     """
     arch = _dynamic_callsite_getattr_8616(project, "arch", None)
     disassembler = _dynamic_callsite_getattr_8616(arch, "capstone", None)
@@ -2952,17 +3002,17 @@ def collect_caller_return_use_evidence_8616(
             continue
         decoded_ranges[(start, end)] = insns
 
-    callsite_cache: dict[int, dict[int, tuple[bool | None, CallsiteReturnUseKind8616 | None, int]]] = {}
+    callsite_cache: dict[int, dict[int, CallerReturnUseFact8616]] = {}
 
     def _callsites_for_target(
         candidate_target: int,
-    ) -> dict[int, tuple[bool | None, CallsiteReturnUseKind8616 | None, int]]:
+    ) -> dict[int, CallerReturnUseFact8616]:
         """Return decoded direct-call use facts keyed by callsite address."""
         normalized_target = candidate_target & 0xFFFF
         cached = callsite_cache.get(normalized_target)
         if cached is not None:
             return cached
-        facts: dict[int, tuple[bool | None, CallsiteReturnUseKind8616 | None, int]] = {}
+        facts: dict[int, CallerReturnUseFact8616] = {}
         for (caller_start, _caller_end), insns in decoded_ranges.items():
             for index, insn in enumerate(insns):
                 call_target = _linear_call_target_8616(insn)
@@ -2971,66 +3021,99 @@ def collect_caller_return_use_evidence_8616(
                 callsite_addr = _instruction_address_8616(insn)
                 if not isinstance(callsite_addr, int):
                     continue
-                return_used, kind = _linear_return_use_after_call_8616(insns, index)
-                facts[callsite_addr] = (return_used, kind, caller_start)
+                facts[callsite_addr] = _linear_return_use_after_call_8616(
+                    insns,
+                    index,
+                    caller_start,
+                    callsite_addr,
+                )
         callsite_cache[normalized_target] = facts
         return facts
 
-    transitive_cache: dict[int, bool | None] = {}
+    transitive_cache: dict[int, CallerReturnUseVerdict8616] = {}
 
-    def _return_observed_transitively(candidate_target: int, active_targets: frozenset[int]) -> bool | None:
+    def _return_observed_transitively(
+        candidate_target: int,
+        active_targets: frozenset[int],
+    ) -> CallerReturnUseVerdict8616:
         """Resolve terminal return pass-throughs only through independent callers."""
         normalized_target = candidate_target & 0xFFFF
         cached = transitive_cache.get(normalized_target)
-        if cached is not None or normalized_target in transitive_cache:
+        if cached is not None:
             return cached
         if normalized_target in active_targets:
-            return None
+            return CallerReturnUseVerdict8616.UNKNOWN
         facts = _callsites_for_target(candidate_target)
         if not facts:
-            transitive_cache[normalized_target] = None
-            return None
-        resolutions: list[bool | None] = []
+            transitive_cache[normalized_target] = CallerReturnUseVerdict8616.UNKNOWN
+            return CallerReturnUseVerdict8616.UNKNOWN
+        resolutions: list[CallerReturnUseVerdict8616] = []
         next_active = active_targets | {normalized_target}
-        for return_used, kind, caller_start in facts.values():
-            if kind is CallsiteReturnUseKind8616.FUNCTION_RETURN:
+        for fact in facts.values():
+            if fact.kind is CallsiteReturnUseKind8616.FUNCTION_RETURN:
                 # A recursive tail pass-through cannot observe its own return.
                 # Ignore that cycle when independent callers provide evidence;
                 # a recursion-only function still resolves to unknown below.
-                if (caller_start & 0xFFFF) in next_active:
+                if (fact.caller_addr & 0xFFFF) in next_active:
                     continue
-                resolutions.append(_return_observed_transitively(caller_start, next_active))
+                resolutions.append(
+                    _return_observed_transitively(fact.caller_addr, next_active)
+                )
             else:
-                resolutions.append(return_used)
-        if any(resolution is True for resolution in resolutions):
-            result: bool | None = True
-        elif resolutions and all(resolution is False for resolution in resolutions):
-            result = False
+                resolutions.append(fact.verdict)
+        if CallerReturnUseVerdict8616.USED in resolutions:
+            result = CallerReturnUseVerdict8616.USED
+        elif resolutions and all(
+            resolution is CallerReturnUseVerdict8616.UNUSED
+            for resolution in resolutions
+        ):
+            result = CallerReturnUseVerdict8616.UNUSED
         else:
-            result = None
+            result = CallerReturnUseVerdict8616.UNKNOWN
         transitive_cache[normalized_target] = result
         return result
 
-    direct_facts = _callsites_for_target(target_addr)
     normalized_target_aliases = frozenset(addr & 0xFFFF for addr in target_aliases)
-    callsites: dict[int, bool | None] = {}
-    for callsite_addr, (return_used, kind, caller_start) in direct_facts.items():
-        if normalized_target_aliases and (caller_start & 0xFFFF) in normalized_target_aliases:
-            continue
-        if kind is CallsiteReturnUseKind8616.FUNCTION_RETURN:
-            return_used = _return_observed_transitively(
-                caller_start,
-                frozenset({target_addr & 0xFFFF}),
+    census_targets = normalized_target_aliases | {target_addr & 0xFFFF}
+    direct_facts = {
+        callsite_addr: fact
+        for candidate_target in census_targets
+        for callsite_addr, fact in _callsites_for_target(candidate_target).items()
+    }
+    resolved_facts: list[CallerReturnUseFact8616] = []
+    for fact in direct_facts.values():
+        if fact.kind is CallsiteReturnUseKind8616.FUNCTION_RETURN and (
+            fact.caller_addr & 0xFFFF
+        ) in census_targets:
+            resolved_facts.append(
+                replace(fact, excluded_recursive_passthrough=True)
             )
-        callsites[callsite_addr] = return_used
-    excluded_count = len(direct_facts) - len(callsites)
-    used_count = sum(result is True for result in callsites.values())
-    unused_count = sum(result is False for result in callsites.values())
+            continue
+        if fact.kind is CallsiteReturnUseKind8616.FUNCTION_RETURN:
+            fact = replace(
+                fact,
+                verdict=_return_observed_transitively(
+                    fact.caller_addr,
+                    census_targets,
+                ),
+            )
+        resolved_facts.append(fact)
+    ordered_facts = tuple(sorted(resolved_facts, key=lambda fact: fact.callsite_addr))
+    included_facts = tuple(
+        fact for fact in ordered_facts if not fact.excluded_recursive_passthrough
+    )
+    excluded_count = len(ordered_facts) - len(included_facts)
+    used_count = sum(
+        fact.verdict is CallerReturnUseVerdict8616.USED for fact in included_facts
+    )
+    unused_count = sum(
+        fact.verdict is CallerReturnUseVerdict8616.UNUSED for fact in included_facts
+    )
     classified_count = used_count + unused_count
-    failure_count = len(callsites) - classified_count
+    failure_count = len(included_facts) - classified_count
     if used_count:
         verdict = CallerReturnUseVerdict8616.USED
-    elif callsites and classified_count == len(callsites):
+    elif included_facts and classified_count == len(included_facts):
         verdict = CallerReturnUseVerdict8616.UNUSED
     else:
         verdict = CallerReturnUseVerdict8616.UNKNOWN
@@ -3044,8 +3127,9 @@ def collect_caller_return_use_evidence_8616(
         failure_count=failure_count,
         used_callsite_count=used_count,
         unused_callsite_count=unused_count,
-        callsite_addrs=tuple(sorted(direct_facts)),
+        callsite_addrs=tuple(fact.callsite_addr for fact in ordered_facts),
         excluded_callsite_count=excluded_count,
+        facts=ordered_facts,
     )
 
 

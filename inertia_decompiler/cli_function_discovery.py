@@ -290,42 +290,31 @@ def _collect_caller_return_use_for_entry_aliases_8616(
     """Collect caller-use evidence across proven label and prologue aliases.
 
     Sidecar labels may point at entry padding while direct calls target the
-    adjusted prologue.  A used verdict is conservative and dominates; absent
-    a consumer, the strongest fully classified unused verdict is retained.
+    adjusted prologue.  The recovery summary owns one complete alias census.
     """
-    evidence_items = tuple(
-        collect_caller_return_use_evidence_8616(
-            project,
-            target_addr,
-            function_ranges,
-            target_aliases=target_addrs,
-        )
-        for target_addr in dict.fromkeys(target_addrs)
+    unique_targets = tuple(dict.fromkeys(target_addrs))
+    if not unique_targets:
+        return None
+    evidence = collect_caller_return_use_evidence_8616(
+        project,
+        unique_targets[0],
+        function_ranges,
+        target_aliases=unique_targets,
     )
     if os.environ.get("INERTIA_DEBUG_RETURN_TYPE_EVIDENCE") == "1":
         logging.getLogger(__name__).warning(
             "entry-alias return-use evidence: targets=%r facts=%r",
-            tuple(hex(target_addr) for target_addr in dict.fromkeys(target_addrs)),
-            tuple(
-                (
-                    hex(item.target_addr),
-                    item.verdict.value,
-                    item.callsite_addrs,
-                    item.used_callsite_count,
-                    item.unused_callsite_count,
-                    item.excluded_callsite_count,
-                    item.failure_count,
-                )
-                for item in evidence_items
+            tuple(hex(target_addr) for target_addr in unique_targets),
+            (
+                evidence.verdict.value,
+                evidence.callsite_addrs,
+                evidence.used_callsite_count,
+                evidence.unused_callsite_count,
+                evidence.excluded_callsite_count,
+                evidence.failure_count,
             ),
         )
-    used = tuple(item for item in evidence_items if item.verdict is CallerReturnUseVerdict8616.USED)
-    if used:
-        return max(used, key=lambda item: item.classified_fact_count)
-    unused = tuple(item for item in evidence_items if item.verdict is CallerReturnUseVerdict8616.UNUSED)
-    if unused:
-        return max(unused, key=lambda item: item.classified_fact_count)
-    return None
+    return evidence if evidence.verdict is not CallerReturnUseVerdict8616.UNKNOWN else None
 
 
 def _binary_padding_entry_aliases_8616(

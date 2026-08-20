@@ -19,6 +19,7 @@ from angr_platforms.X86_16.semantics.terminal_call_paths import (
     angr_terminal_call_path_callbacks_8616,
     prove_terminal_call_path_8616,
 )
+from angr_platforms.X86_16.semantics.terminal_return_storage import TerminalReturnStorage8616
 
 
 class _Operand:
@@ -145,8 +146,8 @@ def test_terminal_call_return_type_refuses_without_observed_caller_result(monkey
     project, function = _project_and_function(post_call_instructions=(_Insn(0x1003, "ret"),))
     monkeypatch.setattr(
         terminal_call_return_types,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({terminal_call_return_types.TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = apply_terminal_call_return_type_evidence_8616(project, function)
@@ -165,8 +166,8 @@ def test_terminal_call_return_type_uses_proven_callee_ax_word_for_observed_resul
     _record_used_result(project)
     monkeypatch.setattr(
         terminal_call_return_types,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({terminal_call_return_types.TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = apply_terminal_call_return_type_evidence_8616(project, function)
@@ -175,6 +176,22 @@ def test_terminal_call_return_type_uses_proven_callee_ax_word_for_observed_resul
     assert result.evidence.sources == (TerminalCallReturnTypeSource8616.CALLEE_TERMINAL_AX_WORD,)
     assert isinstance(function.prototype.returnty, SimTypeShort)
     assert function.prototype.returnty.signed is False
+
+
+def test_terminal_call_return_type_refuses_callee_dx_ax_as_word(monkeypatch) -> None:
+    project, function = _project_and_function(post_call_instructions=(_Insn(0x1003, "ret"),))
+    _record_used_result(project)
+    monkeypatch.setattr(
+        terminal_call_return_types,
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.DX_AX,
+    )
+
+    result = apply_terminal_call_return_type_evidence_8616(project, function)
+
+    assert not result.changed
+    assert result.evidence.classified_fact_count == 0
+    assert function.prototype is None
 
 
 def test_terminal_call_return_type_preserves_concrete_byte_callee_prototype() -> None:

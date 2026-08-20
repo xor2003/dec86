@@ -9,12 +9,13 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from ..callsite_summary import CallsiteSummary8616, logical_argument_widths_from_callsite_8616
+from ..ir import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from .callee_argument_count_evidence import (
-    CalleeArgumentCountVerdict8616,
+    CalleeArgumentCountEvidence8616,
     collect_callee_argument_count_evidence_8616,
 )
 
@@ -45,6 +46,45 @@ class CalleeArgumentWidthEvidence8616:
     classified_fact_count: int = 0
     materialized_count: int = 0
     failure_count: int = 0
+    argument_count: int | None = None
+    argument_storage: tuple[IRAddress, ...] = ()
+    count_evidence: CalleeArgumentCountEvidence8616 | None = field(
+        default=None,
+        compare=False,
+    )
+
+    @property
+    def closes_census(self) -> bool:
+        """Return whether all callers prove one exact callee stack layout."""
+        count_evidence = self.count_evidence
+        if (
+            self.verdict is not CalleeArgumentWidthVerdict8616.CONSISTENT
+            or count_evidence is None
+            or not count_evidence.closes_census
+            or self.argument_count != count_evidence.argument_count
+            or self.raw_fact_count <= 0
+            or not self.raw_fact_count
+            == self.normalized_fact_count
+            == self.classified_fact_count
+            == self.materialized_count
+            or self.failure_count != 0
+        ):
+            return False
+        return len(self.argument_storage) == self.argument_count
+
+    @property
+    def argument_widths(self) -> tuple[int, ...]:
+        """Return source-order widths from the accepted stack identities."""
+        if not self.closes_census:
+            return ()
+        return tuple(address.size for address in self.argument_storage)
+
+    @property
+    def required_count_evidence(self) -> CalleeArgumentCountEvidence8616:
+        """Return the retained arity census or fail an invalid owned contract."""
+        if self.count_evidence is None:
+            raise TypeError("callee argument storage evidence must retain count evidence")
+        return self.count_evidence
 
 
 def _widths_by_offset_8616(widths: tuple[int, ...]) -> tuple[tuple[int, int], ...]:
@@ -55,6 +95,23 @@ def _widths_by_offset_8616(widths: tuple[int, ...]) -> tuple[tuple[int, int], ..
         mapped.append((offset, width))
         offset += width
     return tuple(mapped)
+
+
+def _argument_storage_8616(
+    widths_by_offset: tuple[tuple[int, int], ...],
+) -> tuple[IRAddress, ...]:
+    """Build exact callee `SS:BP+offset` identities for source arguments."""
+    return tuple(
+        IRAddress(
+            space=MemSpace.SS,
+            base=("bp",),
+            offset=offset,
+            size=width,
+            status=AddressStatus.STABLE,
+            segment_origin=SegmentOrigin.DEFAULTED,
+        )
+        for offset, width in widths_by_offset
+    )
 
 
 def _logical_widths_for_proven_count_8616(
@@ -85,9 +142,20 @@ def collect_callee_argument_width_evidence_8616(
     """Join exact logical widths from every completely classified caller."""
     count_evidence = collect_callee_argument_count_evidence_8616(project, target_addr)
     summaries = count_evidence.callsite_summaries
-    raw_count = len(summaries)
+    raw_count = count_evidence.raw_fact_count
+    if count_evidence.closes_census and count_evidence.argument_count == 0:
+        return CalleeArgumentWidthEvidence8616(
+            target_addr=target_addr,
+            verdict=CalleeArgumentWidthVerdict8616.CONSISTENT,
+            raw_fact_count=raw_count,
+            normalized_fact_count=raw_count,
+            classified_fact_count=raw_count,
+            materialized_count=raw_count,
+            argument_count=0,
+            count_evidence=count_evidence,
+        )
     if (
-        count_evidence.verdict is not CalleeArgumentCountVerdict8616.CONSISTENT
+        not count_evidence.closes_census
         or not isinstance(count_evidence.argument_count, int)
         or count_evidence.argument_count <= 0
     ):
@@ -96,6 +164,7 @@ def collect_callee_argument_width_evidence_8616(
             verdict=CalleeArgumentWidthVerdict8616.UNKNOWN,
             raw_fact_count=raw_count,
             failure_count=raw_count,
+            count_evidence=count_evidence,
         )
     classified_widths = tuple(
         widths
@@ -114,15 +183,18 @@ def collect_callee_argument_width_evidence_8616(
         widths = next(iter(distinct_widths))
         verdict = CalleeArgumentWidthVerdict8616.CONSISTENT
         mapped_widths = _widths_by_offset_8616(widths)
+        argument_storage = _argument_storage_8616(mapped_widths)
         materialized_count = len(classified_widths)
     elif len(distinct_widths) > 1:
         verdict = CalleeArgumentWidthVerdict8616.CONFLICT
         mapped_widths = ()
+        argument_storage = ()
         materialized_count = 0
         failure_count += 1
     else:
         verdict = CalleeArgumentWidthVerdict8616.UNKNOWN
         mapped_widths = ()
+        argument_storage = ()
         materialized_count = 0
     return CalleeArgumentWidthEvidence8616(
         target_addr=target_addr,
@@ -133,4 +205,7 @@ def collect_callee_argument_width_evidence_8616(
         classified_fact_count=len(classified_widths),
         materialized_count=materialized_count,
         failure_count=failure_count,
+        argument_count=count_evidence.argument_count,
+        argument_storage=argument_storage,
+        count_evidence=count_evidence,
     )

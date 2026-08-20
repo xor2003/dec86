@@ -210,7 +210,8 @@ results or bypass leakage/call-contract checks.
 
 ### 3. Unify interprocedural function contracts at Types/Lowering
 
-Status: pending.
+Status: in progress; argument storage, return-use caller-census refusal, and
+typed register-return condition forms are enforced.
 
 Reason: Definition/callsite signature disagreement is evidence that the project
 has competing interprocedural truths. One binary-evidenced contract must own
@@ -235,6 +236,92 @@ Definition of failure:
   reconciles them after Lowering
 - evidence counters do not close, conflict/unknown cases are silently accepted,
   or focused validation and behavior gates regress
+
+Measured progress on 2026-08-17:
+
+- `CalleeArgumentCountEvidence8616.closes_census` now requires every discovered
+  caller to be normalized, classified, and materialized with zero failures.
+- one classifiable caller plus any unclassified caller now yields `UNKNOWN`,
+  and Types/Lowering refuses interface unification instead of accepting a
+  transient local header; a function with no discovered callers may still use
+  body-local argument evidence.
+- argument-width evidence and positive-BP interface lowering consume the same
+  closed-census contract rather than reconstructing a weaker verdict.
+- return-use recovery now inventories every proven label/prologue alias in one
+  evidence record; the CLI no longer scans aliases independently and selects a
+  partial result that happens to classify as unused.
+- a recursive read-modify-write consumer of `AX` now proves a used return and
+  blocks `void` demotion. Only a recursive terminal `call; ret` pass-through
+  cycle may be excluded, and that cycle cannot independently prove `void`.
+- Capstone register-access facts distinguish a return-carrier read-modify-write
+  from a pure clobber before Types/Lowering consumes the caller census.
+- Semantics now owns a typed per-terminal-path return-storage state. Wide
+  `DX:AX` promotion requires every entry-reachable terminal path to prove the
+  pair with closed counters; one word-only path, an incomplete CFG successor,
+  a stale `DX`, or an intervening non-epilogue instruction refuses promotion.
+- the compatibility AX-lane projection is empty when terminal-path collection
+  is incomplete, so legacy type consumers cannot infer from a successful
+  subset while the typed evidence still exposes the failed census.
+- negative tests cover incomplete collection, malformed cached evidence,
+  incomplete `UNKNOWN` evidence, the no-caller boundary, recursive value use,
+  recursive pass-through exclusion, and calls split across entry aliases.
+- the exact Ultra QuickC `args` regression retains both required calls, and the
+  default pipeline passes 3/3 lanes: 1,469 focused tests, 4/4 Ultra QuickC
+  fixtures, and all seven MS C tiny compile/decompile/recompile/runtime cases.
+- the return-use focused surface passes 103 tests; the complete changed-file
+  gate passes Ruff, MyPy for seven source modules, type ratchet, architecture,
+  MCP/Understand-Anything state, ownership, and 175 related tests.
+- the return-storage focused surface passes 38 tests and its changed-file gate
+  passes Ruff, MyPy, type ratchet, architecture, context, ownership, and 159
+  related tests. A repeated default pipeline remains 3/3 green; its longest MS
+  C fixture stayed within normal variance rather than adding fallback work.
+- Semantics now owns complete terminal stack-cleanup evidence. Callee cleanup
+  is accepted only when every entry-reachable return is classified, all five
+  evidence counters close, and every return agrees on one even immediate.
+- callsite summarization no longer decodes a guessed 256-byte window and trusts
+  its first `ret`. Conflicting return immediates, an incomplete CFG successor,
+  an indirect/bodyless branch, or malformed cleanup evidence now refuses the
+  cleanup contract; a bodyless direct terminal return remains supported.
+- the terminal-cleanup and downstream call-contract surface passes 155 focused
+  tests. Ruff `--fix`, MyPy, type ratchet, architecture ownership, MCP/context,
+  and ownership-manifest gates pass for the complete changed surface, and the
+  repeated default pipeline passes all focused, Ultra QuickC, and seven MS C
+  tiny compile/decompile/recompile/runtime contracts.
+- Types/Lowering now owns one closed source-order argument-storage contract.
+  Every proven argument carries an exact stable `SS:BP+offset` identity and
+  width; physical right-to-left push order is normalized once and consumed by
+  both definitions and callsite declarations. An incomplete width census
+  refuses materialization instead of falling back to one local call summary.
+- Mixed-width tests prove that physical `(word, dword)` pushes become source
+  `(dword, word)` storage at `BP+4` and `BP+8`; zero-argument and incomplete-
+  census cases close or refuse explicitly. The focused argument-contract
+  surface passes 126 tests and the changed-file gate passes Ruff `--fix`,
+  MyPy, type ratchet, architecture/context, ownership, and 361 selected tests.
+- The repeated default pipeline passes 3/3 lanes after this contract change:
+  1,469 focused tests, 4/4 Ultra QuickC fixtures, and all seven MS C tiny
+  compile/decompile/recompile/runtime cases. The promoted QuickC `args`
+  fixture also passed three concurrent deterministic stress runs.
+- Semantics now publishes one exact terminal return-storage class only after
+  every reachable path agrees. `AL`, `AH`, `AX`, and `DX:AX` remain distinct;
+  mixed or incomplete paths have no scalar projection. Calling-convention and
+  all active return-type/value consumers use this exact contract, so a wide
+  `DX:AX` result can no longer be silently narrowed to `AX` through the legacy
+  lane-set compatibility view.
+- Exact-storage negatives cover mixed paths, incomplete collection, and both
+  direct and terminal-call attempts to type `DX:AX` as a word. The focused
+  surface passes 56 tests; its changed-file gate passes Ruff `--fix`, MyPy for
+  eight source modules, type/docs ratchets, architecture/context, ownership,
+  and 230 selected tests. The default pipeline remains 3/3 green.
+
+Remaining task-3 work: conditional, indexed, indirect, stack, overlapping, and
+multi-output live-out storage plus stack effects beyond closed terminal `ret`
+cleanup. Exact stable direct DS/ES must-write outputs and their caller-side
+condition uses now enter the same storage contract without being misprojected
+as scalar C returns. Input trials, exact reaching-definition binding,
+scalar/pointer register outputs, all strict/non-strict/equality `DX:AX`
+condition forms, recursive return pass-through propagation, SCC-wide
+production publication, and one transaction that updates definitions and
+callsites are implemented.
 
 ### 4. Keep discovery and semantic-loss ratchets permanent
 
@@ -584,7 +671,7 @@ Definition of failure:
 
 ### 8. Borrow Ghidra's strongest mechanisms at their owning layers
 
-Status: source-mapped design work, implementation pending.
+Status: implementation in progress from the IR/Alias vertical milestone.
 
 Reason: Ghidra's strongest results come from memory SSA, storage trials, typed
 range propagation, split-value normalization, conservative CFG collapse, and
@@ -619,6 +706,10 @@ of responsibilities rather than copying source. Any copied or closely adapted
 implementation still requires an explicit license and notice review.
 
 #### 8.1 Keep stack locations in SSA until locals can be proven
+
+Status: in progress; exact `SS:BP+offset` ranges now flow through IR, Alias,
+and the first Lowering materializer. Widening and multi-function
+generalization remain.
 
 Reason: Early conversion of stack storage into loosely related C temporaries
 loses definition, join, width, escape, and call-clobber evidence. Exact SS range
@@ -673,6 +764,16 @@ Definition of failure:
 
 #### 8.2 Recover call and return contracts from storage trials
 
+Status: in progress. Exact input storage-trial collection, `DX:AX`
+direct-global return materialization, replay-safe call accounting, exact
+final-callsite multiplicity validation, deterministic return/live-out trial
+collection, signed/unsigned strict and non-strict `DX:AX` ordering use typing,
+sign-insensitive equality/inequality use typing, recursive pass-through
+propagation, production SCC publication, and atomic callee plus callsite type
+application are complete. Exact direct DS/ES must-write live-outs with one
+unclobbered caller condition use are implemented; broader memory live-outs and
+stack effects remain.
+
 Reason: Calls and returns cross function boundaries where local inference is
 insufficient. Typed storage trials allow a complete caller census to prove
 inputs, outputs, stack delta, and split returns without guessed signatures.
@@ -704,6 +805,342 @@ The hard negative boundary comes from Ghidra itself: PercolateUp converted an
 object address into a row value, and Beep lost an output-port argument. Those
 outputs become rejection fixtures for argument-class changes and incomplete
 trials. QuickSort's two recursive edges remain the fixed-point stress test.
+
+Measured progress on 2026-08-20:
+
+- direct-global `DX:AX` stores now consume or reuse one exact typed call across
+  same-group, cross-group, and replayed C-AST projections; cleanup refuses to
+  remove a standalone call unless the matching canonical assignment is active
+- synthesized value calls retain their instruction identity, allowing the
+  existing callsite declaration owner to infer the proven return class
+- callee arity no longer aliases unrelated linear code targets by low 16 bits;
+  explicit project aliases remain the only rebasing authority
+- an incomplete whole-program arity census emits an honest unprototyped
+  declaration with the proven return type instead of guessing parameters
+- isolated sidecar-free ReInitBars and DrawTime regressions pass strict GCC,
+  `validation=passed`, whole-tail validation, and exact one-call assertions
+- Tail Validation now owns a typed callsite-multiplicity report with closed
+  evidence counters. It counts only final C calls carrying an exact required
+  machine instruction identity; target names, rendered C, and untagged calls
+  are not treated as multiplicity proof
+- an assignment-RHS call plus a standalone call with the same `ins_addr` now
+  fails the absolute final semantic guard and persists as a
+  `callsite_multiplicity` snapshot failure, while two distinct machine
+  callsites targeting the same callee pass
+- the validation cache contract was versioned, and the new module/test are in
+  the promoted Makefile, architecture, and ownership inventories. Ruff
+  `--fix`, MyPy, types/docs, architecture/context/ownership, 490 selected
+  changed-surface tests, and both isolated sidecar-free SORTD regressions pass
+- typed IR analysis now proves the machine-BP to angr entry-SP coordinate
+  before stack-memory SSA Lowering. Unknown coordinates refuse local
+  materialization, positive BP ranges remain typed storage-trial refusals, and
+  exact materialization retires only the obsolete entry-SP declaration
+  projection. Width-to-type Lowering now maps proven one-, two-, and four-byte
+  scalar ranges exactly instead of ignoring width
+- the three stack-annotation regressions now emit one `BP-2` `unsigned short`
+  local with the requested name and no stale byte, dword, or split-argument
+  declaration. Their strengthened smoke tests pass; 152 related tests and the
+  512-test changed-surface gate pass with Ruff `--fix`, MyPy, types/docs,
+  architecture/context, and ownership checks
+- the `whsum` declaration failure no longer reproduces: the existing
+  Types/Lowering owner consumes the complete caller-width census and emits
+  `void sub_105e6(unsigned short a0, unsigned short a1);`; the CLI only replays
+  that typed contract before rendering. Tail validation passes and C11 syntax
+  checking with implicit declarations promoted to errors succeeds
+- the fixture now requires that source-backed prototype in its generated-C
+  contract, so the default pipeline cannot pass if the declaration disappears
+- the required seven-worker default `make test-pipeline` passes all three
+  lanes: 1,486 focused tests, four validated QuickC fixtures, and all seven MS
+  C tiny compile/decompile/recompile/runtime constructs. The measured lane
+  times on the final edited-state run were 79.702s, 101.846s, and 174.758s
+  respectively; only the focused lane exceeded its 30s advisory budget
+- typed Types/Lowering contracts now retain exact stack/register identity,
+  width, SSA reaching definition and use, signedness, pointer/value class,
+  split-return provenance, stack delta, and the mandatory five evidence
+  counters. A deterministic SCC solver closes only complete callsite censuses
+  and retains typed refusal reasons for every unresolved or conflicting set
+- focused QuickSort and mutual-recursion fixtures converge independently of
+  input order; Beep-like incomplete censuses and PercolateUp-like
+  pointer-to-value changes refuse, and split `DX:AX` outputs require one shared
+  provenance before joining
+- one atomic transaction contract now represents an accepted callee contract
+  with every proof-bearing callsite binding. Focused tests prove that omitted
+  callsites cannot be consumed, but the main Types/Lowering path does not yet
+  publish the SCC result to production declaration and prototype consumers
+- the direct-caller census now retains one typed origin record per callsite:
+  evidence project, exact caller function address, machine callsite address,
+  and typed summary. Argument-count and width evidence derive from that same
+  census, so the production trial collector no longer has to guess which
+  function or rebased project owns a summary. The extraction also reduced the
+  oversized argument-count module from 392 to 177 lines; Ruff `--fix`, MyPy,
+  architecture/context/ownership gates, and 453 selected tests pass
+- a Types/Lowering reaching-definition resolver now verifies the exact typed
+  CALL use and binds immediate, `SS:BP` value, stable `DS`/`ES` value, and
+  `SS:BP` address arguments to program-owned SSA definitions. Split global
+  loads retain byte-accurate memory pieces; a claimed BP address must trace
+  through local SSA aliases to the matching BP origin, while missing,
+  conflicting, and call-output facts refuse with typed reasons and closed
+  evidence counters. All four production modules remain below 350 lines; seven
+  real-lifter regressions and the 508-test ownership-expanded changed-surface
+  gate pass with Ruff `--fix`, MyPy, types/docs, architecture/context, and
+  ownership checks. `quality-dev` passes, and the default seven-worker pipeline
+  passes 1,502 focused tests, four validated QuickC fixtures, and all seven MS
+  C tiny compile/decompile/recompile/runtime constructs; lane times were
+  37.270s, 63.146s, and 108.145s
+- Ruff `--fix`, MyPy, ownership/header guards, architecture/context checks,
+  115 related tests, and the 655-test changed-surface gate pass. The default
+  seven-worker pipeline also passes 1,495 focused tests, four QuickC fixtures,
+  and all seven MS C tiny compile/decompile/recompile/runtime constructs; lane
+  times were 36.554s, 69.144s, and 107.550s
+- the IR layer now owns a lazy, exact-function SSA registry so every retained
+  caller origin resolves against one program-owned dataflow artifact; missing
+  function bounds, IR refusal, and SSA refusal are typed failures, and only
+  proven artifacts are cached
+- the production Types/Lowering input collector joins the closed caller census,
+  exact source-order `SS:BP+offset` callee storage, SSA reaching definitions,
+  condition signedness, and binary pointer-use evidence. It materializes
+  immediate, stack value/address, and split `DS`/`ES` global trials with exact
+  source and destination pieces; pointer signedness is explicitly not
+  applicable rather than guessed
+- duplicate machine callsites, unknown stack delta, missing caller SSA,
+  reaching-definition conflicts, piece mismatches, and unknown or conflicting
+  signedness/value classes refuse with typed reasons and closed five-field
+  counters. Seven real-lifter tests cover positive and refusal behavior, and
+  the focused interprocedural surface passes 20 tests
+- the changed-surface gate passes Ruff `--fix`, MyPy for ten source files,
+  types/docs and dot-access ratchets, architecture/context/ownership checks,
+  and 540 selected tests. `quality-dev` passes, including the 38-module mypyc
+  import smoke and three no-regression quality comparisons. The required
+  seven-worker `make test-pipeline` passes 1,509 focused tests and all six
+  selected tiny MS C compile/run/decompile/recompile/decompiled-run programs
+- the caller return-use census now retains one typed fact per direct machine
+  call: exact caller function, callsite, witness instruction, use kind, verdict,
+  and recursive-pass-through exclusion. Transitive wrapper observations update
+  only the verdict and preserve the local return witness; unknown paths remain
+  visible failures. The owner was extracted from the oversized callsite summary
+  into a 96-line recovery-metadata contract while preserving public re-exports
+- five focused exact-fact tests, all 14 caller-use regressions, 145 broader
+  caller-evidence consumer tests, and the 456-test changed-file gate pass with
+  Ruff `--fix`, MyPy, types/docs, architecture/context, and ownership checks
+- return definitions now distinguish ordinary SSA/constant values from typed
+  `CALL_OUTPUT` producers. An observed return use binds only to the unique typed
+  CALL at the exact machine callsite and an exact accepted target address; it
+  never fabricates an SSA version or aliases targets by their low 16 bits
+- AX and split DX:AX definitions retain exact register storage and one shared,
+  deterministic call provenance. Unknown/unobserved uses, missing callsites,
+  target mismatches, invalid storage, and duplicate pieces are typed atomic
+  refusals. Return trials now require `CALL_OUTPUT` at their own callsite
+- seven real-lifter producer tests and six updated SCC/solver tests pass. The
+  463-test changed-file gate also passes Ruff `--fix`, MyPy, types/docs,
+  architecture/context/ownership, and confirms Understand-Anything automatic
+  updates remain disabled
+- a dedicated Types/Lowering classifier now joins one exact caller return-use
+  witness, Alias-owned AX/AL/AH storage identity, and canonical `ConditionIR`.
+  Signed ordering proves a signed scalar return; unsigned ordering retains its
+  proven unsigned interpretation but refuses the still-ambiguous pointer/value
+  class, while equality, missing witnesses, split carriers, contradictory
+  identities, and duplicate semantic projections remain typed atomic refusals
+- the classifier retains its exact condition and all five evidence counters.
+  Ten focused classification tests include real lifted signed/unsigned/equality
+  branches and the complete refusal matrix. Ruff `--fix`, MyPy, types/docs,
+  architecture/context/ownership, and the 473-test changed-file gate pass;
+  Understand-Anything automatic updates remain disabled
+- the Alias layer now owns exact full-word SP/BP/SI/DI domains and angr register
+  offsets in addition to AX/BX/CX/DX. This lets Types/Lowering identify legal
+  8086 address carriers without creating a competing register map
+- a dedicated Types/Lowering classifier now starts at one exact, versionless AX
+  `CALL_OUTPUT`, follows only versioned equal-width semantic MOVs in the exact
+  witness block, and proves pointer class only when that lineage reaches one
+  stable, segment-proven, single-base DS/ES/SS LOAD or STORE. Pointer
+  signedness is explicitly `NOT_APPLICABLE`
+- mixed address bases, provisional addresses, carrier clobbers, absent
+  dereferences, duplicate witnesses, versioned or mismatched call outputs, and
+  caller identity mismatches remain typed refusals. The shared result/evidence
+  contract was extracted so the scalar classifier is 254 lines, the contract
+  is 147 lines, and the pointer classifier is 342 lines
+- eleven focused pointer tests cover real-lifter positive and refusal paths;
+  the ownership-expanded changed-file gate passes Ruff `--fix`, MyPy for six
+  selected source files, types/docs, architecture/context/ownership checks,
+  and 509 selected tests. Understand-Anything automatic updates remain
+  disabled. The required full pipeline was not rerun for this bounded
+  same-block prerequisite
+- the first cross-block probe exposed an earlier IR defect: real pyvex
+  `Exit.dst` values are direct constants, while VEX import accepted only
+  wrapped constant expressions. Conditional blocks therefore retained only
+  one of their taken/fallthrough successors, making later SSA blocks appear
+  disconnected. VEX import now normalizes both boundary forms before building
+  `IRBlock.successor_addrs`; it does not synthesize edges in Types/Lowering
+- a dedicated real-lifter CFG regression proves that both successors survive
+  and that function SSA records the complete predecessor join. Thirty-five
+  focused IR/SSA tests and the 91-test ownership-expanded changed-file gate
+  pass Ruff `--fix`, MyPy, types/docs, architecture/context/ownership checks,
+  and the disabled Understand-Anything auto-update guard
+- returned-pointer lineage now crosses only authoritative function-SSA CFG
+  edges. At a join, every predecessor must retain the same Alias-owned
+  full-word carrier domain and any register phi must contain the exact sorted
+  `(source_block, value)` inputs produced by those predecessors
+- direct edges and compatible all-predecessor phi joins retain complete typed
+  edge and phi evidence through the final stable DS/ES/SS dereference. A
+  clobbered predecessor, incomplete CFG, corrupted phi, ambiguous/provisional
+  address, or reachable cycle refuses with a stable typed reason; cycles are
+  not guessed through an implicit fixed point
+- block-local transfer and CFG/phi convergence have separate Types/Lowering
+  owners. The pointer classifier was reduced from 342 to 145 lines; its 244-line
+  block-transfer and 298-line flow modules remain below the 350-line ratchet
+- six new real-lifter CFG tests cover direct transfer, compatible phi input,
+  clobbered joins, corrupted phi evidence, incomplete CFG, and cycle refusal.
+  All 18 focused pointer/CFG tests pass, and the ownership-expanded changed-file
+  gate passes Ruff `--fix`, MyPy for nine production files, types/docs,
+  architecture/context/ownership checks, and 527 selected tests in 52.38s.
+  Understand-Anything automatic updates remain disabled. The required full
+  pipeline was not rerun for this bounded pointer-flow increment
+- deterministic return/live-out collection now joins the complete input
+  callsite census with Semantics-owned terminal carrier proof, exact caller
+  return-use facts, program-owned SSA, versionless `CALL_OUTPUT` definitions,
+  and the existing scalar-condition or segmented-pointer classifiers. Proven
+  `AX` scalar and pointer uses become solver-ready return trials; closed unused
+  returns preserve their callsites with no invented output
+- machine instruction addresses are not assumed to identify one SSA
+  instruction. Scalar trials require one direct Alias-matching register read,
+  while pointer trials consume the exact alias step already retained by the
+  pointer-flow proof. Corrupt censuses, exact function/target mismatches,
+  unknown terminal storage, unsupported use kinds, and unproven `DX:AX` use
+  remain typed refusals
+- the collector, per-callsite materializer, and typed result contracts are
+  separate Types/Lowering owners at 291, 339, and 90 lines. The SCC solver now
+  refuses an empty incomplete callsite set instead of raising `IndexError`.
+  Six real-lifter collection tests, all 53 focused return/SCC tests, and the
+  68-test ownership-expanded changed-surface gate pass with Ruff `--fix`,
+  MyPy, types/docs, architecture/context, and ownership checks. Understand-
+  Anything automatic updates remain disabled
+- a dedicated 323-line condition/CFG selector and 256-line split classifier
+  now prove non-strict signed or unsigned lexicographic `DX:AX` comparisons.
+  The proof retains the three canonical conditions, exact SSA CFG edges,
+  control-only trampoline blocks, both Alias-owned storage pieces, and distinct
+  AX/DX use instructions before creating one shared-provenance output trial
+- incomplete AX-only evidence, semantically active trampolines, non-adjacent
+  comparison pieces, competing chains, and broken CFG paths remain typed
+  refusals. One real-lifter integration regression and three direct selector
+  tests cover the acceptance and dangerous refusal boundaries
+- all 57 focused return/SCC tests pass. The ownership-expanded changed-file
+  gate passes Ruff `--fix`, MyPy for ten production modules, types/docs,
+  architecture/context/ownership checks, and 500 selected tests. Understand-
+  Anything automatic updates remain disabled; the required full semantic
+  pipeline was not rerun for this bounded split-return increment
+- Semantics now retains an exact direct target, terminal return instruction,
+  and CFG block path for each caller-selected call-result pass-through. The
+  closed evidence census refuses active post-call effects, indirect calls,
+  ambiguous CFGs, duplicate candidates, and missing identities; four focused
+  pass-through tests and the existing terminal-call tests cover these bounds
+- Types/Lowering now lowers each proven recursive pass-through into a deferred
+  trial retaining the exact SSA `CALL`, target, terminal machine return, and
+  CFG path without inventing storage, signedness, or a pointer/value class. A
+  recursion-only trial remains complete collection evidence, but the solver
+  refuses it as `PASSTHROUGH_OUTPUT_UNRESOLVED` instead of accepting an empty
+  output contract. Three real-lifter tests cover the positive identity join,
+  witness mismatch, and mandatory no-seed refusal
+- the SCC solver now advances a non-empty, otherwise valid direct output seed
+  through deferred recursive pass-throughs as an explicit fixed-point state.
+  It never treats an empty/void shape as a seed, and recursion-only evidence
+  still refuses as `PASSTHROUGH_OUTPUT_UNRESOLVED`
+- accepted callsite bindings retain the exact deferred `CALL`, target,
+  terminal return, and CFG-path proof beside the shared function output slots;
+  no synthetic RET SSA read or export-time signature repair is introduced. A
+  callsite carrying both direct-return and pass-through evidence is a typed
+  `CALLSITE_SET_CONFLICT`
+- the single-function join was extracted into a 340-line Types/Lowering owner,
+  reducing the SCC solver from 350 to 196 lines. All 18 focused return/SCC
+  tests pass, and the ownership-expanded changed-file gate passes Ruff
+  `--fix`, MyPy for five production files, types/docs,
+  architecture/context/ownership checks, and 505 selected tests. Understand-
+  Anything automatic updates remain disabled
+- a 330-line production Types/Lowering lifecycle owner now collects the current
+  function's closed input and return trials, replaces that function in the
+  immutable sorted program trial payload, resolves every retained SCC, and
+  publishes the complete result in one project assignment before prototype and
+  declaration consumers run. The atomic payload now retains both source trials
+  and their accepted/refused resolutions
+- incomplete input or return collection leaves the preceding atomic payload
+  unchanged. A complete solver conflict is published as a typed refusal, and
+  both definition-width and callsite-declaration consumers refuse to fall
+  through that known conflict to older heuristic evidence
+- production publication/replay, incomplete-collection preservation, typed
+  conflict publication, and refusal-aware declaration tests pass. The focused
+  interprocedural surface passes 32 tests; the ownership-expanded gate passes
+  Ruff `--fix`, MyPy for eight production files, types/docs,
+  architecture/context/ownership checks, and 663 selected tests. Understand-
+  Anything automatic updates remain disabled
+- one shared Types/Lowering adapter now projects accepted scalar storage widths
+  and signedness to exact angr `SimType` objects and preserves proven 16-bit
+  near-pointer pointee types. Empty output sets remain unproven rather than
+  being guessed as `void`; multiple logical outputs and unsupported widths are
+  typed refusals
+- prototype preflight verifies exact source-order `SS:BP` storage, C argument
+  identity and width, pointer pointee coherence, and the accepted output shape
+  before any mutation. The application transaction then updates C arguments,
+  the callee prototype, function metadata, and the callsite return declaration
+  together; a published typed refusal blocks older width reconciliation
+- focused tests prove scalar width/signedness projection, `DX:AX` long return
+  projection, near-pointer preservation, no partial mutation on refusal,
+  lifecycle ordering, and one identical return type at the callee and callsite.
+  The 73-test integrated surface, Ruff `--fix`, MyPy, architecture/context and
+  ownership guards, and `quality-dev` including the 38-module mypyc smoke pass
+- one typed decision-graph owner now proves signed and unsigned strict and
+  non-strict ordering plus equality and inequality from exact Alias-owned
+  `DX:AX` pieces, canonical `ConditionIR`, authoritative function-SSA edges,
+  common sinks, and refusal-free control-only trampolines. The prior condition
+  module is a 23-line compatibility facade; the authoritative owner remains
+  below the 350-line ratchet
+- equality/inequality trials retain `SIGN_INSENSITIVE` rather than claiming
+  source signedness. The shared SimType adapter uses a canonical unsigned C
+  projection that preserves all proven bits while the typed trial remains the
+  authoritative sign interpretation
+- real-lifter tests cover signed and unsigned strict comparisons and equality/
+  inequality, while malformed sink topology and active trampoline paths refuse
+  explicitly. The integrated return/type surface passes 83 tests
+- the complete edited-state `quality-dev` gate passes Ruff `--fix`, MyPy for 65
+  source files, the 38-module mypyc compile/import smoke, architecture/context/
+  ownership checks, 1,523 fast-pipeline tests, and all three decompilation
+  quality comparisons
+- the required seven-worker default pipeline passes 3/3 lanes: 1,523 focused
+  tests, 4/4 validated Ultra QuickC fixtures, and all seven MS C tiny build/run/
+  decompile/recompile/decompiled-run constructs. Lane times were 37.728s,
+  63.614s, and 107.548s; only the focused lane exceeded its advisory budget
+- VEX STORE import now derives the direct-memory width from the resolved value,
+  preserving byte stores carried through temporaries instead of defaulting the
+  address and store to a word
+- Semantics now classifies exact stable direct DS/ES stores as must-write only
+  when every entry-reachable machine-return path writes the same byte range.
+  Conditional writes, incomplete/non-return terminals, indirect aliases,
+  overlapping direct ranges, and DS/ES identity conflicts refuse atomically
+  with closed evidence counters
+- Types/Lowering now binds one such output to the exact caller `CALL_OUTPUT`,
+  follows only an authoritative unclobbered SSA CFG path, and activates a
+  live-out trial only for the direct load named by canonical `ConditionIR`.
+  VEX JCC replay loads do not become duplicate machine uses; absent uses remain
+  inactive rather than being invented
+- signed/unsigned ordering, equality, and zero-use evidence retain exact
+  storage, callsite, definition, condition, and signedness. Intervening direct
+  clobbers become `NOT_REACHED`; indirect aliases, calls, cycles, incomplete
+  CFG, overlaps, target mismatch, conditional callee writes, and conflicting
+  signedness remain typed refusals
+- accepted memory outputs use the distinct `LIVE_OUT` role in the existing SCC
+  contract. The C return-type adapter consumes only `RETURN`, so a memory-only
+  function is not incorrectly emitted with a scalar return type
+- the semantic and lowering modules have explicit architecture and test owners
+  and are registered in the Makefile typed, Ruff, and focused-test ratchets.
+  Ruff `--fix`, focused MyPy for the complete production surface, architecture/
+  ownership checks, and 73 focused tests pass
+- the edited-state `quality-dev` gate passes Ruff `--fix`, MyPy, the 38-module
+  mypyc compile/import smoke, architecture/context/ownership checks, 1,523
+  focused tests, and all three decompilation-quality comparisons
+- the required seven-worker pipeline passes 3/3 lanes: 1,523 focused tests,
+  4/4 validated Ultra QuickC fixtures, and all seven MS C tiny build/run/
+  decompile/recompile/decompiled-run constructs. Lane times were 44.760s,
+  72.383s, and 137.923s
+- next implementation boundary: generalize live-out evidence only when Alias
+  and SSA can prove conditional, indexed, indirect, stack, overlapping, or
+  multiple output storage without inferring semantics from rendering
 
 Definition of done:
 
@@ -777,6 +1214,31 @@ Definition of failure:
 - accepted types diverge between IR, contracts, diagnostics, rendering, or tests
 
 #### 8.4 Normalize split values and carry before type and structure recovery
+
+Status: in progress. The production pre-Lowering path computes one coherent
+Semantics -> Alias -> Widening artifact for exact ADC/SBB pairs. It preserves
+block-local VEX provenance, proves same-block or dominating CFG/phi flags,
+retains every original byte address for adjacent DS/ES memory sources, and
+refuses conflicting phi, segment, range, definition, or Alias evidence. Exact
+Alias-proven stack destinations materialize through Types/Lowering as one
+four-byte object. Direct 16-bit loads, byte-composed words, and exact low/high
+constant pairs now remain distinct typed carriers through Widening. Ruff
+`--fix`, strict MyPy, architecture/ownership checks, and 33 focused
+SSA/carry/borrow tests pass. Beep and DrawTime pass their source-backed
+acceptance tests. IR block ownership now removes exact overlapping VEX micro-operations
+before SSA: the real Sleep function classifies and removes all ten duplicates,
+leaves one producer for the call at `0x10f52`, and records zero ownership
+failures. Semantics now derives one typed stack effect for every CALL and
+materializes used `AX` or `DX:AX` returns as exact `CALL_OUTPUT` definitions on
+unambiguous return edges before function SSA. Block-local SSA reserves entry
+version zero and honors the register version captured by each VEX temporary;
+this removes the prior pre-write/post-write version collision without weakening
+carry proof. The 18 focused call-output, call-effect, carry-output, and SSA tests
+pass, including a corrupted-version refusal. Sleep and ReInitBars remain open:
+the current sidecar-free Sleep run retains both calls and its wide arithmetic,
+but Tail Validation still rejects uninitialized `AX` and `SS:BP-4` because the
+exact `CALL_OUTPUT` producer has not yet been projected through Alias/Widening
+into Types/Lowering.
 
 Reason: Split carriers and carry/borrow expressions obscure the single values
 needed by type propagation and explicit conditions. Widening must normalize
@@ -1015,6 +1477,9 @@ Definition of failure:
 
 #### 8.10 Smallest high-impact implementation milestone
 
+Status: complete for the first exact word range, including the closed pipeline
+gates. Generalization continues under 8.1 and 8.2.
+
 Reason: One exact SS range exercised through IR, Alias, Widening, Lowering, and
 validation proves the cross-layer contracts before generalizing expensive
 memory SSA and interprocedural changes across the entire binary.
@@ -1037,6 +1502,87 @@ Use DrawFrame's initialized loop local as the positive SORTD case. Use an
 overlapping-width stack fixture and a branch with unknown SP delta as refusal
 cases. Once this vertical slice passes, generalize the same contracts to Beep
 call arguments, Sleep's wide clock value, and InitBars aggregate ranges.
+
+Measured progress on 2026-08-17:
+
+- function SSA now versions exact stable `SS:BP+offset:size` LOAD/STORE ranges
+  independently from scalar SSA and creates deterministic memory phi inputs at
+  branch joins; serialized `IRAddress` projections retain the version
+- store and phi versions are globally deterministic within the function, and
+  a bounded fixed-point solver carries reaching versions through CFG edges
+- overlapping byte ranges and provisional SP-relative ranges are explicit
+  refusals; they remain unversioned and are counted in the five-field evidence
+  loop rather than being materialized as locals
+- `IRCallStackEffect8616` records net stack delta, preserved ranges, escaped
+  ranges, and completeness. Unknown calls refuse range propagation; only a
+  complete zero-net-delta effect that explicitly preserves and does not escape
+  the exact range may carry its version through the call
+- the Alias layer now projects every versioned stack LOAD, STORE, and memory
+  phi through the canonical storage-identity model, preserves the exact SSA
+  version and phi inputs, and carries every upstream refusal into a typed Alias
+  refusal; mixed-storage phi inputs refuse instead of joining by shape
+- the Alias projection runs immediately after VEX function SSA in both owned
+  structuring execution paths and hard-fails if upstream evidence accounting is
+  open. Fixed-point exhaustion also returns only unversioned blocks plus one
+  refusal per access, never a partial SSA artifact
+- the Types/Lowering adapter deduplicates exact Alias SSA versions into storage
+  candidates and invokes the existing Alias-fact stack lowering consumer.
+  Frame-control words, overlaps, provisional SP ranges, unknown calls, and any
+  candidate that fails materialization remain typed refusals or hard failures;
+  accepted ranges become real `SimStackVariable`/`CVariable` objects
+- action 3 is not applicable to DrawFrame's single 16-bit loop range; no
+  adjacent low/high pair is present to widen. Its refusal boundary remains
+  covered by the existing exact-carrier Widening tests rather than shape fusion
+- block-local IR SSA now preserves every `IRValue` provenance field while
+  assigning versions, recursively versions `IRBinaryValue` operands and
+  indexed-address expressions, and retains `IRCondition.width_bits`; it no
+  longer drops `source_tmp`, memory-access, or index evidence needed by
+  Widening
+- a real sidecar-free `add ax,bx; adc dx,cx` lift proves that the exact VEX
+  temporary chain from the prior flags value through the carry mask and high
+  add survives SSA (`t71 -> t72 -> t73 -> t75 -> t77 -> DX`)
+- every imported `WrTmp` definition now retains its numeric `source_tmp`, so
+  Semantics resolves definitions without parsing `tNN` display names
+- typed Semantics evidence now closes the exact low-result, final flags version,
+  carry/borrow extraction, high base operation, high final operation, and all
+  operand definitions for real `add/adc` and `sub/sbb` lifts. Widening consumes
+  those links with canonical Alias register domains and retains both slices,
+  signedness `unknown`, definitions, and carry/borrow provenance in one 32-bit
+  fact; it does not inspect mnemonics, assembly, C, or AST shape
+- real-lifter positive tests and mask, cross-block, result-carrier, segment, and
+  source-definition refusal tests close all five evidence counters. Ruff
+  `--fix`, MyPy, architecture/context/ownership gates, and 162 seven-worker
+  changed-surface tests pass; all new production modules remain below 350 lines
+- final acceptance passes `quality-dev` with the 38-module mypyc smoke, 1,523
+  focused tests, and all three quality comparisons. The required default test
+  pipeline is 3/3 green: 1,523 tests, Ultra QuickC fixtures, and all seven MS C
+  tiny compile/run/decompile/recompile/decompiled-run cases; there are no
+  failures or timeouts
+- after this provenance repair, `quality-dev` passes Ruff `--fix`, MyPy, the
+  38-module mypyc compile/import smoke, architecture/context/ownership checks,
+  1,523 focused tests, and all three decompilation-quality comparisons. The
+  required seven-worker pipeline passes 3/3 lanes: 1,523 focused tests, 4/4
+  validated Ultra QuickC fixtures, and all seven MS C tiny build/run/decompile/
+  recompile/decompiled-run constructs; lane times were 30.383s, 65.414s, and
+  101.599s
+- final return-type regeneration now consumes the complete caller-use census
+  and exact terminal register-storage contract in Types/Lowering. `NONE` plus
+  `UNUSED` removes only side-effect-free synthetic returns; AX storage is
+  preserved and call/dirty return expressions hard-fail
+- DrawFrame passes both source-backed and isolated sidecar-free focused checks.
+  The no-sidecar result has `validation=passed`, a `void` four-argument
+  signature, `char local_52[80]`, the exact loop local, all nine required calls,
+  a pre-test loop, and no scalar return; whole-tail validation is clean
+- immutable IR and Alias contracts are split from their 292-line and 248-line
+  solvers, keeping all four new modules below 350 lines. Ruff `--fix`, MyPy,
+  types/docs, architecture/context, ownership, and 506 changed-surface tests
+  pass. The required pipeline is 3/3 green: 1,469 unit-focused tests, Ultra
+  Quick C, and all seven MS C tiny compile/decompile/recompile/runtime cases.
+
+Remaining milestone work: generalize the accepted wide-value and exact source-
+carrier contracts to the prioritized SORTD functions. The required full
+pipeline must be rerun after that function-level increment; no pair may be
+fused from mnemonic or AST shape alone.
 
 Definition of done:
 

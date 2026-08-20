@@ -68,14 +68,11 @@ def test_caller_return_use_collection_checks_label_and_prologue_aliases(monkeypa
             callsite_addrs=(0x2000,) if classified else (),
         )
 
-    evidence_by_target = {
-        0x102CC: evidence(0x102CC, CallerReturnUseVerdict8616.UNKNOWN),
-        0x102E0: evidence(0x102E0, CallerReturnUseVerdict8616.UNUSED),
-    }
+    merged_evidence = evidence(0x102CC, CallerReturnUseVerdict8616.UNUSED)
 
     def collect(_project, target_addr, _function_ranges, *, target_aliases):
         calls.append((target_addr, target_aliases))
-        return evidence_by_target[target_addr]
+        return merged_evidence
 
     monkeypatch.setattr(cli_function_discovery, "collect_caller_return_use_evidence_8616", collect)
 
@@ -85,28 +82,13 @@ def test_caller_return_use_collection_checks_label_and_prologue_aliases(monkeypa
         ((0x10010, 0x1005D),),
     )
 
-    assert calls == [
-        (0x102CC, (0x102CC, 0x102E0)),
-        (0x102E0, (0x102CC, 0x102E0)),
-    ]
-    assert result is evidence_by_target[0x102E0]
+    assert calls == [(0x102CC, (0x102CC, 0x102E0))]
+    assert result is merged_evidence
 
 
 def test_caller_return_use_collection_keeps_any_used_alias(monkeypatch) -> None:
-    unused = CallerReturnUseEvidence8616(
-        0x102CC,
-        CallerReturnUseVerdict8616.UNUSED,
-        1,
-        1,
-        1,
-        1,
-        0,
-        0,
-        1,
-        (0x2000,),
-    )
     used = CallerReturnUseEvidence8616(
-        0x102E0,
+        0x102CC,
         CallerReturnUseVerdict8616.USED,
         1,
         1,
@@ -120,9 +102,7 @@ def test_caller_return_use_collection_keeps_any_used_alias(monkeypatch) -> None:
     monkeypatch.setattr(
         cli_function_discovery,
         "collect_caller_return_use_evidence_8616",
-        lambda _project, target_addr, _ranges, *, target_aliases: (
-            used if target_addr == 0x102E0 else unused
-        ),
+        lambda _project, target_addr, _ranges, *, target_aliases: used,
     )
 
     result = cli_function_discovery._collect_caller_return_use_for_entry_aliases_8616(
@@ -240,11 +220,7 @@ def test_direct_callee_return_use_collection_joins_public_entry_and_prologue_ali
 
     def collect(_project, target_addr, _ranges, *, target_aliases):
         observed.append(target_addr)
-        verdict = (
-            CallerReturnUseVerdict8616.UNUSED
-            if target_addr == 0x10F18
-            else CallerReturnUseVerdict8616.UNKNOWN
-        )
+        verdict = CallerReturnUseVerdict8616.UNUSED
         classified = int(verdict is CallerReturnUseVerdict8616.UNUSED)
         return CallerReturnUseEvidence8616(
             target_addr,
@@ -271,7 +247,7 @@ def test_direct_callee_return_use_collection_joins_public_entry_and_prologue_ali
         ((0x10F18, 0x10F64),),
     )
 
-    assert observed == [0x10F38, 0x10F18]
+    assert observed == [0x10F38]
     assert evidence[0x10F38].target_addr == 0x10F38
     assert evidence[0x10F38].verdict is CallerReturnUseVerdict8616.UNUSED
 

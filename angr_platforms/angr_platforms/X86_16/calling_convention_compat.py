@@ -21,10 +21,8 @@ from angr.sim_type import SimType, SimTypeBottom, SimTypeChar, SimTypeFunction, 
 from pyvex.expr import Get
 from pyvex.stmt import Put
 
-from .semantics.terminal_register_returns import (
-    TerminalAxReturnLane8616,
-    terminal_ax_return_lane_states_8616,
-)
+from .semantics.terminal_register_returns import collect_terminal_ax_return_evidence_8616
+from .semantics.terminal_return_storage import TerminalReturnStorage8616, terminal_return_storage_8616
 from .simos_86_16 import SimCC8616MSCsmall
 from .widening.stack_argument_widths import (
     StackWordArithmeticFact8616,
@@ -307,16 +305,12 @@ def _bp_byte_load_offsets_from_instructions_8616(project: object, function: obje
 
 def _terminal_byte_return_evidence_8616(project: object, function: object) -> bool:
     """Detect terminal low-byte-only return production without source declarations."""
-    states = terminal_ax_return_lane_states_8616(project, function)
-    return TerminalAxReturnLane8616.LOW in states and TerminalAxReturnLane8616.WORD not in states
+    return terminal_return_storage_8616(project, function) is TerminalReturnStorage8616.AL
 
 
 def _terminal_word_return_evidence_8616(project: object, function: object) -> bool:
     """Return whether a terminal path leaves a word result in AX."""
-    if _terminal_wide_return_evidence_8616(project, function) is not _WideReturnEvidence8616.NONE:
-        return False
-    states = terminal_ax_return_lane_states_8616(project, function)
-    return TerminalAxReturnLane8616.WORD in states and TerminalAxReturnLane8616.LOW not in states
+    return terminal_return_storage_8616(project, function) is TerminalReturnStorage8616.AX
 
 
 def _function_target_addrs_8616(function: object) -> set[int]:
@@ -403,16 +397,13 @@ def _terminal_wide_return_evidence_from_instructions_8616(
 
 
 def _terminal_wide_return_evidence_8616(project: object, function: object) -> _WideReturnEvidence8616:
-    """Detect a terminal DX:AX producer without relying on source names."""
-    for block in _iter_function_blocks_8616(project, function):
-        # Dynamic angr/capstone compatibility boundary.
-        insns = tuple(getattr(getattr(block, "capstone", None), "insns", ()) or ())
-        if not insns:
-            continue
-        evidence = _terminal_wide_return_evidence_from_instructions_8616(project, function, insns)
-        if evidence is not _WideReturnEvidence8616.NONE:
-            return evidence
-    return _WideReturnEvidence8616.NONE
+    """Detect a DX:AX result only from a complete terminal-path census."""
+    evidence = collect_terminal_ax_return_evidence_8616(project, function)
+    return (
+        _WideReturnEvidence8616.DX_AX_TERMINAL_ARITH
+        if evidence.proves_wide_return
+        else _WideReturnEvidence8616.NONE
+    )
 
 
 def _wide_return_suffix_is_terminal_8616(

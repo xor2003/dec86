@@ -30,6 +30,7 @@ from angr.sim_type import (
     SimTypeFunction,
     SimTypePointer,
 )
+from archinfo import Arch
 
 from ..analysis_helpers import canonicalize_x86_16_padding_call_target_8616, preferred_known_helper_signature_decl
 from ..c_ast_utils import _iter_c_nodes_deep_8616
@@ -45,10 +46,7 @@ from .c_runtime_header import (
     is_lowered_runtime_macro_8616,
     runtime_helper_declaration_8616,
 )
-from .callee_argument_count_evidence import (
-    CalleeArgumentCountVerdict8616,
-    collect_callee_argument_count_evidence_8616,
-)
+from .callee_argument_width_evidence import collect_callee_argument_width_evidence_8616
 from .callee_global_object_type_surface import resolved_type_8616
 from .callee_pointer_evidence import callee_pointer_argument_is_proven_8616
 from .callsite_pointer_tables import (
@@ -56,6 +54,18 @@ from .callsite_pointer_tables import (
     materialize_callsite_pointer_table_types_8616,
 )
 from .dos_interrupt_abi import dos_interrupt_prototype_declaration_8616
+from .interprocedural_storage_contracts import (
+    StorageTrialSignedness8616,
+    StorageTrialValueClass8616,
+)
+from .interprocedural_storage_simtypes import (
+    StorageSimTypeVerdict8616,
+    storage_contract_return_type_8616,
+)
+from .interprocedural_storage_transaction import (
+    accepted_callsite_storage_binding_8616,
+    function_storage_resolution_8616,
+)
 from .return_type_evidence import caller_return_use_evidence_proves_unused_8616
 
 __all__ = [
@@ -115,6 +125,7 @@ class _KnowledgeBaseSurface8616(Protocol):
 class _ProjectSurface8616(Protocol):
     """Minimal project surface used for exact target lookup."""
 
+    arch: Arch
     kb: _KnowledgeBaseSurface8616
 
 
@@ -410,13 +421,18 @@ def _summary_arg_widths_8616(summary: CallsiteSummary8616) -> tuple[int, ...] | 
     return normalized_widths
 
 
-def _scalar_decl_for_width_8616(width: int, name: str) -> str:
+def _scalar_decl_for_width_8616(
+    width: int,
+    name: str,
+    signedness: StorageTrialSignedness8616 = StorageTrialSignedness8616.UNSIGNED,
+) -> str:
     """Render a target-width scalar argument declaration."""
+    prefix = "" if signedness is StorageTrialSignedness8616.SIGNED else "unsigned "
     if width >= 4:
-        return f"unsigned long {name}"
+        return f"{prefix}long {name}"
     if width == 1:
-        return f"unsigned char {name}"
-    return f"unsigned short {name}"
+        return f"{prefix}char {name}"
+    return f"{prefix}short {name}"
 
 
 def _argument_type_8616(argument: object, *, codegen: object | None = None) -> object:
@@ -449,6 +465,7 @@ def _argument_decl_8616(
     index: int,
     *,
     pointer_proven: bool,
+    signedness: StorageTrialSignedness8616 = StorageTrialSignedness8616.UNSIGNED,
 ) -> str:
     """Render pointer class from typed AST evidence, otherwise summary width."""
     argument_type = _argument_type_8616(argument, codegen=codegen)
@@ -461,7 +478,7 @@ def _argument_decl_8616(
         return cast(str, SimTypePointer(argument_type.elem_type).c_repr(name=f"a{index}"))
     if pointer_proven:
         return f"void *a{index}"
-    return _scalar_decl_for_width_8616(width, f"a{index}")
+    return _scalar_decl_for_width_8616(width, f"a{index}", signedness)
 
 
 def _argument_forward_declarations_8616(codegen: object, argument: object) -> tuple[str, ...]:
@@ -497,6 +514,21 @@ def _joined_return_type_8616(
 ) -> str | None:
     """Join caller-use evidence for one exact target or refuse ABI conflict."""
     if isinstance(summary.target_addr, int):
+        storage_resolution = function_storage_resolution_8616(
+            project,
+            summary.target_addr,
+        )
+        if storage_resolution is not None:
+            if storage_resolution.contract is None:
+                return None
+            storage_return = storage_contract_return_type_8616(
+                storage_resolution.contract,
+                cast(_ProjectSurface8616, project).arch,
+            )
+            if storage_return.verdict is StorageSimTypeVerdict8616.REFUSED:
+                return None
+            if storage_return.accepted:
+                return storage_return.c_type if isinstance(storage_return.c_type, str) else None
         try:
             function = cast(_ProjectSurface8616, project).kb.functions.function(
                 addr=summary.target_addr,
@@ -589,6 +621,29 @@ def _prototype_decl_8616(
     """Build one declaration when name, arity, widths, and arguments agree."""
     name = _call_name_8616(node)
     widths = _summary_arg_widths_8616(summary)
+    storage_contract = None
+    if isinstance(summary.target_addr, int):
+        storage_resolution = function_storage_resolution_8616(project, summary.target_addr)
+        if storage_resolution is not None and storage_resolution.contract is None:
+            return None
+        storage_contract = None if storage_resolution is None else storage_resolution.contract
+        if storage_contract is not None:
+            binding = accepted_callsite_storage_binding_8616(
+                project,
+                summary.target_addr,
+                summary.callsite_addr,
+            )
+            if binding is None:
+                return None
+            widths = tuple(slot.width for slot in storage_contract.inputs)
+        else:
+            width_contract = collect_callee_argument_width_evidence_8616(
+                project, summary.target_addr
+            )
+            if width_contract.raw_fact_count > 0:
+                widths = (
+                    width_contract.argument_widths if width_contract.closes_census else None
+                )
     arguments = tuple(cast(Sequence[object], node.args or ()))
     if name is None or widths is None or len(arguments) != len(widths):
         return None
@@ -598,10 +653,16 @@ def _prototype_decl_8616(
             argument,
             width,
             index,
-            pointer_proven=callee_pointer_argument_is_proven_8616(
-                project,
-                name,
-                index,
+            pointer_proven=(
+                storage_contract.inputs[index].value_class
+                is StorageTrialValueClass8616.POINTER
+                if storage_contract is not None
+                else callee_pointer_argument_is_proven_8616(project, name, index)
+            ),
+            signedness=(
+                storage_contract.inputs[index].signedness
+                if storage_contract is not None
+                else StorageTrialSignedness8616.UNSIGNED
             ),
         )
         for index, (argument, width) in enumerate(zip(arguments, widths, strict=True))
@@ -623,20 +684,21 @@ def _has_typed_aggregate_pointer_argument_8616(node: CFunctionCall) -> bool:
     return False
 
 
-def _program_arity_conflict_decl_8616(
+def _program_arity_fallback_decl_8616(
     project: object,
     summary: CallsiteSummary8616,
     name: str,
     return_type: str,
 ) -> str | None:
-    """Return an unprototyped declaration for a proven cross-caller arity conflict."""
+    """Return an unprototyped declaration for a discovered but open arity census."""
     if not isinstance(summary.target_addr, int):
         return None
-    evidence = collect_callee_argument_count_evidence_8616(
+    width_evidence = collect_callee_argument_width_evidence_8616(
         project,
         summary.target_addr,
     )
-    if evidence.verdict is not CalleeArgumentCountVerdict8616.CONFLICT:
+    evidence = width_evidence.required_count_evidence
+    if evidence.raw_fact_count <= 0 or evidence.closes_census:
         return None
     return f"{return_type} {name}();"
 
@@ -780,7 +842,7 @@ def materialize_callsite_prototype_declarations_8616(project: object, codegen: o
             declaration = inferred_declaration if summary.logical_arg_widths else None
             if declaration is None:
                 declaration = (
-                    _program_arity_conflict_decl_8616(
+                    _program_arity_fallback_decl_8616(
                         project,
                         summary,
                         call_name,

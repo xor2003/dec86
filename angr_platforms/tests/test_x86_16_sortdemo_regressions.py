@@ -665,10 +665,7 @@ def test_sortd_drawframe_sidecar_free_materializes_segmented_buffer_calls(
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
-    assert re.search(
-        r"short sub_101f0\([^)]*,[^)]*,[^)]*,[^)]*\)",
-        result.stdout,
-    )
+    assert re.search(r"void sub_101f0\([^)]*,[^)]*,[^)]*,[^)]*\)", result.stdout)
     final_body = _function_body_from_stdout(result.stdout, "void sub_101f0")
     assert "char local_52[80];" in final_body
     assert "unsigned short local_2;" in final_body
@@ -680,7 +677,8 @@ def test_sortd_drawframe_sidecar_free_materializes_segmented_buffer_calls(
     assert re.search(r"for \(; local_2 <= \w+; local_2 = local_2 \+ 1\)", final_body)
     assert "SEG_U" not in final_body
     assert "vvar_" not in final_body
-    assert re.search(r"\breturn\s+[^;]+;", final_body)
+    assert re.search(r"\breturn\s*;", final_body)
+    assert not re.search(r"\breturn\s+[^;]+;", final_body)
 
 
 def test_sortd_reinitbars_sidecar_free_materializes_indexed_global_copy(
@@ -714,7 +712,7 @@ def test_sortd_reinitbars_sidecar_free_materializes_indexed_global_copy(
     assert "gcc syntax check failed:" not in combined
     final_body = _function_body_from_stdout(result.stdout, "void sub_10678")
     assert final_body.count("unsigned short local_2;") == 1
-    assert "g_0BA6 = sub_1137e();" in final_body
+    assert final_body.count("sub_1137e();") == 1 and "g_0BA6 = sub_1137e();" in final_body
     assert "g_0B4C[local_2] = g_08F0[local_2];" in final_body
     assert final_body.count("sub_106c8(local_2);") == 1
     assert "local_2 += 1;" in final_body

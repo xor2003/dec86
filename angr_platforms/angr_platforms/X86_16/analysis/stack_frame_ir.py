@@ -7,14 +7,83 @@ Forbidden: inventing locals/args without segmented SS:BP/SP evidence.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
-from ..ir.core import IRAddress, IRFunctionArtifact, MemSpace
+from ..ir.core import IRAddress, IRFunctionArtifact, IRInstr, IRValue, MemSpace
 
 __all__ = [
+    "BPFrameCoordinateEvidence8616",
+    "FrameCoordinateStats8616",
+    "FrameCoordinateStatus8616",
     "FrameAccessArtifact",
     "StackFrameSlot",
     "build_x86_16_ir_frame_access_artifact",
 ]
+
+
+class FrameCoordinateStatus8616(str, Enum):
+    """Typed state of the BP-to-entry-SP coordinate proof."""
+
+    UNKNOWN = "unknown"
+    PROVEN = "proven"
+    CONFLICT = "conflict"
+
+
+@dataclass(frozen=True, slots=True)
+class FrameCoordinateStats8616:
+    """Closed evidence accounting for one frame-coordinate proof."""
+
+    raw_fact_count: int = 0
+    normalized_fact_count: int = 0
+    classified_fact_count: int = 0
+    materialized_count: int = 0
+    failure_count: int = 0
+
+    @property
+    def complete(self) -> bool:
+        """Return whether every normalized relation has one outcome."""
+        return (
+            self.raw_fact_count >= self.normalized_fact_count
+            and self.normalized_fact_count == self.classified_fact_count
+            and self.classified_fact_count == self.materialized_count + self.failure_count
+        )
+
+    def to_dict(self) -> dict[str, int]:
+        """Return the mandatory five evidence counters."""
+        return {
+            "raw_fact_count": self.raw_fact_count,
+            "normalized_fact_count": self.normalized_fact_count,
+            "classified_fact_count": self.classified_fact_count,
+            "materialized_count": self.materialized_count,
+            "failure_count": self.failure_count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BPFrameCoordinateEvidence8616:
+    """Proven relation from machine BP to angr's entry-SP coordinate."""
+
+    status: FrameCoordinateStatus8616 = FrameCoordinateStatus8616.UNKNOWN
+    bp_entry_sp_delta: int | None = None
+    detail: str = "no BP-relative stack access"
+    stats: FrameCoordinateStats8616 = FrameCoordinateStats8616()
+
+    @property
+    def complete(self) -> bool:
+        """Return whether counters close and the typed state is coherent."""
+        if not self.stats.complete:
+            return False
+        return (self.status is FrameCoordinateStatus8616.PROVEN) == isinstance(self.bp_entry_sp_delta, int)
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize the coordinate proof for diagnostics and gates."""
+        return {
+            "status": self.status.value,
+            "bp_entry_sp_delta": self.bp_entry_sp_delta,
+            "detail": self.detail,
+            "stats": self.stats.to_dict(),
+            "complete": self.complete,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,16 +111,19 @@ class FrameAccessArtifact:
 
     slots: tuple[StackFrameSlot, ...] = ()
     refusals: tuple[str, ...] = ()
+    bp_coordinate: BPFrameCoordinateEvidence8616 = BPFrameCoordinateEvidence8616()
 
     def to_dict(self) -> dict[str, object]:
         """Serialize the frame-access artifact for diagnostics and artifacts."""
         return {
             "slots": [item.to_dict() for item in self.slots],
             "refusals": list(self.refusals),
+            "bp_coordinate": self.bp_coordinate.to_dict(),
         }
 
 
 def _slot_role(base: str, offset: int) -> str:
+    """Classify one exact frame slot without naming it."""
     if base == "bp":
         if offset >= 4:
             return "arg"
@@ -59,6 +131,89 @@ def _slot_role(base: str, offset: int) -> str:
             return "local"
         return "frame_meta"
     return "sp_relative"
+
+
+def _writes_register_8616(instruction: IRInstr, register: str) -> bool:
+    """Return whether one typed instruction writes the exact register."""
+    destination = instruction.dst
+    return isinstance(destination, IRValue) and destination.space is MemSpace.REG and destination.name == register
+
+
+def _bp_access_8616(instruction: IRInstr) -> bool:
+    """Return whether one instruction accesses exact SS:BP storage."""
+    return any(
+        isinstance(argument, IRAddress) and argument.space is MemSpace.SS and argument.base == ("bp",)
+        for argument in instruction.args
+    )
+
+
+def _sp_relative_value_8616(instruction: IRInstr) -> IRValue | None:
+    """Return the sole typed SP-relative source of a register move."""
+    if instruction.op != "MOV" or len(instruction.args) != 1:
+        return None
+    source = instruction.args[0]
+    if isinstance(source, IRValue) and source.space is MemSpace.REG and source.name == "sp":
+        return source
+    return None
+
+
+def _build_bp_coordinate_evidence_8616(artifact: IRFunctionArtifact) -> BPFrameCoordinateEvidence8616:
+    """Prove BP's entry-SP delta from typed register effects before first use."""
+    has_bp_access = any(_bp_access_8616(instruction) for block in artifact.blocks for instruction in block.instrs)
+    if not has_bp_access:
+        return BPFrameCoordinateEvidence8616()
+
+    entry_block = next((block for block in artifact.blocks if block.addr == artifact.function_addr), None)
+    if entry_block is None:
+        stats = FrameCoordinateStats8616(1, 1, 1, 0, 1)
+        return BPFrameCoordinateEvidence8616(
+            detail="function entry block is unavailable",
+            stats=stats,
+        )
+
+    sp_delta = 0
+    sp_delta_known = True
+    candidates: list[int] = []
+    for instruction in entry_block.instrs:
+        if _bp_access_8616(instruction):
+            break
+        if _writes_register_8616(instruction, "sp"):
+            source = _sp_relative_value_8616(instruction)
+            if source is None or not sp_delta_known:
+                sp_delta_known = False
+            else:
+                sp_delta += source.offset
+            continue
+        if _writes_register_8616(instruction, "bp"):
+            source = _sp_relative_value_8616(instruction)
+            if source is not None and sp_delta_known:
+                candidates.append(sp_delta + source.offset)
+
+    unique_candidates = tuple(sorted(set(candidates)))
+    if len(unique_candidates) == 1:
+        stats = FrameCoordinateStats8616(len(candidates), 1, 1, 1, 0)
+        return BPFrameCoordinateEvidence8616(
+            status=FrameCoordinateStatus8616.PROVEN,
+            bp_entry_sp_delta=unique_candidates[0],
+            detail="typed entry effects establish BP from a known entry-SP delta",
+            stats=stats,
+        )
+    normalized_count = max(1, len(unique_candidates))
+    stats = FrameCoordinateStats8616(
+        raw_fact_count=max(1, len(candidates)),
+        normalized_fact_count=normalized_count,
+        classified_fact_count=normalized_count,
+        failure_count=normalized_count,
+    )
+    return BPFrameCoordinateEvidence8616(
+        status=(FrameCoordinateStatus8616.CONFLICT if len(unique_candidates) > 1 else FrameCoordinateStatus8616.UNKNOWN),
+        detail=(
+            "conflicting typed BP-to-entry-SP relations"
+            if len(unique_candidates) > 1
+            else "BP-relative storage has no proven entry-SP relation"
+        ),
+        stats=stats,
+    )
 
 
 def build_x86_16_ir_frame_access_artifact(artifact: IRFunctionArtifact) -> FrameAccessArtifact:
@@ -89,6 +244,7 @@ def build_x86_16_ir_frame_access_artifact(artifact: IRFunctionArtifact) -> Frame
         return FrameAccessArtifact(
             slots=tuple(sorted(slots.values(), key=lambda item: (item.base, item.offset, item.size))),
             refusals=tuple(sorted(set(refusals))),
+            bp_coordinate=_build_bp_coordinate_evidence_8616(artifact),
         )
 
     return _impl()

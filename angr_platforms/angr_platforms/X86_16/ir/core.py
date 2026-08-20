@@ -19,6 +19,7 @@ __all__ = [
     "SegmentOrigin",
     "IRAddress",
     "IRBinaryValue",
+    "IRCallStackEffect8616",
     "is_stack_address_8616",
     "IRAtom",
     "IRBlock",
@@ -128,6 +129,7 @@ class IRAddress:
     status: AddressStatus = AddressStatus.UNKNOWN
     segment_origin: SegmentOrigin = SegmentOrigin.UNKNOWN
     expr: tuple[str, ...] | None = None
+    version: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Serialize this typed IR address for diagnostics and artifacts."""
@@ -140,6 +142,35 @@ class IRAddress:
             "status": self.status.value,
             "segment_origin": self.segment_origin.value,
             "expr": self.expr,
+            "version": self.version,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class IRCallStackEffect8616:
+    """Typed net stack and escape effect for one call boundary."""
+
+    net_stack_delta: int | None = None
+    preserved_ranges: tuple[IRAddress, ...] = ()
+    escaped_ranges: tuple[IRAddress, ...] = ()
+    complete: bool = False
+
+    def preserves(self, address: IRAddress) -> bool:
+        """Return whether this complete call effect preserves one exact range."""
+        identity = (address.space, address.base, address.offset, address.size)
+        preserved = {
+            (item.space, item.base, item.offset, item.size) for item in self.preserved_ranges
+        }
+        escaped = {(item.space, item.base, item.offset, item.size) for item in self.escaped_ranges}
+        return self.complete and self.net_stack_delta == 0 and identity in preserved and identity not in escaped
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize this call effect for diagnostics and clean workers."""
+        return {
+            "net_stack_delta": self.net_stack_delta,
+            "preserved_ranges": [item.to_dict() for item in self.preserved_ranges],
+            "escaped_ranges": [item.to_dict() for item in self.escaped_ranges],
+            "complete": self.complete,
         }
 
 
@@ -214,6 +245,7 @@ class IRInstr:
     args: tuple[IRAtom, ...]
     size: int = 0
     addr: int | None = None
+    call_stack_effect: IRCallStackEffect8616 | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Serialize this typed IR instruction for diagnostics and artifacts."""
@@ -223,6 +255,9 @@ class IRInstr:
             "args": [_atom_to_dict(arg) for arg in self.args],
             "size": self.size,
             "addr": self.addr,
+            "call_stack_effect": (
+                None if self.call_stack_effect is None else self.call_stack_effect.to_dict()
+            ),
         }
 
 

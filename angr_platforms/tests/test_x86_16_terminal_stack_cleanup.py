@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from angr.errors import SimEngineError
+from angr_platforms.X86_16.semantics.terminal_stack_cleanup import (
+    collect_terminal_stack_cleanup_evidence_8616,
+    terminal_stack_cleanup_at_address_8616,
+)
+
+
+class _Factory:
+    def __init__(self, blocks: dict[int, object]) -> None:
+        self.blocks = blocks
+
+    def block(self, address: int, *, opt_level: int) -> object:
+        assert opt_level == 0
+        return self.blocks[address]
+
+
+def _insn(address: int, mnemonic: str, *, size: int = 1, target: int | None = None) -> object:
+    operands = () if target is None else (SimpleNamespace(type=2, imm=target),)
+    return SimpleNamespace(address=address, size=size, mnemonic=mnemonic, operands=operands)
+
+
+def _ret(address: int, cleanup: int) -> object:
+    return SimpleNamespace(
+        address=address,
+        size=3,
+        mnemonic="ret",
+        operands=(SimpleNamespace(type=2, imm=cleanup),),
+    )
+
+
+def test_terminal_stack_cleanup_refuses_conflicting_return_paths() -> None:
+    branch = _insn(0x1000, "je", size=2, target=0x1010)
+    blocks = {
+        0x1000: SimpleNamespace(capstone=SimpleNamespace(insns=(branch,))),
+        0x1002: SimpleNamespace(capstone=SimpleNamespace(insns=(_ret(0x1002, 4),))),
+        0x1010: SimpleNamespace(capstone=SimpleNamespace(insns=(_ret(0x1010, 6),))),
+    }
+    project = SimpleNamespace(factory=_Factory(blocks))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set=set(blocks))
+
+    evidence = collect_terminal_stack_cleanup_evidence_8616(project, function)
+
+    assert evidence.complete is True
+    assert evidence.cleanup_amounts == frozenset({4, 6})
+    assert evidence.consistent_cleanup is None
+
+
+def test_terminal_stack_cleanup_accepts_consistent_return_paths() -> None:
+    branch = _insn(0x1000, "je", size=2, target=0x1010)
+    blocks = {
+        0x1000: SimpleNamespace(capstone=SimpleNamespace(insns=(branch,))),
+        0x1002: SimpleNamespace(capstone=SimpleNamespace(insns=(_ret(0x1002, 4),))),
+        0x1010: SimpleNamespace(capstone=SimpleNamespace(insns=(_ret(0x1010, 4),))),
+    }
+    project = SimpleNamespace(factory=_Factory(blocks))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set=set(blocks))
+
+    evidence = collect_terminal_stack_cleanup_evidence_8616(project, function)
+
+    assert evidence.complete is True
+    assert evidence.consistent_cleanup == 4
+    assert evidence.raw_fact_count == evidence.materialized_count == 2
+
+
+def test_terminal_stack_cleanup_refuses_incomplete_successor() -> None:
+    branch = _insn(0x1000, "je", size=2, target=0x1010)
+    blocks = {
+        0x1000: SimpleNamespace(capstone=SimpleNamespace(insns=(branch,))),
+        0x1002: SimpleNamespace(capstone=SimpleNamespace(insns=(_ret(0x1002, 4),))),
+    }
+    project = SimpleNamespace(factory=_Factory(blocks))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set=set(blocks))
+
+    evidence = collect_terminal_stack_cleanup_evidence_8616(project, function)
+
+    assert evidence.complete is False
+    assert evidence.consistent_cleanup is None
+    assert evidence.failure_count == 1
+
+
+def test_bodyless_stack_cleanup_requires_direct_terminal_block() -> None:
+    direct_project = SimpleNamespace(
+        factory=_Factory(
+            {0x2000: SimpleNamespace(capstone=SimpleNamespace(insns=(_ret(0x2000, 8),)))}
+        )
+    )
+    branch_project = SimpleNamespace(
+        factory=_Factory(
+            {0x2000: SimpleNamespace(capstone=SimpleNamespace(insns=(_insn(0x2000, "jmp", target=0x2010),)))}
+        )
+    )
+
+    assert terminal_stack_cleanup_at_address_8616(direct_project, 0x2000).consistent_cleanup == 8
+    assert terminal_stack_cleanup_at_address_8616(branch_project, 0x2000).complete is False
+
+
+def test_bodyless_stack_cleanup_refuses_inaccessible_decode() -> None:
+    class _MissingFactory:
+        def block(self, _address: int, *, opt_level: int) -> object:
+            assert opt_level == 0
+            raise SimEngineError("No bytes in memory")
+
+    evidence = terminal_stack_cleanup_at_address_8616(
+        SimpleNamespace(factory=_MissingFactory()),
+        0x11222,
+    )
+
+    assert evidence.complete is False
+    assert evidence.raw_fact_count == evidence.failure_count == 1
+    assert evidence.consistent_cleanup is None

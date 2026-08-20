@@ -17,6 +17,7 @@ def _summary(**overrides: tuple[str, ...]) -> SimpleNamespace:
     fields = {
         "def_use_issues": (),
         "missing_required_calls": (),
+        "callsite_multiplicity_issues": (),
         "call_interface_issues": (),
         "call_argument_class_issues": (),
         "function_parameter_issues": (),
@@ -62,6 +63,14 @@ def test_introduced_scope_treats_duplicate_issue_as_a_new_failure() -> None:
         before=_summary(call_interface_issues=(issue,)),
         scope=TailSemanticFailureScope8616.INTRODUCED,
     ) == {"call_interfaces": (issue,)}
+
+
+def test_callsite_multiplicity_keeps_its_own_semantic_failure_family() -> None:
+    issue = "callsite-multiplicity:duplicate-final-callsite:callsite=0x1010"
+
+    assert collect_tail_semantic_failures_8616(
+        _summary(callsite_multiplicity_issues=(issue,)),
+    ) == {"callsite_multiplicity": (issue,)}
 
 
 def test_semantic_failure_codec_keeps_typed_families_and_issues() -> None:

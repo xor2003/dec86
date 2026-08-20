@@ -14,6 +14,7 @@ from .core import (
     IRAddress,
     IRBinaryValue,
     IRBlock,
+    IRCallStackEffect8616,
     IRCondition,
     IRFunctionArtifact,
     IRInstr,
@@ -42,6 +43,13 @@ from .segment_state import (
 )
 from .ssa import SSABinding, SSABlock, build_x86_16_block_local_ssa
 from .ssa_function import SSAFunctionArtifact, SSAIncomingValue, SSAPhiNode, build_x86_16_function_ssa
+from .ssa_memory_contracts import (
+    SSAFunctionMemoryResult8616,
+    SSAMemoryBinding8616,
+    SSAMemoryIncomingValue8616,
+    SSAMemoryPhiNode8616,
+    SSAMemoryStats8616,
+)
 from .string_effects import (
     IRStringEffectArtifact,
     IRStringEffectRecord,
@@ -58,6 +66,7 @@ __all__ = [
     "IRBlock",
     "IRAddress",
     "IRBinaryValue",
+    "IRCallStackEffect8616",
     "IRCondition",
     "IRFunctionArtifact",
     "IRInstr",
@@ -81,6 +90,11 @@ __all__ = [
     "SSAFunctionArtifact",
     "SSAIncomingValue",
     "SSAPhiNode",
+    "SSAFunctionMemoryResult8616",
+    "SSAMemoryBinding8616",
+    "SSAMemoryIncomingValue8616",
+    "SSAMemoryPhiNode8616",
+    "SSAMemoryStats8616",
     "IRStringEffectArtifact",
     "IRStringEffectRecord",
     "apply_x86_16_vex_ir_artifact",

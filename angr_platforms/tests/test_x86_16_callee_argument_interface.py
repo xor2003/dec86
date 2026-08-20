@@ -84,6 +84,72 @@ def test_callee_argument_interface_refuses_conflicting_arity_without_mutation() 
     assert len(cfunc.arg_list) == 1
 
 
+def test_callee_argument_interface_refuses_incomplete_consistent_cache_without_mutation() -> None:
+    evidence = CalleeArgumentCountEvidence8616(
+        target_addr=0x1000,
+        verdict=CalleeArgumentCountVerdict8616.CONSISTENT,
+        argument_count=0,
+        raw_fact_count=2,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=1,
+        failure_count=1,
+    )
+    cfunc = SimpleNamespace(addr=0x1000, arg_list=[object()])
+    project = SimpleNamespace(
+        _inertia_callee_argument_count_evidence_8616={0x1000: evidence},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc)
+
+    result = reconcile_callee_argument_interface_8616(project, codegen, candidate_count=1)
+
+    assert evidence.closes_census is False
+    assert result.decision is CalleeArgumentInterfaceDecision8616.REFUSE
+    assert result.changed is False
+    assert len(cfunc.arg_list) == 1
+
+
+def test_callee_argument_interface_refuses_incomplete_unknown_census_without_mutation() -> None:
+    evidence = CalleeArgumentCountEvidence8616(
+        target_addr=0x1000,
+        verdict=CalleeArgumentCountVerdict8616.UNKNOWN,
+        raw_fact_count=2,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=1,
+        failure_count=1,
+    )
+    cfunc = SimpleNamespace(addr=0x1000, arg_list=[object()])
+    project = SimpleNamespace(
+        _inertia_callee_argument_count_evidence_8616={0x1000: evidence},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc)
+
+    result = reconcile_callee_argument_interface_8616(project, codegen, candidate_count=1)
+
+    assert result.decision is CalleeArgumentInterfaceDecision8616.REFUSE
+    assert result.changed is False
+    assert len(cfunc.arg_list) == 1
+
+
+def test_callee_argument_interface_accepts_body_evidence_without_discovered_callers() -> None:
+    evidence = CalleeArgumentCountEvidence8616(
+        target_addr=0x1000,
+        verdict=CalleeArgumentCountVerdict8616.UNKNOWN,
+    )
+    cfunc = SimpleNamespace(addr=0x1000, arg_list=[object()])
+    project = SimpleNamespace(
+        _inertia_callee_argument_count_evidence_8616={0x1000: evidence},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc)
+
+    result = reconcile_callee_argument_interface_8616(project, codegen, candidate_count=1)
+
+    assert result.decision is CalleeArgumentInterfaceDecision8616.ACCEPT
+    assert result.changed is False
+    assert len(cfunc.arg_list) == 1
+
+
 def test_positive_bp_lowering_clears_stale_unused_header_from_binary_zero_evidence() -> None:
     arch = Arch86_16()
     word_type = SimTypeShort(False).with_arch(arch)

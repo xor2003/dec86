@@ -10,6 +10,25 @@ CLI/reporting evidence.
 
 from __future__ import annotations
 
+from .carry_borrow_pipeline import (
+    CarryBorrowWideningPipeline8616,
+    apply_carry_borrow_widening_pipeline_8616,
+    build_carry_borrow_widening_pipeline_8616,
+)
+from .carry_borrow_storage import (
+    WideCarryBorrowStorage8616,
+    WideCarryBorrowStorageEvidence8616,
+    WideCarryBorrowStorageFailure8616,
+    WideCarryBorrowStorageVerdict8616,
+    widen_carry_borrow_storage_8616,
+)
+from .carry_borrow_values import (
+    WideCarryBorrowEvidence8616,
+    WideCarryBorrowFailure8616,
+    WideCarryBorrowValue8616,
+    WideCarryBorrowVerdict8616,
+    widen_carry_borrow_values_8616,
+)
 from .register_widening import (
     RegisterWideningCandidate,
     can_join_adjacent_register_slices,
@@ -52,8 +71,19 @@ __all__ = [
     "WideningCandidate",
     "WideningPipelineSpec",
     "WideningProof",
+    "CarryBorrowWideningPipeline8616",
+    "WideCarryBorrowEvidence8616",
+    "WideCarryBorrowFailure8616",
+    "WideCarryBorrowStorage8616",
+    "WideCarryBorrowStorageEvidence8616",
+    "WideCarryBorrowStorageFailure8616",
+    "WideCarryBorrowStorageVerdict8616",
+    "WideCarryBorrowValue8616",
+    "WideCarryBorrowVerdict8616",
     "WordProjectionRecompositionStats8616",
     "analyze_adjacent_storage_slices",
+    "apply_carry_borrow_widening_pipeline_8616",
+    "build_carry_borrow_widening_pipeline_8616",
     "can_join_adjacent_register_slices",
     "can_join_adjacent_storage_slices",
     "collect_bp_stack_access_widths_from_instructions_8616",
@@ -68,4 +98,6 @@ __all__ = [
     "prove_adjacent_storage_slices",
     "prove_contained_stack_subview",
     "run_typed_widening_pass_8616",
+    "widen_carry_borrow_values_8616",
+    "widen_carry_borrow_storage_8616",
 ]

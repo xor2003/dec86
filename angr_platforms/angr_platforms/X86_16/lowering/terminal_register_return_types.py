@@ -23,10 +23,7 @@ from archinfo import Arch
 from ..annotations import ANNOTATION_KEY
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..callsite_summary import CallerReturnUseVerdict8616
-from ..semantics.terminal_register_returns import (
-    TerminalAxReturnLane8616,
-    terminal_ax_return_lane_states_8616,
-)
+from ..semantics.terminal_return_storage import TerminalReturnStorage8616, terminal_return_storage_8616
 from .return_type_evidence import proven_function_result_observation_8616
 from .unused_void_return_types import materialize_unused_caller_void_codegen_type_8616
 
@@ -178,10 +175,10 @@ def apply_terminal_register_return_type_evidence_8616(
     ):
         return TerminalRegisterReturnTypeResult8616(False, TerminalRegisterReturnTypeStats8616())
 
-    states = terminal_ax_return_lane_states_8616(project, function)
-    normalized_count = int(bool(states))
+    storage = terminal_return_storage_8616(project, function)
+    normalized_count = int(storage is not None)
     if (
-        states != frozenset({TerminalAxReturnLane8616.WORD})
+        storage is not TerminalReturnStorage8616.AX
         or proven_function_result_observation_8616(project, function_surface.addr)
         is not CallerReturnUseVerdict8616.USED
     ):
@@ -261,14 +258,12 @@ def materialize_terminal_register_return_type_8616(
         result = TerminalRegisterReturnTypeResult8616(False, TerminalRegisterReturnTypeStats8616())
         codegen_surface._inertia_terminal_register_return_type_result_8616 = result
         return result
-    states = terminal_ax_return_lane_states_8616(project, function)
+    storage = terminal_return_storage_8616(project, function)
     if os.environ.get("INERTIA_DEBUG_TERMINAL_RETURN_TYPES") == "1":
-        _LOGGER.warning("terminal AX return type states: addr=%#x states=%s", cfunc.addr, tuple(states))
-    is_word = TerminalAxReturnLane8616.WORD in states and TerminalAxReturnLane8616.LOW not in states
-    if not is_word:
+        _LOGGER.warning("terminal return storage: addr=%#x storage=%s", cfunc.addr, storage)
+    if storage is not TerminalReturnStorage8616.AX:
         result = TerminalRegisterReturnTypeResult8616(
-            False,
-            TerminalRegisterReturnTypeStats8616(1, int(bool(states)), 0, 0, 0),
+            False, TerminalRegisterReturnTypeStats8616(1, int(storage is not None), 0, 0, 0)
         )
         codegen_surface._inertia_terminal_register_return_type_result_8616 = result
         return result

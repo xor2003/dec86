@@ -32,7 +32,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Protocol, cast, overload
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimType, SimTypeInt, SimTypePointer
+from angr.sim_type import SimType, SimTypeChar, SimTypeLong, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from archinfo import Arch
 
@@ -82,8 +82,11 @@ def _stack_slot_identity_from_fact_8616(fact: AliasStorageFacts) -> _StackSlotId
     return cast(_StackSlotIdentityLike, identity[1])
 
 
-def _typed_bp_frame_slots_8616(codegen: object) -> tuple[StackFrameSlot, ...]:
-    """Return typed SS:BP local/argument slots published by the IR boundary."""
+def _typed_bp_frame_slots_8616(
+    codegen: object,
+    required_ranges: frozenset[tuple[int, int]] | None = None,
+) -> tuple[StackFrameSlot, ...]:
+    """Return typed SS:BP slots in the materializer's explicit evidence scope."""
     artifact = _dynamic_boundary_attr_8616(codegen, "_inertia_vex_ir_frame")
     if not isinstance(artifact, FrameAccessArtifact):
         return ()
@@ -91,6 +94,7 @@ def _typed_bp_frame_slots_8616(codegen: object) -> tuple[StackFrameSlot, ...]:
         slot
         for slot in artifact.slots
         if slot.base == "bp" and slot.role in {"local", "arg"} and slot.size > 0
+        and (required_ranges is None or (slot.offset, slot.size) in required_ranges)
     )
 
 
@@ -282,8 +286,16 @@ def _stack_object_name(offset: int, codegen: object | None = None) -> str:
 
 
 def _stack_type_for_size(size: int, *, codegen: object | None = None) -> SimType:
-    """Return SimTypeInt for the given byte size with arch attached if available."""
-    t = SimTypeInt(signed=False)
+    """Return one exact-width unsigned scalar type or refuse unsupported widths."""
+    scalar_types: dict[int, SimType] = {
+        1: SimTypeChar(signed=False),
+        2: SimTypeShort(signed=False),
+        4: SimTypeLong(signed=False),
+    }
+    try:
+        t = scalar_types[size]
+    except KeyError as exc:
+        raise ValueError(f"unsupported scalar stack width {size}") from exc
     if codegen is not None:
         project = _dynamic_boundary_attr_8616(codegen, "project")
         cfunc = _dynamic_boundary_attr_8616(codegen, "cfunc")
@@ -462,8 +474,10 @@ def materialize_stack_cvar_at_offset_from_facts_8616(
 def lower_stack_accesses_from_alias_facts_8616(
     codegen: object,
     alias_facts: list[object],
+    *,
+    required_bp_ranges: frozenset[tuple[int, int]] | None = None,
 ) -> StackLoweringResult:
-    """Lower alias-proven BP stack facts into CVariable surfaces."""
+    """Lower alias-proven BP facts into angr entry-SP CVariable surfaces."""
 
     def _impl() -> StackLoweringResult:
         """Primary stack lowering: consume alias facts, not linear expression patterns.
@@ -479,7 +493,7 @@ def lower_stack_accesses_from_alias_facts_8616(
         NOT materialization.
         """
         bindings = build_stack_variable_bindings_from_alias_facts_8616(alias_facts)
-        typed_frame_slots = _typed_bp_frame_slots_8616(codegen)
+        typed_frame_slots = _typed_bp_frame_slots_8616(codegen, required_bp_ranges)
         unbound_typed_frame_slots = _unbound_typed_frame_slots_8616(bindings, typed_frame_slots)
         stable_stack_fact_count = len(
             [

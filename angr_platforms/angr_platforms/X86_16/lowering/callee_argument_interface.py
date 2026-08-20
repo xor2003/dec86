@@ -17,11 +17,8 @@ from angr.analyses.decompiler.structured_codegen.c import CVariable
 from angr.sim_type import SimType, SimTypeFunction, SimTypeShort
 from angr.sim_variable import SimStackVariable
 
-from .callee_argument_count_evidence import (
-    CalleeArgumentCountEvidence8616,
-    CalleeArgumentCountVerdict8616,
-    collect_callee_argument_count_evidence_8616,
-)
+from .callee_argument_count_evidence import CalleeArgumentCountEvidence8616, CalleeArgumentCountVerdict8616
+from .callee_argument_width_evidence import collect_callee_argument_width_evidence_8616
 from .near_pointer_type import near_pointer_type_8616
 from .stack_prototype_materialization import materialize_exact_trailing_stack_argument_8616
 
@@ -315,15 +312,17 @@ def reconcile_callee_argument_interface_8616(
     """Join a candidate header with all available binary caller evidence."""
     typed_codegen = cast(_CodegenSurface8616, codegen)
     cfunc = typed_codegen.cfunc
+    storage_evidence = collect_callee_argument_width_evidence_8616(
+        project, -1 if cfunc is None else cfunc.addr
+    )
+    evidence = storage_evidence.required_count_evidence
     if cfunc is None:
-        evidence = collect_callee_argument_count_evidence_8616(project, -1)
         return CalleeArgumentInterfaceResult8616(
             evidence,
             CalleeArgumentInterfaceDecision8616.REFUSE,
         )
-    evidence = collect_callee_argument_count_evidence_8616(project, cfunc.addr)
     typed_codegen._inertia_callee_argument_count_evidence_8616 = evidence
-    if evidence.verdict is CalleeArgumentCountVerdict8616.CONFLICT:
+    if evidence.raw_fact_count > 0 and not storage_evidence.closes_census:
         return CalleeArgumentInterfaceResult8616(evidence, CalleeArgumentInterfaceDecision8616.REFUSE)
     if evidence.verdict is not CalleeArgumentCountVerdict8616.CONSISTENT:
         return CalleeArgumentInterfaceResult8616(evidence, CalleeArgumentInterfaceDecision8616.ACCEPT)

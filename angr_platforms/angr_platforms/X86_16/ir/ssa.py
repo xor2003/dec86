@@ -9,11 +9,14 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from .core import IRAtom, IRBlock, IRCondition, IRInstr, IRValue, MemSpace
+from .core import IRAtom, IRBinaryValue, IRBlock, IRCondition, IRInstr, IRValue, MemSpace
 
 __all__ = ["SSABinding", "SSABlock", "build_x86_16_block_local_ssa"]
+
+_VersionKey = tuple[str, str | None, int]
+_TemporarySnapshots = dict[int, IRValue]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,51 +55,114 @@ class SSABlock:
         }
 
 
-def _version_key(value: IRValue) -> tuple[str, str | None, int]:
+def _version_key(value: IRValue) -> _VersionKey:
     return (value.space.value, value.name, value.offset)
 
 
 def _versioned(value: IRValue, version: int) -> IRValue:
-    return IRValue(
-        space=value.space,
-        name=value.name,
-        offset=value.offset,
-        const=value.const,
-        size=value.size,
-        version=version,
-        expr=value.expr,
+    """Assign one SSA version without dropping value provenance."""
+    return replace(value, version=version)
+
+
+def _rewrite_binary_value(
+    value: IRBinaryValue,
+    versions: dict[_VersionKey, int],
+    snapshots: _TemporarySnapshots,
+) -> IRBinaryValue:
+    """Rewrite both operands of one typed binary value into current SSA versions."""
+    return replace(
+        value,
+        lhs=_rewrite_value_expression(value.lhs, versions, snapshots),
+        rhs=_rewrite_value_expression(value.rhs, versions, snapshots),
     )
 
 
-def _rewrite_value(value: IRValue, versions: dict[tuple[str, str | None, int], int]) -> IRValue:
+def _rewrite_value_expression(
+    value: IRValue | IRBinaryValue,
+    versions: dict[_VersionKey, int],
+    snapshots: _TemporarySnapshots,
+) -> IRValue | IRBinaryValue:
+    """Rewrite a scalar or nested typed value expression into current SSA versions."""
+    if isinstance(value, IRBinaryValue):
+        return _rewrite_binary_value(value, versions, snapshots)
+    return _rewrite_value(value, versions, snapshots)
+
+
+def _rewrite_value(
+    value: IRValue,
+    versions: dict[_VersionKey, int],
+    snapshots: _TemporarySnapshots,
+) -> IRValue:
+    """Rewrite one value and its indexed-address provenance into current SSA versions."""
     if value.space in {MemSpace.CONST, MemSpace.UNKNOWN}:
         return value
     key = _version_key(value)
-    version = versions.get(key, 0)
-    return _versioned(value, version)
+    snapshot = None if value.source_tmp is None else snapshots.get(value.source_tmp)
+    if (
+        snapshot is not None
+        and snapshot.version is not None
+        and snapshot.size == value.size
+        and _version_key(snapshot) == key
+    ):
+        version = snapshot.version
+    else:
+        version = versions.setdefault(key, 0)
+    rewritten_index = (
+        None
+        if value.index is None
+        else _rewrite_value_expression(value.index, versions, snapshots)
+    )
+    return replace(_versioned(value, version), index=rewritten_index)
 
 
-def _rewrite_atom(atom: IRAtom, versions: dict[tuple[str, str | None, int], int]) -> IRAtom:
+def _rewrite_atom(
+    atom: IRAtom,
+    versions: dict[_VersionKey, int],
+    snapshots: _TemporarySnapshots,
+) -> IRAtom:
+    """Rewrite every value-bearing IR atom without losing typed metadata."""
     if isinstance(atom, IRCondition):
         return IRCondition(
             op=atom.op,
-            args=tuple(_rewrite_atom(arg, versions) for arg in atom.args),
+            args=tuple(_rewrite_atom(arg, versions, snapshots) for arg in atom.args),
             expr=atom.expr,
+            width_bits=atom.width_bits,
         )
-    if not isinstance(atom, IRValue):
-        return atom
-    return _rewrite_value(atom, versions)
+    if isinstance(atom, IRBinaryValue):
+        return _rewrite_binary_value(atom, versions, snapshots)
+    if isinstance(atom, IRValue):
+        return _rewrite_value(atom, versions, snapshots)
+    return atom
+
+
+def _record_temporary_snapshot(
+    instruction: IRInstr,
+    destination: IRValue | None,
+    arguments: tuple[IRAtom, ...],
+    snapshots: _TemporarySnapshots,
+) -> None:
+    """Record the exact scalar version captured by one VEX temporary MOV."""
+    if (
+        instruction.op == "MOV"
+        and destination is not None
+        and destination.space is MemSpace.TMP
+        and destination.source_tmp is not None
+        and len(arguments) == 1
+        and isinstance(arguments[0], IRValue)
+    ):
+        snapshots[destination.source_tmp] = arguments[0]
 
 
 def build_x86_16_block_local_ssa(block: IRBlock) -> SSABlock:
     """Rewrite a typed IR block into deterministic block-local SSA form."""
-    versions: dict[tuple[str, str | None, int], int] = {}
+    versions: dict[_VersionKey, int] = {}
+    snapshots: _TemporarySnapshots = {}
     rewritten: list[IRInstr] = []
     bindings: list[SSABinding] = []
     for index, instr in enumerate(block.instrs):
         rewritten_args: list[IRAtom] = []
         for arg in instr.args:
-            rewritten_args.append(_rewrite_atom(arg, versions))
+            rewritten_args.append(_rewrite_atom(arg, versions, snapshots))
         rewritten_dst = instr.dst
         if rewritten_dst is not None and rewritten_dst.space not in {MemSpace.CONST, MemSpace.UNKNOWN}:
             key = _version_key(rewritten_dst)
@@ -104,13 +170,16 @@ def build_x86_16_block_local_ssa(block: IRBlock) -> SSABlock:
             versions[key] = version
             rewritten_dst = _versioned(rewritten_dst, version)
             bindings.append(SSABinding(target=rewritten_dst, version=version, instr_index=index))
+        rewritten_args_tuple = tuple(rewritten_args)
+        _record_temporary_snapshot(instr, rewritten_dst, rewritten_args_tuple, snapshots)
         rewritten.append(
             IRInstr(
                 op=instr.op,
                 dst=rewritten_dst,
-                args=tuple(rewritten_args),
+                args=rewritten_args_tuple,
                 size=instr.size,
                 addr=instr.addr,
+                call_stack_effect=instr.call_stack_effect,
             )
         )
     return SSABlock(addr=block.addr, instrs=tuple(rewritten), bindings=tuple(bindings))

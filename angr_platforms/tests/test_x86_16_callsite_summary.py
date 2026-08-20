@@ -2409,7 +2409,59 @@ def test_collect_caller_return_use_evidence_ignores_recursive_return_passthrough
     assert evidence.classified_fact_count == 0
     assert evidence.used_callsite_count == 0
     assert evidence.unused_callsite_count == 0
-    assert evidence.failure_count == 1
+    assert evidence.excluded_callsite_count == 1
+    assert evidence.failure_count == 0
+
+
+def test_collect_caller_return_use_evidence_keeps_recursive_value_use():
+    recursive_consumer = bytes.fromhex("e8 fd ff 05 01 00 c3")
+    independent_caller = bytes.fromhex("e8 dd ff b8 00 00")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(
+            memory=_Memory({0x1000: recursive_consumer, 0x1020: independent_caller})
+        ),
+    )
+
+    evidence = collect_caller_return_use_evidence_8616(
+        project,
+        0x1000,
+        ((0x1000, 0x1007), (0x1020, 0x1026)),
+        target_aliases=(0x1000,),
+    )
+
+    assert evidence.verdict is CallerReturnUseVerdict8616.USED
+    assert evidence.raw_fact_count == 2
+    assert evidence.classified_fact_count == 2
+    assert evidence.used_callsite_count == 1
+    assert evidence.unused_callsite_count == 1
+    assert evidence.excluded_callsite_count == 0
+    assert evidence.failure_count == 0
+
+
+def test_collect_caller_return_use_evidence_censuses_all_entry_aliases():
+    unused_alias_caller = bytes.fromhex("e8 dd ff b8 00 00")
+    used_alias_caller = bytes.fromhex("e8 dd ff 05 01 00")
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        loader=SimpleNamespace(
+            memory=_Memory({0x1020: unused_alias_caller, 0x1030: used_alias_caller})
+        ),
+    )
+
+    evidence = collect_caller_return_use_evidence_8616(
+        project,
+        0x1000,
+        ((0x1020, 0x1026), (0x1030, 0x1036)),
+        target_aliases=(0x1000, 0x1010),
+    )
+
+    assert evidence.verdict is CallerReturnUseVerdict8616.USED
+    assert evidence.raw_fact_count == 2
+    assert evidence.classified_fact_count == 2
+    assert evidence.used_callsite_count == 1
+    assert evidence.unused_callsite_count == 1
+    assert evidence.failure_count == 0
 
 
 def test_collect_caller_return_use_evidence_uses_independent_callers_across_recursive_wrapper():

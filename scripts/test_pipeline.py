@@ -55,6 +55,14 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_typed_conditions.py",
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_jcc.py",
     "angr_platforms/tests/test_x86_16_stack_lowering_contracts.py",
+    "angr_platforms/tests/test_x86_16_stack_memory_ssa_lowering.py",
+    "angr_platforms/tests/test_x86_16_interprocedural_storage_consumers.py",
+    "angr_platforms/tests/test_x86_16_interprocedural_storage_prototype_application.py",
+    "angr_platforms/tests/test_x86_16_interprocedural_storage_reaching_defs.py",
+    "angr_platforms/tests/test_x86_16_interprocedural_storage_simtypes.py",
+    "angr_platforms/tests/test_x86_16_interprocedural_storage_trial_collection.py",
+    "angr_platforms/tests/test_x86_16_interprocedural_storage_trials.py",
+    "angr_platforms/tests/test_x86_16_unused_void_return_types.py",
     "angr_platforms/tests/test_x86_16_alu_helpers.py",
     "angr_platforms/tests/test_x86_16_object_lowering.py",
     "angr_platforms/tests/test_x86_16_semantics_alias_query.py",
@@ -367,21 +375,17 @@ def _sortdemo_status_command(
     ]
     if per_function_proc:
         command.append("--per-function-proc")
-        status_out = status_out.with_name(
-            f"{status_out.stem}_proc_diagnostic{status_out.suffix}"
-        )
-        transcript_out = transcript_out.with_name(
-            f"{transcript_out.stem}_proc_diagnostic{transcript_out.suffix}"
-        )
+        status_out = status_out.with_name(f"{status_out.stem}_proc_diagnostic{status_out.suffix}")
+        transcript_out = transcript_out.with_name(f"{transcript_out.stem}_proc_diagnostic{transcript_out.suffix}")
     if args.sortdemo_max_functions > 0:
         command.extend(("--max-functions", str(args.sortdemo_max_functions)))
     command.extend(
         [
-        "--transcript-out",
-        str(transcript_out),
-        "--out",
-        str(status_out),
-        "--pretty",
+            "--transcript-out",
+            str(transcript_out),
+            "--out",
+            str(status_out),
+            "--pretty",
         ]
     )
     return command
@@ -469,16 +473,12 @@ def _sortd_sidecar_free_lane(args: argparse.Namespace) -> LaneResult:
         ]
         behavior_result = _run_command("sortd-generated-sort-core", behavior_cmd)
     elapsed = round(
-        sidecar_result.elapsed_seconds
-        + translation_unit_result.elapsed_seconds
-        + behavior_result.elapsed_seconds,
+        sidecar_result.elapsed_seconds + translation_unit_result.elapsed_seconds + behavior_result.elapsed_seconds,
         3,
     )
     budget, budget_status = _budget_status("sortd-sidecar-free", elapsed)
     terminal_result = (
-        translation_unit_result
-        if translation_unit_result.status is not LaneStatus.PASSED
-        else behavior_result
+        translation_unit_result if translation_unit_result.status is not LaneStatus.PASSED else behavior_result
     )
     return LaneResult(
         name="sortd-sidecar-free",
@@ -661,7 +661,13 @@ def _msc6_tiny_lane(args: argparse.Namespace, *, name: str, constructs: tuple[st
     budget, budget_status = _budget_status(name, elapsed)
     unsuccessful_children = [child for child in child_results if child.status != LaneStatus.PASSED]
     timed_out_children = [child for child in unsuccessful_children if child.status == LaneStatus.TIMED_OUT]
-    status = LaneStatus.TIMED_OUT if timed_out_children else LaneStatus.FAILED if unsuccessful_children else LaneStatus.PASSED
+    status = (
+        LaneStatus.TIMED_OUT
+        if timed_out_children
+        else LaneStatus.FAILED
+        if unsuccessful_children
+        else LaneStatus.PASSED
+    )
     reason_text = (
         "; ".join(f"{child.name}: {child.reason or child.returncode}" for child in unsuccessful_children) or None
     )
@@ -769,9 +775,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         "sortdemo-status": lambda: _sortdemo_status_lane(args),
         "sortd-sidecar-free": lambda: _sortd_sidecar_free_lane(args),
-        "sortdemo-status-proc-diagnostic": lambda: _sortdemo_status_lane(
-            args, per_function_proc=True
-        ),
+        "sortdemo-status-proc-diagnostic": lambda: _sortdemo_status_lane(args, per_function_proc=True),
     }
     results = [lane_fns[name]() for name in lane_names]
     summary = {

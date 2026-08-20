@@ -2,7 +2,8 @@
 
 Layer: Types/lowering.
 Responsibility: combine a complete caller census with complete empty AIL
-terminal returns, then synchronize the generated function and C prototypes.
+terminal returns or exact empty return-register storage, then synchronize the
+generated function and C prototypes.
 Consumes alias, widening, and typed facts.
 Do not recover semantics from COD, source, assembly, or rendered C text.
 Function names are not evidence.
@@ -15,11 +16,14 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CBinaryOp,
     CConstant,
-    CDirtyExpression,
-    CFunctionCall,
     CIndexedVariable,
     CReturn,
+    CTypeCast,
+    CUnaryOp,
+    CVariable,
+    CVariableField,
 )
 from angr.sim_type import SimTypeBottom, SimTypeFunction
 from archinfo import Arch
@@ -28,16 +32,27 @@ from ..annotations import ANNOTATION_KEY
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..callsite_summary import CallerReturnUseVerdict8616
 from ..pipeline.errors import PipelineHardError
+from ..semantics.terminal_return_storage import (
+    TerminalReturnStorage8616,
+    terminal_return_storage_8616,
+)
 from .return_type_evidence import proven_function_result_observation_8616
 from .unobserved_returns import return_value_needs_neutralization_8616
 
 
 def _return_expr_is_side_effect_free_8616(expr: object) -> bool:
-    """Return whether an indexed carrier contains no call or dirty effect."""
+    """Return whether an expression contains only side-effect-free value nodes."""
     nodes = tuple(_iter_c_nodes_deep_8616(expr))
-    return any(isinstance(node, CIndexedVariable) for node in nodes) and not any(
-        isinstance(node, (CFunctionCall, CDirtyExpression)) for node in nodes
+    pure_node_types = (
+        CBinaryOp,
+        CConstant,
+        CIndexedVariable,
+        CTypeCast,
+        CUnaryOp,
+        CVariable,
+        CVariableField,
     )
+    return bool(nodes) and all(isinstance(node, pure_node_types) for node in nodes)
 
 __all__ = [
     "TerminalReturnValueEvidence8616",
@@ -242,7 +257,7 @@ def materialize_unused_caller_void_codegen_type_8616(
     project: object,
     codegen: object,
 ) -> UnusedVoidReturnTypeResult8616:
-    """Replay a proven empty return contract on the final generated C surface."""
+    """Replay a proven empty result contract on the final generated C surface."""
     project_surface = cast(_ProjectSurface8616, project)
     codegen_surface = cast(_CodegenSurface8616, codegen)
     try:
@@ -276,7 +291,16 @@ def materialize_unused_caller_void_codegen_type_8616(
         for node in nonempty_returns
     )
     terminal_value_empty = evidence is not None and evidence.proves_no_terminal_value
-    if not terminal_value_empty and not unresolved_returns and not (function_prototype_is_void and pure_returns):
+    terminal_storage = (
+        None if terminal_value_empty else terminal_return_storage_8616(project, function)
+    )
+    terminal_register_empty = terminal_storage is TerminalReturnStorage8616.NONE
+    if (
+        not terminal_value_empty
+        and not terminal_register_empty
+        and not unresolved_returns
+        and not (function_prototype_is_void and pure_returns)
+    ):
         return UnusedVoidReturnTypeResult8616(False, UnusedVoidReturnTypeStats8616())
     unsafe_returns = tuple(
         node
@@ -284,10 +308,13 @@ def materialize_unused_caller_void_codegen_type_8616(
         if node.retval is not None
         and not (isinstance(node.retval, CConstant) and node.retval.value == 0)
         and not return_value_needs_neutralization_8616(node.retval, prototype.returnty)
-        and not (function_prototype_is_void and _return_expr_is_side_effect_free_8616(node.retval))
+        and not (
+            (function_prototype_is_void or terminal_value_empty or terminal_register_empty)
+            and _return_expr_is_side_effect_free_8616(node.retval)
+        )
     )
     if unsafe_returns:
-        raise PipelineHardError("proven empty AIL returns produced non-synthetic C return values")
+        raise PipelineHardError("proven empty result produced non-synthetic C return values")
     already_void = isinstance(prototype.returnty, SimTypeBottom)
     rebuilt = SimTypeFunction(
         list(prototype.args),
@@ -307,7 +334,7 @@ def materialize_unused_caller_void_codegen_type_8616(
     if changed:
         codegen_surface._inertia_codegen_decl_refresh_required_8616 = True
         codegen_surface._inertia_force_codegen_regeneration_8616 = True
-    fact_count = 2 + len(return_nodes)
+    fact_count = 2 + len(return_nodes) + int(terminal_storage is not None)
     return UnusedVoidReturnTypeResult8616(
         changed,
         UnusedVoidReturnTypeStats8616(fact_count, fact_count, fact_count, 1 + len(return_nodes), 0),

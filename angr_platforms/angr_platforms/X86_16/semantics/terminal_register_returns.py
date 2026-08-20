@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from enum import IntFlag
 from typing import Any, Protocol, cast
 
-from angr.errors import SimTranslationError
+from angr.errors import SimEngineError, SimTranslationError
 
 from ..frontend_instruction_reachability import decoded_block_instructions_8616
 from .branch_target_return import TerminalAxReturnEffectKind8616, terminal_ax_return_effect_8616
@@ -23,6 +23,7 @@ from .branch_target_return import TerminalAxReturnEffectKind8616, terminal_ax_re
 __all__ = [
     "TerminalAxReturnEvidence8616",
     "TerminalAxReturnLane8616",
+    "TerminalReturnStorageState8616",
     "collect_terminal_ax_return_evidence_8616",
     "terminal_ax_return_lane_states_8616",
 ]
@@ -79,15 +80,28 @@ class TerminalAxReturnLane8616(IntFlag):
 
 
 @dataclass(frozen=True, slots=True)
+class TerminalReturnStorageState8616:
+    """Return-carrier state proven along one entry-reachable terminal path."""
+
+    ax_lanes: TerminalAxReturnLane8616
+    dx_ax_pair_proven: bool
+
+
+@dataclass(frozen=True, slots=True)
 class TerminalAxReturnEvidence8616:
     """Closed accounting for entry-reachable binary terminal AX paths."""
 
-    states: frozenset[TerminalAxReturnLane8616]
+    storage_states: frozenset[TerminalReturnStorageState8616]
     raw_fact_count: int
     normalized_fact_count: int
     classified_fact_count: int
     materialized_count: int
     failure_count: int
+
+    @property
+    def states(self) -> frozenset[TerminalAxReturnLane8616]:
+        """Derive the compatibility AX-lane projection from storage states."""
+        return frozenset(state.ax_lanes for state in self.storage_states)
 
     @property
     def complete(self) -> bool:
@@ -104,6 +118,15 @@ class TerminalAxReturnEvidence8616:
     def proves_missing_value_path(self) -> bool:
         """Return whether a complete census includes a path with no AX definition."""
         return self.complete and TerminalAxReturnLane8616.NONE in self.states
+
+    @property
+    def proves_wide_return(self) -> bool:
+        """Return whether every terminal path proves the same DX:AX carrier pair."""
+        return (
+            self.complete
+            and bool(self.storage_states)
+            and all(state.dx_ax_pair_proven for state in self.storage_states)
+        )
 
 
 class _FunctionSurface8616(Protocol):
@@ -127,14 +150,10 @@ def _register_name_8616(insn: object, reg_id: int) -> str:
         return ""
 
 
-def _written_lane_8616(insn: object, effect_dst: str | None) -> TerminalAxReturnLane8616:
-    """Return a proven AX lane written by one instruction."""
-    if effect_dst == "ax":
-        return TerminalAxReturnLane8616.WORD
-    if effect_dst == "al":
-        return TerminalAxReturnLane8616.LOW
-    if effect_dst == "ah":
-        return TerminalAxReturnLane8616.HIGH
+def _written_register_8616(insn: object, effect_dst: str | None) -> str | None:
+    """Return the explicitly written return-carrier register, if proven."""
+    if effect_dst in {"ax", "al", "ah", "dx"}:
+        return effect_dst
     # The typed effect vocabulary is intentionally incomplete. This fallback
     # accepts only instructions whose first register operand is a destination.
     inner = _inner_instruction_8616(insn)
@@ -144,21 +163,40 @@ def _written_lane_8616(insn: object, effect_dst: str | None) -> TerminalAxReturn
         "mov", "lea", "pop", "add", "adc", "sub", "sbb", "and", "or", "xor",
         "inc", "dec", "shl", "sal", "shr", "sar", "rol", "ror", "rcl", "rcr",
     }:
-        return TerminalAxReturnLane8616.NONE
+        return None
     # Dynamic capstone compatibility boundary.
     operands = tuple(getattr(inner, "operands", ()) or ())
     if not operands:
-        return TerminalAxReturnLane8616.NONE
+        return None
     # Dynamic capstone compatibility boundary.
     if int(getattr(operands[0], "type", -1)) != 1:
-        return TerminalAxReturnLane8616.NONE
+        return None
     # Dynamic capstone compatibility boundary.
     reg_name = _register_name_8616(insn, int(getattr(operands[0], "reg", 0) or 0))
+    return reg_name if reg_name in {"ax", "al", "ah", "dx"} else None
+
+
+def _written_lane_8616(insn: object, effect_dst: str | None) -> TerminalAxReturnLane8616:
+    """Return a proven AX lane written by one instruction."""
     return {
         "ax": TerminalAxReturnLane8616.WORD,
         "al": TerminalAxReturnLane8616.LOW,
         "ah": TerminalAxReturnLane8616.HIGH,
-    }.get(reg_name, TerminalAxReturnLane8616.NONE)
+    }.get(_written_register_8616(insn, effect_dst) or "", TerminalAxReturnLane8616.NONE)
+
+
+def _preserves_terminal_return_storage_8616(insn: object, mnemonic: str) -> bool:
+    """Return whether one proven epilogue instruction preserves DX:AX."""
+    if mnemonic in {"nop", "pop", "leave", "jmp", "ljmp", "ret", "retf", "iret"}:
+        return True
+    if mnemonic != "mov":
+        return False
+    inner = cast(Any, _inner_instruction_8616(insn))
+    operands = tuple(inner.operands or ())
+    if len(operands) != 2 or any(int(cast(Any, operand).type) != 1 for operand in operands):
+        return False
+    names = tuple(_register_name_8616(insn, int(cast(Any, operand).reg or 0)) for operand in operands)
+    return names == ("sp", "bp")
 
 
 def _direct_jump_target_8616(insn: object) -> int | None:
@@ -209,21 +247,21 @@ def collect_terminal_ax_return_evidence_8616(
     if not isinstance(entry_addr, int) or entry_addr not in block_addrs:
         return TerminalAxReturnEvidence8616(frozenset(), 1, 0, 0, 0, 1)
     project_dynamic = cast(Any, project)
-    terminal_states: set[TerminalAxReturnLane8616] = set()
+    terminal_states: set[TerminalReturnStorageState8616] = set()
     raw_fact_count = 0
     normalized_fact_count = 0
     classified_fact_count = 0
     materialized_count = 0
     failure_count = 0
 
-    def _record_terminal(lanes: TerminalAxReturnLane8616) -> None:
+    def _record_terminal(lanes: TerminalAxReturnLane8616, dx_ax_pair_proven: bool) -> None:
         """Materialize one classified terminal-path state into the evidence set."""
         nonlocal raw_fact_count, normalized_fact_count, classified_fact_count, materialized_count
         raw_fact_count += 1
         normalized_fact_count += 1
         classified_fact_count += 1
         materialized_count += 1
-        terminal_states.add(lanes)
+        terminal_states.add(TerminalReturnStorageState8616(lanes, dx_ax_pair_proven))
 
     def _record_failure() -> None:
         """Record one reachable control-flow fact that could not be classified."""
@@ -231,13 +269,18 @@ def collect_terminal_ax_return_evidence_8616(
         raw_fact_count += 1
         failure_count += 1
 
-    def _scan(block_addr: int, lanes: TerminalAxReturnLane8616, path: frozenset[int]) -> None:
+    def _scan(
+        block_addr: int,
+        lanes: TerminalAxReturnLane8616,
+        dx_ax_pair_proven: bool,
+        path: frozenset[int],
+    ) -> None:
         """Follow one entry-reachable path without crossing cycles."""
         if block_addr in path:
             return
         try:
             insns = decoded_block_instructions_8616(project_dynamic, block_addr, opt_level=0)
-        except (KeyError, SimTranslationError, ValueError):
+        except (KeyError, SimEngineError, SimTranslationError, ValueError):
             _record_failure()
             return
         if not insns:
@@ -245,20 +288,29 @@ def collect_terminal_ax_return_evidence_8616(
             return
         for insn in insns:
             effect = terminal_ax_return_effect_8616(insn)
+            mnemonic = str(cast(Any, _inner_instruction_8616(insn)).mnemonic or "").lower()
             if effect.kind is TerminalAxReturnEffectKind8616.CALL_CLOBBER:
                 lanes = TerminalAxReturnLane8616.NONE
+                dx_ax_pair_proven = False
             else:
-                written = _written_lane_8616(insn, effect.dst_reg)
-                lanes = written if written == TerminalAxReturnLane8616.WORD else lanes | written
-            # Dynamic capstone compatibility boundary.
-            mnemonic = str(getattr(insn, "mnemonic", "") or "").lower()
+                written_register = _written_register_8616(insn, effect.dst_reg)
+                if written_register in {"ax", "al", "ah"}:
+                    written = _written_lane_8616(insn, effect.dst_reg)
+                    lanes = written if written == TerminalAxReturnLane8616.WORD else lanes | written
+                    dx_ax_pair_proven = False
+                elif written_register == "dx":
+                    dx_ax_pair_proven = lanes == TerminalAxReturnLane8616.WORD and mnemonic in {
+                        "adc", "mov", "sbb",
+                    }
+                elif dx_ax_pair_proven and not _preserves_terminal_return_storage_8616(insn, mnemonic):
+                    dx_ax_pair_proven = False
             if mnemonic in {"ret", "retf", "iret"}:
-                _record_terminal(lanes)
+                _record_terminal(lanes, dx_ax_pair_proven)
                 return
             if mnemonic in {"jmp", "ljmp"}:
                 target = _direct_jump_target_8616(insn)
                 if isinstance(target, int) and target in block_addrs:
-                    _scan(target, lanes, path | {block_addr})
+                    _scan(target, lanes, dx_ax_pair_proven, path | {block_addr})
                 else:
                     _record_failure()
                 return
@@ -268,19 +320,19 @@ def collect_terminal_ax_return_evidence_8616(
                 successors = tuple(dict.fromkeys((target, fallthrough)))
                 for successor in successors:
                     if isinstance(successor, int) and successor in block_addrs:
-                        _scan(successor, lanes, path | {block_addr})
+                        _scan(successor, lanes, dx_ax_pair_proven, path | {block_addr})
                     else:
                         _record_failure()
                 return
         fallthrough = _instruction_fallthrough_8616(insns[-1])
         if isinstance(fallthrough, int) and fallthrough in block_addrs:
-            _scan(fallthrough, lanes, path | {block_addr})
+            _scan(fallthrough, lanes, dx_ax_pair_proven, path | {block_addr})
         else:
             _record_failure()
 
-    _scan(entry_addr, TerminalAxReturnLane8616.NONE, frozenset())
+    _scan(entry_addr, TerminalAxReturnLane8616.NONE, False, frozenset())
     return TerminalAxReturnEvidence8616(
-        states=frozenset(terminal_states),
+        storage_states=frozenset(terminal_states),
         raw_fact_count=raw_fact_count,
         normalized_fact_count=normalized_fact_count,
         classified_fact_count=classified_fact_count,
@@ -294,4 +346,5 @@ def terminal_ax_return_lane_states_8616(
     function: object,
 ) -> frozenset[TerminalAxReturnLane8616]:
     """Return the compatibility lane-state view of closed terminal evidence."""
-    return collect_terminal_ax_return_evidence_8616(project, function).states
+    evidence = collect_terminal_ax_return_evidence_8616(project, function)
+    return evidence.states if evidence.complete else frozenset()

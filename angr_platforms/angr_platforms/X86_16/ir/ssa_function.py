@@ -11,13 +11,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .core import IRFunctionArtifact, IRValue, MemSpace
+from .core import IRFunctionArtifact, IRRefusal, IRValue, MemSpace
 from .ssa import SSABlock, build_x86_16_block_local_ssa
+from .ssa_memory import build_x86_16_function_memory_ssa
+from .ssa_memory_contracts import (
+    SSAMemoryBinding8616,
+    SSAMemoryPhiNode8616,
+    SSAMemoryStats8616,
+)
 
 __all__ = [
     "SSAFunctionArtifact",
     "SSAIncomingValue",
     "SSAPhiNode",
+    "SSAMemoryBinding8616",
+    "SSAMemoryPhiNode8616",
+    "SSAMemoryStats8616",
     "build_x86_16_function_ssa",
     "build_x86_16_ir_predecessor_map",
 ]
@@ -64,6 +73,10 @@ class SSAFunctionArtifact:
     function_addr: int
     blocks: tuple[SSABlock, ...]
     phi_nodes: tuple[SSAPhiNode, ...] = ()
+    memory_bindings: tuple[SSAMemoryBinding8616, ...] = ()
+    memory_phi_nodes: tuple[SSAMemoryPhiNode8616, ...] = ()
+    memory_refusals: tuple[IRRefusal, ...] = ()
+    memory_stats: SSAMemoryStats8616 = SSAMemoryStats8616()
     predecessor_map: dict[int, tuple[int, ...]] = field(default_factory=dict)
     summary: dict[str, object] = field(default_factory=dict)
 
@@ -73,6 +86,16 @@ class SSAFunctionArtifact:
             "function_addr": self.function_addr,
             "blocks": [block.to_dict() for block in self.blocks],
             "phi_nodes": [phi.to_dict() for phi in self.phi_nodes],
+            "memory_bindings": [binding.to_dict() for binding in self.memory_bindings],
+            "memory_phi_nodes": [phi.to_dict() for phi in self.memory_phi_nodes],
+            "memory_refusals": [refusal.to_dict() for refusal in self.memory_refusals],
+            "memory_stats": {
+                "raw_fact_count": self.memory_stats.raw_fact_count,
+                "normalized_fact_count": self.memory_stats.normalized_fact_count,
+                "classified_fact_count": self.memory_stats.classified_fact_count,
+                "materialized_count": self.memory_stats.materialized_count,
+                "failure_count": self.memory_stats.failure_count,
+            },
             "predecessor_map": {
                 hex(addr): [hex(pred) for pred in preds] for addr, preds in sorted(self.predecessor_map.items())
             },
@@ -141,8 +164,10 @@ def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifa
 
     def _impl() -> SSAFunctionArtifact:
         local_blocks = tuple(build_x86_16_block_local_ssa(block) for block in artifact.blocks)
-        local_by_addr = {block.addr: block for block in local_blocks}
         pred_map = build_x86_16_ir_predecessor_map(artifact)
+        memory_ssa = build_x86_16_function_memory_ssa(artifact.function_addr, local_blocks, pred_map)
+        local_blocks = memory_ssa.blocks
+        local_by_addr = {block.addr: block for block in local_blocks}
         exits_by_addr = {block.addr: _block_exit_versions(block) for block in local_blocks}
         phi_nodes: list[SSAPhiNode] = []
 
@@ -171,11 +196,18 @@ def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifa
             "block_count": len(local_blocks),
             "phi_node_count": len(phi_nodes),
             "join_block_count": sum(1 for preds in pred_map.values() if len(preds) > 1),
+            "memory_binding_count": len(memory_ssa.bindings),
+            "memory_phi_node_count": len(memory_ssa.phi_nodes),
+            "memory_refusal_count": len(memory_ssa.refusals),
         }
         return SSAFunctionArtifact(
             function_addr=artifact.function_addr,
             blocks=tuple(sorted(local_by_addr.values(), key=lambda block: block.addr)),
             phi_nodes=tuple(sorted(phi_nodes, key=lambda node: (node.block_addr, node.key))),
+            memory_bindings=memory_ssa.bindings,
+            memory_phi_nodes=memory_ssa.phi_nodes,
+            memory_refusals=memory_ssa.refusals,
+            memory_stats=memory_ssa.stats,
             predecessor_map=pred_map,
             summary=summary,
         )

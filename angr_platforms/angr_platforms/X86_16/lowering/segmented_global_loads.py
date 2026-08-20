@@ -1685,6 +1685,15 @@ def materialize_direct_global_symbol_stores_from_evidence_8616(
         ):
             changed = True
             root_changed = True
+        if isinstance(root, CStatements) and _materialize_nested_direct_global_call_return_store_8616(
+            root,
+            codegen,
+            direct_by_offset,
+            direct_call_return_stores,
+            stats,
+        ):
+            changed = True
+            root_changed = True
         if isinstance(root, CStatements) and _materialize_direct_global_dword_store_pairs_8616(
             root,
             codegen,
@@ -1744,15 +1753,6 @@ def materialize_direct_global_symbol_stores_from_evidence_8616(
             stats.direct_symbol_materialized_count += 1
             stats.direct_symbol_store_materialized_count += 1
             stats.record(SegmentedGlobalLoadDecision8616.MATERIALIZED)
-            changed = True
-            root_changed = True
-        if isinstance(root, CStatements) and _materialize_nested_direct_global_call_return_store_8616(
-            root,
-            codegen,
-            direct_by_offset,
-            direct_call_return_stores,
-            stats,
-        ):
             changed = True
             root_changed = True
         if isinstance(root, CStatements) and _remove_materialized_direct_global_call_return_carriers_8616(
@@ -4275,11 +4275,14 @@ def _match_direct_global_dword_store_pair_8616(
             low_assignment.rhs,
             high_assignment.rhs,
         )
-    if rhs is not None and call_return_evidence is not None:
-        consume_previous = _direct_global_call_return_previous_call_matches_8616(
+        previous_call = _direct_global_call_return_standalone_call_8616(
             previous_stmt,
             call_return_evidence,
         )
+        if rhs is not None and previous_call is not None:
+            rhs = previous_call
+            consume_previous = True
+    if rhs is not None and call_return_evidence is not None:
         stats.direct_symbol_call_return_materialized_count += 1
     if rhs is None:
         rhs = _make_direct_global_dword_store_rhs_8616(
@@ -4377,23 +4380,20 @@ def _cfunction_call_name_8616(node: object) -> str | None:
     return name or None
 
 
-def _direct_global_call_return_previous_call_matches_8616(
-    previous_stmt: object,
+def _direct_global_call_return_standalone_call_8616(
+    stmt: object,
     evidence: DirectGlobalCallReturnStoreEvidence8616 | None,
-) -> bool:
+) -> CFunctionCall | None:
+    """Return an exact standalone call proven by typed call/store evidence."""
+
     if evidence is None:
-        return False
-    previous_assignment = _assignment_statement_8616(previous_stmt)
-    if previous_assignment is None:
-        return False
-    previous_rhs = previous_assignment.rhs
-    call_name = _cfunction_call_name_8616(previous_rhs)
-    if call_name is None or call_name != evidence.source_call_name:
-        return False
-    previous_ins_addr = _statement_ins_addr_8616(previous_stmt)
-    if previous_ins_addr is not None and previous_ins_addr != evidence.source_call_ins_addr:
-        return False
-    return True
+        return None
+    call = _standalone_cfunction_call_8616(stmt)
+    if call is None or not _call_matches_direct_global_return_evidence_8616(call, evidence):
+        return None
+    if _consistent_statement_ins_addr_8616(stmt, call) != evidence.source_call_ins_addr:
+        return None
+    return call
 
 
 def _remove_materialized_direct_global_call_return_carriers_8616(
@@ -4417,6 +4417,13 @@ def _remove_materialized_direct_global_call_return_carriers_8616(
         if isinstance(statements, list):
             kept = []
             for stmt in statements:
+                if any(
+                    _direct_global_call_return_standalone_call_8616(stmt, evidence) is not None
+                    for evidence in active_evidence
+                ):
+                    stats.direct_symbol_call_return_carrier_removed_count += 1
+                    changed = True
+                    continue
                 carrier_key = _direct_global_call_return_carrier_key_8616(root, stmt, active_evidence)
                 if carrier_key is not None:
                     changed = True
@@ -4655,7 +4662,13 @@ def _make_direct_global_call_return_store_rhs_8616(
         return None
     if _register_name_for_dword_high_half_8616(codegen, high_rhs) not in {"dx", "edx"}:
         return None
-    return CFunctionCall(evidence.source_call_name, None, [], codegen=codegen)
+    return CFunctionCall(
+        evidence.source_call_name,
+        None,
+        [],
+        codegen=codegen,
+        tags=_direct_call_return_store_tags_8616(evidence),
+    )
 
 
 def _register_name_for_dword_low_half_8616(codegen: CodegenBoundary8616, expr: object) -> str | None:

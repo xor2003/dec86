@@ -14,6 +14,7 @@ from typing import Any, Protocol, cast
 
 from ..analysis.alias import storage_of
 from ..analysis.stack_frame_ir import build_x86_16_ir_frame_access_artifact
+from .block_ownership import canonicalize_ir_block_ownership_8616
 from .core import (
     AddressStatus,
     IRAddress,
@@ -433,9 +434,14 @@ def _function_info(function: object) -> dict[object, object] | None:
 
 
 def _const(expr: object | None) -> int | None:
-    """Return a concrete VEX constant value when present."""
+    """Return a wrapped expression or direct VEX constant value when present."""
     con = _expr_const(expr)
-    return None if con is None else _external_int(con.value)
+    if con is not None:
+        return _external_int(con.value)
+    try:
+        return _external_int(cast(_VexConstBoundary, expr).value)
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def _int_size(expr: object | None, default: int = 2) -> int:
@@ -561,7 +567,12 @@ def _stmt_to_instr(
             tmp_id = _stmt_tmp(stmt)
             data_tag = _expr_tag(data)
             tmp_exprs[tmp_id] = data
-            dst = IRValue(MemSpace.TMP, name=f"t{tmp_id}", size=_int_size(data))
+            dst = IRValue(
+                MemSpace.TMP,
+                name=f"t{tmp_id}",
+                size=_int_size(data),
+                source_tmp=tmp_id,
+            )
             if data_tag == "Iex_Load":
                 addr = expr_to_address(
                     _expr_addr(data),
@@ -647,16 +658,16 @@ def _stmt_to_instr(
             return IRInstr(op="MOV", dst=dst, args=(src,), size=dst.size, addr=instruction_addr)
         if tag == "Ist_Store":
             data_expr = _stmt_data(stmt)
+            data = _expr_to_value(data_expr, tmps, conditions)
             addr = expr_to_address(
                 _stmt_addr(stmt),
                 tmps,
                 conditions,
                 expr_to_value=_expr_to_value,
-                size=_int_size(data_expr),
+                size=data.size,
                 segment_hints=segment_hints,
                 tmp_exprs=tmp_exprs,
             )
-            data = _expr_to_value(data_expr, tmps, conditions)
             return IRInstr(op="STORE", dst=None, args=(addr, data), size=data.size, addr=instruction_addr)
         if tag == "Ist_Exit":
             cond = expr_to_condition(
@@ -754,16 +765,22 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
             )
             for block in blocks
         ]
+    ownership = canonicalize_ir_block_ownership_8616(tuple(blocks))
+    blocks = list(ownership.blocks)
     function_addr = _function_addr(function)
-    return IRFunctionArtifact(
+    artifact = IRFunctionArtifact(
         function_addr=function_addr,
         blocks=tuple(blocks),
         refusals=tuple(refusals),
-        summary=build_x86_16_ir_function_artifact_summary(
-            IRFunctionArtifact(
-                function_addr=function_addr, blocks=tuple(blocks), refusals=tuple(refusals)
-            )
-        ),
+    )
+    return IRFunctionArtifact(
+        function_addr=artifact.function_addr,
+        blocks=artifact.blocks,
+        refusals=artifact.refusals,
+        summary={
+            **build_x86_16_ir_function_artifact_summary(artifact),
+            **ownership.stats.to_summary(),
+        },
     )
 
 

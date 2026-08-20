@@ -306,6 +306,22 @@ def callee_pointer_argument_indices_at_address_8616(
     function_addr: int,
 ) -> tuple[int, ...]:
     """Return exact binary-proven pointer argument indices for one address."""
+    evidence = callee_pointer_argument_evidence_at_address_8616(project, function_addr)
+    if (
+        evidence is None
+        or evidence.failure_count != 0
+        or evidence.classified_fact_count == 0
+        or evidence.materialized_count != evidence.classified_fact_count
+    ):
+        return ()
+    return evidence.pointer_argument_indices
+
+
+def callee_pointer_argument_evidence_at_address_8616(
+    project: object,
+    function_addr: int,
+) -> CalleePointerArgumentEvidence8616 | None:
+    """Return retained binary pointer evidence, including typed ambiguities."""
     registry = _project_evidence_registry_8616(project)
     evidence = registry.get(function_addr)
     if evidence is None:
@@ -315,20 +331,13 @@ def callee_pointer_argument_indices_at_address_8616(
                 create=False,
             )
         except (AttributeError, KeyError, TypeError):
-            return ()
+            return None
         if function is None:
-            return ()
+            return None
         apply_callee_pointer_argument_evidence_at_address_8616(
             project,
             function,
             function_addr,
         )
         evidence = registry.get(cast(_FunctionBoundary8616, function).addr)
-    if (
-        not isinstance(evidence, CalleePointerArgumentEvidence8616)
-        or evidence.failure_count != 0
-        or evidence.classified_fact_count == 0
-        or evidence.materialized_count != evidence.classified_fact_count
-    ):
-        return ()
-    return evidence.pointer_argument_indices
+    return evidence if isinstance(evidence, CalleePointerArgumentEvidence8616) else None

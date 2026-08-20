@@ -1,0 +1,256 @@
+"""Project exact stack-memory SSA facts into Alias storage identities.
+
+Layer: Alias.
+Responsibility: classify versioned `SS:BP+offset` IR accesses and memory phi
+nodes through the canonical Alias model while preserving typed refusals.
+Owns storage identity only. Do not infer C locals or types, widen adjacent
+ranges, structure control flow, rewrite generated C, or inspect rendered text.
+Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
+from __future__ import annotations
+
+from typing import Protocol, cast
+
+from ..ir.core import IRAddress, IRInstr, IRRefusal, MemSpace
+from ..ir.ssa_function import SSAFunctionArtifact
+from ..pipeline.errors import PipelineHardError
+from .alias_model_impl import AliasFailure, AliasStorageFacts, alias_facts_for_ir_address_8616
+from .stack_memory_ssa_contracts import (
+    StackMemoryAliasFactKind8616,
+    StackMemoryAliasRefusal8616,
+    StackMemoryAliasRefusalKind8616,
+    StackMemoryAliasStats8616,
+    StackMemorySSAAliasArtifact8616,
+    StackMemorySSAAliasFact8616,
+)
+
+__all__ = [
+    "StackMemoryAliasFactKind8616",
+    "StackMemoryAliasRefusal8616",
+    "StackMemoryAliasRefusalKind8616",
+    "StackMemoryAliasStats8616",
+    "StackMemorySSAAliasArtifact8616",
+    "StackMemorySSAAliasFact8616",
+    "apply_x86_16_stack_memory_ssa_alias_artifact",
+    "build_x86_16_stack_memory_ssa_alias_artifact",
+]
+
+
+class _CodegenBoundary8616(Protocol):
+    """Typed artifacts carried across the dynamic angr codegen boundary."""
+
+    _inertia_vex_ir_function_ssa: object
+    _inertia_stack_memory_ssa_alias_artifact: StackMemorySSAAliasArtifact8616
+
+
+def _stack_access_8616(instruction: IRInstr) -> IRAddress | None:
+    """Return one typed SS load/store address."""
+    if instruction.op not in {"LOAD", "STORE"} or not instruction.args:
+        return None
+    address = instruction.args[0]
+    return address if isinstance(address, IRAddress) and address.space is MemSpace.SS else None
+
+
+def _alias_storage_8616(
+    address: IRAddress,
+) -> AliasStorageFacts | tuple[StackMemoryAliasRefusalKind8616, str]:
+    """Classify one typed address through the canonical Alias entry point."""
+    result = alias_facts_for_ir_address_8616(address)
+    if isinstance(result, AliasStorageFacts):
+        return result
+    if isinstance(result, AliasFailure):
+        return (StackMemoryAliasRefusalKind8616.ALIAS_FAILURE, result.reason)
+    return (
+        StackMemoryAliasRefusalKind8616.UNCLASSIFIABLE_ADDRESS,
+        "canonical Alias model did not classify the versioned stack address",
+    )
+
+
+def _incomplete_upstream_artifact_8616(
+    function_ssa: SSAFunctionArtifact,
+    accesses: tuple[tuple[int, int, IRAddress], ...],
+) -> StackMemorySSAAliasArtifact8616:
+    """Refuse every candidate when upstream memory-SSA accounting is open."""
+    access_refusals = tuple(
+        StackMemoryAliasRefusal8616(
+            StackMemoryAliasRefusalKind8616.UPSTREAM_INCOMPLETE,
+            block_addr,
+            instr_index,
+            "stack-memory SSA evidence accounting is incomplete",
+            address,
+        )
+        for block_addr, instr_index, address in accesses
+    )
+    phi_refusals = tuple(
+        StackMemoryAliasRefusal8616(
+            StackMemoryAliasRefusalKind8616.UPSTREAM_INCOMPLETE,
+            phi.block_addr,
+            None,
+            "stack-memory SSA evidence accounting is incomplete",
+            phi.target,
+        )
+        for phi in function_ssa.memory_phi_nodes
+    )
+    refusals = access_refusals + phi_refusals
+    return StackMemorySSAAliasArtifact8616(
+        function_addr=function_ssa.function_addr,
+        refusals=refusals,
+        source_refusals=function_ssa.memory_refusals,
+        stats=StackMemoryAliasStats8616(
+            raw_fact_count=len(refusals),
+            failure_count=len(refusals),
+        ),
+        upstream_complete=False,
+    )
+
+
+def build_x86_16_stack_memory_ssa_alias_artifact(
+    function_ssa: SSAFunctionArtifact,
+) -> StackMemorySSAAliasArtifact8616:
+    """Project all function stack-memory SSA inputs into exact Alias facts."""
+    accesses = tuple(
+        (block.addr, instr_index, address)
+        for block in sorted(function_ssa.blocks, key=lambda item: item.addr)
+        for instr_index, instruction in enumerate(block.instrs)
+        if (address := _stack_access_8616(instruction)) is not None
+    )
+    if not function_ssa.memory_stats.complete:
+        return _incomplete_upstream_artifact_8616(function_ssa, accesses)
+
+    blocks_by_addr = {block.addr: block for block in function_ssa.blocks}
+    upstream_by_block: dict[int | None, list[IRRefusal]] = {}
+    for refusal in function_ssa.memory_refusals:
+        upstream_by_block.setdefault(refusal.block_addr, []).append(refusal)
+    facts: list[StackMemorySSAAliasFact8616] = []
+    refusals: list[StackMemoryAliasRefusal8616] = []
+
+    for block_addr, instr_index, address in accesses:
+        if address.version is None:
+            upstream = upstream_by_block.get(block_addr, [])
+            source = upstream.pop(0) if upstream else None
+            refusals.append(
+                StackMemoryAliasRefusal8616(
+                    StackMemoryAliasRefusalKind8616.UPSTREAM_MEMORY_REFUSAL
+                    if source is not None
+                    else StackMemoryAliasRefusalKind8616.UNVERSIONED_ADDRESS,
+                    block_addr,
+                    instr_index,
+                    source.detail if source is not None else "stack access has no memory-SSA version",
+                    address,
+                )
+            )
+            continue
+        storage = _alias_storage_8616(address)
+        if isinstance(storage, tuple):
+            refusals.append(
+                StackMemoryAliasRefusal8616(storage[0], block_addr, instr_index, storage[1], address)
+            )
+            continue
+        instruction = blocks_by_addr[block_addr].instrs[instr_index]
+        facts.append(
+            StackMemorySSAAliasFact8616(
+                StackMemoryAliasFactKind8616.STORE
+                if instruction.op == "STORE"
+                else StackMemoryAliasFactKind8616.LOAD,
+                block_addr,
+                instr_index,
+                address,
+                storage,
+            )
+        )
+
+    for phi in function_ssa.memory_phi_nodes:
+        addresses = (phi.target, *(incoming.address for incoming in phi.incoming))
+        if any(address.version is None for address in addresses):
+            refusals.append(
+                StackMemoryAliasRefusal8616(
+                    StackMemoryAliasRefusalKind8616.UNVERSIONED_PHI,
+                    phi.block_addr,
+                    None,
+                    "memory phi target and inputs must all carry SSA versions",
+                    phi.target,
+                )
+            )
+            continue
+        storages = tuple(_alias_storage_8616(address) for address in addresses)
+        failed = next((storage for storage in storages if isinstance(storage, tuple)), None)
+        if failed is not None:
+            refusals.append(StackMemoryAliasRefusal8616(failed[0], phi.block_addr, None, failed[1], phi.target))
+            continue
+        typed_storages = cast(tuple[AliasStorageFacts, ...], storages)
+        if any(storage != typed_storages[0] for storage in typed_storages[1:]):
+            refusals.append(
+                StackMemoryAliasRefusal8616(
+                    StackMemoryAliasRefusalKind8616.INCONSISTENT_PHI_STORAGE,
+                    phi.block_addr,
+                    None,
+                    "memory phi inputs do not have one exact Alias storage identity",
+                    phi.target,
+                )
+            )
+            continue
+        incoming_versions = tuple(
+            cast(int, incoming.address.version) for incoming in phi.incoming
+        )
+        facts.append(
+            StackMemorySSAAliasFact8616(
+                StackMemoryAliasFactKind8616.PHI,
+                phi.block_addr,
+                None,
+                phi.target,
+                typed_storages[0],
+                incoming_versions,
+            )
+        )
+
+    for source_refusals in upstream_by_block.values():
+        refusals.extend(
+            StackMemoryAliasRefusal8616(
+                StackMemoryAliasRefusalKind8616.ORPHAN_UPSTREAM_REFUSAL,
+                source.block_addr,
+                None,
+                source.detail,
+            )
+            for source in source_refusals
+        )
+    raw_count = len(facts) + len(refusals)
+    stats = StackMemoryAliasStats8616(
+        raw_fact_count=raw_count,
+        normalized_fact_count=len(facts),
+        classified_fact_count=len(facts),
+        materialized_count=len(facts),
+        failure_count=len(refusals),
+    )
+    return StackMemorySSAAliasArtifact8616(
+        function_addr=function_ssa.function_addr,
+        facts=tuple(facts),
+        refusals=tuple(refusals),
+        source_refusals=function_ssa.memory_refusals,
+        stats=stats,
+    )
+
+
+def apply_x86_16_stack_memory_ssa_alias_artifact(project: object, codegen: object) -> bool:  # noqa: ARG001
+    """Attach the Alias projection immediately after typed function SSA exists."""
+    boundary = cast(_CodegenBoundary8616, codegen)
+    try:
+        function_ssa = boundary._inertia_vex_ir_function_ssa
+    except AttributeError:
+        return False
+    if not isinstance(function_ssa, SSAFunctionArtifact):
+        return False
+    try:
+        existing = boundary._inertia_stack_memory_ssa_alias_artifact
+    except AttributeError:
+        existing = None
+    if isinstance(existing, StackMemorySSAAliasArtifact8616) and existing.function_addr == function_ssa.function_addr:
+        return False
+    artifact = build_x86_16_stack_memory_ssa_alias_artifact(function_ssa)
+    if not artifact.complete:
+        raise PipelineHardError(
+            "stack-memory SSA Alias projection has incomplete evidence accounting",
+            layer="alias",
+        )
+    boundary._inertia_stack_memory_ssa_alias_artifact = artifact
+    return False

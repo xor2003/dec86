@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr.analyses.decompiler.structured_codegen.c import CConstant, CReturn, CStatements
 from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypeShort
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -16,14 +15,7 @@ from angr_platforms.X86_16.lowering.terminal_register_return_types import (
     apply_terminal_register_return_type_evidence_8616,
     materialize_terminal_register_return_type_8616,
 )
-from angr_platforms.X86_16.lowering.unused_void_return_types import (
-    TerminalReturnValueEvidence8616,
-    UnusedVoidReturnTypeStats8616,
-    materialize_unused_caller_void_codegen_type_8616,
-    materialize_unused_caller_void_return_type_8616,
-    record_terminal_return_value_evidence_8616,
-)
-from angr_platforms.X86_16.semantics.terminal_register_returns import TerminalAxReturnLane8616
+from angr_platforms.X86_16.semantics.terminal_return_storage import TerminalReturnStorage8616
 
 from inertia_decompiler import cli_decompilation
 
@@ -57,26 +49,6 @@ def _record_used_result(project: object, function_addr: int = 0x1000) -> None:
     )
 
 
-def _record_unused_result(project: object, function_addr: int = 0x1000) -> None:
-    """Attach one complete proof that callers ignore the function result."""
-    record_caller_return_use_evidence_8616(
-        project,
-        function_addr,
-        CallerReturnUseEvidence8616(
-            target_addr=function_addr,
-            verdict=CallerReturnUseVerdict8616.UNUSED,
-            raw_fact_count=1,
-            normalized_fact_count=1,
-            classified_fact_count=1,
-            materialized_count=1,
-            failure_count=0,
-            used_callsite_count=0,
-            unused_callsite_count=1,
-            callsite_addrs=(0x2000,),
-        ),
-    )
-
-
 def test_terminal_ax_word_refines_only_generated_byte_header(monkeypatch) -> None:
     arch = Arch86_16()
     original = SimTypeFunction([], SimTypeChar(signed=True)).with_arch(arch)
@@ -85,8 +57,8 @@ def test_terminal_ax_word_refines_only_generated_byte_header(monkeypatch) -> Non
     codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, functy=original))
     monkeypatch.setattr(
         terminal_register_return_types,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = materialize_terminal_register_return_type_8616(project, codegen)
@@ -108,8 +80,27 @@ def test_terminal_ax_mixed_width_paths_refuse_header_refinement(monkeypatch) -> 
     codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, functy=original))
     monkeypatch.setattr(
         terminal_register_return_types,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.LOW, TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: None,
+    )
+
+    result = materialize_terminal_register_return_type_8616(project, codegen)
+
+    assert result.changed is False
+    assert result.stats.classified_fact_count == 0
+    assert codegen.cfunc.functy is original
+
+
+def test_terminal_dx_ax_storage_refuses_word_header_refinement(monkeypatch) -> None:
+    arch = Arch86_16()
+    original = SimTypeFunction([], SimTypeChar(signed=True)).with_arch(arch)
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
+    project = SimpleNamespace(arch=arch, kb=SimpleNamespace(functions=_FunctionManager(function)))
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, functy=original))
+    monkeypatch.setattr(
+        terminal_register_return_types,
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.DX_AX,
     )
 
     result = materialize_terminal_register_return_type_8616(project, codegen)
@@ -136,8 +127,8 @@ def test_terminal_ax_word_refuses_unobserved_guessed_void_prototype(monkeypatch)
     project = SimpleNamespace(arch=arch)
     monkeypatch.setattr(
         terminal_register_return_types,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = apply_terminal_register_return_type_evidence_8616(project, function)
@@ -165,8 +156,8 @@ def test_terminal_ax_word_seeds_observed_guessed_void_prototype(monkeypatch) -> 
     _record_used_result(project)
     monkeypatch.setattr(
         terminal_register_return_types,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = apply_terminal_register_return_type_evidence_8616(project, function)
@@ -193,8 +184,8 @@ def test_terminal_ax_word_preserves_explicit_void_prototype(monkeypatch) -> None
     _record_used_result(project)
     monkeypatch.setattr(
         terminal_register_return_types,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = apply_terminal_register_return_type_evidence_8616(project, function)
@@ -217,8 +208,8 @@ def test_terminal_ax_word_seeds_unknown_prototype_without_freezing_arguments(mon
     _record_used_result(project)
     monkeypatch.setattr(
         terminal_register_return_types,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = apply_terminal_register_return_type_evidence_8616(project, function)
@@ -227,144 +218,6 @@ def test_terminal_ax_word_seeds_unknown_prototype_without_freezing_arguments(mon
     assert isinstance(function.prototype.returnty, SimTypeShort)
     assert function.prototype.args == ()
     assert function.is_prototype_guessed is True
-
-
-def test_unused_caller_without_terminal_value_demotes_generated_scalar_return() -> None:
-    arch = Arch86_16()
-    original = SimTypeFunction([], SimTypeShort(signed=True)).with_arch(arch)
-    function = SimpleNamespace(
-        addr=0x1000,
-        block_addrs_set={0x1000},
-        calling_convention=object(),
-        info={},
-        is_prototype_guessed=True,
-        prototype=original,
-    )
-
-    result = materialize_unused_caller_void_return_type_8616(
-        SimpleNamespace(arch=arch),
-        function,
-        caller_observation=CallerReturnUseVerdict8616.UNUSED,
-        prototype_was_guessed=True,
-        terminal_value_proven=False,
-    )
-
-    assert result.changed is True
-    assert result.stats == UnusedVoidReturnTypeStats8616(2, 2, 2, 1, 0)
-    assert isinstance(function.prototype.returnty, SimTypeBottom)
-    assert function.is_prototype_guessed is True
-
-
-def test_unused_caller_preserves_proven_terminal_scalar_return() -> None:
-    arch = Arch86_16()
-    original = SimTypeFunction([], SimTypeShort(signed=True)).with_arch(arch)
-    function = SimpleNamespace(
-        addr=0x1000,
-        block_addrs_set={0x1000},
-        calling_convention=object(),
-        info={},
-        is_prototype_guessed=True,
-        prototype=original,
-    )
-
-    result = materialize_unused_caller_void_return_type_8616(
-        SimpleNamespace(arch=arch),
-        function,
-        caller_observation=CallerReturnUseVerdict8616.UNUSED,
-        prototype_was_guessed=True,
-        terminal_value_proven=True,
-    )
-
-    assert result.changed is False
-    assert result.stats == UnusedVoidReturnTypeStats8616()
-    assert function.prototype is original
-
-
-def test_void_return_demotion_requires_typed_unused_caller_evidence() -> None:
-    arch = Arch86_16()
-    original = SimTypeFunction([], SimTypeShort(signed=True)).with_arch(arch)
-    function = SimpleNamespace(
-        addr=0x1000,
-        block_addrs_set={0x1000},
-        calling_convention=object(),
-        info={},
-        is_prototype_guessed=True,
-        prototype=original,
-    )
-
-    result = materialize_unused_caller_void_return_type_8616(
-        SimpleNamespace(arch=arch),
-        function,
-        caller_observation=CallerReturnUseVerdict8616.USED,
-        prototype_was_guessed=True,
-        terminal_value_proven=False,
-    )
-
-    assert result.changed is False
-    assert result.stats == UnusedVoidReturnTypeStats8616()
-    assert function.prototype is original
-
-
-def test_void_return_demotion_preserves_explicit_prototype() -> None:
-    arch = Arch86_16()
-    original = SimTypeFunction([], SimTypeShort(signed=True)).with_arch(arch)
-    function = SimpleNamespace(
-        addr=0x1000,
-        block_addrs_set={0x1000},
-        calling_convention=object(),
-        info={ANNOTATION_KEY: {"prototype": original}},
-        is_prototype_guessed=False,
-        prototype=original,
-    )
-
-    result = materialize_unused_caller_void_return_type_8616(
-        SimpleNamespace(arch=arch),
-        function,
-        caller_observation=CallerReturnUseVerdict8616.UNUSED,
-        prototype_was_guessed=False,
-        terminal_value_proven=False,
-    )
-
-    assert result.changed is False
-    assert result.stats == UnusedVoidReturnTypeStats8616()
-    assert function.prototype is original
-
-
-def test_final_codegen_replays_closed_empty_return_evidence() -> None:
-    arch = Arch86_16()
-    original = SimTypeFunction([], SimTypeShort(signed=False)).with_arch(arch)
-    function = SimpleNamespace(
-        addr=0x1000,
-        block_addrs_set={0x1000},
-        calling_convention=object(),
-        info={},
-        is_prototype_guessed=False,
-        prototype=original,
-    )
-    project = SimpleNamespace(arch=arch, kb=SimpleNamespace(functions=_FunctionManager(function)))
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1)
-    return_node = CReturn(CConstant(0, original.returnty, codegen=codegen), codegen=codegen)
-    codegen.cfunc = SimpleNamespace(
-        addr=0x1000,
-        functy=original,
-        statements=CStatements([return_node], codegen=codegen),
-    )
-    _record_unused_result(project)
-    record_terminal_return_value_evidence_8616(
-        project,
-        0x1000,
-        TerminalReturnValueEvidence8616(1, 1, 1, 0, 1, 0),
-    )
-
-    result = materialize_unused_caller_void_codegen_type_8616(project, codegen)
-
-    assert result.changed is True
-    assert result.stats == UnusedVoidReturnTypeStats8616(3, 3, 3, 2, 0)
-    assert isinstance(codegen.cfunc.functy.returnty, SimTypeBottom)
-    assert isinstance(function.prototype.returnty, SimTypeBottom)
-    assert return_node.retval is None
-    assert codegen._inertia_codegen_decl_refresh_required_8616 is True
-    assert codegen._inertia_force_codegen_regeneration_8616 is True
 
 
 def test_cli_render_finalizer_replays_terminal_register_type_lowering(monkeypatch) -> None:

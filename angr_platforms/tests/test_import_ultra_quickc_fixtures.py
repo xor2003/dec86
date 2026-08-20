@@ -186,6 +186,11 @@ def test_selected_ultra_quickc_fixtures_record_borrowed_provenance() -> None:
     assert fixtures[0].decompile_addr is None
     assert fixtures[2].name == "whsum"
     assert fixtures[2].expected_stdout_contains == ("while sum: 15",)
+    whsum_contract = fixtures[2].generated_c_contract
+    assert whsum_contract is not None
+    assert whsum_contract.required_fragments == (
+        "void sub_105e6(unsigned short a0, unsigned short a1);",
+    )
 
 
 def test_switch_fixture_is_explicitly_excluded_until_fast_lane_is_deterministic() -> None:

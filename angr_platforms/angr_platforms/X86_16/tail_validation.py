@@ -112,6 +112,10 @@ from .tail_validation_fingerprint import (
 from .tail_validation_routing import build_tail_validation_family_routing
 from .tail_validation_stack_policy import include_x86_16_tail_validation_stack_write
 from .validation_branch_conditions import validate_materialized_branch_conditions_8616
+from .validation_call_multiplicity import (
+    CallsiteMultiplicityValidationReport8616,
+    validate_required_callsite_multiplicity_8616,
+)
 from .validation_calls import (
     CallArgumentClassValidationReport8616,
     CallInterfaceValidationReport8616,
@@ -248,6 +252,7 @@ _TAIL_VALIDATION_OBSERVABLE_FIELDS = (
 _TAIL_VALIDATION_SEMANTIC_FAILURE_FIELDS = (
     "def_use_issues",
     "missing_required_calls",
+    "callsite_multiplicity_issues",
     "call_interface_issues",
     "call_argument_class_issues",
     "function_parameter_issues",
@@ -259,7 +264,7 @@ _MISSING_CALLSITE_FINGERPRINT_PREFIX_8616 = "missing-callsite:"
 _COMPACT_OBSERVABLE_FIELDS_8616 = {"conditions", "control_flow_effects"}
 _COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_8616 = 512
 _COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_ENV_8616 = "INERTIA_TAIL_VALIDATION_FINGERPRINT_LIMIT"
-_TAIL_VALIDATION_COMPARISON_VERSION_8616 = 12
+_TAIL_VALIDATION_COMPARISON_VERSION_8616 = 13
 _STACK_ARG_ALIAS_TOKEN_RE_8616 = re.compile(
     r"stack_arg:(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::size(?P<size>\d+))?(?::bp[+-]0x[0-9a-fA-F]+)?"
 )
@@ -1281,6 +1286,7 @@ class X86_16TailValidationSummary:
     function_parameter_issues: tuple[str, ...] = ()
     function_return_class_issues: tuple[str, ...] = ()
     storage_identity_issues: tuple[str, ...] = ()
+    callsite_multiplicity_issues: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, tuple[str, ...]]:
         """Return a serializable mapping of summary fields to fingerprints."""
@@ -1293,6 +1299,7 @@ class X86_16FinalSemanticValidationReport8616:
 
     def_use: DefUseValidationReport8616
     required_calls: RequiredCallsiteValidationReport8616
+    callsite_multiplicity: CallsiteMultiplicityValidationReport8616
     call_interfaces: CallInterfaceValidationReport8616
     call_argument_classes: CallArgumentClassValidationReport8616
     function_parameters: FunctionParameterValidationReport8616
@@ -1308,6 +1315,7 @@ class X86_16FinalSemanticValidationReport8616:
         return bool(
             self.def_use.passed
             and self.required_calls.passed
+            and self.callsite_multiplicity.passed
             and self.call_interfaces.passed
             and self.call_argument_classes.passed
             and self.function_parameters.passed
@@ -1325,6 +1333,8 @@ class X86_16FinalSemanticValidationReport8616:
             failures["def_use"] = self.def_use.issue_tokens()
         if self.required_calls.missing_calls:
             failures["required_calls"] = self.required_calls.missing_calls
+        if self.callsite_multiplicity.issues:
+            failures["callsite_multiplicity"] = self.callsite_multiplicity.issue_tokens()
         if self.call_interfaces.issues:
             failures["call_interfaces"] = self.call_interfaces.issue_tokens()
         if self.call_argument_classes.issues:
@@ -1359,6 +1369,13 @@ class X86_16FinalSemanticValidationReport8616:
                 "classified_fact_count": self.required_calls.classified_fact_count,
                 "materialized_count": self.required_calls.materialized_count,
                 "failure_count": self.required_calls.failure_count,
+            },
+            "callsite_multiplicity": {
+                "raw_fact_count": self.callsite_multiplicity.raw_fact_count,
+                "normalized_fact_count": self.callsite_multiplicity.normalized_fact_count,
+                "classified_fact_count": self.callsite_multiplicity.classified_fact_count,
+                "materialized_count": self.callsite_multiplicity.materialized_count,
+                "failure_count": self.callsite_multiplicity.failure_count,
             },
             "call_interfaces": {
                 "raw_fact_count": self.call_interfaces.raw_fact_count,
@@ -5279,6 +5296,7 @@ def refresh_x86_16_final_semantic_validation_8616(
             failure_count=0,
             missing_calls=(),
         )
+        callsite_multiplicity_report = CallsiteMultiplicityValidationReport8616()
         call_interface_report = CallInterfaceValidationReport8616()
         call_argument_class_report = CallArgumentClassValidationReport8616()
         function_parameter_report = FunctionParameterValidationReport8616()
@@ -5290,6 +5308,7 @@ def refresh_x86_16_final_semantic_validation_8616(
         return X86_16FinalSemanticValidationReport8616(
             def_use=def_use_report,
             required_calls=required_call_report,
+            callsite_multiplicity=callsite_multiplicity_report,
             call_interfaces=call_interface_report,
             call_argument_classes=call_argument_class_report,
             function_parameters=function_parameter_report,
@@ -5315,6 +5334,10 @@ def refresh_x86_16_final_semantic_validation_8616(
         include_virtual_carriers=include_virtual_carriers,
     )
     required_call_report = validate_required_callsites_8616(codegen, root)
+    callsite_multiplicity_report = validate_required_callsite_multiplicity_8616(
+        codegen,
+        root,
+    )
     call_interface_report = validate_call_interfaces_8616(codegen, root)
     call_argument_class_report = validate_call_argument_classes_8616(codegen, root)
     function_parameter_report = validate_function_parameters_8616(project, codegen)
@@ -5326,6 +5349,7 @@ def refresh_x86_16_final_semantic_validation_8616(
     report = X86_16FinalSemanticValidationReport8616(
         def_use=def_use_report,
         required_calls=required_call_report,
+        callsite_multiplicity=callsite_multiplicity_report,
         call_interfaces=call_interface_report,
         call_argument_classes=call_argument_class_report,
         function_parameters=function_parameter_report,
@@ -5407,6 +5431,10 @@ def collect_x86_16_tail_validation_summary(
             ),
         )
         required_call_report = validate_required_callsites_8616(codegen, root)
+        callsite_multiplicity_report = validate_required_callsite_multiplicity_8616(
+            codegen,
+            root,
+        )
         call_interface_report = validate_call_interfaces_8616(codegen, root)
         call_argument_class_report = validate_call_argument_classes_8616(codegen, root)
         function_parameter_report = validate_function_parameters_8616(project, codegen)
@@ -5420,6 +5448,7 @@ def collect_x86_16_tail_validation_summary(
                 "boundary_fingerprint": summary_boundary_fingerprint,
                 "def_use_issues": def_use_report.issue_tokens(),
                 "missing_required_calls": required_call_report.missing_calls,
+                "callsite_multiplicity_issues": callsite_multiplicity_report.issue_tokens(),
                 "call_interface_issues": call_interface_report.issue_tokens(),
                 "call_argument_class_issues": call_argument_class_report.issue_tokens(),
                 "function_parameter_issues": function_parameter_report.issue_tokens(),
@@ -5584,6 +5613,7 @@ def collect_x86_16_tail_validation_summary(
                     ),
                     def_use_issues=def_use_report.issue_tokens(),
                     missing_required_calls=required_call_report.missing_calls,
+                    callsite_multiplicity_issues=callsite_multiplicity_report.issue_tokens(),
                     call_interface_issues=call_interface_report.issue_tokens(),
                     call_argument_class_issues=call_argument_class_report.issue_tokens(),
                     function_parameter_issues=function_parameter_report.issue_tokens(),
@@ -5627,6 +5657,7 @@ def collect_x86_16_tail_validation_summary(
                 f"control={summary.control_flow_effects!r} "
                 f"def_use={summary.def_use_issues!r} "
                 f"required_calls={summary.missing_required_calls!r} "
+                f"callsite_multiplicity={summary.callsite_multiplicity_issues!r} "
                 f"control_flow={summary.control_flow_issues!r} "
                 f"storage_identities={summary.storage_identity_issues!r}\n"
             )

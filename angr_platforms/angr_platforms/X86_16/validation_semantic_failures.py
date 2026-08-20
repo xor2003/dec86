@@ -37,6 +37,11 @@ class TailSemanticIssueSurface8616(Protocol):
         ...
 
     @property
+    def callsite_multiplicity_issues(self) -> tuple[str, ...]:
+        """Return exact machine-callsite overmaterialization failures."""
+        ...
+
+    @property
     def call_interface_issues(self) -> tuple[str, ...]:
         """Return call-interface failures."""
         ...
@@ -89,6 +94,7 @@ def collect_tail_semantic_failures_8616(
     after_fields = (
         ("def_use", after.def_use_issues),
         ("required_calls", after.missing_required_calls),
+        ("callsite_multiplicity", after.callsite_multiplicity_issues),
         ("call_interfaces", after.call_interface_issues),
         ("call_argument_classes", after.call_argument_class_issues),
         ("function_parameters", after.function_parameter_issues),
@@ -99,6 +105,7 @@ def collect_tail_semantic_failures_8616(
     before_fields = (
         before.def_use_issues,
         before.missing_required_calls,
+        before.callsite_multiplicity_issues,
         before.call_interface_issues,
         before.call_argument_class_issues,
         before.function_parameter_issues,

@@ -31,10 +31,7 @@ from angr.sim_variable import SimMemoryVariable, SimStackVariable
 from archinfo import Arch
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
-from ..semantics.terminal_register_returns import (
-    TerminalAxReturnLane8616,
-    terminal_ax_return_lane_states_8616,
-)
+from ..semantics.terminal_return_storage import TerminalReturnStorage8616, terminal_return_storage_8616
 from .physical_registers import physical_register_view_8616
 from .terminal_return_expressions import (
     contains_effectful_call_8616,
@@ -273,8 +270,10 @@ def materialize_terminal_register_return_value_8616(
     )
     returns = tuple(node for node in nodes if isinstance(node, CReturn))
     raw_count = len(assignments)
-    states = terminal_ax_return_lane_states_8616(project, function)
-    terminal_shape = states == frozenset({TerminalAxReturnLane8616.WORD}) and len(returns) == 1
+    terminal_shape = (
+        terminal_return_storage_8616(project, function) is TerminalReturnStorage8616.AX
+        and len(returns) == 1
+    )
     if not terminal_shape or not assignments:
         return _result_8616(
             codegen_surface,

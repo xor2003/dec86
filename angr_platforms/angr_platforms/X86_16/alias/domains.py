@@ -2,7 +2,6 @@
 
 Layer: Alias.
 Responsibility: owns storage identity for register domains and bit views.
-Owns storage identity for register domains and bit views.
 Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting
 work here.
 """
@@ -53,6 +52,10 @@ AX: DomainKey = DomainKey("reg", "AX")
 BX: DomainKey = DomainKey("reg", "BX")
 CX: DomainKey = DomainKey("reg", "CX")
 DX: DomainKey = DomainKey("reg", "DX")
+SP: DomainKey = DomainKey("reg", "SP")
+BP: DomainKey = DomainKey("reg", "BP")
+SI: DomainKey = DomainKey("reg", "SI")
+DI: DomainKey = DomainKey("reg", "DI")
 
 REGISTER_VIEWS: dict[str, tuple[DomainKey, View]] = {
     "ax": (AX, FULL16),
@@ -67,6 +70,10 @@ REGISTER_VIEWS: dict[str, tuple[DomainKey, View]] = {
     "dx": (DX, FULL16),
     "dl": (DX, LOW8),
     "dh": (DX, HIGH8),
+    "sp": (SP, FULL16),
+    "bp": (BP, FULL16),
+    "si": (SI, FULL16),
+    "di": (DI, FULL16),
 }
 
 REGISTER_OFFSETS: dict[str, int] = {
@@ -74,6 +81,10 @@ REGISTER_OFFSETS: dict[str, int] = {
     "cx": 2,
     "dx": 4,
     "bx": 6,
+    "sp": 8,
+    "bp": 10,
+    "si": 12,
+    "di": 14,
 }
 
 REGISTER_PAIR_NAMES: dict[str, str] = {
@@ -139,8 +150,10 @@ def join_register_views(left: View, right: View) -> View | None:
 
 __all__ = [
     "AX",
+    "BP",
     "BX",
     "CX",
+    "DI",
     "DX",
     "DomainKey",
     "FULL16",
@@ -149,6 +162,8 @@ __all__ = [
     "REGISTER_OFFSETS",
     "REGISTER_PAIR_NAMES",
     "REGISTER_VIEWS",
+    "SI",
+    "SP",
     "View",
     "join_register_views",
     "register_domain_for_name",

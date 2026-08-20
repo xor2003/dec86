@@ -19,7 +19,6 @@ from angr.sim_variable import SimStackVariable
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..calling_convention_compat import collect_bp_word_stack_access_offsets_8616
-from .callee_argument_count_evidence import CalleeArgumentCountVerdict8616
 from .callee_argument_interface import (
     CalleeArgumentInterfaceDecision8616,
     reconcile_callee_argument_interface_8616,
@@ -304,7 +303,7 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
     existing_args = existing_arg_list
     if (
         len(desired) < len(existing_args)
-        and interface_result.evidence.verdict is not CalleeArgumentCountVerdict8616.CONSISTENT
+        and not interface_result.evidence.closes_census
     ):
         typed_codegen._inertia_positive_bp_argument_stats_8616 = PositiveBpArgumentStats8616(
             raw_fact_count=raw_count,

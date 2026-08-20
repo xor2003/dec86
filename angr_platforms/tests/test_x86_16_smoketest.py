@@ -738,6 +738,9 @@ def test_stack_variable_annotation_applies_local_name():
     assert dec.codegen is not None
     assert "int add_store(int lhs, int rhs)" in dec.codegen.text
     assert "unsigned short total;" in dec.codegen.text
+    assert "unsigned char total;" not in dec.codegen.text
+    assert "unsigned int total;" not in dec.codegen.text
+    assert "unsigned int rhs;" not in dec.codegen.text
     assert "total = lhs + rhs;" in dec.codegen.text
 
 
@@ -756,6 +759,8 @@ def test_stack_variable_annotation_preserves_explicit_type():
 
     assert dec.codegen is not None
     assert "unsigned short sum_local;" in dec.codegen.text
+    assert "unsigned char sum_local;" not in dec.codegen.text
+    assert "unsigned int sum_local;" not in dec.codegen.text
     assert "sum_local = lhs + rhs;" in dec.codegen.text
     annotations = project.kb.functions[0x1000].info["x86_16_annotations"]["stack_vars"]
     assert annotations[-4]["name"] == "sum_local"
@@ -777,6 +782,8 @@ def test_bp_relative_stack_annotation_uses_assembly_displacement():
 
     assert dec.codegen is not None
     assert "unsigned short sum_local;" in dec.codegen.text
+    assert "unsigned char sum_local;" not in dec.codegen.text
+    assert "unsigned int sum_local;" not in dec.codegen.text
     assert "sum_local = lhs + rhs;" in dec.codegen.text
 
 

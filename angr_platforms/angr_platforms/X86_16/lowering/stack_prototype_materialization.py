@@ -39,6 +39,10 @@ from .callee_argument_width_evidence import (
     CalleeArgumentWidthVerdict8616,
     collect_callee_argument_width_evidence_8616,
 )
+from .interprocedural_storage_transaction import (
+    accepted_stack_input_layout_8616,
+    function_storage_resolution_8616,
+)
 from .stack_lowering_from_facts import canonical_stack_offset_8616
 
 __all__ = [
@@ -780,9 +784,13 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
         else collect_callee_argument_width_evidence_8616(project, typed_cfunc.addr)
     )
     typed_codegen._inertia_callee_argument_width_evidence_8616 = incoming_width_evidence
-    incoming_widths = (
+    storage_resolution = function_storage_resolution_8616(project, typed_cfunc.addr)
+    if storage_resolution is not None and storage_resolution.contract is None:
+        return False
+    accepted_layout = accepted_stack_input_layout_8616(project, typed_cfunc.addr)
+    incoming_widths = dict(accepted_layout) if accepted_layout is not None else (
         dict(incoming_width_evidence.widths_by_offset)
-        if incoming_width_evidence.verdict is CalleeArgumentWidthVerdict8616.CONSISTENT
+        if incoming_width_evidence.closes_census
         else {}
     )
     wide_evidence = (
@@ -949,21 +957,10 @@ def reconcile_exact_stack_argument_prototype_8616(project: object, codegen: obje
 
 
 def reconcile_callsite_interface_declarations_8616(project: object, codegen: object) -> bool:
-    """Finalize stack widths before lowering the corresponding declarations.
+    """Run the owned publication, prototype, helper, and declaration lifecycle."""
+    from .interprocedural_storage_pipeline import publish_and_reconcile_callsite_interfaces_8616
 
-    The local peer import avoids a module cycle while keeping this lifecycle
-    operation wholly inside types/lowering. Stage orchestrators must call this
-    entry point instead of independently ordering width and declaration passes.
-    """
-    from .callsite_prototype_declarations import materialize_callsite_prototype_declarations_8616
-    from .helper_call_interfaces import materialize_known_helper_call_interfaces_8616
-
-    prototype_changed = reconcile_exact_stack_argument_prototype_8616(project, codegen)
-    helper_changed = materialize_known_helper_call_interfaces_8616(project, codegen)
-    materialize_callsite_prototype_declarations_8616(project, codegen)
-    # Declaration metadata does not mutate the C AST and must not activate a
-    # stage semantic-validation delta by itself.
-    return prototype_changed or helper_changed
+    return bool(publish_and_reconcile_callsite_interfaces_8616(project, codegen))
 
 
 def materialize_annotated_stack_prototype_8616(project: object, codegen: object) -> bool:

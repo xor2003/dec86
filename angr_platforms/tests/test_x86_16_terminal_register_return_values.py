@@ -12,7 +12,7 @@ from angr_platforms.X86_16.lowering.terminal_register_return_values import (
     TerminalRegisterReturnValueStatus8616,
     materialize_terminal_register_return_value_8616,
 )
-from angr_platforms.X86_16.semantics.terminal_register_returns import TerminalAxReturnLane8616
+from angr_platforms.X86_16.semantics.terminal_return_storage import TerminalReturnStorage8616
 
 
 class _Codegen(SimpleNamespace):
@@ -75,8 +75,8 @@ def test_terminal_ax_value_materializes_linear_argument_expression(monkeypatch) 
     project, codegen, assignment, return_node = _fixture()
     monkeypatch.setattr(
         terminal_register_return_values,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = materialize_terminal_register_return_value_8616(project, codegen)
@@ -100,8 +100,8 @@ def test_terminal_ax_value_uses_last_linear_definition(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         terminal_register_return_values,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = materialize_terminal_register_return_value_8616(project, codegen)
@@ -120,8 +120,8 @@ def test_terminal_ax_value_flattens_nested_statement_wrappers(monkeypatch) -> No
     ]
     monkeypatch.setattr(
         terminal_register_return_values,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = materialize_terminal_register_return_value_8616(project, codegen)
@@ -148,8 +148,8 @@ def test_terminal_ax_value_refuses_structured_control_flow(monkeypatch) -> None:
     ]
     monkeypatch.setattr(
         terminal_register_return_values,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = materialize_terminal_register_return_value_8616(project, codegen)
@@ -182,8 +182,8 @@ def test_terminal_ax_value_allows_proven_segmented_frame_read(monkeypatch) -> No
     )
     monkeypatch.setattr(
         terminal_register_return_values,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = materialize_terminal_register_return_value_8616(project, codegen)
@@ -206,8 +206,8 @@ def test_terminal_ax_value_refuses_intervening_argument_definition(monkeypatch) 
     )
     monkeypatch.setattr(
         terminal_register_return_values,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = materialize_terminal_register_return_value_8616(project, codegen)
@@ -222,8 +222,8 @@ def test_terminal_ax_value_refuses_call_rhs(monkeypatch) -> None:
     assignment.rhs = structured_c.CFunctionCall("unknown", None, [], codegen=codegen)
     monkeypatch.setattr(
         terminal_register_return_values,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = materialize_terminal_register_return_value_8616(project, codegen)
@@ -247,8 +247,8 @@ def test_terminal_ax_value_accepts_shared_scalar_subtree(monkeypatch) -> None:
     shared_argument.collapsed = True
     monkeypatch.setattr(
         terminal_register_return_values,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = materialize_terminal_register_return_value_8616(project, codegen)
@@ -318,8 +318,8 @@ def test_terminal_ax_value_replaces_undefined_generated_return_from_linear_carri
     ]
     monkeypatch.setattr(
         terminal_register_return_values,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = materialize_terminal_register_return_value_8616(project, codegen)
@@ -340,8 +340,8 @@ def test_terminal_ax_value_preserves_existing_resolved_return(monkeypatch) -> No
     return_node.retval = assignment.rhs
     monkeypatch.setattr(
         terminal_register_return_values,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = materialize_terminal_register_return_value_8616(project, codegen)

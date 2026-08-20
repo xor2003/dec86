@@ -1,0 +1,158 @@
+"""Connect exact call-stack Semantics to the pre-Alias function SSA path.
+
+Layer: Semantics.
+Responsibility: orchestrate IR import, authoritative callsite summaries,
+Semantics-owned call effects, and function SSA before Alias consumes stack
+versions. This module only coordinates owned typed artifacts at their earliest
+valid boundary.
+Owns instruction effects, flags, branch meaning, and expression interpretation.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
+from __future__ import annotations
+
+from typing import Protocol, cast
+
+from ..callsite_summary import build_callsite_summary_inventory_8616
+from ..ir import IRFunctionArtifact
+from ..ir.ssa_function import SSAFunctionArtifact, build_x86_16_function_ssa
+from ..ir.vex_import import build_x86_16_ir_function_artifact
+from ..pipeline.errors import PipelineHardError
+from .call_outputs import CallOutputArtifact8616, materialize_call_outputs_8616
+from .call_stack_effects import (
+    CallStackEffectArtifact8616,
+    materialize_call_stack_effects_8616,
+)
+
+
+class _FunctionManager8616(Protocol):
+    """Third-party function-manager boundary used for exact lookup."""
+
+    def function(self, *, addr: int, create: bool = False) -> object | None:
+        """Return an existing function without inventing a boundary."""
+        ...
+
+
+class _KnowledgeBase8616(Protocol):
+    """Third-party knowledge-base boundary used by this semantic pass."""
+
+    functions: _FunctionManager8616
+
+
+class _ProjectBoundary8616(Protocol):
+    """Minimal angr project surface needed for exact function lookup."""
+
+    kb: _KnowledgeBase8616
+
+
+class _CFunctionBoundary8616(Protocol):
+    """Minimal generated-function identity used by this pass."""
+
+    addr: int
+
+
+class _FunctionBoundary8616(Protocol):
+    """Owned metadata extension on a third-party recovered function."""
+
+    info: dict[str, object]
+
+
+class _CodegenBoundary8616(Protocol):
+    """Dynamic angr codegen plus owned semantic artifact extensions."""
+
+    cfunc: _CFunctionBoundary8616 | None
+    _inertia_vex_ir_artifact: IRFunctionArtifact
+    _inertia_vex_ir_summary: dict[str, object]
+    _inertia_vex_ir_function_ssa: SSAFunctionArtifact
+    _inertia_call_stack_effect_artifact_8616: CallStackEffectArtifact8616
+    _inertia_call_output_artifact_8616: CallOutputArtifact8616
+
+
+def build_semantic_function_ssa_8616(
+    project: object,
+    function: object,
+    *,
+    ir_artifact: IRFunctionArtifact | None = None,
+) -> tuple[CallStackEffectArtifact8616, CallOutputArtifact8616, SSAFunctionArtifact]:
+    """Build function SSA only after exact CALL effects have typed outcomes."""
+    raw_ir = (
+        build_x86_16_ir_function_artifact(project, function)
+        if ir_artifact is None
+        else ir_artifact
+    )
+    callsite_addrs = tuple(
+        instruction.addr
+        for block in raw_ir.blocks
+        for instruction in block.instrs
+        if instruction.op == "CALL" and instruction.addr is not None
+    )
+    summaries = build_callsite_summary_inventory_8616(function, callsite_addrs)
+    effects = materialize_call_stack_effects_8616(raw_ir, summaries)
+    if not effects.stats.closed or (
+        effects.stats.classified_fact_count > 0
+        and effects.stats.materialized_count == 0
+    ):
+        raise PipelineHardError(
+            "call-stack Semantics did not retain one typed outcome per CALL",
+            layer="semantics",
+        )
+    outputs = materialize_call_outputs_8616(effects.function, summaries)
+    if not outputs.stats.closed or (
+        outputs.stats.classified_fact_count > 0
+        and outputs.stats.materialized_count == 0
+    ):
+        raise PipelineHardError(
+            "call-output Semantics did not retain one typed outcome per CALL",
+            layer="semantics",
+        )
+    return effects, outputs, build_x86_16_function_ssa(outputs.function)
+
+
+def apply_x86_16_call_stack_effects_8616(project: object, codegen: object) -> bool:
+    """Replace raw function SSA with the Semantics-enriched production artifact."""
+    boundary = cast(_CodegenBoundary8616, codegen)
+    try:
+        cfunc = boundary.cfunc
+        raw_ir = boundary._inertia_vex_ir_artifact
+    except AttributeError:
+        return False
+    if cfunc is None or not isinstance(cfunc.addr, int):
+        return False
+    if not isinstance(raw_ir, IRFunctionArtifact) or raw_ir.function_addr != cfunc.addr:
+        return False
+    project_boundary = cast(_ProjectBoundary8616, project)
+    try:
+        function = project_boundary.kb.functions.function(addr=cfunc.addr, create=False)
+    except (AttributeError, KeyError, TypeError):
+        return False
+    if function is None:
+        return False
+    effects, outputs, function_ssa = build_semantic_function_ssa_8616(
+        project,
+        function,
+        ir_artifact=raw_ir,
+    )
+    boundary._inertia_vex_ir_artifact = outputs.function
+    boundary._inertia_vex_ir_summary = outputs.function.summary
+    boundary._inertia_vex_ir_function_ssa = function_ssa
+    boundary._inertia_call_stack_effect_artifact_8616 = effects
+    boundary._inertia_call_output_artifact_8616 = outputs
+    typed_function = cast(_FunctionBoundary8616, function)
+    try:
+        info: dict[str, object] | None = typed_function.info
+    except AttributeError:
+        info = None
+    if isinstance(info, dict):
+        info["x86_16_vex_ir_artifact"] = outputs.function.to_dict()
+        info["x86_16_vex_ir_summary"] = dict(outputs.function.summary)
+        info["x86_16_vex_ir_function_ssa"] = function_ssa.to_dict()
+        info["x86_16_call_stack_effects"] = effects.to_dict()
+        info["x86_16_call_outputs"] = outputs.to_dict()
+    return False
+
+
+__all__ = [
+    "apply_x86_16_call_stack_effects_8616",
+    "build_semantic_function_ssa_8616",
+]

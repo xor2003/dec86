@@ -66,6 +66,16 @@ def test_register_alias_domains_cover_ax_al_ah():
     assert register_offset_for_name("ax") == 0
 
 
+def test_register_alias_domains_cover_word_addressing_registers():
+    expected_offsets = {"sp": 8, "bp": 10, "si": 12, "di": 14}
+
+    for name, offset in expected_offsets.items():
+        assert register_domain_for_name(name) is not None
+        assert register_view_for_name(name) == FULL16
+        assert register_pair_name(name) == name
+        assert register_offset_for_name(name) == offset
+
+
 def test_register_alias_state_round_trips_full_write_and_slice_reads():
     state = AliasState()
     token = object()

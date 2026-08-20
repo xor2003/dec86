@@ -52,6 +52,7 @@ def test_ir_address_to_dict_preserves_segment_base_and_status():
         "status": "provisional",
         "segment_origin": "defaulted",
         "expr": ("Iop_Sub16", "bp"),
+        "version": None,
     }
 
 

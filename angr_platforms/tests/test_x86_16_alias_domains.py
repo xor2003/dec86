@@ -37,13 +37,13 @@ def test_x86_16_alias_domains_map_register_views_and_pairs() -> None:
 
 
 def test_x86_16_alias_domains_refuse_unknown_names() -> None:
-    assert register_domain_for_name("sp") is None
+    assert register_domain_for_name("r0") is None
     assert register_domain_for_name(None) is None
-    assert register_view_for_name("sp") is None
+    assert register_view_for_name("r0") is None
     assert register_view_for_name(None) is None
-    assert register_pair_name("sp") is None
+    assert register_pair_name("r0") is None
     assert register_pair_name(None) is None
-    assert register_offset_for_name("sp") is None
+    assert register_offset_for_name("r0") is None
     assert register_offset_for_name(None) is None
 
 

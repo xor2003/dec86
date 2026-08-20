@@ -156,7 +156,8 @@ def test_vex_import_maps_si_based_store_to_typed_provisional_ds_address() -> Non
                 _wrtmp(0, _get(12)),
                 _wrtmp(1, _const(4)),
                 _wrtmp(2, _binop("Iop_Add16", _rdtmp(0), _rdtmp(1))),
-                _store(_rdtmp(2), _const(0x55)),
+                _wrtmp(3, SimpleNamespace(tag="Iex_Const", con=SimpleNamespace(value=0x55), ty="Ity_I8")),
+                _store(_rdtmp(2), _rdtmp(3)),
             )
         },
         function,
@@ -172,6 +173,7 @@ def test_vex_import_maps_si_based_store_to_typed_provisional_ds_address() -> Non
     assert addr.space == MemSpace.DS
     assert addr.base == ("si",)
     assert addr.offset == 4
+    assert addr.size == store.size == 1
     assert addr.status == AddressStatus.PROVISIONAL
     assert addr.segment_origin == SegmentOrigin.DEFAULTED
     assert all(instruction.addr == 0x1000 for instruction in artifact.blocks[0].instrs)

@@ -2,12 +2,19 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from angr.errors import SimEngineError
 from angr_platforms.X86_16.semantics import terminal_register_returns
 from angr_platforms.X86_16.semantics.branch_target_return import TerminalAxReturnEffectKind8616
 from angr_platforms.X86_16.semantics.terminal_register_returns import (
+    TerminalAxReturnEvidence8616,
     TerminalAxReturnLane8616,
+    TerminalReturnStorageState8616,
     collect_terminal_ax_return_evidence_8616,
     terminal_ax_return_lane_states_8616,
+)
+from angr_platforms.X86_16.semantics.terminal_return_storage import (
+    TerminalReturnStorage8616,
+    consistent_terminal_return_storage_8616,
 )
 
 
@@ -94,3 +101,128 @@ def test_terminal_ax_evidence_closes_mixed_defined_and_undefined_return_paths(mo
     assert repeated == evidence
     assert len(project.factory.calls) == len(blocks)
     assert set(project.factory.calls) == set(blocks)
+
+
+def test_terminal_wide_return_requires_every_terminal_path(monkeypatch) -> None:
+    branch = _insn(0x1000, "je", size=2, target=0x1010)
+    wide_ax = _insn(0x1002, "mov")
+    wide_dx = _insn(0x1003, "mov")
+    wide_ret = _insn(0x1004, "ret")
+    word_ax = _insn(0x1010, "mov")
+    word_ret = _insn(0x1011, "ret")
+    blocks = {
+        0x1000: SimpleNamespace(capstone=SimpleNamespace(insns=(branch,))),
+        0x1002: SimpleNamespace(capstone=SimpleNamespace(insns=(wide_ax, wide_dx, wide_ret))),
+        0x1010: SimpleNamespace(capstone=SimpleNamespace(insns=(word_ax, word_ret))),
+    }
+    project = SimpleNamespace(factory=_Factory(blocks))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set=set(blocks))
+
+    monkeypatch.setattr(
+        terminal_register_returns,
+        "terminal_ax_return_effect_8616",
+        lambda insn: SimpleNamespace(
+            kind=TerminalAxReturnEffectKind8616.OTHER,
+            dst_reg="dx"
+            if insn is wide_dx
+            else "ax"
+            if insn is wide_ax or insn is word_ax
+            else None,
+        ),
+    )
+
+    evidence = collect_terminal_ax_return_evidence_8616(project, function)
+
+    assert evidence.complete is True
+    assert evidence.proves_wide_return is False
+    assert {state.dx_ax_pair_proven for state in evidence.storage_states} == {False, True}
+
+
+def test_terminal_lane_projection_refuses_incomplete_successor_census(monkeypatch) -> None:
+    branch = _insn(0x1000, "je", size=2, target=0x1010)
+    write_ax = _insn(0x1002, "mov")
+    terminal = _insn(0x1003, "ret")
+    blocks = {
+        0x1000: SimpleNamespace(capstone=SimpleNamespace(insns=(branch,))),
+        0x1002: SimpleNamespace(capstone=SimpleNamespace(insns=(write_ax, terminal))),
+    }
+    project = SimpleNamespace(factory=_Factory(blocks))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set=set(blocks))
+    monkeypatch.setattr(
+        terminal_register_returns,
+        "terminal_ax_return_effect_8616",
+        lambda insn: SimpleNamespace(
+            kind=TerminalAxReturnEffectKind8616.OTHER,
+            dst_reg="ax" if insn is write_ax else None,
+        ),
+    )
+
+    evidence = collect_terminal_ax_return_evidence_8616(project, function)
+
+    assert evidence.complete is False
+    assert evidence.states == frozenset({TerminalAxReturnLane8616.WORD})
+    assert terminal_ax_return_lane_states_8616(project, function) == frozenset()
+
+
+def test_terminal_register_return_refuses_inaccessible_decode() -> None:
+    class _MissingFactory:
+        def block(self, _address: int, *, opt_level: int) -> object:
+            assert opt_level == 0
+            raise SimEngineError("No bytes in memory")
+
+    evidence = collect_terminal_ax_return_evidence_8616(
+        SimpleNamespace(factory=_MissingFactory()),
+        SimpleNamespace(addr=0x11222, block_addrs_set={0x11222}),
+    )
+
+    assert evidence.complete is False
+    assert evidence.raw_fact_count == evidence.failure_count == 1
+
+
+def test_exact_terminal_storage_distinguishes_ax_from_dx_ax() -> None:
+    word = TerminalAxReturnEvidence8616(
+        frozenset({TerminalReturnStorageState8616(TerminalAxReturnLane8616.WORD, False)}),
+        1,
+        1,
+        1,
+        1,
+        0,
+    )
+    wide = TerminalAxReturnEvidence8616(
+        frozenset({TerminalReturnStorageState8616(TerminalAxReturnLane8616.WORD, True)}),
+        1,
+        1,
+        1,
+        1,
+        0,
+    )
+
+    assert consistent_terminal_return_storage_8616(word) is TerminalReturnStorage8616.AX
+    assert consistent_terminal_return_storage_8616(wide) is TerminalReturnStorage8616.DX_AX
+
+
+def test_exact_terminal_storage_refuses_mixed_or_incomplete_paths() -> None:
+    mixed = TerminalAxReturnEvidence8616(
+        frozenset(
+            {
+                TerminalReturnStorageState8616(TerminalAxReturnLane8616.LOW, False),
+                TerminalReturnStorageState8616(TerminalAxReturnLane8616.WORD, False),
+            }
+        ),
+        2,
+        2,
+        2,
+        2,
+        0,
+    )
+    incomplete = TerminalAxReturnEvidence8616(
+        frozenset({TerminalReturnStorageState8616(TerminalAxReturnLane8616.WORD, False)}),
+        2,
+        1,
+        1,
+        1,
+        1,
+    )
+
+    assert consistent_terminal_return_storage_8616(mixed) is None
+    assert consistent_terminal_return_storage_8616(incomplete) is None

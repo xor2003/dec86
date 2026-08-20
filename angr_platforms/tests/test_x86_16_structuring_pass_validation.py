@@ -251,6 +251,21 @@ def test_structuring_stable_stack_semantics_owner_records_pass(monkeypatch):
 
     monkeypatch.setattr(stage, "transfer_semantic_alias_facts_to_codegen_8616", _transfer)
     monkeypatch.setattr(stage, "lower_stack_accesses_from_alias_facts_8616", _alias_lowering)
+    monkeypatch.setattr(
+        stage._vex_ir,
+        "apply_x86_16_vex_ir_artifact",
+        lambda *_args: calls.append("vex-ir") or False,
+    )
+    monkeypatch.setattr(
+        stage._stack_memory_ssa,
+        "apply_x86_16_stack_memory_ssa_alias_artifact",
+        lambda *_args: calls.append("memory-alias") or False,
+    )
+    monkeypatch.setattr(
+        stage,
+        "lower_x86_16_stack_memory_ssa_alias_artifact",
+        lambda *_args: calls.append("memory-lowering") or None,
+    )
     monkeypatch.setattr(stage, "lower_runtime_ss_segment_helpers_to_stack_8616", _runtime_ss_lowering)
     monkeypatch.setattr(stage, "lower_stable_ss_linear_stack_dereferences_8616", _ss_lowering)
     monkeypatch.setattr(stage, "prune_unread_stack_lowered_register_carriers_8616", _prune_carriers)
@@ -258,9 +273,67 @@ def test_structuring_stable_stack_semantics_owner_records_pass(monkeypatch):
     changed = stage._apply_structuring_stable_stack_semantics_8616(project, codegen)
 
     assert changed is True
-    assert calls == ["transfer", "alias:1", "runtime-ss", "ss", "carrier"]
+    assert calls == [
+        "vex-ir",
+        "memory-alias",
+        "memory-lowering",
+        "transfer",
+        "alias:1",
+        "runtime-ss",
+        "ss",
+        "carrier",
+    ]
     assert codegen._inertia_stable_stack_semantics_structuring_pass_ran_8616 is True
     assert codegen._inertia_codegen_decl_refresh_required_8616 is True
+
+
+def test_structuring_stable_stack_semantics_prefers_memory_ssa_lowering(monkeypatch):
+    calls: list[str] = []
+    project = SimpleNamespace()
+    codegen = SimpleNamespace(_inertia_semantic_stack_materialized_count=0)
+
+    monkeypatch.setattr(
+        stage._vex_ir,
+        "apply_x86_16_vex_ir_artifact",
+        lambda *_args: calls.append("vex-ir") or False,
+    )
+    monkeypatch.setattr(
+        stage._stack_memory_ssa,
+        "apply_x86_16_stack_memory_ssa_alias_artifact",
+        lambda *_args: calls.append("memory-alias") or False,
+    )
+
+    def memory_lowering(actual_codegen):
+        calls.append("memory-lowering")
+        actual_codegen._inertia_semantic_stack_materialized_count = 1
+        return object()
+
+    monkeypatch.setattr(stage, "lower_x86_16_stack_memory_ssa_alias_artifact", memory_lowering)
+    monkeypatch.setattr(
+        stage,
+        "transfer_semantic_alias_facts_to_codegen_8616",
+        lambda *_args: pytest.fail("legacy Alias re-lift must not run"),
+    )
+    monkeypatch.setattr(
+        stage,
+        "lower_runtime_ss_segment_helpers_to_stack_8616",
+        lambda *_args, **_kwargs: calls.append("runtime-ss") or False,
+    )
+    monkeypatch.setattr(
+        stage,
+        "lower_stable_ss_linear_stack_dereferences_8616",
+        lambda *_args, **_kwargs: calls.append("ss") or False,
+    )
+    monkeypatch.setattr(
+        stage,
+        "prune_unread_stack_lowered_register_carriers_8616",
+        lambda *_args: calls.append("carrier") or False,
+    )
+
+    changed = stage._apply_structuring_stable_stack_semantics_8616(project, codegen)
+
+    assert changed is True
+    assert calls == ["vex-ir", "memory-alias", "memory-lowering", "runtime-ss", "ss", "carrier"]
 
 
 def test_structuring_codegen_replays_lowered_register_carrier_consumer(monkeypatch):
@@ -1714,6 +1787,11 @@ def test_structuring_validation_prime_refreshes_conditions_after_final_lowering_
         lambda *_args, **_kwargs: calls.append("vex-ir") or False,
     )
     monkeypatch.setattr(
+        stage._stack_memory_ssa,
+        "apply_x86_16_stack_memory_ssa_alias_artifact",
+        lambda *_args, **_kwargs: calls.append("memory-alias") or False,
+    )
+    monkeypatch.setattr(
         stage._segment_state,
         "apply_x86_16_segment_state_artifact",
         lambda *_args, **_kwargs: calls.append("segment-state") or False,
@@ -1759,6 +1837,7 @@ def test_structuring_validation_prime_refreshes_conditions_after_final_lowering_
 
     assert calls == [
         "vex-ir",
+        "memory-alias",
         "segment-state",
         "segment",
         "pointer-memory",

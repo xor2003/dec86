@@ -98,7 +98,14 @@ ARGS_FIXTURE: QuickCFixtureSpec = QuickCFixtureSpec(
 DEFAULT_FIXTURES: tuple[QuickCFixtureSpec, ...] = (
     QuickCFixtureSpec("hello", "PROGRAMS/hello.c", expected_stdout_contains=("Hello world",)),
     QuickCFixtureSpec("add", "PROGRAMS/add.c", expected_stdout_contains=("15",)),
-    QuickCFixtureSpec("whsum", "PROGRAMS/whsum.c", expected_stdout_contains=("while sum: 15",)),
+    QuickCFixtureSpec(
+        "whsum",
+        "PROGRAMS/whsum.c",
+        expected_stdout_contains=("while sum: 15",),
+        generated_c_contract=GeneratedCContract(
+            required_fragments=("void sub_105e6(unsigned short a0, unsigned short a1);",),
+        ),
+    ),
     ARGS_FIXTURE,
 )
 
