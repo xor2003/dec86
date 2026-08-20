@@ -32,3 +32,22 @@ def test_info_respects_debug_level(capsys: pytest.CaptureFixture[str]) -> None:
         assert "visible line" in capsys.readouterr().out
     finally:
         debug.debug_level = previous_level
+
+
+def test_error_raises_a_lifting_exception_instead_of_exiting(capsys: pytest.CaptureFixture[str]) -> None:
+    from pyvex.errors import LiftingException
+
+    with pytest.raises(debug.X86_16FrontendFatalError) as raised:
+        debug.ERROR("not implemented: 0x%02x /%d\n", 0xC1, 1)
+
+    assert isinstance(raised.value, LiftingException)
+    assert "not implemented: 0xc1 /1" in str(raised.value)
+    captured = capsys.readouterr()
+    assert "[ERROR]" in captured.err
+    assert "not implemented: 0xc1 /1" in captured.err
+
+
+def test_failed_assert_raises_instead_of_exiting() -> None:
+    debug.ASSERT(True)
+    with pytest.raises(debug.X86_16FrontendFatalError):
+        debug.ASSERT(False)
