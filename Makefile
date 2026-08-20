@@ -205,6 +205,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/jcc_condition.py \
 	angr_platforms/angr_platforms/X86_16/lift_86_16.py \
 	angr_platforms/angr_platforms/X86_16/load_dos_mz.py \
+	angr_platforms/angr_platforms/X86_16/packed_mz_unpack.py \
 	angr_platforms/angr_platforms/X86_16/load_dos_ne.py \
 	angr_platforms/angr_platforms/X86_16/lst_extract.py \
 	angr_platforms/angr_platforms/X86_16/ne_exe_parse.py \
@@ -773,6 +774,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/jcc_condition.py \
 	angr_platforms/angr_platforms/X86_16/lift_86_16.py \
 	angr_platforms/angr_platforms/X86_16/load_dos_mz.py \
+	angr_platforms/angr_platforms/X86_16/packed_mz_unpack.py \
 	angr_platforms/angr_platforms/X86_16/load_dos_ne.py \
 	angr_platforms/angr_platforms/X86_16/lst_extract.py \
 	angr_platforms/angr_platforms/X86_16/ne_exe_parse.py \

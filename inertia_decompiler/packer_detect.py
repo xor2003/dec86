@@ -1,231 +1,149 @@
-"""Efficient packed DOS EXE detector.
+"""Detect stub-packed DOS MZ executables from their header and entry stub.
 
 Layer: CLI/fallback/reporting.
-Responsibility: detect known DOS packers for reporting and loader policy only.
+Responsibility: classify known DOS packers (LZEXE, PKLITE, EXEPACK, UPX) for loader policy and
+reporting, from exact header signatures first and entry-stub text second.
+Forbidden: unpacking, guessing image contents, or any semantic recovery.
 
 Strategy:
-1. Primary scan: entry region ± 2KB (95% detection accuracy)
-2. Secondary scan: first 16KB of file
-3. Fallback: full file scan (only if needed)
 
-Why this works:
-- DOS packers put stubs at entry point
-- Signatures clustered near entry or file start
-- Avoids false positives from source code strings
+1. Header signatures (confidence 1.0): ``LZ90``/``LZ91`` at offset 0x1C, the ``PKLITE`` banner inside
+   the header area before the relocation table, and the EXEPACK ``RB`` marker right below ``CS:0``.
+2. Entry-region text (confidence 0.8): packer banners within 2 KiB of the entry stub.
+
+Nothing else is scanned: packer stubs always live at the entry point, and scanning whole files for
+ASCII banners produced false positives on source text and string tables.
 """
 
 from __future__ import annotations
 
+import struct
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+
+__all__ = [
+    "PackerDetection",
+    "PackerType",
+    "detect_packer",
+    "detect_packer_in_bytes",
+    "get_packer_name",
+    "is_packed",
+]
+
+_ENTRY_REGION_RADIUS: int = 2048
 
 
 class PackerType(Enum):
-    """Known DOS packer types."""
+    """Known DOS packer families."""
 
     PKLITE = "PKLITE"
     LZEXE = "LZEXE"
+    EXEPACK = "EXEPACK"
     UPX = "UPX"
     UNKNOWN = "UNKNOWN"
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PackerDetection:
     """Result of packer detection."""
 
     packer_type: PackerType
-    signature: str  # The actual signature found
-    offset: int  # File offset where found
-    scan_region: str  # "entry", "start", or "full"
-    confidence: float  # 0.0-1.0 (1.0 = certain, 0.5 = unsure)
+    signature: str
+    offset: int
+    scan_region: str
+    confidence: float
+
+    @property
+    def label(self) -> str:
+        """Return the packer name with its version suffix when the signature carries one."""
+        if self.packer_type is PackerType.LZEXE and self.signature in {"LZ90", "LZ91"}:
+            return f"LZEXE 0.{self.signature[2:]}"
+        return self.packer_type.value
 
 
-def _parse_dos_header(data: bytes) -> dict[str, int]:
-    """Extract key fields from DOS MZ header.
+@dataclass(frozen=True, slots=True)
+class _MZHeaderView:
+    header_paragraphs: int
+    entry_cs: int
+    entry_ip: int
+    relocation_offset: int
+    relocation_count: int
 
-    Returns: {
-        'entry_cs': entry segment,
-        'entry_ip': entry offset,
-        'header_size': header size in paragraphs,
-        'relocs_offset': offset to relocation table,
-        'num_relocs': number of relocations,
-    }
-    """
-    if len(data) < 0x40:
-        return {}
+    @classmethod
+    def parse(cls, data: bytes) -> _MZHeaderView | None:
+        """Parse the MZ header words needed for packer detection, or return ``None`` for non-MZ data."""
+        if len(data) < 0x1C or data[:2] not in (b"MZ", b"ZM"):
+            return None
+        (_last_page, _pages, relocation_count, header_paragraphs, _min_alloc, _max_alloc, _ss, _sp, _checksum, ip, cs, relocation_offset) = struct.unpack_from("<12H", data, 2)
+        return cls(
+            header_paragraphs=header_paragraphs,
+            entry_cs=cs,
+            entry_ip=ip,
+            relocation_offset=relocation_offset,
+            relocation_count=relocation_count,
+        )
 
-    import struct
+    @property
+    def header_size(self) -> int:
+        """Return the header size in bytes."""
+        return self.header_paragraphs * 16
 
-    # MZ header layout (relevant fields)
-    entry_cs = struct.unpack_from("<H", data, 0x08)[0]  # Offset 0x08
-    entry_ip = struct.unpack_from("<H", data, 0x04)[0]  # Offset 0x04
-    header_size_para = struct.unpack_from("<H", data, 0x02)[0]  # Offset 0x02
-    relocs_offset = struct.unpack_from("<H", data, 0x18)[0]  # Offset 0x18
-    num_relocs = struct.unpack_from("<H", data, 0x06)[0]  # Offset 0x06
-
-    # Calculate linear entry point (in bytes from file start, approximate)
-    # DOS: entry is (CS << 4) + IP, but CS is relative to image base
-    # For stub detection, we scan from header end
-    entry_offset_approx = header_size_para * 16
-
-    return {
-        "entry_cs": entry_cs,
-        "entry_ip": entry_ip,
-        "header_size": header_size_para,
-        "entry_offset_approx": entry_offset_approx,
-        "relocs_offset": relocs_offset,
-        "num_relocs": num_relocs,
-    }
+    @property
+    def entry_file_offset(self) -> int:
+        """Return the file offset of the entry stub (``CS:IP`` relative to the load image)."""
+        return self.header_size + ((self.entry_cs << 4) + self.entry_ip) % 0x100000
 
 
-def _scan_region(data: bytes, start: int, end: int, signatures: dict[str, str]) -> Optional[tuple[str, int]]:
-    """Scan a region for signatures.
-
-    Args:
-        data: Binary data
-        start: Start offset (inclusive)
-        end: End offset (exclusive)
-        signatures: {signature_string: packer_name}
-
-    Returns:
-        (signature, offset) if found, else None
-    """
-    if start < 0 or start >= len(data):
-        return None
-
-    end = min(end, len(data))
-    search_region = data[start:end]
-
-    for sig, packer_name in signatures.items():
-        pos = search_region.find(sig.encode("ascii", errors="ignore"))
-        if pos >= 0:
-            return (sig, start + pos)
-
+def _header_signature(data: bytes, header: _MZHeaderView) -> PackerDetection | None:
+    tag = data[0x1C:0x20]
+    if tag in (b"LZ90", b"LZ91"):
+        return PackerDetection(PackerType.LZEXE, tag.decode("ascii"), 0x1C, "header", 1.0)
+    banner_end = max(0x1C, min(header.relocation_offset, header.header_size, len(data)))
+    banner = data[0x1C:banner_end].upper().find(b"PKLITE")
+    if banner >= 0:
+        return PackerDetection(PackerType.PKLITE, "PKLITE", 0x1C + banner, "header", 1.0)
+    exepack_marker = header.header_size + (header.entry_cs << 4) - 2
+    if 0 <= exepack_marker and exepack_marker + 2 <= len(data) and data[exepack_marker : exepack_marker + 2] == b"RB":
+        return PackerDetection(PackerType.EXEPACK, "RB", exepack_marker, "header", 1.0)
     return None
 
 
-def detect_packer(binary_path: Path) -> Optional[PackerDetection]:
-    """Detect if DOS EXE is packed and by which packer."""
+def _entry_region_signature(data: bytes, header: _MZHeaderView) -> PackerDetection | None:
+    entry = header.entry_file_offset
+    start = max(0, entry - _ENTRY_REGION_RADIUS)
+    end = min(len(data), entry + _ENTRY_REGION_RADIUS)
+    region = data[start:end]
+    for needle, packer in ((b"PKLITE", PackerType.PKLITE), (b"UPX!", PackerType.UPX), (b"LZ91", PackerType.LZEXE), (b"LZ90", PackerType.LZEXE)):
+        position = region.upper().find(needle) if packer is PackerType.PKLITE else region.find(needle)
+        if position >= 0:
+            return PackerDetection(packer, needle.decode("ascii"), start + position, "entry", 0.8)
+    return None
 
-    def _impl() -> Optional[PackerDetection]:
-        try:
-            data = binary_path.read_bytes()
-        except (OSError, IOError):
-            return None
 
-        if len(data) < 64:  # Too small for DOS header
-            return None
-
-        # Parse DOS header to find entry point
-        header = _parse_dos_header(data)
-        if not header:
-            return None
-
-        entry_offset = header.get("entry_offset_approx", 64)
-
-        # Define signatures per packer
-        # Format: {signature: (packer_type, confidence)}
-        pklite_sigs = {
-            "PKLITE": PackerType.PKLITE,
-        }
-        lzexe_sigs = {
-            "LZ91": PackerType.LZEXE,
-            "LZ90": PackerType.LZEXE,
-            "LZ9": PackerType.LZEXE,  # Catch earlier variants
-        }
-        upx_sigs = {
-            "UPX!": PackerType.UPX,
-            "UPX0": PackerType.UPX,
-            "UPX1": PackerType.UPX,
-        }
-
-        all_sigs = {**pklite_sigs, **lzexe_sigs, **upx_sigs}
-
-        # ======== PRIMARY: Entry region scan (95% detection) ========
-        scan_start = max(0, entry_offset - 2048)
-        scan_end = min(len(data), entry_offset + 2048)
-
-        result = _scan_region(data, scan_start, scan_end, {sig: name.value for sig, name in all_sigs.items()})
-        if result:
-            sig, offset = result
-            packer = all_sigs[sig]
-            return PackerDetection(
-                packer_type=packer,
-                signature=sig,
-                offset=offset,
-                scan_region="entry",
-                confidence=0.95,  # Very high confidence for entry region
-            )
-
-        # ======== SECONDARY: First 16KB scan ========
-        scan_end = min(len(data), 16 * 1024)
-
-        result = _scan_region(data, 0, scan_end, {sig: name.value for sig, name in all_sigs.items()})
-        if result:
-            sig, offset = result
-            packer = all_sigs[sig]
-            return PackerDetection(
-                packer_type=packer,
-                signature=sig,
-                offset=offset,
-                scan_region="start",
-                confidence=0.80,  # Good confidence for early file region
-            )
-
-        # ======== FALLBACK: Full file scan (optional, for edge cases) ========
-        # Only do this if file is reasonably sized (avoid gigantic memory reads)
-        if len(data) < 10 * 1024 * 1024:  # Max 10MB for full scan
-            result = _scan_region(data, 0, len(data), {sig: name.value for sig, name in all_sigs.items()})
-            if result:
-                sig, offset = result
-                packer = all_sigs[sig]
-                return PackerDetection(
-                    packer_type=packer,
-                    signature=sig,
-                    offset=offset,
-                    scan_region="full",
-                    confidence=0.60,  # Lower confidence (could be false positive)
-                )
-
+def detect_packer_in_bytes(data: bytes) -> PackerDetection | None:
+    """Detect a known packer from the bytes of a DOS MZ executable."""
+    header = _MZHeaderView.parse(data)
+    if header is None:
         return None
+    return _header_signature(data, header) or _entry_region_signature(data, header)
 
-    return _impl()
+
+def detect_packer(binary_path: Path) -> PackerDetection | None:
+    """Detect a known packer from a DOS MZ executable file."""
+    try:
+        data = binary_path.read_bytes()
+    except OSError:
+        return None
+    return detect_packer_in_bytes(data)
 
 
 def is_packed(binary_path: Path) -> bool:
-    """Quick check: is this binary packed?
+    """Return whether a DOS EXE is packed by a known packer."""
+    return detect_packer(binary_path) is not None
 
-    Args:
-        binary_path: Path to DOS EXE file
 
-    Returns:
-        True if packed by known packer, False otherwise
-    """
+def get_packer_name(binary_path: Path) -> str | None:
+    """Return the human-readable packer label (e.g. ``"PKLITE"``, ``"LZEXE 0.91"``) or ``None``."""
     detection = detect_packer(binary_path)
-    return detection is not None
-
-
-def get_packer_name(binary_path: Path) -> Optional[str]:
-    """Get human-readable packer name if binary is packed.
-
-    Args:
-        binary_path: Path to DOS EXE file
-
-    Returns:
-        Packer name (e.g., "PKLITE", "LZEXE", "UPX") or None
-    """
-    detection = detect_packer(binary_path)
-    if detection:
-        return detection.packer_type.value
-    return None
-
-
-__all__ = [
-    "PackerType",
-    "PackerDetection",
-    "detect_packer",
-    "is_packed",
-    "get_packer_name",
-]
+    return detection.label if detection is not None else None

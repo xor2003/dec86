@@ -43,6 +43,9 @@ mypyc = [
     "mypy",
     "mypyc",
 ]
+unpack = [
+    "unicorn==2.1.4",
+]
 
 [project.scripts]
 decompile-x86-16 = "decompile:main"
