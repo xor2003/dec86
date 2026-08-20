@@ -173,7 +173,14 @@ from inertia_decompiler.project_loading import (
     _build_project_cached,
     _describe_exception,
 )
-from inertia_decompiler.recompile_check import check_c_recompiles_8616
+from inertia_decompiler.recompile_check import (
+    MSC_DOS_TARGET,
+    PORTABLE_FLAT_TARGET,
+    MscDosCheckPolicy,
+    check_c_recompiles_8616,
+    msc_dos_check_policy_8616,
+    msc_dos_check_skip_reason_8616,
+)
 from inertia_decompiler.runtime_support import (
     DECOMPILATION_PREP_LOCK,
 )
@@ -3157,16 +3164,23 @@ def _partial_timeout_payload_is_validated_8616(project: object, payload: str | N
 
 
 def _validated_payload_replacement_recompiles_8616(validated_payload: str) -> bool:
+    """Return whether a cached validated payload still recompiles under the active recompile policy."""
     if not isinstance(validated_payload, str) or not validated_payload.strip():
         return False
     payload_hash = hashlib.sha256(validated_payload.encode("utf-8", errors="ignore")).hexdigest()
-    for target in ("portable-flat", "msc-dos"):
+    msc_dos_policy = msc_dos_check_policy_8616()
+    for target in (PORTABLE_FLAT_TARGET, MSC_DOS_TARGET):
+        if target == MSC_DOS_TARGET and msc_dos_policy is MscDosCheckPolicy.OFF:
+            continue
         cache_key = (target, payload_hash)
         with _REPLACEMENT_RECOMPILE_CACHE_LOCK_8616:
             cached = _REPLACEMENT_RECOMPILE_CACHE_8616.get(cache_key)
         if cached is None:
             with contextlib.suppress(Exception):
-                cached = bool(check_c_recompiles_8616(validated_payload, target=target).passed)
+                result = check_c_recompiles_8616(validated_payload, target=target)
+                cached = bool(result.passed) or (
+                    target == MSC_DOS_TARGET and msc_dos_check_skip_reason_8616(result, msc_dos_policy) is not None
+                )
             if cached is None:
                 cached = False
             with _REPLACEMENT_RECOMPILE_CACHE_LOCK_8616:

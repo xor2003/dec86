@@ -24,6 +24,7 @@ class CliArguments(argparse.Namespace):
     show_asm: bool
     alternate_source_c: bool
     c_target: str
+    msc_dos_check: str
     output_c_dir: Path | None
     trace_c_stages: bool
     dump_layers: bool
@@ -32,6 +33,7 @@ class CliArguments(argparse.Namespace):
     proc: str | None
     proc_kind: str
     timeout: int
+    catalog_timeout: int | None
     window: int
     max_memory_mb: int
     max_functions: int
@@ -60,6 +62,17 @@ class CliArguments(argparse.Namespace):
 
 def _parse_int(value: str) -> int:
     return int(value, 0)
+
+
+def _optional_int_env(name: str) -> int | None:
+    """Return an integer environment default, ignoring unset or malformed values."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw, 0)
+    except ValueError:
+        return None
 
 
 def _build_cli_argument_parser() -> argparse.ArgumentParser:
@@ -112,6 +125,18 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         default="portable-flat",
         help="Emit segmented-memory helper macros for a specific recompilable C target.",
     )
+    msc_dos_check_default = os.environ.get("INERTIA_MSC_DOS_CHECK", "").strip().lower() or "required"
+    parser.add_argument(
+        "--msc-dos-check",
+        choices=("required", "optional", "off"),
+        default=msc_dos_check_default,
+        help=(
+            "Policy for the MS C 5.1 (kvikdos) msc-dos recompile check in the acceptance gate: "
+            "required (default) fails a function when that toolchain is missing, optional skips the check "
+            "only when kvikdos/MS C 5.1 are unavailable, off never runs it. The gcc portable-flat check "
+            "always stays required. Also set via INERTIA_MSC_DOS_CHECK."
+        ),
+    )
     output_c_dir = os.environ.get("INERTIA_OUTPUT_C_DIR", "").strip()
     parser.add_argument(
         "--output-c-dir",
@@ -155,6 +180,16 @@ def _build_cli_argument_parser() -> argparse.ArgumentParser:
         type=int,
         default=60,
         help="Analysis timeout in seconds. Defaults to 60.",
+    )
+    parser.add_argument(
+        "--catalog-timeout",
+        type=int,
+        default=_optional_int_env("INERTIA_CATALOG_TIMEOUT"),
+        help=(
+            "Time budget in seconds for the quick function catalog that recovers candidate CFGs before a "
+            "whole-binary EXE sweep; only catalogued functions are decompiled. Defaults to the auto budget "
+            "min(max(4, --timeout), 8), which covers only part of a large binary. Also set via INERTIA_CATALOG_TIMEOUT."
+        ),
     )
     parser.add_argument(
         "--window",
