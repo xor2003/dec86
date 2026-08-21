@@ -13,13 +13,11 @@ from __future__ import annotations
 
 from operator import attrgetter
 
+from ..alias.terminal_memory_outputs import TerminalMemoryAliasFact8616
 from ..ir import IRValue
 from ..ir.condition_ir import ConditionIR
 from ..ir.ssa_function import SSAFunctionArtifact
-from ..semantics.terminal_memory_output_contracts import (
-    TerminalMemoryOutputDisposition8616,
-    TerminalMemoryOutputFact8616,
-)
+from ..semantics.terminal_memory_output_contracts import TerminalMemoryOutputDisposition8616
 from .interprocedural_storage_contracts import (
     StorageIdentity8616,
     StorageIdentityKind8616,
@@ -113,7 +111,7 @@ def _condition_for_use_8616(
 
 def materialize_memory_live_out_candidate_8616(
     artifact: SSAFunctionArtifact,
-    output: TerminalMemoryOutputFact8616,
+    alias_output: TerminalMemoryAliasFact8616,
     caller_addr: int,
     callee_addr: int,
     callsite_addr: int,
@@ -121,6 +119,9 @@ def materialize_memory_live_out_candidate_8616(
     conditions: tuple[ConditionIR, ...],
 ) -> MemoryLiveOutCandidateResult8616:
     """Materialize one activated direct-memory output candidate or refuse."""
+    output = alias_output.terminal_output
+    if not alias_output.complete or not alias_output.is_owner:
+        raise RuntimeError("Types/Lowering received an incomplete non-owner Alias output")
     storage = StorageIdentity8616(
         StorageIdentityKind8616.MEMORY, output.address.size, output.address
     )
@@ -201,7 +202,7 @@ def materialize_memory_live_out_candidate_8616(
     if not clean_candidates:
         fact = MemoryLiveOutUseFact8616(
             storage,
-            output,
+            alias_output,
             MemoryLiveOutUseDisposition8616.NOT_REACHED,
         )
         return MemoryLiveOutCandidateResult8616(True, fact=fact)
@@ -220,7 +221,7 @@ def materialize_memory_live_out_candidate_8616(
     use, condition, signedness = typed[0]
     fact = MemoryLiveOutUseFact8616(
         storage,
-        output,
+        alias_output,
         MemoryLiveOutUseDisposition8616.USED,
         use,
         signedness,

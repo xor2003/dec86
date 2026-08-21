@@ -33,7 +33,6 @@ class TerminalMemoryOutputFailure8616(StrEnum):
     ALIAS_CONFLICT = "alias_conflict"
     CFG_INCOMPLETE = "cfg_incomplete"
     ENTRY_BLOCK_MISSING = "entry_block_missing"
-    OVERLAPPING_STORAGE = "overlapping_storage"
     TERMINAL_NOT_RETURN = "terminal_not_return"
 
 

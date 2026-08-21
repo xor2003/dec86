@@ -2,7 +2,17 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr_platforms.X86_16.ir import AddressStatus, IRAddress, IRValue, MemSpace
+from angr_platforms.X86_16.alias.terminal_memory_outputs import (
+    TerminalMemoryAliasFact8616,
+    classify_terminal_memory_output_aliases_8616,
+)
+from angr_platforms.X86_16.ir import (
+    AddressStatus,
+    IRAddress,
+    IRValue,
+    MemSpace,
+    SegmentOrigin,
+)
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.lowering.interprocedural_storage_contracts import (
     CallsiteStorageTrials8616,
@@ -34,7 +44,9 @@ from angr_platforms.X86_16.lowering.interprocedural_storage_transaction import (
 )
 from angr_platforms.X86_16.semantics.terminal_memory_output_contracts import (
     TerminalMemoryOutputDisposition8616,
+    TerminalMemoryOutputEvidence8616,
     TerminalMemoryOutputFact8616,
+    TerminalMemoryOutputStats8616,
     TerminalMemoryStoreSite8616,
 )
 
@@ -55,8 +67,22 @@ def _memory(
             offset=offset,
             size=width,
             status=AddressStatus.STABLE,
+            segment_origin=SegmentOrigin.PROVEN,
         ),
     )
+
+
+def _alias_output(terminal: TerminalMemoryOutputFact8616) -> TerminalMemoryAliasFact8616:
+    """Build the exact Alias owner retained by solver fixture effects."""
+    evidence = TerminalMemoryOutputEvidence8616(
+        CALLEE,
+        (terminal,),
+        None,
+        TerminalMemoryOutputStats8616(1, 1, 1, 1),
+    )
+    aliases = classify_terminal_memory_output_aliases_8616(evidence)
+    assert aliases.complete is True
+    return aliases.canonical_facts[0]
 
 
 def _live_out(
@@ -133,7 +159,7 @@ def _effect_from_trial(trial: StorageTrial8616) -> MemoryLiveOutUseFact8616:
     )
     return MemoryLiveOutUseFact8616(
         trial.storage,
-        terminal,
+        _alias_output(terminal),
         MemoryLiveOutUseDisposition8616.USED,
         trial.use,
         trial.signedness,
@@ -162,7 +188,7 @@ def _conditional_effect(offset: int) -> MemoryLiveOutUseFact8616:
     )
     return MemoryLiveOutUseFact8616(
         storage,
-        terminal,
+        _alias_output(terminal),
         MemoryLiveOutUseDisposition8616.USED,
         use,
         StorageTrialSignedness8616.SIGN_INSENSITIVE,

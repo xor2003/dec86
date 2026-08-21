@@ -710,6 +710,8 @@ def test_sortd_reinitbars_sidecar_free_materializes_indexed_global_copy(
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
+    assert "unsigned long sub_1137e();" in result.stdout
+    assert "extern unsigned long g_0BA6;" in result.stdout
     final_body = _function_body_from_stdout(result.stdout, "void sub_10678")
     assert final_body.count("unsigned short local_2;") == 1
     assert final_body.count("sub_1137e();") == 1 and "g_0BA6 = sub_1137e();" in final_body

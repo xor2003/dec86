@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from ..alias.terminal_memory_outputs import classify_terminal_memory_output_aliases_8616
 from ..ir.condition_ir import ConditionIR
 from ..semantics.call_stack_effect_pipeline import (
     semantic_function_ssa_artifact_at_address_8616,
@@ -106,7 +107,18 @@ def collect_function_memory_live_out_trials_8616(
             max(1, terminal.stats.raw_fact_count),
             terminal.stats.normalized_fact_count,
         )
-    if not terminal.facts:
+    aliases = classify_terminal_memory_output_aliases_8616(terminal)
+    if not aliases.complete:
+        return _failed_8616(
+            MemoryLiveOutFailure8616(
+                MemoryLiveOutFailureKind8616.ALIAS_EVIDENCE_REFUSED,
+                callee_addr,
+                alias_failure=aliases.failure,
+            ),
+            max(1, aliases.stats.raw_fact_count),
+            aliases.stats.normalized_fact_count,
+        )
+    if not aliases.facts:
         empty = tuple(
             CallsiteMemoryLiveOutEvidence8616(site.caller_addr, callee_addr, site.callsite_addr)
             for site in callsites
@@ -149,13 +161,11 @@ def collect_function_memory_live_out_trials_8616(
             conditions_by_caller[site.caller_addr] = conditions
         facts: list[MemoryLiveOutUseFact8616] = []
         trials: list[StorageTrial8616] = []
-        for output in sorted(
-            terminal.facts,
-            key=lambda fact: (fact.key[0].value, fact.key[1], fact.key[2]),
-        ):
+        for alias_output in aliases.canonical_facts:
+            output = alias_output.terminal_output
             candidate = materialize_memory_live_out_candidate_8616(
                 artifact,
-                output,
+                alias_output,
                 site.caller_addr,
                 callee_addr,
                 site.callsite_addr,

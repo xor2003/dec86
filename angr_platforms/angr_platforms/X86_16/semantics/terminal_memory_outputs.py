@@ -5,9 +5,9 @@ Responsibility: prove whether each stable direct DS/ES store is definitely
 written on every entry-reachable return path while retaining all store sites.
 Consumes typed function SSA and structured instruction decoding. This module
 does not create Alias identities, choose C types, mutate prototypes, or render C.
-Indirect, indexed, overlapping, or incompletely connected memory effects remain
-explicitly outside this first direct-storage proof and cannot validate a
-conflicting direct output.
+Indirect, indexed, or incompletely connected memory effects remain explicitly
+outside this direct-storage proof. Exact overlapping direct ranges remain
+separate Semantics facts; the Alias layer owns their storage relationship.
 Owns instruction effects, flags, branch meaning, and expression interpretation.
 Do not perform alias-state ownership, widening, lowering/materialization,
 structuring, rewrite, postprocess, or CLI/reporting work here.
@@ -255,10 +255,6 @@ def collect_terminal_memory_output_evidence_8616(
             artifact.function_addr, (), None, TerminalMemoryOutputStats8616()
         )
     keys = tuple(sorted(grouped, key=lambda item: (item[0].value, item[1], item[2])))
-    if any(_ranges_overlap_8616(left, right) for index, left in enumerate(keys) for right in keys[index + 1 :]):
-        return _refused_8616(
-            artifact, TerminalMemoryOutputFailure8616.OVERLAPPING_STORAGE, len(keys), len(keys)
-        )
     for block_addr, instr_index, instruction in all_stores:
         if (block_addr, instr_index) in direct_sites:
             continue

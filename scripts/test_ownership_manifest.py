@@ -1266,6 +1266,16 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         tests=("angr_platforms/tests/test_x86_16_terminal_memory_outputs.py",),
     ),
     TestOwnershipRule(
+        owner="x86-16-terminal-memory-output-alias",
+        paths=(
+            "angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_x86_16_terminal_memory_output_aliases.py",
+            "angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py",
+        ),
+    ),
+    TestOwnershipRule(
         owner="x86-16-call-semantics",
         paths=(
             "angr_platforms/angr_platforms/X86_16/semantics/call_output_contracts.py",

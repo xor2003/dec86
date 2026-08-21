@@ -3,7 +3,17 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from angr_platforms.X86_16.ir import AddressStatus, IRAddress, IRInstr, IRValue, MemSpace
+from angr_platforms.X86_16.alias.terminal_memory_outputs import (
+    classify_terminal_memory_output_aliases_8616,
+)
+from angr_platforms.X86_16.ir import (
+    AddressStatus,
+    IRAddress,
+    IRInstr,
+    IRValue,
+    MemSpace,
+    SegmentOrigin,
+)
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR, ConditionOp
 from angr_platforms.X86_16.ir.function_ssa_registry import FunctionSSAArtifactStage8616
 from angr_platforms.X86_16.ir.ssa import SSABlock
@@ -27,7 +37,9 @@ from angr_platforms.X86_16.lowering.interprocedural_storage_live_out_flow import
 )
 from angr_platforms.X86_16.semantics.terminal_memory_output_contracts import (
     TerminalMemoryOutputDisposition8616,
+    TerminalMemoryOutputEvidence8616,
     TerminalMemoryOutputFact8616,
+    TerminalMemoryOutputStats8616,
     TerminalMemoryStoreSite8616,
 )
 
@@ -44,6 +56,7 @@ def _address(*, size: int = 1, base: tuple[str, ...] = ()) -> IRAddress:
         offset=0x1234,
         size=size,
         status=AddressStatus.STABLE,
+        segment_origin=SegmentOrigin.PROVEN,
     )
 
 
@@ -168,9 +181,18 @@ def _materialize(
     output: TerminalMemoryOutputFact8616 | None = None,
     conditions: tuple[ConditionIR, ...] | None = None,
 ) -> MemoryLiveOutCandidateResult8616:
+    terminal_output = output or _output()
+    terminal = TerminalMemoryOutputEvidence8616(
+        CALLEE,
+        (terminal_output,),
+        None,
+        TerminalMemoryOutputStats8616(1, 1, 1, 1),
+    )
+    alias_evidence = classify_terminal_memory_output_aliases_8616(terminal)
+    assert alias_evidence.complete is True
     return materialize_memory_live_out_candidate_8616(
         artifact,
-        output or _output(),
+        alias_evidence.canonical_facts[0],
         CALLER,
         CALLEE,
         CALLSITE,

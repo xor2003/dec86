@@ -934,7 +934,8 @@ propagation, production SCC publication, and atomic callee plus callsite type
 application are complete. Exact direct DS/ES must-write live-outs with condition
 uses preserved on every target-reaching caller CFG path are implemented,
 including a deterministic union when different callers consume disjoint proven
-outputs. Every project-
+outputs. Nested overlapping direct views now materialize only through a unique
+maximal Alias owner for an exact whole-range caller use. Every project-
 wide trial, return, and live-out consumer now reads the canonical Semantics-
 ready exact-function SSA artifact. RunMenu call-result-to-stack materialization
 is complete; broader memory live-outs and storage-contract recovery remain.
@@ -1416,10 +1417,37 @@ Measured progress on 2026-08-20:
   1,617 tests, 4/4 Ultra QuickC fixtures, and all seven MS C tiny build/run/
   decompile/recompile/decompiled-run contracts; no selected lane failed,
   skipped, or timed out
-- next implementation boundary: generalize live-out evidence only when Alias
-  and SSA prove indexed, indirect, stack, overlapping, or additional
-  multiple-output storage. Conditional stable direct `DS`/`ES` effects are
-  complete for this scope and must not be reconstructed from rendered C
+- the sidecar-free ReInitBars baseline already emits exactly one
+  `g_0BA6 = sub_1137e();` assignment with `unsigned long` callee and global
+  declarations, strict GCC acceptance, `validation=passed`, and clean whole-
+  tail validation. Its regression now guards the full 32-bit declaration
+  contract instead of prompting a false implementation fix
+- Semantics now publishes each exact overlapping direct `DS`/`ES` range with
+  terminal-path evidence and does not decide storage ownership. Alias binds
+  every range to a segment-preserving identity, records all nested subviews,
+  and selects one unique maximal owner. Crossing overlaps, duplicate storage,
+  missing Alias facts, and unproven segment origins refuse atomically with all
+  five evidence counters
+- Types/Lowering consumes and retains the exact Alias owner before creating a
+  `CALL_OUTPUT` live-out trial. A caller's exact whole-owner condition use is
+  accepted; a contained subview use remains an overlap refusal until byte-view
+  value composition is proven. DS and ES equal numeric offsets remain distinct
+  storage spaces
+- positive and refusal coverage passes across the Semantics, Alias, live-out,
+  and storage-slot surfaces. The changed-file gate passes 668 tests with Ruff
+  `--fix`, MyPy, types/docs, architecture/context, and ownership checks. The
+  strict executable-only SORTD gate remains 20/20 with zero timeout, traceback,
+  discovery, empty-output, validation, or policy failure
+- the edited-state `quality-dev` gate passes 1,622 tests, the 38-module mypyc
+  compile/import smoke, and all three generated-C quality comparisons. The
+  mandatory seven-worker pipeline passes 3/3 lanes: the same 1,622 tests, 4/4
+  validated Ultra QuickC fixtures, and all seven MS C tiny build/run/decompile/
+  recompile/decompiled-run contracts; no lane failed, skipped, or timed out
+- next implementation boundary: generalize live-out evidence only when Alias,
+  byte-view composition, and SSA prove contained-subview caller uses, indexed,
+  indirect, stack, or broader multiple-output storage. Conditional and nested
+  whole-owner stable direct `DS`/`ES` effects are complete for this scope and
+  must not be reconstructed from rendered C
 
 Definition of done:
 

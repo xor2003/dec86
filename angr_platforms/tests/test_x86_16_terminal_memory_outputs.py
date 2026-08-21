@@ -141,6 +141,29 @@ def test_ds_and_es_ranges_remain_distinct_outputs() -> None:
     }
 
 
+def test_overlapping_direct_views_remain_separate_semantics_facts() -> None:
+    artifact = _artifact(
+        (
+            _block(
+                0x1000,
+                _store(0x1000, offset=0x1234, size=2),
+                _store(0x1001, offset=0x1235),
+            ),
+        ),
+        {0x1000: ()},
+    )
+
+    evidence = collect_terminal_memory_output_evidence_8616(
+        _project(**{"1000": "ret"}), artifact
+    )
+
+    assert evidence.complete is True
+    assert {fact.key for fact in evidence.must_write_facts} == {
+        (MemSpace.DS, 0x1234, 2),
+        (MemSpace.DS, 0x1235, 1),
+    }
+
+
 def test_indirect_same_space_store_refuses_direct_output() -> None:
     artifact = _artifact(
         (_block(0x1000, _store(0x1000), _store(0x1001, base=("bx",))),),

@@ -120,6 +120,7 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/alias/carry_borrow_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/carry_borrow_sources.py \
 	angr_platforms/angr_platforms/X86_16/alias/storage_fact_join.py \
+	angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py \
 	angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_cfg.py \
 	angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_contracts.py \
 	angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_links.py \
@@ -590,6 +591,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/alias/carry_borrow_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/carry_borrow_sources.py \
 	angr_platforms/angr_platforms/X86_16/alias/storage_fact_join.py \
+	angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py \
 	angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_cfg.py \
 	angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_contracts.py \
 	angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_links.py \
@@ -1245,6 +1247,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/alias/carry_borrow_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/carry_borrow_sources.py \
 	angr_platforms/angr_platforms/X86_16/alias/storage_fact_join.py \
+	angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py \
 	angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_cfg.py \
 	angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_contracts.py \
 	angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_links.py \
@@ -1692,6 +1695,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_trial_collection.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_trials.py \
 	angr_platforms/tests/test_x86_16_terminal_memory_outputs.py \
+	angr_platforms/tests/test_x86_16_terminal_memory_output_aliases.py \
 	angr_platforms/tests/test_x86_16_unused_void_return_types.py \
 	angr_platforms/tests/test_x86_16_decompilation_cache_surface.py \
 	angr_platforms/tests/test_check_sortd_sidecar_free.py \
@@ -1743,6 +1747,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_call_stack_effects.py \
 	angr_platforms/tests/test_x86_16_function_ssa_registry.py \
 	angr_platforms/tests/test_x86_16_terminal_memory_outputs.py \
+	angr_platforms/tests/test_x86_16_terminal_memory_output_aliases.py \
 	angr_platforms/tests/test_x86_16_smoketest.py \
 	angr_platforms/tests/test_check_changed_non_test_types.py \
 	angr_platforms/tests/test_cli_batch_c_output.py \

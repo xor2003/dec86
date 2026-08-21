@@ -13,6 +13,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from ..alias.terminal_memory_outputs import (
+    TerminalMemoryAliasFact8616,
+    TerminalMemoryAliasFailure8616,
+)
 from ..ir.condition_ir import ConditionIR
 from ..ir.function_ssa_registry import FunctionSSAArtifactFailure8616
 from ..semantics.terminal_memory_output_contracts import (
@@ -51,6 +55,7 @@ class MemoryLiveOutFailureKind8616(StrEnum):
 
     CALLEE_SSA_UNAVAILABLE = "callee_ssa_unavailable"
     TERMINAL_EVIDENCE_REFUSED = "terminal_evidence_refused"
+    ALIAS_EVIDENCE_REFUSED = "alias_evidence_refused"
     CALLER_SSA_UNAVAILABLE = "caller_ssa_unavailable"
     CALL_OUTPUT_DEFINITION_REFUSED = "call_output_definition_refused"
     CALL_OUTPUT_DEFINITION_CONFLICT = "call_output_definition_conflict"
@@ -71,17 +76,23 @@ class MemoryLiveOutUseFact8616:
     """One exact storage candidate and its bounded caller-use outcome."""
 
     storage: StorageIdentity8616
-    terminal_output: TerminalMemoryOutputFact8616
+    alias_output: TerminalMemoryAliasFact8616
     disposition: MemoryLiveOutUseDisposition8616
     use: StorageUseEvidence8616 | None = None
     signedness: StorageTrialSignedness8616 | None = None
     condition: ConditionIR | None = None
 
     @property
+    def terminal_output(self) -> TerminalMemoryOutputFact8616:
+        """Return the Semantics output retained inside the Alias proof."""
+        return self.alias_output.terminal_output
+
+    @property
     def complete(self) -> bool:
         """Return whether this fact retains every field required by its verdict."""
         output_matches = bool(
-            self.terminal_output.complete
+            self.alias_output.complete
+            and self.alias_output.is_owner
             and self.storage.address == self.terminal_output.address
         )
         if self.disposition is MemoryLiveOutUseDisposition8616.NOT_REACHED:
@@ -149,6 +160,7 @@ class MemoryLiveOutFailure8616:
     storage_key: MemoryOutputKey8616 | None = None
     ssa_failure: FunctionSSAArtifactFailure8616 | None = None
     terminal_failure: TerminalMemoryOutputFailure8616 | None = None
+    alias_failure: TerminalMemoryAliasFailure8616 | None = None
     definition_failure: CallOutputDefinitionFailure8616 | None = None
 
 

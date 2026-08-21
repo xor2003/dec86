@@ -1250,6 +1250,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_projection.py",
     "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_sources.py",
     "angr_platforms/angr_platforms/X86_16/alias/storage_fact_join.py",
+    "angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py",
     "angr_platforms/angr_platforms/X86_16/alias/condition_register_carriers.py",
     "angr_platforms/angr_platforms/X86_16/alias/condition_register_liveness.py",
     "angr_platforms/angr_platforms/X86_16/alias/domains.py",
@@ -2076,6 +2077,9 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
         "angr_platforms/angr_platforms/X86_16/semantics/terminal_memory_output_contracts.py",
         "angr_platforms/angr_platforms/X86_16/semantics/terminal_memory_outputs.py",
     ),
+    "x86-16-terminal-memory-output-alias": (
+        "angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py",
+    ),
     "x86-16-call-semantics": (
         "angr_platforms/angr_platforms/X86_16/semantics/call_output_contracts.py",
         "angr_platforms/angr_platforms/X86_16/semantics/call_outputs.py",
@@ -2157,6 +2161,10 @@ _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
     ),
     "x86-16-terminal-memory-output-semantics": (
         "angr_platforms/tests/test_x86_16_terminal_memory_outputs.py",
+    ),
+    "x86-16-terminal-memory-output-alias": (
+        "angr_platforms/tests/test_x86_16_terminal_memory_output_aliases.py",
+        "angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py",
     ),
     "x86-16-call-semantics": (
         "angr_platforms/tests/test_x86_16_call_outputs.py",

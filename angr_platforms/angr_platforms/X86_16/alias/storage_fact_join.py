@@ -37,6 +37,22 @@ class SegmentedAliasRange8616:
         """Return the first byte offset of this segmented range."""
         return int(self.addresses[0].offset)
 
+    def overlaps(self, other: "SegmentedAliasRange8616") -> bool:
+        """Return whether two proven ranges overlap in one segmented space."""
+        return (
+            self.space is other.space
+            and self.offset < other.offset + other.size
+            and other.offset < self.offset + self.size
+        )
+
+    def contains(self, other: "SegmentedAliasRange8616") -> bool:
+        """Return whether this proven segmented range contains another view."""
+        return (
+            self.space is other.space
+            and self.offset <= other.offset
+            and other.offset + other.size <= self.offset + self.size
+        )
+
 
 def join_adjacent_stack_alias_facts_8616(
     low: AliasStorageFacts,

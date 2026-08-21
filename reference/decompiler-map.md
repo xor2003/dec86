@@ -29,6 +29,12 @@ leave the late pass as a temporary consumer only.
 | Validation | `X86_16/tail_validation*.py`, `validation_*.py` | semantic equivalence checks and honest failure reporting |
 | CLI | `inertia_decompiler/` | orchestration, fallback choice, reports, timeouts |
 
+For interprocedural global-memory outputs, Semantics owns exact store and
+terminal-path facts, Alias owns segmented range identity and overlapping-view
+ownership, and Types/Lowering owns caller-use trials. A contained subview may
+be folded only into a unique maximal Alias range; crossing or unproven views
+must refuse before Lowering.
+
 ## Never Fix Here
 
 - Do not add semantic recovery to `decompiler_postprocess_jcc.py`.
