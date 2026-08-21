@@ -1257,6 +1257,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/alias/stack_lowering.py",
     "angr_platforms/angr_platforms/X86_16/alias/segment_stack_fragments.py",
     "angr_platforms/angr_platforms/X86_16/alias/segment_stack_restore.py",
+    "angr_platforms/angr_platforms/X86_16/alias/stack_memory_access_projection.py",
     "angr_platforms/angr_platforms/X86_16/alias/stack_memory_ssa.py",
     "angr_platforms/angr_platforms/X86_16/alias/stack_memory_ssa_contracts.py",
     "angr_platforms/angr_platforms/X86_16/alias/transfer.py",
@@ -1293,6 +1294,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/ir/ssa_function.py",
     "angr_platforms/angr_platforms/X86_16/ir/ssa_memory.py",
     "angr_platforms/angr_platforms/X86_16/ir/ssa_memory_contracts.py",
+    "angr_platforms/angr_platforms/X86_16/ir/ssa_memory_ranges.py",
     "angr_platforms/angr_platforms/X86_16/ir/string_effects.py",
     "angr_platforms/angr_platforms/X86_16/ir/value_ir.py",
     "angr_platforms/angr_platforms/X86_16/ir/vex_addressing.py",
@@ -1601,6 +1603,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_placement.py",
     "angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignments.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_memory_ssa.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/stack_memory_ssa_contracts.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_projection_retirement.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_impl.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_prototype_materialization.py",
@@ -2005,6 +2008,7 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "x86-16-lowering-stack-from-facts": (
         "angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_from_facts.py",
         "angr_platforms/angr_platforms/X86_16/lowering/stack_memory_ssa.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/stack_memory_ssa_contracts.py",
         "angr_platforms/angr_platforms/X86_16/lowering/stack_projection_retirement.py",
     ),
     "x86-16-interprocedural-storage-contracts": (

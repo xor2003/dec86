@@ -16,12 +16,18 @@ from ..ir.core import IRAddress, IRInstr, IRRefusal, MemSpace
 from ..ir.ssa_function import SSAFunctionArtifact
 from ..ir.ssa_memory_contracts import SSAMemoryOverlap8616, SSAMemoryOverlapRelation8616
 from ..pipeline.errors import PipelineHardError
-from .alias_model_impl import AliasFailure, AliasStorageFacts, alias_facts_for_ir_address_8616
+from .alias_model_impl import AliasStorageFacts
+from .stack_memory_access_projection import (
+    alias_stack_memory_storage_8616,
+    project_stack_memory_access_8616,
+)
 from .stack_memory_ssa_contracts import (
     StackMemoryAliasFactKind8616,
     StackMemoryAliasRefusal8616,
     StackMemoryAliasRefusalKind8616,
     StackMemoryAliasStats8616,
+    StackMemorySSAAliasAccess8616,
+    StackMemorySSAAliasAccessSlice8616,
     StackMemorySSAAliasArtifact8616,
     StackMemorySSAAliasFact8616,
     StackMemorySSAAliasOverlap8616,
@@ -32,6 +38,8 @@ __all__ = [
     "StackMemoryAliasRefusal8616",
     "StackMemoryAliasRefusalKind8616",
     "StackMemoryAliasStats8616",
+    "StackMemorySSAAliasAccess8616",
+    "StackMemorySSAAliasAccessSlice8616",
     "StackMemorySSAAliasArtifact8616",
     "StackMemorySSAAliasFact8616",
     "StackMemorySSAAliasOverlap8616",
@@ -55,27 +63,12 @@ def _stack_access_8616(instruction: IRInstr) -> IRAddress | None:
     return address if isinstance(address, IRAddress) and address.space is MemSpace.SS else None
 
 
-def _alias_storage_8616(
-    address: IRAddress,
-) -> AliasStorageFacts | tuple[StackMemoryAliasRefusalKind8616, str]:
-    """Classify one typed address through the canonical Alias entry point."""
-    result = alias_facts_for_ir_address_8616(address)
-    if isinstance(result, AliasStorageFacts):
-        return result
-    if isinstance(result, AliasFailure):
-        return (StackMemoryAliasRefusalKind8616.ALIAS_FAILURE, result.reason)
-    return (
-        StackMemoryAliasRefusalKind8616.UNCLASSIFIABLE_ADDRESS,
-        "canonical Alias model did not classify the versioned stack address",
-    )
-
-
 def _alias_overlap_8616(
     overlap: SSAMemoryOverlap8616,
 ) -> StackMemorySSAAliasOverlap8616 | StackMemoryAliasRefusal8616:
     """Project and verify one IR byte-overlap relation through Alias."""
     addresses = (overlap.left, overlap.right, overlap.intersection)
-    storages = tuple(_alias_storage_8616(address) for address in addresses)
+    storages = tuple(alias_stack_memory_storage_8616(address) for address in addresses)
     for address, storage in zip(addresses, storages, strict=True):
         if isinstance(storage, tuple):
             return StackMemoryAliasRefusal8616(storage[0], None, None, storage[1], address)
@@ -151,64 +144,60 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
     function_ssa: SSAFunctionArtifact,
 ) -> StackMemorySSAAliasArtifact8616:
     """Project all function stack-memory SSA inputs into exact Alias facts."""
-    accesses = tuple(
+    raw_accesses = tuple(
         (block.addr, instr_index, address)
         for block in sorted(function_ssa.blocks, key=lambda item: item.addr)
         for instr_index, instruction in enumerate(block.instrs)
         if (address := _stack_access_8616(instruction)) is not None
     )
     if not function_ssa.memory_stats.complete:
-        return _incomplete_upstream_artifact_8616(function_ssa, accesses)
+        return _incomplete_upstream_artifact_8616(function_ssa, raw_accesses)
 
-    blocks_by_addr = {block.addr: block for block in function_ssa.blocks}
     upstream_by_block: dict[int | None, list[IRRefusal]] = {}
     for refusal in function_ssa.memory_refusals:
         upstream_by_block.setdefault(refusal.block_addr, []).append(refusal)
     facts: list[StackMemorySSAAliasFact8616] = []
+    composed_accesses: list[StackMemorySSAAliasAccess8616] = []
     overlaps: list[StackMemorySSAAliasOverlap8616] = []
     refusals: list[StackMemoryAliasRefusal8616] = []
 
-    for block_addr, instr_index, address in accesses:
-        if address.version is None:
-            upstream = upstream_by_block.get(block_addr, [])
-            source = upstream.pop(0) if upstream else None
-            refusals.append(
-                StackMemoryAliasRefusal8616(
-                    StackMemoryAliasRefusalKind8616.UPSTREAM_MEMORY_REFUSAL
-                    if source is not None
-                    else StackMemoryAliasRefusalKind8616.UNVERSIONED_ADDRESS,
-                    block_addr,
-                    instr_index,
-                    source.detail if source is not None else "stack access has no memory-SSA version",
-                    address,
-                )
-            )
+    accepted_positions = {
+        (access.block_addr, access.instr_index) for access in function_ssa.memory_accesses
+    }
+    for access in function_ssa.memory_accesses:
+        projected_access = project_stack_memory_access_8616(access)
+        if isinstance(projected_access, StackMemoryAliasRefusal8616):
+            refusals.append(projected_access)
+        elif isinstance(projected_access, StackMemorySSAAliasAccess8616):
+            composed_accesses.append(projected_access)
+        else:
+            facts.append(projected_access)
+
+    for block_addr, instr_index, address in raw_accesses:
+        if (block_addr, instr_index) in accepted_positions:
             continue
-        storage = _alias_storage_8616(address)
-        if isinstance(storage, tuple):
-            refusals.append(
-                StackMemoryAliasRefusal8616(storage[0], block_addr, instr_index, storage[1], address)
-            )
-            continue
-        instruction = blocks_by_addr[block_addr].instrs[instr_index]
-        facts.append(
-            StackMemorySSAAliasFact8616(
-                StackMemoryAliasFactKind8616.STORE
-                if instruction.op == "STORE"
-                else StackMemoryAliasFactKind8616.LOAD,
+        upstream = upstream_by_block.get(block_addr, [])
+        source = upstream.pop(0) if upstream else None
+        refusals.append(
+            StackMemoryAliasRefusal8616(
+                StackMemoryAliasRefusalKind8616.UPSTREAM_MEMORY_REFUSAL
+                if source is not None
+                else StackMemoryAliasRefusalKind8616.UNVERSIONED_ADDRESS,
                 block_addr,
                 instr_index,
+                source.detail
+                if source is not None
+                else "stack access has no authoritative memory-SSA access",
                 address,
-                storage,
             )
         )
 
     for overlap in function_ssa.memory_overlaps:
-        projected = _alias_overlap_8616(overlap)
-        if isinstance(projected, StackMemoryAliasRefusal8616):
-            refusals.append(projected)
+        projected_overlap = _alias_overlap_8616(overlap)
+        if isinstance(projected_overlap, StackMemoryAliasRefusal8616):
+            refusals.append(projected_overlap)
         else:
-            overlaps.append(projected)
+            overlaps.append(projected_overlap)
 
     for phi in function_ssa.memory_phi_nodes:
         addresses = (phi.target, *(incoming.address for incoming in phi.incoming))
@@ -223,7 +212,7 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
                 )
             )
             continue
-        storages = tuple(_alias_storage_8616(address) for address in addresses)
+        storages = tuple(alias_stack_memory_storage_8616(address) for address in addresses)
         failed = next((storage for storage in storages if isinstance(storage, tuple)), None)
         if failed is not None:
             refusals.append(StackMemoryAliasRefusal8616(failed[0], phi.block_addr, None, failed[1], phi.target))
@@ -264,7 +253,7 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
             )
             for source in source_refusals
         )
-    materialized_count = len(facts) + len(overlaps)
+    materialized_count = len(facts) + len(composed_accesses) + len(overlaps)
     raw_count = materialized_count + len(refusals)
     stats = StackMemoryAliasStats8616(
         raw_fact_count=raw_count,
@@ -276,6 +265,7 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
     return StackMemorySSAAliasArtifact8616(
         function_addr=function_ssa.function_addr,
         facts=tuple(facts),
+        accesses=tuple(composed_accesses),
         overlaps=tuple(overlaps),
         refusals=tuple(refusals),
         source_refusals=function_ssa.memory_refusals,

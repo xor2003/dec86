@@ -10,17 +10,25 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
-from .core import AddressStatus, IRAddress, IRAtom, IRCondition, IRInstr, IRRefusal, MemSpace
+from .core import IRAddress, IRAtom, IRCondition, IRInstr, IRRefusal
 from .ssa import SSABlock
 from .ssa_memory_contracts import (
     MemoryRangeKey8616,
     SSAFunctionMemoryResult8616,
+    SSAMemoryAccess8616,
+    SSAMemoryAccessKind8616,
+    SSAMemoryAccessSlice8616,
     SSAMemoryBinding8616,
     SSAMemoryIncomingValue8616,
-    SSAMemoryOverlap8616,
-    SSAMemoryOverlapRelation8616,
     SSAMemoryPhiNode8616,
     SSAMemoryStats8616,
+)
+from .ssa_memory_ranges import (
+    build_stack_memory_cell_layout_8616,
+    collect_stack_memory_accesses_8616,
+    memory_range_key_8616,
+    stack_memory_access_8616,
+    versioned_memory_address_8616,
 )
 
 __all__ = [
@@ -28,97 +36,33 @@ __all__ = [
 ]
 
 
-def _memory_key_8616(address: IRAddress) -> MemoryRangeKey8616 | None:
-    """Return one versionable exact SS:BP range identity."""
-    if (
-        address.space is not MemSpace.SS
-        or address.status is not AddressStatus.STABLE
-        or address.base != ("bp",)
-        or address.size <= 0
-    ):
-        return None
-    return (address.space.value, address.base, address.offset, address.size)
-
-
-def _versioned_address_8616(address: IRAddress, version: int) -> IRAddress:
-    """Preserve all address evidence while assigning an SSA version."""
-    return IRAddress(
-        space=address.space,
-        base=address.base,
-        offset=address.offset,
-        size=address.size,
-        status=address.status,
-        segment_origin=address.segment_origin,
-        expr=address.expr,
-        version=version,
-    )
-
-
-def _stack_access_8616(instr: IRInstr) -> IRAddress | None:
-    """Return the memory operand for one typed stack LOAD or STORE."""
-    if instr.op not in {"LOAD", "STORE"} or not instr.args:
-        return None
-    address = instr.args[0]
-    return address if isinstance(address, IRAddress) and address.space is MemSpace.SS else None
-
-
-def _overlap_8616(left: IRAddress, right: IRAddress) -> SSAMemoryOverlap8616 | None:
-    """Return the exact intersection of two canonical non-identical ranges."""
-    if left.space is not right.space or left.base != right.base:
-        return None
-    start = max(left.offset, right.offset)
-    end = min(left.offset + left.size, right.offset + right.size)
-    if start >= end:
-        return None
-    left_contains = left.offset <= right.offset and right.offset + right.size <= left.offset + left.size
-    right_contains = right.offset <= left.offset and left.offset + left.size <= right.offset + right.size
-    if left_contains:
-        relation = SSAMemoryOverlapRelation8616.LEFT_CONTAINS_RIGHT
-    elif right_contains:
-        relation = SSAMemoryOverlapRelation8616.RIGHT_CONTAINS_LEFT
-    else:
-        relation = SSAMemoryOverlapRelation8616.PARTIAL
-    intersection = IRAddress(
-        left.space,
-        left.base,
-        start,
-        end - start,
-        left.status,
-        left.segment_origin,
-    )
-    return SSAMemoryOverlap8616(left, right, intersection, relation)
-
-
 def _rewrite_atom_8616(
     atom: IRAtom,
     versions: dict[MemoryRangeKey8616, int],
-    refused_keys: frozenset[MemoryRangeKey8616],
+    accepted_ranges: frozenset[MemoryRangeKey8616],
+    cells_by_range: dict[MemoryRangeKey8616, tuple[MemoryRangeKey8616, ...]],
 ) -> IRAtom:
-    """Rewrite exact memory atoms to their reaching version."""
+    """Rewrite a one-cell memory atom to its reaching version."""
     if isinstance(atom, IRCondition):
         return IRCondition(
             op=atom.op,
-            args=tuple(_rewrite_atom_8616(item, versions, refused_keys) for item in atom.args),
+            args=tuple(
+                _rewrite_atom_8616(item, versions, accepted_ranges, cells_by_range)
+                for item in atom.args
+            ),
             expr=atom.expr,
             width_bits=atom.width_bits,
         )
     if not isinstance(atom, IRAddress):
         return atom
-    key = _memory_key_8616(atom)
-    if key is None or key in refused_keys:
+    key = memory_range_key_8616(atom)
+    if key not in accepted_ranges:
         return atom
-    return _versioned_address_8616(atom, versions.get(key, 0))
-
-
-def _collect_accesses_8616(
-    blocks: tuple[SSABlock, ...],
-) -> tuple[tuple[int, int, IRAddress], ...]:
-    """Collect stack accesses in deterministic instruction order."""
-    return tuple(
-        (block.addr, index, address)
-        for block in sorted(blocks, key=lambda item: item.addr)
-        for index, instr in enumerate(block.instrs)
-        if (address := _stack_access_8616(instr)) is not None
+    cells = cells_by_range[key]
+    return (
+        versioned_memory_address_8616(atom, versions[cells[0]])
+        if len(cells) == 1
+        else atom
     )
 
 
@@ -127,112 +71,129 @@ def build_x86_16_function_memory_ssa(
     blocks: tuple[SSABlock, ...],
     predecessor_map: dict[int, tuple[int, ...]],
 ) -> SSAFunctionMemoryResult8616:
-    """Version exact stack ranges and join reaching definitions to a fixed point."""
-    accesses = _collect_accesses_8616(blocks)
-    valid_keys = tuple(
-        key for _block, _index, address in accesses if (key := _memory_key_8616(address)) is not None
-    )
-    unique_keys = tuple(sorted(set(valid_keys)))
-    address_by_key = {
-        key: address
-        for _block, _index, address in accesses
-        if (key := _memory_key_8616(address)) is not None
+    """Version canonical stack cells and join reaching definitions to a fixed point."""
+    accesses = collect_stack_memory_accesses_8616(blocks)
+    layout = build_stack_memory_cell_layout_8616(accesses)
+    range_addresses = {item.key: item.address for item in layout.ranges}
+    cells_by_range = {
+        item.key: tuple(
+            (cell.space.value, cell.base, cell.offset, cell.size) for cell in item.cells
+        )
+        for item in layout.ranges
     }
-    overlaps = tuple(
-        overlap
-        for index, left_key in enumerate(unique_keys)
-        for right_key in unique_keys[index + 1 :]
-        if (overlap := _overlap_8616(address_by_key[left_key], address_by_key[right_key]))
-        is not None
-    )
-    overlapping_keys = frozenset(
+    cell_addresses = {
+        (cell.space.value, cell.base, cell.offset, cell.size): cell for cell in layout.cells
+    }
+    call_refused_ranges = {
         key
-        for overlap in overlaps
-        for address in (overlap.left, overlap.right)
-        if (key := _memory_key_8616(address)) is not None
-    )
-    call_refused_keys = frozenset(
-        key
-        for key in unique_keys
+        for key, address in range_addresses.items()
         if any(
-            instr.op == "CALL"
+            instruction.op == "CALL"
             and (
-                instr.call_stack_effect is None
-                or not instr.call_stack_effect.preserves(address_by_key[key])
+                instruction.call_stack_effect is None
+                or not instruction.call_stack_effect.preserves(address)
             )
             for block in blocks
-            for instr in block.instrs
+            for instruction in block.instrs
         )
-    )
-    refused_keys = overlapping_keys | call_refused_keys
+    }
+    refused_ranges = set(range_addresses) if not layout.complete else set(call_refused_ranges)
+    while True:
+        refused_cells = {
+            cell_key for key in refused_ranges for cell_key in cells_by_range[key]
+        }
+        expanded = {
+            key
+            for key, cell_keys in cells_by_range.items()
+            if any(cell_key in refused_cells for cell_key in cell_keys)
+        }
+        if expanded <= refused_ranges:
+            break
+        refused_ranges.update(expanded)
     refusals = tuple(
         IRRefusal(
             kind=(
-                "overlapping_stack_range"
-                if _memory_key_8616(address) in overlapping_keys
+                "stack_memory_cell_layout_incomplete"
+                if not layout.complete and memory_range_key_8616(address) is not None
                 else "unknown_call_stack_effect"
-                if _memory_key_8616(address) in call_refused_keys
+                if memory_range_key_8616(address) in refused_ranges
                 else "unproven_stack_range"
             ),
             detail=f"refused SS range base={address.base!r} offset={address.offset} size={address.size}",
             block_addr=block_addr,
         )
         for block_addr, _index, address in accesses
-        if _memory_key_8616(address) is None or _memory_key_8616(address) in refused_keys
+        if memory_range_key_8616(address) is None
+        or memory_range_key_8616(address) in refused_ranges
     )
-    accepted_keys = tuple(key for key in unique_keys if key not in refused_keys)
+    accepted_ranges = frozenset(key for key in range_addresses if key not in refused_ranges)
+    accepted_cells = tuple(
+        sorted(
+            {
+                cell_key
+                for key in accepted_ranges
+                for cell_key in cells_by_range[key]
+            }
+        )
+    )
     store_versions: dict[tuple[int, int, MemoryRangeKey8616], int] = {}
     next_version = 1
     for block in sorted(blocks, key=lambda item: item.addr):
-        for index, instr in enumerate(block.instrs):
-            address = _stack_access_8616(instr)
-            key = _memory_key_8616(address) if address is not None else None
-            if instr.op == "STORE" and key in accepted_keys:
-                store_versions[(block.addr, index, key)] = next_version
-                next_version += 1
+        for index, instruction in enumerate(block.instrs):
+            address = stack_memory_access_8616(instruction)
+            key = memory_range_key_8616(address) if address is not None else None
+            if instruction.op == "STORE" and key in accepted_ranges:
+                for cell_key in cells_by_range[key]:
+                    store_versions[(block.addr, index, cell_key)] = next_version
+                    next_version += 1
 
     join_keys = tuple(
-        (block_addr, key)
+        (block_addr, cell_key)
         for block_addr, predecessors in sorted(predecessor_map.items())
         if len(predecessors) > 1
-        for key in accepted_keys
+        for cell_key in accepted_cells
     )
     phi_versions = {item: next_version + index for index, item in enumerate(join_keys)}
-    entry_versions = {(block.addr, key): 0 for block in blocks for key in accepted_keys}
+    entry_versions = {
+        (block.addr, cell_key): 0 for block in blocks for cell_key in accepted_cells
+    }
     exit_versions = dict(entry_versions)
     last_store = {
-        (block.addr, key): max(
+        (block.addr, cell_key): max(
             (
                 version
-                for (store_block, _index, store_key), version in store_versions.items()
-                if store_block == block.addr and store_key == key
+                for (store_block, _index, store_cell), version in store_versions.items()
+                if store_block == block.addr and store_cell == cell_key
             ),
             default=0,
         )
         for block in blocks
-        for key in accepted_keys
+        for cell_key in accepted_cells
     }
-    iteration_limit = max(1, len(blocks) * max(1, len(accepted_keys)) + 1)
+    iteration_limit = max(1, len(blocks) * max(1, len(accepted_cells)) + 1)
     for _iteration in range(iteration_limit):
         changed = False
         for block in sorted(blocks, key=lambda item: item.addr):
-            for key in accepted_keys:
+            for cell_key in accepted_cells:
                 predecessor_versions = {
-                    exit_versions[(predecessor, key)]
+                    exit_versions[(predecessor, cell_key)]
                     for predecessor in predecessor_map.get(block.addr, ())
-                    if (predecessor, key) in exit_versions
+                    if (predecessor, cell_key) in exit_versions
                 }
                 entry = (
                     0
                     if not predecessor_versions
                     else next(iter(predecessor_versions))
                     if len(predecessor_versions) == 1
-                    else phi_versions[(block.addr, key)]
+                    else phi_versions[(block.addr, cell_key)]
                 )
-                exit_version = last_store[(block.addr, key)] or entry
-                if entry_versions[(block.addr, key)] != entry or exit_versions[(block.addr, key)] != exit_version:
-                    entry_versions[(block.addr, key)] = entry
-                    exit_versions[(block.addr, key)] = exit_version
+                exit_version = last_store[(block.addr, cell_key)] or entry
+                if (
+                    entry_versions[(block.addr, cell_key)] != entry
+                    or exit_versions[(block.addr, cell_key)] != exit_version
+                ):
+                    entry_versions[(block.addr, cell_key)] = entry
+                    exit_versions[(block.addr, cell_key)] = exit_version
                     changed = True
         if not changed:
             break
@@ -247,7 +208,7 @@ def build_x86_16_function_memory_ssa(
                 block_addr=block_addr,
             )
             for block_addr, _index, address in accesses
-            if _memory_key_8616(address) not in refused_keys
+            if memory_range_key_8616(address) in accepted_ranges
         )
         return SSAFunctionMemoryResult8616(
             blocks=blocks,
@@ -255,35 +216,74 @@ def build_x86_16_function_memory_ssa(
             phi_nodes=(),
             refusals=refusals + iteration_refusals,
             stats=SSAMemoryStats8616(
-                raw_fact_count=len(accesses) + len(overlaps),
-                normalized_fact_count=len(overlaps),
-                classified_fact_count=len(overlaps),
-                materialized_count=len(overlaps),
+                raw_fact_count=len(accesses) + len(layout.overlaps),
+                normalized_fact_count=len(layout.overlaps),
+                classified_fact_count=len(layout.overlaps),
+                materialized_count=len(layout.overlaps),
                 failure_count=len(accesses),
             ),
-            overlaps=overlaps,
+            overlaps=layout.overlaps,
         )
 
     bindings: list[SSAMemoryBinding8616] = []
+    versioned_accesses: list[SSAMemoryAccess8616] = []
     rewritten_blocks: list[SSABlock] = []
-    materialized_count = len(overlaps)
+    materialized_count = len(layout.overlaps)
     for block in sorted(blocks, key=lambda item: item.addr):
-        current = {key: entry_versions[(block.addr, key)] for key in accepted_keys}
+        current = {
+            cell_key: entry_versions[(block.addr, cell_key)] for cell_key in accepted_cells
+        }
         rewritten_instrs: list[IRInstr] = []
-        for index, instr in enumerate(block.instrs):
-            args = tuple(_rewrite_atom_8616(atom, current, refused_keys) for atom in instr.args)
-            address = _stack_access_8616(instr)
-            key = _memory_key_8616(address) if address is not None else None
-            if key is not None and address is not None and key in accepted_keys:
+        for index, instruction in enumerate(block.instrs):
+            args = tuple(
+                _rewrite_atom_8616(atom, current, accepted_ranges, cells_by_range)
+                for atom in instruction.args
+            )
+            address = stack_memory_access_8616(instruction)
+            key = memory_range_key_8616(address) if address is not None else None
+            if key is not None and address is not None and key in accepted_ranges:
                 materialized_count += 1
-                if instr.op == "STORE":
-                    version = store_versions[(block.addr, index, key)]
-                    current[key] = version
-                    versioned_address = _versioned_address_8616(address, version)
-                    args = (versioned_address, *args[1:])
-                    bindings.append(SSAMemoryBinding8616(block.addr, index, versioned_address))
+                cell_keys = cells_by_range[key]
+                if instruction.op == "STORE":
+                    for cell_key in cell_keys:
+                        current[cell_key] = store_versions[(block.addr, index, cell_key)]
+                slices = tuple(
+                    SSAMemoryAccessSlice8616(
+                        cell_addresses[cell_key].offset - address.offset,
+                        versioned_memory_address_8616(
+                            cell_addresses[cell_key], current[cell_key]
+                        ),
+                    )
+                    for cell_key in cell_keys
+                )
+                access = SSAMemoryAccess8616(
+                    SSAMemoryAccessKind8616.STORE
+                    if instruction.op == "STORE"
+                    else SSAMemoryAccessKind8616.LOAD,
+                    block.addr,
+                    index,
+                    address,
+                    slices,
+                )
+                if not access.complete:
+                    raise RuntimeError("stack-memory SSA produced an incomplete byte view")
+                versioned_accesses.append(access)
+                if len(slices) == 1:
+                    args = (versioned_memory_address_8616(address, current[cell_keys[0]]), *args[1:])
+                if instruction.op == "STORE":
+                    bindings.extend(
+                        SSAMemoryBinding8616(block.addr, index, item.address)
+                        for item in slices
+                    )
             rewritten_instrs.append(
-                IRInstr(instr.op, instr.dst, args, instr.size, instr.addr, instr.call_stack_effect)
+                IRInstr(
+                    instruction.op,
+                    instruction.dst,
+                    args,
+                    instruction.size,
+                    instruction.addr,
+                    instruction.call_stack_effect,
+                )
             )
         rewritten_blocks.append(
             SSABlock(
@@ -297,18 +297,28 @@ def build_x86_16_function_memory_ssa(
     phi_nodes = tuple(
         SSAMemoryPhiNode8616(
             block_addr=block_addr,
-            key=key,
-            target=_versioned_address_8616(address_by_key[key], phi_versions[(block_addr, key)]),
+            key=cell_key,
+            target=versioned_memory_address_8616(
+                cell_addresses[cell_key], phi_versions[(block_addr, cell_key)]
+            ),
             incoming=tuple(
                 SSAMemoryIncomingValue8616(
                     predecessor,
-                    _versioned_address_8616(address_by_key[key], exit_versions[(predecessor, key)]),
+                    versioned_memory_address_8616(
+                        cell_addresses[cell_key], exit_versions[(predecessor, cell_key)]
+                    ),
                 )
                 for predecessor in predecessor_map[block_addr]
             ),
         )
-        for block_addr, key in join_keys
-        if len({exit_versions[(predecessor, key)] for predecessor in predecessor_map[block_addr]}) > 1
+        for block_addr, cell_key in join_keys
+        if len(
+            {
+                exit_versions[(predecessor, cell_key)]
+                for predecessor in predecessor_map[block_addr]
+            }
+        )
+        > 1
     )
     failure_count = len(refusals)
     return SSAFunctionMemoryResult8616(
@@ -317,11 +327,12 @@ def build_x86_16_function_memory_ssa(
         phi_nodes=phi_nodes,
         refusals=refusals,
         stats=SSAMemoryStats8616(
-            raw_fact_count=len(accesses) + len(overlaps),
+            raw_fact_count=len(accesses) + len(layout.overlaps),
             normalized_fact_count=materialized_count,
             classified_fact_count=materialized_count,
             materialized_count=materialized_count,
             failure_count=failure_count,
         ),
-        overlaps=overlaps,
+        overlaps=layout.overlaps,
+        accesses=tuple(versioned_accesses),
     )

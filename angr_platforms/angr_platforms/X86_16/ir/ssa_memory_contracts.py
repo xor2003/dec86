@@ -47,6 +47,68 @@ class SSAMemoryOverlap8616:
         }
 
 
+class SSAMemoryAccessKind8616(StrEnum):
+    """Kind of one versioned stack-memory access."""
+
+    LOAD = "load"
+    STORE = "store"
+
+
+@dataclass(frozen=True, slots=True)
+class SSAMemoryAccessSlice8616:
+    """One canonical byte-range slice and its reaching SSA version."""
+
+    source_byte_offset: int
+    address: IRAddress
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
+        return {
+            "source_byte_offset": self.source_byte_offset,
+            "address": self.address.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SSAMemoryAccess8616:
+    """One original stack access composed from exact versioned byte slices."""
+
+    kind: SSAMemoryAccessKind8616
+    block_addr: int
+    instr_index: int
+    address: IRAddress
+    slices: tuple[SSAMemoryAccessSlice8616, ...]
+
+    @property
+    def complete(self) -> bool:
+        """Return whether ordered versioned slices exactly cover the access."""
+        expected_offset = self.address.offset
+        for item in self.slices:
+            cell = item.address
+            if (
+                item.source_byte_offset != expected_offset - self.address.offset
+                or cell.space is not self.address.space
+                or cell.base != self.address.base
+                or cell.offset != expected_offset
+                or cell.size <= 0
+                or cell.version is None
+            ):
+                return False
+            expected_offset += cell.size
+        return bool(self.slices and expected_offset == self.address.offset + self.address.size)
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
+        return {
+            "kind": self.kind.value,
+            "block_addr": self.block_addr,
+            "instr_index": self.instr_index,
+            "address": self.address.to_dict(),
+            "slices": [item.to_dict() for item in self.slices],
+            "complete": self.complete,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class SSAMemoryBinding8616:
     """One versioned definition of an exact stack-memory range."""
@@ -129,11 +191,15 @@ class SSAFunctionMemoryResult8616:
     refusals: tuple[IRRefusal, ...]
     stats: SSAMemoryStats8616
     overlaps: tuple[SSAMemoryOverlap8616, ...] = ()
+    accesses: tuple[SSAMemoryAccess8616, ...] = ()
 
 
 __all__ = [
     "MemoryRangeKey8616",
     "SSAFunctionMemoryResult8616",
+    "SSAMemoryAccess8616",
+    "SSAMemoryAccessKind8616",
+    "SSAMemoryAccessSlice8616",
     "SSAMemoryBinding8616",
     "SSAMemoryIncomingValue8616",
     "SSAMemoryOverlap8616",

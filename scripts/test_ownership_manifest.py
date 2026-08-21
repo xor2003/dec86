@@ -846,6 +846,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         paths=(
             "angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_from_facts.py",
             "angr_platforms/angr_platforms/X86_16/lowering/stack_memory_ssa.py",
+            "angr_platforms/angr_platforms/X86_16/lowering/stack_memory_ssa_contracts.py",
             "angr_platforms/angr_platforms/X86_16/lowering/stack_projection_retirement.py",
         ),
         tests=(
@@ -1218,12 +1219,15 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     TestOwnershipRule(
         owner="x86-16-stack-memory-ssa",
         paths=(
+            "angr_platforms/angr_platforms/X86_16/alias/stack_memory_access_projection.py",
             "angr_platforms/angr_platforms/X86_16/alias/stack_memory_ssa.py",
             "angr_platforms/angr_platforms/X86_16/alias/stack_memory_ssa_contracts.py",
             "angr_platforms/angr_platforms/X86_16/ir/ssa_memory.py",
             "angr_platforms/angr_platforms/X86_16/ir/ssa_memory_contracts.py",
+            "angr_platforms/angr_platforms/X86_16/ir/ssa_memory_ranges.py",
         ),
         tests=(
+            "angr_platforms/tests/test_x86_16_ir_memory_byte_ssa.py",
             "angr_platforms/tests/test_x86_16_ir_ssa.py",
             "angr_platforms/tests/test_x86_16_stack_memory_ssa_alias.py",
         ),

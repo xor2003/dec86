@@ -178,15 +178,6 @@ def test_stack_memory_ssa_lowering_refuses_frame_control_storage() -> None:
         (
             _stack_alias_artifact_for_instructions(
                 (
-                    IRInstr("STORE", None, (_bp_slot(-4), IRValue(MemSpace.CONST, const=1, size=2)), size=2),
-                    IRInstr("LOAD", IRValue(MemSpace.REG, name="ax", size=2), (_bp_slot(-3),), size=2),
-                )
-            ),
-            1,
-        ),
-        (
-            _stack_alias_artifact_for_instructions(
-                (
                     IRInstr("STORE", None, (_bp_slot(-2), IRValue(MemSpace.CONST, const=1, size=2)), size=2),
                     IRInstr("CALL", None, (IRValue(MemSpace.CONST, const=0x2000, size=2),)),
                     IRInstr("LOAD", IRValue(MemSpace.REG, name="ax", size=2), (_bp_slot(-2),), size=2),
@@ -229,6 +220,39 @@ def test_stack_memory_ssa_lowering_preserves_upstream_refusals(source, overlap_c
     assert artifact.stats.raw_fact_count == artifact.stats.failure_count == len(source.refusals)
     assert {refusal.kind for refusal in artifact.refusals} == {
         StackMemorySSALoweringRefusalKind8616.SOURCE_ALIAS_REFUSAL
+    }
+    assert codegen.cfunc.variables_in_use == {}
+
+
+def test_stack_memory_ssa_lowering_refuses_composed_byte_views() -> None:
+    source = _stack_alias_artifact_for_instructions(
+        (
+            IRInstr(
+                "STORE",
+                None,
+                (_bp_slot(-4), IRValue(MemSpace.CONST, const=1, size=2)),
+                size=2,
+            ),
+            IRInstr(
+                "LOAD",
+                IRValue(MemSpace.REG, name="ax", size=2),
+                (_bp_slot(-3),),
+                size=2,
+            ),
+        )
+    )
+    codegen = _FakeCodegen(source)
+
+    artifact = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
+
+    assert artifact is not None and artifact.complete is True
+    assert source.refusals == ()
+    assert len(source.accesses) == 2
+    assert len(source.overlaps) == 1
+    assert artifact.candidates == ()
+    assert artifact.stats.raw_fact_count == artifact.stats.failure_count == 2
+    assert {refusal.kind for refusal in artifact.refusals} == {
+        StackMemorySSALoweringRefusalKind8616.COMPOSED_BYTE_VIEW_UNPROVEN
     }
     assert codegen.cfunc.variables_in_use == {}
 

@@ -21,6 +21,8 @@ from angr_platforms.X86_16.ir.core import (
 from angr_platforms.X86_16.ir.ssa import SSABlock
 from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact, build_x86_16_function_ssa
 from angr_platforms.X86_16.ir.ssa_memory_contracts import (
+    SSAMemoryAccess8616,
+    SSAMemoryAccessKind8616,
     SSAMemoryIncomingValue8616,
     SSAMemoryOverlap8616,
     SSAMemoryOverlapRelation8616,
@@ -86,7 +88,7 @@ def test_stack_memory_ssa_alias_projects_accesses_and_phi_exactly() -> None:
     assert all(fact.storage == artifact.facts[0].storage for fact in artifact.facts)
 
 
-def test_stack_memory_ssa_alias_preserves_upstream_range_refusals() -> None:
+def test_stack_memory_ssa_alias_projects_partial_overlap_as_composed_views() -> None:
     word = _bp_slot(-4, 2)
     overlap = _bp_slot(-3, 2)
     function_ssa = build_x86_16_function_ssa(
@@ -108,19 +110,20 @@ def test_stack_memory_ssa_alias_preserves_upstream_range_refusals() -> None:
 
     assert artifact.complete is True
     assert artifact.facts == ()
+    assert len(artifact.accesses) == 2
     assert artifact.stats.raw_fact_count == 3
-    assert artifact.stats.materialized_count == 1
-    assert artifact.stats.failure_count == 2
+    assert artifact.stats.materialized_count == 3
+    assert artifact.stats.failure_count == 0
     alias_overlap = artifact.overlaps[0]
     assert alias_overlap.source.relation is SSAMemoryOverlapRelation8616.PARTIAL
     assert alias_overlap.left_storage.contains(alias_overlap.intersection_storage)
     assert alias_overlap.right_storage.contains(alias_overlap.intersection_storage)
     assert not alias_overlap.left_storage.contains(alias_overlap.right_storage)
     assert not alias_overlap.right_storage.contains(alias_overlap.left_storage)
-    assert len(artifact.source_refusals) == 2
-    assert {refusal.kind for refusal in artifact.refusals} == {
-        StackMemoryAliasRefusalKind8616.UPSTREAM_MEMORY_REFUSAL
-    }
+    assert artifact.source_refusals == ()
+    assert artifact.refusals == ()
+    assert [len(access.slices) for access in artifact.accesses] == [2, 2]
+    assert artifact.to_dict()["accesses"][0]["source"]["complete"] is True
 
 
 def test_stack_memory_ssa_alias_preserves_contained_byte_view() -> None:
@@ -144,10 +147,14 @@ def test_stack_memory_ssa_alias_preserves_contained_byte_view() -> None:
     artifact = build_x86_16_stack_memory_ssa_alias_artifact(function_ssa)
 
     assert artifact.complete is True
-    assert artifact.facts == ()
+    assert len(artifact.facts) == 1
+    assert artifact.facts[0].kind is StackMemoryAliasFactKind8616.LOAD
+    assert artifact.facts[0].address.version == 2
+    assert len(artifact.accesses) == 1
+    assert len(artifact.accesses[0].slices) == 2
     assert artifact.stats.raw_fact_count == 3
-    assert artifact.stats.materialized_count == 1
-    assert artifact.stats.failure_count == 2
+    assert artifact.stats.materialized_count == 3
+    assert artifact.stats.failure_count == 0
     alias_overlap = artifact.overlaps[0]
     assert alias_overlap.source.relation is SSAMemoryOverlapRelation8616.LEFT_CONTAINS_RIGHT
     assert alias_overlap.left_storage.contains(alias_overlap.right_storage)
@@ -177,6 +184,31 @@ def test_stack_memory_ssa_alias_refuses_inconsistent_overlap_relation() -> None:
     assert artifact.overlaps == ()
     assert artifact.stats.raw_fact_count == artifact.stats.failure_count == 1
     assert artifact.refusals[0].kind is StackMemoryAliasRefusalKind8616.INCONSISTENT_OVERLAP_STORAGE
+
+
+def test_stack_memory_ssa_alias_refuses_incomplete_composed_access() -> None:
+    address = _bp_slot(-4, 2)
+    function_ssa = SSAFunctionArtifact(
+        function_addr=0x1000,
+        blocks=(),
+        memory_accesses=(
+            SSAMemoryAccess8616(
+                SSAMemoryAccessKind8616.LOAD,
+                0x1000,
+                0,
+                address,
+                (),
+            ),
+        ),
+        memory_stats=SSAMemoryStats8616(1, 1, 1, 1, 0),
+    )
+
+    artifact = build_x86_16_stack_memory_ssa_alias_artifact(function_ssa)
+
+    assert artifact.complete is True
+    assert artifact.accesses == ()
+    assert artifact.stats.raw_fact_count == artifact.stats.failure_count == 1
+    assert artifact.refusals[0].kind is StackMemoryAliasRefusalKind8616.INCOMPLETE_ACCESS_SLICES
 
 
 def test_stack_memory_ssa_alias_refuses_phi_with_mixed_storage_identity() -> None:

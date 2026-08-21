@@ -707,10 +707,10 @@ implementation still requires an explicit license and notice review.
 
 #### 8.1 Keep stack locations in SSA until locals can be proven
 
-Status: in progress; exact `SS:BP+offset` ranges and byte-overlap geometry now
-flow through IR and Alias, while safe exact ranges reach the first Lowering
-materializer. Byte-view SSA materialization, Widening, and multi-function
-generalization remain.
+Status: in progress; exact `SS:BP+offset` ranges now partition into canonical
+byte cells with versioned definitions and joins through IR and Alias. Safe
+exact ranges still reach the first Lowering materializer, while composed-view
+object materialization, Widening, and multi-function generalization remain.
 
 Reason: Early conversion of stack storage into loosely related C temporaries
 loses definition, join, width, escape, and call-clobber evidence. Exact SS range
@@ -758,22 +758,25 @@ Measured progress on 2026-08-21:
   ownership checks, 1,523 tests, and all three quality comparisons. The
   required pipeline passes its focused, Ultra QuickC, and seven MS C tiny
   compile/run/decompile/recompile/runtime lanes.
-- IR now retains one deterministic typed relation for every pair of
-  non-identical overlapping exact BP ranges: left-contains-right,
-  right-contains-left, or partial, plus the exact byte intersection. These
-  facts participate in the five closed evidence counters instead of existing
-  outside accounting.
-- Alias projects both ranges and their intersection through the canonical
-  storage model, rechecks containment, and emits a typed refusal when a
-  malformed relation disagrees with storage identity. Partial word overlap
-  and a contained byte view have positive fixtures; a deliberately reversed
-  containment relation is refused.
-- This prerequisite does not weaken local materialization: both overlapping
-  accesses remain explicit upstream refusals, and the Lowering regression
-  proves that the retained overlap fact creates no C local candidate. General
-  byte-view definitions, joins, and safe split/merge materialization remain.
-- The overlap surface passes 30 focused and real-function tests, including
-  sidecar-free DrawFrame, DrawTime, and InitMenu compilation/validation.
+- IR now partitions every accepted exact BP access by all observed byte
+  boundaries. Stores define each canonical cell, loads retain ordered reaching
+  slices, and joins create one phi per changed cell while the original access
+  remains the accounting unit. Exact one-cell accesses retain the compatible
+  versioned-address path.
+- Call effects are checked against each original access range. If one escaped
+  or unpreserved view is refused, its entire connected overlap component is
+  refused, preventing a partially accepted neighbor from consuming an ignored
+  store.
+- Alias projects complete multi-cell accesses as typed composed views, rechecks
+  that every slice is contained by the original storage identity, and keeps
+  exact one-cell accesses on the existing fact path. Malformed views and
+  inconsistent overlap relations have typed refusals.
+- Lowering does not guess one C object for a composed view. It emits an explicit
+  `COMPOSED_BYTE_VIEW_UNPROVEN` outcome for each such access, while preserving
+  the existing exact-range materializer. Safe split/merge object
+  materialization remains the next part of this task.
+- The byte-view surface passes 32 focused tests plus sidecar-free DrawFrame,
+  DrawTime, and InitMenu compilation/validation regressions.
   `quality-dev` passes Ruff `--fix`, strict MyPy, the 38-module mypyc smoke,
   architecture/context/ownership gates, 1,523 tests, and all three quality
   comparisons. The mandatory seven-worker pipeline passes all three lanes,

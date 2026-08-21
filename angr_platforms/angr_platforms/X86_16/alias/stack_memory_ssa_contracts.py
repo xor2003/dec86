@@ -11,14 +11,18 @@ Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting wor
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from ..ir.core import IRAddress, IRRefusal
-from ..ir.ssa_memory_contracts import SSAMemoryOverlap8616
+from ..ir.ssa_memory_contracts import (
+    SSAMemoryAccess8616,
+    SSAMemoryAccessSlice8616,
+    SSAMemoryOverlap8616,
+)
 from .alias_model_impl import AliasStorageFacts
 
 
-class StackMemoryAliasFactKind8616(str, Enum):
+class StackMemoryAliasFactKind8616(StrEnum):
     """Kind of versioned memory fact projected into Alias."""
 
     LOAD = "load"
@@ -26,7 +30,7 @@ class StackMemoryAliasFactKind8616(str, Enum):
     PHI = "phi"
 
 
-class StackMemoryAliasRefusalKind8616(str, Enum):
+class StackMemoryAliasRefusalKind8616(StrEnum):
     """Typed reason why one stack-memory SSA input was not projected."""
 
     UPSTREAM_INCOMPLETE = "upstream_incomplete"
@@ -37,6 +41,8 @@ class StackMemoryAliasRefusalKind8616(str, Enum):
     UNVERSIONED_PHI = "unversioned_phi"
     INCONSISTENT_PHI_STORAGE = "inconsistent_phi_storage"
     INCONSISTENT_OVERLAP_STORAGE = "inconsistent_overlap_storage"
+    INCOMPLETE_ACCESS_SLICES = "incomplete_access_slices"
+    INCONSISTENT_ACCESS_STORAGE = "inconsistent_access_storage"
     ORPHAN_UPSTREAM_REFUSAL = "orphan_upstream_refusal"
 
 
@@ -61,6 +67,40 @@ class StackMemorySSAAliasFact8616:
             "address": self.address.to_dict(),
             "storage_kind": identity[0] if identity is not None else None,
             "incoming_versions": list(self.incoming_versions),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class StackMemorySSAAliasAccessSlice8616:
+    """Alias storage identity for one exact slice of a composed access."""
+
+    source: SSAMemoryAccessSlice8616
+    storage: AliasStorageFacts
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
+        identity = self.storage.identity
+        return {
+            "source": self.source.to_dict(),
+            "storage_kind": identity[0] if identity is not None else None,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class StackMemorySSAAliasAccess8616:
+    """One original access and the ordered Alias identities of its byte views."""
+
+    source: SSAMemoryAccess8616
+    storage: AliasStorageFacts
+    slices: tuple[StackMemorySSAAliasAccessSlice8616, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
+        identity = self.storage.identity
+        return {
+            "source": self.source.to_dict(),
+            "storage_kind": identity[0] if identity is not None else None,
+            "slices": [item.to_dict() for item in self.slices],
         }
 
 
@@ -146,6 +186,7 @@ class StackMemorySSAAliasArtifact8616:
 
     function_addr: int = 0
     facts: tuple[StackMemorySSAAliasFact8616, ...] = ()
+    accesses: tuple[StackMemorySSAAliasAccess8616, ...] = ()
     overlaps: tuple[StackMemorySSAAliasOverlap8616, ...] = ()
     refusals: tuple[StackMemoryAliasRefusal8616, ...] = ()
     source_refusals: tuple[IRRefusal, ...] = ()
@@ -162,6 +203,7 @@ class StackMemorySSAAliasArtifact8616:
         return {
             "function_addr": self.function_addr,
             "facts": [fact.to_dict() for fact in self.facts],
+            "accesses": [access.to_dict() for access in self.accesses],
             "overlaps": [overlap.to_dict() for overlap in self.overlaps],
             "refusals": [refusal.to_dict() for refusal in self.refusals],
             "source_refusals": [refusal.to_dict() for refusal in self.source_refusals],
@@ -176,6 +218,8 @@ __all__ = [
     "StackMemoryAliasRefusal8616",
     "StackMemoryAliasRefusalKind8616",
     "StackMemoryAliasStats8616",
+    "StackMemorySSAAliasAccess8616",
+    "StackMemorySSAAliasAccessSlice8616",
     "StackMemorySSAAliasArtifact8616",
     "StackMemorySSAAliasFact8616",
     "StackMemorySSAAliasOverlap8616",

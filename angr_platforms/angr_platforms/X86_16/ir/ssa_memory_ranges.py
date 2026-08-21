@@ -1,0 +1,206 @@
+"""Canonicalize exact stack-memory ranges into disjoint byte cells.
+
+Layer: IR.
+Responsibility: derive deterministic byte-range partitions and overlap geometry
+from proven ``SS:BP+offset`` accesses before memory SSA assigns versions.
+Owns typed Value, Address, Condition, instruction facts, and lossless normalization.
+Do not perform alias-state ownership, widening, lowering/materialization,
+structuring, rewrite, postprocess, or CLI/reporting work here.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TypeAlias
+
+from .core import AddressStatus, IRAddress, IRInstr, MemSpace
+from .ssa import SSABlock
+from .ssa_memory_contracts import (
+    MemoryRangeKey8616,
+    SSAMemoryOverlap8616,
+    SSAMemoryOverlapRelation8616,
+)
+
+StackMemoryAccessInput8616: TypeAlias = tuple[int, int, IRAddress]
+
+
+@dataclass(frozen=True, slots=True)
+class StackMemoryRangeCells8616:
+    """One observed exact range and its canonical disjoint byte cells."""
+
+    key: MemoryRangeKey8616
+    address: IRAddress
+    cells: tuple[IRAddress, ...]
+
+    @property
+    def complete(self) -> bool:
+        """Return whether ordered cells cover the original range exactly once."""
+        expected_offset = self.address.offset
+        for cell in self.cells:
+            if (
+                cell.space is not self.address.space
+                or cell.base != self.address.base
+                or cell.offset != expected_offset
+                or cell.size <= 0
+            ):
+                return False
+            expected_offset += cell.size
+        return bool(self.cells and expected_offset == self.address.offset + self.address.size)
+
+
+@dataclass(frozen=True, slots=True)
+class StackMemoryCellLayout8616:
+    """Canonical cell layout shared by every exact stack access in a function."""
+
+    ranges: tuple[StackMemoryRangeCells8616, ...] = ()
+    cells: tuple[IRAddress, ...] = ()
+    overlaps: tuple[SSAMemoryOverlap8616, ...] = ()
+
+    @property
+    def complete(self) -> bool:
+        """Return whether every observed range has one exact cell covering."""
+        return all(item.complete for item in self.ranges)
+
+
+def memory_range_key_8616(address: IRAddress) -> MemoryRangeKey8616 | None:
+    """Return one versionable exact ``SS:BP`` range identity."""
+    if (
+        address.space is not MemSpace.SS
+        or address.status is not AddressStatus.STABLE
+        or address.base != ("bp",)
+        or address.size <= 0
+    ):
+        return None
+    return (address.space.value, address.base, address.offset, address.size)
+
+
+def versioned_memory_address_8616(address: IRAddress, version: int) -> IRAddress:
+    """Preserve all address evidence while assigning one SSA version."""
+    return IRAddress(
+        space=address.space,
+        base=address.base,
+        offset=address.offset,
+        size=address.size,
+        status=address.status,
+        segment_origin=address.segment_origin,
+        expr=address.expr,
+        version=version,
+    )
+
+
+def stack_memory_access_8616(instruction: IRInstr) -> IRAddress | None:
+    """Return the memory operand for one typed stack LOAD or STORE."""
+    if instruction.op not in {"LOAD", "STORE"} or not instruction.args:
+        return None
+    address = instruction.args[0]
+    return address if isinstance(address, IRAddress) and address.space is MemSpace.SS else None
+
+
+def collect_stack_memory_accesses_8616(
+    blocks: tuple[SSABlock, ...],
+) -> tuple[StackMemoryAccessInput8616, ...]:
+    """Collect stack accesses in deterministic instruction order."""
+    return tuple(
+        (block.addr, index, address)
+        for block in sorted(blocks, key=lambda item: item.addr)
+        for index, instruction in enumerate(block.instrs)
+        if (address := stack_memory_access_8616(instruction)) is not None
+    )
+
+
+def memory_overlap_8616(left: IRAddress, right: IRAddress) -> SSAMemoryOverlap8616 | None:
+    """Return the exact intersection of two canonical non-identical ranges."""
+    if left.space is not right.space or left.base != right.base:
+        return None
+    start = max(left.offset, right.offset)
+    end = min(left.offset + left.size, right.offset + right.size)
+    if start >= end:
+        return None
+    left_contains = left.offset <= right.offset and right.offset + right.size <= left.offset + left.size
+    right_contains = right.offset <= left.offset and left.offset + left.size <= right.offset + right.size
+    if left_contains:
+        relation = SSAMemoryOverlapRelation8616.LEFT_CONTAINS_RIGHT
+    elif right_contains:
+        relation = SSAMemoryOverlapRelation8616.RIGHT_CONTAINS_LEFT
+    else:
+        relation = SSAMemoryOverlapRelation8616.PARTIAL
+    intersection = IRAddress(
+        left.space,
+        left.base,
+        start,
+        end - start,
+        left.status,
+        left.segment_origin,
+    )
+    return SSAMemoryOverlap8616(left, right, intersection, relation)
+
+
+def build_stack_memory_cell_layout_8616(
+    accesses: tuple[StackMemoryAccessInput8616, ...],
+) -> StackMemoryCellLayout8616:
+    """Partition all proven ranges at every observed byte boundary."""
+    representatives: dict[MemoryRangeKey8616, IRAddress] = {}
+    boundaries: dict[tuple[str, tuple[str, ...]], set[int]] = {}
+    for _block_addr, _instr_index, address in accesses:
+        key = memory_range_key_8616(address)
+        if key is None:
+            continue
+        representatives.setdefault(key, address)
+        boundaries.setdefault((key[0], key[1]), set()).update(
+            (address.offset, address.offset + address.size)
+        )
+
+    canonical_cells: dict[MemoryRangeKey8616, IRAddress] = {}
+    ranges: list[StackMemoryRangeCells8616] = []
+    for key, address in sorted(representatives.items()):
+        points = (
+            address.offset,
+            *sorted(
+                point
+                for point in boundaries[(key[0], key[1])]
+                if address.offset < point < address.offset + address.size
+            ),
+            address.offset + address.size,
+        )
+        cells: list[IRAddress] = []
+        for start, end in zip(points[:-1], points[1:], strict=True):
+            cell_key = (key[0], key[1], start, end - start)
+            cell = canonical_cells.setdefault(
+                cell_key,
+                IRAddress(
+                    address.space,
+                    address.base,
+                    start,
+                    end - start,
+                    address.status,
+                    address.segment_origin,
+                ),
+            )
+            cells.append(cell)
+        ranges.append(StackMemoryRangeCells8616(key, address, tuple(cells)))
+
+    ordered_ranges = tuple(ranges)
+    overlaps = tuple(
+        overlap
+        for index, left in enumerate(ordered_ranges)
+        for right in ordered_ranges[index + 1 :]
+        if (overlap := memory_overlap_8616(left.address, right.address)) is not None
+    )
+    return StackMemoryCellLayout8616(
+        ranges=ordered_ranges,
+        cells=tuple(canonical_cells[key] for key in sorted(canonical_cells)),
+        overlaps=overlaps,
+    )
+
+
+__all__ = [
+    "StackMemoryAccessInput8616",
+    "StackMemoryCellLayout8616",
+    "StackMemoryRangeCells8616",
+    "build_stack_memory_cell_layout_8616",
+    "collect_stack_memory_accesses_8616",
+    "memory_overlap_8616",
+    "memory_range_key_8616",
+    "stack_memory_access_8616",
+    "versioned_memory_address_8616",
+]

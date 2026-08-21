@@ -47,6 +47,9 @@ from .ssa import SSABinding, SSABlock, build_x86_16_block_local_ssa
 from .ssa_function import SSAFunctionArtifact, SSAIncomingValue, SSAPhiNode, build_x86_16_function_ssa
 from .ssa_memory_contracts import (
     SSAFunctionMemoryResult8616,
+    SSAMemoryAccess8616,
+    SSAMemoryAccessKind8616,
+    SSAMemoryAccessSlice8616,
     SSAMemoryBinding8616,
     SSAMemoryIncomingValue8616,
     SSAMemoryOverlap8616,
@@ -97,6 +100,9 @@ __all__ = [
     "SSAIncomingValue",
     "SSAPhiNode",
     "SSAFunctionMemoryResult8616",
+    "SSAMemoryAccess8616",
+    "SSAMemoryAccessKind8616",
+    "SSAMemoryAccessSlice8616",
     "SSAMemoryBinding8616",
     "SSAMemoryIncomingValue8616",
     "SSAMemoryOverlap8616",

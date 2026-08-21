@@ -15,6 +15,7 @@ from .core import IRFunctionArtifact, IRRefusal, IRValue, MemSpace
 from .ssa import SSABlock, build_x86_16_block_local_ssa
 from .ssa_memory import build_x86_16_function_memory_ssa
 from .ssa_memory_contracts import (
+    SSAMemoryAccess8616,
     SSAMemoryBinding8616,
     SSAMemoryOverlap8616,
     SSAMemoryPhiNode8616,
@@ -25,6 +26,7 @@ __all__ = [
     "SSAFunctionArtifact",
     "SSAIncomingValue",
     "SSAPhiNode",
+    "SSAMemoryAccess8616",
     "SSAMemoryBinding8616",
     "SSAMemoryOverlap8616",
     "SSAMemoryPhiNode8616",
@@ -76,6 +78,7 @@ class SSAFunctionArtifact:
     blocks: tuple[SSABlock, ...]
     phi_nodes: tuple[SSAPhiNode, ...] = ()
     memory_bindings: tuple[SSAMemoryBinding8616, ...] = ()
+    memory_accesses: tuple[SSAMemoryAccess8616, ...] = ()
     memory_phi_nodes: tuple[SSAMemoryPhiNode8616, ...] = ()
     memory_overlaps: tuple[SSAMemoryOverlap8616, ...] = ()
     memory_refusals: tuple[IRRefusal, ...] = ()
@@ -90,6 +93,7 @@ class SSAFunctionArtifact:
             "blocks": [block.to_dict() for block in self.blocks],
             "phi_nodes": [phi.to_dict() for phi in self.phi_nodes],
             "memory_bindings": [binding.to_dict() for binding in self.memory_bindings],
+            "memory_accesses": [access.to_dict() for access in self.memory_accesses],
             "memory_phi_nodes": [phi.to_dict() for phi in self.memory_phi_nodes],
             "memory_overlaps": [overlap.to_dict() for overlap in self.memory_overlaps],
             "memory_refusals": [refusal.to_dict() for refusal in self.memory_refusals],
@@ -201,6 +205,7 @@ def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifa
             "phi_node_count": len(phi_nodes),
             "join_block_count": sum(1 for preds in pred_map.values() if len(preds) > 1),
             "memory_binding_count": len(memory_ssa.bindings),
+            "memory_access_count": len(memory_ssa.accesses),
             "memory_phi_node_count": len(memory_ssa.phi_nodes),
             "memory_overlap_count": len(memory_ssa.overlaps),
             "memory_refusal_count": len(memory_ssa.refusals),
@@ -210,6 +215,7 @@ def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifa
             blocks=tuple(sorted(local_by_addr.values(), key=lambda block: block.addr)),
             phi_nodes=tuple(sorted(phi_nodes, key=lambda node: (node.block_addr, node.key))),
             memory_bindings=memory_ssa.bindings,
+            memory_accesses=memory_ssa.accesses,
             memory_phi_nodes=memory_ssa.phi_nodes,
             memory_overlaps=memory_ssa.overlaps,
             memory_refusals=memory_ssa.refusals,
