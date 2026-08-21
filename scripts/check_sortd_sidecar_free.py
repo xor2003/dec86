@@ -85,6 +85,9 @@ _WORD_TYPE_RE = r"(?:unsigned\s+)?short"
 _RUNMENU_ADDR = 0x102E0
 _RUNMENU_SIGNATURE_RE = re.compile(r"\bvoid\s+sub_102e0\s*\(\s*void\s*\)")
 _RUNMENU_EXIT_CASE_RE = re.compile(r"\bcase\s+27\s*:\s*return\s*;")
+_RUNMENU_REDUNDANT_TAIL_RE = re.compile(
+    r"\b(?:goto\s+LABEL_10488|LABEL_10488\s*:)", re.IGNORECASE
+)
 _DRAWTIME_ADDR = 0x10498
 _DRAWTIME_SIGNATURE_RE = re.compile(
     rf"\bvoid\s+sub_10498\s*\(\s*{_WORD_TYPE_RE}\s+[A-Za-z_]\w*\s*\)"
@@ -224,6 +227,8 @@ def evaluate_sortd_transcript(
         runmenu_segment
     ):
         violations.append("RunMenu lacks its void binary-proven ESC exit")
+    if _RUNMENU_REDUNDANT_TAIL_RE.search(runmenu_segment):
+        violations.append("RunMenu retains a redundant switch-to-loop-tail goto")
     drawtime_segment = _function_transcript_segment(transcript, _DRAWTIME_ADDR)
     if not _DRAWTIME_SIGNATURE_RE.search(drawtime_segment) or _UNINITIALIZED_BP4_LOCAL_RE.search(drawtime_segment):
         violations.append("DrawTime lacks its canonical void positive-BP signature")

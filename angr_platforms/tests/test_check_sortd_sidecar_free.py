@@ -167,6 +167,25 @@ def test_sidecar_free_ratchet_rejects_runmenu_scalar_return() -> None:
     assert "RunMenu lacks its void binary-proven ESC exit" in result.violations
 
 
+def test_sidecar_free_ratchet_rejects_redundant_runmenu_loop_tail_goto() -> None:
+    transcript = _passing_transcript().replace(
+        "case 27: return;",
+        "case 69: goto LABEL_10488; case 27: return; } LABEL_10488:;",
+    )
+
+    result = evaluate_sortd_transcript(
+        transcript,
+        decompiler_returncode=2,
+        minimum_decompiled=DEFAULT_MINIMUM_DECOMPILED,
+        maximum_empty=0,
+        maximum_timeouts=0,
+        maximum_tracebacks=0,
+    )
+
+    assert not result.passed
+    assert "RunMenu retains a redundant switch-to-loop-tail goto" in result.violations
+
+
 def test_sidecar_free_ratchet_rejects_unmaterialized_positive_bp_arguments() -> None:
     transcript = _passing_transcript().replace(
         "void sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return; }",

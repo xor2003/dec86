@@ -56,6 +56,21 @@ class SourceRegionCatalogEvidence8616:
         )
 
 
+def source_region_catalog_evidence_comment_8616(
+    evidence: SourceRegionCatalogEvidence8616,
+) -> str:
+    """Render the stable C-comment diagnostic for one discovery evidence loop."""
+    failed_addrs = ",".join(hex(addr) for addr in evidence.failed_addrs) or "none"
+    return (
+        "/* source-region discovery evidence: "
+        f"raw_fact_count={evidence.raw_fact_count} "
+        f"normalized_fact_count={evidence.normalized_fact_count} "
+        f"classified_fact_count={evidence.classified_fact_count} "
+        f"materialized_count={evidence.materialized_count} "
+        f"failure_count={evidence.failure_count} failed_addrs={failed_addrs} */"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DisplayCatalogCachePayload8616:
     """Validated display catalog and the exact evidence available when it was built."""

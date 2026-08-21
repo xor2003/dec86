@@ -20,6 +20,7 @@ from inertia_decompiler.cli_function_discovery import (
     SourceRegionCatalogEvidence8616,
     _configure_display_catalog_cache_policy_8616,
     _load_catalog_address_cache,
+    _recover_cached_function_pairs,
     _source_region_catalog_evidence_8616,
     _store_catalog_address_cache,
     _store_catalog_address_cache_addrs_8616,
@@ -29,6 +30,7 @@ from inertia_decompiler.discovery_cache_contract import (
     caller_return_use_evidence_record_8616,
     display_catalog_cache_payload_from_record_8616,
     display_catalog_cache_record_8616,
+    source_region_catalog_evidence_comment_8616,
 )
 
 
@@ -103,6 +105,25 @@ def test_display_catalog_cache_restores_exact_discovery_evidence(monkeypatch, tm
     assert caller_return_use_evidence_by_addr_8616(destination_project) == {0x10560: evidence}
     assert _source_region_catalog_evidence_8616(destination_project) == source_region
     assert _evidence_digest(destination_project) == _evidence_digest(source_project)
+
+
+def test_cached_function_recovery_reemits_exact_discovery_evidence(monkeypatch, capsys, tmp_path):
+    binary = tmp_path / "sample.exe"
+    binary.write_bytes(b"MZ")
+    evidence = SourceRegionCatalogEvidence8616(1, 1, 1, 1, 0, ())
+    project = SimpleNamespace(
+        entry=0x1100,
+        loader=SimpleNamespace(
+            main_object=SimpleNamespace(binary=str(binary), linked_base=0x1000, max_addr=0x200),
+        ),
+        _inertia_source_region_catalog_evidence=evidence,
+    )
+    pair = (SimpleNamespace(), SimpleNamespace(addr=0x10560))
+    monkeypatch.setattr(function_discovery, "_recover_candidate_with_timeout", lambda *_args, **_kwargs: pair)
+    monkeypatch.setattr(function_discovery, "_function_skip_reason", lambda _function: None)
+
+    assert _recover_cached_function_pairs(project, addrs=[0x10560], timeout=2, limit=1) == [pair]
+    assert source_region_catalog_evidence_comment_8616(evidence) in capsys.readouterr().out
 
 
 def test_direct_target_reuses_closed_display_catalog_evidence(monkeypatch, tmp_path):

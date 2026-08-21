@@ -1568,6 +1568,10 @@ Measured closure on 2026-08-21:
 
 #### 8.5 Collapse CFG regions only after conditions are explicit
 
+Status: in progress. The exact switch-case edge to a proven enclosing
+loop-tail exit is complete for RunMenu; general sequence/condition/loop/switch
+region collapse remains open.
+
 Reason: Structured loops and branches are trustworthy only when their CFG
 boundaries and `Condition` provenance are already explicit. Conservative region
 collapse improves readability without inventing branch meaning.
@@ -1607,6 +1611,36 @@ Definition of failure:
 - a prettier region changes entry/exit/backedge/polarity or hides an unresolved
   edge
 - unproven control flow is guessed instead of retained explicitly
+
+Measured progress on 2026-08-21:
+
+- Structuring now owns an exact typed-AST transformation from switch-case
+  gotos to the enclosing loop-tail label into `break`; Rewrite and CLI do not
+  infer or repair this control flow
+- the owner requires one unambiguous target, no executable suffix, no nested
+  breakable scope, no external incoming target, complete codegen publication,
+  and exact materialization evidence; every ambiguity refuses and preserves the
+  original goto
+- tail validation consumes only the matching typed `goto:<address>` delta and
+  leaves unrelated deltas for their authoritative validators
+- the sidecar-free RunMenu output converts nine proven exits, removes
+  `LABEL_10488`, retains the Escape path, and passes whole-tail validation;
+  focused tests cover the positive topology, idempotence, evidence counters,
+  exact validation composition, and all refusal cases
+- discovery-cache replay now re-emits the exact restored source-region evidence
+  diagnostic, so strict cold and replay runs enforce the same 20/20 discovery
+  contract instead of treating a correct cache hit as missing evidence
+- the strict cold current-source and cached-replay checks both report
+  20 raw, normalized, classified, and materialized functions, zero discovery
+  failures, zero timeouts, zero tracebacks, and zero validation failures
+- `quality-dev` passes Ruff `--fix`, MyPy, the 38-module mypyc import smoke,
+  architecture/context/ownership checks, 1,613 tests, and all three
+  decompilation-quality comparisons; the required test pipeline also passes
+  its three selected lanes, including Ultra QuickC and all seven MS C tiny
+  compile/run/decompile/recompile/decompiled-run constructs
+- concurrent code-graph indexing can consume most host CPUs and cause false
+  function-deadline failures. Acceptance runs therefore use bounded resource
+  isolation; semantic timeouts were not increased to hide host contention
 
 #### 8.6 Explicitly do not borrow Ghidra's function-start patterns
 

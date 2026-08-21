@@ -66,6 +66,7 @@ from inertia_decompiler.discovery_cache_contract import (
     SourceRegionCatalogEvidence8616,
     display_catalog_cache_payload_from_record_8616,
     display_catalog_cache_record_8616,
+    source_region_catalog_evidence_comment_8616,
 )
 from inertia_decompiler.discovery_evidence_project import isolated_discovery_evidence_project_8616
 from inertia_decompiler.project_loading import (
@@ -3411,15 +3412,7 @@ def _recover_pre_entry_source_catalog_8616(
                 function_addr,
                 replace(caller_return_use, target_addr=function_addr),
             )
-    print(
-        "/* source-region discovery evidence: "
-        f"raw_fact_count={evidence.raw_fact_count} "
-        f"normalized_fact_count={evidence.normalized_fact_count} "
-        f"classified_fact_count={evidence.classified_fact_count} "
-        f"materialized_count={evidence.materialized_count} "
-        f"failure_count={evidence.failure_count} "
-        f"failed_addrs={','.join(hex(addr) for addr in evidence.failed_addrs) or 'none'} */"
-    )
+    print(source_region_catalog_evidence_comment_8616(evidence))
     if evidence.classified_fact_count > 0 and evidence.materialized_count == 0:
         raise RuntimeError("source-region discovery classified entries but materialized none")
     return recovered, evidence
@@ -3773,6 +3766,9 @@ def _recover_cached_function_pairs(
             print(
                 f"/* restored {len(recovered)} previously recovered function entr{'y' if len(recovered) == 1 else 'ies'} from recovery cache. */"
             )
+            source_region_evidence = _source_region_catalog_evidence_8616(project)
+            if source_region_evidence is not None:
+                print(source_region_catalog_evidence_comment_8616(source_region_evidence))
         return recovered
 
     return _impl()

@@ -187,6 +187,10 @@ from .structuring.return_chains import (
 from .structuring.software_interrupt_returns import (
     materialize_software_interrupt_terminal_results_8616,
 )
+from .structuring.switch_loop_tail_breaks import (
+    SwitchLoopTailBreakResult8616,
+    materialize_switch_loop_tail_breaks_8616,
+)
 from .structuring.wide_stack_return_predicates import (
     materialize_wide_stack_return_predicate_8616,
     wide_stack_return_predicate_validation_delta_is_proven_8616,
@@ -208,6 +212,9 @@ from .tail_validation import (
 )
 from .validation_condition_precision import condition_precision_validation_delta_8616
 from .validation_semantic_failures import TailSemanticFailureScope8616
+from .validation_switch_loop_tail_breaks import (
+    consume_switch_loop_tail_break_validation_delta_8616,
+)
 from .widening.carry_borrow_pipeline import apply_carry_borrow_widening_pipeline_8616
 from .widening.segmented_load_widening import apply_segmented_load_widening_8616
 from .widening.stack_memory_objects import apply_x86_16_stack_memory_object_widening_8616
@@ -427,6 +434,11 @@ def _build_decompiler_structuring_passes() -> tuple[DecompilerStructuringPassSpe
         DecompilerStructuringPassSpec(
             "_switch_loop_exit_return_repair_8616",
             _repair_structuring_switch_loop_exit_returns_8616,
+            True,
+        ),
+        DecompilerStructuringPassSpec(
+            "_switch_loop_tail_break_collapse_8616",
+            _collapse_structuring_switch_loop_tail_breaks_8616,
             True,
         ),
         DecompilerStructuringPassSpec(
@@ -1617,6 +1629,17 @@ def _repair_structuring_switch_loop_exit_returns_8616(project: AngrProjectSurfac
     return bool(repair_switch_loop_exit_returns_from_evidence_8616(project, codegen))
 
 
+def _collapse_structuring_switch_loop_tail_breaks_8616(
+    project: AngrProjectSurface,
+    codegen: AngrCodegenSurface,
+) -> bool:
+    """Collapse exact switch exits after condition and return materialization."""
+    del project
+    result = materialize_switch_loop_tail_breaks_8616(codegen.cfunc.statements)
+    codegen._inertia_structuring_switch_loop_tail_break_result_8616 = result
+    return result.changed
+
+
 def _materialize_structuring_return_shape_8616(
     project: AngrProjectSurface,
     codegen: AngrCodegenSurface,
@@ -2492,6 +2515,37 @@ def _try_accept_structuring_validation_delta_from_evidence_8616(
         )
     except Exception:
         return False
+
+    try:
+        switch_tail_result = codegen._inertia_structuring_switch_loop_tail_break_result_8616
+    except AttributeError:
+        switch_tail_result = None
+    switch_tail_validation = consume_switch_loop_tail_break_validation_delta_8616(
+        switch_tail_result
+        if isinstance(switch_tail_result, SwitchLoopTailBreakResult8616)
+        else None,
+        validation,
+    )
+    if switch_tail_validation.accepted:
+        try:
+            switch_tail_accepts = (
+                codegen._inertia_structuring_switch_loop_tail_break_validation_accepts_8616
+            )
+        except AttributeError:
+            switch_tail_accepts = 0
+        codegen._inertia_structuring_switch_loop_tail_break_validation_accepts_8616 = (
+            int(switch_tail_accepts or 0) + 1
+        )
+        if not switch_tail_validation.residual_changed:
+            validation["summary_text"] = "no observable whole-tail changes"
+            validation.pop("delta", None)
+            validation["verdict"] = build_x86_16_tail_validation_verdict(
+                f"structuring:{spec_name}", validation
+            )
+            return True
+        validation["verdict"] = build_x86_16_tail_validation_verdict(
+            f"structuring:{spec_name}", validation
+        )
 
     def _is_void_tail_call_guard_structuring_delta_8616() -> bool:
         if int(getattr(codegen, "_inertia_void_tail_call_guard_materialized_8616", 0) or 0) <= 0:

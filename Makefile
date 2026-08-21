@@ -388,6 +388,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/validation_condition_identity.py \
 	angr_platforms/angr_platforms/X86_16/validation_control_flow.py \
 	angr_platforms/angr_platforms/X86_16/validation_condition_precision.py \
+	angr_platforms/angr_platforms/X86_16/validation_switch_loop_tail_breaks.py \
 	angr_platforms/angr_platforms/X86_16/validation_control_flow_obligations.py \
 	angr_platforms/angr_platforms/X86_16/validation_dataflow.py \
 	angr_platforms/angr_platforms/X86_16/validation_semantic_failures.py \
@@ -612,6 +613,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/structuring/branch_return_expressions.py \
 	angr_platforms/angr_platforms/X86_16/structuring/multi_arm_return_chains.py \
 	angr_platforms/angr_platforms/X86_16/structuring/total_return_suffixes.py \
+	angr_platforms/angr_platforms/X86_16/structuring/switch_loop_tail_breaks.py \
 	angr_platforms/angr_platforms/X86_16/structuring/compare32_recovery.py \
 	angr_platforms/angr_platforms/X86_16/structuring/call_argument_join_conditions.py \
 	angr_platforms/angr_platforms/X86_16/structuring/call_argument_joins.py \
@@ -1041,6 +1043,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/validation_condition_identity.py \
 	angr_platforms/angr_platforms/X86_16/validation_control_flow.py \
 	angr_platforms/angr_platforms/X86_16/validation_condition_precision.py \
+	angr_platforms/angr_platforms/X86_16/validation_switch_loop_tail_breaks.py \
 	angr_platforms/angr_platforms/X86_16/validation_control_flow_obligations.py \
 	angr_platforms/angr_platforms/X86_16/validation_dataflow.py \
 	angr_platforms/angr_platforms/X86_16/validation_semantic_failures.py \
@@ -1265,6 +1268,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/structuring/branch_return_expressions.py \
 	angr_platforms/angr_platforms/X86_16/structuring/multi_arm_return_chains.py \
 	angr_platforms/angr_platforms/X86_16/structuring/total_return_suffixes.py \
+	angr_platforms/angr_platforms/X86_16/structuring/switch_loop_tail_breaks.py \
 	angr_platforms/angr_platforms/X86_16/structuring/compare32_recovery.py \
 	angr_platforms/angr_platforms/X86_16/structuring/call_argument_join_conditions.py \
 	angr_platforms/angr_platforms/X86_16/structuring/call_argument_joins.py \
@@ -1707,6 +1711,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_scalar_return_types.py \
 	angr_platforms/tests/test_x86_16_structuring_return_chains.py \
 	angr_platforms/tests/test_x86_16_total_return_suffixes.py \
+	angr_platforms/tests/test_x86_16_switch_loop_tail_breaks.py \
 	angr_platforms/tests/test_x86_16_wide_stack_condition_chains.py
 
 QA_PYTEST_TARGETS := \
@@ -1889,6 +1894,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_structuring_multi_arm_condition_ownership.py \
 	angr_platforms/tests/test_x86_16_structuring_loop_body_repair.py \
 	angr_platforms/tests/test_x86_16_total_return_suffixes.py \
+	angr_platforms/tests/test_x86_16_switch_loop_tail_breaks.py \
 	angr_platforms/tests/test_x86_16_wide_stack_condition_chains.py \
 	angr_platforms/tests/test_x86_16_dce_optimization.py \
 	angr_platforms/tests/test_x86_16_dce_lvalue_reads.py \

@@ -724,6 +724,14 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         tests=("angr_platforms/tests/test_x86_16_structuring_loop_body_repair.py",),
     ),
     TestOwnershipRule(
+        owner="x86-16-structuring-switch-loop-tail-breaks",
+        paths=(
+            "angr_platforms/angr_platforms/X86_16/structuring/switch_loop_tail_breaks.py",
+            "angr_platforms/angr_platforms/X86_16/validation_switch_loop_tail_breaks.py",
+        ),
+        tests=("angr_platforms/tests/test_x86_16_switch_loop_tail_breaks.py",),
+    ),
+    TestOwnershipRule(
         owner="x86-16-structuring-loop-break-jcc",
         paths=("angr_platforms/angr_platforms/X86_16/structuring/loop_break_jcc.py",),
         tests=("angr_platforms/tests/test_x86_16_structuring_loop_break_jcc.py",),
