@@ -1543,6 +1543,8 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/callee_pointer_evidence.py",
     "angr_platforms/angr_platforms/X86_16/lowering/indexed_global_evidence.py",
     "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_collector_parity.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory_contracts.py",
     "angr_platforms/angr_platforms/X86_16/lowering/helper_call_interfaces.py",
     "angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_evidence.py",
     "angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_materialization.py",
@@ -1552,6 +1554,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift.py",
     "scripts/check_generated_translation_unit.py",
     "scripts/generated_translation_unit_assembly.py",
+    "scripts/indexed_address_parity_inventory.py",
     "inertia_decompiler/cli_batch_c_output.py",
     "inertia_decompiler/generated_external_function_contracts.py",
     "inertia_decompiler/generated_c_function_extraction.py",
@@ -2120,6 +2123,9 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
         "angr_platforms/angr_platforms/X86_16/alias/indexed_address_contracts.py",
         "angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py",
         "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_collector_parity.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory_contracts.py",
+        "scripts/indexed_address_parity_inventory.py",
     ),
     "x86-16-carry-borrow-widening": (
         "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_contracts.py",
@@ -2149,6 +2155,8 @@ _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
         "test_indexed_load_projects_symbolic_target_and_exact_stack_source",
         "angr_platforms/tests/test_x86_16_indexed_address_collector_parity.py::"
         "test_real_indexed_load_collectors_have_exact_identity_parity",
+        "angr_platforms/tests/test_x86_16_indexed_address_parity_inventory.py::"
+        "test_identity_conflict_is_classified_on_exact_instruction_site",
     ),
     "pipeline-architecture-final-emission-guard": (
         "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"

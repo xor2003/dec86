@@ -1578,18 +1578,43 @@ Measured progress on 2026-08-21:
   non-semantic migration census with matched, Alias-only, legacy-only, and
   duplicate keys; real lifted load and store fixtures have exact parity, while
   divergent and duplicate fixtures remain visible
-- seventeen indexed real-lifter, Alias, refusal, and parity regressions pass;
-  the ownership-expanded focused selection passes 73 tests
+- nineteen indexed real-lifter, Alias, refusal, and parity regressions pass;
+  every inventory mismatch class has a direct regression, repeated same-site
+  typed refusals remain visible, and the ownership-expanded focused selection
+  passes 75 tests
 - `quality-dev` and `quality-hard` pass Ruff `--fix`, strict MyPy, the 38-module
-  mypyc compile/import smoke, 1,666 focused tests, and all three generated-C
-  comparisons. The required default pipeline passes 1,666 tests in 30.96s and
-  all seven MS C tiny compile/run/decompile/recompile/decompiled-run constructs
+  mypyc compile/import smoke, 1,673 focused tests, and all three generated-C
+  comparisons. The required default pipeline passes its focused suite and all
+  seven MS C tiny compile/run/decompile/recompile/decompiled-run constructs
 - the sidecar-free SORTD indexed-aggregate regression passes recompilation and
   validation in 23.34s after the main-path IR/Alias artifacts were enabled
-- the next migration step is a whole-SORTD parity inventory, followed by
-  migration of `widening/global_object_layout.py` to Alias-projected facts;
-  only an evidence-closed consumer switch may retire the corresponding late
-  instruction-backed producer
+- `scripts/indexed_address_parity_inventory.py SORTD.EXE` now runs the canonical
+  sidecar-free, non-library function catalog and writes deterministic JSON to
+  stdout (or `--report-out PATH`); the durable measured report and work order
+  are recorded in this section, while the JSON is reproducible and is not kept
+  as a temporary repository artifact
+- the 20-function SORTD inventory closes with 49 IR candidates, 47 accepted
+  Alias facts, 2 typed IR/Alias refusals, 29 matched collector keys, 18
+  Alias-only keys, 10 legacy-only keys, and no duplicates; 9 function reports
+  are exact and 11 remain divergent
+- mismatch classification accounts for all 28 unmatched keys: 8 identity
+  conflicts, 12 Alias-only keys without a late candidate, and 8 legacy-only
+  keys without an IR candidate; no mismatch is hidden behind an IR or Alias
+  refusal
+- machine-instruction review proves that the 8 legacy-only keys are late
+  collector false positives: each uses BP-based addressing and therefore SS,
+  while the legacy global collector incorrectly reports DS
+- two identity families expose earlier provenance debt: `push word ptr
+  [bx+0x136]` at `0x100cb` is imported as two byte loads, and `mov byte ptr
+  [bx+0x8f1], 7` at `0x1064c` is imported as a two-byte store; comparison-load
+  facts in several sort functions also retain the following JCC address rather
+  than the CMP instruction that owns the memory effect
+- implementation order is now: (1) preserve atomic machine access width and
+  owning instruction address in frontend/IR, (2) rerun the whole-SORTD census
+  and close or explicitly prove every identity conflict, (3) classify the
+  Alias-only superset as pointer access versus bounded aggregate evidence, and
+  only then (4) migrate `widening/global_object_layout.py` to Alias-projected
+  facts; Widening must not consume the current inventory as semantic evidence
 
 Do not borrow Ghidra's fallback assumption that an unlocked indexed range has
 at least four elements (`varmap.cc:1215-1219`). InitBars' wrong `% 0x60b`,

@@ -50,6 +50,12 @@ views, and Types/Lowering owns object materialization. During migration,
 from both producers but may not select evidence or change C. The legacy
 instruction-backed global collectors remain migration debt until each consumer
 has switched to the earlier typed evidence with an exact corpus parity census.
+`X86_16/lowering/indexed_address_parity_inventory.py` and its contracts extend
+that read-only census across a discovered function set. The tooling entry point
+`scripts/indexed_address_parity_inventory.py` always isolates the executable
+from local sidecars and reports non-library functions by default; divergence is
+diagnostic evidence, never permission for Lowering to choose whichever producer
+looks more convenient.
 
 For interprocedural global-memory outputs, Semantics owns exact store and
 terminal-path facts, Alias owns segmented range identity and overlapping-view

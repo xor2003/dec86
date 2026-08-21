@@ -128,6 +128,8 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_pipeline.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_collector_parity.py \
+	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory.py \
+	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory_contracts.py \
 	angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_cfg.py \
 	angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_contracts.py \
 	angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_links.py \
@@ -499,6 +501,8 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_pointer_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_global_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_collector_parity.py \
+	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory.py \
+	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/helper_call_interfaces.py \
 	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_materialization.py \
@@ -826,6 +830,7 @@ QA_TYPED_FILES := \
 	scripts/verify_msc_example_runtime_gate.py \
 	scripts/compare_ghidra_function_coverage.py \
 	scripts/check_sortd_sidecar_free.py \
+	scripts/indexed_address_parity_inventory.py \
 	scripts/check_generated_translation_unit.py \
 	scripts/generated_translation_unit_assembly.py \
 	scripts/check_sortd_generated_sort_core.py \
@@ -1166,6 +1171,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_pointer_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_global_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_collector_parity.py \
+	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory.py \
+	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/helper_call_interfaces.py \
 	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_materialization.py \
@@ -1494,6 +1501,7 @@ QA_RUFF_TARGETS := \
 	scripts/check_changed_non_test_types.py \
 	scripts/check_decompiler_architecture.py \
 	scripts/check_sortd_sidecar_free.py \
+	scripts/indexed_address_parity_inventory.py \
 	scripts/check_generated_translation_unit.py \
 	scripts/generated_translation_unit_assembly.py \
 	scripts/check_sortd_generated_sort_core.py \
@@ -1699,6 +1707,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_indexed_address_evidence.py \
 	angr_platforms/tests/test_x86_16_indexed_address_aliases.py \
 	angr_platforms/tests/test_x86_16_indexed_address_collector_parity.py \
+	angr_platforms/tests/test_x86_16_indexed_address_parity_inventory.py \
+	angr_platforms/tests/test_x86_16_sortd_indexed_address_parity_inventory.py \
 	angr_platforms/tests/test_x86_16_global_object_layout.py \
 	angr_platforms/tests/test_x86_16_project_type_contracts.py \
 	angr_platforms/tests/test_x86_16_cod_global_identity.py \
@@ -1989,6 +1999,8 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_indexed_address_evidence.py \
 	angr_platforms/tests/test_x86_16_indexed_address_aliases.py \
 	angr_platforms/tests/test_x86_16_indexed_address_collector_parity.py \
+	angr_platforms/tests/test_x86_16_indexed_address_parity_inventory.py \
+	angr_platforms/tests/test_x86_16_sortd_indexed_address_parity_inventory.py \
 	angr_platforms/tests/test_x86_16_cod_global_identity.py \
 	angr_platforms/tests/test_x86_16_segmented_global_loads.py \
 	angr_platforms/tests/test_x86_16_decompilation_cache_surface.py \
