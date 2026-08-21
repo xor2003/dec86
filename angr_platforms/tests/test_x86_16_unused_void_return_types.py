@@ -67,7 +67,9 @@ def _function_fixture(*, explicit: bool = False) -> tuple[Arch86_16, SimpleNames
     return arch, function, prototype
 
 
-def _codegen_fixture(*, effectful: bool = False) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
+def _codegen_fixture(
+    *, effectful: bool = False, return_constant: int | None = None
+) -> tuple[SimpleNamespace, SimpleNamespace, SimpleNamespace]:
     arch, function, prototype = _function_fixture()
     project = SimpleNamespace(arch=arch, kb=SimpleNamespace(functions=_FunctionManager(function)))
     codegen = SimpleNamespace(
@@ -75,7 +77,9 @@ def _codegen_fixture(*, effectful: bool = False) -> tuple[SimpleNamespace, Simpl
         next_idx=lambda _name: 1,
         project=project,
     )
-    if effectful:
+    if return_constant is not None:
+        return_value = structured_c.CConstant(return_constant, prototype.returnty, codegen=codegen)
+    elif effectful:
         return_value = structured_c.CFunctionCall(0x1234, None, [], codegen=codegen)
     else:
         return_value = structured_c.CVariable(
@@ -199,6 +203,26 @@ def test_final_codegen_consumes_exact_terminal_storage(
         assert result.stats == UnusedVoidReturnTypeStats8616()
         assert function.prototype is original
         assert codegen.cfunc.statements.statements[0].retval is not None
+
+
+@pytest.mark.parametrize(("value", "expected_changed"), [(0, True), (1, False)])
+def test_unused_zero_return_is_synthetic_despite_terminal_ax(
+    monkeypatch: pytest.MonkeyPatch,
+    value: int,
+    expected_changed: bool,
+) -> None:
+    project, codegen, function = _codegen_fixture(return_constant=value)
+    monkeypatch.setattr(
+        unused_void_return_types,
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
+    )
+
+    result = materialize_unused_caller_void_codegen_type_8616(project, codegen)
+
+    assert result.changed is expected_changed
+    assert isinstance(function.prototype.returnty, SimTypeBottom) is expected_changed
+    assert (codegen.cfunc.statements.statements[0].retval is None) is expected_changed
 
 
 def test_exact_empty_terminal_storage_refuses_effectful_return(

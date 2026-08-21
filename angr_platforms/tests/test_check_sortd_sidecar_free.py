@@ -19,7 +19,7 @@ from scripts.check_sortd_sidecar_free import (
 
 def _passing_transcript() -> str:
     required_bodies = {
-        0x102E0: "short sub_102e0(void) { switch (ax) { case 27: return 0; } }",
+        0x102E0: "void sub_102e0(void) { switch (ax) { case 27: return; } }",
         0x10498: "void sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return; }",
         0x10E70: (
             "void sub_10e70(unsigned short arg, short arg_6) "
@@ -135,8 +135,8 @@ def test_sidecar_free_ratchet_rejects_required_function_acceptance_regression() 
     assert f"required decompiled function regressions: {required_addr:#x}" in result.violations
 
 
-def test_sidecar_free_ratchet_rejects_runmenu_without_proven_escape_return() -> None:
-    transcript = _passing_transcript().replace("case 27: return 0;", "case 27: break;")
+def test_sidecar_free_ratchet_rejects_runmenu_without_proven_escape_exit() -> None:
+    transcript = _passing_transcript().replace("case 27: return;", "case 27: break;")
 
     result = evaluate_sortd_transcript(
         transcript,
@@ -148,11 +148,11 @@ def test_sidecar_free_ratchet_rejects_runmenu_without_proven_escape_return() -> 
     )
 
     assert not result.passed
-    assert "RunMenu lacks its scalar binary-proven ESC return case" in result.violations
+    assert "RunMenu lacks its void binary-proven ESC exit" in result.violations
 
 
-def test_sidecar_free_ratchet_rejects_runmenu_bare_return() -> None:
-    transcript = _passing_transcript().replace("case 27: return 0;", "case 27: return;")
+def test_sidecar_free_ratchet_rejects_runmenu_scalar_return() -> None:
+    transcript = _passing_transcript().replace("void sub_102e0(void)", "short sub_102e0(void)")
 
     result = evaluate_sortd_transcript(
         transcript,
@@ -164,7 +164,7 @@ def test_sidecar_free_ratchet_rejects_runmenu_bare_return() -> None:
     )
 
     assert not result.passed
-    assert "RunMenu lacks its scalar binary-proven ESC return case" in result.violations
+    assert "RunMenu lacks its void binary-proven ESC exit" in result.violations
 
 
 def test_sidecar_free_ratchet_rejects_unmaterialized_positive_bp_arguments() -> None:

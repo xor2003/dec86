@@ -2,8 +2,8 @@
 
 Layer: Types/lowering.
 Responsibility: combine a complete caller census with complete empty AIL
-terminal returns or exact empty return-register storage, then synchronize the
-generated function and C prototypes.
+terminal returns, exact empty return-register storage, or a synthetic zero
+return, then synchronize the generated function and C prototypes.
 Consumes alias, widening, and typed facts.
 Do not recover semantics from COD, source, assembly, or rendered C text.
 Function names are not evidence.
@@ -184,7 +184,6 @@ def terminal_return_value_evidence_8616(
     owner: object,
     function_addr: int,
 ) -> TerminalReturnValueEvidence8616 | None:
-    """Return terminal-return evidence across the current address domains."""
     """Return recorded terminal-return evidence for one exact function address."""
     carrier = cast(_EvidenceOwner8616, owner)
     try:
@@ -286,6 +285,10 @@ def materialize_unused_caller_void_codegen_type_8616(
     pure_returns = bool(nonempty_returns) and all(
         _return_expr_is_side_effect_free_8616(node.retval) for node in nonempty_returns
     )
+    synthetic_zero_returns = bool(nonempty_returns) and all(
+        isinstance(node.retval, CConstant) and node.retval.value == 0
+        for node in nonempty_returns
+    )
     unresolved_returns = bool(nonempty_returns) and all(
         return_value_needs_neutralization_8616(node.retval, prototype.returnty)
         for node in nonempty_returns
@@ -299,6 +302,7 @@ def materialize_unused_caller_void_codegen_type_8616(
         not terminal_value_empty
         and not terminal_register_empty
         and not unresolved_returns
+        and not synthetic_zero_returns
         and not (function_prototype_is_void and pure_returns)
     ):
         return UnusedVoidReturnTypeResult8616(False, UnusedVoidReturnTypeStats8616())

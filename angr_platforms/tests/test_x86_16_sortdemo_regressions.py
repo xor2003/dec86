@@ -459,8 +459,8 @@ def test_sortdemo_swaps_preserves_binary_proven_global_increment_and_pointer_swa
     assert "function: 0x107b8 Swaps" in result.stdout
     assert "validation=passed" in combined
     assert "gcc syntax check failed:" not in combined
-    assert "short Swaps(g_08F0_entry *bar1, g_08F0_entry *bar2)" in result.stdout
-    final_body = _function_body_from_stdout(result.stdout, "short Swaps")
+    assert "void Swaps(g_08F0_entry *bar1, g_08F0_entry *bar2)" in result.stdout
+    final_body = _function_body_from_stdout(result.stdout, "void Swaps")
     assert "chkstk" not in final_body.lower()
     assert "iSwaps += 1;" in final_body
     assert "barTmp = bar1[0];" in final_body or "local_2 = bar1[0];" in final_body
@@ -855,13 +855,13 @@ def test_sortd_initmenu_sidecar_free_preserves_calls_and_compiles(
     assert result.returncode == 0, combined
     _assert_clean_decompilation_output(combined)
     assert "no helper metadata (.lst/.map/.cod/debug info) found" in combined
-    assert "short sub_10060(void)" in result.stdout
+    assert "void sub_10060(void)" in result.stdout
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc portable-flat syntax check failed:" not in combined
     assert re.search(r"(?:int|void) sub_12756\(char \*a0, unsigned short a1\);", result.stdout)
     assert "extern char * g_0136[];" in result.stdout
-    final_body = _function_body_from_stdout(result.stdout, "short sub_10060")
+    final_body = _function_body_from_stdout(result.stdout, "void sub_10060")
     assert "char local_12[16];" in final_body and "// [bp+0x2]" not in final_body
     assert final_body.count("sub_12b24(15);") == 1
     assert final_body.count("sub_12b3e(0, 0);") == 1
@@ -873,8 +873,7 @@ def test_sortd_initmenu_sidecar_free_preserves_calls_and_compiles(
     assert final_body.count("sub_1123a(") == 3
     assert "sub_1143a(SEG_U16(inertia_ds, 306), SEG_U16(inertia_ds, 308), 30, 0)" in final_body
     assert "vvar_" not in final_body
-    assert "return;" not in final_body
-    assert final_body.count("return 0;") == 1
+    assert "return 0;" not in final_body
 
 
 def test_sortd_quicksort_sidecar_free_preserves_typed_control_flow_and_compiles(
@@ -906,9 +905,9 @@ def test_sortd_quicksort_sidecar_free_preserves_typed_control_flow_and_compiles(
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc portable-flat syntax check failed:" not in combined
-    final_body = _function_body_from_stdout(result.stdout, "short sub_10ce0")
+    final_body = _function_body_from_stdout(result.stdout, "void sub_10ce0")
     assert "vvar_" not in final_body
-    signature = re.search(r"short sub_10ce0\(short (\w+), short (\w+)\)", final_body)
+    signature = re.search(r"void sub_10ce0\(short (\w+), short (\w+)\)", final_body)
     assert signature is not None
     low_arg, high_arg = signature.groups()
     assert f"if ({low_arg} < {high_arg})" in final_body
@@ -927,7 +926,7 @@ def test_sortd_quicksort_sidecar_free_preserves_typed_control_flow_and_compiles(
     assert final_body.count("sub_107b8(") == 3
     assert final_body.count("sub_10768(") == 3
     assert "sub_1075b(" not in final_body
-    assert final_body.count("return 0;") == 1
+    assert final_body.count("return;") == 1
     assert final_body.count("sub_10ce0(") == 5
     assert final_body.count(f"sub_10ce0({low_arg}, local_6 - 1);") == 2
     assert final_body.count(f"sub_10ce0(local_6 + 1, {high_arg});") == 2
@@ -1242,7 +1241,7 @@ def test_sortdemo_quicksort_preserves_pivot_swaps_and_recursive_calls():
     assert "function: 0x10ce0 QuickSort" in result.stdout
     assert "validation=passed" in combined
     assert "Function recovery failed" not in combined
-    body = _function_body_from_stdout(result.stdout, "short QuickSort")
+    body = _function_body_from_stdout(result.stdout, "void QuickSort")
     assert "vvar_" not in body
     assert "MK_FP(" not in body
     assert "iBreak = abarWork[iHigh].field_0;" in body
@@ -1436,7 +1435,7 @@ def test_sortd_runmenu_sidecar_free_preserves_binary_escape_exit(tmp_path: Path)
     assert "whole-tail validation clean across 1 functions" in combined
     body = _function_body_from_stdout(result.stdout, "sub_102e0(")
     assert re.search(r"local_2\s*=\s*sub_11292\(\);", body)
-    assert re.search(r"case 27:\s*return 0;", body)
+    assert re.search(r"case 27:\s*return;", body)
     for case_value in (27, 60, 62, 66, 69, 72, 73, 81, 83, 84):
         assert f"case {case_value}:" in body
 
@@ -1453,7 +1452,7 @@ def test_initbars_getvideoconfig_far_pointer_call_has_no_stack_setup_remnants():
     combined = _combined_output(result)
     assert result.returncode == 0, combined
     assert "function: 0x10560 InitBars" in combined
-    assert "short sub_10560(void)" in result.stdout
+    assert "void sub_10560(void)" in result.stdout
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "Source-backed quality guard rejected" not in combined
@@ -1537,7 +1536,7 @@ def test_initmenu_pause_zero_guard_has_no_raw_flag_carrier():
     assert "gcc portable-flat syntax check failed:" not in combined
     assert "int32_t setbkcolor(int32_t color);" in result.stdout
     assert "int sprintf(char *buf, const char *fmt, ...);" in result.stdout
-    assert "short InitMenu" in result.stdout
+    assert "void InitMenu" in result.stdout
     body = _function_body_from_stdout(result.stdout, "void InitMenu")
     tail_after_pause_text = body.rsplit('strcpy(ach, "            ");', 1)[-1]
     assert "vvar_" not in body

@@ -1377,6 +1377,24 @@ Measured progress on 2026-08-20:
   tests, and all three quality comparisons. The mandatory seven-worker pipeline
   passes the same 1,610 tests, 4/4 Ultra QuickC fixtures, and all seven MS C tiny
   build/run/decompile/recompile/decompiled-run contracts with exit code 255
+- closed `UNUSED` caller-return evidence now permits the existing Types/Lowering
+  owner to demote an exact synthetic terminal zero to `void`, even when the
+  terminal machine state still carries `AX`. Nonzero constants, variable
+  returns, effectful call returns, and incomplete caller censuses remain scalar
+  or refuse demotion
+- the sidecar-free SORTD artifact changes only four source-void functions:
+  InitMenu, RunMenu, Swaps, and QuickSort. Their signatures become `void` and
+  synthetic `return 0;` statements become bare returns; all calls and other C
+  statements are byte-identical to the preceding artifact. The strict gate now
+  requires RunMenu's binary-proven `case 27: return;`, and rejects either a
+  scalar RunMenu signature or an Escape `break`
+- the edited-state strict gate passes 20/20 functions with zero fallback,
+  timeout, traceback, discovery, empty-output, validation, or policy failures.
+  Focused positive and refusal regressions pass; `quality-dev` passes Ruff,
+  MyPy, mypyc smoke imports, architecture/context/ownership checks, 1,612 tests,
+  and all three quality comparisons. The mandatory seven-worker pipeline passes
+  the same 1,612 tests, 4/4 Ultra QuickC fixtures, and all seven MS C tiny
+  build/run/decompile/recompile/decompiled-run contracts
 - next implementation boundary: generalize live-out evidence only when Alias
   and SSA prove conditional, indexed, indirect, stack, overlapping, or
   additional multiple-output storage without inferring semantics from rendered
