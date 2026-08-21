@@ -1649,6 +1649,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_stack_lowering_contracts.py \
 	angr_platforms/tests/test_x86_16_stack_memory_object_widening.py \
 	angr_platforms/tests/test_x86_16_stack_memory_ssa_lowering.py \
+	angr_platforms/tests/test_x86_16_stack_memory_ssa_safety.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_consumers.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_pipeline.py \
@@ -1885,6 +1886,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_stack_lowering_contracts.py \
 	angr_platforms/tests/test_x86_16_stack_memory_object_widening.py \
 	angr_platforms/tests/test_x86_16_stack_memory_ssa_lowering.py \
+	angr_platforms/tests/test_x86_16_stack_memory_ssa_safety.py \
 	angr_platforms/tests/test_x86_16_unused_void_return_types.py \
 	angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py \
 	angr_platforms/tests/test_x86_16_consumed_push_lvalues.py \

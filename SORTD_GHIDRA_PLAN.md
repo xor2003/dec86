@@ -713,9 +713,10 @@ accepts a composed byte-view component only when every range is nested under
 one unique Alias-equivalent owner, and Lowering materializes that owner. General
 non-laminar contained views are now covered. Exact call-bearing direct scalar
 writes are covered when typed call effects prove that the unique owner survives;
-the project-wide multi-function semantic-artifact handoff is complete. Explicit
-one-branch SP-change and DS/SS-collision refusal fixtures still need a focused
-audit before this task meets its full negative-test DoD.
+the project-wide multi-function semantic-artifact handoff is complete. The
+overlap, escape, one-branch SP-change, and DS/SS-collision negative-fixture DoD
+is complete. Measured positive local-output improvement for DrawFrame,
+DrawTime, and InitMenu remains before this task is complete.
 
 Reason: Early conversion of stack storage into loosely related C temporaries
 loses definition, join, width, escape, and call-clobber evidence. Exact SS range
@@ -836,6 +837,17 @@ Measured progress on 2026-08-21:
   tests, four validated Ultra QuickC fixtures, and all seven MS C tiny
   compile/run/decompile/recompile/decompiled-run constructs; no lane failed,
   skipped, or timed out.
+- The explicit branch-dependent `SS:SP` join fixture now proves the
+  correctness-first refusal path end to end: IR reports
+  `unproven_stack_range`, Alias retains the typed upstream refusal, and
+  Lowering creates no candidate or C local. The equal-offset explicit DS/SS
+  fixture proves that DS remains a distinct typed address outside stack SSA and
+  only the SS owner can materialize. No production semantic workaround was
+  required; the existing IR -> Alias -> Lowering ownership boundary was
+  already conservative. Both fixtures are enforced by the Makefile and focused
+  pipeline. The checkpoint passes 31 focused tests, six real SORTD regressions,
+  `quality-dev`, and all three mandatory pipeline lanes: 1,584 focused tests,
+  four validated Ultra QuickC fixtures, and all seven MS C tiny constructs.
 
 This should remove Ghidra-like stack setup temporaries from DrawFrame,
 DrawTime, and InitMenu without moving stack recovery into Rewrite. Negative
