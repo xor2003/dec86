@@ -179,6 +179,9 @@ def _address_from_parts(
         status=status,
         segment_origin=segment_origin,
         expr=expr,
+        base_values=tuple(
+            IRValue(MemSpace.REG, name=name, size=2) for name in base
+        ),
     )
 
 

@@ -1285,6 +1285,8 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/ir/core.py",
     "angr_platforms/angr_platforms/X86_16/ir/block_ownership.py",
     "angr_platforms/angr_platforms/X86_16/ir/effects.py",
+    "angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py",
+    "angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py",
     "angr_platforms/angr_platforms/X86_16/ir/ir_canonicalize_8616.py",
     "angr_platforms/angr_platforms/X86_16/ir/regs.py",
     "angr_platforms/angr_platforms/X86_16/ir/segment_contract.py",

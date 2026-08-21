@@ -231,6 +231,8 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/ir/core.py \
 	angr_platforms/angr_platforms/X86_16/ir/block_ownership.py \
 	angr_platforms/angr_platforms/X86_16/ir/effects.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py \
 	angr_platforms/angr_platforms/X86_16/ir/ir_canonicalize_8616.py \
 	angr_platforms/angr_platforms/X86_16/ir/regs.py \
 	angr_platforms/angr_platforms/X86_16/ir/segment_contract.py \
@@ -892,6 +894,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/ir/core.py \
 	angr_platforms/angr_platforms/X86_16/ir/block_ownership.py \
 	angr_platforms/angr_platforms/X86_16/ir/effects.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py \
 	angr_platforms/angr_platforms/X86_16/ir/ir_canonicalize_8616.py \
 	angr_platforms/angr_platforms/X86_16/ir/regs.py \
 	angr_platforms/angr_platforms/X86_16/ir/segment_contract.py \
@@ -1680,6 +1684,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_direct_stack_move_pretest_initializers.py \
 	angr_platforms/tests/test_x86_16_direct_stack_move_loops.py \
 	angr_platforms/tests/test_x86_16_direct_stack_update_groups.py \
+	angr_platforms/tests/test_x86_16_indexed_address_evidence.py \
 	angr_platforms/tests/test_x86_16_global_object_layout.py \
 	angr_platforms/tests/test_x86_16_project_type_contracts.py \
 	angr_platforms/tests/test_x86_16_cod_global_identity.py \
@@ -1967,6 +1972,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_direct_stack_move_pretest_initializers.py \
 	angr_platforms/tests/test_x86_16_direct_stack_move_loops.py \
 	angr_platforms/tests/test_x86_16_direct_stack_update_groups.py \
+	angr_platforms/tests/test_x86_16_indexed_address_evidence.py \
 	angr_platforms/tests/test_x86_16_cod_global_identity.py \
 	angr_platforms/tests/test_x86_16_segmented_global_loads.py \
 	angr_platforms/tests/test_x86_16_decompilation_cache_surface.py \

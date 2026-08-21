@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from .core import IRAtom, IRBinaryValue, IRBlock, IRCondition, IRInstr, IRValue, MemSpace
+from .core import IRAddress, IRAtom, IRBinaryValue, IRBlock, IRCondition, IRInstr, IRValue, MemSpace
 
 __all__ = ["SSABinding", "SSABlock", "build_x86_16_block_local_ssa"]
 
@@ -150,6 +150,14 @@ def _rewrite_atom(
         return _rewrite_binary_value(atom, versions, snapshots, definitions)
     if isinstance(atom, IRValue):
         return _rewrite_value(atom, versions, snapshots, definitions)
+    if isinstance(atom, IRAddress):
+        return replace(
+            atom,
+            base_values=tuple(
+                _rewrite_value(value, versions, snapshots, definitions)
+                for value in atom.base_values
+            ),
+        )
     return atom
 
 

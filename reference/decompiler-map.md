@@ -38,6 +38,15 @@ transfer the resulting `ConditionIR`, but must not recreate operands or branch
 meaning. The eventual replacement is direct cross-block condition-source
 provenance in `IRFunctionArtifact`, after which the cache bridge can be removed.
 
+Indexed segmented addresses are also IR facts. `IRAddress.base_values` retains
+their exact versioned dynamic terms, and `X86_16/ir/indexed_address_evidence.py`
+owns tracing a supported term to its SSA definition and stable stack source.
+That producer must publish either a typed fact or a typed refusal; it must not
+infer aliases, bounds, arrays, structures, or C types. Alias owns storage/range
+identity, Widening owns proven aggregate views, and Types/Lowering owns object
+materialization. The legacy instruction-backed global collectors remain
+migration debt until each consumer has switched to the earlier typed evidence.
+
 For interprocedural global-memory outputs, Semantics owns exact store and
 terminal-path facts, Alias owns segmented range identity and overlapping-view
 ownership, Widening owns exact caller-load projections into those ranges, and

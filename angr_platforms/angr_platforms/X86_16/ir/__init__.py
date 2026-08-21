@@ -25,6 +25,16 @@ from .core import (
     MemSpace,
     SegmentOrigin,
 )
+from .indexed_address_contracts import (
+    IndexedAddressAccessKind8616,
+    IndexedAddressDefinitionSite8616,
+    IndexedAddressEvidence8616,
+    IndexedAddressFact8616,
+    IndexedAddressFailureKind8616,
+    IndexedAddressRefusal8616,
+    IndexedAddressStats8616,
+)
+from .indexed_address_evidence import collect_indexed_address_evidence_8616
 from .segment_contract import (
     SegmentAccessFact,
     SegmentAccessKind,
@@ -81,6 +91,13 @@ __all__ = [
     "IRInstr",
     "IRRefusal",
     "IRValue",
+    "IndexedAddressAccessKind8616",
+    "IndexedAddressDefinitionSite8616",
+    "IndexedAddressEvidence8616",
+    "IndexedAddressFact8616",
+    "IndexedAddressFailureKind8616",
+    "IndexedAddressRefusal8616",
+    "IndexedAddressStats8616",
     "AddressStatus",
     "SegmentOrigin",
     "MemSpace",
@@ -119,6 +136,7 @@ __all__ = [
     "build_x86_16_function_ssa",
     "build_x86_16_ir_function_artifact",
     "build_x86_16_ir_function_artifact_summary",
+    "collect_indexed_address_evidence_8616",
     "build_x86_16_segment_state_artifact",
     "build_x86_16_segment_function_contract",
     "build_x86_16_typed_string_effect_artifact",

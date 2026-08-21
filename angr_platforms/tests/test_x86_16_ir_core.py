@@ -29,6 +29,7 @@ def test_ir_value_to_dict_preserves_expr_and_version():
         "memory_access_size": None,
         "memory_access_insn": None,
         "source_tmp": None,
+        "call_output": None,
     }
 
 
@@ -53,6 +54,7 @@ def test_ir_address_to_dict_preserves_segment_base_and_status():
         "segment_origin": "defaulted",
         "expr": ("Iop_Sub16", "bp"),
         "version": None,
+        "base_values": [],
     }
 
 

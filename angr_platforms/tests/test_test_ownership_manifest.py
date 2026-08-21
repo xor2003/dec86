@@ -119,12 +119,16 @@ def test_selects_validation_semantic_failure_tests_for_owner_file():
     )
 
 
-def test_selects_ir_layer_fallback_for_unowned_ir_file():
+def test_selects_indexed_address_owner_for_ir_core():
     selected = test_ownership_manifest.select_tests_for_files(
         ("angr_platforms/angr_platforms/X86_16/ir/core.py",)
     )
 
-    assert selected == ("angr_platforms/tests/test_x86_16_ir_core.py",)
+    assert selected == (
+        "angr_platforms/tests/test_x86_16_indexed_address_evidence.py",
+        "angr_platforms/tests/test_x86_16_ir_core.py",
+        "angr_platforms/tests/test_x86_16_ir_ssa.py",
+    )
 
 
 def test_selects_semantics_layer_fallback_for_unowned_semantics_file():

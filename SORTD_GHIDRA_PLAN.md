@@ -1516,6 +1516,12 @@ Definition of failure:
 
 #### 8.3 Propagate types through IR, aliases, and bounded object ranges
 
+Status: in progress at the IR evidence prerequisite. Indexed DS/ES addresses
+now retain exact versioned dynamic terms and publish typed SSA facts or
+refusals. Alias range ownership, Widening aggregate views, bounded type
+propagation, and replacement of the legacy instruction-backed collectors
+remain open; no downstream consumer has switched yet.
+
 Reason: Type information must follow value and alias provenance across the
 pipeline before memory expressions can become pointers, indexes, fields, or
 aggregates. Bounded range evidence prevents useful typing from becoming shape
@@ -1545,6 +1551,30 @@ Adopt this after Alias and Widening, with stricter Inertia evidence:
 3. Reconcile overlapping range hints only when one byte-accurate array,
    structure, or explicit union accounts for every access.
 4. Preserve raw segmented accesses when evidence conflicts.
+
+Measured progress on 2026-08-21:
+
+- `IRAddress.base_values` preserves each dynamic address term as an `IRValue`,
+  and block-local SSA assigns the exact register version used by the memory
+  access instead of leaving only an unversioned register-name tuple
+- the new IR owner classifies every indexed DS/ES load or store and traces the
+  supported same-block `MOV`/`SHL` chain to a stable `SS:BP` source; multiple
+  terms, missing/conflicting definitions, unsupported expressions, unproven
+  addresses, and unsupported shifts remain typed refusals
+- all five evidence counters close, direct segmented accesses stay outside the
+  indexed census, and the producer does not infer Alias identity, bounds,
+  arrays, structures, C types, or rendered expressions
+- five real-lifter and refusal regressions pass; the ownership-expanded
+  changed-surface gate passes Ruff `--fix`, strict MyPy, architecture/context,
+  ownership, and 510 tests
+- `quality-dev` passes the 38-module mypyc compile/import smoke, 1,653 focused
+  tests, and all three generated-C comparisons. The required default pipeline
+  passes 3/3 lanes: 1,653 focused tests in 30.337s, 4/4 validated Ultra QuickC
+  fixtures in 58.200s, and all seven MS C tiny compile/run/decompile/recompile/
+  decompiled-run constructs in 91.753s
+- the next migration step is Alias projection of these facts plus an explicit
+  parity census against the current instruction-backed global collectors;
+  only then may one Widening/Types consumer switch and its late producer retire
 
 Do not borrow Ghidra's fallback assumption that an unlocked indexed range has
 at least four elements (`varmap.cc:1215-1219`). InitBars' wrong `% 0x60b`,

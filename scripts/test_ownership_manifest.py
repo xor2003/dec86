@@ -1332,6 +1332,22 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         tests=("angr_platforms/tests/test_x86_16_ir_ssa.py",),
     ),
     TestOwnershipRule(
+        owner="x86-16-indexed-address-evidence",
+        paths=(
+            "angr_platforms/angr_platforms/X86_16/ir/__init__.py",
+            "angr_platforms/angr_platforms/X86_16/ir/core.py",
+            "angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py",
+            "angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py",
+            "angr_platforms/angr_platforms/X86_16/ir/ssa.py",
+            "angr_platforms/angr_platforms/X86_16/ir/vex_addressing.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_x86_16_indexed_address_evidence.py",
+            "angr_platforms/tests/test_x86_16_ir_core.py",
+            "angr_platforms/tests/test_x86_16_ir_ssa.py",
+        ),
+    ),
+    TestOwnershipRule(
         owner="x86-16-carry-borrow-widening",
         paths=(
             "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_contracts.py",

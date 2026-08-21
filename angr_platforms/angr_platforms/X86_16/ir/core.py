@@ -158,6 +158,7 @@ class IRAddress:
     segment_origin: SegmentOrigin = SegmentOrigin.UNKNOWN
     expr: tuple[str, ...] | None = None
     version: int | None = None
+    base_values: tuple[IRValue, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         """Serialize this typed IR address for diagnostics and artifacts."""
@@ -171,6 +172,7 @@ class IRAddress:
             "segment_origin": self.segment_origin.value,
             "expr": self.expr,
             "version": self.version,
+            "base_values": [value.to_dict() for value in self.base_values],
         }
 
 
