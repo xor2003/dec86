@@ -184,13 +184,17 @@ class IRCallStackEffect8616:
     complete: bool = False
 
     def preserves(self, address: IRAddress) -> bool:
-        """Return whether this complete call effect preserves one exact range."""
+        """Check one range; known SP movement does not rebase BP/entry-SP coordinates."""
         identity = (address.space, address.base, address.offset, address.size)
         preserved = {
             (item.space, item.base, item.offset, item.size) for item in self.preserved_ranges
         }
         escaped = {(item.space, item.base, item.offset, item.size) for item in self.escaped_ranges}
-        return self.complete and self.net_stack_delta == 0 and identity in preserved and identity not in escaped
+        coordinate_is_stable = address.base != ("sp",) or self.net_stack_delta == 0
+        return bool(
+            self.complete and self.net_stack_delta is not None and coordinate_is_stable
+            and identity in preserved and identity not in escaped
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Serialize this call effect for diagnostics and clean workers."""

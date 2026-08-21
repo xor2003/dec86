@@ -741,6 +741,23 @@ Implement the equivalent in Inertia's IR and Alias layers:
 4. Lower an SS range to one local only after all definitions, uses, widths,
    joins, and escapes agree. Keep unresolved accesses explicit.
 
+Measured progress on 2026-08-21:
+
+- `IRCallStackEffect8616` now applies stack deltas to the coordinate they
+  actually move. A complete, known callee-cleanup delta may preserve an
+  explicitly preserved `SS:BP+offset` or entry-SP range, while a nonzero delta
+  still refuses a current-`SP` range and an unknown delta refuses every range.
+- the Semantics callsite-summary producer is covered end to end through
+  function memory SSA for a value argument cleaned by the callee. Positive BP,
+  nonzero-SP, and unknown-delta cases prevent either blanket refusal or unsafe
+  preservation.
+- 33 focused IR/Semantics/Alias/Lowering tests pass. Sidecar-free DrawFrame,
+  DrawTime, and InitMenu compile/validation regressions pass unchanged.
+  `quality-dev` passes Ruff `--fix`, MyPy, mypyc smoke, architecture/context/
+  ownership checks, 1,523 tests, and all three quality comparisons. The
+  required pipeline passes its focused, Ultra QuickC, and seven MS C tiny
+  compile/run/decompile/recompile/runtime lanes.
+
 This should remove Ghidra-like stack setup temporaries from DrawFrame,
 DrawTime, and InitMenu without moving stack recovery into Rewrite. Negative
 tests must cover overlapping locals, SP changes on one branch, escaped stack

@@ -10,6 +10,7 @@ from angr_platforms.X86_16.ir import (
     AddressStatus,
     IRAddress,
     IRBlock,
+    IRCallStackEffect8616,
     IRFunctionArtifact,
     IRInstr,
     IRValue,
@@ -65,6 +66,7 @@ def _summary(
     arg_widths: tuple[int, ...] = (),
     logical_arg_classes: tuple[CallsiteArgumentClass8616, ...] = (),
     cleanup: int | None = 0,
+    callee_cleanup: bool = False,
 ) -> CallsiteSummary8616:
     return CallsiteSummary8616(
         callsite_addr=0x1003,
@@ -78,7 +80,7 @@ def _summary(
         return_used=True,
         logical_arg_widths=arg_widths,
         logical_arg_classes=logical_arg_classes,
-        stack_cleanup_instruction_addr=0x1006 if cleanup else None,
+        stack_cleanup_instruction_addr=0x1006 if cleanup and not callee_cleanup else None,
     )
 
 
@@ -111,6 +113,57 @@ def test_zero_argument_call_proves_zero_cleanup_when_summary_omits_it() -> None:
     assert result.facts[0].verdict is CallStackEffectVerdict8616.PROVEN
     assert result.facts[0].effect.net_stack_delta == 0
     assert result.facts[0].effect.preserved_ranges == (_slot(),)
+
+
+def test_callee_cleanup_preserves_exact_bp_range_with_known_sp_delta() -> None:
+    """A proven callee cleanup moves SP without rebasing the caller's BP slot."""
+    result = materialize_call_stack_effects_8616(
+        _artifact(),
+        {
+            0x1003: _summary(
+                arg_widths=(2,),
+                logical_arg_classes=(CallsiteArgumentClass8616.VALUE,),
+                cleanup=2,
+                callee_cleanup=True,
+            )
+        },
+    )
+
+    assert result.complete is True
+    assert result.facts[0].effect.net_stack_delta == 2
+    assert result.facts[0].effect.preserves(_slot()) is True
+    function_ssa = build_x86_16_function_ssa(result.function)
+    assert function_ssa.memory_stats.failure_count == 0
+    assert len(function_ssa.memory_bindings) == 1
+
+
+def test_nonzero_delta_does_not_preserve_current_sp_coordinate() -> None:
+    """A current-SP range moves when a complete call changes SP."""
+    sp_slot = IRAddress(
+        MemSpace.SS,
+        base=("sp",),
+        offset=2,
+        size=2,
+        status=AddressStatus.STABLE,
+        segment_origin=SegmentOrigin.PROVEN,
+    )
+    effect = IRCallStackEffect8616(
+        net_stack_delta=2,
+        preserved_ranges=(sp_slot,),
+        complete=True,
+    )
+
+    assert effect.preserves(sp_slot) is False
+
+
+def test_unknown_delta_does_not_preserve_bp_coordinate() -> None:
+    """Explicit range identity cannot compensate for an unknown stack delta."""
+    effect = IRCallStackEffect8616(
+        preserved_ranges=(_slot(),),
+        complete=True,
+    )
+
+    assert effect.preserves(_slot()) is False
 
 
 def test_missing_call_summary_materializes_typed_refusal() -> None:
