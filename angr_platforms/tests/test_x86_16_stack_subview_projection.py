@@ -7,6 +7,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CFunctionCall,
     CStatements,
     CVariable,
 )
@@ -98,14 +99,20 @@ def _load(address: IRAddress) -> IRInstr:
     )
 
 
-def _attach_word_proof(codegen: _DummyCodegen, offset: int) -> None:
+def _attach_word_proof(
+    codegen: _DummyCodegen,
+    offset: int,
+    *,
+    view_offsets: tuple[int, ...] = (1,),
+) -> None:
     function_ssa = build_x86_16_function_ssa(
         IRFunctionArtifact(
             function_addr=FUNCTION_ADDR,
             blocks=(
                 IRBlock(
                     addr=FUNCTION_ADDR,
-                    instrs=(_store(_bp_slot(offset, 2)), _load(_bp_slot(offset + 1, 1))),
+                    instrs=(_store(_bp_slot(offset, 2)),)
+                    + tuple(_load(_bp_slot(offset + delta, 1)) for delta in view_offsets),
                 ),
             ),
         )
@@ -200,13 +207,14 @@ def test_stack_subview_projection_refuses_wrong_region_and_scale() -> None:
 
     changed = materialize_contained_stack_subviews_8616(codegen)
 
-    assert changed is False
+    assert changed is True
     assert first.rhs is wrong_region
     assert second.rhs is wrong_scale
     stats = codegen._inertia_stack_subview_last_stats_8616
-    assert stats.raw_fact_count == stats.failure_count == 2
+    assert stats.raw_fact_count == 3
+    assert stats.failure_count == 2
     assert stats.normalized_fact_count == 1
-    assert stats.classified_fact_count == stats.materialized_count == 0
+    assert stats.classified_fact_count == stats.materialized_count == 1
 
 
 def test_stack_subview_projection_refuses_syntax_without_widening_proof() -> None:
@@ -261,6 +269,60 @@ def test_stack_subview_projection_does_not_rewrite_assignment_lvalue() -> None:
     assert materialize_contained_stack_subviews_8616(codegen) is False
     assert assignment.lhs is recomposed_lvalue
     assert codegen._inertia_stack_subview_last_stats_8616.raw_fact_count == 0
+
+
+def test_stack_subview_projection_materializes_direct_low_and_high_reads() -> None:
+    for relative_offset in (0, 1):
+        codegen = _DummyCodegen()
+        word = _stack_var(-4, 2, "local_4", codegen)
+        byte = _stack_var(-4 + relative_offset, 1, "byte_view", codegen)
+        destination = CVariable(SimpleNamespace(name="inertia_ax"), codegen=codegen)
+        assignment = CAssignment(destination, byte, codegen=codegen)
+        codegen.cfunc = SimpleNamespace(
+            addr=FUNCTION_ADDR,
+            statements=CStatements([assignment], codegen=codegen),
+            variables_in_use={word.variable: word, byte.variable: byte},
+        )
+        _attach_word_proof(codegen, -4, view_offsets=(relative_offset,))
+
+        assert materialize_contained_stack_subviews_8616(codegen) is True
+        assert isinstance(assignment.rhs, CBinaryOp) and assignment.rhs.op == "And"
+        if relative_offset:
+            assert isinstance(assignment.rhs.lhs, CBinaryOp) and assignment.rhs.lhs.op == "Shr"
+
+
+@pytest.mark.parametrize(("relative_offset", "side_effecting"), ((0, False), (1, False), (1, True)))
+def test_stack_subview_projection_materializes_only_safe_direct_writes(
+    relative_offset: int,
+    side_effecting: bool,
+) -> None:
+    codegen = _DummyCodegen()
+    word = _stack_var(-4, 2, "local_4", codegen)
+    byte = _stack_var(-4 + relative_offset, 1, "byte_view", codegen)
+    rhs = (
+        CFunctionCall("callee", SimpleNamespace(addr=0x5000, name="callee"), [], codegen=codegen)
+        if side_effecting
+        else _constant(7, codegen)
+    )
+    assignment = CAssignment(byte, rhs, codegen=codegen, tags={"ins_addr": 0x4020})
+    codegen.cfunc = SimpleNamespace(
+        addr=FUNCTION_ADDR,
+        statements=CStatements([assignment], codegen=codegen),
+        variables_in_use={word.variable: word, byte.variable: byte},
+    )
+    _attach_word_proof(codegen, -4, view_offsets=(relative_offset,))
+
+    changed = materialize_contained_stack_subviews_8616(codegen)
+
+    projected = codegen.cfunc.statements.statements[0]
+    assert changed is not side_effecting
+    if side_effecting:
+        assert projected is assignment
+        assert codegen._inertia_stack_subview_last_stats_8616.failure_count == 1
+    else:
+        assert isinstance(projected, CAssignment) and projected.tags == assignment.tags
+        assert isinstance(projected.lhs, CVariable) and projected.lhs.variable is word.variable
+        assert isinstance(projected.rhs, CBinaryOp) and projected.rhs.op == "Or"
 
 
 def test_stack_subview_projection_declared_after_object_widening() -> None:

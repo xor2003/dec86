@@ -711,8 +711,8 @@ Status: in progress; exact `SS:BP+offset` ranges partition into canonical byte
 cells with versioned definitions and joins through IR and Alias. Widening now
 accepts a composed byte-view component only when every range is nested under
 one unique Alias-equivalent owner, and Lowering materializes that owner. General
-non-laminar byte views, direct byte-view reads/writes outside complete word
-recompositions, and multi-function generalization remain.
+non-laminar byte views, side-effecting direct byte writes, wider owners, and
+multi-function generalization remain.
 
 Reason: Early conversion of stack storage into loosely related C temporaries
 loses definition, join, width, escape, and call-clobber evidence. Exact SS range
@@ -788,15 +788,22 @@ Measured progress on 2026-08-21:
   refuses missing, stale, ambiguous, cross-region, wrong-offset, or wrong-scale
   evidence. The declared projection pass runs after its artifact producer; the
   previous independent `SimStackVariable` ownership reconstruction is removed.
+- A typed Widening resolver now classifies each structured stack view as
+  `NOT_CANDIDATE`, `ACCEPTED`, or `REFUSED` against the current object artifact.
+  Proven low/high byte reads project from the unique word owner, and pure byte
+  assignments become tag-preserving read/modify/write assignments to that
+  owner. Call-bearing or otherwise side-effecting RHS expressions remain
+  unchanged; stale, refused, ambiguous, cross-function, and unmaterialized
+  owners cannot bypass the typed decision.
 - The object Widening/Lowering surface passes 17 focused tests and a 111-test
   expanded IR/Alias/Widening/Lowering/Structuring set. The artifact-backed
-  projection has seven focused tests, and its 100-test related lifecycle set
-  passes. Sidecar-free DrawFrame, DrawTime, and InitMenu compilation/validation
-  regressions pass.
+  projection has 11 focused tests. Its 34-test immediate lifecycle surface and
+  sidecar-free ExchangeSort, DrawFrame, DrawTime, and InitMenu compilation/
+  validation regressions pass.
   `quality-dev` passes Ruff `--fix`, strict MyPy, mypyc smoke,
-  architecture/context/ownership gates, 1,528 tests, and all three quality
+  architecture/context/ownership gates, 1,532 tests, and all three quality
   comparisons. The mandatory seven-worker pipeline passes all three lanes:
-  1,528 focused tests, three Ultra QuickC validations, and all seven MS C tiny
+  1,532 focused tests, three Ultra QuickC validations, and all seven MS C tiny
   compile/run/decompile/recompile/decompiled-run constructs.
 
 This should remove Ghidra-like stack setup temporaries from DrawFrame,

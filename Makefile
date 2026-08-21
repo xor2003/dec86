@@ -663,6 +663,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects_contracts.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_widening.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py \
+	angr_platforms/angr_platforms/X86_16/widening/stack_subview_proof.py \
 	angr_platforms/angr_platforms/X86_16/widening/store_width.py \
 	angr_platforms/angr_platforms/X86_16/widening/carry_borrow_pipeline.py \
 	angr_platforms/angr_platforms/X86_16/widening/carry_borrow_storage.py \
@@ -1306,6 +1307,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects_contracts.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_widening.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py \
+	angr_platforms/angr_platforms/X86_16/widening/stack_subview_proof.py \
 	angr_platforms/angr_platforms/X86_16/widening/store_width.py \
 	angr_platforms/angr_platforms/X86_16/widening/carry_borrow_pipeline.py \
 	angr_platforms/angr_platforms/X86_16/widening/carry_borrow_storage.py \

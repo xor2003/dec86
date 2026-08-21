@@ -1,4 +1,4 @@
-"""Materialize Widening-proven redundant stack subview recompositions.
+"""Materialize Widening-proven structured-C stack object views.
 
 Layer: Widening.
 Responsibility: project accepted stack-object byte views into structured C
@@ -9,25 +9,26 @@ CLI/reporting evidence.
 
 This pass consumes structured C AST shape as a materialization target, not as
 semantic evidence. It refuses missing, stale, incomplete, ambiguous,
-cross-region, wrong-offset, wrong-scale, or lvalue projections. Do not move
-this work to postprocess or infer it from rendered C or assembly text.
+cross-region, wrong-offset, wrong-scale, or unsafe write projections. Do not
+move this work to postprocess or infer it from rendered C or assembly text.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_variable import SimStackVariable
+from angr.sim_type import SimType, SimTypeChar, SimTypeShort
 
-from ..alias.stack_memory_ssa_contracts import StackMemorySSAAliasArtifact8616
 from ..c_ast_utils import _clone_c_ast_tree_8616, _replace_c_children_8616
-from ..ir.core import IRAddress, MemSpace
 from ..pipeline.errors import PipelineHardError
-from .stack_memory_objects_contracts import (
-    StackMemoryObjectWideningArtifact8616,
-    StackMemoryObjectWideningCandidate8616,
+from .stack_subview_proof import (
+    StackObjectViewProof8616,
+    StackObjectViewResolutionKind8616,
+    current_stack_object_widening_8616,
+    resolve_stack_object_view_8616,
+    stack_variable_range_8616,
 )
 
 
@@ -49,13 +50,6 @@ class _StackSubviewCandidate8616:
     container: structured_c.CVariable
     subview: structured_c.CVariable
     projection_bits: int | None
-
-
-class _CodegenBoundary8616(Protocol):
-    """Owned proof artifacts carried on the dynamic angr codegen boundary."""
-
-    _inertia_stack_memory_ssa_alias_artifact: StackMemorySSAAliasArtifact8616
-    _inertia_stack_memory_object_widening_artifact: StackMemoryObjectWideningArtifact8616
 
 
 def _dynamic_attr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
@@ -115,121 +109,97 @@ def _stack_subview_candidate_8616(node: object) -> _StackSubviewCandidate8616 | 
     return None
 
 
-def _current_object_widening_8616(codegen: object) -> StackMemoryObjectWideningArtifact8616 | None:
-    """Return the current complete stack-object proof or reject a layer bypass."""
-    boundary = cast(_CodegenBoundary8616, codegen)
-    try:
-        source = boundary._inertia_stack_memory_ssa_alias_artifact
-    except AttributeError:
-        source = None
-    try:
-        artifact = boundary._inertia_stack_memory_object_widening_artifact
-    except AttributeError:
-        artifact = None
-    if source is None and artifact is None:
+def _word_byte_proof_8616(proof: StackObjectViewProof8616 | None) -> StackObjectViewProof8616 | None:
+    """Accept the currently supported exact byte view of a word owner."""
+    if proof is None or proof.owner_size != 2 or proof.view_size != 1:
         return None
-    if (
-        not isinstance(source, StackMemorySSAAliasArtifact8616)
-        or not isinstance(artifact, StackMemoryObjectWideningArtifact8616)
-        or artifact.source_alias is not source
-        or not artifact.complete
-    ):
-        raise PipelineHardError(
-            "stack subview projection does not consume the current complete Widening artifact",
-            layer="widening",
+    return proof if proof.relative_offset in {0, 1} else None
+
+
+def _side_effect_free_byte_rhs_8616(node: object) -> bool:
+    """Accept recursively pure values whose evaluation can share an owner read."""
+    if isinstance(node, (structured_c.CConstant, structured_c.CVariable)):
+        return True
+    if isinstance(node, structured_c.CTypeCast):
+        return _side_effect_free_byte_rhs_8616(node.expr)
+    if isinstance(node, structured_c.CBinaryOp):
+        return _side_effect_free_byte_rhs_8616(node.lhs) and _side_effect_free_byte_rhs_8616(
+            node.rhs
         )
-    return artifact
+    return False
 
 
-def _stack_range_8616(variable: object, function_addr: int) -> tuple[int, int] | None:
-    """Return an exact BP-relative range from one third-party stack variable."""
-    if not isinstance(variable, SimStackVariable):
-        return None
-    base = _dynamic_attr_8616(variable, "base", None)
-    region = _dynamic_attr_8616(variable, "region", None)
-    offset = _dynamic_attr_8616(variable, "offset", None)
-    size = _dynamic_attr_8616(variable, "size", None)
-    if base != "bp" or region != function_addr or not isinstance(offset, int):
-        return None
-    if not isinstance(size, int) or size <= 0:
-        return None
-    return offset, size
+def _expression_type_or_word_8616(expr: structured_c.CExpression) -> SimType:
+    """Return a concrete boundary type for an optionally untyped C expression."""
+    expr_type = expr.type
+    return expr_type if isinstance(expr_type, SimType) else SimTypeShort(False)
 
 
-def _address_range_8616(address: IRAddress) -> tuple[int, int] | None:
-    """Return an exact SS:BP range from one accepted Widening address."""
-    if address.space is not MemSpace.SS or address.base != ("bp",) or address.size <= 0:
-        return None
-    return address.offset, address.size
-
-
-def _owner_cvariable_8616(
-    cfunc: object,
-    syntax: _StackSubviewCandidate8616,
-    proof: StackMemoryObjectWideningCandidate8616,
-    function_addr: int,
-) -> structured_c.CVariable | None:
-    """Resolve the unique structured-C variable for one proven object owner."""
-    owner_range = _address_range_8616(proof.address)
-    if owner_range is None:
-        return None
-    if _stack_range_8616(syntax.container.variable, function_addr) == owner_range:
-        return syntax.container
-    variables_in_use = _dynamic_attr_8616(cfunc, "variables_in_use", None)
-    if not isinstance(variables_in_use, dict):
-        return None
-    owners = [
-        cvar
-        for variable, cvar in variables_in_use.items()
-        if _stack_range_8616(variable, function_addr) == owner_range
-        and isinstance(cvar, structured_c.CVariable)
-    ]
-    unique = {id(owner): owner for owner in owners}
-    return next(iter(unique.values())) if len(unique) == 1 else None
-
-
-def _proven_owner_8616(
-    cfunc: object,
-    artifact: StackMemoryObjectWideningArtifact8616 | None,
-    syntax: _StackSubviewCandidate8616,
-) -> structured_c.CVariable | None:
-    """Match syntax ranges to exactly one accepted Widening object."""
-    if artifact is None:
-        return None
-    function_addr = _dynamic_attr_8616(cfunc, "addr", None)
-    if not isinstance(function_addr, int) or function_addr != artifact.function_addr:
-        raise PipelineHardError(
-            "stack subview projection received a Widening artifact for another function",
-            layer="widening",
+def _byte_read_expr_8616(codegen: object, proof: StackObjectViewProof8616) -> structured_c.CExpression:
+    """Project one proven byte rvalue from its unsigned word owner."""
+    owner = cast(structured_c.CExpression, _clone_c_ast_tree_8616(proof.owner))
+    value: structured_c.CExpression = structured_c.CTypeCast(
+        _expression_type_or_word_8616(owner),
+        SimTypeShort(False),
+        owner,
+        codegen=codegen,
+    )
+    if proof.relative_offset:
+        value = structured_c.CBinaryOp(
+            "Shr",
+            value,
+            structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
         )
-    container_range = _stack_range_8616(syntax.container.variable, function_addr)
-    subview_range = _stack_range_8616(syntax.subview.variable, function_addr)
-    if container_range is None or subview_range is None:
-        return None
-    owners: list[structured_c.CVariable] = []
-    for proof in artifact.candidates:
-        owner_range = _address_range_8616(proof.address)
-        covered_ranges = {
-            address_range
-            for address in proof.covered_addresses
-            if (address_range := _address_range_8616(address)) is not None
-        }
-        if (
-            owner_range is None
-            or owner_range[1] != 2
-            or container_range not in covered_ranges
-            or subview_range not in covered_ranges
-            or container_range[0] != owner_range[0]
-            or container_range[1] not in {1, owner_range[1]}
-            or subview_range != (owner_range[0] + 1, 1)
-            or syntax.projection_bits != 8
-        ):
-            continue
-        owner = _owner_cvariable_8616(cfunc, syntax, proof, function_addr)
-        if owner is not None:
-            owners.append(owner)
-    unique = {id(owner): owner for owner in owners}
-    return next(iter(unique.values())) if len(unique) == 1 else None
+    value = structured_c.CBinaryOp(
+        "And",
+        value,
+        structured_c.CConstant(0xFF, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    view_type = proof.view.variable_type
+    if isinstance(view_type, SimTypeChar):
+        return structured_c.CTypeCast(SimTypeShort(False), view_type, value, codegen=codegen)
+    return value
+
+
+def _byte_write_assignment_8616(
+    codegen: object,
+    assignment: structured_c.CAssignment,
+    proof: StackObjectViewProof8616,
+) -> structured_c.CAssignment:
+    """Project one side-effect-free byte assignment into its word owner."""
+    owner_read = cast(structured_c.CExpression, _clone_c_ast_tree_8616(proof.owner))
+    preserved_mask = 0x00FF if proof.relative_offset else 0xFF00
+    preserved = structured_c.CBinaryOp(
+        "And",
+        owner_read,
+        structured_c.CConstant(preserved_mask, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    rhs = cast(structured_c.CExpression, _clone_c_ast_tree_8616(assignment.rhs))
+    byte_value: structured_c.CExpression = structured_c.CBinaryOp(
+        "And",
+        structured_c.CTypeCast(
+            _expression_type_or_word_8616(rhs),
+            SimTypeShort(False),
+            rhs,
+            codegen=codegen,
+        ),
+        structured_c.CConstant(0xFF, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    if proof.relative_offset:
+        byte_value = structured_c.CBinaryOp(
+            "Shl",
+            byte_value,
+            structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        )
+    replacement = cast(structured_c.CAssignment, _clone_c_ast_tree_8616(assignment))
+    replacement.lhs = cast(structured_c.CExpression, _clone_c_ast_tree_8616(proof.owner))
+    replacement.rhs = structured_c.CBinaryOp("Or", preserved, byte_value, codegen=codegen)
+    return replacement
 
 
 def _increment_codegen_counter_8616(codegen: object, name: str, amount: int) -> None:
@@ -240,32 +210,79 @@ def _increment_codegen_counter_8616(codegen: object, name: str, amount: int) -> 
 
 
 def materialize_contained_stack_subviews_8616(codegen: object) -> bool:
-    """Fold one word recomposition only from the current Widening decision."""
+    """Project proven word-owned byte views from the current Widening decision."""
     cfunc = _dynamic_attr_8616(codegen, "cfunc", None)
     root = _dynamic_attr_8616(cfunc, "statements", None)
     if root is None:
         return False
-    artifact = _current_object_widening_8616(codegen)
+    artifact = current_stack_object_widening_8616(codegen)
 
     stats = StackSubviewProjectionStats8616()
 
     def transform(node: object) -> object:
-        """Materialize one proven contained stack view."""
+        """Materialize one proven recomposition, direct read, or direct write."""
+        if isinstance(node, structured_c.CAssignment) and isinstance(
+            node.lhs, structured_c.CVariable
+        ):
+            resolution = resolve_stack_object_view_8616(cfunc, artifact, node.lhs)
+            if resolution.kind is not StackObjectViewResolutionKind8616.NOT_CANDIDATE:
+                stats.raw_fact_count += 1
+                proof = _word_byte_proof_8616(resolution.proof)
+                if (
+                    resolution.kind is not StackObjectViewResolutionKind8616.ACCEPTED
+                    or proof is None
+                    or not isinstance(node.rhs, structured_c.CExpression)
+                    or not _side_effect_free_byte_rhs_8616(node.rhs)
+                ):
+                    stats.failure_count += 1
+                    return node
+                stats.normalized_fact_count += 1
+                stats.classified_fact_count += 1
+                stats.materialized_count += 1
+                return _byte_write_assignment_8616(codegen, node, proof)
+
         candidate = _stack_subview_candidate_8616(node)
-        if candidate is None:
-            return node
-        stats.raw_fact_count += 1
-        if candidate.projection_bits != 8:
-            stats.failure_count += 1
-            return node
-        stats.normalized_fact_count += 1
-        owner = _proven_owner_8616(cfunc, artifact, candidate)
-        if owner is None:
-            stats.failure_count += 1
-            return node
-        stats.classified_fact_count += 1
-        stats.materialized_count += 1
-        return _clone_c_ast_tree_8616(owner)
+        if candidate is not None:
+            stats.raw_fact_count += 1
+            resolution = resolve_stack_object_view_8616(cfunc, artifact, candidate.subview)
+            proof = _word_byte_proof_8616(resolution.proof)
+            container_range = (
+                stack_variable_range_8616(candidate.container.variable, artifact.function_addr)
+                if artifact is not None
+                else None
+            )
+            owner_range = (
+                (proof.source.address.offset, proof.source.address.size) if proof is not None else None
+            )
+            if (
+                candidate.projection_bits != 8
+                or resolution.kind is not StackObjectViewResolutionKind8616.ACCEPTED
+                or proof is None
+                or proof.relative_offset != 1
+                or owner_range is None
+                or container_range not in {(owner_range[0], 1), owner_range}
+            ):
+                stats.failure_count += 1
+            else:
+                stats.normalized_fact_count += 1
+                stats.classified_fact_count += 1
+                stats.materialized_count += 1
+                return _clone_c_ast_tree_8616(proof.owner)
+
+        if isinstance(node, structured_c.CVariable):
+            resolution = resolve_stack_object_view_8616(cfunc, artifact, node)
+            if resolution.kind is StackObjectViewResolutionKind8616.NOT_CANDIDATE:
+                return node
+            stats.raw_fact_count += 1
+            proof = _word_byte_proof_8616(resolution.proof)
+            if resolution.kind is not StackObjectViewResolutionKind8616.ACCEPTED or proof is None:
+                stats.failure_count += 1
+                return node
+            stats.normalized_fact_count += 1
+            stats.classified_fact_count += 1
+            stats.materialized_count += 1
+            return _byte_read_expr_8616(codegen, proof)
+        return node
 
     def should_process_child(parent: object, attr: str) -> bool:
         """Keep assignment lvalues outside this rvalue materialization pass."""
