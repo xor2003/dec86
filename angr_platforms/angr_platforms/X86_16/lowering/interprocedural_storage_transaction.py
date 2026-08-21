@@ -14,12 +14,16 @@ from __future__ import annotations
 from typing import Protocol, cast
 
 from ..pipeline.errors import PipelineHardError
+from .interprocedural_memory_output_validation import (
+    validate_memory_output_transaction_8616,
+)
 from .interprocedural_storage_contracts import (
     CallsiteStorageBinding8616,
     FunctionStorageContract8616,
     FunctionStorageResolution8616,
     ProgramStorageResolution8616,
     StorageIdentityKind8616,
+    StorageTrialVerdict8616,
 )
 
 __all__ = [
@@ -62,6 +66,35 @@ def apply_program_storage_resolution_8616(
             "classified storage trials produced no contract",
             layer="types/lowering",
         )
+    for function_resolution in resolution.resolutions:
+        contract = function_resolution.contract
+        accepted = function_resolution.verdict is StorageTrialVerdict8616.ACCEPTED
+        if accepted != (contract is not None):
+            raise PipelineHardError(
+                "storage verdict and function contract disagree",
+                layer="types/lowering",
+                details={"function_addr": function_resolution.function_addr},
+            )
+        if contract is None:
+            continue
+        if contract.function_addr != function_resolution.function_addr:
+            raise PipelineHardError(
+                "storage result and function contract identities disagree",
+                layer="types/lowering",
+                details={"function_addr": function_resolution.function_addr},
+            )
+        memory_validation = validate_memory_output_transaction_8616(contract)
+        if not memory_validation.complete:
+            failure = memory_validation.failure
+            raise PipelineHardError(
+                "memory-output contract transaction is incoherent: "
+                f"{None if failure is None else failure.value}",
+                layer="types/lowering",
+                details={
+                    "function_addr": function_resolution.function_addr,
+                    "failure": None if failure is None else failure.value,
+                },
+            )
     surface = cast(_ProjectStorageContractSurface8616, project)
     try:
         previous = surface._inertia_interprocedural_storage_resolution_8616

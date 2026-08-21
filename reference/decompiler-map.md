@@ -29,6 +29,15 @@ leave the late pass as a temporary consumer only.
 | Validation | `X86_16/tail_validation*.py`, `validation_*.py` | semantic equivalence checks and honest failure reporting |
 | CLI | `inertia_decompiler/` | orchestration, fallback choice, reports, timeouts |
 
+Typed branch evidence is an IR/frontend fact even when angr returns a cached
+IRSB. `X86_16/ir/condition_cache_relift.py` owns the temporary exact-byte
+publication bridge: an empty condition cache is complete only when a typed
+pending `ConditionSource` still owns that block; otherwise the custom lifter is
+run under isolated state and must close all five evidence counters. Lowering may
+transfer the resulting `ConditionIR`, but must not recreate operands or branch
+meaning. The eventual replacement is direct cross-block condition-source
+provenance in `IRFunctionArtifact`, after which the cache bridge can be removed.
+
 For interprocedural global-memory outputs, Semantics owns exact store and
 terminal-path facts, Alias owns segmented range identity and overlapping-view
 ownership, Widening owns exact caller-load projections into those ranges, and
@@ -37,7 +46,10 @@ materialized only with its exact byte offset into a unique maximal Alias range;
 crossing, width-conflicting, or unproven views must refuse before Lowering.
 Function contracts retain those projections under one Alias-owned memory
 object. They must not flatten whole and contained views into independent scalar
-return slots; `outputs` is reserved for register/sequence returns.
+return slots; `outputs` is reserved for register/sequence returns. Atomic
+publication revalidates that every object view has exactly one matching effect
+and optional `LIVE_OUT` trial in the same caller/callsite binding; stale,
+duplicate, missing, or orphaned projections fail before project mutation.
 
 ## Never Fix Here
 

@@ -148,7 +148,10 @@ def test_specific_rule_takes_precedence_over_layer_fallback():
         ("angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py",)
     )
 
-    assert selected == ("angr_platforms/tests/test_x86_16_condition_transfer.py",)
+    assert selected == (
+        "angr_platforms/tests/test_x86_16_condition_cache_relift.py",
+        "angr_platforms/tests/test_x86_16_condition_transfer.py",
+    )
 
 
 def test_selects_tail_validation_family_tests_for_related_modules():

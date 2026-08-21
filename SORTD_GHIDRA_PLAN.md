@@ -940,7 +940,7 @@ from that owner, retaining the proven byte offset and exact access width before
 Types/Lowering creates a trial. Every project-wide trial, return, and live-out
 consumer now reads the canonical Semantics-ready exact-function SSA artifact.
 RunMenu call-result-to-stack materialization is complete; indexed, indirect,
-stack, overlapping multi-view, and broader memory live-outs remain.
+stack, and broader object-type or multiple-output materialization remain.
 
 Reason: Calls and returns cross function boundaries where local inference is
 insufficient. Typed storage trials allow a complete caller census to prove
@@ -1482,6 +1482,15 @@ Measured progress on 2026-08-20:
   validated Ultra QuickC fixtures, and all seven MS C tiny build/run/decompile/
   recompile/decompiled-run contracts; lane times are 29.266s, 55.004s, and
   82.097s with zero failure, skip, or timeout
+- atomic publication now revalidates each accepted Alias-owned memory object
+  against the exact effects and optional `LIVE_OUT` trials retained by the same
+  caller/callsite binding. Missing callsites or effects, duplicate owners or
+  views, trial mismatches, and orphan effects or trials refuse before the
+  project contract surface is mutated
+- the transaction proof has typed verdicts, failure reasons, and all five
+  evidence counters. Its focused publication/storage surface passes 25 tests,
+  including valid replay and four post-solver corruption cases; the diagnostic
+  `PipelineHardError` names the typed failure while retaining structured detail
 - next implementation boundary: generalize live-out evidence only when Alias,
   Widening, and SSA prove indexed, indirect, stack, or broader multiple-output
   storage. Conditional, exact whole-owner, contained, overlapping-caller-view,
@@ -1639,20 +1648,38 @@ Measured closure on 2026-08-21:
   the wide goal arithmetic, and passes whole-tail validation. Source-backed and
   sidecar-free ReInitBars and DrawTime regressions also pass, as does Beep's
   call/argument/validation acceptance test
+- the clean-worker Sleep failure was traced before Structuring to a frontend
+  cache-publication defect: angr could return a cached IRSB without replaying the
+  custom lifter's condition-recording side effect, while an empty per-block
+  cache list was incorrectly accepted as complete. The IR-owned exact-byte
+  relift bridge now isolates lifter state, distinguishes a typed pending
+  `ConditionSource` from an unbacked empty cache, and publishes typed refusal
+  reasons plus all five evidence counters
+- the exact real-image regression poisons all three Sleep condition owners and
+  requires deterministic recovery of `sle`, `sge`, and `ule`. Four clean
+  workers using transported parent evidence now return `status=ok`, preserve
+  `sub_1137e() > local_4`, and emit one identical validated C payload hash
 - Beep's direct-address output keeps an unprototyped `Sleep()` declaration
   because that deliberately incomplete one-function caller census cannot prove
   a whole-program signature. The regression enforces this typed refusal while
   still requiring the exact four-byte call argument and behavior
 - 13 focused placement/provenance tests cover same-group and nested positive
   cases, idempotence, missing source materialization, unjoined calls, mixed
-  calls/effects, and ambiguous parent refusal. All edited production modules
-  remain below 350 lines
-- `quality-dev` passes Ruff `--fix`, MyPy for 94 source modules, the 38-module
-  mypyc import smoke, architecture/context/ownership checks, 1,523 focused
-  tests, and all three decompilation-quality comparisons
-- the required seven-worker default pipeline passes all three lanes: 1,523
-  focused tests, 4/4 validated Ultra QuickC fixtures, and all seven MS C tiny
-  compile/run/decompile/recompile/decompiled-run constructs
+  calls/effects, and ambiguous parent refusal. Both new production modules
+  remain below 350 lines; the legacy 770-line `condition_transfer.py` gains
+  only three net lines in this checkpoint
+- fresh-cache strict sidecar-free acceptance passes 20/20 raw, normalized,
+  classified, materialized, attempted, and decompiled functions with zero
+  discovery failures, empty bodies, validation failures, timeouts, tracebacks,
+  or violations
+- `quality-dev` and `quality-hard` pass Ruff `--fix`, MyPy for 101 source
+  modules, the 38-module mypyc compile/import smoke, architecture/context/
+  ownership checks, 1,648 focused tests, and all three decompilation-quality
+  comparisons
+- the required seven-worker default pipeline passes all three lanes: 1,648
+  focused tests in 29.637s, 4/4 validated Ultra QuickC fixtures in 55.780s,
+  and all seven MS C tiny compile/run/decompile/recompile/decompiled-run
+  constructs in 85.599s, with zero lane failures or timeouts
 
 #### 8.5 Collapse CFG regions only after conditions are explicit
 

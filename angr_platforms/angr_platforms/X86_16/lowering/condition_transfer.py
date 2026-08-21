@@ -34,7 +34,7 @@ __all__ = [
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from ..alias.condition_register_carriers import normalize_condition_register_carriers_8616
@@ -43,6 +43,14 @@ from ..alias.condition_register_liveness import (
     normalize_condition_register_liveness_8616,
 )
 from ..condition_trace import record_classified_conditions_trace_8616
+from ..ir.condition_cache_relift import (
+    ConditionCacheReliftStats8616,
+    ConditionReliftBlock8616,
+    has_typed_condition_cache_evidence_8616,
+    relift_cached_project_blocks_8616,
+    relift_function_condition_cache_8616,
+    reset_lifter_condition_state_8616,
+)
 from ..ir.condition_ir import (
     JCC_TO_COND_8616,
     ConditionEdgeEvidence,
@@ -76,6 +84,7 @@ class _ConditionFunctionOwnership8616:
     decoded_block_addrs: frozenset[int]
     conditional_owners: dict[int, _ConditionBlockOwner8616]
     register_topology: ConditionRegisterTopology8616
+    relift_blocks: tuple[ConditionReliftBlock8616, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,45 +128,6 @@ _INVERTED_JCC_MNEMONICS_8616: dict[str, str] = {
 }
 
 
-def _relift_blocks_for_condition_cache_8616(project: object, block_addrs: list[int]) -> None:
-    factory = _dynamic_boundary_attr_8616(project, "factory", None) if project is not None else None
-    block_lifter = _dynamic_boundary_attr_8616(factory, "block", None)
-    if not callable(block_lifter):
-        return
-    for block_addr in block_addrs:
-        try:
-            block_lifter(block_addr, opt_level=0)
-        except TypeError:
-            try:
-                block_lifter(block_addr)
-            except Exception:
-                continue
-        except Exception:
-            continue
-
-
-def _reset_affine_condition_state_8616(instruction_cls: object) -> None:
-    """Reset path-sensitive affine state before deterministic relift."""
-    affine_state = _dynamic_boundary_attr_8616(instruction_cls, "_inertia_condition_reg_affine_state_8616", None)
-    if isinstance(affine_state, dict):
-        affine_state.clear()
-    affine_snapshots = _dynamic_boundary_attr_8616(
-        instruction_cls, "_inertia_condition_reg_affine_state_snapshots_8616", None
-    )
-    if isinstance(affine_snapshots, dict):
-        affine_snapshots.clear()
-    index_state = _dynamic_boundary_attr_8616(instruction_cls, "_inertia_condition_index_reg_state_8616", None)
-    if isinstance(index_state, dict):
-        index_state.clear()
-    value_state = _dynamic_boundary_attr_8616(
-        instruction_cls,
-        "_inertia_condition_reg_value_state_8616",
-        None,
-    )
-    if isinstance(value_state, dict):
-        value_state.clear()
-
-
 def _current_function_condition_ownership_8616(func: object) -> _ConditionFunctionOwnership8616:
     """Decode exact current-function block terminators for condition ownership."""
     try:
@@ -168,10 +138,14 @@ def _current_function_condition_ownership_8616(func: object) -> _ConditionFuncti
     decoded_block_addrs: set[int] = set()
     owners: dict[int, _ConditionBlockOwner8616] = {}
     conflicting_owners: set[int] = set()
+    relift_blocks_by_addr: dict[int, ConditionReliftBlock8616] = {}
     for block in blocks:
         block_addr = _dynamic_boundary_attr_8616(block, "addr", None)
         if not isinstance(block_addr, int):
             continue
+        block_size = _dynamic_boundary_attr_8616(block, "size", None)
+        if isinstance(block_size, int) and block_size > 0:
+            relift_blocks_by_addr[block_addr] = ConditionReliftBlock8616(block_addr, block_size)
         capstone = _dynamic_boundary_attr_8616(block, "capstone", None)
         wrappers = tuple(_dynamic_boundary_attr_8616(capstone, "insns", ()) or ())
         if not wrappers:
@@ -269,6 +243,7 @@ def _current_function_condition_ownership_8616(func: object) -> _ConditionFuncti
             predecessors_by_block,
             frozenset(condition_only_blocks),
         ),
+        relift_blocks=tuple(relift_blocks_by_addr[address] for address in sorted(relift_blocks_by_addr)),
     )
 
 
@@ -536,7 +511,7 @@ def _collect_pending_fallthrough_conditions_8616(
                     mnemonic,
                     source.kind,
                 )
-            if mnemonic not in JCC_TO_COND_8616:
+            if not isinstance(mnemonic, str) or mnemonic not in JCC_TO_COND_8616:
                 edge = _edge_evidence_from_pending_source_8616(source, mnemonic, edge_block_addr=addr)
                 if edge is not None:
                     edge_evidence.append(edge)
@@ -570,8 +545,18 @@ def _collect_pending_fallthrough_conditions_8616(
 def _collect_typed_condition_artifacts_8616(
     project: object,
     func_addr: int,
-) -> tuple[list[ConditionIR], list[ConditionEdgeEvidence], _ConditionOwnershipStats8616]:
-    def _impl() -> tuple[list[ConditionIR], list[ConditionEdgeEvidence], _ConditionOwnershipStats8616]:
+) -> tuple[
+    list[ConditionIR],
+    list[ConditionEdgeEvidence],
+    _ConditionOwnershipStats8616,
+    ConditionCacheReliftStats8616 | None,
+]:
+    def _impl() -> tuple[
+        list[ConditionIR],
+        list[ConditionEdgeEvidence],
+        _ConditionOwnershipStats8616,
+        ConditionCacheReliftStats8616 | None,
+    ]:
         """Collect ConditionIR objects from the module-level cache in lift_86_16.
 
         During lifting, _record_typed_condition_8616() writes ConditionIR objects
@@ -582,15 +567,15 @@ def _collect_typed_condition_artifacts_8616(
         """
         kb = _dynamic_boundary_attr_8616(project, "kb", None) if project is not None else None
         if kb is None:
-            return [], [], _ConditionOwnershipStats8616(0, 0, 0, 0, 0)
+            return [], [], _ConditionOwnershipStats8616(0, 0, 0, 0, 0), None
 
         func = kb.functions.function(addr=func_addr, create=False)
         if func is None:
-            return [], [], _ConditionOwnershipStats8616(0, 0, 0, 0, 0)
+            return [], [], _ConditionOwnershipStats8616(0, 0, 0, 0, 0), None
 
         block_addrs = sorted(_dynamic_boundary_attr_8616(func, "block_addrs_set", set()) or set())
         if not block_addrs:
-            return [], [], _ConditionOwnershipStats8616(0, 0, 0, 0, 0)
+            return [], [], _ConditionOwnershipStats8616(0, 0, 0, 0, 0), None
         ownership = _current_function_condition_ownership_8616(func)
 
         # Read from the module-level cache populated during the initial lift
@@ -611,21 +596,27 @@ def _collect_typed_condition_artifacts_8616(
             pending_sources = {}
 
         condition_block_addrs = sorted(ownership.conditional_owners) or block_addrs
+
         cached_block_count = sum(
-            1 for block_addr in condition_block_addrs if isinstance(module_cache.get(block_addr, None), list)
+            1
+            for block_addr in condition_block_addrs
+            if has_typed_condition_cache_evidence_8616(module_cache, pending_sources, block_addr)
         )
+        relift_stats: ConditionCacheReliftStats8616 | None = None
         if cached_block_count != len(condition_block_addrs):
-            if "Instruction_ANY" in locals():
-                _reset_affine_condition_state_8616(Instruction_ANY)
-            missing_blocks = [
-                block_addr
-                for block_addr in condition_block_addrs
-                if not isinstance(module_cache.get(block_addr, None), list)
-            ]
-            relift_blocks = missing_blocks if ownership.conditional_owners else block_addrs
-            _relift_blocks_for_condition_cache_8616(project, relift_blocks)
-            for block_addr in missing_blocks:
-                module_cache.setdefault(block_addr, [])
+            relift_artifact = relift_function_condition_cache_8616(
+                project,
+                ownership.relift_blocks,
+                frozenset(condition_block_addrs),
+            )
+            if relift_artifact is not None:
+                module_cache = relift_artifact.condition_cache()
+                pending_sources = relift_artifact.pending_source_cache()
+                relift_stats = relift_artifact.stats
+            else:
+                if "Instruction_ANY" in locals():
+                    reset_lifter_condition_state_8616()
+                relift_cached_project_blocks_8616(project, tuple(block_addrs))
         if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
             cache_keys = tuple(sorted(k for k in module_cache.keys() if isinstance(k, int)))
             pending_keys = tuple(sorted(k for k in pending_sources.keys() if isinstance(k, int)))
@@ -668,9 +659,14 @@ def _collect_typed_condition_artifacts_8616(
             edge_evidence.extend(pending_edges)
 
         conditions, ownership_stats = _filter_conditions_to_current_function_8616(all_conditions, ownership)
+        if relift_stats is not None and relift_stats.failure_count:
+            ownership_stats = replace(
+                ownership_stats,
+                failure_count=ownership_stats.failure_count + relift_stats.failure_count,
+            )
         if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
             log.warning("[condition-transfer] ownership=%s", ownership_stats)
-        return conditions, edge_evidence, ownership_stats
+        return conditions, edge_evidence, ownership_stats, relift_stats
 
     return _impl()
 
@@ -680,7 +676,9 @@ def collect_typed_conditions_from_emulator_8616(
     func_addr: int,
 ) -> list[ConditionIR]:
     """Collect ConditionIR objects from the module-level lifter cache."""
-    conditions, _edge_evidence, _ownership_stats = _collect_typed_condition_artifacts_8616(project, func_addr)
+    conditions, _edge_evidence, _ownership_stats, _relift_stats = _collect_typed_condition_artifacts_8616(
+        project, func_addr
+    )
     return conditions
 
 
@@ -689,7 +687,9 @@ def collect_typed_condition_artifacts_8616(
     func_addr: int,
 ) -> tuple[list[ConditionIR], list[ConditionEdgeEvidence]]:
     """Collect typed condition and edge-condition artifacts for a function."""
-    conditions, edge_evidence, _ownership_stats = _collect_typed_condition_artifacts_8616(project, func_addr)
+    conditions, edge_evidence, _ownership_stats, _relift_stats = _collect_typed_condition_artifacts_8616(
+        project, func_addr
+    )
     return conditions, edge_evidence
 
 
@@ -737,7 +737,9 @@ def transfer_typed_conditions_to_codegen_8616(
     """
     from ..pipeline.contracts import SemanticLaneState
 
-    conditions, edge_evidence, ownership_stats = _collect_typed_condition_artifacts_8616(project, func_addr)
+    conditions, edge_evidence, ownership_stats, relift_stats = _collect_typed_condition_artifacts_8616(
+        project, func_addr
+    )
     existing_edge_evidence = _dynamic_boundary_attr_8616(codegen, "_inertia_condition_edge_evidence", None)
     if not edge_evidence and isinstance(existing_edge_evidence, (list, tuple)) and existing_edge_evidence:
         edge_evidence = list(existing_edge_evidence)
@@ -745,6 +747,7 @@ def transfer_typed_conditions_to_codegen_8616(
     typing.cast(typing.Any, codegen)._inertia_condition_facts = conditions  # compatibility alias
     typing.cast(typing.Any, codegen)._inertia_condition_edge_evidence = edge_evidence
     typing.cast(typing.Any, codegen)._inertia_condition_ownership_stats = ownership_stats
+    typing.cast(typing.Any, codegen)._inertia_condition_cache_relift_stats_8616 = relift_stats
     record_classified_conditions_trace_8616(project, codegen, conditions)
 
     # ── Initialize CONDITION lane contract ──

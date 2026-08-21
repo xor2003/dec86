@@ -1495,6 +1495,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/ir/function_ssa_registry.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_object_contracts.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_objects.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_validation.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_collection_contracts.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_contracts.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_function_solver.py",
@@ -1542,6 +1543,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/register_constant_segmented_store.py",
     "angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py",
     "angr_platforms/angr_platforms/X86_16/lowering/near_pointer_type.py",
+    "angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift.py",
     "scripts/check_generated_translation_unit.py",
     "scripts/generated_translation_unit_assembly.py",
     "inertia_decompiler/cli_batch_c_output.py",
@@ -2029,6 +2031,9 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "x86-16-lowering-pointer-memory-idioms": (
         "angr_platforms/angr_platforms/X86_16/lowering/pointer_memory_idioms.py",
     ),
+    "x86-16-ir-condition-cache-relift": (
+        "angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift.py",
+    ),
     "x86-16-lowering-condition-transfer": ("angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py",),
     "x86-16-lowering-call-return-selectors": (
         "angr_platforms/angr_platforms/X86_16/lowering/call_return_selectors.py",
@@ -2089,6 +2094,7 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "x86-16-interprocedural-memory-output-objects": (
         "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_object_contracts.py",
         "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_objects.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_validation.py",
     ),
     "x86-16-call-semantics": (
         "angr_platforms/angr_platforms/X86_16/semantics/call_output_contracts.py",
@@ -2183,12 +2189,16 @@ _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
     ),
     "x86-16-interprocedural-memory-output-objects": (
         "angr_platforms/tests/test_x86_16_interprocedural_memory_output_objects.py",
+        "angr_platforms/tests/test_x86_16_interprocedural_memory_output_validation.py",
         "angr_platforms/tests/test_x86_16_interprocedural_storage_slot_join.py",
         "angr_platforms/tests/test_x86_16_interprocedural_storage_return_trial_collection.py",
     ),
     "x86-16-call-semantics": (
         "angr_platforms/tests/test_x86_16_call_outputs.py",
         "angr_platforms/tests/test_x86_16_call_stack_effects.py",
+    ),
+    "x86-16-ir-condition-cache-relift": (
+        "angr_platforms/tests/test_x86_16_condition_cache_relift.py",
     ),
     "x86-16-ir-ssa": ("angr_platforms/tests/test_x86_16_ir_ssa.py",),
     "x86-16-carry-borrow-widening": (

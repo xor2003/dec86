@@ -72,6 +72,7 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/ir/function_ssa_registry.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_object_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_objects.py \
+	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_validation.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_collection_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_function_solver.py \
@@ -446,6 +447,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/ir/function_ssa_registry.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_object_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_objects.py \
+	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_validation.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_collection_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_function_solver.py \
@@ -493,6 +495,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/register_constant_segmented_store.py \
 	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py \
 	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_type.py \
+	angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_fact_arbitration.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_argument_type_facts.py \
@@ -1105,6 +1108,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/ir/function_ssa_registry.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_object_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_objects.py \
+	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_validation.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_collection_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_function_solver.py \
@@ -1152,6 +1156,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/register_constant_segmented_store.py \
 	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py \
 	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_type.py \
+	angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_fact_arbitration.py \
 	angr_platforms/angr_platforms/X86_16/lowering/condition_argument_type_facts.py \
@@ -1610,6 +1615,7 @@ QA_RUFF_TARGETS := \
 		angr_platforms/tests/test_x86_16_callsite_pointer_tables.py \
 		angr_platforms/tests/test_x86_16_signed_global_declarations.py \
 		angr_platforms/tests/test_x86_16_condition_lowering.py \
+		angr_platforms/tests/test_x86_16_condition_cache_relift.py \
 		angr_platforms/tests/test_x86_16_condition_transfer.py \
 		angr_platforms/tests/test_x86_16_frontend_condition_evidence.py \
 		angr_platforms/tests/test_x86_16_decompiler_postprocess_typed_conditions.py \
@@ -1690,6 +1696,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_consumers.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py \
 	angr_platforms/tests/test_x86_16_interprocedural_memory_output_objects.py \
+	angr_platforms/tests/test_x86_16_interprocedural_memory_output_validation.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_slot_join.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_pipeline.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_prototype_application.py \
@@ -1735,6 +1742,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_consumers.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py \
 	angr_platforms/tests/test_x86_16_interprocedural_memory_output_objects.py \
+	angr_platforms/tests/test_x86_16_interprocedural_memory_output_validation.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_slot_join.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_pipeline.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_prototype_application.py \
@@ -1866,6 +1874,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_decompiler_postprocess_callsites.py \
 	angr_platforms/tests/test_x86_16_protected_call_arguments.py \
 	angr_platforms/tests/test_x86_16_condition_lowering.py \
+	angr_platforms/tests/test_x86_16_condition_cache_relift.py \
 	angr_platforms/tests/test_x86_16_condition_transfer.py \
 	angr_platforms/tests/test_x86_16_frontend_condition_evidence.py \
 	angr_platforms/tests/test_x86_16_wide_call_return_guard_chains.py \

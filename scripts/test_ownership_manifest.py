@@ -446,6 +446,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/tests/test_x86_16_interprocedural_storage_simtypes.py",
             "angr_platforms/tests/test_x86_16_interprocedural_storage_trial_collection.py",
             "angr_platforms/tests/test_x86_16_interprocedural_storage_trials.py",
+            "angr_platforms/tests/test_x86_16_interprocedural_memory_output_validation.py",
         ),
     ),
     TestOwnershipRule(
@@ -839,9 +840,17 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         ),
     ),
     TestOwnershipRule(
+        owner="x86-16-ir-condition-cache-relift",
+        paths=("angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift.py",),
+        tests=("angr_platforms/tests/test_x86_16_condition_cache_relift.py",),
+    ),
+    TestOwnershipRule(
         owner="x86-16-lowering-condition-transfer",
         paths=("angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py",),
-        tests=("angr_platforms/tests/test_x86_16_condition_transfer.py",),
+        tests=(
+            "angr_platforms/tests/test_x86_16_condition_cache_relift.py",
+            "angr_platforms/tests/test_x86_16_condition_transfer.py",
+        ),
     ),
     TestOwnershipRule(
         owner="x86-16-lowering-call-return-selectors",
@@ -1291,9 +1300,11 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         paths=(
             "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_object_contracts.py",
             "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_objects.py",
+            "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_validation.py",
         ),
         tests=(
             "angr_platforms/tests/test_x86_16_interprocedural_memory_output_objects.py",
+            "angr_platforms/tests/test_x86_16_interprocedural_memory_output_validation.py",
             "angr_platforms/tests/test_x86_16_interprocedural_storage_slot_join.py",
             "angr_platforms/tests/test_x86_16_interprocedural_storage_return_trial_collection.py",
         ),
