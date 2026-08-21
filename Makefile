@@ -1563,6 +1563,7 @@ QA_RUFF_TARGETS := \
 		angr_platforms/tests/test_x86_16_carry_borrow_widening.py \
 		angr_platforms/tests/test_x86_16_call_outputs.py \
 		angr_platforms/tests/test_x86_16_call_stack_effects.py \
+		angr_platforms/tests/test_x86_16_function_ssa_registry.py \
 		angr_platforms/tests/test_x86_16_call_contracts.py \
 		angr_platforms/tests/test_x86_16_calling_convention_compat.py \
 		angr_platforms/tests/test_x86_16_call_execution_frame_carriers.py \
@@ -1711,6 +1712,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_carry_borrow_widening.py \
 	angr_platforms/tests/test_x86_16_call_outputs.py \
 	angr_platforms/tests/test_x86_16_call_stack_effects.py \
+	angr_platforms/tests/test_x86_16_function_ssa_registry.py \
 	angr_platforms/tests/test_x86_16_terminal_memory_outputs.py \
 	angr_platforms/tests/test_x86_16_smoketest.py \
 	angr_platforms/tests/test_check_changed_non_test_types.py \

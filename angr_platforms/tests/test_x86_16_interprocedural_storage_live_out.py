@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from angr_platforms.X86_16.ir import AddressStatus, IRAddress, IRInstr, IRValue, MemSpace
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR, ConditionOp
+from angr_platforms.X86_16.ir.function_ssa_registry import FunctionSSAArtifactStage8616
 from angr_platforms.X86_16.ir.ssa import SSABlock
 from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact
 from angr_platforms.X86_16.lowering import interprocedural_storage_live_out
@@ -217,6 +218,10 @@ def test_function_collection_connects_terminal_store_to_caller_live_out(monkeypa
     project = SimpleNamespace(
         factory=_Factory(),
         _inertia_function_ssa_artifacts_8616={CALLER: caller, CALLEE: callee},
+        _inertia_function_ssa_stages_8616={
+            CALLER: FunctionSSAArtifactStage8616.SEMANTIC,
+            CALLEE: FunctionSSAArtifactStage8616.SEMANTIC,
+        },
     )
     monkeypatch.setattr(
         interprocedural_storage_live_out,

@@ -713,7 +713,9 @@ accepts a composed byte-view component only when every range is nested under
 one unique Alias-equivalent owner, and Lowering materializes that owner. General
 non-laminar contained views are now covered. Exact call-bearing direct scalar
 writes are covered when typed call effects prove that the unique owner survives;
-multi-function generalization remains.
+the project-wide multi-function semantic-artifact handoff is complete. Explicit
+one-branch SP-change and DS/SS-collision refusal fixtures still need a focused
+audit before this task meets its full negative-test DoD.
 
 Reason: Early conversion of stack storage into loosely related C temporaries
 loses definition, join, width, escape, and call-clobber evidence. Exact SS range
@@ -816,6 +818,24 @@ Measured progress on 2026-08-21:
   1,548 focused tests, four validated Ultra QuickC fixtures, and all seven MS C
   tiny compile/run/decompile/recompile/decompiled-run constructs; no lane
   failed, skipped, or timed out.
+- Project-wide exact-function SSA now has one IR-owned readiness registry. Raw
+  `IR` artifacts may upgrade once to canonical `SEMANTIC` artifacts; they cannot
+  downgrade, and divergent same-stage publication refuses without replacing
+  accepted evidence. The main Semantics path publishes its call-effect-enriched
+  artifact, while lazy exact-function lookup performs the same enrichment for
+  interprocedural consumers.
+- Types/Lowering storage-trial, return, and live-out consumers now require the
+  Semantics-ready registry artifact instead of rebuilding an independent raw
+  SSA view. Two-function tests prove independent address caching, replay object
+  identity, typed missing-function refusal, one-way upgrade, and conflict
+  refusal. The broader interprocedural surface passes 120 tests, and six real
+  sidecar-free SORTD regressions pass with compilation and validation intact.
+- The closed checkpoint passes Ruff `--fix`, project-wide MyPy, mypyc import
+  smoke, architecture/context/ownership checks, and all three quality
+  comparisons. The mandatory seven-worker pipeline is 3/3 green: 1,582 focused
+  tests, four validated Ultra QuickC fixtures, and all seven MS C tiny
+  compile/run/decompile/recompile/decompiled-run constructs; no lane failed,
+  skipped, or timed out.
 
 This should remove Ghidra-like stack setup temporaries from DrawFrame,
 DrawTime, and InitMenu without moving stack recovery into Rewrite. Negative
@@ -850,8 +870,10 @@ collection, signed/unsigned strict and non-strict `DX:AX` ordering use typing,
 sign-insensitive equality/inequality use typing, recursive pass-through
 propagation, production SCC publication, and atomic callee plus callsite type
 application are complete. Exact direct DS/ES must-write live-outs with one
-unclobbered caller condition use are implemented; broader memory live-outs and
-stack effects remain.
+unclobbered caller condition use are implemented. Every project-wide trial,
+return, and live-out consumer now reads the canonical Semantics-ready exact-
+function SSA artifact; broader memory live-outs and storage-contract recovery
+remain.
 
 Reason: Calls and returns cross function boundaries where local inference is
 insufficient. Typed storage trials allow a complete caller census to prove

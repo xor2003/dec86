@@ -20,7 +20,9 @@ from ..caller_return_use_contracts import (
 from ..ir import IRValue, MemSpace
 from ..ir.function_ssa_registry import (
     FunctionSSAArtifactFailure8616,
-    function_ssa_artifact_at_address_8616,
+)
+from ..semantics.call_stack_effect_pipeline import (
+    semantic_function_ssa_artifact_at_address_8616,
 )
 from ..semantics.terminal_return_passthrough import (
     TerminalReturnPassThroughEvidence8616,
@@ -155,7 +157,7 @@ def materialize_return_passthrough_trial_8616(
             normalized=True,
         )
 
-    ssa = function_ssa_artifact_at_address_8616(project, fact.caller_addr)
+    ssa = semantic_function_ssa_artifact_at_address_8616(project, fact.caller_addr)
     artifact = ssa.artifact
     if artifact is None:
         return _refused_result_8616(

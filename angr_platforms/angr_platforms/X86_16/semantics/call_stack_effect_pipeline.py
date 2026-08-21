@@ -16,6 +16,15 @@ from typing import Protocol, cast
 
 from ..callsite_summary import build_callsite_summary_inventory_8616
 from ..ir import IRFunctionArtifact
+from ..ir.function_ssa_registry import (
+    FunctionSSAArtifactFailure8616,
+    FunctionSSAArtifactResolution8616,
+    FunctionSSAArtifactStage8616,
+    FunctionSSAArtifactVerdict8616,
+    function_boundary_at_address_8616,
+    publish_function_ssa_artifact_8616,
+    registered_function_ssa_artifact_8616,
+)
 from ..ir.ssa_function import SSAFunctionArtifact, build_x86_16_function_ssa
 from ..ir.vex_import import build_x86_16_ir_function_artifact
 from ..pipeline.errors import PipelineHardError
@@ -65,8 +74,59 @@ class _CodegenBoundary8616(Protocol):
     _inertia_vex_ir_artifact: IRFunctionArtifact
     _inertia_vex_ir_summary: dict[str, object]
     _inertia_vex_ir_function_ssa: SSAFunctionArtifact
+    _inertia_vex_ir_function_ssa_stage_8616: FunctionSSAArtifactStage8616
     _inertia_call_stack_effect_artifact_8616: CallStackEffectArtifact8616
     _inertia_call_output_artifact_8616: CallOutputArtifact8616
+
+
+def semantic_function_ssa_artifact_at_address_8616(
+    project: object,
+    function_addr: int,
+) -> FunctionSSAArtifactResolution8616:
+    """Build or return one exact Semantics-ready project SSA artifact."""
+    registered = registered_function_ssa_artifact_8616(project, function_addr)
+    if (
+        registered.verdict is FunctionSSAArtifactVerdict8616.PROVEN
+        and registered.stage is FunctionSSAArtifactStage8616.SEMANTIC
+    ):
+        return registered
+    if registered.failure is FunctionSSAArtifactFailure8616.ARTIFACT_CONFLICT:
+        return registered
+    function = function_boundary_at_address_8616(project, function_addr)
+    if function is None:
+        return FunctionSSAArtifactResolution8616(
+            function_addr,
+            FunctionSSAArtifactVerdict8616.UNKNOWN_REFUSE,
+            None,
+            FunctionSSAArtifactFailure8616.FUNCTION_NOT_FOUND,
+            None,
+        )
+    try:
+        _effects, outputs, function_ssa = build_semantic_function_ssa_8616(
+            project,
+            function,
+        )
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return FunctionSSAArtifactResolution8616(
+            function_addr,
+            FunctionSSAArtifactVerdict8616.UNKNOWN_REFUSE,
+            None,
+            FunctionSSAArtifactFailure8616.SEMANTIC_BUILD_FAILED,
+            registered.stage,
+        )
+    if outputs.function.refusals:
+        return FunctionSSAArtifactResolution8616(
+            function_addr,
+            FunctionSSAArtifactVerdict8616.UNKNOWN_REFUSE,
+            None,
+            FunctionSSAArtifactFailure8616.IR_BUILD_REFUSED,
+            registered.stage,
+        )
+    return publish_function_ssa_artifact_8616(
+        project,
+        function_ssa,
+        FunctionSSAArtifactStage8616.SEMANTIC,
+    )
 
 
 def build_semantic_function_ssa_8616(
@@ -133,9 +193,36 @@ def apply_x86_16_call_stack_effects_8616(project: object, codegen: object) -> bo
         function,
         ir_artifact=raw_ir,
     )
+    if not outputs.function.refusals:
+        publication = publish_function_ssa_artifact_8616(
+            project,
+            function_ssa,
+            FunctionSSAArtifactStage8616.SEMANTIC,
+        )
+        if (
+            publication.verdict is not FunctionSSAArtifactVerdict8616.PROVEN
+            or publication.artifact is None
+        ):
+            raise PipelineHardError(
+                "Semantics function SSA conflicts with the project registry",
+                layer="semantics",
+                details={
+                    "function_addr": cfunc.addr,
+                    "failure": None
+                    if publication.failure is None
+                    else publication.failure.value,
+                    "stage": None
+                    if publication.stage is None
+                    else publication.stage.value,
+                },
+            )
+        function_ssa = publication.artifact
     boundary._inertia_vex_ir_artifact = outputs.function
     boundary._inertia_vex_ir_summary = outputs.function.summary
     boundary._inertia_vex_ir_function_ssa = function_ssa
+    boundary._inertia_vex_ir_function_ssa_stage_8616 = (
+        FunctionSSAArtifactStage8616.SEMANTIC
+    )
     boundary._inertia_call_stack_effect_artifact_8616 = effects
     boundary._inertia_call_output_artifact_8616 = outputs
     typed_function = cast(_FunctionBoundary8616, function)
@@ -147,6 +234,9 @@ def apply_x86_16_call_stack_effects_8616(project: object, codegen: object) -> bo
         info["x86_16_vex_ir_artifact"] = outputs.function.to_dict()
         info["x86_16_vex_ir_summary"] = dict(outputs.function.summary)
         info["x86_16_vex_ir_function_ssa"] = function_ssa.to_dict()
+        info["x86_16_vex_ir_function_ssa_stage"] = (
+            FunctionSSAArtifactStage8616.SEMANTIC.value
+        )
         info["x86_16_call_stack_effects"] = effects.to_dict()
         info["x86_16_call_outputs"] = outputs.to_dict()
     return False

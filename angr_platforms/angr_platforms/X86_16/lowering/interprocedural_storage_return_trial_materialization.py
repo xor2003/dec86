@@ -21,9 +21,11 @@ from ..ir import IRValue, MemSpace
 from ..ir.condition_ir import ConditionIR
 from ..ir.function_ssa_registry import (
     FunctionSSAArtifactFailure8616,
-    function_ssa_artifact_at_address_8616,
 )
 from ..ir.ssa_function import SSAFunctionArtifact
+from ..semantics.call_stack_effect_pipeline import (
+    semantic_function_ssa_artifact_at_address_8616,
+)
 from ..semantics.terminal_return_storage import TerminalReturnStorage8616
 from .condition_transfer import collect_typed_condition_artifacts_8616
 from .interprocedural_storage_contracts import (
@@ -235,7 +237,7 @@ def materialize_callsite_return_trials_8616(
     conditions_by_caller: dict[int, tuple[ConditionIR, ...]],
 ) -> tuple[tuple[StorageTrial8616, ...] | None, ReturnStorageTrialCollectionFailure8616 | None]:
     """Materialize one callsite's exact return pieces or one typed refusal."""
-    ssa = function_ssa_artifact_at_address_8616(project, fact.caller_addr)
+    ssa = semantic_function_ssa_artifact_at_address_8616(project, fact.caller_addr)
     artifact = ssa.artifact
     if artifact is None:
         return None, _failure_8616(

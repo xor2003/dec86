@@ -12,9 +12,9 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 from __future__ import annotations
 
 from ..ir import IRAddress
-from ..ir.function_ssa_registry import (
-    FunctionSSAArtifactVerdict8616,
-    function_ssa_artifact_at_address_8616,
+from ..ir.function_ssa_registry import FunctionSSAArtifactVerdict8616
+from ..semantics.call_stack_effect_pipeline import (
+    semantic_function_ssa_artifact_at_address_8616,
 )
 from .callee_argument_width_evidence import (
     collect_callee_argument_width_evidence_8616,
@@ -102,7 +102,10 @@ def _callsite_trials_8616(
         return None, (_failure_8616(StorageTrialCollectionFailureKind8616.ARGUMENT_STORAGE_UNKNOWN, callee_addr, fact),), False
     if not isinstance(summary.stack_cleanup, int) or summary.stack_cleanup < 0:
         return None, (_failure_8616(StorageTrialCollectionFailureKind8616.STACK_DELTA_UNKNOWN, callee_addr, fact),), False
-    ssa_resolution = function_ssa_artifact_at_address_8616(fact.evidence_project, caller_addr)
+    ssa_resolution = semantic_function_ssa_artifact_at_address_8616(
+        fact.evidence_project,
+        caller_addr,
+    )
     function_ssa = ssa_resolution.artifact
     if ssa_resolution.verdict is not FunctionSSAArtifactVerdict8616.PROVEN or function_ssa is None:
         failure = StorageTrialCollectionFailure8616(

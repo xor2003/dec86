@@ -13,7 +13,9 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ..ir.condition_ir import ConditionIR
-from ..ir.function_ssa_registry import function_ssa_artifact_at_address_8616
+from ..semantics.call_stack_effect_pipeline import (
+    semantic_function_ssa_artifact_at_address_8616,
+)
 from ..semantics.terminal_memory_outputs import collect_terminal_memory_output_evidence_8616
 from .condition_transfer import collect_typed_condition_artifacts_8616
 from .interprocedural_storage_contracts import (
@@ -68,7 +70,7 @@ def collect_function_memory_live_out_trials_8616(
     accepted_target_addrs: tuple[int, ...],
 ) -> FunctionMemoryLiveOutCollection8616:
     """Collect bounded exact direct-memory LIVE_OUT trials for one callee."""
-    callee_ssa = function_ssa_artifact_at_address_8616(project, callee_addr)
+    callee_ssa = semantic_function_ssa_artifact_at_address_8616(project, callee_addr)
     if callee_ssa.artifact is None:
         return _failed_8616(
             MemoryLiveOutFailure8616(
@@ -107,7 +109,10 @@ def collect_function_memory_live_out_trials_8616(
     collected_sites: list[CallsiteMemoryLiveOutEvidence8616] = []
     raw = normalized = materialized = 0
     for site in sorted(callsites, key=lambda item: (item.callsite_addr, item.caller_addr)):
-        caller_ssa = function_ssa_artifact_at_address_8616(project, site.caller_addr)
+        caller_ssa = semantic_function_ssa_artifact_at_address_8616(
+            project,
+            site.caller_addr,
+        )
         artifact = caller_ssa.artifact
         if artifact is None:
             return _failed_8616(
