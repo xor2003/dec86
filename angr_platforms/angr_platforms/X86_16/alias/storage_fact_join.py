@@ -13,9 +13,22 @@ Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting wor
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 from ..ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from .alias_model_impl import AliasStorageFacts, _StackSlotIdentity
+
+
+class SegmentedAccessRelation8616(StrEnum):
+    """Alias relationship between two typed segmented memory ranges."""
+
+    DISJOINT = "disjoint"
+    EXACT = "exact"
+    CONTAINED = "contained"
+    CONTAINS = "contains"
+    CROSSING = "crossing"
+    UNPROVEN = "unproven"
+    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +66,39 @@ class SegmentedAliasRange8616:
             and other.offset + other.size <= self.offset + self.size
         )
 
+
+def segmented_access_relation_8616(
+    access: IRAddress,
+    target: IRAddress,
+) -> SegmentedAccessRelation8616:
+    """Classify one typed access range against exact segmented storage."""
+    spaces = {MemSpace.SS, MemSpace.DS, MemSpace.ES}
+    if access.space not in spaces or target.space not in spaces:
+        return SegmentedAccessRelation8616.UNKNOWN
+    if access.space is not target.space:
+        return SegmentedAccessRelation8616.DISJOINT
+    if access.base or target.base or access.size <= 0 or target.size <= 0:
+        return SegmentedAccessRelation8616.UNKNOWN
+    overlaps = (
+        access.offset < target.offset + target.size
+        and target.offset < access.offset + access.size
+    )
+    if not overlaps:
+        return SegmentedAccessRelation8616.DISJOINT
+    if (
+        access.status is not AddressStatus.STABLE
+        or target.status is not AddressStatus.STABLE
+        or access.segment_origin is not SegmentOrigin.PROVEN
+        or target.segment_origin is not SegmentOrigin.PROVEN
+    ):
+        return SegmentedAccessRelation8616.UNPROVEN
+    if access.offset == target.offset and access.size == target.size:
+        return SegmentedAccessRelation8616.EXACT
+    if target.offset <= access.offset and access.offset + access.size <= target.offset + target.size:
+        return SegmentedAccessRelation8616.CONTAINED
+    if access.offset <= target.offset and target.offset + target.size <= access.offset + access.size:
+        return SegmentedAccessRelation8616.CONTAINS
+    return SegmentedAccessRelation8616.CROSSING
 
 def join_adjacent_stack_alias_facts_8616(
     low: AliasStorageFacts,
@@ -198,8 +244,10 @@ def join_adjacent_segmented_alias_facts_8616(
 
 
 __all__ = [
+    "SegmentedAccessRelation8616",
     "SegmentedAliasRange8616",
     "build_segmented_alias_range_8616",
     "join_adjacent_segmented_alias_facts_8616",
     "join_adjacent_stack_alias_facts_8616",
+    "segmented_access_relation_8616",
 ]

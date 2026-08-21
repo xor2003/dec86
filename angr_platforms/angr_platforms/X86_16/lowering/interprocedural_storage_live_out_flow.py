@@ -1,8 +1,9 @@
 """Prove and materialize one direct segmented-memory live-out use.
 
 Layer: Types/Lowering.
-Responsibility: bind one Semantics output to CALL_OUTPUT, prove an unclobbered
-caller CFG path, classify ConditionIR, and build one provisional LIVE_OUT trial.
+Responsibility: bind one Widening-proven output view to CALL_OUTPUT, prove an
+unclobbered caller CFG path, classify ConditionIR, and build one provisional
+LIVE_OUT trial.
 Function censuses stay outside. Only ConditionIR-attributed access instructions
 activate evidence; JCC replay loads and absent direct uses do not become facts.
 Consumes alias, widening, and typed facts.
@@ -11,13 +12,11 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
-from operator import attrgetter
-
-from ..alias.terminal_memory_outputs import TerminalMemoryAliasFact8616
 from ..ir import IRValue
 from ..ir.condition_ir import ConditionIR
 from ..ir.ssa_function import SSAFunctionArtifact
 from ..semantics.terminal_memory_output_contracts import TerminalMemoryOutputDisposition8616
+from ..widening.terminal_memory_output_views import TerminalMemoryOutputViewFact8616
 from .interprocedural_storage_contracts import (
     StorageIdentity8616,
     StorageIdentityKind8616,
@@ -34,9 +33,7 @@ from .interprocedural_storage_live_out_contracts import (
     MemoryLiveOutUseFact8616,
 )
 from .interprocedural_storage_live_out_paths import (
-    MemoryAccessRelation8616,
     MemoryLiveOutPathVerdict8616,
-    memory_access_relation_8616,
     memory_live_out_path_failure_8616,
     prove_memory_live_out_path_8616,
 )
@@ -44,26 +41,6 @@ from .interprocedural_storage_return_defs import (
     CallOutputDefinitionVerdict8616,
     resolve_storage_call_output_definitions_8616,
 )
-
-
-def _related_loads_8616(
-    artifact: SSAFunctionArtifact, storage: StorageIdentity8616, callsite_addr: int,
-) -> tuple[tuple[StorageUseEvidence8616, ...], tuple[StorageUseEvidence8616, ...]]:
-    """Return exact and overlapping direct LOAD candidates in caller SSA."""
-    exact: list[StorageUseEvidence8616] = []
-    overlap: list[StorageUseEvidence8616] = []
-    for block in artifact.blocks:
-        for instr_index, instruction in enumerate(block.instrs):
-            if instruction.op != "LOAD" or instruction.addr is None:
-                continue
-            relation = memory_access_relation_8616(instruction, storage)
-            use = StorageUseEvidence8616(block.addr, instr_index, instruction.addr, callsite_addr)
-            if relation is MemoryAccessRelation8616.EXACT:
-                exact.append(use)
-            elif relation is MemoryAccessRelation8616.OVERLAP:
-                overlap.append(use)
-    order = attrgetter("block_addr", "instr_index", "instr_addr")
-    return tuple(sorted(exact, key=order)), tuple(sorted(overlap, key=order))
 
 
 def _value_matches_8616(value: object, storage: StorageIdentity8616, use: StorageUseEvidence8616) -> bool:
@@ -111,7 +88,7 @@ def _condition_for_use_8616(
 
 def materialize_memory_live_out_candidate_8616(
     artifact: SSAFunctionArtifact,
-    alias_output: TerminalMemoryAliasFact8616,
+    output_view: TerminalMemoryOutputViewFact8616,
     caller_addr: int,
     callee_addr: int,
     callsite_addr: int,
@@ -119,13 +96,22 @@ def materialize_memory_live_out_candidate_8616(
     conditions: tuple[ConditionIR, ...],
 ) -> MemoryLiveOutCandidateResult8616:
     """Materialize one activated direct-memory output candidate or refuse."""
+    alias_output = output_view.alias_output
     output = alias_output.terminal_output
-    if not alias_output.complete or not alias_output.is_owner:
-        raise RuntimeError("Types/Lowering received an incomplete non-owner Alias output")
+    if not output_view.complete:
+        raise RuntimeError("Types/Lowering received an incomplete Widening output view")
     storage = StorageIdentity8616(
-        StorageIdentityKind8616.MEMORY, output.address.size, output.address
+        StorageIdentityKind8616.MEMORY, output_view.width, output_view.address
     )
-    exact_loads, overlapping_loads = _related_loads_8616(artifact, storage, callsite_addr)
+    uses = tuple(
+        StorageUseEvidence8616(
+            access.block_addr,
+            access.instr_index,
+            access.instr_addr,
+            callsite_addr,
+        )
+        for access in output_view.accesses
+    )
     condition_candidates: list[
         tuple[
             StorageUseEvidence8616,
@@ -134,14 +120,14 @@ def materialize_memory_live_out_candidate_8616(
             MemoryLiveOutFailureKind8616 | None,
         ]
     ] = []
-    for use in exact_loads:
+    for use in uses:
         condition, signedness, failure = _condition_for_use_8616(conditions, storage, use)
         if failure is not MemoryLiveOutFailureKind8616.CONDITION_NOT_FOUND:
             condition_candidates.append((use, condition, signedness, failure))
-    if not condition_candidates and not overlapping_loads:
+    if not condition_candidates:
         return MemoryLiveOutCandidateResult8616(False)
     if not storage.is_exact:
-        raise RuntimeError("Semantics published an inexact direct-memory output")
+        raise RuntimeError("Widening published an inexact direct-memory view")
     definitions = resolve_storage_call_output_definitions_8616(
         artifact,
         caller_addr,
@@ -160,22 +146,6 @@ def materialize_memory_live_out_candidate_8616(
                 else MemoryLiveOutFailureKind8616.CALL_OUTPUT_DEFINITION_REFUSED
             ),
             definition_failure=definitions.failure,
-        )
-    overlap_paths = tuple(
-        prove_memory_live_out_path_8616(artifact, definitions, storage, use)
-        for use in overlapping_loads
-    )
-    path_failure = memory_live_out_path_failure_8616(overlap_paths)
-    if path_failure is not None:
-        return MemoryLiveOutCandidateResult8616(
-            True,
-            failure=path_failure,
-        )
-    if any(
-        path.verdict is MemoryLiveOutPathVerdict8616.CLEAN for path in overlap_paths
-    ):
-        return MemoryLiveOutCandidateResult8616(
-            True, failure=MemoryLiveOutFailureKind8616.USE_OVERLAP
         )
     paths = tuple(
         (
@@ -202,7 +172,7 @@ def materialize_memory_live_out_candidate_8616(
     if not clean_candidates:
         fact = MemoryLiveOutUseFact8616(
             storage,
-            alias_output,
+            output_view,
             MemoryLiveOutUseDisposition8616.NOT_REACHED,
         )
         return MemoryLiveOutCandidateResult8616(True, fact=fact)
@@ -221,7 +191,7 @@ def materialize_memory_live_out_candidate_8616(
     use, condition, signedness = typed[0]
     fact = MemoryLiveOutUseFact8616(
         storage,
-        alias_output,
+        output_view,
         MemoryLiveOutUseDisposition8616.USED,
         use,
         signedness,

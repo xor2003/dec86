@@ -1,10 +1,10 @@
 """Prove caller CFG paths from one call output to one memory use.
 
 Layer: Types/Lowering.
-Responsibility: classify exact segmented-memory access relationships and require
-every caller path reaching one candidate LOAD to preserve the same CALL_OUTPUT.
-This module consumes canonical function SSA and exact Alias/Types storage facts;
-it does not infer storage, mutate prototypes, structure control flow, or render C.
+Responsibility: require every caller path reaching one candidate LOAD to
+preserve the same CALL_OUTPUT. This module consumes canonical function SSA and
+the Alias-owned segmented access relation; it does not infer storage, mutate
+prototypes, structure control flow, or render C.
 Consumes alias, widening, and typed facts.
 Do not recover semantics from COD, source, assembly, or rendered C text.
 """
@@ -14,7 +14,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from ..ir import AddressStatus, IRAddress, IRInstr, MemSpace
+from ..alias.storage_fact_join import (
+    SegmentedAccessRelation8616,
+    segmented_access_relation_8616,
+)
+from ..ir import IRAddress
 from ..ir.ssa import SSABlock
 from ..ir.ssa_function import SSAFunctionArtifact
 from .interprocedural_storage_contracts import StorageIdentity8616, StorageUseEvidence8616
@@ -22,22 +26,11 @@ from .interprocedural_storage_live_out_contracts import MemoryLiveOutFailureKind
 from .interprocedural_storage_return_defs import CallOutputDefinitionResult8616
 
 __all__ = [
-    "MemoryAccessRelation8616",
     "MemoryLiveOutPathResult8616",
     "MemoryLiveOutPathVerdict8616",
-    "memory_access_relation_8616",
     "memory_live_out_path_failure_8616",
     "prove_memory_live_out_path_8616",
 ]
-
-
-class MemoryAccessRelation8616(StrEnum):
-    """Relationship between one IR memory access and an exact output range."""
-
-    DISJOINT = "disjoint"
-    EXACT = "exact"
-    OVERLAP = "overlap"
-    UNKNOWN = "unknown"
 
 
 class MemoryLiveOutPathVerdict8616(StrEnum):
@@ -71,38 +64,6 @@ _FAILURE_PRIORITY_8616 = (
     MemoryLiveOutFailureKind8616.CFG_INCOMPLETE,
     MemoryLiveOutFailureKind8616.CFG_CYCLE,
 )
-
-
-def memory_access_relation_8616(
-    instruction: IRInstr,
-    storage: StorageIdentity8616,
-) -> MemoryAccessRelation8616:
-    """Classify one LOAD/STORE against exact segmented storage."""
-    address = instruction.args[0] if instruction.args else None
-    target = storage.address
-    if not isinstance(address, IRAddress) or target is None:
-        return MemoryAccessRelation8616.UNKNOWN
-    if address.space is MemSpace.SS or (
-        address.space in {MemSpace.DS, MemSpace.ES} and address.space is not target.space
-    ):
-        return MemoryAccessRelation8616.DISJOINT
-    if address.space is not target.space:
-        return MemoryAccessRelation8616.UNKNOWN
-    if address.base or address.status is not AddressStatus.STABLE or address.size <= 0:
-        return MemoryAccessRelation8616.UNKNOWN
-    overlaps = (
-        address.offset < target.offset + target.size
-        and target.offset < address.offset + address.size
-    )
-    if not overlaps:
-        return MemoryAccessRelation8616.DISJOINT
-    if (
-        address.offset == target.offset
-        and address.size == target.size
-        and instruction.size == storage.width
-    ):
-        return MemoryAccessRelation8616.EXACT
-    return MemoryAccessRelation8616.OVERLAP
 
 
 def _validated_cfg_8616(
@@ -260,20 +221,33 @@ def prove_memory_live_out_path_8616(
                 break
             if instruction.op not in {"LOAD", "STORE"}:
                 continue
-            relation = memory_access_relation_8616(instruction, storage)
-            if relation is MemoryAccessRelation8616.UNKNOWN:
+            address = instruction.args[0] if instruction.args else None
+            target_address = storage.address
+            relation = (
+                segmented_access_relation_8616(address, target_address)
+                if isinstance(address, IRAddress) and target_address is not None
+                else SegmentedAccessRelation8616.UNKNOWN
+            )
+            if relation in {
+                SegmentedAccessRelation8616.UNKNOWN,
+                SegmentedAccessRelation8616.UNPROVEN,
+            }:
                 result = MemoryLiveOutPathResult8616(
                     MemoryLiveOutPathVerdict8616.UNKNOWN_REFUSE,
                     MemoryLiveOutFailureKind8616.INTERVENING_ALIAS,
                 )
                 break
-            if instruction.op == "STORE" and relation is MemoryAccessRelation8616.OVERLAP:
+            if instruction.op == "STORE" and relation in {
+                SegmentedAccessRelation8616.CONTAINED,
+                SegmentedAccessRelation8616.CONTAINS,
+                SegmentedAccessRelation8616.CROSSING,
+            }:
                 result = MemoryLiveOutPathResult8616(
                     MemoryLiveOutPathVerdict8616.UNKNOWN_REFUSE,
                     MemoryLiveOutFailureKind8616.INTERVENING_WRITE,
                 )
                 break
-            if instruction.op == "STORE" and relation is MemoryAccessRelation8616.EXACT:
+            if instruction.op == "STORE" and relation is SegmentedAccessRelation8616.EXACT:
                 result = MemoryLiveOutPathResult8616(
                     MemoryLiveOutPathVerdict8616.OVERWRITTEN
                 )

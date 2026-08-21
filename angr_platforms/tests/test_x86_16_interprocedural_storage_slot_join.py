@@ -49,6 +49,11 @@ from angr_platforms.X86_16.semantics.terminal_memory_output_contracts import (
     TerminalMemoryOutputStats8616,
     TerminalMemoryStoreSite8616,
 )
+from angr_platforms.X86_16.widening.terminal_memory_output_views import (
+    TerminalMemoryOutputViewAccess8616,
+    TerminalMemoryOutputViewFact8616,
+    TerminalMemoryOutputViewKind8616,
+)
 
 CALLEE = 0x2000
 
@@ -83,6 +88,29 @@ def _alias_output(terminal: TerminalMemoryOutputFact8616) -> TerminalMemoryAlias
     aliases = classify_terminal_memory_output_aliases_8616(evidence)
     assert aliases.complete is True
     return aliases.canonical_facts[0]
+
+
+def _output_view(
+    terminal: TerminalMemoryOutputFact8616,
+    use: StorageUseEvidence8616,
+) -> TerminalMemoryOutputViewFact8616:
+    """Build the exact whole Widening view retained by one fixture effect."""
+    alias_output = _alias_output(terminal)
+    return TerminalMemoryOutputViewFact8616(
+        alias_output,
+        alias_output.storage_range,
+        TerminalMemoryOutputViewKind8616.WHOLE,
+        0,
+        (
+            TerminalMemoryOutputViewAccess8616(
+                use.block_addr,
+                use.instr_index,
+                use.instr_addr,
+                terminal.address,
+                terminal.address.size,
+            ),
+        ),
+    )
 
 
 def _live_out(
@@ -159,7 +187,7 @@ def _effect_from_trial(trial: StorageTrial8616) -> MemoryLiveOutUseFact8616:
     )
     return MemoryLiveOutUseFact8616(
         trial.storage,
-        _alias_output(terminal),
+        _output_view(terminal, trial.use),
         MemoryLiveOutUseDisposition8616.USED,
         trial.use,
         trial.signedness,
@@ -188,7 +216,7 @@ def _conditional_effect(offset: int) -> MemoryLiveOutUseFact8616:
     )
     return MemoryLiveOutUseFact8616(
         storage,
-        _alias_output(terminal),
+        _output_view(terminal, use),
         MemoryLiveOutUseDisposition8616.USED,
         use,
         StorageTrialSignedness8616.SIGN_INSENSITIVE,

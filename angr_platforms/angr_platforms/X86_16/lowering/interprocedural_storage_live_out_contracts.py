@@ -25,6 +25,10 @@ from ..semantics.terminal_memory_output_contracts import (
     TerminalMemoryOutputFact8616,
     TerminalMemoryOutputFailure8616,
 )
+from ..widening.terminal_memory_output_views import (
+    TerminalMemoryOutputViewFact8616,
+    TerminalMemoryOutputViewFailure8616,
+)
 from .interprocedural_storage_contracts import (
     StorageIdentity8616,
     StorageTrial8616,
@@ -56,6 +60,7 @@ class MemoryLiveOutFailureKind8616(StrEnum):
     CALLEE_SSA_UNAVAILABLE = "callee_ssa_unavailable"
     TERMINAL_EVIDENCE_REFUSED = "terminal_evidence_refused"
     ALIAS_EVIDENCE_REFUSED = "alias_evidence_refused"
+    WIDENING_EVIDENCE_REFUSED = "widening_evidence_refused"
     CALLER_SSA_UNAVAILABLE = "caller_ssa_unavailable"
     CALL_OUTPUT_DEFINITION_REFUSED = "call_output_definition_refused"
     CALL_OUTPUT_DEFINITION_CONFLICT = "call_output_definition_conflict"
@@ -64,7 +69,6 @@ class MemoryLiveOutFailureKind8616(StrEnum):
     INTERVENING_ALIAS = "intervening_alias"
     INTERVENING_CALL = "intervening_call"
     INTERVENING_WRITE = "intervening_write"
-    USE_OVERLAP = "use_overlap"
     CONDITION_NOT_FOUND = "condition_not_found"
     CONDITION_CONFLICT = "condition_conflict"
     CONDITION_UNSUPPORTED = "condition_unsupported"
@@ -76,11 +80,16 @@ class MemoryLiveOutUseFact8616:
     """One exact storage candidate and its bounded caller-use outcome."""
 
     storage: StorageIdentity8616
-    alias_output: TerminalMemoryAliasFact8616
+    output_view: TerminalMemoryOutputViewFact8616
     disposition: MemoryLiveOutUseDisposition8616
     use: StorageUseEvidence8616 | None = None
     signedness: StorageTrialSignedness8616 | None = None
     condition: ConditionIR | None = None
+
+    @property
+    def alias_output(self) -> TerminalMemoryAliasFact8616:
+        """Return the Alias owner retained inside the Widening view."""
+        return self.output_view.alias_output
 
     @property
     def terminal_output(self) -> TerminalMemoryOutputFact8616:
@@ -91,9 +100,8 @@ class MemoryLiveOutUseFact8616:
     def complete(self) -> bool:
         """Return whether this fact retains every field required by its verdict."""
         output_matches = bool(
-            self.alias_output.complete
-            and self.alias_output.is_owner
-            and self.storage.address == self.terminal_output.address
+            self.output_view.complete
+            and self.storage.address == self.output_view.address
         )
         if self.disposition is MemoryLiveOutUseDisposition8616.NOT_REACHED:
             return self.storage.is_exact and output_matches and all(
@@ -161,6 +169,7 @@ class MemoryLiveOutFailure8616:
     ssa_failure: FunctionSSAArtifactFailure8616 | None = None
     terminal_failure: TerminalMemoryOutputFailure8616 | None = None
     alias_failure: TerminalMemoryAliasFailure8616 | None = None
+    view_failure: TerminalMemoryOutputViewFailure8616 | None = None
     definition_failure: CallOutputDefinitionFailure8616 | None = None
 
 

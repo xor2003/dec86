@@ -18,6 +18,7 @@ from ..semantics.call_stack_effect_pipeline import (
     semantic_function_ssa_artifact_at_address_8616,
 )
 from ..semantics.terminal_memory_outputs import collect_terminal_memory_output_evidence_8616
+from ..widening.terminal_memory_output_views import collect_terminal_memory_output_views_8616
 from .condition_transfer import collect_typed_condition_artifacts_8616
 from .interprocedural_storage_contracts import (
     CallsiteStorageTrials8616,
@@ -45,7 +46,6 @@ def _failed_8616(
         MemoryLiveOutFailureKind8616.CALL_OUTPUT_DEFINITION_CONFLICT,
         MemoryLiveOutFailureKind8616.CONDITION_CONFLICT,
         MemoryLiveOutFailureKind8616.SIGNEDNESS_CONFLICT,
-        MemoryLiveOutFailureKind8616.USE_OVERLAP,
     }
     verdict = (
         MemoryLiveOutCollectionVerdict8616.CONFLICT
@@ -163,38 +163,55 @@ def collect_function_memory_live_out_trials_8616(
         trials: list[StorageTrial8616] = []
         for alias_output in aliases.canonical_facts:
             output = alias_output.terminal_output
-            candidate = materialize_memory_live_out_candidate_8616(
-                artifact,
-                alias_output,
-                site.caller_addr,
-                callee_addr,
-                site.callsite_addr,
-                targets,
-                conditions,
-            )
-            if not candidate.activated:
-                continue
-            raw += 1
-            normalized += 1
-            if candidate.failure is not None:
+            views = collect_terminal_memory_output_views_8616(alias_output, artifact)
+            if not views.complete:
                 return _failed_8616(
                     MemoryLiveOutFailure8616(
-                        candidate.failure,
+                        MemoryLiveOutFailureKind8616.WIDENING_EVIDENCE_REFUSED,
                         callee_addr,
                         site.caller_addr,
                         site.callsite_addr,
                         output.key,
-                        definition_failure=candidate.definition_failure,
+                        view_failure=views.failure,
                     ),
-                    raw,
-                    normalized,
+                    max(1, raw + views.stats.raw_fact_count),
+                    normalized + views.stats.normalized_fact_count,
                 )
-            if not candidate.complete or candidate.fact is None:
-                raise RuntimeError("complete memory live-out candidate lost its typed outcome")
-            facts.append(candidate.fact)
-            if candidate.trial is not None:
-                trials.append(replace(candidate.trial, logical_index=len(trials)))
-            materialized += 1
+            for output_view in views.facts:
+                candidate = materialize_memory_live_out_candidate_8616(
+                    artifact,
+                    output_view,
+                    site.caller_addr,
+                    callee_addr,
+                    site.callsite_addr,
+                    targets,
+                    conditions,
+                )
+                if not candidate.activated:
+                    continue
+                raw += 1
+                normalized += 1
+                if candidate.failure is not None:
+                    return _failed_8616(
+                        MemoryLiveOutFailure8616(
+                            candidate.failure,
+                            callee_addr,
+                            site.caller_addr,
+                            site.callsite_addr,
+                            output.key,
+                            definition_failure=candidate.definition_failure,
+                        ),
+                        raw,
+                        normalized,
+                    )
+                if not candidate.complete or candidate.fact is None:
+                    raise RuntimeError(
+                        "complete memory live-out candidate lost its typed outcome"
+                    )
+                facts.append(candidate.fact)
+                if candidate.trial is not None:
+                    trials.append(replace(candidate.trial, logical_index=len(trials)))
+                materialized += 1
         collected_sites.append(
             CallsiteMemoryLiveOutEvidence8616(
                 site.caller_addr,

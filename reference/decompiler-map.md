@@ -31,9 +31,10 @@ leave the late pass as a temporary consumer only.
 
 For interprocedural global-memory outputs, Semantics owns exact store and
 terminal-path facts, Alias owns segmented range identity and overlapping-view
-ownership, and Types/Lowering owns caller-use trials. A contained subview may
-be folded only into a unique maximal Alias range; crossing or unproven views
-must refuse before Lowering.
+ownership, Widening owns exact caller-load projections into those ranges, and
+Types/Lowering owns caller CFG/use trials. A contained caller view may be
+materialized only with its exact byte offset into a unique maximal Alias range;
+crossing, width-conflicting, or unproven views must refuse before Lowering.
 
 ## Never Fix Here
 

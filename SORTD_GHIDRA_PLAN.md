@@ -935,10 +935,12 @@ application are complete. Exact direct DS/ES must-write live-outs with condition
 uses preserved on every target-reaching caller CFG path are implemented,
 including a deterministic union when different callers consume disjoint proven
 outputs. Nested overlapping direct views now materialize only through a unique
-maximal Alias owner for an exact whole-range caller use. Every project-
-wide trial, return, and live-out consumer now reads the canonical Semantics-
-ready exact-function SSA artifact. RunMenu call-result-to-stack materialization
-is complete; broader memory live-outs and storage-contract recovery remain.
+maximal Alias owner. Widening projects exact and contained direct caller views
+from that owner, retaining the proven byte offset and exact access width before
+Types/Lowering creates a trial. Every project-wide trial, return, and live-out
+consumer now reads the canonical Semantics-ready exact-function SSA artifact.
+RunMenu call-result-to-stack materialization is complete; indexed, indirect,
+stack, overlapping multi-view, and broader memory live-outs remain.
 
 Reason: Calls and returns cross function boundaries where local inference is
 insufficient. Typed storage trials allow a complete caller census to prove
@@ -1428,11 +1430,19 @@ Measured progress on 2026-08-20:
   and selects one unique maximal owner. Crossing overlaps, duplicate storage,
   missing Alias facts, and unproven segment origins refuse atomically with all
   five evidence counters
-- Types/Lowering consumes and retains the exact Alias owner before creating a
-  `CALL_OUTPUT` live-out trial. A caller's exact whole-owner condition use is
-  accepted; a contained subview use remains an overlap refusal until byte-view
-  value composition is proven. DS and ES equal numeric offsets remain distinct
-  storage spaces
+- Alias now owns the typed segmented range relation used by downstream layers:
+  exact, contained, contains, crossing, disjoint, unproven, and unknown. DS and
+  ES equal numeric offsets remain distinct storage spaces, and incomplete
+  overlap evidence cannot be promoted by Widening or Lowering
+- Widening now groups direct caller loads under the unique maximal Alias owner
+  and publishes exact whole or contained views with the exact byte offset,
+  width, instruction sites, and source accesses. Crossing overlap, unproven
+  range identity, conflicting widths, and conflicting storage refuse the whole
+  view collection with closed evidence counters
+- Types/Lowering consumes the Widening view instead of rediscovering overlap.
+  It creates the `CALL_OUTPUT` definition and storage trial at the projected
+  view's exact range; caller-path analysis uses the Alias-owned relation to
+  distinguish a disjoint write from a full or partial overwrite
 - positive and refusal coverage passes across the Semantics, Alias, live-out,
   and storage-slot surfaces. The changed-file gate passes 668 tests with Ruff
   `--fix`, MyPy, types/docs, architecture/context, and ownership checks. The
@@ -1443,11 +1453,24 @@ Measured progress on 2026-08-20:
   mandatory seven-worker pipeline passes 3/3 lanes: the same 1,622 tests, 4/4
   validated Ultra QuickC fixtures, and all seven MS C tiny build/run/decompile/
   recompile/decompiled-run contracts; no lane failed, skipped, or timed out
+- contained high-byte production integration, duplicate-load grouping,
+  segment separation, disjoint-write preservation, whole-owner overwrite, and
+  crossing/unproven/conflicting refusal fixtures pass. The changed-file gate
+  passes 672 tests with Ruff `--fix`, MyPy, types/docs, architecture/context,
+  and ownership checks. The strict executable-only SORTD gate remains 20/20
+  with zero timeout, traceback, discovery, empty-output, validation, or policy
+  failure
+- the edited-state `quality-dev` gate passes the 38-module mypyc compile/import
+  smoke and all three generated-C quality comparisons, with measured candidate
+  speedups of 7.484x, 4.817x, and 4.304x and no quality regression. The
+  mandatory seven-worker pipeline passes 3/3 lanes: 1,633 focused tests, 4/4
+  validated Ultra QuickC fixtures, and all seven MS C tiny build/run/decompile/
+  recompile/decompiled-run contracts
 - next implementation boundary: generalize live-out evidence only when Alias,
-  byte-view composition, and SSA prove contained-subview caller uses, indexed,
-  indirect, stack, or broader multiple-output storage. Conditional and nested
-  whole-owner stable direct `DS`/`ES` effects are complete for this scope and
-  must not be reconstructed from rendered C
+  Widening, and SSA prove indexed, indirect, stack, overlapping multiple caller
+  views, object-level contract ownership, or broader multiple-output storage.
+  Conditional, exact whole-owner, and contained direct stable `DS`/`ES` effects
+  are complete for this scope and must not be reconstructed from rendered C
 
 Definition of done:
 

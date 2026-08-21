@@ -42,6 +42,9 @@ from angr_platforms.X86_16.semantics.terminal_memory_output_contracts import (
     TerminalMemoryOutputStats8616,
     TerminalMemoryStoreSite8616,
 )
+from angr_platforms.X86_16.widening.terminal_memory_output_views import (
+    collect_terminal_memory_output_views_8616,
+)
 
 CALLER = 0x1000
 CALLEE = 0x1020
@@ -190,9 +193,16 @@ def _materialize(
     )
     alias_evidence = classify_terminal_memory_output_aliases_8616(terminal)
     assert alias_evidence.complete is True
+    views = collect_terminal_memory_output_views_8616(
+        alias_evidence.canonical_facts[0], artifact
+    )
+    assert views.complete is True
+    if not views.facts:
+        return MemoryLiveOutCandidateResult8616(False)
+    assert len(views.facts) == 1
     return materialize_memory_live_out_candidate_8616(
         artifact,
-        alias_evidence.canonical_facts[0],
+        views.facts[0],
         CALLER,
         CALLEE,
         CALLSITE,
@@ -313,14 +323,12 @@ def test_indirect_alias_and_intervening_call_refuse_attribution() -> None:
     assert second_call.failure is MemoryLiveOutFailureKind8616.INTERVENING_CALL
 
 
-def test_overlapping_load_refuses_but_conditional_write_retains_typed_effect() -> None:
-    overlap = _materialize(_artifact(_call(), _load(size=2)))
+def test_conditional_write_retains_typed_effect_without_value_trial() -> None:
     conditional = _materialize(
         _artifact(_call(), _load()),
         _output(TerminalMemoryOutputDisposition8616.CONDITIONAL),
     )
 
-    assert overlap.failure is MemoryLiveOutFailureKind8616.USE_OVERLAP
     assert conditional.complete is True
     assert conditional.failure is None
     assert conditional.trial is None

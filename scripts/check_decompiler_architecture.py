@@ -1739,6 +1739,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/widening/carry_borrow_pipeline.py",
     "angr_platforms/angr_platforms/X86_16/widening/carry_borrow_storage.py",
     "angr_platforms/angr_platforms/X86_16/widening/carry_borrow_values.py",
+    "angr_platforms/angr_platforms/X86_16/widening/terminal_memory_output_views.py",
     "angr_platforms/angr_platforms/X86_16/widening/widening_copyprop_8616.py",
     "angr_platforms/angr_platforms/X86_16/widening/widening_memory_fold_8616.py",
     "angr_platforms/angr_platforms/X86_16/widening/widening_rules.py",
@@ -2080,6 +2081,9 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "x86-16-terminal-memory-output-alias": (
         "angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py",
     ),
+    "x86-16-terminal-memory-output-widening": (
+        "angr_platforms/angr_platforms/X86_16/widening/terminal_memory_output_views.py",
+    ),
     "x86-16-call-semantics": (
         "angr_platforms/angr_platforms/X86_16/semantics/call_output_contracts.py",
         "angr_platforms/angr_platforms/X86_16/semantics/call_outputs.py",
@@ -2163,6 +2167,11 @@ _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
         "angr_platforms/tests/test_x86_16_terminal_memory_outputs.py",
     ),
     "x86-16-terminal-memory-output-alias": (
+        "angr_platforms/tests/test_x86_16_terminal_memory_output_aliases.py",
+        "angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py",
+    ),
+    "x86-16-terminal-memory-output-widening": (
+        "angr_platforms/tests/test_x86_16_terminal_memory_output_views.py",
         "angr_platforms/tests/test_x86_16_terminal_memory_output_aliases.py",
         "angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py",
     ),
