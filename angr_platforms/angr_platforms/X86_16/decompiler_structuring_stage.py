@@ -210,6 +210,7 @@ from .validation_condition_precision import condition_precision_validation_delta
 from .validation_semantic_failures import TailSemanticFailureScope8616
 from .widening.carry_borrow_pipeline import apply_carry_borrow_widening_pipeline_8616
 from .widening.segmented_load_widening import apply_segmented_load_widening_8616
+from .widening.stack_memory_objects import apply_x86_16_stack_memory_object_widening_8616
 from .widening.stack_subview_projection import materialize_contained_stack_subviews_8616
 from .widening.widening_copyprop_8616 import _widening_copy_propagation_8616
 
@@ -455,6 +456,9 @@ def _build_decompiler_structuring_passes() -> tuple[DecompilerStructuringPassSpe
         ),
         DecompilerStructuringPassSpec(
             "_carry_borrow_widening_artifact_8616", apply_carry_borrow_widening_pipeline_8616, True
+        ),
+        DecompilerStructuringPassSpec(
+            "_stack_memory_object_widening_artifact", apply_x86_16_stack_memory_object_widening_8616, True
         ),
         DecompilerStructuringPassSpec(
             "_segment_stack_restore_artifact_8616",
@@ -2026,6 +2030,7 @@ def _apply_structuring_stable_stack_semantics_8616(project: AngrProjectSurface, 
     apply_x86_16_call_stack_effects_8616(project, codegen)
     _stack_memory_ssa.apply_x86_16_stack_memory_ssa_alias_artifact(project, codegen)
     apply_carry_borrow_widening_pipeline_8616(project, codegen)
+    apply_x86_16_stack_memory_object_widening_8616(project, codegen)
     before_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
     memory_ssa_lowering = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
     wide_call_output_lowering = (

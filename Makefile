@@ -659,6 +659,8 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/widening/segmented_load_identity.py \
 	angr_platforms/angr_platforms/X86_16/widening/segmented_load_widening.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_argument_widths.py \
+	angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects.py \
+	angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects_contracts.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_widening.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py \
 	angr_platforms/angr_platforms/X86_16/widening/store_width.py \
@@ -1300,6 +1302,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/widening/segmented_load_identity.py \
 	angr_platforms/angr_platforms/X86_16/widening/segmented_load_widening.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_argument_widths.py \
+	angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects.py \
+	angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects_contracts.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_widening.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py \
 	angr_platforms/angr_platforms/X86_16/widening/store_width.py \
@@ -1635,6 +1639,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_stack_aggregate_objects.py \
 	angr_platforms/tests/test_x86_16_stack_argument_identity.py \
 	angr_platforms/tests/test_x86_16_stack_lowering_contracts.py \
+	angr_platforms/tests/test_x86_16_stack_memory_object_widening.py \
 	angr_platforms/tests/test_x86_16_stack_memory_ssa_lowering.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_consumers.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py \
@@ -1866,6 +1871,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_stack_aggregate_objects.py \
 	angr_platforms/tests/test_x86_16_stack_argument_identity.py \
 	angr_platforms/tests/test_x86_16_stack_lowering_contracts.py \
+	angr_platforms/tests/test_x86_16_stack_memory_object_widening.py \
 	angr_platforms/tests/test_x86_16_stack_memory_ssa_lowering.py \
 	angr_platforms/tests/test_x86_16_unused_void_return_types.py \
 	angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py \

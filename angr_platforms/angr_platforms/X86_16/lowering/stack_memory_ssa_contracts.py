@@ -31,7 +31,7 @@ class StackMemorySSALoweringRefusalKind8616(StrEnum):
     """Typed reason why one storage group did not become a C variable."""
 
     SOURCE_ALIAS_REFUSAL = "source_alias_refusal"
-    COMPOSED_BYTE_VIEW_UNPROVEN = "composed_byte_view_unproven"
+    SOURCE_WIDENING_REFUSAL = "source_widening_refusal"
     INCONSISTENT_ALIAS_STORAGE = "inconsistent_alias_storage"
     PHI_WITHOUT_ACCESS = "phi_without_access"
     FRAME_CONTROL_SLOT = "frame_control_slot"
@@ -69,6 +69,7 @@ class StackMemorySSALoweringRefusal8616:
     kind: StackMemorySSALoweringRefusalKind8616
     detail: str
     address: IRAddress | None = None
+    related_addresses: tuple[IRAddress, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-friendly representation."""
@@ -76,6 +77,7 @@ class StackMemorySSALoweringRefusal8616:
             "kind": self.kind.value,
             "detail": self.detail,
             "address": self.address.to_dict() if self.address is not None else None,
+            "related_addresses": [address.to_dict() for address in self.related_addresses],
         }
 
 

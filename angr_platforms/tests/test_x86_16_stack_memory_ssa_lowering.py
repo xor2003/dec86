@@ -34,6 +34,9 @@ from angr_platforms.X86_16.lowering.stack_memory_ssa import (
     lower_x86_16_stack_memory_ssa_alias_artifact,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
+from angr_platforms.X86_16.widening.stack_memory_objects import (
+    build_x86_16_stack_memory_object_widening_artifact,
+)
 
 
 def _bp_slot(offset: int, size: int = 2) -> IRAddress:
@@ -88,6 +91,10 @@ class _FakeCodegen:
             sort_local_vars=lambda: None,
         )
         self._inertia_stack_memory_ssa_alias_artifact = source
+        if source.accesses:
+            self._inertia_stack_memory_object_widening_artifact = (
+                build_x86_16_stack_memory_object_widening_artifact(source)
+            )
         self._inertia_vex_ir_frame = FrameAccessArtifact(
             bp_coordinate=BPFrameCoordinateEvidence8616(
                 status=FrameCoordinateStatus8616.PROVEN,
@@ -224,7 +231,7 @@ def test_stack_memory_ssa_lowering_preserves_upstream_refusals(source, overlap_c
     assert codegen.cfunc.variables_in_use == {}
 
 
-def test_stack_memory_ssa_lowering_refuses_composed_byte_views() -> None:
+def test_stack_memory_ssa_lowering_refuses_partial_composed_byte_views() -> None:
     source = _stack_alias_artifact_for_instructions(
         (
             IRInstr(
@@ -250,11 +257,72 @@ def test_stack_memory_ssa_lowering_refuses_composed_byte_views() -> None:
     assert len(source.accesses) == 2
     assert len(source.overlaps) == 1
     assert artifact.candidates == ()
-    assert artifact.stats.raw_fact_count == artifact.stats.failure_count == 2
+    assert artifact.stats.raw_fact_count == artifact.stats.failure_count == 1
     assert {refusal.kind for refusal in artifact.refusals} == {
-        StackMemorySSALoweringRefusalKind8616.COMPOSED_BYTE_VIEW_UNPROVEN
+        StackMemorySSALoweringRefusalKind8616.SOURCE_WIDENING_REFUSAL
+    }
+    assert {(address.offset, address.size) for address in artifact.refusals[0].related_addresses} >= {
+        (-4, 2),
+        (-3, 2),
     }
     assert codegen.cfunc.variables_in_use == {}
+
+
+def test_stack_memory_ssa_lowering_materializes_nested_byte_view_owner() -> None:
+    word = _bp_slot(-4)
+    high_byte = _bp_slot(-3, size=1)
+    source = _stack_alias_artifact_for_instructions(
+        (
+            IRInstr(
+                "STORE",
+                None,
+                (word, IRValue(MemSpace.CONST, const=1, size=2)),
+                size=2,
+            ),
+            IRInstr(
+                "LOAD",
+                IRValue(MemSpace.REG, name="al", size=1),
+                (high_byte,),
+                size=1,
+            ),
+        )
+    )
+    codegen = _FakeCodegen(source)
+
+    artifact = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
+
+    assert artifact is not None and artifact.complete is True
+    assert artifact.refusals == ()
+    assert len(artifact.candidates) == 1
+    candidate = artifact.candidates[0]
+    assert (candidate.address.offset, candidate.address.size) == (-4, 2)
+    assert candidate.versions == (1, 2)
+    stack_variables = [
+        variable for variable in codegen.cfunc.variables_in_use if isinstance(variable, SimStackVariable)
+    ]
+    assert [(variable.offset, variable.size) for variable in stack_variables] == [(-4, 2)]
+    assert isinstance(codegen.cfunc.variables_in_use[stack_variables[0]].variable_type, SimTypeShort)
+
+
+def test_stack_memory_ssa_lowering_hard_fails_composed_access_without_widening() -> None:
+    word = _bp_slot(-4)
+    high_byte = _bp_slot(-3, size=1)
+    source = _stack_alias_artifact_for_instructions(
+        (
+            IRInstr(
+                "STORE",
+                None,
+                (word, IRValue(MemSpace.CONST, const=1, size=2)),
+                size=2,
+            ),
+            IRInstr("LOAD", IRValue(MemSpace.REG, name="al", size=1), (high_byte,), size=1),
+        )
+    )
+    codegen = _FakeCodegen(source)
+    del codegen._inertia_stack_memory_object_widening_artifact
+
+    with pytest.raises(PipelineHardError, match="before Widening"):
+        lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
 
 
 def test_stack_memory_ssa_lowering_hard_fails_missing_materialization(monkeypatch) -> None:

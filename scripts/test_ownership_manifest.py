@@ -1321,6 +1321,17 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         ),
     ),
     TestOwnershipRule(
+        owner="x86-16-stack-memory-object-widening",
+        paths=(
+            "angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects.py",
+            "angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects_contracts.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_x86_16_stack_memory_object_widening.py",
+            "angr_platforms/tests/test_x86_16_stack_memory_ssa_lowering.py",
+        ),
+    ),
+    TestOwnershipRule(
         owner="x86-16-dce-optimization",
         paths=(
             "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py",

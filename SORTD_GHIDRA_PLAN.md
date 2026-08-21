@@ -707,10 +707,12 @@ implementation still requires an explicit license and notice review.
 
 #### 8.1 Keep stack locations in SSA until locals can be proven
 
-Status: in progress; exact `SS:BP+offset` ranges now partition into canonical
-byte cells with versioned definitions and joins through IR and Alias. Safe
-exact ranges still reach the first Lowering materializer, while composed-view
-object materialization, Widening, and multi-function generalization remain.
+Status: in progress; exact `SS:BP+offset` ranges partition into canonical byte
+cells with versioned definitions and joins through IR and Alias. Widening now
+accepts a composed byte-view component only when every range is nested under
+one unique Alias-equivalent owner, and Lowering materializes that owner. General
+non-laminar byte views, arbitrary byte-view AST uses, and multi-function
+generalization remain.
 
 Reason: Early conversion of stack storage into loosely related C temporaries
 loses definition, join, width, escape, and call-clobber evidence. Exact SS range
@@ -731,7 +733,7 @@ solves stack-pointer changes and repairs stack-relative loads. See:
 - `varmap.cc:1120-1320` (`MapState::gatherVarnodes`,
   `ScopeLocal::restructureVarnode`, `ScopeLocal::restructure`)
 
-Implement the equivalent in Inertia's IR and Alias layers:
+Implement the equivalent in Inertia's IR, Alias, Widening, and Lowering layers:
 
 1. Give each stack read/write an `Address(space=SS, base=entry_sp_or_bp,
    offset, width)` identity before naming any local or argument.
@@ -771,17 +773,23 @@ Measured progress on 2026-08-21:
   that every slice is contained by the original storage identity, and keeps
   exact one-cell accesses on the existing fact path. Malformed views and
   inconsistent overlap relations have typed refusals.
-- Lowering does not guess one C object for a composed view. It emits an explicit
-  `COMPOSED_BYTE_VIEW_UNPROVEN` outcome for each such access, while preserving
-  the existing exact-range materializer. Safe split/merge object
-  materialization remains the next part of this task.
-- The byte-view surface passes 32 focused tests plus sidecar-free DrawFrame,
-  DrawTime, and InitMenu compilation/validation regressions.
-  `quality-dev` passes Ruff `--fix`, strict MyPy, the 38-module mypyc smoke,
-  architecture/context/ownership gates, 1,523 tests, and all three quality
-  comparisons. The mandatory seven-worker pipeline passes all three lanes,
-  including Ultra QuickC and all seven MS C tiny compile/run/decompile/
-  recompile/decompiled-run cases.
+- Widening owns composed stack-object proof. It accepts only a connected overlap
+  component whose ranges are all contained by one unique owner with consistent
+  Alias storage, and carries every source access, fact, version, and byte phi
+  into the accepted artifact. Partial overlap, missing or ambiguous ownership,
+  inconsistent storage, and orphan views refuse the whole component.
+- Lowering consumes that exact Widening artifact instead of rediscovering
+  storage. Missing, stale, or incomplete Widening fails the pipeline; a refused
+  component suppresses every covered exact fragment so no partial local can
+  escape. Existing exact-range materialization remains unchanged.
+- The new Widening/Lowering surface passes 17 focused tests and a 111-test
+  expanded IR/Alias/Widening/Lowering/Structuring set. Sidecar-free DrawFrame,
+  DrawTime, and InitMenu compilation/validation regressions pass.
+  `quality-dev` passes Ruff `--fix`, strict MyPy, mypyc smoke,
+  architecture/context/ownership gates, 1,525 tests, and all three quality
+  comparisons. The mandatory seven-worker pipeline passes all three lanes:
+  1,525 focused tests, three Ultra QuickC validations, and all seven MS C tiny
+  compile/run/decompile/recompile/decompiled-run constructs.
 
 This should remove Ghidra-like stack setup temporaries from DrawFrame,
 DrawTime, and InitMenu without moving stack recovery into Rewrite. Negative
@@ -792,6 +800,8 @@ Definition of done:
 
 - exact SS ranges have versioned definitions, phi joins, byte-accurate overlap
   handling, and typed call delta/clobber effects in IR/Alias
+- every accepted composed view has one unique Alias-equivalent Widening owner;
+  every unresolved component refuses atomically before Lowering
 - DrawFrame, DrawTime, and InitMenu improve through Lowering-owned locals while
   every listed overlap/SP/escape/segment fixture refuses unsafe materialization
 - evidence counters close and validation, behavior, and recompilation remain
@@ -802,6 +812,7 @@ Definition of failure:
 - stack identity is reconstructed from rendered C, variable names, or raw
   numeric proximity, or DS and SS storage are conflated
 - an unknown stack delta, overlap, escape, or clobber is silently ignored
+- Lowering bypasses, recreates, or accepts a stale/incomplete Widening decision
 - locals are discovered in Structuring/Rewrite or any required effect regresses
 
 #### 8.2 Recover call and return contracts from storage trials
