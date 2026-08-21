@@ -711,8 +711,8 @@ Status: in progress; exact `SS:BP+offset` ranges partition into canonical byte
 cells with versioned definitions and joins through IR and Alias. Widening now
 accepts a composed byte-view component only when every range is nested under
 one unique Alias-equivalent owner, and Lowering materializes that owner. General
-non-laminar byte views, side-effecting direct byte writes, wider owners, and
-multi-function generalization remain.
+non-laminar byte views, side-effecting direct scalar writes, and multi-function
+generalization remain.
 
 Reason: Early conversion of stack storage into loosely related C temporaries
 loses definition, join, width, escape, and call-clobber evidence. Exact SS range
@@ -795,15 +795,22 @@ Measured progress on 2026-08-21:
   owner. Call-bearing or otherwise side-effecting RHS expressions remain
   unchanged; stale, refused, ambiguous, cross-function, and unmaterialized
   owners cannot bypass the typed decision.
+- Scalar-view expression construction is isolated from proof resolution and
+  supports exact byte or word subranges of proven 2-byte and 4-byte owners.
+  Reads use unsigned owner-width shifts and masks; pure writes preserve every
+  non-view bit with a tag-preserving read/modify/write assignment. Unsupported
+  three-byte views refuse, and the older two-byte recomposition fold remains
+  word-only so a dword owner cannot replace a partial value. Nested pure RHS
+  reads are projected before the containing-owner write is finalized.
 - The object Widening/Lowering surface passes 17 focused tests and a 111-test
   expanded IR/Alias/Widening/Lowering/Structuring set. The artifact-backed
-  projection has 11 focused tests. Its 34-test immediate lifecycle surface and
+  projection has 22 focused tests. Its 39-test immediate lifecycle surface and
   sidecar-free ExchangeSort, DrawFrame, DrawTime, and InitMenu compilation/
   validation regressions pass.
   `quality-dev` passes Ruff `--fix`, strict MyPy, mypyc smoke,
-  architecture/context/ownership gates, 1,532 tests, and all three quality
+  architecture/context/ownership gates, 1,542 tests, and all three quality
   comparisons. The mandatory seven-worker pipeline passes all three lanes:
-  1,532 focused tests, three Ultra QuickC validations, and all seven MS C tiny
+  1,543 focused tests, three Ultra QuickC validations, and all seven MS C tiny
   compile/run/decompile/recompile/decompiled-run constructs.
 
 This should remove Ghidra-like stack setup temporaries from DrawFrame,

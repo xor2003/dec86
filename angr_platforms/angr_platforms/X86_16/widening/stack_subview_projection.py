@@ -19,10 +19,15 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimType, SimTypeChar, SimTypeShort
 
 from ..c_ast_utils import _clone_c_ast_tree_8616, _replace_c_children_8616
 from ..pipeline.errors import PipelineHardError
+from .stack_subview_expression import (
+    make_scalar_subview_read_expr_8616,
+    make_scalar_subview_write_assignment_8616,
+    scalar_subview_proof_8616,
+    side_effect_free_subview_rhs_8616,
+)
 from .stack_subview_proof import (
     StackObjectViewProof8616,
     StackObjectViewResolutionKind8616,
@@ -116,92 +121,6 @@ def _word_byte_proof_8616(proof: StackObjectViewProof8616 | None) -> StackObject
     return proof if proof.relative_offset in {0, 1} else None
 
 
-def _side_effect_free_byte_rhs_8616(node: object) -> bool:
-    """Accept recursively pure values whose evaluation can share an owner read."""
-    if isinstance(node, (structured_c.CConstant, structured_c.CVariable)):
-        return True
-    if isinstance(node, structured_c.CTypeCast):
-        return _side_effect_free_byte_rhs_8616(node.expr)
-    if isinstance(node, structured_c.CBinaryOp):
-        return _side_effect_free_byte_rhs_8616(node.lhs) and _side_effect_free_byte_rhs_8616(
-            node.rhs
-        )
-    return False
-
-
-def _expression_type_or_word_8616(expr: structured_c.CExpression) -> SimType:
-    """Return a concrete boundary type for an optionally untyped C expression."""
-    expr_type = expr.type
-    return expr_type if isinstance(expr_type, SimType) else SimTypeShort(False)
-
-
-def _byte_read_expr_8616(codegen: object, proof: StackObjectViewProof8616) -> structured_c.CExpression:
-    """Project one proven byte rvalue from its unsigned word owner."""
-    owner = cast(structured_c.CExpression, _clone_c_ast_tree_8616(proof.owner))
-    value: structured_c.CExpression = structured_c.CTypeCast(
-        _expression_type_or_word_8616(owner),
-        SimTypeShort(False),
-        owner,
-        codegen=codegen,
-    )
-    if proof.relative_offset:
-        value = structured_c.CBinaryOp(
-            "Shr",
-            value,
-            structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
-            codegen=codegen,
-        )
-    value = structured_c.CBinaryOp(
-        "And",
-        value,
-        structured_c.CConstant(0xFF, SimTypeShort(False), codegen=codegen),
-        codegen=codegen,
-    )
-    view_type = proof.view.variable_type
-    if isinstance(view_type, SimTypeChar):
-        return structured_c.CTypeCast(SimTypeShort(False), view_type, value, codegen=codegen)
-    return value
-
-
-def _byte_write_assignment_8616(
-    codegen: object,
-    assignment: structured_c.CAssignment,
-    proof: StackObjectViewProof8616,
-) -> structured_c.CAssignment:
-    """Project one side-effect-free byte assignment into its word owner."""
-    owner_read = cast(structured_c.CExpression, _clone_c_ast_tree_8616(proof.owner))
-    preserved_mask = 0x00FF if proof.relative_offset else 0xFF00
-    preserved = structured_c.CBinaryOp(
-        "And",
-        owner_read,
-        structured_c.CConstant(preserved_mask, SimTypeShort(False), codegen=codegen),
-        codegen=codegen,
-    )
-    rhs = cast(structured_c.CExpression, _clone_c_ast_tree_8616(assignment.rhs))
-    byte_value: structured_c.CExpression = structured_c.CBinaryOp(
-        "And",
-        structured_c.CTypeCast(
-            _expression_type_or_word_8616(rhs),
-            SimTypeShort(False),
-            rhs,
-            codegen=codegen,
-        ),
-        structured_c.CConstant(0xFF, SimTypeShort(False), codegen=codegen),
-        codegen=codegen,
-    )
-    if proof.relative_offset:
-        byte_value = structured_c.CBinaryOp(
-            "Shl",
-            byte_value,
-            structured_c.CConstant(8, SimTypeShort(False), codegen=codegen),
-            codegen=codegen,
-        )
-    replacement = cast(structured_c.CAssignment, _clone_c_ast_tree_8616(assignment))
-    replacement.lhs = cast(structured_c.CExpression, _clone_c_ast_tree_8616(proof.owner))
-    replacement.rhs = structured_c.CBinaryOp("Or", preserved, byte_value, codegen=codegen)
-    return replacement
-
-
 def _increment_codegen_counter_8616(codegen: object, name: str, amount: int) -> None:
     """Accumulate evidence on the dynamic third-party codegen boundary."""
     current = _dynamic_attr_8616(codegen, name, 0)
@@ -227,19 +146,19 @@ def materialize_contained_stack_subviews_8616(codegen: object) -> bool:
             resolution = resolve_stack_object_view_8616(cfunc, artifact, node.lhs)
             if resolution.kind is not StackObjectViewResolutionKind8616.NOT_CANDIDATE:
                 stats.raw_fact_count += 1
-                proof = _word_byte_proof_8616(resolution.proof)
+                proof = scalar_subview_proof_8616(resolution.proof)
                 if (
                     resolution.kind is not StackObjectViewResolutionKind8616.ACCEPTED
                     or proof is None
                     or not isinstance(node.rhs, structured_c.CExpression)
-                    or not _side_effect_free_byte_rhs_8616(node.rhs)
+                    or not side_effect_free_subview_rhs_8616(node.rhs)
                 ):
                     stats.failure_count += 1
                     return node
                 stats.normalized_fact_count += 1
                 stats.classified_fact_count += 1
                 stats.materialized_count += 1
-                return _byte_write_assignment_8616(codegen, node, proof)
+                return make_scalar_subview_write_assignment_8616(codegen, node, proof)
 
         candidate = _stack_subview_candidate_8616(node)
         if candidate is not None:
@@ -274,14 +193,14 @@ def materialize_contained_stack_subviews_8616(codegen: object) -> bool:
             if resolution.kind is StackObjectViewResolutionKind8616.NOT_CANDIDATE:
                 return node
             stats.raw_fact_count += 1
-            proof = _word_byte_proof_8616(resolution.proof)
+            proof = scalar_subview_proof_8616(resolution.proof)
             if resolution.kind is not StackObjectViewResolutionKind8616.ACCEPTED or proof is None:
                 stats.failure_count += 1
                 return node
             stats.normalized_fact_count += 1
             stats.classified_fact_count += 1
             stats.materialized_count += 1
-            return _byte_read_expr_8616(codegen, proof)
+            return make_scalar_subview_read_expr_8616(codegen, proof)
         return node
 
     def should_process_child(parent: object, attr: str) -> bool:

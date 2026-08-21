@@ -662,6 +662,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects_contracts.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_widening.py \
+	angr_platforms/angr_platforms/X86_16/widening/stack_subview_expression.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_subview_proof.py \
 	angr_platforms/angr_platforms/X86_16/widening/store_width.py \
@@ -1306,6 +1307,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects_contracts.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_widening.py \
+	angr_platforms/angr_platforms/X86_16/widening/stack_subview_expression.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py \
 	angr_platforms/angr_platforms/X86_16/widening/stack_subview_proof.py \
 	angr_platforms/angr_platforms/X86_16/widening/store_width.py \
@@ -1613,6 +1615,7 @@ QA_RUFF_TARGETS := \
 		angr_platforms/tests/test_x86_16_widening_copyprop.py \
 		angr_platforms/tests/test_x86_16_widening_memory_fold.py \
 		angr_platforms/tests/test_x86_16_stack_subview_projection.py \
+		angr_platforms/tests/test_x86_16_stack_subview_projection_wide.py \
 		angr_platforms/tests/test_x86_16_widening_rules.py \
 		angr_platforms/tests/test_x86_16_package_exports.py \
 		angr_platforms/tests/test_x86_16_sortd_sleep_regression.py \
@@ -1867,6 +1870,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_widening_copyprop.py \
 	angr_platforms/tests/test_x86_16_widening_memory_fold.py \
 	angr_platforms/tests/test_x86_16_stack_subview_projection.py \
+	angr_platforms/tests/test_x86_16_stack_subview_projection_wide.py \
 	angr_platforms/tests/test_x86_16_widening_rules.py \
 	angr_platforms/tests/test_x86_16_generated_c_acceptance.py \
 	angr_platforms/tests/test_x86_16_structuring_grouping_report.py \

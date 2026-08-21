@@ -1722,6 +1722,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects.py",
     "angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects_contracts.py",
     "angr_platforms/angr_platforms/X86_16/widening/stack_widening.py",
+    "angr_platforms/angr_platforms/X86_16/widening/stack_subview_expression.py",
     "angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py",
     "angr_platforms/angr_platforms/X86_16/widening/stack_subview_proof.py",
     "angr_platforms/angr_platforms/X86_16/widening/store_width.py",
@@ -1890,6 +1891,7 @@ _FOCUSED_PYTEST_MARKERS = (
     "angr_platforms/tests/test_x86_16_widening_copyprop.py",
     "angr_platforms/tests/test_x86_16_widening_memory_fold.py",
     "angr_platforms/tests/test_x86_16_stack_subview_projection.py",
+    "angr_platforms/tests/test_x86_16_stack_subview_projection_wide.py",
     "angr_platforms/tests/test_x86_16_widening_rules.py",
 )
 
@@ -1987,6 +1989,7 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "x86-16-widening-memory-fold": ("angr_platforms/angr_platforms/X86_16/widening/widening_memory_fold_8616.py",),
     "x86-16-widening-rules": ("angr_platforms/angr_platforms/X86_16/widening/widening_rules.py",),
     "x86-16-stack-subview-projection": (
+        "angr_platforms/angr_platforms/X86_16/widening/stack_subview_expression.py",
         "angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py",
         "angr_platforms/angr_platforms/X86_16/widening/stack_subview_proof.py",
     ),
