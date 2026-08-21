@@ -1364,6 +1364,11 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         tests=("angr_platforms/tests/test_x86_16_widening_memory_fold.py",),
     ),
     TestOwnershipRule(
+        owner="x86-16-stack-subview-projection",
+        paths=("angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py",),
+        tests=("angr_platforms/tests/test_x86_16_stack_subview_projection.py",),
+    ),
+    TestOwnershipRule(
         owner="x86-16-widening-rules",
         paths=(
             "angr_platforms/angr_platforms/X86_16/widening/widening_rules.py",

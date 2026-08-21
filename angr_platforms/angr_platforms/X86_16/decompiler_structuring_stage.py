@@ -430,11 +430,6 @@ def _build_decompiler_structuring_passes() -> tuple[DecompilerStructuringPassSpe
             True,
         ),
         DecompilerStructuringPassSpec(
-            "_widening_copy_propagation_8616",
-            _run_structuring_widening_copy_propagation_8616,
-            False,
-        ),
-        DecompilerStructuringPassSpec(
             "_void_tail_call_guard_repair_8616",
             _materialize_structuring_void_tail_call_guard_8616,
             True,
@@ -459,6 +454,11 @@ def _build_decompiler_structuring_passes() -> tuple[DecompilerStructuringPassSpe
         ),
         DecompilerStructuringPassSpec(
             "_stack_memory_object_widening_artifact", apply_x86_16_stack_memory_object_widening_8616, True
+        ),
+        DecompilerStructuringPassSpec(
+            "_widening_copy_propagation_8616",
+            _run_structuring_widening_copy_propagation_8616,
+            False,
         ),
         DecompilerStructuringPassSpec(
             "_segment_stack_restore_artifact_8616",

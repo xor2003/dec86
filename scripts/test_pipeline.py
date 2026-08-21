@@ -83,6 +83,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_trivial_copy_optimization.py",
     "angr_platforms/tests/test_x86_16_widening_copyprop.py",
     "angr_platforms/tests/test_x86_16_widening_memory_fold.py",
+    "angr_platforms/tests/test_x86_16_stack_subview_projection.py",
     "angr_platforms/tests/test_x86_16_widening_rules.py",
     "angr_platforms/tests/test_x86_16_generated_c_acceptance.py",
     "angr_platforms/tests/test_x86_16_sortdemo_decompiler_status.py",
