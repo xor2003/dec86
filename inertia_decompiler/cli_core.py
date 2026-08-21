@@ -122,6 +122,7 @@ from inertia_decompiler.non_optimized_fallback import (
 )
 from inertia_decompiler.project_evidence_transport import transfer_project_evidence_8616
 from inertia_decompiler.project_loading import (
+    PackedExecutableRefusedError,
     _build_project,
     _build_project_cached,
     _build_project_from_bytes,
@@ -7566,7 +7567,11 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
     runtime_header = render_c_runtime_header_8616(args.c_target)
     if runtime_header:
         print(runtime_header, end="" if runtime_header.endswith("\n") else "\n", flush=True)
-    setup = _prepare_main_project_8616(args, effective_signature_catalog)
+    try:
+        setup = _prepare_main_project_8616(args, effective_signature_catalog)
+    except PackedExecutableRefusedError as ex:
+        print(f"error: {ex}", file=sys.stderr, flush=True)
+        return 7
     project = setup.project
     function_label = setup.function_label
     cod_metadata = setup.cod_metadata

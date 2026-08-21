@@ -14,11 +14,17 @@ import shutil
 import subprocess
 import tempfile
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
+
+from inertia_decompiler.recompile_check_contract import (
+    RecompileCheckOutcome as RecompileCheckOutcome,
+)
+from inertia_decompiler.recompile_check_contract import (
+    RecompileCheckResult as RecompileCheckResult,
+)
 
 
 def _sanitize_nested_block_comments(text: str) -> str:
@@ -116,22 +122,6 @@ def _strip_msc_dos_header_aggregate_typedefs_8616(text: str) -> str:
             cleaned,
         )
     return cleaned
-
-
-@dataclass(frozen=True, slots=True)
-class RecompileCheckResult:
-    """Result from one emitted-C recompilation check."""
-
-    passed: bool
-    target: str
-    exit_code: int
-    compiler: str | None
-    stdout: str
-    stderr: str
-    command: tuple[str, ...]
-    checked_payload: str
-    checked_payload_hash: str
-    source_path: str | None = None
 
 
 _DEFAULT_KVIKDOS_PATH = Path("/home/xor/kvikdos/kvikdos")
@@ -302,7 +292,7 @@ def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileChec
             compile_payload = _compile_input_payload_8616(c_text, target=target)
             checked_payload, checked_hash = _checked_payload_identity_8616(c_text)
             return RecompileCheckResult(
-                passed=False,
+                outcome=RecompileCheckOutcome.TOOLCHAIN_UNAVAILABLE,
                 target=target,
                 exit_code=127,
                 compiler=None,
@@ -318,7 +308,7 @@ def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileChec
             compile_payload = _compile_input_payload_8616(c_text, target=target)
             checked_payload, checked_hash = _checked_payload_identity_8616(c_text)
             return RecompileCheckResult(
-                passed=False,
+                outcome=RecompileCheckOutcome.TOOLCHAIN_UNAVAILABLE,
                 target=target,
                 exit_code=127,
                 compiler=str(kvikdos),
@@ -366,7 +356,7 @@ def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileChec
                     )
                 except subprocess.TimeoutExpired as ex:
                     return RecompileCheckResult(
-                        passed=False,
+                        outcome=RecompileCheckOutcome.FAILED,
                         target=target,
                         exit_code=124,
                         compiler=str(kvikdos),
@@ -398,7 +388,7 @@ def _check_c_recompiles_msc51_8616(c_text: str, *, target: str) -> RecompileChec
             stdout_text = "\n".join(attempt.stdout or "" for attempt in attempts)
             stderr_text = "\n".join(attempt.stderr or "" for attempt in attempts)
         return RecompileCheckResult(
-            passed=passed,
+            outcome=RecompileCheckOutcome.PASSED if passed else RecompileCheckOutcome.FAILED,
             target=target,
             exit_code=proc.returncode,
             compiler=str(kvikdos),
@@ -424,7 +414,7 @@ def check_c_recompiles_8616(c_text: str, *, target: str = "portable-flat") -> Re
         compiler = shutil.which("gcc")
         if compiler is None:
             return RecompileCheckResult(
-                passed=False,
+                outcome=RecompileCheckOutcome.TOOLCHAIN_UNAVAILABLE,
                 target=target,
                 exit_code=127,
                 compiler=None,
@@ -463,7 +453,7 @@ def check_c_recompiles_8616(c_text: str, *, target: str = "portable-flat") -> Re
             )
         except subprocess.TimeoutExpired as ex:
             return RecompileCheckResult(
-                passed=False,
+                outcome=RecompileCheckOutcome.FAILED,
                 target=target,
                 exit_code=124,
                 compiler=compiler,
@@ -481,7 +471,7 @@ def check_c_recompiles_8616(c_text: str, *, target: str = "portable-flat") -> Re
         else:
             source_path = str(src_path)
         return RecompileCheckResult(
-            passed=passed,
+            outcome=RecompileCheckOutcome.PASSED if passed else RecompileCheckOutcome.FAILED,
             target=target,
             exit_code=proc.returncode,
             compiler=compiler,

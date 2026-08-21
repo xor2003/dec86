@@ -341,6 +341,9 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/hardware.py \
 	angr_platforms/angr_platforms/X86_16/simprocs_io.py \
 	angr_platforms/angr_platforms/X86_16/debug.py \
+	angr_platforms/angr_platforms/X86_16/exepack.py \
+	angr_platforms/angr_platforms/X86_16/mz_image.py \
+	angr_platforms/angr_platforms/X86_16/packed_mz.py \
 	angr_platforms/angr_platforms/X86_16/dev_io.py \
 	angr_platforms/angr_platforms/X86_16/io.py \
 	angr_platforms/angr_platforms/X86_16/instruction.py \
@@ -767,6 +770,7 @@ QA_TYPED_FILES := \
 	inertia_decompiler/rizin_evidence.py \
 	inertia_decompiler/rizin_discovery.py \
 	inertia_decompiler/recompile_check.py \
+	inertia_decompiler/recompile_check_contract.py \
 	inertia_decompiler/runtime_support.py \
 	inertia_decompiler/sidecar_cache.py \
 	inertia_decompiler/sidecar_metadata.py \
@@ -986,6 +990,9 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/hardware.py \
 	angr_platforms/angr_platforms/X86_16/simprocs_io.py \
 	angr_platforms/angr_platforms/X86_16/debug.py \
+	angr_platforms/angr_platforms/X86_16/exepack.py \
+	angr_platforms/angr_platforms/X86_16/mz_image.py \
+	angr_platforms/angr_platforms/X86_16/packed_mz.py \
 	angr_platforms/angr_platforms/X86_16/dev_io.py \
 	angr_platforms/angr_platforms/X86_16/io.py \
 	angr_platforms/angr_platforms/X86_16/instruction.py \
@@ -1411,6 +1418,7 @@ QA_RUFF_TARGETS := \
 	inertia_decompiler/rizin_evidence.py \
 	inertia_decompiler/rizin_discovery.py \
 	inertia_decompiler/recompile_check.py \
+	inertia_decompiler/recompile_check_contract.py \
 	inertia_decompiler/runtime_support.py \
 	inertia_decompiler/sidecar_cache.py \
 	inertia_decompiler/sidecar_metadata.py \
@@ -1482,6 +1490,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_simprocs_io.py \
 	angr_platforms/tests/test_x86_16_debug_info_real_compilers.py \
 	angr_platforms/tests/test_x86_16_debug.py \
+	angr_platforms/tests/test_recompile_check_contract.py \
+	angr_platforms/tests/test_x86_16_packed_mz.py \
 	angr_platforms/tests/test_x86_16_dev_io.py \
 	angr_platforms/tests/test_x86_16_io.py \
 	angr_platforms/tests/test_x86_16_emulator.py \
@@ -1728,6 +1738,8 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_hardware.py \
 	angr_platforms/tests/test_x86_16_simprocs_io.py \
 	angr_platforms/tests/test_x86_16_debug.py \
+	angr_platforms/tests/test_recompile_check_contract.py \
+	angr_platforms/tests/test_x86_16_packed_mz.py \
 	angr_platforms/tests/test_x86_16_dev_io.py \
 	angr_platforms/tests/test_x86_16_io.py \
 	angr_platforms/tests/test_x86_16_emulator.py \

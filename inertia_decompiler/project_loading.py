@@ -11,7 +11,6 @@ import os
 import re
 import sys
 import time
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Protocol, cast
@@ -19,6 +18,15 @@ from typing import Any, Callable, Protocol, cast
 import angr
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.compiler_helpers import hook_x86_16_known_compiler_helpers_8616
+from angr_platforms.X86_16.exepack import unpack_exepack
+from angr_platforms.X86_16.mz_image import UnpackedMZImage
+from angr_platforms.X86_16.packed_mz import (
+    PackedMZError,
+    PackerDetection,
+    PackerType,
+    detect_packer,
+    unpack_lzexe_091,
+)
 
 from inertia_decompiler.telemetry import trace_function
 
@@ -128,149 +136,71 @@ def _looks_like_ne_executable_cached(path: Path) -> bool:
 
 def _detect_packed_mz_executable(path: Path) -> str | None:
     """Return the recognized MZ packer name, when one is present."""
-    return _detect_packed_mz_executable_cached(path)
+    detection = _detect_packed_mz_executable_cached(path)
+    return None if detection is None else detection.label
 
 
 @lru_cache(maxsize=256)
-def _detect_packed_mz_executable_cached(path: Path) -> str | None:
-    """Cache the bounded MZ packer signature probe for one executable path."""
-    try:
-        header = path.read_bytes()[:0x40]
-    except OSError:
-        return None
-    if len(header) < 0x20 or header[:2] != b"MZ":
-        return None
-    signature = header[0x1C:0x20]
-    if signature == b"LZ90":
-        return "LZEXE 0.90"
-    if signature == b"LZ91":
-        return "LZEXE 0.91"
-    if signature[:2] == b"PK":
-        return "PKLITE"
-    return None
+def _detect_packed_mz_executable_cached(path: Path) -> PackerDetection | None:
+    """Cache the frontend's bounded, typed MZ packer detection."""
+    return detect_packer(path)
 
 
 def _is_blob_only_input(path: Path) -> bool:
     return path.suffix.lower() in {".bin", ".raw", ".cod"}
 
 
-@dataclass(frozen=True)
-class _UnpackedLZEXEImage:
-    kind: str
-    code: bytes
-    entry_point: int
+class PackedExecutableRefusedError(RuntimeError):
+    """A recognized packed executable lacks a proven decoder."""
+
+    def __init__(self, *, path: Path, packer: str, reason: str) -> None:
+        """Record the input, packer label, and evidence-backed refusal reason."""
+        self.path = path
+        self.packer = packer
+        self.reason = reason
+        super().__init__(f"refused {packer}-packed executable {path}: {reason}")
 
 
 class _PackedProjectMarker(Protocol):
     _inertia_packed_exe: str
 
 
-class _LZEXEBitStream:
-    def __init__(self, data: bytes, offset: int) -> None:
-        self._data = data
-        self._pos = offset
-        self._count = 0
-        self._buffer = 0
-        self._load_word()
-
-    def _load_word(self) -> None:
-        self._count = 0x10
-        self._buffer = self._data[self._pos] | (self._data[self._pos + 1] << 8)
-        self._pos += 2
-
-    def bit(self) -> int:
-        """Read one low-order bit from the packed LZEXE stream."""
-        value = self._buffer & 1
-        self._buffer >>= 1
-        self._count -= 1
-        if self._count == 0:
-            self._load_word()
-        return value
-
-    def byte(self) -> int:
-        """Read one literal byte from the packed LZEXE stream."""
-        value = self._data[self._pos]
-        self._pos += 1
-        return value
-
-
-def _unpack_lzexe_image(data: bytes, *, base_addr: int) -> _UnpackedLZEXEImage:
-    def _impl() -> _UnpackedLZEXEImage:
-        if len(data) < 0x40 or data[:2] != b"MZ":
-            raise ValueError("Not a DOS MZ executable.")
-        signature = data[0x1C:0x20]
-        if signature != b"LZ91":
-            raise ValueError(f"Unsupported packed executable format: {signature!r}")
-
-        header_paragraphs = int.from_bytes(data[0x08:0x0A], "little")
-        initial_cs = int.from_bytes(data[0x16:0x18], "little")
-        initial_ip = int.from_bytes(data[0x14:0x16], "little")
-        lz_header_offset = (header_paragraphs + initial_cs) << 4
-        lz_entry = lz_header_offset + initial_ip
-        if data[lz_entry : lz_entry + 4] != b"\x06\x0e\x1f\x8b":
-            raise ValueError("Packed executable entry does not match LZEXE 0.91 stub.")
-
-        unpacked_ip = int.from_bytes(data[lz_header_offset : lz_header_offset + 2], "little")
-        unpacked_cs = int.from_bytes(data[lz_header_offset + 2 : lz_header_offset + 4], "little")
-        packed_paragraphs = int.from_bytes(data[lz_header_offset + 8 : lz_header_offset + 10], "little")
-        unpacked_paragraphs = int.from_bytes(data[lz_header_offset + 10 : lz_header_offset + 12], "little")
-        packed_stream_offset = lz_header_offset - (packed_paragraphs << 4)
-        output = bytearray((unpacked_paragraphs * 2) << 4)
-
-        stream = _LZEXEBitStream(data, packed_stream_offset)
-        out_pos = 0
-        while True:
-            if stream.bit():
-                output[out_pos] = stream.byte()
-                out_pos += 1
-                continue
-
-            if stream.bit() == 0:
-                length = (stream.bit() << 1) | stream.bit()
-                length += 2
-                span = stream.byte() | ~0xFF
-            else:
-                span = stream.byte()
-                length = stream.byte()
-                span |= ((length & ~0x07) << 5) | ~0x1FFF
-                length = (length & 0x07) + 2
-                if length == 2:
-                    length = stream.byte()
-                    if length == 0:
-                        break
-                    if length == 1:
-                        continue
-                    length += 1
-
-            for _ in range(length):
-                output[out_pos] = output[out_pos + span]
-                out_pos += 1
-
-        relocation_offset = lz_header_offset + 0x158
-        rel_off = 0
-        load_segment = base_addr >> 4
-        while True:
-            span = data[relocation_offset]
-            relocation_offset += 1
-            if span == 0:
-                span = int.from_bytes(data[relocation_offset : relocation_offset + 2], "little")
-                relocation_offset += 2
-                if span == 0:
-                    rel_off += 0x0FFF0
-                    continue
-                if span == 1:
-                    break
-            rel_off += span
-            patched = (int.from_bytes(output[rel_off : rel_off + 2], "little") + load_segment) & 0xFFFF
-            output[rel_off : rel_off + 2] = patched.to_bytes(2, "little")
-
-        return _UnpackedLZEXEImage(
-            kind="LZEXE 0.91",
-            code=bytes(output[:out_pos]),
-            entry_point=base_addr + (unpacked_cs << 4) + unpacked_ip,
+def _decoded_packed_stream(path: Path, detection: PackerDetection) -> io.BytesIO:
+    """Return a normal MZ stream only for a packer whose decoder is proven."""
+    decoder: Callable[[bytes], UnpackedMZImage]
+    if detection.packer_type is PackerType.LZEXE and detection.signature == "LZ91":
+        decoder = unpack_lzexe_091
+    elif detection.packer_type is PackerType.EXEPACK:
+        decoder = unpack_exepack
+    else:
+        raise PackedExecutableRefusedError(
+            path=path,
+            packer=detection.label,
+            reason="no evidence-backed decoder is implemented; unpack the executable first",
         )
+    try:
+        unpacked = decoder(path.read_bytes())
+    except (OSError, PackedMZError) as ex:
+        raise PackedExecutableRefusedError(path=path, packer=detection.label, reason=str(ex)) from ex
+    _debug_print(
+        f"[dbg] unpacked {detection.label}: entry={unpacked.entry_cs:04x}:{unpacked.entry_ip:04x} "
+        f"size={len(unpacked.image)} relocations={len(unpacked.relocations)}"
+    )
+    return io.BytesIO(unpacked.to_mz_bytes())
 
-    return _impl()
+
+def _project_source(source: Path | io.BytesIO) -> Path | io.BytesIO:
+    """Rewind an in-memory executable before passing it to a third-party loader."""
+    if isinstance(source, io.BytesIO):
+        source.seek(0)
+    return source
+
+
+def _mark_packed_project(project: angr.Project, detection: PackerDetection | None) -> angr.Project:
+    """Attach packer provenance without changing the normal project contract."""
+    if detection is not None:
+        cast(_PackedProjectMarker, project)._inertia_packed_exe = detection.label
+    return project
 
 
 def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point: int) -> angr.Project:
@@ -307,31 +237,19 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
                 )
             )
 
-        packed_exe = _detect_packed_mz_executable(path)
-        if packed_exe and suffix == ".exe":
-            unpacked = _unpack_lzexe_image(path.read_bytes(), base_addr=base_addr)
-            project = angr.Project(
-                io.BytesIO(unpacked.code),
-                auto_load_libs=False,
-                main_opts={
-                    "backend": "blob",
-                    "arch": Arch86_16(),
-                    "base_addr": base_addr,
-                    "entry_point": unpacked.entry_point,
-                },
-                simos="DOS",
-            )
-            packed_project = cast(_PackedProjectMarker, project)
-            packed_project._inertia_packed_exe = packed_exe
-            _debug_print(f"[dbg] unpacked {packed_exe}: entry={hex(unpacked.entry_point)} size={len(unpacked.code)}")
-            return _finalize_x86_16_project(project)
+        packed_detection = _detect_packed_mz_executable_cached(path) if suffix == ".exe" else None
+        project_input: Path | io.BytesIO = (
+            _decoded_packed_stream(path, packed_detection) if packed_detection is not None else path
+        )
 
         if suffix == ".exe":
             explicit_base = _probe_ida_base_linear(path, base_addr << 4 if base_addr < 0x10000 else base_addr)
-            exe_backend = "dos_ne" if _looks_like_ne_executable(path) else "dos_mz"
+            exe_backend = "dos_mz" if packed_detection is not None else (
+                "dos_ne" if _looks_like_ne_executable(path) else "dos_mz"
+            )
             try:
                 proj = angr.Project(
-                    path,
+                    _project_source(project_input),
                     auto_load_libs=False,
                     main_opts={
                         "backend": exe_backend,
@@ -341,14 +259,14 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
                 )
                 _debug_print(f"[dbg] {exe_backend} load base={hex(explicit_base)}")
                 _debug_print(f"[dbg] project built: arch={proj.arch.name} entry={hex(proj.entry)}")
-                return _finalize_x86_16_project(proj)
+                return _finalize_x86_16_project(_mark_packed_project(proj, packed_detection))
             except Exception as ex:
                 _debug_print(
                     f"[dbg] explicit {exe_backend} load failed at {hex(explicit_base)}: {_describe_exception(ex)}"
                 )
 
         try:
-            proj = angr.Project(path, auto_load_libs=False)
+            proj = angr.Project(_project_source(project_input), auto_load_libs=False)
         except Exception as ex:
             if suffix == ".exe" and "Position-DEPENDENT object" in str(ex):
                 explicit_base = _probe_ida_base_linear(path, base_addr << 4 if base_addr < 0x10000 else base_addr)
@@ -356,7 +274,7 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
                     f"[dbg] retrying DOS MZ load with explicit base_addr={hex(explicit_base)} after {type(ex).__name__}"
                 )
                 proj = angr.Project(
-                    path,
+                    _project_source(project_input),
                     auto_load_libs=False,
                     main_opts={
                         "backend": "dos_mz",
@@ -366,7 +284,7 @@ def _build_project(path: Path, *, force_blob: bool, base_addr: int, entry_point:
             else:
                 raise
         _debug_print(f"[dbg] project built: arch={proj.arch.name} entry={hex(proj.entry)}")
-        return _finalize_x86_16_project(proj)
+        return _finalize_x86_16_project(_mark_packed_project(proj, packed_detection))
 
     return _impl()
 
