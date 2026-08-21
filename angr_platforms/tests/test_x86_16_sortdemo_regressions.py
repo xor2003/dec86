@@ -862,7 +862,7 @@ def test_sortd_initmenu_sidecar_free_preserves_calls_and_compiles(
     assert re.search(r"(?:int|void) sub_12756\(char \*a0, unsigned short a1\);", result.stdout)
     assert "extern char * g_0136[];" in result.stdout
     final_body = _function_body_from_stdout(result.stdout, "short sub_10060")
-    assert "char local_12[16];" in final_body
+    assert "char local_12[16];" in final_body and "// [bp+0x2]" not in final_body
     assert final_body.count("sub_12b24(15);") == 1
     assert final_body.count("sub_12b3e(0, 0);") == 1
     assert final_body.count("sub_101f0(") == 1

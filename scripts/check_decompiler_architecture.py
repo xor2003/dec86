@@ -1587,6 +1587,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/stack_declaration_identity.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_argument_stack_sources.py",
     "angr_platforms/angr_platforms/X86_16/lowering/structured_intrinsics.py",
     "angr_platforms/angr_platforms/X86_16/lowering/terminal_call_return_types.py",

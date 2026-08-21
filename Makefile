@@ -522,6 +522,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py \
+	angr_platforms/angr_platforms/X86_16/lowering/stack_declaration_identity.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_argument_stack_sources.py \
 	angr_platforms/angr_platforms/X86_16/lowering/structured_intrinsics.py \
 	angr_platforms/angr_platforms/X86_16/lowering/terminal_call_return_types.py \
@@ -1171,6 +1172,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_pointer_snapshot.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py \
+	angr_platforms/angr_platforms/X86_16/lowering/stack_declaration_identity.py \
 	angr_platforms/angr_platforms/X86_16/lowering/call_argument_stack_sources.py \
 	angr_platforms/angr_platforms/X86_16/lowering/structured_intrinsics.py \
 	angr_platforms/angr_platforms/X86_16/lowering/terminal_call_return_types.py \
@@ -1656,6 +1658,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_consumed_push_lvalues.py \
 	angr_platforms/tests/test_x86_16_stack_aggregate_objects.py \
 	angr_platforms/tests/test_x86_16_stack_argument_identity.py \
+	angr_platforms/tests/test_x86_16_stack_declaration_identity.py \
 	angr_platforms/tests/test_x86_16_stack_lowering_contracts.py \
 	angr_platforms/tests/test_x86_16_stack_memory_object_widening.py \
 	angr_platforms/tests/test_x86_16_stack_memory_ssa_lowering.py \
@@ -1895,6 +1898,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_structuring_sequences.py \
 	angr_platforms/tests/test_x86_16_stack_aggregate_objects.py \
 	angr_platforms/tests/test_x86_16_stack_argument_identity.py \
+	angr_platforms/tests/test_x86_16_stack_declaration_identity.py \
 	angr_platforms/tests/test_x86_16_stack_lowering_contracts.py \
 	angr_platforms/tests/test_x86_16_stack_memory_object_widening.py \
 	angr_platforms/tests/test_x86_16_stack_memory_ssa_lowering.py \

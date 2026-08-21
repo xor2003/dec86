@@ -17,8 +17,11 @@ from typing import Protocol, Sequence, cast
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimStackVariable
 
-from ..alias.alias_model import _stack_slot_identity_for_variable
+from ..alias.alias_model_impl import _stack_slot_identity_for_variable
 from ..c_ast_utils import _replace_c_children_8616
+from .stack_declaration_identity import (
+    prune_unreferenced_pre_argument_declarations_8616,
+)
 
 
 class _ArgumentIdentityCFunction8616(Protocol):
@@ -62,7 +65,22 @@ def _positive_stack_variable_8616(node: object) -> SimStackVariable | None:
         or variable.offset <= 0
     ):
         return None
+    identity = _stack_slot_identity_for_variable(variable)
+    if identity is None or identity.base != "bp":
+        return None
     return variable
+
+
+def _mark_stack_identity_change_8616(
+    codegen: _ArgumentIdentityCodegen8616,
+) -> None:
+    """Request declaration refresh after an owned stack-identity mutation."""
+    codegen._inertia_codegen_decl_refresh_required_8616 = True
+    try:
+        unified_count = codegen._inertia_arg_stack_identity_unified_8616
+    except AttributeError:
+        unified_count = 0
+    codegen._inertia_arg_stack_identity_unified_8616 = unified_count + 1
 
 
 def _clone_argument_reference_8616(
@@ -109,6 +127,8 @@ def unify_positive_bp_argument_identity_8616(
     except AttributeError:
         pass
 
+    changed = prune_unreferenced_pre_argument_declarations_8616(typed_codegen)
+
     arguments_by_identity: dict[object, list[structured_c.CVariable]] = {}
     for candidate in argument_list:
         if not isinstance(candidate, structured_c.CVariable):
@@ -128,14 +148,14 @@ def unify_positive_bp_argument_identity_8616(
         typed_codegen._inertia_arg_stack_identity_stats_8616 = (
             StackArgumentIdentityStats8616()
         )
-        return False
+        if changed:
+            _mark_stack_identity_change_8616(typed_codegen)
+        return changed
 
     raw_count = 0
     normalized_count = 0
     classified_count = 0
     materialized_count = 0
-    changed = False
-
     def transform(node: object) -> object:
         nonlocal raw_count, normalized_count, classified_count
         nonlocal materialized_count, changed
@@ -203,12 +223,7 @@ def unify_positive_bp_argument_identity_8616(
             "argument stack identities were classified but not materialized"
         )
     if changed:
-        typed_codegen._inertia_codegen_decl_refresh_required_8616 = True
-        try:
-            unified_count = typed_codegen._inertia_arg_stack_identity_unified_8616
-        except AttributeError:
-            unified_count = 0
-        typed_codegen._inertia_arg_stack_identity_unified_8616 = unified_count + 1
+        _mark_stack_identity_change_8616(typed_codegen)
     return changed
 
 

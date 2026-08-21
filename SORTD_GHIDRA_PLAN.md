@@ -707,7 +707,7 @@ implementation still requires an explicit license and notice review.
 
 #### 8.1 Keep stack locations in SSA until locals can be proven
 
-Status: in progress; exact `SS:BP+offset` ranges partition into canonical byte
+Status: complete; exact `SS:BP+offset` ranges partition into canonical byte
 cells with versioned definitions and joins through IR and Alias. Widening now
 accepts a composed byte-view component only when every range is nested under
 one unique Alias-equivalent owner, and Lowering materializes that owner. General
@@ -715,8 +715,9 @@ non-laminar contained views are now covered. Exact call-bearing direct scalar
 writes are covered when typed call effects prove that the unique owner survives;
 the project-wide multi-function semantic-artifact handoff is complete. The
 overlap, escape, one-branch SP-change, and DS/SS-collision negative-fixture DoD
-is complete. Measured positive local-output improvement for DrawFrame,
-DrawTime, and InitMenu remains before this task is complete.
+is complete. Sidecar-free DrawFrame and DrawTime retain clean Lowering-owned
+locals without setup temporaries, and InitMenu no longer conflates its `BP-2`
+loop local with an unreferenced `BP+2` control-slot declaration.
 
 Reason: Early conversion of stack storage into loosely related C temporaries
 loses definition, join, width, escape, and call-clobber evidence. Exact SS range
@@ -848,6 +849,26 @@ Measured progress on 2026-08-21:
   pipeline. The checkpoint passes 31 focused tests, six real SORTD regressions,
   `quality-dev`, and all three mandatory pipeline lanes: 1,584 focused tests,
   four validated Ultra QuickC fixtures, and all seven MS C tiny constructs.
+- Types/Lowering now owns declaration-map cleanup separately from argument
+  inference. It classifies exact Alias stack identities below the first ABI
+  argument, removes only declarations absent from both the function body and
+  header, and refuses unknown-width, ABI-crossing, body-owned, header-owned,
+  and overlapping views. Typed evidence reports raw, normalized, classified,
+  materialized, failed, and refused facts; classified facts cannot silently
+  produce zero materializations.
+- The sidecar-free InitMenu regression now rejects any surviving `BP+2`
+  declaration owner while preserving its calls, strict portable-flat compile,
+  `validation=passed`, and clean whole-tail result. Fresh DrawFrame and DrawTime
+  captures retain their clean local shapes. The first cold isolated InitMenu
+  run reached clean validation but hit the unchanged 180-second watchdog; the
+  warm acceptance passed in 72.2 seconds, so no timeout was relaxed and the
+  cold-path variance remains performance debt under task 6.
+- Seven declaration-identity cases and the existing eight argument-identity
+  cases pass. Ruff `--fix`, strict MyPy, mypyc import smoke, architecture,
+  context, ownership, and `quality-dev` gates pass. The mandatory seven-worker
+  pipeline is 3/3 green with 1,589 focused tests, four validated Ultra QuickC
+  fixtures, and all seven MS C tiny compile/run/decompile/recompile/decompiled-
+  run constructs.
 
 This should remove Ghidra-like stack setup temporaries from DrawFrame,
 DrawTime, and InitMenu without moving stack recovery into Rewrite. Negative

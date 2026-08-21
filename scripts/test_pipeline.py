@@ -55,6 +55,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_typed_conditions.py",
     "angr_platforms/tests/test_x86_16_decompiler_postprocess_jcc.py",
     "angr_platforms/tests/test_x86_16_stack_lowering_contracts.py",
+    "angr_platforms/tests/test_x86_16_stack_declaration_identity.py",
     "angr_platforms/tests/test_x86_16_stack_memory_ssa_lowering.py",
     "angr_platforms/tests/test_x86_16_stack_memory_ssa_safety.py",
     "angr_platforms/tests/test_x86_16_interprocedural_storage_consumers.py",
