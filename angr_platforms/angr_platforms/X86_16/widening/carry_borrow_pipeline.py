@@ -110,7 +110,7 @@ def build_carry_borrow_widening_pipeline_8616(
             "carry/borrow Semantics evidence accounting is incomplete",
             layer="semantics",
         )
-    aliases = project_carry_borrow_aliases_8616(semantics)
+    aliases = project_carry_borrow_aliases_8616(semantics, function_ssa)
     if not aliases.complete:
         raise PipelineHardError(
             "carry/borrow Alias evidence accounting is incomplete",

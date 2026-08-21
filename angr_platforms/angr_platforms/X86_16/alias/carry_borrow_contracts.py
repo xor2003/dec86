@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from ..ir import IRValue
+from ..ir import IRCallOutputProvenance8616, IRValue
 from ..semantics.carry_borrow_contracts import (
     CarryBorrowLink8616,
     CarryBorrowOperandUse8616,
@@ -34,6 +34,14 @@ class CarryBorrowAliasFailure8616(StrEnum):
     """Stable reason a semantic link lacks exact Alias carrier proof."""
 
     CARRIER_ALIAS_MISMATCH = "carrier_alias_mismatch"
+    CALL_OUTPUT_CONFLICT = "call_output_conflict"
+    CALL_OUTPUT_DEFINITION_AMBIGUOUS = "call_output_definition_ambiguous"
+    CALL_OUTPUT_DEFINITION_MISSING = "call_output_definition_missing"
+    CALL_OUTPUT_ORDER_MISMATCH = "call_output_order_mismatch"
+    CALL_OUTPUT_PARTIAL = "call_output_partial"
+    CALL_OUTPUT_SHAPE_MISMATCH = "call_output_shape_mismatch"
+    CALL_OUTPUT_SSA_MISSING = "call_output_ssa_missing"
+    FUNCTION_SSA_MISMATCH = "function_ssa_mismatch"
     RESULT_CARRIER_MISMATCH = "result_carrier_mismatch"
     SEGMENT_MISMATCH = "segment_mismatch"
     SEMANTICS_INCOMPLETE = "semantics_incomplete"
@@ -65,6 +73,15 @@ class CarryBorrowOperandAlias8616:
 
 
 @dataclass(frozen=True, slots=True)
+class CarryBorrowCallOutputAlias8616:
+    """Exact low/high register definitions produced by one machine call."""
+
+    provenance: IRCallOutputProvenance8616
+    low_output: IRValue
+    high_output: IRValue
+
+
+@dataclass(frozen=True, slots=True)
 class CarryBorrowAliasFact8616:
     """Alias-proven result and operand identities for one carry-linked value."""
 
@@ -75,6 +92,7 @@ class CarryBorrowAliasFact8616:
     low_rhs: CarryBorrowOperandAlias8616
     high_lhs: CarryBorrowOperandAlias8616
     high_rhs: CarryBorrowOperandAlias8616
+    lhs_call_output: CarryBorrowCallOutputAlias8616 | None = None
     source_memory: SegmentedAliasRange8616 | None = None
     source_constant: int | None = None
 
@@ -135,5 +153,6 @@ __all__ = [
     "CarryBorrowAliasResolution8616",
     "CarryBorrowAliasStats8616",
     "CarryBorrowAliasVerdict8616",
+    "CarryBorrowCallOutputAlias8616",
     "CarryBorrowOperandAlias8616",
 ]

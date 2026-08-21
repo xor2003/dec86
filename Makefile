@@ -108,6 +108,11 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_argument.py \
 	angr_platforms/angr_platforms/X86_16/lowering/near_pointer_type.py \
 	angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_stack_storage.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_ast.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_contracts.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_placement.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignments.py \
 	angr_platforms/angr_platforms/X86_16/alias/carry_borrow_contracts.py \
 	angr_platforms/angr_platforms/X86_16/alias/carry_borrow_destinations.py \
 	angr_platforms/angr_platforms/X86_16/alias/carry_borrow_projection.py \
@@ -525,6 +530,11 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_from_facts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_stack_storage.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_ast.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_contracts.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_placement.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignments.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_memory_ssa.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_projection_retirement.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_impl.py \
@@ -1158,6 +1168,11 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_lowering.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_from_facts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_stack_storage.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_ast.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_contracts.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_evidence.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_placement.py \
+	angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignments.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_memory_ssa.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_projection_retirement.py \
 	angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_impl.py \
@@ -1528,6 +1543,7 @@ QA_RUFF_TARGETS := \
 		angr_platforms/tests/test_test_ownership_manifest.py \
 		angr_platforms/tests/test_x86_16_carry_borrow_cfg.py \
 		angr_platforms/tests/test_x86_16_carry_borrow_call_output.py \
+		angr_platforms/tests/test_x86_16_wide_call_output_assignments.py \
 		angr_platforms/tests/test_x86_16_carry_borrow_sources.py \
 		angr_platforms/tests/test_x86_16_carry_borrow_stack_storage.py \
 		angr_platforms/tests/test_x86_16_carry_borrow_widening.py \
@@ -1671,6 +1687,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_trials.py \
 	angr_platforms/tests/test_x86_16_carry_borrow_cfg.py \
 	angr_platforms/tests/test_x86_16_carry_borrow_call_output.py \
+	angr_platforms/tests/test_x86_16_wide_call_output_assignments.py \
 	angr_platforms/tests/test_x86_16_carry_borrow_sources.py \
 	angr_platforms/tests/test_x86_16_carry_borrow_stack_storage.py \
 	angr_platforms/tests/test_x86_16_carry_borrow_widening.py \

@@ -130,6 +130,9 @@ from .lowering.structured_intrinsics import (
     prune_unused_structured_insert_intrinsics_8616,
 )
 from .lowering.unobserved_returns import neutralize_unobserved_unresolved_returns_8616
+from .lowering.wide_call_output_assignments import (
+    lower_wide_call_output_stack_assignments_8616,
+)
 from .lowering.wide_stack_pair_evidence import proven_wide_stack_ir_pair_8616
 from .pipeline.errors import PipelineHardError
 from .semantics.call_stack_effect_pipeline import apply_x86_16_call_stack_effects_8616
@@ -2025,6 +2028,13 @@ def _apply_structuring_stable_stack_semantics_8616(project: AngrProjectSurface, 
     apply_carry_borrow_widening_pipeline_8616(project, codegen)
     before_materialized = int(getattr(codegen, "_inertia_semantic_stack_materialized_count", 0) or 0)
     memory_ssa_lowering = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
+    wide_call_output_lowering = (
+        lower_wide_call_output_stack_assignments_8616(codegen)
+        if memory_ssa_lowering is not None
+        else None
+    )
+    if wide_call_output_lowering is not None:
+        changed = bool(wide_call_output_lowering.stats.changed_count) or changed
     if memory_ssa_lowering is None:
         transfer_semantic_alias_facts_to_codegen_8616(project, codegen)
         # Dynamic boundary: legacy codegen carries transferred Alias facts as optional metadata.

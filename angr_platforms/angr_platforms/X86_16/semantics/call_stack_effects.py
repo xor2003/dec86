@@ -49,7 +49,7 @@ class CallStackEffectArtifact8616:
     @property
     def complete(self) -> bool:
         """Return whether every CALL has a positive preservation proof."""
-        return self.stats.complete
+        return bool(self.stats.complete)
 
     def to_dict(self) -> dict[str, object]:
         """Return deterministic diagnostics without duplicating the full IR."""
@@ -112,9 +112,11 @@ def _effect_from_summary_8616(
         return _refused_effect_8616(ranges, CallStackEffectFailure8616.ARGUMENT_COUNT_UNKNOWN)
     if len(summary.arg_widths) != summary.arg_count or any(width <= 0 for width in summary.arg_widths):
         return _refused_effect_8616(ranges, CallStackEffectFailure8616.ARGUMENT_WIDTHS_INCOMPLETE)
-    if summary.stack_cleanup is None:
+    argument_bytes = sum(summary.arg_widths)
+    stack_cleanup = 0 if summary.arg_count == 0 and summary.stack_cleanup is None else summary.stack_cleanup
+    if stack_cleanup is None:
         return _refused_effect_8616(ranges, CallStackEffectFailure8616.STACK_CLEANUP_UNKNOWN)
-    if sum(summary.arg_widths) != summary.stack_cleanup:
+    if argument_bytes != stack_cleanup:
         return _refused_effect_8616(ranges, CallStackEffectFailure8616.STACK_CLEANUP_MISMATCH)
     if summary.arg_count:
         if (
@@ -135,8 +137,8 @@ def _effect_from_summary_8616(
                 CallStackEffectFailure8616.POINTER_ARGUMENT_MAY_ESCAPE,
             )
     net_stack_delta = (
-        summary.stack_cleanup
-        if summary.stack_cleanup > 0 and summary.stack_cleanup_instruction_addr is None
+        stack_cleanup
+        if stack_cleanup > 0 and summary.stack_cleanup_instruction_addr is None
         else 0
     )
     return (

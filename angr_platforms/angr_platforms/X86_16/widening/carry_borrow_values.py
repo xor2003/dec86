@@ -19,6 +19,7 @@ from ..alias.carry_borrow_contracts import (
     CarryBorrowAliasFact8616,
     CarryBorrowAliasResolution8616,
     CarryBorrowAliasVerdict8616,
+    CarryBorrowCallOutputAlias8616,
 )
 from ..alias.domains import DomainKey
 from ..alias.storage_fact_join import SegmentedAliasRange8616
@@ -80,6 +81,7 @@ class WideCarryBorrowValue8616:
     address_space: MemSpace | None
     source_memory: SegmentedAliasRange8616 | None
     source_constant: int | None
+    lhs_call_output: CarryBorrowCallOutputAlias8616 | None
     low: WideRegisterSlice8616
     high: WideRegisterSlice8616
     provenance: CarryBorrowLink8616
@@ -290,6 +292,7 @@ def _materialize_fact(
             address_space=None if fact.source_memory is None else fact.source_memory.space,
             source_memory=fact.source_memory,
             source_constant=fact.source_constant,
+            lhs_call_output=fact.lhs_call_output,
             low=low_slice,
             high=high_slice,
             provenance=link,

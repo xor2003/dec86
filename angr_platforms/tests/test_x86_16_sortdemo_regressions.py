@@ -1627,7 +1627,7 @@ def test_beep_direct_path_validates_without_high_byte_contract_fallback():
         zero_guard = result.stdout.index("if (!frequency)", first_guard + 1)
         assert re.search(r"if \(!frequency\)\s+return(?: 0)?;", result.stdout)
         assert first_guard < control_definition < sleep_call < zero_guard < control_read
-    assert re.search(r"(?m)^(?:void|int|unsigned short) Sleep\(unsigned long a0\);$", result.stdout)
+    assert re.search(r"(?m)^(?:void|int|unsigned short) Sleep\(\);$", result.stdout)
     scorecard = build_acceptance_scorecard(
         "Beep",
         combined,

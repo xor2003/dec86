@@ -17,6 +17,7 @@ __all__ = ["SSABinding", "SSABlock", "build_x86_16_block_local_ssa"]
 
 _VersionKey = tuple[str, str | None, int]
 _TemporarySnapshots = dict[int, IRValue]
+_CurrentDefinitions = dict[_VersionKey, IRValue]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,12 +69,13 @@ def _rewrite_binary_value(
     value: IRBinaryValue,
     versions: dict[_VersionKey, int],
     snapshots: _TemporarySnapshots,
+    definitions: _CurrentDefinitions,
 ) -> IRBinaryValue:
     """Rewrite both operands of one typed binary value into current SSA versions."""
     return replace(
         value,
-        lhs=_rewrite_value_expression(value.lhs, versions, snapshots),
-        rhs=_rewrite_value_expression(value.rhs, versions, snapshots),
+        lhs=_rewrite_value_expression(value.lhs, versions, snapshots, definitions),
+        rhs=_rewrite_value_expression(value.rhs, versions, snapshots, definitions),
     )
 
 
@@ -81,23 +83,26 @@ def _rewrite_value_expression(
     value: IRValue | IRBinaryValue,
     versions: dict[_VersionKey, int],
     snapshots: _TemporarySnapshots,
+    definitions: _CurrentDefinitions,
 ) -> IRValue | IRBinaryValue:
     """Rewrite a scalar or nested typed value expression into current SSA versions."""
     if isinstance(value, IRBinaryValue):
-        return _rewrite_binary_value(value, versions, snapshots)
-    return _rewrite_value(value, versions, snapshots)
+        return _rewrite_binary_value(value, versions, snapshots, definitions)
+    return _rewrite_value(value, versions, snapshots, definitions)
 
 
 def _rewrite_value(
     value: IRValue,
     versions: dict[_VersionKey, int],
     snapshots: _TemporarySnapshots,
+    definitions: _CurrentDefinitions,
 ) -> IRValue:
     """Rewrite one value and its indexed-address provenance into current SSA versions."""
     if value.space in {MemSpace.CONST, MemSpace.UNKNOWN}:
         return value
     key = _version_key(value)
     snapshot = None if value.source_tmp is None else snapshots.get(value.source_tmp)
+    source_definition: IRValue | None
     if (
         snapshot is not None
         and snapshot.version is not None
@@ -105,33 +110,46 @@ def _rewrite_value(
         and _version_key(snapshot) == key
     ):
         version = snapshot.version
+        source_definition = snapshot
     else:
         version = versions.setdefault(key, 0)
+        source_definition = definitions.get(key)
     rewritten_index = (
         None
         if value.index is None
-        else _rewrite_value_expression(value.index, versions, snapshots)
+        else _rewrite_value_expression(value.index, versions, snapshots, definitions)
     )
-    return replace(_versioned(value, version), index=rewritten_index)
+    return replace(
+        _versioned(value, version),
+        index=rewritten_index,
+        call_output=(
+            value.call_output
+            if source_definition is None
+            else source_definition.call_output
+        ),
+    )
 
 
 def _rewrite_atom(
     atom: IRAtom,
     versions: dict[_VersionKey, int],
     snapshots: _TemporarySnapshots,
+    definitions: _CurrentDefinitions,
 ) -> IRAtom:
     """Rewrite every value-bearing IR atom without losing typed metadata."""
     if isinstance(atom, IRCondition):
         return IRCondition(
             op=atom.op,
-            args=tuple(_rewrite_atom(arg, versions, snapshots) for arg in atom.args),
+            args=tuple(
+                _rewrite_atom(arg, versions, snapshots, definitions) for arg in atom.args
+            ),
             expr=atom.expr,
             width_bits=atom.width_bits,
         )
     if isinstance(atom, IRBinaryValue):
-        return _rewrite_binary_value(atom, versions, snapshots)
+        return _rewrite_binary_value(atom, versions, snapshots, definitions)
     if isinstance(atom, IRValue):
-        return _rewrite_value(atom, versions, snapshots)
+        return _rewrite_value(atom, versions, snapshots, definitions)
     return atom
 
 
@@ -157,18 +175,20 @@ def build_x86_16_block_local_ssa(block: IRBlock) -> SSABlock:
     """Rewrite a typed IR block into deterministic block-local SSA form."""
     versions: dict[_VersionKey, int] = {}
     snapshots: _TemporarySnapshots = {}
+    definitions: _CurrentDefinitions = {}
     rewritten: list[IRInstr] = []
     bindings: list[SSABinding] = []
     for index, instr in enumerate(block.instrs):
         rewritten_args: list[IRAtom] = []
         for arg in instr.args:
-            rewritten_args.append(_rewrite_atom(arg, versions, snapshots))
+            rewritten_args.append(_rewrite_atom(arg, versions, snapshots, definitions))
         rewritten_dst = instr.dst
         if rewritten_dst is not None and rewritten_dst.space not in {MemSpace.CONST, MemSpace.UNKNOWN}:
             key = _version_key(rewritten_dst)
             version = versions.get(key, -1) + 1
             versions[key] = version
             rewritten_dst = _versioned(rewritten_dst, version)
+            definitions[key] = rewritten_dst
             bindings.append(SSABinding(target=rewritten_dst, version=version, instr_index=index))
         rewritten_args_tuple = tuple(rewritten_args)
         _record_temporary_snapshot(instr, rewritten_dst, rewritten_args_tuple, snapshots)

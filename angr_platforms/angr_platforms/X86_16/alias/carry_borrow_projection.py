@@ -11,7 +11,8 @@ Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting wor
 
 from __future__ import annotations
 
-from ..ir import MemSpace
+from ..ir import IRCallOutputProvenance8616, IRCallOutputShape8616, IRInstr, IRValue, MemSpace
+from ..ir.ssa_function import SSAFunctionArtifact
 from ..semantics.carry_borrow_contracts import (
     CarryBorrowEvidence8616,
     CarryBorrowLink8616,
@@ -25,6 +26,7 @@ from .carry_borrow_contracts import (
     CarryBorrowAliasResolution8616,
     CarryBorrowAliasStats8616,
     CarryBorrowAliasVerdict8616,
+    CarryBorrowCallOutputAlias8616,
     CarryBorrowOperandAlias8616,
 )
 from .carry_borrow_sources import (
@@ -47,9 +49,100 @@ def _refusal(
     )
 
 
+def _ssa_identity_8616(value: IRValue) -> tuple[MemSpace, str | None, int, int, int | None]:
+    """Return the exact SSA storage identity relevant to Alias projection."""
+    return (value.space, value.name, value.offset, value.size, value.version)
+
+
+def _valid_call_output_definition_8616(
+    instruction: IRInstr,
+    expected: IRValue,
+    provenance: IRCallOutputProvenance8616,
+) -> bool:
+    """Check one typed CALL_OUTPUT definition without parsing diagnostic text."""
+    destination = instruction.dst
+    if (
+        instruction.op != "CALL_OUTPUT"
+        or destination is None
+        or destination.call_output != provenance
+        or instruction.addr != provenance.callsite_addr
+        or _ssa_identity_8616(destination) != _ssa_identity_8616(expected)
+        or len(instruction.args) != 1
+    ):
+        return False
+    target = instruction.args[0]
+    return (
+        isinstance(target, IRValue)
+        and target.space is MemSpace.CONST
+        and target.const == provenance.target_addr
+    )
+
+
+def _call_output_candidates_8616(
+    function_ssa: SSAFunctionArtifact,
+    expected: IRValue,
+    provenance: IRCallOutputProvenance8616,
+) -> tuple[tuple[int, int, IRValue], ...]:
+    """Collect exact CALL_OUTPUT definitions for one SSA register use."""
+    return tuple(
+        (block.addr, instr_index, instruction.dst)
+        for block in function_ssa.blocks
+        for instr_index, instruction in enumerate(block.instrs)
+        if instruction.dst is not None
+        and _valid_call_output_definition_8616(instruction, expected, provenance)
+    )
+
+
+def _resolve_lhs_call_output_8616(
+    function_ssa: SSAFunctionArtifact | None,
+    link: CarryBorrowLink8616,
+) -> CarryBorrowCallOutputAlias8616 | CarryBorrowAliasFailure8616 | None:
+    """Resolve a complete exact call-return identity for both arithmetic halves."""
+    low_value = link.low_lhs.value
+    high_value = link.high_lhs.value
+    low_provenance = low_value.call_output
+    high_provenance = high_value.call_output
+    if low_provenance is None and high_provenance is None:
+        return None
+    if low_provenance is None or high_provenance is None:
+        return CarryBorrowAliasFailure8616.CALL_OUTPUT_PARTIAL
+    if low_provenance != high_provenance:
+        return CarryBorrowAliasFailure8616.CALL_OUTPUT_CONFLICT
+    if (
+        low_provenance.shape is not IRCallOutputShape8616.DX_AX
+        or (low_value.name, high_value.name) != ("ax", "dx")
+        or low_value.size != 2
+        or high_value.size != 2
+    ):
+        return CarryBorrowAliasFailure8616.CALL_OUTPUT_SHAPE_MISMATCH
+    if function_ssa is None:
+        return CarryBorrowAliasFailure8616.CALL_OUTPUT_SSA_MISSING
+    low_candidates = _call_output_candidates_8616(function_ssa, low_value, low_provenance)
+    high_candidates = _call_output_candidates_8616(function_ssa, high_value, high_provenance)
+    if not low_candidates or not high_candidates:
+        return CarryBorrowAliasFailure8616.CALL_OUTPUT_DEFINITION_MISSING
+    if len(low_candidates) != 1 or len(high_candidates) != 1:
+        return CarryBorrowAliasFailure8616.CALL_OUTPUT_DEFINITION_AMBIGUOUS
+    low_block, low_index, low_output = low_candidates[0]
+    high_block, high_index, high_output = high_candidates[0]
+    if (
+        low_block != link.low_arithmetic.block_addr
+        or high_block != link.high_base_arithmetic.block_addr
+        or low_index >= link.low_arithmetic.instr_index
+        or high_index >= link.high_base_arithmetic.instr_index
+    ):
+        return CarryBorrowAliasFailure8616.CALL_OUTPUT_ORDER_MISMATCH
+    return CarryBorrowCallOutputAlias8616(
+        provenance=low_provenance,
+        low_output=low_output,
+        high_output=high_output,
+    )
+
+
 def _project_link(
     semantics: CarryBorrowResolution8616,
     link: CarryBorrowLink8616,
+    function_ssa: SSAFunctionArtifact | None,
 ) -> CarryBorrowAliasResolution8616:
     low_result = link.low_result_write.instruction.dst
     high_result = link.high_result_write.instruction.dst
@@ -88,6 +181,9 @@ def _project_link(
         or high_lhs.memory is not None
     ):
         return _refusal(semantics, CarryBorrowAliasFailure8616.RESULT_CARRIER_MISMATCH)
+    lhs_call_output = _resolve_lhs_call_output_8616(function_ssa, link)
+    if isinstance(lhs_call_output, CarryBorrowAliasFailure8616):
+        return _refusal(semantics, lhs_call_output)
     source_memory = None
     source_constant = None
     if low_rhs.register_domain is not None and high_rhs.register_domain is not None:
@@ -121,6 +217,7 @@ def _project_link(
             low_rhs=low_rhs,
             high_lhs=high_lhs,
             high_rhs=high_rhs,
+            lhs_call_output=lhs_call_output,
             source_memory=source_memory,
             source_constant=source_constant,
         ),
@@ -129,16 +226,21 @@ def _project_link(
 
 def project_carry_borrow_aliases_8616(
     evidence: CarryBorrowEvidence8616,
+    function_ssa: SSAFunctionArtifact | None = None,
 ) -> CarryBorrowAliasEvidence8616:
     """Resolve exact Alias identities for all semantic carry/borrow outcomes."""
     resolutions: tuple[CarryBorrowAliasResolution8616, ...]
-    if not evidence.complete:
+    if function_ssa is not None and function_ssa.function_addr != evidence.function_addr:
+        resolutions = (
+            _refusal(None, CarryBorrowAliasFailure8616.FUNCTION_SSA_MISMATCH),
+        )
+    elif not evidence.complete:
         resolutions = (
             _refusal(None, CarryBorrowAliasFailure8616.SEMANTICS_INCOMPLETE),
         )
     else:
         resolutions = tuple(
-            _project_link(item, item.link)
+            _project_link(item, item.link, function_ssa)
             if item.verdict is CarryBorrowVerdict8616.PROVEN and item.link is not None
             else _refusal(item, CarryBorrowAliasFailure8616.SEMANTICS_REFUSED)
             for item in evidence.resolutions
@@ -164,6 +266,7 @@ __all__ = [
     "CarryBorrowAliasResolution8616",
     "CarryBorrowAliasStats8616",
     "CarryBorrowAliasVerdict8616",
+    "CarryBorrowCallOutputAlias8616",
     "CarryBorrowOperandAlias8616",
     "project_carry_borrow_aliases_8616",
 ]

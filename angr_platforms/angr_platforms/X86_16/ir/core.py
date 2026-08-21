@@ -10,7 +10,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import TypeAlias
 
 __all__ = [
@@ -19,6 +19,8 @@ __all__ = [
     "SegmentOrigin",
     "IRAddress",
     "IRBinaryValue",
+    "IRCallOutputProvenance8616",
+    "IRCallOutputShape8616",
     "IRCallStackEffect8616",
     "is_stack_address_8616",
     "IRAtom",
@@ -62,6 +64,30 @@ class SegmentOrigin(Enum):
     UNKNOWN = "unknown"
 
 
+class IRCallOutputShape8616(StrEnum):
+    """Binary-proven register layout produced by one machine call."""
+
+    AX = "ax"
+    DX_AX = "dx_ax"
+
+
+@dataclass(frozen=True, slots=True)
+class IRCallOutputProvenance8616:
+    """Exact call boundary that produced one retained register output."""
+
+    callsite_addr: int
+    target_addr: int
+    shape: IRCallOutputShape8616
+
+    def to_dict(self) -> dict[str, object]:
+        """Serialize exact call-output identity for diagnostics and workers."""
+        return {
+            "callsite_addr": self.callsite_addr,
+            "target_addr": self.target_addr,
+            "shape": self.shape.value,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class IRValue:
     """Typed scalar or storage value with optional exact access provenance."""
@@ -78,6 +104,7 @@ class IRValue:
     memory_access_size: int | None = None
     memory_access_insn: int | None = field(default=None, compare=False)
     source_tmp: int | None = field(default=None, compare=False)
+    call_output: IRCallOutputProvenance8616 | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Serialize this typed IR value for diagnostics and artifacts."""
@@ -95,6 +122,7 @@ class IRValue:
             "memory_access_size": self.memory_access_size,
             "memory_access_insn": self.memory_access_insn,
             "source_tmp": self.source_tmp,
+            "call_output": None if self.call_output is None else self.call_output.to_dict(),
         }
 
 

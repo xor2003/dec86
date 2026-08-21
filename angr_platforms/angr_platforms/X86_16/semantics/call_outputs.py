@@ -17,7 +17,14 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from ..callsite_summary import CallsiteSummary8616, callsite_machine_frame_kind_8616
-from ..ir import IRBlock, IRFunctionArtifact, IRInstr, IRValue, MemSpace
+from ..ir import (
+    IRBlock,
+    IRCallOutputProvenance8616,
+    IRFunctionArtifact,
+    IRInstr,
+    IRValue,
+    MemSpace,
+)
 from .call_output_contracts import (
     CallOutputFact8616,
     CallOutputFailure8616,
@@ -74,6 +81,7 @@ def _shape_8616(summary: CallsiteSummary8616) -> CallOutputShape8616 | None:
 def _output_values_8616(
     shape: CallOutputShape8616,
     callsite_addr: int,
+    target_addr: int,
 ) -> tuple[IRValue, ...]:
     """Return exact register slices defined by one used call result."""
     names = ("ax",) if shape is CallOutputShape8616.AX else ("ax", "dx")
@@ -83,6 +91,11 @@ def _output_values_8616(
             name=name,
             size=2,
             expr=("call_output", shape.value, f"{callsite_addr:#x}"),
+            call_output=IRCallOutputProvenance8616(
+                callsite_addr=callsite_addr,
+                target_addr=target_addr,
+                shape=shape,
+            ),
         )
         for name in names
     )
@@ -270,7 +283,7 @@ def materialize_call_outputs_8616(
                 )
             )
             continue
-        outputs = _output_values_8616(shape, instruction.addr)
+        outputs = _output_values_8616(shape, instruction.addr, summary.target_addr)
         injections[summary.return_addr] = tuple(
             IRInstr(
                 "CALL_OUTPUT",

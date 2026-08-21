@@ -1215,8 +1215,9 @@ Definition of failure:
 
 #### 8.4 Normalize split values and carry before type and structure recovery
 
-Status: in progress. The production pre-Lowering path computes one coherent
-Semantics -> Alias -> Widening artifact for exact ADC/SBB pairs. It preserves
+Status: complete for the current exact direct-carrier scope. The production
+pre-Lowering path computes one coherent Semantics -> Alias -> Widening artifact
+for exact ADC/SBB pairs. It preserves
 block-local VEX provenance, proves same-block or dominating CFG/phi flags,
 retains every original byte address for adjacent DS/ES memory sources, and
 refuses conflicting phi, segment, range, definition, or Alias evidence. Exact
@@ -1234,11 +1235,9 @@ unambiguous return edges before function SSA. Block-local SSA reserves entry
 version zero and honors the register version captured by each VEX temporary;
 this removes the prior pre-write/post-write version collision without weakening
 carry proof. The 18 focused call-output, call-effect, carry-output, and SSA tests
-pass, including a corrupted-version refusal. Sleep and ReInitBars remain open:
-the current sidecar-free Sleep run retains both calls and its wide arithmetic,
-but Tail Validation still rejects uninitialized `AX` and `SS:BP-4` because the
-exact `CALL_OUTPUT` producer has not yet been projected through Alias/Widening
-into Types/Lowering.
+pass, including a corrupted-version refusal. The exact `CALL_OUTPUT` producer
+now projects through Alias and Widening into Types/Lowering and closes the former
+Sleep and ReInitBars materialization gap.
 
 Reason: Split carriers and carry/borrow expressions obscure the single values
 needed by type propagation and explicit conditions. Widening must normalize
@@ -1276,6 +1275,38 @@ Definition of failure:
 - split values are fused by shape, adjacency, register convention, or AST text
 - semantic normalization occurs in Structuring, Rewrite, CLI, or export
 - a slice, carry, memory effect, condition, or call argument changes incorrectly
+
+Measured closure on 2026-08-21:
+
+- IR retains one immutable `DX:AX` call-output provenance through both SSA
+  pieces; Alias requires exact shared callsite, target, storage, and definition
+  identity before Widening accepts the pair
+- Types/Lowering joins the accepted call output, one exact four-byte `SS:BP`
+  source, one exact stack destination, and every carrier instruction address;
+  it creates one wide assignment only after the destination stack object exists
+- Structuring may place the call and carrier statements in the same immediate
+  statement group or in one exact adjacent nested `CStatements` sibling. The
+  Lowering placement owner accepts only carrier-only assignment/expression
+  leaves with complete address coverage; calls, unrelated effects, control-flow
+  nodes, ambiguous parents, and missing coverage remain classified hard failures
+- the real sidecar-free Sleep regression retains both clock calls, materializes
+  the wide goal arithmetic, and passes whole-tail validation. Source-backed and
+  sidecar-free ReInitBars and DrawTime regressions also pass, as does Beep's
+  call/argument/validation acceptance test
+- Beep's direct-address output keeps an unprototyped `Sleep()` declaration
+  because that deliberately incomplete one-function caller census cannot prove
+  a whole-program signature. The regression enforces this typed refusal while
+  still requiring the exact four-byte call argument and behavior
+- 13 focused placement/provenance tests cover same-group and nested positive
+  cases, idempotence, missing source materialization, unjoined calls, mixed
+  calls/effects, and ambiguous parent refusal. All edited production modules
+  remain below 350 lines
+- `quality-dev` passes Ruff `--fix`, MyPy for 94 source modules, the 38-module
+  mypyc import smoke, architecture/context/ownership checks, 1,523 focused
+  tests, and all three decompilation-quality comparisons
+- the required seven-worker default pipeline passes all three lanes: 1,523
+  focused tests, 4/4 validated Ultra QuickC fixtures, and all seven MS C tiny
+  compile/run/decompile/recompile/decompiled-run constructs
 
 #### 8.5 Collapse CFG regions only after conditions are explicit
 

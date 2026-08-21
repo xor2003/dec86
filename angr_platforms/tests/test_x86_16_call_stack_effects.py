@@ -64,7 +64,7 @@ def _summary(
     *,
     arg_widths: tuple[int, ...] = (),
     logical_arg_classes: tuple[CallsiteArgumentClass8616, ...] = (),
-    cleanup: int = 0,
+    cleanup: int | None = 0,
 ) -> CallsiteSummary8616:
     return CallsiteSummary8616(
         callsite_addr=0x1003,
@@ -98,6 +98,19 @@ def test_zero_argument_call_preserves_exact_bp_range_for_memory_ssa() -> None:
     function_ssa = build_x86_16_function_ssa(result.function)
     assert function_ssa.memory_stats.failure_count == 0
     assert len(function_ssa.memory_bindings) == 1
+
+
+def test_zero_argument_call_proves_zero_cleanup_when_summary_omits_it() -> None:
+    """No argument bytes means there is no caller/callee cleanup ambiguity."""
+    result = materialize_call_stack_effects_8616(
+        _artifact(),
+        {0x1003: _summary(cleanup=None)},
+    )
+
+    assert result.complete is True
+    assert result.facts[0].verdict is CallStackEffectVerdict8616.PROVEN
+    assert result.facts[0].effect.net_stack_delta == 0
+    assert result.facts[0].effect.preserved_ranges == (_slot(),)
 
 
 def test_missing_call_summary_materializes_typed_refusal() -> None:

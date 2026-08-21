@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
-from angr_platforms.X86_16.ir import IRBlock, IRFunctionArtifact, IRInstr, IRValue, MemSpace
+from angr_platforms.X86_16.ir import (
+    IRBlock,
+    IRCallOutputProvenance8616,
+    IRFunctionArtifact,
+    IRInstr,
+    IRValue,
+    MemSpace,
+)
 from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
 from angr_platforms.X86_16.semantics.call_output_contracts import (
     CallOutputFailure8616,
@@ -78,6 +85,16 @@ def test_dx_ax_call_outputs_are_definitions_on_exact_return_edge() -> None:
     mov_source = ssa_return.instrs[2].args[0]
     assert isinstance(mov_source, IRValue)
     assert mov_source.version == 0
+    expected_provenance = IRCallOutputProvenance8616(
+        callsite_addr=0x1003,
+        target_addr=0x2000,
+        shape=CallOutputShape8616.DX_AX,
+    )
+    assert all(
+        instruction.dst is not None and instruction.dst.call_output == expected_provenance
+        for instruction in ssa_return.instrs[:2]
+    )
+    assert mov_source.call_output == expected_provenance
 
 
 def test_call_output_refuses_return_block_with_bypass_predecessor() -> None:

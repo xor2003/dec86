@@ -12,15 +12,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TypeAlias
 
-from ..ir import IRValue
+from ..ir import IRCallOutputShape8616, IRValue
 
-
-class CallOutputShape8616(StrEnum):
-    """Supported binary-proven return register layouts."""
-
-    AX = "ax"
-    DX_AX = "dx_ax"
+CallOutputShape8616: TypeAlias = IRCallOutputShape8616
 
 
 class CallOutputVerdict8616(StrEnum):
