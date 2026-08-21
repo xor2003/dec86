@@ -328,11 +328,12 @@ Measured progress on 2026-08-17:
   eight source modules, type/docs ratchets, architecture/context, ownership,
   and 230 selected tests. The default pipeline remains 3/3 green.
 
-Remaining task-3 work: conditional, indexed, indirect, stack, overlapping, and
-multi-output live-out storage plus stack effects beyond closed terminal `ret`
-cleanup. Exact stable direct DS/ES must-write outputs and their caller-side
-condition uses now enter the same storage contract without being misprojected
-as scalar C returns. Input trials, exact reaching-definition binding,
+Remaining task-3 work: materializing conditional, indexed, indirect, stack,
+overlapping, and broader multi-output live-out storage plus stack effects beyond
+closed terminal `ret` cleanup. Exact stable direct DS/ES must-write outputs and
+their caller-side condition uses now enter the same storage contract only when
+every target-reaching caller path preserves the call output; mixed-path and
+partial-overwrite cases refuse. Input trials, exact reaching-definition binding,
 scalar/pointer register outputs, all strict/non-strict/equality `DX:AX`
 condition forms, recursive return pass-through propagation, SCC-wide
 production publication, and one transaction that updates definitions and
@@ -429,6 +430,12 @@ timeout could interrupt that destructor with the `BaseException`-derived
 `AnalysisTimeout`, producing an unraisable traceback after successful
 decompilation. Normal Python ownership now releases the bytearray, and a
 structural regression prevents the unnecessary destructor from returning.
+
+Fixed-budget decompiler measurements must also wait for codebase-memory indexing
+to become idle. One automatic graph refresh consumed about 6.6 CPUs and 8 GiB
+RSS, causing the unchanged 50-second startup catalog to close at 17/20 and then
+19/20 entries. The same edited tree closed at 20/20 once indexing finished; do
+not weaken discovery or validation timeouts to hide external host contention.
 
 ### 7. Borrow Reko's proven quality mechanisms without its unsafe fallbacks
 
@@ -924,9 +931,10 @@ final-callsite multiplicity validation, deterministic return/live-out trial
 collection, signed/unsigned strict and non-strict `DX:AX` ordering use typing,
 sign-insensitive equality/inequality use typing, recursive pass-through
 propagation, production SCC publication, and atomic callee plus callsite type
-application are complete. Exact direct DS/ES must-write live-outs with
-unclobbered caller condition uses are implemented, including a deterministic
-union when different callers consume disjoint proven outputs. Every project-
+application are complete. Exact direct DS/ES must-write live-outs with condition
+uses preserved on every target-reaching caller CFG path are implemented,
+including a deterministic union when different callers consume disjoint proven
+outputs. Every project-
 wide trial, return, and live-out consumer now reads the canonical Semantics-
 ready exact-function SSA artifact. RunMenu call-result-to-stack materialization
 is complete; broader memory live-outs and storage-contract recovery remain.
@@ -1272,15 +1280,17 @@ Measured progress on 2026-08-20:
   overlapping direct ranges, and DS/ES identity conflicts refuse atomically
   with closed evidence counters
 - Types/Lowering now binds one such output to the exact caller `CALL_OUTPUT`,
-  follows only an authoritative unclobbered SSA CFG path, and activates a
-  live-out trial only for the direct load named by canonical `ConditionIR`.
+  follows every authoritative SSA CFG path that can reach the candidate use,
+  and activates a live-out trial only for the direct load named by canonical
+  `ConditionIR`.
   VEX JCC replay loads do not become duplicate machine uses; absent uses remain
   inactive rather than being invented
 - signed/unsigned ordering, equality, and zero-use evidence retain exact
-  storage, callsite, definition, condition, and signedness. Intervening direct
-  clobbers become `NOT_REACHED`; indirect aliases, calls, cycles, incomplete
-  CFG, overlaps, target mismatch, conditional callee writes, and conflicting
-  signedness remain typed refusals
+  storage, callsite, definition, condition, and signedness. A full exact write
+  on every target-reaching path becomes `NOT_REACHED`; a clean/write join or a
+  partial overlapping write is `INTERVENING_WRITE`. Indirect aliases, calls,
+  cycles, incomplete CFG, target mismatch, conditional callee writes, and
+  conflicting signedness remain typed refusals
 - accepted memory outputs use the distinct `LIVE_OUT` role in the existing SCC
   contract. The C return-type adapter consumes only `RETURN`, so a memory-only
   function is not incorrectly emitted with a scalar return type
@@ -1347,6 +1357,26 @@ Measured progress on 2026-08-20:
   tests, 4/4 validated Ultra QuickC fixtures, and all seven MS C tiny build/run/
   decompile/recompile/decompiled-run constructs with matching exit code 255;
   no lane failed, skipped, or timed out
+- the prior caller path proof used `any(...)`, so one clean successor could
+  short-circuit traversal and hide a sibling write, unknown alias, or call before
+  both paths merged at the same condition load. A dedicated 292-line
+  Types/Lowering owner now computes reverse target reachability and joins every
+  target-reaching path as `CLEAN`, `OVERWRITTEN`, `NOT_REACHED`, or
+  `UNKNOWN_REFUSE`; disconnected branches and exits remain irrelevant
+- fifteen focused regressions cover mixed clean/write, clean/alias, clean/call,
+  partial overlap, full overwrite, disconnected load, and a blocked branch that
+  cannot reach the load. The materializer shrank from 340 to 242 lines, and the
+  new owner is registered in the Ruff, MyPy, architecture, and test-ownership
+  inventories
+- the strict sidecar-free edited-state gate passes 20/20 with zero fallback,
+  timeout, traceback, discovery, empty-output, validation, or policy failures.
+  All 12 bodies emitted by the timeout-limited pre-change run are byte-identical;
+  the edited run additionally emitted the eight pre-change timeout functions
+- the final `quality-dev` gate passes Ruff `--fix`, MyPy, the 38-module mypyc
+  compile/import smoke, architecture/context/ownership checks, 1,610 focused
+  tests, and all three quality comparisons. The mandatory seven-worker pipeline
+  passes the same 1,610 tests, 4/4 Ultra QuickC fixtures, and all seven MS C tiny
+  build/run/decompile/recompile/decompiled-run contracts with exit code 255
 - next implementation boundary: generalize live-out evidence only when Alias
   and SSA prove conditional, indexed, indirect, stack, overlapping, or
   additional multiple-output storage without inferring semantics from rendered

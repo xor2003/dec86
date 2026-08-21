@@ -11,11 +11,9 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
-from enum import StrEnum
 from operator import attrgetter
-from typing import TypeAlias
 
-from ..ir import AddressStatus, IRAddress, IRInstr, IRValue, MemSpace
+from ..ir import IRValue
 from ..ir.condition_ir import ConditionIR
 from ..ir.ssa_function import SSAFunctionArtifact
 from ..semantics.terminal_memory_output_contracts import (
@@ -37,59 +35,17 @@ from .interprocedural_storage_live_out_contracts import (
     MemoryLiveOutUseDisposition8616,
     MemoryLiveOutUseFact8616,
 )
+from .interprocedural_storage_live_out_paths import (
+    MemoryAccessRelation8616,
+    MemoryLiveOutPathVerdict8616,
+    memory_access_relation_8616,
+    memory_live_out_path_failure_8616,
+    prove_memory_live_out_path_8616,
+)
 from .interprocedural_storage_return_defs import (
-    CallOutputDefinitionResult8616,
     CallOutputDefinitionVerdict8616,
     resolve_storage_call_output_definitions_8616,
 )
-
-
-class _AccessRelation8616(StrEnum):
-    """Relationship between one IR memory access and an exact output range."""
-
-    DISJOINT = "disjoint"
-    EXACT = "exact"
-    OVERLAP = "overlap"
-    UNKNOWN = "unknown"
-
-
-_PathResult8616: TypeAlias = tuple[bool, frozenset[MemoryLiveOutFailureKind8616]]
-
-
-def _access_relation_8616(instruction: IRInstr, storage: StorageIdentity8616) -> _AccessRelation8616:
-    """Classify one LOAD/STORE against exact segmented storage."""
-    address = instruction.args[0] if instruction.args else None
-    target = storage.address
-    if not isinstance(address, IRAddress) or target is None:
-        return _AccessRelation8616.UNKNOWN
-    if address.space is MemSpace.SS or (
-        address.space in {MemSpace.DS, MemSpace.ES} and address.space is not target.space
-    ):
-        return _AccessRelation8616.DISJOINT
-    if address.space is not target.space:
-        return _AccessRelation8616.UNKNOWN
-    if address.base or address.status is not AddressStatus.STABLE or address.size <= 0:
-        return _AccessRelation8616.UNKNOWN
-    overlaps = address.offset < target.offset + target.size and target.offset < address.offset + address.size
-    if not overlaps:
-        return _AccessRelation8616.DISJOINT
-    if address.offset == target.offset and address.size == target.size and instruction.size == storage.width:
-        return _AccessRelation8616.EXACT
-    return _AccessRelation8616.OVERLAP
-
-
-def _successors_8616(artifact: SSAFunctionArtifact) -> dict[int, tuple[int, ...]] | None:
-    """Invert the authoritative predecessor map after exact census checks."""
-    blocks = {block.addr for block in artifact.blocks}
-    if set(artifact.predecessor_map) != blocks:
-        return None
-    successors: dict[int, set[int]] = {address: set() for address in blocks}
-    for successor, predecessors in artifact.predecessor_map.items():
-        if any(predecessor not in blocks for predecessor in predecessors):
-            return None
-        for predecessor in predecessors:
-            successors[predecessor].add(successor)
-    return {address: tuple(sorted(values)) for address, values in successors.items()}
 
 
 def _related_loads_8616(
@@ -102,73 +58,14 @@ def _related_loads_8616(
         for instr_index, instruction in enumerate(block.instrs):
             if instruction.op != "LOAD" or instruction.addr is None:
                 continue
-            relation = _access_relation_8616(instruction, storage)
+            relation = memory_access_relation_8616(instruction, storage)
             use = StorageUseEvidence8616(block.addr, instr_index, instruction.addr, callsite_addr)
-            if relation is _AccessRelation8616.EXACT:
+            if relation is MemoryAccessRelation8616.EXACT:
                 exact.append(use)
-            elif relation is _AccessRelation8616.OVERLAP:
+            elif relation is MemoryAccessRelation8616.OVERLAP:
                 overlap.append(use)
     order = attrgetter("block_addr", "instr_index", "instr_addr")
     return tuple(sorted(exact, key=order)), tuple(sorted(overlap, key=order))
-
-
-def _clean_path_8616(
-    artifact: SSAFunctionArtifact,
-    successors: dict[int, tuple[int, ...]],
-    definition: CallOutputDefinitionResult8616,
-    storage: StorageIdentity8616,
-    target: StorageUseEvidence8616,
-) -> _PathResult8616:
-    """Prove one path from CALL_OUTPUT to a load without intervening ambiguity."""
-    producer = definition.definitions[0]
-    blocks = {block.addr: block for block in artifact.blocks}
-    target_site = (target.block_addr, target.instr_index)
-    blockers: set[MemoryLiveOutFailureKind8616] = set()
-    visiting: set[tuple[int, int]] = set()
-    memo: dict[tuple[int, int], bool] = {}
-
-    def _visit(state: tuple[int, int]) -> bool:
-        if state in memo:
-            return memo[state]
-        if state in visiting:
-            blockers.add(MemoryLiveOutFailureKind8616.CFG_CYCLE)
-            return False
-        block = blocks.get(state[0])
-        if block is None or not 0 <= state[1] <= len(block.instrs):
-            blockers.add(MemoryLiveOutFailureKind8616.CFG_INCOMPLETE)
-            return False
-        visiting.add(state)
-        reached = blocked = False
-        for index in range(state[1], len(block.instrs)):
-            if (block.addr, index) == target_site:
-                reached = True
-                break
-            instruction = block.instrs[index]
-            if instruction.op == "CALL":
-                blockers.add(MemoryLiveOutFailureKind8616.INTERVENING_CALL)
-                blocked = True
-                break
-            if instruction.op not in {"LOAD", "STORE"}:
-                continue
-            relation = _access_relation_8616(instruction, storage)
-            if relation is _AccessRelation8616.UNKNOWN:
-                blockers.add(MemoryLiveOutFailureKind8616.INTERVENING_ALIAS)
-                blocked = True
-                break
-            if instruction.op == "STORE" and relation in {
-                _AccessRelation8616.EXACT,
-                _AccessRelation8616.OVERLAP,
-            }:
-                blocked = True
-                break
-        if not reached and not blocked:
-            reached = any(_visit((successor, 0)) for successor in successors[block.addr])
-        visiting.remove(state)
-        memo[state] = reached
-        return reached
-
-    start = (producer.block_addr, producer.instr_index + 1)
-    return _visit(start), frozenset(blockers)
 
 
 def _value_matches_8616(value: object, storage: StorageIdentity8616, use: StorageUseEvidence8616) -> bool:
@@ -263,40 +160,45 @@ def materialize_memory_live_out_candidate_8616(
             ),
             definition_failure=definitions.failure,
         )
-    successors = _successors_8616(artifact)
-    if successors is None:
+    overlap_paths = tuple(
+        prove_memory_live_out_path_8616(artifact, definitions, storage, use)
+        for use in overlapping_loads
+    )
+    path_failure = memory_live_out_path_failure_8616(overlap_paths)
+    if path_failure is not None:
         return MemoryLiveOutCandidateResult8616(
-            True, failure=MemoryLiveOutFailureKind8616.CFG_INCOMPLETE
+            True,
+            failure=path_failure,
         )
     if any(
-        _clean_path_8616(artifact, successors, definitions, storage, use)[0]
-        for use in overlapping_loads
+        path.verdict is MemoryLiveOutPathVerdict8616.CLEAN for path in overlap_paths
     ):
         return MemoryLiveOutCandidateResult8616(
             True, failure=MemoryLiveOutFailureKind8616.USE_OVERLAP
         )
     paths = tuple(
-        (candidate, _clean_path_8616(artifact, successors, definitions, storage, candidate[0]))
+        (
+            candidate,
+            prove_memory_live_out_path_8616(
+                artifact,
+                definitions,
+                storage,
+                candidate[0],
+            ),
+        )
         for candidate in condition_candidates
     )
-    clean_candidates = tuple(candidate for candidate, path in paths if path[0])
+    path_failure = memory_live_out_path_failure_8616(
+        tuple(path for _candidate, path in paths)
+    )
+    if path_failure is not None:
+        return MemoryLiveOutCandidateResult8616(True, failure=path_failure)
+    clean_candidates = tuple(
+        candidate
+        for candidate, path in paths
+        if path.verdict is MemoryLiveOutPathVerdict8616.CLEAN
+    )
     if not clean_candidates:
-        blockers = frozenset(blocker for _candidate, path in paths for blocker in path[1])
-        failure = next(
-            (
-                kind
-                for kind in (
-                    MemoryLiveOutFailureKind8616.INTERVENING_ALIAS,
-                    MemoryLiveOutFailureKind8616.INTERVENING_CALL,
-                    MemoryLiveOutFailureKind8616.CFG_INCOMPLETE,
-                    MemoryLiveOutFailureKind8616.CFG_CYCLE,
-                )
-                if kind in blockers
-            ),
-            None,
-        )
-        if failure is not None:
-            return MemoryLiveOutCandidateResult8616(True, failure=failure)
         fact = MemoryLiveOutUseFact8616(storage, MemoryLiveOutUseDisposition8616.NOT_REACHED)
         return MemoryLiveOutCandidateResult8616(True, fact=fact)
     if output.disposition is TerminalMemoryOutputDisposition8616.CONDITIONAL:

@@ -56,6 +56,7 @@ class MemoryLiveOutFailureKind8616(StrEnum):
     CFG_CYCLE = "cfg_cycle"
     INTERVENING_ALIAS = "intervening_alias"
     INTERVENING_CALL = "intervening_call"
+    INTERVENING_WRITE = "intervening_write"
     USE_OVERLAP = "use_overlap"
     CONDITION_NOT_FOUND = "condition_not_found"
     CONDITION_CONFLICT = "condition_conflict"

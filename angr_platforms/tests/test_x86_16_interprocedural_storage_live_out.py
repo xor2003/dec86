@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from angr_platforms.X86_16.ir import AddressStatus, IRAddress, IRInstr, IRValue, MemSpace
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR, ConditionOp
 from angr_platforms.X86_16.ir.function_ssa_registry import FunctionSSAArtifactStage8616
@@ -83,28 +84,69 @@ def _artifact(*instructions: IRInstr) -> SSAFunctionArtifact:
     )
 
 
+def _mixed_path_artifact(
+    *blocked_instructions: IRInstr,
+    blocked_reaches_load: bool = True,
+) -> SSAFunctionArtifact:
+    clean_block = 0x1004
+    blocked_block = 0x1006
+    merge_block = 0x1008
+    return SSAFunctionArtifact(
+        function_addr=CALLER,
+        blocks=(
+            SSABlock(CALLER, (_call(),), ()),
+            SSABlock(clean_block, (), ()),
+            SSABlock(blocked_block, blocked_instructions, ()),
+            SSABlock(merge_block, (_load(merge_block),), ()),
+        ),
+        predecessor_map={
+            CALLER: (),
+            clean_block: (CALLER,),
+            blocked_block: (CALLER,),
+            merge_block: (
+                (clean_block, blocked_block) if blocked_reaches_load else (clean_block,)
+            ),
+        },
+    )
+
+
+def _disconnected_load_artifact() -> SSAFunctionArtifact:
+    load_block = 0x1008
+    return SSAFunctionArtifact(
+        function_addr=CALLER,
+        blocks=(
+            SSABlock(CALLER, (_call(), _call(0x1002, 0x1100)), ()),
+            SSABlock(load_block, (_load(load_block),), ()),
+        ),
+        predecessor_map={CALLER: (), load_block: ()},
+    )
+
+
 def _output(
     disposition: TerminalMemoryOutputDisposition8616 = TerminalMemoryOutputDisposition8616.MUST_WRITE,
+    *,
+    size: int = 1,
 ) -> TerminalMemoryOutputFact8616:
-    return TerminalMemoryOutputFact8616(_address(), disposition, (), (CALLEE,))
+    return TerminalMemoryOutputFact8616(_address(size=size), disposition, (), (CALLEE,))
 
 
 def _condition(
     op: ConditionOp = "ne",
     *,
     load_addr: int = LOAD_ADDR,
+    size: int = 1,
 ) -> ConditionIR:
     return ConditionIR(
         op=op,
         lhs=IRValue(
             MemSpace.DS,
             offset=0x1234,
-            size=1,
-            memory_access_size=1,
+            size=size,
+            memory_access_size=size,
             memory_access_insn=load_addr,
         ),
-        rhs=IRValue(MemSpace.CONST, const=0, size=1),
-        width_bits=8,
+        rhs=IRValue(MemSpace.CONST, const=0, size=size),
+        width_bits=size * 8,
         producer_insn=load_addr,
     )
 
@@ -159,6 +201,71 @@ def test_exact_store_before_load_closes_as_not_reached() -> None:
     result = _materialize(_artifact(_call(), _store(), _load()))
 
     assert result.complete is True
+    assert result.fact is not None
+    assert result.fact.disposition is MemoryLiveOutUseDisposition8616.NOT_REACHED
+    assert result.trial is None
+
+
+def test_partial_overwrite_refuses_live_out_attribution() -> None:
+    result = _materialize(
+        _artifact(_call(), _store(), _load(size=2)),
+        output=_output(size=2),
+        conditions=(_condition(size=2),),
+    )
+
+    assert result.fact is None
+    assert result.trial is None
+    assert result.failure is MemoryLiveOutFailureKind8616.INTERVENING_WRITE
+
+
+@pytest.mark.parametrize(
+    ("blocker", "failure"),
+    (
+        ((_store(0x1006),), MemoryLiveOutFailureKind8616.INTERVENING_WRITE),
+        (
+            (_store(0x1006, base=("bx",)),),
+            MemoryLiveOutFailureKind8616.INTERVENING_ALIAS,
+        ),
+        ((_call(0x1006, 0x1100),), MemoryLiveOutFailureKind8616.INTERVENING_CALL),
+    ),
+)
+def test_mixed_clean_and_blocked_paths_refuse_live_out_attribution(
+    blocker: tuple[IRInstr, ...], failure: MemoryLiveOutFailureKind8616
+) -> None:
+    result = _materialize(
+        _mixed_path_artifact(*blocker),
+        conditions=(_condition(load_addr=0x1008),),
+    )
+
+    assert result.fact is None
+    assert result.trial is None
+    assert result.failure is failure
+
+
+def test_blocked_branch_that_cannot_reach_load_does_not_refuse_attribution() -> None:
+    result = _materialize(
+        _mixed_path_artifact(
+            _call(0x1006, 0x1100),
+            blocked_reaches_load=False,
+        ),
+        conditions=(_condition(load_addr=0x1008),),
+    )
+
+    assert result.complete is True
+    assert result.failure is None
+    assert result.fact is not None
+    assert result.fact.disposition is MemoryLiveOutUseDisposition8616.USED
+    assert result.trial is not None
+
+
+def test_disconnected_load_closes_as_not_reached_despite_unrelated_blocker() -> None:
+    result = _materialize(
+        _disconnected_load_artifact(),
+        conditions=(_condition(load_addr=0x1008),),
+    )
+
+    assert result.complete is True
+    assert result.failure is None
     assert result.fact is not None
     assert result.fact.disposition is MemoryLiveOutUseDisposition8616.NOT_REACHED
     assert result.trial is None
