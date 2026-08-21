@@ -704,6 +704,7 @@ QA_TYPED_FILES := \
 	inertia_decompiler/function_worker_policy.py \
 	inertia_decompiler/generated_c_artifacts.py \
 	inertia_decompiler/cli_batch_c_output.py \
+	inertia_decompiler/generated_external_function_contracts.py \
 	inertia_decompiler/generated_c_function_extraction.py \
 	inertia_decompiler/generated_translation_unit_assembly.py \
 	inertia_decompiler/cli_decompilation.py \
@@ -1354,6 +1355,7 @@ QA_RUFF_TARGETS := \
 	inertia_decompiler/segment_program_layout_reporting.py \
 	inertia_decompiler/generated_c_artifacts.py \
 	inertia_decompiler/cli_batch_c_output.py \
+	inertia_decompiler/generated_external_function_contracts.py \
 	inertia_decompiler/generated_c_function_extraction.py \
 	inertia_decompiler/generated_translation_unit_assembly.py \
 	inertia_decompiler/cli_decompilation.py \

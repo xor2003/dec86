@@ -60,16 +60,6 @@ class Memory:
         self.memory: bytearray = bytearray(size)
         self.a20gate: bool = False
 
-    def __del__(self) -> None:
-        """Best-effort cleanup during interpreter shutdown or timeout unwinding."""
-        try:
-            del self.memory
-            self.mem_size = 0
-        except Exception:
-            # Destructor paths can run while scan-safe timeouts are unwinding.
-            # Keep cleanup best-effort and never let finalization emit noise.
-            pass
-
     def dump_mem(self, addr: int, size: int) -> None:
         """Print a hex dump of the concrete memory backing store."""
         addr &= ~(0x10 - 1)

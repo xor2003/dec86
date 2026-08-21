@@ -12,6 +12,10 @@ def test_memory_initializes_default_concrete_store() -> None:
     assert memory.is_ena_a20gate() is False
 
 
+def test_memory_relies_on_gc_without_timeout_interruptible_finalizer() -> None:
+    assert "__del__" not in Memory.__dict__
+
+
 def test_memory_read_write_data_respects_bounds() -> None:
     memory = Memory(8)
 

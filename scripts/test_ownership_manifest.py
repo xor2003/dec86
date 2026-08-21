@@ -66,6 +66,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         owner="generated-translation-unit-assembly",
         paths=(
             "inertia_decompiler/cli_batch_c_output.py",
+            "inertia_decompiler/generated_external_function_contracts.py",
             "inertia_decompiler/generated_translation_unit_assembly.py",
             "scripts/generated_translation_unit_assembly.py",
         ),

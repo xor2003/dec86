@@ -5,6 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import bitstring
+import pytest
+import pyvex
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR, ConditionSource
 from angr_platforms.X86_16.ir.core import IRBinaryValue, IRCondition, IRValue, MemSpace
@@ -33,6 +35,74 @@ def test_direct_byte_test_mask_is_classified_before_a_jcc() -> None:
     )
 
     assert instruction.simple_semantics == ("test_abs_imm8", 0x1234, 1)
+
+
+def test_byte_register_copy_preserves_direct_load_condition_evidence(monkeypatch) -> None:
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
+
+    pyvex.lift(
+        bytes.fromhex("a0341288c380fb00750190c3"),
+        0x4000,
+        Arch86_16(),
+        opt_level=0,
+    )
+
+    conditions = Instruction_ANY._inertia_module_condition_cache[0x4000]
+    assert len(conditions) == 1
+    condition = conditions[0]
+    assert isinstance(condition, ConditionIR)
+    assert condition.op == "ne"
+    assert condition.width_bits == 8
+    assert condition.producer_insn == 0x4005
+    assert condition.producer_semantics == ("cmp_reg_imm8", "bl", 0)
+    assert condition.lhs == IRValue(
+        MemSpace.DS,
+        offset=0x1234,
+        size=1,
+        expr=("cmp-ds",),
+        memory_access_size=1,
+        memory_access_insn=0x4000,
+    )
+    assert condition.rhs == IRValue(
+        MemSpace.CONST,
+        const=0,
+        size=1,
+        expr=("cmp-imm",),
+    )
+
+
+@pytest.mark.parametrize(
+    "machine_code",
+    (
+        bytes.fromhex("a0341288c3fec380fb00750190c3"),
+        bytes.fromhex("a0341288e380fb00750190c3"),
+    ),
+    ids=("incremented-copy", "unknown-high-byte-copy"),
+)
+def test_byte_register_transform_clears_direct_load_condition_evidence(
+    monkeypatch,
+    machine_code: bytes,
+) -> None:
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
+
+    pyvex.lift(
+        machine_code,
+        0x4000,
+        Arch86_16(),
+        opt_level=0,
+    )
+
+    condition = Instruction_ANY._inertia_module_condition_cache[0x4000][0]
+    assert isinstance(condition, ConditionIR)
+    assert isinstance(condition.lhs, IRValue)
+    assert condition.lhs.space is MemSpace.REG
+    assert condition.lhs.name == "bl"
+    assert condition.lhs.size == 1
+    assert condition.lhs.memory_access_insn is None
 
 
 def test_direct_byte_test_mask_emits_exact_typed_access_evidence() -> None:

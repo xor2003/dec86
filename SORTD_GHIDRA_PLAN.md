@@ -172,6 +172,21 @@ Definition of failure:
 - any focused CLI/export, compilation, typing, documentation, or architecture
   gate fails
 
+Measured maintenance on 2026-08-21:
+
+- the real strict 20-function payload exposed three compatible return-contract
+  variants: K&R `unsigned short` versus `unsigned long`, and exact-parameter
+  `void` versus return-capable `int` declarations. These are now joined by one
+  typed export-contract owner; incompatible parameter or return classes remain
+  hard assembly conflicts
+- declaration joining moved into the 177-line
+  `generated_external_function_contracts.py` module, reducing
+  `generated_translation_unit_assembly.py` from 370 to 235 lines without
+  changing function bodies
+- direct binary candidate inventory and the selected function queue are again
+  reported as distinct counts; the strict gate now reports 20 queued and 20
+  materialized functions instead of relabeling 254 raw candidates as queued
+
 ### 2. Expand behavior proof beyond the sort core
 
 Status: complete for every source-selftested non-library function.
@@ -407,6 +422,13 @@ Definition of failure:
 - output order or hashes become nondeterministic, worker RSS exceeds the 2 GiB
   budget, or a worker failure is lost
 - measured wall time does not improve materially or semantic gates regress
+
+Measured maintenance on 2026-08-21: the frontend `Memory` wrapper no longer
+defines a custom destructor merely to delete its owned bytearray. A SIGALRM
+timeout could interrupt that destructor with the `BaseException`-derived
+`AnalysisTimeout`, producing an unraisable traceback after successful
+decompilation. Normal Python ownership now releases the bytearray, and a
+structural regression prevents the unnecessary destructor from returning.
 
 ### 7. Borrow Reko's proven quality mechanisms without its unsafe fallbacks
 
@@ -1307,6 +1329,24 @@ Measured progress on 2026-08-20:
   three lanes with 4/4 Ultra QuickC fixtures and all seven MS C tiny build/run/
   decompile/recompile/decompiled-run constructs; no lane failed, skipped, or
   timed out
+- the frontend now classifies `cmp r8, imm8` and transfers an exact low-byte
+  direct `DS`/`ES` provenance through an equal-width register copy. High-byte
+  and transformed carriers explicitly refuse transfer. VEX import retains the
+  parent 16-bit register storage identity while recording the one-byte effect
+  width
+- real producer and interprocedural regressions prove that
+  `mov al, [mem]; mov bl, al; cmp bl, 0` reaches the canonical exact-function
+  SSA artifact and materializes the required `LIVE_OUT` trial
+- the strict sidecar-free gate passes 20/20 attempted, classified, decompiled,
+  materialized, normalized, queued, raw, and selected functions with zero
+  timeout, traceback, discovery, empty-output, validation, or policy failures
+- the final edited-state `quality-dev` gate passes Ruff `--fix`, MyPy, the
+  38-module mypyc compile/import smoke, architecture/context/ownership checks,
+  1,604 focused tests, and all three generated-C quality comparisons
+- the mandatory seven-worker pipeline passes 3/3 lanes: the same 1,604 focused
+  tests, 4/4 validated Ultra QuickC fixtures, and all seven MS C tiny build/run/
+  decompile/recompile/decompiled-run constructs with matching exit code 255;
+  no lane failed, skipped, or timed out
 - next implementation boundary: generalize live-out evidence only when Alias
   and SSA prove conditional, indexed, indirect, stack, overlapping, or
   additional multiple-output storage without inferring semantics from rendered

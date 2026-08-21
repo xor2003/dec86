@@ -87,11 +87,11 @@ _RUNMENU_SIGNATURE_RE = re.compile(rf"\b{_WORD_TYPE_RE}\s+sub_102e0\s*\(\s*void\
 _RUNMENU_EXIT_CASE_RE = re.compile(r"\bcase\s+27\s*:\s*return\s+[^;\n]+;")
 _DRAWTIME_ADDR = 0x10498
 _DRAWTIME_SIGNATURE_RE = re.compile(
-    rf"\bshort\s+sub_10498\s*\(\s*{_WORD_TYPE_RE}\s+[A-Za-z_]\w*\s*\)"
+    rf"\bvoid\s+sub_10498\s*\(\s*{_WORD_TYPE_RE}\s+[A-Za-z_]\w*\s*\)"
 )
 _BEEP_ADDR = 0x10E70
 _BEEP_SIGNATURE_RE = re.compile(
-    rf"\b{_WORD_TYPE_RE}\s+sub_10e70\s*\(\s*{_WORD_TYPE_RE}\s+(?P<frequency>[A-Za-z_]\w*)\s*,\s*"
+    rf"\bvoid\s+sub_10e70\s*\(\s*{_WORD_TYPE_RE}\s+(?P<frequency>[A-Za-z_]\w*)\s*,\s*"
     rf"{_WORD_TYPE_RE}\s+(?P<duration>[A-Za-z_]\w*)\s*\)"
 )
 _UNINITIALIZED_BP4_LOCAL_RE = re.compile(r"^[^/\n;]+;\s*//\s*\[bp\+0x4\]", re.MULTILINE)
@@ -226,11 +226,11 @@ def evaluate_sortd_transcript(
         violations.append("RunMenu lacks its scalar binary-proven ESC return case")
     drawtime_segment = _function_transcript_segment(transcript, _DRAWTIME_ADDR)
     if not _DRAWTIME_SIGNATURE_RE.search(drawtime_segment) or _UNINITIALIZED_BP4_LOCAL_RE.search(drawtime_segment):
-        violations.append("DrawTime lacks its canonical scalar-return positive-BP signature")
+        violations.append("DrawTime lacks its canonical void positive-BP signature")
     beep_segment = _function_transcript_segment(transcript, _BEEP_ADDR)
     beep_signature = _BEEP_SIGNATURE_RE.search(beep_segment)
     if beep_signature is None or _UNINITIALIZED_BP4_LOCAL_RE.search(beep_segment):
-        violations.append("Beep lacks its scalar two-argument positive-BP signature")
+        violations.append("Beep lacks its void two-argument positive-BP signature")
     elif re.search(rf"\bif\s*\(\s*{re.escape(beep_signature.group('duration'))}\s*<\s*75\s*\)", beep_segment) is None:
         violations.append("Beep lacks its binary-proven minimum-duration guard")
     if empty_count > maximum_empty:

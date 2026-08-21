@@ -1541,6 +1541,7 @@ _PROMOTED_TYPED_FILES = (
     "scripts/check_generated_translation_unit.py",
     "scripts/generated_translation_unit_assembly.py",
     "inertia_decompiler/cli_batch_c_output.py",
+    "inertia_decompiler/generated_external_function_contracts.py",
     "inertia_decompiler/generated_c_function_extraction.py",
     "inertia_decompiler/generated_translation_unit_assembly.py",
     "scripts/check_sortd_generated_sort_core.py",

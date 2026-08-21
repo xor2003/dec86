@@ -8110,8 +8110,6 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
     print(f"/* binary: {args.binary} */")
     print(f"/* arch: {project.arch.name} */")
     print(f"/* entry: {project.entry:#x} */")
-    if direct_inventory_total is not None:
-        total_functions = max(total_functions, direct_inventory_total)
     print(f"/* functions queued for decompilation: {total_functions} */")
 
     if args.max_functions > 0 and total_functions > shown_total:

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pyvex
 from angr import options as o
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.ir import MemSpace
+from angr_platforms.X86_16.ir.vex_import import build_x86_16_ir_function_artifact
 from pyvex.expr import Get
 from pyvex.stmt import Put
 
@@ -43,3 +47,27 @@ def test_partial_cl_write_preserves_high_byte_for_later_full_cx_read() -> None:
     successor = simgr.active[0]
     assert successor.solver.eval(successor.regs.cx) == 0xAB05
     assert successor.solver.eval(successor.regs.ax) == 0xAB05
+
+
+def test_vex_import_preserves_byte_register_put_width() -> None:
+    project = decompile._build_project_from_bytes(
+        bytes.fromhex("a0341288c3c3"),
+        base_addr=0x1000,
+        entry_point=0x1000,
+    )
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
+
+    artifact = build_x86_16_ir_function_artifact(project, function)
+    byte_moves = tuple(
+        instruction
+        for instruction in artifact.blocks[0].instrs
+        if instruction.op == "MOV"
+        and instruction.dst is not None
+        and instruction.dst.space is MemSpace.REG
+        and instruction.dst.name in {"ax", "bx"}
+    )
+
+    assert tuple((move.dst.name, move.dst.size, move.size) for move in byte_moves) == (
+        ("ax", 2, 1),
+        ("bx", 2, 1),
+    )

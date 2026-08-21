@@ -33,7 +33,7 @@ short sub_101f0(
     unsigned short width,
     short height);
 
-short sub_10498(unsigned short row);
+void sub_10498(unsigned short row);
 
 short sub_106c8(unsigned short row);
 short sub_10678(void);
@@ -57,7 +57,7 @@ void sub_10a88(short maximum);
 void sub_10b50(void);
 void sub_10c18(void);
 void sub_10ce0(short low, short high);
-short sub_10e70(unsigned short frequency, short duration);
+void sub_10e70(unsigned short frequency, short duration);
 unsigned short sub_10f38(long wait);
 
 int sub_10a61(unsigned short maximum)

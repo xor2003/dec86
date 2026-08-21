@@ -81,6 +81,28 @@ def test_assembler_joins_compatible_external_parameter_array_bounds() -> None:
     assert result.conflicts == ()
 
 
+def test_assembler_joins_unprototyped_external_integer_returns() -> None:
+    first = "unsigned short helper();\nvoid first(void) {}\n"
+    second = "unsigned long helper();\nvoid second(void) {}\n"
+
+    result = assemble_generated_translation_unit((first, second))
+
+    assert result.source.count("unsigned long helper()") == 1
+    assert "unsigned short helper()" not in result.source
+    assert result.conflicts == ()
+
+
+def test_assembler_refuses_unproven_void_external_return() -> None:
+    first = "void helper(unsigned short value);\nvoid first(void) { helper(1); }\n"
+    second = "int helper(unsigned short value);\nvoid second(void) { helper(2); }\n"
+
+    result = assemble_generated_translation_unit((first, second))
+
+    assert result.source.count("int helper(unsigned short value)") == 1
+    assert "void helper(unsigned short value)" not in result.source
+    assert result.conflicts == ()
+
+
 def test_assembler_refuses_incompatible_external_parameter_contracts() -> None:
     first = "int helper(unsigned short value);\nvoid first(void) {}\n"
     second = "int helper(char *value);\nvoid second(void) {}\n"

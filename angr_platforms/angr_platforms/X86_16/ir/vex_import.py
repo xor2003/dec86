@@ -655,7 +655,7 @@ def _stmt_to_instr(
             offset = _stmt_offset(stmt)
             dst = IRValue(MemSpace.REG, name=register_name_from_offset(offset), size=2)
             src = _expr_to_value(_stmt_data(stmt), tmps, conditions)
-            return IRInstr(op="MOV", dst=dst, args=(src,), size=dst.size, addr=instruction_addr)
+            return IRInstr(op="MOV", dst=dst, args=(src,), size=src.size or dst.size, addr=instruction_addr)
         if tag == "Ist_Store":
             data_expr = _stmt_data(stmt)
             data = _expr_to_value(data_expr, tmps, conditions)

@@ -20,10 +20,10 @@ from scripts.check_sortd_sidecar_free import (
 def _passing_transcript() -> str:
     required_bodies = {
         0x102E0: "short sub_102e0(void) { switch (ax) { case 27: return 0; } }",
-        0x10498: "short sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return 0; }",
+        0x10498: "void sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return; }",
         0x10E70: (
-            "short sub_10e70(unsigned short arg, short arg_6) "
-            "{ if (arg_6 < 75) { arg_6 = 75; } return arg + arg_6; }"
+            "void sub_10e70(unsigned short arg, short arg_6) "
+            "{ if (arg_6 < 75) { arg_6 = 75; } return; }"
         ),
     }
     function_rows = "\n".join(
@@ -169,8 +169,8 @@ def test_sidecar_free_ratchet_rejects_runmenu_bare_return() -> None:
 
 def test_sidecar_free_ratchet_rejects_unmaterialized_positive_bp_arguments() -> None:
     transcript = _passing_transcript().replace(
-        "short sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return 0; }",
-        "short sub_10498(void) { unsigned short local_4; // [bp+0x4]\n return 0; }",
+        "void sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return; }",
+        "void sub_10498(void) { unsigned short local_4; // [bp+0x4]\n return; }",
     )
 
     result = evaluate_sortd_transcript(
@@ -183,13 +183,13 @@ def test_sidecar_free_ratchet_rejects_unmaterialized_positive_bp_arguments() -> 
     )
 
     assert not result.passed
-    assert "DrawTime lacks its canonical scalar-return positive-BP signature" in result.violations
+    assert "DrawTime lacks its canonical void positive-BP signature" in result.violations
 
 
-def test_sidecar_free_ratchet_rejects_beep_void_return() -> None:
+def test_sidecar_free_ratchet_rejects_beep_scalar_return() -> None:
     transcript = _passing_transcript().replace(
-        "short sub_10e70(unsigned short arg, short arg_6)",
         "void sub_10e70(unsigned short arg, short arg_6)",
+        "short sub_10e70(unsigned short arg, short arg_6)",
     )
 
     result = evaluate_sortd_transcript(
@@ -202,7 +202,7 @@ def test_sidecar_free_ratchet_rejects_beep_void_return() -> None:
     )
 
     assert not result.passed
-    assert "Beep lacks its scalar two-argument positive-BP signature" in result.violations
+    assert "Beep lacks its void two-argument positive-BP signature" in result.violations
 
 
 def test_sidecar_free_ratchet_rejects_beep_without_duration_guard() -> None:
@@ -221,10 +221,10 @@ def test_sidecar_free_ratchet_rejects_beep_without_duration_guard() -> None:
     assert "Beep lacks its binary-proven minimum-duration guard" in result.violations
 
 
-def test_sidecar_free_ratchet_rejects_drawtime_void_return() -> None:
+def test_sidecar_free_ratchet_rejects_drawtime_scalar_return() -> None:
     transcript = _passing_transcript().replace(
-        "short sub_10498(unsigned short arg)",
         "void sub_10498(unsigned short arg)",
+        "short sub_10498(unsigned short arg)",
     )
 
     result = evaluate_sortd_transcript(
@@ -237,7 +237,7 @@ def test_sidecar_free_ratchet_rejects_drawtime_void_return() -> None:
     )
 
     assert not result.passed
-    assert "DrawTime lacks its canonical scalar-return positive-BP signature" in result.violations
+    assert "DrawTime lacks its canonical void positive-BP signature" in result.violations
 
 
 def test_sidecar_free_ratchet_rejects_any_traceback():

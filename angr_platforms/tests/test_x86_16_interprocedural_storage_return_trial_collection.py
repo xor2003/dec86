@@ -7,6 +7,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import angr
+import pytest
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.caller_return_use_contracts import (
     CallerReturnUseEvidence8616,
@@ -244,16 +245,34 @@ def test_closed_unused_return_preserves_callsite_without_output_trial() -> None:
     assert contract is not None and contract.outputs == ()
 
 
-def test_direct_global_condition_materializes_live_out_without_c_return() -> None:
+@pytest.mark.parametrize(
+    ("caller_code", "caller_blocks", "caller_edges"),
+    (
+        (
+            bytes.fromhex("e81d00803e341200750190c3"),
+            {0x1000, 0x1003, 0x100A, 0x100B},
+            ((0x1000, 0x1003), (0x1003, 0x100A), (0x1003, 0x100B)),
+        ),
+        (
+            bytes.fromhex("e81d00a0341288c380fb00750190c3"),
+            {0x1000, 0x1003, 0x100D, 0x100E},
+            ((0x1000, 0x1003), (0x1003, 0x100D), (0x1003, 0x100E), (0x100D, 0x100E)),
+        ),
+    ),
+    ids=("direct-memory-condition", "same-block-register-copy-condition"),
+)
+def test_global_condition_materializes_live_out_without_c_return(
+    caller_code: bytes,
+    caller_blocks: set[int],
+    caller_edges: tuple[tuple[int, int], ...],
+) -> None:
     project, callee = _project(
-        bytes.fromhex("e81d00803e341200750190c3"),
-        {0x1000, 0x1003, 0x100A, 0x100B},
+        caller_code,
+        caller_blocks,
         bytes.fromhex("b001a23412c3"),
     )
     caller = project.kb.functions._functions[0]
-    caller.graph = SimpleNamespace(
-        edges=((0x1000, 0x1003), (0x1003, 0x100A), (0x1003, 0x100B))
-    )
+    caller.graph = SimpleNamespace(edges=caller_edges)
 
     result = _collect(
         project,

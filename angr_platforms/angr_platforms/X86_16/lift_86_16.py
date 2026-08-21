@@ -575,13 +575,16 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     return ("cmp_abs_imm8", dst_abs_mem8, src_imm8)
                 if src_reg8:
                     return ("cmp_abs_reg8", dst_abs_mem8, src_reg8)
+            if dst_reg8:
+                if src_imm8 is not None:
+                    return ("cmp_reg_imm8", dst_reg8, src_imm8)
             if dst_indexed_mem8 is not None and src_reg8:
                 return ("cmp_indexed_abs_reg8", dst_indexed_mem8, src_reg8)
             if dst_indexed_mem16 is not None and src_reg:
                 return ("cmp_indexed_abs_reg16", dst_indexed_mem16, src_reg)
             if dst_reg and src_indexed_mem16 is not None:
                 return ("cmp_reg_indexed_abs16", dst_reg, src_indexed_mem16)
-            if dst_reg8 and dst_reg8 in self._REG8_NAMES:
+            if dst_reg8:
                 src_abs_mem8 = self._direct_mem8(src)
                 if src_abs_mem8 is not None:
                     return ("cmp_reg_abs8", dst_reg8, src_abs_mem8)
@@ -632,6 +635,14 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 self._record_cmp_condition_source(lhs_val, rhs_val)
                 if not self._next_instruction_is_simple_jcc():
                     self._update_cmp_flags(lhs_val, rhs_val)
+                return True
+            if kind == "cmp_reg_imm8":
+                _, dst_reg, immediate = semantics
+                lhs_val = self.get(dst_reg, Type.int_8)
+                rhs_val = self.constant(immediate, Type.int_8)
+                self._record_cmp_condition_source(lhs_val, rhs_val, width_bits=8)
+                if not self._next_instruction_is_simple_jcc():
+                    self._update_cmp_flags8(lhs_val, rhs_val)
                 return True
             if kind in {"cmp_reg_abs8", "cmp_abs_reg8", "cmp_abs_imm8"}:
                 if kind == "cmp_reg_abs8":
@@ -1580,6 +1591,13 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             lhs = self._condition_reg_value_8616(lhs_reg, width_bits=8)
             rhs = self._condition_direct_ds_value_8616(offset, width_bits=8)
             return (lhs, rhs) if lhs is not None else None
+        if kind == "cmp_reg_imm8":
+            _, lhs_reg, imm = semantics
+            lhs = self._condition_proven_reg_value_8616(
+                lhs_reg, width_bits=8
+            ) or self._condition_reg_value_8616(lhs_reg, width_bits=8)
+            rhs = self._condition_const_value_8616(imm, width_bits=8)
+            return (lhs, rhs) if lhs is not None else None
         if kind == "cmp_abs_reg8":
             _, offset, rhs_reg = semantics
             lhs = self._condition_direct_ds_value_8616(offset, width_bits=8)
@@ -1801,7 +1819,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         dst_reg: str,
         src_reg: str,
     ) -> None:
-        """Copy exact-value provenance for a whole-register move."""
+        """Copy exact-value provenance between equal-width register views."""
         state = Instruction_ANY._inertia_condition_reg_value_state_8616
         if not isinstance(state, dict):
             return
@@ -1812,19 +1830,28 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         )
         if not isinstance(block_addr, int):
             return
-        source = state.get((int(block_addr), str(src_reg).lower()))
+        dst_name = str(dst_reg).lower()
+        src_name = str(src_reg).lower()
+        dst_key = self._LOW8_PARENT_REGS.get(dst_name, dst_name)
+        src_key = self._LOW8_PARENT_REGS.get(src_name, src_name)
+        if (dst_name in self._REG8_NAMES and dst_name not in self._LOW8_PARENT_REGS) or (
+            src_name in self._REG8_NAMES and src_name not in self._LOW8_PARENT_REGS
+        ):
+            state.pop((int(block_addr), dst_key), None)
+            return
+        source = state.get((int(block_addr), src_key))
         if (
             isinstance(source, _ConditionRegisterValueState8616)
             and source.next_addr <= int(self.addr)
         ):
-            state[(int(block_addr), str(dst_reg).lower())] = (
+            state[(int(block_addr), dst_key)] = (
                 _ConditionRegisterValueState8616(
                     value=source.value,
                     next_addr=int(self.addr) + int(self.cs.size),
                 )
             )
         else:
-            state.pop((int(block_addr), str(dst_reg).lower()), None)
+            state.pop((int(block_addr), dst_key), None)
 
     def _widen_condition_reg_value_state_8616(self, reg_name: str) -> None:
         """Carry a contiguous low-byte provenance through CBW/CWDE."""
@@ -2065,12 +2092,19 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
     def _transfer_full_lift_condition_value_semantics_8616(self) -> None:
         """Update typed value provenance after normal Instr16 machine lifting."""
         semantics = self.condition_value_semantics
-        if semantics is None and self.cs.mnemonic in {"inc", "dec"}:
+        byte_copy: tuple[str, str] | None = None
+        if semantics is None:
             operands = tuple(self.cs.operands)
-            reg_name = self._reg16_name(operands[0]) if len(operands) == 1 else None
-            if reg_name is not None and reg_name not in {"sp", "bp"}:
-                operation = "add" if self.cs.mnemonic == "inc" else "sub"
-                semantics = (f"{operation}_reg_imm16", reg_name, 1)
+            if self.cs.mnemonic == "mov" and len(operands) == 2:
+                dst_reg8 = self._reg8_name(operands[0])
+                src_reg8 = self._reg8_name(operands[1])
+                if dst_reg8 is not None and src_reg8 is not None:
+                    byte_copy = dst_reg8, src_reg8
+            if self.cs.mnemonic in {"inc", "dec"}:
+                reg_name = self._reg16_name(operands[0]) if len(operands) == 1 else None
+                if reg_name is not None and reg_name not in {"sp", "bp"}:
+                    operation = "add" if self.cs.mnemonic == "inc" else "sub"
+                    semantics = (f"{operation}_reg_imm16", reg_name, 1)
         result = self._arithmetic_result_value_from_semantics_8616(semantics) if semantics is not None else None
         written_registers = set(self._full_lift_written_condition_registers_8616())
         if semantics is not None:
@@ -2079,6 +2113,8 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             self._clear_condition_index_reg_state_8616(reg_name)
             self._clear_condition_reg_value_state_8616(reg_name)
         self._set_condition_arithmetic_result_state_8616(result)
+        if byte_copy is not None:
+            self._copy_condition_reg_value_state_8616(*byte_copy)
 
     def _shift_condition_index_reg_state_8616(self, reg_name: str, shift: int) -> None:
         state = Instruction_ANY._inertia_condition_index_reg_state_8616
