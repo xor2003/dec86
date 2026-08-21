@@ -88,7 +88,11 @@ def recover_zero_arg_call_return_stack_store_8616(
     width: int,
     source_register_name: str | None,
 ) -> ZeroArgCallReturnStackStoreEvidence8616 | None:
-    """Return unique typed evidence for an exact call-return stack store."""
+    """Return unique typed evidence for an exact zero-argument return store.
+
+    ``None`` is the collected representation for no positive caller cleanup;
+    legacy summaries may represent the same zero-argument state as ``0``.
+    """
     expected_register = {1: "al", 2: "ax"}.get(width)
     if inventory is None or expected_register is None or source_register_name != expected_register:
         return None
@@ -103,7 +107,7 @@ def recover_zero_arg_call_return_stack_store_8616(
         and summary.return_use_kind is CallsiteReturnUseKind8616.VALUE
         and summary.arg_count == 0
         and not summary.arg_widths
-        and summary.stack_cleanup == 0
+        and summary.stack_cleanup in (None, 0)
         and isinstance(summary.target_addr, int)
     )
     if len(candidates) != 1:

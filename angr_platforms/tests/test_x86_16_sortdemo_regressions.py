@@ -1435,6 +1435,7 @@ def test_sortd_runmenu_sidecar_free_preserves_binary_escape_exit(tmp_path: Path)
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     body = _function_body_from_stdout(result.stdout, "sub_102e0(")
+    assert re.search(r"local_2\s*=\s*sub_11292\(\);", body)
     assert re.search(r"case 27:\s*return 0;", body)
     for case_value in (27, 60, 62, 66, 69, 72, 73, 81, 83, 84):
         assert f"case {case_value}:" in body

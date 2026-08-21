@@ -59,7 +59,7 @@ def _summary() -> CallsiteSummary8616:
         kind="direct_near",
         arg_count=0,
         arg_widths=(),
-        stack_cleanup=0,
+        stack_cleanup=None,
         return_register="ax",
         return_used=True,
         return_shape="ax",
@@ -110,9 +110,10 @@ def _zero_arg_fact() -> DirectStackMoveFact8616:
     )
 
 
-def test_recovers_exact_zero_arg_call_return_stack_store() -> None:
-    """Accept the typed AL return stored immediately into the proven local."""
-    evidence = _recover(_summary())
+@pytest.mark.parametrize("stack_cleanup", (None, 0))
+def test_recovers_exact_zero_arg_call_return_stack_store(stack_cleanup: int | None) -> None:
+    """Accept current and legacy zero-argument cleanup representations."""
+    evidence = _recover(replace(_summary(), stack_cleanup=stack_cleanup))
 
     assert evidence is not None
     assert evidence.callsite_addr == 0x4010
@@ -127,6 +128,7 @@ def test_recovers_exact_zero_arg_call_return_stack_store() -> None:
         replace(_summary(), return_store_destination=("bp", -4)),
         replace(_summary(), return_store_width=2),
         replace(_summary(), arg_count=1, arg_widths=(2,), stack_cleanup=2),
+        replace(_summary(), stack_cleanup=2),
         replace(_summary(), return_use_kind=CallsiteReturnUseKind8616.CONDITION),
     ),
 )

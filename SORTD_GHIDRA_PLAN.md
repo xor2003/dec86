@@ -906,8 +906,8 @@ application are complete. Exact direct DS/ES must-write live-outs with
 unclobbered caller condition uses are implemented, including a deterministic
 union when different callers consume disjoint proven outputs. Every project-
 wide trial, return, and live-out consumer now reads the canonical Semantics-
-ready exact-function SSA artifact. RunMenu call-result-to-stack materialization,
-broader memory live-outs, and storage-contract recovery remain.
+ready exact-function SSA artifact. RunMenu call-result-to-stack materialization
+is complete; broader memory live-outs and storage-contract recovery remain.
 
 Reason: Calls and returns cross function boundaries where local inference is
 insufficient. Typed storage trials allow a complete caller census to prove
@@ -1290,18 +1290,27 @@ Measured progress on 2026-08-20:
   passes 3/3 lanes with the same 1,598 tests, 4/4 validated Ultra QuickC
   fixtures, and all seven MS C tiny build/run/decompile/recompile/decompiled-run
   constructs
-- a strict whole-file run with `--ignore-local-sidecar-hints` discovers all 20
-  SORTD functions but emits generated C for 19. RunMenu (`0x102e0`) correctly
-  fails the absolute final semantic guard because the menu-key byte at
-  `SS:BP-2` is read without the recovered `getch()` call-result assignment. The
-  live-out union cannot cause or repair this: RunMenu's sole caller consumes no
-  terminal memory output, so both the old and new joins have an empty live-out
-  set. This remains an open P0, not an accepted fallback
-- next implementation boundary: retain RunMenu's exact call-result-to-stack-
-  local assignment through IR, Alias, and Lowering. After that acceptance gate
-  passes, generalize live-out evidence only when Alias and SSA prove
-  conditional, indexed, indirect, stack, overlapping, or additional multiple
-  output storage without inferring semantics from rendered C
+- RunMenu's exact `call 0x11292; mov [bp-2], al` evidence was already collected
+  correctly, but the Types/Lowering classifier required the impossible
+  production state `stack_cleanup == 0`; callsite collection represents the
+  absence of a positive caller cleanup as `None`. The classifier now accepts
+  `None` or legacy `0` only when argument count and widths are exactly empty,
+  while contradictory positive cleanup remains a typed refusal
+- the strict sidecar-free RunMenu regression now materializes
+  `local_2 = sub_11292();`, retains the subsequent value argument and Escape
+  exit, passes strict portable-flat compilation, `validation=passed`, and clean
+  whole-tail validation. The permanent regression requires both the assignment
+  and Escape case; the focused callsite/Lowering surface passes 100 tests
+- the closed checkpoint passes Ruff `--fix`, MyPy, the 38-module mypyc compile/
+  import smoke, architecture/context/ownership checks, 1,598 focused tests, and
+  all three quality comparisons. The mandatory seven-worker pipeline passes all
+  three lanes with 4/4 Ultra QuickC fixtures and all seven MS C tiny build/run/
+  decompile/recompile/decompiled-run constructs; no lane failed, skipped, or
+  timed out
+- next implementation boundary: generalize live-out evidence only when Alias
+  and SSA prove conditional, indexed, indirect, stack, overlapping, or
+  additional multiple-output storage without inferring semantics from rendered
+  C
 
 Definition of done:
 
