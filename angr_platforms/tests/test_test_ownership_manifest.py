@@ -135,6 +135,7 @@ def test_selects_indexed_address_owner_for_ir_core():
         "angr_platforms/tests/test_x86_16_indexed_address_evidence.py",
         "angr_platforms/tests/test_x86_16_ir_core.py",
         "angr_platforms/tests/test_x86_16_ir_ssa.py",
+        "angr_platforms/tests/test_x86_16_vex_memory_access_fidelity.py",
     )
 
 

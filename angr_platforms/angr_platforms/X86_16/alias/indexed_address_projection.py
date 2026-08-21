@@ -143,7 +143,7 @@ def project_indexed_address_aliases_8616(
         tuple(facts),
         tuple(refusals),
         IndexedAddressAliasStats8616(
-            raw_fact_count=evidence.stats.raw_fact_count,
+            raw_fact_count=evidence.stats.normalized_fact_count,
             normalized_fact_count=materialized,
             classified_fact_count=materialized,
             materialized_count=materialized,

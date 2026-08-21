@@ -30,6 +30,7 @@ class IndexedAddressFailureKind8616(StrEnum):
 
     ADDRESS_UNPROVEN = "address_unproven"
     ACCESS_WIDTH_CONFLICT = "access_width_conflict"
+    ACCESS_MICRO_OP_CONFLICT = "access_micro_op_conflict"
     MULTIPLE_DYNAMIC_TERMS = "multiple_dynamic_terms"
     INDEX_VALUE_UNVERSIONED = "index_value_unversioned"
     INDEX_DEFINITION_MISSING = "index_definition_missing"
@@ -125,13 +126,15 @@ class IndexedAddressStats8616:
     classified_fact_count: int = 0
     materialized_count: int = 0
     failure_count: int = 0
+    coalesced_fact_count: int = 0
 
     @property
     def closed(self) -> bool:
         """Return whether every raw candidate has one fact or refusal."""
         return bool(
             self.raw_fact_count
-            == self.normalized_fact_count
+            == self.normalized_fact_count + self.coalesced_fact_count
+            and self.normalized_fact_count
             == self.classified_fact_count
             == self.materialized_count + self.failure_count
         )

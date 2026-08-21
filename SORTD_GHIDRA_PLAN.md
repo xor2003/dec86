@@ -327,6 +327,26 @@ Measured progress on 2026-08-17:
   surface passes 56 tests; its changed-file gate passes Ruff `--fix`, MyPy for
   eight source modules, type/docs ratchets, architecture/context, ownership,
   and 230 selected tests. The default pipeline remains 3/3 green.
+- VEX import now resolves callable pyvex result types through the block type
+  environment and converts their bit widths to exact byte widths. Byte
+  interrupt stores therefore remain byte stores through IR, Lowering, and
+  final validation instead of being silently promoted to words.
+- IR owns two lossless normalizations: exact same-instruction little-endian
+  byte micro-operations coalesce into one machine access, and an exact
+  JCC-only transport load is rebound to the immediately preceding CMP value.
+  Frontend VEX topology remains unchanged because altering it regressed the
+  Ultra QuickC `args` control flow and duplicated one distinct call argument.
+- The fresh sidecar-free SORTD indexed-address census closes at 42 raw facts,
+  36 normalized facts, six coalesced facts, 36 classified facts, 35 Alias
+  materializations, and one explicit refusal. Collector parity reports 31
+  matches, four Alias-only pointer accesses in `0x107b8`, eight legacy-only
+  BP/SS false positives, and zero identity conflicts.
+- The complete checkpoint passes the 499-test changed-file gate, a broader
+  112-pass/65-skip semantic selection, all 1,673 default-pipeline tests, all
+  four Ultra QuickC fixtures, and all seven MS C tiny compile/decompile/
+  recompile/runtime cases. The hard gate also passes Ruff `--fix`, strict
+  MyPy, architecture/context/ownership checks, mypyc compile/import smoke for
+  38 modules, and all three generated-C quality comparisons.
 
 Remaining task-3 work: materializing indexed, indirect, stack, and broader
 multi-output live-out storage plus stack effects beyond closed terminal `ret`
@@ -1593,28 +1613,31 @@ Measured progress on 2026-08-21:
   stdout (or `--report-out PATH`); the durable measured report and work order
   are recorded in this section, while the JSON is reproducible and is not kept
   as a temporary repository artifact
-- the 20-function SORTD inventory closes with 49 IR candidates, 47 accepted
-  Alias facts, 2 typed IR/Alias refusals, 29 matched collector keys, 18
-  Alias-only keys, 10 legacy-only keys, and no duplicates; 9 function reports
-  are exact and 11 remain divergent
-- mismatch classification accounts for all 28 unmatched keys: 8 identity
-  conflicts, 12 Alias-only keys without a late candidate, and 8 legacy-only
-  keys without an IR candidate; no mismatch is hidden behind an IR or Alias
-  refusal
+- the 20-function SORTD inventory now closes from 42 raw frontend memory
+  micro-operations to 36 normalized machine accesses: 6 exact
+  same-instruction little-endian pairs are coalesced, 35 facts reach Alias,
+  and 1 remains a typed refusal
+- collector parity now has 31 matched keys, 4 Alias-only keys, 8 legacy-only
+  keys, no duplicates, and no identity conflicts; 17 function reports are
+  exact and 3 remain divergent
 - machine-instruction review proves that the 8 legacy-only keys are late
   collector false positives: each uses BP-based addressing and therefore SS,
   while the legacy global collector incorrectly reports DS
-- two identity families expose earlier provenance debt: `push word ptr
-  [bx+0x136]` at `0x100cb` is imported as two byte loads, and `mov byte ptr
-  [bx+0x8f1], 7` at `0x1064c` is imported as a two-byte store; comparison-load
-  facts in several sort functions also retain the following JCC address rather
-  than the CMP instruction that owns the memory effect
-- implementation order is now: (1) preserve atomic machine access width and
-  owning instruction address in frontend/IR, (2) rerun the whole-SORTD census
-  and close or explicitly prove every identity conflict, (3) classify the
-  Alias-only superset as pointer access versus bounded aggregate evidence, and
-  only then (4) migrate `widening/global_object_layout.py` to Alias-projected
-  facts; Widening must not consume the current inventory as semantic evidence
+- the former width/provenance conflicts are closed at their authoritative
+  boundaries: VEX result widths are resolved against the IRSB type environment,
+  IR coalesces only exact same-instruction contiguous micro-operations without
+  changing the frontend byte-access ABI, and IR import rebinds only an exact
+  JCC transport load to the identical immediately preceding CMP value; the
+  established frontend VEX shape remains unchanged for angr structuring
+- the 4 remaining Alias-only accesses are the two pointer-argument loads and
+  two pointer-argument stores in function `0x107b8` (`Swaps` in the reviewed
+  source); they are valid Alias evidence but are not bounded global aggregate
+  evidence
+- implementation order is now: (1) [done] fix machine width and owning
+  instruction provenance, (2) [done] close the whole-SORTD identity-conflict
+  census, (3) classify Alias facts as pointer access versus bounded aggregate
+  evidence, and only then (4) migrate `widening/global_object_layout.py` to the
+  Alias projection; Widening must not consume the current inventory directly
 
 Do not borrow Ghidra's fallback assumption that an unlocked indexed range has
 at least four elements (`varmap.cc:1215-1219`). InitBars' wrong `% 0x60b`,

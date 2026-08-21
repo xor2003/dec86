@@ -10,6 +10,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from functools import partial
 from typing import Any, Protocol, cast
 
 from ..analysis.alias import storage_of
@@ -34,7 +35,14 @@ from .ssa import build_x86_16_block_local_ssa
 from .ssa_function import build_x86_16_function_ssa
 from .vex_addressing import SegmentHintMap, block_segment_hints, expr_to_address
 from .vex_condition_lifting import build_condition_from_binop, expr_to_condition
+from .vex_condition_transport import (
+    VexConditionTransportNormalizer8616,
+    VexConditionTransportStats8616,
+    aggregate_vex_condition_transport_stats_8616,
+    build_vex_condition_transport_layout_8616,
+)
 from .vex_control_flow import terminal_control_flow_instr_8616
+from .vex_types import vex_expr_size_bytes
 
 __all__ = (
     "apply_x86_16_vex_ir_artifact",
@@ -55,12 +63,6 @@ class _VexConstBoundary(Protocol):
     value: object
 
 
-class _VexResultSizeBoundary(Protocol):
-    """Minimal pyvex result-size surface consumed by IR import."""
-
-    value: object
-
-
 class _VexExprBoundary(Protocol):
     """Minimal pyvex expression surface consumed by IR import."""
 
@@ -70,8 +72,6 @@ class _VexExprBoundary(Protocol):
     op: object
     args: object
     con: _VexConstBoundary | None
-    result_size: _VexResultSizeBoundary | None
-    ty: object
     addr: object
 
 
@@ -93,6 +93,7 @@ class _VexBlockBoundary(Protocol):
 
     statements: object
     next: object
+    tyenv: object
 
 
 class _BlockBoundary(Protocol):
@@ -235,34 +236,6 @@ def _expr_const(expr: object | None) -> _VexConstBoundary | None:
         return None
 
 
-def _expr_result_size(expr: object | None) -> object | None:
-    """Return a VEX result-size value when present."""
-    if expr is None:
-        return None
-    try:
-        result_size = cast(_VexExprBoundary, expr).result_size
-    except AttributeError:
-        return None
-    if result_size is None:
-        return None
-    if isinstance(result_size, int):
-        return result_size
-    try:
-        return result_size.value
-    except AttributeError:
-        return result_size
-
-
-def _expr_ty(expr: object | None) -> object | None:
-    """Return a VEX expression type token when present."""
-    if expr is None:
-        return None
-    try:
-        return cast(_VexExprBoundary, expr).ty
-    except AttributeError:
-        return None
-
-
 def _stmt_tag(stmt: object | None) -> str:
     """Return a VEX statement tag from the pyvex boundary."""
     if stmt is None:
@@ -371,6 +344,16 @@ def _vex_next(vex: _VexBlockBoundary | None) -> object | None:
         return None
 
 
+def _vex_type_environment(vex: _VexBlockBoundary | None) -> object | None:
+    """Return the external IRSB type environment used by VEX width methods."""
+    if vex is None:
+        return None
+    try:
+        return vex.tyenv
+    except AttributeError:
+        return None
+
+
 def _function_addr(function: object) -> int:
     """Return an angr function address from the boundary object."""
     try:
@@ -444,31 +427,29 @@ def _const(expr: object | None) -> int | None:
         return None
 
 
-def _int_size(expr: object | None, default: int = 2) -> int:
+def _int_size(
+    expr: object | None,
+    default: int = 2,
+    *,
+    type_environment: object | None = None,
+) -> int:
     """Return the byte width advertised by a VEX expression boundary."""
-    size = _expr_result_size(expr)
-    if isinstance(size, int):
-        return size
-    vex_type_sizes = {
-        "Ity_I1": 1,
-        "Ity_I8": 1,
-        "Ity_I16": 2,
-        "Ity_I32": 4,
-        "Ity_I64": 8,
-        "Ity_I128": 16,
-        "Ity_I256": 32,
-    }
-    type_size = vex_type_sizes.get(str(_expr_ty(expr) or ""))
-    if type_size is not None:
-        return type_size
-    try:
-        return _external_int(size or default)
-    except Exception:  # noqa: BLE001
-        return default
+    return vex_expr_size_bytes(
+        expr,
+        type_environment=type_environment,
+        default=default,
+    )
 
 
-def _expr_to_value(expr: object, tmps: _TmpValues, conditions: _TmpConditions) -> IRValue:
+def _expr_to_value(
+    expr: object,
+    tmps: _TmpValues,
+    conditions: _TmpConditions,
+    *,
+    type_environment: object | None = None,
+) -> IRValue:
     """Convert a VEX expression boundary into a typed IR value."""
+    convert = partial(_expr_to_value, type_environment=type_environment)
 
     def _impl() -> IRValue:
         def _unop_value() -> IRValue:
@@ -476,7 +457,7 @@ def _expr_to_value(expr: object, tmps: _TmpValues, conditions: _TmpConditions) -
             op = _expr_op(expr, "unop")
             if not args:
                 return IRValue(MemSpace.UNKNOWN, name=op, expr=("empty_unop",))
-            inner = _expr_to_value(args[0], tmps, conditions)
+            inner = convert(args[0], tmps, conditions)
             return IRValue(
                 inner.space,
                 name=inner.name,
@@ -492,8 +473,8 @@ def _expr_to_value(expr: object, tmps: _TmpValues, conditions: _TmpConditions) -
             args = _expr_args(expr)
             if len(args) != 2:
                 return IRValue(MemSpace.TMP, name=f"expr:{op}", expr=(op,))
-            left = _expr_to_value(args[0], tmps, conditions)
-            right = _expr_to_value(args[1], tmps, conditions)
+            left = convert(args[0], tmps, conditions)
+            right = convert(args[1], tmps, conditions)
             cond = build_condition_from_binop(op, left, right)
             if cond is not None:
                 return IRValue(MemSpace.TMP, name=f"cond:{cond.op}", size=1, expr=(op,))
@@ -528,9 +509,17 @@ def _expr_to_value(expr: object, tmps: _TmpValues, conditions: _TmpConditions) -
             return IRValue(MemSpace.TMP, name=f"t{tmp_id}")
         if tag == "Iex_Get":
             name = register_name_from_offset(_expr_offset(expr))
-            return IRValue(MemSpace.REG, name=name, size=_int_size(expr))
+            return IRValue(
+                MemSpace.REG,
+                name=name,
+                size=_int_size(expr, type_environment=type_environment),
+            )
         if tag == "Iex_Const":
-            return IRValue(MemSpace.CONST, const=_const(expr), size=_int_size(expr))
+            return IRValue(
+                MemSpace.CONST,
+                const=_const(expr),
+                size=_int_size(expr, type_environment=type_environment),
+            )
         if tag == "Iex_Unop":
             return _unop_value()
         if tag == "Iex_Binop":
@@ -540,10 +529,15 @@ def _expr_to_value(expr: object, tmps: _TmpValues, conditions: _TmpConditions) -
                 _expr_addr(expr),
                 tmps,
                 conditions,
-                expr_to_value=_expr_to_value,
-                size=_int_size(expr),
+                expr_to_value=convert,
+                size=_int_size(expr, type_environment=type_environment),
             )
-            return IRValue(MemSpace.TMP, name="load", size=addr.size or _int_size(expr), expr=("load",))
+            return IRValue(
+                MemSpace.TMP,
+                name="load",
+                size=addr.size or _int_size(expr, type_environment=type_environment),
+                expr=("load",),
+            )
         return IRValue(MemSpace.UNKNOWN, name=tag or "expr")
 
     return _impl()
@@ -557,8 +551,10 @@ def _stmt_to_instr(
     instruction_addr: int | None,
     segment_hints: SegmentHintMap,
     tmp_exprs: _TmpExprs,
+    type_environment: object | None,
 ) -> IRInstr | None:
     """Convert one VEX statement boundary into a typed IR instruction."""
+    convert = partial(_expr_to_value, type_environment=type_environment)
 
     def _impl() -> IRInstr | None:
         tag = _stmt_tag(stmt)
@@ -570,7 +566,7 @@ def _stmt_to_instr(
             dst = IRValue(
                 MemSpace.TMP,
                 name=f"t{tmp_id}",
-                size=_int_size(data),
+                size=_int_size(data, type_environment=type_environment),
                 source_tmp=tmp_id,
             )
             if data_tag == "Iex_Load":
@@ -578,38 +574,44 @@ def _stmt_to_instr(
                     _expr_addr(data),
                     tmps,
                     conditions,
-                    expr_to_value=_expr_to_value,
-                    size=_int_size(data),
+                    expr_to_value=convert,
+                    size=_int_size(data, type_environment=type_environment),
                     segment_hints=segment_hints,
                     tmp_exprs=tmp_exprs,
                 )
                 tmps[tmp_id] = IRValue(
                     MemSpace.TMP,
                     name=f"load_t{tmp_id}",
-                    size=_int_size(data),
+                    size=_int_size(data, type_environment=type_environment),
                     expr=("load",),
                     source_tmp=tmp_id,
                 )
-                return IRInstr(op="LOAD", dst=dst, args=(addr,), size=_int_size(data), addr=instruction_addr)
+                return IRInstr(
+                    op="LOAD",
+                    dst=dst,
+                    args=(addr,),
+                    size=_int_size(data, type_environment=type_environment),
+                    addr=instruction_addr,
+                )
             if data_tag == "Iex_Binop":
                 op = _expr_op(data, "BINOP")
                 args = _expr_args(data)
                 if len(args) == 2:
-                    left = _expr_to_value(args[0], tmps, conditions)
-                    right = _expr_to_value(args[1], tmps, conditions)
+                    left = convert(args[0], tmps, conditions)
+                    right = convert(args[1], tmps, conditions)
                     if any(token in op for token in ("Cmp", "And", "Or")):
                         conditions[tmp_id] = expr_to_condition(
                             data,
                             tmps,
                             conditions,
-                            expr_to_value=_expr_to_value,
+                            expr_to_value=convert,
                             tmp_exprs=tmp_exprs,
                         )
                     else:
                         cond = build_condition_from_binop(op, left, right)
                         if cond is not None:
                             conditions[tmp_id] = cond
-                    value = _expr_to_value(data, tmps, conditions)
+                    value = convert(data, tmps, conditions)
                     tmps[tmp_id] = IRValue(
                         value.space,
                         name=value.name,
@@ -629,7 +631,7 @@ def _stmt_to_instr(
                         addr=instruction_addr,
                     )
             if data_tag == "Iex_ITE":
-                cond = expr_to_condition(data, tmps, conditions, expr_to_value=_expr_to_value, tmp_exprs=tmp_exprs)
+                cond = expr_to_condition(data, tmps, conditions, expr_to_value=convert, tmp_exprs=tmp_exprs)
                 if not (
                     cond.op == "nonzero"
                     and len(cond.args) == 1
@@ -638,7 +640,7 @@ def _stmt_to_instr(
                     and cond.args[0].name == "Iex_ITE"
                 ):
                     conditions[tmp_id] = cond
-            value = _expr_to_value(data, tmps, conditions)
+            value = convert(data, tmps, conditions)
             tmps[tmp_id] = IRValue(
                 value.space,
                 name=value.name,
@@ -654,16 +656,16 @@ def _stmt_to_instr(
         if tag == "Ist_Put":
             offset = _stmt_offset(stmt)
             dst = IRValue(MemSpace.REG, name=register_name_from_offset(offset), size=2)
-            src = _expr_to_value(_stmt_data(stmt), tmps, conditions)
+            src = convert(_stmt_data(stmt), tmps, conditions)
             return IRInstr(op="MOV", dst=dst, args=(src,), size=src.size or dst.size, addr=instruction_addr)
         if tag == "Ist_Store":
             data_expr = _stmt_data(stmt)
-            data = _expr_to_value(data_expr, tmps, conditions)
+            data = convert(data_expr, tmps, conditions)
             addr = expr_to_address(
                 _stmt_addr(stmt),
                 tmps,
                 conditions,
-                expr_to_value=_expr_to_value,
+                expr_to_value=convert,
                 size=data.size,
                 segment_hints=segment_hints,
                 tmp_exprs=tmp_exprs,
@@ -671,23 +673,31 @@ def _stmt_to_instr(
             return IRInstr(op="STORE", dst=None, args=(addr, data), size=data.size, addr=instruction_addr)
         if tag == "Ist_Exit":
             cond = expr_to_condition(
-                _stmt_guard(stmt), tmps, conditions, expr_to_value=_expr_to_value, tmp_exprs=tmp_exprs
+                _stmt_guard(stmt), tmps, conditions, expr_to_value=convert, tmp_exprs=tmp_exprs
             )
-            target = _expr_to_value(_stmt_dst(stmt), tmps, conditions)
+            target = convert(_stmt_dst(stmt), tmps, conditions)
             return IRInstr(op="CJMP", dst=None, args=(cond, target), size=0, addr=instruction_addr)
         return None
 
     return _impl()
 
 
-def _block_to_ir(block: object) -> IRBlock:
+def _block_to_ir(
+    block: object,
+) -> tuple[IRBlock, VexConditionTransportStats8616]:
     """Import one angr block boundary into a typed IR block."""
 
-    def _impl() -> IRBlock:
+    def _impl() -> tuple[IRBlock, VexConditionTransportStats8616]:
         vex = _block_vex(block)
         addr = _block_addr(block)
         if vex is None:
-            return IRBlock(addr=addr, refusals=(IRRefusal("missing_vex", "block has no vex IR", addr),))
+            return (
+                IRBlock(
+                    addr=addr,
+                    refusals=(IRRefusal("missing_vex", "block has no vex IR", addr),),
+                ),
+                VexConditionTransportStats8616(),
+            )
         tmps: _MutableTmpValues = {}
         conditions: _MutableTmpConditions = {}
         tmp_exprs: _TmpExprs = {}
@@ -695,6 +705,10 @@ def _block_to_ir(block: object) -> IRBlock:
         refusals: list[IRRefusal] = []
         segment_hints = block_segment_hints(block)
         statements = _vex_statements(vex)
+        transport = VexConditionTransportNormalizer8616(
+            build_vex_condition_transport_layout_8616(statements)
+        )
+        type_environment = _vex_type_environment(vex)
         instruction_addr: int | None = None
         for stmt in statements:
             tag = _stmt_tag(stmt)
@@ -708,11 +722,20 @@ def _block_to_ir(block: object) -> IRBlock:
                 instruction_addr=instruction_addr,
                 segment_hints=segment_hints,
                 tmp_exprs=tmp_exprs,
+                type_environment=type_environment,
             )
             if instr is None:
                 if tag:
                     refusals.append(IRRefusal("unsupported_stmt", f"unsupported VEX statement {tag}", addr))
                 continue
+            if instr.op == "LOAD" and tag == "Ist_WrTmp":
+                tmp_id = _stmt_tmp(stmt)
+                loaded_value = tmps.get(tmp_id)
+                if loaded_value is not None:
+                    replacement = transport.observe_load(instr, loaded_value, tmp_id)
+                    if replacement is not None:
+                        tmps[tmp_id] = replacement
+                        continue
             instrs.append(instr)
         terminal = terminal_control_flow_instr_8616(vex, instruction_addr)
         if terminal is not None:
@@ -727,11 +750,14 @@ def _block_to_ir(block: object) -> IRBlock:
         next_const = _const(_vex_next(vex))
         if next_const is not None:
             successor_addrs.append(int(next_const))
-        return IRBlock(
-            addr=addr,
-            instrs=tuple(instrs),
-            refusals=tuple(refusals),
-            successor_addrs=tuple(sorted(dict.fromkeys(successor_addrs))),
+        return (
+            IRBlock(
+                addr=addr,
+                instrs=tuple(instrs),
+                refusals=tuple(refusals),
+                successor_addrs=tuple(sorted(dict.fromkeys(successor_addrs))),
+            ),
+            transport.stats(),
         )
 
     return _impl()
@@ -741,6 +767,7 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
     """Build a typed IR function artifact from an angr function boundary."""
     blocks: list[IRBlock] = []
     refusals: list[IRRefusal] = []
+    transport_reports: list[VexConditionTransportStats8616] = []
     project_boundary = cast(_ProjectBoundary, project)
     for block_addr in _function_block_addrs(function):
         try:
@@ -748,8 +775,9 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
         except Exception as ex:  # noqa: BLE001
             refusals.append(IRRefusal("block_decode_failed", str(ex), _external_int(block_addr)))
             continue
-        ir_block = _block_to_ir(block)
+        ir_block, transport_report = _block_to_ir(block)
         blocks.append(ir_block)
+        transport_reports.append(transport_report)
         refusals.extend(ir_block.refusals)
     graph_successors = _function_graph_successors(
         function,
@@ -767,6 +795,9 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
         ]
     ownership = canonicalize_ir_block_ownership_8616(tuple(blocks))
     blocks = list(ownership.blocks)
+    transport_stats = aggregate_vex_condition_transport_stats_8616(
+        tuple(transport_reports)
+    )
     function_addr = _function_addr(function)
     artifact = IRFunctionArtifact(
         function_addr=function_addr,
@@ -780,6 +811,7 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
         summary={
             **build_x86_16_ir_function_artifact_summary(artifact),
             **ownership.stats.to_summary(),
+            **transport_stats.to_summary(),
         },
     )
 

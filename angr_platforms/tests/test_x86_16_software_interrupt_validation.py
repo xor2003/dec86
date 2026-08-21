@@ -4,10 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypeShort
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.interrupt_contract import interrupt_core_addr_8616
-from angr_platforms.X86_16.ir.core import IRValue, MemSpace
+from angr_platforms.X86_16.ir.core import IRBinaryValue, IRValue, MemSpace
 from angr_platforms.X86_16.semantics.software_interrupt_inputs import (
     SoftwareInterruptInputArtifact8616,
     SoftwareInterruptInputFact8616,
@@ -147,6 +147,57 @@ def test_interrupt_validation_rejects_semantics_refusal() -> None:
 def test_interrupt_validation_accepts_exact_returned_call() -> None:
     codegen = _codegen_with_fact()
     root, _call = _returned_call_root(codegen, (4, 5, 6))
+
+    report = validate_software_interrupt_inputs_8616(codegen, root)
+
+    assert report.passed
+    assert report.materialized_count == 1
+
+
+def test_interrupt_validation_accepts_proven_byte_shift_count() -> None:
+    codegen = _Codegen()
+    shifted = IRBinaryValue(
+        "Shl",
+        IRValue(MemSpace.CONST, const=5, size=2),
+        IRValue(MemSpace.CONST, const=1, size=1),
+        size=2,
+    )
+    fact = SoftwareInterruptInputFact8616(
+        callsite_addr=0x104,
+        target_addr=interrupt_core_addr_8616(0x33),
+        vector=0x33,
+        selector_value=4,
+        argument_registers=("ax", "cx", "dx"),
+        argument_values=(
+            IRValue(MemSpace.CONST, const=4, size=2),
+            shifted,
+            IRValue(MemSpace.CONST, const=6, size=2),
+        ),
+        result_register="ax",
+    )
+    codegen._inertia_software_interrupt_input_artifact_8616 = (
+        SoftwareInterruptInputArtifact8616(
+            facts=(fact,),
+            stats=SoftwareInterruptInputStats8616(1, 1, 1, 1, 0),
+        )
+    )
+    shifted_ast = structured_c.CBinaryOp(
+        "Shl",
+        _constant(5, codegen),
+        structured_c.CConstant(1, SimTypeChar(False), codegen=codegen),
+        codegen=codegen,
+    )
+    call = structured_c.CFunctionCall(
+        "interrupt_int33",
+        None,
+        [_constant(4, codegen), shifted_ast, _constant(6, codegen)],
+        tags={"ins_addr": 0x104},
+        codegen=codegen,
+    )
+    root = structured_c.CStatements(
+        statements=[structured_c.CReturn(call, codegen=codegen)],
+        codegen=codegen,
+    )
 
     report = validate_software_interrupt_inputs_8616(codegen, root)
 

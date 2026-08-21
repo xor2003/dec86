@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .core import AddressStatus, IRAddress, IRInstr, IRValue, MemSpace, SegmentOrigin
+from .indexed_address_access_normalization import normalize_indexed_address_accesses_8616
 from .indexed_address_contracts import (
     IndexedAddressAccessKind8616,
     IndexedAddressDefinitionSite8616,
@@ -194,8 +195,8 @@ def _trace_index_source_8616(
 
 
 def _candidate_failure_8616(
-    instruction: IRInstr,
     address: IRAddress,
+    access_size: int,
 ) -> IndexedAddressFailureKind8616 | None:
     """Validate address and access fields before tracing index provenance."""
     if (
@@ -204,7 +205,7 @@ def _candidate_failure_8616(
         or address.size <= 0
     ):
         return IndexedAddressFailureKind8616.ADDRESS_UNPROVEN
-    if instruction.size != address.size:
+    if access_size != address.size:
         return IndexedAddressFailureKind8616.ACCESS_WIDTH_CONFLICT
     if len(address.base) != 1 or len(address.base_values) != 1:
         return IndexedAddressFailureKind8616.MULTIPLE_DYNAMIC_TERMS
@@ -225,84 +226,75 @@ def collect_indexed_address_evidence_8616(
 ) -> IndexedAddressEvidence8616:
     """Collect every indexed DS/ES access as a fact or typed refusal."""
     definitions = _definition_index_8616(artifact)
+    normalization = normalize_indexed_address_accesses_8616(artifact)
     facts: list[IndexedAddressFact8616] = []
     refusals: list[IndexedAddressRefusal8616] = []
-    raw_count = 0
-    for block in sorted(artifact.blocks, key=lambda item: item.addr):
-        for instr_index, instruction in enumerate(block.instrs):
-            address = instruction.args[0] if instruction.args else None
-            if (
-                instruction.op not in {"LOAD", "STORE"}
-                or instruction.addr is None
-                or not isinstance(address, IRAddress)
-                or address.space not in {MemSpace.DS, MemSpace.ES}
-                or not address.base
-            ):
-                continue
-            raw_count += 1
-            failure = _candidate_failure_8616(instruction, address)
-            trace: _TraceResult8616 | None = None
-            if failure is None:
-                trace = _trace_index_source_8616(
-                    address.base_values[0],
-                    definitions,
-                    block_addr=block.addr,
-                    before_index=instr_index,
-                )
-                failure = trace.failure
-            if failure is not None or trace is None or trace.source is None:
-                refusals.append(
-                    IndexedAddressRefusal8616(
-                        artifact.function_addr,
-                        block.addr,
-                        instr_index,
-                        instruction.addr,
-                        address,
-                        failure or IndexedAddressFailureKind8616.INDEX_SOURCE_UNPROVEN,
-                    )
-                )
-                continue
-            kind = (
-                IndexedAddressAccessKind8616.LOAD
-                if instruction.op == "LOAD"
-                else IndexedAddressAccessKind8616.STORE
-            )
-            fact = IndexedAddressFact8616(
-                artifact.function_addr,
-                block.addr,
-                instr_index,
-                instruction.addr,
-                kind,
-                address,
+    for access in normalization.accesses:
+        address = access.address
+        failure = access.failure or _candidate_failure_8616(address, access.access_size)
+        trace: _TraceResult8616 | None = None
+        if failure is None:
+            trace = _trace_index_source_8616(
                 address.base_values[0],
-                trace.source,
-                trace.shift,
-                trace.path,
+                definitions,
+                block_addr=access.block_addr,
+                before_index=access.instr_index,
             )
-            if not fact.complete:
-                refusals.append(
-                    IndexedAddressRefusal8616(
-                        artifact.function_addr,
-                        block.addr,
-                        instr_index,
-                        instruction.addr,
-                        address,
-                        IndexedAddressFailureKind8616.INDEX_SOURCE_UNPROVEN,
-                    )
+            failure = trace.failure
+        if failure is not None or trace is None or trace.source is None:
+            refusals.append(
+                IndexedAddressRefusal8616(
+                    artifact.function_addr,
+                    access.block_addr,
+                    access.instr_index,
+                    access.instr_addr,
+                    address,
+                    failure or IndexedAddressFailureKind8616.INDEX_SOURCE_UNPROVEN,
                 )
-                continue
-            facts.append(fact)
+            )
+            continue
+        kind = (
+            IndexedAddressAccessKind8616.LOAD
+            if access.op == "LOAD"
+            else IndexedAddressAccessKind8616.STORE
+        )
+        fact = IndexedAddressFact8616(
+            artifact.function_addr,
+            access.block_addr,
+            access.instr_index,
+            access.instr_addr,
+            kind,
+            address,
+            address.base_values[0],
+            trace.source,
+            trace.shift,
+            trace.path,
+        )
+        if not fact.complete:
+            refusals.append(
+                IndexedAddressRefusal8616(
+                    artifact.function_addr,
+                    access.block_addr,
+                    access.instr_index,
+                    access.instr_addr,
+                    address,
+                    IndexedAddressFailureKind8616.INDEX_SOURCE_UNPROVEN,
+                )
+            )
+            continue
+        facts.append(fact)
     classified = len(facts) + len(refusals)
     return IndexedAddressEvidence8616(
         artifact.function_addr,
         tuple(facts),
         tuple(refusals),
         IndexedAddressStats8616(
-            raw_count,
-            raw_count,
+            normalization.raw_fact_count,
+            normalization.normalized_fact_count,
             classified,
             len(facts),
             len(refusals),
+            normalization.coalesced_fact_count,
         ),
     )
 

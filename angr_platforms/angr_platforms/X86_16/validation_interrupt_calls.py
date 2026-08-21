@@ -13,6 +13,7 @@ from enum import StrEnum
 from typing import Protocol, Sequence, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimStackVariable
 
 from .c_ast_utils import _iter_c_nodes_deep_8616
@@ -138,7 +139,13 @@ def _callsite_addr_8616(call: structured_c.CFunctionCall) -> int | None:
 def _actual_value_fingerprint_8616(node: object) -> str | None:
     """Fingerprint the final C subset permitted by interrupt lowering."""
     if isinstance(node, structured_c.CConstant) and isinstance(node.value, int):
-        return f"const:{node.value:#x}:size2"
+        if isinstance(node.type, SimTypeChar):
+            size = 1
+        elif isinstance(node.type, SimTypeShort):
+            size = 2
+        else:
+            return None
+        return f"const:{node.value:#x}:size{size}"
     if isinstance(node, structured_c.CVariable):
         try:
             variable = cast(_CVariableSurface8616, node).variable

@@ -154,7 +154,7 @@ class IndexedAddressAliasEvidence8616:
         return bool(
             self.source.closed
             and self.function_addr == self.source.function_addr
-            and self.stats.raw_fact_count == self.source.stats.raw_fact_count
+            and self.stats.raw_fact_count == self.source.stats.normalized_fact_count
             and len(self.facts) == self.stats.materialized_count
             and len(self.refusals) == self.stats.failure_count
             and self.stats.closed

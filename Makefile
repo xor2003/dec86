@@ -239,6 +239,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/ir/core.py \
 	angr_platforms/angr_platforms/X86_16/ir/block_ownership.py \
 	angr_platforms/angr_platforms/X86_16/ir/effects.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_access_normalization.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_pipeline.py \
@@ -261,8 +262,10 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/ir/value_ir.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_addressing.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_condition_lifting.py \
+	angr_platforms/angr_platforms/X86_16/ir/vex_condition_transport.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_control_flow.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_import.py \
+	angr_platforms/angr_platforms/X86_16/ir/vex_types.py \
 	angr_platforms/angr_platforms/X86_16/function_effect_summary.py \
 	angr_platforms/angr_platforms/X86_16/helper_effect_summary.py \
 	angr_platforms/angr_platforms/X86_16/helper_family_routing.py \
@@ -909,6 +912,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/ir/core.py \
 	angr_platforms/angr_platforms/X86_16/ir/block_ownership.py \
 	angr_platforms/angr_platforms/X86_16/ir/effects.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_access_normalization.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_pipeline.py \
@@ -931,8 +935,10 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/ir/value_ir.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_addressing.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_condition_lifting.py \
+	angr_platforms/angr_platforms/X86_16/ir/vex_condition_transport.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_control_flow.py \
 	angr_platforms/angr_platforms/X86_16/ir/vex_import.py \
+	angr_platforms/angr_platforms/X86_16/ir/vex_types.py \
 	angr_platforms/angr_platforms/X86_16/function_effect_summary.py \
 	angr_platforms/angr_platforms/X86_16/helper_effect_summary.py \
 	angr_platforms/angr_platforms/X86_16/helper_family_routing.py \
@@ -1583,6 +1589,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_segment_state.py \
 	angr_platforms/tests/test_x86_16_vex_import.py \
 	angr_platforms/tests/test_x86_16_vex_import_cfg_successors.py \
+	angr_platforms/tests/test_x86_16_vex_memory_access_fidelity.py \
 	angr_platforms/tests/test_x86_16_condition_rendering.py \
 	angr_platforms/tests/test_x86_16_ir_readiness.py \
 	angr_platforms/tests/test_x86_16_layer_module_status.py \
@@ -1851,6 +1858,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_segment_state.py \
 	angr_platforms/tests/test_x86_16_vex_import.py \
 	angr_platforms/tests/test_x86_16_vex_import_cfg_successors.py \
+	angr_platforms/tests/test_x86_16_vex_memory_access_fidelity.py \
 	angr_platforms/tests/test_x86_16_condition_rendering.py \
 	angr_platforms/tests/test_x86_16_ir_readiness.py \
 	angr_platforms/tests/test_x86_16_layer_module_status.py \

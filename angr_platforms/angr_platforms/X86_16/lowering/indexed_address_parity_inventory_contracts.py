@@ -120,7 +120,7 @@ class IndexedAddressFunctionParityReport8616:
             and self.function_addr == self.parity.function_addr
             and self.ir_stats.closed
             and self.alias_stats.closed
-            and self.alias_stats.raw_fact_count == self.ir_stats.raw_fact_count
+            and self.alias_stats.raw_fact_count == self.ir_stats.normalized_fact_count
             and self.parity.closed
             and all(mismatch.complete for mismatch in self.mismatches)
             and len(self.mismatches)
@@ -160,6 +160,7 @@ class IndexedAddressParityInventoryStats8616:
     legacy_only_no_ir_count: int
     legacy_only_ir_refusal_count: int
     legacy_only_alias_refusal_count: int
+    coalesced_fact_count: int = 0
 
     @classmethod
     def from_reports(
@@ -205,6 +206,9 @@ class IndexedAddressParityInventoryStats8616:
                 mismatch.kind is IndexedAddressMismatchKind8616.LEGACY_ONLY_ALIAS_REFUSED
                 for mismatch in mismatches
             ),
+            coalesced_fact_count=sum(
+                report.ir_stats.coalesced_fact_count for report in reports
+            ),
         )
 
     @property
@@ -220,10 +224,12 @@ class IndexedAddressParityInventoryStats8616:
         return bool(
             self.function_count == self.exact_function_count + self.divergent_function_count
             and self.raw_fact_count
-            == self.normalized_fact_count
+            == self.normalized_fact_count + self.coalesced_fact_count
+            and self.normalized_fact_count
             == self.classified_fact_count
             == self.materialized_count + self.failure_count
-            and self.raw_fact_count == self.alias_materialized_count + self.alias_failure_count
+            and self.normalized_fact_count
+            == self.alias_materialized_count + self.alias_failure_count
             and self.raw_key_count == self.normalized_key_count + self.duplicate_key_count
             and self.normalized_key_count
             == self.matched_key_count * 2 + self.alias_only_count + self.legacy_only_count

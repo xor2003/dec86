@@ -551,6 +551,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/tests/test_x86_16_frontend_condition_evidence.py",
             "angr_platforms/tests/test_x86_16_condition_ir.py",
             "angr_platforms/tests/test_x86_16_lifter_condition_cache.py",
+            "angr_platforms/tests/test_x86_16_vex_memory_access_fidelity.py",
         ),
     ),
     TestOwnershipRule(
@@ -784,12 +785,16 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
     TestOwnershipRule(
         owner="x86-16-vex-import-ir",
         paths=(
+            "angr_platforms/angr_platforms/X86_16/memory.py",
             "angr_platforms/angr_platforms/X86_16/ir/block_ownership.py",
+            "angr_platforms/angr_platforms/X86_16/ir/vex_condition_transport.py",
             "angr_platforms/angr_platforms/X86_16/ir/vex_import.py",
+            "angr_platforms/angr_platforms/X86_16/ir/vex_types.py",
         ),
         tests=(
             "angr_platforms/tests/test_x86_16_vex_import.py",
             "angr_platforms/tests/test_x86_16_vex_import_cfg_successors.py",
+            "angr_platforms/tests/test_x86_16_vex_memory_access_fidelity.py",
         ),
     ),
     TestOwnershipRule(
@@ -1336,6 +1341,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         paths=(
             "angr_platforms/angr_platforms/X86_16/ir/__init__.py",
             "angr_platforms/angr_platforms/X86_16/ir/core.py",
+            "angr_platforms/angr_platforms/X86_16/ir/indexed_address_access_normalization.py",
             "angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py",
             "angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py",
             "angr_platforms/angr_platforms/X86_16/ir/indexed_address_pipeline.py",
@@ -1359,6 +1365,7 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/tests/test_x86_16_indexed_address_evidence.py",
             "angr_platforms/tests/test_x86_16_ir_core.py",
             "angr_platforms/tests/test_x86_16_ir_ssa.py",
+            "angr_platforms/tests/test_x86_16_vex_memory_access_fidelity.py",
         ),
     ),
     TestOwnershipRule(

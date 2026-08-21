@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Protocol, Sequence, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
-from angr.sim_type import SimTypeShort
+from angr.sim_type import SimTypeChar, SimTypeShort
 from angr.sim_variable import SimStackVariable
 
 from ..c_ast_utils import _clone_c_ast_tree_8616, _iter_c_nodes_deep_8616
@@ -167,14 +167,26 @@ def _lower_value_8616(
             return None
         return structured_c.CBinaryOp(value.op, lhs, rhs, codegen=codegen)
     if value.space is MemSpace.CONST and value.const is not None:
-        return structured_c.CConstant(value.const, SimTypeShort(False), codegen=codegen)
+        value_type = {
+            1: SimTypeChar(False),
+            2: SimTypeShort(False),
+        }.get(value.size)
+        if value_type is None:
+            return None
+        return structured_c.CConstant(value.const, value_type, codegen=codegen)
     return _stack_cvar_for_value_8616(value, candidates, codegen)
 
 
 def _actual_value_fingerprint_8616(node: object) -> str | None:
     """Fingerprint the final C subset emitted from interrupt input facts."""
     if isinstance(node, structured_c.CConstant) and isinstance(node.value, int):
-        return f"const:{node.value:#x}:size2"
+        if isinstance(node.type, SimTypeChar):
+            size = 1
+        elif isinstance(node.type, SimTypeShort):
+            size = 2
+        else:
+            return None
+        return f"const:{node.value:#x}:size{size}"
     if isinstance(node, structured_c.CVariable):
         variable = _stack_variable_8616(node)
         if variable is not None:
