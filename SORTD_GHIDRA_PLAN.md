@@ -1395,10 +1395,31 @@ Measured progress on 2026-08-20:
   and all three quality comparisons. The mandatory seven-worker pipeline passes
   the same 1,612 tests, 4/4 Ultra QuickC fixtures, and all seven MS C tiny
   build/run/decompile/recompile/decompiled-run contracts
+- Semantics now retains the exact terminal-path partition for stable direct
+  `DS`/`ES` outputs: store sites, all entry-reachable return terminals, and the
+  subset definitely written before return. `MUST_WRITE` and `CONDITIONAL`
+  dispositions are valid only when that typed path evidence is internally
+  complete and coherent
+- Types/Lowering projects a conditional output as an explicit `MAY_WRITE`
+  memory effect through caller collection and the accepted atomic function
+  contract. It never invents an unconditional `CALL_OUTPUT` definition or value
+  trial. Conversely, a must-write effect without its exact value trial and a
+  conditional effect with such a trial both refuse the whole contract
+- positive and refusal coverage passes across 129 Semantics and
+  interprocedural-storage tests. Ruff `--fix`, focused MyPy, types/docs ratchets,
+  mypyc smoke imports, and explicit graph-available architecture/context/
+  ownership checks pass. The strict sidecar-free gate remains 20/20 with zero
+  fallback, timeout, traceback, discovery, empty-output, validation, or policy
+  failures
+- the edited-state `quality-dev` gate passes 1,617 tests and all three generated-C
+  quality comparisons. The mandatory seven-worker pipeline passes the same
+  1,617 tests, 4/4 Ultra QuickC fixtures, and all seven MS C tiny build/run/
+  decompile/recompile/decompiled-run contracts; no selected lane failed,
+  skipped, or timed out
 - next implementation boundary: generalize live-out evidence only when Alias
-  and SSA prove conditional, indexed, indirect, stack, overlapping, or
-  additional multiple-output storage without inferring semantics from rendered
-  C
+  and SSA prove indexed, indirect, stack, overlapping, or additional
+  multiple-output storage. Conditional stable direct `DS`/`ES` effects are
+  complete for this scope and must not be reconstructed from rendered C
 
 Definition of done:
 

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TypeAlias
 
-from ..ir import IRAddress, MemSpace
+from ..ir import AddressStatus, IRAddress, MemSpace
 
 MemoryOutputKey8616: TypeAlias = tuple[MemSpace, int, int]
 
@@ -54,11 +54,35 @@ class TerminalMemoryOutputFact8616:
     disposition: TerminalMemoryOutputDisposition8616
     store_sites: tuple[TerminalMemoryStoreSite8616, ...]
     terminal_block_addrs: tuple[int, ...]
+    definitely_written_terminal_block_addrs: tuple[int, ...]
 
     @property
     def key(self) -> MemoryOutputKey8616:
         """Return the byte-accurate segmented range identity."""
         return (self.address.space, self.address.offset, self.address.size)
+
+    @property
+    def complete(self) -> bool:
+        """Return whether the fact retains exact stores and terminal coverage."""
+        definite = self.definitely_written_terminal_block_addrs
+        terminals = self.terminal_block_addrs
+        disposition_matches = (
+            definite == terminals
+            if self.disposition is TerminalMemoryOutputDisposition8616.MUST_WRITE
+            else definite != terminals
+        )
+        return bool(
+            self.address.space in {MemSpace.DS, MemSpace.ES}
+            and not self.address.base
+            and self.address.size > 0
+            and self.address.status is AddressStatus.STABLE
+            and self.store_sites
+            and terminals
+            and tuple(sorted(set(terminals))) == terminals
+            and tuple(sorted(set(definite))) == definite
+            and set(definite) <= set(terminals)
+            and disposition_matches
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +119,11 @@ class TerminalMemoryOutputEvidence8616:
     @property
     def complete(self) -> bool:
         """Return whether all bounded direct candidates were classified."""
-        return self.failure is None and self.stats.complete
+        return (
+            self.failure is None
+            and self.stats.complete
+            and all(fact.complete for fact in self.facts)
+        )
 
     @property
     def must_write_facts(self) -> tuple[TerminalMemoryOutputFact8616, ...]:

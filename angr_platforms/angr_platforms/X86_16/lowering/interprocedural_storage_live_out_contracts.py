@@ -17,6 +17,8 @@ from ..ir.condition_ir import ConditionIR
 from ..ir.function_ssa_registry import FunctionSSAArtifactFailure8616
 from ..semantics.terminal_memory_output_contracts import (
     MemoryOutputKey8616,
+    TerminalMemoryOutputDisposition8616,
+    TerminalMemoryOutputFact8616,
     TerminalMemoryOutputFailure8616,
 )
 from .interprocedural_storage_contracts import (
@@ -62,7 +64,6 @@ class MemoryLiveOutFailureKind8616(StrEnum):
     CONDITION_CONFLICT = "condition_conflict"
     CONDITION_UNSUPPORTED = "condition_unsupported"
     SIGNEDNESS_CONFLICT = "signedness_conflict"
-    CONDITIONAL_WRITE = "conditional_write"
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +71,7 @@ class MemoryLiveOutUseFact8616:
     """One exact storage candidate and its bounded caller-use outcome."""
 
     storage: StorageIdentity8616
+    terminal_output: TerminalMemoryOutputFact8616
     disposition: MemoryLiveOutUseDisposition8616
     use: StorageUseEvidence8616 | None = None
     signedness: StorageTrialSignedness8616 | None = None
@@ -78,12 +80,17 @@ class MemoryLiveOutUseFact8616:
     @property
     def complete(self) -> bool:
         """Return whether this fact retains every field required by its verdict."""
+        output_matches = bool(
+            self.terminal_output.complete
+            and self.storage.address == self.terminal_output.address
+        )
         if self.disposition is MemoryLiveOutUseDisposition8616.NOT_REACHED:
-            return self.storage.is_exact and all(
+            return self.storage.is_exact and output_matches and all(
                 item is None for item in (self.use, self.signedness, self.condition)
             )
         return bool(
             self.storage.is_exact
+            and output_matches
             and self.use is not None
             and self.use.is_complete
             and self.signedness is not None
@@ -108,8 +115,15 @@ class MemoryLiveOutCandidateResult8616:
             return (self.fact, self.trial, self.failure, self.definition_failure) == (None,) * 4
         if self.failure is not None:
             return self.fact is None and self.trial is None
-        return self.fact is not None and self.fact.complete and (
-            self.trial is None or self.trial.is_complete
+        if self.fact is None or not self.fact.complete or self.definition_failure is not None:
+            return False
+        needs_trial = bool(
+            self.fact.disposition is MemoryLiveOutUseDisposition8616.USED
+            and self.fact.terminal_output.disposition
+            is TerminalMemoryOutputDisposition8616.MUST_WRITE
+        )
+        return self.trial.is_complete if needs_trial and self.trial is not None else (
+            self.trial is None and not needs_trial
         )
 
 

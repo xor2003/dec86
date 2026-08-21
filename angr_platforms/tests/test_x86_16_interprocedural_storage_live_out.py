@@ -28,6 +28,7 @@ from angr_platforms.X86_16.lowering.interprocedural_storage_live_out_flow import
 from angr_platforms.X86_16.semantics.terminal_memory_output_contracts import (
     TerminalMemoryOutputDisposition8616,
     TerminalMemoryOutputFact8616,
+    TerminalMemoryStoreSite8616,
 )
 
 CALLER = 0x1000
@@ -127,7 +128,18 @@ def _output(
     *,
     size: int = 1,
 ) -> TerminalMemoryOutputFact8616:
-    return TerminalMemoryOutputFact8616(_address(size=size), disposition, (), (CALLEE,))
+    definite = (
+        (CALLEE,)
+        if disposition is TerminalMemoryOutputDisposition8616.MUST_WRITE
+        else ()
+    )
+    return TerminalMemoryOutputFact8616(
+        _address(size=size),
+        disposition,
+        (TerminalMemoryStoreSite8616(CALLEE, 0, CALLEE),),
+        (CALLEE,),
+        definite,
+    )
 
 
 def _condition(
@@ -279,7 +291,7 @@ def test_indirect_alias_and_intervening_call_refuse_attribution() -> None:
     assert second_call.failure is MemoryLiveOutFailureKind8616.INTERVENING_CALL
 
 
-def test_overlapping_load_and_conditional_write_refuse() -> None:
+def test_overlapping_load_refuses_but_conditional_write_retains_typed_effect() -> None:
     overlap = _materialize(_artifact(_call(), _load(size=2)))
     conditional = _materialize(
         _artifact(_call(), _load()),
@@ -287,7 +299,15 @@ def test_overlapping_load_and_conditional_write_refuse() -> None:
     )
 
     assert overlap.failure is MemoryLiveOutFailureKind8616.USE_OVERLAP
-    assert conditional.failure is MemoryLiveOutFailureKind8616.CONDITIONAL_WRITE
+    assert conditional.complete is True
+    assert conditional.failure is None
+    assert conditional.trial is None
+    assert conditional.fact is not None
+    assert conditional.fact.disposition is MemoryLiveOutUseDisposition8616.USED
+    assert (
+        conditional.fact.terminal_output.disposition
+        is TerminalMemoryOutputDisposition8616.CONDITIONAL
+    )
 
 
 def test_conflicting_condition_signedness_refuses() -> None:
@@ -345,3 +365,56 @@ def test_function_collection_connects_terminal_store_to_caller_live_out(monkeypa
     assert collection.stats.raw_fact_count == collection.stats.materialized_count == 1
     assert len(collection.callsites) == 1
     assert collection.callsites[0].trials[0].role is StorageTrialRole8616.LIVE_OUT
+
+
+def test_function_collection_retains_conditional_effect_without_value_trial(monkeypatch) -> None:
+    caller = _artifact(_call(), _load())
+    stored_return = CALLEE + 2
+    clean_return = CALLEE + 4
+    callee = SSAFunctionArtifact(
+        function_addr=CALLEE,
+        blocks=(
+            SSABlock(CALLEE, (), ()),
+            SSABlock(stored_return, (_store(stored_return),), ()),
+            SSABlock(clean_return, (), ()),
+        ),
+        predecessor_map={
+            CALLEE: (),
+            stored_return: (CALLEE,),
+            clean_return: (CALLEE,),
+        },
+    )
+
+    class _Factory:
+        def block(self, address: int, *, opt_level: int) -> object:
+            assert address in {stored_return, clean_return}
+            assert opt_level == 0
+            instruction = SimpleNamespace(mnemonic="ret")
+            return SimpleNamespace(capstone=SimpleNamespace(insns=(instruction,)))
+
+    project = SimpleNamespace(
+        factory=_Factory(),
+        _inertia_function_ssa_artifacts_8616={CALLER: caller, CALLEE: callee},
+        _inertia_function_ssa_stages_8616={
+            CALLER: FunctionSSAArtifactStage8616.SEMANTIC,
+            CALLEE: FunctionSSAArtifactStage8616.SEMANTIC,
+        },
+    )
+    monkeypatch.setattr(
+        interprocedural_storage_live_out,
+        "collect_typed_condition_artifacts_8616",
+        lambda _project, _address: ([_condition()], ()),
+    )
+    callsites = (CallsiteStorageTrials8616(CALLER, CALLEE, CALLSITE, stack_delta=0),)
+
+    collection = collect_function_memory_live_out_trials_8616(
+        project, CALLEE, callsites, (CALLEE,)
+    )
+
+    assert collection.complete is True
+    assert collection.stats.raw_fact_count == collection.stats.materialized_count == 1
+    effect = collection.callsites[0].facts[0]
+    assert effect.complete is True
+    assert effect.terminal_output.disposition is TerminalMemoryOutputDisposition8616.CONDITIONAL
+    assert effect.terminal_output.definitely_written_terminal_block_addrs == (stored_return,)
+    assert collection.callsites[0].trials == ()

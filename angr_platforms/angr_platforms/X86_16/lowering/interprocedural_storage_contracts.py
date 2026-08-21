@@ -11,19 +11,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from ..ir import AddressStatus, IRAddress, IRValue, MemSpace
 from .interprocedural_storage_return_passthrough_contracts import ReturnPassThroughTrial8616
 
+if TYPE_CHECKING:
+    from .interprocedural_storage_live_out_contracts import MemoryLiveOutUseFact8616
+
 __all__ = [
-    "CallsiteStorageBinding8616", "CallsiteStorageTrials8616", "FunctionStorageContract8616",
-    "FunctionStorageResolution8616", "FunctionStorageTrials8616", "ProgramStorageResolution8616",
-    "StorageIdentity8616", "StorageIdentityKind8616", "StorageDefinitionKind8616",
-    "StorageReachingDefinition8616", "StorageSlotContract8616", "StorageTrial8616",
-    "StorageTrialFailureKind8616", "StorageTrialRole8616", "StorageTrialSignedness8616",
-    "StorageTrialStats8616",
-    "StorageTrialValueClass8616", "StorageTrialVerdict8616", "StorageUseEvidence8616",
-    "ValueProvenance8616",
+    "CallsiteStorageBinding8616", "CallsiteStorageTrials8616", "FunctionStorageContract8616", "FunctionStorageResolution8616", "FunctionStorageTrials8616", "ProgramStorageResolution8616",
+    "StorageIdentity8616", "StorageIdentityKind8616", "StorageDefinitionKind8616", "StorageReachingDefinition8616", "StorageSlotContract8616", "StorageTrial8616", "StorageTrialFailureKind8616",
+    "StorageTrialRole8616", "StorageTrialSignedness8616", "StorageTrialStats8616", "StorageTrialValueClass8616", "StorageTrialVerdict8616", "StorageUseEvidence8616", "ValueProvenance8616",
 ]
 
 
@@ -239,7 +238,7 @@ class StorageTrial8616:
 
 @dataclass(frozen=True, slots=True)
 class CallsiteStorageTrials8616:
-    """All typed interface trials and stack effect for one machine call."""
+    """Typed interface trials, memory effects, and stack state for one call."""
 
     caller_addr: int
     callee_addr: int
@@ -247,6 +246,7 @@ class CallsiteStorageTrials8616:
     arguments: tuple[StorageTrial8616, ...] = ()
     returns: tuple[StorageTrial8616, ...] = ()
     live_outs: tuple[StorageTrial8616, ...] = ()
+    memory_effects: tuple[MemoryLiveOutUseFact8616, ...] = ()
     return_passthroughs: tuple[ReturnPassThroughTrial8616, ...] = ()
     stack_delta: int | None = None
 
@@ -287,6 +287,7 @@ class CallsiteStorageBinding8616:
     returns: tuple[StorageTrial8616, ...]
     stack_delta: int
     live_outs: tuple[StorageTrial8616, ...] = ()
+    memory_effects: tuple[MemoryLiveOutUseFact8616, ...] = ()
     return_passthroughs: tuple[ReturnPassThroughTrial8616, ...] = ()
 
 

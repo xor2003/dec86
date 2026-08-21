@@ -137,7 +137,11 @@ def _must_write_keys_8616(
     reachable: set[int],
     successors: dict[int, frozenset[int]],
     candidate_keys: frozenset[MemoryOutputKey8616],
-) -> tuple[frozenset[MemoryOutputKey8616], tuple[int, ...]] | None:
+) -> tuple[
+    frozenset[MemoryOutputKey8616],
+    tuple[int, ...],
+    dict[MemoryOutputKey8616, tuple[int, ...]],
+] | None:
     """Solve definite direct stores to every terminal over the exact SSA CFG."""
     blocks = {block.addr: block for block in artifact.blocks if block.addr in reachable}
     predecessors = {
@@ -181,7 +185,11 @@ def _must_write_keys_8616(
             if new_in != incoming[address] or new_out != outgoing[address]:
                 incoming[address], outgoing[address], changed = new_in, new_out, True
     terminal_sets = tuple(outgoing[address] for address in terminals)
-    return frozenset.intersection(*terminal_sets), terminals
+    definite_terminals = {
+        key: tuple(address for address in terminals if key in outgoing[address])
+        for key in candidate_keys
+    }
+    return frozenset.intersection(*terminal_sets), terminals, definite_terminals
 
 
 def _store_may_alias_candidates_8616(
@@ -263,7 +271,7 @@ def collect_terminal_memory_output_evidence_8616(
         return _refused_8616(
             artifact, TerminalMemoryOutputFailure8616.CFG_INCOMPLETE, len(keys), len(keys)
         )
-    must_write, terminals = solved
+    must_write, terminals, definite_terminals = solved
     if any(not _terminal_is_return_8616(project, address) for address in terminals):
         return _refused_8616(
             artifact, TerminalMemoryOutputFailure8616.TERMINAL_NOT_RETURN, len(keys), len(keys)
@@ -278,6 +286,7 @@ def collect_terminal_memory_output_evidence_8616(
             ),
             store_sites=tuple(sorted(grouped[key][1], key=lambda site: (site.block_addr, site.instr_index))),
             terminal_block_addrs=terminals,
+            definitely_written_terminal_block_addrs=definite_terminals[key],
         )
         for key in keys
     )

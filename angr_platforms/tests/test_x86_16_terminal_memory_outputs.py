@@ -95,7 +95,10 @@ def test_store_on_only_one_return_path_remains_conditional() -> None:
 
     assert evidence.complete is True
     assert len(evidence.facts) == 1
-    assert evidence.facts[0].disposition is TerminalMemoryOutputDisposition8616.CONDITIONAL
+    fact = evidence.facts[0]
+    assert fact.disposition is TerminalMemoryOutputDisposition8616.CONDITIONAL
+    assert fact.terminal_block_addrs == (0x1010, 0x1020)
+    assert fact.definitely_written_terminal_block_addrs == (0x1010,)
 
 
 def test_same_range_written_on_every_branch_is_must_write() -> None:
@@ -115,6 +118,10 @@ def test_same_range_written_on_every_branch_is_must_write() -> None:
     assert evidence.complete is True
     assert evidence.must_write_facts[0].key == (MemSpace.DS, 0x1234, 1)
     assert len(evidence.must_write_facts[0].store_sites) == 2
+    assert evidence.must_write_facts[0].definitely_written_terminal_block_addrs == (
+        0x1010,
+        0x1020,
+    )
 
 
 def test_ds_and_es_ranges_remain_distinct_outputs() -> None:

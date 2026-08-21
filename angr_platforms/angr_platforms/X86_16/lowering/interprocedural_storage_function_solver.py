@@ -15,6 +15,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from ..pipeline.errors import PipelineHardError
+from ..semantics.terminal_memory_output_contracts import (
+    TerminalMemoryOutputDisposition8616,
+)
 from .interprocedural_storage_contracts import (
     CallsiteStorageBinding8616,
     CallsiteStorageTrials8616,
@@ -28,6 +31,7 @@ from .interprocedural_storage_contracts import (
     StorageTrialStats8616,
     StorageTrialVerdict8616,
 )
+from .interprocedural_storage_live_out_contracts import MemoryLiveOutUseDisposition8616
 from .interprocedural_storage_return_passthrough_contracts import ReturnPassThroughTrial8616
 from .interprocedural_storage_slot_join import (
     join_storage_slot_contracts_8616,
@@ -81,6 +85,24 @@ def _trial_matches_callsite_8616(
     )
 
 
+def _memory_effects_match_live_outs_8616(callsite: CallsiteStorageTrials8616) -> bool:
+    """Require one value trial exactly for each proven must-write caller use."""
+    if any(not effect.complete for effect in callsite.memory_effects):
+        return False
+    effect_keys = tuple(effect.storage.key for effect in callsite.memory_effects)
+    if len(set(effect_keys)) != len(effect_keys):
+        return False
+    expected = {
+        effect.storage.key
+        for effect in callsite.memory_effects
+        if effect.disposition is MemoryLiveOutUseDisposition8616.USED
+        and effect.terminal_output.disposition
+        is TerminalMemoryOutputDisposition8616.MUST_WRITE
+    }
+    observed = {trial.storage.key for trial in callsite.live_outs}
+    return expected == observed
+
+
 def _ordered_failures_8616(
     failures: Iterable[StorageTrialFailureKind8616],
 ) -> tuple[StorageTrialFailureKind8616, ...]:
@@ -100,9 +122,19 @@ def join_function_storage_trials_8616(
     passthroughs = tuple(
         trial for callsite in trials.callsites for trial in callsite.return_passthroughs
     )
-    raw_count = len(all_trials) + len(passthroughs)
-    normalized_count = sum(item.is_complete for item in all_trials) + sum(
-        item.is_complete for item in passthroughs
+    memory_effects = tuple(
+        effect for callsite in trials.callsites for effect in callsite.memory_effects
+    )
+    interface_trials = tuple(
+        trial
+        for callsite in trials.callsites
+        for trial in (*callsite.arguments, *callsite.returns)
+    )
+    raw_count = len(interface_trials) + len(passthroughs) + len(memory_effects)
+    normalized_count = (
+        sum(item.is_complete for item in interface_trials)
+        + sum(item.is_complete for item in passthroughs)
+        + sum(item.complete for item in memory_effects)
     )
     failures: list[StorageTrialFailureKind8616] = []
     expected = tuple(sorted(set(trials.expected_callsite_addrs)))
@@ -116,6 +148,8 @@ def join_function_storage_trials_8616(
         for callsite in trials.callsites
         for trial in (*callsite.arguments, *callsite.returns, *callsite.live_outs)
     ):
+        failures.append(StorageTrialFailureKind8616.INCOMPLETE_TRIAL)
+    if any(not _memory_effects_match_live_outs_8616(callsite) for callsite in trials.callsites):
         failures.append(StorageTrialFailureKind8616.INCOMPLETE_TRIAL)
     if any(
         not trial.belongs_to(callsite.callee_addr, callsite.caller_addr, callsite.callsite_addr)
@@ -230,6 +264,7 @@ def resolve_joined_function_storage_trials_8616(
             returns=ordered_storage_trials_8616(callsite, StorageTrialRole8616.RETURN),
             stack_delta=joined.stack_delta,
             live_outs=ordered_storage_trials_8616(callsite, StorageTrialRole8616.LIVE_OUT),
+            memory_effects=callsite.memory_effects,
             return_passthroughs=callsite.return_passthroughs,
         )
         for callsite in sorted(joined.trials.callsites, key=lambda item: item.callsite_addr)

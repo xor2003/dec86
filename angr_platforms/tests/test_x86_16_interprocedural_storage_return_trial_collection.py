@@ -288,11 +288,14 @@ def test_global_condition_materializes_live_out_without_c_return(
     callsite = result.trials.callsites[0]
     assert callsite.returns == ()
     assert len(callsite.live_outs) == 1
+    assert len(callsite.memory_effects) == 1
+    assert callsite.memory_effects[0].complete is True
     assert callsite.live_outs[0].storage.address is not None
     assert callsite.live_outs[0].storage.address.offset == 0x1234
     contract = resolve_program_storage_trials_8616((result.trials,)).contract_for(CALLEE_ADDR)
     assert contract is not None
     assert tuple(output.role for output in contract.outputs) == (StorageTrialRole8616.LIVE_OUT,)
+    assert contract.callsites[0].memory_effects == callsite.memory_effects
     return_type = storage_contract_return_type_8616(contract, Arch86_16())
     assert return_type.verdict is StorageSimTypeVerdict8616.UNPROVEN
 

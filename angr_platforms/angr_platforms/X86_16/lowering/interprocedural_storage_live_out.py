@@ -63,6 +63,20 @@ def _failed_8616(
     )
 
 
+def attach_callsite_memory_live_out_evidence_8616(
+    callsite: CallsiteStorageTrials8616,
+    evidence: tuple[CallsiteMemoryLiveOutEvidence8616, ...],
+) -> CallsiteStorageTrials8616:
+    """Attach the unique exact live-out projection to one callsite contract."""
+    matches = tuple(item for item in evidence if item.callsite_addr == callsite.callsite_addr)
+    if len(matches) != 1:
+        raise RuntimeError("complete memory live-out collection lost exact callsite evidence")
+    match = matches[0]
+    if match.caller_addr != callsite.caller_addr or match.callee_addr != callsite.callee_addr:
+        raise RuntimeError("memory live-out callsite identity changed during projection")
+    return replace(callsite, live_outs=match.trials, memory_effects=match.facts)
+
+
 def collect_function_memory_live_out_trials_8616(
     project: object,
     callee_addr: int,

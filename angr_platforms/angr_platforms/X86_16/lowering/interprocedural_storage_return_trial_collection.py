@@ -34,11 +34,14 @@ from .interprocedural_storage_contracts import (
     CallsiteStorageTrials8616,
     FunctionStorageTrials8616,
     StorageIdentity8616,
-    StorageTrial8616,
     StorageTrialStats8616,
 )
-from .interprocedural_storage_live_out import collect_function_memory_live_out_trials_8616
+from .interprocedural_storage_live_out import (
+    attach_callsite_memory_live_out_evidence_8616,
+    collect_function_memory_live_out_trials_8616,
+)
 from .interprocedural_storage_live_out_contracts import (
+    CallsiteMemoryLiveOutEvidence8616,
     MemoryLiveOutCollectionVerdict8616,
     MemoryLiveOutFailure8616,
 )
@@ -201,7 +204,7 @@ def collect_function_return_storage_trials_8616(
                 callee_addr,
             )
         )
-    live_outs_by_callsite: dict[int, tuple[StorageTrial8616, ...]] = {}
+    memory_live_out_evidence: tuple[CallsiteMemoryLiveOutEvidence8616, ...] = ()
     live_out_stats = StorageTrialStats8616()
     if not failures:
         live_outs = collect_function_memory_live_out_trials_8616(
@@ -220,9 +223,7 @@ def collect_function_return_storage_trials_8616(
                 _failure_8616(kind, callee_addr, live_out_failure=live_outs.failures[0])
             )
         else:
-            live_outs_by_callsite = {
-                site.callsite_addr: site.trials for site in live_outs.callsites
-            }
+            memory_live_out_evidence = live_outs.callsites
     used_facts = tuple(
         fact
         for fact in evidence.facts
@@ -269,7 +270,9 @@ def collect_function_return_storage_trials_8616(
                     )
                 )
                 continue
-            callsite = replace(callsite, live_outs=live_outs_by_callsite.get(fact.callsite_addr, ()))
+            callsite = attach_callsite_memory_live_out_evidence_8616(
+                callsite, memory_live_out_evidence
+            )
             if fact.excluded_recursive_passthrough:
                 passthrough = materialize_return_passthrough_trial_8616(
                     project,

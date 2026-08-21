@@ -199,12 +199,12 @@ def materialize_memory_live_out_candidate_8616(
         if path.verdict is MemoryLiveOutPathVerdict8616.CLEAN
     )
     if not clean_candidates:
-        fact = MemoryLiveOutUseFact8616(storage, MemoryLiveOutUseDisposition8616.NOT_REACHED)
-        return MemoryLiveOutCandidateResult8616(True, fact=fact)
-    if output.disposition is TerminalMemoryOutputDisposition8616.CONDITIONAL:
-        return MemoryLiveOutCandidateResult8616(
-            True, failure=MemoryLiveOutFailureKind8616.CONDITIONAL_WRITE
+        fact = MemoryLiveOutUseFact8616(
+            storage,
+            output,
+            MemoryLiveOutUseDisposition8616.NOT_REACHED,
         )
+        return MemoryLiveOutCandidateResult8616(True, fact=fact)
     typed: list[tuple[StorageUseEvidence8616, ConditionIR, StorageTrialSignedness8616]] = []
     for use, condition, signedness, failure in clean_candidates:
         if failure is not None or condition is None or signedness is None:
@@ -218,12 +218,19 @@ def materialize_memory_live_out_candidate_8616(
             True, failure=MemoryLiveOutFailureKind8616.SIGNEDNESS_CONFLICT
         )
     use, condition, signedness = typed[0]
+    fact = MemoryLiveOutUseFact8616(
+        storage,
+        output,
+        MemoryLiveOutUseDisposition8616.USED,
+        use,
+        signedness,
+        condition,
+    )
+    if output.disposition is TerminalMemoryOutputDisposition8616.CONDITIONAL:
+        return MemoryLiveOutCandidateResult8616(True, fact=fact)
     provenance = definitions.provenance
     if provenance is None:
         raise RuntimeError("complete CALL_OUTPUT lost provenance")
-    fact = MemoryLiveOutUseFact8616(
-        storage, MemoryLiveOutUseDisposition8616.USED, use, signedness, condition
-    )
     trial = StorageTrial8616(
         callee_addr=callee_addr,
         caller_addr=caller_addr,

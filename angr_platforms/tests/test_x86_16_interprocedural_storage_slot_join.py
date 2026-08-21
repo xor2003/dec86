@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr_platforms.X86_16.ir import AddressStatus, IRAddress, IRValue, MemSpace
+from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.lowering.interprocedural_storage_contracts import (
     CallsiteStorageTrials8616,
     FunctionStorageTrials8616,
@@ -19,6 +20,10 @@ from angr_platforms.X86_16.lowering.interprocedural_storage_contracts import (
     StorageUseEvidence8616,
     ValueProvenance8616,
 )
+from angr_platforms.X86_16.lowering.interprocedural_storage_live_out_contracts import (
+    MemoryLiveOutUseDisposition8616,
+    MemoryLiveOutUseFact8616,
+)
 from angr_platforms.X86_16.lowering.interprocedural_storage_solver import (
     resolve_program_storage_trials_8616,
 )
@@ -26,6 +31,11 @@ from angr_platforms.X86_16.lowering.interprocedural_storage_transaction import (
     accepted_callsite_storage_binding_8616,
     accepted_function_storage_contract_8616,
     apply_program_storage_resolution_8616,
+)
+from angr_platforms.X86_16.semantics.terminal_memory_output_contracts import (
+    TerminalMemoryOutputDisposition8616,
+    TerminalMemoryOutputFact8616,
+    TerminalMemoryStoreSite8616,
 )
 
 CALLEE = 0x2000
@@ -90,12 +100,73 @@ def _callsite(
     callsite: int,
     *live_outs: StorageTrial8616,
 ) -> CallsiteStorageTrials8616:
+    memory_effect_by_storage: dict[tuple[object, ...], MemoryLiveOutUseFact8616] = {}
+    for trial in live_outs:
+        if trial.role is StorageTrialRole8616.LIVE_OUT:
+            memory_effect_by_storage.setdefault(trial.storage.key, _effect_from_trial(trial))
     return CallsiteStorageTrials8616(
         caller_addr=caller,
         callee_addr=CALLEE,
         callsite_addr=callsite,
         live_outs=live_outs,
+        memory_effects=tuple(memory_effect_by_storage.values()),
         stack_delta=0,
+    )
+
+
+def _effect_from_trial(trial: StorageTrial8616) -> MemoryLiveOutUseFact8616:
+    """Build the must-write effect that owns one solver test live-out trial."""
+    address = trial.storage.address
+    assert address is not None
+    terminal = TerminalMemoryOutputFact8616(
+        address,
+        TerminalMemoryOutputDisposition8616.MUST_WRITE,
+        (TerminalMemoryStoreSite8616(CALLEE, 0, CALLEE),),
+        (CALLEE,),
+        (CALLEE,),
+    )
+    condition = ConditionIR(
+        "ne",
+        IRValue(address.space, offset=address.offset, size=address.size),
+        IRValue(MemSpace.CONST, const=0, size=address.size),
+        width_bits=address.size * 8,
+    )
+    return MemoryLiveOutUseFact8616(
+        trial.storage,
+        terminal,
+        MemoryLiveOutUseDisposition8616.USED,
+        trial.use,
+        trial.signedness,
+        condition,
+    )
+
+
+def _conditional_effect(offset: int) -> MemoryLiveOutUseFact8616:
+    """Build one exact may-write effect with no unconditional value trial."""
+    storage = _memory(offset)
+    address = storage.address
+    assert address is not None
+    terminal = TerminalMemoryOutputFact8616(
+        address,
+        TerminalMemoryOutputDisposition8616.CONDITIONAL,
+        (TerminalMemoryStoreSite8616(CALLEE, 0, CALLEE),),
+        (CALLEE,),
+        (),
+    )
+    use = StorageUseEvidence8616(0x3000, 1, 0x3013, 0x3010)
+    condition = ConditionIR(
+        "ne",
+        IRValue(MemSpace.DS, offset=offset, size=1),
+        IRValue(MemSpace.CONST, const=0, size=1),
+        width_bits=8,
+    )
+    return MemoryLiveOutUseFact8616(
+        storage,
+        terminal,
+        MemoryLiveOutUseDisposition8616.USED,
+        use,
+        StorageTrialSignedness8616.SIGN_INSENSITIVE,
+        condition,
     )
 
 
@@ -169,6 +240,57 @@ def test_multiple_live_outs_at_one_callsite_keep_exact_storage_order() -> None:
     )
     assert tuple(slot.logical_index for slot in contract.outputs) == (0, 1)
     assert tuple(trial.logical_index for trial in contract.callsites[0].live_outs) == (0, 1)
+
+
+def test_conditional_memory_effect_survives_without_becoming_output_slot() -> None:
+    effect = _conditional_effect(0x1400)
+    callsite = CallsiteStorageTrials8616(
+        caller_addr=0x3000,
+        callee_addr=CALLEE,
+        callsite_addr=0x3010,
+        memory_effects=(effect,),
+        stack_delta=0,
+    )
+
+    contract = resolve_program_storage_trials_8616((_function(callsite),)).contract_for(CALLEE)
+
+    assert contract is not None
+    assert contract.outputs == ()
+    assert contract.callsites[0].live_outs == ()
+    assert contract.callsites[0].memory_effects == (effect,)
+
+
+def test_must_write_memory_effect_without_value_trial_refuses() -> None:
+    trial = _live_out(0x3000, 0x3010, 0x1400)
+    callsite = CallsiteStorageTrials8616(
+        caller_addr=0x3000,
+        callee_addr=CALLEE,
+        callsite_addr=0x3010,
+        memory_effects=(_effect_from_trial(trial),),
+        stack_delta=0,
+    )
+
+    result = resolve_program_storage_trials_8616((_function(callsite),)).resolutions[0]
+
+    assert result.verdict is StorageTrialVerdict8616.UNKNOWN_REFUSE
+    assert result.failures == (StorageTrialFailureKind8616.INCOMPLETE_TRIAL,)
+
+
+def test_conditional_memory_effect_with_value_trial_refuses() -> None:
+    trial = _live_out(0x3000, 0x3010, 0x1400)
+    callsite = CallsiteStorageTrials8616(
+        caller_addr=0x3000,
+        callee_addr=CALLEE,
+        callsite_addr=0x3010,
+        live_outs=(trial,),
+        memory_effects=(_conditional_effect(0x1400),),
+        stack_delta=0,
+    )
+
+    result = resolve_program_storage_trials_8616((_function(callsite),)).resolutions[0]
+
+    assert result.verdict is StorageTrialVerdict8616.UNKNOWN_REFUSE
+    assert result.failures == (StorageTrialFailureKind8616.INCOMPLETE_TRIAL,)
 
 
 def test_ds_and_es_live_outs_have_total_deterministic_storage_order() -> None:
