@@ -76,6 +76,7 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_live_out.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_live_out_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_live_out_flow.py \
+	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_slot_join.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_pipeline.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_prototype_application.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_prototype_types.py \
@@ -443,6 +444,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_live_out.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_live_out_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_live_out_flow.py \
+	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_slot_join.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_pipeline.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_prototype_application.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_prototype_types.py \
@@ -1093,6 +1095,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_live_out.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_live_out_contracts.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_live_out_flow.py \
+	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_slot_join.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_pipeline.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_prototype_application.py \
 	angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_prototype_types.py \
@@ -1665,6 +1668,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_stack_memory_ssa_safety.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_consumers.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py \
+	angr_platforms/tests/test_x86_16_interprocedural_storage_slot_join.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_pipeline.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_prototype_application.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_reaching_defs.py \
@@ -1705,6 +1709,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_caller_return_use_contracts.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_consumers.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py \
+	angr_platforms/tests/test_x86_16_interprocedural_storage_slot_join.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_pipeline.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_prototype_application.py \
 	angr_platforms/tests/test_x86_16_interprocedural_storage_reaching_defs.py \

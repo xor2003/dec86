@@ -902,11 +902,12 @@ final-callsite multiplicity validation, deterministic return/live-out trial
 collection, signed/unsigned strict and non-strict `DX:AX` ordering use typing,
 sign-insensitive equality/inequality use typing, recursive pass-through
 propagation, production SCC publication, and atomic callee plus callsite type
-application are complete. Exact direct DS/ES must-write live-outs with one
-unclobbered caller condition use are implemented. Every project-wide trial,
-return, and live-out consumer now reads the canonical Semantics-ready exact-
-function SSA artifact; broader memory live-outs and storage-contract recovery
-remain.
+application are complete. Exact direct DS/ES must-write live-outs with
+unclobbered caller condition uses are implemented, including a deterministic
+union when different callers consume disjoint proven outputs. Every project-
+wide trial, return, and live-out consumer now reads the canonical Semantics-
+ready exact-function SSA artifact. RunMenu call-result-to-stack materialization,
+broader memory live-outs, and storage-contract recovery remain.
 
 Reason: Calls and returns cross function boundaries where local inference is
 insufficient. Typed storage trials allow a complete caller census to prove
@@ -1272,9 +1273,35 @@ Measured progress on 2026-08-20:
   4/4 validated Ultra QuickC fixtures, and all seven MS C tiny build/run/
   decompile/recompile/decompiled-run constructs. Lane times were 44.760s,
   72.383s, and 137.923s
-- next implementation boundary: generalize live-out evidence only when Alias
-  and SSA can prove conditional, indexed, indirect, stack, overlapping, or
-  multiple output storage without inferring semantics from rendering
+- one dedicated Types/Lowering join owner now forms the deterministic union of
+  exact `LIVE_OUT` storage across a complete caller census. Different callers
+  may consume disjoint proven outputs from one callee without forcing every
+  callsite to have an identical live-out subset. Input and scalar-return roles
+  retain their identical-shape agreement requirement
+- the join refuses same-storage type conflicts, duplicate storage within one
+  callsite, malformed trial roles, and incomplete caller censuses. A primitive-
+  field total-order key keeps mixed DS/ES storage deterministic without
+  comparing raw enums. Seven focused tests cover disjoint, multiple-output, and
+  mixed DS/ES acceptance plus each refusal. The owner is 252 lines, and
+  extracting it reduced the function solver from 350 to 262 lines
+- the edited-state `quality-dev` gate passes Ruff `--fix`, MyPy, the 38-module
+  mypyc compile/import smoke, architecture/context/ownership checks, 1,598
+  tests, and all three decompilation-quality comparisons. The required pipeline
+  passes 3/3 lanes with the same 1,598 tests, 4/4 validated Ultra QuickC
+  fixtures, and all seven MS C tiny build/run/decompile/recompile/decompiled-run
+  constructs
+- a strict whole-file run with `--ignore-local-sidecar-hints` discovers all 20
+  SORTD functions but emits generated C for 19. RunMenu (`0x102e0`) correctly
+  fails the absolute final semantic guard because the menu-key byte at
+  `SS:BP-2` is read without the recovered `getch()` call-result assignment. The
+  live-out union cannot cause or repair this: RunMenu's sole caller consumes no
+  terminal memory output, so both the old and new joins have an empty live-out
+  set. This remains an open P0, not an accepted fallback
+- next implementation boundary: retain RunMenu's exact call-result-to-stack-
+  local assignment through IR, Alias, and Lowering. After that acceptance gate
+  passes, generalize live-out evidence only when Alias and SSA prove
+  conditional, indexed, indirect, stack, overlapping, or additional multiple
+  output storage without inferring semantics from rendered C
 
 Definition of done:
 

@@ -29,6 +29,10 @@ from .interprocedural_storage_contracts import (
     StorageTrialVerdict8616,
 )
 from .interprocedural_storage_return_passthrough_contracts import ReturnPassThroughTrial8616
+from .interprocedural_storage_slot_join import (
+    join_storage_slot_contracts_8616,
+    ordered_storage_trials_8616,
+)
 
 __all__ = [
     "FunctionStorageTrialJoin8616", "join_function_storage_trials_8616",
@@ -62,98 +66,6 @@ class FunctionStorageTrialJoin8616:
         if self.failures or not self.direct_outputs:
             return None
         return self.direct_outputs
-
-
-def _ordered_trials_8616(
-    callsite: CallsiteStorageTrials8616,
-    role: StorageTrialRole8616,
-) -> tuple[StorageTrial8616, ...]:
-    """Return one role's trials in deterministic logical-piece order."""
-    trials = callsite.arguments
-    if role is StorageTrialRole8616.LIVE_OUT:
-        trials = callsite.live_outs
-    elif role is StorageTrialRole8616.RETURN:
-        trials = callsite.returns
-    return tuple(sorted(trials, key=lambda item: (item.logical_index, item.piece_index)))
-
-
-def _trial_groups_8616(
-    trials: tuple[StorageTrial8616, ...],
-) -> tuple[tuple[StorageTrial8616, ...], ...] | None:
-    """Group contiguous logical slots and reject missing or duplicate pieces."""
-    if not trials:
-        return ()
-    grouped: dict[int, list[StorageTrial8616]] = {}
-    for trial in trials:
-        grouped.setdefault(trial.logical_index, []).append(trial)
-    if tuple(sorted(grouped)) != tuple(range(len(grouped))):
-        return None
-    result: list[tuple[StorageTrial8616, ...]] = []
-    for logical_index in sorted(grouped):
-        pieces = tuple(sorted(grouped[logical_index], key=lambda item: item.piece_index))
-        if (
-            not pieces
-            or any(item.piece_count != len(pieces) for item in pieces)
-            or tuple(item.piece_index for item in pieces) != tuple(range(len(pieces)))
-        ):
-            return None
-        result.append(pieces)
-    return tuple(result)
-
-
-def _slot_contracts_8616(
-    callsites: tuple[CallsiteStorageTrials8616, ...],
-    role: StorageTrialRole8616,
-) -> tuple[tuple[StorageSlotContract8616, ...] | None, StorageTrialFailureKind8616 | None]:
-    """Join exact slot shape, signedness, and value class across callsites."""
-    relevant = callsites
-    if not relevant:
-        return (), None
-    if role is not StorageTrialRole8616.INPUT:
-        relevant = tuple(callsite for callsite in callsites if _ordered_trials_8616(callsite, role))
-        if not relevant:
-            return (), None
-    site_contracts: list[tuple[StorageSlotContract8616, ...]] = []
-    for callsite in relevant:
-        groups = _trial_groups_8616(_ordered_trials_8616(callsite, role))
-        if groups is None:
-            return None, StorageTrialFailureKind8616.ARGUMENT_ORDER_CONFLICT
-        slots: list[StorageSlotContract8616] = []
-        for pieces in groups:
-            if role is not StorageTrialRole8616.INPUT and len(pieces) > 1:
-                provenances = {item.provenance for item in pieces}
-                if len(provenances) != 1 or None in provenances:
-                    return None, StorageTrialFailureKind8616.SPLIT_PROVENANCE_CONFLICT
-            signedness = {item.signedness for item in pieces}
-            if len(signedness) != 1:
-                return None, StorageTrialFailureKind8616.SIGNEDNESS_CONFLICT
-            value_classes = {item.value_class for item in pieces}
-            if len(value_classes) != 1:
-                return None, StorageTrialFailureKind8616.VALUE_CLASS_CONFLICT
-            slots.append(
-                StorageSlotContract8616(
-                    role=role,
-                    logical_index=pieces[0].logical_index,
-                    pieces=tuple(item.storage for item in pieces),
-                    signedness=pieces[0].signedness,
-                    value_class=pieces[0].value_class,
-                )
-            )
-        site_contracts.append(tuple(slots))
-    reference = site_contracts[0]
-    for current in site_contracts[1:]:
-        if len(current) != len(reference):
-            return None, StorageTrialFailureKind8616.ARGUMENT_ORDER_CONFLICT
-        for left, right in zip(reference, current, strict=True):
-            if tuple(piece.key for piece in left.pieces) != tuple(
-                piece.key for piece in right.pieces
-            ):
-                return None, StorageTrialFailureKind8616.STORAGE_CONFLICT
-            if left.signedness is not right.signedness:
-                return None, StorageTrialFailureKind8616.SIGNEDNESS_CONFLICT
-            if left.value_class is not right.value_class:
-                return None, StorageTrialFailureKind8616.VALUE_CLASS_CONFLICT
-    return reference, None
 
 
 def _trial_matches_callsite_8616(
@@ -220,15 +132,15 @@ def join_function_storage_trials_8616(
     stack_deltas = {callsite.stack_delta for callsite in trials.callsites}
     if not trials.callsites or None in stack_deltas or len(stack_deltas) != 1:
         failures.append(StorageTrialFailureKind8616.STACK_DELTA_CONFLICT)
-    inputs, input_failure = _slot_contracts_8616(
+    inputs, input_failure = join_storage_slot_contracts_8616(
         trials.callsites,
         StorageTrialRole8616.INPUT,
     )
-    direct_outputs, output_failure = _slot_contracts_8616(
+    direct_outputs, output_failure = join_storage_slot_contracts_8616(
         trials.callsites,
         StorageTrialRole8616.RETURN,
     )
-    live_outs, live_out_failure = _slot_contracts_8616(
+    live_outs, live_out_failure = join_storage_slot_contracts_8616(
         trials.callsites,
         StorageTrialRole8616.LIVE_OUT,
     )
@@ -314,10 +226,10 @@ def resolve_joined_function_storage_trials_8616(
         CallsiteStorageBinding8616(
             caller_addr=callsite.caller_addr,
             callsite_addr=callsite.callsite_addr,
-            arguments=_ordered_trials_8616(callsite, StorageTrialRole8616.INPUT),
-            returns=_ordered_trials_8616(callsite, StorageTrialRole8616.RETURN),
+            arguments=ordered_storage_trials_8616(callsite, StorageTrialRole8616.INPUT),
+            returns=ordered_storage_trials_8616(callsite, StorageTrialRole8616.RETURN),
             stack_delta=joined.stack_delta,
-            live_outs=_ordered_trials_8616(callsite, StorageTrialRole8616.LIVE_OUT),
+            live_outs=ordered_storage_trials_8616(callsite, StorageTrialRole8616.LIVE_OUT),
             return_passthroughs=callsite.return_passthroughs,
         )
         for callsite in sorted(joined.trials.callsites, key=lambda item: item.callsite_addr)
