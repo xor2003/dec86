@@ -160,19 +160,23 @@ def _component_refusal_8616(
 def _candidate_for_component_8616(
     component: frozenset[_RangeKey8616],
     evidence: dict[_RangeKey8616, _RangeEvidence8616],
+    *,
+    has_partial_overlap: bool,
 ) -> StackMemoryObjectWideningCandidate8616 | StackMemoryObjectWideningRefusal8616:
-    """Resolve one nested component to its unique containing Alias object."""
+    """Resolve one component to its unique containing Alias object or typed refusal."""
     owners = [
         key
         for key in sorted(component)
         if all(_contains_range_8616(evidence[key].address, evidence[member].address) for member in component)
     ]
     if len(owners) != 1:
+        refusal_kinds = StackMemoryObjectWideningRefusalKind8616
+        if has_partial_overlap:
+            return _component_refusal_8616(
+                refusal_kinds.PARTIAL_OVERLAP, "partial overlap lacks one containing Alias range", component, evidence
+            )
         return _component_refusal_8616(
-            StackMemoryObjectWideningRefusalKind8616.MISSING_UNIQUE_OWNER,
-            "overlap component has no unique range containing every byte view",
-            component,
-            evidence,
+            refusal_kinds.MISSING_UNIQUE_OWNER, "overlap component has no unique containing range", component, evidence
         )
     owner = evidence[owners[0]]
     owner_storage = owner.storage
@@ -270,16 +274,6 @@ def build_x86_16_stack_memory_object_widening_artifact(
     refusals: list[StackMemoryObjectWideningRefusal8616] = []
     components = _connected_components_8616(adjacency, composed_keys)
     for component in components:
-        if any(pair <= component for pair in partial_pairs):
-            refusals.append(
-                _component_refusal_8616(
-                    StackMemoryObjectWideningRefusalKind8616.PARTIAL_OVERLAP,
-                    "partial overlap cannot become one C storage object",
-                    component,
-                    evidence,
-                )
-            )
-            continue
         if len(component) == 1:
             refusals.append(
                 _component_refusal_8616(
@@ -290,7 +284,11 @@ def build_x86_16_stack_memory_object_widening_artifact(
                 )
             )
             continue
-        outcome = _candidate_for_component_8616(component, evidence)
+        outcome = _candidate_for_component_8616(
+            component,
+            evidence,
+            has_partial_overlap=any(pair <= component for pair in partial_pairs),
+        )
         if isinstance(outcome, StackMemoryObjectWideningCandidate8616):
             candidates.append(outcome)
         else:

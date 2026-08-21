@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.alias.stack_memory_ssa import build_x86_16_stack_memory_ssa_alias_artifact
 from angr_platforms.X86_16.analysis.stack_frame_ir import (
     BPFrameCoordinateEvidence8616,
@@ -21,6 +22,7 @@ from angr_platforms.X86_16.ir.core import (
     SegmentOrigin,
 )
 from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
+from angr_platforms.X86_16.ir.ssa_memory_contracts import SSAMemoryOverlapRelation8616
 from angr_platforms.X86_16.lowering.stack_memory_ssa import (
     lower_x86_16_stack_memory_ssa_alias_artifact,
 )
@@ -112,6 +114,79 @@ def test_stack_memory_object_widening_refuses_partial_overlap_component() -> Non
         (-4, 2),
         (-3, 2),
     }
+
+
+def test_stack_memory_object_widening_accepts_non_laminar_views_with_unique_owner() -> None:
+    owner = _bp_slot(-8, 4)
+    low_word = _bp_slot(-8, 2)
+    shifted_word = _bp_slot(-7, 2)
+    source = _alias_for_blocks(
+        IRBlock(addr=0x1000, instrs=(_store(owner), _load(low_word), _load(shifted_word)))
+    )
+
+    artifact = build_x86_16_stack_memory_object_widening_artifact(source)
+
+    assert any(
+        overlap.source.relation is SSAMemoryOverlapRelation8616.PARTIAL
+        for overlap in source.overlaps
+    )
+    assert artifact.complete is True
+    assert artifact.refusals == ()
+    assert artifact.stats.raw_fact_count == artifact.stats.materialized_count == 1
+    assert len(artifact.candidates) == 1
+    candidate = artifact.candidates[0]
+    assert (candidate.address.offset, candidate.address.size) == (-8, 4)
+    assert {(address.offset, address.size) for address in candidate.covered_addresses} >= {
+        (-8, 4),
+        (-8, 2),
+        (-7, 2),
+    }
+
+
+def test_stack_memory_lowering_materializes_non_laminar_unique_owner_atomically() -> None:
+    source = _alias_for_blocks(
+        IRBlock(
+            addr=0x1000,
+            instrs=(
+                _store(_bp_slot(-8, 4)),
+                _load(_bp_slot(-8, 2)),
+                _load(_bp_slot(-7, 2)),
+            ),
+        )
+    )
+    codegen = SimpleNamespace(
+        project=SimpleNamespace(arch=Arch86_16()),
+        cfunc=SimpleNamespace(
+            addr=source.function_addr,
+            variables_in_use={},
+            unified_local_vars={},
+            arg_list=(),
+            sort_local_vars=lambda: None,
+        ),
+        _inertia_stack_memory_ssa_alias_artifact=source,
+        _inertia_stack_memory_object_widening_artifact=(
+            build_x86_16_stack_memory_object_widening_artifact(source)
+        ),
+        _inertia_vex_ir_frame=FrameAccessArtifact(
+            bp_coordinate=BPFrameCoordinateEvidence8616(
+                status=FrameCoordinateStatus8616.PROVEN,
+                bp_entry_sp_delta=-2,
+                detail="test fixture",
+                stats=FrameCoordinateStats8616(1, 1, 1, 1, 0),
+            )
+        ),
+        next_idx=lambda _name: 1,
+    )
+
+    artifact = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
+
+    assert artifact is not None and artifact.complete is True
+    assert artifact.refusals == ()
+    assert len(artifact.candidates) == 1
+    stack_variables = [
+        variable for variable in codegen.cfunc.variables_in_use if isinstance(variable, SimStackVariable)
+    ]
+    assert [(variable.offset, variable.size) for variable in stack_variables] == [(-8, 4)]
 
 
 def test_stack_memory_object_widening_consumes_every_byte_phi() -> None:

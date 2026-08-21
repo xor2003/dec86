@@ -147,6 +147,46 @@ def test_dword_stack_owner_projects_proven_scalar_reads(
     assert stats.failure_count == 0
 
 
+def test_dword_stack_owner_projects_non_laminar_word_views() -> None:
+    codegen = _DummyCodegen()
+    owner = _stack_var(OWNER_OFFSET, 4, "owner", codegen)
+    low_word = _stack_var(OWNER_OFFSET, 2, "low_word", codegen)
+    shifted_word = _stack_var(OWNER_OFFSET + 1, 2, "shifted_word", codegen)
+    low_assignment = CAssignment(
+        CVariable(SimpleNamespace(name="inertia_ax"), codegen=codegen),
+        low_word,
+        codegen=codegen,
+    )
+    shifted_assignment = CAssignment(
+        CVariable(SimpleNamespace(name="inertia_dx"), codegen=codegen),
+        shifted_word,
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=FUNCTION_ADDR,
+        statements=CStatements([low_assignment, shifted_assignment], codegen=codegen),
+        variables_in_use={
+            owner.variable: owner,
+            low_word.variable: low_word,
+            shifted_word.variable: shifted_word,
+        },
+    )
+    _attach_dword_proof(codegen, ((0, 2), (1, 2)))
+
+    widening = codegen._inertia_stack_memory_object_widening_artifact
+    assert widening.refusals == ()
+    assert len(widening.candidates) == 1
+    assert materialize_contained_stack_subviews_8616(codegen) is True
+    assert isinstance(low_assignment.rhs, CBinaryOp) and low_assignment.rhs.op == "And"
+    assert isinstance(shifted_assignment.rhs, CBinaryOp) and shifted_assignment.rhs.op == "And"
+    shifted_owner = shifted_assignment.rhs.lhs
+    assert isinstance(shifted_owner, CBinaryOp) and shifted_owner.op == "Shr"
+    assert isinstance(shifted_owner.rhs, CConstant) and shifted_owner.rhs.value == 8
+    stats = codegen._inertia_stack_subview_last_stats_8616
+    assert stats.raw_fact_count == stats.materialized_count == 2
+    assert stats.failure_count == 0
+
+
 @pytest.mark.parametrize(
     ("view_size", "relative_offset", "preserved_mask", "view_mask"),
     (
