@@ -1,8 +1,8 @@
 """Typed contracts for the stack-memory SSA Alias projection.
 
 Layer: Alias.
-Responsibility: define immutable Alias facts, refusals, and closed evidence
-accounting for versioned stack-memory inputs.
+Responsibility: define immutable Alias facts, byte-overlap projections,
+refusals, and closed evidence accounting for stack-memory inputs.
 Owns storage identity contracts only. Do not infer locals or types, widen
 ranges, structure control flow, rewrite generated C, or inspect rendered text.
 Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting work here.
@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from ..ir.core import IRAddress, IRRefusal
+from ..ir.ssa_memory_contracts import SSAMemoryOverlap8616
 from .alias_model_impl import AliasStorageFacts
 
 
@@ -35,6 +36,7 @@ class StackMemoryAliasRefusalKind8616(str, Enum):
     UNCLASSIFIABLE_ADDRESS = "unclassifiable_address"
     UNVERSIONED_PHI = "unversioned_phi"
     INCONSISTENT_PHI_STORAGE = "inconsistent_phi_storage"
+    INCONSISTENT_OVERLAP_STORAGE = "inconsistent_overlap_storage"
     ORPHAN_UPSTREAM_REFUSAL = "orphan_upstream_refusal"
 
 
@@ -59,6 +61,30 @@ class StackMemorySSAAliasFact8616:
             "address": self.address.to_dict(),
             "storage_kind": identity[0] if identity is not None else None,
             "incoming_versions": list(self.incoming_versions),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class StackMemorySSAAliasOverlap8616:
+    """Alias projection of one byte-exact IR overlap relationship."""
+
+    source: SSAMemoryOverlap8616
+    left_storage: AliasStorageFacts
+    right_storage: AliasStorageFacts
+    intersection_storage: AliasStorageFacts
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
+        left_identity = self.left_storage.identity
+        right_identity = self.right_storage.identity
+        intersection_identity = self.intersection_storage.identity
+        return {
+            "source": self.source.to_dict(),
+            "left_storage_kind": left_identity[0] if left_identity is not None else None,
+            "right_storage_kind": right_identity[0] if right_identity is not None else None,
+            "intersection_storage_kind": (
+                intersection_identity[0] if intersection_identity is not None else None
+            ),
         }
 
 
@@ -120,6 +146,7 @@ class StackMemorySSAAliasArtifact8616:
 
     function_addr: int = 0
     facts: tuple[StackMemorySSAAliasFact8616, ...] = ()
+    overlaps: tuple[StackMemorySSAAliasOverlap8616, ...] = ()
     refusals: tuple[StackMemoryAliasRefusal8616, ...] = ()
     source_refusals: tuple[IRRefusal, ...] = ()
     stats: StackMemoryAliasStats8616 = StackMemoryAliasStats8616()
@@ -135,6 +162,7 @@ class StackMemorySSAAliasArtifact8616:
         return {
             "function_addr": self.function_addr,
             "facts": [fact.to_dict() for fact in self.facts],
+            "overlaps": [overlap.to_dict() for overlap in self.overlaps],
             "refusals": [refusal.to_dict() for refusal in self.refusals],
             "source_refusals": [refusal.to_dict() for refusal in self.source_refusals],
             "stats": self.stats.to_dict(),
@@ -150,4 +178,5 @@ __all__ = [
     "StackMemoryAliasStats8616",
     "StackMemorySSAAliasArtifact8616",
     "StackMemorySSAAliasFact8616",
+    "StackMemorySSAAliasOverlap8616",
 ]

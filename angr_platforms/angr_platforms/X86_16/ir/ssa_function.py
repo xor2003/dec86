@@ -16,6 +16,7 @@ from .ssa import SSABlock, build_x86_16_block_local_ssa
 from .ssa_memory import build_x86_16_function_memory_ssa
 from .ssa_memory_contracts import (
     SSAMemoryBinding8616,
+    SSAMemoryOverlap8616,
     SSAMemoryPhiNode8616,
     SSAMemoryStats8616,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "SSAIncomingValue",
     "SSAPhiNode",
     "SSAMemoryBinding8616",
+    "SSAMemoryOverlap8616",
     "SSAMemoryPhiNode8616",
     "SSAMemoryStats8616",
     "build_x86_16_function_ssa",
@@ -75,6 +77,7 @@ class SSAFunctionArtifact:
     phi_nodes: tuple[SSAPhiNode, ...] = ()
     memory_bindings: tuple[SSAMemoryBinding8616, ...] = ()
     memory_phi_nodes: tuple[SSAMemoryPhiNode8616, ...] = ()
+    memory_overlaps: tuple[SSAMemoryOverlap8616, ...] = ()
     memory_refusals: tuple[IRRefusal, ...] = ()
     memory_stats: SSAMemoryStats8616 = SSAMemoryStats8616()
     predecessor_map: dict[int, tuple[int, ...]] = field(default_factory=dict)
@@ -88,6 +91,7 @@ class SSAFunctionArtifact:
             "phi_nodes": [phi.to_dict() for phi in self.phi_nodes],
             "memory_bindings": [binding.to_dict() for binding in self.memory_bindings],
             "memory_phi_nodes": [phi.to_dict() for phi in self.memory_phi_nodes],
+            "memory_overlaps": [overlap.to_dict() for overlap in self.memory_overlaps],
             "memory_refusals": [refusal.to_dict() for refusal in self.memory_refusals],
             "memory_stats": {
                 "raw_fact_count": self.memory_stats.raw_fact_count,
@@ -198,6 +202,7 @@ def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifa
             "join_block_count": sum(1 for preds in pred_map.values() if len(preds) > 1),
             "memory_binding_count": len(memory_ssa.bindings),
             "memory_phi_node_count": len(memory_ssa.phi_nodes),
+            "memory_overlap_count": len(memory_ssa.overlaps),
             "memory_refusal_count": len(memory_ssa.refusals),
         }
         return SSAFunctionArtifact(
@@ -206,6 +211,7 @@ def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifa
             phi_nodes=tuple(sorted(phi_nodes, key=lambda node: (node.block_addr, node.key))),
             memory_bindings=memory_ssa.bindings,
             memory_phi_nodes=memory_ssa.phi_nodes,
+            memory_overlaps=memory_ssa.overlaps,
             memory_refusals=memory_ssa.refusals,
             memory_stats=memory_ssa.stats,
             predecessor_map=pred_map,

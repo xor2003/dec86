@@ -49,6 +49,8 @@ from .ssa_memory_contracts import (
     SSAFunctionMemoryResult8616,
     SSAMemoryBinding8616,
     SSAMemoryIncomingValue8616,
+    SSAMemoryOverlap8616,
+    SSAMemoryOverlapRelation8616,
     SSAMemoryPhiNode8616,
     SSAMemoryStats8616,
 )
@@ -97,6 +99,8 @@ __all__ = [
     "SSAFunctionMemoryResult8616",
     "SSAMemoryBinding8616",
     "SSAMemoryIncomingValue8616",
+    "SSAMemoryOverlap8616",
+    "SSAMemoryOverlapRelation8616",
     "SSAMemoryPhiNode8616",
     "SSAMemoryStats8616",
     "IRStringEffectArtifact",

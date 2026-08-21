@@ -707,8 +707,9 @@ implementation still requires an explicit license and notice review.
 
 #### 8.1 Keep stack locations in SSA until locals can be proven
 
-Status: in progress; exact `SS:BP+offset` ranges now flow through IR, Alias,
-and the first Lowering materializer. Widening and multi-function
+Status: in progress; exact `SS:BP+offset` ranges and byte-overlap geometry now
+flow through IR and Alias, while safe exact ranges reach the first Lowering
+materializer. Byte-view SSA materialization, Widening, and multi-function
 generalization remain.
 
 Reason: Early conversion of stack storage into loosely related C temporaries
@@ -757,6 +758,27 @@ Measured progress on 2026-08-21:
   ownership checks, 1,523 tests, and all three quality comparisons. The
   required pipeline passes its focused, Ultra QuickC, and seven MS C tiny
   compile/run/decompile/recompile/runtime lanes.
+- IR now retains one deterministic typed relation for every pair of
+  non-identical overlapping exact BP ranges: left-contains-right,
+  right-contains-left, or partial, plus the exact byte intersection. These
+  facts participate in the five closed evidence counters instead of existing
+  outside accounting.
+- Alias projects both ranges and their intersection through the canonical
+  storage model, rechecks containment, and emits a typed refusal when a
+  malformed relation disagrees with storage identity. Partial word overlap
+  and a contained byte view have positive fixtures; a deliberately reversed
+  containment relation is refused.
+- This prerequisite does not weaken local materialization: both overlapping
+  accesses remain explicit upstream refusals, and the Lowering regression
+  proves that the retained overlap fact creates no C local candidate. General
+  byte-view definitions, joins, and safe split/merge materialization remain.
+- The overlap surface passes 30 focused and real-function tests, including
+  sidecar-free DrawFrame, DrawTime, and InitMenu compilation/validation.
+  `quality-dev` passes Ruff `--fix`, strict MyPy, the 38-module mypyc smoke,
+  architecture/context/ownership gates, 1,523 tests, and all three quality
+  comparisons. The mandatory seven-worker pipeline passes all three lanes,
+  including Ultra QuickC and all seven MS C tiny compile/run/decompile/
+  recompile/decompiled-run cases.
 
 This should remove Ghidra-like stack setup temporaries from DrawFrame,
 DrawTime, and InitMenu without moving stack recovery into Rewrite. Negative

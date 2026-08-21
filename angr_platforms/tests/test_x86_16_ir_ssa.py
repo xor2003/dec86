@@ -13,6 +13,7 @@ from angr_platforms.X86_16.ir.core import (
 )
 from angr_platforms.X86_16.ir.ssa import build_x86_16_block_local_ssa
 from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
+from angr_platforms.X86_16.ir.ssa_memory_contracts import SSAMemoryOverlapRelation8616
 
 
 def test_block_local_ssa_versions_register_defs_monotonically():
@@ -233,8 +234,16 @@ def test_function_memory_ssa_refuses_overlapping_stack_ranges():
     function_ssa = build_x86_16_function_ssa(artifact)
 
     assert function_ssa.memory_stats.complete is True
+    assert function_ssa.memory_stats.raw_fact_count == 3
+    assert function_ssa.memory_stats.materialized_count == 1
     assert function_ssa.memory_stats.failure_count == 2
     assert function_ssa.memory_bindings == ()
+    memory_overlap = function_ssa.memory_overlaps[0]
+    assert memory_overlap.relation is SSAMemoryOverlapRelation8616.PARTIAL
+    assert (memory_overlap.left.offset, memory_overlap.left.size) == (-4, 2)
+    assert (memory_overlap.right.offset, memory_overlap.right.size) == (-3, 2)
+    assert (memory_overlap.intersection.offset, memory_overlap.intersection.size) == (-3, 1)
+    assert function_ssa.to_dict()["memory_overlaps"][0]["relation"] == "partial"
     assert {refusal.kind for refusal in function_ssa.memory_refusals} == {"overlapping_stack_range"}
     assert all(
         isinstance(instr.args[0], IRAddress) and instr.args[0].version is None

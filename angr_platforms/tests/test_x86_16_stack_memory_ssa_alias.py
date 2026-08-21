@@ -22,6 +22,8 @@ from angr_platforms.X86_16.ir.ssa import SSABlock
 from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact, build_x86_16_function_ssa
 from angr_platforms.X86_16.ir.ssa_memory_contracts import (
     SSAMemoryIncomingValue8616,
+    SSAMemoryOverlap8616,
+    SSAMemoryOverlapRelation8616,
     SSAMemoryPhiNode8616,
     SSAMemoryStats8616,
 )
@@ -106,11 +108,75 @@ def test_stack_memory_ssa_alias_preserves_upstream_range_refusals() -> None:
 
     assert artifact.complete is True
     assert artifact.facts == ()
-    assert artifact.stats.raw_fact_count == artifact.stats.failure_count == 2
+    assert artifact.stats.raw_fact_count == 3
+    assert artifact.stats.materialized_count == 1
+    assert artifact.stats.failure_count == 2
+    alias_overlap = artifact.overlaps[0]
+    assert alias_overlap.source.relation is SSAMemoryOverlapRelation8616.PARTIAL
+    assert alias_overlap.left_storage.contains(alias_overlap.intersection_storage)
+    assert alias_overlap.right_storage.contains(alias_overlap.intersection_storage)
+    assert not alias_overlap.left_storage.contains(alias_overlap.right_storage)
+    assert not alias_overlap.right_storage.contains(alias_overlap.left_storage)
     assert len(artifact.source_refusals) == 2
     assert {refusal.kind for refusal in artifact.refusals} == {
         StackMemoryAliasRefusalKind8616.UPSTREAM_MEMORY_REFUSAL
     }
+
+
+def test_stack_memory_ssa_alias_preserves_contained_byte_view() -> None:
+    word = _bp_slot(-4, 2)
+    byte = _bp_slot(-3, 1)
+    function_ssa = build_x86_16_function_ssa(
+        IRFunctionArtifact(
+            function_addr=0x1000,
+            blocks=(
+                IRBlock(
+                    addr=0x1000,
+                    instrs=(
+                        IRInstr("STORE", None, (word, IRValue(MemSpace.CONST, const=1, size=2)), size=2),
+                        IRInstr("LOAD", IRValue(MemSpace.REG, name="al", size=1), (byte,), size=1),
+                    ),
+                ),
+            ),
+        )
+    )
+
+    artifact = build_x86_16_stack_memory_ssa_alias_artifact(function_ssa)
+
+    assert artifact.complete is True
+    assert artifact.facts == ()
+    assert artifact.stats.raw_fact_count == 3
+    assert artifact.stats.materialized_count == 1
+    assert artifact.stats.failure_count == 2
+    alias_overlap = artifact.overlaps[0]
+    assert alias_overlap.source.relation is SSAMemoryOverlapRelation8616.LEFT_CONTAINS_RIGHT
+    assert alias_overlap.left_storage.contains(alias_overlap.right_storage)
+    assert alias_overlap.right_storage == alias_overlap.intersection_storage
+
+
+def test_stack_memory_ssa_alias_refuses_inconsistent_overlap_relation() -> None:
+    word = _bp_slot(-4, 2)
+    byte = _bp_slot(-3, 1)
+    function_ssa = SSAFunctionArtifact(
+        function_addr=0x1000,
+        blocks=(),
+        memory_overlaps=(
+            SSAMemoryOverlap8616(
+                word,
+                byte,
+                byte,
+                SSAMemoryOverlapRelation8616.RIGHT_CONTAINS_LEFT,
+            ),
+        ),
+        memory_stats=SSAMemoryStats8616(1, 1, 1, 1, 0),
+    )
+
+    artifact = build_x86_16_stack_memory_ssa_alias_artifact(function_ssa)
+
+    assert artifact.complete is True
+    assert artifact.overlaps == ()
+    assert artifact.stats.raw_fact_count == artifact.stats.failure_count == 1
+    assert artifact.refusals[0].kind is StackMemoryAliasRefusalKind8616.INCONSISTENT_OVERLAP_STORAGE
 
 
 def test_stack_memory_ssa_alias_refuses_phi_with_mixed_storage_identity() -> None:

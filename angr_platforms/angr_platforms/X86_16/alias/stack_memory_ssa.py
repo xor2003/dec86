@@ -14,6 +14,7 @@ from typing import Protocol, cast
 
 from ..ir.core import IRAddress, IRInstr, IRRefusal, MemSpace
 from ..ir.ssa_function import SSAFunctionArtifact
+from ..ir.ssa_memory_contracts import SSAMemoryOverlap8616, SSAMemoryOverlapRelation8616
 from ..pipeline.errors import PipelineHardError
 from .alias_model_impl import AliasFailure, AliasStorageFacts, alias_facts_for_ir_address_8616
 from .stack_memory_ssa_contracts import (
@@ -23,6 +24,7 @@ from .stack_memory_ssa_contracts import (
     StackMemoryAliasStats8616,
     StackMemorySSAAliasArtifact8616,
     StackMemorySSAAliasFact8616,
+    StackMemorySSAAliasOverlap8616,
 )
 
 __all__ = [
@@ -32,6 +34,7 @@ __all__ = [
     "StackMemoryAliasStats8616",
     "StackMemorySSAAliasArtifact8616",
     "StackMemorySSAAliasFact8616",
+    "StackMemorySSAAliasOverlap8616",
     "apply_x86_16_stack_memory_ssa_alias_artifact",
     "build_x86_16_stack_memory_ssa_alias_artifact",
 ]
@@ -67,6 +70,35 @@ def _alias_storage_8616(
     )
 
 
+def _alias_overlap_8616(
+    overlap: SSAMemoryOverlap8616,
+) -> StackMemorySSAAliasOverlap8616 | StackMemoryAliasRefusal8616:
+    """Project and verify one IR byte-overlap relation through Alias."""
+    addresses = (overlap.left, overlap.right, overlap.intersection)
+    storages = tuple(_alias_storage_8616(address) for address in addresses)
+    for address, storage in zip(addresses, storages, strict=True):
+        if isinstance(storage, tuple):
+            return StackMemoryAliasRefusal8616(storage[0], None, None, storage[1], address)
+    left, right, intersection = cast(tuple[AliasStorageFacts, ...], storages)
+    left_contains_right = left.contains(right)
+    right_contains_left = right.contains(left)
+    if overlap.relation is SSAMemoryOverlapRelation8616.LEFT_CONTAINS_RIGHT:
+        relation_consistent = left_contains_right and not right_contains_left
+    elif overlap.relation is SSAMemoryOverlapRelation8616.RIGHT_CONTAINS_LEFT:
+        relation_consistent = right_contains_left and not left_contains_right
+    else:
+        relation_consistent = not left_contains_right and not right_contains_left
+    if not left.contains(intersection) or not right.contains(intersection) or not relation_consistent:
+        return StackMemoryAliasRefusal8616(
+            StackMemoryAliasRefusalKind8616.INCONSISTENT_OVERLAP_STORAGE,
+            None,
+            None,
+            "IR overlap relation disagrees with canonical Alias storage containment",
+            overlap.intersection,
+        )
+    return StackMemorySSAAliasOverlap8616(overlap, left, right, intersection)
+
+
 def _incomplete_upstream_artifact_8616(
     function_ssa: SSAFunctionArtifact,
     accesses: tuple[tuple[int, int, IRAddress], ...],
@@ -92,7 +124,17 @@ def _incomplete_upstream_artifact_8616(
         )
         for phi in function_ssa.memory_phi_nodes
     )
-    refusals = access_refusals + phi_refusals
+    overlap_refusals = tuple(
+        StackMemoryAliasRefusal8616(
+            StackMemoryAliasRefusalKind8616.UPSTREAM_INCOMPLETE,
+            None,
+            None,
+            "stack-memory SSA evidence accounting is incomplete",
+            overlap.intersection,
+        )
+        for overlap in function_ssa.memory_overlaps
+    )
+    refusals = access_refusals + phi_refusals + overlap_refusals
     return StackMemorySSAAliasArtifact8616(
         function_addr=function_ssa.function_addr,
         refusals=refusals,
@@ -123,6 +165,7 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
     for refusal in function_ssa.memory_refusals:
         upstream_by_block.setdefault(refusal.block_addr, []).append(refusal)
     facts: list[StackMemorySSAAliasFact8616] = []
+    overlaps: list[StackMemorySSAAliasOverlap8616] = []
     refusals: list[StackMemoryAliasRefusal8616] = []
 
     for block_addr, instr_index, address in accesses:
@@ -159,6 +202,13 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
                 storage,
             )
         )
+
+    for overlap in function_ssa.memory_overlaps:
+        projected = _alias_overlap_8616(overlap)
+        if isinstance(projected, StackMemoryAliasRefusal8616):
+            refusals.append(projected)
+        else:
+            overlaps.append(projected)
 
     for phi in function_ssa.memory_phi_nodes:
         addresses = (phi.target, *(incoming.address for incoming in phi.incoming))
@@ -214,17 +264,19 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
             )
             for source in source_refusals
         )
-    raw_count = len(facts) + len(refusals)
+    materialized_count = len(facts) + len(overlaps)
+    raw_count = materialized_count + len(refusals)
     stats = StackMemoryAliasStats8616(
         raw_fact_count=raw_count,
-        normalized_fact_count=len(facts),
-        classified_fact_count=len(facts),
-        materialized_count=len(facts),
+        normalized_fact_count=materialized_count,
+        classified_fact_count=materialized_count,
+        materialized_count=materialized_count,
         failure_count=len(refusals),
     )
     return StackMemorySSAAliasArtifact8616(
         function_addr=function_ssa.function_addr,
         facts=tuple(facts),
+        overlaps=tuple(overlaps),
         refusals=tuple(refusals),
         source_refusals=function_ssa.memory_refusals,
         stats=stats,

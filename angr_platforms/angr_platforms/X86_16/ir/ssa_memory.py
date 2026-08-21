@@ -17,6 +17,8 @@ from .ssa_memory_contracts import (
     SSAFunctionMemoryResult8616,
     SSAMemoryBinding8616,
     SSAMemoryIncomingValue8616,
+    SSAMemoryOverlap8616,
+    SSAMemoryOverlapRelation8616,
     SSAMemoryPhiNode8616,
     SSAMemoryStats8616,
 )
@@ -60,13 +62,31 @@ def _stack_access_8616(instr: IRInstr) -> IRAddress | None:
     return address if isinstance(address, IRAddress) and address.space is MemSpace.SS else None
 
 
-def _overlaps_8616(left: MemoryRangeKey8616, right: MemoryRangeKey8616) -> bool:
-    """Return whether two same-base byte ranges overlap without identity."""
-    left_space, left_base, left_offset, left_size = left
-    right_space, right_base, right_offset, right_size = right
-    if (left_space, left_base) != (right_space, right_base) or left == right:
-        return False
-    return bool(left_offset < right_offset + right_size and right_offset < left_offset + left_size)
+def _overlap_8616(left: IRAddress, right: IRAddress) -> SSAMemoryOverlap8616 | None:
+    """Return the exact intersection of two canonical non-identical ranges."""
+    if left.space is not right.space or left.base != right.base:
+        return None
+    start = max(left.offset, right.offset)
+    end = min(left.offset + left.size, right.offset + right.size)
+    if start >= end:
+        return None
+    left_contains = left.offset <= right.offset and right.offset + right.size <= left.offset + left.size
+    right_contains = right.offset <= left.offset and left.offset + left.size <= right.offset + right.size
+    if left_contains:
+        relation = SSAMemoryOverlapRelation8616.LEFT_CONTAINS_RIGHT
+    elif right_contains:
+        relation = SSAMemoryOverlapRelation8616.RIGHT_CONTAINS_LEFT
+    else:
+        relation = SSAMemoryOverlapRelation8616.PARTIAL
+    intersection = IRAddress(
+        left.space,
+        left.base,
+        start,
+        end - start,
+        left.status,
+        left.segment_origin,
+    )
+    return SSAMemoryOverlap8616(left, right, intersection, relation)
 
 
 def _rewrite_atom_8616(
@@ -113,14 +133,24 @@ def build_x86_16_function_memory_ssa(
         key for _block, _index, address in accesses if (key := _memory_key_8616(address)) is not None
     )
     unique_keys = tuple(sorted(set(valid_keys)))
-    overlapping_keys = frozenset(
-        key for key in unique_keys if any(_overlaps_8616(key, other) for other in unique_keys)
-    )
     address_by_key = {
         key: address
         for _block, _index, address in accesses
         if (key := _memory_key_8616(address)) is not None
     }
+    overlaps = tuple(
+        overlap
+        for index, left_key in enumerate(unique_keys)
+        for right_key in unique_keys[index + 1 :]
+        if (overlap := _overlap_8616(address_by_key[left_key], address_by_key[right_key]))
+        is not None
+    )
+    overlapping_keys = frozenset(
+        key
+        for overlap in overlaps
+        for address in (overlap.left, overlap.right)
+        if (key := _memory_key_8616(address)) is not None
+    )
     call_refused_keys = frozenset(
         key
         for key in unique_keys
@@ -225,14 +255,18 @@ def build_x86_16_function_memory_ssa(
             phi_nodes=(),
             refusals=refusals + iteration_refusals,
             stats=SSAMemoryStats8616(
-                raw_fact_count=len(accesses),
+                raw_fact_count=len(accesses) + len(overlaps),
+                normalized_fact_count=len(overlaps),
+                classified_fact_count=len(overlaps),
+                materialized_count=len(overlaps),
                 failure_count=len(accesses),
             ),
+            overlaps=overlaps,
         )
 
     bindings: list[SSAMemoryBinding8616] = []
     rewritten_blocks: list[SSABlock] = []
-    materialized_count = 0
+    materialized_count = len(overlaps)
     for block in sorted(blocks, key=lambda item: item.addr):
         current = {key: entry_versions[(block.addr, key)] for key in accepted_keys}
         rewritten_instrs: list[IRInstr] = []
@@ -283,10 +317,11 @@ def build_x86_16_function_memory_ssa(
         phi_nodes=phi_nodes,
         refusals=refusals,
         stats=SSAMemoryStats8616(
-            raw_fact_count=len(accesses),
+            raw_fact_count=len(accesses) + len(overlaps),
             normalized_fact_count=materialized_count,
             classified_fact_count=materialized_count,
             materialized_count=materialized_count,
             failure_count=failure_count,
         ),
+        overlaps=overlaps,
     )

@@ -11,12 +11,40 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TypeAlias
 
 from .core import IRAddress, IRRefusal
 from .ssa import SSABlock
 
 MemoryRangeKey8616: TypeAlias = tuple[str, tuple[str, ...], int, int]
+
+
+class SSAMemoryOverlapRelation8616(StrEnum):
+    """Byte-exact relation between two non-identical stack ranges."""
+
+    LEFT_CONTAINS_RIGHT = "left_contains_right"
+    RIGHT_CONTAINS_LEFT = "right_contains_left"
+    PARTIAL = "partial"
+
+
+@dataclass(frozen=True, slots=True)
+class SSAMemoryOverlap8616:
+    """One canonical pair of stack ranges and their exact byte intersection."""
+
+    left: IRAddress
+    right: IRAddress
+    intersection: IRAddress
+    relation: SSAMemoryOverlapRelation8616
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
+        return {
+            "left": self.left.to_dict(),
+            "right": self.right.to_dict(),
+            "intersection": self.intersection.to_dict(),
+            "relation": self.relation.value,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +100,7 @@ class SSAMemoryPhiNode8616:
 
 @dataclass(frozen=True, slots=True)
 class SSAMemoryStats8616:
-    """Closed evidence accounting for stack-memory SSA accesses."""
+    """Closed evidence accounting for stack accesses and overlap relations."""
 
     raw_fact_count: int = 0
     normalized_fact_count: int = 0
@@ -82,7 +110,7 @@ class SSAMemoryStats8616:
 
     @property
     def complete(self) -> bool:
-        """Return whether every discovered stack access was handled honestly."""
+        """Return whether every discovered memory fact was handled honestly."""
         return (
             self.raw_fact_count == self.materialized_count + self.failure_count
             and self.normalized_fact_count
@@ -100,6 +128,7 @@ class SSAFunctionMemoryResult8616:
     phi_nodes: tuple[SSAMemoryPhiNode8616, ...]
     refusals: tuple[IRRefusal, ...]
     stats: SSAMemoryStats8616
+    overlaps: tuple[SSAMemoryOverlap8616, ...] = ()
 
 
 __all__ = [
@@ -107,6 +136,8 @@ __all__ = [
     "SSAFunctionMemoryResult8616",
     "SSAMemoryBinding8616",
     "SSAMemoryIncomingValue8616",
+    "SSAMemoryOverlap8616",
+    "SSAMemoryOverlapRelation8616",
     "SSAMemoryPhiNode8616",
     "SSAMemoryStats8616",
 ]

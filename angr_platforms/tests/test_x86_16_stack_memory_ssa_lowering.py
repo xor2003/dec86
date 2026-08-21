@@ -173,48 +173,58 @@ def test_stack_memory_ssa_lowering_refuses_frame_control_storage() -> None:
 
 
 @pytest.mark.parametrize(
-    "source",
+    ("source", "overlap_count"),
     [
-        _stack_alias_artifact_for_instructions(
-            (
-                IRInstr("STORE", None, (_bp_slot(-4), IRValue(MemSpace.CONST, const=1, size=2)), size=2),
-                IRInstr("LOAD", IRValue(MemSpace.REG, name="ax", size=2), (_bp_slot(-3),), size=2),
-            )
+        (
+            _stack_alias_artifact_for_instructions(
+                (
+                    IRInstr("STORE", None, (_bp_slot(-4), IRValue(MemSpace.CONST, const=1, size=2)), size=2),
+                    IRInstr("LOAD", IRValue(MemSpace.REG, name="ax", size=2), (_bp_slot(-3),), size=2),
+                )
+            ),
+            1,
         ),
-        _stack_alias_artifact_for_instructions(
-            (
-                IRInstr("STORE", None, (_bp_slot(-2), IRValue(MemSpace.CONST, const=1, size=2)), size=2),
-                IRInstr("CALL", None, (IRValue(MemSpace.CONST, const=0x2000, size=2),)),
-                IRInstr("LOAD", IRValue(MemSpace.REG, name="ax", size=2), (_bp_slot(-2),), size=2),
-            )
+        (
+            _stack_alias_artifact_for_instructions(
+                (
+                    IRInstr("STORE", None, (_bp_slot(-2), IRValue(MemSpace.CONST, const=1, size=2)), size=2),
+                    IRInstr("CALL", None, (IRValue(MemSpace.CONST, const=0x2000, size=2),)),
+                    IRInstr("LOAD", IRValue(MemSpace.REG, name="ax", size=2), (_bp_slot(-2),), size=2),
+                )
+            ),
+            0,
         ),
-        _stack_alias_artifact_for_instructions(
-            (
-                IRInstr(
-                    "LOAD",
-                    IRValue(MemSpace.REG, name="ax", size=2),
-                    (
-                        IRAddress(
-                            MemSpace.SS,
-                            base=("sp",),
-                            offset=2,
-                            size=2,
-                            status=AddressStatus.PROVISIONAL,
-                            segment_origin=SegmentOrigin.DEFAULTED,
+        (
+            _stack_alias_artifact_for_instructions(
+                (
+                    IRInstr(
+                        "LOAD",
+                        IRValue(MemSpace.REG, name="ax", size=2),
+                        (
+                            IRAddress(
+                                MemSpace.SS,
+                                base=("sp",),
+                                offset=2,
+                                size=2,
+                                status=AddressStatus.PROVISIONAL,
+                                segment_origin=SegmentOrigin.DEFAULTED,
+                            ),
                         ),
+                        size=2,
                     ),
-                    size=2,
-                ),
-            )
+                )
+            ),
+            0,
         ),
     ],
 )
-def test_stack_memory_ssa_lowering_preserves_upstream_refusals(source) -> None:
+def test_stack_memory_ssa_lowering_preserves_upstream_refusals(source, overlap_count: int) -> None:
     codegen = _FakeCodegen(source)
 
     artifact = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
 
     assert artifact is not None and artifact.complete is True
+    assert len(source.overlaps) == overlap_count
     assert artifact.candidates == ()
     assert artifact.stats.raw_fact_count == artifact.stats.failure_count == len(source.refusals)
     assert {refusal.kind for refusal in artifact.refusals} == {
