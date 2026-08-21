@@ -122,6 +122,8 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/alias/carry_borrow_destinations.py \
 	angr_platforms/angr_platforms/X86_16/alias/carry_borrow_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/carry_borrow_sources.py \
+	angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_classification.py \
+	angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_contracts.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_contracts.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/storage_fact_join.py \
@@ -204,6 +206,8 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/alias/alias_model.py \
 	angr_platforms/angr_platforms/X86_16/alias/alias_model_impl.py \
 	angr_platforms/angr_platforms/X86_16/alias/callsite_stack_merge.py \
+	angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_classification.py \
+	angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_contracts.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_contracts.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/condition_register_carriers.py \
@@ -877,6 +881,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/alias/alias_model.py \
 	angr_platforms/angr_platforms/X86_16/alias/alias_model_impl.py \
 	angr_platforms/angr_platforms/X86_16/alias/callsite_stack_merge.py \
+	angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_classification.py \
+	angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_contracts.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_contracts.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/condition_register_carriers.py \

@@ -10,6 +10,14 @@ from angr_platforms.X86_16.alias.alias_model_impl import (
     AliasFailure,
     alias_facts_for_ir_address_8616,
 )
+from angr_platforms.X86_16.alias.indexed_address_access_classification import (
+    classify_indexed_alias_accesses_8616,
+)
+from angr_platforms.X86_16.alias.indexed_address_access_contracts import (
+    IndexedAliasAccessEvidence8616,
+    IndexedAliasAccessFailureKind8616,
+    IndexedAliasAccessRole8616,
+)
 from angr_platforms.X86_16.alias.indexed_address_contracts import (
     IndexedAddressAliasEvidence8616,
     IndexedAddressAliasFailureKind8616,
@@ -46,6 +54,7 @@ INDEXED_STORE = bytes.fromhex(
 MULTI_TERM_LOAD = bytes.fromhex(
     "55 89 e5 83 ec 02 c7 46 fe 01 00 8b 76 fe d1 e6 8b 80 00 02 c9 c3"
 )
+POINTER_ARGUMENT_LOAD = bytes.fromhex("55 89 e5 8b 5e 04 8b 07 5d c3")
 
 
 def _lift(code: bytes) -> SSAFunctionArtifact:
@@ -153,6 +162,59 @@ def test_generic_alias_api_refuses_to_collapse_dynamic_ds_address() -> None:
     assert "symbolic Alias projection" in result.reason
 
 
+def test_alias_access_classifies_real_direct_argument_dereference_as_pointer() -> None:
+    result = classify_indexed_alias_accesses_8616(
+        project_indexed_address_aliases_8616(_evidence(POINTER_ARGUMENT_LOAD))
+    )
+
+    assert result.closed
+    assert result.refusals == ()
+    assert result.stats.raw_fact_count == result.stats.materialized_count == 1
+    assert result.facts[0].role is IndexedAliasAccessRole8616.POINTER_RELATIVE
+    assert result.facts[0].is_pointer_argument
+
+
+def test_alias_access_classifies_scaled_nonzero_base_as_global_indexed() -> None:
+    result = classify_indexed_alias_accesses_8616(
+        project_indexed_address_aliases_8616(_evidence(INDEXED_LOAD))
+    )
+
+    assert result.closed
+    assert result.refusals == ()
+    assert result.facts[0].role is IndexedAliasAccessRole8616.GLOBAL_INDEXED
+    assert not result.facts[0].is_pointer_argument
+
+
+def test_alias_access_refuses_unscaled_displaced_form_as_ambiguous() -> None:
+    source = _evidence(POINTER_ARGUMENT_LOAD)
+    displaced_fact = replace(
+        source.facts[0],
+        address=replace(source.facts[0].address, offset=2),
+    )
+    projected = project_indexed_address_aliases_8616(replace(source, facts=(displaced_fact,)))
+
+    result = classify_indexed_alias_accesses_8616(projected)
+
+    assert result.closed
+    assert result.facts == ()
+    assert result.stats.raw_fact_count == result.stats.failure_count == 1
+    assert (
+        result.refusals[0].failure
+        is IndexedAliasAccessFailureKind8616.AMBIGUOUS_ADDRESS_FORM
+    )
+
+
+def test_alias_access_retains_upstream_refusal_in_closed_accounting() -> None:
+    source = project_indexed_address_aliases_8616(_evidence(MULTI_TERM_LOAD))
+
+    result = classify_indexed_alias_accesses_8616(source)
+
+    assert result.closed
+    assert result.facts == ()
+    assert result.stats.raw_fact_count == result.stats.failure_count
+    assert result.refusals[0].failure is IndexedAliasAccessFailureKind8616.UPSTREAM_REFUSAL
+
+
 def test_main_path_attaches_ir_then_alias_evidence() -> None:
     codegen = SimpleNamespace(_inertia_vex_ir_function_ssa=_lift(INDEXED_LOAD))
 
@@ -163,6 +225,10 @@ def test_main_path_attaches_ir_then_alias_evidence() -> None:
     assert isinstance(result, IndexedAddressAliasEvidence8616)
     assert result.closed
     assert len(result.facts) == 1
+    access_result = codegen._inertia_indexed_address_alias_access_evidence_8616
+    assert isinstance(access_result, IndexedAliasAccessEvidence8616)
+    assert access_result.closed
+    assert access_result.source is result
 
 
 def test_alias_main_path_hard_fails_when_ir_owner_was_skipped() -> None:

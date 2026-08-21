@@ -15,6 +15,9 @@ from collections import defaultdict
 from collections.abc import Iterable
 from typing import Protocol, cast
 
+from ..alias.indexed_address_access_classification import (
+    classify_indexed_alias_accesses_8616,
+)
 from ..alias.indexed_address_contracts import (
     IndexedAddressAliasEvidence8616,
     IndexedAddressAliasFailureKind8616,
@@ -183,6 +186,7 @@ def build_indexed_address_function_parity_report_8616(
     function_ssa = build_x86_16_function_ssa(ir_artifact)
     ir_evidence = collect_indexed_address_evidence_8616(function_ssa)
     alias_evidence = project_indexed_address_aliases_8616(ir_evidence)
+    access_evidence = classify_indexed_alias_accesses_8616(alias_evidence)
     parity = compare_indexed_address_collectors_8616(
         alias_evidence,
         recover_indexed_segmented_global_load_site_evidence_8616(project, function),
@@ -192,6 +196,8 @@ def build_indexed_address_function_parity_report_8616(
         function_addr,
         ir_evidence.stats,
         alias_evidence.stats,
+        access_evidence.stats,
+        tuple(fact.role for fact in access_evidence.facts),
         parity,
         classify_indexed_address_mismatches_8616(alias_evidence, parity),
     )

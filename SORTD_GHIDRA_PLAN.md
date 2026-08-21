@@ -1633,11 +1633,22 @@ Measured progress on 2026-08-21:
   two pointer-argument stores in function `0x107b8` (`Swaps` in the reviewed
   source); they are valid Alias evidence but are not bounded global aggregate
   evidence
+- Alias now classifies only exact direct unscaled dereferences as
+  pointer-relative and exact scaled nonzero-base accesses as globally indexed
+  candidates. The closed sidecar-free census reports 4 pointer-relative facts,
+  31 globally indexed candidates, and 1 retained upstream refusal; mixed forms
+  remain typed refusals, and no Alias role claims aggregate bounds
+- the role classifier is attached atomically by the existing Alias main-path
+  publisher. Real lifted pointer/global fixtures, ambiguous and upstream
+  refusal fixtures, ownership checks, and the whole-SORTD census are permanent
+  regressions
 - implementation order is now: (1) [done] fix machine width and owning
   instruction provenance, (2) [done] close the whole-SORTD identity-conflict
-  census, (3) classify Alias facts as pointer access versus bounded aggregate
-  evidence, and only then (4) migrate `widening/global_object_layout.py` to the
-  Alias projection; Widening must not consume the current inventory directly
+  census, (3) [done] classify Alias facts as pointer-relative versus global
+  indexed candidates, (4) prove whole-element load-to-store value paths in IR
+  and project both endpoints through Alias, and only then (5) migrate
+  `widening/global_object_layout.py` to those Alias projections. Widening must
+  not consume the current inventory directly
 
 Do not borrow Ghidra's fallback assumption that an unlocked indexed range has
 at least four elements (`varmap.cc:1215-1219`). InitBars' wrong `% 0x60b`,

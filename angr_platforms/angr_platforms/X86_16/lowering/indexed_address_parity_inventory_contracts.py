@@ -14,6 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from ..alias.indexed_address_access_contracts import (
+    IndexedAliasAccessRole8616,
+    IndexedAliasAccessStats8616,
+)
 from ..alias.indexed_address_contracts import (
     IndexedAddressAliasFailureKind8616,
     IndexedAddressAliasStats8616,
@@ -99,6 +103,8 @@ class IndexedAddressFunctionParityReport8616:
     function_addr: int
     ir_stats: IndexedAddressStats8616
     alias_stats: IndexedAddressAliasStats8616
+    access_stats: IndexedAliasAccessStats8616
+    access_roles: tuple[IndexedAliasAccessRole8616, ...]
     parity: IndexedAddressCollectorParity8616
     mismatches: tuple[IndexedAddressCollectorMismatch8616, ...]
 
@@ -120,7 +126,10 @@ class IndexedAddressFunctionParityReport8616:
             and self.function_addr == self.parity.function_addr
             and self.ir_stats.closed
             and self.alias_stats.closed
+            and self.access_stats.closed
             and self.alias_stats.raw_fact_count == self.ir_stats.normalized_fact_count
+            and self.access_stats.raw_fact_count == self.alias_stats.raw_fact_count
+            and len(self.access_roles) == self.access_stats.materialized_count
             and self.parity.closed
             and all(mismatch.complete for mismatch in self.mismatches)
             and len(self.mismatches)
@@ -149,6 +158,10 @@ class IndexedAddressParityInventoryStats8616:
     failure_count: int
     alias_materialized_count: int
     alias_failure_count: int
+    access_materialized_count: int
+    access_failure_count: int
+    pointer_relative_count: int
+    global_indexed_count: int
     raw_key_count: int
     normalized_key_count: int
     matched_key_count: int
@@ -180,6 +193,18 @@ class IndexedAddressParityInventoryStats8616:
             failure_count=sum(report.ir_stats.failure_count for report in reports),
             alias_materialized_count=sum(report.alias_stats.materialized_count for report in reports),
             alias_failure_count=sum(report.alias_stats.failure_count for report in reports),
+            access_materialized_count=sum(report.access_stats.materialized_count for report in reports),
+            access_failure_count=sum(report.access_stats.failure_count for report in reports),
+            pointer_relative_count=sum(
+                role is IndexedAliasAccessRole8616.POINTER_RELATIVE
+                for report in reports
+                for role in report.access_roles
+            ),
+            global_indexed_count=sum(
+                role is IndexedAliasAccessRole8616.GLOBAL_INDEXED
+                for report in reports
+                for role in report.access_roles
+            ),
             raw_key_count=sum(report.parity.stats.raw_key_count for report in reports),
             normalized_key_count=sum(report.parity.stats.normalized_key_count for report in reports),
             matched_key_count=sum(report.parity.stats.matched_key_count for report in reports),
@@ -230,6 +255,9 @@ class IndexedAddressParityInventoryStats8616:
             == self.materialized_count + self.failure_count
             and self.normalized_fact_count
             == self.alias_materialized_count + self.alias_failure_count
+            == self.access_materialized_count + self.access_failure_count
+            and self.access_materialized_count
+            == self.pointer_relative_count + self.global_indexed_count
             and self.raw_key_count == self.normalized_key_count + self.duplicate_key_count
             and self.normalized_key_count
             == self.matched_key_count * 2 + self.alias_only_count + self.legacy_only_count

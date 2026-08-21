@@ -18,6 +18,8 @@ from typing import Protocol, cast
 from ..ir.indexed_address_contracts import IndexedAddressEvidence8616, IndexedAddressFact8616
 from ..pipeline.errors import PipelineHardError
 from .alias_model_impl import AliasFailure, AliasStorageFacts, alias_facts_for_ir_address_8616
+from .indexed_address_access_classification import classify_indexed_alias_accesses_8616
+from .indexed_address_access_contracts import IndexedAliasAccessEvidence8616
 from .indexed_address_contracts import (
     IndexedAddressAliasEvidence8616,
     IndexedAddressAliasFact8616,
@@ -35,6 +37,7 @@ class _CodegenBoundary8616(Protocol):
     _inertia_vex_ir_function_ssa: object
     _inertia_indexed_address_evidence_8616: IndexedAddressEvidence8616
     _inertia_indexed_address_alias_evidence_8616: IndexedAddressAliasEvidence8616
+    _inertia_indexed_address_alias_access_evidence_8616: IndexedAliasAccessEvidence8616
 
 
 def _source_key_8616(fact: IndexedAddressFact8616) -> tuple[object, ...]:
@@ -185,14 +188,23 @@ def apply_x86_16_indexed_address_aliases_8616(
         existing = boundary._inertia_indexed_address_alias_evidence_8616
     except AttributeError:
         existing = None
-    if (
+    if not (
         isinstance(existing, IndexedAddressAliasEvidence8616)
         and existing.source == source
     ):
-        return False
-    boundary._inertia_indexed_address_alias_evidence_8616 = (
-        project_indexed_address_aliases_8616(source)
-    )
+        existing = project_indexed_address_aliases_8616(source)
+        boundary._inertia_indexed_address_alias_evidence_8616 = existing
+    try:
+        access_evidence = boundary._inertia_indexed_address_alias_access_evidence_8616
+    except AttributeError:
+        access_evidence = None
+    if not (
+        isinstance(access_evidence, IndexedAliasAccessEvidence8616)
+        and access_evidence.source == existing
+    ):
+        boundary._inertia_indexed_address_alias_access_evidence_8616 = (
+            classify_indexed_alias_accesses_8616(existing)
+        )
     return False
 
 

@@ -1347,6 +1347,8 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/angr_platforms/X86_16/ir/indexed_address_pipeline.py",
             "angr_platforms/angr_platforms/X86_16/ir/ssa.py",
             "angr_platforms/angr_platforms/X86_16/ir/vex_addressing.py",
+            "angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_classification.py",
+            "angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_contracts.py",
             "angr_platforms/angr_platforms/X86_16/alias/indexed_address_contracts.py",
             "angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py",
             "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_collector_parity.py",

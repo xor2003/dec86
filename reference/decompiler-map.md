@@ -56,7 +56,10 @@ that read-only census across a discovered function set. The tooling entry point
 from local sidecars and reports non-library functions by default; divergence is
 diagnostic evidence, never permission for Lowering to choose whichever producer
 looks more convenient.
-
+`X86_16/alias/indexed_address_access_classification.py` classifies only two
+unambiguous post-Alias forms: zero-displacement unscaled pointer-relative access
+and scaled, nonzero-base global-index candidates. Mixed forms are typed refusals;
+bounds/layouts need separate proof, as do load-to-store paths for family joins.
 For interprocedural global-memory outputs, Semantics owns exact store and
 terminal-path facts, Alias owns segmented range identity and overlapping-view
 ownership, Widening owns exact caller-load projections into those ranges, and
@@ -126,7 +129,6 @@ either move the work to the correct layer or explicitly update the architecture
 allowlist with a documented migration reason and regression.
 
 ## Function Fix DoD
-
 A fixed function needs all of:
 
 - focused before/after regression evidence;
