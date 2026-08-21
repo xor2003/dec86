@@ -125,6 +125,10 @@ def test_selects_indexed_address_owner_for_ir_core():
     )
 
     assert selected == (
+        "angr_platforms/tests/test_x86_16_indexed_address_aliases.py::"
+        "test_indexed_load_projects_symbolic_target_and_exact_stack_source",
+        "angr_platforms/tests/test_x86_16_indexed_address_collector_parity.py::"
+        "test_real_indexed_load_collectors_have_exact_identity_parity",
         "angr_platforms/tests/test_x86_16_indexed_address_evidence.py",
         "angr_platforms/tests/test_x86_16_ir_core.py",
         "angr_platforms/tests/test_x86_16_ir_ssa.py",

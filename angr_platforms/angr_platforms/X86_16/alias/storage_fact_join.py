@@ -176,7 +176,7 @@ def build_segmented_alias_range_8616(
         or first.status is not AddressStatus.STABLE
         or first.segment_origin is not SegmentOrigin.PROVEN
         or first.size <= 0
-        or first.offset < 0
+        or (first.space in {MemSpace.DS, MemSpace.ES} and first.offset < 0)
     ):
         return None
     for previous, current in zip(addresses[:-1], addresses[1:], strict=True):

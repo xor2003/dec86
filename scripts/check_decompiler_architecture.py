@@ -1249,6 +1249,8 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_destinations.py",
     "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_projection.py",
     "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_sources.py",
+    "angr_platforms/angr_platforms/X86_16/alias/indexed_address_contracts.py",
+    "angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py",
     "angr_platforms/angr_platforms/X86_16/alias/storage_fact_join.py",
     "angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py",
     "angr_platforms/angr_platforms/X86_16/alias/condition_register_carriers.py",
@@ -1287,6 +1289,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/ir/effects.py",
     "angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py",
     "angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py",
+    "angr_platforms/angr_platforms/X86_16/ir/indexed_address_pipeline.py",
     "angr_platforms/angr_platforms/X86_16/ir/ir_canonicalize_8616.py",
     "angr_platforms/angr_platforms/X86_16/ir/regs.py",
     "angr_platforms/angr_platforms/X86_16/ir/segment_contract.py",
@@ -1539,6 +1542,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_type_surface.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_pointer_evidence.py",
     "angr_platforms/angr_platforms/X86_16/lowering/indexed_global_evidence.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_collector_parity.py",
     "angr_platforms/angr_platforms/X86_16/lowering/helper_call_interfaces.py",
     "angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_evidence.py",
     "angr_platforms/angr_platforms/X86_16/lowering/far_pointer_segmented_load_materialization.py",
@@ -2109,6 +2113,14 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
         "angr_platforms/angr_platforms/X86_16/ir/ssa.py",
         "angr_platforms/angr_platforms/X86_16/ir/ssa_function.py",
     ),
+    "x86-16-indexed-address-evidence": (
+        "angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py",
+        "angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py",
+        "angr_platforms/angr_platforms/X86_16/ir/indexed_address_pipeline.py",
+        "angr_platforms/angr_platforms/X86_16/alias/indexed_address_contracts.py",
+        "angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_collector_parity.py",
+    ),
     "x86-16-carry-borrow-widening": (
         "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_contracts.py",
         "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_destinations.py",
@@ -2132,6 +2144,12 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
 }
 
 _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
+    "x86-16-indexed-address-evidence": (
+        "angr_platforms/tests/test_x86_16_indexed_address_aliases.py::"
+        "test_indexed_load_projects_symbolic_target_and_exact_stack_source",
+        "angr_platforms/tests/test_x86_16_indexed_address_collector_parity.py::"
+        "test_real_indexed_load_collectors_have_exact_identity_parity",
+    ),
     "pipeline-architecture-final-emission-guard": (
         "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
         "test_architecture_guard_rejects_raw_linear_segment_arithmetic",

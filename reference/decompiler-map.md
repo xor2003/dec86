@@ -43,9 +43,13 @@ their exact versioned dynamic terms, and `X86_16/ir/indexed_address_evidence.py`
 owns tracing a supported term to its SSA definition and stable stack source.
 That producer must publish either a typed fact or a typed refusal; it must not
 infer aliases, bounds, arrays, structures, or C types. Alias owns storage/range
-identity, Widening owns proven aggregate views, and Types/Lowering owns object
-materialization. The legacy instruction-backed global collectors remain
-migration debt until each consumer has switched to the earlier typed evidence.
+identity in `X86_16/alias/indexed_address_projection.py` without collapsing the
+dynamic term to a direct-memory displacement. Widening owns proven aggregate
+views, and Types/Lowering owns object materialization. During migration,
+`X86_16/lowering/indexed_address_collector_parity.py` may compare identities
+from both producers but may not select evidence or change C. The legacy
+instruction-backed global collectors remain migration debt until each consumer
+has switched to the earlier typed evidence with an exact corpus parity census.
 
 For interprocedural global-memory outputs, Semantics owns exact store and
 terminal-path facts, Alias owns segmented range identity and overlapping-view

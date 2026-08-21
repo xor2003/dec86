@@ -1516,11 +1516,12 @@ Definition of failure:
 
 #### 8.3 Propagate types through IR, aliases, and bounded object ranges
 
-Status: in progress at the IR evidence prerequisite. Indexed DS/ES addresses
-now retain exact versioned dynamic terms and publish typed SSA facts or
-refusals. Alias range ownership, Widening aggregate views, bounded type
-propagation, and replacement of the legacy instruction-backed collectors
-remain open; no downstream consumer has switched yet.
+Status: in progress through the IR-to-Alias migration prerequisite. Indexed
+DS/ES addresses now retain exact versioned dynamic terms, publish typed SSA
+facts or refusals, and project into symbolic Alias storage with exact stack
+index-source ownership. Widening aggregate views, bounded type propagation,
+and replacement of the legacy instruction-backed collectors remain open; no
+downstream semantic consumer has switched yet.
 
 Reason: Type information must follow value and alias provenance across the
 pipeline before memory expressions can become pointers, indexes, fields, or
@@ -1564,17 +1565,31 @@ Measured progress on 2026-08-21:
 - all five evidence counters close, direct segmented accesses stay outside the
   indexed census, and the producer does not infer Alias identity, bounds,
   arrays, structures, C types, or rendered expressions
-- five real-lifter and refusal regressions pass; the ownership-expanded
-  changed-surface gate passes Ruff `--fix`, strict MyPy, architecture/context,
-  ownership, and 510 tests
-- `quality-dev` passes the 38-module mypyc compile/import smoke, 1,653 focused
-  tests, and all three generated-C comparisons. The required default pipeline
-  passes 3/3 lanes: 1,653 focused tests in 30.337s, 4/4 validated Ultra QuickC
-  fixtures in 58.200s, and all seven MS C tiny compile/run/decompile/recompile/
-  decompiled-run constructs in 91.753s
-- the next migration step is Alias projection of these facts plus an explicit
-  parity census against the current instruction-backed global collectors;
-  only then may one Widening/Types consumer switch and its late producer retire
+- `X86_16/ir/indexed_address_pipeline.py` publishes the closed IR artifact in
+  the main execution path, and `X86_16/alias/indexed_address_projection.py`
+  refuses to run when that earlier owner is missing or has the wrong contract
+- Alias preserves DS versus ES, displacement, access width, exact index SSA
+  value, shift, definition path, and canonical `SS:BP+offset` source range;
+  the direct Alias API now refuses symbolic DS/ES addresses instead of
+  collapsing them to the constant displacement
+- the canonical segmented Alias range builder now accepts negative BP-relative
+  stack offsets while retaining nonnegative DS/ES offsets
+- `X86_16/lowering/indexed_address_collector_parity.py` publishes a typed,
+  non-semantic migration census with matched, Alias-only, legacy-only, and
+  duplicate keys; real lifted load and store fixtures have exact parity, while
+  divergent and duplicate fixtures remain visible
+- seventeen indexed real-lifter, Alias, refusal, and parity regressions pass;
+  the ownership-expanded focused selection passes 73 tests
+- `quality-dev` and `quality-hard` pass Ruff `--fix`, strict MyPy, the 38-module
+  mypyc compile/import smoke, 1,666 focused tests, and all three generated-C
+  comparisons. The required default pipeline passes 1,666 tests in 30.96s and
+  all seven MS C tiny compile/run/decompile/recompile/decompiled-run constructs
+- the sidecar-free SORTD indexed-aggregate regression passes recompilation and
+  validation in 23.34s after the main-path IR/Alias artifacts were enabled
+- the next migration step is a whole-SORTD parity inventory, followed by
+  migration of `widening/global_object_layout.py` to Alias-projected facts;
+  only an evidence-closed consumer switch may retire the corresponding late
+  instruction-backed producer
 
 Do not borrow Ghidra's fallback assumption that an unlocked indexed range has
 at least four elements (`varmap.cc:1215-1219`). InitBars' wrong `% 0x60b`,

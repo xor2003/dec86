@@ -1657,6 +1657,7 @@ def test_structuring_direct_stack_materialization_records_owner_run_flag(monkeyp
 
 def test_structuring_segment_global_prime_uses_stage_owned_order_before_validation(monkeypatch):
     calls: list[tuple[object, object, object, object | None]] = []
+    parity_calls: list[tuple[object, object]] = []
     cod_metadata = object()
     synthetic_globals = {"clStart": object()}
     project = SimpleNamespace(
@@ -1692,6 +1693,13 @@ def test_structuring_segment_global_prime_uses_stage_owned_order_before_validati
         "run_segment_global_materialization_8616",
         segment_global_materialization,
     )
+    monkeypatch.setattr(
+        stage,
+        "collect_indexed_address_collector_parity_8616",
+        lambda actual_project, actual_codegen: parity_calls.append(
+            (actual_project, actual_codegen)
+        ),
+    )
 
     changed = stage._prime_structuring_segment_global_semantics_8616(
         project,
@@ -1699,6 +1707,7 @@ def test_structuring_segment_global_prime_uses_stage_owned_order_before_validati
     )
 
     assert changed is True
+    assert parity_calls == [(project, codegen)]
     assert calls == [(project, codegen, synthetic_globals, cod_metadata)]
     assert codegen._inertia_segment_global_structuring_prime_ran_8616 is True
     assert codegen._inertia_codegen_decl_refresh_required_8616 is True

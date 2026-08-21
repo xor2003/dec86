@@ -11,6 +11,7 @@ through getattr when translating them into owned alias facts.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -488,7 +489,7 @@ def _stack_slot_identity_can_join(lhs: object, rhs: object) -> bool:
 def _storage_domain_for_expr(expr: object) -> _StorageDomainSignature:
     from ..semantics.alias_query import _storage_domain_for_expr as _impl
 
-    return _impl(expr)
+    return cast(_StorageDomainSignature, _impl(expr))
 
 
 @dataclass(frozen=True)
@@ -566,6 +567,13 @@ def alias_facts_for_ir_address_8616(addr: "object") -> AliasStorageFacts | Alias
 
         # DS/ES memory
         if addr.space in {MemSpace.DS, MemSpace.ES}:
+            if addr.base or addr.base_values:
+                return AliasFailure(
+                    reason="indexed DS/ES address requires symbolic Alias projection",
+                    address=addr,
+                    space=addr.space.value.upper(),
+                    offset=addr.offset if isinstance(addr.offset, int) else None,
+                )
             return AliasStorageFacts(
                 domain=_StorageDomainSignature(
                     "memory",
@@ -586,42 +594,42 @@ def describe_alias_storage(expr: object) -> AliasStorageFacts:
     """Describe alias storage for a decompiler expression."""
     from ..semantics.alias_query import describe_alias_storage as _impl
 
-    return _impl(expr)
+    return cast(AliasStorageFacts, _impl(expr))
 
 
 def same_alias_storage_domain(lhs: object, rhs: object) -> bool:
     """Return whether two expressions belong to the same alias storage domain."""
     from ..semantics.alias_query import same_alias_storage_domain as _impl
 
-    return _impl(lhs, rhs)
+    return bool(_impl(lhs, rhs))
 
 
 def compatible_alias_storage_views(lhs: object, rhs: object) -> bool:
     """Return whether two expression storage views are compatible."""
     from ..semantics.alias_query import compatible_alias_storage_views as _impl
 
-    return _impl(lhs, rhs)
+    return bool(_impl(lhs, rhs))
 
 
 def needs_alias_synthesis(expr: object) -> bool:
     """Return whether an expression requires synthesized alias storage."""
     from ..semantics.alias_query import needs_alias_synthesis as _impl
 
-    return _impl(expr)
+    return bool(_impl(expr))
 
 
 def can_join_alias_storage(lhs: object, rhs: object) -> bool:
     """Return whether two expression storage facts can be joined."""
     from ..semantics.alias_query import can_join_alias_storage as _impl
 
-    return _impl(lhs, rhs)
+    return bool(_impl(lhs, rhs))
 
 
 def contains_alias_storage(container: object, subview: object) -> bool:
     """Return whether one expression's proven storage contains another view."""
     from ..semantics.alias_query import contains_alias_storage as _impl
 
-    return _impl(container, subview)
+    return bool(_impl(container, subview))
 
 
 ALIAS_RECOVERY_API: tuple[AliasRecoveryAPISpec, ...] = (

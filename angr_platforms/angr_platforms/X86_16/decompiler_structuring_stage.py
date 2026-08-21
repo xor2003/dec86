@@ -46,6 +46,7 @@ from . import structuring_grouped_pass as _grouped_structuring
 from . import type_array_matching as _array_match
 from . import type_equivalence_classes as _type_equiv
 from . import type_structure_merging as _struct_merge
+from .alias import indexed_address_projection as _indexed_address_aliases
 from .alias import segment_stack_restore as _segment_stack_restore
 from .alias import stack_memory_ssa as _stack_memory_ssa
 from .c_ast_utils import (
@@ -55,6 +56,7 @@ from .c_ast_utils import (
 )
 from .callsite_summary import CallerReturnUseVerdict8616
 from .condition_trace import record_ast_condition_trace_8616
+from .ir import indexed_address_pipeline as _indexed_address_ir
 from .ir import segment_contract as _segment_contract
 from .ir import segment_state as _segment_state
 from .ir import string_effects as _string_effects
@@ -81,6 +83,9 @@ from .lowering.dead_register_carriers import prune_unread_stack_lowered_register
 from .lowering.explicit_char_types import materialize_explicit_scalar_char_types_8616
 from .lowering.fact_transfer import transfer_semantic_alias_facts_to_codegen_8616
 from .lowering.fixed_stack_probe_frames import lower_fixed_stack_probe_frames_8616
+from .lowering.indexed_address_collector_parity import (
+    collect_indexed_address_collector_parity_8616,
+)
 from .lowering.indexed_global_evidence import IndexedSegmentedGlobalEvidence8616
 from .lowering.pointer_memory_idioms import (
     PointerMemoryIdiomCallbacks8616,
@@ -452,8 +457,18 @@ def _build_decompiler_structuring_passes() -> tuple[DecompilerStructuringPassSpe
             True,
         ),
         DecompilerStructuringPassSpec(
+            "_indexed_address_ir_evidence_8616",
+            _indexed_address_ir.apply_x86_16_indexed_address_evidence_8616,
+            True,
+        ),
+        DecompilerStructuringPassSpec(
             "_call_stack_effect_semantics_8616",
             apply_x86_16_call_stack_effects_8616,
+            True,
+        ),
+        DecompilerStructuringPassSpec(
+            "_indexed_address_alias_evidence_8616",
+            _indexed_address_aliases.apply_x86_16_indexed_address_aliases_8616,
             True,
         ),
         DecompilerStructuringPassSpec(
@@ -1637,7 +1652,7 @@ def _collapse_structuring_switch_loop_tail_breaks_8616(
     del project
     result = materialize_switch_loop_tail_breaks_8616(codegen.cfunc.statements)
     codegen._inertia_structuring_switch_loop_tail_break_result_8616 = result
-    return result.changed
+    return bool(result.changed)
 
 
 def _materialize_structuring_return_shape_8616(
@@ -1991,6 +2006,7 @@ def _prime_structuring_segment_global_semantics_8616(
     codegen: AngrCodegenSurface,
 ) -> bool:
     """Consume proven segment/global facts before Structuring validation."""
+    collect_indexed_address_collector_parity_8616(project, codegen)
     # Synthetic-global maps are dynamic metadata on the angr project/codegen boundary.
     synthetic_globals = getattr(codegen, "_inertia_synthetic_globals", None)
     if not isinstance(synthetic_globals, dict):
@@ -2050,7 +2066,9 @@ def _apply_structuring_stable_stack_semantics_8616(project: AngrProjectSurface, 
     """Orchestrate IR, Alias, and Lowering owners before C structuring."""
     changed = False
     _vex_ir.apply_x86_16_vex_ir_artifact(project, codegen)
+    _indexed_address_ir.apply_x86_16_indexed_address_evidence_8616(project, codegen)
     apply_x86_16_call_stack_effects_8616(project, codegen)
+    _indexed_address_aliases.apply_x86_16_indexed_address_aliases_8616(project, codegen)
     _stack_memory_ssa.apply_x86_16_stack_memory_ssa_alias_artifact(project, codegen)
     apply_carry_borrow_widening_pipeline_8616(project, codegen)
     apply_x86_16_stack_memory_object_widening_8616(project, codegen)
@@ -2114,7 +2132,9 @@ def _prime_structuring_validation_semantics_8616(project: AngrProjectSurface, co
         return
     try:
         _vex_ir.apply_x86_16_vex_ir_artifact(project, codegen)
+        _indexed_address_ir.apply_x86_16_indexed_address_evidence_8616(project, codegen)
         apply_x86_16_call_stack_effects_8616(project, codegen)
+        _indexed_address_aliases.apply_x86_16_indexed_address_aliases_8616(project, codegen)
         _stack_memory_ssa.apply_x86_16_stack_memory_ssa_alias_artifact(project, codegen)
         _segment_stack_restore.apply_x86_16_segment_stack_restore_artifact(project, codegen)
         _segment_state.apply_x86_16_segment_state_artifact(project, codegen)

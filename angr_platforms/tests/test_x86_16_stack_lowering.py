@@ -275,7 +275,7 @@ class TestStackStorageFactsForSegmentedAddress:
 
 
 class TestAliasFactsForIRAddress:
-    """alias_facts_for_ir_address_8616 must map IRAddress to AliasStorageFacts."""
+    """The canonical Alias entry point must classify or explicitly refuse."""
 
     def test_ss_stack_address_produces_alias_facts(self):
         addr = IRAddress(
@@ -308,7 +308,7 @@ class TestAliasFactsForIRAddress:
         assert isinstance(slot, _StackSlotIdentity)
         assert slot.base == "sp"
 
-    def test_ds_address_produces_memory_facts(self):
+    def test_symbolic_ds_address_requires_indexed_alias_projection(self):
         addr = IRAddress(
             space=MemSpace.DS,
             base=("bx",),
@@ -317,11 +317,10 @@ class TestAliasFactsForIRAddress:
             segment_origin=SegmentOrigin.PROVEN,
         )
         facts = alias_facts_for_ir_address_8616(addr)
-        assert facts is not None
-        assert isinstance(facts, AliasStorageFacts)
-        assert facts.domain.space == "memory"
+        assert isinstance(facts, AliasFailure)
+        assert facts.space == "DS"
 
-    def test_es_address_produces_memory_facts(self):
+    def test_symbolic_es_address_requires_indexed_alias_projection(self):
         addr = IRAddress(
             space=MemSpace.ES,
             base=("di",),
@@ -330,9 +329,8 @@ class TestAliasFactsForIRAddress:
             segment_origin=SegmentOrigin.PROVEN,
         )
         facts = alias_facts_for_ir_address_8616(addr)
-        assert facts is not None
-        assert isinstance(facts, AliasStorageFacts)
-        assert facts.domain.space == "memory"
+        assert isinstance(facts, AliasFailure)
+        assert facts.space == "ES"
 
     def test_unknown_space_returns_none(self):
         addr = IRAddress(space=MemSpace.UNKNOWN, offset=0)
