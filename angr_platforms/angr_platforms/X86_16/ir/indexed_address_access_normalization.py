@@ -33,6 +33,7 @@ class NormalizedIndexedAddressAccess8616:
     address: IRAddress
     access_size: int
     raw_fact_count: int
+    member_instr_indices: tuple[int, ...]
     failure: IndexedAddressFailureKind8616 | None = None
 
     @property
@@ -47,6 +48,9 @@ class NormalizedIndexedAddressAccess8616:
             and self.address.base
             and self.access_size > 0
             and self.raw_fact_count > 0
+            and len(self.member_instr_indices) == self.raw_fact_count
+            and self.member_instr_indices == tuple(sorted(set(self.member_instr_indices)))
+            and self.instr_index in self.member_instr_indices
         )
 
 
@@ -149,6 +153,7 @@ def _normalize_group_8616(
             first_address,
             first_instruction.size,
             1,
+            (first_index,),
         )
     low = _exact_little_endian_pair_8616(entries)
     if low is not None:
@@ -161,6 +166,7 @@ def _normalize_group_8616(
             replace(low_address, size=2),
             2,
             len(entries),
+            tuple(sorted(item[0] for item in entries)),
         )
     return NormalizedIndexedAddressAccess8616(
         block_addr,
@@ -170,6 +176,7 @@ def _normalize_group_8616(
         first_address,
         first_instruction.size,
         len(entries),
+        tuple(sorted(item[0] for item in entries)),
         IndexedAddressFailureKind8616.ACCESS_MICRO_OP_CONFLICT,
     )
 

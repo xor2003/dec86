@@ -58,8 +58,8 @@ diagnostic evidence, never permission for Lowering to choose whichever producer
 looks more convenient.
 `X86_16/alias/indexed_address_access_classification.py` classifies only two
 unambiguous post-Alias forms: zero-displacement unscaled pointer-relative access
-and scaled, nonzero-base global-index candidates. Mixed forms are typed refusals;
-bounds/layouts need separate proof, as do load-to-store paths for family joins.
+and scaled global-index candidates. IR owns exact indexed LOAD-to-STORE SSA lane
+paths; Alias owns endpoint/index identity; Widening proves families and bounds.
 For interprocedural global-memory outputs, Semantics owns exact store and
 terminal-path facts, Alias owns segmented range identity and overlapping-view
 ownership, Widening owns exact caller-load projections into those ranges, and

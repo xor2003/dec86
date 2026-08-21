@@ -22,10 +22,12 @@ from ..alias.indexed_address_contracts import (
     IndexedAddressAliasFailureKind8616,
     IndexedAddressAliasStats8616,
 )
+from ..alias.indexed_address_copy_contracts import IndexedAliasCopyStats8616
 from ..ir.indexed_address_contracts import (
     IndexedAddressFailureKind8616,
     IndexedAddressStats8616,
 )
+from ..ir.indexed_address_copy_contracts import IndexedAddressCopyStats8616
 from .indexed_address_collector_parity import (
     IndexedAddressCollectorKey8616,
     IndexedAddressCollectorParity8616,
@@ -97,6 +99,26 @@ class IndexedAddressCollectorMismatch8616:
 
 
 @dataclass(frozen=True, slots=True)
+class IndexedAddressCopySite8616:
+    """Exact machine and segmented-base identity of one Alias-proven copy."""
+
+    source_instr_addr: int
+    destination_instr_addr: int
+    source_base_offset: int
+    destination_base_offset: int
+
+    @property
+    def complete(self) -> bool:
+        """Return whether this diagnostic identifies two distinct endpoints."""
+        return bool(
+            self.source_instr_addr >= 0
+            and self.destination_instr_addr > self.source_instr_addr
+            and 0 <= self.source_base_offset <= 0xFFFF
+            and 0 <= self.destination_base_offset <= 0xFFFF
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class IndexedAddressFunctionParityReport8616:
     """Closed indexed-address migration report for one recovered function."""
 
@@ -105,6 +127,9 @@ class IndexedAddressFunctionParityReport8616:
     alias_stats: IndexedAddressAliasStats8616
     access_stats: IndexedAliasAccessStats8616
     access_roles: tuple[IndexedAliasAccessRole8616, ...]
+    copy_stats: IndexedAddressCopyStats8616
+    alias_copy_stats: IndexedAliasCopyStats8616
+    alias_copy_sites: tuple[IndexedAddressCopySite8616, ...]
     parity: IndexedAddressCollectorParity8616
     mismatches: tuple[IndexedAddressCollectorMismatch8616, ...]
 
@@ -127,9 +152,14 @@ class IndexedAddressFunctionParityReport8616:
             and self.ir_stats.closed
             and self.alias_stats.closed
             and self.access_stats.closed
+            and self.copy_stats.closed
+            and self.alias_copy_stats.closed
             and self.alias_stats.raw_fact_count == self.ir_stats.normalized_fact_count
             and self.access_stats.raw_fact_count == self.alias_stats.raw_fact_count
             and len(self.access_roles) == self.access_stats.materialized_count
+            and self.alias_copy_stats.raw_fact_count == self.copy_stats.raw_fact_count
+            and len(self.alias_copy_sites) == self.alias_copy_stats.materialized_count
+            and all(site.complete for site in self.alias_copy_sites)
             and self.parity.closed
             and all(mismatch.complete for mismatch in self.mismatches)
             and len(self.mismatches)
@@ -162,6 +192,11 @@ class IndexedAddressParityInventoryStats8616:
     access_failure_count: int
     pointer_relative_count: int
     global_indexed_count: int
+    copy_raw_fact_count: int
+    copy_materialized_count: int
+    copy_failure_count: int
+    alias_copy_materialized_count: int
+    alias_copy_failure_count: int
     raw_key_count: int
     normalized_key_count: int
     matched_key_count: int
@@ -204,6 +239,17 @@ class IndexedAddressParityInventoryStats8616:
                 role is IndexedAliasAccessRole8616.GLOBAL_INDEXED
                 for report in reports
                 for role in report.access_roles
+            ),
+            copy_raw_fact_count=sum(report.copy_stats.raw_fact_count for report in reports),
+            copy_materialized_count=sum(
+                report.copy_stats.materialized_count for report in reports
+            ),
+            copy_failure_count=sum(report.copy_stats.failure_count for report in reports),
+            alias_copy_materialized_count=sum(
+                report.alias_copy_stats.materialized_count for report in reports
+            ),
+            alias_copy_failure_count=sum(
+                report.alias_copy_stats.failure_count for report in reports
             ),
             raw_key_count=sum(report.parity.stats.raw_key_count for report in reports),
             normalized_key_count=sum(report.parity.stats.normalized_key_count for report in reports),
@@ -258,6 +304,9 @@ class IndexedAddressParityInventoryStats8616:
             == self.access_materialized_count + self.access_failure_count
             and self.access_materialized_count
             == self.pointer_relative_count + self.global_indexed_count
+            and self.copy_raw_fact_count
+            == self.copy_materialized_count + self.copy_failure_count
+            == self.alias_copy_materialized_count + self.alias_copy_failure_count
             and self.raw_key_count == self.normalized_key_count + self.duplicate_key_count
             and self.normalized_key_count
             == self.matched_key_count * 2 + self.alias_only_count + self.legacy_only_count
@@ -293,6 +342,7 @@ class IndexedAddressParityInventory8616:
 __all__ = [
     "IndexedAddressCollectorMismatch8616",
     "IndexedAddressCollectorSide8616",
+    "IndexedAddressCopySite8616",
     "IndexedAddressFunctionParityReport8616",
     "IndexedAddressMismatchKind8616",
     "IndexedAddressParityInventory8616",

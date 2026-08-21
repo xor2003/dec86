@@ -16,6 +16,7 @@ from collections import Counter
 from typing import Protocol, cast
 
 from ..ir.indexed_address_contracts import IndexedAddressEvidence8616, IndexedAddressFact8616
+from ..ir.indexed_address_copy_contracts import IndexedAddressCopyEvidence8616
 from ..pipeline.errors import PipelineHardError
 from .alias_model_impl import AliasFailure, AliasStorageFacts, alias_facts_for_ir_address_8616
 from .indexed_address_access_classification import classify_indexed_alias_accesses_8616
@@ -28,6 +29,8 @@ from .indexed_address_contracts import (
     IndexedAddressAliasStats8616,
     IndexedAliasStorage8616,
 )
+from .indexed_address_copy_contracts import IndexedAliasCopyEvidence8616
+from .indexed_address_copy_projection import project_indexed_address_copies_8616
 from .storage_fact_join import build_segmented_alias_range_8616
 
 
@@ -36,8 +39,10 @@ class _CodegenBoundary8616(Protocol):
 
     _inertia_vex_ir_function_ssa: object
     _inertia_indexed_address_evidence_8616: IndexedAddressEvidence8616
+    _inertia_indexed_address_copy_evidence_8616: IndexedAddressCopyEvidence8616
     _inertia_indexed_address_alias_evidence_8616: IndexedAddressAliasEvidence8616
     _inertia_indexed_address_alias_access_evidence_8616: IndexedAliasAccessEvidence8616
+    _inertia_indexed_address_alias_copy_evidence_8616: IndexedAliasCopyEvidence8616
 
 
 def _source_key_8616(fact: IndexedAddressFact8616) -> tuple[object, ...]:
@@ -185,6 +190,18 @@ def apply_x86_16_indexed_address_aliases_8616(
             layer="alias",
         )
     try:
+        copy_source = boundary._inertia_indexed_address_copy_evidence_8616
+    except AttributeError as error:
+        raise PipelineHardError(
+            "indexed-address IR copy evidence is missing before Alias projection",
+            layer="alias",
+        ) from error
+    if not isinstance(copy_source, IndexedAddressCopyEvidence8616):
+        raise PipelineHardError(
+            "indexed-address IR copy evidence has the wrong pipeline contract",
+            layer="alias",
+        )
+    try:
         existing = boundary._inertia_indexed_address_alias_evidence_8616
     except AttributeError:
         existing = None
@@ -202,8 +219,24 @@ def apply_x86_16_indexed_address_aliases_8616(
         isinstance(access_evidence, IndexedAliasAccessEvidence8616)
         and access_evidence.source == existing
     ):
-        boundary._inertia_indexed_address_alias_access_evidence_8616 = (
-            classify_indexed_alias_accesses_8616(existing)
+        access_evidence = classify_indexed_alias_accesses_8616(existing)
+        boundary._inertia_indexed_address_alias_access_evidence_8616 = access_evidence
+    try:
+        copy_evidence = boundary._inertia_indexed_address_alias_copy_evidence_8616
+    except AttributeError:
+        copy_evidence = None
+    if not (
+        isinstance(copy_evidence, IndexedAliasCopyEvidence8616)
+        and copy_evidence.source == copy_source
+        and copy_evidence.aliases == existing
+        and copy_evidence.accesses == access_evidence
+    ):
+        boundary._inertia_indexed_address_alias_copy_evidence_8616 = (
+            project_indexed_address_copies_8616(
+                copy_source,
+                existing,
+                access_evidence,
+            )
         )
     return False
 

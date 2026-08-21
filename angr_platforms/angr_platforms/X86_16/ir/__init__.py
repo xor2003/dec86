@@ -34,6 +34,18 @@ from .indexed_address_contracts import (
     IndexedAddressRefusal8616,
     IndexedAddressStats8616,
 )
+from .indexed_address_copy_contracts import (
+    IndexedAddressCopyEvidence8616,
+    IndexedAddressCopyFact8616,
+    IndexedAddressCopyFailureKind8616,
+    IndexedAddressCopyLane8616,
+    IndexedAddressCopyRefusal8616,
+    IndexedAddressCopyStats8616,
+    IndexedAddressCopyStep8616,
+    IndexedAddressCopyStepKind8616,
+    IndexedAddressCopyValuePath8616,
+)
+from .indexed_address_copy_evidence import collect_indexed_address_copy_evidence_8616
 from .indexed_address_evidence import collect_indexed_address_evidence_8616
 from .segment_contract import (
     SegmentAccessFact,
@@ -98,6 +110,15 @@ __all__ = [
     "IndexedAddressFailureKind8616",
     "IndexedAddressRefusal8616",
     "IndexedAddressStats8616",
+    "IndexedAddressCopyEvidence8616",
+    "IndexedAddressCopyFact8616",
+    "IndexedAddressCopyFailureKind8616",
+    "IndexedAddressCopyLane8616",
+    "IndexedAddressCopyRefusal8616",
+    "IndexedAddressCopyStats8616",
+    "IndexedAddressCopyStep8616",
+    "IndexedAddressCopyStepKind8616",
+    "IndexedAddressCopyValuePath8616",
     "AddressStatus",
     "SegmentOrigin",
     "MemSpace",
@@ -137,6 +158,7 @@ __all__ = [
     "build_x86_16_ir_function_artifact",
     "build_x86_16_ir_function_artifact_summary",
     "collect_indexed_address_evidence_8616",
+    "collect_indexed_address_copy_evidence_8616",
     "build_x86_16_segment_state_artifact",
     "build_x86_16_segment_function_contract",
     "build_x86_16_typed_string_effect_artifact",

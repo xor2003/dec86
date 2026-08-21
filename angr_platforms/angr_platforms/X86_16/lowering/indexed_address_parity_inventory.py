@@ -22,8 +22,10 @@ from ..alias.indexed_address_contracts import (
     IndexedAddressAliasEvidence8616,
     IndexedAddressAliasFailureKind8616,
 )
+from ..alias.indexed_address_copy_projection import project_indexed_address_copies_8616
 from ..alias.indexed_address_projection import project_indexed_address_aliases_8616
 from ..ir.indexed_address_contracts import IndexedAddressFailureKind8616
+from ..ir.indexed_address_copy_evidence import collect_indexed_address_copy_evidence_8616
 from ..ir.indexed_address_evidence import collect_indexed_address_evidence_8616
 from ..ir.ssa_function import build_x86_16_function_ssa
 from ..ir.vex_import import build_x86_16_ir_function_artifact
@@ -36,6 +38,7 @@ from .indexed_address_collector_parity import (
 from .indexed_address_parity_inventory_contracts import (
     IndexedAddressCollectorMismatch8616,
     IndexedAddressCollectorSide8616,
+    IndexedAddressCopySite8616,
     IndexedAddressFunctionParityReport8616,
     IndexedAddressMismatchKind8616,
     IndexedAddressParityInventory8616,
@@ -187,6 +190,15 @@ def build_indexed_address_function_parity_report_8616(
     ir_evidence = collect_indexed_address_evidence_8616(function_ssa)
     alias_evidence = project_indexed_address_aliases_8616(ir_evidence)
     access_evidence = classify_indexed_alias_accesses_8616(alias_evidence)
+    copy_evidence = collect_indexed_address_copy_evidence_8616(
+        function_ssa,
+        ir_evidence,
+    )
+    alias_copy_evidence = project_indexed_address_copies_8616(
+        copy_evidence,
+        alias_evidence,
+        access_evidence,
+    )
     parity = compare_indexed_address_collectors_8616(
         alias_evidence,
         recover_indexed_segmented_global_load_site_evidence_8616(project, function),
@@ -198,6 +210,17 @@ def build_indexed_address_function_parity_report_8616(
         alias_evidence.stats,
         access_evidence.stats,
         tuple(fact.role for fact in access_evidence.facts),
+        copy_evidence.stats,
+        alias_copy_evidence.stats,
+        tuple(
+            IndexedAddressCopySite8616(
+                fact.source_copy.source.instr_addr,
+                fact.source_copy.destination.instr_addr,
+                fact.source.storage.base_offset,
+                fact.destination.storage.base_offset,
+            )
+            for fact in alias_copy_evidence.facts
+        ),
         parity,
         classify_indexed_address_mismatches_8616(alias_evidence, parity),
     )

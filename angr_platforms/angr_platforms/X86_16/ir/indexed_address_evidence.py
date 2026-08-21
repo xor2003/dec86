@@ -26,18 +26,14 @@ from .indexed_address_contracts import (
     IndexedAddressRefusal8616,
     IndexedAddressStats8616,
 )
+from .scalar_definitions import (
+    ScalarDefinition8616,
+    ScalarDefinitionIndex8616,
+    build_scalar_definition_index_8616,
+    reaching_scalar_definitions_8616,
+    scalar_definition_key_8616,
+)
 from .ssa_function import SSAFunctionArtifact
-
-_DefinitionKey8616 = tuple[str, str | None, int, int, int | None]
-
-
-@dataclass(frozen=True, slots=True)
-class _Definition8616:
-    """Internal exact SSA definition and its instruction location."""
-
-    block_addr: int
-    instr_index: int
-    instruction: IRInstr
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,33 +46,9 @@ class _TraceResult8616:
     failure: IndexedAddressFailureKind8616 | None
 
 
-def _definition_key_8616(value: IRValue) -> _DefinitionKey8616:
-    """Return the exact scalar SSA identity used by the definition index."""
-    identity = (
-        f"vex_tmp:{value.source_tmp}"
-        if value.space is MemSpace.TMP and value.source_tmp is not None
-        else value.name
-    )
-    return (value.space.value, identity, value.offset, value.size, value.version)
-
-
-def _definition_index_8616(
-    artifact: SSAFunctionArtifact,
-) -> dict[_DefinitionKey8616, tuple[_Definition8616, ...]]:
-    """Index every exact scalar definition without discarding conflicts."""
-    grouped: dict[_DefinitionKey8616, list[_Definition8616]] = {}
-    for block in artifact.blocks:
-        for instr_index, instruction in enumerate(block.instrs):
-            if instruction.dst is None:
-                continue
-            key = _definition_key_8616(instruction.dst)
-            grouped.setdefault(key, []).append(
-                _Definition8616(block.addr, instr_index, instruction)
-            )
-    return {key: tuple(items) for key, items in grouped.items()}
-
-
-def _path_site_8616(definition: _Definition8616) -> IndexedAddressDefinitionSite8616 | None:
+def _path_site_8616(
+    definition: ScalarDefinition8616,
+) -> IndexedAddressDefinitionSite8616 | None:
     """Return one exact path site when machine identity is available."""
     instruction = definition.instruction
     if instruction.addr is None:
@@ -108,24 +80,25 @@ def _stable_stack_source_8616(instruction: IRInstr) -> IRAddress | None:
 
 def _trace_index_source_8616(
     value: IRValue,
-    definitions: dict[_DefinitionKey8616, tuple[_Definition8616, ...]],
+    definitions: ScalarDefinitionIndex8616,
     *,
     block_addr: int,
     before_index: int,
     shift: int = 0,
     path: tuple[IndexedAddressDefinitionSite8616, ...] = (),
-    seen: frozenset[_DefinitionKey8616] = frozenset(),
+    seen: frozenset[tuple[str, str | None, int, int, int | None]] = frozenset(),
 ) -> _TraceResult8616:
     """Trace one versioned index through MOV/SHL to an exact stack LOAD."""
-    key = _definition_key_8616(value)
+    key = scalar_definition_key_8616(value)
     if key in seen:
         return _TraceResult8616(
             None, shift, path, IndexedAddressFailureKind8616.INDEX_DEFINITION_CONFLICT
         )
-    candidates = tuple(
-        item
-        for item in definitions.get(key, ())
-        if item.block_addr == block_addr and item.instr_index < before_index
+    candidates = reaching_scalar_definitions_8616(
+        definitions,
+        value,
+        block_addr=block_addr,
+        before_index=before_index,
     )
     if not candidates:
         return _TraceResult8616(
@@ -225,7 +198,7 @@ def collect_indexed_address_evidence_8616(
     artifact: SSAFunctionArtifact,
 ) -> IndexedAddressEvidence8616:
     """Collect every indexed DS/ES access as a fact or typed refusal."""
-    definitions = _definition_index_8616(artifact)
+    definitions = build_scalar_definition_index_8616(artifact)
     normalization = normalize_indexed_address_accesses_8616(artifact)
     facts: list[IndexedAddressFact8616] = []
     refusals: list[IndexedAddressRefusal8616] = []

@@ -35,8 +35,13 @@ def test_sortd_sidecar_free_inventory_matches_reviewed_migration_baseline() -> N
         "alias_only_no_legacy_count": 4,
         "access_failure_count": 1,
         "access_materialized_count": 35,
+        "alias_copy_failure_count": 6,
+        "alias_copy_materialized_count": 2,
         "classified_fact_count": 36,
         "coalesced_fact_count": 6,
+        "copy_failure_count": 5,
+        "copy_materialized_count": 3,
+        "copy_raw_fact_count": 8,
         "divergent_function_count": 3,
         "duplicate_key_count": 0,
         "exact_function_count": 17,
@@ -56,3 +61,17 @@ def test_sortd_sidecar_free_inventory_matches_reviewed_migration_baseline() -> N
         "raw_fact_count": 42,
         "raw_key_count": 74,
     }
+    assert tuple(
+        (
+            report["function_addr"],
+            site["source_instr_addr"],
+            site["destination_instr_addr"],
+            site["source_base_offset"],
+            site["destination_base_offset"],
+        )
+        for report in payload["functions"]
+        for site in report["alias_copy_sites"]
+    ) == (
+        (0x10678, 0x106A9, 0x106B2, 0x08F0, 0x0B4C),
+        (0x10808, 0x10871, 0x1087A, 0x0B4A, 0x0B4C),
+    )

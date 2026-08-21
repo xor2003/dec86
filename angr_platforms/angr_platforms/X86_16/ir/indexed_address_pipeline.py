@@ -15,6 +15,8 @@ from typing import Protocol, cast
 
 from ..pipeline.errors import PipelineHardError
 from .indexed_address_contracts import IndexedAddressEvidence8616
+from .indexed_address_copy_contracts import IndexedAddressCopyEvidence8616
+from .indexed_address_copy_evidence import collect_indexed_address_copy_evidence_8616
 from .indexed_address_evidence import collect_indexed_address_evidence_8616
 from .ssa_function import SSAFunctionArtifact
 
@@ -24,6 +26,7 @@ class _CodegenBoundary8616(Protocol):
 
     _inertia_vex_ir_function_ssa: object
     _inertia_indexed_address_evidence_8616: IndexedAddressEvidence8616
+    _inertia_indexed_address_copy_evidence_8616: IndexedAddressCopyEvidence8616
 
 
 def apply_x86_16_indexed_address_evidence_8616(
@@ -42,18 +45,35 @@ def apply_x86_16_indexed_address_evidence_8616(
         existing = boundary._inertia_indexed_address_evidence_8616
     except AttributeError:
         existing = None
-    if (
+    if not (
         isinstance(existing, IndexedAddressEvidence8616)
         and existing.function_addr == function_ssa.function_addr
     ):
-        return False
-    evidence = collect_indexed_address_evidence_8616(function_ssa)
-    if not evidence.closed:
-        raise PipelineHardError(
-            "indexed-address IR evidence has incomplete accounting",
-            layer="ir",
+        existing = collect_indexed_address_evidence_8616(function_ssa)
+        if not existing.closed:
+            raise PipelineHardError(
+                "indexed-address IR evidence has incomplete accounting",
+                layer="ir",
+            )
+        boundary._inertia_indexed_address_evidence_8616 = existing
+    try:
+        copy_evidence = boundary._inertia_indexed_address_copy_evidence_8616
+    except AttributeError:
+        copy_evidence = None
+    if not (
+        isinstance(copy_evidence, IndexedAddressCopyEvidence8616)
+        and copy_evidence.source == existing
+    ):
+        copy_evidence = collect_indexed_address_copy_evidence_8616(
+            function_ssa,
+            existing,
         )
-    boundary._inertia_indexed_address_evidence_8616 = evidence
+        if not copy_evidence.closed:
+            raise PipelineHardError(
+                "indexed-address copy evidence has incomplete accounting",
+                layer="ir",
+            )
+        boundary._inertia_indexed_address_copy_evidence_8616 = copy_evidence
     return False
 
 

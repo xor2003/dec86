@@ -125,10 +125,16 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_classification.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_contracts.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_contracts.py \
+	angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_contracts.py \
+	angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/storage_fact_join.py \
 	angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_contracts.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_evidence.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_trace.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_pipeline.py \
+	angr_platforms/angr_platforms/X86_16/ir/scalar_definitions.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_collector_parity.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory_contracts.py \
@@ -209,6 +215,8 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_classification.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_contracts.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_contracts.py \
+	angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_contracts.py \
+	angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/condition_register_carriers.py \
 	angr_platforms/angr_platforms/X86_16/alias/condition_register_liveness.py \
@@ -245,10 +253,14 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/ir/effects.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_access_normalization.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_contracts.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_evidence.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_trace.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_pipeline.py \
 	angr_platforms/angr_platforms/X86_16/ir/ir_canonicalize_8616.py \
 	angr_platforms/angr_platforms/X86_16/ir/regs.py \
+	angr_platforms/angr_platforms/X86_16/ir/scalar_definitions.py \
 	angr_platforms/angr_platforms/X86_16/ir/segment_contract.py \
 	angr_platforms/angr_platforms/X86_16/segment_function_summary.py \
 	angr_platforms/angr_platforms/X86_16/segment_program_layout.py \
@@ -884,6 +896,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_classification.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_contracts.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_contracts.py \
+	angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_contracts.py \
+	angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py \
 	angr_platforms/angr_platforms/X86_16/alias/condition_register_carriers.py \
 	angr_platforms/angr_platforms/X86_16/alias/condition_register_liveness.py \
@@ -920,10 +934,14 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/ir/effects.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_access_normalization.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_contracts.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_evidence.py \
+	angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_trace.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py \
 	angr_platforms/angr_platforms/X86_16/ir/indexed_address_pipeline.py \
 	angr_platforms/angr_platforms/X86_16/ir/ir_canonicalize_8616.py \
 	angr_platforms/angr_platforms/X86_16/ir/regs.py \
+	angr_platforms/angr_platforms/X86_16/ir/scalar_definitions.py \
 	angr_platforms/angr_platforms/X86_16/ir/segment_contract.py \
 	angr_platforms/angr_platforms/X86_16/segment_function_summary.py \
 	angr_platforms/angr_platforms/X86_16/segment_program_layout.py \
@@ -1717,6 +1735,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_direct_stack_move_pretest_initializers.py \
 	angr_platforms/tests/test_x86_16_direct_stack_move_loops.py \
 	angr_platforms/tests/test_x86_16_direct_stack_update_groups.py \
+	angr_platforms/tests/test_x86_16_indexed_address_copies.py \
 	angr_platforms/tests/test_x86_16_indexed_address_evidence.py \
 	angr_platforms/tests/test_x86_16_indexed_address_aliases.py \
 	angr_platforms/tests/test_x86_16_indexed_address_collector_parity.py \
@@ -2010,6 +2029,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_direct_stack_move_pretest_initializers.py \
 	angr_platforms/tests/test_x86_16_direct_stack_move_loops.py \
 	angr_platforms/tests/test_x86_16_direct_stack_update_groups.py \
+	angr_platforms/tests/test_x86_16_indexed_address_copies.py \
 	angr_platforms/tests/test_x86_16_indexed_address_evidence.py \
 	angr_platforms/tests/test_x86_16_indexed_address_aliases.py \
 	angr_platforms/tests/test_x86_16_indexed_address_collector_parity.py \

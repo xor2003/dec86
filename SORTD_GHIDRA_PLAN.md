@@ -1536,7 +1536,7 @@ Definition of failure:
 
 #### 8.3 Propagate types through IR, aliases, and bounded object ranges
 
-Status: in progress through the IR-to-Alias migration prerequisite. Indexed
+Status: in progress; the IR-to-Alias migration prerequisite is complete. Indexed
 DS/ES addresses now retain exact versioned dynamic terms, publish typed SSA
 facts or refusals, and project into symbolic Alias storage with exact stack
 index-source ownership. Widening aggregate views, bounded type propagation,
@@ -1642,11 +1642,23 @@ Measured progress on 2026-08-21:
   publisher. Real lifted pointer/global fixtures, ambiguous and upstream
   refusal fixtures, ownership checks, and the whole-SORTD census are permanent
   regressions
+- normalized indexed STORE facts retain every exact VEX byte-lane member. IR
+  traces each member backward through supported same-block SSA operations and
+  materializes a copy only when all lanes converge on one unchanged indexed LOAD
+- Alias resolves both copy endpoints to canonical facts and accepts the relation
+  only when both are globally indexed with the same exact stack index storage and
+  shift. Pointer-relative, transformed, width-conflicting, and different-index
+  cases remain typed refusals
+- the sidecar-free SORTD copy census closes all 8 indexed STORE candidates: 3
+  are exact IR copies and 5 are IR refusals; Alias retains 2 globally indexed
+  copies and 6 refusals. The accepted sites are `0x106a9 -> 0x106b2`
+  (`DS:0x08f0` to `DS:0x0b4c`) and `0x10871 -> 0x1087a`
+  (`DS:0x0b4a` to `DS:0x0b4c`)
 - implementation order is now: (1) [done] fix machine width and owning
   instruction provenance, (2) [done] close the whole-SORTD identity-conflict
   census, (3) [done] classify Alias facts as pointer-relative versus global
-  indexed candidates, (4) prove whole-element load-to-store value paths in IR
-  and project both endpoints through Alias, and only then (5) migrate
+  indexed candidates, (4) [done] prove whole-element load-to-store value paths
+  in IR and project both endpoints through Alias, and now (5) migrate
   `widening/global_object_layout.py` to those Alias projections. Widening must
   not consume the current inventory directly
 

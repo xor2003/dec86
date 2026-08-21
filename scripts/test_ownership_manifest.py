@@ -1343,13 +1343,19 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "angr_platforms/angr_platforms/X86_16/ir/core.py",
             "angr_platforms/angr_platforms/X86_16/ir/indexed_address_access_normalization.py",
             "angr_platforms/angr_platforms/X86_16/ir/indexed_address_contracts.py",
+            "angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_contracts.py",
+            "angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_evidence.py",
+            "angr_platforms/angr_platforms/X86_16/ir/indexed_address_copy_trace.py",
             "angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py",
             "angr_platforms/angr_platforms/X86_16/ir/indexed_address_pipeline.py",
+            "angr_platforms/angr_platforms/X86_16/ir/scalar_definitions.py",
             "angr_platforms/angr_platforms/X86_16/ir/ssa.py",
             "angr_platforms/angr_platforms/X86_16/ir/vex_addressing.py",
             "angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_classification.py",
             "angr_platforms/angr_platforms/X86_16/alias/indexed_address_access_contracts.py",
             "angr_platforms/angr_platforms/X86_16/alias/indexed_address_contracts.py",
+            "angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_contracts.py",
+            "angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_projection.py",
             "angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py",
             "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_collector_parity.py",
             "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory.py",
@@ -1357,6 +1363,8 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
             "scripts/indexed_address_parity_inventory.py",
         ),
         tests=(
+            "angr_platforms/tests/test_x86_16_indexed_address_copies.py::"
+            "test_main_path_publishes_ir_and_alias_copy_evidence_atomically",
             "angr_platforms/tests/test_x86_16_indexed_address_aliases.py::"
             "test_indexed_load_projects_symbolic_target_and_exact_stack_source",
             "angr_platforms/tests/test_x86_16_indexed_address_collector_parity.py::"
