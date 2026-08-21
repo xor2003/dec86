@@ -1493,6 +1493,8 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/callee_argument_count_evidence.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_argument_width_evidence.py",
     "angr_platforms/angr_platforms/X86_16/ir/function_ssa_registry.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_object_contracts.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_objects.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_collection_contracts.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_contracts.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_function_solver.py",
@@ -2084,6 +2086,10 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "x86-16-terminal-memory-output-widening": (
         "angr_platforms/angr_platforms/X86_16/widening/terminal_memory_output_views.py",
     ),
+    "x86-16-interprocedural-memory-output-objects": (
+        "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_object_contracts.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_objects.py",
+    ),
     "x86-16-call-semantics": (
         "angr_platforms/angr_platforms/X86_16/semantics/call_output_contracts.py",
         "angr_platforms/angr_platforms/X86_16/semantics/call_outputs.py",
@@ -2174,6 +2180,11 @@ _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
         "angr_platforms/tests/test_x86_16_terminal_memory_output_views.py",
         "angr_platforms/tests/test_x86_16_terminal_memory_output_aliases.py",
         "angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py",
+    ),
+    "x86-16-interprocedural-memory-output-objects": (
+        "angr_platforms/tests/test_x86_16_interprocedural_memory_output_objects.py",
+        "angr_platforms/tests/test_x86_16_interprocedural_storage_slot_join.py",
+        "angr_platforms/tests/test_x86_16_interprocedural_storage_return_trial_collection.py",
     ),
     "x86-16-call-semantics": (
         "angr_platforms/tests/test_x86_16_call_outputs.py",

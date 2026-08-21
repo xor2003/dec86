@@ -35,6 +35,9 @@ ownership, Widening owns exact caller-load projections into those ranges, and
 Types/Lowering owns caller CFG/use trials. A contained caller view may be
 materialized only with its exact byte offset into a unique maximal Alias range;
 crossing, width-conflicting, or unproven views must refuse before Lowering.
+Function contracts retain those projections under one Alias-owned memory
+object. They must not flatten whole and contained views into independent scalar
+return slots; `outputs` is reserved for register/sequence returns.
 
 ## Never Fix Here
 

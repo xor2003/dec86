@@ -1287,6 +1287,18 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         ),
     ),
     TestOwnershipRule(
+        owner="x86-16-interprocedural-memory-output-objects",
+        paths=(
+            "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_object_contracts.py",
+            "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_objects.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_x86_16_interprocedural_memory_output_objects.py",
+            "angr_platforms/tests/test_x86_16_interprocedural_storage_slot_join.py",
+            "angr_platforms/tests/test_x86_16_interprocedural_storage_return_trial_collection.py",
+        ),
+    ),
+    TestOwnershipRule(
         owner="x86-16-call-semantics",
         paths=(
             "angr_platforms/angr_platforms/X86_16/semantics/call_output_contracts.py",

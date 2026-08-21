@@ -328,9 +328,9 @@ Measured progress on 2026-08-17:
   eight source modules, type/docs ratchets, architecture/context, ownership,
   and 230 selected tests. The default pipeline remains 3/3 green.
 
-Remaining task-3 work: materializing conditional, indexed, indirect, stack,
-overlapping, and broader multi-output live-out storage plus stack effects beyond
-closed terminal `ret` cleanup. Exact stable direct DS/ES must-write outputs and
+Remaining task-3 work: materializing indexed, indirect, stack, and broader
+multi-output live-out storage plus stack effects beyond closed terminal `ret`
+cleanup. Exact stable direct DS/ES must-write outputs and
 their caller-side condition uses now enter the same storage contract only when
 every target-reaching caller path preserves the call output; mixed-path and
 partial-overwrite cases refuse. Input trials, exact reaching-definition binding,
@@ -1466,11 +1466,27 @@ Measured progress on 2026-08-20:
   mandatory seven-worker pipeline passes 3/3 lanes: 1,633 focused tests, 4/4
   validated Ultra QuickC fixtures, and all seven MS C tiny build/run/decompile/
   recompile/decompiled-run contracts
+- Types/Lowering now joins every exact whole or contained caller projection
+  under one canonical Alias-owned memory-output object. Register and sequence
+  returns remain scalar function outputs, while exact callsite views retain
+  their Widening provenance. DS and ES remain distinct ownership spaces
+- conflicting owners, crossing ranges, missing, extra, or duplicate trials,
+  and signedness or value-class conflicts refuse the object transaction with
+  closed evidence counters. Seven focused object tests cover whole/high-byte,
+  disjoint-caller, segment, conflict, missing, duplicate, and orphan cases
+- the focused object/storage surface passes 23 tests. The changed-file gate
+  passes Ruff `--fix`, MyPy, types/docs, architecture/context, ownership, and
+  628 selected tests; strict executable-only SORTD remains 20/20, and
+  `quality-dev` passes its mypyc and generated-C comparison gates. The
+  mandatory seven-worker pipeline passes 3/3 lanes: 1,640 focused tests, 4/4
+  validated Ultra QuickC fixtures, and all seven MS C tiny build/run/decompile/
+  recompile/decompiled-run contracts; lane times are 29.266s, 55.004s, and
+  82.097s with zero failure, skip, or timeout
 - next implementation boundary: generalize live-out evidence only when Alias,
-  Widening, and SSA prove indexed, indirect, stack, overlapping multiple caller
-  views, object-level contract ownership, or broader multiple-output storage.
-  Conditional, exact whole-owner, and contained direct stable `DS`/`ES` effects
-  are complete for this scope and must not be reconstructed from rendered C
+  Widening, and SSA prove indexed, indirect, stack, or broader multiple-output
+  storage. Conditional, exact whole-owner, contained, overlapping-caller-view,
+  and object-owned direct stable `DS`/`ES` effects are complete for this scope
+  and must not be reconstructed from rendered C
 
 Definition of done:
 

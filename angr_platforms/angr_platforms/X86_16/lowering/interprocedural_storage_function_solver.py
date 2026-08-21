@@ -15,8 +15,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from ..pipeline.errors import PipelineHardError
-from ..semantics.terminal_memory_output_contracts import (
-    TerminalMemoryOutputDisposition8616,
+from .interprocedural_memory_output_object_contracts import (
+    MemoryOutputObjectJoinEvidence8616,
+)
+from .interprocedural_memory_output_objects import (
+    join_memory_output_object_contracts_8616,
 )
 from .interprocedural_storage_contracts import (
     CallsiteStorageBinding8616,
@@ -31,7 +34,6 @@ from .interprocedural_storage_contracts import (
     StorageTrialStats8616,
     StorageTrialVerdict8616,
 )
-from .interprocedural_storage_live_out_contracts import MemoryLiveOutUseDisposition8616
 from .interprocedural_storage_return_passthrough_contracts import ReturnPassThroughTrial8616
 from .interprocedural_storage_slot_join import (
     join_storage_slot_contracts_8616,
@@ -53,7 +55,7 @@ class FunctionStorageTrialJoin8616:
     passthroughs: tuple[ReturnPassThroughTrial8616, ...]
     inputs: tuple[StorageSlotContract8616, ...] | None
     direct_outputs: tuple[StorageSlotContract8616, ...] | None
-    live_outs: tuple[StorageSlotContract8616, ...] | None
+    memory_output_join: MemoryOutputObjectJoinEvidence8616
     stack_delta: int | None
     failures: tuple[StorageTrialFailureKind8616, ...]
     raw_count: int
@@ -83,24 +85,6 @@ def _trial_matches_callsite_8616(
         and trial.caller_addr == callsite.caller_addr
         and trial.callsite_addr == callsite.callsite_addr
     )
-
-
-def _memory_effects_match_live_outs_8616(callsite: CallsiteStorageTrials8616) -> bool:
-    """Require one value trial exactly for each proven must-write caller use."""
-    if any(not effect.complete for effect in callsite.memory_effects):
-        return False
-    effect_keys = tuple(effect.storage.key for effect in callsite.memory_effects)
-    if len(set(effect_keys)) != len(effect_keys):
-        return False
-    expected = {
-        effect.storage.key
-        for effect in callsite.memory_effects
-        if effect.disposition is MemoryLiveOutUseDisposition8616.USED
-        and effect.terminal_output.disposition
-        is TerminalMemoryOutputDisposition8616.MUST_WRITE
-    }
-    observed = {trial.storage.key for trial in callsite.live_outs}
-    return expected == observed
 
 
 def _ordered_failures_8616(
@@ -149,8 +133,6 @@ def join_function_storage_trials_8616(
         for trial in (*callsite.arguments, *callsite.returns, *callsite.live_outs)
     ):
         failures.append(StorageTrialFailureKind8616.INCOMPLETE_TRIAL)
-    if any(not _memory_effects_match_live_outs_8616(callsite) for callsite in trials.callsites):
-        failures.append(StorageTrialFailureKind8616.INCOMPLETE_TRIAL)
     if any(
         not trial.belongs_to(callsite.callee_addr, callsite.caller_addr, callsite.callsite_addr)
         for callsite in trials.callsites
@@ -174,11 +156,10 @@ def join_function_storage_trials_8616(
         trials.callsites,
         StorageTrialRole8616.RETURN,
     )
-    live_outs, live_out_failure = join_storage_slot_contracts_8616(
-        trials.callsites,
-        StorageTrialRole8616.LIVE_OUT,
-    )
-    failures.extend(item for item in (input_failure, output_failure, live_out_failure) if item is not None)
+    memory_output_join = join_memory_output_object_contracts_8616(trials.callsites)
+    failures.extend(item for item in (input_failure, output_failure) if item is not None)
+    if memory_output_join.storage_failure is not None:
+        failures.append(memory_output_join.storage_failure)
     stack_delta = next(iter(stack_deltas)) if len(stack_deltas) == 1 else None
     if not isinstance(stack_delta, int):
         stack_delta = None
@@ -188,7 +169,7 @@ def join_function_storage_trials_8616(
         passthroughs=passthroughs,
         inputs=inputs,
         direct_outputs=direct_outputs,
-        live_outs=live_outs,
+        memory_output_join=memory_output_join,
         stack_delta=stack_delta,
         failures=_ordered_failures_8616(failures),
         raw_count=raw_count,
@@ -247,12 +228,11 @@ def resolve_joined_function_storage_trials_8616(
             failures.append(StorageTrialFailureKind8616.STORAGE_CONFLICT)
         else:
             outputs = passthrough_outputs
-    if outputs is not None and joined.live_outs is not None:
-        outputs = (*outputs, *joined.live_outs)
     if (
         failures
         or joined.inputs is None
         or outputs is None
+        or not joined.memory_output_join.complete
         or joined.stack_delta is None
     ):
         return _refused_resolution_8616(joined, failures)
@@ -275,6 +255,7 @@ def resolve_joined_function_storage_trials_8616(
         outputs=outputs,
         stack_delta=joined.stack_delta,
         callsites=bindings,
+        memory_outputs=joined.memory_output_join.objects,
     )
     stats = StorageTrialStats8616(
         raw_fact_count=joined.raw_count,

@@ -259,8 +259,8 @@ def test_disjoint_caller_live_out_subsets_form_one_function_contract() -> None:
 
     assert resolution.stats.complete is True
     assert contract is not None
-    assert tuple(slot.logical_index for slot in contract.outputs) == (0, 1)
-    assert tuple(slot.pieces[0].address.offset for slot in contract.outputs) == (
+    assert contract.outputs == ()
+    assert tuple(item.storage.address.offset for item in contract.memory_outputs) == (
         0x1200,
         0x1300,
     )
@@ -288,11 +288,11 @@ def test_multiple_live_outs_at_one_callsite_keep_exact_storage_order() -> None:
     contract = resolve_program_storage_trials_8616((_function(callsite),)).contract_for(CALLEE)
 
     assert contract is not None
-    assert tuple(slot.pieces[0].address.offset for slot in contract.outputs) == (
+    assert tuple(item.storage.address.offset for item in contract.memory_outputs) == (
         0x1200,
         0x1300,
     )
-    assert tuple(slot.logical_index for slot in contract.outputs) == (0, 1)
+    assert contract.outputs == ()
     assert tuple(trial.logical_index for trial in contract.callsites[0].live_outs) == (0, 1)
 
 
@@ -309,7 +309,7 @@ def test_conditional_memory_effect_survives_without_becoming_output_slot() -> No
     contract = resolve_program_storage_trials_8616((_function(callsite),)).contract_for(CALLEE)
 
     assert contract is not None
-    assert contract.outputs == ()
+    assert contract.outputs == () and len(contract.memory_outputs) == 1
     assert contract.callsites[0].live_outs == ()
     assert contract.callsites[0].memory_effects == (effect,)
 
@@ -358,7 +358,7 @@ def test_ds_and_es_live_outs_have_total_deterministic_storage_order() -> None:
     contract = resolve_program_storage_trials_8616((_function(callsite),)).contract_for(CALLEE)
 
     assert contract is not None
-    assert tuple(slot.pieces[0].address.space for slot in contract.outputs) == (
+    assert tuple(item.storage.address.space for item in contract.memory_outputs) == (
         MemSpace.DS,
         MemSpace.ES,
     )

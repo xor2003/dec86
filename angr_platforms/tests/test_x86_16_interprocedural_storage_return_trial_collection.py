@@ -23,7 +23,6 @@ from angr_platforms.X86_16.lowering.interprocedural_storage_collection_contracts
 from angr_platforms.X86_16.lowering.interprocedural_storage_contracts import (
     CallsiteStorageTrials8616,
     FunctionStorageTrials8616,
-    StorageTrialRole8616,
     StorageTrialSignedness8616,
     StorageTrialStats8616,
     StorageTrialValueClass8616,
@@ -294,7 +293,7 @@ def test_global_condition_materializes_live_out_without_c_return(
     assert callsite.live_outs[0].storage.address.offset == 0x1234
     contract = resolve_program_storage_trials_8616((result.trials,)).contract_for(CALLEE_ADDR)
     assert contract is not None
-    assert tuple(output.role for output in contract.outputs) == (StorageTrialRole8616.LIVE_OUT,)
+    assert contract.outputs == () and len(contract.memory_outputs) == 1
     assert contract.callsites[0].memory_effects == callsite.memory_effects
     return_type = storage_contract_return_type_8616(contract, Arch86_16())
     assert return_type.verdict is StorageSimTypeVerdict8616.UNPROVEN

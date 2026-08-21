@@ -64,6 +64,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py",
     "angr_platforms/tests/test_x86_16_terminal_memory_output_aliases.py",
     "angr_platforms/tests/test_x86_16_terminal_memory_output_views.py",
+    "angr_platforms/tests/test_x86_16_interprocedural_memory_output_objects.py",
     "angr_platforms/tests/test_x86_16_interprocedural_storage_slot_join.py",
     "angr_platforms/tests/test_x86_16_interprocedural_storage_prototype_application.py",
     "angr_platforms/tests/test_x86_16_interprocedural_storage_reaching_defs.py",

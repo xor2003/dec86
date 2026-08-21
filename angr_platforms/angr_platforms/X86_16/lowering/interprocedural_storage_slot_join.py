@@ -1,12 +1,11 @@
 """Join exact interprocedural storage slots across a complete caller census.
 
 Layer: Types/Lowering.
-Responsibility: normalize proof-bearing input, return, and memory live-out
-trials into deterministic function-level storage slots. Input and scalar-return
-shapes must agree at every relevant callsite. Memory live-outs are a union of
-exact storage observed across the complete census because different callers
-may consume different outputs of the same callee. This module does not collect
-trials, infer storage, mutate codegen, or synthesize missing uses.
+Responsibility: normalize proof-bearing input and scalar-return trials into
+deterministic function-level storage slots whose shapes agree at every relevant
+callsite. Memory live-outs remain callsite views and are joined separately under
+Alias owners. This module does not collect trials, infer storage, mutate
+codegen, or synthesize missing uses.
 Consumes alias, widening, and typed facts. Storage-trial facts remain the
 authoritative proof payload.
 Do not recover semantics from COD, source, assembly, or rendered C text.
@@ -16,7 +15,6 @@ from __future__ import annotations
 
 from .interprocedural_storage_contracts import (
     CallsiteStorageTrials8616,
-    StorageIdentity8616,
     StorageSlotContract8616,
     StorageTrial8616,
     StorageTrialFailureKind8616,
@@ -30,19 +28,6 @@ _SlotJoinResult8616 = tuple[
     StorageTrialFailureKind8616 | None,
 ]
 _StoragePiecesKey8616 = tuple[tuple[object, ...], ...]
-_StoragePieceOrderKey8616 = tuple[
-    str,
-    int,
-    bool,
-    str,
-    tuple[str, ...],
-    int,
-    int,
-    bool,
-    int,
-    str,
-]
-_StoragePiecesOrderKey8616 = tuple[_StoragePieceOrderKey8616, ...]
 
 
 def ordered_storage_trials_8616(
@@ -134,41 +119,6 @@ def _pieces_key_8616(slot: StorageSlotContract8616) -> _StoragePiecesKey8616:
     return tuple(piece.key for piece in slot.pieces)
 
 
-def _piece_order_key_8616(piece: StorageIdentity8616) -> _StoragePieceOrderKey8616:
-    """Project exact storage to primitive fields with a total ordering."""
-    address = piece.address
-    if address is None:
-        return (
-            piece.kind.value,
-            piece.width,
-            False,
-            "",
-            (),
-            0,
-            0,
-            False,
-            0,
-            piece.register or "",
-        )
-    return (
-        piece.kind.value,
-        piece.width,
-        True,
-        address.space.value,
-        address.base,
-        address.offset,
-        address.size,
-        address.version is not None,
-        address.version if address.version is not None else 0,
-        "",
-    )
-
-
-def _pieces_order_key_8616(slot: StorageSlotContract8616) -> _StoragePiecesOrderKey8616:
-    """Return a deterministic total-order key for one logical slot."""
-    return tuple(_piece_order_key_8616(piece) for piece in slot.pieces)
-
-
 def _uniform_slot_contracts_8616(
     callsites: tuple[CallsiteStorageTrials8616, ...],
     role: StorageTrialRole8616,
@@ -203,50 +153,11 @@ def _uniform_slot_contracts_8616(
     return reference, None
 
 
-def _live_out_slot_contracts_8616(
-    callsites: tuple[CallsiteStorageTrials8616, ...],
-) -> _SlotJoinResult8616:
-    """Union exact live-outs while rejecting conflicts for the same storage."""
-    slots_by_storage: dict[_StoragePiecesKey8616, StorageSlotContract8616] = {}
-    for callsite in callsites:
-        slots, failure = _site_slots_8616(callsite, StorageTrialRole8616.LIVE_OUT)
-        if slots is None:
-            return None, failure
-        seen_at_callsite: set[_StoragePiecesKey8616] = set()
-        for slot in slots:
-            storage_key = _pieces_key_8616(slot)
-            if storage_key in seen_at_callsite:
-                return None, StorageTrialFailureKind8616.STORAGE_CONFLICT
-            seen_at_callsite.add(storage_key)
-            previous = slots_by_storage.get(storage_key)
-            if previous is None:
-                slots_by_storage[storage_key] = slot
-                continue
-            if previous.signedness is not slot.signedness:
-                return None, StorageTrialFailureKind8616.SIGNEDNESS_CONFLICT
-            if previous.value_class is not slot.value_class:
-                return None, StorageTrialFailureKind8616.VALUE_CLASS_CONFLICT
-    ordered = tuple(sorted(slots_by_storage.values(), key=_pieces_order_key_8616))
-    return (
-        tuple(
-            StorageSlotContract8616(
-                role=slot.role,
-                logical_index=index,
-                pieces=slot.pieces,
-                signedness=slot.signedness,
-                value_class=slot.value_class,
-            )
-            for index, slot in enumerate(ordered)
-        ),
-        None,
-    )
-
-
 def join_storage_slot_contracts_8616(
     callsites: tuple[CallsiteStorageTrials8616, ...],
     role: StorageTrialRole8616,
 ) -> _SlotJoinResult8616:
-    """Join one role's exact slots over a complete caller census."""
+    """Join one input/return role's exact slots over a complete census."""
     if role is StorageTrialRole8616.LIVE_OUT:
-        return _live_out_slot_contracts_8616(callsites)
+        return None, StorageTrialFailureKind8616.INCOMPLETE_TRIAL
     return _uniform_slot_contracts_8616(callsites, role)

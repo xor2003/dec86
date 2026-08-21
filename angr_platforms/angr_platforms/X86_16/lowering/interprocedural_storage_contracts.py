@@ -17,6 +17,7 @@ from ..ir import AddressStatus, IRAddress, IRValue, MemSpace
 from .interprocedural_storage_return_passthrough_contracts import ReturnPassThroughTrial8616
 
 if TYPE_CHECKING:
+    from .interprocedural_memory_output_object_contracts import MemoryOutputObjectContract8616
     from .interprocedural_storage_live_out_contracts import MemoryLiveOutUseFact8616
 
 __all__ = [
@@ -121,10 +122,8 @@ class StorageIdentity8616:
     def key(self) -> tuple[object, ...]:
         """Return deterministic exact-storage identity for joins."""
         if self.address is not None:
-            return (
-                self.kind, self.width, self.address.space, self.address.base, self.address.offset,
-                self.address.size, self.address.version,
-            )
+            return (self.kind, self.width, self.address.space, self.address.base,
+                    self.address.offset, self.address.size, self.address.version)
         return (self.kind, self.width, self.register)
 
 
@@ -300,6 +299,7 @@ class FunctionStorageContract8616:
     outputs: tuple[StorageSlotContract8616, ...]
     stack_delta: int
     callsites: tuple[CallsiteStorageBinding8616, ...]
+    memory_outputs: tuple[MemoryOutputObjectContract8616, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
