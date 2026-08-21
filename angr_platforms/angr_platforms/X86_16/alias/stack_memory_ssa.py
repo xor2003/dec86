@@ -16,7 +16,6 @@ from ..ir.core import IRAddress, IRInstr, IRRefusal, MemSpace
 from ..ir.ssa_function import SSAFunctionArtifact
 from ..ir.ssa_memory_contracts import SSAMemoryOverlap8616, SSAMemoryOverlapRelation8616
 from ..pipeline.errors import PipelineHardError
-from .alias_model_impl import AliasStorageFacts
 from .stack_memory_access_projection import (
     alias_stack_memory_storage_8616,
     project_stack_memory_access_8616,
@@ -72,7 +71,7 @@ def _alias_overlap_8616(
     for address, storage in zip(addresses, storages, strict=True):
         if isinstance(storage, tuple):
             return StackMemoryAliasRefusal8616(storage[0], None, None, storage[1], address)
-    left, right, intersection = cast(tuple[AliasStorageFacts, ...], storages)
+    left, right, intersection = storages
     left_contains_right = left.contains(right)
     right_contains_left = right.contains(left)
     if overlap.relation is SSAMemoryOverlapRelation8616.LEFT_CONTAINS_RIGHT:
@@ -132,6 +131,7 @@ def _incomplete_upstream_artifact_8616(
         function_addr=function_ssa.function_addr,
         refusals=refusals,
         source_refusals=function_ssa.memory_refusals,
+        call_effects=function_ssa.memory_call_effects,
         stats=StackMemoryAliasStats8616(
             raw_fact_count=len(refusals),
             failure_count=len(refusals),
@@ -217,7 +217,7 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
         if failed is not None:
             refusals.append(StackMemoryAliasRefusal8616(failed[0], phi.block_addr, None, failed[1], phi.target))
             continue
-        typed_storages = cast(tuple[AliasStorageFacts, ...], storages)
+        typed_storages = storages
         if any(storage != typed_storages[0] for storage in typed_storages[1:]):
             refusals.append(
                 StackMemoryAliasRefusal8616(
@@ -269,6 +269,7 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
         overlaps=tuple(overlaps),
         refusals=tuple(refusals),
         source_refusals=function_ssa.memory_refusals,
+        call_effects=function_ssa.memory_call_effects,
         stats=stats,
     )
 

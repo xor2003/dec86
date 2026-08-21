@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TypeAlias
 
-from .core import IRAddress, IRRefusal
+from .core import IRAddress, IRCallStackEffect8616, IRRefusal
 from .ssa import SSABlock
 
 MemoryRangeKey8616: TypeAlias = tuple[str, tuple[str, ...], int, int]
@@ -52,6 +52,25 @@ class SSAMemoryAccessKind8616(StrEnum):
 
     LOAD = "load"
     STORE = "store"
+
+
+@dataclass(frozen=True, slots=True)
+class SSACallStackEffectSite8616:
+    """One exact CALL and its typed stack effect retained by memory SSA."""
+
+    block_addr: int
+    instr_index: int
+    callsite_addr: int | None
+    effect: IRCallStackEffect8616
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a deterministic JSON-friendly representation."""
+        return {
+            "block_addr": self.block_addr,
+            "instr_index": self.instr_index,
+            "callsite_addr": self.callsite_addr,
+            "effect": self.effect.to_dict(),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,10 +211,12 @@ class SSAFunctionMemoryResult8616:
     stats: SSAMemoryStats8616
     overlaps: tuple[SSAMemoryOverlap8616, ...] = ()
     accesses: tuple[SSAMemoryAccess8616, ...] = ()
+    call_effects: tuple[SSACallStackEffectSite8616, ...] = ()
 
 
 __all__ = [
     "MemoryRangeKey8616",
+    "SSACallStackEffectSite8616",
     "SSAFunctionMemoryResult8616",
     "SSAMemoryAccess8616",
     "SSAMemoryAccessKind8616",

@@ -25,6 +25,7 @@ from ..alias.stack_memory_ssa_contracts import (
 )
 from ..ir.core import IRAddress
 from ..ir.ssa_memory_contracts import (
+    SSACallStackEffectSite8616,
     SSAMemoryAccessKind8616,
     SSAMemoryOverlapRelation8616,
 )
@@ -162,6 +163,7 @@ def _candidate_for_component_8616(
     evidence: dict[_RangeKey8616, _RangeEvidence8616],
     *,
     has_partial_overlap: bool,
+    call_effects: tuple[SSACallStackEffectSite8616, ...],
 ) -> StackMemoryObjectWideningCandidate8616 | StackMemoryObjectWideningRefusal8616:
     """Resolve one component to its unique containing Alias object or typed refusal."""
     owners = [
@@ -239,6 +241,7 @@ def _candidate_for_component_8616(
         source_facts=source_facts,
         versions=tuple(sorted(versions)),
         fact_kinds=tuple(sorted(fact_kinds, key=lambda kind: kind.value)),
+        call_effects=call_effects,
     )
 
 
@@ -288,6 +291,7 @@ def build_x86_16_stack_memory_object_widening_artifact(
             component,
             evidence,
             has_partial_overlap=any(pair <= component for pair in partial_pairs),
+            call_effects=source.call_effects,
         )
         if isinstance(outcome, StackMemoryObjectWideningCandidate8616):
             candidates.append(outcome)
@@ -342,6 +346,5 @@ def apply_x86_16_stack_memory_object_widening_8616(
             details=artifact.to_dict(),
         )
     return False
-
 
 __all__ = ["apply_x86_16_stack_memory_object_widening_8616", "build_x86_16_stack_memory_object_widening_artifact"]

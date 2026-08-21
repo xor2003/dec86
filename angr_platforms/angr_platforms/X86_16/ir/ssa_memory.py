@@ -10,10 +10,11 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
-from .core import IRAddress, IRAtom, IRCondition, IRInstr, IRRefusal
+from .core import IRAddress, IRAtom, IRCallStackEffect8616, IRCondition, IRInstr, IRRefusal
 from .ssa import SSABlock
 from .ssa_memory_contracts import (
     MemoryRangeKey8616,
+    SSACallStackEffectSite8616,
     SSAFunctionMemoryResult8616,
     SSAMemoryAccess8616,
     SSAMemoryAccessKind8616,
@@ -84,18 +85,21 @@ def build_x86_16_function_memory_ssa(
     cell_addresses = {
         (cell.space.value, cell.base, cell.offset, cell.size): cell for cell in layout.cells
     }
+    call_effects = tuple(
+        SSACallStackEffectSite8616(
+            block.addr,
+            instr_index,
+            instruction.addr,
+            instruction.call_stack_effect or IRCallStackEffect8616(),
+        )
+        for block in sorted(blocks, key=lambda item: item.addr)
+        for instr_index, instruction in enumerate(block.instrs)
+        if instruction.op == "CALL"
+    )
     call_refused_ranges = {
         key
         for key, address in range_addresses.items()
-        if any(
-            instruction.op == "CALL"
-            and (
-                instruction.call_stack_effect is None
-                or not instruction.call_stack_effect.preserves(address)
-            )
-            for block in blocks
-            for instruction in block.instrs
-        )
+        if any(not site.effect.preserves(address) for site in call_effects)
     }
     refused_ranges = set(range_addresses) if not layout.complete else set(call_refused_ranges)
     while True:
@@ -223,6 +227,7 @@ def build_x86_16_function_memory_ssa(
                 failure_count=len(accesses),
             ),
             overlaps=layout.overlaps,
+            call_effects=call_effects,
         )
 
     bindings: list[SSAMemoryBinding8616] = []
@@ -335,4 +340,5 @@ def build_x86_16_function_memory_ssa(
         ),
         overlaps=layout.overlaps,
         accesses=tuple(versioned_accesses),
+        call_effects=call_effects,
     )

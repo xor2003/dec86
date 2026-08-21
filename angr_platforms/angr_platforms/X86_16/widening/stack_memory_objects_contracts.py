@@ -22,6 +22,7 @@ from ..alias.stack_memory_ssa_contracts import (
     StackMemorySSAAliasFact8616,
 )
 from ..ir.core import IRAddress
+from ..ir.ssa_memory_contracts import SSACallStackEffectSite8616
 
 
 class StackMemoryObjectWideningRefusalKind8616(StrEnum):
@@ -45,6 +46,19 @@ class StackMemoryObjectWideningCandidate8616:
     source_facts: tuple[StackMemorySSAAliasFact8616, ...]
     versions: tuple[int, ...]
     fact_kinds: tuple[StackMemoryAliasFactKind8616, ...]
+    call_effects: tuple[SSACallStackEffectSite8616, ...] = ()
+
+    def calls_preserve_owner(self, callsite_addrs: tuple[int, ...]) -> bool:
+        """Require one exact owner-preserving IR effect for every structured call."""
+        if len(frozenset(callsite_addrs)) != len(callsite_addrs):
+            return False
+        for callsite_addr in callsite_addrs:
+            matches = tuple(
+                site for site in self.call_effects if site.callsite_addr == callsite_addr
+            )
+            if len(matches) != 1 or not matches[0].effect.preserves(self.address):
+                return False
+        return True
 
     def to_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-friendly representation."""
@@ -55,6 +69,7 @@ class StackMemoryObjectWideningCandidate8616:
             "source_fact_count": len(self.source_facts),
             "versions": list(self.versions),
             "fact_kinds": [kind.value for kind in self.fact_kinds],
+            "call_effect_count": len(self.call_effects),
         }
 
 

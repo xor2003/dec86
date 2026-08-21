@@ -9,12 +9,15 @@ Do not join values from rendered text, cosmetic shape, postprocess, or
 CLI/reporting evidence.
 
 This module is a structured-C materialization boundary. Never infer a view from
-rendered C, assembly text, variable names, or expression shape here. Unsupported
-scalar widths and side-effecting write values must remain unchanged.
+rendered C, assembly text, variable names, or expression shape here. A call-bearing
+write is materializable only when its exact callsite has an owner-preserving typed
+effect in the consumed Widening proof; all other side effects remain unchanged.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -59,17 +62,65 @@ def scalar_subview_proof_8616(
     return proof
 
 
-def side_effect_free_subview_rhs_8616(node: object) -> bool:
-    """Accept recursively pure values whose evaluation may share an owner read."""
+class StackSubviewRhsEffectKind8616(StrEnum):
+    """Typed evaluation requirement for one scalar-view write value."""
+
+    PURE = "pure"
+    OWNER_PRESERVING_CALLS = "owner_preserving_calls"
+    UNSUPPORTED = "unsupported"
+
+
+@dataclass(frozen=True, slots=True)
+class StackSubviewRhsEffect8616:
+    """Structured RHS classification plus exact callsites requiring proof."""
+
+    kind: StackSubviewRhsEffectKind8616
+    callsite_addrs: tuple[int, ...] = ()
+
+
+def _combine_rhs_effects_8616(
+    effects: tuple[StackSubviewRhsEffect8616, ...],
+) -> StackSubviewRhsEffect8616:
+    """Combine child evaluations without losing exact callsite identity."""
+    if any(effect.kind is StackSubviewRhsEffectKind8616.UNSUPPORTED for effect in effects):
+        return StackSubviewRhsEffect8616(StackSubviewRhsEffectKind8616.UNSUPPORTED)
+    callsites = tuple(addr for effect in effects for addr in effect.callsite_addrs)
+    kind = (
+        StackSubviewRhsEffectKind8616.OWNER_PRESERVING_CALLS
+        if callsites
+        else StackSubviewRhsEffectKind8616.PURE
+    )
+    return StackSubviewRhsEffect8616(kind, callsites)
+
+
+def classify_subview_rhs_8616(node: object) -> StackSubviewRhsEffect8616:
+    """Classify values that are pure or contain exactly tagged function calls."""
     if isinstance(node, (structured_c.CConstant, structured_c.CVariable)):
-        return True
+        return StackSubviewRhsEffect8616(StackSubviewRhsEffectKind8616.PURE)
     if isinstance(node, structured_c.CTypeCast):
-        return side_effect_free_subview_rhs_8616(node.expr)
+        return classify_subview_rhs_8616(node.expr)
     if isinstance(node, structured_c.CBinaryOp):
-        return side_effect_free_subview_rhs_8616(node.lhs) and side_effect_free_subview_rhs_8616(
-            node.rhs
+        return _combine_rhs_effects_8616(
+            (classify_subview_rhs_8616(node.lhs), classify_subview_rhs_8616(node.rhs))
         )
-    return False
+    if isinstance(node, structured_c.CFunctionCall):
+        tags = node.tags
+        callsite_addr = tags.get("ins_addr") if isinstance(tags, dict) else None
+        if not isinstance(callsite_addr, int):
+            return StackSubviewRhsEffect8616(StackSubviewRhsEffectKind8616.UNSUPPORTED)
+        children = tuple(node.args or ())
+        if isinstance(node.callee_target, structured_c.CExpression):
+            children = (node.callee_target, *children)
+        combined = _combine_rhs_effects_8616(
+            tuple(classify_subview_rhs_8616(child) for child in children)
+        )
+        if combined.kind is StackSubviewRhsEffectKind8616.UNSUPPORTED:
+            return combined
+        return StackSubviewRhsEffect8616(
+            StackSubviewRhsEffectKind8616.OWNER_PRESERVING_CALLS,
+            (*combined.callsite_addrs, callsite_addr),
+        )
+    return StackSubviewRhsEffect8616(StackSubviewRhsEffectKind8616.UNSUPPORTED)
 
 
 def _expression_type_or_width_8616(expr: structured_c.CExpression, size: int) -> SimType:
@@ -122,7 +173,7 @@ def make_scalar_subview_write_assignment_8616(
     assignment: structured_c.CAssignment,
     proof: StackObjectViewProof8616,
 ) -> structured_c.CAssignment:
-    """Project one pure scalar-view write as a containing-owner update."""
+    """Project one proven scalar-view write as a containing-owner update."""
     owner_type = _unsigned_scalar_type_8616(proof.owner_size)
     if owner_type is None:
         raise ValueError(f"unsupported scalar stack owner width {proof.owner_size}")
@@ -169,8 +220,10 @@ def make_scalar_subview_write_assignment_8616(
 
 
 __all__ = [
+    "StackSubviewRhsEffect8616",
+    "StackSubviewRhsEffectKind8616",
+    "classify_subview_rhs_8616",
     "make_scalar_subview_read_expr_8616",
     "make_scalar_subview_write_assignment_8616",
     "scalar_subview_proof_8616",
-    "side_effect_free_subview_rhs_8616",
 ]

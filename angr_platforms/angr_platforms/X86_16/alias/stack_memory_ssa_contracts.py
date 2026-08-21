@@ -15,6 +15,7 @@ from enum import StrEnum
 
 from ..ir.core import IRAddress, IRRefusal
 from ..ir.ssa_memory_contracts import (
+    SSACallStackEffectSite8616,
     SSAMemoryAccess8616,
     SSAMemoryAccessSlice8616,
     SSAMemoryOverlap8616,
@@ -190,6 +191,7 @@ class StackMemorySSAAliasArtifact8616:
     overlaps: tuple[StackMemorySSAAliasOverlap8616, ...] = ()
     refusals: tuple[StackMemoryAliasRefusal8616, ...] = ()
     source_refusals: tuple[IRRefusal, ...] = ()
+    call_effects: tuple[SSACallStackEffectSite8616, ...] = ()
     stats: StackMemoryAliasStats8616 = StackMemoryAliasStats8616()
     upstream_complete: bool = True
 
@@ -207,6 +209,7 @@ class StackMemorySSAAliasArtifact8616:
             "overlaps": [overlap.to_dict() for overlap in self.overlaps],
             "refusals": [refusal.to_dict() for refusal in self.refusals],
             "source_refusals": [refusal.to_dict() for refusal in self.source_refusals],
+            "call_effects": [effect.to_dict() for effect in self.call_effects],
             "stats": self.stats.to_dict(),
             "upstream_complete": self.upstream_complete,
             "complete": self.complete,

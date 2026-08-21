@@ -23,10 +23,11 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from ..c_ast_utils import _clone_c_ast_tree_8616, _replace_c_children_8616
 from ..pipeline.errors import PipelineHardError
 from .stack_subview_expression import (
+    StackSubviewRhsEffectKind8616,
+    classify_subview_rhs_8616,
     make_scalar_subview_read_expr_8616,
     make_scalar_subview_write_assignment_8616,
     scalar_subview_proof_8616,
-    side_effect_free_subview_rhs_8616,
 )
 from .stack_subview_proof import (
     StackObjectViewProof8616,
@@ -147,11 +148,17 @@ def materialize_contained_stack_subviews_8616(codegen: object) -> bool:
             if resolution.kind is not StackObjectViewResolutionKind8616.NOT_CANDIDATE:
                 stats.raw_fact_count += 1
                 proof = scalar_subview_proof_8616(resolution.proof)
+                rhs_effect = classify_subview_rhs_8616(node.rhs)
                 if (
                     resolution.kind is not StackObjectViewResolutionKind8616.ACCEPTED
                     or proof is None
                     or not isinstance(node.rhs, structured_c.CExpression)
-                    or not side_effect_free_subview_rhs_8616(node.rhs)
+                    or rhs_effect.kind is StackSubviewRhsEffectKind8616.UNSUPPORTED
+                    or (
+                        rhs_effect.kind
+                        is StackSubviewRhsEffectKind8616.OWNER_PRESERVING_CALLS
+                        and not proof.source.calls_preserve_owner(rhs_effect.callsite_addrs)
+                    )
                 ):
                     stats.failure_count += 1
                     return node

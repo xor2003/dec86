@@ -711,8 +711,9 @@ Status: in progress; exact `SS:BP+offset` ranges partition into canonical byte
 cells with versioned definitions and joins through IR and Alias. Widening now
 accepts a composed byte-view component only when every range is nested under
 one unique Alias-equivalent owner, and Lowering materializes that owner. General
-non-laminar contained views are now covered; side-effecting direct scalar
-writes and multi-function generalization remain.
+non-laminar contained views are now covered. Exact call-bearing direct scalar
+writes are covered when typed call effects prove that the unique owner survives;
+multi-function generalization remains.
 
 Reason: Early conversion of stack storage into loosely related C temporaries
 loses definition, join, width, escape, and call-clobber evidence. Exact SS range
@@ -794,9 +795,12 @@ Measured progress on 2026-08-21:
   `NOT_CANDIDATE`, `ACCEPTED`, or `REFUSED` against the current object artifact.
   Proven low/high byte reads project from the unique word owner, and pure byte
   assignments become tag-preserving read/modify/write assignments to that
-  owner. Call-bearing or otherwise side-effecting RHS expressions remain
-  unchanged; stale, refused, ambiguous, cross-function, and unmaterialized
-  owners cannot bypass the typed decision.
+  owner. A call-bearing RHS is accepted only when every tagged C callsite maps
+  one-to-one to an exact IR call effect that proves the complete owner range is
+  preserved. Untagged, mismatched, duplicate, incomplete, and clobbering call
+  evidence refuses; other side effects remain unchanged. Stale, refused,
+  ambiguous, cross-function, and unmaterialized owners cannot bypass the typed
+  decision.
 - Scalar-view expression construction is isolated from proof resolution and
   supports exact byte or word subranges of proven 2-byte and 4-byte owners.
   Reads use unsigned owner-width shifts and masks; pure writes preserve every
@@ -805,13 +809,13 @@ Measured progress on 2026-08-21:
   word-only so a dword owner cannot replace a partial value. Nested pure RHS
   reads are projected before the containing-owner write is finalized.
 - The immediate object Widening, Lowering, and artifact-backed projection
-  lifecycle passes 42 focused tests. Sidecar-free ExchangeSort, DrawFrame,
-  DrawTime, and InitMenu compilation/validation regressions pass.
-  `quality-dev` passes Ruff `--fix`, strict MyPy, mypyc smoke,
-  architecture/context/ownership gates, 1,544 tests, and all three quality
-  comparisons. The mandatory seven-worker pipeline passes all three lanes:
-  1,544 focused tests, three Ultra QuickC validations, and all seven MS C tiny
-  compile/run/decompile/recompile/decompiled-run constructs.
+  lifecycle passes 46 focused cases. Sidecar-free ExchangeSort, DrawFrame,
+  DrawTime, and InitMenu compilation/validation regressions pass. Ruff `--fix`,
+  strict MyPy, mypyc smoke, architecture/context/ownership gates, and all three
+  quality comparisons pass. The mandatory seven-worker pipeline is 3/3 green:
+  1,548 focused tests, four validated Ultra QuickC fixtures, and all seven MS C
+  tiny compile/run/decompile/recompile/decompiled-run constructs; no lane
+  failed, skipped, or timed out.
 
 This should remove Ghidra-like stack setup temporaries from DrawFrame,
 DrawTime, and InitMenu without moving stack recovery into Rewrite. Negative
