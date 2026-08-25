@@ -132,6 +132,32 @@ Inspect embedded debug metadata directly:
 
 More format detail lives in [CODEVIEW_SUPPORT.md](CODEVIEW_SUPPORT.md), [DOS_COMPILER_SUPPORT.md](DOS_COMPILER_SUPPORT.md), [NE_WIN16_SUPPORT.md](NE_WIN16_SUPPORT.md), and [NE_LOADER_INTEGRATION_VERIFIED.md](NE_LOADER_INTEGRATION_VERIFIED.md).
 
+## 80386 Real-Mode Frontend
+
+The in-tree x86-16 frontend supports the architecturally defined 80386
+instruction extensions available while the processor remains in real mode. This
+includes 32-bit operand- and address-size overrides, EAX through EDI, FS and GS,
+80386 effective-address/SIB forms, extended arithmetic and bit operations,
+double-precision shifts, sign/zero extension, 32-bit stack and control-flow
+forms, and the corresponding defined flag, fault, and segmented-memory effects.
+
+Verification uses the borrowed 80386 instruction corpus, focused edge values,
+real-hardware observations, and whole-instruction lifting checks. Undefined
+results are deliberately outside the compatibility contract; for example,
+`SHLD` and `SHRD` counts greater than the operand width are decoded but their
+undefined result and flag values are not reproduced. Non-architectural or
+internally inconsistent oracle traces are likewise not encoded as semantics.
+
+Run the focused frontend regression with:
+
+```bash
+python -m pytest -q \
+  angr_platforms/tests/test_x86_16_borrow_80386_lifter_corpus.py \
+  angr_platforms/tests/test_x86_16_80386_stack_imul_edges.py \
+  angr_platforms/tests/test_x86_16_addressing_helpers.py \
+  angr_platforms/tests/test_x86_16_stack_helpers.py
+```
+
 ## Signature Catalogs
 
 Build one deduplicated catalog from FLAIR `.pat`, OMF `.obj`, and OMF `.lib` inputs:

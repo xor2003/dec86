@@ -270,7 +270,7 @@ def resolve_memory_operand_8616(
     width_bits: int,
     *,
     address_bits: int = 16,
-) -> "ResolvedMemoryOperand":
+) -> ResolvedMemoryOperand:
     """Resolve a memory operand into execution-linear and semantic segmented forms."""
     # EXECUTION ONLY: exec_linear is computed for the engine, not for semantics.
     # Alias/type/structuring layers MUST use operand.ir_address() instead.
@@ -418,7 +418,7 @@ class ResolvedMemoryOperand:
             # Symbolic offset — try to extract BP-relative constant
             extracted = extract_bp_relative_offset_8616(offset_raw, tmp_defs=tmp_defs)
             if extracted is not None:
-                offset_val, bp_base = extracted
+                offset_val, _bp_base = extracted
                 # BP-relative stack slot: STABLE status, base = ("bp",)
                 if space == MemSpace.SS:
                     base = ("bp",)
@@ -458,7 +458,7 @@ def default_segment_for_modrm16(mod: int, rm: int) -> sgreg_t:
 def default_segment_for_modrm32(mod: int, rm: int, sib_base: int | None = None) -> sgreg_t:
     """Return the default segment register for a 32-bit ModRM/SIB operand."""
     if rm == 4 and sib_base is not None:
-        if sib_base in (4, 5):
+        if sib_base == 4 or (sib_base == 5 and mod != 0):
             return sgreg_t.SS
         return sgreg_t.DS
     if rm == 5 and mod != 0:
@@ -486,10 +486,7 @@ def modrm16_effective_offset(emu: object, modrm: _ModRM, disp8: int, disp16: int
             addr = addr + emulator.get_gpreg(reg16_t.BP)
 
     if rm < 6:
-        if rm % 2:
-            addr = addr + emulator.get_gpreg(reg16_t.DI)
-        else:
-            addr = addr + emulator.get_gpreg(reg16_t.SI)
+        addr = addr + emulator.get_gpreg(reg16_t.DI) if rm % 2 else addr + emulator.get_gpreg(reg16_t.SI)
 
     return addr
 
@@ -514,10 +511,7 @@ def modrm32_effective_offset(
             base = emulator.get_gpreg(reg32_t.ESP)
         else:
             base = emulator.get_gpreg(reg32_t(sib.base))
-        if sib.index == 4:
-            index = emulator.constant(0, Type.int_32)
-        else:
-            index = emulator.get_gpreg(reg32_t(sib.index))
+        index = emulator.constant(0, Type.int_32) if sib.index == 4 else emulator.get_gpreg(reg32_t(sib.index))
         addr = addr + base + index * (1 << sib.scale)
         return addr
 
@@ -718,7 +712,7 @@ def extract_bp_relative_offset_8616(
                     return (right & 0xFFFF, ("bp",))
                 if isinstance(left, int) and _is_bp_reg(right, tmp_defs=tmp_defs):
                     return (left & 0xFFFF, ("bp",))
-            if op_str in {"Iop_Sub16", "Iop_Sub32"}:
+            if op_str in {"Iop_Sub16", "Iop_Sub32"}:  # noqa: SIM102
                 if _is_bp_reg(left, tmp_defs=tmp_defs) and isinstance(right, int):
                     return (-(right & 0xFFFF), ("bp",))
             return None
@@ -789,9 +783,9 @@ def _collect_add_sub_terms(
                 return (left_terms + right_terms, (left_const + right_const) & 0xFFFF)
             # One side may be non-decomposable; treat it as a term
             if left_terms is not None:
-                return (left_terms + [args[1]], left_const & 0xFFFF)
+                return ([*left_terms, args[1]], left_const & 0xFFFF)
             if right_terms is not None:
-                return (right_terms + [args[0]], right_const & 0xFFFF)
+                return ([*right_terms, args[0]], right_const & 0xFFFF)
             return ([args[0], args[1]], 0)
 
         if op_str in {"Iop_Sub16", "Iop_Sub32"}:
@@ -804,9 +798,9 @@ def _collect_add_sub_terms(
             if left_terms is not None and right_terms is not None:
                 return (left_terms + right_terms, (left_const - right_const) & 0xFFFF)
             if left_terms is not None:
-                return (left_terms + [args[1]], left_const & 0xFFFF)
+                return ([*left_terms, args[1]], left_const & 0xFFFF)
             if right_terms is not None:
-                return (right_terms + [args[0]], (-right_const) & 0xFFFF)
+                return ([*right_terms, args[0]], (-right_const) & 0xFFFF)
             return ([args[0], args[1]], 0)
 
         if isinstance(expr, int):
@@ -840,10 +834,7 @@ def _is_index_reg_8616(expr: object) -> bool:
 
     # Obsolete path: reg16_t enum values (never matched VEX expressions)
     reg_offset = getattr(expr, "reg", None)
-    if isinstance(reg_offset, int) and reg_offset in {6, 7}:
-        return True
-
-    return False
+    return bool(isinstance(reg_offset, int) and reg_offset in {6, 7})
 
 
 def _is_bp_reg(expr: object, *, tmp_defs: dict[int, object] | None = None) -> bool:
@@ -880,10 +871,7 @@ def _is_bp_reg(expr: object, *, tmp_defs: dict[int, object] | None = None) -> bo
 
         # Obsolete path: reg16_t enum value (never matched VEX expressions)
         reg_offset = getattr(expr, "reg", None)
-        if isinstance(reg_offset, int) and reg_offset == 5:
-            return True
-
-        return False
+        return bool(isinstance(reg_offset, int) and reg_offset == 5)
 
     return _impl()
 

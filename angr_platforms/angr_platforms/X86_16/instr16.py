@@ -6,6 +6,8 @@ Forbidden: decompiler postprocess repair, source/COD-backed semantics, or valida
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from pyvex import IRConst
 from pyvex.expr import Const
 from pyvex.lifting.util import JumpKind
@@ -26,13 +28,14 @@ from .alu_helpers import (
     rotate_through_carry_right_state,
     unary_operation,
 )
+from .debug import ERROR
 from .emulator import Emulator
 from .exception import EXP_UD
 from .exec import OpcodeExecHandler
 from .instr_base import InstrBase, VexExpr, _vex_expr
 from .instruction import CHK_IMM8, CHK_IMM16, CHK_MODRM, CHK_MOFFS, CHK_PTR16, InstrData, InstrFlags
 from .jcc_condition import _consume_last_condition_branch_8616
-from .regs import coerce_reg16_t, reg8_t, reg16_t, sgreg_t
+from .regs import coerce_reg16_t, reg8_t, reg16_t, reg32_t, sgreg_t
 from .stack_helpers import (
     branch_rel8,
     branch_rel16,
@@ -43,7 +46,6 @@ from .stack_helpers import (
     enter16,
     far_return_ip16,
     leave16,
-    loop_rel8,
     near_relative_target16,
     pop16,
     pop16_register,
@@ -239,7 +241,25 @@ class Instr16(InstrBase):
         sf(0x0F8D, self.jnl_rel16, CHK_IMM16)
         sf(0x0F8E, self.jle_rel16, CHK_IMM16)
         sf(0x0F8F, self.jnle_rel16, CHK_IMM16)
+        sf(0x0FA0, self.push_fs, 0)
+        sf(0x0FA1, self.pop_fs, 0)
+        sf(0x0FA8, self.push_gs, 0)
+        sf(0x0FA9, self.pop_gs, 0)
         sf(0x0FAF, self.imul_r16_rm16, CHK_MODRM)
+        sf(0x0FB2, self.lss_r16_m16_16, CHK_MODRM)
+        sf(0x0FB4, self.lfs_r16_m16_16, CHK_MODRM)
+        sf(0x0FB5, self.lgs_r16_m16_16, CHK_MODRM)
+        sf(0x0FA4, self.shld_rm16_r16_imm8, CHK_MODRM | CHK_IMM8)
+        sf(0x0FA5, self.shld_rm16_r16_cl, CHK_MODRM)
+        sf(0x0FA3, self.bt_rm16_r16, CHK_MODRM)
+        sf(0x0FAB, self.bts_rm16_r16, CHK_MODRM)
+        sf(0x0FAC, self.shrd_rm16_r16_imm8, CHK_MODRM | CHK_IMM8)
+        sf(0x0FAD, self.shrd_rm16_r16_cl, CHK_MODRM)
+        sf(0x0FBC, self.bsf_r16_rm16, CHK_MODRM)
+        sf(0x0FBD, self.bsr_r16_rm16, CHK_MODRM)
+        sf(0x0FB3, self.btr_rm16_r16, CHK_MODRM)
+        sf(0x0FBA, self.code_0fba, CHK_MODRM | CHK_IMM8)
+        sf(0x0FBB, self.btc_rm16_r16, CHK_MODRM)
         sf(0x0FB6, self.movzx_r16_rm8, CHK_MODRM)
         sf(0x0FB7, self.movzx_r16_rm16, CHK_MODRM)
         sf(0x0FBE, self.movsx_r16_rm8, CHK_MODRM)
@@ -254,6 +274,7 @@ class Instr16(InstrBase):
         sf(0xFF, self.code_ff, CHK_MODRM)
         sf(0x0F00, self.code_0f00, CHK_MODRM)
         sf(0x0F01, self.code_0f01, CHK_MODRM)
+        sf(0x0F06, self.clts, 0)
 
         # FPU instructions
         sf(0xDA, self.code_da, CHK_MODRM)
@@ -262,19 +283,38 @@ class Instr16(InstrBase):
 
     def jcxz_rel8(self) -> None:
         """Execute decoded ``JCXZ_REL8`` semantics through frontend emulator effects."""
-        branch_rel8(self._active_stack_emulator(), self.emu.get_gpreg(reg16_t.CX) == 0, self.instr.imm8)
+        counter_reg = reg32_t.ECX if self.instr.address_bits == 32 else reg16_t.CX
+        counter_type = Type.int_32 if self.instr.address_bits == 32 else Type.int_16
+        branch_rel8(
+            self._active_stack_emulator(),
+            self.emu.get_gpreg(counter_reg) == self.emu.constant(0, counter_type),
+            self.instr.imm8,
+            self.instr.size,
+        )
+
+    def _loop_counter_nonzero(self) -> VexExpr:
+        """Decrement the address-size-selected LOOP counter and return whether it remains nonzero."""
+        counter_reg = reg32_t.ECX if self.instr.address_bits == 32 else reg16_t.CX
+        counter_type = Type.int_32 if self.instr.address_bits == 32 else Type.int_16
+        counter = self.emu.get_gpreg(counter_reg) - self.emu.constant(1, counter_type)
+        self.emu.set_gpreg(counter_reg, counter)
+        return _vex_expr((counter != self.emu.constant(0, counter_type)).cast_to(Type.int_1))
 
     def loop16(self) -> None:
         """Execute decoded ``LOOP16`` semantics through frontend emulator effects."""
-        loop_rel8(self._active_stack_emulator(), _vex_expr(self.emu.constant(1, Type.int_1)), self.instr.imm8)
+        branch_rel8(
+            self._active_stack_emulator(), self._loop_counter_nonzero(), self.instr.imm8, self.instr.size
+        )
 
     def loop16e(self) -> None:
         """Execute decoded ``LOOP16E`` semantics through frontend emulator effects."""
-        loop_rel8(self._active_stack_emulator(), _vex_expr(self.emu.is_zero()), self.instr.imm8)
+        condition = self._loop_counter_nonzero() & self.emu.is_zero()
+        branch_rel8(self._active_stack_emulator(), condition, self.instr.imm8, self.instr.size)
 
     def loop16ne(self) -> None:
         """Execute decoded ``LOOP16NE`` semantics through frontend emulator effects."""
-        loop_rel8(self._active_stack_emulator(), _vex_expr(~self.emu.is_zero()), self.instr.imm8)
+        condition = self._loop_counter_nonzero() & (self.emu.is_zero() == self.emu.constant(0, Type.int_1))
+        branch_rel8(self._active_stack_emulator(), condition, self.instr.imm8, self.instr.size)
 
     def code_8f(self) -> None:
         """Dispatch decoded opcode group ``8F`` through owned handlers."""
@@ -413,6 +453,22 @@ class Instr16(InstrBase):
     def push_cs(self) -> None:
         """Execute decoded ``PUSH_CS`` semantics through frontend emulator effects."""
         push_segment16(self._active_stack_emulator(), sgreg_t.CS)
+
+    def push_fs(self) -> None:
+        """Push the 80386 FS segment register."""
+        push_segment16(self._active_stack_emulator(), sgreg_t.FS)
+
+    def pop_fs(self) -> None:
+        """Pop a word into the 80386 FS segment register."""
+        pop_segment16(self._active_stack_emulator(), sgreg_t.FS)
+
+    def push_gs(self) -> None:
+        """Push the 80386 GS segment register."""
+        push_segment16(self._active_stack_emulator(), sgreg_t.GS)
+
+    def pop_gs(self) -> None:
+        """Pop a word into the 80386 GS segment register."""
+        pop_segment16(self._active_stack_emulator(), sgreg_t.GS)
 
     def push_ss(self) -> None:
         """Execute decoded ``PUSH_SS`` semantics through frontend emulator effects."""
@@ -572,6 +628,11 @@ class Instr16(InstrBase):
             raise RuntimeError("BOUND exception emission requires an active lifter instruction")
         lifter_instruction.jump(out_of_range, 0xFF005, JumpKind.Call)
 
+    def clts(self) -> None:
+        """Clear the task-switched bit in CR0."""
+        cr0 = _vex_expr(self.emu.get_crn(0))
+        self.emu.set_crn(0, cr0 & self.emu.constant(0xFFFFFFF7, Type.int_32))
+
     def imul_r16_rm16_imm16(self) -> None:
         """Execute decoded ``IMUL_R16_RM16_IMM16`` semantics through frontend emulator effects."""
         rm16_s = _vex_expr(self.get_rm16()).signed
@@ -626,6 +687,8 @@ class Instr16(InstrBase):
     def lea_r16_m16(self) -> None:
         """Execute decoded ``LEA_R16_M16`` semantics through frontend emulator effects."""
         _, addr = self._resolved_rm_address()
+        if self.effective_address_bits() == 32:
+            addr = _vex_expr(addr).cast_to(Type.int_16)
         self.set_r16(addr)
 
     def _load_far_pointer(self) -> tuple[object, object]:
@@ -709,15 +772,22 @@ class Instr16(InstrBase):
         value = load_resolved_operand(self.emu, operand)
         self.emu.set_gpreg(reg8_t.AL, value)
 
+    def _string_index_regs(self) -> tuple[reg16_t | reg32_t, reg16_t | reg32_t]:
+        """Return source and destination index registers selected by address size."""
+        if self.instr.address_bits == 32:
+            return reg32_t.ESI, reg32_t.EDI
+        return reg16_t.SI, reg16_t.DI
+
     def movsb_m8_m8(self) -> None:
         """Execute decoded ``MOVSB_M8_M8`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        si = self.emu.get_gpreg(reg16_t.SI)
-        di = self.emu.get_gpreg(reg16_t.DI)
+        si_reg, di_reg = self._string_index_regs()
+        si = self.emu.get_gpreg(si_reg)
+        di = self.emu.get_gpreg(di_reg)
         value = string_load(self._active_string_emulator(), string_source_segment(self.instr), si, 1)
         string_store(self._active_string_emulator(), sgreg_t.ES, di, value, 1)
-        string_advance_indices(self._active_string_emulator(), 1, reg16_t.SI, reg16_t.DI)
+        string_advance_indices(self._active_string_emulator(), 1, si_reg, di_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
@@ -726,9 +796,10 @@ class Instr16(InstrBase):
         """Execute decoded ``STOSB_M8_AL`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        di = self.emu.get_gpreg(reg16_t.DI)
+        _, di_reg = self._string_index_regs()
+        di = self.emu.get_gpreg(di_reg)
         string_store(self._active_string_emulator(), sgreg_t.ES, di, self.emu.get_gpreg(reg8_t.AL), 1)
-        string_advance_indices(self._active_string_emulator(), 1, reg16_t.DI)
+        string_advance_indices(self._active_string_emulator(), 1, di_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
@@ -737,9 +808,10 @@ class Instr16(InstrBase):
         """Execute decoded ``STOSW_M16_AX`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        di = self.emu.get_gpreg(reg16_t.DI)
+        _, di_reg = self._string_index_regs()
+        di = self.emu.get_gpreg(di_reg)
         string_store(self._active_string_emulator(), sgreg_t.ES, di, self.emu.get_gpreg(reg16_t.AX), 2)
-        string_advance_indices(self._active_string_emulator(), 2, reg16_t.DI)
+        string_advance_indices(self._active_string_emulator(), 2, di_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
@@ -748,10 +820,11 @@ class Instr16(InstrBase):
         """Execute decoded ``LODSB_AL_M8`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        si = self.emu.get_gpreg(reg16_t.SI)
+        si_reg, _ = self._string_index_regs()
+        si = self.emu.get_gpreg(si_reg)
         value = string_load(self._active_string_emulator(), string_source_segment(self.instr), si, 1)
         self.emu.set_gpreg(reg8_t.AL, value)
-        string_advance_indices(self._active_string_emulator(), 1, reg16_t.SI)
+        string_advance_indices(self._active_string_emulator(), 1, si_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
@@ -760,10 +833,11 @@ class Instr16(InstrBase):
         """Execute decoded ``LODSW_AX_M16`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        si = self.emu.get_gpreg(reg16_t.SI)
+        si_reg, _ = self._string_index_regs()
+        si = self.emu.get_gpreg(si_reg)
         value = string_load(self._active_string_emulator(), string_source_segment(self.instr), si, 2)
         self.emu.set_gpreg(reg16_t.AX, value)
-        string_advance_indices(self._active_string_emulator(), 2, reg16_t.SI)
+        string_advance_indices(self._active_string_emulator(), 2, si_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
@@ -772,10 +846,11 @@ class Instr16(InstrBase):
         """Execute decoded ``SCASB_AL_M8`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        di = self.emu.get_gpreg(reg16_t.DI)
+        _, di_reg = self._string_index_regs()
+        di = self.emu.get_gpreg(di_reg)
         value = string_load(self._active_string_emulator(), sgreg_t.ES, di, 1)
         string_compare_values(self.emu.get_gpreg(reg8_t.AL), value, self.emu.update_eflags_sub)
-        string_advance_indices(self._active_string_emulator(), 1, reg16_t.DI)
+        string_advance_indices(self._active_string_emulator(), 1, di_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond, zf_sensitive=True)
@@ -784,10 +859,11 @@ class Instr16(InstrBase):
         """Execute decoded ``SCASW_AX_M16`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        di = self.emu.get_gpreg(reg16_t.DI)
+        _, di_reg = self._string_index_regs()
+        di = self.emu.get_gpreg(di_reg)
         value = string_load(self._active_string_emulator(), sgreg_t.ES, di, 2)
         string_compare_values(self.emu.get_gpreg(reg16_t.AX), value, self.emu.update_eflags_sub)
-        string_advance_indices(self._active_string_emulator(), 2, reg16_t.DI)
+        string_advance_indices(self._active_string_emulator(), 2, di_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond, zf_sensitive=True)
@@ -796,12 +872,13 @@ class Instr16(InstrBase):
         """Execute decoded ``CMPS_M8_M8`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        si = self.emu.get_gpreg(reg16_t.SI)
-        di = self.emu.get_gpreg(reg16_t.DI)
+        si_reg, di_reg = self._string_index_regs()
+        si = self.emu.get_gpreg(si_reg)
+        di = self.emu.get_gpreg(di_reg)
         m8_s = string_load(self._active_string_emulator(), string_source_segment(self.instr), si, 1)
         m8_d = string_load(self._active_string_emulator(), sgreg_t.ES, di, 1)
         string_compare_values(m8_s, m8_d, self.emu.update_eflags_sub)
-        string_advance_indices(self._active_string_emulator(), 1, reg16_t.SI, reg16_t.DI)
+        string_advance_indices(self._active_string_emulator(), 1, si_reg, di_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
@@ -810,12 +887,13 @@ class Instr16(InstrBase):
         """Execute decoded ``CMPS_M16_M16`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        si = self.emu.get_gpreg(reg16_t.SI)
-        di = self.emu.get_gpreg(reg16_t.DI)
+        si_reg, di_reg = self._string_index_regs()
+        si = self.emu.get_gpreg(si_reg)
+        di = self.emu.get_gpreg(di_reg)
         m16_s = string_load(self._active_string_emulator(), string_source_segment(self.instr), si, 2)
         m16_d = string_load(self._active_string_emulator(), sgreg_t.ES, di, 2)
         string_compare_values(m16_s, m16_d, self.emu.update_eflags_sub)
-        string_advance_indices(self._active_string_emulator(), 2, reg16_t.SI, reg16_t.DI)
+        string_advance_indices(self._active_string_emulator(), 2, si_reg, di_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
@@ -824,11 +902,12 @@ class Instr16(InstrBase):
         """Execute decoded ``MOVSW_M16_M16`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        si = self.emu.get_gpreg(reg16_t.SI)
-        di = self.emu.get_gpreg(reg16_t.DI)
+        si_reg, di_reg = self._string_index_regs()
+        si = self.emu.get_gpreg(si_reg)
+        di = self.emu.get_gpreg(di_reg)
         value = string_load(self._active_string_emulator(), string_source_segment(self.instr), si, 2)
         string_store(self._active_string_emulator(), sgreg_t.ES, di, value, 2)
-        string_advance_indices(self._active_string_emulator(), 2, reg16_t.SI, reg16_t.DI)
+        string_advance_indices(self._active_string_emulator(), 2, si_reg, di_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
@@ -837,10 +916,11 @@ class Instr16(InstrBase):
         """Execute decoded ``INSB_M8_DX`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        di = self.emu.get_gpreg(reg16_t.DI)
+        _, di_reg = self._string_index_regs()
+        di = self.emu.get_gpreg(di_reg)
         dx = self.emu.get_gpreg(reg16_t.DX)
         string_store(self._active_string_emulator(), sgreg_t.ES, di, self.emu.in_io8(_vex_expr(dx)), 1)
-        string_advance_indices(self._active_string_emulator(), 1, reg16_t.DI)
+        string_advance_indices(self._active_string_emulator(), 1, di_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
@@ -849,10 +929,11 @@ class Instr16(InstrBase):
         """Execute decoded ``INSW_M16_DX`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        di = self.emu.get_gpreg(reg16_t.DI)
+        _, di_reg = self._string_index_regs()
+        di = self.emu.get_gpreg(di_reg)
         dx = self.emu.get_gpreg(reg16_t.DX)
         string_store(self._active_string_emulator(), sgreg_t.ES, di, self.emu.in_io16(_vex_expr(dx)), 2)
-        string_advance_indices(self._active_string_emulator(), 2, reg16_t.DI)
+        string_advance_indices(self._active_string_emulator(), 2, di_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
@@ -861,12 +942,13 @@ class Instr16(InstrBase):
         """Execute decoded ``OUTSB_DX_M8`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        si = self.emu.get_gpreg(reg16_t.SI)
+        si_reg, _ = self._string_index_regs()
+        si = self.emu.get_gpreg(si_reg)
         dx = self.emu.get_gpreg(reg16_t.DX)
         self.emu.out_io8(
             _vex_expr(dx), string_load(self._active_string_emulator(), string_source_segment(self.instr), si, 1)
         )
-        string_advance_indices(self._active_string_emulator(), 1, reg16_t.SI)
+        string_advance_indices(self._active_string_emulator(), 1, si_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
@@ -875,12 +957,13 @@ class Instr16(InstrBase):
         """Execute decoded ``OUTSW_DX_M16`` semantics through frontend emulator effects."""
         repeat_cond = repeat_prefix_cond(self._active_string_emulator(), self.instr)
 
-        si = self.emu.get_gpreg(reg16_t.SI)
+        si_reg, _ = self._string_index_regs()
+        si = self.emu.get_gpreg(si_reg)
         dx = self.emu.get_gpreg(reg16_t.DX)
         self.emu.out_io16(
             _vex_expr(dx), string_load(self._active_string_emulator(), string_source_segment(self.instr), si, 2)
         )
-        string_advance_indices(self._active_string_emulator(), 2, reg16_t.SI)
+        string_advance_indices(self._active_string_emulator(), 2, si_reg)
 
         if repeat_cond is not None:
             repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
@@ -1065,9 +1148,159 @@ class Instr16(InstrBase):
         self.set_r16(r16_s * rm16_s)
         self.emu.update_eflags_imul(r16_s, rm16_s)
 
+    def _load_pointer_segment16(self, segment: sgreg_t) -> None:
+        """Load a 16:16 memory pointer into the ModR/M register and segment."""
+        offset, selector = self._load_far_pointer()
+        self.set_r16(offset)
+        self.emu.set_sgreg(segment, selector)
+
+    def lss_r16_m16_16(self) -> None:
+        """Load a 16:16 pointer and its selector into SS."""
+        self._load_pointer_segment16(sgreg_t.SS)
+
+    def lfs_r16_m16_16(self) -> None:
+        """Load a 16:16 pointer and its selector into FS."""
+        self._load_pointer_segment16(sgreg_t.FS)
+
+    def lgs_r16_m16_16(self) -> None:
+        """Load a 16:16 pointer and its selector into GS."""
+        self._load_pointer_segment16(sgreg_t.GS)
+
+    def _double_shift16(self, *, left: bool, count: VexExpr | int) -> None:
+        """Execute a 16-bit SHLD/SHRD operation with a masked 80386 count."""
+        dst = _vex_expr(self.get_rm16())
+        src = _vex_expr(self.get_r16())
+        masked = self._shift_count(count)
+        inverse = self.emu.constant(16, Type.int_8) - masked
+        shifted = (dst << masked) | (src >> inverse) if left else (dst >> masked) | (src << inverse)
+        result = self._ite_value(masked == self.emu.constant(0, Type.int_8), dst, shifted.cast_to(Type.int_16))
+        self.set_rm16(result)
+        self.emu.update_eflags_double_shift(dst, result, masked, left=left)
+
+    def _bit_operation16(self, operation: str, *, immediate: bool = False) -> None:
+        """Apply one 16-bit BT-family operation, including memory bit strings."""
+        index = _vex_expr(
+            self.emu.constant(self.instr.imm8 & 0xFF, Type.int_16)
+            if immediate
+            else self.get_r16()
+        )
+        bit = (index & self.emu.constant(15, Type.int_16)).cast_to(Type.int_8)
+        if self.instr.modrm.mod == 3:
+            value = _vex_expr(self.get_rm16())
+
+            def write_register(result: object) -> None:
+                self.set_rm16(result)
+
+            write: Callable[[object], None] = write_register
+        else:
+            operand = self._resolved_rm_operand(16)
+            offset = operand.offset
+            if not immediate:
+                address_type = Type.int_32 if self.instr.address_bits == 32 else Type.int_16
+                address_index = (
+                    index.widen_signed(address_type) if self.instr.address_bits == 32 else index
+                )
+                displacement = (
+                    address_index.sar(self.emu.constant(4, Type.int_8)) * 2
+                ).cast_to(address_type)
+                offset = offset + displacement
+            value = _vex_expr(self.emu.get_data16(operand.segment, offset))
+
+            def write_memory(result: object) -> None:
+                self.emu.put_data16(operand.segment, offset, result)
+
+            write = write_memory
+        mask = self.emu.constant(1, Type.int_16) << bit
+        carry = ((value >> bit) & self.emu.constant(1, Type.int_16)).cast_to(Type.int_1)
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        self.emu.set_gpreg(reg16_t.FLAGS, self.emu.set_carry(flags, carry))
+        if operation == "set":
+            write(value | mask)
+        elif operation == "reset":
+            write(value & ~mask)
+        elif operation == "complement":
+            write(value ^ mask)
+
+    def bt_rm16_r16(self) -> None:
+        """Test a register-indexed bit and copy it to CF."""
+        self._bit_operation16("test")
+
+    def bts_rm16_r16(self) -> None:
+        """Test and set a register-indexed bit."""
+        self._bit_operation16("set")
+
+    def btr_rm16_r16(self) -> None:
+        """Test and reset a register-indexed bit."""
+        self._bit_operation16("reset")
+
+    def btc_rm16_r16(self) -> None:
+        """Test and complement a register-indexed bit."""
+        self._bit_operation16("complement")
+
+    def code_0fba(self) -> None:
+        """Dispatch immediate-index BT/BTS/BTR/BTC group members."""
+        self._dispatch_modrm_reg(
+            (None, None, None, None, self.bt_rm16_imm8, self.bts_rm16_imm8, self.btr_rm16_imm8, self.btc_rm16_imm8),
+            lambda reg: ERROR("invalid 0x0fba /%d\n", reg),
+        )
+
+    def bt_rm16_imm8(self) -> None:
+        """Test an immediate-indexed bit and copy it to CF."""
+        self._bit_operation16("test", immediate=True)
+
+    def bts_rm16_imm8(self) -> None:
+        """Test and set an immediate-indexed bit."""
+        self._bit_operation16("set", immediate=True)
+
+    def btr_rm16_imm8(self) -> None:
+        """Test and reset an immediate-indexed bit."""
+        self._bit_operation16("reset", immediate=True)
+
+    def btc_rm16_imm8(self) -> None:
+        """Test and complement an immediate-indexed bit."""
+        self._bit_operation16("complement", immediate=True)
+
+    def shld_rm16_r16_imm8(self) -> None:
+        """Double-precision left shift using an immediate count."""
+        self._double_shift16(left=True, count=self.instr.imm8)
+
+    def shld_rm16_r16_cl(self) -> None:
+        """Double-precision left shift using CL."""
+        self._double_shift16(left=True, count=self.emu.get_gpreg(reg8_t.CL))
+
+    def shrd_rm16_r16_imm8(self) -> None:
+        """Double-precision right shift using an immediate count."""
+        self._double_shift16(left=False, count=self.instr.imm8)
+
+    def shrd_rm16_r16_cl(self) -> None:
+        """Double-precision right shift using CL."""
+        self._double_shift16(left=False, count=self.emu.get_gpreg(reg8_t.CL))
+
+    def _bit_scan16(self, *, reverse: bool) -> None:
+        """Scan a 16-bit source and update the destination and zero flag."""
+        src = _vex_expr(self.get_rm16())
+        old = _vex_expr(self.get_r16())
+        result = old
+        indices = range(16) if reverse else range(15, -1, -1)
+        for index in indices:
+            bit = src & self.emu.constant(1 << index, Type.int_16)
+            result = self._ite_value(bit != self.emu.constant(0, Type.int_16), self.emu.constant(index, Type.int_16), result)
+        is_zero = src == self.emu.constant(0, Type.int_16)
+        self.set_r16(self._ite_value(is_zero, old, result))
+        flags = self.emu.get_gpreg(reg16_t.FLAGS)
+        self.emu.set_gpreg(reg16_t.FLAGS, self.emu.set_zero(flags, is_zero))
+
+    def bsf_r16_rm16(self) -> None:
+        """Find the least-significant set bit in a 16-bit operand."""
+        self._bit_scan16(reverse=False)
+
+    def bsr_r16_rm16(self) -> None:
+        """Find the most-significant set bit in a 16-bit operand."""
+        self._bit_scan16(reverse=True)
+
     def movzx_r16_rm8(self) -> None:
         """Execute decoded ``MOVZX_R16_RM8`` semantics through frontend emulator effects."""
-        rm8 = self.get_rm8()
+        rm8 = _vex_expr(self.get_rm8()).cast_to(Type.int_16)
         self.set_r16(rm8)
 
     def movzx_r16_rm16(self) -> None:
@@ -1206,7 +1439,6 @@ class Instr16(InstrBase):
         # if reg == 2:
         #    self.lgdt_m24()
         # elif reg == 3:
-        pass
 
     def code_da(self) -> None:
         """Dispatch decoded opcode group ``DA`` through owned handlers."""
@@ -1672,7 +1904,10 @@ class Instr16(InstrBase):
         val = (_vex_expr(self.emu.get_gpreg(reg16_t.DX)).cast_to(Type.int_32) << 16) | _vex_expr(
             self.emu.get_gpreg(reg16_t.AX)
         ).cast_to(Type.int_32)
-        self.emu.set_gpreg(reg16_t.AX, (val // rm16).cast_to(Type.int_16))
+        self._divide_error_if(rm16 == self.emu.constant(0, Type.int_32))
+        quotient = val // rm16
+        self._divide_error_if(quotient > self.emu.constant(0xFFFF, Type.int_32))
+        self.emu.set_gpreg(reg16_t.AX, quotient.cast_to(Type.int_16))
         self.emu.set_gpreg(reg16_t.DX, (val % rm16).cast_to(Type.int_16))
 
     def idiv_dx_ax_rm16(self) -> None:
@@ -1680,11 +1915,20 @@ class Instr16(InstrBase):
         rm16_s = _vex_expr(self.get_rm16()).cast_to(Type.int_32, signed=True)
         # if rm16_s == 0:
         #    raise Exception(self.emu.EXP_DE)
-        val_s = (_vex_expr(self.emu.get_gpreg(reg16_t.DX)).cast_to(Type.int_32, signed=True) << 16) | _vex_expr(
-            self.emu.get_gpreg(reg16_t.AX)
-        ).cast_to(Type.int_32)
-        self.emu.set_gpreg(reg16_t.AX, (val_s // rm16_s).cast_to(Type.int_16))
-        self.emu.set_gpreg(reg16_t.DX, (val_s % rm16_s).cast_to(Type.int_16))
+        val_s = (
+            (_vex_expr(self.emu.get_gpreg(reg16_t.DX)).cast_to(Type.int_32, signed=True) << 16)
+            | _vex_expr(self.emu.get_gpreg(reg16_t.AX)).cast_to(Type.int_32)
+        ).signed
+        self._divide_error_if(rm16_s == self.emu.constant(0, Type.int_32))
+        quotient = val_s // rm16_s
+        remainder = val_s - quotient * rm16_s
+        signed_quotient = quotient.signed
+        self._divide_error_if(
+            (signed_quotient < self.emu.constant(0xFFFF8000, Type.int_32).signed)
+            | (signed_quotient > self.emu.constant(0x00007FFF, Type.int_32).signed)
+        )
+        self.emu.set_gpreg(reg16_t.AX, quotient.cast_to(Type.int_16))
+        self.emu.set_gpreg(reg16_t.DX, remainder.cast_to(Type.int_16))
 
     def inc_rm16(self) -> None:
         """Execute decoded ``INC_RM16`` semantics through frontend emulator effects."""

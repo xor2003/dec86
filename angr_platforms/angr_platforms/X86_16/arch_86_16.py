@@ -6,7 +6,7 @@ Forbidden: decompiler semantic recovery, alias/type ownership, or rewrite cleanu
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from archinfo import ArchError, Endness, RegisterOffset
 
@@ -58,7 +58,13 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
         for reg in self.register_list:
             self.logger.debug(f"Reg {reg.name}: size {reg.size}, vex_offset {reg.vex_offset}")
 
-        self.vex_offsets = {reg.name.lower(): reg.vex_offset for reg in self.register_list}
+        self.vex_offsets: dict[str, int] = {}
+        for reg in self.register_list:
+            self.vex_offsets[reg.name.lower()] = reg.vex_offset
+            for alias_name in reg.alias_names:
+                self.vex_offsets[alias_name.lower()] = reg.vex_offset
+            for subregister_name, subregister_offset, _subregister_size in reg.subregisters:
+                self.vex_offsets[subregister_name.lower()] = reg.vex_offset + subregister_offset
 
     name = "86_16"
     bits = 16
@@ -66,10 +72,10 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
     vex_arch: Any = cast(Any, pyvex.ARCH_X86)
     vex_support: Any = cast(Any, True)
     vex_conditional_helpers = False
-    sizeof = {"short": 16, "int": 16, "long": 32, "long long": 32}
+    sizeof: ClassVar[dict[str, int]] = {"short": 16, "int": 16, "long": 32, "long long": 32}
     ld_linux_name = None
     linux_name = None
-    lib_paths: list[str] = []
+    lib_paths: list[str] = []  # noqa: RUF012
     # max_inst_bytes = 4
     # ip_offset = 0x80000000
     # sp_offset = 16
@@ -96,8 +102,8 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
     uc_mode = (_unicorn.UC_MODE_16 + _unicorn.UC_MODE_LITTLE_ENDIAN) if _unicorn else None
     uc_const = _unicorn.x86_const if _unicorn else None
     uc_prefix = "UC_X86_" if _unicorn else None
-    function_prologs = {rb"\x55\x8b\xec", rb"\xc8"}  # push bp; mov bp, sp
-    function_epilogs = {
+    function_prologs: ClassVar[set[bytes]] = {rb"\x55\x8b\xec", rb"\xc8"}  # push bp; mov bp, sp
+    function_epilogs: ClassVar[set[bytes]] = {
         rb"\xc9\xc3",
         rb"\xc9\xcb",  # leave; ret
         rb"\x5d\xc3",
@@ -107,82 +113,88 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
     ret_instruction = b"\xc3"
     nop_instruction = b"\x90"
 
-    register_list = [
-        # Primary 16-bit registers only (size=2, no 32-bit to avoid recursion in name resolution)
+    register_list: ClassVar[list[Register]] = [
+        # 80386 storage is 32-bit. Legacy names are overlapping subregister views,
+        # not aliases: writing AX must preserve the high half of EAX.
         Register(
-            name="ax",
-            size=2,
-            subregisters=[("al", 0, 1), ("ah", 1, 1)],
+            name="eax",
+            size=4,
+            subregisters=[("ax", 0, 2), ("al", 0, 1), ("ah", 1, 1)],
             general_purpose=True,
             argument=True,
             vex_offset=0,
         ),
         Register(
-            name="cx",
-            size=2,
-            subregisters=[("cl", 0, 1), ("ch", 1, 1)],
-            general_purpose=True,
-            vex_offset=2,
-        ),
-        Register(
-            name="dx",
-            size=2,
-            subregisters=[("dl", 0, 1), ("dh", 1, 1)],
+            name="ecx",
+            size=4,
+            subregisters=[("cx", 0, 2), ("cl", 0, 1), ("ch", 1, 1)],
             general_purpose=True,
             vex_offset=4,
         ),
         Register(
-            name="bx",
-            size=2,
-            subregisters=[("bl", 0, 1), ("bh", 1, 1)],
+            name="edx",
+            size=4,
+            subregisters=[("dx", 0, 2), ("dl", 0, 1), ("dh", 1, 1)],
             general_purpose=True,
-            vex_offset=6,
-        ),
-        Register(
-            name="sp",
-            size=2,
-            alias_names=("stack_base",),
-            general_purpose=True,
-            default_value=(0x7FFF, True, "global"),
             vex_offset=8,
         ),
         Register(
-            name="bp",
-            size=2,
+            name="ebx",
+            size=4,
+            subregisters=[("bx", 0, 2), ("bl", 0, 1), ("bh", 1, 1)],
+            general_purpose=True,
+            vex_offset=12,
+        ),
+        Register(
+            name="esp",
+            size=4,
+            subregisters=[("sp", 0, 2)],
+            alias_names=("stack_base",),
+            general_purpose=True,
+            default_value=(0x7FFF, True, "global"),
+            vex_offset=16,
+        ),
+        Register(
+            name="ebp",
+            size=4,
+            subregisters=[("bp", 0, 2)],
             general_purpose=True,
             argument=True,
-            vex_offset=10,
+            vex_offset=20,
         ),
         Register(
-            name="si",
-            size=2,
-            vex_offset=12,
+            name="esi",
+            size=4,
+            subregisters=[("si", 0, 2)],
+            vex_offset=24,
             general_purpose=True,
         ),
         Register(
-            name="di",
-            size=2,
-            vex_offset=14,
+            name="edi",
+            size=4,
+            subregisters=[("di", 0, 2)],
+            vex_offset=28,
             general_purpose=True,
         ),
         Register(
-            name="ip",
-            size=2,
-            alias_names=("pc", "eip"),
-            vex_offset=16,  # PC at fixed offset, no subreg/alias cycle
+            name="eip",
+            size=4,
+            subregisters=[("ip", 0, 2)],
+            alias_names=("pc",),
+            vex_offset=32,
         ),
         Register(
-            name="flags",
-            size=2,
-            alias_names=("eflags",),
-            vex_offset=18,
+            name="eflags",
+            size=4,
+            subregisters=[("flags", 0, 2)],
+            vex_offset=36,
         ),
-        Register(name="cs", size=2, vex_offset=20),
-        Register(name="ds", size=2, vex_offset=22),
-        Register(name="es", size=2, vex_offset=24),
-        Register(name="fs", size=2, default_value=(0, False, None), concrete=False, vex_offset=26),
-        Register(name="gs", size=2, default_value=(0, False, None), concrete=False, vex_offset=28),
-        Register(name="ss", size=2, vex_offset=30),
+        Register(name="cs", size=2, vex_offset=40),
+        Register(name="ds", size=2, vex_offset=42),
+        Register(name="es", size=2, vex_offset=44),
+        Register(name="fs", size=2, default_value=(0, False, None), concrete=False, vex_offset=46),
+        Register(name="gs", size=2, default_value=(0, False, None), concrete=False, vex_offset=48),
+        Register(name="ss", size=2, vex_offset=50),
         # Flags and helpers (4-byte, artificial, no subregs)
         Register(
             name="d",
@@ -191,7 +203,7 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
             default_value=(1, False, None),
             concrete=False,
             artificial=True,
-            vex_offset=32,
+            vex_offset=52,
         ),
         Register(
             name="id",
@@ -200,7 +212,7 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
             default_value=(1, False, None),
             concrete=False,
             artificial=True,
-            vex_offset=36,
+            vex_offset=56,
         ),
         Register(
             name="ac",
@@ -209,13 +221,13 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
             default_value=(0, False, None),
             concrete=False,
             artificial=True,
-            vex_offset=40,
+            vex_offset=60,
         ),
-        Register(name="cmstart", size=4, vex_offset=44),
-        Register(name="cmlen", size=4, vex_offset=48),
-        Register(name="nraddr", size=4, artificial=True, vex_offset=52),
-        Register(name="sc_class", size=4, artificial=True, vex_offset=56),
-        Register(name="ip_at_syscall", size=4, concrete=False, artificial=True, vex_offset=60),
+        Register(name="cmstart", size=4, vex_offset=64),
+        Register(name="cmlen", size=4, vex_offset=68),
+        Register(name="nraddr", size=4, artificial=True, vex_offset=72),
+        Register(name="sc_class", size=4, artificial=True, vex_offset=76),
+        Register(name="ip_at_syscall", size=4, concrete=False, artificial=True, vex_offset=80),
         # FPU (unchanged, offset after)
         Register(
             name="fpreg",
@@ -223,7 +235,7 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
             alias_names=("fpu_regs",),
             floating_point=True,
             concrete=False,
-            vex_offset=64,
+            vex_offset=84,
         ),
         Register(
             name="fptag",
@@ -231,10 +243,13 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
             alias_names=("fpu_tags",),
             floating_point=True,
             default_value=(0, False, None),
-            vex_offset=128,
+            vex_offset=148,
         ),
-        Register(name="fpround", size=4, floating_point=True, default_value=(0, False, None), vex_offset=136),
-        Register(name="fc3210", size=4, floating_point=True, vex_offset=140),
+        Register(name="fpround", size=4, floating_point=True, default_value=(0, False, None), vex_offset=156),
+        Register(name="fc3210", size=4, floating_point=True, vex_offset=160),
+        Register(name="cr0", size=4, vex_offset=164),
+        Register(name="cr2", size=4, vex_offset=168),
+        Register(name="cr3", size=4, vex_offset=172),
     ]
 
     @property

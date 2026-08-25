@@ -141,7 +141,8 @@ def test_default_segment_helpers_match_x86_16_addressing_rules():
 
     assert default_segment_for_modrm32(0, 0) == sgreg_t.DS
     assert default_segment_for_modrm32(0, 4, 4) == sgreg_t.SS
-    assert default_segment_for_modrm32(0, 4, 5) == sgreg_t.SS
+    assert default_segment_for_modrm32(0, 4, 5) == sgreg_t.DS
+    assert default_segment_for_modrm32(1, 4, 5) == sgreg_t.SS
     assert default_segment_for_modrm32(0, 4, 0) == sgreg_t.DS
     assert default_segment_for_modrm32(1, 5) == sgreg_t.SS
 
@@ -191,6 +192,7 @@ def test_modrm32_effective_offset_handles_sib_base_and_no_index():
     emu.gpregs[reg32_t.ESP] = 0x1000
     emu.gpregs[reg32_t.ECX] = 0x0040
     emu.gpregs[reg32_t.EDX] = 0x0300
+    emu.gpregs[reg32_t.ESI] = 0x0800
 
     addr = modrm32_effective_offset(emu, _Modrm(0, 4), _SIB(4, 4, 1), 0x10, 0x4444)
     assert addr == 0x1000
@@ -203,6 +205,9 @@ def test_modrm32_effective_offset_handles_sib_base_and_no_index():
 
     addr = modrm32_effective_offset(emu, _Modrm(0, 4), _SIB(0, 1, 2), 0x10, 0x4444)
     assert addr == 0x2000 + (0x0040 << 2)
+
+    addr = modrm32_effective_offset(emu, _Modrm(0, 4), _SIB(6, 4, 3), 0x10, 0x4444)
+    assert addr == 0x0800
 
 
 def test_resolve_modrm_address_pairs_segment_and_offset():

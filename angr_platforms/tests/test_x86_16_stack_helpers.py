@@ -298,7 +298,7 @@ def test_stack_helpers_32bit_far_and_interrupt_helpers_use_dword_frames():
     assert return_far32(emu, 4) == (0x11112222, 0x33334444)
     assert emu.get_gpreg(reg32_t.ESP) == 0x1FFC
     assert emu.get_gpreg(reg32_t.EIP) == 0x11112222
-    assert emu.get_sgreg(sgreg_t.CS) == 0x33334444
+    assert emu.get_sgreg(sgreg_t.CS) == 0x4444
 
     emu.gpregs[reg32_t.ESP] = 0x1FF0
     emu.irsb.next = None
@@ -310,7 +310,7 @@ def test_stack_helpers_32bit_far_and_interrupt_helpers_use_dword_frames():
     emu.irsb.jumpkind = None
     assert return_interrupt32(emu) == (0x11112222, 0x33334444, 0x55556666)
     assert emu.get_gpreg(reg32_t.EIP) == 0x11112222
-    assert emu.get_sgreg(sgreg_t.CS) == 0x33334444
+    assert emu.get_sgreg(sgreg_t.CS) == 0x4444
     assert emu.get_eflags() == 0x55556666
 
 

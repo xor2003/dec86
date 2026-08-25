@@ -10,8 +10,9 @@ Dynamic value boundary: PyVEX expressions overload Python operators at runtime;
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Sequence
 from types import MethodType
-from typing import TYPE_CHECKING, Any, Callable, Sequence, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pyvex.lifting.util import JumpKind
 from pyvex.lifting.util.vex_helper import Type
@@ -37,6 +38,7 @@ from .exception import EXP_GP
 from .exec import ExecInstr, OpcodeExecHandler
 from .instruction import CHK_IMM8, CHK_IMM16, CHK_MODRM, CHK_MOFFS, MAX_OPCODE, InstrData, InstrFlags
 from .interrupt_contract import interrupt_core_addr_8616
+from .msvc_x87_interrupts import is_msvc_x87_emulation_interrupt_8616, msvc_x87_escape_opcode_8616
 from .parse import ParseInstr
 from .regs import coerce_reg8_t, coerce_reg32_t, reg8_t, reg16_t
 from .stack_helpers import StackEmulator, branch_rel8, return_far16, return_interrupt16
@@ -52,9 +54,9 @@ CHSZ_AD: int = 2
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-BoundOpcodeHandler: TypeAlias = Callable[[], None]
-OpcodeRegistrationHandler: TypeAlias = OpcodeExecHandler | BoundOpcodeHandler
-VexExpr: TypeAlias = Any
+type BoundOpcodeHandler = Callable[[], None]
+type OpcodeRegistrationHandler = OpcodeExecHandler | BoundOpcodeHandler
+type VexExpr = Any
 
 
 def _vex_expr(value: object) -> VexExpr:
@@ -494,59 +496,79 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
 
     def jo_rel8(self) -> None:
         """Emit the decoded ``JO`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), self.emu.is_overflow(), self.instr.imm8)
+        branch_rel8(self._active_stack_emulator(), self.emu.is_overflow(), self.instr.imm8, self.instr.size)
 
     def jno_rel8(self) -> None:
         """Emit the decoded ``JNO`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), ~self.emu.is_overflow(), self.instr.imm8)
+        branch_rel8(self._active_stack_emulator(), ~self.emu.is_overflow(), self.instr.imm8, self.instr.size)
 
     def jb_rel8(self) -> None:
         """Emit the decoded ``JB`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), self.emu.is_carry(), self.instr.imm8)
+        branch_rel8(self._active_stack_emulator(), self.emu.is_carry(), self.instr.imm8, self.instr.size)
 
     def jnb_rel8(self) -> None:  # jae
         """Emit the decoded ``JNB`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), ~self.emu.is_carry(), self.instr.imm8)
+        branch_rel8(self._active_stack_emulator(), ~self.emu.is_carry(), self.instr.imm8, self.instr.size)
 
     def jz_rel8(self) -> None:
         """Emit the decoded ``JZ`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), self.emu.is_zero(), self.instr.imm8)
+        branch_rel8(self._active_stack_emulator(), self.emu.is_zero(), self.instr.imm8, self.instr.size)
 
     def jnz_rel8(self) -> None:
         """Emit the decoded ``JNZ`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), ~self.emu.is_zero(), self.instr.imm8)
+        branch_rel8(self._active_stack_emulator(), ~self.emu.is_zero(), self.instr.imm8, self.instr.size)
 
     def jbe_rel8(self) -> None:
         """Emit the decoded ``JBE`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), self.emu.is_carry() | self.emu.is_zero(), self.instr.imm8)
+        branch_rel8(
+            self._active_stack_emulator(),
+            self.emu.is_carry() | self.emu.is_zero(),
+            self.instr.imm8,
+            self.instr.size,
+        )
 
     def ja_rel8(self) -> None:
         """Emit the decoded ``JA`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), ~(self.emu.is_carry() | self.emu.is_zero()), self.instr.imm8)
+        branch_rel8(
+            self._active_stack_emulator(),
+            ~(self.emu.is_carry() | self.emu.is_zero()),
+            self.instr.imm8,
+            self.instr.size,
+        )
 
     def js_rel8(self) -> None:
         """Emit the decoded ``JS`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), self.emu.is_sign(), self.instr.imm8)
+        branch_rel8(self._active_stack_emulator(), self.emu.is_sign(), self.instr.imm8, self.instr.size)
 
     def jns_rel8(self) -> None:
         """Emit the decoded ``JNS`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), ~self.emu.is_sign(), self.instr.imm8)
+        branch_rel8(self._active_stack_emulator(), ~self.emu.is_sign(), self.instr.imm8, self.instr.size)
 
     def jp_rel8(self) -> None:
         """Emit the decoded ``JP`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), self.emu.is_parity(), self.instr.imm8)
+        branch_rel8(self._active_stack_emulator(), self.emu.is_parity(), self.instr.imm8, self.instr.size)
 
     def jnp_rel8(self) -> None:
         """Emit the decoded ``JNP`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), ~self.emu.is_parity(), self.instr.imm8)
+        branch_rel8(self._active_stack_emulator(), ~self.emu.is_parity(), self.instr.imm8, self.instr.size)
 
     def jl_rel8(self) -> None:
         """Emit the decoded ``JL`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), self.emu.is_sign() != self.emu.is_overflow(), self.instr.imm8)
+        branch_rel8(
+            self._active_stack_emulator(),
+            self.emu.is_sign() != self.emu.is_overflow(),
+            self.instr.imm8,
+            self.instr.size,
+        )
 
     def jnl_rel8(self) -> None:  # jge
         """Emit the decoded ``JNL`` short conditional branch."""
-        branch_rel8(self._active_stack_emulator(), ~(self.emu.is_sign() != self.emu.is_overflow()), self.instr.imm8)
+        branch_rel8(
+            self._active_stack_emulator(),
+            ~(self.emu.is_sign() != self.emu.is_overflow()),
+            self.instr.imm8,
+            self.instr.size,
+        )
 
     def jle_rel8(self) -> None:
         """Emit the decoded ``JLE`` short conditional branch."""
@@ -554,6 +576,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
             self._active_stack_emulator(),
             self.emu.is_zero() | (self.emu.is_sign() != self.emu.is_overflow()),
             self.instr.imm8,
+            self.instr.size,
         )
 
     def jnle_rel8(self) -> None:
@@ -562,6 +585,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
             self._active_stack_emulator(),
             ~self.emu.is_zero() & (self.emu.is_sign() == self.emu.is_overflow()),
             self.instr.imm8,
+            self.instr.size,
         )
 
     def test_rm8_r8(self) -> None:
@@ -598,7 +622,6 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
 
     def nop(self) -> None:
         """Execute decoded ``NOP`` semantics through frontend emulator effects."""
-        pass
 
     def wait(self) -> None:
         """Execute decoded ``WAIT`` semantics through frontend emulator effects."""
@@ -873,14 +896,11 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
 
     def int_imm8(self) -> None:
         """Execute decoded ``INT_IMM8`` semantics through frontend emulator effects."""
-        if self.instr.imm8 in (0x34, 0x35, 0x38, 0x39):
-            # Microsoft C's x87 emulator replaces ESC opcodes with INT helpers:
-            # 34h=D8, 35h=D9, 38h=DC, 39h=DD. The ModR/M payload still describes
-            # the original FPU memory operand, so lift it as the same harmless FPU
-            # escape used for hardware x87 bytes.
+        vector = self.instr.imm8 & 0xFF
+        if self.instr.msvc_x87_escape and msvc_x87_escape_opcode_8616(vector) is not None:
             self.esc()
             return
-        if self.instr.imm8 == 0x3D:
+        if is_msvc_x87_emulation_interrupt_8616(vector) and vector == 0x3D:
             self.wait()
             return
         next_ip = _vex_expr(self.emu.get_ip()) + self.emu.constant(self.instr.size, Type.int_16)
@@ -890,11 +910,16 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
         lifter_instruction.put(next_ip.cast_to(Type.int_32), "ip_at_syscall")
         # Model real-mode interrupts as synthetic call targets so CFG/decompilation
         # can treat them like normal helper functions.
-        self.emu.set_gpreg(reg16_t.IP, self.emu.constant(self.instr.imm8, Type.int_16))
-        lifter_instruction.jump(None, interrupt_core_addr_8616(self.instr.imm8), JumpKind.Call)
+        self.emu.set_gpreg(reg16_t.IP, self.emu.constant(vector, Type.int_16))
+        lifter_instruction.jump(None, interrupt_core_addr_8616(vector), JumpKind.Call)
 
     def iret(self, _instr: dict[str, object] | None = None) -> None:
-        """Execute decoded ``IRET`` semantics through frontend emulator effects."""
+        """Return through the operand-size-selected real-mode interrupt frame."""
+        if self.instr.operand_bits == 32:
+            from .stack_helpers import return_interrupt32
+
+            return_interrupt32(self._active_stack_emulator())
+            return
         return_interrupt16(self._active_stack_emulator())
 
     def in_al_imm8(self) -> None:
@@ -908,7 +933,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
 
     def jmp(self) -> None:
         """Execute decoded ``JMP`` semantics through frontend emulator effects."""
-        branch_rel8(self._active_stack_emulator(), True, self.instr.imm8)
+        branch_rel8(self._active_stack_emulator(), True, self.instr.imm8, self.instr.size)
 
     def in_al_dx(self) -> None:
         """Execute decoded ``IN_AL_DX`` semantics through frontend emulator effects."""
@@ -987,7 +1012,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
 
     def setno_rm8(self) -> None:
         """Store the decoded ``SETNO`` condition result in the byte destination."""
-        self.set_rm8(not self.emu.is_overflow())
+        self.set_rm8(self.emu.is_overflow() == self.emu.constant(0, Type.int_1))
 
     def setb_rm8(self) -> None:
         """Store the decoded ``SETB`` condition result in the byte destination."""
@@ -995,7 +1020,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
 
     def setnb_rm8(self) -> None:
         """Store the decoded ``SETNB`` condition result in the byte destination."""
-        self.set_rm8(not self.emu.is_carry())
+        self.set_rm8(self.emu.is_carry() == self.emu.constant(0, Type.int_1))
 
     def setz_rm8(self) -> None:
         """Store the decoded ``SETZ`` condition result in the byte destination."""
@@ -1003,15 +1028,16 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
 
     def setnz_rm8(self) -> None:
         """Store the decoded ``SETNZ`` condition result in the byte destination."""
-        self.set_rm8(not self.emu.is_zero())
+        self.set_rm8(self.emu.is_zero() == self.emu.constant(0, Type.int_1))
 
     def setbe_rm8(self) -> None:
         """Store the decoded ``SETBE`` condition result in the byte destination."""
-        self.set_rm8(self.emu.is_carry() or self.emu.is_zero())
+        self.set_rm8(_vex_expr(self.emu.is_carry()) | _vex_expr(self.emu.is_zero()))
 
     def seta_rm8(self) -> None:
         """Store the decoded ``SETA`` condition result in the byte destination."""
-        self.set_rm8(not (self.emu.is_carry() or self.emu.is_zero()))
+        carry_or_zero = _vex_expr(self.emu.is_carry()) | _vex_expr(self.emu.is_zero())
+        self.set_rm8(carry_or_zero == self.emu.constant(0, Type.int_1))
 
     def sets_rm8(self) -> None:
         """Store the decoded ``SETS`` condition result in the byte destination."""
@@ -1019,7 +1045,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
 
     def setns_rm8(self) -> None:
         """Store the decoded ``SETNS`` condition result in the byte destination."""
-        self.set_rm8(not self.emu.is_sign())
+        self.set_rm8(self.emu.is_sign() == self.emu.constant(0, Type.int_1))
 
     def setp_rm8(self) -> None:
         """Store the decoded ``SETP`` condition result in the byte destination."""
@@ -1027,7 +1053,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
 
     def setnp_rm8(self) -> None:
         """Store the decoded ``SETNP`` condition result in the byte destination."""
-        self.set_rm8(not self.emu.is_parity())
+        self.set_rm8(self.emu.is_parity() == self.emu.constant(0, Type.int_1))
 
     def setl_rm8(self) -> None:
         """Store the decoded ``SETL`` condition result in the byte destination."""
@@ -1039,11 +1065,14 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
 
     def setle_rm8(self) -> None:
         """Store the decoded ``SETLE`` condition result in the byte destination."""
-        self.set_rm8(self.emu.is_zero() or (self.emu.is_sign() != self.emu.is_overflow()))
+        signed_less = _vex_expr(self.emu.is_sign()) != _vex_expr(self.emu.is_overflow())
+        self.set_rm8(_vex_expr(self.emu.is_zero()) | _vex_expr(signed_less))
 
     def setnle_rm8(self) -> None:
         """Store the decoded ``SETNLE`` condition result in the byte destination."""
-        self.set_rm8(not self.emu.is_zero() and (self.emu.is_sign() == self.emu.is_overflow()))
+        nonzero = self.emu.is_zero() == self.emu.constant(0, Type.int_1)
+        signed_ge = _vex_expr(self.emu.is_sign()) == _vex_expr(self.emu.is_overflow())
+        self.set_rm8(_vex_expr(nonzero) & _vex_expr(signed_ge))
 
     def code_80(self) -> None:
         """Dispatch opcode group ``80`` by its decoded ModR/M extension."""
@@ -1420,15 +1449,40 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
         """Execute decoded ``DIV_AL_AH_RM8`` semantics through frontend emulator effects."""
         rm8 = _vex_expr(self.get_rm8()).cast_to(Type.int_16)
         ax = _vex_expr(self.emu.get_gpreg(reg16_t.AX))
-        self.emu.set_gpreg(reg8_t.AL, ax // rm8)
+        self._divide_error_if(rm8 == self.emu.constant(0, Type.int_16))
+        quotient = ax // rm8
+        self._divide_error_if(quotient > self.emu.constant(0xFF, Type.int_16))
+        self.emu.set_gpreg(reg8_t.AL, quotient)
         self.emu.set_gpreg(reg8_t.AH, ax % rm8)
 
     def idiv_al_ah_rm8(self) -> None:
         """Execute decoded ``IDIV_AL_AH_RM8`` semantics through frontend emulator effects."""
         rm8_s = _vex_expr(self.get_rm8()).cast_to(Type.int_16, signed=True)
         ax_s = _vex_expr(self.emu.get_gpreg(reg16_t.AX)).signed
-        self.emu.set_gpreg(reg8_t.AL, ax_s // rm8_s)
-        self.emu.set_gpreg(reg8_t.AH, ax_s % rm8_s)
+        self._divide_error_if(rm8_s == self.emu.constant(0, Type.int_16))
+        quotient = ax_s // rm8_s
+        remainder = ax_s - quotient * rm8_s
+        signed_quotient = quotient.signed
+        self._divide_error_if(
+            (signed_quotient < self.emu.constant(0xFF80, Type.int_16).signed)
+            | (signed_quotient > self.emu.constant(0x007F, Type.int_16).signed)
+        )
+        self.emu.set_gpreg(reg8_t.AL, quotient)
+        self.emu.set_gpreg(reg8_t.AH, remainder)
+
+    def _divide_error_if(self, condition: VexExpr) -> None:
+        """Emit a native-VEX-compatible conditional x86 divide-error exit."""
+        lifter_instruction = self.emu.lifter_instruction
+        if lifter_instruction is None:
+            raise RuntimeError("divide-error lifting requires an active lifter instruction")
+        target = self.emu.constant(0, Type.int_32)
+        guard = condition.cast_to(Type.int_1)
+        lifter_instruction.irsb_c.add_exit(
+            guard.rdt,
+            target.rdt,
+            "Ijk_SigFPE_IntDiv",
+            lifter_instruction.arch.ip_offset,
+        )
 
     def set_chsz_ad(self, ad: bool) -> None:
         """Set whether address-size override semantics are active."""

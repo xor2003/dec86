@@ -67,6 +67,12 @@ class _JumpEmitter(Protocol):
         ...
 
 
+class _InstructionAddressWidth8616(Protocol):
+    """Active lifter instruction field used for address-size resolution."""
+
+    address_bits: int
+
+
 class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic frontend base contract
     """Frontend access surface that keeps execution and semantic addresses separate."""
 
@@ -169,7 +175,14 @@ class DataAccess(Hardware):  # type: ignore[misc, unused-ignore]  # dynamic fron
 
     def _resolved_segment_operand(self, seg: object, addr: object, width_bits: int) -> ResolvedMemoryOperand:
         """Resolve a segment-relative operand without recording side effects."""
-        return resolve_memory_operand_8616(self, seg, addr, width_bits, address_bits=16)
+        address_bits = 16
+        try:
+            active_address_bits = cast(_InstructionAddressWidth8616, self.instr).address_bits
+        except AttributeError:
+            active_address_bits = 0
+        if isinstance(active_address_bits, int) and active_address_bits > 0:
+            address_bits = active_address_bits
+        return resolve_memory_operand_8616(self, seg, addr, width_bits, address_bits=address_bits)
 
     def search_tlb(self, vpn: int) -> object | None:
         """Return a cached TLB entry when present."""

@@ -119,9 +119,9 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
     chsz_op: int | bool
     reg_offsets: dict[int, int]
 
-    _REG8_NAMES = {"al", "ah", "bl", "bh", "cl", "ch", "dl", "dh"}
-    _REG16_NAMES = {"ax", "bx", "cx", "dx", "sp", "bp", "si", "di", "ip", "flags"}
-    _LOW8_PARENT_REGS = {"al": "ax", "bl": "bx", "cl": "cx", "dl": "dx"}
+    _REG8_NAMES = {"al", "ah", "bl", "bh", "cl", "ch", "dl", "dh"}  # noqa: RUF012
+    _REG16_NAMES = {"ax", "bx", "cx", "dx", "sp", "bp", "si", "di", "ip", "flags"}  # noqa: RUF012
+    _LOW8_PARENT_REGS = {"al": "ax", "bl": "bx", "cl": "cx", "dl": "dx"}  # noqa: RUF012
     _SIMPLE_JCC_8616: frozenset[str] = frozenset(
         JCC_EQ_MNEMONICS_8616
         | JCC_NE_MNEMONICS_8616
@@ -142,7 +142,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         {"cbw", "cwd", "enter", "lds", "lea", "leave", "les", "mov", "nop", "pop", "push", "xchg"}
     )
 
-    _BLOCK_TERMINATORS = {
+    _BLOCK_TERMINATORS = {  # noqa: RUF012
         "call",
         "jmp",
         *_SIMPLE_JCC_8616,
@@ -153,19 +153,19 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         "int3",
         "hlt",
     }
-    _REG_OFFSETS = {
+    _REG_OFFSETS = {  # noqa: RUF012
         reg16_t.AX: 0,
-        reg16_t.CX: 2,
-        reg16_t.DX: 4,
-        reg16_t.BX: 6,
-        reg16_t.BP: 10,
-        reg16_t.SI: 12,
-        reg16_t.DI: 14,
-        reg16_t.FLAGS: 18,
-        20: 20,  # SS offset
-        22: 22,  # CS offset
-        reg16_t.IP: 24,
-        reg16_t.SP: 8,
+        reg16_t.CX: 4,
+        reg16_t.DX: 8,
+        reg16_t.BX: 12,
+        reg16_t.SP: 16,
+        reg16_t.BP: 20,
+        reg16_t.SI: 24,
+        reg16_t.DI: 28,
+        reg16_t.IP: 32,
+        reg16_t.FLAGS: 36,
+        20: 50,  # SS offset
+        22: 40,  # CS offset
     }
 
     def lift(self, irsb_c: Any, past_instructions: list[Any], future_instructions: list[Any]) -> None:
@@ -183,6 +183,11 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         self.emu.set_lifter_instruction(_LifterInstructionFacade(irsb_c, self))
         self._past_instructions = past_instructions
         self._future_instructions = future_instructions
+        if self.instr.invalid_lock or self.instr.invalid_opcode_extension:
+            guard = self.emu.constant(1, Type.int_1)
+            target = self.emu.constant(0, Type.int_32)
+            irsb_c.add_exit(guard.rdt, target.rdt, "Ijk_SigILL", self.arch.ip_offset)
+            return
         if self.simple_semantics is not None:
             self._lift_simple()
             return
@@ -226,6 +231,20 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     instr = list(self.arch.capstone.disasm(raw, self.addr, 1))
                 except AnalysisTimeout as ex:
                     raise ParseError("Instruction disassembly timed out") from ex
+                capstone_rejected_full = not instr
+                prefix_bytes = {0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65, 0x66, 0x67, 0xF0, 0xF2, 0xF3}
+                prefix_index = 0
+                while prefix_index < len(raw) and raw[prefix_index] in prefix_bytes:
+                    prefix_index += 1
+                invalid_pop_extension = (
+                    prefix_index + 1 < len(raw)
+                    and raw[prefix_index] == 0x8F
+                    and ((raw[prefix_index + 1] >> 3) & 7) != 0
+                )
+                if not instr and invalid_pop_extension:
+                    sanitized = bytearray(raw)
+                    sanitized[prefix_index + 1] &= 0xC7
+                    instr = list(self.arch.capstone.disasm(bytes(sanitized), self.addr, 1))
                 if not instr:
                     # Capstone rejects several LOCK-prefixed forms that the real 286 still
                     # executes, and also segment-override + LOCK combinations.
@@ -245,6 +264,15 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 logger.debug("cs dis: %s %s", self.cs.mnemonic, self.cs.op_str)
                 cast(Any, self).name = self.cs.insn_name()
                 matched_semantics = self._match_simple_semantics()
+                prefix_index = 0
+                width_override = False
+                while prefix_index < len(raw) and raw[prefix_index] in prefix_bytes:
+                    width_override |= raw[prefix_index] in {0x66, 0x67}
+                    prefix_index += 1
+                self.instr.invalid_lock = capstone_rejected_full and 0xF0 in raw[:prefix_index]
+                self.instr.invalid_opcode_extension = invalid_pop_extension
+                if width_override or self.instr.invalid_lock or self.instr.invalid_opcode_extension:
+                    matched_semantics = None
                 if matched_semantics and str(matched_semantics[0]).startswith("add_reg_"):
                     self.condition_value_semantics = matched_semantics
                     self.simple_semantics = None
@@ -253,21 +281,24 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 if self.simple_semantics is not None:
                     bitstrm.bytepos = self.start + cs_prefix_len + self.cs.size
                     self.bitwidth = (cs_prefix_len + self.cs.size) * 8
-                    self.is_mode32 = False
+                    self.is_mode32 = self.emu.is_mode32()
                     self.chsz_op = False
                     return {"x": "00000000"}
 
-                self.is_mode32 = False  # emu.is_mode32()
+                self.instr.size = cs_prefix_len + self.cs.size
+                self.is_mode32 = self.emu.is_mode32()
                 prefix = self._ensure_instr32().parse_prefix() if self.is_mode32 else self.instr16.parse_prefix()
                 self.chsz_op = prefix & CHSZ_OP
                 chsz_ad = prefix & CHSZ_AD
 
                 if self.is_mode32 ^ bool(self.chsz_op):
                     instr32 = self._ensure_instr32()
-                    instr32.set_chsz_ad(not (self.is_mode32 ^ bool(chsz_ad)))
+                    instr32.chsz = prefix
+                    instr32.set_chsz_ad(bool(chsz_ad))
                     instr32.parse()
                 else:
-                    self.instr16.set_chsz_ad(self.is_mode32 ^ bool(chsz_ad))
+                    self.instr16.chsz = prefix
+                    self.instr16.set_chsz_ad(bool(chsz_ad))
                     self.instr16.parse()
                 self.bitwidth = (bitstrm.bytepos - self.start) * 8
                 return {"x": "00000000"}
@@ -296,6 +327,9 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             if self.cs.mnemonic == "leave":
                 return ("leave",)
             if self.cs.mnemonic in {"cbw", "cwde"} and not ops:
+                instruction_bytes = bytes(self.cs.bytes)
+                if 0x66 in instruction_bytes[:-1]:
+                    return ("sign_extend_ax_eax",)
                 return ("sign_extend_al_ax",)
             if self.cs.mnemonic == "enter" and len(ops) == 2 and all(op.type == 2 for op in ops):
                 return ("enter", ops[0].imm & 0xFFFF, ops[1].imm & 0xFF)
@@ -575,9 +609,8 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     return ("cmp_abs_imm8", dst_abs_mem8, src_imm8)
                 if src_reg8:
                     return ("cmp_abs_reg8", dst_abs_mem8, src_reg8)
-            if dst_reg8:
-                if src_imm8 is not None:
-                    return ("cmp_reg_imm8", dst_reg8, src_imm8)
+            if dst_reg8 and src_imm8 is not None:
+                return ("cmp_reg_imm8", dst_reg8, src_imm8)
             if dst_indexed_mem8 is not None and src_reg8:
                 return ("cmp_indexed_abs_reg8", dst_indexed_mem8, src_reg8)
             if dst_indexed_mem16 is not None and src_reg:
@@ -736,11 +769,11 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
             elif kind == "js":
                 cond = sf
             elif kind == "jns":
-                cond = ~sf
+                cond = self._flag_is_clear(7)
             elif kind in {"jp", "jpe"}:
                 cond = self._flag_is_set(2)
             elif kind in {"jnp", "jpo"}:
-                cond = ~self._flag_is_set(2)
+                cond = self._flag_is_clear(2)
             else:
                 raise NotImplementedError(kind)
             self._emit_simple_jcc(cond, target)
@@ -2294,7 +2327,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         args = tuple(condition.args or ())
         op = str(condition.op)
         producer_insn = getattr(self, "_inertia_consumed_last_condition_addr_8616", None)
-        if condition.expr and condition.expr[0] in {"update_eflags_inc", "update_eflags_dec"}:
+        if condition.expr and condition.expr[0] in {"update_eflags_inc", "update_eflags_dec"}:  # noqa: SIM102
             if jcc_mnemonic not in JCC_EQ_MNEMONICS_8616 | JCC_NE_MNEMONICS_8616:
                 return None
         if op in {"compare", "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge"} and len(args) == 2:
@@ -2454,18 +2487,18 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
 
     # Module-level condition cache for transfer from lifter to codegen.
     # Keyed by block address → list[ConditionIR | ConditionFailure].
-    _inertia_module_condition_cache: dict[int, list[ConditionIR | ConditionFailure]] = {}
-    _inertia_pending_condition_sources_by_addr: dict[int, ConditionSource] = {}
-    _inertia_condition_reg_affine_state_8616: dict[str, tuple[IRValue, int]] = {}
-    _inertia_condition_reg_affine_state_snapshots_8616: dict[int, dict[str, tuple[IRValue, int]]] = {}
+    _inertia_module_condition_cache: dict[int, list[ConditionIR | ConditionFailure]] = {}  # noqa: RUF012
+    _inertia_pending_condition_sources_by_addr: dict[int, ConditionSource] = {}  # noqa: RUF012
+    _inertia_condition_reg_affine_state_8616: dict[str, tuple[IRValue, int]] = {}  # noqa: RUF012
+    _inertia_condition_reg_affine_state_snapshots_8616: dict[int, dict[str, tuple[IRValue, int]]] = {}  # noqa: RUF012
     _inertia_condition_index_reg_state_8616: dict[
         str,
         tuple[IRValue | IRBinaryValue, int],
-    ] = {}
+    ] = {}  # noqa: RUF012
     _inertia_condition_reg_value_state_8616: dict[
         tuple[int, str],
         _ConditionRegisterValueState8616,
-    ] = {}
+    ] = {}  # noqa: RUF012
 
     def _record_typed_condition_8616(self, cond: ConditionIR | ConditionFailure) -> None:
         """Record a typed condition on the emulator AND module cache for function-level transfer."""
@@ -2523,6 +2556,13 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     "ax",
                 )
                 self._widen_condition_reg_value_state_8616("ax")
+                return
+            if kind == "sign_extend_ax_eax":
+                self.put(
+                    self.get("ax", Type.int_16).widen_signed(Type.int_32),
+                    "eax",
+                )
+                self._widen_condition_reg_value_state_8616("eax")
                 return
             if kind == "push_reg16":
                 _, reg_name = semantics
@@ -2883,7 +2923,7 @@ update_abstractmethods(Instruction_ANY)
 class Lifter86_16(GymratLifter):  # type: ignore[misc]  # dynamic pyvex base
     """Gymrat lifter entry point for the 16-bit x86 frontend."""
 
-    instrs: list[type[Instruction_ANY]] = [Instruction_ANY]
+    instrs: list[type[Instruction_ANY]] = [Instruction_ANY]  # noqa: RUF012
 
     def decode(self) -> list[Any]:
         """Decode a pyvex block into 16-bit instruction objects."""

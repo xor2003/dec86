@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import builtins
 from collections.abc import Callable
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from pyvex.lifting.util import JumpKind
 from pyvex.lifting.util.vex_helper import Type
 
-from .addressing_helpers import linear_address
 from .regs import reg16_t, reg32_t, sgreg_t
 
 
@@ -61,7 +60,7 @@ class StackLifterInstruction(Protocol):
         self,
         condition: object,
         target: object,
-        jumpkind: object | None = None,  # noqa: V107 - PyVEX keyword contract
+        jumpkind: object | None = None,
     ) -> None:
         """Emit a VEX control-flow edge."""
         ...
@@ -162,8 +161,8 @@ class StackEmulator(Protocol):
         ...
 
 
-StackPair: TypeAlias = tuple[StackExpr, StackExpr]
-StackTriple: TypeAlias = tuple[StackExpr, StackExpr, StackExpr]
+type StackPair = tuple[StackExpr, StackExpr]
+type StackTriple = tuple[StackExpr, StackExpr, StackExpr]
 
 
 def _dynamic_pyvex_expr_getattr_8616(obj: object, name: str, default: object = None) -> object:
@@ -234,8 +233,8 @@ def pop_flags16(emu: StackEmulator, writable_mask: int = 0x0FD5, fixed_mask: int
 
 
 def push_flags32(emu: StackEmulator) -> None:
-    """Push EFLAGS through the 32-bit segmented stack."""
-    push32(emu, emu.get_eflags())
+    """Push the 80386 EFLAGS image with reserved, RF, and VM bits cleared."""
+    push32(emu, emu.get_eflags() & emu.constant(0xFFFF, Type.int_32))
 
 
 def pop_flags32(emu: StackEmulator) -> StackExpr:
@@ -281,17 +280,31 @@ def pop_all16(emu: StackEmulator) -> None:
 
 
 def push32(emu: StackEmulator, value: object) -> None:
-    """Push a 32-bit value through SS:ESP."""
-    emu.update_gpreg(reg32_t.ESP, -4)
-    sp = emu.get_gpreg(reg32_t.ESP)
+    """Push a 32-bit value through the real-mode 16-bit SS:SP address."""
+    raw_sp = emu.get_gpreg(reg32_t.ESP)
+    sp = (
+        emu.constant(raw_sp & 0xFFFF, Type.int_16)
+        if isinstance(raw_sp, int)
+        else cast(StackExpr, raw_sp).cast_to(Type.int_16)
+    )
+    sp = sp - emu.constant(4, Type.int_16)
+    next_esp = sp & 0xFFFF if isinstance(sp, int) else sp.cast_to(Type.int_32)
+    emu.set_gpreg(reg32_t.ESP, next_esp)
     emu.write_mem32_seg(sgreg_t.SS, sp, value)
 
 
 def pop32(emu: StackEmulator) -> StackExpr:
-    """Pop and return a 32-bit value from the segmented SS stack."""
-    sp = emu.get_gpreg(reg32_t.ESP)
+    """Pop a 32-bit value through the real-mode 16-bit SS:SP address."""
+    raw_sp = emu.get_gpreg(reg32_t.ESP)
+    sp = (
+        emu.constant(raw_sp & 0xFFFF, Type.int_16)
+        if isinstance(raw_sp, int)
+        else cast(StackExpr, raw_sp).cast_to(Type.int_16)
+    )
     value = emu.read_mem32_seg(sgreg_t.SS, sp)
-    emu.update_gpreg(reg32_t.ESP, 4)
+    next_sp = sp + emu.constant(4, Type.int_16)
+    next_esp = next_sp & 0xFFFF if isinstance(next_sp, int) else next_sp.cast_to(Type.int_32)
+    emu.set_gpreg(reg32_t.ESP, next_esp)
     return value
 
 
@@ -313,12 +326,16 @@ def pop_all32(emu: StackEmulator) -> None:
     emu.set_gpreg(reg32_t.EDI, pop32(emu))
     emu.set_gpreg(reg32_t.ESI, pop32(emu))
     emu.set_gpreg(reg32_t.EBP, pop32(emu))
-    esp = pop32(emu)
+    saved_esp = pop32(emu)
     emu.set_gpreg(reg32_t.EBX, pop32(emu))
     emu.set_gpreg(reg32_t.EDX, pop32(emu))
     emu.set_gpreg(reg32_t.ECX, pop32(emu))
     emu.set_gpreg(reg32_t.EAX, pop32(emu))
-    emu.set_gpreg(reg32_t.ESP, esp)
+    live_esp = emu.get_gpreg(reg32_t.ESP)
+    merged_esp = (saved_esp & emu.constant(0xFFFF0000, Type.int_32)) | (
+        live_esp & emu.constant(0x0000FFFF, Type.int_32)
+    )
+    emu.set_gpreg(reg32_t.ESP, merged_esp)
 
 
 def push_segment32(emu: StackEmulator, segment: sgreg_t) -> None:
@@ -327,8 +344,10 @@ def push_segment32(emu: StackEmulator, segment: sgreg_t) -> None:
 
 
 def pop_segment32(emu: StackEmulator, segment: sgreg_t) -> None:
-    """Pop a 32-bit stack value into a segment register."""
-    emu.set_segment(segment, pop32(emu))
+    """Pop a four-byte stack slot into a 16-bit segment selector."""
+    value = pop32(emu)
+    selector = value & 0xFFFF if isinstance(value, int) else value.cast_to(Type.int_16)
+    emu.set_segment(segment, selector)
 
 
 def near_return_ip16(emu: StackEmulator, instruction_size: int) -> StackExpr:
@@ -336,9 +355,9 @@ def near_return_ip16(emu: StackEmulator, instruction_size: int) -> StackExpr:
     return emu.get_gpreg(reg16_t.IP) + emu.constant(instruction_size, Type.int_16)
 
 
-def near_return_eip32(emu: StackEmulator) -> StackExpr:
+def near_return_eip32(emu: StackEmulator, instruction_size: int = 0) -> StackExpr:
     """Return the current 32-bit EIP used as a near-call return target."""
-    return emu.get_eip()
+    return emu.get_gpreg(reg32_t.EIP) + emu.constant(instruction_size, Type.int_32)
 
 
 def near_relative_target16(emu: StackEmulator, displacement: object, instruction_size: int) -> StackExpr:
@@ -348,7 +367,11 @@ def near_relative_target16(emu: StackEmulator, displacement: object, instruction
 
 def near_relative_target32(emu: StackEmulator, displacement: object, instruction_size: int = 0) -> StackExpr:
     """Compute a 32-bit relative branch target from EIP, displacement, and size."""
-    return emu.get_eip() + emu.constant(instruction_size, Type.int_32) + emu.constant(displacement, Type.int_32)
+    return (
+        emu.get_gpreg(reg32_t.EIP)
+        + emu.constant(instruction_size, Type.int_32)
+        + emu.constant(displacement, Type.int_32)
+    )
 
 
 def push_far_return_frame16(emu: StackEmulator, return_ip: object | None = None) -> object:
@@ -423,10 +446,15 @@ def return_near32(emu: StackEmulator, stack_adjust: int = 0) -> StackExpr:
     """Emit a 32-bit near return and apply an optional stack adjustment."""
     eip = pop32(emu)
     if stack_adjust:
-        emu.set_gpreg(reg32_t.ESP, emu.get_gpreg(reg32_t.ESP) + emu.constant(stack_adjust, Type.int_32))
+        raw_sp = emu.get_gpreg(reg32_t.ESP)
+        if isinstance(raw_sp, int):
+            adjusted_sp = (raw_sp + stack_adjust) & 0xFFFF
+        else:
+            sp16 = cast(StackExpr, raw_sp).cast_to(Type.int_16)
+            adjusted_sp = (sp16 + emu.constant(stack_adjust, Type.int_16)).cast_to(Type.int_32)
+        emu.set_gpreg(reg32_t.ESP, adjusted_sp)
     emu.set_eip(eip)
-    emu.irsb.next = eip
-    emu.irsb.jumpkind = "Ijk_Ret"
+    emu.lifter_instruction.jump(None, eip, JumpKind.Ret)
     return eip
 
 
@@ -478,30 +506,40 @@ def far_return_ip16(emu: StackEmulator, instruction_size: int) -> StackExpr:
 
 def far_return_ip32(emu: StackEmulator, instruction_size: int) -> StackExpr:
     """Compute the 32-bit far-call return EIP from instruction size."""
-    return emu.get_eip() + emu.constant(instruction_size, Type.int_32)
+    return near_return_eip32(emu, instruction_size)
 
 
 def emit_far_call16(emu: StackEmulator, segment: object, offset: object, return_ip: object) -> object:
     """Emit a 16-bit far call through the emulator boundary."""
-    emu.callf(segment, offset, return_ip=return_ip)
+    push_far_return_frame16(emu, return_ip)
+    emu.set_segment(sgreg_t.CS, segment)
+    emu.set_eip(offset)
+    emu.lifter_instruction.jump(None, offset, JumpKind.Call)
     return return_ip
 
 
 def emit_far_jump16(emu: StackEmulator, segment: object, offset: object) -> object:
     """Emit a 16-bit far jump through the emulator boundary."""
-    emu.jmpf(segment, offset)
+    emu.set_segment(sgreg_t.CS, segment)
+    emu.set_eip(offset)
+    emu.lifter_instruction.jump(None, offset, JumpKind.Boring)
     return offset
 
 
 def emit_far_call32(emu: StackEmulator, segment: object, offset: object, return_ip: object) -> object:
     """Emit a 32-bit far call through the emulator boundary."""
-    emu.callf(segment, offset, return_ip=return_ip)
+    push_far_return_frame32(emu, return_ip)
+    emu.set_segment(sgreg_t.CS, segment)
+    emu.set_eip(offset)
+    emu.lifter_instruction.jump(None, offset, JumpKind.Call)
     return return_ip
 
 
 def emit_far_jump32(emu: StackEmulator, segment: object, offset: object) -> object:
     """Emit a 32-bit far jump through the emulator boundary."""
-    emu.jmpf(segment, offset)
+    emu.set_segment(sgreg_t.CS, segment)
+    emu.set_eip(offset)
+    emu.lifter_instruction.jump(None, offset, JumpKind.Boring)
     return offset
 
 
@@ -512,8 +550,7 @@ def return_far16(emu: StackEmulator, stack_adjust: int = 0) -> StackPair:
         emu.set_gpreg(reg16_t.SP, emu.get_gpreg(reg16_t.SP) + emu.constant(stack_adjust, Type.int_16))
     emu.set_sgreg(sgreg_t.CS, seg)
     emu.set_gpreg(reg16_t.IP, ip)
-    addr = linear_address(emu, seg, ip)
-    emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
+    emu.lifter_instruction.jump(None, ip, jumpkind=JumpKind.Ret)
     return ip, seg
 
 
@@ -523,8 +560,7 @@ def return_interrupt16(emu: StackEmulator) -> StackTriple:
     emu.set_gpreg(reg16_t.FLAGS, flags)
     emu.set_sgreg(sgreg_t.CS, cs)
     emu.set_gpreg(reg16_t.IP, ip)
-    addr = linear_address(emu, cs, ip)
-    emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
+    emu.lifter_instruction.jump(None, ip, jumpkind=JumpKind.Ret)
     return ip, cs, flags
 
 
@@ -532,22 +568,28 @@ def return_far32(emu: StackEmulator, stack_adjust: int = 0) -> StackPair:
     """Emit a 32-bit far return and restore CS:EIP."""
     eip, seg = pop_far_return_frame32(emu)
     if stack_adjust:
-        emu.set_gpreg(reg32_t.ESP, emu.get_gpreg(reg32_t.ESP) + emu.constant(stack_adjust, Type.int_32))
-    emu.set_segment(sgreg_t.CS.name, seg)
+        raw_sp = emu.get_gpreg(reg32_t.ESP)
+        if isinstance(raw_sp, int):
+            adjusted_sp = (raw_sp + stack_adjust) & 0xFFFF
+        else:
+            sp16 = cast(StackExpr, raw_sp).cast_to(Type.int_16)
+            adjusted_sp = (sp16 + emu.constant(stack_adjust, Type.int_16)).cast_to(Type.int_32)
+        emu.set_gpreg(reg32_t.ESP, adjusted_sp)
+    selector = seg & 0xFFFF if isinstance(seg, int) else seg.cast_to(Type.int_16)
+    emu.set_segment(sgreg_t.CS, selector)
     emu.set_eip(eip)
-    addr = linear_address(emu, seg, eip)
-    emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
+    emu.lifter_instruction.jump(None, eip, jumpkind=JumpKind.Ret)
     return eip, seg
 
 
 def return_interrupt32(emu: StackEmulator) -> StackTriple:
     """Emit a 32-bit interrupt return and restore CS:EIP plus EFLAGS."""
     eip, cs, flags = pop_interrupt_frame32(emu)
+    selector = cs & 0xFFFF if isinstance(cs, int) else cs.cast_to(Type.int_16)
     emu.set_eflags(flags)
-    emu.set_segment(sgreg_t.CS.name, cs)
+    emu.set_segment(sgreg_t.CS, selector)
     emu.set_eip(eip)
-    addr = linear_address(emu, cs, eip)
-    emu.lifter_instruction.jump(None, addr, jumpkind=JumpKind.Ret)
+    emu.lifter_instruction.jump(None, eip, jumpkind=JumpKind.Ret)
     return eip, cs, flags
 
 
@@ -562,7 +604,7 @@ def _branch_rel(
     if hasattr(condition, "cast_to"):
         condition = cast(StackExpr, condition).cast_to(Type.int_1)
     target = (
-        (emu.get_gpreg(reg16_t.IP) if target_width_bits == 16 else emu.get_eip())
+        (emu.get_gpreg(reg16_t.IP) if target_width_bits == 16 else emu.get_gpreg(reg32_t.EIP))
         + emu.constant(displacement, Type.int_16 if target_width_bits == 16 else Type.int_32)
         + emu.constant(instruction_size, Type.int_16 if target_width_bits == 16 else Type.int_32)
     )
@@ -577,9 +619,14 @@ def _branch_rel(
     return target
 
 
-def branch_rel8(emu: StackEmulator, condition: object, displacement: object) -> object | None:
+def branch_rel8(
+    emu: StackEmulator,
+    condition: object,
+    displacement: object,
+    instruction_size: int = 2,
+) -> object | None:
     """Emit or compute an 8-bit relative branch target from a 16-bit IP."""
-    return _branch_rel(emu, condition, displacement, 2, 16, emit_near_jump16)
+    return _branch_rel(emu, condition, displacement, instruction_size, 16, emit_near_jump16)
 
 
 def branch_rel16(
@@ -592,9 +639,14 @@ def branch_rel16(
     return _branch_rel(emu, condition, displacement, instruction_size, 16, emit_near_jump16)
 
 
-def branch_rel32(emu: StackEmulator, condition: object, displacement: object) -> object | None:
+def branch_rel32(
+    emu: StackEmulator,
+    condition: object,
+    displacement: object,
+    instruction_size: int = 0,
+) -> object | None:
     """Emit or compute a 32-bit relative branch target from EIP."""
-    return _branch_rel(emu, condition, displacement, 0, 32, emit_near_jump32)
+    return _branch_rel(emu, condition, displacement, instruction_size, 32, emit_near_jump32)
 
 
 def loop_rel8(emu: StackEmulator, condition: StackExpr, displacement: object) -> object | None:
@@ -622,6 +674,26 @@ def enter16(emu: StackEmulator, frame_size: int, nesting_level: int) -> None:
     emu.set_gpreg(reg16_t.BP, frame_temp)
     sp -= frame_size
     emu.set_gpreg(reg16_t.SP, sp)
+
+
+def enter32(emu: StackEmulator, frame_size: int, nesting_level: int) -> None:
+    """Execute operand-size-32 ENTER through the real-mode 16-bit stack address."""
+    push32(emu, emu.get_gpreg(reg32_t.EBP))
+    frame_temp = emu.get_gpreg(reg32_t.ESP)
+    if nesting_level:
+        frame_pointer = emu.get_gpreg(reg32_t.EBP)
+        for _ in range(1, nesting_level):
+            frame_pointer -= emu.constant(4, Type.int_32)
+            push32(emu, emu.read_mem32_seg(sgreg_t.SS, frame_pointer))
+        push32(emu, frame_temp)
+    emu.set_gpreg(reg32_t.EBP, frame_temp)
+    raw_sp = emu.get_gpreg(reg32_t.ESP)
+    if isinstance(raw_sp, int):
+        sp = (raw_sp - frame_size) & 0xFFFF
+    else:
+        sp16 = cast(StackExpr, raw_sp).cast_to(Type.int_16)
+        sp = (sp16 - emu.constant(frame_size, Type.int_16)).cast_to(Type.int_32)
+    emu.set_gpreg(reg32_t.ESP, sp)
 
 
 def leave16(emu: StackEmulator) -> None:

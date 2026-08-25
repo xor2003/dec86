@@ -7,7 +7,7 @@ Forbidden: postprocess flag cleanup, condition recovery, or validation acceptanc
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, TypeAlias, cast
+from typing import Any, cast
 
 from pyvex.lifting.util.vex_helper import Type
 
@@ -16,8 +16,8 @@ from .regs import reg16_t, reg32_t
 # pyvex's VexValue operator stubs expose raw RdTmp/list results even though the
 # runtime syntax wrapper returns another value wrapper. Keep that third-party
 # mismatch isolated behind one explicit frontend boundary type.
-VexExpr: TypeAlias = Any
-FlagValue: TypeAlias = int | VexExpr
+type VexExpr = Any
+type FlagValue = int | VexExpr
 
 
 class Eflags:
@@ -37,7 +37,6 @@ class Eflags:
     def __init__(self) -> None:
         """Initialize the stateless flag-operation mixin."""
         # self.eflags = 0
-        pass
 
     def get_eflags(self) -> FlagValue:
         """Return the host's 32-bit EFLAGS value."""
@@ -136,7 +135,9 @@ class Eflags:
             return Type.int_16
         if ty == Type.int_16:
             return Type.int_32
-        return Type.int_32
+        if ty == Type.int_32:
+            return Type.int_64
+        raise ValueError(f"unsupported arithmetic width: {ty!r}")
 
     def _count8(self, count: FlagValue) -> VexExpr:
         return self.constant(count, Type.int_8) if isinstance(count, int) else count.cast_to(Type.int_8)
@@ -345,13 +346,15 @@ class Eflags:
         """Update arithmetic flags for an unsigned multiply result."""
         type1 = v1.ty
         flags = self.get_gpreg(reg16_t.FLAGS)
-        result = v1.cast_to(Type.int_32) * v2.cast_to(Type.int_32)
+        wide_type = self._wider_type(type1)
+        result = v1.cast_to(wide_type) * v2.cast_to(wide_type)
         size = v1.width
+        high_nonzero = ((result >> size) != self.constant(0, wide_type)).cast_to(Type.int_1)
 
-        flags = self.set_carry(flags, (result >> size) != 0)
+        flags = self.set_carry(flags, high_nonzero)
         flags = self.set_zero(flags, result.cast_to(type1) == 0)
-        flags = self.set_sign(flags, (v1 * v2)[size - 1])
-        flags = self.set_overflow(flags, (result >> size) != 0)
+        flags = self.set_sign(flags, result[size - 1])
+        flags = self.set_overflow(flags, high_nonzero)
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_imul(self, v1: VexExpr, v2: FlagValue) -> None:
@@ -359,10 +362,10 @@ class Eflags:
         v2_expr = cast(VexExpr, self.constant(v2, v1.ty) if isinstance(v2, int) else v2)
         type1 = v1.ty
         flags = self.get_gpreg(reg16_t.FLAGS)
-        result = v1.widen_signed(Type.int_32) * v2_expr.widen_signed(Type.int_32)
         size = v1.width
+        wide_type = Type.int_64 if size == 32 else Type.int_32
+        result = v1.widen_signed(wide_type) * v2_expr.widen_signed(wide_type)
 
-        sign = (v1.cast_to(v2_expr.ty, signed=True) * v2_expr.signed)[size - 1]
         low = result.cast_to(type1)
         high = (result >> self.constant(size, Type.int_8)).cast_to(type1)
         sign_ext = self._ite(
@@ -373,43 +376,38 @@ class Eflags:
         sign_ext_ok = (high == sign_ext).cast_to(Type.int_1)
         cfof = (sign_ext_ok == self.constant(0, Type.int_1)).cast_to(Type.int_1)
         flags = self.set_carry(flags, cfof)
-        flags = self.set_zero(flags, result.cast_to(type1) == 0)
-        flags = self.set_sign(flags, sign)
         flags = self.set_overflow(flags, cfof)
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_shl(self, v: VexExpr, c: FlagValue) -> None:
         """Update arithmetic flags for a logical left shift."""
         const_count = self._const_u8_value(c)
-        if const_count == 1:
+        masked_const_count = None if const_count is None else const_count & 0x1F
+        if masked_const_count and masked_const_count <= v.width:
             flags = self.get_gpreg(reg16_t.FLAGS)
-            result = v << self.constant(1, Type.int_8)
-            cf = v[v.width - 1].cast_to(Type.int_1)
+            count = self.constant(masked_const_count, Type.int_8)
+            result = v << count
+            cf = (v >> self.constant(v.width - masked_const_count, Type.int_8))[0].cast_to(Type.int_1)
             flags = self.set_carry(flags, cf)
             flags = self.set_parity(flags, self.chk_parity(result))
             flags = self.set_flag(flags, 4, self.constant(0, Type.int_1))
             flags = self.set_zero(flags, (result == 0).cast_to(Type.int_1))
             flags = self.set_sign(flags, result[v.width - 1].cast_to(Type.int_1))
-            flags = self.set_overflow(flags, (result[v.width - 1].cast_to(Type.int_1) ^ cf).cast_to(Type.int_1))
+            if masked_const_count == 1:
+                flags = self.set_overflow(
+                    flags,
+                    (result[v.width - 1].cast_to(Type.int_1) ^ cf).cast_to(Type.int_1),
+                )
             self.set_gpreg(reg16_t.FLAGS, flags)
             return
         c = self._mask_shift_count(c)
         flags = self.get_gpreg(reg16_t.FLAGS)
         size = v.width
-        step_result = v
-        step_cf = self.get_flag(0)
-        result = v
-        cf = self.get_flag(0)
-        for step in range(1, 32):
-            step_cf = step_result[size - 1].cast_to(Type.int_1)
-            step_result = step_result << self.constant(1, Type.int_8)
-            use_step = c == self.constant(step, Type.int_8)
-            result = self._ite(use_step, step_result, result)
-            cf = self._ite(use_step, step_cf, cf)
-
         unchanged = c == self.constant(0, Type.int_8)
         one = c == self.constant(1, Type.int_8)
-        flags = self._ite(unchanged, self.get_gpreg(reg16_t.FLAGS), flags)
+        result = v << c
+        inverse = self.constant(size, Type.int_8) - c
+        cf = (v >> inverse)[0].cast_to(Type.int_1)
         flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), cf))
         flags = self.set_parity(flags, self._ite(unchanged, self.get_flag(2), self.chk_parity(result)))
         flags = self.set_flag(flags, 4, self._ite(unchanged, self.get_flag(4), self.constant(0, Type.int_1)))
@@ -418,11 +416,38 @@ class Eflags:
         flags = self.set_overflow(
             flags,
             self._ite(
-                one,
-                (result[size - 1].cast_to(Type.int_1) ^ cf).cast_to(Type.int_1),
-                self.constant(0, Type.int_1),
+                unchanged,
+                self.get_flag(11),
+                self._ite(
+                    one,
+                    (result[size - 1].cast_to(Type.int_1) ^ cf).cast_to(Type.int_1),
+                    self.get_flag(11),
+                ),
             ),
         )
+        self.set_gpreg(reg16_t.FLAGS, flags)
+
+    def update_eflags_double_shift(self, v: VexExpr, result: VexExpr, c: FlagValue, *, left: bool) -> None:
+        """Update defined SHLD/SHRD flags from the combined double-shift result."""
+        count = self._mask_shift_count(c)
+        width = v.width
+        defined = count <= self.constant(width, Type.int_8)
+        active = defined & (count != self.constant(0, Type.int_8))
+        one = count == self.constant(1, Type.int_8)
+        if left:
+            carry = (v >> (self.constant(width, Type.int_8) - count))[0].cast_to(Type.int_1)
+            overflow = (result[width - 1].cast_to(Type.int_1) ^ carry).cast_to(Type.int_1)
+        else:
+            carry = (v >> (count - self.constant(1, Type.int_8)))[0].cast_to(Type.int_1)
+            overflow = (v[width - 1].cast_to(Type.int_1) ^ result[width - 1].cast_to(Type.int_1)).cast_to(
+                Type.int_1
+            )
+        flags = self.get_gpreg(reg16_t.FLAGS)
+        flags = self.set_carry(flags, self._ite(active, carry, self.get_flag(0)))
+        flags = self.set_parity(flags, self._ite(active, self.chk_parity(result), self.get_flag(2)))
+        flags = self.set_zero(flags, self._ite(active, (result == 0).cast_to(Type.int_1), self.get_flag(6)))
+        flags = self.set_sign(flags, self._ite(active, result[width - 1].cast_to(Type.int_1), self.get_flag(7)))
+        flags = self.set_overflow(flags, self._ite(one, overflow, self.get_flag(11)))
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_rol(self, v: VexExpr, c: FlagValue) -> None:
@@ -472,25 +497,24 @@ class Eflags:
         c = self._mask_shift_count(c)
         flags = self.get_gpreg(reg16_t.FLAGS)
         size = v.width
-        step_result = v
-        step_cf = self.get_flag(0)
-        result = v
-        cf = self.get_flag(0)
-        for step in range(1, 32):
-            step_cf = step_result[0].cast_to(Type.int_1)
-            step_result = step_result >> self.constant(1, Type.int_8)
-            use_step = c == self.constant(step, Type.int_8)
-            result = self._ite(use_step, step_result, result)
-            cf = self._ite(use_step, step_cf, cf)
-
         unchanged = c == self.constant(0, Type.int_8)
         one = c == self.constant(1, Type.int_8)
+        result = v >> c
+        previous = v >> (c - self.constant(1, Type.int_8))
+        cf = previous[0].cast_to(Type.int_1)
         flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), cf))
         flags = self.set_parity(flags, self._ite(unchanged, self.get_flag(2), self.chk_parity(result)))
         flags = self.set_flag(flags, 4, self._ite(unchanged, self.get_flag(4), self.constant(1, Type.int_1)))
         flags = self.set_zero(flags, self._ite(unchanged, self.get_flag(6), (result == 0).cast_to(Type.int_1)))
         flags = self.set_sign(flags, self._ite(unchanged, self.get_flag(7), result[size - 1].cast_to(Type.int_1)))
-        flags = self.set_overflow(flags, self._ite(one, v[size - 1].cast_to(Type.int_1), self.constant(0, Type.int_1)))
+        flags = self.set_overflow(
+            flags,
+            self._ite(
+                unchanged,
+                self.get_flag(11),
+                self._ite(one, v[size - 1].cast_to(Type.int_1), self.get_flag(11)),
+            ),
+        )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def update_eflags_sar(self, v: VexExpr, c: FlagValue) -> None:
@@ -510,24 +534,16 @@ class Eflags:
         c = self._mask_shift_count(c)
         flags = self.get_gpreg(reg16_t.FLAGS)
         size = v.width
-        step_result = v
-        step_cf = self.get_flag(0)
-        result = v
-        cf = self.get_flag(0)
-        for step in range(1, 32):
-            step_cf = step_result[0].cast_to(Type.int_1)
-            step_result = step_result.sar(self.constant(1, Type.int_8))
-            use_step = c == self.constant(step, Type.int_8)
-            result = self._ite(use_step, step_result, result)
-            cf = self._ite(use_step, step_cf, cf)
-
         unchanged = c == self.constant(0, Type.int_8)
+        result = v.sar(c)
+        previous = v.sar(c - self.constant(1, Type.int_8))
+        cf = previous[0].cast_to(Type.int_1)
         flags = self.set_carry(flags, self._ite(unchanged, self.get_flag(0), cf))
         flags = self.set_parity(flags, self._ite(unchanged, self.get_flag(2), self.chk_parity(result)))
         flags = self.set_flag(flags, 4, self._ite(unchanged, self.get_flag(4), self.constant(1, Type.int_1)))
         flags = self.set_zero(flags, self._ite(unchanged, self.get_flag(6), (result == 0).cast_to(Type.int_1)))
         flags = self.set_sign(flags, self._ite(unchanged, self.get_flag(7), result[size - 1].cast_to(Type.int_1)))
-        flags = self.set_overflow(flags, self.constant(0, Type.int_1))
+        flags = self.set_overflow(flags, self._ite(unchanged, self.get_flag(11), self.constant(0, Type.int_1)))
         self.set_gpreg(reg16_t.FLAGS, flags)
 
     def chk_parity(self, v: FlagValue) -> VexExpr:

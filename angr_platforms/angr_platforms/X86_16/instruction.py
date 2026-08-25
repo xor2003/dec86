@@ -36,7 +36,7 @@ MAX_OPCODE: int = 0x200
 class ModRM:
     """Decoded ModR/M byte fields used by frontend parsing and execution."""
 
-    __slots__ = ("rm", "reg", "mod")
+    __slots__ = ("mod", "reg", "rm")
 
     def __init__(self) -> None:
         """Initialize an empty ModR/M operand descriptor."""
@@ -63,29 +63,32 @@ class InstrData:
     """Mutable decoded instruction record shared by parse, exec, and emulation layers."""
 
     __slots__ = (
-        "prefix",
-        "pre_segment",
-        "pre_repeat",
-        "segment",
-        "opcode",
-        "modrm",
-        "sib",
+        "address_bits",
+        "control_flow_class",
         "disp8",
         "disp16",
         "disp32",
+        "displacement_bits",
         "imm8",
         "imm16",
         "imm32",
-        "ptr16",
-        "moffs",
-        "prefix_len",
-        "size",
-        "operand_bits",
-        "address_bits",
-        "displacement_bits",
+        "invalid_lock",
+        "invalid_opcode_extension",
         "mode32",
+        "modrm",
+        "moffs",
+        "msvc_x87_escape",
+        "opcode",
+        "operand_bits",
+        "pre_repeat",
+        "pre_segment",
+        "prefix",
+        "prefix_len",
+        "ptr16",
         "repeat_class",
-        "control_flow_class",
+        "segment",
+        "sib",
+        "size",
         "width_case",
     )
 
@@ -105,6 +108,9 @@ class InstrData:
         self.imm8: int = 0  # 8-bit immediate value
         self.imm16: int = 0  # 16-bit immediate value
         self.imm32: int = 0  # 32-bit immediate value
+        self.invalid_lock: bool = False  # LOCK prefix rejected for this opcode/form
+        self.invalid_opcode_extension: bool = False  # Reserved ModR/M opcode extension
+        self.msvc_x87_escape: bool = False  # INT byte stream consumed as an MSVC x87 ESC payload
         self.ptr16: int = 0  # 16-bit far pointer
         self.moffs: int = 0  # Memory offset
         self.prefix_len: int = 0  # number of prefix bytes consumed
@@ -149,7 +155,7 @@ def describe_x86_16_instruction_metadata_surface() -> dict[str, object]:
 class X86Instruction:
     """Shared decoded-instruction view for parser, executor, and emulator handlers."""
 
-    __slots__ = ("emu", "instr", "mode32", "chsz_ad")
+    __slots__ = ("chsz_ad", "emu", "instr", "mode32")
 
     def __init__(self, emu: Emulator, instr: InstrData, mode32: bool) -> None:
         """Bind emulator state and decoded instruction metadata."""
@@ -203,7 +209,7 @@ class X86Instruction:
 class InstrFlags:
     """Opcode operand-presence flags consumed by parser and opcode tables."""
 
-    __slots__ = ("modrm", "imm32", "imm16", "imm8", "ptr16", "moffs", "moffs8")
+    __slots__ = ("imm8", "imm16", "imm32", "modrm", "moffs", "moffs8", "ptr16")
 
     def __init__(self) -> None:
         """Initialize an opcode flag record with no operands required."""
