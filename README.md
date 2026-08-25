@@ -1,9 +1,9 @@
 # Inertia Decompiler
 
-Inertia is an angr-based workspace for decompiling and comparing 16-bit DOS
-programs, including i386 real-mode code that uses 32-bit registers and offsets.
-It preserves the DOS segmented-memory model and targets real-mode `.EXE`,
-`.COM`, raw blobs, and compiler/listing sidecars from DOS-era toolchains.
+Inertia Decompiler is a toolchain for decompiling and comparing 16-bit and
+32-bit real-mode DOS programs. It supports the DOS segmented-memory model and
+processes real-mode `.EXE`, `.COM`, and assembly listings from DOS-era
+toolchains.
 
 Correctness comes before pretty C. When evidence is weak, the tools prefer low-level output, visible refusals, or explicit fallback reports over guessed source.
 
