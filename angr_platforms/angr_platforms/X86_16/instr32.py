@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 from pyvex.lifting.util import JumpKind, Type
 
-from .addressing_helpers import advance_eip32, load_far_pointer
+from .addressing_helpers import advance_eip32, load_far_pointer, load_resolved_operand, store_resolved_operand
 from .alu_helpers import (
     binary_operation,
     binary_operation_with_carry,
@@ -617,9 +617,16 @@ class Instr32(InstrBase):
     def xchg_r32_rm32(self) -> None:
         """Execute decoded ``XCHG_R32_RM32`` semantics through frontend emulator effects."""
         r32 = self.get_r32()
-        rm32 = self.get_rm32()
+        if self.instr.modrm.mod == 3:
+            rm32 = self.get_rm32()
+            self.set_r32(rm32)
+            self.set_rm32(r32)
+            return
+
+        operand = self._resolved_rm_operand(32)
+        rm32 = load_resolved_operand(self.emu, operand)
         self.set_r32(rm32)
-        self.set_rm32(r32)
+        store_resolved_operand(self.emu, operand, r32)
 
     def mov_rm32_r32(self) -> None:
         """Execute decoded ``MOV_RM32_R32`` semantics through frontend emulator effects."""
@@ -1062,7 +1069,7 @@ class Instr32(InstrBase):
             offset = operand.offset
             if not immediate:
                 displacement = (index.signed.sar(self.emu.constant(5, Type.int_8)) * 4).cast_to(
-                    Type.int_32 if self.instr.address_bits == 32 else Type.int_16
+                    Type.int_32 if self.effective_address_bits() == 32 else Type.int_16
                 )
                 offset = offset + displacement
             value = _vex_expr(self.emu.get_data32(operand.segment, offset))

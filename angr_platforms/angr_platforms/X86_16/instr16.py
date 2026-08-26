@@ -790,7 +790,7 @@ class Instr16(InstrBase):
         string_advance_indices(self._active_string_emulator(), 1, si_reg, di_reg)
 
         if repeat_cond is not None:
-            repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
+            repeat_jump(self._active_string_emulator(), self.instr, repeat_cond, zf_sensitive=True)
 
     def stosb_m8_al(self) -> None:
         """Execute decoded ``STOSB_M8_AL`` semantics through frontend emulator effects."""
@@ -881,7 +881,7 @@ class Instr16(InstrBase):
         string_advance_indices(self._active_string_emulator(), 1, si_reg, di_reg)
 
         if repeat_cond is not None:
-            repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
+            repeat_jump(self._active_string_emulator(), self.instr, repeat_cond, zf_sensitive=True)
 
     def cmps_m16_m16(self) -> None:
         """Execute decoded ``CMPS_M16_M16`` semantics through frontend emulator effects."""
@@ -896,7 +896,7 @@ class Instr16(InstrBase):
         string_advance_indices(self._active_string_emulator(), 2, si_reg, di_reg)
 
         if repeat_cond is not None:
-            repeat_jump(self._active_string_emulator(), self.instr, repeat_cond)
+            repeat_jump(self._active_string_emulator(), self.instr, repeat_cond, zf_sensitive=True)
 
     def movsw_m16_m16(self) -> None:
         """Execute decoded ``MOVSW_M16_M16`` semantics through frontend emulator effects."""
@@ -1659,8 +1659,8 @@ class Instr16(InstrBase):
     def shl_rm16_1(self) -> None:
         """Execute decoded ``SHL_RM16_1`` semantics through frontend emulator effects."""
         rm16 = _vex_expr(self.get_rm16())
-        self.set_rm16(rm16 << 1)
         self.emu.update_eflags_shl(rm16, 1)
+        self.set_rm16(rm16 << 1)
 
     def rol_rm16_cl(self) -> None:
         """Execute decoded ``ROL_RM16_CL`` semantics through frontend emulator effects."""

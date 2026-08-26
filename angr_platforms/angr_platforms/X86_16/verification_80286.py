@@ -17,19 +17,19 @@ from typing import Any, cast
 
 import angr
 from angr import options as o
-from capstone.x86_const import X86_OP_MEM
+from capstone.x86_const import X86_OP_MEM, X86_OP_REG
 
 from .arch_86_16 import Arch86_16
 
 _AngrState = Any
 
 __all__ = [
-    "CaseMismatch",
-    "CaseResult",
     "DEFAULT_MOO_PARSER",
     "DEFAULT_REVOCATION_LIST",
     "DEFAULT_SUITE_DIR",
     "REPO_ROOT",
+    "CaseMismatch",
+    "CaseResult",
     "case_linear_ip",
     "discover_moo_files",
     "load_moo_cases",
@@ -52,6 +52,7 @@ STRING_OPCODES: set[int] = {0x6C, 0x6D, 0x6E, 0x6F, 0xA4, 0xA5, 0xA6, 0xA7, 0xAA
 PREFIX_BYTES: set[int] = {0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65, 0x66, 0x67, 0xF0, 0xF2, 0xF3}
 REAL_MODE_FLAGS_MASK: int = 0x0FD7
 FLAGS_MASKS: dict[str, int] = {
+    "CF": REAL_MODE_FLAGS_MASK & ~0x0002,
     "D4": 0x04C4,
     "D5": 0x04C4,
     "69": 0x0803,
@@ -171,8 +172,9 @@ def opcode_name_for_path(path: Path) -> str:
 
 
 def _make_project() -> angr.Project:
+    """Create a verifier project covering the complete real-mode IP range."""
     return angr.load_shellcode(
-        b"\x90",
+        b"\x90" * 0xFE00,
         arch=Arch86_16(),
         start_offset=0,
         load_address=0,
@@ -211,9 +213,8 @@ def _should_retry_with_relocated_ip(case: dict[str, Any], state: _AngrState) -> 
         return False
     if state.addr != (regs["ip"] & 0xFFFF):
         return False
-    if _dynamic_verifier_getattr_8616(state.history, "bbl_addrs", None):
-        if list(state.history.bbl_addrs):
-            return False
+    if _dynamic_verifier_getattr_8616(state.history, "bbl_addrs", None) and list(state.history.bbl_addrs):
+        return False
     try:
         insn = _instruction_bytes(case)
         first = _first_insn(case, insn)
@@ -309,43 +310,58 @@ def _concrete_word(state: _AngrState, addr: int) -> int:
 
 
 def _step_with_bytes(project: angr.Project, state: _AngrState, insn_bytes: bytes) -> Any:  # noqa: ANN401
-    simgr = project.factory.simgr(state)
+    """Execute one instruction, mirroring IPs reserved by angr's extern object."""
+    original_addr = int(state.addr)
+    mirrored = original_addr >= 0xFE00
+    execution_state = state.copy() if mirrored else state
+    if mirrored:
+        execution_state.regs.ip = 0x0800
+    simgr = project.factory.simgr(execution_state)
     simgr.step(num_inst=1, insn_bytes=insn_bytes)
     if simgr.errored:
         raise simgr.errored[0].error
     if simgr.active:
-        return simgr.active[0]
-    if simgr.deadended:
-        return simgr.deadended[0]
-    raise RuntimeError("Execution produced no active or deadended state")
+        stepped = simgr.active[0]
+    elif simgr.deadended:
+        stepped = simgr.deadended[0]
+    else:
+        raise RuntimeError("Execution produced no active or deadended state")
+    if mirrored:
+        mirrored_ip = _solver_eval_int_8616(stepped, stepped.regs.ip)
+        stepped.regs.ip = (original_addr + mirrored_ip - 0x0800) & 0xFFFF
+    return stepped
 
 
 def _step_with_lock_retry(
     project: angr.Project, state: _AngrState, insn_bytes: bytes, *, advance_ip_for_stripped_lock: bool = True
 ) -> Any:  # noqa: ANN401
-    try:
+    prefix_end = 0
+    while prefix_end < len(insn_bytes) and insn_bytes[prefix_end] in PREFIX_BYTES:
+        prefix_end += 1
+    if 0xF0 not in insn_bytes[:prefix_end]:
         return _step_with_bytes(project, state, insn_bytes)
-    except Exception as ex:  # pylint:disable=broad-except
-        if 0xF0 not in insn_bytes or "IR decoding error" not in str(ex):
-            raise
-        stripped = bytes(b for i, b in enumerate(insn_bytes) if not (b == 0xF0 and i == insn_bytes.index(0xF0)))
-        original_addr = state.addr
-        stepped = _step_with_bytes(project, state, stripped)
-        if advance_ip_for_stripped_lock or stepped.addr != original_addr:
-            stepped.regs.ip = (_solver_eval_int_8616(stepped, stepped.regs.ip) + 1) & 0xFFFF
-        return stepped
+    lock_index = insn_bytes.index(0xF0, 0, prefix_end)
+    stripped = insn_bytes[:lock_index] + insn_bytes[lock_index + 1 :]
+    original_addr = state.addr
+    stepped = _step_with_bytes(project, state, stripped)
+    if advance_ip_for_stripped_lock or stepped.addr != original_addr:
+        stepped.regs.ip = (_solver_eval_int_8616(stepped, stepped.regs.ip) + 1) & 0xFFFF
+    return stepped
 
 
 def _push16_concrete(state: _AngrState, value: int) -> None:
     sp = (_solver_eval_int_8616(state, state.regs.sp) - 2) & 0xFFFF
     state.regs.sp = sp
     ss = _solver_eval_int_8616(state, state.regs.ss) & 0xFFFF
-    state.memory.store(real_mode_linear(ss, sp), value.to_bytes(2, "little"))
+    state.memory.store(real_mode_linear(ss, sp), bytes([value & 0xFF]))
+    state.memory.store(real_mode_linear(ss, (sp + 1) & 0xFFFF), bytes([(value >> 8) & 0xFF]))
 
 
 def _pop16_concrete(state: _AngrState) -> int:
     sp = _solver_eval_int_8616(state, state.regs.sp) & 0xFFFF
-    value = _concrete_word(state, real_mode_linear(_solver_eval_int_8616(state, state.regs.ss) & 0xFFFF, sp))
+    ss = _solver_eval_int_8616(state, state.regs.ss) & 0xFFFF
+    value = _concrete_byte(state, real_mode_linear(ss, sp))
+    value |= _concrete_byte(state, real_mode_linear(ss, (sp + 1) & 0xFFFF)) << 8
     state.regs.sp = (sp + 2) & 0xFFFF
     return value
 
@@ -450,6 +466,15 @@ def _simulate_manual_control_flow(case: dict[str, Any], state: _AngrState, insn_
             state.regs.cs = insn_bytes[idx + 3] | (insn_bytes[idx + 4] << 8)
             return True
 
+        if opcode == 0xE8 and (initial["ip"] & 0xFFFF) >= 0xFE00:
+            displacement = insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8)
+            if displacement >= 0x8000:
+                displacement -= 0x10000
+            return_ip = (initial["ip"] + len(insn_bytes)) & 0xFFFF
+            _push16_concrete(state, return_ip)
+            state.regs.ip = (return_ip + displacement) & 0xFFFF
+            return True
+
         if opcode == 0xCD:
             vector = insn_bytes[idx + 1]
             _push16_concrete(state, initial["flags"] & 0xFFFF)
@@ -475,6 +500,17 @@ def _simulate_manual_control_flow(case: dict[str, Any], state: _AngrState, insn_
             state.regs.cs = _pop16_concrete(state)
             return True
 
+        if opcode == 0xC3 and (initial["ip"] & 0xFFFF) >= 0xFE00:
+            state.regs.ip = _pop16_concrete(state)
+            return True
+
+        if opcode == 0xC2 and (initial["ip"] & 0xFFFF) >= 0xFE00:
+            state.regs.ip = _pop16_concrete(state)
+            state.regs.sp = (
+                state.solver.eval(state.regs.sp) + (insn_bytes[idx + 1] | (insn_bytes[idx + 2] << 8))
+            ) & 0xFFFF
+            return True
+
         if opcode == 0xCA:
             state.regs.ip = _pop16_concrete(state)
             state.regs.cs = _pop16_concrete(state)
@@ -486,21 +522,39 @@ def _simulate_manual_control_flow(case: dict[str, Any], state: _AngrState, insn_
         if opcode == 0xCF:
             state.regs.ip = _pop16_concrete(state)
             state.regs.cs = _pop16_concrete(state)
-            state.regs.flags = _pop16_concrete(state) & REAL_MODE_FLAGS_MASK
+            state.regs.flags = (_pop16_concrete(state) & REAL_MODE_FLAGS_MASK) | 0x0002
             return True
 
         if opcode == 0xFF and len(insn_bytes) >= 2:
-            modrm_reg = (insn_bytes[1] >> 3) & 0x7
+            modrm_reg = (insn_bytes[idx + 1] >> 3) & 0x7
+            insn = _first_insn(case, insn_bytes)
+            operand = insn.operands[0]
             ptr_addr = _mem_operand_linear(case, insn_bytes)
-            if ptr_addr is None:
-                return False
+            near_target: int | None = None
+            if operand.type == X86_OP_REG:
+                register_name = insn.reg_name(operand.reg)
+                if register_name is not None:
+                    near_target = initial.get(register_name.lower(), 0) & 0xFFFF
+            elif ptr_addr is not None:
+                near_target = _concrete_word(state, ptr_addr)
+            if modrm_reg == 2 and near_target is not None:  # call near r/m16
+                _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
+                state.regs.ip = near_target
+                return True
             if modrm_reg == 3:  # call far m16:16
+                if ptr_addr is None:
+                    return False
                 _push16_concrete(state, initial["cs"] & 0xFFFF)
                 _push16_concrete(state, (initial["ip"] + len(insn_bytes)) & 0xFFFF)
                 state.regs.ip = _concrete_word(state, ptr_addr)
                 state.regs.cs = _concrete_word(state, ptr_addr + 2)
                 return True
+            if modrm_reg == 4 and near_target is not None:  # jmp near r/m16
+                state.regs.ip = near_target
+                return True
             if modrm_reg == 5:  # jmp far m16:16
+                if ptr_addr is None:
+                    return False
                 state.regs.ip = _concrete_word(state, ptr_addr)
                 state.regs.cs = _concrete_word(state, ptr_addr + 2)
                 return True
@@ -607,12 +661,24 @@ def _simulate_faulting_word_string_case(
 
 def _case_flags_mask(opcode: str, case: dict[str, Any]) -> int | None:
     mask = FLAGS_MASKS.get(opcode)
-    if opcode in {"D3.0", "D3.1", "D3.2", "D3.3", "D3.4", "D3.5"}:
-        count = case["initial"]["regs"]["cx"] & 0xFF
+    shift_group = opcode.split(".", maxsplit=1)
+    if len(shift_group) == 2 and shift_group[0] in {"C0", "C1", "D2", "D3"}:
+        raw_bytes = bytes(case["bytes"])
+        immediate = raw_bytes[-2] if raw_bytes and raw_bytes[-1] == 0xF4 else raw_bytes[-1]
+        count = (
+            case["initial"]["regs"]["cx"] & 0x1F
+            if shift_group[0] in {"D2", "D3"}
+            else immediate & 0x1F
+        )
         if count != 1:
             dynamic_mask = REAL_MODE_FLAGS_MASK & ~0x0800
             mask = dynamic_mask if mask is None else (mask & dynamic_mask)
-    if opcode in {"D0.4", "D0.5", "D0.7", "D1.4", "D1.5", "D1.7", "D2.4", "D2.5", "D2.7", "D3.4", "D3.5", "D3.7"}:
+    if len(shift_group) == 2 and shift_group[0] in {"C0", "C1", "D0", "D1", "D2", "D3"} and shift_group[1] in {
+        "4",
+        "5",
+        "6",
+        "7",
+    }:
         dynamic_mask = REAL_MODE_FLAGS_MASK & ~0x0010
         mask = dynamic_mask if mask is None else (mask & dynamic_mask)
     return mask
@@ -674,8 +740,8 @@ def _compare_case(state: _AngrState, case: dict[str, Any], *, opcode: str, halte
             if actual != expected:
                 mismatches.append(CaseMismatch("reg", reg, expected, actual))
 
-        initial_ram = {addr: byte for addr, byte in case["initial"].get("ram", [])}
-        final_ram = {addr: byte for addr, byte in case["final"].get("ram", [])}
+        initial_ram = dict(case["initial"].get("ram", []))
+        final_ram = dict(case["final"].get("ram", []))
         flag_address = case.get("exception", {}).get("flag_address")
         for addr in sorted(set(initial_ram) | set(final_ram)):
             if flag_address is not None and addr in {flag_address, flag_address + 1}:

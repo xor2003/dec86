@@ -83,6 +83,7 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
         super(ExecInstr, self).__init__(emu, instr, mode32)  # ParseInstr
         super(ParseInstr, self).__init__(emu, instr, mode32)  # EmuInstr
         self.emu = emu
+        self.emu.active_instruction = self
         # Keep opcode tables in fixed-size arrays for fast indexed access.
         self.instrfuncs: list[OpcodeExecHandler | None]
         self.chk: list[int | InstrFlags]
@@ -1393,8 +1394,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
         self.set_rm8(result)
         flags = _vex_expr(self.emu.get_gpreg(reg16_t.FLAGS))
         flags = self.emu.set_carry(flags, cf)
+        one = (count & self.emu.constant(0x1F, Type.int_8)) == self.emu.constant(1, Type.int_8)
         flags = self.emu.set_overflow(
-            flags, self._ite_value(count == self.emu.constant(1, Type.int_8), overflow, self.emu.get_flag(11))
+            flags, self._ite_value(one, overflow, self.emu.get_flag(11))
         )
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 
@@ -1406,8 +1408,9 @@ class InstrBase(ExecInstr, ParseInstr, EmuInstr):  # type: ignore[misc, unused-i
         self.set_rm8(result)
         flags = _vex_expr(self.emu.get_gpreg(reg16_t.FLAGS))
         flags = self.emu.set_carry(flags, cf)
+        one = (count & self.emu.constant(0x1F, Type.int_8)) == self.emu.constant(1, Type.int_8)
         flags = self.emu.set_overflow(
-            flags, self._ite_value(count == self.emu.constant(1, Type.int_8), overflow, self.emu.get_flag(11))
+            flags, self._ite_value(one, overflow, self.emu.get_flag(11))
         )
         self.emu.set_gpreg(reg16_t.FLAGS, flags)
 

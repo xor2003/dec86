@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 import angr
 import pyvex
 from angr import options as o
@@ -21,14 +23,10 @@ def _run_one_instruction(arch, code: bytes, ax: int = 0x125A, di: int = 0x200):
     )
     state.regs.ax = ax
     state.regs.es = 0
-    try:
+    with contextlib.suppress(AttributeError):
         state.regs.di = di
-    except AttributeError:
-        pass
-    try:
+    with contextlib.suppress(AttributeError):
         state.regs.edi = di
-    except AttributeError:
-        pass
 
     simgr = project.factory.simgr(state)
     simgr.step(num_inst=1, insn_bytes=code)
@@ -51,14 +49,10 @@ def _run_one_instruction_with_flags(arch, code: bytes, ax: int, flags: int, dx: 
     state.regs.ax = ax
     state.regs.flags = flags
     if dx is not None:
-        try:
+        with contextlib.suppress(AttributeError):
             state.regs.dx = dx
-        except AttributeError:
-            pass
-        try:
+        with contextlib.suppress(AttributeError):
             state.regs.edx = dx
-        except AttributeError:
-            pass
 
     simgr = project.factory.simgr(state)
     simgr.step(num_inst=1, insn_bytes=code)
@@ -80,10 +74,8 @@ def _run_loop_instruction(arch, code: bytes, cx: int, flags: int = 0):
     )
     state.regs.cx = cx
     state.regs.flags = flags
-    try:
+    with contextlib.suppress(AttributeError):
         state.regs.ecx = cx
-    except AttributeError:
-        pass
 
     simgr = project.factory.simgr(state)
     simgr.step(num_inst=1, insn_bytes=code)
@@ -105,10 +97,8 @@ def _run_jcc_instruction(arch, code: bytes, *, cx: int = 0, flags: int = 0):
     )
     state.regs.cx = cx
     state.regs.flags = flags
-    try:
+    with contextlib.suppress(AttributeError):
         state.regs.ecx = cx
-    except AttributeError:
-        pass
 
     simgr = project.factory.simgr(state)
     simgr.step(num_inst=1, insn_bytes=code)
@@ -148,10 +138,8 @@ def _run_one_instruction_with_regs(arch, code: bytes, regs: dict[str, int]):
         setattr(state.regs, reg, value)
         alias = {"cx": "ecx", "dx": "edx", "si": "esi", "di": "edi"}.get(reg)
         if alias is not None:
-            try:
+            with contextlib.suppress(AttributeError):
                 setattr(state.regs, alias, value)
-            except AttributeError:
-                pass
 
     simgr = project.factory.simgr(state)
     simgr.step(num_inst=1, insn_bytes=code)
@@ -174,10 +162,8 @@ def _run_xlat_instruction(arch, code: bytes, table: bytes, bx: int = 0x220, ax: 
     state.regs.ds = 0
     state.regs.bx = bx
     state.regs.ax = ax
-    try:
+    with contextlib.suppress(AttributeError):
         state.regs.ebx = bx
-    except AttributeError:
-        pass
     state.memory.store(bx, table)
 
     simgr = project.factory.simgr(state)
@@ -265,14 +251,10 @@ def _run_load_instruction(arch, code: bytes, mem: bytes, si: int = 0x220):
         add_options={o.ZERO_FILL_UNCONSTRAINED_MEMORY, o.ZERO_FILL_UNCONSTRAINED_REGISTERS}
     )
     state.regs.ds = 0
-    try:
+    with contextlib.suppress(AttributeError):
         state.regs.si = si
-    except AttributeError:
-        pass
-    try:
+    with contextlib.suppress(AttributeError):
         state.regs.esi = si
-    except AttributeError:
-        pass
     state.memory.store(si, mem)
 
     simgr = project.factory.simgr(state)
@@ -314,14 +296,10 @@ def _run_scan_instruction(arch, code: bytes, ax: int, mem: bytes, di: int = 0x20
     )
     state.regs.ax = ax
     state.regs.es = 0
-    try:
+    with contextlib.suppress(AttributeError):
         state.regs.di = di
-    except AttributeError:
-        pass
-    try:
+    with contextlib.suppress(AttributeError):
         state.regs.edi = di
-    except AttributeError:
-        pass
     state.memory.store(di, mem)
 
     simgr = project.factory.simgr(state)
@@ -330,7 +308,15 @@ def _run_scan_instruction(arch, code: bytes, ax: int, mem: bytes, di: int = 0x20
     return simgr.active[0]
 
 
-def _run_cmps_instruction(arch, code: bytes, src: bytes, dst: bytes, si: int = 0x220, di: int = 0x200):
+def _run_cmps_instruction(
+    arch,
+    code: bytes,
+    src: bytes,
+    dst: bytes,
+    si: int = 0x220,
+    di: int = 0x200,
+    count: int = 0,
+):
     project = angr.load_shellcode(
         code,
         arch=arch,
@@ -344,6 +330,7 @@ def _run_cmps_instruction(arch, code: bytes, src: bytes, dst: bytes, si: int = 0
     )
     state.regs.ds = 0
     state.regs.es = 0
+    state.regs.cx = count
     try:
         state.regs.si = si
         state.regs.di = di
@@ -361,6 +348,16 @@ def _run_cmps_instruction(arch, code: bytes, src: bytes, dst: bytes, si: int = 0
     simgr.step(num_inst=1, insn_bytes=code)
     assert len(simgr.active) == 1
     return simgr.active[0]
+
+
+def test_cmpsb_repeat_stops_when_zero_condition_fails() -> None:
+    """REPE/REPNE CMPSB must combine the remaining count with the updated ZF."""
+    cases = ((bytes.fromhex("f3a6"), b"\x01", b"\x02"), (bytes.fromhex("f2a6"), b"\x01", b"\x01"))
+    for code, src, dst in cases:
+        state = _run_cmps_instruction(Arch86_16(), code, src=src, dst=dst, count=2)
+
+        assert state.addr == 0x102
+        assert state.solver.eval(state.regs.cx) == 1
 
 
 def _run_far_load_instruction(code: bytes, si: int = 0x220):
@@ -462,10 +459,8 @@ def _run_stack_instruction(arch, code: bytes, regs: dict[str, int], stack: bytes
         setattr(state.regs, reg, value)
         alias = reg_aliases.get(reg)
         if alias is not None:
-            try:
+            with contextlib.suppress(AttributeError):
                 setattr(state.regs, alias, value)
-            except AttributeError:
-                pass
     if stack:
         state.memory.store(sp, stack)
 

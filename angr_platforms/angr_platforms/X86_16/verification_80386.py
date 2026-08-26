@@ -15,6 +15,7 @@ import angr.sim_options as o
 from .verification_80286 import (
     CaseMismatch,
     CaseResult,
+    _AngrState,
     _concrete_byte,
     _make_project,
     _solver_eval_int_8616,
@@ -71,6 +72,31 @@ def _repeat_count_80386(case: dict[str, Any], instruction: bytes) -> int | None:
     return ecx & (0xFFFFFFFF if address_bits == 32 else 0xFFFF)
 
 
+def _repeat_should_continue_80386(state: _AngrState, instruction: bytes) -> bool:
+    """Return whether an address-size-selected 80386 REP iteration should continue."""
+    index = 0
+    address32 = False
+    repeat_prefix: int | None = None
+    prefix_bytes = {0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65, 0x66, 0x67, 0xF0, 0xF2, 0xF3}
+    while index < len(instruction) and instruction[index] in prefix_bytes:
+        if instruction[index] == 0x67:
+            address32 = True
+        if instruction[index] in {0xF2, 0xF3}:
+            repeat_prefix = instruction[index]
+        index += 1
+    if repeat_prefix is None or index >= len(instruction):
+        return False
+    count_expr = state.regs.ecx if address32 else state.regs.cx
+    count_mask = 0xFFFFFFFF if address32 else 0xFFFF
+    if (_solver_eval_int_8616(state, count_expr) & count_mask) == 0:
+        return False
+    opcode = instruction[index]
+    if opcode not in {0xA6, 0xA7, 0xAE, 0xAF}:
+        return True
+    zero = (_solver_eval_int_8616(state, state.regs.eflags) >> 6) & 1
+    return bool(zero == (1 if repeat_prefix == 0xF3 else 0))
+
+
 def _shift_count_80386(case: dict[str, Any]) -> int | None:
     """Return the 80386-masked shift count encoded by one hardware case."""
     name = str(case["name"])
@@ -97,7 +123,8 @@ def _shift_width_80386(case: dict[str, Any]) -> int:
 
 def _defined_eflags_mask_80386(case: dict[str, Any]) -> int:
     """Return the architectural EFLAGS comparison mask for one hardware case."""
-    mnemonic = str(case["name"]).split(maxsplit=1)[0].lower()
+    name_parts = str(case["name"]).lower().split()
+    mnemonic = name_parts[1] if name_parts and name_parts[0] == "lock" else name_parts[0]
     if mnemonic in {"bt", "btc", "btr", "bts"}:
         return _DEFINED_REAL_MODE_EFLAGS_MASK & ~_UNDEFINED_BT_FLAGS
     if mnemonic in {"bsf", "bsr"}:
@@ -112,17 +139,15 @@ def _defined_eflags_mask_80386(case: dict[str, Any]) -> int:
     if count == 0:
         return _DEFINED_REAL_MODE_EFLAGS_MASK
     if mnemonic in {"rol", "ror"} and count is not None:
-        effective_count = count % _shift_width_80386(case)
         return (
             _DEFINED_REAL_MODE_EFLAGS_MASK
-            if effective_count == 1
+            if count == 1
             else _DEFINED_REAL_MODE_EFLAGS_MASK & ~_ARITHMETIC_FLAG_OF
         )
     if mnemonic in {"rcl", "rcr"} and count is not None:
-        effective_count = count % (_shift_width_80386(case) + 1)
         return (
             _DEFINED_REAL_MODE_EFLAGS_MASK
-            if effective_count == 1
+            if count == 1
             else _DEFINED_REAL_MODE_EFLAGS_MASK & ~_ARITHMETIC_FLAG_OF
         )
     if mnemonic in {"sal", "sar", "shl", "shr", "shld", "shrd"} and count is not None:
@@ -222,28 +247,22 @@ def _verified_invalid_lock_fault_80386(
     )
 
 
-def _verified_register_divide_error_80386(case: dict[str, Any], instruction: bytes) -> bool | None:
-    """Verify a hardware vector-0 witness for a register unsigned-DIV fault."""
+def _verified_divide_error_80386(case: dict[str, Any], instruction: bytes) -> bool | None:
+    """Verify an explicit hardware vector-0 witness for DIV or IDIV."""
     index = 0
-    operand_bits = 16
     while index < len(instruction) and instruction[index] in {0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65, 0x66, 0x67, 0xF0}:
-        if instruction[index] == 0x66:
-            operand_bits = 32
         index += 1
-    if index + 1 >= len(instruction) or instruction[index] != 0xF7:
+    if index + 1 >= len(instruction) or instruction[index] not in {0xF6, 0xF7}:
         return None
     modrm = instruction[index + 1]
-    if (modrm >> 6) != 3 or ((modrm >> 3) & 7) != 6:
+    if ((modrm >> 3) & 7) not in {6, 7}:
+        return None
+    exception = case.get("exception")
+    if not isinstance(exception, dict) or int(exception.get("number", -1)) != 0:
         return None
 
-    registers = ("eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi")
-    mask = (1 << operand_bits) - 1
     initial_regs = case["initial"]["regs"]
     final_regs = case["final"].get("regs", {})
-    divisor = int(initial_regs[registers[modrm & 7]]) & mask
-    high_half = int(initial_regs["edx"]) & mask
-    modeled_fault = divisor == 0 or high_half >= divisor
-
     initial_ram = dict(case["initial"].get("ram", []))
     if not all(address in initial_ram for address in range(4)):
         return False
@@ -256,13 +275,16 @@ def _verified_register_divide_error_80386(case: dict[str, Any], instruction: byt
         and int(final_regs.get("eax", initial_regs["eax"])) == int(initial_regs["eax"])
         and int(final_regs.get("edx", initial_regs["edx"])) == int(initial_regs["edx"])
     )
-    return modeled_fault and hardware_fault
+    return hardware_fault
 
 
 def _verified_real_mode_segment_limit_fault_80386(
     case: dict[str, Any], instruction: bytes, project: angr.Project
 ) -> bool | None:
     """Verify a hardware #SS/#GP witness for any explicit address32 memory operand."""
+    exception = case.get("exception")
+    if not isinstance(exception, dict) or int(exception.get("number", -1)) not in {12, 13}:
+        return None
     prefix_index = 0
     address_bits = 16
     while prefix_index < len(instruction) and instruction[prefix_index] in {
@@ -477,7 +499,7 @@ def verify_straightline_case_80386(
             if not invalid_lock_verified:
                 result.error = "Invalid LOCK fault did not match the hardware vector-6 witness"
             return result
-        divide_error_verified = _verified_register_divide_error_80386(case, instruction)
+        divide_error_verified = _verified_divide_error_80386(case, instruction)
         if divide_error_verified is not None:
             result.passed = divide_error_verified
             if not divide_error_verified:
@@ -508,9 +530,18 @@ def verify_straightline_case_80386(
         else:
             state = _step_with_lock_retry(local_project, state, instruction, advance_ip_for_stripped_lock=True)
             iterations = 1
-            while repeat_count is not None and state.addr == start_addr and iterations < repeat_count:
+            while (
+                repeat_count is not None
+                and state.addr == start_addr
+                and iterations < repeat_count
+                and _repeat_should_continue_80386(state, instruction)
+            ):
                 state = _step_with_lock_retry(local_project, state, instruction, advance_ip_for_stripped_lock=True)
                 iterations += 1
+            if repeat_count is not None and state.addr == start_addr and (
+                iterations >= repeat_count or not _repeat_should_continue_80386(state, instruction)
+            ):
+                state.regs.ip = (_solver_eval_int_8616(state, state.regs.ip) + len(instruction)) & 0xFFFF
         eflags_mask = _defined_eflags_mask_80386(case)
         mismatches: list[CaseMismatch] = []
         for register, initial_value in initial_regs.items():

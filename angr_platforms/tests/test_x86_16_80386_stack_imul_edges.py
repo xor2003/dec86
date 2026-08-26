@@ -5,6 +5,7 @@ from __future__ import annotations
 import gzip
 import runpy
 from collections.abc import Callable
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, cast
 
@@ -26,6 +27,19 @@ def _first_hardware_case(opcode: str) -> dict[str, Any]:
     with gzip.open(MOO_ROOT / f"{opcode}.MOO.gz", "rb") as moo_file:
         _, cases = parse_moo_bytes(moo_file.read())
     return cases[0]
+
+
+def _first_hardware_case_named(opcode: str, name: str, *, index: int | None = None) -> dict[str, Any]:
+    """Load the first authoritative hardware case with the requested disassembly."""
+    parser_globals = runpy.run_path(str(MOO_PARSER))
+    parse_moo_bytes = cast(
+        Callable[[bytes], tuple[str, list[dict[str, Any]]]],
+        parser_globals["parse_moo_bytes"],
+    )
+    root = MOO_ROOT if (MOO_ROOT / f"{opcode}.MOO.gz").exists() else REPO_ROOT / "borrow" / "80286" / "v1_real_mode"
+    with gzip.open(root / f"{opcode}.MOO.gz", "rb") as moo_file:
+        _, cases = parse_moo_bytes(moo_file.read())
+    return next(case for case in cases if case["name"] == name and (index is None or case["idx"] == index))
 
 
 @pytest.mark.parametrize("opcode", ("660FAF", "6660", "6661"))
@@ -137,6 +151,8 @@ def test_80386_adc_uses_wide_carry_out(opcode: str) -> None:
         "6766D1.6",
         "6766D3.4",
         "67C1.2",
+        "C0.0",
+        "C0.1",
         "67D0.4",
         "67D0.6",
         "67D1.4",
@@ -153,6 +169,8 @@ def test_80386_adc_uses_wide_carry_out(opcode: str) -> None:
         "D0.6",
         "D1.4",
         "D1.6",
+        "D2.0",
+        "D2.1",
         "D2.3",
         "D2.4",
         "D2.6",
@@ -165,6 +183,79 @@ def test_80386_adc_uses_wide_carry_out(opcode: str) -> None:
 def test_80386_shift_rotate_defined_flags_match_hardware(opcode: str) -> None:
     """Compare count-dependent defined flags and all shift/rotate data effects."""
     result = verify_straightline_case_80386(_first_hardware_case(opcode), opcode=opcode)
+    assert result.passed, result
+
+
+@pytest.mark.parametrize(("opcode", "name"), (("D1.4", "shl dx,1"), ("D1.6", "sal dx,1")))
+def test_80286_register_shift_by_one_materializes_hardware_flags(opcode: str, name: str) -> None:
+    """Do not use the flag-eliding simple lift when shift flags remain observable."""
+    result = verify_straightline_case_80386(_first_hardware_case_named(opcode, name), opcode=opcode)
+    assert result.passed, result
+
+
+@pytest.mark.parametrize(("opcode", "name"), (("C0.0", "rol bl,B0h"), ("C0.1", "ror bl,B0h")))
+def test_80386_byte_full_rotation_updates_hardware_carry(opcode: str, name: str) -> None:
+    """Retain the nonzero masked count when deriving carry for a full byte rotation."""
+    result = verify_straightline_case_80386(_first_hardware_case_named(opcode, name), opcode=opcode)
+    assert result.passed, result
+
+
+@pytest.mark.parametrize(
+    ("opcode", "name"),
+    (("C0.2", "rcl byte [ds:di],BCh"), ("C0.3", "rcr bh,73h")),
+)
+def test_80386_multibit_rotate_ignores_undefined_overflow(opcode: str, name: str) -> None:
+    """Exclude OF for encoded multibit rotates even when their effective count is one."""
+    result = verify_straightline_case_80386(_first_hardware_case_named(opcode, name), opcode=opcode)
+    assert result.passed, result
+
+
+@pytest.mark.parametrize(("opcode", "name"), (("C0.2", "rcl bh,C1h"), ("C0.3", "rcr bh,C1h")))
+def test_80386_rotate_through_carry_masks_count_for_defined_overflow(opcode: str, name: str) -> None:
+    """Update OF when the five-bit-masked rotate-through-carry count is one."""
+    result = verify_straightline_case_80386(_first_hardware_case_named(opcode, name), opcode=opcode)
+    assert result.passed, result
+
+
+def test_80386_verifier_executes_instruction_above_first_memory_page() -> None:
+    """Execute an instruction whose hardware EIP lies above the first 4 KiB page."""
+    opcode = "C0.2"
+    case = _first_hardware_case_named(opcode, "rcl byte [ss:bp-5Bh],48h")
+    result = verify_straightline_case_80386(case, opcode=opcode)
+    assert result.passed, result
+
+
+def test_80386_verifier_executes_instruction_in_reserved_top_page() -> None:
+    """Mirror execution out of angr's reserved top-address extern region."""
+    opcode = "C0.2"
+    case = deepcopy(_first_hardware_case_named(opcode, "rcl byte [ss:bp-5Bh],48h"))
+    case["initial"]["regs"]["eip"] = 0xFE08
+    case["final"]["regs"]["eip"] = 0xFE0D
+    result = verify_straightline_case_80386(case, opcode=opcode)
+    assert result.passed, result
+
+
+def test_80386_real_mode_iret_forces_reserved_flags_bit_one() -> None:
+    """Restore an interrupt frame while forcing architectural FLAGS bit one."""
+    opcode = "CF"
+    case = _first_hardware_case_named(opcode, "iret", index=1)
+    result = verify_straightline_case_80386(case, opcode=opcode)
+    assert result.passed, result
+
+
+@pytest.mark.parametrize(
+    ("index", "name"),
+    (
+        (1, "o32 enter 372h,34h"),
+        (56, "o32 enter 9E75h,F0h"),
+        (75, "o32 enter 3F5Ah,31h"),
+    ),
+)
+def test_80386_real_mode_enter32_uses_16bit_stack_addresses(index: int, name: str) -> None:
+    """Copy ENTER frames through SS:BP, including cross-page dword accesses."""
+    opcode = "66C8"
+    case = _first_hardware_case_named(opcode, name, index=index)
+    result = verify_straightline_case_80386(case, opcode=opcode)
     assert result.passed, result
 
 
@@ -284,6 +375,55 @@ def test_80386_signed_division_widths_match_hardware(opcode: str) -> None:
 def test_80386_unsigned_division_overflow_matches_hardware_fault(opcode: str) -> None:
     """Prove quotient overflow and the corresponding hardware vector-0 entry."""
     result = verify_straightline_case_80386(_first_hardware_case(opcode), opcode=opcode)
+    assert result.passed, result
+
+
+@pytest.mark.parametrize(
+    ("opcode", "index", "name"),
+    (
+        ("F7.6", 1, "div di"),
+        ("67F7.6", 1, "div di"),
+        ("66F7.6", 6, "div esi"),
+        ("6766F7.6", 10, "div edi"),
+    ),
+)
+def test_80386_successful_register_division_uses_normal_execution(
+    opcode: str, index: int, name: str
+) -> None:
+    """Do not classify successful register DIV cases as vector-0 faults."""
+    case = _first_hardware_case_named(opcode, name, index=index)
+    result = verify_straightline_case_80386(case, opcode=opcode)
+    assert result.passed, result
+
+
+@pytest.mark.parametrize(
+    ("opcode", "name"),
+    (
+        ("F7.6", "div word [ds:bx+11Dh]"),
+        ("66F7.6", "div dword [ds:bx+11Dh]"),
+        ("67F7.6", "div word [ds:ecx-3323h]"),
+    ),
+)
+def test_80386_memory_division_error_matches_hardware_frame(opcode: str, name: str) -> None:
+    """Validate explicit vector-0 witnesses for memory-divisor overflow."""
+    case = _first_hardware_case_named(opcode, name, index=118)
+    result = verify_straightline_case_80386(case, opcode=opcode)
+    assert result.passed, result
+
+
+def test_80386_repe_cmps_stops_on_first_unequal_byte() -> None:
+    """Stop REPE CMPS when ZF clears instead of exhausting ECX."""
+    opcode = "A6"
+    case = _first_hardware_case_named(opcode, "repe cmpsb", index=9)
+    result = verify_straightline_case_80386(case, opcode=opcode)
+    assert result.passed, result
+
+
+def test_80386_repe_cmps_stops_before_unreached_segment_limit() -> None:
+    """Do not infer a later segment fault after REPE has already terminated."""
+    opcode = "A7"
+    case = _first_hardware_case_named(opcode, "repe cmpsw", index=58)
+    result = verify_straightline_case_80386(case, opcode=opcode)
     assert result.passed, result
 
 

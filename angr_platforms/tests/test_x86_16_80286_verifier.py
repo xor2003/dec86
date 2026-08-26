@@ -348,10 +348,37 @@ def test_verify_80286_int_case_passes():
 
 
 def test_verify_80286_iret_case_passes():
-    summary = verify_moo_file(_moo("CF"), limit=1)
+    summary = verify_moo_file(_moo("CF"), limit=2)
 
-    assert summary["passed"] == 1
+    assert summary["passed"] == 2
     assert summary["failed"] == 0
+
+
+def test_verify_80286_segment_override_bypasses_ds_fast_path():
+    cases = load_moo_cases(_moo("8A"))[1]
+    case = next(item for item in cases if item["idx"] == 50)
+
+    result = verify_case(case, opcode="8A")
+
+    assert result.passed, result.mismatches
+
+
+def test_verify_80286_word_load_crossing_page_uses_byte_safe_path():
+    cases = load_moo_cases(_moo("A1"))[1]
+    case = next(item for item in cases if item["idx"] == 1415)
+
+    result = verify_case(case, opcode="A1")
+
+    assert result.passed, result.mismatches
+
+
+def test_verify_80286_register_sub_uses_one_vex_customizer():
+    cases = load_moo_cases(_moo("29"))[1]
+    case = next(item for item in cases if item["idx"] == 7)
+
+    result = verify_case(case, opcode="29")
+
+    assert result.passed, result.mismatches
 
 
 def test_verify_80286_hlt_case_passes():
@@ -436,6 +463,51 @@ def test_verify_80286_far_indirect_call_case_passes():
 
     assert summary["passed"] == 1
     assert summary["failed"] == 0
+
+
+def test_verify_80286_high_ip_near_indirect_call_uses_unrelocated_target_and_return() -> None:
+    """Do not apply the verifier's reserved-IP mirror delta to an indirect call target."""
+    case = load_moo_cases(_moo("FF.2"))[1][185]
+
+    result = verify_case(case, opcode="FF.2")
+
+    assert result.passed, result.mismatches
+
+
+def test_verify_80286_high_ip_near_indirect_jump_uses_unrelocated_target() -> None:
+    """Do not apply the verifier's reserved-IP mirror delta to an indirect jump target."""
+    case = load_moo_cases(_moo("FF.4"))[1][191]
+
+    result = verify_case(case, opcode="FF.4")
+
+    assert result.passed, result.mismatches
+
+
+def test_verify_80286_high_ip_register_call_pushes_architectural_return() -> None:
+    """Resolve a register call before pushing its architectural high-IP return address."""
+    case = load_moo_cases(_moo("FF.2"))[1][437]
+
+    result = verify_case(case, opcode="FF.2")
+
+    assert result.passed, result.mismatches
+
+
+def test_verify_80286_high_ip_relative_call_pushes_architectural_return() -> None:
+    """Push the architectural return IP when a relative call is mirrored below FE00h."""
+    case = load_moo_cases(_moo("E8"))[1][3]
+
+    result = verify_case(case, opcode="E8")
+
+    assert result.passed, result.mismatches
+
+
+def test_verify_80286_high_ip_near_return_uses_unrelocated_stack_target() -> None:
+    """Preserve the absolute popped target when a near return is mirrored below FE00h."""
+    case = load_moo_cases(_moo("C3"))[1][177]
+
+    result = verify_case(case, opcode="C3")
+
+    assert result.passed, result.mismatches
 
 
 def test_verify_80286_mul_rm8_case_passes():

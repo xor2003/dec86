@@ -12,6 +12,7 @@ from typing import Protocol, cast
 from pyvex.expr import Const, RdTmp
 from pyvex.lifting.util.syntax_wrapper import VexValue
 from pyvex.lifting.util.vex_helper import IRSBCustomizer, Type
+from pyvex.stmt import Put
 
 from .interrupt import Interrupt
 from .processor import Processor
@@ -27,6 +28,8 @@ class _ArchRegister(Protocol):
 
     name: str
     vex_offset: int
+    alias_names: tuple[str, ...]
+    subregisters: tuple[tuple[str, int, int], ...]
 
 
 class _EmulatorArch(Protocol):
@@ -77,7 +80,16 @@ class Emulator(Interrupt):
         self.arch = arch
         self.lifter = lifter
         self.irsb = lifter.irsb if lifter else None
-        self.vex_offsets: dict[str, int] = {register.name.lower(): register.vex_offset for register in arch.register_list}
+        self.active_instruction: object | None = None
+        self.vex_offsets: dict[str, int] = {}
+        for register in arch.register_list:
+            self.vex_offsets[register.name.lower()] = register.vex_offset
+            # Dynamic third-party boundary: external ArchInfo register objects may omit aliases.
+            for alias_name in getattr(register, "alias_names", ()):
+                self.vex_offsets[alias_name.lower()] = register.vex_offset
+            # Dynamic third-party boundary: external ArchInfo register objects may omit subregisters.
+            for subregister_name, subregister_offset, _subregister_size in getattr(register, "subregisters", ()):
+                self.vex_offsets[subregister_name.lower()] = register.vex_offset + subregister_offset
         self.regs: dict[str, object] = {}
 
     def chk_ring(self, _dpl: int) -> bool:
@@ -85,6 +97,30 @@ class Emulator(Interrupt):
         # The current x86-16 lifter only models real-mode execution, where ring checks
         # should not block instructions like HLT inside the verification harness.
         return True
+
+    def get_crn(self, n: int) -> object:
+        """Read an 80386 control register in concrete or VEX lifting mode."""
+        if n not in (0, 2, 3):
+            raise ValueError(f"Invalid 80386 CR index: {n}")
+        if self.lifter_instruction is None:
+            return super().get_crn(n)
+        offset = self.vex_offsets[f"cr{n}"]
+        return VexValue(self.lifter_instruction, self.lifter_instruction.rdreg(offset, Type.int_32))
+
+    def set_crn(self, n: int, value: object) -> None:
+        """Write an 80386 control register in concrete or VEX lifting mode."""
+        if n not in (0, 2, 3):
+            raise ValueError(f"Invalid 80386 CR index: {n}")
+        if self.lifter_instruction is None:
+            if not isinstance(value, int):
+                raise TypeError("concrete control-register writes require an integer")
+            super().set_crn(n, value)
+            return
+        if isinstance(value, int):
+            value = self.constant(value, Type.int_32)
+        if isinstance(value, VexValue):
+            value = value.cast_to(Type.int_32).rdt
+        self.lifter_instruction._append_stmt(Put(value, self.vex_offsets[f"cr{n}"]))
 
     def _vv(self, value: object, ty: object | None = None) -> object:
         """Wrap Python constants or VEX expressions as VexValue objects."""
