@@ -18,7 +18,41 @@ Numeric function and global names are acceptable when the executable has no
 debug information. Source names below identify addresses for this report only;
 they must not become recovery evidence.
 
-## Measured Baseline
+## Current Checkpoint (2026-08-27)
+
+Current sidecar-free command:
+
+```text
+PYTHONHASHSEED=0 PYTHON_JIT=1 ./decompile.py SORTD.EXE \
+  --ignore-local-sidecar-hints --no-alternate-source-c -q
+```
+
+- discovery and execution attempt all 20 non-library functions
+- 13 functions emit validated C; seven refuse and fall back to assembly/details
+- generated C contains no unsupported/unknown-instruction marker and no packed
+  parity, overflow, `eflags`, or `cc_op` equation
+- `sub_109e8` now passes validation with its argument assignment before the
+  pretest loop and its binary-proven division at the loop-body entry
+- cold wall time is 278.41 seconds with seven clean workers and about 294 MiB
+  parent peak RSS; this is below the 300-second whole-run target
+- unchanged-tree replay is 95.90 seconds: 13 accepted functions are cache hits,
+  while the seven refused functions are deliberately revalidated
+
+The remaining P0 fallbacks, ordered by the earliest useful owner, are:
+
+1. `0x10498`: Lowering leaves forbidden flattened `ss << 4` address arithmetic
+2. `0x107b8`: Lowering leaves unresolved stack locals although semantic
+   validation itself is stable
+3. `0x108d0`: Structuring loses the binary-proven `BP-6 = 0` loop initializer
+4. `0x10e70`: IR/Alias-to-Lowering carrier definitions do not reach all uses
+5. `0x102e0`: virtual register carriers remain uninitialized in switch arms
+6. `0x10560`: stack definitions and an 86-byte aggregate do not reach all uses
+7. `0x10b50`: Structuring projects one Jcc as two loop guards
+
+No failure is accepted or cached. The plan remains incomplete until all seven
+emit C, validate, recompile, and pass the behavior/pipeline gates.
+
+## Historical Measured Baseline
 
 Fresh command on 2026-08-06:
 
@@ -43,6 +77,16 @@ The previous direct-output defect concatenated independently valid payloads and
 produced conflicting declarations. Whole-binary stdout now uses the same owned,
 structured export contract as generated artifacts. Conflicts are typed failures
 reported on stderr with a nonzero exit status.
+
+Latest required-gate verification on 2026-08-26 passes all three default lanes
+with zero failures, skips, or timeouts. The focused lane passes 1,709 tests in
+54.898 seconds; Ultra QuickC passes 4/4 fixtures with 4/4 validation in 43.300
+seconds; and all seven MS C tiny constructs pass their compile, original-run,
+decompile, recompile, and decompiled-run contracts in 90.898 seconds. The
+focused lane remains over its historical 30-second soft budget and is retained
+as performance debt, not hidden as a correctness pass. `linters-dev` also
+passes Ruff `--fix`, MyPy, the 38-module mypyc compile/import smoke, and the
+development complexity gate.
 
 ## Address Coverage
 
@@ -88,12 +132,12 @@ canonicalizes those declarations and passes `gcc -std=c11 -Wall -Wextra
 Owner: CLI/export assembly in `inertia_decompiler/`. Function postprocess must
 not reconcile interprocedural declarations.
 
-### P0: Semantic completeness
+### P0: Semantic completeness (reopened)
 
-The prior assembly fallbacks and lost control effects are closed in the current
-run. In particular, Beep retains its `duration < 75` guard and both byte-output
-arguments, DrawFrame initializes its loop variable before the pre-test loop,
-and Sleep uses the widened clock result. All 20 pass validation.
+The historical 20/20 checkpoint below is no longer the current edited-tree
+state. The current checkpoint has 13 validated C functions and seven explicit
+fallbacks. In particular, `sub_109e8` is now closed, while the seven failures
+listed above remain P0 and must not be hidden by output cleanup or caching.
 
 The generated behavior gate now compiles and executes unchanged output for all
 19 non-library functions covered by `SORTDEMO.C` function self-tests. `main`
@@ -135,12 +179,11 @@ not a defect under the no-debug-information requirement.
 
 ### P2: Performance
 
-Default N-1 clean-process execution is working and deterministic with seven
-workers on this eight-CPU host. The measured run used about 302 MiB peak RSS,
-well below the 2 GiB budget, and reduced the prior three-worker wall time from
-about 467 seconds to about 274 seconds. Do not parallelize mutable fallback
-rebuilds until their project state and aggregate memory are measured in
-isolation; the validated primary function jobs are already parallel.
+Default N-1 clean-process execution is working with seven workers on this
+eight-CPU host. The current cold run is 278.41 seconds and an unchanged-tree
+replay is 95.90 seconds. Accepted results are cached; failed results are always
+revalidated. The remaining serial tail requires pass-level optimization inside
+complex functions, not more worker fan-out or mutable shared-project rebuilds.
 
 ## Ordered Plan With Per-Step DoD
 
@@ -222,6 +265,17 @@ The final expanded pipeline passes 5/5 lanes. Its status parser associates
 deferred canonical definitions and their declaration preludes with the exact
 function record, so batch stdout cannot create false "generated C missing"
 results or bypass leakage/call-contract checks.
+
+Fresh verification on 2026-08-22 passes all five expanded lanes with zero
+failures, skips, or timeouts: the focused Python lane completes in 45.196
+seconds, Ultra QuickC passes 4/4 fixtures and validation, and all seven MS C
+tiny constructs pass compile/run/decompile/recompile/decompiled-run checks.
+Sidecar-free SORTD decompiles 20/20 functions with zero validation failures,
+timeouts, or tracebacks; its canonical translation unit compiles and the 19
+source-selftested bodies pass the generated behavior gate. The independent
+status/source-contract scoreboard passes 20/20. `quality-hard` also passes
+Ruff `--fix`, strict MyPy for 121 source files, the mypyc build/import smoke,
+architecture/context/ownership checks, and generated-C comparisons.
 
 ### 3. Unify interprocedural function contracts at Types/Lowering
 
@@ -347,6 +401,58 @@ Measured progress on 2026-08-17:
   recompile/runtime cases. The hard gate also passes Ruff `--fix`, strict
   MyPy, architecture/context/ownership checks, mypyc compile/import smoke for
   38 modules, and all three generated-C quality comparisons.
+- Callsite summaries now retain the exact decoded return-store instruction
+  address instead of dropping it after classifying destination and width.
+  Structuring uses that typed address, the exact call instruction tag, and one
+  unique adjacent sequential ownership witness to bind call results across
+  unrelated angr dirty carriers; dirty IDs and rendered names are not proof.
+- The uncached sidecar-free `_TIDShowRange` regression now emits
+  `mseg = MapInEMSSprite(2, 0); if (mseg)` and preserves all arguments. Its
+  uninitialized AX condition is closed, reducing the final def-use failures
+  from 39 to 31. The 116-test callsite/Structuring surface, Ruff `--fix`,
+  strict MyPy, and architecture checks pass.
+- Structuring shared-tail replay exposed one projection disagreement at the
+  `_RectCopy` callsite `0x1085`: two statements referenced the same structured
+  call node, but the callsite summary classified its return as used. The exact
+  machine witness is `lcall 0x11e, 6; add sp, 0x10; sub ax, ax`; the final
+  instruction clobbers the return value rather than consuming it.
+- Semantics now owns exact `sub reg, reg` and `xor reg, reg` zero-idiom facts.
+  Both bounded and linear caller return-use classifiers consume that single
+  fact and classify the witness as `CLOBBERED`; Structuring can therefore
+  coalesce the duplicate statement occurrence without postprocess repair.
+  Focused Ruff `--fix`, strict MyPy for the four touched source modules, and 16
+  return-use/shared-tail tests pass.
+- Two uncached real `_TIDShowRange` runs retain exactly two body-level
+  `_RectCopy` calls and report zero duplicate-callsite or multiplicity
+  diagnostics. The previous segmented-write mismatch is absent from the
+  current final verdict.
+- Alias now consumes the generic decoded register reaching-source proof at
+  exact condition-producer boundaries. The `_TIDShowRange` roots close at two
+  raw self-test candidates, two classified storage identities, two materialized
+  bindings, and zero failures: `mseg` is `SS:BP-0xc`, while the switch selector
+  is `DS:0x7002`. The existing Alias carrier owner then propagates the selector
+  through the exact `DEC AX` chain and materializes comparisons against `1..4`.
+  Explicit ES absolute loads refuse DS identity, and competing owned bindings
+  hard-fail. The prior 88 unresolved SSA register-carrier reads are absent.
+- The focused source-binding/carrier/reaching-source surface passes 25 tests;
+  the changed-file gate passes Ruff `--fix`, strict MyPy for six non-test
+  modules, type/docs ratchets, architecture/context/ownership checks, and 64
+  selected tests.
+- Structuring now owns regenerated aliases of one exact stored call result.
+  It requires one unique typed `SS:BP+offset` destination and same-sequence C
+  AST dominance with no intervening destination write, unrelated call, or
+  control transfer; ambiguous or nested occurrences refuse without mutation.
+  Machine source order is deliberately not used because every regenerated
+  occurrence carries the same original VEX position.
+- The uncached real `_TIDShowRange` run closes at one raw, normalized,
+  classified, and materialized ownership fact with zero failures and two
+  rewritten aliases. Final C contains exactly one body-level
+  `mseg = MapInEMSSprite(2, 0);`, preserves `if (mseg)`, reports
+  `validation=passed`, and passes whole-tail validation.
+- Eight focused ownership tests, the 60-test shared-call/Structuring surface,
+  Ruff `--fix`, strict MyPy, and architecture checks pass. The prior CLI smoke
+  test no longer accepts timeout as success; its fresh seven-worker real run
+  passes in 219.27 seconds and enforces exact call counts and validation.
 
 Remaining task-3 work: materializing indexed, indirect, stack, and broader
 multi-output live-out storage plus stack effects beyond closed terminal `ret`
@@ -361,7 +467,7 @@ callsites are implemented.
 
 ### 4. Keep discovery and semantic-loss ratchets permanent
 
-Status: complete for the current 20-function baseline.
+Status: reopened; discovery remains 20/20, but current materialization is 13/20.
 
 Reason: The known-good 20-function corpus is a durable completeness boundary.
 Permanent discovery, materialization, fallback, and tiny-example ratchets stop
@@ -422,7 +528,8 @@ Definition of failure:
 
 ### 6. Profile before further parallelization
 
-Status: primary N-1 execution complete; fallback work deferred.
+Status: in progress; primary N-1 execution and accepted-result caching are
+complete, while per-function hot-path work remains.
 
 Reason: The validated primary path already uses available CPUs, while mutable
 fallback rebuilds may share project state and multiply memory. Profiling and
@@ -456,6 +563,19 @@ to become idle. One automatic graph refresh consumed about 6.6 CPUs and 8 GiB
 RSS, causing the unchanged 50-second startup catalog to close at 17/20 and then
 19/20 entries. The same edited tree closed at 20/20 once indexing finished; do
 not weaken discovery or validation timeouts to hide external host contention.
+
+Measured maintenance on 2026-08-27:
+
+- pure-binary clean-process failures no longer trigger an evidence-identical
+  in-process retry; sidecar-backed retries remain when evidence can differ
+- a longest-first worker dispatch experiment increased wall time to 440.56
+  seconds and was reverted; stable address order is faster on this host
+- the current cold run is 278.41 seconds and unchanged-tree replay is 95.90
+  seconds, versus the preceding 362.07-second cold and 116.90-second replay
+- the remaining replay cost belongs to uncached failed functions; caching their
+  failure payloads is forbidden because failure details vary under contention
+- once the queue drains, one complex function owns the serial tail; additional
+  workers cannot shorten that phase, so future work must profile internal passes
 
 ### 7. Borrow Reko's proven quality mechanisms without its unsafe fallbacks
 
@@ -729,7 +849,7 @@ stricter segmented-memory and validation contracts.
 
 Definition of done:
 
-- tasks 8.1 through 8.10 meet their individual DoD in pipeline order
+- tasks 8.1 through 8.11 meet their individual DoD in pipeline order
 - each mechanism has one authoritative typed owner and replaces, rather than
   duplicates, any superseded late semantic producer
 - the full task 8.7 closed gate passes and known Ghidra SORTD errors remain
@@ -947,7 +1067,8 @@ Definition of failure:
 
 Status: in progress. Exact input storage-trial collection, `DX:AX`
 direct-global return materialization, replay-safe call accounting, exact
-final-callsite multiplicity validation, deterministic return/live-out trial
+final-callsite multiplicity validation, regenerated stored-result alias
+ownership, deterministic return/live-out trial
 collection, signed/unsigned strict and non-strict `DX:AX` ordering use typing,
 sign-insensitive equality/inequality use typing, recursive pass-through
 propagation, production SCC publication, and atomic callee plus callsite type
@@ -1511,6 +1632,32 @@ Measured progress on 2026-08-20:
   evidence counters. Its focused publication/storage surface passes 25 tests,
   including valid replay and four post-solver corruption cases; the diagnostic
   `PipelineHardError` names the typed failure while retaining structured detail
+- the `mul_us` scalar fixture exposed two distinct terminal-value defects. The
+  Semantics fact for implicit `mul` output now names `AX` as its destination,
+  and Structuring consumes the resulting typed AX lineage before a plausible
+  but stale `return a;` can bypass it. No semantic repair was added to Rewrite
+  or CLI; the startup architecture guard rejected that wrong-layer dependency
+- the Structuring owner accepts one fully proven terminal block and one return,
+  closes all five evidence counters, and replaces an existing value only when
+  the candidate is equivalent or extends its left-hand AX read/modify/write
+  lineage. Ambiguous CFGs, multiple returns, unsupported widths, missing proof,
+  and unrelated reshaping are typed refusals that preserve the existing body
+- tail validation caught the first over-broad implementation widening a byte
+  local in `byteops_unsigned`; the non-extension refusal now keeps its exact
+  byte storage while allowing `mul_us` to become `return a * b;`. The focused
+  171-test surface, Ruff `--fix`, strict focused MyPy, architecture checks, and
+  all ten scalar compile/run/decompile/recompile/decompiled-run functions pass
+- after the Python/angr dependency upgrade, `fill_bytes` exposed an owned
+  Types/Lowering API mismatch rather than a condition-recovery defect. Angr now
+  passes a shared recursive-type `memo` into `SimType._with_arch`; the fixed
+  16-bit near-pointer implementation used the old signature, so codegen text
+  regeneration raised before Structuring or Postprocess validation could be
+  collected. Its implementation now preserves and forwards that memo through
+  the public architecture-binding contract
+- a function-prototype regression exercises the exact recursive binding path.
+  Ruff `--fix`, strict focused MyPy, and all 11 focused SimType tests pass; the
+  full three-function `pointer_memory` compile/run/decompile/recompile/
+  decompiled-run gate is green with clean tail validation and exit code 255
 - next implementation boundary: generalize live-out evidence only when Alias,
   Widening, and SSA prove indexed, indirect, stack, or broader multiple-output
   storage. Conditional, exact whole-owner, contained, overlapping-caller-view,
@@ -1536,12 +1683,11 @@ Definition of failure:
 
 #### 8.3 Propagate types through IR, aliases, and bounded object ranges
 
-Status: in progress; the IR-to-Alias migration prerequisite is complete. Indexed
-DS/ES addresses now retain exact versioned dynamic terms, publish typed SSA
-facts or refusals, and project into symbolic Alias storage with exact stack
-index-source ownership. Widening aggregate views, bounded type propagation,
-and replacement of the legacy instruction-backed collectors remain open; no
-downstream semantic consumer has switched yet.
+Status: in progress; the IR-to-Alias prerequisite and first project-wide
+Widening consumer migration are complete. Indexed DS/ES addresses retain exact
+versioned terms and Alias storage/index ownership; Widening now owns two-byte
+global layout and exact copy-family joins. Bounded range/type propagation and
+replacement of the remaining per-function legacy rendering collectors remain.
 
 Reason: Type information must follow value and alias provenance across the
 pipeline before memory expressions can become pointers, indexes, fields, or
@@ -1654,13 +1800,33 @@ Measured progress on 2026-08-21:
   copies and 6 refusals. The accepted sites are `0x106a9 -> 0x106b2`
   (`DS:0x08f0` to `DS:0x0b4c`) and `0x10871 -> 0x1087a`
   (`DS:0x0b4a` to `DS:0x0b4c`)
+- Alias now publishes one immutable 20-function program census from the
+  complete binary-discovery catalog and reuses the canonical IR SSA registry;
+  exact supplied boundaries are validated before cached artifacts can replay.
+  A missing or conflicting function remains a typed program refusal
+- Widening consumes every Alias access/copy fact or refusal exactly once. A
+  partial program suppresses all layout inference; transformed copies and
+  different index identities retain separate families or refuse layouts
+- the current sidecar-free Widening census closes 44 inputs as 27 consumed and
+  17 explicit refusals. It proves only `DS:0x08f0` and `DS:0x0b4c` as two-byte
+  layouts and joins their family only through the exact `0x08f0 -> 0x0b4c`
+  copy; the `0x0b4a -> 0x0b4c` copy has no proven source layout and cannot join
+- `project_global_object_layout.py` no longer manufactures indexed storage
+  views from instruction-backed collectors. CLI discovery transports the
+  complete catalog without semantic classification, Alias owns the census,
+  Widening owns layout/family proof, and Lowering hard-fails an open artifact
+- real-lifter positives and refusals, registry/cache replay, and the isolated
+  sidecar-free SORTD aggregate regression pass. The latter keeps strict GCC,
+  `validation=passed`, whole-tail cleanliness, `g_08F0_entry`, and the exact
+  `g_0B4C` copy behavior; its measured wall time was 39.60 seconds
 - implementation order is now: (1) [done] fix machine width and owning
   instruction provenance, (2) [done] close the whole-SORTD identity-conflict
   census, (3) [done] classify Alias facts as pointer-relative versus global
   indexed candidates, (4) [done] prove whole-element load-to-store value paths
-  in IR and project both endpoints through Alias, and now (5) migrate
-  `widening/global_object_layout.py` to those Alias projections. Widening must
-  not consume the current inventory directly
+  in IR and project both endpoints through Alias, (5) [done] migrate project
+  layout recovery to Alias-fed Widening, and now (6) prove bounded object ranges
+  before Types/Lowering materializes arrays. Widening must not consume the
+  parity inventory or any rendered representation
 
 Do not borrow Ghidra's fallback assumption that an unlocked indexed range has
 at least four elements (`varmap.cc:1215-1219`). InitBars' wrong `% 0x60b`,
@@ -1686,29 +1852,19 @@ Definition of failure:
 
 #### 8.4 Normalize split values and carry before type and structure recovery
 
-Status: complete for the current exact direct-carrier scope. The production
-pre-Lowering path computes one coherent Semantics -> Alias -> Widening artifact
-for exact ADC/SBB pairs. It preserves
-block-local VEX provenance, proves same-block or dominating CFG/phi flags,
-retains every original byte address for adjacent DS/ES memory sources, and
-refuses conflicting phi, segment, range, definition, or Alias evidence. Exact
-Alias-proven stack destinations materialize through Types/Lowering as one
-four-byte object. Direct 16-bit loads, byte-composed words, and exact low/high
-constant pairs now remain distinct typed carriers through Widening. Ruff
-`--fix`, strict MyPy, architecture/ownership checks, and 33 focused
-SSA/carry/borrow tests pass. Beep and DrawTime pass their source-backed
-acceptance tests. IR block ownership now removes exact overlapping VEX micro-operations
-before SSA: the real Sleep function classifies and removes all ten duplicates,
-leaves one producer for the call at `0x10f52`, and records zero ownership
-failures. Semantics now derives one typed stack effect for every CALL and
-materializes used `AX` or `DX:AX` returns as exact `CALL_OUTPUT` definitions on
-unambiguous return edges before function SSA. Block-local SSA reserves entry
-version zero and honors the register version captured by each VEX temporary;
-this removes the prior pre-write/post-write version collision without weakening
-carry proof. The 18 focused call-output, call-effect, carry-output, and SSA tests
-pass, including a corrupted-version refusal. The exact `CALL_OUTPUT` producer
-now projects through Alias and Widening into Types/Lowering and closes the former
-Sleep and ReInitBars materialization gap.
+Status: reopened and in progress. Semantics -> Alias -> Widening retains exact
+ADC/SBB values, but the former C-AST placement contract collapsed each
+definition to instruction address alone and inferred execution ownership from
+post-join container paths. That was not sufficient proof at branch joins and
+invalidated the previous DrawTime completion claim.
+
+Structuring now publishes typed pre-join Clinic CFG instruction ownership with
+exact block/instruction sites and typed missing, ambiguous, unreachable, and
+order-conflict outcomes. Carry Lowering retains both low/high block addresses,
+requires that artifact on the main execution path, and refuses another
+reaching definition of the same FLAGS identity. Explicit C predicate projection
+is Lowering-only and consumes the already typed ADD_WITH_CARRY or
+SUB_WITH_BORROW relation; it does not infer semantics from rendered C.
 
 Reason: Split carriers and carry/borrow expressions obscure the single values
 needed by type propagation and explicit conditions. Widening must normalize
@@ -1747,55 +1903,22 @@ Definition of failure:
 - semantic normalization occurs in Structuring, Rewrite, CLI, or export
 - a slice, carry, memory effect, condition, or call argument changes incorrectly
 
-Measured closure on 2026-08-21:
+Measured current state on 2026-08-26:
 
-- IR retains one immutable `DX:AX` call-output provenance through both SSA
-  pieces; Alias requires exact shared callsite, target, storage, and definition
-  identity before Widening accepts the pair
-- Types/Lowering joins the accepted call output, one exact four-byte `SS:BP`
-  source, one exact stack destination, and every carrier instruction address;
-  it creates one wide assignment only after the destination stack object exists
-- Structuring may place the call and carrier statements in the same immediate
-  statement group or in one exact adjacent nested `CStatements` sibling. The
-  Lowering placement owner accepts only carrier-only assignment/expression
-  leaves with complete address coverage; calls, unrelated effects, control-flow
-  nodes, ambiguous parents, and missing coverage remain classified hard failures
-- the real sidecar-free Sleep regression retains both clock calls, materializes
-  the wide goal arithmetic, and passes whole-tail validation. Source-backed and
-  sidecar-free ReInitBars and DrawTime regressions also pass, as does Beep's
-  call/argument/validation acceptance test
-- the clean-worker Sleep failure was traced before Structuring to a frontend
-  cache-publication defect: angr could return a cached IRSB without replaying the
-  custom lifter's condition-recording side effect, while an empty per-block
-  cache list was incorrectly accepted as complete. The IR-owned exact-byte
-  relift bridge now isolates lifter state, distinguishes a typed pending
-  `ConditionSource` from an unbacked empty cache, and publishes typed refusal
-  reasons plus all five evidence counters
-- the exact real-image regression poisons all three Sleep condition owners and
-  requires deterministic recovery of `sle`, `sge`, and `ule`. Four clean
-  workers using transported parent evidence now return `status=ok`, preserve
-  `sub_1137e() > local_4`, and emit one identical validated C payload hash
-- Beep's direct-address output keeps an unprototyped `Sleep()` declaration
-  because that deliberately incomplete one-function caller census cannot prove
-  a whole-program signature. The regression enforces this typed refusal while
-  still requiring the exact four-byte call argument and behavior
-- 13 focused placement/provenance tests cover same-group and nested positive
-  cases, idempotence, missing source materialization, unjoined calls, mixed
-  calls/effects, and ambiguous parent refusal. Both new production modules
-  remain below 350 lines; the legacy 770-line `condition_transfer.py` gains
-  only three net lines in this checkpoint
-- fresh-cache strict sidecar-free acceptance passes 20/20 raw, normalized,
-  classified, materialized, attempted, and decompiled functions with zero
-  discovery failures, empty bodies, validation failures, timeouts, tracebacks,
-  or violations
-- `quality-dev` and `quality-hard` pass Ruff `--fix`, MyPy for 101 source
-  modules, the 38-module mypyc compile/import smoke, architecture/context/
-  ownership checks, 1,648 focused tests, and all three decompilation-quality
-  comparisons
-- the required seven-worker default pipeline passes all three lanes: 1,648
-  focused tests in 29.637s, 4/4 validated Ultra QuickC fixtures in 55.780s,
-  and all seven MS C tiny compile/run/decompile/recompile/decompiled-run
-  constructs in 85.599s, with zero lane failures or timeouts
+- 21 focused carry/CFG ownership tests pass, including two mutually exclusive
+  SUB/borrow chains sharing one FLAGS SSA identity, another reaching machine
+  definition, duplicate owners, missing owners, and same-block order conflict
+- Ruff `--fix`, strict focused MyPy for eight production modules, and the
+  ownership manifest pass; the architecture checker reports no failure in this
+  surface, while unrelated concurrent new modules still fail their own header
+  and typed-promotion checks
+- the exact production sidecar-free DrawTime run through pre-join ownership
+  finishes in 71 seconds with no carry or ownership refusal, retains
+  `Beep(60 * row, 75)` and both Sleep argument shapes, and correctly returns
+  `validation=failed`: 34 uninitialized carriers and a forbidden raw
+  `ss << 4` expression remain
+- closed evidence counters, `validation=passed`, recompilation, and required
+  pipelines remain mandatory before this task can return to complete
 
 #### 8.5 Collapse CFG regions only after conditions are explicit
 
@@ -1872,6 +1995,37 @@ Measured progress on 2026-08-21:
 - concurrent code-graph indexing can consume most host CPUs and cause false
   function-deadline failures. Acceptance runs therefore use bounded resource
   isolation; semantic timeouts were not increased to hide host contention
+- exact-function relifting now owns `ConditionIR` for real projects. The old
+  lifter compatibility cache is keyed only by rebased block address and cannot
+  prove ownership across extracted functions; a two-project regression rejects
+  complete sibling evidence at the same address
+- the real five-function `compare16` batch now passes tail validation, C
+  recompilation, and DOS behavior with exit `255` instead of the contaminated
+  exit `12`; the permanent MS C tiny pipeline retains this end-to-end ratchet
+- the MS C `switch_fold` regression was a Structuring projection-lifetime
+  defect: a proven selector-return condition did not remain authoritative after
+  later condition/lowering regeneration, so rendered C could retain an
+  uninitialized carrier. Structuring now fingerprints the exact selector and
+  return projection, checks it against the live AST, replays it at every owned
+  lifecycle boundary, and hard-fails any active but stale projection
+- Ultra QuickC `args` exposed a separate Structuring identity defect. The
+  semantic call condition was intentionally preserved, but the C expression
+  still carried tags from the preceding call and its exact binary-arm
+  orientation had not been published. Call-return materialization now selects
+  the unique typed `ConditionIR` from structured callsite identity plus the
+  callsite summary return block, then restamps the C condition with that exact
+  identity. Rendered names and stale tags are fallback evidence only
+- binary-arm classification infers an empty arm only as the complement of an
+  independently CFG-proven opposite arm. A nonempty unknown arm, ambiguous
+  reachability, or non-unique callsite/return identity refuses materialization
+  and preserves the existing structure
+- the repaired real `args` fixture retains both required calls and places
+  `local_4 = 1` only under the proven `v` branch; it has
+  `validation=passed`, recompiles, and passes its runtime/source contract. The
+  focused Structuring/import surface passes 92 tests, and the required gate
+  passes 1,709 focused tests, 4/4 validated QuickC fixtures, and all seven MS C
+  tiny constructs. Ruff `--fix`, strict focused MyPy, `linters-dev`, and the
+  architecture/context/ownership checks are green
 
 #### 8.6 Explicitly do not borrow Ghidra's function-start patterns
 
@@ -2153,6 +2307,75 @@ Definition of failure:
   overlap, phi input, or unknown SP delta is ignored
 - postprocess/CLI reconstructs the local or wide value from rendered output
 - generalization starts before the positive and refusal vertical-slice gates pass
+
+#### 8.11 Eliminate dead status-flag definitions before C expressions exist
+
+Status: in progress; implementation and exact-function acceptance are complete,
+while the required project pipeline and seven remaining function closures are
+pending. Typed per-bit same-block
+and function-CFG proofs, direct-callee summaries, and lazy frontend emission are
+implemented for `ADD`, `SUB`, `INC`, `DEC`, `SHL`, `SHR`, and `SAR`. On the
+exact `sub_109e8` CLI path all 11 classified CFG candidates materialize and
+packed flag equations fall from 4 to 0.
+
+Reason: Eagerly materialized packed-status updates retain large parity and
+carry equations even when later instructions overwrite every affected flag.
+This obscures otherwise simple C and increases simplifier and codegen work.
+The proof must track each flag independently because instructions such as
+`INC` preserve carry while `ADC` and `SBB` consume it.
+
+Definition of done:
+
+- Semantics owns a typed per-bit read/overwrite contract for decoded x86
+  instructions; the frontend only projects Capstone evidence into it
+- same-basic-block writes are omitted only after all written bits are proven
+  overwritten before any read, and absent lookahead keeps complete flags
+- the exact `sub_109e8` `SUB -> SAR 1 -> MOV -> INC` sequence is covered, while
+  `INC -> ADC`, conditional reads, zero/unknown shift counts, and unknown
+  instructions retain the prior flags
+- a later IR/CFG liveness pass handles cross-block deadness with successor,
+  loop, and call-effect evidence; the frontend does not guess beyond its block
+- the five evidence counters close for every suppression decision, and a
+  classified dead write cannot reach zero materialization
+- `sub_109e8` loses the dead flag equations without losing either call, changing
+  branch polarity, or worsening tail validation; focused gates, the SORTD
+  corpus, strict recompilation, MS C tiny examples, types/docs, and Ruff pass
+
+Current evidence on 2026-08-27:
+
+- 24 focused status-liveness tests cover same-block, successor, loop, call,
+  live-condition, unknown-edge, cache-relift, and zero-materialization cases
+- partial-live `SHL`, `SHR`, and `SAR` regressions prove that a ZF-only
+  successor does not construct parity equations; unknown/live paths keep flags
+- 188 status-liveness and 80386 edge tests pass, including instruction execution
+  semantics beyond the decompiler-only projection
+- all 11 exact `sub_109e8` candidates close with `failure_count=0`; the prior
+  uninitialized `reg+0x24` carriers were FLAGS, and those failures disappear
+  when the CFG artifact is consumed
+- Structuring now resolves direct-stack assignments through the Lowering-owned
+  machine-BP to entry-SP registry, closing the independent `0x10a4f` ownership
+  failure without weakening classified/materialized evidence checks
+- Types/Lowering persists the proven complete aggregate typedef through codegen
+  rollback, so final rendering no longer emits an incomplete `g_08F0_entry`
+- the exact sidecar-free function has `validation=passed`, whole-tail validation
+  clean, GCC acceptance, both calls intact, and no unsupported instructions;
+  no call/body repair occurs in Rewrite or CLI
+- the current whole-file C output has zero unsupported/unknown-instruction and
+  zero packed flag-equation markers; 13/20 functions validate and seven honest
+  fallbacks remain for the independent failures in the current checkpoint
+- changed-source Ruff `--fix`, mypy, types/docs, architecture, and ownership
+  checks pass; required whole-pipeline verification is the remaining acceptance
+
+Definition of failure:
+
+- flags are deleted as one packed value instead of per bit, or carry is dropped
+  across `INC/DEC` before `ADC/SBB`
+- calls, indirect control flow, unknown instructions, or uncertain successors
+  are treated as overwrites without typed evidence
+- flag semantics are repaired from assembly/rendered C or in Structuring,
+  postprocess, CLI, or export code
+- output is merely prettier while call, control-flow, validation, compilation,
+  behavior, evidence-accounting, typing, documentation, or lint gates regress
 
 ### 9. Direct decompilation-result comparison index
 

@@ -16,7 +16,7 @@ import re
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeAlias, cast
+from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
@@ -94,12 +94,12 @@ from inertia_decompiler.sidecar_metadata import (
 # angr's structured-C node classes and attributes vary across supported
 # versions. Keep that third-party dynamism explicit and confined to this AST
 # compatibility module; owned CLI state and evidence contracts remain concrete.
-StructuredAstValue: TypeAlias = Any
-StructuredCodegenValue: TypeAlias = Any
-AngrProjectValue: TypeAlias = Any
+type StructuredAstValue = Any
+type StructuredCodegenValue = Any
+type AngrProjectValue = Any
 
-_AccessTraitEvidenceProfile: TypeAlias = _cli_access_profiles.AccessTraitEvidenceProfile
-_AccessTraitStrideEvidence: TypeAlias = _cli_access_profiles.AccessTraitStrideEvidence
+type _AccessTraitEvidenceProfile = _cli_access_profiles.AccessTraitEvidenceProfile
+type _AccessTraitStrideEvidence = _cli_access_profiles.AccessTraitStrideEvidence
 
 
 def _compat_callback(callback: Callable[..., object]) -> StructuredAstValue:
@@ -109,130 +109,130 @@ def _compat_callback(callback: Callable[..., object]) -> StructuredAstValue:
 
 print: Callable[..., None] = _timestamped_print
 __all__ = [
-    "_attach_cod_callee_names",
-    "_build_cod_positive_bp_alias_map",
-    "_cod_stack_alias_for_disp",
-    "_attach_cod_variable_names",
-    "_synthetic_global_entry",
-    "_sanitize_cod_identifier",
-    "_get_or_seed_inertia_alias_state",
-    "_make_unique_identifier",
-    "_structured_codegen_node",
-    "_c_constant_value",
-    "_normalize_16bit_signed_offset",
-    "_project_rewrite_cache",
+    "_AccessTraitRewriteDecision",
     "_CODSourceRewriteSpec",
-    "_segment_reg_name",
-    "_classify_segmented_addr_expr",
-    "_classify_segmented_dereference",
-    "_match_real_mode_linear_expr",
-    "_match_segmented_dereference",
-    "_match_segment_register_based_dereference",
-    "_strip_segment_scale_from_addr_expr",
-    "_match_ss_stack_reference",
-    "_flatten_c_add_terms",
-    "_resolve_dirty_virtual_expr_8616",
-    "_match_stack_cvar_and_offset",
-    "_match_ss_local_plus_const",
-    "_replace_c_children",
-    "_iter_c_nodes_deep",
-    "_same_c_expression",
-    "_same_c_storage",
-    "_same_stack_slot_identity",
-    "_stack_slot_identity_can_join",
-    "_is_c_constant_int",
-    "_cite_is_negation",
-    "_invert_comparison_op",
-    "_make_inverted_comparison",
-    "_invert_interval_guard_if_safe",
-    "_extract_same_zero_compare_expr",
-    "_extract_zero_flag_source_expr",
-    "_simplify_zero_flag_comparison",
-    "_match_high_byte_projection_base",
-    "_match_adjacent_register_pair_var_expr",
-    "_match_high_byte_projection_expr",
-    "_match_high_byte_projection_constant",
-    "_simplify_boolean_expr",
-    "_simplify_zero_mul_or_expr",
-    "_simplify_basic_algebraic_identities",
-    "_simplify_structured_c_expressions",
-    "_unwrap_c_casts",
-    "_match_shift_right_8_expr",
-    "_match_duplicate_word_increment_shift_expr",
-    "_match_duplicate_word_base_expr",
-    "_attach_cod_global_names",
+    "_WideningMatch",
+    "_access_trait_field_name",
+    "_access_trait_member_candidates",
+    "_access_trait_profile_for_key",
+    "_access_trait_variable_key",
+    "_addr_exprs_are_byte_pair",
+    "_addr_exprs_are_same",
+    "_analyze_widening_expr",
+    "_attach_access_trait_field_names",
+    "_attach_cod_callee_names",
     "_attach_cod_global_declaration_names",
     "_attach_cod_global_declaration_types",
-    "_access_trait_field_name",
-    "_stack_object_name",
-    "_access_trait_variable_key",
-    "_access_trait_profile_for_key",
-    "_WideningMatch",
-    "_AccessTraitRewriteDecision",
-    "_build_access_trait_evidence_profiles",
-    "_analyze_widening_expr",
-    "_access_trait_member_candidates",
-    "_should_attach_access_trait_names",
-    "_attach_access_trait_field_names",
-    "_attach_pointer_member_names",
+    "_attach_cod_global_names",
+    "_attach_cod_variable_names",
     "_attach_lst_data_names",
-    "_normalize_scalar_byte_register_types",
-    "_attach_segment_register_names",
+    "_attach_pointer_member_names",
     "_attach_register_names",
-    "_elide_redundant_segment_pointer_dereferences",
-    "_collect_access_traits",
-    "_prune_unused_unnamed_memory_declarations",
-    "_prune_unused_linear_register_declarations",
-    "_prune_unused_local_declarations",
-    "_prune_dead_local_assignments",
-    "_materialize_missing_stack_local_declarations",
-    "_dedupe_codegen_variable_names_8616",
-    "_materialize_missing_register_local_declarations",
-    "_prune_void_function_return_values",
-    "_coalesce_far_pointer_stack_expressions",
-    "_simplify_nested_mk_fp_calls",
+    "_attach_segment_register_names",
     "_attach_ss_stack_variables",
-    "_rewrite_ss_stack_byte_offsets",
-    "_promote_direct_stack_cvariable",
-    "_stack_type_for_size",
-    "_resolve_stack_cvar_at_offset",
-    "_materialize_stack_cvar_at_offset",
+    "_build_access_trait_evidence_profiles",
+    "_build_cod_positive_bp_alias_map",
+    "_c_constant_value",
     "_canonicalize_stack_cvar_expr",
     "_canonicalize_stack_cvars",
-    "_resolve_stack_cvar_from_addr_expr",
-    "_coalesce_direct_ss_local_word_statements",
-    "_seed_adjacent_byte_pair_aliases",
-    "_coalesce_linear_recurrence_statements",
-    "_coalesce_segmented_word_store_statements",
-    "_run_typed_widening_pass",
-    "_global_memory_addr",
-    "_global_load_addr",
-    "_match_scaled_high_byte",
-    "_extract_dereference_addr_expr",
-    "_match_byte_load_addr_expr",
-    "_match_byte_store_addr_expr",
-    "_match_shifted_high_byte_addr_expr",
-    "_match_word_pair_low_addr_expr",
-    "_split_expr_const_offset",
-    "_same_expression_list",
-    "_addr_exprs_are_same",
-    "_addr_exprs_are_byte_pair",
-    "_make_word_dereference_from_addr_expr",
-    "_match_word_dereference_addr_expr",
-    "_match_word_rhs_from_byte_pair",
-    "_high_byte_store_addr",
-    "_synthetic_word_global_variable",
+    "_cite_is_negation",
+    "_classify_segmented_addr_expr",
+    "_classify_segmented_dereference",
+    "_clone_structured_c_value",
     "_coalesce_cod_word_global_loads",
-    "_coalesce_segmented_word_load_expressions",
     "_coalesce_cod_word_global_statements",
+    "_coalesce_direct_ss_local_word_statements",
+    "_coalesce_far_pointer_stack_expressions",
+    "_coalesce_linear_recurrence_statements",
+    "_coalesce_segmented_word_load_expressions",
+    "_coalesce_segmented_word_store_statements",
+    "_cod_stack_alias_for_disp",
+    "_collect_access_traits",
+    "_dedupe_codegen_variable_names_8616",
+    "_dos_helper_declarations",
+    "_elide_redundant_segment_pointer_dereferences",
+    "_extract_dereference_addr_expr",
+    "_extract_same_zero_compare_expr",
+    "_extract_zero_flag_source_expr",
+    "_flatten_c_add_terms",
+    "_get_or_seed_inertia_alias_state",
+    "_global_load_addr",
+    "_global_memory_addr",
+    "_high_byte_store_addr",
     "_int21_call_replacements",
     "_interrupt_call_replacement_map",
-    "_dos_helper_declarations",
     "_interrupt_helper_declarations",
-    "_known_helper_declarations",
+    "_invert_comparison_op",
+    "_invert_interval_guard_if_safe",
+    "_is_c_constant_int",
     "_is_staging_local_name",
-    "_clone_structured_c_value",
+    "_iter_c_nodes_deep",
+    "_known_helper_declarations",
+    "_make_inverted_comparison",
+    "_make_unique_identifier",
+    "_make_word_dereference_from_addr_expr",
+    "_match_adjacent_register_pair_var_expr",
+    "_match_byte_load_addr_expr",
+    "_match_byte_store_addr_expr",
+    "_match_duplicate_word_base_expr",
+    "_match_duplicate_word_increment_shift_expr",
+    "_match_high_byte_projection_base",
+    "_match_high_byte_projection_constant",
+    "_match_high_byte_projection_expr",
+    "_match_real_mode_linear_expr",
+    "_match_scaled_high_byte",
+    "_match_segment_register_based_dereference",
+    "_match_segmented_dereference",
+    "_match_shift_right_8_expr",
+    "_match_shifted_high_byte_addr_expr",
+    "_match_ss_local_plus_const",
+    "_match_ss_stack_reference",
+    "_match_stack_cvar_and_offset",
+    "_match_word_dereference_addr_expr",
+    "_match_word_pair_low_addr_expr",
+    "_match_word_rhs_from_byte_pair",
+    "_materialize_missing_register_local_declarations",
+    "_materialize_missing_stack_local_declarations",
+    "_materialize_stack_cvar_at_offset",
+    "_normalize_16bit_signed_offset",
+    "_normalize_scalar_byte_register_types",
+    "_project_rewrite_cache",
+    "_promote_direct_stack_cvariable",
+    "_prune_dead_local_assignments",
     "_prune_tiny_wrapper_staging_locals",
+    "_prune_unused_linear_register_declarations",
+    "_prune_unused_local_declarations",
+    "_prune_unused_unnamed_memory_declarations",
+    "_prune_void_function_return_values",
+    "_replace_c_children",
+    "_resolve_dirty_virtual_expr_8616",
+    "_resolve_stack_cvar_at_offset",
+    "_resolve_stack_cvar_from_addr_expr",
+    "_rewrite_ss_stack_byte_offsets",
+    "_run_typed_widening_pass",
+    "_same_c_expression",
+    "_same_c_storage",
+    "_same_expression_list",
+    "_same_stack_slot_identity",
+    "_sanitize_cod_identifier",
+    "_seed_adjacent_byte_pair_aliases",
+    "_segment_reg_name",
+    "_should_attach_access_trait_names",
+    "_simplify_basic_algebraic_identities",
+    "_simplify_boolean_expr",
+    "_simplify_nested_mk_fp_calls",
+    "_simplify_structured_c_expressions",
+    "_simplify_zero_flag_comparison",
+    "_simplify_zero_mul_or_expr",
+    "_split_expr_const_offset",
+    "_stack_object_name",
+    "_stack_slot_identity_can_join",
+    "_stack_type_for_size",
+    "_strip_segment_scale_from_addr_expr",
+    "_structured_codegen_node",
+    "_synthetic_global_entry",
+    "_synthetic_word_global_variable",
+    "_unwrap_c_casts",
 ]
 
 
@@ -281,7 +281,7 @@ def _build_cod_positive_bp_alias_map(bp_disps: list[int], cod_metadata: CODProcM
         unmatched_var_positive = [disp for disp in var_positive if disp not in alias_map]
         unused_meta_positive = [item for item in meta_positive if item[1] not in alias_map.values()]
         if len(unmatched_var_positive) <= len(unused_meta_positive):
-            for disp, (_, name) in zip(unmatched_var_positive, unused_meta_positive):
+            for disp, (_, name) in zip(unmatched_var_positive, unused_meta_positive, strict=False):
                 alias_map[disp] = name
 
         return alias_map
@@ -582,12 +582,12 @@ def _structured_slot_names_8616(value: StructuredAstValue) -> tuple[str, ...]:
                 slots = (slots,)
             for slot in slots:
                 if isinstance(slot, str) and not slot.startswith("_") and slot != "codegen":
-                    attrs.append(slot)
+                    attrs.append(slot)  # noqa: PERF401
 
         if hasattr(value, "__dict__"):
             attrs.extend(
                 attr
-                for attr in value.__dict__.keys()
+                for attr in value.__dict__
                 if isinstance(attr, str) and not attr.startswith("_") and attr != "codegen"
             )
 
@@ -1030,7 +1030,7 @@ def _replace_condition_pairs(
         if not hasattr(current, "condition_and_nodes"):
             return False
         try:
-            pairs = getattr(current, "condition_and_nodes")
+            pairs = current.condition_and_nodes
         except Exception:
             _AST_REWRITE_LOGGER.debug(
                 "cli_c_ast_rewrites._replace_c_children: failed to read condition_and_nodes on %r",
@@ -1128,7 +1128,7 @@ def _iter_c_nodes_deep(node: StructuredAstValue, seen: set[int] | None = None) -
                 continue
             for item in _iter_c_node_children_8616(value, set()):
                 if _structured_codegen_node(item):
-                    node_stack.append(item)
+                    node_stack.append(item)  # noqa: PERF401
 
 
 def _same_c_expression(
@@ -1171,7 +1171,7 @@ def _same_c_expression(
             rhs_args = list(getattr(rhs, "args", ()) or ())
             if len(lhs_args) != len(rhs_args):
                 return False
-            return all(_same_c_expression(larg, rarg, seen_pairs) for larg, rarg in zip(lhs_args, rhs_args))
+            return all(_same_c_expression(larg, rarg, seen_pairs) for larg, rarg in zip(lhs_args, rhs_args, strict=False))
 
         if type(lhs).__name__ == "CDirtyExpression":
             lhs_dirty = getattr(lhs, "dirty", None)
@@ -1782,7 +1782,7 @@ def _simplify_structured_c_expressions(codegen: StructuredCodegenValue) -> bool:
                 rhs = _unwrap_c_casts(walk_node.rhs)
                 if not isinstance(rhs, structured_c.CBinaryOp) or rhs.op != "Or":
                     continue
-                for maybe_const, maybe_other in ((rhs.lhs, rhs.rhs), (rhs.rhs, rhs.lhs)):
+                for maybe_const, _maybe_other in ((rhs.lhs, rhs.rhs), (rhs.rhs, rhs.lhs)):
                     const_value = _c_constant_value(_unwrap_c_casts(maybe_const))
                     if const_value is None or const_value & 0xFF:
                         continue
@@ -2625,19 +2625,17 @@ def _simplify_structured_c_expressions(codegen: StructuredCodegenValue) -> bool:
                     if node.op == "Add":
                         if isinstance(lhs, structured_c.CVariable) and isinstance(
                             getattr(lhs, "variable", None), SimStackVariable
-                        ):
-                            if _c_constant_value(rhs) is not None:
-                                alias_expr = far_pointer_aliases.get(id(lhs.variable))
-                                if alias_expr is not None:
-                                    return _make_mk_fp(alias_expr, rhs)
+                        ) and _c_constant_value(rhs) is not None:
+                            alias_expr = far_pointer_aliases.get(id(lhs.variable))
+                            if alias_expr is not None:
+                                return _make_mk_fp(alias_expr, rhs)
                         if isinstance(rhs, structured_c.CVariable) and isinstance(
                             getattr(rhs, "variable", None), SimStackVariable
-                        ):
-                            if _c_constant_value(lhs) is not None:
-                                alias_expr = far_pointer_aliases.get(id(rhs.variable))
-                                if alias_expr is not None:
-                                    return _make_mk_fp(alias_expr, lhs)
-                    if not resolved_contains_dereference and not storage_backed_source:
+                        ) and _c_constant_value(lhs) is not None:
+                            alias_expr = far_pointer_aliases.get(id(rhs.variable))
+                            if alias_expr is not None:
+                                return _make_mk_fp(alias_expr, lhs)
+                    if not resolved_contains_dereference and not storage_backed_source:  # noqa: SIM102
                         if not _memory_backed_widening_base(node):
                             delta = _match_word_plus_minus_one_expr(node)
                             if delta is not None:
@@ -2648,13 +2646,13 @@ def _simplify_structured_c_expressions(codegen: StructuredCodegenValue) -> bool:
                             high_update = _match_high_byte_preserving_word_expr(node)
                             if high_update is not None:
                                 return high_update
-                if node.op in {"Add", "Sub"}:
-                    if not resolved_contains_dereference and not storage_backed_source:
+                if node.op in {"Add", "Sub"}:  # noqa: SIM102
+                    if not resolved_contains_dereference and not storage_backed_source:  # noqa: SIM102
                         if not _memory_backed_widening_base(resolved):
                             linear = _match_linear_word_delta_expr(resolved)
                             if linear is not None:
                                 return linear
-                if isinstance(lhs, structured_c.CConstant) and isinstance(rhs, structured_c.CConstant):
+                if isinstance(lhs, structured_c.CConstant) and isinstance(rhs, structured_c.CConstant):  # noqa: SIM102
                     if isinstance(lhs.value, int) and isinstance(rhs.value, int):
                         result = None
                         if node.op == "Add":
@@ -2703,7 +2701,7 @@ def _simplify_structured_c_expressions(codegen: StructuredCodegenValue) -> bool:
                             const_value |= value
                     if len(terms) > 2 or len(non_constants) != len(terms):
                         rebuilt_terms = list(non_constants)
-                        if const_value is not None:
+                        if const_value is not None:  # noqa: SIM102
                             if not ((node.op == "And" and const_value == -1) or (node.op == "Or" and const_value == 0)):
                                 rebuilt_terms.append(
                                     structured_c.CConstant(
@@ -2731,9 +2729,8 @@ def _simplify_structured_c_expressions(codegen: StructuredCodegenValue) -> bool:
                         return node.rhs
                     if _c_constant_value(rhs) == 0:
                         return node.lhs
-                if node.op == "Sub":
-                    if _c_constant_value(rhs) == 0:
-                        return node.lhs
+                if node.op == "Sub" and _c_constant_value(rhs) == 0:
+                    return node.lhs
                 if node.op == "Add":
                     folded = _fold_simple_add_constants(node)
                     if folded is not node:
@@ -2901,7 +2898,7 @@ def _simplify_structured_c_expressions(codegen: StructuredCodegenValue) -> bool:
             simplified = _simplify_boolean_expr(node, codegen)
             if simplified is not node:
                 return simplified
-            if isinstance(node, structured_c.CBinaryOp) and node.op == "Sub":
+            if isinstance(node, structured_c.CBinaryOp) and node.op == "Sub":  # noqa: SIM102
                 if _same_c_expression(node.lhs, node.rhs):
                     type_ = node.type or getattr(node.lhs, "type", None)
                     if type_ is not None:
@@ -2995,7 +2992,7 @@ def _match_shift_right_8_expr(node: StructuredAstValue) -> StructuredAstValue:
             ):
                 or_expr = _unwrap_c_casts(lhs.lhs)
                 if isinstance(or_expr, structured_c.CBinaryOp) and or_expr.op == "Or":
-                    for maybe_masked, maybe_const in ((or_expr.lhs, or_expr.rhs), (or_expr.rhs, or_expr.lhs)):
+                    for _maybe_masked, maybe_const in ((or_expr.lhs, or_expr.rhs), (or_expr.rhs, or_expr.lhs)):
                         const_value = _c_constant_value(_unwrap_c_casts(maybe_const))
                         if not isinstance(const_value, int):
                             continue
@@ -4594,7 +4591,7 @@ def _word_from_widening_shift_match(
     shifted_source = _unwrap_c_casts(shifted_source)
     low_expr = _unwrap_c_casts(low_rhs)
     analysis = _analyze_widening_expr(shifted_source, lambda expr: expr, lambda expr: expr)
-    if analysis is not None and analysis.kind == "linear" and analysis.delta in {1, -1}:
+    if analysis is not None and analysis.kind == "linear" and analysis.delta in {1, -1}:  # noqa: SIM102
         if _same_c_expression(low_expr, analysis.base_expr):
             return _canonicalize_stack_cvar_expr(shifted_source, codegen)
     if _same_c_expression(low_expr, shifted_source):
@@ -4850,11 +4847,9 @@ def _collect_staging_wrapper_summary(statements: list[object]) -> tuple[int, dic
         staging_variable_ids: set[int] = set()
         non_staging_logic = False
         for stmt in statements:
-            if isinstance(stmt, structured_c.CExpressionStatement) and isinstance(
+            if (isinstance(stmt, structured_c.CExpressionStatement) and isinstance(
                 stmt.expr, structured_c.CFunctionCall
-            ):
-                call_count += 1
-            elif isinstance(stmt, structured_c.CFunctionCall):
+            )) or isinstance(stmt, structured_c.CFunctionCall):
                 call_count += 1
             if not isinstance(stmt, structured_c.CAssignment) or not isinstance(stmt.lhs, structured_c.CVariable):
                 if not (

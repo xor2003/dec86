@@ -19,7 +19,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import asdict
 from enum import Enum
 from pathlib import Path
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -35,7 +35,7 @@ from angr_platforms.X86_16.lowering.indexed_address_parity_inventory_contracts i
 from inertia_decompiler.cli_function_discovery import _recover_fast_exe_catalog  # noqa: E402
 from inertia_decompiler.project_loading import _build_project  # noqa: E402
 
-JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+type JsonValue = bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"] | None
 
 
 class _Arguments(Protocol):

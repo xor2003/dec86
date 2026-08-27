@@ -28,8 +28,8 @@ def _flatten_add_terms(node, seen=None):
 def test_classify_segmented_addr_expr_treats_sp_virtual_register_as_stack_anchor():
     project = SimpleNamespace(arch=Arch86_16())
     codegen = SimpleNamespace(
-        project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False
-    )
+        project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False, 
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     ss_offset, ss_size = project.arch.registers["ss"]
     ss_reg = structured_c.CVariable(SimRegisterVariable(ss_offset, ss_size, name="ss"), codegen=codegen)
     sp_offset, sp_size = project.arch.registers["sp"]
@@ -67,8 +67,8 @@ def test_classify_segmented_addr_expr_treats_sp_virtual_register_as_stack_anchor
 def test_classify_segmented_addr_expr_treats_bp_virtual_register_as_stack_anchor():
     project = SimpleNamespace(arch=Arch86_16())
     codegen = SimpleNamespace(
-        project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False
-    )
+        project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False, 
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     ss_offset, ss_size = project.arch.registers["ss"]
     ss_reg = structured_c.CVariable(SimRegisterVariable(ss_offset, ss_size, name="ss"), codegen=codegen)
     bp_offset, bp_size = project.arch.registers["bp"]
@@ -106,8 +106,8 @@ def test_classify_segmented_addr_expr_treats_bp_virtual_register_as_stack_anchor
 def test_classify_segmented_addr_expr_treats_dirty_bp_carrier_as_stack_anchor():
     project = SimpleNamespace(arch=Arch86_16())
     codegen = SimpleNamespace(
-        project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False
-    )
+        project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False, 
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     ss_offset, _ss_size = project.arch.registers["ss"]
     bp_offset, _bp_size = project.arch.registers["bp"]
     ss_reg = structured_c.CDirtyExpression(
@@ -151,8 +151,8 @@ def test_classify_segmented_addr_expr_treats_dirty_bp_carrier_as_stack_anchor():
 def test_classify_segmented_addr_expr_folds_constant_subterm_before_stack_anchor():
     project = SimpleNamespace(arch=Arch86_16())
     codegen = SimpleNamespace(
-        project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False
-    )
+        project=project, cfunc=SimpleNamespace(addr=0x1000), next_idx=lambda _name: 0, cstyle_null_cmp=False, 
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     ss_offset, _ss_size = project.arch.registers["ss"]
     bp_offset, _bp_size = project.arch.registers["bp"]
     ss_reg = structured_c.CDirtyExpression(

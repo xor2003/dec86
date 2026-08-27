@@ -120,8 +120,7 @@ def _run_json(binary_path: Path, command: str, *, timeout_sec: int) -> object:
     completed = subprocess.run(
         cmd,
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         timeout=max(1, int(timeout_sec)),
     )

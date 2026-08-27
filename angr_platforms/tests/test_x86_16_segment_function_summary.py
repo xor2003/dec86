@@ -8,6 +8,7 @@ from angr_platforms.X86_16.analysis_helpers import (
     CallTargetSeed,
     collect_direct_far_call_targets,
     collect_neighbor_call_targets,
+    resolve_direct_call_target_from_block,
 )
 from angr_platforms.X86_16.ir.segment_contract import SegmentFactVerdict, SegmentFunctionContract
 from angr_platforms.X86_16.segment_function_summary import (
@@ -167,3 +168,8 @@ def test_neighbor_collection_distinguishes_direct_far_call() -> None:
     instruction.insn.operands = (operand(0x10020),)
     assert collect_direct_far_call_targets(function) == []
     assert collect_neighbor_call_targets(function)[0].kind is CallTargetKind8616.DIRECT_NEAR_CALL
+
+    instruction.mnemonic = "lcall"
+    instruction.insn.operands = (operand(0), operand(0))
+    assert resolve_direct_call_target_from_block(project, 0x10010) == 0
+    assert collect_neighbor_call_targets(function) == []

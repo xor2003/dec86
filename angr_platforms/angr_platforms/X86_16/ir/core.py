@@ -11,26 +11,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, StrEnum
-from typing import TypeAlias
 
 __all__ = [
-    "AddressStatus",
     "SEGMENTED_LOAD_ADDRESS_TAG_8616",
-    "SegmentOrigin",
+    "AddressStatus",
     "IRAddress",
+    "IRAtom",
     "IRBinaryValue",
+    "IRBlock",
     "IRCallOutputProvenance8616",
     "IRCallOutputShape8616",
     "IRCallStackEffect8616",
-    "is_stack_address_8616",
-    "IRAtom",
-    "IRBlock",
     "IRCondition",
     "IRFunctionArtifact",
     "IRInstr",
     "IRRefusal",
     "IRValue",
     "MemSpace",
+    "SegmentOrigin",
+    "is_stack_address_8616",
 ]
 
 SEGMENTED_LOAD_ADDRESS_TAG_8616: str = "inertia_x86_16_segmented_load_address"
@@ -243,7 +242,7 @@ class IRCondition:
     """Typed branch or predicate condition in the IR layer."""
 
     op: str
-    args: tuple["IRAtom", ...]
+    args: tuple[IRAtom, ...]
     expr: tuple[str, ...] | None = None
     width_bits: int | None = field(default=None, compare=False)
 
@@ -263,7 +262,7 @@ class IRCondition:
         }
 
 
-IRAtom: TypeAlias = IRValue | IRBinaryValue | IRAddress | IRCondition
+type IRAtom = IRValue | IRBinaryValue | IRAddress | IRCondition
 
 
 def _atom_to_dict(atom: IRAtom) -> dict[str, object]:
@@ -331,20 +330,5 @@ class IRBlock:
         }
 
 
-@dataclass(frozen=True, slots=True)
-class IRFunctionArtifact:
-    """Typed IR artifact for one recovered function."""
-
-    function_addr: int
-    blocks: tuple[IRBlock, ...] = ()
-    refusals: tuple[IRRefusal, ...] = ()
-    summary: dict[str, object] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, object]:
-        """Serialize this function-level typed IR artifact."""
-        return {
-            "function_addr": self.function_addr,
-            "blocks": [block.to_dict() for block in self.blocks],
-            "refusals": [item.to_dict() for item in self.refusals],
-            "summary": dict(self.summary),
-        }
+# The split artifact imports IRBlock/IRRefusal, so its compatibility re-export is late.
+from .function_artifact import IRFunctionArtifact  # noqa: E402

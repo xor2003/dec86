@@ -10,7 +10,7 @@ from __future__ import annotations
 import typing
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeAlias, cast
+from typing import Any, Protocol, cast
 
 import angr
 from angr.analyses.decompiler import structured_codegen
@@ -27,7 +27,7 @@ structured_c: Any = structured_codegen.c
 
 print: Callable[..., None] = _timestamped_print
 
-RegisterState: TypeAlias = dict[str, dict[tuple[str, ...], int]]
+type RegisterState = dict[str, dict[tuple[str, ...], int]]
 
 
 class _CFunctionLike(Protocol):
@@ -53,25 +53,25 @@ class _FunctionLike(Protocol):
 __all__ = [
     "InterruptWrapperCall",
     "InterruptWrapperFieldAccess",
-    "_normalize_interrupt_wrapper_name",
+    "_attach_dos_pseudo_callees",
+    "_attach_interrupt_wrapper_callees",
     "_interrupt_wrapper_call_kind",
     "_interrupt_wrapper_call_signature",
+    "_interrupt_wrapper_call_text",
+    "_interrupt_wrapper_field_access_summary",
     "_interrupt_wrapper_field_path",
     "_interrupt_wrapper_field_role",
-    "_interrupt_wrapper_field_access_summary",
-    "_interrupt_wrapper_call_text",
+    "_interrupt_wrapper_helper_call_expr",
+    "_interrupt_wrapper_record_register_write",
+    "_interrupt_wrapper_register_state_value",
+    "_interrupt_wrapper_result_expr_replacement",
+    "_interrupt_wrapper_result_extract_expr",
+    "_interrupt_wrapper_result_helper_expr",
+    "_interrupt_wrapper_result_replacement",
+    "_lower_interrupt_wrapper_result_reads",
+    "_normalize_interrupt_wrapper_name",
     "collect_interrupt_wrapper_calls",
     "collect_interrupt_wrapper_field_accesses",
-    "_attach_interrupt_wrapper_callees",
-    "_interrupt_wrapper_register_state_value",
-    "_interrupt_wrapper_record_register_write",
-    "_interrupt_wrapper_helper_call_expr",
-    "_interrupt_wrapper_result_helper_expr",
-    "_interrupt_wrapper_result_extract_expr",
-    "_interrupt_wrapper_result_replacement",
-    "_interrupt_wrapper_result_expr_replacement",
-    "_lower_interrupt_wrapper_result_reads",
-    "_attach_dos_pseudo_callees",
 ]
 
 
@@ -171,7 +171,7 @@ def _interrupt_wrapper_call_signature(node: object) -> InterruptWrapperCall | No
         # Dynamic codegen boundary: CFunctionCall may carry a string callee_target.
         elif isinstance(getattr(node, "callee_target", None), str):
             # Dynamic codegen boundary: CFunctionCall may carry a string callee_target.
-            callee_name = getattr(node, "callee_target")
+            callee_name = node.callee_target
 
         # Dynamic codegen boundary: CFunctionCall args may be absent on synthetic nodes.
         args = tuple(getattr(node, "args", ()) or ())
@@ -464,7 +464,7 @@ def _interrupt_wrapper_helper_call_expr(
             )
 
         helper_name = interrupt_service_name(service_call, api_style)
-        if helper_name.startswith("int86") or helper_name.startswith("intdos"):
+        if helper_name.startswith(("int86", "intdos")):
             return None
 
         helper_args: list[object] = []
@@ -550,14 +550,13 @@ def _interrupt_wrapper_result_extract_expr(
                 codegen=codegen,
             ))
 
-        if "getvect" in str(helper_name):
-            if access.base_name == "sregs" and access.field_path == ("es",):
-                return cast(object, structured_c.CFunctionCall(
-                    "FP_SEG",
-                    None,
-                    [helper_call],
-                    codegen=codegen,
-                ))
+        if "getvect" in str(helper_name) and access.base_name == "sregs" and access.field_path == ("es",):
+            return cast(object, structured_c.CFunctionCall(
+                "FP_SEG",
+                None,
+                [helper_call],
+                codegen=codegen,
+            ))
 
         if access.base_name == "sregs" and access.field_path == ("es",):
             return helper_call
@@ -766,7 +765,7 @@ def _attach_dos_pseudo_callees(
             if node_call.callee_func is None:
                 call_nodes.append(node_call)
 
-        for node, pseudo_func in zip(call_nodes, pseudo_funcs):
+        for node, pseudo_func in zip(call_nodes, pseudo_funcs, strict=False):
             if pseudo_func is not None:
                 node.callee_func = pseudo_func
         return bool(call_nodes)

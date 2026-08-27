@@ -125,7 +125,7 @@ def test_recompilable_storage_map_keeps_same_offset_in_distinct_segments_distinc
 
 def test_recompilable_storage_map_producer_uses_codegen_segment_summary_and_lowering() -> None:
     class MockCodegen:
-        _inertia_segmented_memory_summary = {
+        _inertia_segmented_memory_summary = {  # noqa: RUF012
             "stable": {
                 "DS": {
                     "classification": "const",
@@ -140,7 +140,7 @@ def test_recompilable_storage_map_producer_uses_codegen_segment_summary_and_lowe
             },
             "unknown": {},
         }
-        _inertia_segmented_memory_lowering = {
+        _inertia_segmented_memory_lowering = {  # noqa: RUF012
             "DS": {
                 "classification": "const",
                 "allow_linear_lowering": True,
@@ -167,8 +167,8 @@ def test_recompilable_storage_map_producer_uses_codegen_segment_summary_and_lowe
 
 def test_recompilable_storage_map_producer_refuses_segment_without_lowering_surface() -> None:
     class MockCodegen:
-        _inertia_segmented_memory_summary = {"stable": {}, "over_associated": {}, "unknown": {}}
-        _inertia_segmented_memory_lowering = {}
+        _inertia_segmented_memory_summary = {"stable": {}, "over_associated": {}, "unknown": {}}  # noqa: RUF012
+        _inertia_segmented_memory_lowering = {}  # noqa: RUF012
 
     artifact = export_recompilable_storage_map_from_codegen(
         MockCodegen(),
@@ -183,12 +183,12 @@ def test_recompilable_storage_map_producer_refuses_segment_without_lowering_surf
 
 def test_recompilable_storage_map_alias_export_maps_stack_slot_to_ss() -> None:
     class MockCodegen:
-        _inertia_segmented_memory_summary = {
+        _inertia_segmented_memory_summary = {  # noqa: RUF012
             "stable": {"SS": {"classification": "const", "known_values": (0x3000,)}},
             "over_associated": {},
             "unknown": {},
         }
-        _inertia_segmented_memory_lowering = {"SS": {"classification": "const", "allow_linear_lowering": True}}
+        _inertia_segmented_memory_lowering = {"SS": {"classification": "const", "allow_linear_lowering": True}}  # noqa: RUF012
 
     stack_facts = AliasStorageFacts(
         domain=_StorageDomainSignature(
@@ -219,12 +219,12 @@ def test_recompilable_storage_map_alias_export_maps_stack_slot_to_ss() -> None:
 
 def test_recompilable_storage_map_alias_export_requires_explicit_segment_for_memory() -> None:
     class MockCodegen:
-        _inertia_segmented_memory_summary = {
+        _inertia_segmented_memory_summary = {  # noqa: RUF012
             "stable": {"DS": {"classification": "const", "known_values": (0x2000,)}},
             "over_associated": {},
             "unknown": {},
         }
-        _inertia_segmented_memory_lowering = {"DS": {"classification": "const", "allow_linear_lowering": True}}
+        _inertia_segmented_memory_lowering = {"DS": {"classification": "const", "allow_linear_lowering": True}}  # noqa: RUF012
 
     memory_facts = AliasStorageFacts(
         domain=_StorageDomainSignature("memory", 2, _StorageView(0x40 * 8, 16)),

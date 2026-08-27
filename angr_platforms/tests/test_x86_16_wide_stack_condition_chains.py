@@ -3,6 +3,7 @@ from __future__ import annotations
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
 from angr_platforms.X86_16.structuring.wide_stack_condition_chains import (
+    reachable_wide_stack_conditions_8616,
     recover_wide_stack_condition_chain_8616,
 )
 from angr_platforms.X86_16.structuring.wide_stack_single_branches import (
@@ -77,6 +78,39 @@ def test_wide_stack_condition_chain_refuses_missing_low_word_decision() -> None:
 
     assert result.condition is None
     assert result.stats.materialized_count == 0
+
+
+def test_reachable_conditions_do_not_compare_symbolic_operands() -> None:
+    class SymbolicOperand:
+        def __eq__(self, _other: object) -> bool:
+            raise AssertionError("CFG node traversal must not compare operands")
+
+    second = ConditionIR(
+        op="eq",
+        lhs=SymbolicOperand(),
+        rhs=0,
+        block_addr=0x1010,
+        taken_target=0x1020,
+        fallthrough_target=0x1030,
+    )
+    root = ConditionIR(
+        op="eq",
+        lhs=SymbolicOperand(),
+        rhs=0,
+        block_addr=0x1000,
+        taken_target=0x1010,
+        fallthrough_target=0x1030,
+    )
+
+    result = reachable_wide_stack_conditions_8616(
+        root,
+        {0x1000: root, 0x1010: second},
+        {},
+    )
+
+    assert len(result) == 2
+    assert result[0] is root
+    assert result[1] is second
 
 
 def test_wide_stack_single_body_recovers_signed_less_than() -> None:

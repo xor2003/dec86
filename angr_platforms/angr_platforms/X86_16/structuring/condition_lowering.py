@@ -36,12 +36,12 @@ if TYPE_CHECKING:
     from angr.analyses.decompiler.structured_codegen.c import CConstant, CExpression
 
 __all__ = [
-    "lower_typed_condition_to_c_expr_8616",
-    "lower_ir_value_to_c_expr_8616",
+    "attach_condition_segment_access_provenance_8616",
     "condition_op_to_structured_kind_8616",
     "condition_origin_tags_8616",
     "condition_segment_access_tags_8616",
-    "attach_condition_segment_access_provenance_8616",
+    "lower_ir_value_to_c_expr_8616",
+    "lower_typed_condition_to_c_expr_8616",
     "materialize_indexed_segmented_condition_value_8616",
     "materialize_typed_condition_stack_operand_8616",
     "stable_stack_condition_binding_tags_8616",
@@ -50,7 +50,7 @@ __all__ = [
 _SOURCE_INSTRUCTION_ADDRS_TAG_8616 = "inertia_source_instruction_addrs"
 
 
-def _make_c_constant_8616(value: int, codegen: object, signed: bool = False) -> "CConstant":
+def _make_c_constant_8616(value: int, codegen: object, signed: bool = False) -> CConstant:
     """Create a structured-codegen CConstant node."""
     from angr.analyses.decompiler.structured_codegen.c import CConstant
     from angr.sim_type import SimTypeShort
@@ -148,7 +148,7 @@ def _condition_segment_accesses_8616(
 
 
 def attach_condition_segment_access_provenance_8616(
-    expression: "CExpression",
+    expression: CExpression,
     condition: ConditionIR,
 ) -> int:
     """Carry exact operand access provenance onto matching segment helpers.

@@ -1,8 +1,14 @@
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
 from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.alias.logical_stack_memory_projection import (
+    LogicalStackMemoryAliasFailure8616,
+    LogicalStackMemoryAliasRefusal8616,
+)
 from angr_platforms.X86_16.alias.stack_memory_ssa import build_x86_16_stack_memory_ssa_alias_artifact
+from angr_platforms.X86_16.alias.stack_memory_ssa_contracts import StackMemoryAliasStats8616
 from angr_platforms.X86_16.analysis.stack_frame_ir import (
     BPFrameCoordinateEvidence8616,
     FrameAccessArtifact,
@@ -25,6 +31,9 @@ from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
 from angr_platforms.X86_16.ir.ssa_memory_contracts import SSAMemoryOverlapRelation8616
 from angr_platforms.X86_16.lowering.stack_memory_ssa import (
     lower_x86_16_stack_memory_ssa_alias_artifact,
+)
+from angr_platforms.X86_16.lowering.stack_memory_ssa_contracts import (
+    StackMemorySSALoweringRefusalKind8616,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.widening.stack_memory_objects import (
@@ -116,6 +125,36 @@ def test_stack_memory_object_widening_refuses_partial_overlap_component() -> Non
     }
 
 
+def test_logical_alias_refusal_survives_widening_and_lowering() -> None:
+    source = _alias_for_blocks(IRBlock(addr=0x1000))
+    logical_refusal = LogicalStackMemoryAliasRefusal8616(
+        LogicalStackMemoryAliasFailure8616.MISSING_EXECUTION_SLICE,
+        "logical operand has no exact execution slice",
+    )
+    source = replace(
+        source,
+        logical_refusals=(logical_refusal,),
+        logical_stats=StackMemoryAliasStats8616(raw_fact_count=1, failure_count=1),
+    )
+
+    widening = build_x86_16_stack_memory_object_widening_artifact(source)
+
+    assert widening.complete is True
+    assert widening.stats.raw_fact_count == widening.stats.failure_count == 1
+    assert widening.refusals[0].kind is StackMemoryObjectWideningRefusalKind8616.SOURCE_LOGICAL_ALIAS_REFUSAL
+    assert widening.refusals[0].source_logical_refusal is logical_refusal
+
+    codegen = SimpleNamespace(
+        _inertia_stack_memory_ssa_alias_artifact=source,
+        _inertia_stack_memory_object_widening_artifact=widening,
+    )
+    lowered = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
+
+    assert lowered is not None and lowered.complete is True
+    assert lowered.stats.raw_fact_count == lowered.stats.failure_count == 1
+    assert lowered.refusals[0].kind is StackMemorySSALoweringRefusalKind8616.SOURCE_WIDENING_REFUSAL
+
+
 def test_stack_memory_object_widening_accepts_non_laminar_views_with_unique_owner() -> None:
     owner = _bp_slot(-8, 4)
     low_word = _bp_slot(-8, 2)
@@ -176,6 +215,8 @@ def test_stack_memory_lowering_materializes_non_laminar_unique_owner_atomically(
             )
         ),
         next_idx=lambda _name: 1,
+        next_ident=lambda name: f"{name}_0",
+        next_node_idx=lambda: 1,
     )
 
     artifact = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)

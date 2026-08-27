@@ -328,7 +328,7 @@ def _prune_return_address_stack_arguments_8616(project: SimpleNamespace, codegen
 
         def _should_drop_arg(variable: object, stack_specs: Mapping[object, object]) -> bool:
             slot_offset = _return_address_stack_offset(variable)
-            if slot_offset != 0:
+            if slot_offset != 0:  # noqa: SIM103
                 return False
             # BP+2 is the near return IP, not a source-level argument. Metadata
             # can label object-file stack slots with a different bias, but it
@@ -448,10 +448,8 @@ def _prune_return_address_stack_arguments_8616(project: SimpleNamespace, codegen
         def _sync_arg_name(arg: Any, variable: Any, arg_name: str | None) -> None:
             if arg_name is None:
                 return
-            try:
+            with contextlib.suppress(Exception):
                 arg.name = arg_name
-            except Exception:
-                pass
             if variable is not None and getattr(variable, "name", None) != arg_name:
                 variable.name = arg_name
             unified = getattr(arg, "unified_variable", None)
@@ -512,20 +510,22 @@ def _prune_return_address_stack_arguments_8616(project: SimpleNamespace, codegen
             return changed_body or changed_maps
 
         kept_args = []
-        changed = False
+        args_changed = False
         for arg in arg_list:
             variable = getattr(arg, "variable", None)
             _debug_stack_variable("arg_list", variable)
             if _should_drop_arg(variable, stack_specs):
-                changed = True
+                args_changed = True
                 continue
             kept_args.append(arg)
 
         changed_body = _prune_return_address_body_assignments(codegen.cfunc)
         changed_maps = _prune_return_address_variable_maps()
-        changed = changed_body or changed_maps or changed
+        changed = changed_body or changed_maps or args_changed
         if not changed:
             return False
+        if not args_changed:
+            return True
         codegen.cfunc.arg_list = kept_args
         proto_args = list(getattr(prototype, "args", ()) or ())
         arg_types, arg_names = _build_proto_args_and_names(
@@ -812,9 +812,7 @@ def _repair_unresolved_function_exit_gotos_8616(project: Any, codegen: Any) -> b
                 return False
             if min_block_addr is None or max_block_addr is None:
                 return False
-            if target < min_block_addr or target > max_block_addr:
-                return True
-            return False
+            return bool(target < min_block_addr or target > max_block_addr)
 
         changed = False
 
@@ -834,7 +832,7 @@ def _repair_unresolved_function_exit_gotos_8616(project: Any, codegen: Any) -> b
                 candidate_return = CReturn(None, codegen=codegen)
                 replaced = _replace_c_children_8616(
                     root,
-                    lambda node: candidate_return if node is goto else node,
+                    lambda node: candidate_return if node is goto else node,  # noqa: B023
                 )
                 if replaced:
                     changed = True
@@ -1107,7 +1105,7 @@ def _promote_stack_prototype_from_bp_loads_8616(project: SimpleNamespace, codege
         existing_args = list(getattr(codegen.cfunc, "arg_list", ()) or ())
         promote_near_pointers = True
 
-        annotations, source_pointer_flags, stack_specs, annotated_args = _collect_stack_promotion_inputs_8616(func)
+        annotations, source_pointer_flags, _stack_specs, annotated_args = _collect_stack_promotion_inputs_8616(func)
         if not source_pointer_flags:
             source_pointer_flags = _prototype_pointer_flags_for_codegen_function_8616(project, func_addr)
         if os.environ.get("INERTIA_DEBUG_X87_PROTO") == "1":
@@ -1255,7 +1253,7 @@ def _promote_positive_bp_stack_slots_to_args_8616(project: SimpleNamespace, code
             # Dynamic angr/codegen compatibility boundary.
             tuple(current_proto.args or ()),
             # Dynamic angr/codegen compatibility boundary.
-            tuple(current_proto.arg_names or ()),
+            tuple(current_proto.arg_names or ()), strict=False,
         ):
             if isinstance(arg_name, str) and arg_name and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", arg_name):
                 source_arg_names_by_offset.setdefault(cursor, arg_name)
@@ -1420,7 +1418,7 @@ def _promote_positive_bp_stack_slots_to_args_8616(project: SimpleNamespace, code
         arg_names.append(name if isinstance(name, str) and name else f"arg_{index}")
     existing_args = list(getattr(cfunc, "arg_list", ()) or ())
     if len(existing_args) != len(desired_args) or any(
-        existing is not desired for existing, desired in zip(existing_args, desired_args)
+        existing is not desired for existing, desired in zip(existing_args, desired_args, strict=False)
     ):
         cfunc.arg_list = desired_args
         changed = True
@@ -1621,7 +1619,7 @@ def _sync_arg_list_from_prototype_stack_layout_8616(
 
         existing_args = list(getattr(cfunc, "arg_list", ()) or ())
         if len(existing_args) != len(desired_args) or any(
-            existing is not desired for existing, desired in zip(existing_args, desired_args)
+            existing is not desired for existing, desired in zip(existing_args, desired_args, strict=False)
         ):
             cfunc.arg_list = desired_args
             changed = True
@@ -1630,7 +1628,7 @@ def _sync_arg_list_from_prototype_stack_layout_8616(
             prototype_dynamic = cast(Any, prototype)
             return_type = prototype_dynamic.returnty
             # Dynamic angr/codegen compatibility boundary.
-            if any(isinstance(arg_type, SimTypeLong) and not getattr(arg_type, "signed", True) for arg_type in proto_args):
+            if any(isinstance(arg_type, SimTypeLong) and not getattr(arg_type, "signed", True) for arg_type in proto_args):  # noqa: SIM102
                 if isinstance(return_type, SimTypeLong):
                     return_type = SimTypeLong(False).with_arch(project.arch)
             active_prototype = prototype_dynamic.__class__(
@@ -2793,8 +2791,8 @@ def _return_value_is_unresolved_synthetic_carrier_component_8616(expr: object) -
         return _is_unresolved_synthetic_carrier_name_8616(name) or (
             _is_generated_stack_local_carrier_name_8616(name)
             or _is_generated_stack_local_carrier_variable_8616(expr)
-            or isinstance(name, str)
-            and re.fullmatch(r"ss|ds|es", name) is not None
+            or (isinstance(name, str)
+            and re.fullmatch(r"ss|ds|es", name) is not None)
         )
     if isinstance(expr, CIndexedVariable):
         return _return_value_is_unresolved_synthetic_carrier_component_8616(
@@ -2929,7 +2927,7 @@ def _promote_from_legacy_arg_names_8616(
         if not getattr(codegen, "cfunc", None):
             return False
         stack_slots_by_offset: dict[int, _StackSlotIdentity] = {}
-        for variable, _cvar in getattr(codegen.cfunc, "variables_in_use", {}).items():
+        for variable in getattr(codegen.cfunc, "variables_in_use", {}):
             if not isinstance(variable, SimStackVariable):
                 continue
             identity = _stack_slot_identity_for_variable(variable)
@@ -3520,7 +3518,7 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
                 exact_stack_candidates.setdefault(offset, []).append((score, cvar))
 
         for offset, candidates in exact_stack_candidates.items():
-            best_score, best_cvar = max(candidates, key=lambda item: item[0])
+            _best_score, best_cvar = max(candidates, key=lambda item: item[0])
             stack_vars_by_offset[offset] = best_cvar
 
         materialized_stack_cvars: dict[int, CVariable] = {}
@@ -3552,10 +3550,7 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
                     stack_specs=stack_specs,
                 )
             candidate_offsets: tuple[int, ...]
-            if offset < 0:
-                candidate_offsets = (offset, offset + 2, offset - 2)
-            else:
-                candidate_offsets = (offset,)
+            candidate_offsets = (offset, offset + 2, offset - 2) if offset < 0 else (offset,)
             return select_stack_annotation_spec_8616(
                 binding,
                 stack_specs=stack_specs,
@@ -3622,7 +3617,7 @@ def _apply_annotations_8616(project: SimpleNamespace, codegen: SimpleNamespace) 
                 size = variable.size
                 if not isinstance(base_offset, int) or not isinstance(size, int):
                     continue
-                if base_offset <= offset < base_offset + size:
+                if base_offset <= offset < base_offset + size:  # noqa: SIM102
                     if best_size is None or size < best_size:
                         best = cvar
                         best_size = size
@@ -3720,10 +3715,7 @@ def _rename_stack_variables_from_specs_8616(
             offset = variable.offset
             candidate_offsets: tuple[int, ...]
             if offset > 0:
-                if positive_specs_are_normalized:
-                    candidate_offsets = (offset - 2, offset)
-                else:
-                    candidate_offsets = (offset,)
+                candidate_offsets = (offset - 2, offset) if positive_specs_are_normalized else (offset,)
                 helper_name = helper_arg_name_by_offset.get(offset)
                 if helper_name is not None:
                     return helper_name, None
@@ -3832,7 +3824,7 @@ def _sync_arg_list_from_annotations_8616(
         specs_are_normalized = _positive_stack_specs_are_normalized_for_codegen_8616(stack_specs, codegen)
         arg_offsets = [offset + 2 if specs_are_normalized else offset for offset in raw_arg_offsets]
         arg_offsets_set = set(arg_offsets)
-        raw_offset_by_codegen_offset = dict(zip(arg_offsets, raw_arg_offsets))
+        raw_offset_by_codegen_offset = dict(zip(arg_offsets, raw_arg_offsets, strict=False))
         if not arg_offsets:
             return False
         known_positive_stack_offsets = {
@@ -4004,7 +3996,7 @@ def _sync_arg_list_from_annotations_8616(
             len(existing_args) == target_arg_count
             and len(getattr(current_proto, "args", ()) or ()) == target_arg_count
             and list(getattr(current_proto, "arg_names", ()) or ()) == normalized_names
-            and all(existing is resolved for existing, resolved in zip(existing_args, resolved_args))
+            and all(existing is resolved for existing, resolved in zip(existing_args, resolved_args, strict=False))
             and not pointer_promoted
             and not scalar_materialized
             and not name_changed
@@ -4259,7 +4251,7 @@ def _apply_annotation_rewrites_8616(
                     if low_cvar is not None and high_cvar is not None:
                         low_var = getattr(low_cvar, "variable", None)
                         high_var = getattr(high_cvar, "variable", None)
-                        if isinstance(low_var, SimStackVariable) and isinstance(high_var, SimStackVariable):
+                        if isinstance(low_var, SimStackVariable) and isinstance(high_var, SimStackVariable):  # noqa: SIM102
                             if not _stack_slot_identity_can_join(low_var, high_var):
                                 continue
                     if low_cvar is not None:
@@ -4303,7 +4295,7 @@ def _apply_helper_signature_annotation_8616(
             if isinstance(stripped_decl, str) and stripped_decl:
                 existing = tuple(getattr(codegen, "_inertia_callsite_prototype_decls", ()) or ())
                 if stripped_decl not in existing:
-                    codegen._inertia_callsite_prototype_decls = existing + (stripped_decl,)
+                    codegen._inertia_callsite_prototype_decls = (*existing, stripped_decl)
                     changed = True
         helper_decl = preferred_known_helper_signature_decl(func_name) if isinstance(func_name, str) else None
         if helper_decl is None:

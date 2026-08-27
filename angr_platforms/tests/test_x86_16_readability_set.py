@@ -11,7 +11,7 @@ def test_x86_16_golden_readability_set_names_expected_cases() -> None:
     cases = describe_x86_16_golden_readability_set()
 
     assert [case.proc_name for case in cases] == ["_mset_pos", "_ChangeWeather", "_start", "_max", "_ConfigCrts"]
-    assert GOLDEN_READABILITY_SET == cases
+    assert cases == GOLDEN_READABILITY_SET
 
 
 def test_x86_16_golden_readability_set_carries_anchor_counts() -> None:

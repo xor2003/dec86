@@ -10,7 +10,7 @@ import os
 import sys
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -40,6 +40,13 @@ class WorkItemStatus(StrEnum):
     UNCOLLECTED = "uncollected"
     TIMEOUT = "timeout"
     EMPTY = "empty"
+
+
+class FunctionWorkExecutionOrigin8616(StrEnum):
+    """Execution boundary that produced one function-work result."""
+
+    IN_PROCESS = "in_process"
+    CLEAN_PROCESS = "clean_process"
 
 
 class TailValidationDisplayOutcome(StrEnum):
@@ -81,7 +88,7 @@ def _tail_validation_to_item_status(
     return WorkItemStatus.UNCOLLECTED
 
 
-def _work_item_status_display(result: "WorkItemStatus | str") -> WorkItemStatus:
+def _work_item_status_display(result: WorkItemStatus | str) -> WorkItemStatus:
     if isinstance(result, WorkItemStatus):
         return result
     try:
@@ -129,12 +136,15 @@ class FunctionWorkItem:
 
     ``recovery_addr`` preserves the requested binary/catalog boundary when an
     angr function canonicalizes its active address past padding or a prefix.
+    ``retained_project`` keeps a freshly recovered function's weak angr owner
+    alive for in-process retries; worker IPC must continue to rebuild projects.
     """
 
     index: int
     function_cfg: Any
     function: Any
     recovery_addr: int | None = None
+    retained_project: Any | None = field(default=None, repr=False, compare=False)
 
     @property
     def c_target(self) -> str:
@@ -184,7 +194,7 @@ class FunctionWorkItem:
 
 @dataclass(frozen=True)
 class FunctionWorkResult:
-    """Reported result for a function work item."""
+    """Reported result plus its retry-relevant execution provenance."""
 
     index: int
     status: str
@@ -206,6 +216,16 @@ class FunctionWorkResult:
     gcc_checked_payload_hash: str | None = None
     segment_program_function_evidence: SegmentProgramFunctionEvidence8616 | None = None
     failure_family_snapshot: FailureFamilySnapshot | None = None
+    execution_origin: FunctionWorkExecutionOrigin8616 = (
+        FunctionWorkExecutionOrigin8616.IN_PROCESS
+    )
+
+    def retry_may_change_evidence(self, *, sidecar_available: bool) -> bool:
+        """Return whether a recovery retry can consume distinct evidence."""
+        return (
+            self.execution_origin is not FunctionWorkExecutionOrigin8616.CLEAN_PROCESS
+            or sidecar_available
+        )
 
 
 def emit_tail_validation_for_function_run_or_uncollected(

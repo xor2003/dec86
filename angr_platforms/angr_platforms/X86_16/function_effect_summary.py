@@ -6,8 +6,8 @@ Forbidden: creating proof, hiding unknowns, or changing recovered output.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping, TypeAlias
 
 __all__ = [
     "FunctionEffectSummary",
@@ -86,7 +86,7 @@ class FunctionEffectSummary:
         }
 
 
-FunctionEffectSource: TypeAlias = Mapping[str, object]
+type FunctionEffectSource = Mapping[str, object]
 
 
 def _value(source: FunctionEffectSource, name: str, default: object) -> object:

@@ -13,11 +13,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TypeAlias
 
 from ..ir import AddressStatus, IRAddress, MemSpace
 
-MemoryOutputKey8616: TypeAlias = tuple[MemSpace, int, int]
+type MemoryOutputKey8616 = tuple[MemSpace, int, int]
 
 
 class TerminalMemoryOutputDisposition8616(StrEnum):

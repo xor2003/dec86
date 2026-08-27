@@ -10,7 +10,6 @@ This module exists to keep stack lowering from depending on postprocess
 compatibility utilities.  It may recognize C AST carriers for stack addresses
 only as an input to lowering-owned stack-slot materialization.
 """
-# ruff: noqa: ANN001, ANN202
 
 from __future__ import annotations
 
@@ -131,7 +130,7 @@ def _single_assignment_expr_for_variable_8616(codegen: object, target: object) -
             nested_statements = getattr(current, "statements", None)
             if isinstance(nested_statements, (list, tuple)):
                 for item in reversed(tuple(nested_statements)):
-                    stack.append(item)
+                    stack.append(item)  # noqa: PERF402
 
             body = getattr(current, "body", None)
             if body is not None:
@@ -146,7 +145,7 @@ def _single_assignment_expr_for_variable_8616(codegen: object, target: object) -
                 for pair in reversed(tuple(condition_and_nodes)):
                     if isinstance(pair, tuple):
                         for item in reversed(pair):
-                            stack.append(item)
+                            stack.append(item)  # noqa: PERF402
 
     matches = []
     for stmt in _iter_statement_nodes(root):

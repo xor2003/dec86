@@ -761,7 +761,7 @@ def _should_skip_scan_safe_back_edge(capstone_block: object, mode: str, max_loop
 
         for insn in block:
             mnemonic = _dynamic_corpus_scan_getattr_8616(insn, "mnemonic", "")
-            if not (mnemonic.startswith("j") or mnemonic.startswith("loop")):
+            if not (mnemonic.startswith(("j", "loop"))):
                 continue
 
             operands = _dynamic_corpus_scan_getattr_8616(insn, "operands", ())
@@ -849,7 +849,7 @@ def _sorted_top_8616(counter: Counter[Any], key_name: str) -> list[dict[str, obj
 def _sorted_top_tuples_8616(counter: Counter[Any], field_names: tuple[str, ...]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for keys, count in sorted(counter.items(), key=lambda item: (-item[1], item[0])):
-        row: dict[str, object] = {field: value for field, value in zip(field_names, keys, strict=False)}
+        row: dict[str, object] = dict(zip(field_names, keys, strict=False))
         row["count"] = count
         rows.append(row)
     return rows
@@ -1236,7 +1236,7 @@ def scan_function(
             try:
                 project = project_from_bytes(code)
                 _mark_stage(result, "load", True)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 failure_class, reason = classify_failure("load", exc)
                 return _fail_scan_stage(result, stage="load", failure_class=failure_class, reason=reason)
 
@@ -1245,7 +1245,7 @@ def scan_function(
             if mode == "scan-safe" and max_cfg_bytes > 0:
                 try:
                     _probe_scan_safe_lift(code, mode, max_cfg_bytes)
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     failure_class, reason = classify_failure("lift", exc)
                     return _fail_scan_stage(result, stage="lift", failure_class=failure_class, reason=reason)
 
@@ -1264,9 +1264,9 @@ def scan_function(
                 return prefix_skip
 
             try:
-                project.factory.block(0x1000, len(code)).vex
+                project.factory.block(0x1000, len(code)).vex  # noqa: B018
                 _mark_stage(result, "lift", True)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 failure_class, reason = classify_failure("lift", exc)
                 return _fail_scan_stage(result, stage="lift", failure_class=failure_class, reason=reason)
 
@@ -1326,7 +1326,7 @@ def scan_function(
                 seed_calling_conventions(cfg)
                 func = cast(Any, cfg).functions[0x1000]
                 _mark_stage(result, "cfg", True)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 failure_class, reason = classify_failure("cfg", exc)
                 return _fail_scan_stage(
                     result,
@@ -1426,7 +1426,7 @@ def scan_function(
                 result.ok = True
                 _mark_stage(result, "decompile", True)
                 return _finish_scan(result)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 failure_class, reason = classify_failure(
                     "decompile",
                     exc,
@@ -1462,16 +1462,16 @@ __all__ = [
     "FunctionScanResult",
     "ScanTimeout",
     "StageResult",
+    "_classify_readability_cluster",
     "_clear_alarm",
+    "_should_skip_scan_safe_back_edge",
+    "_should_skip_scan_safe_call_chain",
+    "_should_skip_scan_safe_cfg",
+    "_should_skip_scan_safe_decompile",
+    "_should_skip_scan_safe_decompile_for_cfg_shape",
     "classify_failure",
     "extract_cod_functions",
     "scan_function",
     "set_memory_limit",
     "summarize_results",
-    "_should_skip_scan_safe_decompile",
-    "_should_skip_scan_safe_cfg",
-    "_should_skip_scan_safe_back_edge",
-    "_should_skip_scan_safe_call_chain",
-    "_should_skip_scan_safe_decompile_for_cfg_shape",
-    "_classify_readability_cluster",
 ]

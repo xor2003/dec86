@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import cast
 
-from angr.analyses.decompiler.structuring.structurer_nodes import SequenceNode
+from angr.analyses.decompiler.structurer_nodes import SequenceNode
 
 __all__ = [
     "TypedSwitchSeqNodeRefusal8616",
@@ -171,7 +171,6 @@ def _register_expression_8616(project: object | None, payload: object) -> object
         return None
     try:
         from angr.ailment import Expr
-        from angr.sim_variable import SimRegisterVariable
     except ImportError:
         return None
     bits = size * 8
@@ -179,7 +178,6 @@ def _register_expression_8616(project: object | None, payload: object) -> object
         object | None,
         Expr.Register(
             None,
-            SimRegisterVariable(offset, size, name=name),
             offset,
             bits,
             reg_name=name,
@@ -305,7 +303,7 @@ def materialize_typed_switch_seqnode_8616(
             attempted=True,
         )
     try:
-        from angr.analyses.decompiler.structuring.structurer_nodes import SwitchCaseNode
+        from angr.analyses.decompiler.structurer_nodes import SwitchCaseNode
     except ImportError as exc:
         return _refusal_8616(
             TypedSwitchSeqNodeRefusal8616.SWITCH_CASE_NODE_UNAVAILABLE,

@@ -6,6 +6,7 @@ import pytest
 from angr.sim_type import (
     SimStruct,
     SimTypeChar,
+    SimTypeFunction,
     SimTypeLong,
     SimTypeShort,
 )
@@ -175,6 +176,21 @@ def test_pointer_slot_preserves_proven_near_pointee_type() -> None:
     assert isinstance(result.sim_type, SimTypeNearPointer16_8616)
     assert result.sim_type.pts_to == item_type
     assert result.c_type == "struct Item *"
+
+
+def test_near_pointer_supports_angr_recursive_architecture_binding() -> None:
+    """Function-type rebinding must pass angr's shared recursive-type memo."""
+    arch = Arch86_16()
+    prototype = SimTypeFunction(
+        [SimTypeNearPointer16_8616(SimTypeChar(False))],
+        SimTypeShort(False),
+    ).with_arch(arch)
+
+    pointer = prototype.args[0]
+    assert isinstance(pointer, SimTypeNearPointer16_8616)
+    assert pointer.size == 16
+    assert pointer._arch is arch
+    assert pointer.pts_to._arch is arch
 
 
 def test_empty_output_is_unproven_and_multiple_outputs_refuse() -> None:

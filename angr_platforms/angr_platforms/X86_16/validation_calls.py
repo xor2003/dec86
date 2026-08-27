@@ -9,10 +9,10 @@ mutation, or treating validation findings as repair instructions.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Protocol, Sequence, cast
+from typing import Any, Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CFunctionCall
 from angr.sim_type import (
@@ -39,7 +39,11 @@ from .helper_abi import (
     known_helper_is_variadic_8616,
     known_helper_logical_argument_widths_8616,
 )
-from .lowering.call_argument_shape import accounted_target_prototype_shape_evidence_8616
+from .lowering.call_argument_shape import (
+    accounted_target_prototype_shape_evidence_8616,
+    accounted_variadic_target_shape_evidence_8616,
+    exact_call_return_pair_shape_evidence_8616,
+)
 from .lowering.near_pointer_argument import NearPointerArgumentFact8616
 from .lowering.return_type_evidence import (
     FunctionReturnClass8616,
@@ -63,17 +67,17 @@ __all__ = [
     "CallInterfaceIssue8616",
     "CallInterfaceIssueKind8616",
     "CallInterfaceValidationReport8616",
-    "FunctionReturnClassIssue8616",
-    "FunctionReturnClassIssueKind8616",
-    "FunctionReturnClassValidationReport8616",
     "FunctionParameterIssue8616",
     "FunctionParameterIssueKind8616",
     "FunctionParameterValidationReport8616",
+    "FunctionReturnClassIssue8616",
+    "FunctionReturnClassIssueKind8616",
+    "FunctionReturnClassValidationReport8616",
     "RequiredCallsiteValidationReport8616",
     "validate_call_argument_classes_8616",
     "validate_call_interfaces_8616",
-    "validate_function_return_class_8616",
     "validate_function_parameters_8616",
+    "validate_function_return_class_8616",
     "validate_required_callsites_8616",
 ]
 
@@ -94,12 +98,14 @@ class _AddressedCalleeSurface8616(Protocol):
     """Minimal third-party callee identity used for exact target matching."""
 
     addr: object
+    name: object
 
 
 class _PrototypedCalleeSurface8616(Protocol):
     """Third-party callee prototype used to validate logical argument widths."""
 
     prototype: object
+    is_prototype_guessed: bool
 
 
 class _TypedCExpressionSurface8616(Protocol):
@@ -334,7 +340,7 @@ class CallArgumentClassValidationReport8616:
         return tuple(issue.token() for issue in self.issues)
 
 
-@dataclass(frozen=True, order=True, slots=True)
+@dataclass(frozen=True, slots=True)
 class CallInterfaceIssue8616:
     """One mismatch between binary callsite evidence and a final C call."""
 
@@ -343,14 +349,34 @@ class CallInterfaceIssue8616:
     target_addr: int
     expected_argument_count: int
     actual_argument_count: int | None
+    physical_argument_widths: tuple[int, ...] = ()
+    logical_argument_widths: tuple[int, ...] = ()
+    actual_argument_widths: tuple[int, ...] | None = None
+    prototype_argument_widths: tuple[int, ...] | None = None
+    prototype_variadic: bool | None = None
 
     def token(self) -> str:
         """Return a deterministic failure token for tail-validation reports."""
         actual = "unknown" if self.actual_argument_count is None else str(self.actual_argument_count)
+        physical_widths = ",".join(str(width) for width in self.physical_argument_widths) or "none"
+        logical_widths = ",".join(str(width) for width in self.logical_argument_widths) or "none"
+        actual_widths = (
+            "unknown"
+            if self.actual_argument_widths is None
+            else ",".join(str(width) for width in self.actual_argument_widths) or "none"
+        )
+        prototype_widths = (
+            "unknown"
+            if self.prototype_argument_widths is None
+            else ",".join(str(width) for width in self.prototype_argument_widths) or "none"
+        )
+        variadic = "unknown" if self.prototype_variadic is None else str(self.prototype_variadic).lower()
         return (
             f"call-interface:{self.kind}:callsite={self.callsite_addr:#x}:"
             f"target={self.target_addr:#x}:expected-argc={self.expected_argument_count}:"
-            f"actual-argc={actual}"
+            f"actual-argc={actual}:physical-widths={physical_widths}:"
+            f"logical-widths={logical_widths}:actual-widths={actual_widths}:"
+            f"prototype-widths={prototype_widths}:prototype-variadic={variadic}"
         )
 
 
@@ -501,7 +527,7 @@ def _final_function_parameters_8616(
     if len(arg_types) != len(arg_list):
         return normalized_addr, None
     by_offset: dict[int, SimType] = {}
-    for cvar, arg_type in zip(arg_list, arg_types):
+    for cvar, arg_type in zip(arg_list, arg_types, strict=False):
         try:
             variable = cast(_CVariableStorageSurface8616, cvar).variable
         except AttributeError:
@@ -1042,10 +1068,13 @@ def _expected_call_argument_count_8616(
             callee = functions.function(addr=summary.target_addr, create=False)
         except (AttributeError, TypeError):
             callee = None
-    name = call.callee_target
-    if not isinstance(name, str) and callee is not None:
-        # Dynamic angr C-AST boundary: callee function names are optional.
-        name = getattr(callee, "name", None)
+    try:
+        # angr renders this third-party identity before the fallback target.
+        name = cast(_AddressedCalleeSurface8616, callee).name if callee is not None else None
+    except AttributeError:
+        name = None
+    if not isinstance(name, str):
+        name = call.callee_target
     helper_name = name if isinstance(name, str) else None
     helper_widths = known_helper_logical_argument_widths_8616(helper_name)
     metadata_name: str | None = None
@@ -1063,8 +1092,13 @@ def _expected_call_argument_count_8616(
         return logical_argument_count
     if callee is not None:
         try:
-            prototype = cast(Any, callee).prototype
-            if isinstance(prototype, SimTypeFunction) and isinstance(prototype.args, Sequence):
+            callee_surface = cast(_PrototypedCalleeSurface8616, callee)
+            prototype = callee_surface.prototype
+            if (
+                not callee_surface.is_prototype_guessed
+                and isinstance(prototype, SimTypeFunction)
+                and isinstance(prototype.args, Sequence)
+            ):
                 return len(prototype.args)
         except AttributeError:
             pass
@@ -1119,27 +1153,31 @@ def _materialized_argument_widths_8616(
     return tuple(widths)
 
 
-def _target_prototype_argument_widths_8616(
+def _target_prototype_argument_shape_8616(
     call: CFunctionCall,
     project: object,
     target_addr: int | None = None,
-) -> tuple[int, ...] | None:
-    """Return exact byte widths from the materialized call target prototype."""
+) -> tuple[tuple[int, ...], bool] | None:
+    """Return fixed byte widths and variadic status from the target prototype."""
     callee = call.callee_func
-    if callee is None:
-        if isinstance(target_addr, int):
-            try:
-                functions = cast(Any, cast(Any, project).kb).functions
-                callee = functions.function(addr=target_addr, create=False)
-            except (AttributeError, TypeError):
-                callee = None
+    if callee is None and isinstance(target_addr, int):
+        try:
+            functions = cast(Any, cast(Any, project).kb).functions
+            callee = functions.function(addr=target_addr, create=False)
+        except (AttributeError, TypeError):
+            callee = None
     if callee is None:
         return None
     try:
-        prototype = cast(_PrototypedCalleeSurface8616, callee).prototype
-        prototype_args = cast(SimTypeFunction, prototype).args
+        callee_surface = cast(_PrototypedCalleeSurface8616, callee)
+        prototype = callee_surface.prototype
+        if callee_surface.is_prototype_guessed:
+            return None
     except AttributeError:
         return None
+    if not isinstance(prototype, SimTypeFunction):
+        return None
+    prototype_args = prototype.args
     if not isinstance(prototype_args, Sequence) or isinstance(prototype_args, (str, bytes)):
         return None
     widths: list[int] = []
@@ -1148,7 +1186,7 @@ def _target_prototype_argument_widths_8616(
         if width is None:
             return None
         widths.append(width)
-    return tuple(widths)
+    return tuple(widths), prototype.variadic
 
 
 def _materialized_arguments_8616(call: CFunctionCall) -> tuple[object, ...] | None:
@@ -1159,18 +1197,6 @@ def _materialized_arguments_8616(call: CFunctionCall) -> tuple[object, ...] | No
     if isinstance(args, Sequence) and not isinstance(args, (str, bytes)):
         return tuple(args)
     return None
-
-
-def _contains_wide_nested_call_8616(call: CFunctionCall, project: object) -> bool:
-    """Return whether a final argument contains a typed multiword call result."""
-    for argument in _materialized_arguments_8616(call) or ():
-        for node in _iter_c_nodes_deep_8616(argument):
-            if not isinstance(node, CFunctionCall) or node is call:
-                continue
-            width = _type_width_bytes_8616(node.type, project)
-            if width is not None and width > 2:
-                return True
-    return False
 
 
 def _materialized_argument_class_8616(
@@ -1229,7 +1255,7 @@ def validate_call_argument_classes_8616(
         arguments = _materialized_arguments_8616(match.call)
         if arguments is None or len(arguments) != len(dependencies):
             continue
-        facts = call_argument_source_dependency_facts_8616(match.summary, arguments)
+        facts = call_argument_source_dependency_facts_8616(codegen, match.summary, arguments)
         normalized_source_fact_count += len(facts)
         source_facts.extend((match, fact) for fact in facts)
     issues: list[CallArgumentClassIssue8616 | CallArgumentSourceIssue8616] = []
@@ -1332,47 +1358,41 @@ def validate_call_interfaces_8616(
             continue
         if actual_count != expected_count:
             live_widths = _materialized_argument_widths_8616(match.call, project)
-            prototype_widths = _target_prototype_argument_widths_8616(
+            actual_arguments = _materialized_arguments_8616(match.call) or ()
+            return_pair_evidence = exact_call_return_pair_shape_evidence_8616(match.summary)
+            if (
+                return_pair_evidence is not None
+                and len(return_pair_evidence.widths) == actual_count
+                and all(
+                    isinstance(actual_arguments[index], CFunctionCall)
+                    or any(
+                        isinstance(node, CFunctionCall)
+                        for node in _iter_c_nodes_deep_8616(actual_arguments[index])
+                    )
+                    for index in return_pair_evidence.return_argument_indices
+                )
+            ):
+                materialized_count += 1
+                continue
+            prototype_shape = _target_prototype_argument_shape_8616(
                 match.call,
                 project,
                 target_addr,
             )
-            physical_widths = tuple(
-                width for width in match.summary.arg_widths if isinstance(width, int) and width > 0
-            )
-            if (
-                live_widths is not None
-                and len(live_widths) == actual_count
-                and len(physical_widths) == expected_count
-                and len(live_widths) < len(physical_widths)
-                and sum(live_widths) == sum(physical_widths)
-                and (
-                    prototype_widths is None
-                    or live_widths == prototype_widths
-                    or (
-                        prototype_widths is None
-                        and _contains_wide_nested_call_8616(match.call, project)
-                        and expected_count - actual_count == 1
-                    )
+            prototype_widths = prototype_shape[0] if prototype_shape is not None else None
+            prototype_variadic = prototype_shape[1] if prototype_shape is not None else False
+            grouped_evidence = None
+            if live_widths is not None and prototype_widths is not None:
+                evidence_factory = (
+                    accounted_variadic_target_shape_evidence_8616
+                    if prototype_variadic
+                    else accounted_target_prototype_shape_evidence_8616
                 )
-            ):
-                materialized_count += 1
-                continue
-            if (
-                expected_count - actual_count == 1
-                and _contains_wide_nested_call_8616(match.call, project)
-            ):
-                materialized_count += 1
-                continue
-            grouped_evidence = (
-                accounted_target_prototype_shape_evidence_8616(
+                grouped_evidence = evidence_factory(
                     match.summary,
                     live_widths,
                     prototype_widths,
                 )
-                if live_widths is not None
-                else None
-            )
             if grouped_evidence is not None and len(grouped_evidence.widths) == actual_count:
                 materialized_count += 1
                 continue
@@ -1383,6 +1403,13 @@ def validate_call_interfaces_8616(
                     target_addr=target_addr,
                     expected_argument_count=expected_count,
                     actual_argument_count=actual_count,
+                    physical_argument_widths=match.summary.arg_widths,
+                    logical_argument_widths=match.summary.logical_arg_widths,
+                    actual_argument_widths=live_widths,
+                    prototype_argument_widths=prototype_widths,
+                    prototype_variadic=(
+                        prototype_variadic if prototype_shape is not None else None
+                    ),
                 )
             )
             continue

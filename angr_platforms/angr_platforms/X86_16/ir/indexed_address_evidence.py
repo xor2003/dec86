@@ -26,6 +26,8 @@ from .indexed_address_contracts import (
     IndexedAddressRefusal8616,
     IndexedAddressStats8616,
 )
+from .logical_memory_contracts import IRLogicalMemoryArtifact8616
+from .logical_memory_value_trace import trace_logical_word_load_8616
 from .scalar_definitions import (
     ScalarDefinition8616,
     ScalarDefinitionIndex8616,
@@ -81,14 +83,16 @@ def _stable_stack_source_8616(instruction: IRInstr) -> IRAddress | None:
 def _trace_index_source_8616(
     value: IRValue,
     definitions: ScalarDefinitionIndex8616,
+    logical_memory: IRLogicalMemoryArtifact8616 | None,
     *,
+    function_addr: int,
     block_addr: int,
     before_index: int,
     shift: int = 0,
     path: tuple[IndexedAddressDefinitionSite8616, ...] = (),
     seen: frozenset[tuple[str, str | None, int, int, int | None]] = frozenset(),
 ) -> _TraceResult8616:
-    """Trace one versioned index through MOV/SHL to an exact stack LOAD."""
+    """Trace one versioned index through proven scalar definitions."""
     key = scalar_definition_key_8616(value)
     if key in seen:
         return _TraceResult8616(
@@ -127,6 +131,21 @@ def _trace_index_source_8616(
         return _TraceResult8616(source, shift, next_path, None)
 
     instruction = definition.instruction
+    if instruction.op == "Iop_Or16":
+        logical_trace = trace_logical_word_load_8616(
+            instruction,
+            definitions,
+            logical_memory,
+            function_addr=function_addr,
+            block_addr=block_addr,
+            before_index=definition.instr_index,
+        )
+        return _TraceResult8616(
+            logical_trace.source,
+            shift,
+            (*next_path, *logical_trace.definition_path),
+            logical_trace.failure,
+        )
     next_value: IRValue | None = None
     next_shift = shift
     if instruction.op == "MOV" and len(instruction.args) == 1:
@@ -159,6 +178,8 @@ def _trace_index_source_8616(
     return _trace_index_source_8616(
         next_value,
         definitions,
+        logical_memory,
+        function_addr=function_addr,
         block_addr=block_addr,
         before_index=definition.instr_index,
         shift=next_shift,
@@ -210,6 +231,8 @@ def collect_indexed_address_evidence_8616(
             trace = _trace_index_source_8616(
                 address.base_values[0],
                 definitions,
+                artifact.logical_memory,
+                function_addr=artifact.function_addr,
                 block_addr=access.block_addr,
                 before_index=access.instr_index,
             )

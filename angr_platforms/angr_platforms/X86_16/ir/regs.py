@@ -9,32 +9,51 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
-__all__ = ["REG16_OFFSET_MAP", "register_name_from_offset", "segment_space_for_base"]
+__all__ = ["REG16_OFFSET_MAP", "REG32_OFFSET_MAP", "register_name_from_offset", "segment_space_for_base"]
 
 
 REG16_OFFSET_MAP: dict[int, str] = {
     0: "ax",
-    2: "cx",
-    4: "dx",
-    6: "bx",
-    8: "sp",
-    10: "bp",
-    12: "si",
-    14: "di",
-    16: "ip",
-    18: "flags",
-    20: "cs",
-    22: "ds",
-    24: "es",
-    26: "fs",
-    28: "gs",
-    30: "ss",
+    4: "cx",
+    8: "dx",
+    12: "bx",
+    16: "sp",
+    20: "bp",
+    24: "si",
+    28: "di",
+    32: "ip",
+    36: "flags",
+    40: "cs",
+    42: "ds",
+    44: "es",
+    46: "fs",
+    48: "gs",
+    50: "ss",
+}
+
+REG32_OFFSET_MAP: dict[int, str] = {
+    0: "eax",
+    4: "ecx",
+    8: "edx",
+    12: "ebx",
+    16: "esp",
+    20: "ebp",
+    24: "esi",
+    28: "edi",
+    32: "eip",
+    36: "eflags",
+    164: "cr0",
+    168: "cr2",
+    172: "cr3",
 }
 
 
-def register_name_from_offset(offset: int) -> str:
-    """Return the 16-bit register name for a VEX register offset."""
-    return REG16_OFFSET_MAP.get(int(offset), f"r{offset}")
+def register_name_from_offset(offset: int, size: int = 2) -> str:
+    """Return the width-correct register view for a VEX offset and byte size."""
+    offset_value = int(offset)
+    if size == 4 and offset_value in REG32_OFFSET_MAP:
+        return REG32_OFFSET_MAP[offset_value]
+    return REG16_OFFSET_MAP.get(offset_value, f"r{offset}")
 
 
 def segment_space_for_base(name: str | None) -> str:

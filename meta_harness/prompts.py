@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 from .config import RuntimeConfig
 from .stuck_policy import stuck_playbook
@@ -51,7 +51,7 @@ def _repo_standing_tasks(cfg: RuntimeConfig) -> str:
     return "Repo standing tasks:\n" + "".join(f"- {task}\n" for task in tasks) + "\n"
 
 
-def build_master_prompt(cfg: RuntimeConfig) -> str:
+def build_master_prompt(cfg: RuntimeConfig) -> str:  # noqa: D103
     evidence_facts_file = cfg.state_dir / "evidence_facts.json"
     if cfg.compact_prompts:
         return (
@@ -97,7 +97,7 @@ def build_master_prompt(cfg: RuntimeConfig) -> str:
     )
 
 
-def build_checker_prompt(cfg: RuntimeConfig) -> str:
+def build_checker_prompt(cfg: RuntimeConfig) -> str:  # noqa: D103
     evidence_facts_file = cfg.state_dir / "evidence_facts.json"
     return build_master_prompt(cfg) + (
         "\nChecker step:\n"
@@ -112,7 +112,7 @@ def build_checker_prompt(cfg: RuntimeConfig) -> str:
     )
 
 
-def build_planner_prompt(
+def build_planner_prompt(  # noqa: D103
     cfg: RuntimeConfig,
     *,
     current_item: str = "",
@@ -218,7 +218,7 @@ def build_planner_prompt(
     return prompt
 
 
-def build_worker_prompt(
+def build_worker_prompt(  # noqa: D103
     cfg: RuntimeConfig,
     *,
     focus_item: str = "",
@@ -271,7 +271,7 @@ def build_worker_prompt(
     return prompt
 
 
-def build_reviewer_prompt(cfg: RuntimeConfig, *, stall_context: str = "", task_packet: str = "") -> str:
+def build_reviewer_prompt(cfg: RuntimeConfig, *, stall_context: str = "", task_packet: str = "") -> str:  # noqa: D103
     prompt = build_master_prompt(cfg) + (
         "\nReviewer step:\n"
         "- In a fresh session, review the current code state and current plan.\n"
@@ -306,7 +306,7 @@ def build_reviewer_prompt(cfg: RuntimeConfig, *, stall_context: str = "", task_p
     return prompt
 
 
-def build_crash_reviewer_prompt(cfg: RuntimeConfig, current_cycle_dir: str, exit_code: int) -> str:
+def build_crash_reviewer_prompt(cfg: RuntimeConfig, current_cycle_dir: str, exit_code: int) -> str:  # noqa: D103
     return build_master_prompt(cfg) + (
         "\nCrash-review step:\n"
         f"- The harness itself exited with status {exit_code}.\n"
@@ -323,7 +323,7 @@ def build_crash_reviewer_prompt(cfg: RuntimeConfig, current_cycle_dir: str, exit
     )
 
 
-def build_resume_prompt(role: str, cfg: RuntimeConfig, *, comments: str = "", role_context: str = "") -> str:
+def build_resume_prompt(role: str, cfg: RuntimeConfig, *, comments: str = "", role_context: str = "") -> str:  # noqa: D103
     role_instructions = {
         "worker": (
             f"Continue the existing {role} session.\n"

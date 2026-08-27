@@ -213,7 +213,7 @@ def _lifted_classification(
     caller = SimpleNamespace(addr=caller_addr, block_addrs_set=block_addrs, info={})
     callee = SimpleNamespace(addr=callee_addr, block_addrs_set={callee_addr}, info={})
     functions = SimpleNamespace(
-        function=lambda addr, create=False: (  # noqa: ARG005
+        function=lambda addr, create=False: (
             caller if addr == caller_addr else callee if addr == callee_addr else None
         )
     )

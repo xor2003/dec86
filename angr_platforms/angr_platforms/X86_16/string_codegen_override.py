@@ -34,7 +34,7 @@ def _render_override_text(codegen: object) -> str | None:
     return render_x86_16_string_intrinsic_c(name, artifact)
 
 
-def apply_x86_16_string_codegen_override(project: object, codegen: object) -> bool:  # noqa: ARG001
+def apply_x86_16_string_codegen_override(project: object, codegen: object) -> bool:
     """Install the string-intrinsic render override when the artifact is proven.
 
     Dynamic attribute boundary: codegen is a third-party angr/codegen

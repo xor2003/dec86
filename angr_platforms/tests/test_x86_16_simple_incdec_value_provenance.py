@@ -1,0 +1,199 @@
+"""Regress exact condition value provenance through optimized INC/DEC lifting."""
+
+from types import SimpleNamespace
+
+import pyvex
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.ir import IRBinaryValue, IRValue, MemSpace
+from angr_platforms.X86_16.ir.condition_ir import ConditionIR
+from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+
+def test_simple_inc_preserves_exact_stack_value_for_following_cmp(monkeypatch) -> None:
+    """An optimized INC must expose the incremented value to a later CMP."""
+    monkeypatch.delenv("INERTIA_ENABLE_AFFINE_SWITCH_CONDITIONS", raising=False)
+    original_index_state = dict(
+        Instruction_ANY._inertia_condition_index_reg_state_8616
+    )
+    original_value_state = dict(
+        Instruction_ANY._inertia_condition_reg_value_state_8616
+    )
+    instruction = Instruction_ANY.__new__(Instruction_ANY)
+    instruction.arch = Arch86_16()
+    instruction.addr = 0x400D
+    instruction.cs = SimpleNamespace(size=3)
+    instruction.emu = SimpleNamespace(_inertia_current_block_addr=0x4000)
+    instruction._get_reg16 = lambda _name: 4
+    instruction._const16 = lambda value: value
+    instruction._next_instruction_is_simple_jcc = lambda: False
+    instruction.put = lambda _value, _name: None
+
+    try:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = {}
+        Instruction_ANY._inertia_condition_reg_value_state_8616 = {}
+        instruction._set_condition_index_reg_stack_state_8616(
+            "ax",
+            ("bp", 0xFFFC, -4),
+        )
+        instruction.addr = 0x4010
+        instruction.cs = SimpleNamespace(size=1)
+
+        assert instruction._lift_simple_incdec_reg16_8616(
+            "inc_reg16",
+            ("inc_reg16", "ax"),
+        )
+        instruction.addr = 0x4011
+        instruction.cs = SimpleNamespace(size=3)
+        lhs, rhs = instruction._condition_operands_from_cmp_semantics_8616(
+            ("cmp_reg_mem16", "ax", ("bp", 4, 4)),
+        )
+    finally:
+        Instruction_ANY._inertia_condition_index_reg_state_8616 = (
+            original_index_state
+        )
+        Instruction_ANY._inertia_condition_reg_value_state_8616 = (
+            original_value_state
+        )
+
+    assert lhs == IRBinaryValue(
+        "add",
+        IRValue(
+            MemSpace.SS,
+            name="bp",
+            offset=-4,
+            size=2,
+            expr=("cmp-stack", "bp"),
+        ),
+        IRValue(
+            MemSpace.CONST,
+            const=1,
+            size=2,
+            expr=("cmp-imm",),
+        ),
+        size=2,
+    )
+    assert rhs == IRValue(
+        MemSpace.SS,
+        name="bp",
+        offset=4,
+        size=2,
+        expr=("cmp-stack", "bp"),
+    )
+
+
+def test_machine_block_preserves_inc_stack_value_in_cmp_condition(monkeypatch) -> None:
+    """The real MOV/INC/CMP/JLE sequence must cache ``stack + 1 <= arg``."""
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    monkeypatch.setattr(
+        Instruction_ANY,
+        "_inertia_pending_condition_sources_by_addr",
+        {},
+    )
+    monkeypatch.setattr(
+        Instruction_ANY,
+        "_inertia_condition_index_reg_state_8616",
+        {},
+    )
+    monkeypatch.setattr(
+        Instruction_ANY,
+        "_inertia_condition_reg_value_state_8616",
+        {},
+    )
+
+    pyvex.lift(
+        bytes.fromhex("8b46fc403b46047e0390c3"),
+        0x4000,
+        Arch86_16(),
+        opt_level=0,
+    )
+
+    condition = Instruction_ANY._inertia_module_condition_cache[0x4000][0]
+    assert isinstance(condition, ConditionIR)
+    assert condition.op == "sle"
+    assert condition.lhs == IRBinaryValue(
+        "add",
+        IRValue(
+            MemSpace.SS,
+            name="bp",
+            offset=-4,
+            size=2,
+            expr=("cmp-stack", "bp"),
+        ),
+        IRValue(
+            MemSpace.CONST,
+            const=1,
+            size=2,
+            expr=("cmp-imm",),
+        ),
+        size=2,
+    )
+    assert condition.rhs == IRValue(
+        MemSpace.SS,
+        name="bp",
+        offset=4,
+        size=2,
+        expr=("cmp-stack", "bp"),
+    )
+
+
+def test_machine_block_keeps_distinct_shifted_indices_in_byte_cmp(monkeypatch) -> None:
+    """Full-lift SHL must retain each stack-derived indexed DS address."""
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    monkeypatch.setattr(
+        Instruction_ANY,
+        "_inertia_pending_condition_sources_by_addr",
+        {},
+    )
+    monkeypatch.setattr(
+        Instruction_ANY,
+        "_inertia_condition_index_reg_state_8616",
+        {},
+    )
+    monkeypatch.setattr(
+        Instruction_ANY,
+        "_inertia_condition_reg_value_state_8616",
+        {},
+    )
+
+    pyvex.lift(
+        bytes.fromhex(
+            "ff06aa0b8b5efed1e38b76fcd1e68a844c0b38874c0b7c0390c3"
+        ),
+        0x4000,
+        Arch86_16(),
+        opt_level=0,
+    )
+
+    condition = Instruction_ANY._inertia_module_condition_cache[0x4000][0]
+    assert isinstance(condition, ConditionIR)
+    assert condition.op == "slt"
+    assert condition.lhs == IRValue(
+        MemSpace.DS,
+        offset=0xB4C,
+        size=1,
+        index=IRValue(
+            MemSpace.SS,
+            name="bp",
+            offset=-2,
+            size=2,
+            expr=("cmp-stack", "bp"),
+        ),
+        index_shift=1,
+        memory_access_size=1,
+        memory_access_insn=0x4012,
+    )
+    assert condition.rhs == IRValue(
+        MemSpace.DS,
+        offset=0xB4C,
+        size=1,
+        index=IRValue(
+            MemSpace.SS,
+            name="bp",
+            offset=-4,
+            size=2,
+            expr=("cmp-stack", "bp"),
+        ),
+        index_shift=1,
+        memory_access_size=1,
+        memory_access_insn=0x400E,
+    )

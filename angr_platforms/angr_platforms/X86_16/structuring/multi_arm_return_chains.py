@@ -19,7 +19,7 @@ import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TypeAlias, cast
+from typing import cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -36,11 +36,11 @@ from ..ir.condition_ir import ConditionIR
 
 log: logging.Logger = logging.getLogger(__name__)
 
-MultiArmConditionMaterializer8616: TypeAlias = Callable[
+type MultiArmConditionMaterializer8616 = Callable[
     [ConditionIR, int, int], CExpression | None
 ]
-MultiArmReturnRecoverer8616: TypeAlias = Callable[[int], CExpression | None]
-MultiArmBodyTargetResolver8616: TypeAlias = Callable[[object], int | None]
+type MultiArmReturnRecoverer8616 = Callable[[int], CExpression | None]
+type MultiArmBodyTargetResolver8616 = Callable[[object], int | None]
 
 
 class MultiArmReturnChainStatus8616(Enum):

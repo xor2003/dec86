@@ -11,8 +11,9 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol, Sequence, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypeShort
@@ -29,6 +30,7 @@ from ..semantics.software_interrupt_inputs import (
     build_software_interrupt_input_artifact_8616,
     software_interrupt_value_fingerprint_8616,
 )
+from ..structured_tags import copy_structured_tags_8616
 
 __all__ = [
     "SoftwareInterruptMaterializationStats8616",
@@ -82,9 +84,10 @@ def _callsite_addr_8616(call: structured_c.CFunctionCall) -> int | None:
         tags = cast(_TaggedCallSurface8616, call).tags
     except AttributeError:
         return None
-    if not isinstance(tags, dict):
+    owned_tags = copy_structured_tags_8616(tags)
+    if owned_tags is None:
         return None
-    value = tags.get("ins_addr")
+    value = owned_tags.get("ins_addr")
     return value if isinstance(value, int) else None
 
 

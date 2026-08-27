@@ -12,7 +12,7 @@ def test_ir_confidence_markers_attach_assumptions_and_critical_unknowns():
 
     class MockCodegen:
         cfunc = MockCFunc()
-        _inertia_vex_ir_summary = {
+        _inertia_vex_ir_summary = {  # noqa: RUF012
             "block_count": 2,
             "address_status_counts": {"provisional": 2},
             "segment_origin_counts": {"unknown": 1, "defaulted": 1},
@@ -40,7 +40,7 @@ def test_ir_confidence_markers_feed_existing_confidence_pass():
 
     class MockCodegen:
         cfunc = MockCFunc()
-        _inertia_vex_ir_summary = {
+        _inertia_vex_ir_summary = {  # noqa: RUF012
             "block_count": 2,
             "address_status_counts": {"provisional": 1},
             "segment_origin_counts": {"unknown": 1},

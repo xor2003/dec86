@@ -24,7 +24,7 @@ import struct
 from dataclasses import dataclass, field
 from enum import IntEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     import angr
@@ -39,7 +39,7 @@ def _dynamic_loader_ne_segment_selectors_8616(main_obj: object) -> dict[int, int
     typed_selectors: dict[int, int] = {}
     for segment, selector in selectors.items():
         if isinstance(segment, int) and isinstance(selector, int):
-            typed_selectors[segment] = selector
+            typed_selectors[segment] = selector  # noqa: PERF403
     return typed_selectors
 
 
@@ -95,7 +95,7 @@ class NEExeInfo:
     data_labels: dict[int, str] = field(default_factory=dict)
 
 
-def find_ne_header(data: bytes) -> Optional[int]:
+def find_ne_header(data: bytes) -> int | None:
     """Find NE header offset from MZ (DOS) header.
 
     MZ header at offset 0x3C contains offset to new executable header.
@@ -333,7 +333,7 @@ def parse_ne_entry_table(
 def parse_ne_exe(
     binary_path: Path,
     load_base_linear: int = 0,
-    project: Optional[angr.Project] = None,
+    project: angr.Project | None = None,
 ) -> NEExeInfo:
     """Parse NE executable and extract debug information.
 
@@ -352,7 +352,7 @@ def parse_ne_exe(
     try:
         with open(binary_path, "rb") as f:
             data = f.read()
-    except (OSError, IOError):
+    except OSError:
         return info
 
     # Find NE header
@@ -361,7 +361,7 @@ def parse_ne_exe(
         return info
 
     # Parse header
-    header, resident_names_abs = parse_ne_header(data, ne_offset)
+    header, _resident_names_abs = parse_ne_header(data, ne_offset)
     if not header:
         return info
 
@@ -423,9 +423,9 @@ def _calculate_ne_linear_addr(
     segment_num: int,
     offset: int,
     load_base_linear: int = 0,
-    ne_segment_selectors: Optional[dict[int, int]] = None,
-    segments: Optional[list[NESegment]] = None,
-) -> Optional[int]:
+    ne_segment_selectors: dict[int, int] | None = None,
+    segments: list[NESegment] | None = None,
+) -> int | None:
     """Calculate linear address from NE segment:offset using loader info if available.
 
     If the CLE DOSNE loader has already calculated segment selectors, use those.
@@ -458,4 +458,4 @@ def _calculate_ne_linear_addr(
 
 
 # Export the main function used by sidecar parsers
-__all__ = ["parse_ne_exe", "NEExeInfo"]
+__all__ = ["NEExeInfo", "parse_ne_exe"]

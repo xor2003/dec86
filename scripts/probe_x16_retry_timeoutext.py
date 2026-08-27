@@ -64,7 +64,7 @@ for r in prev:
         r.update(
             {
                 "status": status,
-                "summary": fallback_reasons or [line for line in out.splitlines()[:6]],
+                "summary": fallback_reasons or list(out.splitlines()[:6]),
                 "snippet": "\n".join(out.splitlines()[:200]),
             }
         )

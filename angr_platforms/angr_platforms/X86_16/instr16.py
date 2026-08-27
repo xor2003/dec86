@@ -36,6 +36,7 @@ from .instr_base import InstrBase, VexExpr, _vex_expr
 from .instruction import CHK_IMM8, CHK_IMM16, CHK_MODRM, CHK_MOFFS, CHK_PTR16, InstrData, InstrFlags
 from .jcc_condition import _consume_last_condition_branch_8616
 from .regs import coerce_reg16_t, reg8_t, reg16_t, reg32_t, sgreg_t
+from .semantics.immediate_semantics import sign_extend_u8_to_u16
 from .stack_helpers import (
     branch_rel8,
     branch_rel16,
@@ -79,7 +80,7 @@ X86_16_OPCODE_HELPERS: tuple[tuple[int, int, str, int], ...] = (
 )
 
 
-class Instr16(InstrBase):
+class Instr16(InstrBase):  # type: ignore[misc] # dynamic multi-mixin frontend base
     """Implement operand-size-16 instruction effects for the x86 frontend."""
 
     _opcode_template_instrfuncs: list[OpcodeExecHandler | None] | None = None
@@ -694,7 +695,8 @@ class Instr16(InstrBase):
     def _load_far_pointer(self) -> tuple[object, object]:
         """Load the decoded far pointer through segmented operand helpers."""
         seg, addr = self._resolved_rm_address()
-        return load_far_pointer(self.emu, seg, addr, 16, address_bits=self.effective_address_bits())
+        result = load_far_pointer(self.emu, seg, addr, 16, address_bits=self.effective_address_bits())
+        return result[0], result[1]
 
     def les_es_r16_m16(self) -> None:
         """Execute decoded ``LES_ES_R16_M16`` semantics through frontend emulator effects."""
@@ -1548,7 +1550,7 @@ class Instr16(InstrBase):
         binary_operation(
             self.emu,
             self.get_rm16,
-            lambda: _vex_expr(self.emu.constant(self.instr.imm8, Type.int_8)).widen_signed(Type.int_16),
+            lambda: self.emu.constant(sign_extend_u8_to_u16(self.instr.imm8), Type.int_16),
             self.set_rm16,
             self.emu.update_eflags_add,
             lambda lhs, rhs: lhs + rhs,
@@ -1559,7 +1561,7 @@ class Instr16(InstrBase):
         binary_operation(
             self.emu,
             self.get_rm16,
-            lambda: _vex_expr(self.emu.constant(self.instr.imm8, Type.int_8)).widen_signed(Type.int_16),
+            lambda: self.emu.constant(sign_extend_u8_to_u16(self.instr.imm8), Type.int_16),
             self.set_rm16,
             self.emu.update_eflags_or,
             lambda lhs, rhs: lhs | rhs,
@@ -1570,7 +1572,7 @@ class Instr16(InstrBase):
         binary_operation_with_carry(
             self.emu,
             self.get_rm16,
-            lambda: _vex_expr(self.emu.constant(self.instr.imm8, Type.int_8)).widen_signed(Type.int_16),
+            lambda: self.emu.constant(sign_extend_u8_to_u16(self.instr.imm8), Type.int_16),
             self.set_rm16,
             self.emu.update_eflags_adc,
             lambda lhs, rhs, carry: lhs + rhs + carry,
@@ -1582,7 +1584,7 @@ class Instr16(InstrBase):
         binary_operation_with_carry(
             self.emu,
             self.get_rm16,
-            lambda: _vex_expr(self.emu.constant(self.instr.imm8, Type.int_8)).widen_signed(Type.int_16),
+            lambda: self.emu.constant(sign_extend_u8_to_u16(self.instr.imm8), Type.int_16),
             self.set_rm16,
             self.emu.update_eflags_sbb,
             lambda lhs, rhs, carry: lhs - rhs - carry,
@@ -1594,7 +1596,7 @@ class Instr16(InstrBase):
         binary_operation(
             self.emu,
             self.get_rm16,
-            lambda: _vex_expr(self.emu.constant(self.instr.imm8, Type.int_8)).widen_signed(Type.int_16),
+            lambda: self.emu.constant(sign_extend_u8_to_u16(self.instr.imm8), Type.int_16),
             self.set_rm16,
             self.emu.update_eflags_and,
             lambda lhs, rhs: lhs & rhs,
@@ -1605,7 +1607,7 @@ class Instr16(InstrBase):
         binary_operation(
             self.emu,
             self.get_rm16,
-            lambda: _vex_expr(self.emu.constant(self.instr.imm8, Type.int_8)).widen_signed(Type.int_16),
+            lambda: self.emu.constant(sign_extend_u8_to_u16(self.instr.imm8), Type.int_16),
             self.set_rm16,
             self.emu.update_eflags_sub,
             lambda lhs, rhs: lhs - rhs,
@@ -1616,7 +1618,7 @@ class Instr16(InstrBase):
         binary_operation(
             self.emu,
             self.get_rm16,
-            lambda: _vex_expr(self.emu.constant(self.instr.imm8, Type.int_8)).widen_signed(Type.int_16),
+            lambda: self.emu.constant(sign_extend_u8_to_u16(self.instr.imm8), Type.int_16),
             self.set_rm16,
             self.emu.update_eflags_xor,
             lambda lhs, rhs: lhs ^ rhs,
@@ -1626,7 +1628,7 @@ class Instr16(InstrBase):
         """Execute decoded ``CMP_RM16_IMM8`` semantics through frontend emulator effects."""
         compare_operation(
             self.get_rm16,
-            lambda: _vex_expr(self.emu.constant(self.instr.imm8, Type.int_8)).widen_signed(Type.int_16),
+            lambda: self.emu.constant(sign_extend_u8_to_u16(self.instr.imm8), Type.int_16),
             self.emu.update_eflags_sub,
         )
 

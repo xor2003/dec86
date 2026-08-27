@@ -76,7 +76,7 @@ def _codegen_fixture(
         cstyle_null_cmp=False,
         next_idx=lambda _name: 1,
         project=project,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     if return_constant is not None:
         return_value = structured_c.CConstant(return_constant, prototype.returnty, codegen=codegen)
     elif effectful:
@@ -177,7 +177,11 @@ def test_final_codegen_replays_closed_empty_return_evidence() -> None:
 
 @pytest.mark.parametrize(
     ("storage", "expected_changed"),
-    [(TerminalReturnStorage8616.NONE, True), (TerminalReturnStorage8616.AX, False)],
+    [
+        (TerminalReturnStorage8616.NONE, True),
+        (TerminalReturnStorage8616.CALL_OUTPUT, True),
+        (TerminalReturnStorage8616.AX, False),
+    ],
 )
 def test_final_codegen_consumes_exact_terminal_storage(
     monkeypatch: pytest.MonkeyPatch,

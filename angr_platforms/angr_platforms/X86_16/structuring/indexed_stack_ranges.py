@@ -29,6 +29,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CExpressionStatement,
     CForLoop,
     CFunctionCall,
+    CIfBreak,
     CIfElse,
     CIndexedVariable,
     CStatements,
@@ -50,6 +51,9 @@ from ..ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from ..lowering.real_mode_linear import (
     DirectStackMoveFact8616,
     DirectStackMoveSourceKind8616,
+)
+from ..lowering.stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
 )
 from ..semantics.call_contracts import RuntimeCallReturnContract8616
 from ..widening.segmented_load_identity import segmented_load_identity_8616
@@ -287,6 +291,24 @@ def _scalar_storage_8616(node: object) -> _ScalarStorage8616 | None:
     return None
 
 
+def _machine_bp_stack_offset_8616(
+    codegen: object | None,
+    node: object,
+) -> int | None:
+    """Project one stack expression to the lowering fact coordinate space."""
+    node = _strip_casts_8616(node)
+    if not isinstance(node, CVariable):
+        return None
+    variable = node.unified_variable
+    if not isinstance(variable, SimStackVariable):
+        variable = node.variable
+    if not isinstance(variable, SimStackVariable):
+        return None
+    if codegen is None:
+        return variable.offset if isinstance(variable.offset, int) else None
+    return machine_bp_offset_for_stack_variable_8616(codegen, variable)
+
+
 def _scalar_memory_address_8616(
     storage: _ScalarStorage8616,
 ) -> IRAddress | None:
@@ -439,14 +461,15 @@ def _break_only_8616(node: object) -> bool:
 
 def _break_guard_descriptor_8616(node: object) -> _AscendingLoop8616 | None:
     """Return the continued-loop predicate encoded by one exact break guard."""
-    if (
-        not isinstance(node, CIfElse)
-        or node.else_node is not None
-        or len(node.condition_and_nodes) != 1
-    ):
-        return None
-    condition, branch = node.condition_and_nodes[0]
-    if not _break_only_8616(branch):
+    if isinstance(node, CIfBreak):
+        condition = node.condition
+    elif isinstance(node, CIfElse):
+        if node.else_node is not None or len(node.condition_and_nodes) != 1:
+            return None
+        condition, branch = node.condition_and_nodes[0]
+        if not _break_only_8616(branch):
+            return None
+    else:
         return None
     condition = _strip_casts_8616(condition)
     if isinstance(condition, CUnaryOp) and condition.op == "Not":
@@ -480,7 +503,7 @@ def _unconditional_while_8616(loop: CWhileLoop) -> bool:
     if loop.condition is None:
         return True
     condition = _strip_casts_8616(loop.condition)
-    return isinstance(condition, CConstant) and condition.value in {True, 1}
+    return isinstance(condition, CConstant) and condition.value in {True}
 
 
 def _canonical_while_8616(
@@ -607,7 +630,8 @@ def _canonical_while_8616(
             )
             continue
         candidates.append((descriptor, guard_index))
-    if len(candidates) != 1:
+    candidate_descriptors = {descriptor for descriptor, _index in candidates}
+    if len(candidate_descriptors) != 1:
         _debug(
             "candidate-count",
             count=len(candidates),
@@ -672,6 +696,11 @@ def _while_prefix_array_8616(
     """Return an array written on every guarded continuing while iteration."""
     statements = _transparent_body_statements_8616(loop.body)
     for statement in statements[guard_index + 1 :]:
+        if (
+            isinstance(statement, (CIfElse, CIfBreak))
+            and _break_guard_descriptor_8616(statement) == descriptor
+        ):
+            continue
         if not isinstance(statement, CAssignment):
             return None
         if any(
@@ -823,6 +852,7 @@ def collect_indexed_stack_read_proofs_8616(
     root: object,
     *,
     direct_stack_move_facts: tuple[DirectStackMoveFact8616, ...] = (),
+    codegen: object | None = None,
 ) -> IndexedStackReadProofReport8616:
     """Prove exact dynamic reads selected from initialized stack-array prefixes.
 
@@ -1009,6 +1039,7 @@ def collect_indexed_stack_read_proofs_8616(
         rhs = _strip_casts_8616(assignment.rhs)
         if not isinstance(rhs, CBinaryOp) or rhs.op != "Mod":
             return None
+        lhs_bp_offset = _machine_bp_stack_offset_8616(codegen, assignment.lhs)
         statement_ins_addr = (
             assignment.tags.get("ins_addr")
             if isinstance(assignment.tags, dict)
@@ -1019,7 +1050,7 @@ def collect_indexed_stack_read_proofs_8616(
             for fact in facts
             if fact.source_kind
             is DirectStackMoveSourceKind8616.SIGNED_IDIV_REMAINDER
-            and fact.dst_offset == lhs.offset
+            and fact.dst_offset == lhs_bp_offset
             and fact.width == lhs.width
             and fact.source_immediate == 1
             and fact.source_call_return_contract is not None
@@ -1043,10 +1074,16 @@ def collect_indexed_stack_read_proofs_8616(
             return None
         fact = candidates[0]
         divisor = _binary_storage_constant_8616(rhs.rhs, "Add", 1)
+        divisor_expression = _strip_casts_8616(rhs.rhs)
+        divisor_bp_offset = (
+            _machine_bp_stack_offset_8616(codegen, divisor_expression.lhs)
+            if isinstance(divisor_expression, CBinaryOp)
+            else None
+        )
         if (
             divisor is None
             or divisor.kind is not _ScalarStorageKind8616.STACK
-            or divisor.offset != fact.source_offset
+            or divisor_bp_offset != fact.source_offset
             or not isinstance(fact.source_call_ins_addr, int)
         ):
             _debug(

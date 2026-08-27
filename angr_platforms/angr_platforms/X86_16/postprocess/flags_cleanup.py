@@ -12,7 +12,7 @@ flow, or facts from rendered text, COD, source, or CLI/reporting evidence here.
 
 from __future__ import annotations
 
-from typing import Any, TypeAlias, cast
+from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
@@ -37,26 +37,26 @@ from ..decompiler_postprocess_utils import (
 )
 
 __all__ = [
-    "_extract_flag_test_info_8616",
+    "_bool_cite_values_8616",
+    "_c_expr_uses_register_8616",
+    "_c_expr_uses_var_8616",
+    "_extract_bool_compare_term_8616",
     "_extract_flag_predicate_from_expr_8616",
-    "_rewrite_flag_bit_value_uses_8616",
+    "_extract_flag_test_info_8616",
+    "_fix_impossible_interval_guard_expr_8616",
+    "_fix_interval_guard_conditions_8616",
+    "_invert_cmp_op_8616",
+    "_make_bool_cite_8616",
+    "_make_bool_expr_from_compare_8616",
+    "_prune_overwritten_flag_assignments_8616",
+    "_prune_unused_flag_assignments_8616",
     "_recover_ordering_condition_from_flag_mask_8616",
     "_recover_signed_condition_8616",
     "_recover_unsigned_condition_8616",
+    "_rewrite_flag_bit_value_uses_8616",
     "_rewrite_flag_condition_expr_8616",
-    "_c_expr_uses_var_8616",
     "_rewrite_flag_condition_pairs_8616",
-    "_bool_cite_values_8616",
-    "_extract_bool_compare_term_8616",
-    "_make_bool_cite_8616",
-    "_invert_cmp_op_8616",
-    "_make_bool_expr_from_compare_8616",
-    "_fix_impossible_interval_guard_expr_8616",
-    "_fix_interval_guard_conditions_8616",
-    "_prune_unused_flag_assignments_8616",
-    "_c_expr_uses_register_8616",
     "_stmt_reads_reg_before_write_8616",
-    "_prune_overwritten_flag_assignments_8616",
 ]
 
 _CF_MASK_8616 = 0x1
@@ -64,15 +64,15 @@ _ZF_MASK_8616 = 0x40
 _SF_MASK_8616 = 0x80
 _OF_MASK_8616 = 0x800
 
-FlagTestInfo8616: TypeAlias = tuple[object, int, bool] | tuple[object, int, int, bool]
-FlagBitValueInfo8616: TypeAlias = tuple[object, int]
-FlagMaskValueInfo8616: TypeAlias = tuple[int, object]
-NestedFlagBitInfo8616: TypeAlias = tuple[object, int]
-FlagPairInfo8616: TypeAlias = tuple[object, int, int, bool]
-CompareInfo8616: TypeAlias = tuple[str, object, object]
-BoolCompareTerm8616: TypeAlias = tuple[CBinaryOp, bool, CITE]
-AssignmentInfo8616: TypeAlias = tuple[CAssignment | None, CStatements | None]
-Assignments8616: TypeAlias = list[tuple[CAssignment, CStatements | None]]
+type FlagTestInfo8616 = tuple[object, int, bool] | tuple[object, int, int, bool]
+type FlagBitValueInfo8616 = tuple[object, int]
+type FlagMaskValueInfo8616 = tuple[int, object]
+type NestedFlagBitInfo8616 = tuple[object, int]
+type FlagPairInfo8616 = tuple[object, int, int, bool]
+type CompareInfo8616 = tuple[str, object, object]
+type BoolCompareTerm8616 = tuple[CBinaryOp, bool, CITE]
+type AssignmentInfo8616 = tuple[CAssignment | None, CStatements | None]
+type Assignments8616 = list[tuple[CAssignment, CStatements | None]]
 
 
 def _dynamic_attr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
@@ -254,14 +254,13 @@ def _extract_flag_predicate_from_expr_8616(node: object, bit: int) -> object | N
         nonlocal node
         node = _unwrap_c_casts_8616(node)
 
-        if bit == 1:
-            if isinstance(node, CBinaryOp) and node.op == "And":
-                lhs_const = _c_constant_value_8616(_unwrap_c_casts_8616(node.lhs))
-                rhs_const = _c_constant_value_8616(_unwrap_c_casts_8616(node.rhs))
-                if lhs_const == 1:
-                    return cast(object | None, node.rhs)
-                if rhs_const == 1:
-                    return cast(object | None, node.lhs)
+        if bit == 1 and isinstance(node, CBinaryOp) and node.op == "And":
+            lhs_const = _c_constant_value_8616(_unwrap_c_casts_8616(node.lhs))
+            rhs_const = _c_constant_value_8616(_unwrap_c_casts_8616(node.rhs))
+            if lhs_const == 1:
+                return cast(object | None, node.rhs)
+            if rhs_const == 1:
+                return cast(object | None, node.lhs)
 
         if isinstance(node, CBinaryOp):
             if node.op == "Shl":
@@ -306,6 +305,15 @@ def _extract_flag_bit_value_info_8616(node: object) -> FlagBitValueInfo8616 | No
 
     def _extract_shifted_flag_value(expr: object) -> tuple[CVariable, int] | None:
         expr = _unwrap_c_casts_8616(expr)
+        while isinstance(expr, CBinaryOp) and expr.op == "And":
+            lhs = _unwrap_c_casts_8616(expr.lhs)
+            rhs = _unwrap_c_casts_8616(expr.rhs)
+            if _c_constant_value_8616(lhs) == 1:
+                expr = rhs
+            elif _c_constant_value_8616(rhs) == 1:
+                expr = lhs
+            else:
+                break
         if isinstance(expr, CVariable):
             return expr, 0
         if not isinstance(expr, CBinaryOp) or expr.op not in {"Shr", "Sar"}:
@@ -779,9 +787,7 @@ def _normalize_bool_compare_guard_8616(node: object, codegen: object) -> object 
 def _same_compare_direction_family_8616(lhs: CBinaryOp, rhs: CBinaryOp) -> bool:
     if lhs.op in {"CmpGT", "CmpGE"} and rhs.op in {"CmpGT", "CmpGE"}:
         return True
-    if lhs.op in {"CmpLT", "CmpLE"} and rhs.op in {"CmpLT", "CmpLE"}:
-        return True
-    return False
+    return bool(lhs.op in {"CmpLT", "CmpLE"} and rhs.op in {"CmpLT", "CmpLE"})
 
 
 def _split_ordering_if_chain_replacement_condition_8616(
@@ -890,7 +896,7 @@ def _c_expr_uses_var_8616(node: object, target: object) -> bool:
             "else_node",
         ):
             child = _dynamic_attr_8616(node, attr, None)
-            if hasattr(child, "__class__") and child.__class__.__name__.startswith("C"):
+            if hasattr(child, "__class__") and child.__class__.__name__.startswith("C"):  # noqa: SIM102
                 if _c_expr_uses_var_8616(child, target):
                     return True
         for attr in ("statements", "operands", "condition_and_nodes"):
@@ -899,10 +905,10 @@ def _c_expr_uses_var_8616(node: object, target: object) -> bool:
                 for item in child:
                     if isinstance(item, tuple):
                         for sub in item:
-                            if hasattr(sub, "__class__") and sub.__class__.__name__.startswith("C"):
+                            if hasattr(sub, "__class__") and sub.__class__.__name__.startswith("C"):  # noqa: SIM102
                                 if _c_expr_uses_var_8616(sub, target):
                                     return True
-                    elif hasattr(item, "__class__") and item.__class__.__name__.startswith("C"):
+                    elif hasattr(item, "__class__") and item.__class__.__name__.startswith("C"):  # noqa: SIM102
                         if _c_expr_uses_var_8616(item, target):
                             return True
         return False
@@ -1126,8 +1132,8 @@ def _fix_impossible_interval_guard_expr_8616(node: object, codegen: object) -> o
         right_info = _extract_bool_compare_term_8616(node.rhs)
         if left_info is None or right_info is None:
             return node
-        left_cmp, left_negated, left_template = left_info
-        right_cmp, right_negated, right_template = right_info
+        left_cmp, left_negated, _left_template = left_info
+        right_cmp, right_negated, _right_template = right_info
         if not _same_c_expression_8616(left_cmp.rhs, right_cmp.rhs):
             return node
 
@@ -1262,7 +1268,7 @@ def _prune_unused_flag_assignments_8616(project: object, codegen: object) -> boo
                         if isinstance(item, tuple):
                             for subitem in item:
                                 if _structured_codegen_node_8616(subitem):
-                                    traversal_stack.append((subitem, False))
+                                    traversal_stack.append((subitem, False))  # noqa: PERF401
 
                 pairs = _dynamic_attr_8616(node, "condition_and_nodes", None)
                 if pairs:
@@ -1379,7 +1385,7 @@ def _c_expr_uses_register_8616(node: object, reg_offset: int) -> bool:
                     if isinstance(item, tuple):
                         for subitem in item:
                             if _structured_codegen_node_8616(subitem):
-                                traversal_stack.append(subitem)
+                                traversal_stack.append(subitem)  # noqa: PERF401
 
             pairs = _dynamic_attr_8616(current, "condition_and_nodes", None)
             if pairs:

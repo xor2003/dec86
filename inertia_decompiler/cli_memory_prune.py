@@ -7,7 +7,8 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 from __future__ import annotations
 
 import re
-from typing import Callable, Iterable, Protocol
+from collections.abc import Callable, Iterable
+from typing import Protocol
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable

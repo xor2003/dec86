@@ -21,9 +21,10 @@ import tempfile
 import threading
 import zipfile
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -321,9 +322,7 @@ def _is_non_library_function_entry(entry: dict[str, object]) -> bool:
     if any(_is_library_like_source_path(path) for path in _object_strings(source_paths)):
         return False
     source_path = str(entry.get("source", ""))
-    if _is_library_like_source_path(source_path):
-        return False
-    return True
+    return not _is_library_like_source_path(source_path)
 
 
 def _linker_family_from_raw(binary_bytes: bytes) -> str:
@@ -697,7 +696,7 @@ def _map_flags_to_rc_functions(
     shift, hits = _best_rc_shift(function_rows, rc_entries, raw_bytes=raw_bytes)
     if shift is None:
         return None, 0, []
-    rc_by_begin = {off: name for off, name in rc_entries}
+    rc_by_begin = dict(rc_entries)
     out: list[dict[str, object]] = []
     for row in function_rows:
         off = row.get("offset")
@@ -827,11 +826,10 @@ def _find_candidate_function_offsets_raw(raw_bytes: bytes, limit: int = 256) -> 
     seen: set[int] = set()
     scored: list[tuple[int, int]] = []
     n = len(raw_bytes)
-    for i in range(0, max(0, n - 3)):
-        if raw_bytes[i : i + 3] in pats:
-            if i not in seen:
-                seen.add(i)
-                scored.append((i, 3))
+    for i in range(max(0, n - 3)):
+        if raw_bytes[i : i + 3] in pats and i not in seen:
+            seen.add(i)
+            scored.append((i, 3))
     # Greedy de-dup: avoid multiple candidates inside one function body.
     scored.sort(key=lambda x: (-x[1], x[0]))
     picked: list[int] = []
@@ -845,7 +843,7 @@ def _find_candidate_function_offsets_raw(raw_bytes: bytes, limit: int = 256) -> 
     picked.sort()
     out: list[dict[str, object]] = []
     for i in picked:
-        out.append(
+        out.append(  # noqa: PERF401
             {
                 "function": f"SUB_{i:05X}",
                 "offset": i,
@@ -918,7 +916,7 @@ def _resolve_catalog_input(catalog_input: Path) -> tuple[Path, Path, tuple[objec
 
     zip_stat = catalog_input.stat()
     zip_key = hashlib.sha256(
-        f"{catalog_input.resolve()}|{zip_stat.st_size}|{zip_stat.st_mtime_ns}".encode("utf-8")
+        f"{catalog_input.resolve()}|{zip_stat.st_size}|{zip_stat.st_mtime_ns}".encode()
     ).hexdigest()[:24]
     extract_root = catalog_input.parent / ".zip_catalog_cache" / zip_key
     extract_root.mkdir(parents=True, exist_ok=True)
@@ -1308,12 +1306,11 @@ def main(argv: list[str] | None = None) -> int:
                         raw_entry["module_length"] = max(_object_int(raw_entry.get("module_length", 0)), _object_int(module_length))
                     if source_paths := matched.get("source_paths"):
                         raw_entry["source_paths"] = list(dict.fromkeys(_object_strings(source_paths)))
-                    if function_name := str(matched.get("function", "")):
-                        if function_name:
-                            raw_entry["function"] = function_name
-                            raw_entry["source"] = str(matched.get("source", ""))
-                            if source_paths:
-                                raw_entry["source"] = _object_strings(source_paths)[0]
+                    if (function_name := str(matched.get("function", ""))) and function_name:
+                        raw_entry["function"] = function_name
+                        raw_entry["source"] = str(matched.get("source", ""))
+                        if source_paths:
+                            raw_entry["source"] = _object_strings(source_paths)[0]
                 function_flag_report = _build_per_function_flag_report(
                     image_bytes=image_bytes,
                     raw_bytes=raw_bytes,
@@ -1448,7 +1445,7 @@ def main(argv: list[str] | None = None) -> int:
                                 f"[{row.get('confidence')}, gap={_object_float(row.get('gap', 0.0)):.3f}] "
                                 f"{_format_top_combo_flags([(_pretty_combo_for_output(str(c)), _object_float(s)) for c, s in _object_pairs(row.get('top_combos', []))])} ; flags: {flags_txt}"
                             )
-                            shown += 1
+                            shown += 1  # noqa: SIM113
                     if args.rc_json:
                         rc_path = args.rc_json if args.rc_json.is_absolute() else (REPO_ROOT / args.rc_json)
                         rc_entries = _load_rc_extract_functions(rc_path)

@@ -82,7 +82,7 @@ def test_callsite_provenance_service_connects_generated_helper_to_policy() -> No
         _inertia_segment_function_contract=contract,
         next_idx=lambda _name: 0,
         project=SimpleNamespace(arch=Arch86_16()),
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     offset = CConstant(0, SimTypeShort(False), codegen=codegen)
     node = CFunctionCall("SEG_PTR", None, [offset], codegen=codegen)
 

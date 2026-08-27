@@ -22,10 +22,15 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_variable import SimStackVariable, SimVariable
 
+from ..analysis.stack_frame_ir import (
+    FrameAccessArtifact,
+    FrameCoordinateStatus8616,
+)
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..semantics.carry_borrow_contracts import CarryBorrowKind8616
 from ..widening.carry_borrow_storage import WideCarryBorrowStorage8616
 from .stack_lowering_from_facts import materialize_stack_cvar_at_offset_from_facts_8616
+from .stack_variable_coordinates import stack_variable_coordinate_registry_8616
 from .wide_call_output_assignment_ast import (
     WideCallOutputCallSite8616,
     c_node_instruction_addrs_8616,
@@ -51,6 +56,12 @@ class _CFunctionBoundary8616(Protocol):
     arg_list: tuple[CVariable, ...]
 
 
+class _CodegenFrameBoundary8616(Protocol):
+    """Dynamic angr codegen surface carrying typed frame evidence."""
+
+    _inertia_vex_ir_frame: FrameAccessArtifact
+
+
 @dataclass(frozen=True, slots=True)
 class _CarrierStatementRef8616:
     """One exact mutable statement slot owned by a carrier fact."""
@@ -70,17 +81,24 @@ class _CarrierScan8616:
 
 
 def _exact_stack_cvar_8616(
+    codegen: object,
     cfunc: _CFunctionBoundary8616,
-    offset: int,
+    bp_offset: int,
     size: int,
 ) -> CVariable | None:
-    """Return one unambiguous exact BP-relative C variable."""
+    """Return one C variable through its exact machine-BP projection."""
+    registry = stack_variable_coordinate_registry_8616(codegen)
+    projection = registry.for_bp_range(bp_offset, size)
+    if projection is not None:
+        return projection.cvar if isinstance(projection.cvar, CVariable) else None
+    if registry.projections:
+        return None
     candidates: dict[int, CVariable] = {}
     for variable, cvar in cfunc.variables_in_use.items():
         if (
             isinstance(variable, SimStackVariable)
             and variable.base == "bp"
-            and variable.offset == offset
+            and variable.offset == bp_offset
             and variable.size == size
         ):
             candidates[id(variable)] = cvar
@@ -93,11 +111,39 @@ def _exact_stack_cvar_8616(
         if (
             isinstance(variable, SimStackVariable)
             and variable.base == "bp"
-            and variable.offset == offset
+            and variable.offset == bp_offset
             and variable.size == size
         ):
             candidates[id(variable)] = cvar
     return next(iter(candidates.values())) if len(candidates) == 1 else None
+
+
+def _entry_sp_offset_for_bp_8616(
+    codegen: object,
+    bp_offset: int,
+    size: int,
+) -> int | None:
+    """Project one machine-BP range into angr's entry-SP coordinate."""
+    projection = stack_variable_coordinate_registry_8616(codegen).for_bp_range(
+        bp_offset,
+        size,
+    )
+    if projection is not None:
+        entry_sp_offset = projection.entry_sp_offset
+        return entry_sp_offset if isinstance(entry_sp_offset, int) else None
+    boundary = cast(_CodegenFrameBoundary8616, codegen)
+    try:
+        frame = boundary._inertia_vex_ir_frame
+    except AttributeError:
+        return None
+    coordinate = frame.bp_coordinate if isinstance(frame, FrameAccessArtifact) else None
+    if (
+        coordinate is None
+        or coordinate.status is not FrameCoordinateStatus8616.PROVEN
+        or not isinstance(coordinate.bp_entry_sp_delta, int)
+    ):
+        return None
+    return bp_offset + coordinate.bp_entry_sp_delta
 
 
 def _already_materialized_8616(
@@ -267,7 +313,12 @@ def materialize_wide_call_output_assignment_8616(
             placement_classified=True,
             already_materialized=True,
         )
-    destination = _exact_stack_cvar_8616(boundary, fact.destination_offset, 4)
+    destination = _exact_stack_cvar_8616(
+        codegen,
+        boundary,
+        fact.destination_offset,
+        4,
+    )
     if destination is None:
         return refused_wide_call_output_assignment_8616(
             source,
@@ -283,10 +334,21 @@ def materialize_wide_call_output_assignment_8616(
         )
         return refused_wide_call_output_assignment_8616(source, failure, fact=fact)
     call_site = call_sites[0]
-    source_cvar = _exact_stack_cvar_8616(boundary, fact.source_offset, 4)
+    source_cvar = _exact_stack_cvar_8616(codegen, boundary, fact.source_offset, 4)
     if source_cvar is None:
-        materialize_stack_cvar_at_offset_from_facts_8616(codegen, fact.source_offset, 4)
-        source_cvar = _exact_stack_cvar_8616(boundary, fact.source_offset, 4)
+        entry_sp_offset = _entry_sp_offset_for_bp_8616(
+            codegen,
+            fact.source_offset,
+            4,
+        )
+        if entry_sp_offset is not None:
+            materialize_stack_cvar_at_offset_from_facts_8616(
+                codegen,
+                entry_sp_offset,
+                4,
+                machine_bp_offset=fact.source_offset,
+            )
+        source_cvar = _exact_stack_cvar_8616(codegen, boundary, fact.source_offset, 4)
     if source_cvar is None:
         return refused_wide_call_output_assignment_8616(
             source,

@@ -9,9 +9,9 @@ canonical translation unit and report typed incomplete/conflict/error outcomes.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Sequence
 
 from inertia_decompiler.generated_translation_unit_assembly import (
     assemble_generated_translation_unit,

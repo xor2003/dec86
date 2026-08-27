@@ -72,6 +72,46 @@ def test_terminal_ax_word_refines_only_generated_byte_header(monkeypatch) -> Non
     assert function.prototype is original
 
 
+def test_terminal_ax_word_reconciles_generated_signed_word_header(monkeypatch) -> None:
+    arch = Arch86_16()
+    original = SimTypeFunction([], SimTypeShort(signed=True)).with_arch(arch)
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={}, prototype=original)
+    project = SimpleNamespace(arch=arch, kb=SimpleNamespace(functions=_FunctionManager(function)))
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, functy=original))
+    monkeypatch.setattr(
+        terminal_register_return_types,
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
+    )
+
+    result = materialize_terminal_register_return_type_8616(project, codegen)
+
+    assert result.changed is True
+    assert result.stats == terminal_register_return_types.TerminalRegisterReturnTypeStats8616(1, 1, 1, 1, 0)
+    assert isinstance(codegen.cfunc.functy.returnty, SimTypeShort)
+    assert codegen.cfunc.functy.returnty.signed is False
+    assert function.prototype is original
+
+
+def test_terminal_ax_word_reconciles_unbound_generated_word_header(monkeypatch) -> None:
+    arch = Arch86_16()
+    original = SimTypeFunction([], SimTypeShort(signed=True))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={}, prototype=original)
+    project = SimpleNamespace(arch=arch, kb=SimpleNamespace(functions=_FunctionManager(function)))
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000, functy=original))
+    monkeypatch.setattr(
+        terminal_register_return_types,
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
+    )
+
+    result = materialize_terminal_register_return_type_8616(project, codegen)
+
+    assert result.changed is True
+    assert isinstance(codegen.cfunc.functy.returnty, SimTypeShort)
+    assert codegen.cfunc.functy.returnty.signed is False
+
+
 def test_terminal_ax_mixed_width_paths_refuse_header_refinement(monkeypatch) -> None:
     arch = Arch86_16()
     original = SimTypeFunction([], SimTypeChar(signed=True)).with_arch(arch)
@@ -110,7 +150,7 @@ def test_terminal_dx_ax_storage_refuses_word_header_refinement(monkeypatch) -> N
     assert codegen.cfunc.functy is original
 
 
-def test_terminal_ax_word_refuses_unobserved_guessed_void_prototype(monkeypatch) -> None:
+def test_terminal_ax_word_seeds_unobserved_guessed_void_prototype(monkeypatch) -> None:
     arch = Arch86_16()
     original = SimTypeFunction(
         [SimTypeShort(signed=True)],
@@ -125,6 +165,48 @@ def test_terminal_ax_word_refuses_unobserved_guessed_void_prototype(monkeypatch)
         prototype=original,
     )
     project = SimpleNamespace(arch=arch)
+    monkeypatch.setattr(
+        terminal_register_return_types,
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
+    )
+
+    result = apply_terminal_register_return_type_evidence_8616(project, function)
+
+    assert result.changed is True
+    assert result.stats == terminal_register_return_types.TerminalRegisterReturnTypeStats8616(1, 1, 1, 1, 0)
+    assert isinstance(function.prototype.returnty, SimTypeShort)
+    assert function.prototype.returnty.signed is False
+
+
+def test_terminal_ax_word_preserves_proven_unused_guessed_void_prototype(monkeypatch) -> None:
+    arch = Arch86_16()
+    original = SimTypeFunction([], SimTypeBottom(label="void")).with_arch(arch)
+    function = SimpleNamespace(
+        addr=0x1000,
+        block_addrs_set={0x1000},
+        calling_convention=object(),
+        info={},
+        is_prototype_guessed=True,
+        prototype=original,
+    )
+    project = SimpleNamespace(arch=arch)
+    record_caller_return_use_evidence_8616(
+        project,
+        function.addr,
+        CallerReturnUseEvidence8616(
+            target_addr=function.addr,
+            verdict=CallerReturnUseVerdict8616.UNUSED,
+            raw_fact_count=1,
+            normalized_fact_count=1,
+            classified_fact_count=1,
+            materialized_count=1,
+            failure_count=0,
+            used_callsite_count=0,
+            unused_callsite_count=1,
+            callsite_addrs=(0x2000,),
+        ),
+    )
     monkeypatch.setattr(
         terminal_register_return_types,
         "terminal_return_storage_8616",

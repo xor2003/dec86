@@ -9,11 +9,15 @@ from angr_platforms.X86_16.compiler_helpers import (
     hook_x86_16_known_compiler_helpers_8616,
     identify_x86_16_compiler_helper_at_8616,
     is_x86_16_registered_stack_probe_target_8616,
+    is_x86_16_stack_probe_helper_at_8616,
     is_x86_16_stack_probe_name_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_stage import _target_is_stack_probe_helper_8616
 
 MSC_ANCHKSTK_BYTES = bytes.fromhex("59 8b dc 2b d8 72 0a 3b 1e b6 00 72 04 8b e3 ff e1")
+MSC_ANLDIV_BYTES = bytes.fromhex(
+    "55 8b ec 57 56 53 33 ff 8b 46 06 0b c0 7d 11 47 8b 56 04 f7 d8 f7 da 1d 00 00 89 46 06 89 56 04"
+)
 
 
 def _project_with_memory(code: bytes, *, base: int = 0x1000):
@@ -39,6 +43,20 @@ def test_identify_msc_anchkstk_from_binary_bytes_without_sidecars():
     assert evidence.name == "aNchkstk"
     assert evidence.pattern_name == "msc_aNchkstk_popcx_sp_ax"
     assert evidence.matched_bytes == len(MSC_ANCHKSTK_BYTES)
+    assert is_x86_16_stack_probe_helper_at_8616(project, 0x1000) is True
+
+
+def test_identify_msc_signed_long_divide_from_binary_bytes_without_sidecars() -> None:
+    project = _project_with_memory(MSC_ANLDIV_BYTES)
+
+    evidence = identify_x86_16_compiler_helper_at_8616(project, 0x1000)
+
+    assert evidence is not None
+    assert evidence.kind is CompilerHelperEvidenceKind8616.SIGNED_LONG_DIVIDE
+    assert evidence.name == "aNldiv"
+    assert evidence.pattern_name == "msc_aNldiv_signed_dx_ax"
+    assert evidence.matched_bytes == len(MSC_ANLDIV_BYTES)
+    assert is_x86_16_stack_probe_helper_at_8616(project, 0x1000) is False
 
 
 def test_identify_stack_probe_through_rebased_original_project_bytes():

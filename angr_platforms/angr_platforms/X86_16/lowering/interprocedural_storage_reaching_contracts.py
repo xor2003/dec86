@@ -26,6 +26,7 @@ __all__ = [
     "CallArgumentDefinitionStats8616",
     "CallArgumentDefinitionVerdict8616",
     "PhysicalCallArgument8616",
+    "PhysicalCallArgumentPiece8616",
     "SSAInstructionSite8616",
 ]
 
@@ -97,9 +98,17 @@ class SSAInstructionSite8616:
 
 
 @dataclass(frozen=True, slots=True)
-class PhysicalCallArgument8616:
-    """One source-order argument projected to its physical push fact."""
+class PhysicalCallArgumentPiece8616:
+    """One exact physical push contributing bytes to a logical argument."""
 
     width: int
     source: tuple[object, ...]
     push_addr: int
+
+
+@dataclass(frozen=True, slots=True)
+class PhysicalCallArgument8616:
+    """One source-order logical argument and its ordered physical pieces."""
+
+    width: int
+    pieces: tuple[PhysicalCallArgumentPiece8616, ...]

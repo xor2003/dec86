@@ -6,6 +6,7 @@ Responsibility: collect optional rizin function seeds without making them semant
 
 from __future__ import annotations
 
+import contextlib
 import json
 import shutil
 import subprocess
@@ -21,10 +22,10 @@ _RIZIN_DISCOVERY_POLICY_SCHEMA = 4
 _DOS_MZ_LOAD_BASE = 0x10000
 
 __all__ = [
-    "RizinDiscoveryStatus",
     "RizinDiscoveryResult",
-    "discover_rizin_function_entries",
+    "RizinDiscoveryStatus",
     "discover_function_offsets_with_rizin",
+    "discover_rizin_function_entries",
 ]
 
 
@@ -109,8 +110,7 @@ def _run_rizin_json(binary_path: Path, command: str, *, timeout_sec: int) -> obj
         completed = subprocess.run(
             cmd,
             check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=max(1, int(timeout_sec)),
         )
@@ -153,9 +153,8 @@ def _mz_linear_candidates_from_prologues(binary_path: Path) -> tuple[list[int], 
                 continue
             paddr = int(seg.get("paddr", 0) or 0)
             vaddr = int(seg.get("vaddr", 0) or 0)
-            if paddr > 0 and vaddr >= 0:
-                if chosen is None or paddr < int(chosen.get("paddr", 0) or 0):
-                    chosen = {"paddr": paddr, "vaddr": vaddr}
+            if paddr > 0 and vaddr >= 0 and (chosen is None or paddr < int(chosen.get("paddr", 0) or 0)):
+                chosen = {"paddr": paddr, "vaddr": vaddr}
         if chosen is None:
             return [], "no_mappable_segment"
         pbase = int(chosen["paddr"])
@@ -191,8 +190,7 @@ def _mz_linear_candidates_from_prologues(binary_path: Path) -> tuple[list[int], 
         entry_raw = subprocess.run(
             ["rizin", "-2", "-q", "-c", "ieq", str(binary_path)],
             check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=2,
         )
@@ -201,10 +199,8 @@ def _mz_linear_candidates_from_prologues(binary_path: Path) -> tuple[list[int], 
     if entry_raw is not None and entry_raw.returncode == 0:
         entry_text = entry_raw.stdout.strip()
         if entry_text.startswith("0x"):
-            try:
+            with contextlib.suppress(ValueError):
                 candidates.append(0x10000 + int(entry_text, 16))
-            except ValueError:
-                pass
     dedup: set[int] = set()
     ordered: list[int] = []
     for addr in sorted(candidates):
@@ -228,10 +224,7 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
             cached_detail = str(cached.get("detail", "") or "")
             offsets_raw = cached.get("offsets")
             cached_offsets: tuple[int, ...]
-            if isinstance(offsets_raw, list):
-                cached_offsets = tuple(_json_int(x) for x in offsets_raw)
-            else:
-                cached_offsets = ()
+            cached_offsets = tuple(_json_int(x) for x in offsets_raw) if isinstance(offsets_raw, list) else ()
             if cached_status_raw:
                 for status in RizinDiscoveryStatus:
                     if status.value == cached_status_raw:
@@ -250,8 +243,7 @@ def discover_rizin_function_entries(binary_path: Path, *, timeout_sec: int = 8) 
         completed = subprocess.run(
             cmd,
             check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             timeout=max(1, int(timeout_sec)),
         )

@@ -4,13 +4,16 @@ import sys
 import time
 from pathlib import Path
 
-from inertia_decompiler.fork_timeout import run_with_timeout_in_fork
+from inertia_decompiler.fork_timeout import run_captured_subprocess_tree, run_with_timeout_in_fork
 
 
 def _process_is_running(pid: int) -> bool:
     stat_path = Path("/proc") / str(pid) / "stat"
     if stat_path.exists():
-        fields = stat_path.read_text(encoding="utf-8").split()
+        try:
+            fields = stat_path.read_text(encoding="utf-8").split()
+        except FileNotFoundError:
+            return False
         return len(fields) < 3 or fields[2] not in {"X", "Z"}
     try:
         os.kill(pid, 0)
@@ -116,3 +119,39 @@ except TimeoutError as exc:
     assert lines[0] == "TimeoutError"
     assert "Timed out after 1s" in lines[1]
     assert float(lines[2]) < 2.5
+
+
+def test_captured_subprocess_timeout_reaps_pipe_holding_descendants(tmp_path: Path) -> None:
+    if os.name != "posix":
+        return
+
+    marker = tmp_path / "captured-descendant.pid"
+    script = r'''
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+marker = Path(sys.argv[1])
+child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+marker.write_text(str(child.pid), encoding="ascii")
+time.sleep(60)
+'''
+    started = time.monotonic()
+    try:
+        run_captured_subprocess_tree(
+            [sys.executable, "-c", script, str(marker)],
+            env=os.environ,
+            timeout=1,
+        )
+    except subprocess.TimeoutExpired:
+        pass
+    else:
+        raise AssertionError("captured subprocess tree did not time out")
+
+    assert time.monotonic() - started < 3.0
+    descendant_pid = int(marker.read_text(encoding="ascii"))
+    deadline = time.monotonic() + 2.0
+    while _process_is_running(descendant_pid) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not _process_is_running(descendant_pid)

@@ -26,11 +26,11 @@ def test_args_generated_c_contract_accepts_indexed_independent_calls() -> None:
 unsigned short sub_10058(short arg, unsigned short *arg_5)
 {
     unsigned short local_4;
-    if (sub_10010(SEG_PTR(inertia_ds, arg_5[local_2]), 118)) {
+    if (sub_10010(SEG_PTR(inertia_ds, arg_6[local_2]), 118)) {
         local_4 = 1;
     }
-    sub_10010(SEG_PTR(inertia_ds, arg_5[local_2]), 104);
-    sub_106d6(676, arg_5[local_2]);
+    sub_10010(SEG_PTR(inertia_ds, arg_6[local_2]), 104);
+    sub_106d6(676, arg_6[local_2]);
 }
 """
 
@@ -82,7 +82,7 @@ unsigned short sub_10058(short arg, unsigned short *arg_5)
     contract_result = result["generated_c_contract"]
     assert contract_result["status"] == "failed"
     assert "local_2 = 104;" in contract_result["present_forbidden_fragments"]
-    assert contract_result["insufficient_occurrences"] == [["arg_5[local_2]", 3, 0]]
+    assert contract_result["insufficient_occurrences"] == [["arg_6[local_2]", 3, 0]]
 
 
 def test_args_generated_c_contract_refuses_hoisted_verbose_assignment() -> None:
@@ -98,9 +98,9 @@ int sub_10058(short arg_4, unsigned short *arg_5)
     unsigned short local_4;
     unsigned short local_2;
     local_4 = 1;
-    if (sub_10010(SEG_PTR(inertia_ds, arg_5[local_2]), 104)) { }
-    if (sub_10010(SEG_PTR(inertia_ds, arg_5[local_2]), 118)) { }
-    sub_106d6(676, arg_5[local_2]);
+    if (sub_10010(SEG_PTR(inertia_ds, arg_6[local_2]), 104)) { }
+    if (sub_10010(SEG_PTR(inertia_ds, arg_6[local_2]), 118)) { }
+    sub_106d6(676, arg_6[local_2]);
 }
 """
 

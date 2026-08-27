@@ -189,7 +189,7 @@ def _prune_dead_local_assignments(
             if hasattr(node, "condition_and_nodes"):
                 try:
                     # Dynamic codegen boundary: CIfElse-like nodes may expose condition/body pairs.
-                    pairs = getattr(node, "condition_and_nodes")
+                    pairs = node.condition_and_nodes
                 except Exception:
                     pairs = None
                 if pairs:
@@ -520,7 +520,7 @@ def _prune_dead_local_assignments(
         if hasattr(node, "condition_and_nodes"):
             try:
                 # Dynamic codegen boundary: CIfElse-like nodes may expose condition/body pairs.
-                pairs = getattr(node, "condition_and_nodes")
+                pairs = node.condition_and_nodes
             except Exception:
                 pairs = None
             if pairs:

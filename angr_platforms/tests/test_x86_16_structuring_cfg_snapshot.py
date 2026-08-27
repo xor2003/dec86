@@ -2,9 +2,15 @@ import networkx as nx
 from angr_platforms.X86_16.structuring_cfg_snapshot import build_cfg_snapshot
 
 
+class _Stmt:
+    def __init__(self, tags):
+        self.tags = tags
+
+
 class _Node:
-    def __init__(self, addr):
+    def __init__(self, addr, statements=()):
         self.addr = addr
+        self.statements = statements
 
 
 class _Clinic:
@@ -78,3 +84,32 @@ def test_build_cfg_snapshot_marks_unreachable_nodes():
     assert by_id[0x1000].reachable_from_entry is True
     assert by_id[0x1001].reachable_from_entry is True
     assert by_id[0x1002].reachable_from_entry is False
+
+
+def test_build_cfg_snapshot_preserves_statement_provenance():
+    graph = nx.DiGraph()
+    graph.add_node(
+        _Node(
+            0x1000,
+            statements=(
+                _Stmt({"ins_addr": 0x1000, "vex_block_addr": 0x1000, "vex_stmt_idx": 1}),
+                _Stmt({"ins_addr": 0x1002, "vex_block_addr": 0x1000, "vex_stmt_idx": 2}),
+            ),
+        )
+    )
+
+    snapshot = build_cfg_snapshot(_Codegen(0x1000, clinic=_Clinic(graph)))
+
+    assert snapshot is not None
+    [node] = snapshot.nodes
+    assert node.statement_ins_addrs == (0x1000, 0x1002)
+    assert node.statement_provenance_keys == (("vex", 0x1000, 1), ("vex", 0x1000, 2))
+    serialized_nodes = snapshot.to_dict()["nodes"]
+    assert isinstance(serialized_nodes, list)
+    [serialized_node] = serialized_nodes
+    assert isinstance(serialized_node, dict)
+    assert serialized_node["statement_ins_addrs"] == ["0x1000", "0x1002"]
+    assert serialized_node["statement_provenance_keys"] == [
+        ["vex", "0x1000", 1],
+        ["vex", "0x1000", 2],
+    ]

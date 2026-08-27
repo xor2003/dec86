@@ -124,7 +124,7 @@ def _record_result_8616(
     result: FunctionStoragePublicationResult8616,
 ) -> FunctionStoragePublicationResult8616:
     """Persist one typed lifecycle result on the owned codegen surface."""
-    try:
+    try:  # noqa: SIM105
         cast(
             _CodegenSurface8616,
             codegen,

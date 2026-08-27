@@ -8,19 +8,19 @@ from __future__ import annotations
 
 from collections.abc import ItemsView, Iterator, KeysView, Mapping, ValuesView
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from types import MappingProxyType
 
 from .cod_extract import CODProcMetadata
 
 __all__ = [
-    "CODSourceRewriteSpec",
-    "CODSourceRewriteRegistry",
-    "CODSourceRewriteStatus",
-    "CODSourceRewriteStatusKind",
+    "COD_SOURCE_REWRITE_REGISTRY",
     "COD_SOURCE_REWRITE_SPECS",
     "COD_SOURCE_REWRITE_SPECS_BY_NAME",
-    "COD_SOURCE_REWRITE_REGISTRY",
+    "CODSourceRewriteRegistry",
+    "CODSourceRewriteSpec",
+    "CODSourceRewriteStatus",
+    "CODSourceRewriteStatusKind",
     "apply_cod_source_rewrites",
     "cod_source_rewrite_description",
     "cod_source_rewrite_names",
@@ -36,7 +36,7 @@ __all__ = [
 ]
 
 
-class CODSourceRewriteStatusKind(str, Enum):
+class CODSourceRewriteStatusKind(StrEnum):
     """Lifecycle state for disabled source-backed rewrite debt."""
 
     TEMPORARY_RESCUE = "temporary_rescue"
@@ -44,7 +44,7 @@ class CODSourceRewriteStatusKind(str, Enum):
     ALREADY_SUBSUMED_BY_GENERAL_RECOVERY = "already_subsumed_by_general_recovery"
 
     @classmethod
-    def coerce(cls, value: object) -> "CODSourceRewriteStatusKind":
+    def coerce(cls, value: object) -> CODSourceRewriteStatusKind:
         """Normalize legacy status values into the typed rewrite-status enum."""
         if isinstance(value, cls):
             return value

@@ -13,14 +13,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .core import IRAddress, IRInstr, IRValue, MemSpace
-from .indexed_address_access_normalization import NormalizedIndexedAddressAccess8616
+from .core import IRInstr, IRValue, MemSpace
+from .indexed_address_contracts import IndexedAddressFailureKind8616
 from .indexed_address_copy_contracts import (
     IndexedAddressCopyFailureKind8616,
     IndexedAddressCopyLane8616,
     IndexedAddressCopyStep8616,
     IndexedAddressCopyStepKind8616,
     IndexedAddressCopyValuePath8616,
+)
+from .logical_memory_contracts import IRLogicalMemoryArtifact8616
+from .logical_memory_value_trace import (
+    LogicalMemoryValueTrace8616,
+    trace_logical_word_load_8616,
 )
 from .scalar_definitions import (
     ScalarDefinition8616,
@@ -41,12 +46,13 @@ class IndexedAddressCopyPathRefusal8616:
 
 @dataclass(frozen=True, slots=True)
 class _ValueTrace8616:
-    """Internal exact source trace or one typed refusal."""
+    """Internal exact scalar source trace or one typed refusal."""
 
     entry: ScalarDefinition8616 | None
     load: ScalarDefinition8616 | None
     steps: tuple[IndexedAddressCopyStep8616, ...]
     refusal: IndexedAddressCopyPathRefusal8616 | None
+    logical_source: LogicalMemoryValueTrace8616 | None
 
 
 def _failed_trace_8616(
@@ -59,7 +65,21 @@ def _failed_trace_8616(
         None,
         (),
         IndexedAddressCopyPathRefusal8616(failure, detail),
+        None,
     )
+
+
+def _logical_copy_failure_8616(
+    failure: IndexedAddressFailureKind8616 | None,
+) -> IndexedAddressCopyFailureKind8616:
+    """Map authoritative logical-value refusals into the copy contract."""
+    if failure is IndexedAddressFailureKind8616.INDEX_DEFINITION_MISSING:
+        return IndexedAddressCopyFailureKind8616.VALUE_DEFINITION_MISSING
+    if failure is IndexedAddressFailureKind8616.INDEX_DEFINITION_CONFLICT:
+        return IndexedAddressCopyFailureKind8616.LOGICAL_MEMORY_EVIDENCE_CONFLICT
+    if failure is IndexedAddressFailureKind8616.INDEX_EXPRESSION_UNSUPPORTED:
+        return IndexedAddressCopyFailureKind8616.VALUE_OPERATION_UNSUPPORTED
+    return IndexedAddressCopyFailureKind8616.LOGICAL_MEMORY_EVIDENCE_UNPROVEN
 
 
 def _unique_definition_8616(
@@ -125,7 +145,9 @@ def _step_kind_8616(
 def _trace_value_to_load_8616(
     value: IRValue,
     definitions: ScalarDefinitionIndex8616,
+    logical_memory: IRLogicalMemoryArtifact8616 | None,
     *,
+    function_addr: int,
     block_addr: int,
     before_index: int,
     seen: frozenset[tuple[str, str | None, int, int, int | None]] = frozenset(),
@@ -153,12 +175,37 @@ def _trace_value_to_load_8616(
                 IndexedAddressCopyFailureKind8616.VALUE_OPERATION_UNSUPPORTED,
                 "source LOAD lacks exact value or instruction identity",
             )
-        return _ValueTrace8616(definition, definition, (), None)
+        return _ValueTrace8616(definition, definition, (), None, None)
+    if instruction.op == "Iop_Or16":
+        logical_source = trace_logical_word_load_8616(
+            instruction,
+            definitions,
+            logical_memory,
+            function_addr=function_addr,
+            block_addr=block_addr,
+            before_index=definition.instr_index,
+        )
+        if not logical_source.complete:
+            failure = _logical_copy_failure_8616(logical_source.failure)
+            detail = (
+                "logical word source lacks closed exact value evidence"
+                if logical_source.failure is None
+                else f"logical word source refused {logical_source.failure.value}"
+            )
+            return _failed_trace_8616(failure, detail)
+        return _ValueTrace8616(
+            definition,
+            definition,
+            (),
+            None,
+            logical_source,
+        )
     source_expression: IRValue | None = None
-    if instruction.op == "MOV" and len(instruction.args) == 1:
-        argument = instruction.args[0]
-        source_expression = argument if isinstance(argument, IRValue) else None
-    elif instruction.op == "Iop_Shr16" and len(instruction.args) == 2:
+    if (
+        instruction.op == "MOV" and len(instruction.args) == 1
+    ) or (
+        instruction.op == "Iop_Shr16" and len(instruction.args) == 2
+    ):
         argument = instruction.args[0]
         source_expression = argument if isinstance(argument, IRValue) else None
     if source_expression is None:
@@ -169,6 +216,8 @@ def _trace_value_to_load_8616(
     source_trace = _trace_value_to_load_8616(
         source_expression,
         definitions,
+        logical_memory,
+        function_addr=function_addr,
         block_addr=block_addr,
         before_index=definition.instr_index,
         seen=seen | {key},
@@ -219,6 +268,7 @@ def _trace_value_to_load_8616(
         source_trace.load,
         (step, *source_trace.steps),
         None,
+        source_trace.logical_source,
     )
 
 
@@ -235,33 +285,14 @@ def _member_instruction_8616(
     return instruction
 
 
-def order_indexed_store_members_8616(
-    block: SSABlock,
-    access: NormalizedIndexedAddressAccess8616,
-) -> tuple[int, ...] | None:
-    """Order one direct member or exact little-endian pair by byte offset."""
-    entries: list[tuple[int, int]] = []
-    for instr_index in access.member_instr_indices:
-        instruction = _member_instruction_8616(block, instr_index)
-        address = None if instruction is None else instruction.args[0]
-        if not isinstance(address, IRAddress):
-            return None
-        entries.append((address.offset, instr_index))
-    ordered_entries = tuple(sorted(entries))
-    ordered = tuple(index for _offset, index in ordered_entries)
-    if len(ordered) == 1:
-        return ordered
-    offsets = tuple(offset for offset, _index in ordered_entries)
-    if len(ordered) == 2 and offsets == (access.address.offset, access.address.offset + 1):
-        return ordered
-    return None
-
-
 def trace_indexed_store_member_8616(
     block: SSABlock,
     instr_index: int,
     lane: IndexedAddressCopyLane8616,
     definitions: ScalarDefinitionIndex8616,
+    logical_memory: IRLogicalMemoryArtifact8616 | None,
+    *,
+    function_addr: int,
 ) -> IndexedAddressCopyValuePath8616 | IndexedAddressCopyPathRefusal8616:
     """Trace one normalized STORE member to its exact LOAD endpoint."""
     instruction = _member_instruction_8616(block, instr_index)
@@ -274,6 +305,8 @@ def trace_indexed_store_member_8616(
     trace = _trace_value_to_load_8616(
         value,
         definitions,
+        logical_memory,
+        function_addr=function_addr,
         block_addr=block.addr,
         before_index=instr_index,
     )
@@ -297,6 +330,7 @@ def trace_indexed_store_member_8616(
         value,
         load_instruction.dst,
         trace.steps,
+        trace.logical_source,
     )
     if not path.complete:
         return IndexedAddressCopyPathRefusal8616(
@@ -308,6 +342,5 @@ def trace_indexed_store_member_8616(
 
 __all__ = [
     "IndexedAddressCopyPathRefusal8616",
-    "order_indexed_store_members_8616",
     "trace_indexed_store_member_8616",
 ]

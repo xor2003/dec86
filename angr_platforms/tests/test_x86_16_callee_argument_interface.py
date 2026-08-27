@@ -170,7 +170,7 @@ def test_positive_bp_lowering_clears_stale_unused_header_from_binary_zero_eviden
             )
         },
     )
-    codegen = SimpleNamespace(project=project, next_idx=lambda name: 1)
+    codegen = SimpleNamespace(project=project, next_idx=lambda name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     argument = CVariable(
         SimStackVariable(4, 2, base="bp", name="stale", region=0x1000),
         variable_type=word_type,
@@ -199,7 +199,7 @@ def test_pointer_interface_materializes_binary_proven_trailing_bp_argument() -> 
         arch=arch,
         kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: function)),
     )
-    codegen = SimpleNamespace(project=project, next_idx=lambda name: 1)
+    codegen = SimpleNamespace(project=project, next_idx=lambda name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     bar1 = CVariable(
         SimStackVariable(4, 2, base="bp", name="bar1", region=0x1000),
         variable_type=word_type,
@@ -242,7 +242,7 @@ def test_pointer_interface_refuses_to_invent_missing_scalar_prefix() -> None:
         arch=arch,
         kb=SimpleNamespace(functions=SimpleNamespace(function=lambda addr, create=False: function)),
     )
-    codegen = SimpleNamespace(project=project, next_idx=lambda name: 1)
+    codegen = SimpleNamespace(project=project, next_idx=lambda name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     first = CVariable(
         SimStackVariable(4, 2, base="bp", name="value", region=0x1000),
         variable_type=word_type,

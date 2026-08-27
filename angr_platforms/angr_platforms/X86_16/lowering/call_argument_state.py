@@ -13,11 +13,11 @@ assembly, or rendered C text.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, TypeAlias
+from typing import Any
 
 # Opaque angr structured-codegen values are intentionally dynamic at this
 # boundary; mypyc cannot import dataclass fields annotated as builtin object.
-OpaqueCodegenValue8616: TypeAlias = Any
+type OpaqueCodegenValue8616 = Any
 
 
 @dataclass(frozen=True, slots=True)

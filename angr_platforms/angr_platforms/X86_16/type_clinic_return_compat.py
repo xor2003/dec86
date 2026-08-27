@@ -15,6 +15,7 @@ from typing import Any, Protocol, cast
 
 from angr import ailment
 from angr.analyses.decompiler.clinic import Clinic
+from angr.knowledge_plugins.functions.function import PrototypeSource
 
 from .callsite_summary import CallerReturnUseVerdict8616
 from .lowering.return_type_evidence import proven_function_result_observation_8616
@@ -51,6 +52,8 @@ class _FunctionSurface8616(Protocol):
 
     addr: int
     is_prototype_guessed: bool
+    prototype: object | None
+    prototype_source: PrototypeSource
 
 
 class _ClinicSurface8616(Protocol):
@@ -59,6 +62,26 @@ class _ClinicSurface8616(Protocol):
     _ail_graph: _GraphSurface8616
     function: _FunctionSurface8616
     project: object
+
+
+def _preserve_strong_prototype_during_cc_recovery_8616() -> None:
+    """Keep authoritative prototypes while Clinic fills a missing calling convention."""
+    original = Clinic._recover_calling_conventions
+    if original.__name__ == "_recover_calling_conventions_8616":
+        return
+
+    def _recover_calling_conventions_8616(self: object, func_graph: object | None = None) -> None:
+        """Adapt angr 9.3 Clinic without replacing evidence-backed prototype types."""
+        clinic = cast(_ClinicSurface8616, self)
+        function = clinic.function
+        preserved_prototype = function.prototype
+        preserved_source = function.prototype_source
+        cast(Any, original)(self, func_graph=func_graph)
+        if preserved_prototype is not None and preserved_source >= PrototypeSource.CCA_DECOMPILER:
+            function.prototype = preserved_prototype
+            function.prototype_source = preserved_source
+
+    cast(Any, Clinic)._recover_calling_conventions = _recover_calling_conventions_8616
 
 
 
@@ -125,14 +148,23 @@ def finalize_clinic_return_type_8616(
 
 def apply_x86_16_clinic_return_type_compatibility() -> None:
     """Install the post-prototype Clinic lowering adapter once."""
+    _preserve_strong_prototype_during_cc_recovery_8616()
     original = Clinic._make_function_prototype
     if original.__name__ == "_make_function_prototype_8616":
         return
 
-    def _make_function_prototype_8616(self: object, arg_list: list[object], variable_kb: object) -> None:
+    def _make_function_prototype_8616(
+        self: object,
+        arg_list: list[object],
+        variable_kb: object | None = None,
+    ) -> None:
+        """Run Clinic prototype synthesis across supported angr call contracts."""
         clinic = cast(_ClinicSurface8616, self)
         prototype_was_guessed = clinic.function.is_prototype_guessed
-        cast(Any, original)(self, arg_list, variable_kb)
+        if variable_kb is None:
+            cast(Any, original)(self, arg_list)
+        else:
+            cast(Any, original)(self, arg_list, variable_kb)
         finalize_clinic_return_type_8616(
             clinic.project,
             clinic.function,

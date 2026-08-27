@@ -41,6 +41,7 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 __all__ = [
     "_c_ast_cycle_path_8616",
     "_clone_c_ast_tree_8616",
+    "_iter_c_node_occurrences_8616",
     "_iter_c_nodes_deep_8616",
     "_iter_c_statement_nodes_8616",
     "_replace_c_children_8616",
@@ -143,7 +144,7 @@ def _c_ast_cycle_path_8616(node: object, *, max_nodes: int = 16_384) -> tuple[st
         detail = f"[op={op}]" if isinstance(op, str) and op else ""
         entry = f"{edge}:{type(current).__name__}{detail}"
         if marker in active_indexes:
-            return tuple(path + [f"{entry}(cycle-to={active_indexes[marker]})"])
+            return (*path, f"{entry}(cycle-to={active_indexes[marker]})")
         if marker in completed or visited >= max_nodes:
             return ()
         active_indexes[marker] = len(path)
@@ -221,7 +222,7 @@ def _structured_slot_names_for_type_8616(value_type: type) -> tuple[str, ...]:
             slots = (slots,)
         for slot in slots:
             if isinstance(slot, str) and not slot.startswith("_") and slot not in _STRUCTURED_NON_CHILD_ATTRS_8616:
-                attrs.append(slot)
+                attrs.append(slot)  # noqa: PERF401
 
     seen = set()
     ordered: list[str] = []
@@ -269,6 +270,7 @@ def _structured_slot_names_8616(value: object) -> tuple[str, ...]:
 
 
 def _iter_c_node_children_8616(value: object, seen_values: set[int] | None = None) -> Iterator[object]:
+    """Yield structured nodes directly contained by a dynamic boundary value."""
     if seen_values is None:
         seen_values = set()
 
@@ -414,7 +416,7 @@ def _replace_c_children_8616(
         if not hasattr(current, "condition_and_nodes"):
             return False
         try:
-            pairs = getattr(current, "condition_and_nodes")
+            pairs = current.condition_and_nodes
         except Exception:
             pairs = None
         if not pairs:
@@ -440,7 +442,7 @@ def _replace_c_children_8616(
         if not hasattr(current, "cases"):
             return False
         try:
-            cases = getattr(current, "cases")
+            cases = current.cases
         except Exception:
             return False
         if not cases:
@@ -503,22 +505,48 @@ def _iter_c_nodes_deep_8616(node: object, seen: set[int] | None = None) -> Itera
     node_stack = [node]
     while node_stack:
         current = node_stack.pop()
-        if not _structured_codegen_node_8616(current):
-            continue
         node_id = id(current)
         if node_id in seen:
             continue
         seen.add(node_id)
         yield current
 
+        seen_values: set[int] = set()
         for attr in _structured_slot_names_8616(current):
             try:
                 value = getattr(current, attr)
             except Exception:
                 continue
-            for child in _iter_c_node_children_8616(value, set()):
-                if _structured_codegen_node_8616(child):
-                    node_stack.append(child)
+            node_stack.extend(_iter_c_node_children_8616(value, seen_values))
+
+
+def _iter_c_node_occurrences_8616(
+    value: object,
+    active_node_ids: frozenset[int] = frozenset(),
+) -> Iterator[object]:
+    """Yield each AST edge occurrence while refusing active-path cycles."""
+    if isinstance(value, dict):
+        for child in value.values():
+            yield from _iter_c_node_occurrences_8616(child, active_node_ids)
+        return
+    if isinstance(value, (list, tuple)):
+        for child in value:
+            yield from _iter_c_node_occurrences_8616(child, active_node_ids)
+        return
+    if not _structured_codegen_node_8616(value):
+        return
+    node_id = id(value)
+    if node_id in active_node_ids:
+        return
+    yield value
+    child_active_ids = active_node_ids | {node_id}
+    for attr in _structured_slot_names_8616(value):
+        with suppress(Exception):
+            # Dynamic boundary: angr C node child slots vary by class and version.
+            yield from _iter_c_node_occurrences_8616(
+                getattr(value, attr),
+                child_active_ids,
+            )
 
 
 def _same_c_expression_8616(lhs: object, rhs: object) -> bool:
@@ -527,12 +555,10 @@ def _same_c_expression_8616(lhs: object, rhs: object) -> bool:
     def _same_stack_variable_8616(lvar: SimStackVariable, rvar: SimStackVariable) -> bool:
         """Compare stack variables across the dynamic third-party angr boundary."""
         return bool(
-            (
             lvar.offset == rvar.offset
             and lvar.size == rvar.size
             and lvar.base == rvar.base
             and lvar.region == rvar.region
-            )
         )
 
     def _dirty_identity_8616(node: CDirtyExpression) -> tuple[str, object] | None:

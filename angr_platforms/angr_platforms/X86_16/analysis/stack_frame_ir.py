@@ -7,21 +7,21 @@ Forbidden: inventing locals/args without segmented SS:BP/SP evidence.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from ..ir.core import IRAddress, IRFunctionArtifact, IRInstr, IRValue, MemSpace
 
 __all__ = [
     "BPFrameCoordinateEvidence8616",
+    "FrameAccessArtifact",
     "FrameCoordinateStats8616",
     "FrameCoordinateStatus8616",
-    "FrameAccessArtifact",
     "StackFrameSlot",
     "build_x86_16_ir_frame_access_artifact",
 ]
 
 
-class FrameCoordinateStatus8616(str, Enum):
+class FrameCoordinateStatus8616(StrEnum):
     """Typed state of the BP-to-entry-SP coordinate proof."""
 
     UNKNOWN = "unknown"

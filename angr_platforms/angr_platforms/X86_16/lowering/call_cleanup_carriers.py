@@ -21,8 +21,9 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable, cast
+from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
@@ -135,10 +136,10 @@ def _stack_cleanup_carrier_lhs_8616(node: object, project: object) -> bool:
     sp_register = registers.get("sp") if isinstance(registers, dict) else None
     sp_offset = sp_register[0] if isinstance(sp_register, tuple) and sp_register else None
     return bool(
-        isinstance(variable, SimStackVariable)
-        and variable.base == "bp"
-        or isinstance(variable, SimRegisterVariable)
-        and variable.reg == sp_offset
+        (isinstance(variable, SimStackVariable)
+        and variable.base == "bp")
+        or (isinstance(variable, SimRegisterVariable)
+        and variable.reg == sp_offset)
     )
 
 
@@ -155,10 +156,7 @@ def _expression_instruction_addresses_8616(node: object) -> frozenset[int]:
         ins_addr = tags.get("ins_addr") if isinstance(tags, dict) else None
         if isinstance(ins_addr, int):
             addresses.add(ins_addr)
-        if isinstance(current, structured_c.CAssignment):
-            visit(current.lhs)
-            visit(current.rhs)
-        elif isinstance(current, structured_c.CBinaryOp):
+        if isinstance(current, (structured_c.CAssignment, structured_c.CBinaryOp)):
             visit(current.lhs)
             visit(current.rhs)
         elif isinstance(current, structured_c.CTypeCast):

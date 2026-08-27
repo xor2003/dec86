@@ -100,16 +100,54 @@ unsigned short Sleep(long wait)
     assert result["functions"][0]["generated_c_marker"] == "normal"
 
 
+def test_sortdemo_status_joins_definitions_deferred_after_multiple_markers() -> None:
+    result = parse_status_text(
+        """
+/* == function 0x10560 InitBars == */
+/* info: function 0x10560 InitBars attempt=decompiled validation=passed */
+/* == function 0x10f38 Sleep == */
+/* info: function 0x10f38 Sleep attempt=decompiled validation=passed */
+void sub_10560(void)
+{
+    int vc;
+    time(0);
+    srand(1);
+    getvideoconfig(&vc);
+    rand();
+    sub_10678();
+}
+unsigned short sub_10f38(long wait)
+{
+    while (clock() < wait) {
+    }
+    return clock();
+}
+""",
+        check_source_contracts=True,
+    )
+
+    assert result["summary"] == {"total": 2, "passed": 2}
+    assert result["source_contract_summary"] == {"total": 2, "passed": 2, "failed": 0}
+
+
 def test_sortdemo_status_keeps_canonical_type_prelude_with_definition():
     result = parse_status_text(
         """
+/* == function 0x2000 helper == */
+/* info: function 0x2000 helper attempt=decompiled validation=passed */
 /* == function 0x107b8 Swaps == */
 /* info: function 0x107b8 Swaps attempt=decompiled validation=passed */
-/* info: decompilation attempted for 1/1 selected function(s) */
+/* info: decompilation attempted for 2/2 selected function(s) */
+[metric] worker diagnostic that is not generated C
+WARNING  | decompiler diagnostic that is not generated C
 typedef struct g_08F0_entry {
     char field_0;
     char field_1;
 } g_08F0_entry;
+void sub_2000(void)
+{
+    return;
+}
 short Swaps(g_08F0_entry *bar1, g_08F0_entry *bar2)
 {
     g_08F0_entry temporary;
@@ -122,8 +160,24 @@ short Swaps(g_08F0_entry *bar1, g_08F0_entry *bar2)
         check_source_contracts=True,
     )
 
-    assert result["summary"] == {"total": 1, "passed": 1}
+    assert result["summary"] == {"total": 2, "passed": 2}
     assert result["source_contract_summary"] == {"total": 1, "passed": 1, "failed": 0}
+
+
+def test_sortdemo_status_ignores_deallocator_cleanup_traceback_before_final_success():
+    result = parse_status_text(
+        """
+/* function: 0x10f38 Sleep */
+Exception ignored while calling deallocator <function IO.__del__>:
+Traceback (most recent call last):
+  File "io.py", line 50, in __del__
+AnalysisTimeout:
+/* failure family: status=ok stage=not_set fallback=file_sweep validation=passed */
+/* info: function 0x10f38 Sleep attempt=decompiled validation=passed */
+"""
+    )
+
+    assert result["summary"] == {"total": 1, "passed": 1}
 
 
 def test_sortdemo_source_call_contract_accepts_generated_integer_type_footer():
@@ -282,7 +336,7 @@ void InsertionSort(void)
 {
     unsigned short local_4;
     unsigned short local_6;
-    if ((g_0B4C[local_4 - 1] & 255) <= local_6)
+    if (!((g_0B4C[local_4 - 1] & 255) > local_6))
         break;
     DrawBar(local_4);
     DrawTime(local_4);

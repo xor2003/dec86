@@ -17,9 +17,10 @@ join must keep the move in place instead of silently broadening its execution.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, cast
+from typing import Any, cast
 
 from ..ir.condition_ir import ConditionIR
 from ..lowering.real_mode_linear import DirectStackMoveFact8616

@@ -35,6 +35,7 @@ from angr_platforms.X86_16.decompiler_postprocess_calls import (
     _align_cod_call_names_8616,
     _annotated_function_pointer_stack_offsets_8616,
     _attach_callsite_summaries_8616,
+    _bind_call_argument_setup_liveness_classifier_8616,
     _bind_function_result_observation_provider_8616,
     _bind_segment_push_source_lowerer_8616,
     _cod_metadata_for_function_8616,
@@ -59,6 +60,9 @@ from angr_platforms.X86_16.decompiler_postprocess_utils import (
     _match_bp_stack_load_8616,
     _same_c_expression_8616,
 )
+from angr_platforms.X86_16.lowering.call_argument_carrier_liveness import (
+    call_argument_setup_is_proven_dead_8616,
+)
 from angr_platforms.X86_16.lowering.call_argument_state import ProtectedCallArgumentStore8616
 from angr_platforms.X86_16.lowering.return_type_evidence import proven_function_result_observation_8616
 from angr_platforms.X86_16.lowering.segmented_global_loads import DirectGlobalSymbolRef8616
@@ -76,7 +80,7 @@ from angr_platforms.X86_16.tail_validation_fingerprint import _expr_fingerprint
 def _args_match(args: list, expected: list) -> bool:
     if len(args) != len(expected):
         return False
-    return all(_same_c_expression_8616(a, e) for a, e in zip(args, expected))
+    return all(_same_c_expression_8616(a, e) for a, e in zip(args, expected, strict=False))
 
 
 class _DummyCodegen:
@@ -88,6 +92,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 class _LoopLikeNode:
@@ -130,6 +138,7 @@ def _project_with_bytes(base: int, data: bytes):
 
 def _codegen(project, statements):
     codegen = _DummyCodegen(project)
+    _bind_call_argument_setup_liveness_classifier_8616(codegen, call_argument_setup_is_proven_dead_8616)
     root = CStatements(statements, addr=0x4010, codegen=codegen)
     codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
     return codegen
@@ -1576,6 +1585,73 @@ def test_materialize_callsite_stack_arguments_publishes_nested_grouped_shape():
     summary = codegen._inertia_callsite_summaries[id(inner_call)]
     assert summary.arg_widths == (2, 2, 2, 2)
     assert summary.logical_arg_widths == (4, 4)
+
+
+def test_materialize_callsite_stack_arguments_publishes_variadic_wide_suffix():
+    project = _project()
+    codegen = _empty_codegen(project)
+    short_type = SimTypeShort(False).with_arch(project.arch)
+    long_type = SimTypeLong(False).with_arch(project.arch)
+    inner_callee = SimpleNamespace(
+        name="aNldiv",
+        prototype_libname=None,
+        prototype=SimTypeFunction([long_type, long_type], long_type).with_arch(project.arch),
+    )
+    inner_call = CFunctionCall(
+        "aNldiv",
+        inner_callee,
+        [
+            _scg.c.CConstant(30, long_type, codegen=codegen),
+            _scg.c.CConstant(0x1234, long_type, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    outer_callee = SimpleNamespace(
+        name="sprintf",
+        prototype=SimTypeFunction(
+            [short_type, short_type],
+            short_type,
+            variadic=True,
+        ).with_arch(project.arch),
+    )
+    outer_call = CFunctionCall(
+        "sprintf",
+        outer_callee,
+        [
+            _scg.c.CConstant(1, short_type, codegen=codegen),
+            _scg.c.CConstant(2, short_type, codegen=codegen),
+            inner_call,
+        ],
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements([outer_call], addr=0x4010, codegen=codegen)
+    codegen.cfunc.body = codegen.cfunc.statements
+    codegen._inertia_callsite_summaries = {
+        id(outer_call): CallsiteSummary8616(
+            callsite_addr=0x4012,
+            target_addr=0x1544,
+            return_addr=0x4015,
+            kind="direct_near",
+            arg_count=4,
+            arg_widths=(2, 2, 2, 2),
+            stack_cleanup=8,
+            return_register="ax",
+            return_used=True,
+            push_arg_sources=(
+                ("ret_reg", 0x4008, "dx"),
+                ("ret_reg", 0x4008, "ax"),
+                ("imm", 2),
+                ("imm", 1),
+            ),
+        )
+    }
+
+    changed = _materialize_callsite_stack_arguments_8616(project, codegen)
+
+    assert changed is True
+    summary = codegen._inertia_callsite_summaries[id(outer_call)]
+    assert summary.arg_widths == (2, 2, 2, 2)
+    assert summary.logical_arg_widths == (2, 2, 4)
 
 
 def test_materialize_callsite_stack_arguments_prefers_current_statements_and_syncs_body():
@@ -3809,6 +3885,7 @@ def test_materialize_callsite_stack_arguments_scans_past_value_assignments_betwe
                 codegen=codegen,
             ),
             CExpressionStatement(call, codegen=codegen),
+            CReturn(carrier_after, codegen=codegen),
         ],
         addr=0x4010,
         codegen=codegen,
@@ -3847,11 +3924,18 @@ def test_materialize_callsite_stack_arguments_scans_past_value_assignments_betwe
     changed = _materialize_callsite_stack_arguments_8616(project, codegen)
 
     assert changed is True
-    final_stmt = codegen.cfunc.statements.statements[-1]
+    final_stmt = next(
+        stmt
+        for stmt in codegen.cfunc.statements.statements
+        if isinstance(stmt, CExpressionStatement) and stmt.expr is call
+    )
     assert isinstance(final_stmt, CExpressionStatement)
     assert len(final_stmt.expr.args) == 2
+    assert carrier_next in [getattr(stmt, "lhs", None) for stmt in codegen.cfunc.statements.statements]
+    assert carrier_after in [getattr(stmt, "lhs", None) for stmt in codegen.cfunc.statements.statements]
     assert ax_7 in [getattr(stmt, "lhs", None) for stmt in codegen.cfunc.statements.statements]
     assert ax_8 in [getattr(stmt, "lhs", None) for stmt in codegen.cfunc.statements.statements]
+    assert codegen._inertia_callsite_materialization_stats.live_setup_definition_preserved_count == 1
 
 
 def test_materialize_callsite_stack_arguments_refuses_name_only_probe_summary_upgrade():
@@ -7927,6 +8011,8 @@ def test_materialize_callsite_stack_arguments_consumes_dx_ax_return_push_pair():
     )
     rebound_summary = codegen._inertia_callsite_summaries[id(final_call.args[2])]
     assert rebound_summary.callsite_addr == 0x10D3
+    outer_summary = codegen._inertia_callsite_summaries[id(final_call)]
+    assert outer_summary.logical_arg_widths == (2, 2, 4)
     assert not any(
         isinstance(getattr(node, "variable", None), SimRegisterVariable)
         and getattr(getattr(node, "variable", None), "name", None) in {"ax", "dx"}
@@ -7934,6 +8020,19 @@ def test_materialize_callsite_stack_arguments_consumes_dx_ax_return_push_pair():
         for node in (arg, *_iter_c_nodes_deep_8616(arg))
     )
     assert getattr(codegen, "_inertia_return_register_call_args_materialized_8616", 0) == 1
+
+    duplicate_call = CFunctionCall(
+        "aNldiv",
+        final_call.args[2].callee_func,
+        [deepcopy(arg) for arg in final_call.args[2].args],
+        codegen=codegen,
+    )
+    duplicate_call.tags = dict(final_call.args[2].tags)
+    statements.insert(0, CExpressionStatement(duplicate_call, codegen=codegen))
+    codegen._inertia_callsite_materialization_complete_8616 = False
+
+    assert _materialize_callsite_stack_arguments_8616(project, codegen) is True
+    assert len(codegen.cfunc.statements.statements) == 1
 
 
 def test_materialize_callsite_stack_arguments_restores_protected_dx_ax_return_call():

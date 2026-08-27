@@ -20,6 +20,10 @@ class _FakeCodegen:
     def next_idx(self, _name):
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def test_prune_dead_local_assignments_keeps_side_effecting_rhs() -> None:

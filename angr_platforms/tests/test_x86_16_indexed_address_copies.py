@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from dataclasses import replace
 from types import SimpleNamespace
 
 import angr
@@ -23,11 +24,13 @@ from angr_platforms.X86_16.alias.indexed_address_projection import (
 )
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir import (
+    IndexedAddressAccessKind8616,
     IndexedAddressCopyEvidence8616,
     IndexedAddressCopyFailureKind8616,
     IndexedAddressCopyLane8616,
     IndexedAddressCopyStepKind8616,
     IndexedAddressEvidence8616,
+    MemSpace,
     SSAFunctionArtifact,
     build_x86_16_function_ssa,
     build_x86_16_ir_function_artifact,
@@ -138,6 +141,122 @@ def test_real_word_copy_proves_both_lanes_to_one_indexed_load() -> None:
     ) == (
         IndexedAddressCopyStepKind8616.LOW_BYTE_EXTRACT,
         IndexedAddressCopyStepKind8616.HIGH_BYTE_SHIFT,
+    )
+
+
+def test_logical_word_copy_retains_both_exact_source_byte_lanes() -> None:
+    _artifact, _addresses, result = _collect(GLOBAL_WORD_COPY)
+
+    fact = result.facts[0]
+    assert fact.source.address.space is fact.destination.address.space is MemSpace.DS
+    logical_source = fact.value_paths[0].logical_source
+    assert logical_source is not None
+    assert logical_source.complete
+    assert fact.value_paths[1].logical_source == logical_source
+    logical_loads = tuple(
+        site for site in logical_source.definition_path if site.op == "LOAD"
+    )
+    assert len(logical_loads) == 2
+    assert (
+        logical_loads[0].block_addr,
+        logical_loads[0].instr_index,
+        logical_loads[0].instr_addr,
+    ) == (fact.source.block_addr, fact.source.instr_index, fact.source.instr_addr)
+    assert logical_loads[1].block_addr == fact.source.block_addr
+    assert logical_loads[1].instr_addr == fact.source.instr_addr
+
+
+def test_word_copy_refuses_absent_logical_memory_artifact() -> None:
+    artifact = _lift(GLOBAL_WORD_COPY)
+    addresses = collect_indexed_address_evidence_8616(artifact)
+
+    result = collect_indexed_address_copy_evidence_8616(
+        replace(artifact, logical_memory=None),
+        addresses,
+    )
+
+    assert result.closed
+    assert result.facts == ()
+    assert result.stats.raw_fact_count == result.stats.failure_count == 1
+    assert (
+        result.refusals[0].failure
+        is IndexedAddressCopyFailureKind8616.LOGICAL_MEMORY_EVIDENCE_UNPROVEN
+    )
+
+
+def test_word_copy_refuses_open_logical_memory_artifact() -> None:
+    artifact = _lift(GLOBAL_WORD_COPY)
+    addresses = collect_indexed_address_evidence_8616(artifact)
+    logical_memory = artifact.logical_memory
+    assert logical_memory is not None
+    open_stats = replace(
+        logical_memory.stats,
+        raw_fact_count=logical_memory.stats.raw_fact_count + 1,
+    )
+    open_logical_memory = replace(logical_memory, stats=open_stats)
+    assert not open_logical_memory.closed
+
+    result = collect_indexed_address_copy_evidence_8616(
+        replace(artifact, logical_memory=open_logical_memory),
+        addresses,
+    )
+
+    assert result.closed
+    assert result.facts == ()
+    assert result.stats.raw_fact_count == result.stats.failure_count == 1
+    assert (
+        result.refusals[0].failure
+        is IndexedAddressCopyFailureKind8616.LOGICAL_MEMORY_EVIDENCE_UNPROVEN
+    )
+
+
+def test_word_copy_refuses_mismatched_logical_execution_slice() -> None:
+    artifact = _lift(GLOBAL_WORD_COPY)
+    addresses = collect_indexed_address_evidence_8616(artifact)
+    source = next(
+        fact
+        for fact in addresses.facts
+        if fact.kind is IndexedAddressAccessKind8616.LOAD
+        and fact.address.offset == 0x08F0
+    )
+    logical_memory = artifact.logical_memory
+    assert logical_memory is not None
+    source_access = next(
+        access
+        for access in logical_memory.accesses
+        if access.key.insn_addr == source.instr_addr
+        and access.address.space is source.address.space
+        and access.address.offset == source.address.offset
+        and access.address.size == source.address.size
+    )
+    low_slice, high_slice = source_access.execution_slices
+    mismatched_access = replace(
+        source_access,
+        execution_slices=(
+            replace(low_slice, instr_index=low_slice.instr_index + 1),
+            high_slice,
+        ),
+    )
+    mismatched_logical_memory = replace(
+        logical_memory,
+        accesses=tuple(
+            mismatched_access if access is source_access else access
+            for access in logical_memory.accesses
+        ),
+    )
+    assert mismatched_logical_memory.closed
+
+    result = collect_indexed_address_copy_evidence_8616(
+        replace(artifact, logical_memory=mismatched_logical_memory),
+        addresses,
+    )
+
+    assert result.closed
+    assert result.facts == ()
+    assert result.stats.raw_fact_count == result.stats.failure_count == 1
+    assert (
+        result.refusals[0].failure
+        is IndexedAddressCopyFailureKind8616.LOGICAL_MEMORY_EVIDENCE_UNPROVEN
     )
 
 

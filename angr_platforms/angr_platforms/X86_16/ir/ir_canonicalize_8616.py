@@ -13,6 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, cast
 
+from .condition_fingerprint_masks import is_proven_full_width_mask_8616
+
 __all__ = [
     "_ir_canonicalize_expr_8616",
     "canonicalize_expr_8616",
@@ -35,6 +37,13 @@ class _CExprBoundary(Protocol):
     constant: object
     type: object
     codegen: object
+    variable: object
+
+
+class _CVariableBoundary(Protocol):
+    """External C-variable attributes used to preserve machine width."""
+
+    size: object
 
 
 def _c_op(expr: object) -> str:
@@ -69,6 +78,14 @@ def _c_type(expr: object | None) -> object | None:
         return cast(_CExprBoundary, expr).type
     except AttributeError:
         return None
+
+
+def _c_width_bytes(expr: object) -> int | None:
+    try:
+        size = cast(_CVariableBoundary, cast(_CExprBoundary, expr).variable).size
+    except AttributeError:
+        return None
+    return size if isinstance(size, int) and size > 0 else None
 
 
 def canonicalize_expr_8616(expr: object, *, max_rounds: int = 4) -> object:
@@ -260,9 +277,9 @@ def _canonicalize_bitwise_assoc_8616(lhs: object, rhs: object, op: str, template
         rhs_val = _c_constant_value(rhs)
 
         if op == "And":
-            if rhs_val in {-1, 0xFFFF, 0xFFFFFFFF}:
+            if isinstance(rhs_val, int) and is_proven_full_width_mask_8616(rhs_val, _c_width_bytes(lhs)):
                 return lhs
-            if lhs_val in {-1, 0xFFFF, 0xFFFFFFFF}:
+            if isinstance(lhs_val, int) and is_proven_full_width_mask_8616(lhs_val, _c_width_bytes(rhs)):
                 return rhs
             if rhs_val == 0 or lhs_val == 0:
                 return _make_const_8616(0, template)
@@ -315,7 +332,7 @@ def _canonicalize_bitwise_assoc_8616(lhs: object, rhs: object, op: str, template
 
         if op == "Or" and const == 0:
             return base
-        if op == "And" and const in {-1, 0xFFFF, 0xFFFFFFFF}:
+        if op == "And" and is_proven_full_width_mask_8616(const, _c_width_bytes(base)):
             return base
 
         return _make_binop_8616(op, base, _make_const_8616(const, template), template)

@@ -3,6 +3,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from angr_platforms.X86_16.frontend_function_instructions import (
+    FunctionInstructionInventoryStatus8616,
+    collect_function_instruction_inventory_8616,
+)
+from angr_platforms.X86_16.frontend_instruction_kinds import (
+    is_x86_16_call_mnemonic_8616,
+)
 from angr_platforms.X86_16.frontend_instruction_reachability import (
     collect_instruction_reachability_8616,
     decoded_block_instructions_8616,
@@ -13,6 +20,19 @@ from angr_platforms.X86_16.recovery_instruction_coverage import (
 )
 
 from inertia_decompiler.project_loading import _build_project_from_bytes
+
+
+@pytest.mark.parametrize("mnemonic", ["call", "lcall", "callq"])
+def test_frontend_call_kind_accepts_capstone_near_and_far_spellings(
+    mnemonic: str,
+) -> None:
+    """Near and far backend spellings must project to one call kind."""
+    assert is_x86_16_call_mnemonic_8616(mnemonic) is True
+
+
+def test_frontend_call_kind_refuses_non_call_mnemonic() -> None:
+    """Mnemonic classification must not infer calls from unrelated opcodes."""
+    assert is_x86_16_call_mnemonic_8616("jmp") is False
 
 
 def _unreachable_padding_project() -> object:
@@ -32,6 +52,7 @@ def test_frontend_reachability_excludes_bytes_skipped_by_direct_jump() -> None:
     )
 
     assert evidence.complete is True
+    assert evidence.reachable_block_addrs == (0x1000, 0x1005)
     assert evidence.reachable_instruction_addrs == (0x1000, 0x1005)
     assert evidence.unresolved_block_addrs == ()
     assert evidence.raw_fact_count == 2
@@ -77,6 +98,46 @@ def test_frontend_reachability_records_lifter_runtime_refusal(monkeypatch) -> No
     assert evidence.complete is False
     assert evidence.unresolved_block_addrs == (0x1000,)
     assert evidence.failure_count == 1
+
+
+def test_frontend_reachability_reuses_exact_immutable_request() -> None:
+    calls = 0
+    instruction = SimpleNamespace(
+        address=0x1000,
+        size=1,
+        mnemonic="ret",
+        insn=SimpleNamespace(operands=()),
+    )
+
+    def decode_block(address: int, *, opt_level: int) -> object:
+        nonlocal calls
+        calls += 1
+        assert address == 0x1000
+        assert opt_level == 0
+        return SimpleNamespace(
+            addr=address,
+            size=1,
+            capstone=SimpleNamespace(insns=(instruction,)),
+        )
+
+    project = SimpleNamespace(factory=SimpleNamespace(block=decode_block))
+
+    first = collect_instruction_reachability_8616(
+        project,
+        entry=0x1000,
+        region_start=0x1000,
+        region_end=0x1001,
+    )
+    second = collect_instruction_reachability_8616(
+        project,
+        entry=0x1000,
+        region_start=0x1000,
+        region_end=0x1001,
+    )
+
+    assert first.complete is True
+    assert second is first
+    assert calls == 1
 
 
 def test_frontend_block_inventory_reuses_only_exact_decode_requests() -> None:
@@ -128,6 +189,84 @@ def test_frontend_block_inventory_reuses_deterministic_refusals() -> None:
             decoded_block_instructions_8616(project, 0x200, num_inst=1, opt_level=0)
 
     assert calls == 1
+
+
+def test_function_inventory_decodes_only_current_cfg_blocks() -> None:
+    current = SimpleNamespace(address=0x2000, size=1, mnemonic="nop")
+    stale = SimpleNamespace(address=0x1000, size=1, mnemonic="add")
+    decoded_addrs: list[int] = []
+
+    def decode_block(
+        address: int,
+        *,
+        opt_level: int,
+        num_inst: int | None = None,
+    ) -> object:
+        del opt_level, num_inst
+        decoded_addrs.append(address)
+        instructions = (current,) if address == 0x2000 else (stale,)
+        return SimpleNamespace(capstone=SimpleNamespace(insns=instructions))
+
+    function = SimpleNamespace(block_addrs_set={0x2000})
+    project = SimpleNamespace(
+        factory=SimpleNamespace(block=decode_block),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(
+                function=lambda *, addr, create=False: function
+                if addr == 0x2000 and create is False
+                else None
+            )
+        ),
+    )
+
+    inventory = collect_function_instruction_inventory_8616(
+        project,
+        function_entry=0x2000,
+    )
+
+    assert inventory.status is FunctionInstructionInventoryStatus8616.COMPLETE
+    assert inventory.complete is True
+    assert inventory.block_addrs == (0x2000,)
+    assert inventory.instructions == (current,)
+    assert decoded_addrs == [0x2000]
+    assert inventory.raw_fact_count == inventory.materialized_count == 1
+    assert inventory.failure_count == 0
+
+
+def test_function_inventory_refuses_incomplete_cfg_decode() -> None:
+    function = SimpleNamespace(block_addrs_set={0x2000, 0x2010})
+
+    def decode_block(
+        address: int,
+        *,
+        opt_level: int,
+        num_inst: int | None = None,
+    ) -> object:
+        del opt_level, num_inst
+        instructions = (
+            (SimpleNamespace(address=address, size=1, mnemonic="nop"),)
+            if address == 0x2000
+            else ()
+        )
+        return SimpleNamespace(capstone=SimpleNamespace(insns=instructions))
+
+    project = SimpleNamespace(
+        factory=SimpleNamespace(block=decode_block),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda *, addr, create=False: function)
+        ),
+    )
+
+    inventory = collect_function_instruction_inventory_8616(
+        project,
+        function_entry=0x2000,
+    )
+
+    assert inventory.status is FunctionInstructionInventoryStatus8616.DECODE_REFUSED
+    assert inventory.complete is False
+    assert inventory.raw_fact_count == 2
+    assert inventory.materialized_count == 1
+    assert inventory.failure_count == 1
 
 
 def test_exact_coverage_accepts_only_binary_proven_unreachable_instructions() -> None:

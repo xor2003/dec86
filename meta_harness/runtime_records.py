@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import json
 import re
@@ -56,15 +56,15 @@ FAILURE_CLASSES = {
 }
 
 
-def iso_now() -> str:
-    def _impl():
+def iso_now() -> str:  # noqa: D103
+    def _impl():  # noqa: ANN202
         return datetime.now().astimezone().isoformat(timespec="seconds")
 
     return _impl()
 
 
-def append_jsonl(path: Path, payload: dict[str, object]) -> None:
-    def _impl():
+def append_jsonl(path: Path, payload: dict[str, object]) -> None:  # noqa: D103
+    def _impl() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fp:
             fp.write(json.dumps(payload, sort_keys=True) + "\n")
@@ -72,8 +72,8 @@ def append_jsonl(path: Path, payload: dict[str, object]) -> None:
     return _impl()
 
 
-def load_jsonl(path: Path, limit: int = 50) -> list[dict[str, object]]:
-    def _impl():
+def load_jsonl(path: Path, limit: int = 50) -> list[dict[str, object]]:  # noqa: D103
+    def _impl():  # noqa: ANN202
         if not path.exists():
             return []
         rows: list[dict[str, object]] = []
@@ -89,16 +89,16 @@ def load_jsonl(path: Path, limit: int = 50) -> list[dict[str, object]]:
     return _impl()
 
 
-def write_json(path: Path, payload: dict[str, object]) -> None:
-    def _impl():
+def write_json(path: Path, payload: dict[str, object]) -> None:  # noqa: D103
+    def _impl() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     return _impl()
 
 
-def read_json(path: Path) -> dict[str, object]:
-    def _impl():
+def read_json(path: Path) -> dict[str, object]:  # noqa: D103
+    def _impl():  # noqa: ANN202
         if not path.exists():
             return {}
         try:
@@ -110,8 +110,8 @@ def read_json(path: Path) -> dict[str, object]:
     return _impl()
 
 
-def parse_usage_metrics(text: str) -> dict[str, object]:
-    def _impl():
+def parse_usage_metrics(text: str) -> dict[str, object]:  # noqa: D103
+    def _impl():  # noqa: ANN202
         prompt_tokens = 0
         completion_tokens = 0
         total_tokens = 0
@@ -145,7 +145,7 @@ def parse_usage_metrics(text: str) -> dict[str, object]:
     return _impl()
 
 
-def build_history_event(
+def build_history_event(  # noqa: D103
     *,
     event: str,
     status: str,
@@ -156,7 +156,7 @@ def build_history_event(
     failure_class: str | None = None,
     details: dict[str, object] | None = None,
 ) -> dict[str, object]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if event not in EVENT_NAMES:
             raise ValueError(f"Unknown harness event: {event}")
         if status not in EVENT_STATUSES:
@@ -178,8 +178,8 @@ def build_history_event(
     return _impl()
 
 
-def summarize_session_rows(rows: list[dict[str, object]]) -> dict[str, object]:
-    def _impl():
+def summarize_session_rows(rows: list[dict[str, object]]) -> dict[str, object]:  # noqa: D103
+    def _impl():  # noqa: ANN202
         total_sessions = 0
         total_duration_secs = 0
         total_tokens = 0
@@ -209,11 +209,11 @@ def summarize_session_rows(rows: list[dict[str, object]]) -> dict[str, object]:
     return _impl()
 
 
-def compact_runtime_signals(
+def compact_runtime_signals(  # noqa: D103
     history_rows: list[dict[str, object]],
     session_rows: list[dict[str, object]],
 ) -> dict[str, object]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         event_counts: Counter[str] = Counter()
         failure_counts: Counter[str] = Counter()
         role_tokens: Counter[str] = Counter()
@@ -245,13 +245,13 @@ def compact_runtime_signals(
     return _impl()
 
 
-def build_evidence_facts(
+def build_evidence_facts(  # noqa: D103
     text: str,
     *,
     low_confidence_threshold: float = 0.6,
     generated_at: str | None = None,
 ) -> dict[str, object]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         facts: list[dict[str, object]] = []
         seen: set[tuple[str, str, str]] = set()
         key_value_re = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]{2,})=(-?\d+(?:\.\d+)?)\b")
@@ -262,7 +262,7 @@ def build_evidence_facts(
         failure_ratio_re = re.compile(r"failures=(\d+)/(\d+)")
 
         def _normalize_value(value: object) -> str:
-            def _impl():
+            def _impl():  # noqa: ANN202
                 if isinstance(value, dict):
                     return json.dumps(value, sort_keys=True)
                 if isinstance(value, float):
@@ -281,7 +281,7 @@ def build_evidence_facts(
             line: str,
             reason: str,
         ) -> None:
-            def _impl():
+            def _impl() -> None:
                 dedupe_key = (kind, key, _normalize_value(value))
                 if dedupe_key in seen:
                     return

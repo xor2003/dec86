@@ -45,3 +45,28 @@ def test_carr_cod_module_proves_setgear_result_is_unused() -> None:
     assert width_evidence.raw_fact_count == 1
     assert width_evidence.materialized_count == 1
     assert width_evidence.failure_count == 0
+
+
+def test_cockpit_cod_module_proves_tidshowrange_result_is_unused() -> None:
+    metadata = extract_cod_proc_metadata(
+        REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
+        "_TIDShowRange",
+    )
+    evidence_owner = SimpleNamespace()
+
+    evidence = record_cod_module_caller_return_use_evidence_8616(
+        metadata,
+        0x1000,
+        evidence_owner,
+    )
+
+    assert evidence.verdict is CallerReturnUseVerdict8616.UNUSED
+    assert evidence.raw_fact_count == 1
+    assert evidence.normalized_fact_count == 1
+    assert evidence.classified_fact_count == 1
+    assert evidence.materialized_count == 1
+    assert evidence.failure_count == 0
+    assert evidence.used_callsite_count == 0
+    assert evidence.unused_callsite_count == 1
+    assert evidence.callsite_addrs == (0x729,)
+    assert evidence.fact_census_complete

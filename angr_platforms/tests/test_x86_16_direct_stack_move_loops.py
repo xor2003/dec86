@@ -132,7 +132,7 @@ def test_refuses_non_tail_move_with_intervening_instruction_before_loopback() ->
 
 def test_replay_moves_regenerated_assignment_to_proven_loop_tail() -> None:
     project = SimpleNamespace(arch=ArchX86())
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, cstyle_null_cmp=False, project=project)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, cstyle_null_cmp=False, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     destination = structured_c.CVariable(
         SimStackVariable(-2, 2, base="bp", name="i"),
         variable_type=SimTypeShort(False),

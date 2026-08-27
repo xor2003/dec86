@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.ir import (
+    IRAddress,
     IRBlock,
     IRCallOutputProvenance8616,
     IRFunctionArtifact,
     IRInstr,
     IRValue,
     MemSpace,
+)
+from angr_platforms.X86_16.ir.logical_memory_contracts import (
+    IRLogicalMemoryAccess8616,
+    IRLogicalMemoryAccessKey8616,
+    IRLogicalMemoryStats8616,
+    IRMemoryAccessKind8616,
+    IRMemoryExecutionSlice8616,
+    empty_ir_logical_memory_artifact_8616,
 )
 from angr_platforms.X86_16.ir.ssa_function import build_x86_16_function_ssa
 from angr_platforms.X86_16.semantics.call_output_contracts import (
@@ -95,6 +106,58 @@ def test_dx_ax_call_outputs_are_definitions_on_exact_return_edge() -> None:
         for instruction in ssa_return.instrs[:2]
     )
     assert mov_source.call_output == expected_provenance
+
+
+def test_call_output_projection_preserves_logical_memory_artifact() -> None:
+    marker = empty_ir_logical_memory_artifact_8616(0x1000)
+    source = replace(_artifact(), logical_memory=marker)
+
+    result = materialize_call_outputs_8616(source, {0x1003: _summary()})
+
+    assert result.function.logical_memory is marker
+
+
+def test_call_output_projection_rebases_logical_memory_execution_slice() -> None:
+    address = IRAddress(MemSpace.SS, base=("bp",), offset=4, size=1)
+    source = _artifact()
+    return_block = next(block for block in source.blocks if block.addr == 0x1006)
+    load = IRInstr(
+        "LOAD",
+        IRValue(MemSpace.TMP, name="t0", size=1, source_tmp=0),
+        (address,),
+        size=1,
+        addr=0x1006,
+    )
+    source = replace(
+        source,
+        blocks=tuple(
+            replace(block, instrs=(load, *block.instrs))
+            if block is return_block
+            else block
+            for block in source.blocks
+        ),
+        logical_memory=replace(
+            empty_ir_logical_memory_artifact_8616(0x1000),
+            accesses=(
+                IRLogicalMemoryAccess8616(
+                    IRLogicalMemoryAccessKey8616(0x1000, 0x1006, 0x1006, 0),
+                    IRMemoryAccessKind8616.READ,
+                    address,
+                    16,
+                    (IRMemoryExecutionSlice8616(0x1006, 0, 0x1006, 0, address),),
+                ),
+            ),
+            stats=IRLogicalMemoryStats8616(1, 1, 1, 1, 0),
+        ),
+    )
+
+    result = materialize_call_outputs_8616(source, {0x1003: _summary()})
+
+    logical_memory = result.function.logical_memory
+    assert logical_memory is not None and logical_memory.closed
+    assert logical_memory.accesses[0].execution_slices[0].instr_index == 2
+    return_block = next(block for block in result.function.blocks if block.addr == 0x1006)
+    assert return_block.instrs[2] is load
 
 
 def test_call_output_refuses_return_block_with_bypass_predecessor() -> None:

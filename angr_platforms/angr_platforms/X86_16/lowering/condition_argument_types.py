@@ -13,6 +13,7 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -158,14 +159,10 @@ def _set_argument_surface_type_8616(
     """Apply one type to matching CVariable and unified-local surfaces."""
     changed = 0
     roots: list[object] = [cfunc]
-    try:
+    with contextlib.suppress(AttributeError):
         roots.append(cfunc.statements)
-    except AttributeError:
-        pass
-    try:
+    with contextlib.suppress(AttributeError):
         roots.append(cfunc.body)
-    except AttributeError:
-        pass
     seen: set[int] = set()
     for root in roots:
         for node in _iter_c_nodes_deep_8616(root):

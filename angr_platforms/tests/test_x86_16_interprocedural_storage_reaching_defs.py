@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from dataclasses import replace
 from types import SimpleNamespace
 
 import angr
@@ -87,11 +88,48 @@ def test_immediate_argument_resolves_exact_store_and_call_use() -> None:
     assert result.verdict is CallArgumentDefinitionVerdict8616.PROVEN
     assert result.failure is None
     assert result.stats.complete
-    assert len(result.definitions) == 1
+    assert len(result.definitions) == 2
+    assert tuple(definition.value.size for definition in result.definitions) == (1, 1)
     assert result.definitions[0].value.const == 5
-    assert result.definitions[0].instr_addr == 0x1000
+    assert tuple(definition.instr_addr for definition in result.definitions) == (0x1000, 0x1000)
     assert result.use is not None
     assert result.use.callsite_addr == 0x1002
+
+
+def test_wide_logical_argument_resolves_two_physical_push_definitions() -> None:
+    ssa = _lift_ssa(bytes.fromhex("6a026a01e80000"))
+    summary = CallsiteSummary8616(
+        callsite_addr=0x1004,
+        target_addr=0x1007,
+        return_addr=0x1007,
+        kind="near",
+        arg_count=2,
+        arg_widths=(2, 2),
+        stack_cleanup=4,
+        return_register=None,
+        return_used=None,
+        push_arg_sources=(
+            (CallsitePushSourceKind8616.IMMEDIATE.value, 2),
+            (CallsitePushSourceKind8616.IMMEDIATE.value, 1),
+        ),
+        push_arg_instruction_addrs=(0x1000, 0x1002),
+        logical_arg_widths=(4,),
+    )
+
+    result = resolve_call_argument_reaching_definition_8616(ssa, summary, 0)
+
+    assert result.verdict is CallArgumentDefinitionVerdict8616.PROVEN
+    assert result.failure is None
+    assert result.stats.complete
+    assert result.stats.raw_fact_count == result.stats.materialized_count == 1
+    assert tuple(definition.value.size for definition in result.definitions) == (1, 1, 1, 1)
+    assert tuple(definition.value.const for definition in result.definitions) == (1, None, 2, None)
+    assert tuple(definition.instr_addr for definition in result.definitions) == (
+        0x1002,
+        0x1002,
+        0x1000,
+        0x1000,
+    )
 
 
 def test_bp_value_argument_resolves_exact_stack_load() -> None:
@@ -106,14 +144,30 @@ def test_bp_value_argument_resolves_exact_stack_load() -> None:
     result = resolve_call_argument_reaching_definition_8616(ssa, summary, 0)
 
     assert result.verdict is CallArgumentDefinitionVerdict8616.PROVEN
-    assert len(result.definitions) == 1
-    storage = result.definitions[0].source_storage
-    assert storage is not None
-    assert storage.kind is StorageIdentityKind8616.STACK
-    assert storage.address is not None
-    assert storage.address.space is MemSpace.SS
-    assert storage.address.base == ("bp",)
-    assert storage.address.offset == 4
+    assert len(result.definitions) == 2
+    storages = tuple(definition.source_storage for definition in result.definitions)
+    assert all(storage is not None for storage in storages)
+    assert all(storage.kind is StorageIdentityKind8616.STACK for storage in storages if storage)
+    assert tuple(storage.address.offset for storage in storages if storage and storage.address) == (4, 5)
+    assert all(storage.address.space is MemSpace.SS for storage in storages if storage and storage.address)
+
+
+def test_bp_value_without_authoritative_logical_access_refuses() -> None:
+    ssa = replace(_lift_ssa(bytes.fromhex("ff7604e80000")), logical_memory=None)
+    summary = _summary(
+        callsite_addr=0x1003,
+        target_addr=0x1006,
+        push_addr=0x1000,
+        source=(CallsitePushSourceKind8616.BP_VALUE.value, 4),
+    )
+
+    result = resolve_call_argument_reaching_definition_8616(ssa, summary, 0)
+
+    assert result.verdict is CallArgumentDefinitionVerdict8616.UNKNOWN_REFUSE
+    assert result.failure is CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_NOT_FOUND
+    assert result.stats.raw_fact_count == result.stats.normalized_fact_count == 1
+    assert result.stats.classified_fact_count == result.stats.materialized_count == 0
+    assert result.stats.failure_count == 1
 
 
 def test_global_word_argument_retains_two_exact_memory_pieces() -> None:
@@ -159,13 +213,51 @@ def test_bp_address_argument_requires_matching_ssa_origin() -> None:
     )
 
     assert proven.verdict is CallArgumentDefinitionVerdict8616.PROVEN
-    storage = proven.definitions[0].source_storage
-    assert storage is not None and storage.address is not None
-    assert storage.address.offset == -4
+    assert tuple(
+        definition.source_storage.address.offset
+        for definition in proven.definitions
+        if definition.source_storage is not None
+        and definition.source_storage.address is not None
+    ) == (-4, -3)
     assert contradicted.verdict is CallArgumentDefinitionVerdict8616.UNKNOWN_REFUSE
     assert contradicted.failure is CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_NOT_FOUND
     assert contradicted.stats.classified_fact_count == 0
     assert contradicted.stats.materialized_count == 0
+
+
+def test_signed_immediate_retains_two_byte_definitions_as_one_logical_fact() -> None:
+    ssa = _lift_ssa(bytes.fromhex("6affe80000"))
+    summary = _summary(
+        callsite_addr=0x1002,
+        target_addr=0x1005,
+        push_addr=0x1000,
+        source=(CallsitePushSourceKind8616.IMMEDIATE.value, -1),
+    )
+
+    result = resolve_call_argument_reaching_definition_8616(ssa, summary, 0)
+
+    assert result.verdict is CallArgumentDefinitionVerdict8616.PROVEN
+    assert result.stats.raw_fact_count == result.stats.materialized_count == 1
+    assert tuple(definition.value.size for definition in result.definitions) == (1, 1)
+    assert result.definitions[0].value.const == 0xFFFF
+
+
+def test_immediate_source_mismatch_refuses_all_physical_pieces() -> None:
+    ssa = _lift_ssa(bytes.fromhex("6a05e80000"))
+    summary = _summary(
+        callsite_addr=0x1002,
+        target_addr=0x1005,
+        push_addr=0x1000,
+        source=(CallsitePushSourceKind8616.IMMEDIATE.value, 6),
+    )
+
+    result = resolve_call_argument_reaching_definition_8616(ssa, summary, 0)
+
+    assert result.verdict is CallArgumentDefinitionVerdict8616.UNKNOWN_REFUSE
+    assert result.failure is CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_NOT_FOUND
+    assert result.stats.raw_fact_count == result.stats.normalized_fact_count == 1
+    assert result.stats.classified_fact_count == result.stats.materialized_count == 0
+    assert result.stats.failure_count == 1
 
 
 def test_missing_push_definition_refuses_after_normalization() -> None:

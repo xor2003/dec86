@@ -65,6 +65,7 @@ from ..ir.core import IRValue, MemSpace
 from ..pipeline.errors import PipelineHardError
 from ..widening.stack_widening import prove_adjacent_storage_slices
 from .semantic_cast import CSemanticCast8616
+from .stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -352,12 +353,14 @@ def _wide_condition_stack_cvar_8616(
     if not (
         isinstance(low_variable, SimStackVariable)
         and low_variable.base == "bp"
-        and isinstance(low_variable.offset, int)
         and isinstance(high_variable, SimStackVariable)
         and high_variable.base == "bp"
-        and high_variable.offset == low_variable.offset + 2
         and high_variable.size == 2
     ):
+        return None
+    low_offset = machine_bp_offset_for_stack_variable_8616(codegen, low_variable)
+    high_offset = machine_bp_offset_for_stack_variable_8616(codegen, high_variable)
+    if not isinstance(low_offset, int) or high_offset != low_offset + 2:
         return None
     if low_variable.size == 4:
         wide_cvar = low_expr
@@ -370,7 +373,7 @@ def _wide_condition_stack_cvar_8616(
             for variable, cvar in codegen.cfunc.variables_in_use.items()
             if isinstance(variable, SimStackVariable)
             and variable.base == "bp"
-            and variable.offset == low_variable.offset
+            and machine_bp_offset_for_stack_variable_8616(codegen, variable) == low_offset
             and variable.size == 4
             and isinstance(cvar, CVariable)
         )
@@ -379,12 +382,11 @@ def _wide_condition_stack_cvar_8616(
             return None
         wide_cvar = unique_candidates[0]
     wide_type = SimTypeLong(True).with_arch(codegen.project.arch)
-    low_offset = low_variable.offset
     for variable, cvar in codegen.cfunc.variables_in_use.items():
         if (
             isinstance(variable, SimStackVariable)
             and variable.base == "bp"
-            and variable.offset == low_offset
+            and machine_bp_offset_for_stack_variable_8616(codegen, variable) == low_offset
             and variable.size == 4
         ):
             codegen.cfunc.variable_manager.set_variable_type(variable, wide_type)
@@ -397,7 +399,7 @@ def _wide_condition_stack_cvar_8616(
         if (
             isinstance(variable, SimStackVariable)
             and variable.base == "bp"
-            and variable.offset == low_offset
+            and machine_bp_offset_for_stack_variable_8616(codegen, variable) == low_offset
             and variable.size == 4
         ):
             node.variable_type = wide_type
@@ -606,7 +608,7 @@ def lower_wide_call_return_condition_chain_8616(
     )
 
 
-def _aggregate_boundaries_8616(root: object) -> tuple[int, ...]:
+def _aggregate_boundaries_8616(codegen: object, root: object) -> tuple[int, ...]:
     """Return stack offsets with independently proven aggregate types."""
     offsets: set[int] = set()
     for node in _iter_c_nodes_deep_8616(root):
@@ -616,24 +618,24 @@ def _aggregate_boundaries_8616(root: object) -> tuple[int, ...]:
         if (
             isinstance(variable, SimStackVariable)
             and variable.base == "bp"
-            and isinstance(variable.offset, int)
+            and isinstance((bp_offset := machine_bp_offset_for_stack_variable_8616(codegen, variable)), int)
             and isinstance(node.variable_type, (SimTypeArray, SimStruct))
         ):
-            offsets.add(variable.offset)
+            offsets.add(bp_offset)
     return tuple(sorted(offsets))
 
 
 def _stack_cvar_at_base_offset_8616(
-    cfunc: _CallOutputCFunction8616,
+    codegen: _CallOutputCodegen8616,
     base_offset: int,
 ) -> CVariable | None:
     """Return one unambiguous BP stack variable rooted at ``base_offset``."""
     candidates: dict[int, CVariable] = {}
-    for variable, cvar in cfunc.variables_in_use.items():
+    for variable, cvar in codegen.cfunc.variables_in_use.items():
         if (
             isinstance(variable, SimStackVariable)
             and variable.base == "bp"
-            and variable.offset == base_offset
+            and machine_bp_offset_for_stack_variable_8616(codegen, variable) == base_offset
             and isinstance(cvar, CVariable)
         ):
             candidates[id(variable)] = cvar
@@ -655,7 +657,7 @@ def _summary_bp_address_offsets_8616(summary: CallsiteSummary8616) -> tuple[int,
             and isinstance(source[1], int)
             and source[1] < 0
         ):
-            offsets.append(source[1])
+            offsets.append(source[1])  # noqa: PERF401
     return tuple(dict.fromkeys(offsets))
 
 
@@ -706,16 +708,19 @@ def _call_addressed_bases_8616(
             base = _referenced_stack_cvar_8616(argument)
             if base is not None:
                 variable = cast(SimStackVariable, base.variable)
+                base_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+                if base_offset is None:
+                    continue
                 bases.append(
                     _CallAddressedStackBase8616(
                         callsite_addr=summary.callsite_addr,
-                        base_offset=cast(int, variable.offset),
+                        base_offset=base_offset,
                         base_cvar=base,
                     )
                 )
     for callsite_addr, summary in _callsite_inventory_8616(codegen).items():
         for base_offset in _summary_bp_address_offsets_8616(summary):
-            base = _stack_cvar_at_base_offset_8616(codegen.cfunc, base_offset)
+            base = _stack_cvar_at_base_offset_8616(codegen, base_offset)
             bases.append(
                 _CallAddressedStackBase8616(
                     callsite_addr=callsite_addr,
@@ -791,7 +796,7 @@ def recover_call_output_stack_object_facts_8616(
     except AttributeError:
         return (), CallOutputStackObjectStats8616()
     condition_slices = _condition_stack_slices_8616(conditions)
-    aggregate_boundaries = _aggregate_boundaries_8616(root)
+    aggregate_boundaries = _aggregate_boundaries_8616(boundary, root)
     if os.environ.get("INERTIA_DEBUG_CALL_OUTPUT_STACK_OBJECTS") == "1":
         _LOGGER.warning(
             "call-output object evidence: call_bases=%r condition_slices=%r "
@@ -894,7 +899,7 @@ def _replay_call_output_stack_object_facts_8616(
             conditions
         )
     }
-    aggregate_boundaries = _aggregate_boundaries_8616(root)
+    aggregate_boundaries = _aggregate_boundaries_8616(codegen, root)
     replayed: list[CallOutputStackObjectFact8616] = []
     for fact in previous_facts:
         matching_bases = tuple(
@@ -919,7 +924,7 @@ def _replay_call_output_stack_object_facts_8616(
         current_variable = current_base.variable
         if (
             not isinstance(current_variable, SimStackVariable)
-            or current_variable.offset != fact.base_offset
+            or machine_bp_offset_for_stack_variable_8616(codegen, current_variable) != fact.base_offset
         ):
             continue
         replayed.append(
@@ -994,13 +999,13 @@ def _replace_stack_fields_8616(
         field_offset = expression.field.offset
         if (
             isinstance(variable, SimStackVariable)
-            and isinstance(variable.offset, int)
+            and isinstance((bp_offset := machine_bp_offset_for_stack_variable_8616(codegen, variable)), int)
             and isinstance(field_offset, int)
         ):
-            match = field_map.get(variable.offset + field_offset)
+            match = field_map.get(bp_offset + field_offset)
             if (
                 match is not None
-                and match[0].base_offset == variable.offset
+                and match[0].base_offset == bp_offset
                 and match[1].relative_offset == field_offset
                 and match[1].name == expression.field.field
             ):
@@ -1008,8 +1013,8 @@ def _replace_stack_fields_8616(
         return expression, 0
     if isinstance(expression, CVariable):
         variable = expression.variable
-        if isinstance(variable, SimStackVariable) and isinstance(variable.offset, int):
-            match = field_map.get(variable.offset)
+        if isinstance(variable, SimStackVariable):
+            match = field_map.get(machine_bp_offset_for_stack_variable_8616(codegen, variable))
             if match is not None:
                 fact, field, struct_type = match
                 base = CVariable(
@@ -1116,20 +1121,19 @@ def prune_materialized_call_output_stack_carriers_8616(codegen: object) -> int:
     if not facts:
         return 0
     remaining_offsets = {
-        variable.offset
+        bp_offset
         for node in _iter_c_nodes_deep_8616(cfunc.statements)
         if isinstance(node, CVariable)
         and isinstance((variable := node.variable), SimStackVariable)
-        and isinstance(variable.offset, int)
+        and isinstance((bp_offset := machine_bp_offset_for_stack_variable_8616(boundary, variable)), int)
     }
     projected_offsets = {field.absolute_offset for fact in facts for field in fact.fields}
     removed = 0
     for variable in tuple(cfunc.variables_in_use):
         if (
             isinstance(variable, SimStackVariable)
-            and isinstance(variable.offset, int)
-            and variable.offset in projected_offsets
-            and variable.offset not in remaining_offsets
+            and (bp_offset := machine_bp_offset_for_stack_variable_8616(boundary, variable)) in projected_offsets
+            and bp_offset not in remaining_offsets
         ):
             del cfunc.variables_in_use[variable]
             removed += 1
@@ -1145,8 +1149,8 @@ __all__ = [
     "CallOutputStackObjectStats8616",
     "WideCallReturnConditionResult8616",
     "WideCallReturnConditionStats8616",
-    "lower_wide_call_return_condition_chain_8616",
     "lower_call_output_stack_fields_in_condition_8616",
+    "lower_wide_call_return_condition_chain_8616",
     "prune_materialized_call_output_stack_carriers_8616",
     "prune_materialized_wide_condition_call_carrier_8616",
     "recover_call_output_stack_object_facts_8616",

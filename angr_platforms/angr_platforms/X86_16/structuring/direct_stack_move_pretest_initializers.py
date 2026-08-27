@@ -199,6 +199,7 @@ def pretest_initializer_evidence_8616(
 
 def _pretest_initializer_sites_8616(
     project: object,
+    codegen: object,
     root: object,
     evidence: DirectStackMovePretestInitializerEvidence8616,
     dst_offset: int,
@@ -240,7 +241,7 @@ def _pretest_initializer_sites_8616(
                     if (
                         owns_condition
                         and owns_body
-                        and _tree_reads_stack_offset_8616(condition, dst_offset)
+                        and _tree_reads_stack_offset_8616(codegen, condition, dst_offset)
                     ):
                         sites.append(
                             DirectStackMovePretestInitializerSite8616(
@@ -320,6 +321,7 @@ def place_direct_stack_move_pretest_initializer_assignment_8616(
     sites = (
         _pretest_initializer_sites_8616(
             project,
+            codegen,
             root,
             evidence[0],
             move_fact.dst_offset,
@@ -328,7 +330,7 @@ def place_direct_stack_move_pretest_initializer_assignment_8616(
         else ()
     )
     locations = (
-        tagged_assignment_locations_8616(project, root, move_fact)
+        tagged_assignment_locations_8616(project, codegen, root, move_fact)
         if root is not None
         else ()
     )
@@ -394,6 +396,7 @@ def materialize_direct_stack_move_pretest_initializers_8616(
             continue
         sites = _pretest_initializer_sites_8616(
             project,
+            codegen,
             root,
             evidence[0],
             fact.dst_offset,
@@ -402,7 +405,7 @@ def materialize_direct_stack_move_pretest_initializers_8616(
             refused_no_site += 1
             failures += int(len(sites) > 1)
             continue
-        locations = tagged_assignment_locations_8616(project, root, fact)
+        locations = tagged_assignment_locations_8616(project, codegen, root, fact)
         if len(locations) != 1:
             refused_assignment += 1
             failures += int(len(locations) > 1)

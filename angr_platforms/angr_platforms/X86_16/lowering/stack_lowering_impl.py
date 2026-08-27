@@ -106,7 +106,7 @@ def _safe_sim_type_size_bits(type_obj: object) -> int | None:
 
     try:
         size = cast(Any, type_obj).size
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
     return size if isinstance(size, int) else None
 
@@ -130,6 +130,7 @@ def _bind_expr_types_to_project_arch_8616(
     codegen: object,
     seen: set[int] | None = None,
 ) -> None:
+    """Bind live structured-expression types before current angr combines them."""
     arch = getattr(getattr(codegen, "project", None), "arch", None)
     if arch is None or node is None:
         return
@@ -140,12 +141,23 @@ def _bind_expr_types_to_project_arch_8616(
         return
     seen.add(node_id)
 
-    for attr in ("variable_type", "type"):
+    if isinstance(node, structured_c.CVariable):
+        variable_type = node.variable_type
+        if (
+            variable_type is not None
+            and getattr(variable_type, "_arch", None) is None
+            and hasattr(variable_type, "with_arch")
+        ):
+            node.variable_type = variable_type.with_arch(arch)
+    elif isinstance(node, structured_c.CExpression):
         with contextlib.suppress(Exception):
-            type_obj = getattr(node, attr, None)
-            if type_obj is None or getattr(type_obj, "_arch", None) is not None or not hasattr(type_obj, "with_arch"):
-                continue
-            setattr(node, attr, type_obj.with_arch(arch))
+            expression_type = node.type
+            if (
+                expression_type is not None
+                and getattr(expression_type, "_arch", None) is None
+                and hasattr(expression_type, "with_arch")
+            ):
+                node.set_type(expression_type.with_arch(arch))
 
     for attr in (
         "lhs",
@@ -194,11 +206,11 @@ def _debug_stack_condition_rebind_8616(
             return
         try:
             before_text = before_dynamic.c_repr(indent=0)
-        except Exception:  # noqa: BLE001
+        except Exception:
             before_text = str(before)
         try:
             after_text = after_dynamic.c_repr(indent=0)
-        except Exception:  # noqa: BLE001
+        except Exception:
             after_text = str(after)
         log.warning(
             "[stack-condition-canon] function=%#x note=%s before=%r after=%r",
@@ -703,7 +715,7 @@ def _canonicalize_stack_cvar_expr(
                         for item in reversed(tuple(value)):
                             if isinstance(item, tuple):
                                 for nested in reversed(item):
-                                    stack.append(nested)
+                                    stack.append(nested)  # noqa: PERF402
                             else:
                                 stack.append(item)
                     else:
@@ -1274,9 +1286,8 @@ def _canonicalize_stack_cvar_expr(
                     operand = unwrap_c_casts(node.operand)
                     if isinstance(operand, structured_c.CVariable):
                         variable = operand.variable
-                        if isinstance(variable, SimStackVariable):
-                            if variable.base == "bp":
-                                return operand, 0
+                        if isinstance(variable, SimStackVariable) and variable.base == "bp":
+                            return operand, 0
                         for key in _alias_keys_for_cvar(operand, lookup=True):
                             alias = aliases.get(key)
                             if alias is not None:
@@ -1322,9 +1333,8 @@ def _canonicalize_stack_cvar_expr(
                         resolved = _resolve_stack_pointer_alias(node.rhs)
                         if resolved is None:
                             continue
-                        if isinstance(lhs_var, SimStackVariable):
-                            if lhs_var.base != "bp":
-                                continue
+                        if isinstance(lhs_var, SimStackVariable) and lhs_var.base != "bp":
+                            continue
                         if isinstance(lhs_var, SimStackVariable) and not _is_pointer_capable_stack_variable(
                             lhs_var, lhs
                         ):
@@ -1332,8 +1342,8 @@ def _canonicalize_stack_cvar_expr(
                             # These appear in helper prologue/epilogue carrier patterns.
                             rhs_expr = unwrap_c_casts(node.rhs)
                             if not (
-                                isinstance(rhs_expr, structured_c.CUnaryOp)
-                                and rhs_expr.op == "Reference"
+                                (isinstance(rhs_expr, structured_c.CUnaryOp)
+                                and rhs_expr.op == "Reference")
                                 or isinstance(rhs_expr, structured_c.CBinaryOp)
                             ):
                                 continue
@@ -1947,9 +1957,7 @@ def _canonicalize_stack_cvars(
             return True
         if isinstance(lhs, structured_c.CTypeCast):
             return True
-        if isinstance(lhs, structured_c.CUnaryOp) and lhs.op in {"Dereference", "Reference"}:
-            return True
-        return False
+        return bool(isinstance(lhs, structured_c.CUnaryOp) and lhs.op in {"Dereference", "Reference"})
 
     def transform(node: object) -> object:
         nonlocal changed

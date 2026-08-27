@@ -33,6 +33,9 @@ from angr_platforms.X86_16.ir import (
     IRValue,
     MemSpace,
 )
+from angr_platforms.X86_16.ir.logical_memory_rebase import (
+    rebase_logical_memory_prefix_insertions_8616,
+)
 from angr_platforms.X86_16.ir.ssa_function import (
     SSAFunctionArtifact,
     build_x86_16_function_ssa,
@@ -44,6 +47,9 @@ from angr_platforms.X86_16.lowering.stack_memory_ssa import (
 )
 from angr_platforms.X86_16.widening.carry_borrow_pipeline import (
     build_carry_borrow_widening_pipeline_8616,
+)
+from angr_platforms.X86_16.widening.stack_memory_objects import (
+    build_x86_16_stack_memory_object_widening_artifact,
 )
 
 WIDE_STACK_ADD = bytes.fromhex("03 46 04 13 56 06 89 46 fc 89 56 fe c3")
@@ -101,7 +107,16 @@ def lift_after_dx_ax_call(
         )
         for name, provenance in zip(("ax", "dx"), provenances, strict=True)
     )
-    enriched = replace(artifact, blocks=(replace(block, instrs=(*outputs, *block.instrs)),))
+    rewritten_blocks = (replace(block, instrs=(*outputs, *block.instrs)),)
+    enriched = replace(
+        artifact,
+        blocks=rewritten_blocks,
+        logical_memory=rebase_logical_memory_prefix_insertions_8616(
+            artifact.logical_memory,
+            prefix_lengths={block.addr: len(outputs)},
+            rewritten_blocks=rewritten_blocks,
+        ),
+    )
     return build_x86_16_function_ssa(enriched)
 
 
@@ -122,8 +137,8 @@ def wide_assignment_fixture(
         project=SimpleNamespace(arch=Arch86_16()),
         cstyle_null_cmp=False,
         next_idx=lambda _name: next(indices),
-    )
-    source_variable = SimStackVariable(4, 4, base="bp", name="wait", region=0x1000)
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : next(indices))
+    source_variable = SimStackVariable(2, 4, base="bp", name="wait", region=0x1000)
     source = (
         CVariable(source_variable, variable_type=SimTypeLong(False), codegen=codegen)
         if include_source
@@ -177,6 +192,9 @@ def wide_assignment_fixture(
         sort_local_vars=lambda: None,
     )
     codegen._inertia_stack_memory_ssa_alias_artifact = stack_alias
+    codegen._inertia_stack_memory_object_widening_artifact = (
+        build_x86_16_stack_memory_object_widening_artifact(stack_alias)
+    )
     codegen._inertia_carry_borrow_widening_pipeline_8616 = pipeline
     codegen._inertia_vex_ir_frame = FrameAccessArtifact(
         bp_coordinate=BPFrameCoordinateEvidence8616(

@@ -57,8 +57,8 @@ def test_x86_16_alias_domains_join_adjacent_views() -> None:
 
 
 def test_x86_16_alias_domains_use_value_objects_for_identity() -> None:
-    assert AX == DomainKey("reg", "AX")
-    assert LOW8 == View(bit_offset=0, bit_width=8)
+    assert DomainKey("reg", "AX") == AX
+    assert View(bit_offset=0, bit_width=8) == LOW8
     assert register_offset_for_name("ax") == 0
     assert register_offset_for_name("cx") == 2
     assert register_offset_for_name("dx") == 4

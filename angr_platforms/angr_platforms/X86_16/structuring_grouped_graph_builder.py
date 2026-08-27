@@ -464,9 +464,7 @@ def _scan_typed_ir_block_8616(block: object) -> dict[str, object]:
                 if arg.status == AddressStatus.STABLE:
                     stable_address_spaces.add(arg.space.value)
                 segment_origin_kinds.add(arg.segment_origin.value)
-                if address_hint is None and (arg.status == AddressStatus.STABLE or arg.segment_origin == SegmentOrigin.PROVEN):
-                    address_hint = _format_ir_address_hint_8616(arg)
-                elif address_hint is None:
+                if (address_hint is None and (arg.status == AddressStatus.STABLE or arg.segment_origin == SegmentOrigin.PROVEN)) or address_hint is None:
                     address_hint = _format_ir_address_hint_8616(arg)
             if _dynamic_grouped_graph_getattr_8616(instr, "op", None) != "CJMP":
                 continue

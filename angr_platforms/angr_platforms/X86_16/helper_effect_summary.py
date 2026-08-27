@@ -31,7 +31,7 @@ class HelperEligibilitySummary:
 
     status: str
     candidate_kind: str = "none"
-    effect_summary: FunctionEffectSummary = FunctionEffectSummary()
+    effect_summary: FunctionEffectSummary = FunctionEffectSummary()  # noqa: RUF009
     refusals: tuple[HelperEligibilityRefusal, ...] = ()
 
     def brief(self) -> str:

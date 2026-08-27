@@ -13,8 +13,8 @@ from .structuring_cfg_grouping import CFGGroupingArtifact, build_cfg_grouping_ar
 
 __all__ = (
     "CrossEntryGroupedUnit",
-    "CrossEntryGroupedUnitRefusal",
     "CrossEntryGroupedUnitArtifact",
+    "CrossEntryGroupedUnitRefusal",
     "apply_x86_16_cross_entry_grouped_units",
     "build_x86_16_cross_entry_grouped_units",
     "describe_x86_16_cross_entry_grouped_unit_surface",
@@ -153,7 +153,7 @@ def build_x86_16_cross_entry_grouped_units(codegen: object) -> CrossEntryGrouped
                         neighbor_region_id in shared_region_id_set
                         and neighbor_region_id not in component_shared_region_ids
                     ):
-                        component_worklist.append(neighbor_region_id)
+                        component_worklist.append(neighbor_region_id)  # noqa: PERF401
 
             component_shared_region_ids_tuple = tuple(sorted(component_shared_region_ids))
             anchor_shared_region_id = component_shared_region_ids_tuple[0]

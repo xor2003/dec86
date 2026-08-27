@@ -43,7 +43,7 @@ def summarize_x86_16_function(project: object, function: SimpleNamespace) -> Fun
         return None
 
     callsite_kinds: list[str] = []
-    for callsite_addr in tuple(sorted(getattr(function, "get_call_sites", lambda: [])() or ())):
+    for callsite_addr in tuple(sorted(getattr(function, "get_call_sites", list)() or ())):
         summary = summarize_x86_16_callsite(function, callsite_addr)
         if summary is None or not isinstance(summary.kind, str):
             continue
@@ -69,7 +69,7 @@ def summarize_x86_16_function(project: object, function: SimpleNamespace) -> Fun
         sorted(str(key) for key, count in stable_address_space_counts.items() if isinstance(count, int) and count > 0)
     )
     return FunctionSummary8616(
-        function_addr=int(getattr(function, "addr")),
+        function_addr=int(function.addr),
         direct_call_count=len(callsite_kinds),
         callsite_kinds=tuple(sorted(callsite_kinds)),
         typed_ir_condition_kinds=typed_ir_condition_kinds,

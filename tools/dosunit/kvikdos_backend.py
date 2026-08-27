@@ -54,7 +54,6 @@ class Harness:
 class KvikdosBackendError(DosUnitError):
     """Raised when the Kvikdos execution backend cannot complete a request."""
 
-    pass
 
 
 class KvikdosSession:
@@ -233,7 +232,7 @@ def build_harness(
     pre = vector.get("pre", {})
     if not isinstance(pre, dict):
         raise KvikdosBackendError("vector.pre must be an object")
-    regs = {name: 0 for name in ("ax", "bx", "cx", "dx", "si", "di", "bp", "sp", "flags")}
+    regs = dict.fromkeys(("ax", "bx", "cx", "dx", "si", "di", "bp", "sp", "flags"), 0)
     raw_regs = pre.get("regs", {})
     if isinstance(raw_regs, dict):
         for name in tuple(regs):
@@ -768,8 +767,7 @@ int dosunit_kvikdos_run(const char *prog_filename, const char *dump_filename) {{
         result = subprocess.run(
             [cc, "-shared", "-fPIC", "-O2", "-w", "-o", str(temporary_shared), str(wrapper)],
             check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
         if result.returncode != 0:
@@ -793,8 +791,7 @@ def _run_with_kvikdos_cli(harness_path: Path, dump_path: Path, *, kvikdos_path: 
     result = subprocess.run(
         [found, "--tty-in=-3", str(harness_path)],
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env=env,
     )
     if result.returncode != 0:

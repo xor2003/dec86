@@ -15,9 +15,9 @@ import logging
 import os
 import re
 from collections import Counter
-from collections.abc import Collection, Iterator, MutableMapping
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import asdict, dataclass
-from typing import Any, Callable, Iterable, Mapping, Sequence, TypeAlias, TypeVar, cast
+from typing import Any, cast
 
 from angr.ailment.expression import VirtualVariableCategory
 from angr.analyses.decompiler.structured_codegen.c import (
@@ -58,7 +58,7 @@ from .callsite_summary import (
     structured_callsite_addr_8616,
     summarize_x86_16_callsite,
 )
-from .compiler_helpers import identify_x86_16_compiler_helper_at_8616
+from .compiler_helpers import is_x86_16_stack_probe_helper_at_8616
 from .decompiler_postprocess_flags import _split_ordering_if_chain_replacement_condition_8616
 from .ir.condition_ir import (
     _INVERTED_COMPARISON_OPS_8616,
@@ -80,6 +80,7 @@ from .lowering.segmented_global_loads import (
     IndexedGlobalReadCarrierMaterializationRecord8616,
 )
 from .pipeline.errors import PipelineHardError
+from .structuring.canonical_for_loops import canonical_loop_validation_shape_8616
 from .structuring.indexed_stack_ranges import (
     IndexedStackReadProof8616,
     collect_indexed_stack_read_proofs_8616,
@@ -110,7 +111,9 @@ from .tail_validation_fingerprint import (
     build_x86_16_contextual_call_fingerprints,
 )
 from .tail_validation_routing import build_tail_validation_family_routing
+from .tail_validation_selector_returns import collect_selector_return_fingerprints_8616
 from .tail_validation_stack_policy import include_x86_16_tail_validation_stack_write
+from .validation.status_flag_preservation import packed_status_flag_preservation_evidence_8616
 from .validation_branch_conditions import validate_materialized_branch_conditions_8616
 from .validation_call_multiplicity import (
     CallsiteMultiplicityValidationReport8616,
@@ -161,8 +164,8 @@ from .validation_storage import (
     validate_storage_identities_8616,
 )
 
-StructuredAstValue: TypeAlias = Any
-TailValidationValue: TypeAlias = Any
+type StructuredAstValue = Any
+type TailValidationValue = Any
 
 _TAIL_VALIDATION_EXPRESSION_CALLBACKS_8616 = ExpressionFingerprintCallbacks8616(
     expr_fingerprint=_expr_fingerprint,
@@ -191,54 +194,53 @@ __all__ = [
     "annotate_x86_16_tail_validation_surface_with_baseline",
     "build_x86_16_tail_validation_aggregate",
     "build_x86_16_tail_validation_baseline",
-    "build_x86_16_tail_validation_surface",
     "build_x86_16_tail_validation_cached_result",
-    "build_x86_16_validation_cache_descriptor",
-    "check_x86_16_tail_validation_surface_consistency",
-    "compare_x86_16_tail_validation_baseline",
-    "persist_x86_16_tail_validation_snapshot",
-    "fingerprint_x86_16_tail_validation_boundary",
-    "extract_x86_16_tail_validation_snapshot",
-    "x86_16_tail_validation_snapshot_passed",
-    "resolve_x86_16_validation_cached_artifact",
-    "refresh_x86_16_final_semantic_validation_8616",
-    "summarize_x86_16_tail_validation_records",
-    "collect_x86_16_tail_validation_summary",
-    "compare_x86_16_tail_validation_summaries",
+    "build_x86_16_tail_validation_surface",
     "build_x86_16_tail_validation_verdict",
+    "build_x86_16_validation_cache_descriptor",
     "callsite_consumed_stack_store_prune_delta_8616",
     "callsite_far_pointer_remnant_prune_delta_8616",
     "callsite_helper_control_target_delta_8616",
     "callsite_mixed_helper_stack_control_delta_8616",
+    "callsite_resolved_indirect_helper_control_delta_8616",
     "callsite_resolved_indirect_helper_stack_delta_8616",
     "callsite_stack_arg_slot_alias_condition_delta_8616",
-    "format_x86_16_tail_validation_diff",
-    "dword_global_zero_test_precision_delta_8616",
-    "indexed_global_read_carrier_precision_delta_8616",
-    "indexed_segmented_global_precision_delta_8616",
-    "loop_header_duplicate_guard_removal_delta_8616",
-    "loop_exit_return_guard_repair_delta_8616",
-    "describe_x86_16_tail_validation_scope",
+    "callsite_stack_precision_control_delta_8616",
+    "check_x86_16_tail_validation_surface_consistency",
+    "collect_x86_16_tail_validation_summary",
+    "compare_x86_16_tail_validation_baseline",
+    "compare_x86_16_tail_validation_summaries",
     "conditional_continue_guard_repair_delta_8616",
+    "describe_x86_16_tail_validation_scope",
     "direct_stack_move_function_pointer_prune_delta_8616",
     "direct_stack_move_idiv_remainder_aux_delta_8616",
+    "dword_global_zero_test_precision_delta_8616",
     "exit_goto_repair_delta_8616",
+    "extract_x86_16_tail_validation_snapshot",
+    "fingerprint_x86_16_tail_validation_boundary",
+    "format_x86_16_tail_validation_diff",
+    "indexed_global_read_carrier_precision_delta_8616",
+    "indexed_segmented_global_precision_delta_8616",
+    "loop_exit_return_guard_repair_delta_8616",
+    "loop_header_duplicate_guard_removal_delta_8616",
     "name_only_helper_annotation_delta_8616",
-    "callsite_resolved_indirect_helper_control_delta_8616",
-    "callsite_stack_precision_control_delta_8616",
+    "persist_x86_16_tail_validation_snapshot",
+    "refresh_x86_16_final_semantic_validation_8616",
+    "resolve_x86_16_validation_cached_artifact",
     "segmented_stack_slot_size_precision_delta_8616",
+    "summarize_x86_16_tail_validation_records",
     "switch_loop_exit_return_repair_delta_8616",
+    "validation_delta_removes_stack_or_control_effects_8616",
+    "validation_delta_touched_fields_8616",
     "validation_stack_offsets_in_token_8616",
     "validation_stack_write_delta_offsets_are_evidenced_8616",
     "validation_without_delta_fields_8616",
-    "validation_delta_removes_stack_or_control_effects_8616",
-    "validation_delta_touched_fields_8616",
     "void_tail_call_guard_materialization_delta_8616",
+    "x86_16_tail_validation_snapshot_passed",
 ]
 
 _TAIL_VALIDATION_MODES = {"coarse", "live_out"}
 _TAIL_VALIDATION_AGGREGATE_CACHE: dict[str, dict[str, TailValidationValue]] = {}
-_T = TypeVar("_T")
 _TAIL_VALIDATION_OBSERVABLE_FIELDS = (
     "helper_calls",
     "register_writes",
@@ -264,7 +266,7 @@ _MISSING_CALLSITE_FINGERPRINT_PREFIX_8616 = "missing-callsite:"
 _COMPACT_OBSERVABLE_FIELDS_8616 = {"conditions", "control_flow_effects"}
 _COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_8616 = 512
 _COMPACT_OBSERVABLE_FINGERPRINT_LIMIT_ENV_8616 = "INERTIA_TAIL_VALIDATION_FINGERPRINT_LIMIT"
-_TAIL_VALIDATION_COMPARISON_VERSION_8616 = 13
+_TAIL_VALIDATION_COMPARISON_VERSION_8616 = 15
 _STACK_ARG_ALIAS_TOKEN_RE_8616 = re.compile(
     r"stack_arg:(?P<name>[A-Za-z_][A-Za-z0-9_]*)(?::size(?P<size>\d+))?(?::bp[+-]0x[0-9a-fA-F]+)?"
 )
@@ -1469,13 +1471,13 @@ def build_x86_16_validation_cache_descriptor(
     )
 
 
-def resolve_x86_16_validation_cached_artifact(
+def resolve_x86_16_validation_cached_artifact[T](
     *,
     cache: MutableMapping[str, TailValidationValue] | None,
     descriptor: X86_16ValidationCacheDescriptor,
-    build: Callable[[], _T],
-    clone_on_hit: Callable[[_T], _T] | None = None,
-    store_value: Callable[[_T], TailValidationValue] | None = None,
+    build: Callable[[], T],
+    clone_on_hit: Callable[[T], T] | None = None,
+    store_value: Callable[[T], TailValidationValue] | None = None,
 ) -> dict[str, TailValidationValue]:
     """Return a cached validation artifact or build and persist a fresh value."""
     if cache is not None:
@@ -1996,7 +1998,7 @@ def _target_addr_is_stack_probe_helper_8616(project: TailValidationValue, target
         if candidate_project is None:
             continue
         for addr in candidates:
-            if identify_x86_16_compiler_helper_at_8616(candidate_project, addr) is not None:
+            if is_x86_16_stack_probe_helper_at_8616(candidate_project, addr):
                 return True
     return any(
         _is_stack_probe_helper_name_8616(_project_function_name_for_addr_8616(project, addr)) for addr in candidates
@@ -2044,7 +2046,7 @@ def _callsite_expected_fingerprint_8616(
 def _function_callsite_addrs_for_validation_8616(function: TailValidationValue) -> tuple[int, ...]:
     """Return callsite addresses from dynamic angr function metadata."""
     # Dynamic boundary: angr Function may expose get_call_sites as a method.
-    callsite_addrs = _boundary_tuple_8616(sorted(getattr(function, "get_call_sites", lambda: [])() or ()))
+    callsite_addrs = _boundary_tuple_8616(sorted(getattr(function, "get_call_sites", list)() or ()))
     if callsite_addrs:
         return callsite_addrs
     return tuple(
@@ -2134,9 +2136,7 @@ def _extract_loop_break_guard_normalization_8616(
         def _is_void_loop_exit_stmt_8616(stmt: TailValidationValue) -> bool:
             if isinstance(stmt, CBreak):
                 return True
-            if isinstance(stmt, CReturn) and getattr(stmt, "retval", None) is None:
-                return True
-            return False
+            return bool(isinstance(stmt, CReturn) and getattr(stmt, "retval", None) is None)
 
         if isinstance(guard_stmt, CIfBreak):
             break_cond = guard_stmt.condition
@@ -2541,7 +2541,7 @@ def _ordered_contextual_call_pairs_8616(
         function = _function_for_call_context_8616(root, project)
         if function is None:
             return []
-        callsite_addrs = _boundary_tuple_8616(sorted(getattr(function, "get_call_sites", lambda: [])() or ()))
+        callsite_addrs = _boundary_tuple_8616(sorted(getattr(function, "get_call_sites", list)() or ()))
         if not callsite_addrs:
             callsite_addrs = _collect_direct_capstone_callsite_addrs_8616(function)
         call_nodes = list(_iter_observable_call_nodes_for_validation_8616(root))
@@ -2737,7 +2737,7 @@ def _node_boundary_fingerprint(
             "retval",
         ):
             if hasattr(node, attr):
-                fields.append((attr, _node_boundary_fingerprint(getattr(node, attr, None), project)))
+                fields.append((attr, _node_boundary_fingerprint(getattr(node, attr, None), project)))  # noqa: PERF401
         return (type(node).__name__, tuple(fields))
 
     result = _impl()
@@ -3082,7 +3082,7 @@ def _tail_validation_changed_family_summary(
 
         summarized = []
         for row in rows.values():
-            summarized.append(
+            summarized.append(  # noqa: PERF401
                 {
                     "family": row["family"],
                     "count": row["count"],
@@ -3967,25 +3967,40 @@ def _is_control_flow_node(node: TailValidationValue) -> bool:
     )
 
 
-def _collect_observed_locations(root: TailValidationValue, project: TailValidationValue, mode: str) -> set[str]:
+def _collect_observed_locations(
+    root: TailValidationValue,
+    project: TailValidationValue,
+    mode: str,
+    contextual_conditions: Mapping[int, str] | None = None,
+) -> set[str]:
     observed_locations: set[str] = set()
     if mode != "live_out":
         return observed_locations
 
     def _record_control_condition_locations(node: TailValidationValue) -> None:
+        def _record_contextual_stack_locations(condition: TailValidationValue) -> None:
+            if contextual_conditions is None:
+                return
+            fingerprint = contextual_conditions.get(id(condition))
+            if fingerprint is not None:
+                observed_locations.update(_STACK_SLOT_WRITE_TOKEN_RE_8616.findall(fingerprint))
+
         # Dynamic angr/codegen compatibility boundary.
         condition = getattr(node, "condition", None)
         if condition is not None:
             _record_expr_locations(condition, project, observed_locations)
+            _record_contextual_stack_locations(condition)
         # Dynamic angr/codegen compatibility boundary.
         cond = getattr(node, "cond", None)
         if cond is not None and cond is not condition:
             _record_expr_locations(cond, project, observed_locations)
+            _record_contextual_stack_locations(cond)
         # Dynamic angr/codegen compatibility boundary.
         for pair in _boundary_tuple_8616(getattr(node, "condition_and_nodes", ()) or ()):
             if not isinstance(pair, tuple) or not pair:
                 continue
             _record_expr_locations(pair[0], project, observed_locations)
+            _record_contextual_stack_locations(pair[0])
 
     return_value_unobserved = _active_codegen_return_value_is_unobserved_8616(project)
     for node in _iter_c_nodes_deep_8616(root):
@@ -4038,9 +4053,7 @@ def _iter_observable_call_nodes_for_validation_8616(
                 isinstance(rhs, CFunctionCall)
                 and not _is_runtime_segment_helper_call_8616(rhs)
                 and not _is_structured_c_intrinsic_call_8616(rhs)
-            ):
-                yield from _iter_observable_call_nodes_for_validation_8616(rhs, seen)
-            elif rhs is not None:
+            ) or rhs is not None:
                 yield from _iter_observable_call_nodes_for_validation_8616(rhs, seen)
             return
         for attr in ("retval", "condition", "cond", "expr", "lhs", "rhs", "operand"):
@@ -4049,9 +4062,7 @@ def _iter_observable_call_nodes_for_validation_8616(
                 isinstance(child, CFunctionCall)
                 and not _is_runtime_segment_helper_call_8616(child)
                 and not _is_structured_c_intrinsic_call_8616(child)
-            ):
-                yield from _iter_observable_call_nodes_for_validation_8616(child, seen)
-            elif child is not None:
+            ) or child is not None:
                 yield from _iter_observable_call_nodes_for_validation_8616(child, seen)
         if hasattr(node, "condition_and_nodes"):
             for cond, body in getattr(node, "condition_and_nodes", ()) or ():
@@ -4059,9 +4070,7 @@ def _iter_observable_call_nodes_for_validation_8616(
                     isinstance(cond, CFunctionCall)
                     and not _is_runtime_segment_helper_call_8616(cond)
                     and not _is_structured_c_intrinsic_call_8616(cond)
-                ):
-                    yield from _iter_observable_call_nodes_for_validation_8616(cond, seen)
-                elif cond is not None:
+                ) or cond is not None:
                     yield from _iter_observable_call_nodes_for_validation_8616(cond, seen)
                 yield from _iter_observable_call_nodes_for_validation_8616(body, seen)
         # Dynamic angr/codegen compatibility boundary.
@@ -4268,7 +4277,7 @@ def _build_contextual_call_summary_map(
             return {}
         direct_targets = _collect_direct_capstone_call_targets_for_function(function)
         callsite_addrs = _function_callsite_addrs_for_validation_8616(function)
-        for idx, (node, target_addr) in enumerate(zip(call_nodes, direct_targets)):
+        for idx, (node, target_addr) in enumerate(zip(call_nodes, direct_targets, strict=False)):
             normalized_target = _normalized_call_target_addr_8616(project, target_addr)
             if isinstance(normalized_target, int):
                 summary_map[id(node)] = {"target_addr": normalized_target}
@@ -4327,9 +4336,7 @@ def _assignment_lhs_writes_memory_8616(lhs: TailValidationValue, project: TailVa
         resolve_copy_alias=False,
     )
     location_text = str(location)
-    return location_text.startswith("stack:") or location_text.startswith(
-        ("global:", "deref:")
-    )
+    return location_text.startswith(("stack:", "global:", "deref:"))
 
 
 def _dirty_expression_is_temporary_lvalue_8616(lhs: TailValidationValue) -> bool:
@@ -4404,7 +4411,7 @@ def _is_stack_carrier_temp_assignment_8616(stmt: TailValidationValue) -> bool:
         variable = getattr(lhs, "variable", None)
         name = getattr(variable, "name", None) or getattr(lhs, "name", None)
         if not isinstance(name, str) or not (
-            name.startswith("vvar_") or name.startswith("ir_") or name.startswith("tmp_")
+            name.startswith(("vvar_", "ir_", "tmp_"))
         ):
             return False
         rhs_node = rhs
@@ -4443,14 +4450,14 @@ def _expr_mentions_temp_carrier_8616(expr: TailValidationValue) -> bool:
             variable = getattr(node, "variable", None)
             name = getattr(variable, "name", None) or getattr(node, "name", None)
             if isinstance(name, str) and (
-                name.startswith("vvar_") or name.startswith("ir_") or name.startswith("tmp_")
+                name.startswith(("vvar_", "ir_", "tmp_"))
             ):
                 return True
             if node.__class__.__name__ == "CDirtyExpression":
                 dirty = getattr(node, "dirty", None)
                 dirty_name = getattr(dirty, "name", None)
                 if isinstance(dirty_name, str) and (
-                    dirty_name.startswith("vvar_") or dirty_name.startswith("ir_") or dirty_name.startswith("tmp_")
+                    dirty_name.startswith(("vvar_", "ir_", "tmp_"))
                 ):
                     return True
         return False
@@ -4683,14 +4690,23 @@ def _process_control_flow_node_8616(
     expected_helper_call_counts: Counter[str],
     contextual_condition_fingerprints: Mapping[int, str],
     normalized_loop_conditions: Mapping[int, str],
+    canonical_loop_node_ids: Collection[int],
+    canonical_loop_body_suppressed_write_ids: Mapping[int, frozenset[int]],
     prunable_segment_write_ids: set[int],
     conditions: set[str],
     control_flow_effects: set[str],
 ) -> bool:
-    def _observable_body_write_locations(body: TailValidationValue) -> tuple[str, ...]:
+    def _observable_body_write_locations(
+        body: TailValidationValue,
+        suppressed_write_ids: Collection[int],
+    ) -> tuple[str, ...]:
         locations: set[str] = set()
         for child in _iter_c_nodes_deep_8616(body):
-            if not isinstance(child, CAssignment) or id(child) in prunable_segment_write_ids:
+            if (
+                not isinstance(child, CAssignment)
+                or id(child) in prunable_segment_write_ids
+                or id(child) in suppressed_write_ids
+            ):
                 continue
             for location in _assignment_write_locations_8616(getattr(child, "lhs", None), project):
                 if location.startswith("reg:"):
@@ -4707,8 +4723,16 @@ def _process_control_flow_node_8616(
                     locations.add(location)
         return _sorted_unique(locations)
 
-    def _record_loop_body_writes(kind: str, cond_fp: str, body: TailValidationValue) -> None:
-        body_writes = _observable_body_write_locations(body)
+    def _record_loop_body_writes(
+        kind: str,
+        cond_fp: str,
+        body: TailValidationValue,
+        loop_id: int,
+    ) -> None:
+        body_writes = _observable_body_write_locations(
+            body,
+            canonical_loop_body_suppressed_write_ids.get(loop_id, frozenset()),
+        )
         if not body_writes:
             return
         writes_fp = ",".join(body_writes)
@@ -4796,10 +4820,11 @@ def _process_control_flow_node_8616(
             cond_fp = normalized_loop_conditions.get(
                 id(node), contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project))
             )
-            control_flow_effects.add(f"while:{cond_fp}")
+            loop_kind = "loop" if id(node) in canonical_loop_node_ids else "while"
+            control_flow_effects.add(f"{loop_kind}:{cond_fp}")
             # Dynamic angr/codegen compatibility boundary.
-            _record_body_calls("while", cond_fp, node.body)
-            _record_loop_body_writes("while", cond_fp, node.body)
+            _record_body_calls(loop_kind, cond_fp, node.body)
+            _record_loop_body_writes(loop_kind, cond_fp, node.body, id(node))
             if mode == "live_out":
                 conditions.add(cond_fp)
             return True
@@ -4809,7 +4834,7 @@ def _process_control_flow_node_8616(
             control_flow_effects.add(f"dowhile:{cond_fp}")
             # Dynamic angr/codegen compatibility boundary.
             _record_body_calls("dowhile", cond_fp, node.body)
-            _record_loop_body_writes("dowhile", cond_fp, node.body)
+            _record_loop_body_writes("dowhile", cond_fp, node.body, id(node))
             if mode == "live_out":
                 conditions.add(cond_fp)
             return True
@@ -4819,10 +4844,11 @@ def _process_control_flow_node_8616(
                 id(node),
                 contextual_condition_fingerprints.get(id(cond), _expr_fingerprint(cond, project)),
             )
-            control_flow_effects.add(f"for:{cond_fp}")
+            loop_kind = "loop" if id(node) in canonical_loop_node_ids else "for"
+            control_flow_effects.add(f"{loop_kind}:{cond_fp}")
             # Dynamic angr/codegen compatibility boundary.
-            _record_body_calls("for", cond_fp, node.body)
-            _record_loop_body_writes("for", cond_fp, node.body)
+            _record_body_calls(loop_kind, cond_fp, node.body)
+            _record_loop_body_writes(loop_kind, cond_fp, node.body, id(node))
             if mode == "live_out":
                 conditions.add(cond_fp)
             return True
@@ -4866,6 +4892,8 @@ def _process_tail_validation_node_8616(
     expected_helper_call_counts: Counter[str],
     contextual_condition_fingerprints: Mapping[int, str],
     normalized_loop_conditions: Mapping[int, str],
+    canonical_loop_node_ids: Collection[int],
+    canonical_loop_body_suppressed_write_ids: Mapping[int, frozenset[int]],
     prunable_segment_write_ids: set[int],
     helper_calls: list[str],
     helper_call_node_ids: set[int],
@@ -4975,6 +5003,8 @@ def _process_tail_validation_node_8616(
             expected_helper_call_counts=expected_helper_call_counts,
             contextual_condition_fingerprints=contextual_condition_fingerprints,
             normalized_loop_conditions=normalized_loop_conditions,
+            canonical_loop_node_ids=canonical_loop_node_ids,
+            canonical_loop_body_suppressed_write_ids=canonical_loop_body_suppressed_write_ids,
             prunable_segment_write_ids=prunable_segment_write_ids,
             conditions=conditions,
             control_flow_effects=control_flow_effects,
@@ -5126,6 +5156,7 @@ def _def_use_indexed_stack_read_proofs_8616(
     report = collect_indexed_stack_read_proofs_8616(
         root,
         direct_stack_move_facts=direct_stack_move_facts,
+        codegen=codegen,
     )
     codegen._inertia_indexed_stack_read_proof_report_8616 = report
     if os.environ.get("INERTIA_DEBUG_INDEXED_STACK_RANGES") == "1":
@@ -5331,6 +5362,7 @@ def refresh_x86_16_final_semantic_validation_8616(
             project,
             codegen,
         ),
+        packed_status_flag_preservation=packed_status_flag_preservation_evidence_8616(project, codegen),
         include_virtual_carriers=include_virtual_carriers,
     )
     required_call_report = validate_required_callsites_8616(codegen, root)
@@ -5366,9 +5398,9 @@ def refresh_x86_16_final_semantic_validation_8616(
         "absolute final semantic guard failed: "
         + ", ".join(f"{family}={len(failures)}" for family, failures in semantic_failures.items())
     )
-    required_memory_tokens = semantic_failures.get("required_memory_effects", ())
-    if required_memory_tokens:
-        summary_text += "; " + "; ".join(required_memory_tokens)
+    failure_details = format_tail_semantic_failures_8616(semantic_failures)
+    if failure_details:
+        summary_text += "; " + "; ".join(failure_details)
     validation: dict[str, TailValidationValue] = {
         "changed": True,
         "status": "failed",
@@ -5429,6 +5461,7 @@ def collect_x86_16_tail_validation_summary(
                 project,
                 codegen,
             ),
+            packed_status_flag_preservation=packed_status_flag_preservation_evidence_8616(project, codegen),
         )
         required_call_report = validate_required_callsites_8616(codegen, root)
         callsite_multiplicity_report = validate_required_callsite_multiplicity_8616(
@@ -5490,8 +5523,6 @@ def collect_x86_16_tail_validation_summary(
                 # Dynamic angr/codegen compatibility boundary.
                 func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
                 summary_inventory = callsite_summary_inventory_8616(codegen) or None
-                with span("x86_16.tail_validation.summary.observed_locations", function=func_addr):
-                    observed_locations = _collect_observed_locations(root, project, mode)
                 with span(
                     "x86_16.tail_validation.summary.context",
                     function=func_addr,
@@ -5519,6 +5550,13 @@ def collect_x86_16_tail_validation_summary(
                         contextual_condition_fingerprints = build_x86_16_contextual_condition_fingerprints(
                             root, project
                         )
+                with span("x86_16.tail_validation.summary.observed_locations", function=func_addr):
+                    observed_locations = _collect_observed_locations(
+                        root,
+                        project,
+                        mode,
+                        contextual_condition_fingerprints,
+                    )
                 with span("x86_16.tail_validation.summary.expected_helper_counts", function=func_addr):
                     expected_helper_call_counts = _expected_helper_call_counts_for_validation_8616(
                         root,
@@ -5539,9 +5577,25 @@ def collect_x86_16_tail_validation_summary(
                     )
                 normalized_loop_conditions: dict[int, str] = {}
                 suppressed_control_flow_nodes: set[int] = set()
+                canonical_loop_node_ids: set[int] = set()
+                canonical_loop_body_suppressed_write_ids: dict[int, frozenset[int]] = {}
                 with span("x86_16.tail_validation.summary.loop_normalization", function=func_addr):
                     for node in _iter_c_nodes_deep_8616(root):
                         if not isinstance(node, (CWhileLoop, CForLoop)):
+                            continue
+                        canonical_shape = canonical_loop_validation_shape_8616(node)
+                        if canonical_shape is not None:
+                            normalized_loop_conditions[id(node)] = contextual_condition_fingerprints.get(
+                                id(canonical_shape.condition),
+                                _expr_fingerprint(canonical_shape.condition, project),
+                            )
+                            suppressed_control_flow_nodes.update(
+                                canonical_shape.suppressed_control_node_ids
+                            )
+                            canonical_loop_node_ids.add(id(node))
+                            canonical_loop_body_suppressed_write_ids[id(node)] = (
+                                canonical_shape.suppressed_body_write_node_ids
+                            )
                             continue
                         normalized = _extract_loop_break_guard_normalization_8616(
                             node,
@@ -5567,6 +5621,10 @@ def collect_x86_16_tail_validation_summary(
                             expected_helper_call_counts=expected_helper_call_counts,
                             contextual_condition_fingerprints=contextual_condition_fingerprints,
                             normalized_loop_conditions=normalized_loop_conditions,
+                            canonical_loop_node_ids=canonical_loop_node_ids,
+                            canonical_loop_body_suppressed_write_ids=(
+                                canonical_loop_body_suppressed_write_ids
+                            ),
                             prunable_segment_write_ids=prunable_segment_write_ids,
                             helper_calls=helper_calls,
                             helper_call_node_ids=helper_call_node_ids,
@@ -5581,6 +5639,21 @@ def collect_x86_16_tail_validation_summary(
                             control_flow_effects=control_flow_effects,
                         )
                         _maybe_add_coarse_conditions_8616(node, project, conditions, mode)
+                selector_returns = collect_selector_return_fingerprints_8616(
+                    root,
+                    condition_fingerprint=lambda condition: contextual_condition_fingerprints.get(
+                        id(condition), _expr_fingerprint(condition, project)
+                    ),
+                    return_fingerprint=lambda value: _expr_fingerprint(value, project),
+                )
+                codegen._inertia_tail_validation_selector_return_stats_8616 = selector_returns.stats
+                if selector_returns.stats.failure_count:
+                    raise PipelineHardError(
+                        "classified selector-return validation evidence was not materialized",
+                        layer="tail_validation",
+                        function_addr=func_addr if isinstance(func_addr, int) else None,
+                    )
+                control_flow_effects.update(selector_returns.fingerprints)
                 if split_tail_return_call_fingerprints:
                     returns.discard("none")
                     returns.update(split_tail_return_call_fingerprints)
@@ -5856,8 +5929,16 @@ def compare_x86_16_tail_validation_summaries(
         for field_delta in diff["delta"].values()
         if isinstance(field_delta, dict)
     )
+    semantic_failures = collect_tail_semantic_failures_8616(
+        after,
+        before=before,
+        scope=TailSemanticFailureScope8616.INTRODUCED,
+    )
+    if semantic_failures:
+        diff["semantic_failures"] = semantic_failures
+        changed = True
     diff["changed"] = changed
-    diff["status"] = "changed" if changed else "stable"
+    diff["status"] = "failed" if semantic_failures else ("changed" if changed else "stable")
     return diff
 
 
@@ -6046,7 +6127,7 @@ def _suppress_structuring_callsite_target_local_int_precision_delta_8616(diff: d
         return
 
     register_delta = suppressed.get("register_writes")
-    if register_delta is not None:
+    if register_delta is not None:  # noqa: SIM102
         if register_delta["added"] or any(value != "reg:ax" for value in register_delta["removed"]):
             return
 
@@ -7030,7 +7111,7 @@ def indexed_segmented_global_precision_delta_8616(
     removed_locations = before_locations - after_locations
     if not added_locations and not removed_locations:
         return False
-    changed_locations = tuple((*added_locations.elements(), *removed_locations.elements()))
+    changed_locations = (*added_locations.elements(), *removed_locations.elements())
     if any(not location.startswith("global:") or not _is_evidenced_location(location) for location in changed_locations):
         return False
     return added_locations == Counter(global_added) and removed_locations == Counter(global_removed)
@@ -7580,7 +7661,7 @@ def format_x86_16_tail_validation_diff(validation: dict[str, TailValidationValue
             continue
 
         def _display(value: TailValidationValue) -> TailValidationValue:
-            if field_name == "helper_calls" and isinstance(value, str) and value.startswith("name:"):
+            if field_name == "helper_calls" and isinstance(value, str) and value.startswith("name:"):  # noqa: B023
                 return value[len("name:") :]
             return value
 

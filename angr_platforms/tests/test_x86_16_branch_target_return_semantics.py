@@ -326,6 +326,7 @@ def test_terminal_ax_return_effect_classifies_ax_mul_stack_value():
     )
 
     assert effect.kind is TerminalAxReturnEffectKind8616.AX_MUL_VALUE
+    assert effect.dst_reg == "ax"
     assert effect.rhs_kind is TerminalAxReturnOperandKind8616.STACK
     assert effect.op == "Mul"
     assert effect.mem_disp == -2

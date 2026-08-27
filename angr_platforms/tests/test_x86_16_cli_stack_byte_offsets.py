@@ -49,7 +49,7 @@ def test_rewrite_ss_stack_byte_offsets_uses_vvar_alias_for_stack_slot_recovery()
         variables_in_use={},
         unified_local_vars={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     stack_base_var = SimStackVariable(-10, 1, base="bp", name="s_a", region=0x10010)
     # angr can leave a recovered stack carrier untyped. The lowering pass must
@@ -151,7 +151,7 @@ def test_rewrite_ss_stack_byte_offsets_resolves_dirty_virtual_variable_alias():
         variables_in_use={},
         unified_local_vars={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     stack_base_var = SimStackVariable(-10, 1, base="bp", name="s_a", region=0x10010)
     stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -248,7 +248,7 @@ def test_rewrite_ss_stack_byte_offsets_resolves_direct_reference_alias_chain():
         variables_in_use={},
         unified_local_vars={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     stack_base_var = SimStackVariable(-8, 1, base="bp", name="s_8", region=0x10010)
     stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -341,7 +341,7 @@ def test_rewrite_ss_stack_byte_offsets_resolves_named_vvar_aliases_sharing_one_r
         variables_in_use={},
         unified_local_vars={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     stack_base_var = SimStackVariable(-8, 1, base="bp", name="s_8", region=0x10010)
     stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -434,7 +434,7 @@ def test_rewrite_ss_stack_byte_offsets_resolves_dirty_assignment_alias_chain():
         variables_in_use={},
         unified_local_vars={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     stack_base_var = SimStackVariable(-8, 1, base="bp", name="s_8", region=0x10010)
     stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -528,7 +528,7 @@ def test_rewrite_ss_stack_byte_offsets_uses_sp_virtual_register_as_stack_anchor(
         variables_in_use={},
         unified_local_vars={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     sp_offset, sp_size = project.arch.registers["sp"]
     temp_var = SimRegisterVariable(sp_offset, sp_size, name="vvar_5")
@@ -611,7 +611,7 @@ def test_rewrite_ss_stack_byte_offsets_handles_shl_segment_scale_alias_chain():
         variables_in_use={},
         unified_local_vars={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     stack_base_var = SimStackVariable(-10, 1, base="bp", name="s_a", region=0x10010)
     stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -706,7 +706,7 @@ def test_rewrite_ss_stack_byte_offsets_resolves_full_linear_carrier_plus_byte_of
         variables_in_use={},
         unified_local_vars={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     stack_base_var = SimStackVariable(-6, 1, base="bp", name="iUp", region=0x10010)
     stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -793,7 +793,7 @@ def test_rewrite_ss_stack_byte_offsets_resolves_virtual_ss_linear_carrier_with_r
         variables_in_use={},
         unified_local_vars={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     sp_offset, sp_size = project.arch.registers["sp"]
     ss_offset, ss_size = project.arch.registers["ss"]
@@ -923,7 +923,7 @@ def test_rewrite_ss_stack_byte_offsets_rewrites_for_loop_iterator_store():
         variables_in_use={},
         unified_local_vars={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     stack_base_var = SimStackVariable(-4, 1, base="bp", name="s_4", region=0x10010)
     stack_base_cvar = structured_c.CVariable(stack_base_var, variable_type=SimTypeShort(False), codegen=codegen)

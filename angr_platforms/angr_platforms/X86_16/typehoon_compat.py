@@ -18,7 +18,7 @@ import networkx
 from angr.analyses.reaching_definitions import rd_state as _rd_state
 from angr.analyses.typehoon import simple_solver as _typehoon_simple_solver
 from angr.analyses.typehoon import translator as _typehoon_translator
-from angr.analyses.typehoon.simple_solver import BASE_LATTICES
+from angr.analyses.typehoon.simple_solver import BASE_LATTICES, BASE_LATTICES_INVERTED, TypeLattice
 from angr.analyses.typehoon.typeconsts import (
     BottomType,
     Int,
@@ -30,7 +30,7 @@ from angr.analyses.typehoon.typeconsts import (
     TypeConstant,
 )
 from angr.analyses.typehoon.typeconsts import Int16 as TCInt16
-from angr.analyses.typehoon.typevars import TypeVariable
+from angr.analyses.typehoon.typevars import TypeVariable, TypeVariableManager
 from angr.analyses.variable_recovery import variable_recovery_base as _variable_recovery_base
 from angr.sim_type import (
     SimTypeBottom,
@@ -97,12 +97,13 @@ def apply_x86_16_typehoon_compatibility() -> None:
             solver_dynamic.Pointer16_
         }
 
-    base_lattice_16 = networkx.DiGraph()
-    base_lattice_16.add_edge(TopType(), Int())
-    base_lattice_16.add_edge(Int(), Int16())
-    base_lattice_16.add_edge(Int16(), solver_dynamic.Pointer16_)
-    base_lattice_16.add_edge(solver_dynamic.Pointer16_, BottomType())
-    BASE_LATTICES[16] = base_lattice_16
+    base_lattice_16_graph = networkx.DiGraph()
+    base_lattice_16_graph.add_edge(TopType(), Int())
+    base_lattice_16_graph.add_edge(Int(), Int16())
+    base_lattice_16_graph.add_edge(Int16(), solver_dynamic.Pointer16_)
+    base_lattice_16_graph.add_edge(solver_dynamic.Pointer16_, BottomType())
+    BASE_LATTICES[16] = TypeLattice(base_lattice_16_graph)
+    BASE_LATTICES_INVERTED[16] = BASE_LATTICES[16].inverted()
 
     def _pointer_class_16(self: object) -> type[object]:
         solver = cast(Any, self)
@@ -125,6 +126,7 @@ def apply_x86_16_typehoon_compatibility() -> None:
         typevars: object,
         constraint_set_degradation_threshold: int = 150,
         stackvar_max_sizes: dict[TypeVariable, int] | None = None,
+        tv_manager: TypeVariableManager | None = None,
     ) -> None:
         solver = cast(Any, self)
         constraints_payload = cast(Any, constraints)
@@ -137,6 +139,7 @@ def apply_x86_16_typehoon_compatibility() -> None:
                 typevars_payload,
                 constraint_set_degradation_threshold=constraint_set_degradation_threshold,
                 stackvar_max_sizes=stackvar_max_sizes,
+                tv_manager=tv_manager,
             )
             return None
 
@@ -150,12 +153,11 @@ def apply_x86_16_typehoon_compatibility() -> None:
         solver.bits = bits
         solver._constraints = constraints_payload
         solver._typevars = typevars_payload
+        solver.tv_manager = tv_manager if tv_manager is not None else TypeVariableManager(0x1337)
         solver.stackvar_max_sizes = stackvar_max_sizes if stackvar_max_sizes is not None else {}
         solver._constraint_set_degradation_threshold = constraint_set_degradation_threshold
         solver._base_lattice = cast(Any, BASE_LATTICES[bits])
-        solver._base_lattice_inverted = networkx.DiGraph()
-        for src, dst in solver._base_lattice.edges:
-            solver._base_lattice_inverted.add_edge(dst, src)
+        solver._base_lattice_inverted = cast(Any, BASE_LATTICES_INVERTED[bits])
 
         solver.processed_constraints_count = 0
         solver.simplified_constraints_count = 0

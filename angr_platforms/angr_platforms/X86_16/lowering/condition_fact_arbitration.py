@@ -18,12 +18,11 @@ alternatives remain ambiguous.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
 
 from ..ir.condition_ir import ConditionIR, deduplicate_conditions_8616
 from ..ir.core import IRBinaryValue, IRValue, MemSpace
 
-_BranchIdentity8616: TypeAlias = tuple[
+type _BranchIdentity8616 = tuple[
     object,
     int,
     tuple[str, ...],

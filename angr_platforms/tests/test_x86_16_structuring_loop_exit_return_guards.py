@@ -35,6 +35,12 @@ class _DummyCodegen:
         self._idx += 1
         return self._idx
 
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+
+    def next_ident(self, name: str) -> str:
+        return name
+
 
 def _const(value: int, codegen):
     return CConstant(value, SimTypeShort(False), codegen=codegen)
@@ -101,6 +107,57 @@ def test_loop_exit_return_guard_repair_refuses_non_return_post_loop_flow():
     assert changed is False
     assert loop.body.statements[0] is if_stmt
     assert codegen._inertia_loop_exit_guard_stats_8616["refused_post_loop_flow"] == 1
+
+
+def test_loop_exit_return_guard_repair_preserves_executable_else_body():
+    codegen = _DummyCodegen()
+    exit_cond = _const(1, codegen)
+    else_call = CFunctionCall("tick", None, [], codegen=codegen)
+    else_assignment = CAssignment(_stack(-2, codegen), _const(7, codegen), codegen=codegen)
+    else_body = CStatements([else_call, else_assignment], codegen=codegen)
+    if_stmt = CIfElse(
+        [(exit_cond, CStatements([CReturn(None, codegen=codegen)], codegen=codegen))],
+        else_node=else_body,
+        codegen=codegen,
+    )
+    loop = CWhileLoop(
+        _const(1, codegen),
+        CStatements([if_stmt], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([loop, CReturn(None, codegen=codegen)], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    changed = repair_loop_exit_return_guards_8616(codegen, _callbacks())
+
+    assert changed is False
+    assert loop.body.statements[0] is if_stmt
+    assert if_stmt.else_node is else_body
+    assert else_body.statements == [else_call, else_assignment]
+
+
+def test_loop_exit_return_guard_repair_accepts_recursively_empty_else_body():
+    codegen = _DummyCodegen()
+    exit_cond = _const(1, codegen)
+    empty_else = CStatements([CStatements([], codegen=codegen)], codegen=codegen)
+    if_stmt = CIfElse(
+        [(exit_cond, CStatements([CReturn(None, codegen=codegen)], codegen=codegen))],
+        else_node=empty_else,
+        codegen=codegen,
+    )
+    loop = CWhileLoop(
+        _const(1, codegen),
+        CStatements([if_stmt, CFunctionCall("tick", None, [], codegen=codegen)], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([loop, CReturn(None, codegen=codegen)], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+
+    changed = repair_loop_exit_return_guards_8616(codegen, _callbacks())
+
+    assert changed is True
+    assert isinstance(loop.body.statements[0], CIfBreak)
+    assert loop.body.statements[0].condition is exit_cond
 
 
 def test_default_loop_exit_callbacks_classify_runtime_segment_helpers():

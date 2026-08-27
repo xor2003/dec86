@@ -85,7 +85,7 @@ def _surface(
         next_idx=lambda _name: 1,
         cstyle_null_cmp=False,
         project=project,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     destination = CVariable(
         SimStackVariable(-6, 2, base="bp", name="scan_up"),
         variable_type=SimTypeShort(False),

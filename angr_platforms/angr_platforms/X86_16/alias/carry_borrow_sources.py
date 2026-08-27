@@ -11,6 +11,10 @@ Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting wor
 from __future__ import annotations
 
 from ..ir import IRValue, MemSpace
+from ..ir.logical_memory_contracts import (
+    logical_memory_byte_offset_8616,
+    logical_memory_execution_address_matches_8616,
+)
 from ..semantics.carry_borrow_contracts import (
     CarryBorrowIROp8616,
     CarryBorrowOperandUse8616,
@@ -82,21 +86,26 @@ def _memory_word_alias_8616(
     if definition is None or memory_word is None or use.value.source_tmp is None:
         return CarryBorrowAliasFailure8616.SOURCE_DEFINITION_MISMATCH
     destination = definition.instruction.dst
-    expected_op = (
-        CarryBorrowIROp8616.LOAD
-        if len(memory_word.loads) == 1
-        else CarryBorrowIROp8616.OR16
-    )
+    execution_loads = memory_word.execution_loads
+    logical_address = memory_word.logical_address
+    if len(execution_loads) == 1:
+        expected_op = CarryBorrowIROp8616.LOAD
+    elif len(execution_loads) == 2:
+        expected_op = CarryBorrowIROp8616.OR16
+    else:
+        return CarryBorrowAliasFailure8616.SOURCE_DEFINITION_MISMATCH
     if (
         definition.instruction.op != expected_op.value
         or destination is None
         or destination.source_tmp != use.value.source_tmp
-        or not memory_word.loads
-        or len(memory_word.loads) != len(memory_word.addresses)
         or memory_word.size != 2
     ):
         return CarryBorrowAliasFailure8616.SOURCE_DEFINITION_MISMATCH
-    for load, address in zip(memory_word.loads, memory_word.addresses, strict=True):
+    if expected_op is CarryBorrowIROp8616.LOAD and execution_loads[0].site != definition:
+        return CarryBorrowAliasFailure8616.SOURCE_DEFINITION_MISMATCH
+    for execution_load in execution_loads:
+        load = execution_load.site
+        address = execution_load.address
         load_destination = load.instruction.dst
         if (
             load.instruction.op != CarryBorrowIROp8616.LOAD.value
@@ -106,20 +115,43 @@ def _memory_word_alias_8616(
             or load.instruction.args != (address,)
         ):
             return CarryBorrowAliasFailure8616.SOURCE_DEFINITION_MISMATCH
-    addresses = memory_word.addresses
-    first = addresses[0]
-    if any(address.space is not first.space for address in addresses[1:]):
+    execution_addresses = tuple(item.address for item in execution_loads)
+    if sum(address.size for address in execution_addresses) != memory_word.size:
+        return CarryBorrowAliasFailure8616.SOURCE_DEFINITION_MISMATCH
+    first_execution = execution_addresses[0]
+    if any(
+        address.space is not first_execution.space
+        for address in execution_addresses[1:]
+    ) or logical_address.space is not first_execution.space:
         return CarryBorrowAliasFailure8616.SEGMENT_MISMATCH
     if any(
-        current.offset != previous.offset + previous.size
-        for previous, current in zip(addresses[:-1], addresses[1:], strict=True)
+        not logical_memory_execution_address_matches_8616(
+            current,
+            logical_address,
+            source_byte_offset,
+            memory_word.address_bits,
+        )
+        for source_byte_offset, current in enumerate(execution_addresses)
     ):
         return CarryBorrowAliasFailure8616.SOURCE_RANGE_MISMATCH
-    classified = tuple(alias_facts_for_ir_address_8616(address) for address in addresses)
-    if not all(isinstance(fact, AliasStorageFacts) for fact in classified):
+    if (
+        not logical_address.base
+        and logical_memory_byte_offset_8616(
+            logical_address,
+            memory_word.size - 1,
+            memory_word.address_bits,
+        )
+        < logical_memory_byte_offset_8616(
+            logical_address,
+            0,
+            memory_word.address_bits,
+        )
+    ):
+        return CarryBorrowAliasFailure8616.SOURCE_RANGE_WRAP_UNSUPPORTED
+    classified = alias_facts_for_ir_address_8616(logical_address)
+    if not isinstance(classified, AliasStorageFacts):
         return CarryBorrowAliasFailure8616.SOURCE_ALIAS_UNPROVEN
-    facts = tuple(fact for fact in classified if isinstance(fact, AliasStorageFacts))
-    memory = build_segmented_alias_range_8616(addresses, facts)
+    memory = build_segmented_alias_range_8616((logical_address,), (classified,))
     if memory is None or memory.size != 2:
         return CarryBorrowAliasFailure8616.SOURCE_ALIAS_UNPROVEN
     return CarryBorrowOperandAlias8616(

@@ -76,6 +76,11 @@ _SOURCE_EVIDENCE_RE = re.compile(
 )
 _FUNCTION_RE = re.compile(r"/\* == function (?P<addr>0x[0-9a-f]+) [^=]+ == \*/", re.IGNORECASE)
 _STATUS_RE = re.compile(r"failure family: status=(?P<status>[a-z_]+)\b")
+_FINAL_FUNCTION_INFO_RE = re.compile(
+    r"/\* info: function (?P<addr>0x[0-9a-f]+) \S+ "
+    r"attempt=(?P<attempt>[a-z_]+) validation=(?P<validation>[a-z_]+) \*/",
+    re.IGNORECASE,
+)
 _QUEUED_RE = re.compile(r"functions queued for decompilation: (?P<count>\d+)")
 _SELECTED_RE = re.compile(r"selected (?P<count>\d+) function\(s\) for decompilation")
 _ATTEMPTED_RE = re.compile(r"decompilation attempted for (?P<attempted>\d+)/(?P<selected>\d+) selected function")
@@ -90,8 +95,12 @@ _RUNMENU_REDUNDANT_TAIL_RE = re.compile(
 )
 _DRAWTIME_ADDR = 0x10498
 _DRAWTIME_SIGNATURE_RE = re.compile(
-    rf"\bvoid\s+sub_10498\s*\(\s*{_WORD_TYPE_RE}\s+[A-Za-z_]\w*\s*\)"
+    rf"\bvoid\s+sub_10498\s*\(\s*{_WORD_TYPE_RE}\s+(?P<row>[A-Za-z_]\w*)\s*\)"
 )
+_UNSUPPORTED_INSTRUCTION_RE = re.compile(r"\b(?:unsupported|unknown)\s+instruction\b", re.IGNORECASE)
+_FLAG_ARTIFACT_RE = re.compile(r"\b(?:e?flags|cc_op|cc_dep[12]?)\b", re.IGNORECASE)
+_EMPTY_IF_ELSE_RE = re.compile(r"\bif\s*\([^{};]*\)\s*\{\s*\}\s*else\s*\{\s*\}")
+_RAW_SS_LINEAR_RE = re.compile(r"\binertia_ss\s*<<\s*4\b")
 _BEEP_ADDR = 0x10E70
 _BEEP_SIGNATURE_RE = re.compile(
     rf"\bvoid\s+sub_10e70\s*\(\s*{_WORD_TYPE_RE}\s+(?P<frequency>[A-Za-z_]\w*)\s*,\s*"
@@ -189,12 +198,22 @@ def evaluate_sortd_transcript(
     decompiled_count = int(summary_match.group("decompiled")) if summary_match is not None else 0
     function_addrs = tuple(int(match.group("addr"), 16) for match in _FUNCTION_RE.finditer(transcript))
     statuses = tuple(match.group("status") for match in _STATUS_RE.finditer(transcript))
-    decompiled_function_addrs = tuple(
-        address for address, status in zip(function_addrs, statuses, strict=False) if status == "ok"
+    final_acceptance = {
+        int(match.group("addr"), 16): (
+            match.group("attempt") == "decompiled" and match.group("validation") == "passed"
+        )
+        for match in _FINAL_FUNCTION_INFO_RE.finditer(transcript)
+    }
+    terminal_statuses = tuple(
+        "ok" if final_acceptance.get(address, False) else status
+        for address, status in zip(function_addrs, statuses, strict=False)
     )
-    empty_count = statuses.count("empty")
-    timeout_count = max(statuses.count("timeout"), len(_TIMEOUT_SIGNAL_RE.findall(transcript)))
-    validation_failed_count = statuses.count("validation_failed")
+    decompiled_function_addrs = tuple(
+        address for address, status in zip(function_addrs, terminal_statuses, strict=False) if status == "ok"
+    )
+    empty_count = terminal_statuses.count("empty")
+    timeout_count = max(terminal_statuses.count("timeout"), len(_TIMEOUT_SIGNAL_RE.findall(transcript)))
+    validation_failed_count = terminal_statuses.count("validation_failed")
     traceback_count = transcript.count("Traceback (most recent call last):")
 
     expected_count = len(EXPECTED_SORTD_FUNCTION_ADDRS)
@@ -230,8 +249,18 @@ def evaluate_sortd_transcript(
     if _RUNMENU_REDUNDANT_TAIL_RE.search(runmenu_segment):
         violations.append("RunMenu retains a redundant switch-to-loop-tail goto")
     drawtime_segment = _function_transcript_segment(transcript, _DRAWTIME_ADDR)
-    if not _DRAWTIME_SIGNATURE_RE.search(drawtime_segment) or _UNINITIALIZED_BP4_LOCAL_RE.search(drawtime_segment):
+    drawtime_signature = _DRAWTIME_SIGNATURE_RE.search(drawtime_segment)
+    if drawtime_signature is None or _UNINITIALIZED_BP4_LOCAL_RE.search(drawtime_segment):
         violations.append("DrawTime lacks its canonical void positive-BP signature")
+    elif re.search(
+        rf"\bsub_10e70\s*\(\s*{re.escape(drawtime_signature.group('row'))}\s*\*\s*60\s*,\s*75\s*\)",
+        drawtime_segment,
+    ) is None:
+        violations.append("DrawTime lacks its binary-proven frequency and duration arguments")
+    if _EMPTY_IF_ELSE_RE.search(drawtime_segment):
+        violations.append("DrawTime retains an empty flag-only branch")
+    if _RAW_SS_LINEAR_RE.search(drawtime_segment):
+        violations.append("DrawTime retains raw SS linear-address arithmetic")
     beep_segment = _function_transcript_segment(transcript, _BEEP_ADDR)
     beep_signature = _BEEP_SIGNATURE_RE.search(beep_segment)
     if beep_signature is None or _UNINITIALIZED_BP4_LOCAL_RE.search(beep_segment):
@@ -244,6 +273,10 @@ def evaluate_sortd_transcript(
         violations.append(f"timeout signal count {timeout_count} exceeds {maximum_timeouts}")
     if traceback_count > maximum_tracebacks:
         violations.append(f"traceback count {traceback_count} exceeds {maximum_tracebacks}")
+    if _UNSUPPORTED_INSTRUCTION_RE.search(transcript):
+        violations.append("generated output retains unsupported or unknown instructions")
+    if _FLAG_ARTIFACT_RE.search(transcript):
+        violations.append("generated output retains raw flag-state artifacts")
     if decompiler_returncode not in {0, 2}:
         violations.append(f"unexpected decompiler exit code {decompiler_returncode}")
     if "no helper metadata (.lst/.map/.cod/debug info) found" not in transcript:

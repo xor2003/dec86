@@ -17,9 +17,13 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "angr_platforms"))
 logging.getLogger("angr.state_plugins.unicorn_engine").disabled = True
 
-from angr_platforms.X86_16.codeview_nb00 import CodeViewNB00Info, parse_codeview_nb00
-from angr_platforms.X86_16.codeview_nb02_nb04 import CodeViewNB0204Info, CodeViewSymbol, parse_codeview_nb0204
-from angr_platforms.X86_16.turbo_debug_tdinfo import TDInfoEXEInfo, TDInfoSymbolClass, parse_tdinfo_exe
+from angr_platforms.X86_16.codeview_nb00 import CodeViewNB00Info, parse_codeview_nb00  # noqa: E402
+from angr_platforms.X86_16.codeview_nb02_nb04 import (  # noqa: E402
+    CodeViewNB0204Info,
+    CodeViewSymbol,
+    parse_codeview_nb0204,
+)
+from angr_platforms.X86_16.turbo_debug_tdinfo import TDInfoEXEInfo, TDInfoSymbolClass, parse_tdinfo_exe  # noqa: E402
 
 
 def _parse_int(value: str) -> int:
@@ -42,7 +46,7 @@ def _symbol(symbol: CodeViewSymbol) -> dict[str, Any]:
     }
 
 
-def _type_member(member: Any) -> dict[str, Any]:
+def _type_member(member: Any) -> dict[str, Any]:  # noqa: ANN401
     return {
         "name": member.name,
         "offset": member.offset,
@@ -131,7 +135,7 @@ def _tdinfo(info: TDInfoEXEInfo | None) -> dict[str, Any] | None:
     if info is None:
         return None
 
-    def record(record_obj) -> dict[str, Any]:
+    def record(record_obj) -> dict[str, Any]:  # noqa: ANN001
         return {
             "index": record_obj.index,
             "type_index": record_obj.type_index,
@@ -141,7 +145,7 @@ def _tdinfo(info: TDInfoEXEInfo | None) -> dict[str, Any] | None:
             "symbol_class": _td_symbol_class(record_obj.symbol_class),
         }
 
-    def named(named_obj) -> dict[str, Any]:
+    def named(named_obj) -> dict[str, Any]:  # noqa: ANN001
         return {"name": named_obj.name, "record": record(named_obj.record)}
 
     return {
@@ -242,7 +246,7 @@ def _tdinfo(info: TDInfoEXEInfo | None) -> dict[str, Any] | None:
     }
 
 
-def dump_debug_info(path: Path, *, load_base_linear: int) -> dict[str, Any]:
+def dump_debug_info(path: Path, *, load_base_linear: int) -> dict[str, Any]:  # noqa: D103
     return {
         "binary": str(path),
         "load_base_linear": f"0x{load_base_linear:x}",
@@ -252,7 +256,7 @@ def dump_debug_info(path: Path, *, load_base_linear: int) -> dict[str, Any]:
     }
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: D103
     parser = argparse.ArgumentParser(description="Dump all supported DOS debug information from an executable.")
     parser.add_argument("binary", type=Path)
     parser.add_argument("--load-base-linear", type=_parse_int, default=0, help="linear load base, e.g. 0x10000")

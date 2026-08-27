@@ -47,7 +47,7 @@ class _Functions8616:
     def __init__(self, functions: tuple[object, ...]) -> None:
         self._functions = functions
 
-    def function(self, *, addr: int, create: bool = False) -> object | None:  # noqa: ARG002
+    def function(self, *, addr: int, create: bool = False) -> object | None:
         """Return the unique exact function address, if present."""
         return next(
             (
@@ -120,10 +120,15 @@ def _project_with_census(
     )
     facts = (fact, fact) if duplicate_callsite else (fact,)
     raw_count = len(facts)
+    logical_argument_count = (
+        len(summary.logical_arg_widths)
+        if summary.logical_arg_widths
+        else summary.arg_count
+    )
     count_evidence = CalleeArgumentCountEvidence8616(
         target_addr=summary.target_addr or 0,
         verdict=CalleeArgumentCountVerdict8616.CONSISTENT,
-        argument_count=1,
+        argument_count=logical_argument_count,
         raw_fact_count=raw_count,
         normalized_fact_count=raw_count,
         classified_fact_count=raw_count,
@@ -138,14 +143,14 @@ def _project_with_census(
     return project
 
 
-def _signed_codegen() -> SimpleNamespace:
+def _signed_codegen(width: int = 2) -> SimpleNamespace:
     """Return one exact signed condition fact over the first stack argument."""
     return SimpleNamespace(
         _inertia_typed_conditions=(
             ConditionIR(
                 "slt",
-                IRValue(MemSpace.SS, name="bp", offset=4, size=2),
-                IRValue(MemSpace.CONST, const=0, size=2),
+                IRValue(MemSpace.SS, name="bp", offset=4, size=width),
+                IRValue(MemSpace.CONST, const=0, size=width),
                 src_insn=0x1010,
                 block_addr=0x1010,
             ),
@@ -163,21 +168,92 @@ def test_collects_signed_immediate_trial_and_feeds_scc_solver() -> None:
         callsite_addr=0x1002,
         target_addr=0x1005,
         push_addr=0x1000,
-        source=(CallsitePushSourceKind8616.IMMEDIATE.value, 5),
+        source=(CallsitePushSourceKind8616.IMMEDIATE.value, -1),
     )
-    project = _project_with_census(bytes.fromhex("6a05e80000"), summary)
+    project = _project_with_census(bytes.fromhex("6affe80000"), summary)
 
     result = collect_function_input_storage_trials_8616(project, _signed_codegen(), 0x1005)
 
     assert result.complete
     assert result.stats.complete
-    trial = result.trials.callsites[0].arguments[0]
-    assert trial.reaching_definition.value.const == 5
-    assert trial.signedness is StorageTrialSignedness8616.SIGNED
-    assert trial.value_class is StorageTrialValueClass8616.VALUE
-    assert trial.storage.address is not None
-    assert trial.storage.address.offset == 4
-    assert resolve_program_storage_trials_8616((result.trials,)).contract_for(0x1005) is not None
+    trials = result.trials.callsites[0].arguments
+    assert len(trials) == 2
+    assert {trial.logical_index for trial in trials} == {0}
+    assert all(trial.piece_count == 2 for trial in trials)
+    assert trials[0].reaching_definition.value.const == 0xFFFF
+    assert all(trial.signedness is StorageTrialSignedness8616.SIGNED for trial in trials)
+    assert all(trial.value_class is StorageTrialValueClass8616.VALUE for trial in trials)
+    contract = resolve_program_storage_trials_8616((result.trials,)).contract_for(0x1005)
+    assert contract is not None
+    assert len(contract.inputs) == 1
+    assert contract.inputs[0].width == 2
+
+
+def test_wide_logical_input_keeps_four_pieces_in_one_solver_slot() -> None:
+    summary = CallsiteSummary8616(
+        callsite_addr=0x1004,
+        target_addr=0x1007,
+        return_addr=0x1007,
+        kind="near",
+        arg_count=2,
+        arg_widths=(2, 2),
+        stack_cleanup=4,
+        return_register=None,
+        return_used=None,
+        push_arg_sources=(
+            (CallsitePushSourceKind8616.IMMEDIATE.value, 2),
+            (CallsitePushSourceKind8616.IMMEDIATE.value, 1),
+        ),
+        push_arg_instruction_addrs=(0x1000, 0x1002),
+        logical_arg_widths=(4,),
+    )
+    project = _project_with_census(bytes.fromhex("6a026a01e80000"), summary)
+
+    result = collect_function_input_storage_trials_8616(
+        project,
+        _signed_codegen(4),
+        0x1007,
+    )
+
+    assert result.complete
+    trials = result.trials.callsites[0].arguments
+    assert len(trials) == 4
+    assert {trial.logical_index for trial in trials} == {0}
+    assert all(trial.piece_count == 4 for trial in trials)
+    assert tuple(trial.storage.address.offset for trial in trials if trial.storage.address) == (4, 5, 6, 7)
+    contract = resolve_program_storage_trials_8616((result.trials,)).contract_for(0x1007)
+    assert contract is not None
+    assert len(contract.inputs) == 1
+    assert contract.inputs[0].width == 4
+
+
+def test_zero_argument_call_does_not_materialize_return_address_bytes() -> None:
+    summary = CallsiteSummary8616(
+        callsite_addr=0x1000,
+        target_addr=0x1003,
+        return_addr=0x1003,
+        kind="near",
+        arg_count=0,
+        arg_widths=(),
+        stack_cleanup=0,
+        return_register=None,
+        return_used=None,
+        push_arg_sources=(),
+        push_arg_instruction_addrs=(),
+    )
+    project = _project_with_census(bytes.fromhex("e80000"), summary)
+
+    result = collect_function_input_storage_trials_8616(
+        project,
+        _empty_codegen(),
+        0x1003,
+    )
+
+    assert result.complete
+    assert result.trials.callsites[0].arguments == ()
+    contract = resolve_program_storage_trials_8616((result.trials,)).contract_for(0x1003)
+    assert contract is not None
+    assert contract.inputs == ()
 
 
 def test_collects_bp_address_as_pointer_without_scalar_signedness() -> None:
@@ -192,12 +268,16 @@ def test_collects_bp_address_as_pointer_without_scalar_signedness() -> None:
     result = collect_function_input_storage_trials_8616(project, _empty_codegen(), 0x1007)
 
     assert result.complete
-    trial = result.trials.callsites[0].arguments[0]
-    assert trial.value_class is StorageTrialValueClass8616.POINTER
-    assert trial.signedness is StorageTrialSignedness8616.NOT_APPLICABLE
-    source = trial.reaching_definition.source_storage
-    assert source is not None and source.address is not None
-    assert source.address.offset == -4
+    trials = result.trials.callsites[0].arguments
+    assert {trial.logical_index for trial in trials} == {0}
+    assert all(trial.value_class is StorageTrialValueClass8616.POINTER for trial in trials)
+    assert all(trial.signedness is StorageTrialSignedness8616.NOT_APPLICABLE for trial in trials)
+    assert tuple(
+        trial.reaching_definition.source_storage.address.offset
+        for trial in trials
+        if trial.reaching_definition.source_storage is not None
+        and trial.reaching_definition.source_storage.address is not None
+    ) == (-4, -3)
 
 
 def test_split_global_word_retains_two_source_and_callee_pieces() -> None:

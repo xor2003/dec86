@@ -37,6 +37,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _global_indexed(name: str, base_addr: int, index, codegen):

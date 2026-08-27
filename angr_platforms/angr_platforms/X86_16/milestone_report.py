@@ -7,9 +7,10 @@ Forbidden: collecting new proof, changing pipeline behavior, or hiding incomplet
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, cast
 
 from .addressing_helpers import (
     describe_x86_16_decode_width_matrix,
@@ -101,7 +102,7 @@ def _append_hotspot_and_family_lines_8616(
     changed_families: list[Mapping[str, object]],
 ) -> None:
     for hotspot in stage_hotspots[:2]:
-        lines.append(
+        lines.append(  # noqa: PERF401
             f"stage={hotspot.get('stage', 'unknown')} changed={hotspot.get('changed_count', 0)} rate={hotspot.get('changed_rate', 0.0)}"
         )
     for family_row in changed_families[:3]:

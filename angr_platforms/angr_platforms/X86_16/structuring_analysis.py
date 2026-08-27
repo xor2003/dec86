@@ -24,21 +24,16 @@ Inspired by:
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from .ir.condition_ir import ConditionIR
 from .ir.core import IRValue, MemSpace
+from .structuring.natural_loop_topology import NaturalLoopTopology8616
 from .structuring_graph_builder import build_region_graph
-from .structuring_loops import (
-    NaturalLoopInfo,
-    compute_loop_body,
-    compute_loop_confidence,
-    detect_natural_loop,
-    is_well_structured_multi_exit,
-)
+from .structuring_loops import detect_natural_loop
 from .structuring_region import (
     DominatorInfo,
     Region,
@@ -48,7 +43,7 @@ from .structuring_region import (
 )
 from .structuring_sequences import merge_would_hide_cycle, sequence_merge_is_safe
 
-__all__ = ["Region", "RegionGraph", "RegionType", "RegionBasedStructuringPass"]
+__all__ = ["Region", "RegionBasedStructuringPass", "RegionGraph", "RegionType"]
 
 if TYPE_CHECKING:
     pass
@@ -1111,7 +1106,7 @@ class StructureAnalysis:
     def __init__(
         self,
         graph: RegionGraph,
-        event_listener: Optional[Callable[[str], None]] = None,
+        event_listener: Callable[[str], None] | None = None,
         max_iterations: int = MAX_ITERATIONS,
     ) -> None:
         """Initialize the structuring analyzer.
@@ -1124,9 +1119,9 @@ class StructureAnalysis:
         self.graph = graph
         self.event_listener = event_listener or (lambda msg: None)
         self.max_iterations = max_iterations
-        self.dominators: Optional[DominatorInfo] = None
+        self.dominators: DominatorInfo | None = None
         self.stats = StructuringStats()
-        self.unresolved_cycles: list[tuple[Region, set[Region]]] = []
+        self.natural_loop_topologies: dict[int, NaturalLoopTopology8616] = {}
         self.unresolved_switches: list[Region] = []
 
     def structure(self) -> RegionGraph:
@@ -1173,8 +1168,8 @@ class StructureAnalysis:
                 # Track progress
                 old_node_count = len(self.graph.nodes)
 
-                # Reset unresolved lists for this iteration
-                self.unresolved_cycles.clear()
+                # Reset evidence and unresolved switches for this iteration
+                self.natural_loop_topologies.clear()
                 self.unresolved_switches.clear()
 
                 for region in sorted(self.graph.nodes, key=lambda item: item.region_id or 0):
@@ -1197,7 +1192,7 @@ class StructureAnalysis:
                 if new_node_count == old_node_count and new_node_count > 1:
                     # No progress this round - try refinement strategies
                     # But only if there are unresolved regions to process
-                    if self.unresolved_cycles or self.unresolved_switches:
+                    if self.unresolved_switches:
                         self._process_unresolved_regions()
                     else:
                         # No unresolved regions and no progress - we're stuck
@@ -1278,38 +1273,19 @@ class StructureAnalysis:
         return False
 
     def _try_natural_loop(self, region: Region) -> bool:
-        """Try to match and reduce a natural loop pattern.
+        """Publish exact loop topology without reducing the region graph.
 
         Args:
             region: Candidate loop header region
 
         Returns:
-            True if loop pattern matched and merged, False otherwise
+            Always False because topology alone cannot authorize collapse
         """
-        loop_info = self._detect_natural_loop(region)
-        if not loop_info:
+        topology = self._detect_natural_loop(region)
+        if topology is None:
             return False
-
-        # If confidence is too low, don't merge yet - keep as unresolved
-        if loop_info.confidence < 0.6:
-            self.unresolved_cycles.append((region, loop_info.body_regions))
-            return False
-
-        # Merge all body regions into the header region
-        try:
-            for body_region in loop_info.body_regions:
-                if body_region != region and body_region in self.graph.nodes:
-                    self.graph.merge_regions(body_region, region, transfer_edges="both")
-
-            # Mark as loop region
-            region.region_type = RegionType.Loop
-            region.metadata["loop_info"] = loop_info
-
-            self.stats.regions_reduced += 1
-            return True
-        except Exception as e:
-            logger.debug(f"Failed to merge natural loop regions: {e}")
-            return False
+        self.natural_loop_topologies[topology.header] = topology
+        return False
 
     def _try_sequence(self, region: Region) -> bool:
         """Try to merge region into a sequence with its predecessor or successor.
@@ -1355,9 +1331,7 @@ class StructureAnalysis:
         # Check if this region has multiple successors (branch point)
         succs = self.graph.successors(region)
         if len(succs) < 3:
-            if self._try_edge_guard_switch_cascade(region):
-                return True
-            return False  # Need at least 3 branches for a switch candidate
+            return self._try_edge_guard_switch_cascade(region)
 
         # Mark as switch region - this indicates potential for switch statement
         # Full switch code generation happens in Phase 1.3
@@ -1568,7 +1542,7 @@ class StructureAnalysis:
 
         # Check if either successor has only this region as predecessor
         # (meaning it's a dedicated then-block)
-        for i, succ in enumerate(succs):
+        for _i, succ in enumerate(succs):
             preds = self.graph.predecessors(succ)
             if len(preds) == 1 and succ in preds[0].successors:
                 if merge_would_hide_cycle(self.graph, self.dominators, region, succ):
@@ -1656,13 +1630,10 @@ class StructureAnalysis:
             return False
 
         preds = self.graph.predecessors(region)
-        for pred in preds:
-            if self.dominators.strictly_dominates(region, pred):
-                return True
+        return any(self.dominators.strictly_dominates(region, pred) for pred in preds)
 
-        return False
-
-    def _detect_natural_loop(self, region: Region) -> Optional[NaturalLoopInfo]:
+    def _detect_natural_loop(self, region: Region) -> NaturalLoopTopology8616 | None:
+        """Return typed topology evidence for one dominance-backed header."""
         if self.dominators is None:
             self.dominators = compute_dominators(self.graph)
         return detect_natural_loop(
@@ -1671,63 +1642,17 @@ class StructureAnalysis:
             region,
         )
 
-    def _compute_loop_body(self, header: Region, back_edges: list[Region]) -> set[Region]:
-        if self.dominators is None:
-            return set()
-        body = compute_loop_body(self.graph, self.dominators, header, back_edges)
-        return {region for region in body if isinstance(region, Region)}
-
-    def _is_well_structured_multi_exit(
-        self, body_regions: set[Region], exit_edges: list[tuple[Region, Region]]
-    ) -> bool:
-        return bool(is_well_structured_multi_exit(body_regions, exit_edges))
-
-    def _compute_loop_confidence(
-        self,
-        header: Region,
-        back_edges: list[Region],
-        body_regions: set[Region],
-        exit_edges: list[tuple[Region, Region]],
-        is_reducible: bool,
-    ) -> float:
-        return float(compute_loop_confidence(
-            header,
-            back_edges,
-            body_regions,
-            exit_edges,
-            is_reducible,
-        ))
-
     def _process_unresolved_regions(self) -> None:
         """Apply refinement strategies for unstructured regions.
 
         When the main algorithm makes no progress, we apply last-resort
         refinement strategies to ensure forward progress:
-        - Convert unresolved cycles to explicit loop regions
         - Convert remaining multi-exit regions to explicit gotos
         """
-        if not self.unresolved_cycles and not self.unresolved_switches:
+        if not self.unresolved_switches:
             # No unresolved regions to process - fall back to goto refinement
             self._refine_to_gotos()
             return
-
-        # Process unresolved cycles (low confidence)
-        for region, cycle_regions in self.unresolved_cycles:
-            # Mark as loop but emit goto fallback for exits
-            region.region_type = RegionType.Loop
-
-            # Find exit edges and store for goto emission
-            for body_region in cycle_regions:
-                if body_region in self.graph.nodes:
-                    for succ in self.graph.successors(body_region):
-                        if succ not in cycle_regions and succ != region:
-                            # Store for potential goto emission
-                            existing_exits = region.metadata.get("unstructured_exits")
-                            exits = existing_exits if isinstance(existing_exits, list) else []
-                            exits.append((body_region, succ))
-                            region.metadata["unstructured_exits"] = exits
-
-            self.stats.cycles_resolved += 1
 
         # Process unresolved switches
         for region in self.unresolved_switches:
@@ -1803,16 +1728,15 @@ class RegionBasedStructuringPass:
                 cfunc._structuring_stats["final_node_count"] = len(structured.nodes)
 
                 # Record structured region types on cfunc
-                structured_regions = []
-                for region in structured.nodes:
-                    if region.region_type != RegionType.Linear:
-                        structured_regions.append(
-                            {
-                                "addr": region.block_addr,
-                                "type": region.region_type.value,
-                                "metadata_keys": list(region.metadata.keys()),
-                            }
-                        )
+                structured_regions = [
+                    {
+                        "addr": region.block_addr,
+                        "type": region.region_type.value,
+                        "metadata_keys": list(region.metadata.keys()),
+                    }
+                    for region in structured.nodes
+                    if region.region_type != RegionType.Linear
+                ]
                 cfunc._structuring_stats["structured_regions"] = structured_regions
 
                 # Return True if any structuring occurred

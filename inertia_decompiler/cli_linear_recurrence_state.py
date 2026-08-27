@@ -9,14 +9,14 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
-CExpr: TypeAlias = object
-LinearDelta: TypeAlias = tuple[CExpr | None, int]
+type CExpr = object
+type LinearDelta = tuple[CExpr | None, int]
 
 
 class _CFunctionLike(Protocol):

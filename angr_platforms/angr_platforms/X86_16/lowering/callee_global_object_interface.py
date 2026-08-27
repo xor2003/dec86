@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable, Sequence
 from dataclasses import replace
-from typing import Callable, Protocol, Sequence, TypeAlias, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -44,7 +45,7 @@ from .callee_global_object_type_surface import (
 from .callee_pointer_evidence import CalleePointerArgumentEvidence8616
 from .near_pointer_type import near_pointer_type_8616
 
-GlobalStructFactory8616: TypeAlias = Callable[[str], SimStruct]
+type GlobalStructFactory8616 = Callable[[str], SimStruct]
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -191,10 +192,9 @@ def _materialize_aggregate_interface_8616(
             if isinstance(node, CVariable) and any(
                 same_stack_variable_8616(node.variable, argument)
                 for argument in argument_variables
-            ):
-                if node.variable_type != pointer_type:
-                    node.variable_type = pointer_type
-                    changed = True
+            ) and node.variable_type != pointer_type:
+                node.variable_type = pointer_type
+                changed = True
             if (
                 isinstance(node, CIndexedVariable)
                 and isinstance(node.variable, CVariable)
@@ -218,7 +218,7 @@ def _materialize_aggregate_interface_8616(
                 and isinstance(node.rhs, CIndexedVariable)
                 and is_named_struct_type_8616(node.rhs.type, struct_type)
             ):
-                aggregate_locals.append(node.lhs.variable)
+                aggregate_locals.append(node.lhs.variable)  # noqa: PERF401
     for local in aggregate_locals:
         cfunc.variable_manager.set_variable_type(
             local,

@@ -16,7 +16,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol, TypeAlias, cast
+from typing import Any, Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
@@ -38,9 +38,9 @@ from .wide_stack_predicate_graphs import (
     wide_predicate_exit_targets_8616,
 )
 
-WideReturnRecoverer8616: TypeAlias = Callable[[int], CExpression | None]
-WideReturnComparator8616: TypeAlias = Callable[[CExpression, CExpression], bool]
-WideConditionMaterializer8616: TypeAlias = Callable[[ConditionIR], CExpression | None]
+type WideReturnRecoverer8616 = Callable[[int], CExpression | None]
+type WideReturnComparator8616 = Callable[[CExpression, CExpression], bool]
+type WideConditionMaterializer8616 = Callable[[ConditionIR], CExpression | None]
 
 
 class WideStackReturnPredicateStatus8616(Enum):
@@ -324,9 +324,7 @@ def wide_stack_return_predicate_validation_delta_is_proven_8616(
         if field_delta.get("added") or field_delta.get("removed"):
             return False
     return_delta = delta.get("returns")
-    if isinstance(return_delta, dict) and return_delta.get("removed"):
-        return False
-    return True
+    return not (isinstance(return_delta, dict) and return_delta.get("removed"))
 
 
 __all__ = [

@@ -9,18 +9,18 @@ from angr_platforms.X86_16.alias.callsite_stack_merge import (
 
 
 def test_callsite_stack_merge_keeps_common_width_and_source() -> None:
-    result = merge_callsite_predecessor_stack_traces_8616(
-        (
-            CallsitePushTrace8616((2,), (("imm", 5),), (0x101E,)),
-            CallsitePushTrace8616((2,), (("imm", 5),), (0x1027,)),
-        )
+    traces = (
+        CallsitePushTrace8616((2,), (("imm", 5),), (0x101E,), predecessor_addr=0x1000),
+        CallsitePushTrace8616((2,), (("imm", 5),), (0x1027,), predecessor_addr=0x1020),
     )
+    result = merge_callsite_predecessor_stack_traces_8616(traces)
 
     assert result is not None
     assert result.widths == (2,)
     assert result.sources == (("imm", 5),)
     assert result.representative_instruction_addrs == (0x101E,)
     assert result.alternative_instruction_addrs == ((0x101E, 0x1027),)
+    assert result.traces == traces
     assert result.materialized_count == 1
 
 

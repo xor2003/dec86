@@ -118,7 +118,7 @@ def _surface() -> tuple[SimpleNamespace, CFunctionCall, SimRegisterVariable, CIf
     codegen = SimpleNamespace(
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=ArchX86()),
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     carrier_variable = SimRegisterVariable(8, 2, name="joined_ax")
     branch = _branch(codegen, carrier_variable)
     call = CFunctionCall(

@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,24 +48,24 @@ BYTE_SOURCE = "byte_decoder"
 
 
 @dataclass(frozen=True)
-class Operand:
+class Operand:  # noqa: D101
     kind: str
     value: str | int
     width: int = 16
 
-    def text(self) -> str:
+    def text(self) -> str:  # noqa: D102
         if self.kind == "imm":
             return normalize_hex(self.value, width=2 if self.width == 8 else 4)
         return str(self.value)
 
 
 @dataclass(frozen=True)
-class ConditionIR:
+class ConditionIR:  # noqa: D101
     kind: str
     left: Operand
     right: Operand | None
 
-    def predicate_text(self) -> str:
+    def predicate_text(self) -> str:  # noqa: D102
         if self.kind in {"test_zero", "test_nonzero"} and self.right is not None:
             op = "==" if self.kind == "test_zero" else "!="
             return f"({self.left.text()} & {self.right.text()}) {op} 0x0000"
@@ -83,7 +83,7 @@ class ConditionIR:
 
 
 @dataclass(frozen=True)
-class BranchTarget:
+class BranchTarget:  # noqa: D101
     function_id: str
     function_name: str
     segment_para: int
@@ -93,7 +93,7 @@ class BranchTarget:
     condition: ConditionIR
     discovery_source: str = BYTE_SOURCE
 
-    def coverage(self, *, label: str, predicate: str) -> dict[str, Any]:
+    def coverage(self, *, label: str, predicate: str) -> dict[str, Any]:  # noqa: D102
         to_ip = self.taken_ip if label == "taken" else self.fallthrough_ip
         return {
             "binary": "oracle",
@@ -109,7 +109,7 @@ class BranchTarget:
 
 
 @dataclass(frozen=True)
-class EdgeDiscoveryResult:
+class EdgeDiscoveryResult:  # noqa: D101
     targets: tuple[BranchTarget, ...]
     refusals: tuple[dict[str, Any], ...]
     diagnostics: tuple[dict[str, Any], ...] = ()
@@ -136,7 +136,7 @@ class _Decoded:
     refusal_message: str | None = None
 
 
-def discover_branch_targets(
+def discover_branch_targets(  # noqa: D103
     *,
     exe_path: Path,
     functions: list[dict[str, Any]],
@@ -153,7 +153,7 @@ def discover_branch_targets(
     lifter_project: Any | None = None
     try:
         lifter_project = _load_lifter_project(exe_path)
-    except Exception as ex:  # noqa: BLE001
+    except Exception as ex:
         diagnostics.append(
             {
                 "kind": "edge_discovery_fallback",
@@ -196,7 +196,7 @@ def discover_branch_targets(
     )
 
 
-def _load_lifter_project(exe_path: Path) -> Any:
+def _load_lifter_project(exe_path: Path) -> Any:  # noqa: ANN401
     try:
         import angr
         import angr_platforms.X86_16.simos_86_16  # noqa: F401
@@ -210,14 +210,14 @@ def _load_lifter_project(exe_path: Path) -> Any:
         )
         project._dosunit_lifter_mode = "dos_mz"
         return project
-    except Exception as package_error:  # noqa: BLE001
+    except Exception as package_error:
         project = _load_lightweight_lifter_project(exe_path)
         project._dosunit_lifter_mode = "blob"
         project._dosunit_lifter_fallback = f"{type(package_error).__name__}: {package_error}"
         return project
 
 
-def _load_lightweight_lifter_project(exe_path: Path) -> Any:
+def _load_lightweight_lifter_project(exe_path: Path) -> Any:  # noqa: ANN401
     import importlib.util
     import io
     import sys
@@ -249,7 +249,7 @@ def _load_lightweight_lifter_project(exe_path: Path) -> Any:
     )
 
 
-def read_mz_image(path: Path) -> bytes:
+def read_mz_image(path: Path) -> bytes:  # noqa: D103
     data = path.read_bytes()
     if len(data) < 0x1C or data[:2] not in {b"MZ", b"ZM"}:
         raise DosUnitError("edge strategy currently requires a DOS MZ .exe")
@@ -265,7 +265,7 @@ def read_mz_image(path: Path) -> bytes:
 
 def _discover_lifter_function_targets(
     *,
-    project: Any,
+    project: Any,  # noqa: ANN401
     function: dict[str, Any],
     remaining_branches: int | None,
     scan_limit: int,
@@ -315,7 +315,7 @@ def _discover_lifter_function_targets(
         try:
             block = project.factory.block(at, size=min(0x40, end - at), opt_level=0)
             _ = block.vex
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             refusals.append(
                 _refusal(
                     function_id,
@@ -386,10 +386,7 @@ def _discover_lifter_function_targets(
                 break
 
             producer = _producer_from_lifted_insn(insn)
-            if producer is not None:
-                previous = producer
-            else:
-                previous = None
+            previous = producer if producer is not None else None
             if _is_terminal_lifted_control(insn):
                 advanced_to = insn.address + max(int(insn.size), 1)
                 break
@@ -408,7 +405,7 @@ def _discover_lifter_function_targets(
     return targets, refusals, blocks_lifted
 
 
-def _decode_lifted_control(insn: Any) -> _Decoded:
+def _decode_lifted_control(insn: Any) -> _Decoded:  # noqa: ANN401
     mnemonic = str(insn.mnemonic).lower()
     if mnemonic in BRANCH_MNEMONICS:
         if len(insn.operands) != 1 or insn.operands[0].type != CAPSTONE_OP_IMM:
@@ -433,7 +430,7 @@ def _decode_lifted_control(insn: Any) -> _Decoded:
     return _Decoded(length=int(insn.size))
 
 
-def _producer_from_lifted_insn(insn: Any) -> _Producer | None:
+def _producer_from_lifted_insn(insn: Any) -> _Producer | None:  # noqa: ANN401
     mnemonic = str(insn.mnemonic).lower()
     if mnemonic in {"call", "lcall"}:
         return _unsupported("call_unmodeled", "call before branch is not summarized")
@@ -464,7 +461,7 @@ def _producer_from_lifted_insn(insn: Any) -> _Producer | None:
     return _unsupported("unsupported_ir", "or predicate with distinct operands is not modeled")
 
 
-def _operand_from_lifted(insn: Any, operand: Any, *, width: int | None = None) -> Operand | _Producer:
+def _operand_from_lifted(insn: Any, operand: Any, *, width: int | None = None) -> Operand | _Producer:  # noqa: ANN401
     if operand.type == CAPSTONE_OP_REG:
         name = str(insn.reg_name(operand.reg)).lower()
         if name in REG16:
@@ -482,7 +479,7 @@ def _operand_from_lifted(insn: Any, operand: Any, *, width: int | None = None) -
     return _unsupported("unsupported_ir", "unsupported predicate operand")
 
 
-def _is_terminal_lifted_control(insn: Any) -> bool:
+def _is_terminal_lifted_control(insn: Any) -> bool:  # noqa: ANN401
     mnemonic = str(insn.mnemonic).lower()
     return mnemonic in {"ret", "retf", "iret", "jmp", "ljmp"}
 

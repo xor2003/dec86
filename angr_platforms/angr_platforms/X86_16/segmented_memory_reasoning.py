@@ -19,7 +19,7 @@ import os
 import typing
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional, Set, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimStackVariable
@@ -88,7 +88,7 @@ class SegmentAssignment:
     """A segment register assignment at a location."""
 
     segment_reg: SegmentRegister
-    value: Optional[int]  # Literal value if known (e.g., 0x1000)
+    value: int | None  # Literal value if known (e.g., 0x1000)
     source: str  # "literal", "register", "parameter", "return_value"
     location: str  # Where (function name, line number, etc.)
     confidence: float  # 0.0-1.0
@@ -106,9 +106,9 @@ class SegmentAssociation:
     associated_space: str  # "code", "data", "stack", "unknown", etc.
     classification: str = "unknown"
     evidence_count: int = 0
-    assignments: Set[SegmentAssignment] = field(default_factory=set)
+    assignments: set[SegmentAssignment] = field(default_factory=set)
     stability: float = 0.5  # 0.0-1.0: how stable across functions
-    known_values: Set[int] = field(default_factory=set)
+    known_values: set[int] = field(default_factory=set)
 
     def add_evidence(self, assignment: SegmentAssignment) -> None:
         """Add evidence for this association."""
@@ -133,7 +133,7 @@ class SegmentedPointer:
 
     segment_reg: SegmentRegister
     offset_expr: str  # Expression for offset part
-    known_base: Optional[int]  # Known segment value if constant
+    known_base: int | None  # Known segment value if constant
     element_type: str  # What this points to
     confidence: float  # 0.0-1.0 based on evidence
 
@@ -150,7 +150,7 @@ class FarPointerRecovery:
     pointer_id: int
     segment_part: SegmentedPointer
     access_count: int = 0
-    functions: Set[str] = field(default_factory=set)
+    functions: set[str] = field(default_factory=set)
 
     def __repr__(self) -> str:
         return f"FarPtr({self.name}: {self.segment_part}, {len(self.functions)} functions)"
@@ -623,7 +623,7 @@ def apply_x86_16_segmented_memory_reasoning(codegen: object) -> bool:
             # helper call materialization outside structuring pass execution.  SS
             # stack recovery must run first so stack slots materialize as
             # variables instead of generic segmented runtime helper calls.
-            if not current_stage.startswith("structuring:"):
+            if not current_stage.startswith("structuring:"):  # noqa: SIM102
                 if apply_runtime_segment_lowering_8616(codegen, target=target):
                     changed = True
 

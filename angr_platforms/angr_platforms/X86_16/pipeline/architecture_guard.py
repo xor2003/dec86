@@ -20,8 +20,8 @@ from __future__ import annotations
 
 __all__ = [
     "FORBIDDEN_NORMAL_PATHS",
-    "assert_no_legacy_path_8616",
     "assert_final_c_quality_8616",
+    "assert_no_legacy_path_8616",
     "final_c_has_unreachable_call_after_return_8616",
 ]
 

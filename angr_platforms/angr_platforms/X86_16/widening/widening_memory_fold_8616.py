@@ -73,17 +73,13 @@ def _widening_store_to_load_forwarding_8616(codegen: object) -> bool:
             return False
         lhs = getattr(stmt, "lhs", None)
         # The lhs is typically a CUnaryOp('Reference') or similar for pointer stores
-        if isinstance(lhs, structured_c.CUnaryOp):
-            return True
-        return False
+        return bool(isinstance(lhs, structured_c.CUnaryOp))
 
     def _is_deref_read(rhs: object) -> bool:
         """Check pointer loads through the dynamic third-party angr C AST boundary."""
         from angr.analyses.decompiler.structured_codegen import c as structured_c
 
-        if isinstance(rhs, structured_c.CUnaryOp):
-            return True
-        return False
+        return bool(isinstance(rhs, structured_c.CUnaryOp))
 
     def _addr_key(addr_expr: object) -> str | None:
         """Create an alias key across a dynamic compatibility boundary."""
@@ -193,9 +189,7 @@ def _has_side_effects_stmt(stmt: object) -> bool:
 
     if isinstance(stmt, structured_c.CFunctionCall):
         return True
-    if isinstance(stmt, structured_c.CReturn):
-        return True
-    return False
+    return bool(isinstance(stmt, structured_c.CReturn))
 
 
 def _is_same_expr(a: object, b: object) -> bool:

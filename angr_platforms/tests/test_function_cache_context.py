@@ -164,6 +164,14 @@ def test_function_cache_context_refuses_unknown_cfg_nodes(tmp_path):
     assert _key(tmp_path, item) is None
 
 
+def test_function_cache_context_refuses_nondeterministic_runtime(monkeypatch, tmp_path):
+    monkeypatch.delenv("PYTHONHASHSEED", raising=False)
+    assert _key(tmp_path, _item()) is None
+
+    monkeypatch.setenv("PYTHONHASHSEED", "17")
+    assert _key(tmp_path, _item()) is None
+
+
 def _accepted_cache_record(
     *,
     diagnostic_output: str | None = None,

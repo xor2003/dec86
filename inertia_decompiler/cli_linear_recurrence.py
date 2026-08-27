@@ -10,7 +10,7 @@ import logging
 import os
 import typing
 from collections.abc import Callable, Iterable, Sequence
-from typing import Any, Protocol, TypeAlias, cast
+from typing import Any, Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimStackVariable
@@ -20,10 +20,10 @@ from inertia_decompiler.cli_linear_recurrence_state import LinearRecurrenceState
 
 log: logging.Logger = logging.getLogger(__name__)
 
-CNode: TypeAlias = object
-LinearDeltaMatch: TypeAlias = tuple[CNode | None, int]
-CarryCandidate: TypeAlias = tuple[CNode | None, int | None, structured_c.CAssignment | bool | None]
-LoopParts: TypeAlias = tuple[CNode | None, str, CNode | None, CNode | None]
+type CNode = object
+type LinearDeltaMatch = tuple[CNode | None, int]
+type CarryCandidate = tuple[CNode | None, int | None, structured_c.CAssignment | bool | None]
+type LoopParts = tuple[CNode | None, str, CNode | None, CNode | None]
 
 
 class _LinearRecurrenceRules(Protocol):
@@ -72,10 +72,7 @@ def _node_summary_8616(node: object) -> str:
         return "None"
     try:
         c_repr = _dynamic_codegen_attr(node, "c_repr", None)
-        if callable(c_repr):
-            text = str(c_repr(indent=0))
-        else:
-            text = repr(node)
+        text = str(c_repr(indent=0)) if callable(c_repr) else repr(node)
     except Exception as ex:
         if _linear_recurrence_debug_enabled():
             log.warning("[linear-recurrence] failed c_repr for %s: %s", type(node).__name__, ex)
@@ -329,7 +326,7 @@ def _rebind_for_loop_byte_carrier_recurrence(
             if not state.is_materialized_stack_local(init_local.lhs):
                 _debug_reject("init lhs not materialized local: %r", init_local.lhs)
                 return False
-            if not isinstance(iteration_local, structured_c.CAssignment):
+            if not isinstance(iteration_local, structured_c.CAssignment):  # noqa: SIM102
                 if _linear_recurrence_debug_enabled():
                     log.warning(
                         "[linear-recurrence] reject loop: iteration attr=%s value=%r",
@@ -604,7 +601,7 @@ def _coalesce_linear_recurrence_statements(
                     ):
                         stmt_shift_base, stmt_shift_count = state.extract_shift_delta(stmt.rhs)
                         next_shift_rhs = unwrap_c_casts(next_stmt.rhs)
-                        if isinstance(next_shift_rhs, structured_c.CBinaryOp) and next_shift_rhs.op == "Shr":
+                        if isinstance(next_shift_rhs, structured_c.CBinaryOp) and next_shift_rhs.op == "Shr":  # noqa: SIM102
                             if same_c_expression(unwrap_c_casts(next_shift_rhs.lhs), stmt.lhs):
                                 next_shift_count = c_constant_value(unwrap_c_casts(next_shift_rhs.rhs))
                                 if isinstance(next_shift_count, int) and stmt_shift_count >= 0:
@@ -668,27 +665,26 @@ def _coalesce_linear_recurrence_statements(
                             current_linear is not None
                             and isinstance(rhs, structured_c.CBinaryOp)
                             and rhs.op in {"Add", "Sub"}
-                        ):
-                            if same_c_expression(unwrap_c_casts(rhs.lhs), stmt.lhs) or same_c_expression(
-                                unwrap_c_casts(rhs.rhs), stmt.lhs
-                            ):
-                                current_delta = c_constant_value(unwrap_c_casts(rhs.lhs))
-                                if current_delta is None:
-                                    current_delta = c_constant_value(unwrap_c_casts(rhs.rhs))
-                                if isinstance(current_delta, int):
-                                    base_expr, base_delta = current_linear
-                                    resolved_base = state.resolve_known_copy_alias_expr(base_expr)
-                                    if isinstance(resolved_base, structured_c.CVariable) and isinstance(
-                                        _dynamic_codegen_attr(resolved_base, "variable", None), SimStackVariable
-                                    ):
-                                        state.protected_linear_defs.add(id(temp_var))
-                                    combined = (
-                                        base_delta + current_delta if rhs.op == "Add" else base_delta - current_delta
-                                    )
-                                    stmt = structured_c.CAssignment(
-                                        stmt.lhs, state.build_linear_expr(base_expr, combined), codegen=codegen
-                                    )
-                                    state.changed = True
+                        ) and (same_c_expression(unwrap_c_casts(rhs.lhs), stmt.lhs) or same_c_expression(
+                            unwrap_c_casts(rhs.rhs), stmt.lhs
+                        )):
+                            current_delta = c_constant_value(unwrap_c_casts(rhs.lhs))
+                            if current_delta is None:
+                                current_delta = c_constant_value(unwrap_c_casts(rhs.rhs))
+                            if isinstance(current_delta, int):
+                                base_expr, base_delta = current_linear
+                                resolved_base = state.resolve_known_copy_alias_expr(base_expr)
+                                if isinstance(resolved_base, structured_c.CVariable) and isinstance(
+                                    _dynamic_codegen_attr(resolved_base, "variable", None), SimStackVariable
+                                ):
+                                    state.protected_linear_defs.add(id(temp_var))
+                                combined = (
+                                    base_delta + current_delta if rhs.op == "Add" else base_delta - current_delta
+                                )
+                                stmt = structured_c.CAssignment(
+                                    stmt.lhs, state.build_linear_expr(base_expr, combined), codegen=codegen
+                                )
+                                state.changed = True
                         if temp_var is not None and state.is_copy_alias_candidate(stmt.rhs):
                             alias = unwrap_c_casts(stmt.rhs)
                             alias_var = _dynamic_codegen_attr(alias, "variable", None)

@@ -66,12 +66,12 @@ class RegisterWideningCandidate:
     view: View
     expr: object
 
-    def is_joinable_with(self, other: "RegisterWideningCandidate") -> bool:
+    def is_joinable_with(self, other: RegisterWideningCandidate) -> bool:
         """Return whether this slice is adjacent-compatible with another slice."""
         return self.domain == other.domain and self.view.can_join(other.view)
 
     @classmethod
-    def from_expr(cls, expr: object) -> "RegisterWideningCandidate":
+    def from_expr(cls, expr: object) -> RegisterWideningCandidate:
         """Build a candidate across the dynamic boundary from third-party angr C expressions."""
         if not isinstance(expr, structured_c.CVariable):
             raise ValueError("expected a register CVariable")

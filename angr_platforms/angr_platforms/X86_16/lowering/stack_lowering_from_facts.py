@@ -8,28 +8,12 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
-#   Consume alias-proven stack facts and materialize them into real variables
-#   before final C emission.
-#
-# Input:
-#   AliasStorageFacts(identity=("stack", _StackSlotIdentity(...)))
-#
-# Output:
-#   Real C/Sim stack variables registered through variables_in_use.
-#
-# Forbidden:
-#   - generated-C regex recovery
-#   - counting StackVariableBinding as materialization
-#   - fallback to rewrite/postprocess for semantics
-#
-# Contract:
-#   bindings_count > 0 and materialized_count == 0 is PipelineHardError.
 import contextlib
 import logging
 import os
 import typing
-from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any, Protocol, cast, overload
+from collections.abc import Iterable, Mapping
+from typing import Any, Protocol, cast, overload
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimType, SimTypeChar, SimTypeLong, SimTypePointer, SimTypeShort
@@ -49,9 +33,14 @@ from .stack_variable_binding import (
     StackVariableBinding,
     build_stack_variable_bindings_8616,
 )
-
-if TYPE_CHECKING:
-    pass
+from .stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+    stack_variable_coordinate_registry_8616,
+)
+from .stack_variable_display_names import (
+    apply_stack_variable_projection_name_8616,
+    generated_stack_variable_name_8616,
+)
 
 __all__ = [
     "attach_cod_stack_alias_annotations_8616",
@@ -305,13 +294,6 @@ def _stack_type_for_size(size: int, *, codegen: object | None = None) -> SimType
     return t
 
 
-def _is_generated_stack_cvar_name_8616(name: object) -> bool:
-    """Return whether a stack CVariable name is a generated placeholder."""
-    if not isinstance(name, str) or not name:
-        return True
-    return name.startswith(("arg_", "local_", "stack_", "s_"))
-
-
 def _promote_direct_stack_cvariable(
     codegen: object,
     cvar: object,
@@ -323,12 +305,17 @@ def _promote_direct_stack_cvariable(
     """Update the type and size on an existing stack CVariable."""
     if cvar is not None:
         current_type = _dynamic_boundary_attr_8616(cvar, "variable_type")
-        if not preserve_existing_type and not isinstance(current_type, SimTypePointer):
+        if not preserve_existing_type and not isinstance(current_type, SimTypePointer):  # noqa: SIM102
             if isinstance(cvar, structured_c.CVariable):
                 cvar.variable_type = target_type
-        variable = _dynamic_boundary_attr_8616(cvar, "variable")
-        if isinstance(variable, SimStackVariable):
-            if not isinstance(variable.size, int) or variable.size < size:
+        variables = (
+            _dynamic_boundary_attr_8616(cvar, "variable"),
+            _dynamic_boundary_attr_8616(cvar, "unified_variable"),
+        )
+        for variable in variables:
+            if isinstance(variable, SimStackVariable) and (
+                not isinstance(variable.size, int) or variable.size < size
+            ):
                 variable.size = size
 
 
@@ -341,7 +328,7 @@ def _apply_stack_binding_name_8616(cvar: object, preferred_name: str | None) -> 
         _dynamic_boundary_attr_8616(cvar, "name"),
         _dynamic_boundary_attr_8616(_dynamic_boundary_attr_8616(cvar, "unified_variable"), "name"),
     )
-    if any(isinstance(name, str) and name and not _is_generated_stack_cvar_name_8616(name) for name in current_names):
+    if any(isinstance(name, str) and name and not generated_stack_variable_name_8616(name) for name in current_names):
         return None
     changed_name = None
     if isinstance(variable, SimStackVariable) and _dynamic_boundary_attr_8616(variable, "name") != preferred_name:
@@ -359,7 +346,7 @@ def _apply_stack_binding_name_8616(cvar: object, preferred_name: str | None) -> 
 
 
 def _arg_cvar_at_stack_offset_8616(codegen: object, offset: int) -> object | None:
-    """Return an existing function argument CVariable for a canonical BP offset."""
+    """Return an existing argument at one canonical entry-SP offset."""
     cfunc = _dynamic_boundary_attr_8616(codegen, "cfunc")
     if cfunc is None:
         return None
@@ -396,12 +383,14 @@ def materialize_stack_cvar_at_offset_from_facts_8616(
     offset: int,
     size: int = 2,
     *,
+    machine_bp_offset: int | None = None,
     preferred_name: str | None = None,
 ) -> object | None:
-    """Register a stack CVariable from exact canonical BP-offset facts.
+    """Register a stack CVariable from an exact entry-SP projection.
 
-    This self-contained entry point avoids a circular dependency on the
-    injected helpers used by the canonical stack-lowering pass.
+    ``offset`` is angr's entry-SP coordinate. ``machine_bp_offset`` records the
+    originating SS:BP displacement when Alias and frame evidence supplied one;
+    legacy callers default to an identity projection.
     """
 
     def _impl() -> object | None:
@@ -412,9 +401,39 @@ def materialize_stack_cvar_at_offset_from_facts_8616(
         offset = _canonical_stack_offset_8616(offset)
         if not isinstance(offset, int):
             return None
+        bp_offset = _canonical_stack_offset_8616(machine_bp_offset)
+        if machine_bp_offset is None:
+            bp_offset = offset
+        if not isinstance(bp_offset, int):
+            return None
+        binding_name = preferred_name
+        if bp_offset < 0 and generated_stack_variable_name_8616(binding_name):
+            binding_name = _stack_object_name(bp_offset, codegen=codegen)
+
+        def _record(cvar: object) -> object:
+            if isinstance(binding_name, str) and binding_name:
+                apply_stack_variable_projection_name_8616(
+                    codegen,
+                    cvar=cvar,
+                    entry_sp_offset=offset,
+                    size=size,
+                    name=binding_name,
+                )
+            variable = _dynamic_boundary_attr_8616(cvar, "variable")
+            if isinstance(variable, SimStackVariable):
+                record_stack_variable_coordinate_projection_8616(
+                    codegen,
+                    variable=variable,
+                    cvar=cvar,
+                    bp_offset=bp_offset,
+                    entry_sp_offset=offset,
+                    size=size,
+                    display_name=binding_name,
+                )
+            return cvar
 
         target_type = _stack_type_for_size(size, codegen=codegen)
-        if offset > 2:
+        if offset >= 2:
             arg_cvar = _arg_cvar_at_stack_offset_8616(codegen, offset)
             if isinstance(arg_cvar, structured_c.CVariable):
                 _promote_direct_stack_cvariable(
@@ -424,31 +443,45 @@ def materialize_stack_cvar_at_offset_from_facts_8616(
                     target_type,
                     preserve_existing_type=True,
                 )
-                _apply_stack_binding_name_8616(arg_cvar, preferred_name)
+                _apply_stack_binding_name_8616(arg_cvar, binding_name)
                 _register_stack_cvar_surface_8616(codegen, arg_cvar, target_type)
-                return cast(object, arg_cvar)
+                return _record(cast(object, arg_cvar))
 
-        # Check if already exists in variables_in_use
+        # Reconcile every regenerated view at this exact storage start. angr may
+        # rebuild byte variables after an earlier Alias-proven word projection.
         variables_in_use = _dynamic_boundary_attr_8616(cfunc, "variables_in_use")
         if isinstance(variables_in_use, dict):
-            for var, cvar in variables_in_use.items():
-                if (
-                    isinstance(var, SimStackVariable)
-                    and _canonical_stack_offset_8616(_dynamic_boundary_attr_8616(var, "offset")) == offset
-                ):
-                    _promote_direct_stack_cvariable(codegen, cvar, size, target_type)
-                    _apply_stack_binding_name_8616(cvar, preferred_name)
-                    return cast(object, cvar)
+            matches = [
+                (var, cvar)
+                for var, cvar in variables_in_use.items()
+                if isinstance(var, SimStackVariable)
+                and _canonical_stack_offset_8616(var.offset) == offset
+            ]
+            if matches:
+                canonical_var, canonical_cvar = min(
+                    matches,
+                    key=lambda item: (
+                        item[0].size != size,
+                        not isinstance(item[0].size, int) or item[0].size < size,
+                        str(item[0].name or ""),
+                    ),
+                )
+                for _variable, candidate_cvar in matches:
+                    _promote_direct_stack_cvariable(codegen, candidate_cvar, size, target_type)
+                    _apply_stack_binding_name_8616(candidate_cvar, binding_name)
+                    _register_stack_cvar_surface_8616(codegen, candidate_cvar, target_type)
+                if isinstance(canonical_var, SimStackVariable):
+                    return _record(cast(object, canonical_cvar))
 
         variable = SimStackVariable(
             offset,
             size,
             base="bp",
-            name=_stack_object_name(offset),
+            name=binding_name or _stack_object_name(offset),
             region=_dynamic_boundary_attr_8616(cfunc, "addr"),
         )
         cvar = structured_c.CVariable(variable, variable_type=target_type, codegen=codegen)
-        _apply_stack_binding_name_8616(cvar, preferred_name)
+        _apply_stack_binding_name_8616(cvar, binding_name)
 
         if isinstance(variables_in_use, dict):
             variables_in_use[variable] = cvar
@@ -466,7 +499,7 @@ def materialize_stack_cvar_at_offset_from_facts_8616(
             with contextlib.suppress(Exception):
                 sort_local_vars()
 
-        return cast(object, cvar)
+        return _record(cast(object, cvar))
 
     return _impl()
 
@@ -476,8 +509,9 @@ def lower_stack_accesses_from_alias_facts_8616(
     alias_facts: list[object],
     *,
     required_bp_ranges: frozenset[tuple[int, int]] | None = None,
+    entry_sp_offsets_by_bp_range: Mapping[tuple[int, int], int] | None = None,
 ) -> StackLoweringResult:
-    """Lower alias-proven BP facts into angr entry-SP CVariable surfaces."""
+    """Lower alias-proven BP facts into proven angr entry-SP CVariable surfaces."""
 
     def _impl() -> StackLoweringResult:
         """Primary stack lowering: consume alias facts, not linear expression patterns.
@@ -572,11 +606,30 @@ def lower_stack_accesses_from_alias_facts_8616(
             try:
                 if not isinstance(offset, int):
                     raise TypeError(f"invalid stack binding offset {binding.bp_offset!r}")
+                materialization_offset: int | None
+                if entry_sp_offsets_by_bp_range is None:
+                    existing_projection = stack_variable_coordinate_registry_8616(
+                        codegen
+                    ).for_bp_range(offset, size)
+                    materialization_offset = (
+                        existing_projection.entry_sp_offset
+                        if existing_projection is not None
+                        else offset
+                    )
+                else:
+                    materialization_offset = entry_sp_offsets_by_bp_range.get(
+                        (offset, size)
+                    )
+                if not isinstance(materialization_offset, int):
+                    raise TypeError(
+                        f"missing entry-SP projection for BP range {(offset, size)!r}"
+                    )
 
                 cvar = materialize_stack_cvar_at_offset_from_facts_8616(
                     codegen,
-                    offset,
+                    materialization_offset,
                     size,
+                    machine_bp_offset=offset,
                     preferred_name=binding.var_name,
                 )
                 materialized_name = _dynamic_boundary_attr_8616(

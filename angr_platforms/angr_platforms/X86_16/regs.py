@@ -78,7 +78,7 @@ class dtreg_t(IntEnum):
     DTREGS_COUNT = 4
 
 
-def _coerce_enum(enum_cls: type[_E], value: object) -> _E:
+def _coerce_enum[E: IntEnum](enum_cls: type[_E], value: object) -> _E:
     if isinstance(value, enum_cls):
         return value
     raw_value = value.value if isinstance(value, IntEnum) else value

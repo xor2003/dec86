@@ -78,9 +78,9 @@ class CodeViewNB00Info:
     subsection_directory_offset: int
     modules: tuple[CodeViewNB00Module, ...]
     publics: tuple[CodeViewNB00PublicSymbol, ...]
-    type_definitions: tuple["CodeViewNB00TypeDefinition", ...] = ()
+    type_definitions: tuple[CodeViewNB00TypeDefinition, ...] = ()
     type_record_names: tuple[str, ...] = ()
-    type_members: tuple["CodeViewNB00TypeMember", ...] = ()
+    type_members: tuple[CodeViewNB00TypeMember, ...] = ()
     source_files: tuple[str, ...] = ()
     line_map: dict[int, tuple[int, int]] = field(default_factory=dict)
     debug_identifiers: tuple[str, ...] = ()
@@ -343,7 +343,7 @@ def _collect_type_record_names(
     for definition in type_definitions:
         for leaf in definition.leaves:
             if leaf.kind == "string" and isinstance(leaf.value, str) and leaf.value:
-                names.append(leaf.value)
+                names.append(leaf.value)  # noqa: PERF401
     return tuple(dict.fromkeys(names))
 
 
@@ -453,9 +453,7 @@ def _is_debug_identifier_name(name: str) -> bool:
     allowed_extra = "_$?@"
     if not all(ch.isalnum() or ch in allowed_extra for ch in name):
         return False
-    if not any(ch.isalpha() or ch == "_" for ch in name):
-        return False
-    return True
+    return any(ch.isalpha() or ch == "_" for ch in name)
 
 
 def _public_is_code_symbol(
@@ -466,10 +464,7 @@ def _public_is_code_symbol(
 ) -> bool:
     if symbol.segment == 0:
         return True
-    for (start, end), _module_index in module_ranges:
-        if start <= linear < end:
-            return True
-    return False
+    return any(start <= linear < end for (start, end), _module_index in module_ranges)
 
 
 def _synthesize_code_ranges(

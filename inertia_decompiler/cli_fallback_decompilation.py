@@ -3,11 +3,11 @@
 Responsibility: run bounded fallback lanes and report their validation outcome.
 Forbidden: owning decompiler semantics, source-backed recovery, or postprocess semantic repair.
 """
-# ruff: noqa: ANN001,ANN202
 
 # AUTO-GENERATED split from cli_runtime_shared.py
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -100,14 +100,14 @@ def _call_decompile_function_with_stats(
 
 __all__ = [
     "NonOptimizedSliceOutcome",
-    "_non_optimized_slice_rendered",
     "_non_optimized_slice_failure_detail",
-    "_try_decompile_sidecar_slice",
-    "_try_decompile_non_optimized_slice",
+    "_non_optimized_slice_rendered",
     "_try_decompile_non_optimized_known_function",
-    "_try_emit_trivial_sidecar_c",
-    "_try_emit_string_intrinsic_c",
+    "_try_decompile_non_optimized_slice",
+    "_try_decompile_sidecar_slice",
     "_try_emit_known_runtime_helper_c",
+    "_try_emit_string_intrinsic_c",
+    "_try_emit_trivial_sidecar_c",
 ]
 
 
@@ -277,7 +277,7 @@ def _try_decompile_sidecar_slice(
                         _recover_and_decompile,
                         timeout=runner_timeout,
                     )
-                except Exception as ex:  # noqa: BLE001
+                except Exception as ex:
                     fork_error = ex
                     logger.debug(
                         "sidecar slice fork transport failed for %#x: %s",
@@ -377,7 +377,7 @@ def _try_decompile_non_optimized_slice(
                 )
             try:
                 code = bytes(slice_source_project.loader.memory.load(start, end - start))
-            except Exception as ex:  # noqa: BLE001
+            except Exception as ex:
                 detail = f"{label}: unable to read bytes: {_describe_exception(ex)}"
                 return NonOptimizedSliceOutcome(
                     rendered=None,
@@ -539,7 +539,7 @@ def _try_decompile_non_optimized_slice(
                         payload=_describe_exception(ex),
                         attempt_trace=trace_snapshot(),
                     )
-                except Exception as ex:  # noqa: BLE001
+                except Exception as ex:
                     return SliceRecoveryAttemptOutcome(
                         attempt_name=attempt_name,
                         status="error",
@@ -680,7 +680,7 @@ def _try_decompile_non_optimized_slice(
                 )
                 _inherit_tail_validation_runtime_policy(fresh_project, project)
                 transfer_project_evidence_8616(project, fresh_project)
-            except Exception as ex:  # noqa: BLE001
+            except Exception as ex:
                 retry_failures.append(f"fresh-project setup failed: {_describe_exception(ex)}")
             else:
                 outcome = _attempt(fresh_project, label="fresh-project slice")
@@ -850,14 +850,12 @@ def _try_emit_string_intrinsic_c(
     except Exception as ex:
         # Never let optional string-intrinsic fallback abort the entire sweep.
         # This lane is best-effort and must degrade to "no fallback available".
-        try:
+        with contextlib.suppress(Exception):
             print(
                 f"[dbg] string-intrinsic fallback error for {name}@{start:#x}-{end:#x}: {type(ex).__name__}: {ex}",
                 file=sys.stderr,
                 flush=True,
             )
-        except Exception:
-            pass
         return None
     if fallback is None:
         return None

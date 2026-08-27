@@ -17,10 +17,12 @@ Implements the minimal RSP packet set needed for a debugger TUI:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -31,8 +33,8 @@ class StopReason(Enum):
     """Why the target stopped."""
 
     UNKNOWN = "unknown"
-    SIGTRAP = "sigtrap"  # 05 – breakpoint / single-step
-    SIGINT = "sigint"  # 02 – interrupt
+    SIGTRAP = "sigtrap"  # 05 – breakpoint / single-step  # noqa: RUF003
+    SIGINT = "sigint"  # 02 – interrupt  # noqa: RUF003
     SIGSEGV = "sigsegv"  # 0b
     SIGILL = "sigill"  # 04
     SIGFPE = "sigfpe"  # 08
@@ -274,7 +276,7 @@ class GDBClient:
                 if ch == b"$":
                     break
                 if ch == b"+":
-                    continue  # ack – skip
+                    continue  # ack – skip  # noqa: RUF003
 
             data = bytearray()
             while True:
@@ -284,7 +286,7 @@ class GDBClient:
                 if b == b"#":
                     break
                 if b == b"}":
-                    # escaped byte – next byte is XOR 0x20
+                    # escaped byte – next byte is XOR 0x20  # noqa: RUF003
                     esc = await self._reader.read(1)
                     if not esc:
                         raise GDBClientError("Connection closed")
@@ -325,11 +327,9 @@ class GDBClient:
                 return info
 
             if reply.startswith("S"):
-                # Sxx  – signal
-                try:
+                # Sxx  – signal  # noqa: RUF003
+                with contextlib.suppress(ValueError):
                     info.signal = int(reply[1:3], 16)
-                except ValueError:
-                    pass
                 mapping = {
                     0x02: StopReason.SIGINT,
                     0x04: StopReason.SIGILL,
@@ -348,11 +348,9 @@ class GDBClient:
                             info.thread = v
 
             elif reply.startswith("T"):
-                # Txx  – signal with extra info
-                try:
+                # Txx  – signal with extra info  # noqa: RUF003
+                with contextlib.suppress(ValueError):
                     info.signal = int(reply[1:3], 16)
-                except ValueError:
-                    pass
                 mapping = {
                     0x02: StopReason.SIGINT,
                     0x04: StopReason.SIGILL,
@@ -368,23 +366,17 @@ class GDBClient:
                     elif kv.startswith("thread:"):
                         info.thread = kv[7:]
                     elif kv.startswith("watch:"):
-                        try:
+                        with contextlib.suppress(ValueError):
                             info.watch_addr = int(kv[6:], 16)
-                        except ValueError:
-                            pass
 
             elif reply.startswith("W"):
                 info.reason = StopReason.EXITED
-                try:
+                with contextlib.suppress(ValueError):
                     info.signal = int(reply[1:3], 16)
-                except ValueError:
-                    pass
             elif reply.startswith("X"):
                 info.reason = StopReason.SIGNALLED
-                try:
+                with contextlib.suppress(ValueError):
                     info.signal = int(reply[1:3], 16)
-                except ValueError:
-                    pass
             elif reply.startswith("O"):
                 # Console output
                 hex_out = reply[1:]
@@ -502,7 +494,7 @@ class GDBClient:
         return MemoryRegion(address=addr, data=data)
 
     async def write_memory(self, addr: int, data: bytes) -> str:
-        """Write memory (X packet – binary)."""
+        """Write memory (X packet – binary)."""  # noqa: RUF002
         # Escape data for X packet
         escaped = bytearray()
         for b in data:
@@ -514,7 +506,7 @@ class GDBClient:
         return await self._send_packet(f"X{addr:x},{len(data):x}:" + escaped.decode("latin-1"))
 
     async def write_memory_hex(self, addr: int, data: bytes) -> str:
-        """Write memory (M packet – hex encoded)."""
+        """Write memory (M packet – hex encoded)."""  # noqa: RUF002
         hex_str = data.hex()
         return await self._send_packet(f"M{addr:x},{len(data):x}:{hex_str}")
 
@@ -623,12 +615,12 @@ class GDBClient:
 
 
 __all__ = [
+    "X86_64_REGS",
+    "X86_REGS",
     "GDBClient",
     "GDBClientError",
-    "StopReason",
-    "StopInfo",
-    "RegisterDef",
     "MemoryRegion",
-    "X86_REGS",
-    "X86_64_REGS",
+    "RegisterDef",
+    "StopInfo",
+    "StopReason",
 ]

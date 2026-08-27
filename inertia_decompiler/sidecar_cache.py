@@ -11,7 +11,7 @@ import json
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Protocol, TypeAlias
+from typing import Protocol
 
 from angr_platforms.X86_16.lst_extract import (
     DebugEnumMemberEvidence,
@@ -39,9 +39,9 @@ _SOURCE_FORMAT_DROP_TOKENS = {
 }
 _SIDECAR_METADATA_PARSER_CACHE_VERSION = 11
 
-PayloadSequence: TypeAlias = tuple[object, ...]
-PayloadPairs: TypeAlias = tuple[tuple[object, object], ...]
-PayloadTriples: TypeAlias = tuple[tuple[object, object, object], ...]
+type PayloadSequence = tuple[object, ...]
+type PayloadPairs = tuple[tuple[object, object], ...]
+type PayloadTriples = tuple[tuple[object, object, object], ...]
 
 
 class _KnowledgeBaseLike(Protocol):
@@ -386,7 +386,7 @@ def _payload_pairs(payload: dict[str, object], key: str) -> PayloadPairs:
     pairs: list[tuple[object, object]] = []
     for item in _payload_sequence(payload, key):
         if isinstance(item, (list, tuple)) and len(item) == 2:
-            pairs.append((item[0], item[1]))
+            pairs.append((item[0], item[1]))  # noqa: PERF401
     return tuple(pairs)
 
 
@@ -394,7 +394,7 @@ def _payload_triples(payload: dict[str, object], key: str) -> PayloadTriples:
     triples: list[tuple[object, object, object]] = []
     for item in _payload_sequence(payload, key):
         if isinstance(item, (list, tuple)) and len(item) == 3:
-            triples.append((item[0], item[1], item[2]))
+            triples.append((item[0], item[1], item[2]))  # noqa: PERF401
     return tuple(triples)
 
 

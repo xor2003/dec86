@@ -18,7 +18,7 @@ def _codegen() -> SimpleNamespace:
     return SimpleNamespace(
         project=SimpleNamespace(arch=Arch86_16()),
         next_idx=lambda _name: 1,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
 
 def _stack_cvar(

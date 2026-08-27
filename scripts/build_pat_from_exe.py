@@ -23,6 +23,8 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import contextlib  # noqa: E402
+
 import omf_pat  # noqa: E402 - repository root is bootstrapped above
 from inertia_decompiler.cache import _cache_json_path, _recovery_cache_key  # noqa: E402
 from inertia_decompiler.cli_function_discovery import (  # noqa: E402
@@ -77,10 +79,8 @@ def _clear_function_discovery_cache(project: angr.Project, binary_path: Path) ->
     if key is None:
         return
     cache_path = _cache_json_path("recovery", key)
-    try:
+    with contextlib.suppress(OSError):
         cache_path.unlink()
-    except OSError:
-        pass
 
 
 def _estimate_function_sizes(
@@ -99,10 +99,7 @@ def _estimate_function_sizes(
     resolved: list[tuple[int, int]] = []
     for index, (start, size) in enumerate(unique):
         if size <= 0:
-            if index + 1 < len(unique):
-                estimated = max(0, unique[index + 1][0] - start)
-            else:
-                estimated = max(0, image_end - start)
+            estimated = max(0, unique[index + 1][0] - start) if index + 1 < len(unique) else max(0, image_end - start)
             size = estimated
         resolved.append((start, max(0, int(size))))
     return resolved

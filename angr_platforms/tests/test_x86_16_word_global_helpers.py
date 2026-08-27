@@ -20,7 +20,7 @@ def _make_codegen():
         cfunc=SimpleNamespace(addr=0x1000),
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=Arch86_16()),
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
 
 def test_synthetic_word_global_variable_reuses_created_cache():

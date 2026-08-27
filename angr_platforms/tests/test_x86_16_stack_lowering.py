@@ -48,6 +48,10 @@ class _StackResolutionCodegen:
         """Return a stable synthetic structured-C node index."""
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _stack_slot_identity(variable: object) -> tuple[object, object, object] | None:
@@ -163,6 +167,10 @@ class TestStackObjectNaming:
             def next_idx(self, _name):
                 self._idx += 1
                 return self._idx
+            def next_node_idx(self) -> int:
+                return self.next_idx("")
+            def next_ident(self, name: str) -> str:
+                return name
 
         codegen = _FakeCodegen()
         arg_var = SimStackVariable(4, 2, base="bp", name="arg", region=0x1000)

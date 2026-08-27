@@ -9,6 +9,7 @@ contracts must use typed fields and dot access.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Iterable, Iterator
 from enum import Enum
 from typing import Any, Protocol, cast
@@ -17,6 +18,7 @@ from angr.analyses.calling_convention import calling_convention as _cc_analysis
 from angr.analyses.calling_convention import fact_collector as _cc_fact_collector
 from angr.analyses.calling_convention import utils as _cc_utils
 from angr.errors import SimTranslationError
+from angr.knowledge_plugins.functions.function import PrototypeSource
 from angr.sim_type import SimType, SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypeLong, SimTypeShort
 from pyvex.expr import Get
 from pyvex.stmt import Put
@@ -728,17 +730,13 @@ def _set_function_prototype_8616(
         return cc, existing
     # Dynamic angr SimType compatibility boundary.
     if prototype is not None and getattr(prototype, "_arch", None) is None:
-        try:
+        with contextlib.suppress(Exception):
             prototype = cast(Any, prototype).with_arch(function_dynamic.project.arch)
-        except Exception:
-            pass
     function_dynamic.prototype = prototype
-    function_dynamic.is_prototype_guessed = False
+    function_dynamic.prototype_source = PrototypeSource.CCA_DECOMPILER
     if cc is not None:
-        try:
+        with contextlib.suppress(Exception):
             function_dynamic.calling_convention = cc
-        except Exception:
-            pass
     return cc, prototype
 
 

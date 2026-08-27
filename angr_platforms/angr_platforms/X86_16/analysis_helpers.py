@@ -13,9 +13,9 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol, TypeAlias, cast
+from typing import Any, Protocol, cast
 
 import claripy
 from angr import SimProcedure
@@ -34,16 +34,16 @@ from .interrupt_contract import (
 )
 
 __all__ = (
-    "CallTargetKind8616",
-    "CallTargetSeed",
-    "DOSInt21Call",
     "DOS_SERVICE_BASE_ADDR",
-    "DirectCallsiteSanitizationEvidence",
-    "EntryScore",
-    "FarCallTarget",
     "INTERRUPT_CORE_VECTOR_BASE",
     "INTERRUPT_CORE_VECTOR_COUNT",
     "INTERRUPT_SERVICE_BASE_ADDR",
+    "CallTargetKind8616",
+    "CallTargetSeed",
+    "DOSInt21Call",
+    "DirectCallsiteSanitizationEvidence",
+    "EntryScore",
+    "FarCallTarget",
     "InterruptCall",
     "InterruptServiceSpec",
     "canonicalize_x86_16_padding_call_target_8616",
@@ -273,7 +273,7 @@ class FarCallTarget:
     return_addr: int | None
 
 
-class CallTargetKind8616(str, Enum):
+class CallTargetKind8616(StrEnum):
     """Typed origin and distance of one recovered control-transfer target."""
 
     CFG_RESOLVED_CALL = "existing"
@@ -357,7 +357,7 @@ class InterruptCall:
     string_literal: str | None = None
 
 
-DOSInt21Call: TypeAlias = InterruptCall
+type DOSInt21Call = InterruptCall
 
 
 @dataclass(frozen=True)
@@ -853,7 +853,7 @@ def describe_x86_16_interrupt_core_surface() -> dict[str, object]:
         "vector_count": INTERRUPT_CORE_VECTOR_COUNT,
         "hook_count": INTERRUPT_CORE_VECTOR_COUNT,
         "runtime_alias_base": 0x0000,
-        "named_vectors": tuple(sorted(INTERRUPT_SERVICE_SPECS) + [0x20, 0x21, 0x25, 0x26, 0x27, 0x2F]),
+        "named_vectors": (*sorted(INTERRUPT_SERVICE_SPECS), 32, 33, 37, 38, 39, 47),
         "control_transfer_policy": "int -> synthetic target -> SimOS hook",
         "low_level_helpers": (
             "interrupt_service_addr",
@@ -1651,7 +1651,7 @@ def _resolve_direct_call_target_from_insn(project: object, insn: object) -> int 
         off = operands[1].imm & 0xFFFF
         return canonicalize_x86_16_padding_call_target_8616(
             project,
-            _canonical_code_linear_addr(project, (seg << 4) + off),
+            (seg << 4) + off,
         )
 
     if mnemonic == "call" and len(operands) == 1 and _dynamic_analysis_getattr_8616(operands[0], "type", None) == 2:
@@ -2242,10 +2242,10 @@ def seed_calling_conventions(cfg: object) -> None:
         try:
             if not _function_has_proven_prototype_8616(function):
                 function._init_prototype_and_calling_convention()
-            if project is not None and apply_x86_16_stack_byte_prototype_evidence is not None:
+            if project is not None and apply_x86_16_stack_byte_prototype_evidence is not None:  # noqa: SIM102
                 if apply_x86_16_stack_byte_prototype_evidence(project, function):
                     stack_byte_count += 1
-            if project is not None and apply_x86_16_wide_stack_prototype_evidence is not None:
+            if project is not None and apply_x86_16_wide_stack_prototype_evidence is not None:  # noqa: SIM102
                 if apply_x86_16_wide_stack_prototype_evidence(project, function):
                     wide_stack_count += 1
             if project is not None:

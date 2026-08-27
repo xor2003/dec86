@@ -53,6 +53,10 @@ class _Codegen:
         index = self._next_index
         self._next_index += 1
         return index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _summary(
@@ -160,7 +164,7 @@ def _set_parameter_surface(
     )
     arg_list = [
         CVariable(variable, variable_type=parameter_type, codegen=codegen)
-        for variable, parameter_type in zip(variables, parameter_types)
+        for variable, parameter_type in zip(variables, parameter_types, strict=False)
     ]
     function_type = SimTypeFunction(
         list(parameter_types),
@@ -565,6 +569,42 @@ def test_call_interface_validation_accepts_binary_proven_arity() -> None:
     assert report.failure_count == 0
 
 
+def test_call_interface_validation_refuses_guessed_empty_prototype_arity() -> None:
+    codegen = _Codegen()
+    short_type = SimTypeShort(False).with_arch(codegen.project.arch)
+    callee = SimpleNamespace(
+        addr=0x2000,
+        name="external_stub",
+        prototype=SimTypeFunction([], short_type).with_arch(codegen.project.arch),
+        is_prototype_guessed=True,
+    )
+    call = CFunctionCall(
+        "external_stub",
+        callee,
+        [CConstant(1, short_type, codegen=codegen)],
+        tags={"ins_addr": 0x1010},
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x1010,
+            target_addr=0x2000,
+            return_addr=0x1013,
+            kind="direct_far",
+            arg_count=1,
+            arg_widths=(2,),
+            stack_cleanup=2,
+            return_register="ax",
+            return_used=None,
+        )
+    }
+
+    report = validate_call_interfaces_8616(codegen, CStatements([call], codegen=codegen))
+
+    assert report.passed
+    assert report.classified_fact_count == 0
+
+
 def test_call_interface_validation_uses_project_target_name_for_helper_arity() -> None:
     codegen = _Codegen()
     codegen.project.kb = SimpleNamespace(labels={0x2000: "__aNldiv"})
@@ -598,12 +638,51 @@ def test_call_interface_validation_uses_project_target_name_for_helper_arity() -
     assert report.materialized_count == 1
 
 
+def test_call_interface_validation_prefers_rendered_helper_name_to_stale_target() -> None:
+    codegen = _Codegen()
+    short_type = SimTypeShort(False).with_arch(codegen.project.arch)
+    long_type = SimTypeLong(False).with_arch(codegen.project.arch)
+    callee = SimpleNamespace(
+        addr=0x2000,
+        name="aNldiv",
+        prototype=SimTypeFunction([short_type] * 4, long_type).with_arch(codegen.project.arch),
+    )
+    call = CFunctionCall(
+        "sub_2000",
+        callee,
+        [CConstant(1, long_type, codegen=codegen), CConstant(2, long_type, codegen=codegen)],
+        tags={"ins_addr": 0x1010},
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x1010,
+            target_addr=0x2000,
+            return_addr=0x1013,
+            kind="direct_near",
+            arg_count=4,
+            arg_widths=(2, 2, 2, 2),
+            stack_cleanup=8,
+            return_register="ax",
+            return_used=True,
+            logical_arg_widths=(2, 2, 2, 2),
+        )
+    }
+
+    report = validate_call_interfaces_8616(codegen, CStatements([call], codegen=codegen))
+
+    assert report.passed
+    assert report.classified_fact_count == 1
+    assert report.materialized_count == 1
+
+
 def test_call_interface_validation_accepts_accounted_dword_prototype_grouping() -> None:
     codegen = _Codegen()
     long_type = SimTypeLong(False).with_arch(codegen.project.arch)
     callee = SimpleNamespace(
         addr=0x2000,
         prototype=SimTypeFunction([long_type, long_type], long_type).with_arch(codegen.project.arch),
+        is_prototype_guessed=False,
     )
     args = [
         CConstant(1, long_type, codegen=codegen),
@@ -658,6 +737,117 @@ def test_call_interface_validation_accepts_proven_nested_dword_argument() -> Non
     assert report.classified_fact_count == 1
     assert report.materialized_count == 1
     assert report.failure_count == 0
+
+
+def test_call_interface_validation_accepts_accounted_variadic_nested_dword() -> None:
+    codegen = _Codegen()
+    short_type = SimTypeShort(False).with_arch(codegen.project.arch)
+    long_type = SimTypeLong(False).with_arch(codegen.project.arch)
+    inner_callee = SimpleNamespace(
+        addr=0x3000,
+        name="aNldiv",
+        prototype_libname=None,
+        prototype=SimTypeFunction([long_type, long_type], long_type).with_arch(
+            codegen.project.arch
+        ),
+    )
+    nested = CFunctionCall(
+        "aNldiv",
+        inner_callee,
+        [CConstant(30, long_type, codegen=codegen), CConstant(1, long_type, codegen=codegen)],
+        tags={"ins_addr": 0x1008},
+        codegen=codegen,
+    )
+    outer_callee = SimpleNamespace(
+        addr=0x2000,
+        name="sprintf",
+        prototype=SimTypeFunction(
+            [short_type, short_type],
+            short_type,
+            variadic=True,
+        ).with_arch(codegen.project.arch),
+        is_prototype_guessed=False,
+    )
+    call = CFunctionCall(
+        "sprintf",
+        outer_callee,
+        [
+            CConstant(1, short_type, codegen=codegen),
+            CConstant(2, short_type, codegen=codegen),
+            nested,
+        ],
+        tags={"ins_addr": 0x1010},
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x1010,
+            target_addr=0x2000,
+            return_addr=0x1013,
+            kind="direct_near",
+            arg_count=4,
+            arg_widths=(2, 2, 2, 2),
+            stack_cleanup=8,
+            return_register="ax",
+            return_used=True,
+            logical_arg_widths=(2, 2, 2, 2),
+        )
+    }
+
+    report = validate_call_interfaces_8616(codegen, CStatements([call], codegen=codegen))
+
+    assert report.passed
+    assert report.classified_fact_count == 1
+    assert report.materialized_count == 1
+
+
+def test_call_interface_validation_accepts_exact_return_pair_without_prototype() -> None:
+    codegen = _Codegen()
+    short_type = SimTypeShort(False).with_arch(codegen.project.arch)
+    nested = CFunctionCall(
+        "wide_result",
+        None,
+        [],
+        tags={"ins_addr": 0x1008},
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        "consume",
+        None,
+        [
+            CConstant(1, short_type, codegen=codegen),
+            CConstant(2, short_type, codegen=codegen),
+            nested,
+        ],
+        tags={"ins_addr": 0x1010},
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries = {
+        id(call): CallsiteSummary8616(
+            callsite_addr=0x1010,
+            target_addr=0x2000,
+            return_addr=0x1013,
+            kind="direct_near",
+            arg_count=4,
+            arg_widths=(2, 2, 2, 2),
+            stack_cleanup=8,
+            return_register="ax",
+            return_used=True,
+            push_arg_sources=(
+                ("ret_reg", 0x1008, "dx"),
+                ("ret_reg", 0x1008, "ax"),
+                ("imm", 2),
+                ("imm", 1),
+            ),
+            logical_arg_widths=(2, 2, 2, 2),
+        )
+    }
+
+    report = validate_call_interfaces_8616(codegen, CStatements([call], codegen=codegen))
+
+    assert report.passed
+    assert report.classified_fact_count == 1
+    assert report.materialized_count == 1
 
 
 def test_call_interface_validation_prefers_proven_logical_shape_to_stale_prototype() -> None:
@@ -718,7 +908,9 @@ def test_call_interface_validation_refuses_lost_arguments() -> None:
     assert report.failure_count == 1
     assert report.issue_tokens() == (
         "call-interface:argument-count-mismatch:callsite=0x1010:"
-        "target=0x2000:expected-argc=2:actual-argc=0",
+        "target=0x2000:expected-argc=2:actual-argc=0:physical-widths=2,2:"
+        "logical-widths=2,2:actual-widths=none:prototype-widths=unknown:"
+        "prototype-variadic=unknown",
     )
 
 
@@ -931,7 +1123,9 @@ def test_final_semantic_refresh_promotes_call_interface_failure() -> None:
 
     issue = (
         "call-interface:argument-count-mismatch:callsite=0x1010:"
-        "target=0x2000:expected-argc=2:actual-argc=0"
+        "target=0x2000:expected-argc=2:actual-argc=0:physical-widths=2,2:"
+        "logical-widths=2,2:actual-widths=none:prototype-widths=unknown:"
+        "prototype-variadic=unknown"
     )
     assert report.passed is False
     assert report.call_interfaces.issue_tokens() == (issue,)
@@ -940,6 +1134,7 @@ def test_final_semantic_refresh_promotes_call_interface_failure() -> None:
     ) is False
     postprocess = codegen._inertia_tail_validation_snapshot["postprocess"]
     assert postprocess["semantic_failures"] == {"call_interfaces": (issue,)}
+    assert issue in postprocess["summary_text"]
     assert postprocess["final_semantic_guard"]["call_interfaces"] == {
         "raw_fact_count": 1,
         "normalized_fact_count": 1,

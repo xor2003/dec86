@@ -14,7 +14,7 @@ the function is marked invalid rather than silently continuing.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 __all__ = [
     "StackLoweringResult",
@@ -24,7 +24,7 @@ __all__ = [
 ]
 
 
-class StackLoweringStatus(str, Enum):
+class StackLoweringStatus(StrEnum):
     """Typed verdict for stack slot materialization."""
 
     OK = "ok"
@@ -97,5 +97,5 @@ def materialization_diagnostics_8616(result: StackLoweringResult) -> str:
     if result.failures:
         lines.append(f"  Failures: {len(result.failures)} slots not materialized")
         for f in result.failures:
-            lines.append(f"    SS:BP{f.offset:+d} ({f.size} bytes): {f.reason}")
+            lines.append(f"    SS:BP{f.offset:+d} ({f.size} bytes): {f.reason}")  # noqa: PERF401
     return "\n".join(lines)

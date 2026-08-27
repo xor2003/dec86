@@ -72,7 +72,7 @@ def test_classify_segmented_addr_expr_treats_sp_register_as_stack_anchor() -> No
         cfunc=SimpleNamespace(addr=0x1000),
         next_idx=lambda _name: 0,
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     expr = structured_c.CBinaryOp(
         "Add",
         structured_c.CBinaryOp("Shl", _reg(project, "ss", codegen), _const(4, codegen), codegen=codegen),
@@ -92,7 +92,7 @@ def test_classify_segmented_addr_expr_treats_sp_register_as_stack_anchor() -> No
 
 def test_match_segmented_dereference_returns_explicit_segment_and_offset() -> None:
     project = SimpleNamespace(arch=Arch86_16())
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     deref = structured_c.CUnaryOp("Dereference", _segmented_linear(project, "ds", 0x234, codegen), codegen=codegen)
     cache_store: dict[str, dict[int, object]] = {}
 
@@ -118,7 +118,7 @@ def test_match_segmented_dereference_returns_explicit_segment_and_offset() -> No
 
 def test_match_real_mode_linear_expr_refuses_bare_constant() -> None:
     project = SimpleNamespace(arch=Arch86_16())
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     cache_store: dict[str, dict[int, object]] = {}
 
     result = _match_real_mode_linear_expr(

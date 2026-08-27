@@ -154,7 +154,7 @@ def _parse_os2_resource_table(data: bytes, resource_table_offset: int, resource_
     entries_by_type: dict[int, list[NEResourceEntry]] = {}
     cursor = resource_table_offset
     table_entries = [struct.unpack_from("<HH", data, cursor + i * 4) for i in range(resource_count)]
-    for index, (type_id, name_id) in enumerate(table_entries):
+    for _index, (type_id, name_id) in enumerate(table_entries):
         type_name, file_extension = _decode_os2_type(type_id)
         entry = NEResourceEntry(
             type_id=type_id,

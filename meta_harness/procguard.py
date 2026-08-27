@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import atexit
 import json
@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 @dataclass(frozen=True)
-class ChildProcessRecord:
+class ChildProcessRecord:  # noqa: D101
     pid: int
     command: str
     root_dir: str
@@ -43,7 +43,7 @@ def _save_records(state_dir: Path, records: list[dict[str, object]]) -> None:
     tmp.replace(path)
 
 
-def register_child_process(state_dir: Path, pid: int, command: str, root_dir: str, started_at: str) -> None:
+def register_child_process(state_dir: Path, pid: int, command: str, root_dir: str, started_at: str) -> None:  # noqa: D103
     records = _load_records(state_dir)
     records = [record for record in records if int(record.get("pid", -1)) != pid]
     records.append(
@@ -57,7 +57,7 @@ def register_child_process(state_dir: Path, pid: int, command: str, root_dir: st
     _save_records(state_dir, records)
 
 
-def unregister_child_process(state_dir: Path, pid: int) -> None:
+def unregister_child_process(state_dir: Path, pid: int) -> None:  # noqa: D103
     records = _load_records(state_dir)
     filtered = [record for record in records if int(record.get("pid", -1)) != pid]
     if filtered != records:
@@ -82,7 +82,7 @@ def _record_matches(root_dir: Path, record: dict[str, object]) -> bool:
     return bool(cmdline) and command in cmdline and (recorded_root in cmdline or str(root_dir) in cmdline)
 
 
-def cleanup_stale_child_processes(state_dir: Path, root_dir: Path) -> list[int]:
+def cleanup_stale_child_processes(state_dir: Path, root_dir: Path) -> list[int]:  # noqa: D103
     records = _load_records(state_dir)
     if not records:
         return []
@@ -118,7 +118,7 @@ def cleanup_stale_child_processes(state_dir: Path, root_dir: Path) -> list[int]:
     return cleaned
 
 
-def install_child_cleanup_handler(state_dir: Path, root_dir: Path) -> None:
+def install_child_cleanup_handler(state_dir: Path, root_dir: Path) -> None:  # noqa: D103
     global _REGISTERED
     if _REGISTERED:
         return

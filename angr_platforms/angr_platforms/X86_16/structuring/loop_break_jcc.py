@@ -43,6 +43,7 @@ from ..ir.condition_ir import (
 )
 from ..pipeline.errors import PipelineHardError
 from .condition_materialization import materialize_condition_ir_expression_8616
+from .condition_storage_identity import same_condition_storage_identity_8616
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -227,6 +228,38 @@ def _typed_conditions_by_key_8616(codegen: object) -> dict[tuple[int, int], tupl
     return {key: tuple(values) for key, values in candidates.items()}
 
 
+def _typed_conditions_for_branch_8616(
+    conditions_by_key: dict[tuple[int, int], tuple[ConditionIR, ...]],
+    *,
+    jcc_addr: int,
+    block_addr: int,
+    body_target: int,
+    fallthrough_target: int,
+) -> tuple[ConditionIR, ...]:
+    """Select exact typed branch evidence across equivalent block boundaries."""
+    exact = conditions_by_key.get((jcc_addr, block_addr), ())
+    if exact:
+        return exact
+    same_jcc = tuple(
+        dict.fromkeys(
+            condition
+            for (candidate_jcc, _candidate_block), conditions in conditions_by_key.items()
+            if candidate_jcc == jcc_addr
+            for condition in conditions
+        )
+    )
+    target_matches = tuple(
+        condition
+        for condition in same_jcc
+        if _typed_condition_matches_jcc_targets_8616(
+            condition,
+            body_target=body_target,
+            fallthrough_target=fallthrough_target,
+        )
+    )
+    return target_matches if target_matches else same_jcc
+
+
 def _typed_condition_matches_jcc_targets_8616(
     condition: ConditionIR,
     *,
@@ -344,6 +377,7 @@ def _semantic_break_guards_in_loop_8616(
     loop_body: CStatements,
     *,
     project: object,
+    guard_condition: object,
     guard_condition_fingerprint: str,
     callbacks: UnconsumedLoopBreakJccCallbacks8616,
 ) -> tuple[object, ...]:
@@ -361,7 +395,12 @@ def _semantic_break_guards_in_loop_8616(
         actual = _normalized_condition_fingerprint_8616(
             callbacks.expr_fingerprint(condition, project)
         )
-        if actual != expected:
+        same_storage = same_condition_storage_identity_8616(
+            condition,
+            guard_condition,
+            same_expression=callbacks.same_c_expression,
+        )
+        if actual != expected and not same_storage:
             continue
         seen.add(marker)
         guards.append(node)
@@ -957,7 +996,13 @@ def materialize_unconsumed_loop_break_jcc_8616(
             "vex_block_addr": int(block_addr),
             "inertia_jcc_materialized_8616": True,
         }
-        typed_candidates = typed_conditions_by_key.get(key, ())
+        typed_candidates = _typed_conditions_for_branch_8616(
+            typed_conditions_by_key,
+            jcc_addr=jcc_addr,
+            block_addr=int(block_addr),
+            body_target=int(body_target),
+            fallthrough_target=int(fallthrough_target),
+        )
         if debug_jcc:
             log.warning(
                 "[unconsumed-loop-break-jcc] candidate key=%r mnemonic=%s body_target=%#x "
@@ -1112,6 +1157,7 @@ def materialize_unconsumed_loop_break_jcc_8616(
                 semantic_break_guards = _semantic_break_guards_in_loop_8616(
                     loop_body,
                     project=project,
+                    guard_condition=guard_cond,
                     guard_condition_fingerprint=guard_condition_fingerprint,
                     callbacks=callbacks,
                 )
@@ -1176,6 +1222,11 @@ def materialize_unconsumed_loop_break_jcc_8616(
                         or callbacks.same_c_expression(
                             current_condition,
                             guard_cond,
+                        )
+                        or same_condition_storage_identity_8616(
+                            current_condition,
+                            guard_cond,
+                            same_expression=callbacks.same_c_expression,
                         )
                     ):
                         _record_loop_branch_guard_fact_8616(

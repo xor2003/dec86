@@ -89,9 +89,7 @@ def _build_copy_aliases(
                         if resolved_rhs is None:
                             resolved_rhs = rhs
                 # Dynamic codegen boundary: constant-like values may be carried by generated AST nodes.
-                elif getattr(rhs, "value", None) is not None and isinstance(getattr(rhs, "value", None), int):
-                    resolved_rhs = rhs
-                elif expr_is_safe_inline_candidate(rhs):
+                elif (getattr(rhs, "value", None) is not None and isinstance(getattr(rhs, "value", None), int)) or expr_is_safe_inline_candidate(rhs):
                     resolved_rhs = rhs
                 if resolved_rhs is not None and expr_is_bare_storage_alias(resolved_rhs):
                     resolved_rhs = None
@@ -175,7 +173,7 @@ def _build_far_pointer_aliases(
                 bucket["source"].append((walk_node.lhs, rhs))
 
         far_pointer_aliases: dict[int, object] = {}
-        for _storage_identity, parts in groups.items():
+        for parts in groups.values():
             if not parts["source"]:
                 continue
             candidate_exprs = [cvar for cvar, _rhs in parts["source"] + parts["zero"]]

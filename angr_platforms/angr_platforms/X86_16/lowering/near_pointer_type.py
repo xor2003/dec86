@@ -25,10 +25,15 @@ class SimTypeNearPointer16_8616(SimTypePointer):  # type: ignore[misc]
         """Return the near-pointer width in bits."""
         return 16
 
-    def _with_arch(self, arch: Arch) -> SimTypeNearPointer16_8616:
-        """Bind this near pointer and its pointee to one angr architecture."""
+    def _with_arch(
+        self,
+        arch: Arch,
+        *,
+        memo: dict[str, SimType],
+    ) -> SimTypeNearPointer16_8616:
+        """Bind this near pointer through angr's recursive type memo contract."""
         out = SimTypeNearPointer16_8616(
-            self.pts_to.with_arch(arch),
+            self.pts_to.with_arch(arch, memo=memo),
             self.label,
             self.offset,
             qualifier=self.qualifier,
@@ -67,7 +72,10 @@ def near_pointer_type_8616(
     arch: Arch,
 ) -> SimTypeNearPointer16_8616:
     """Build one architecture-bound 16-bit near-pointer type."""
-    return SimTypeNearPointer16_8616(pointee)._with_arch(arch)
+    pointer = SimTypeNearPointer16_8616(pointee).with_arch(arch)
+    if not isinstance(pointer, SimTypeNearPointer16_8616):
+        raise TypeError("near-pointer architecture binding changed its type")
+    return pointer
 
 
 def with_near_pointer_parameter_8616(

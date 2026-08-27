@@ -60,7 +60,7 @@ def _surface(*, cleanup_amount: int = 4) -> tuple[object, object, CStatements, C
     codegen = SimpleNamespace(
         next_idx=lambda _name: 1,
         project=project,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     local = CVariable(
         SimStackVariable(-8, 2, base="bp", name="saved_di"),
         codegen=codegen,

@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol, cast
 
+from .frontend_instruction_kinds import is_x86_16_call_mnemonic_8616
+
 __all__ = [
     "DecodedBlockRequest8616",
     "DecodedBlockStatus8616",
@@ -81,6 +83,10 @@ class _ProjectBoundary8616(Protocol):
         DecodedBlockRequest8616,
         DecodedBlockEvidence8616,
     ]
+    _inertia_instruction_reachability_cache_8616: dict[
+        tuple[int, int, int],
+        InstructionReachabilityEvidence8616,
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +131,7 @@ def _raise_cached_decode_failure_8616(evidence: DecodedBlockEvidence8616) -> Non
 class InstructionReachabilityEvidence8616:
     """Closed census of bounded binary basic-block reachability."""
 
+    reachable_block_addrs: tuple[int, ...]
     reachable_instruction_addrs: tuple[int, ...]
     unresolved_block_addrs: tuple[int, ...]
     raw_fact_count: int
@@ -144,6 +151,21 @@ class InstructionReachabilityEvidence8616:
             and self.failure_count == 0
             and not self.unresolved_block_addrs
         )
+
+
+def _reachability_cache_8616(
+    project: object,
+) -> dict[tuple[int, int, int], InstructionReachabilityEvidence8616]:
+    """Return immutable byte-reachability evidence cached on one project."""
+    boundary = cast(_ProjectBoundary8616, project)
+    try:
+        cache = boundary._inertia_instruction_reachability_cache_8616
+    except AttributeError:
+        cache = {}
+        boundary._inertia_instruction_reachability_cache_8616 = cache
+    if not isinstance(cache, dict):
+        raise TypeError("instruction reachability cache must be a dict")
+    return cache
 
 
 def decoded_block_instructions_8616(
@@ -237,7 +259,7 @@ def x86_16_block_successors_from_capstone_8616(
 
     if mnemonic in {"ret", "retf", "iret", "retw", "iretq"}:
         return successors, False
-    if mnemonic in {"call", "lcall", "callq"}:
+    if is_x86_16_call_mnemonic_8616(mnemonic):
         if block_end < region_end:
             successors.add(block_end)
         return successors, False
@@ -265,9 +287,14 @@ def collect_instruction_reachability_8616(
 ) -> InstructionReachabilityEvidence8616:
     """Traverse binary-proven successors inside one bounded loaded image."""
     if not (region_start <= entry < region_end):
-        return InstructionReachabilityEvidence8616((), (), 0, 0, 0, 0, 0)
+        return InstructionReachabilityEvidence8616((), (), (), 0, 0, 0, 0, 0)
 
     boundary = cast(_ProjectBoundary8616, project)
+    cache = _reachability_cache_8616(project)
+    cache_key = (entry, region_start, region_end)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
     queue: deque[int] = deque((entry,))
     visited: set[int] = set()
     reachable_instructions: set[int] = set()
@@ -304,7 +331,8 @@ def collect_instruction_reachability_8616(
 
     failure_count = len(unresolved)
     classified_count = len(visited)
-    return InstructionReachabilityEvidence8616(
+    evidence = InstructionReachabilityEvidence8616(
+        reachable_block_addrs=tuple(sorted(visited)),
         reachable_instruction_addrs=tuple(sorted(reachable_instructions)),
         unresolved_block_addrs=tuple(sorted(unresolved)),
         raw_fact_count=classified_count,
@@ -313,3 +341,5 @@ def collect_instruction_reachability_8616(
         materialized_count=classified_count - failure_count,
         failure_count=failure_count,
     )
+    cache[cache_key] = evidence
+    return evidence

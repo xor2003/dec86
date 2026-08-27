@@ -25,7 +25,7 @@ import weakref
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -58,6 +58,7 @@ from angr_platforms.X86_16.compiler_helpers import (
     is_x86_16_stack_probe_name_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_calls import (
+    _replay_bound_callsite_argument_consumer_8616,
     replay_callsite_stack_arguments_after_regeneration_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_simplify import _simplify_structured_expressions_8616
@@ -77,9 +78,11 @@ from angr_platforms.X86_16.decompiler_structuring_stage import (
     finalize_typed_edge_switch_replacement_if_enabled_8616,
     prune_redundant_loop_break_carriers_after_lowering_8616,
     record_typed_edge_switch_replacement_diagnostics_8616,
+    recover_structuring_canonical_for_loops_8616,
     run_direct_instruction_materialization_8616,
     seqnode_switch_replacement_changed_for_codegen_8616,
 )
+from angr_platforms.X86_16.ir.status_flag_lift_context import active_status_flag_lift_context_8616
 from angr_platforms.X86_16.lowering.callsite_prototype_declarations import (
     materialize_callsite_prototype_declarations_8616,
 )
@@ -134,7 +137,11 @@ from angr_platforms.X86_16.pipeline.architecture_guard import (
 from angr_platforms.X86_16.pipeline.contracts import assert_pipeline_contracts_8616
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.pipeline.recovery_coverage_guard import assert_exact_instruction_coverage_8616
-from angr_platforms.X86_16.pipeline.render_authority import CodegenRenderAuthority8616
+from angr_platforms.X86_16.pipeline.render_authority import (
+    CodegenRenderAuthority8616,
+    codegen_render_authority_8616,
+    require_codegen_render_integrity_8616,
+)
 from angr_platforms.X86_16.postprocess.optimization.dce import _dead_code_elimination_8616
 from angr_platforms.X86_16.recovery_instruction_coverage import collect_exact_instruction_coverage_8616
 from angr_platforms.X86_16.render_compat import repair_cfunctioncall_render_targets_8616
@@ -349,21 +356,21 @@ print: Callable[..., None] = _timestamped_print
 __all__ = [
     "_apply_binary_specific_annotations",
     "_apply_function_annotations_for_active_and_original_8616",
-    "_sidecar_cod_metadata_for_function",
-    "_snapshot_codegen_text",
-    "_regenerate_codegen_text_safely",
-    "_emit_optional_source_sidecar_c_block",
-    "_format_minimal_codegen_output",
     "_apply_known_cod_object_annotations",
     "_decompile_function",
-    "_function_complexity",
+    "_decompile_function_with_stats",
     "_direct_call_stub_filter_regions",
-    "_register_direct_call_target_function_stubs",
-    "_prepare_function_for_decompilation",
+    "_emit_optional_source_sidecar_c_block",
+    "_format_minimal_codegen_output",
+    "_function_complexity",
     "_function_decompilation_profile",
     "_preferred_decompiler_options",
     "_preferred_expr_collapse_depth",
-    "_decompile_function_with_stats",
+    "_prepare_function_for_decompilation",
+    "_regenerate_codegen_text_safely",
+    "_register_direct_call_target_function_stubs",
+    "_sidecar_cod_metadata_for_function",
+    "_snapshot_codegen_text",
 ]
 
 
@@ -778,7 +785,7 @@ _LAYER_DUMP_MUTEX = threading.Lock()
 _LAYER_DUMP_STATE_ATTR = "_inertia_layer_dump_states"
 
 
-class _LayerDumpStatus(str, Enum):
+class _LayerDumpStatus(StrEnum):
     skipped = "skipped"
     written = "written"
     failed = "failed"
@@ -1099,10 +1106,8 @@ def _emit_c_stage_trace(
 def _emit_typed_edge_switch_replacement_safety_stats_8616(codegen: object) -> None:
     if os.environ.get("INERTIA_ENABLE_TYPED_SWITCH_AST_ARTIFACTS") != "1":
         return
-    try:
+    with contextlib.suppress(Exception):
         record_typed_edge_switch_replacement_diagnostics_8616(codegen)
-    except Exception:
-        pass
     print(
         "[structuring-pass-status] "
         + json.dumps(
@@ -1716,7 +1721,7 @@ def _typed_switch_seqnode_case_segment_quality_8616(codegen: object) -> dict[str
                         helper_unresolved += 1
                 current = _strip_casts(node)
                 # Dynamic angr/codegen compatibility boundary.
-                if isinstance(current, structured_c.CUnaryOp) and getattr(current, "op", None) == "Dereference":
+                if isinstance(current, structured_c.CUnaryOp) and getattr(current, "op", None) == "Dereference":  # noqa: SIM102
                     # Dynamic angr/codegen compatibility boundary.
                     if _node_has_unresolved_linear_segment(current.operand):
                         linear_unresolved += 1
@@ -1802,7 +1807,8 @@ def _debug_dump_rewrite_pass_lines_8616(
         if isinstance(target_addr, int) and function_addr != target_addr:
             return
         try:
-            render_text = getattr(codegen, "render_text")
+            # Dynamic third-party angr/codegen boundary.
+            render_text = typing.cast(typing.Any, codegen).render_text
             rendered = render_text(getattr(codegen, "cfunc", None))
         except Exception:
             rendered = _snapshot_codegen_text(codegen)
@@ -2018,15 +2024,15 @@ def _finalize_callsite_arguments_after_noncall_regen_8616(codegen: object) -> bo
     stack_changed = _replay_direct_stack_semantics_after_regen_8616(codegen)
     call_changed = bool(replay_callsite_stack_arguments_after_regeneration_8616(project, codegen))
     aggregate_decay_changed = _finalize_typed_call_interfaces_before_render_8616(codegen)
-    occurrence_changed = finalize_shared_call_occurrences_8616(codegen)
+    occurrence_changed = finalize_shared_call_occurrences_8616(project, codegen)
     changed = stack_changed or call_changed or aggregate_decay_changed or occurrence_changed
     if not changed:
         return False
-    _replay_named_segmented_global_lowering_after_regen_8616(codegen)
     _replay_indexed_segmented_global_lowering_after_regen_8616(codegen)
-    _replay_stack_address_lowering_after_regen_8616(codegen)
-    _replay_runtime_segment_lowering_after_regen_8616(codegen)
-    _replay_indexed_segmented_global_lowering_after_regen_8616(codegen)
+    segment_surface_changed = _replay_stack_address_lowering_after_regen_8616(codegen)
+    segment_surface_changed = _replay_runtime_segment_lowering_after_regen_8616(codegen) or segment_surface_changed
+    if segment_surface_changed:
+        _replay_indexed_segmented_global_lowering_after_regen_8616(codegen)
     return True
 
 
@@ -2036,7 +2042,7 @@ def _finalize_typed_call_interfaces_before_render_8616(codegen: object) -> bool:
     dynamic_codegen = typing.cast(typing.Any, codegen)
     try:
         project = dynamic_codegen.project
-        dynamic_codegen.cfunc.functy
+        dynamic_codegen.cfunc.functy  # noqa: B018
     except AttributeError:
         project = None
     if project is not None:
@@ -2128,7 +2134,7 @@ def _replay_call_return_selector_lowering_after_regen_8616(codegen: object) -> b
 def _stabilize_regenerated_noncall_ast_8616(codegen: object) -> bool:
     """Restore call identity before replaying widening and late cleanup."""
     project = getattr(codegen, "project", None)
-    shared_call_changed = finalize_shared_call_occurrences_8616(codegen)
+    shared_call_changed = finalize_shared_call_occurrences_8616(project, codegen)
     changed = bool(shared_call_changed)
     if shared_call_changed:
         changed = bool(
@@ -2140,19 +2146,24 @@ def _stabilize_regenerated_noncall_ast_8616(codegen: object) -> bool:
     indexed_global_changed = _replay_indexed_segmented_global_lowering_after_regen_8616(
         codegen
     )
-    final_occurrence_changed = finalize_shared_call_occurrences_8616(codegen)
-    return final_occurrence_changed or indexed_global_changed or cleanup_result.changed or changed
+    canonical_for_changed = recover_structuring_canonical_for_loops_8616(codegen)
+    return canonical_for_changed or indexed_global_changed or cleanup_result.changed or changed
 
 
 def _finalize_regenerated_noncall_ast_8616(codegen: object) -> bool:
     """Run cleanup before replaying final Lowering-owned AST identities."""
     changed = _stabilize_regenerated_noncall_ast_8616(codegen)
-    changed = _simplify_structured_expressions_8616(codegen) or changed
-    changed = _replay_call_return_selector_lowering_after_regen_8616(codegen) or changed
-    changed = _replay_indexed_segmented_global_lowering_after_regen_8616(codegen) or changed
-    changed = _replay_direct_stack_semantics_after_regen_8616(codegen) or changed
-    changed = _replay_runtime_segment_lowering_after_regen_8616(codegen) or changed
-    return _replay_indexed_segmented_global_lowering_after_regen_8616(codegen) or changed
+    late_ast_changed = _simplify_structured_expressions_8616(codegen)
+    late_ast_changed = _replay_call_return_selector_lowering_after_regen_8616(codegen) or late_ast_changed
+    if late_ast_changed:
+        changed = _replay_indexed_segmented_global_lowering_after_regen_8616(codegen) or changed
+    segment_surface_changed = _replay_direct_stack_semantics_after_regen_8616(codegen)
+    segment_surface_changed = _replay_runtime_segment_lowering_after_regen_8616(codegen) or segment_surface_changed
+    if segment_surface_changed:
+        changed = _replay_indexed_segmented_global_lowering_after_regen_8616(codegen) or changed
+    project = getattr(codegen, "project", None)
+    final_occurrence_changed = finalize_shared_call_occurrences_8616(project, codegen)
+    return bool(final_occurrence_changed or changed or late_ast_changed or segment_surface_changed)
 
 
 def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[str, bool]:
@@ -2231,6 +2242,11 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
             if pre_replay_cfunc is not None:
                 with contextlib.suppress(Exception):
                     typing.cast(typing.Any, codegen).cfunc = pre_replay_cfunc
+                _replay_bound_callsite_argument_consumer_8616(
+                    getattr(codegen, "project", None),
+                    codegen,
+                    preserve_setup=True,
+                )
                 restored_text = _direct_cfunc_text_or_none(f"{replay_tag}-restored-cfunc")
                 if isinstance(restored_text, str) and restored_text.strip():
                     restored_evidence = _render_refresh_preservation_evidence_8616(
@@ -2274,7 +2290,10 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
             return preservation_baseline_text, True
 
         try:
-            selector_return_contract_active = bool(getattr(codegen, "_inertia_return_selector_materialized_8616"))
+            # Dynamic third-party angr/codegen boundary with Inertia extension fields.
+            selector_return_contract_active = bool(
+                typing.cast(typing.Any, codegen)._inertia_return_selector_materialized_8616
+            )
         except AttributeError:
             selector_return_contract_active = False
         # Rendering rule:
@@ -2293,17 +2312,24 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
                 _debug_dump_calls_8616(tag, text, trace_addr)
 
         def _normalize_stack_identifiers_before_render_8616() -> None:
+            """Normalize third-party names, then restore proven BP projections."""
             with contextlib.suppress(Exception):
                 from angr_platforms.X86_16.decompiler_postprocess_stage import (
                     _normalize_stack_variable_identifiers_8616,
                 )
+                from angr_platforms.X86_16.lowering.stack_variable_display_names import (
+                    reapply_stack_variable_projection_names_8616,
+                )
 
                 _normalize_stack_variable_identifiers_8616(codegen)
+                reapply_stack_variable_projection_names_8616(codegen)
 
         def _render_text_or_none(tag: str) -> str | None:
+            require_codegen_render_integrity_8616(codegen, context=context)
             _finalize_typed_call_interfaces_before_render_8616(codegen)
             _normalize_stack_identifiers_before_render_8616()
-            render_text = getattr(codegen, "render_text")
+            # Dynamic third-party angr/codegen boundary.
+            render_text = typing.cast(typing.Any, codegen).render_text
             rendered = render_text(getattr(codegen, "cfunc", None))
             text = _normalize_text_payload_8616(rendered)
             if text:
@@ -2313,6 +2339,7 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
 
         def _direct_cfunc_text_or_none(tag: str) -> str | None:
             """Render the C function after the final evidence-backed stack replay."""
+            require_codegen_render_integrity_8616(codegen, context=context)
             if (
                 semantic_materialization_active
                 and not selector_return_contract_active
@@ -2351,7 +2378,7 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
 
                 _normalize_stack_variable_identifiers_8616(codegen)
             _bind_codegen_render_variable_types_8616(codegen)
-            render_authority = getattr(codegen, "_inertia_codegen_render_authority_8616", None)
+            render_authority = codegen_render_authority_8616(codegen)
             if render_authority is CodegenRenderAuthority8616.PROVEN_FULL_FUNCTION_OVERRIDE:
                 authoritative_text = _render_text_or_none("regen-render-text-authoritative-override")
                 if authoritative_text is not None:
@@ -2432,7 +2459,8 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
                 rendered_text = _render_text_or_none("regen-render-text-before-regenerate")
                 if rendered_text is not None:
                     return rendered_text, True
-            regenerate_text = getattr(codegen, "regenerate_text")
+            # Dynamic third-party angr/codegen boundary.
+            regenerate_text = typing.cast(typing.Any, codegen).regenerate_text
             regenerate_text()
             replay_changed = bool(
                 semantic_materialization_active and _replay_direct_stack_semantics_after_regen_8616(codegen)
@@ -2493,6 +2521,8 @@ def _regenerate_codegen_text_safely(codegen: object, *, context: str) -> tuple[s
                         if direct_text is not None:
                             return direct_text, True
                         regenerate_text()
+        except PipelineHardError:
+            raise
         except RecursionError:
             log.debug("regenerate_text hit RecursionError for %s; retrying render", context)
             cycle_path = _c_ast_cycle_path_8616(getattr(getattr(codegen, "cfunc", None), "statements", None))
@@ -2640,15 +2670,13 @@ def _should_refuse_legacy_cli_rewrite_8616(
     project: angr.Project,
     *,
     small_function: bool,
-    tail_validation_complete: bool,
     sidecar_free: bool,
 ) -> bool:
-    """Refuse late CLI rewrites after pure-binary x86-16 validation terminates."""
+    """Refuse semantic CLI repair for nontrivial pure-binary x86-16 C."""
 
     return bool(
         getattr(getattr(project, "arch", None), "name", None) == "86_16"
         and not small_function
-        and tail_validation_complete
         and sidecar_free
     )
 
@@ -3021,7 +3049,7 @@ def _stack_slot_write_effects_from_c_text_8616(c_text: str) -> Counter[str]:
     names = tuple(sorted(slot_by_name, key=len, reverse=True))
     for line in c_text.splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith("//") or stripped.startswith("*"):
+        if not stripped or stripped.startswith(("//", "*")):
             continue
         for name, write_re in zip(names, write_res, strict=True):
             if write_re.search(stripped):
@@ -3335,28 +3363,6 @@ def _rehydrate_missing_evidenced_calls_on_live_codegen_8616(
     return rendered_text
 
 
-def _missing_return_chain_values_from_text_8616(codegen: object, text: str) -> list[int]:
-    if not (
-        getattr(codegen, "_inertia_return_chain_flattened_8616", False)
-        or getattr(codegen, "_inertia_return_chain_suffix_materialized_8616", False)
-    ):
-        return []
-    values = [
-        int(value) for value in tuple(getattr(codegen, "_inertia_return_chain_materialized_values_8616", ()) or ())
-    ]
-    final_value = getattr(codegen, "_inertia_return_chain_final_value_8616", None)
-    if isinstance(final_value, int):
-        values.append(int(final_value))
-    if not values or not isinstance(text, str):
-        return []
-    emitted_text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("///"))
-    missing: list[int] = []
-    for value in dict.fromkeys(values):
-        if re.search(rf"\breturn\s+{re.escape(str(value))}\s*;", emitted_text) is None:
-            missing.append(int(value))
-    return missing
-
-
 def _global_declaration_name_has_standalone_use_8616(c_text: str, name: str) -> bool:
     """Return whether a recorded global name is used as an object, not a field."""
     if not isinstance(c_text, str) or re.fullmatch(r"[A-Za-z_]\w*", str(name)) is None:
@@ -3402,7 +3408,7 @@ def _materialize_codegen_global_externs_text_8616(c_text: str, codegen: object) 
 
     declarations: list[str] = []
     names: set[str] = set()
-    has_inline_struct_definition = bool(type_definitions)
+    has_inline_struct_definition = False
     for spec in specs:
         if not isinstance(spec, (list, tuple)) or len(spec) != 3:
             continue
@@ -3448,7 +3454,7 @@ def _materialize_codegen_global_externs_text_8616(c_text: str, codegen: object) 
     removed_existing = False
     for line in lines:
         stripped = line.strip()
-        if stripped.startswith("extern "):
+        if stripped.startswith("extern "):  # noqa: SIM102
             if any(re.search(rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])", stripped) for name in names):
                 removed_existing = True
                 continue
@@ -3472,7 +3478,7 @@ def _materialize_codegen_global_externs_text_8616(c_text: str, codegen: object) 
         ),
         None,
     )
-    if has_inline_struct_definition:
+    if pending_type_definitions or has_inline_struct_definition:
         prototype_re = re.compile(r"^\s*[A-Za-z_][\w\s*]*\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*;\s*$")
         prototype_idx = next((idx for idx, line in enumerate(kept_lines) if prototype_re.match(line)), None)
         insert_idx = prototype_idx if prototype_idx is not None else function_idx
@@ -3489,110 +3495,6 @@ def _materialize_codegen_global_externs_text_8616(c_text: str, codegen: object) 
     if not removed_existing and updated == lines:
         return c_text
     return "\n".join(updated) + ("\n" if c_text.endswith("\n") else "")
-
-
-def _preserve_return_chain_text_8616(
-    project: angr.Project,
-    function: object,
-    codegen: object,
-    formatted: str,
-) -> str:
-    missing = _missing_return_chain_values_from_text_8616(codegen, formatted)
-    if not missing:
-        return formatted
-    live_text = _snapshot_codegen_text(codegen)
-    if isinstance(live_text, str) and live_text.strip():
-        live_text = re.sub(r"::0x[0-9a-fA-F]+::(?P<name>[A-Za-z_]\w*)", lambda match: match.group("name"), live_text)
-        live_text = _materialize_missing_direct_call_prototypes_text(live_text)
-        live_text = _sync_restored_return_chain_signature_from_prototype_8616(function, codegen, live_text)
-    live_missing = _missing_return_chain_values_from_text_8616(codegen, live_text)
-    if not live_missing and isinstance(live_text, str) and live_text.strip():
-        logging.getLogger(__name__).warning(
-            "Restored live codegen text after CLI cleanup lost CFG return-chain values at function=%#x missing=%r",
-            function_original_addr(function),
-            missing,
-        )
-        if os.environ.get("INERTIA_DEBUG_RETURN_BRANCH"):
-            with contextlib.suppress(Exception):
-                debug_dir = Path("angr_platforms/.cache/return_chain_debug")
-                debug_dir.mkdir(parents=True, exist_ok=True)
-                debug_path = debug_dir / f"{function_original_addr(function):#x}.restored.c"
-                debug_path.write_text(live_text, encoding="utf-8")
-                logging.getLogger(__name__).warning("[return-chain-cli] restored payload artifact=%s", debug_path)
-        return live_text
-    raise PipelineHardError(
-        "final C lost CFG-proven return-chain values",
-        layer="codegen",
-        function_addr=function_original_addr(function),
-        details={
-            "missing_values": tuple(missing),
-            "live_missing_values": tuple(live_missing),
-            "function_name": getattr(function, "name", None),
-            "project_stage": getattr(project, "_inertia_decompiler_stage", None),
-        },
-    )
-
-
-def _prototype_return_type_name_8616(prototype: object) -> str | None:
-    # Dynamic angr/codegen compatibility boundary.
-    returnty = getattr(prototype, "returnty", None)
-    if isinstance(returnty, SimTypeBottom):
-        return None
-    if isinstance(returnty, SimTypeShort):
-        # Dynamic angr/codegen compatibility boundary.
-        return "short" if bool(returnty.signed) else "unsigned short"
-    return None
-
-
-def _sync_restored_return_chain_signature_from_prototype_8616(
-    function: object,
-    codegen: object,
-    c_text: str,
-) -> str:
-    if not isinstance(c_text, str) or not c_text.strip():
-        return c_text
-
-    # Dynamic angr/codegen compatibility boundary.
-    function_name = getattr(function, "name", None)
-    if not isinstance(function_name, str) or not function_name:
-        return c_text
-
-    # Dynamic angr/codegen compatibility boundary.
-    prototype = getattr(function, "prototype", None)
-    # Dynamic angr/codegen compatibility boundary.
-    cfunc = getattr(codegen, "cfunc", None)
-    # Dynamic angr/codegen compatibility boundary.
-    for candidate in (getattr(cfunc, "prototype", None), getattr(cfunc, "functy", None)):
-        if (
-            candidate is not None
-            # Dynamic angr/codegen compatibility boundary.
-            and getattr(candidate, "returnty", None) is not None
-            and _prototype_return_type_name_8616(candidate) is not None
-        ):
-            prototype = candidate
-            break
-    return_type = _prototype_return_type_name_8616(prototype)
-    if return_type is None:
-        return c_text
-
-    escaped = re.escape(function_name)
-    header_re = re.compile(
-        rf"(?m)^(?P<indent>\s*)void(?P<space>\s+){escaped}(?P<args>\s*\([^;{{}}]*\)\s*)$"
-    )
-    proto_re = re.compile(
-        rf"(?m)^(?P<indent>\s*)void(?P<space>\s+){escaped}(?P<args>\s*\([^;{{}}]*\)\s*;)\s*$"
-    )
-
-    def replace(match: re.Match[str]) -> str:
-        """Rewrite a restored function header/prototype to the recovered return type."""
-        return f"{match.group('indent')}{return_type}{match.group('space')}{function_name}{match.group('args')}"
-
-    updated = proto_re.sub(replace, c_text)
-    updated = header_re.sub(replace, updated)
-    if updated != c_text:
-        # Dynamic angr/codegen compatibility boundary.
-        typing.cast(typing.Any, codegen)._inertia_return_chain_signature_synced_8616 = True
-    return updated
 
 
 def _preserve_source_label_for_same_addr_function_8616(
@@ -3690,7 +3592,7 @@ def _decompile_function(
         ):
             typing.cast(typing.Any, project)._inertia_partial_codegen_text = None
             return "ok", fast_forced
-        with span("decompile.prep", addr=hex(current_func_addr), name=getattr(function, "name", None)):
+        with span("decompile.prep", addr=hex(current_func_addr), name=getattr(function, "name", None)):  # noqa: SIM117
             with DECOMPILATION_PREP_LOCK:
                 pre_block_count, pre_byte_count = _function_complexity(function)
                 typing.cast(typing.Any, project)._inertia_skip_normalize_for_tiny_core = bool(pre_block_count <= 1 and pre_byte_count <= 0x80)
@@ -3883,13 +3785,13 @@ def _decompile_function(
             if clinic_analysis is None:
                 return None
             try:
-                with _guard_angr_peephole_expr_bitwidth_assertion():
+                with _guard_angr_peephole_expr_bitwidth_assertion():  # noqa: SIM117
                     with _guard_angr_variable_recovery_binop_sub_size_mismatch(project):
                         with _analysis_timeout(_remaining_timeout(max(1, min(timeout, 2)))):
                             clinic_analysis(function)
             except _AnalysisTimeout:
                 return "clinic-failure=timeout"
-            except Exception as ex:  # noqa: BLE001
+            except Exception as ex:
                 detail = f"clinic-failure={type(ex).__name__}: {_describe_exception(ex)}"
                 if os.environ.get("INERTIA_DEBUG_DECOMPILER_ERRORS_TRACEBACK"):
                     try:
@@ -3976,7 +3878,7 @@ def _decompile_function(
                     region_span=max(0x180, _function_complexity(function)[1] + 0x80),
                 )
                 _preserve_source_label_for_same_addr_function_8616(function, isolated_function)
-            except Exception as ex:  # noqa: BLE001
+            except Exception as ex:
                 return (
                     "empty",
                     f"Optimized decompilation produced no code. Isolated retry setup failed: {_describe_exception(ex)}",
@@ -4014,7 +3916,7 @@ def _decompile_function(
 
         dec = None
         try:
-            with (
+            with (  # noqa: SIM117
                 active_structuring_function_8616(project, function),
                 _guard_angr_basepointeroffset_codegen_support(),
             ):
@@ -4027,8 +3929,11 @@ def _decompile_function(
                                         with _guard_angr_tail_validation_collection_timing():
                                             with _guard_angr_structuring_codegen_internal_timing():
                                                 with _guard_angr_structuring_seqnode_stage_probe(project):
-                                                    with _guard_angr_pre_codegen_seqnode_probe(project):
-                                                        with _analysis_timeout(_remaining_timeout()):
+                                                    with _guard_angr_pre_codegen_seqnode_probe(project):  # noqa: SIM117
+                                                        with (
+                                                            _analysis_timeout(_remaining_timeout()),
+                                                            active_status_flag_lift_context_8616(project, function),
+                                                        ):
                                                             with span(
                                                                 "decompile.angr_core",
                                                                 addr=hex(current_func_addr),
@@ -4189,6 +4094,8 @@ def _decompile_function(
             return "timeout", timeout_payload
         except Exception as ex:
             typing.cast(typing.Any, project)._inertia_partial_codegen_text = None
+            if os.environ.get("INERTIA_DEBUG_DECOMPILER_ERRORS_TRACEBACK"):
+                traceback.print_exc(file=sys.stderr)
             return "error", str(ex)
         finally:
             if helper_guard_active:
@@ -4633,9 +4540,12 @@ def _decompile_function(
             cfunc = getattr(dec.codegen, "cfunc", None)
             if cfunc is None:
                 return None
-            return snapshot_trusted_cfunc_8616(
-                cfunc,
-                preserve_objects=(dec.codegen, project, project.arch),
+            return typing.cast(
+                object,
+                snapshot_trusted_cfunc_8616(
+                    cfunc,
+                    preserve_objects=(dec.codegen, project, project.arch),
+                ),
             )
 
         def _restore_codegen_cfunc(snapshot: Any) -> bool:
@@ -4706,7 +4616,7 @@ def _decompile_function(
             return changed_local
 
         def _run_callsite_stack_fact_pass() -> bool:
-            if large_x86_16_function:
+            if large_x86_16_function:  # noqa: SIM102
                 if seqnode_switch_replacement_changed_for_codegen_8616(project, dec.codegen):
                     # The SeqNode switch mutator rebuilds case bodies after the
                     # normal callsite pass.  Running this pass here only consumes
@@ -5148,7 +5058,6 @@ def _decompile_function(
         if _should_refuse_legacy_cli_rewrite_8616(
             project,
             small_function=small_function,
-            tail_validation_complete=tail_validation_complete_for_rewrite_gate,
             sidecar_free=sidecar_free_for_rewrite_gate,
         ):
             if _validated_rewrite_refusal_needs_render_refresh_8616(_live_snapshot):
@@ -5572,6 +5481,7 @@ def _decompile_function(
                     active_project,
                     active_codegen,
                     persist_failures=False,
+                    include_virtual_carriers=True,
                 )
             ),
             restore_cfunc=_restore_codegen_cfunc,
@@ -6013,7 +5923,6 @@ def _decompile_function(
             formatted = _materialize_missing_generic_local_declarations_text(formatted)
             formatted = _hoist_c89_local_declarations_text(formatted)
             formatted = _dedupe_duplicate_local_declarations_text(formatted)
-            formatted = _preserve_return_chain_text_8616(project, function, dec.codegen, formatted)
             if not tail_validation_complete_for_rewrite_gate:
                 formatted = _prune_trailing_generic_return_text(formatted)
         formatted = _select_evidence_recovered_c_8616(
@@ -6092,10 +6001,9 @@ def _decompile_function(
                 typing.cast(typing.Any, project)._inertia_last_validated_function_payload_snapshot = None
             if os.environ.get("INERTIA_DEBUG_RETURN_BRANCH"):
                 logging.getLogger(__name__).warning(
-                    "[return-chain-cli] set validated payload function=%#x len=%d missing=%r",
+                    "[return-chain-cli] set validated payload function=%#x len=%d",
                     function_original_addr(function),
                     len(formatted),
-                    _missing_return_chain_values_from_text_8616(dec.codegen, formatted),
                 )
         else:
             stale_record = getattr(project, "_inertia_last_validated_function_payload", None)
@@ -6174,7 +6082,7 @@ def _function_complexity(function: Any) -> tuple[int, int]:
             return 0, 0
         block_profiles = _function_block_profile_cache_8616(function, project)
         total_bytes = 0
-        for _, block_profile in block_profiles.items():
+        for block_profile in block_profiles.values():
             total_bytes += block_profile[0]
         complexity = (len(block_addrs), total_bytes)
         if isinstance(function_info, MutableMapping):
@@ -6301,10 +6209,7 @@ def _original_callee_name_8616(project: angr.Project, slice_target: int) -> str 
             return False
         normalized = normalize_callee_name_8616(known_name)
         return (
-            not isinstance(normalized, str)
-            or not normalized
-            or normalized.startswith("sub_")
-            or normalized.startswith("loc_")
+            not isinstance(normalized, str) or not normalized or normalized.startswith(("sub_", "loc_"))
         )
 
     metadata = getattr(original_project, "_inertia_lst_metadata", None)
@@ -6577,7 +6482,7 @@ def _collect_direct_calls_8616(
 ) -> list[tuple[int | None, int, int | None]]:
     function_dynamic = cast(Any, function)
     direct_calls: list[tuple[int | None, int, int | None]] = []
-    for callsite in getattr(function, "get_call_sites", lambda: [])() or ():
+    for callsite in getattr(function, "get_call_sites", list)() or ():
         if isinstance(callsite, int) and not _callsite_addr_points_to_call_insn_8616(project, function, callsite):
             continue
         try:
@@ -6955,8 +6860,8 @@ def _prepare_function_for_decompilation(
             return
         try:
             graph = getattr(function, "graph", None)
-            nodes = list(getattr(graph, "nodes", lambda: [])()) if graph is not None else []
-            edges = list(getattr(graph, "edges", lambda: [])()) if graph is not None else []
+            nodes = list(getattr(graph, "nodes", list)()) if graph is not None else []
+            edges = list(getattr(graph, "edges", list)()) if graph is not None else []
             entry_nodes = [n for n in nodes if getattr(n, "addr", None) == function.addr]
             succ_addrs: list[int] = []
             if graph is not None and entry_nodes:
@@ -6977,7 +6882,7 @@ def _prepare_function_for_decompilation(
         if not os.environ.get("INERTIA_DEBUG_CALLSITE_RETURNING"):
             return
         try:
-            callsites = tuple(getattr(function, "get_call_sites", lambda: [])() or ())
+            callsites = tuple(getattr(function, "get_call_sites", list)() or ())
             print(
                 f"[dbg] callsite-returning fn={function.addr:#x} callsite_count={len(callsites)}",
                 file=sys.stderr,
@@ -7087,12 +6992,10 @@ def _function_decompilation_profile(
                                 stack_probe_call_count += 1
                                 continue
                             internal_call_count += 1
-                        elif mnemonic.startswith("j"):
-                            has_non_wrapper_traffic = True
-                        elif "[" in op_str and not any(marker in op_str for marker in ("[bp", "[sp", "[ss:")):
+                        elif mnemonic.startswith("j") or ("[" in op_str and not any(marker in op_str for marker in ("[bp", "[sp", "[ss:"))):
                             has_non_wrapper_traffic = True
             else:
-                for _, block_profile in _function_block_profile_cache_8616(function, project).items():
+                for block_profile in _function_block_profile_cache_8616(function, project).values():
                     _, _, stack_probe_calls, internal_calls, block_non_wrapper_traffic = block_profile
                     stack_probe_call_count += stack_probe_calls
                     internal_call_count += internal_calls
@@ -7247,7 +7150,7 @@ def _function_block_profile_cache_8616(
             profiles[block_addr] = (0, 0, 0, 0, False)
             continue
 
-        block_bytes = int(len(getattr(block, "bytes", b"") or b""))
+        block_bytes = len(getattr(block, "bytes", b"") or b"")
         block_call_sites = 0
         stack_probe_calls = 0
         internal_calls = 0
@@ -7261,9 +7164,7 @@ def _function_block_profile_cache_8616(
                     stack_probe_calls += 1
                     continue
                 internal_calls += 1
-            elif mnemonic.startswith("j"):
-                block_non_wrapper_traffic = True
-            elif "[" in op_str and not any(marker in op_str for marker in ("[bp", "[sp", "[ss:")):
+            elif mnemonic.startswith("j") or ("[" in op_str and not any(marker in op_str for marker in ("[bp", "[sp", "[ss:"))):
                 block_non_wrapper_traffic = True
         profiles[block_addr] = (
             block_bytes,

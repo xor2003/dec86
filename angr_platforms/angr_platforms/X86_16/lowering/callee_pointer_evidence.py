@@ -10,8 +10,9 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, Sequence, cast
+from typing import Any, Protocol, cast
 
 from angr.sim_type import SimType, SimTypeFunction
 from capstone.x86_const import (
@@ -67,6 +68,17 @@ class CalleePointerArgumentEvidence8616:
     pointer_stack_offsets: tuple[int, ...]
     pointer_argument_indices: tuple[int, ...]
     ambiguous_displaced_stack_offsets: tuple[int, ...]
+
+    @property
+    def closes_classification(self) -> bool:
+        """Return whether every normalized pointer slot was materialized."""
+        return bool(
+            self.failure_count == 0
+            and self.classified_fact_count > 0
+            and self.normalized_fact_count == self.classified_fact_count
+            and self.materialized_count == self.classified_fact_count
+            and len(self.pointer_argument_indices) == self.classified_fact_count
+        )
 
 
 class _ProjectEvidenceCarrier8616(Protocol):
@@ -215,14 +227,14 @@ def _contiguous_pointer_prefix_indices_8616(
     return tuple(range(len(pointer_offsets)))
 
 
-def apply_callee_pointer_argument_evidence_at_address_8616(
+def recover_callee_pointer_argument_evidence_at_address_8616(
     project: object,
-    function: object,
     address: int,
+    prototype: object | None = None,
     *,
     scan_size: int = 512,
-) -> bool:
-    """Promote parameter slots proven to feed near-pointer dereferences."""
+) -> CalleePointerArgumentEvidence8616:
+    """Classify near-pointer slots from binary evidence without mutating ABI state."""
     instructions = _bounded_instructions_8616(
         project,
         address,
@@ -231,15 +243,17 @@ def apply_callee_pointer_argument_evidence_at_address_8616(
     raw_count, pointer_offsets, ambiguous_offsets = _pointer_stack_offsets_8616(
         instructions
     )
-    typed_function = cast(_FunctionBoundary8616, function)
-    prototype = typed_function.prototype
     offset_to_index = (
         _prototype_stack_offsets_8616(prototype)
         if isinstance(prototype, SimTypeFunction)
         else None
     )
     prototype_pointer_indices = (
-        tuple(offset_to_index[offset] for offset in pointer_offsets if offset in offset_to_index)
+        tuple(
+            offset_to_index[offset]
+            for offset in pointer_offsets
+            if offset in offset_to_index
+        )
         if offset_to_index is not None
         else ()
     )
@@ -249,12 +263,7 @@ def apply_callee_pointer_argument_evidence_at_address_8616(
         else _contiguous_pointer_prefix_indices_8616(pointer_offsets)
     )
     classified_count = len(pointer_indices)
-    materialize_callee_pointer_prefix_prototype_8616(
-        project,
-        typed_function,
-        pointer_indices,
-    )
-    evidence = CalleePointerArgumentEvidence8616(
+    return CalleePointerArgumentEvidence8616(
         target_addr=address,
         raw_fact_count=raw_count,
         normalized_fact_count=len(pointer_offsets),
@@ -268,8 +277,30 @@ def apply_callee_pointer_argument_evidence_at_address_8616(
         pointer_argument_indices=pointer_indices,
         ambiguous_displaced_stack_offsets=ambiguous_offsets,
     )
+
+
+def apply_callee_pointer_argument_evidence_at_address_8616(
+    project: object,
+    function: object,
+    address: int,
+    *,
+    scan_size: int = 512,
+) -> bool:
+    """Promote parameter slots proven to feed near-pointer dereferences."""
+    typed_function = cast(_FunctionBoundary8616, function)
+    evidence = recover_callee_pointer_argument_evidence_at_address_8616(
+        project,
+        address,
+        typed_function.prototype,
+        scan_size=scan_size,
+    )
+    materialize_callee_pointer_prefix_prototype_8616(
+        project,
+        typed_function,
+        evidence.pointer_argument_indices,
+    )
     _project_evidence_registry_8616(project)[typed_function.addr] = evidence
-    return classified_count > 0 and evidence.failure_count == 0
+    return evidence.closes_classification
 
 
 def callee_pointer_argument_is_proven_8616(
@@ -307,12 +338,7 @@ def callee_pointer_argument_indices_at_address_8616(
 ) -> tuple[int, ...]:
     """Return exact binary-proven pointer argument indices for one address."""
     evidence = callee_pointer_argument_evidence_at_address_8616(project, function_addr)
-    if (
-        evidence is None
-        or evidence.failure_count != 0
-        or evidence.classified_fact_count == 0
-        or evidence.materialized_count != evidence.classified_fact_count
-    ):
+    if evidence is None or not evidence.closes_classification:
         return ()
     return evidence.pointer_argument_indices
 

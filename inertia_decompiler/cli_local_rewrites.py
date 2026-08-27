@@ -10,7 +10,7 @@ import contextlib
 import re
 import typing
 from collections.abc import Callable, Iterable
-from typing import Any, TypeAlias, TypeGuard
+from typing import Any, TypeGuard
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeBottom
@@ -20,9 +20,9 @@ _STACK_BP_PLACEHOLDER_RE = re.compile(
     r"<[^>\n]*\|Stack\s+(?P<base>bp)(?P<sign>[+-])0x(?P<offset>[0-9A-Fa-f]+),\s*(?P<size>\d+)\s*B>"
 )
 
-CNode: TypeAlias = object
-CVariableLike: TypeAlias = object
-StackIdentity: TypeAlias = object
+type CNode = object
+type CVariableLike = object
+type StackIdentity = object
 
 
 def _dynamic_codegen_attr(obj: object, name: str, default: Any = None) -> Any:  # noqa: ANN401
@@ -496,10 +496,8 @@ def _dedupe_codegen_variable_names_8616(
                 fallback = _dynamic_codegen_attr(variable, "name", None)
             if not isinstance(fallback, str) or not fallback:
                 fallback = f"var_{id(variable):x}"
-            try:
+            with contextlib.suppress(Exception):
                 typing.cast(typing.Any, variable).ident = fallback if ident is None else str(ident)
-            except Exception:
-                pass
 
         def sort_key(item: tuple[object, object]) -> tuple[object, ...]:
             variable, cvar = item

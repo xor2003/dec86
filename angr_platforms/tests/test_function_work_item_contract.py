@@ -1,10 +1,19 @@
+import weakref
 from types import SimpleNamespace
 
 import pytest
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 
 from inertia_decompiler import cli_core
-from inertia_decompiler.work_items import FunctionWorkItem
+from inertia_decompiler.work_items import (
+    FunctionWorkExecutionOrigin8616,
+    FunctionWorkItem,
+    FunctionWorkResult,
+)
+
+
+class _WeakOwner:
+    alive = True
 
 
 def test_function_work_item_reads_attached_compiler_target() -> None:
@@ -59,6 +68,47 @@ def test_function_work_item_preserves_original_and_active_addresses() -> None:
     assert item.active_addr == 0x1000
     assert item.original_addr == 0x11000
     assert item.recovery_addr == 0x10FF0
+
+
+def test_function_work_item_can_retain_weak_angr_owner() -> None:
+    project = _WeakOwner()
+    project.function_manager = _WeakOwner()
+    manager_ref = weakref.ref(project.function_manager)
+    function = SimpleNamespace(function_manager=weakref.proxy(project.function_manager))
+    item = FunctionWorkItem(
+        index=1,
+        function_cfg=object(),
+        function=function,
+        retained_project=project,
+    )
+
+    del project
+
+    assert manager_ref() is not None
+    assert item.function.function_manager.alive is True
+
+
+def test_clean_work_result_retries_only_with_distinct_sidecar_evidence() -> None:
+    result = FunctionWorkResult(
+        index=1,
+        status="error",
+        payload="failed",
+        debug_output="",
+        function=object(),
+        function_cfg=object(),
+        execution_origin=FunctionWorkExecutionOrigin8616.CLEAN_PROCESS,
+    )
+
+    assert not result.retry_may_change_evidence(sidecar_available=False)
+    assert result.retry_may_change_evidence(sidecar_available=True)
+    assert FunctionWorkResult(
+        index=1,
+        status="error",
+        payload="failed",
+        debug_output="",
+        function=object(),
+        function_cfg=object(),
+    ).retry_may_change_evidence(sidecar_available=False)
 
 
 def test_function_cache_lookup_forwards_complete_work_item_context(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,5 +1,6 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
+import contextlib
 import fcntl
 import hashlib
 import json
@@ -13,6 +14,7 @@ import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
+from typing import Never
 
 from .config import LlmConfig, RuntimeConfig
 from .llm import (
@@ -74,13 +76,13 @@ from .task_packet import (
 from .webui import append_chat_entry
 
 
-class HarnessError(RuntimeError):
+class HarnessError(RuntimeError):  # noqa: D101
     pass
 
 
-class ResourceBlockedError(HarnessError):
-    def __init__(self, context: str, message: str, *, exit_code: int = 75):
-        def _impl():
+class ResourceBlockedError(HarnessError):  # noqa: D101
+    def __init__(self, context: str, message: str, *, exit_code: int = 75) -> None:  # noqa: D107
+        def _impl() -> None:
             super().__init__(message)
             self.context = context
             self.exit_code = exit_code
@@ -88,9 +90,9 @@ class ResourceBlockedError(HarnessError):
         return _impl()
 
 
-class RoleRunError(HarnessError):
-    def __init__(self, role: str, log_file: Path, message: str, exit_code: int | None = None):
-        def _impl():
+class RoleRunError(HarnessError):  # noqa: D101
+    def __init__(self, role: str, log_file: Path, message: str, exit_code: int | None = None) -> None:  # noqa: D107
+        def _impl() -> None:
             super().__init__(message)
             self.role = role
             self.log_file = log_file
@@ -99,21 +101,21 @@ class RoleRunError(HarnessError):
         return _impl()
 
 
-class MetaHarness:
+class MetaHarness:  # noqa: D101
     step_order = ("full-sweep", "checker", "planner", "worker", "reviewer")
-    completed_step_statuses = {"done", "done-with-failures"}
-    graceful_exit_codes = {124, 130, 143}
+    completed_step_statuses = {"done", "done-with-failures"}  # noqa: RUF012
+    graceful_exit_codes = {124, 130, 143}  # noqa: RUF012
     _SWEEP_THREAD_EXHAUSTION_MARKER = "RuntimeError: can't start new thread"
 
     @property
-    def evidence_facts_file(self) -> Path:
-        def _impl():
+    def evidence_facts_file(self) -> Path:  # noqa: D102
+        def _impl():  # noqa: ANN202
             return self.cfg.state_dir / "evidence_facts.json"
 
         return _impl()
 
-    def __init__(self, cfg: RuntimeConfig, llm_cfg: LlmConfig):
-        def _impl():
+    def __init__(self, cfg: RuntimeConfig, llm_cfg: LlmConfig) -> None:  # noqa: D107
+        def _impl() -> None:
             self.cfg = cfg
             self.llm_cfg = llm_cfg
             self.current_cycle_dir: Path | None = None
@@ -143,14 +145,14 @@ class MetaHarness:
         return _impl()
 
     def _ensure_dirs(self) -> None:
-        def _impl():
+        def _impl() -> None:
             for path in (self.cfg.state_dir, self.cfg.log_dir, self.cfg.prompt_dir, self.cfg.runs_dir):
                 path.mkdir(parents=True, exist_ok=True)
             install_child_cleanup_handler(self.cfg.state_dir, self.cfg.root_dir)
 
         return _impl()
 
-    def record_event(
+    def record_event(  # noqa: D102
         self,
         event: str,
         status: str,
@@ -159,7 +161,7 @@ class MetaHarness:
         failure_class: str | None = None,
         **details: object,
     ) -> None:
-        def _impl():
+        def _impl() -> None:
             append_jsonl(
                 self.cfg.history_log_file,
                 build_history_event(
@@ -176,8 +178,8 @@ class MetaHarness:
 
         return _impl()
 
-    def update_preflight_state(self, **updates: object) -> None:
-        def _impl():
+    def update_preflight_state(self, **updates: object) -> None:  # noqa: D102
+        def _impl() -> None:
             payload = read_json(self.cfg.preflight_state_file)
             payload.setdefault("schema_version", PREFLIGHT_STATE_SCHEMA_VERSION)
             payload.update(updates)
@@ -186,7 +188,7 @@ class MetaHarness:
 
         return _impl()
 
-    def record_role_session(
+    def record_role_session(  # noqa: D102
         self,
         *,
         role: str,
@@ -198,7 +200,7 @@ class MetaHarness:
         duration_secs: int,
         outcome: str,
     ) -> None:
-        def _impl():
+        def _impl() -> None:
             text = log_file.read_text(encoding="utf-8", errors="replace") if log_file.exists() else ""
             usage = parse_usage_metrics(text)
             append_jsonl(
@@ -221,40 +223,39 @@ class MetaHarness:
 
         return _impl()
 
-    def timestamp(self) -> str:
-        def _impl():
+    def timestamp(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             return datetime.now().strftime("%Y%m%d_%H%M%S")
 
         return _impl()
 
-    def iso_now(self) -> str:
-        def _impl():
+    def iso_now(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             return datetime.now().astimezone().isoformat(timespec="seconds")
 
         return _impl()
 
-    def log(self, msg: str) -> None:
-        def _impl():
+    def log(self, msg: str) -> None:  # noqa: D102
+        def _impl() -> None:
             line = f"[{self.iso_now()}] {msg}"
             print(line, file=sys.stderr)
             try:
                 self.cfg.last_log_file.parent.mkdir(parents=True, exist_ok=True)
-                with self.log_lock:
-                    with self.cfg.last_log_file.open("a", encoding="utf-8") as fp:
-                        fp.write(line + "\n")
+                with self.log_lock, self.cfg.last_log_file.open("a", encoding="utf-8") as fp:
+                    fp.write(line + "\n")
             except OSError:
                 pass
 
         return _impl()
 
-    def die(self, msg: str) -> None:
-        def _impl():
+    def die(self, msg: str) -> None:  # noqa: D102
+        def _impl() -> Never:
             raise HarnessError(msg)
 
         return _impl()
 
-    def write_status(self, step: str, status: str, extra: str = "") -> None:
-        def _impl():
+    def write_status(self, step: str, status: str, extra: str = "") -> None:  # noqa: D102
+        def _impl() -> None:
             lines = [f"step={step}", f"status={status}"]
             if extra:
                 lines.append(f"extra={extra}")
@@ -264,8 +265,8 @@ class MetaHarness:
 
         return _impl()
 
-    def _start_status_heartbeat(self, step: str, status: str, extra: str = "", *, log_path: Path | None = None):
-        def _impl():
+    def _start_status_heartbeat(self, step: str, status: str, extra: str = "", *, log_path: Path | None = None):  # noqa: ANN202
+        def _impl() -> None:
             interval = float(self.cfg.status_heartbeat_secs)
             if interval <= 0:
                 return None
@@ -276,7 +277,7 @@ class MetaHarness:
             stop_event = threading.Event()
 
             def _run() -> None:
-                def _impl():
+                def _impl() -> None:
                     nonlocal last_wall, last_log_size
                     while not stop_event.wait(interval):
                         now_wall = time.time()
@@ -309,14 +310,14 @@ class MetaHarness:
 
                 return _impl()
 
-            thread = threading.Thread(target=_run, name=f"{step}-status-heartbeat", daemon=True)
+            threading.Thread(target=_run, name=f"{step}-status-heartbeat", daemon=True)
 
         return _impl()
-        thread.start()
-        return stop_event, thread
+        thread.start()  # noqa: F821
+        return stop_event, thread  # noqa: F821
 
-    def role_timeout_secs(self, role: str) -> int:
-        def _impl():
+    def role_timeout_secs(self, role: str) -> int:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if role == "worker":
                 return min(int(self.cfg.codex_timeout_secs), 120)
             if role == "planner":
@@ -329,16 +330,16 @@ class MetaHarness:
 
         return _impl()
 
-    def check_stop_file(self) -> None:
-        def _impl():
+    def check_stop_file(self) -> None:  # noqa: D102
+        def _impl() -> None:
             if self.cfg.stop_file.exists():
                 self.write_status("stopped", "stop-file-detected", str(self.cfg.stop_file))
                 raise SystemExit(10)
 
         return _impl()
 
-    def ensure_prereqs(self) -> None:
-        def _impl():
+    def ensure_prereqs(self) -> None:  # noqa: D102
+        def _impl() -> None:
             command_status: dict[str, bool] = {}
             for cmd in ("timeout", "df", "du"):
                 command_status[cmd] = shutil.which(cmd) is not None
@@ -432,8 +433,8 @@ class MetaHarness:
 
         return _impl()
 
-    def python_module_available(self, module: str) -> bool:
-        def _impl():
+    def python_module_available(self, module: str) -> bool:  # noqa: D102
+        def _impl():  # noqa: ANN202
             try:
                 result = subprocess.run(
                     [str(self.cfg.python_bin), "-c", f"import {module}"],
@@ -447,8 +448,8 @@ class MetaHarness:
 
         return _impl()
 
-    def py_spy_available(self) -> bool:
-        def _impl():
+    def py_spy_available(self) -> bool:  # noqa: D102
+        def _impl() -> bool:
             candidates = [
                 self.cfg.python_bin.parent / "py-spy",
                 shutil.which("py-spy"),
@@ -471,8 +472,8 @@ class MetaHarness:
 
         return _impl()
 
-    def ensure_profiler_tools(self) -> dict[str, object]:
-        def _impl():
+    def ensure_profiler_tools(self) -> dict[str, object]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             required_modules = {"line_profiler": "line_profiler", "memray": "memray"}
             status: dict[str, object] = {
                 "line_profiler": self.python_module_available(required_modules["line_profiler"]),
@@ -516,8 +517,8 @@ class MetaHarness:
 
         return _impl()
 
-    def acquire_lock(self) -> None:
-        def _impl():
+    def acquire_lock(self) -> None:  # noqa: D102
+        def _impl() -> None:
             self.cfg.lock_file.parent.mkdir(parents=True, exist_ok=True)
             fp = self.cfg.lock_file.open("w")
             try:
@@ -534,23 +535,23 @@ class MetaHarness:
 
         return _impl()
 
-    def trim_old_logs(self) -> None:
-        def _impl():
+    def trim_old_logs(self) -> None:  # noqa: D102
+        def _impl() -> None:
             logs = sorted(self.cfg.log_dir.glob("*.log"))
             for old in logs[: max(0, len(logs) - self.cfg.keep_log_count)]:
                 old.unlink(missing_ok=True)
 
         return _impl()
 
-    def free_disk_mb(self) -> int:
-        def _impl():
+    def free_disk_mb(self) -> int:  # noqa: D102
+        def _impl():  # noqa: ANN202
             result = subprocess.run(["df", "-Pm", str(self.cfg.root_dir)], capture_output=True, text=True, check=True)
             return int(result.stdout.splitlines()[1].split()[3])
 
         return _impl()
 
-    def free_ram_mb(self) -> int | None:
-        def _impl():
+    def free_ram_mb(self) -> int | None:  # noqa: D102
+        def _impl():  # noqa: ANN202
             try:
                 for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
                     if line.startswith("MemAvailable:"):
@@ -561,15 +562,15 @@ class MetaHarness:
 
         return _impl()
 
-    def state_dir_mb(self) -> int:
-        def _impl():
+    def state_dir_mb(self) -> int:  # noqa: D102
+        def _impl():  # noqa: ANN202
             result = subprocess.run(["du", "-sm", str(self.cfg.state_dir)], capture_output=True, text=True, check=False)
             return int(result.stdout.split()[0]) if result.returncode == 0 and result.stdout.strip() else 0
 
         return _impl()
 
-    def cleanup_large_artifacts(self) -> None:
-        def _impl():
+    def cleanup_large_artifacts(self) -> None:  # noqa: D102
+        def _impl() -> None:
             threshold = self.cfg.max_single_artifact_mb * 1024 * 1024
             for path in sorted(self.cfg.state_dir.rglob("*")):
                 if path.is_file() and path.stat().st_size > threshold:
@@ -578,8 +579,8 @@ class MetaHarness:
 
         return _impl()
 
-    def trim_old_cycles(self) -> None:
-        def _impl():
+    def trim_old_cycles(self) -> None:  # noqa: D102
+        def _impl() -> None:
             cycles = sorted(p for p in self.cfg.runs_dir.iterdir() if p.is_dir()) if self.cfg.runs_dir.exists() else []
             total_mb = self.state_dir_mb()
             while total_mb > self.cfg.max_state_dir_mb and len(cycles) > 1:
@@ -590,16 +591,16 @@ class MetaHarness:
 
         return _impl()
 
-    def cleanup_state_dir(self) -> None:
-        def _impl():
+    def cleanup_state_dir(self) -> None:  # noqa: D102
+        def _impl() -> None:
             self.trim_old_logs()
             self.cleanup_large_artifacts()
             self.trim_old_cycles()
 
         return _impl()
 
-    def wait_for_memory_headroom(self, context: str) -> None:
-        def _impl():
+    def wait_for_memory_headroom(self, context: str) -> None:  # noqa: D102
+        def _impl() -> None:
             while True:
                 self.check_stop_file()
                 avail = self.free_ram_mb()
@@ -613,8 +614,8 @@ class MetaHarness:
 
         return _impl()
 
-    def preflight_resource_check(self, context: str) -> None:
-        def _impl():
+    def preflight_resource_check(self, context: str) -> None:  # noqa: D102
+        def _impl() -> None:
             self.cleanup_state_dir()
             disk = self.free_disk_mb()
             ram = self.free_ram_mb()
@@ -683,8 +684,8 @@ class MetaHarness:
 
         return _impl()
 
-    def sha256_file(self, path: Path) -> str:
-        def _impl():
+    def sha256_file(self, path: Path) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if not path.exists():
                 return ""
             h = hashlib.sha256()
@@ -696,7 +697,7 @@ class MetaHarness:
         return _impl()
 
     def _compute_script_checksums(self) -> dict[str, str]:
-        def _impl():
+        def _impl():  # noqa: ANN202
             package_root = self.cfg.root_dir / "meta_harness"
             return {
                 "run.sh": self.sha256_file(self.cfg.run_sh_path),
@@ -705,8 +706,8 @@ class MetaHarness:
 
         return _impl()
 
-    def sha256_tree(self, root: Path) -> str:
-        def _impl():
+    def sha256_tree(self, root: Path) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if not root.exists():
                 return ""
             h = hashlib.sha256()
@@ -720,8 +721,8 @@ class MetaHarness:
 
         return _impl()
 
-    def latest_cycle_dir(self) -> Path | None:
-        def _impl():
+    def latest_cycle_dir(self) -> Path | None:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if not self.cfg.runs_dir.exists():
                 return None
             cycles = sorted(p for p in self.cfg.runs_dir.iterdir() if p.is_dir())
@@ -729,15 +730,15 @@ class MetaHarness:
 
         return _impl()
 
-    def cycle_state_file(self, cycle_dir: Path | None = None) -> Path | None:
-        def _impl():
+    def cycle_state_file(self, cycle_dir: Path | None = None) -> Path | None:  # noqa: D102
+        def _impl():  # noqa: ANN202
             base = cycle_dir or self.current_cycle_dir
             return None if base is None else base / "cycle.state.json"
 
         return _impl()
 
     def _empty_cycle_state(self, cycle_index: int) -> dict[str, object]:
-        def _impl():
+        def _impl():  # noqa: ANN202
             return {
                 "schema_version": CYCLE_STATE_SCHEMA_VERSION,
                 "cycle": cycle_index,
@@ -767,7 +768,7 @@ class MetaHarness:
         return _impl()
 
     def _normalize_next_cycle_start_step(self, value: object) -> str | None:
-        def _impl():
+        def _impl():  # noqa: ANN202
             if isinstance(value, str) and value in self.step_order:
                 return value
             return None
@@ -775,7 +776,7 @@ class MetaHarness:
         return _impl()
 
     def _reviewer_completed_in_state(self, state: dict[str, object]) -> bool:
-        def _impl():
+        def _impl():  # noqa: ANN202
             steps = state.get("steps")
             if not isinstance(steps, dict):
                 return False
@@ -785,7 +786,7 @@ class MetaHarness:
         return _impl()
 
     def _hydrate_runtime_hints_from_state(self, state: dict[str, object]) -> None:
-        def _impl():
+        def _impl() -> None:
             raw_streak = state.get("worker_stall_streak", 0)
             try:
                 self.worker_stall_streak = max(0, int(raw_streak))
@@ -822,7 +823,7 @@ class MetaHarness:
         return _impl()
 
     def _state_has_next_cycle_handoff(self, state: dict[str, object]) -> bool:
-        def _impl():
+        def _impl():  # noqa: ANN202
             return (
                 self._reviewer_completed_in_state(state)
                 and self._normalize_next_cycle_start_step(state.get("next_cycle_start_step")) is not None
@@ -831,7 +832,7 @@ class MetaHarness:
         return _impl()
 
     def _save_cycle_state(self) -> None:
-        def _impl():
+        def _impl() -> None:
             if self.current_cycle_dir is None or self.cycle_state is None:
                 return
             self.cycle_state["schema_version"] = CYCLE_STATE_SCHEMA_VERSION
@@ -857,7 +858,7 @@ class MetaHarness:
         return _impl()
 
     def _load_cycle_state(self, cycle_dir: Path) -> dict[str, object] | None:
-        def _impl():
+        def _impl():  # noqa: ANN202
             state_file = cycle_dir / "cycle.state.json"
             if not state_file.exists():
                 return None
@@ -869,7 +870,7 @@ class MetaHarness:
         return _impl()
 
     def _resume_step_from_state(self, state: dict[str, object]) -> str | None:
-        def _impl():
+        def _impl():  # noqa: ANN202
             if self._state_has_next_cycle_handoff(state):
                 return None
             steps = state.get("steps")
@@ -883,8 +884,8 @@ class MetaHarness:
 
         return _impl()
 
-    def current_cycle_step(self) -> str | None:
-        def _impl():
+    def current_cycle_step(self) -> str | None:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if self.cycle_state is None:
                 return None
             steps = self.cycle_state.get("steps")
@@ -903,8 +904,8 @@ class MetaHarness:
 
         return _impl()
 
-    def cycle_step_status(self, step: str) -> str:
-        def _impl():
+    def cycle_step_status(self, step: str) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if self.cycle_state is None:
                 return ""
             steps = self.cycle_state.get("steps")
@@ -917,8 +918,8 @@ class MetaHarness:
 
         return _impl()
 
-    def peek_resume_step(self) -> str | None:
-        def _impl():
+    def peek_resume_step(self) -> str | None:  # noqa: D102
+        def _impl():  # noqa: ANN202
             latest = self.latest_cycle_dir()
             if latest is None:
                 return None
@@ -929,8 +930,8 @@ class MetaHarness:
 
         return _impl()
 
-    def resume_latest_cycle(self) -> str | None:
-        def _impl():
+    def resume_latest_cycle(self) -> str | None:  # noqa: D102
+        def _impl():  # noqa: ANN202
             latest = self.latest_cycle_dir()
             if latest is None:
                 return None
@@ -954,8 +955,8 @@ class MetaHarness:
 
         return _impl()
 
-    def prime_next_cycle_handoff_from_latest_cycle(self) -> None:
-        def _impl():
+    def prime_next_cycle_handoff_from_latest_cycle(self) -> None:  # noqa: D102
+        def _impl() -> None:
             latest = self.latest_cycle_dir()
             if latest is None:
                 return
@@ -967,8 +968,8 @@ class MetaHarness:
 
         return _impl()
 
-    def evidence_failure_count(self) -> int | None:
-        def _impl():
+    def evidence_failure_count(self) -> int | None:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if not self.cfg.evidence_log_file.exists():
                 return None
             text = self.cfg.evidence_log_file.read_text(encoding="utf-8", errors="replace")
@@ -980,8 +981,8 @@ class MetaHarness:
 
         return _impl()
 
-    def refresh_evidence_facts(self) -> dict[str, object]:
-        def _impl():
+    def refresh_evidence_facts(self) -> dict[str, object]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             text = (
                 self.cfg.evidence_log_file.read_text(encoding="utf-8", errors="replace")
                 if self.cfg.evidence_log_file.exists()
@@ -996,8 +997,8 @@ class MetaHarness:
 
         return _impl()
 
-    def prepare_cycle_workspace(self) -> None:
-        def _impl():
+    def prepare_cycle_workspace(self) -> None:  # noqa: D102
+        def _impl() -> None:
             self.cleanup_state_dir()
             self.current_cycle_index += 1
             self.current_cycle_dir = self.cfg.runs_dir / f"{self.timestamp()}_cycle{self.current_cycle_index:03d}"
@@ -1041,8 +1042,8 @@ class MetaHarness:
 
         return _impl()
 
-    def capture_git_state(self, tag: str) -> None:
-        def _impl():
+    def capture_git_state(self, tag: str) -> None:  # noqa: D102
+        def _impl() -> None:
             if self.current_cycle_dir is None:
                 return
             status = subprocess.run(
@@ -1056,8 +1057,8 @@ class MetaHarness:
 
         return _impl()
 
-    def git_status_porcelain(self) -> str:
-        def _impl():
+    def git_status_porcelain(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             result = subprocess.run(
                 ["git", "-C", str(self.cfg.root_dir), "status", "--porcelain"],
                 capture_output=True,
@@ -1068,8 +1069,8 @@ class MetaHarness:
 
         return _impl()
 
-    def changed_tracked_paths(self) -> list[str]:
-        def _impl():
+    def changed_tracked_paths(self) -> list[str]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             paths: list[str] = []
             for raw_line in self.git_status_porcelain().splitlines():
                 if not raw_line or raw_line.startswith("?? "):
@@ -1083,14 +1084,14 @@ class MetaHarness:
 
         return _impl()
 
-    def git_is_clean(self) -> bool:
-        def _impl():
+    def git_is_clean(self) -> bool:  # noqa: D102
+        def _impl() -> bool:
             return not self.git_status_porcelain().strip()
 
         return _impl()
 
-    def current_branch_name(self) -> str:
-        def _impl():
+    def current_branch_name(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             result = subprocess.run(
                 ["git", "-C", str(self.cfg.root_dir), "rev-parse", "--abbrev-ref", "HEAD"],
                 capture_output=True,
@@ -1101,8 +1102,8 @@ class MetaHarness:
 
         return _impl()
 
-    def branch_freshness(self) -> dict[str, object]:
-        def _impl():
+    def branch_freshness(self) -> dict[str, object]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             branch = self.current_branch_name()
             result = subprocess.run(
                 ["git", "-C", str(self.cfg.root_dir), "rev-parse", "--verify", "main"],
@@ -1133,31 +1134,31 @@ class MetaHarness:
 
         return _impl()
 
-    def capture_cycle_artifact(self, src: Path, dst_name: str | None = None) -> None:
-        def _impl():
+    def capture_cycle_artifact(self, src: Path, dst_name: str | None = None) -> None:  # noqa: D102
+        def _impl() -> None:
             if self.current_cycle_dir is None or not src.exists():
                 return
             shutil.copy2(src, self.current_cycle_dir / (dst_name or src.name))
 
         return _impl()
 
-    def role_session_file(self, role: str) -> Path:
-        def _impl():
+    def role_session_file(self, role: str) -> Path:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if self.current_cycle_dir is not None:
                 return self.current_cycle_dir / f"{role}.session"
             return self.cfg.state_dir / f"{role}.session"
 
         return _impl()
 
-    def clear_role_session(self, role: str) -> None:
-        def _impl():
+    def clear_role_session(self, role: str) -> None:  # noqa: D102
+        def _impl() -> None:
             self.role_session_file(role).unlink(missing_ok=True)
             (self.cfg.state_dir / f"{role}.session").unlink(missing_ok=True)
 
         return _impl()
 
-    def consume_operator_comments(self, role: str) -> str:
-        def _impl():
+    def consume_operator_comments(self, role: str) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             path = self.cfg.operator_comments_file
             if not path.exists():
                 return ""
@@ -1186,8 +1187,8 @@ class MetaHarness:
 
         return _impl()
 
-    def capture_cycle_snapshot(self, tag: str) -> None:
-        def _impl():
+    def capture_cycle_snapshot(self, tag: str) -> None:  # noqa: D102
+        def _impl() -> None:
             self.capture_cycle_artifact(self.cfg.status_file, f"status.{tag}.txt")
             self.capture_cycle_artifact(self.cfg.last_log_file, f"last.{tag}.log")
             self.capture_cycle_artifact(self.cfg.evidence_log_file, f"evidence_sweep.{tag}.log")
@@ -1201,16 +1202,16 @@ class MetaHarness:
 
         return _impl()
 
-    def recent_worker_iteration_logs(self, limit: int = 6) -> list[Path]:
-        def _impl():
+    def recent_worker_iteration_logs(self, limit: int = 6) -> list[Path]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if self.current_cycle_dir is None:
                 return []
             return sorted(self.current_cycle_dir.glob("worker.iter*.log"))[-limit:]
 
         return _impl()
 
-    def build_worker_stall_context(self) -> str:
-        def _impl():
+    def build_worker_stall_context(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if self.cycle_step_status("worker") != "stalled":
                 return ""
             logs = self.recent_worker_iteration_logs()
@@ -1232,8 +1233,8 @@ class MetaHarness:
 
         return _impl()
 
-    def recent_worker_escalation_reason(self) -> str:
-        def _impl():
+    def recent_worker_escalation_reason(self) -> str:  # noqa: D102
+        def _impl() -> str:
             if self.worker_stall_streak >= self.cfg.worker_stall_escalation_threshold:
                 return f"stall-streak={self.worker_stall_streak}"
             logs = self.recent_worker_iteration_logs(limit=4)
@@ -1256,8 +1257,8 @@ class MetaHarness:
 
         return _impl()
 
-    def repeated_failed_test_name(self) -> str:
-        def _impl():
+    def repeated_failed_test_name(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             logs = self.recent_worker_iteration_logs(limit=4)
             if not logs:
                 return ""
@@ -1271,8 +1272,8 @@ class MetaHarness:
 
         return _impl()
 
-    def worker_retry_out_of_packet_scope_reason(self) -> str:
-        def _impl():
+    def worker_retry_out_of_packet_scope_reason(self) -> str:  # noqa: D102
+        def _impl() -> str:
             packet = self.current_task_packet_obj()
             if packet is None:
                 return ""
@@ -1290,8 +1291,8 @@ class MetaHarness:
 
         return _impl()
 
-    def current_worker_model(self) -> str:
-        def _impl():
+    def current_worker_model(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             self.refresh_runtime_overrides_from_state()
             if self.manual_worker_model_override:
                 self.update_policy_decision(
@@ -1318,8 +1319,8 @@ class MetaHarness:
 
         return _impl()
 
-    def current_worker_failure_limit(self) -> int:
-        def _impl():
+    def current_worker_failure_limit(self) -> int:  # noqa: D102
+        def _impl():  # noqa: ANN202
             self.refresh_runtime_overrides_from_state()
             if self.manual_worker_failure_limit_override > 0:
                 return self.manual_worker_failure_limit_override
@@ -1343,8 +1344,8 @@ class MetaHarness:
 
         return _impl()
 
-    def current_plan_item_requires_replan(self) -> bool:
-        def _impl():
+    def current_plan_item_requires_replan(self) -> bool:  # noqa: D102
+        def _impl():  # noqa: ANN202
             item = self.current_plan_item_text()
             if not item:
                 return False
@@ -1356,8 +1357,8 @@ class MetaHarness:
 
         return _impl()
 
-    def note_cycle_outcome(self, reviewer_remaining: str) -> None:
-        def _impl():
+    def note_cycle_outcome(self, reviewer_remaining: str) -> None:  # noqa: D102
+        def _impl() -> None:
             decision = decide_cycle_followup(
                 CycleOutcomeContext(
                     reviewer_remaining=reviewer_remaining,
@@ -1445,8 +1446,8 @@ class MetaHarness:
 
         return _impl()
 
-    def mark_cycle_step(self, step: str, status: str, extra: str = "") -> None:
-        def _impl():
+    def mark_cycle_step(self, step: str, status: str, extra: str = "") -> None:  # noqa: D102
+        def _impl() -> None:
             if self.cycle_state is None:
                 return
             steps = self.cycle_state.setdefault("steps", {})
@@ -1462,8 +1463,8 @@ class MetaHarness:
 
         return _impl()
 
-    def maybe_self_restart(self, reason: str) -> bool:
-        def _impl():
+    def maybe_self_restart(self, reason: str) -> bool:  # noqa: D102
+        def _impl() -> bool | None:
             current = self._compute_script_checksums()
             if current == self.script_checksums:
                 return False
@@ -1498,8 +1499,8 @@ class MetaHarness:
 
         return _impl()
 
-    def perform_maintenance(self, reason: str) -> None:
-        def _impl():
+    def perform_maintenance(self, reason: str) -> None:  # noqa: D102
+        def _impl() -> None:
             sessions = load_jsonl(self.cfg.session_ledger_file, limit=max(50, self.cfg.maintenance_compaction_limit))
             history = load_jsonl(self.cfg.history_log_file, limit=max(50, self.cfg.maintenance_compaction_limit))
             summary = summarize_session_rows(sessions)
@@ -1544,8 +1545,8 @@ class MetaHarness:
 
         return _impl()
 
-    def maybe_run_scheduled_maintenance(self, cycles_run: int) -> bool:
-        def _impl():
+    def maybe_run_scheduled_maintenance(self, cycles_run: int) -> bool:  # noqa: D102
+        def _impl() -> bool:
             if not self.cfg.background_maintenance_enabled:
                 return False
             interval = max(0, self.cfg.scheduled_maintenance_interval_cycles)
@@ -1563,8 +1564,8 @@ class MetaHarness:
 
         return _impl()
 
-    def refresh_runtime_overrides_from_state(self) -> None:
-        def _impl():
+    def refresh_runtime_overrides_from_state(self) -> None:  # noqa: D102
+        def _impl() -> None:
             state_file = self.cycle_state_file()
             if state_file is None or not state_file.exists():
                 return
@@ -1577,10 +1578,8 @@ class MetaHarness:
             raw_manual_limit = payload.get(
                 "manual_worker_failure_limit_override", self.manual_worker_failure_limit_override
             )
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 self.manual_worker_failure_limit_override = max(0, int(raw_manual_limit))
-            except (TypeError, ValueError):
-                pass
             packet = payload.get("last_completed_task_packet", self.last_completed_task_packet)
             if isinstance(packet, dict):
                 self.last_completed_task_packet = packet
@@ -1590,8 +1589,8 @@ class MetaHarness:
 
         return _impl()
 
-    def auto_commit_current_cycle(self) -> tuple[bool, str]:
-        def _impl():
+    def auto_commit_current_cycle(self) -> tuple[bool, str]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if not self.cfg.auto_commit_enabled:
                 return False, "auto-commit disabled"
             if self.current_cycle_dir is None or self.cycle_state is None:
@@ -1632,8 +1631,8 @@ class MetaHarness:
 
         return _impl()
 
-    def auto_commit_current_packet(self) -> tuple[bool, str]:
-        def _impl():
+    def auto_commit_current_packet(self) -> tuple[bool, str]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if not self.cfg.auto_commit_enabled:
                 return False, "auto-commit disabled"
             if self.current_cycle_dir is None or self.cycle_state is None:
@@ -1695,8 +1694,8 @@ class MetaHarness:
 
         return _impl()
 
-    def pause_requested_by_operator(self) -> dict[str, object]:
-        def _impl():
+    def pause_requested_by_operator(self) -> dict[str, object]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             self.cfg.stop_file.write_text("paused by web ui\n", encoding="utf-8")
             self.write_status("operator", "pause-requested", f"stop_file={self.cfg.stop_file}")
             self.record_event(
@@ -1706,8 +1705,8 @@ class MetaHarness:
 
         return _impl()
 
-    def resume_requested_by_operator(self) -> dict[str, object]:
-        def _impl():
+    def resume_requested_by_operator(self) -> dict[str, object]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             self.cfg.stop_file.unlink(missing_ok=True)
             self.write_status("operator", "resume-requested", "stop-file-cleared")
             self.record_event(
@@ -1717,8 +1716,8 @@ class MetaHarness:
 
         return _impl()
 
-    def request_planner_rewrite(self) -> dict[str, object]:
-        def _impl():
+    def request_planner_rewrite(self) -> dict[str, object]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             self.sync_current_plan_item()
             self.plan_rewrite_target = self.current_plan_item_text()
             self.next_cycle_start_step = "planner"
@@ -1747,8 +1746,8 @@ class MetaHarness:
 
         return _impl()
 
-    def request_stronger_worker(self) -> dict[str, object]:
-        def _impl():
+    def request_stronger_worker(self) -> dict[str, object]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             self.manual_worker_model_override = self.cfg.worker_stall_model
             self.manual_worker_failure_limit_override = self.cfg.worker_stall_failure_limit
             self.update_policy_decision(
@@ -1770,8 +1769,8 @@ class MetaHarness:
 
         return _impl()
 
-    def run_background_maintenance(self) -> dict[str, object]:
-        def _impl():
+    def run_background_maintenance(self) -> dict[str, object]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             self.record_event(
                 "operator.action_requested",
                 "warning",
@@ -1784,8 +1783,8 @@ class MetaHarness:
 
         return _impl()
 
-    def finalize_run(self, reason: str, exit_code: int | None = None) -> None:
-        def _impl():
+    def finalize_run(self, reason: str, exit_code: int | None = None) -> None:  # noqa: D102
+        def _impl() -> None:
             if self.cycle_state is None:
                 return
             status_text = (
@@ -1826,8 +1825,8 @@ class MetaHarness:
 
         return _impl()
 
-    def prepare_evidence_subset(self) -> None:
-        def _impl():
+    def prepare_evidence_subset(self) -> None:  # noqa: D102
+        def _impl() -> None:
             if self.cfg.evidence_subset_dir.exists():
                 shutil.rmtree(self.cfg.evidence_subset_dir, ignore_errors=True)
             self.cfg.evidence_subset_dir.mkdir(parents=True, exist_ok=True)
@@ -1843,8 +1842,8 @@ class MetaHarness:
 
         return _impl()
 
-    def extract_remaining_steps(self, log_file: Path) -> str:
-        def _impl():
+    def extract_remaining_steps(self, log_file: Path) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             text = log_file.read_text(encoding="utf-8", errors="replace") if log_file.exists() else ""
             for pat in (r"Global Remaining steps:\s*(\d+)", r"Remaining steps:\s*(\d+)"):
                 match = re.search(pat, text)
@@ -1854,8 +1853,8 @@ class MetaHarness:
 
         return _impl()
 
-    def plan_remaining_steps(self) -> int | None:
-        def _impl():
+    def plan_remaining_steps(self) -> int | None:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if not self.cfg.plan_path.exists():
                 return None
             text = self.cfg.plan_path.read_text(encoding="utf-8", errors="replace")
@@ -1863,16 +1862,16 @@ class MetaHarness:
 
         return _impl()
 
-    def plan_task_packets(self) -> list[TaskPacket]:
-        def _impl():
+    def plan_task_packets(self) -> list[TaskPacket]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if not self.cfg.plan_path.exists():
                 return []
             return parse_plan_task_packets(self.cfg.plan_path.read_text(encoding="utf-8", errors="replace"))
 
         return _impl()
 
-    def plan_items(self) -> list[str]:
-        def _impl():
+    def plan_items(self) -> list[str]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if not self.cfg.plan_path.exists():
                 return []
             return split_plan_items(self.cfg.plan_path.read_text(encoding="utf-8", errors="replace"))
@@ -1881,26 +1880,26 @@ class MetaHarness:
 
     @staticmethod
     def _plan_item_is_finished(item: str) -> bool:
-        def _impl():
+        def _impl():  # noqa: ANN202
             return plan_item_is_finished(item)
 
         return _impl()
 
-    def unfinished_plan_items(self) -> list[str]:
-        def _impl():
+    def unfinished_plan_items(self) -> list[str]:  # noqa: D102
+        def _impl():  # noqa: ANN202
             return [item for item in self.plan_items() if not self._plan_item_is_finished(item)]
 
         return _impl()
 
-    def first_plan_item_text(self) -> str:
-        def _impl():
+    def first_plan_item_text(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             items = self.unfinished_plan_items() or self.plan_items()
             return items[0] if items else ""
 
         return _impl()
 
-    def current_plan_item_text(self) -> str:
-        def _impl():
+    def current_plan_item_text(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             items = self.unfinished_plan_items() or self.plan_items()
             if not items:
                 return ""
@@ -1910,8 +1909,8 @@ class MetaHarness:
 
         return _impl()
 
-    def current_task_packet_obj(self) -> TaskPacket | None:
-        def _impl():
+    def current_task_packet_obj(self) -> TaskPacket | None:  # noqa: D102
+        def _impl():  # noqa: ANN202
             packets = self.plan_task_packets()
             if not packets:
                 return None
@@ -1923,22 +1922,22 @@ class MetaHarness:
 
         return _impl()
 
-    def current_task_packet_block(self) -> str:
-        def _impl():
+    def current_task_packet_block(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             packet = self.current_task_packet_obj()
             return packet.to_prompt_block() if packet is not None else ""
 
         return _impl()
 
     def _sync_current_task_packet(self) -> None:
-        def _impl():
+        def _impl() -> None:
             packet = self.current_task_packet_obj()
             self.current_task_packet = packet.to_dict() if packet is not None else {}
 
         return _impl()
 
-    def plan_item_needs_split(self, item: str) -> bool:
-        def _impl():
+    def plan_item_needs_split(self, item: str) -> bool:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if not item.strip():
                 return False
             lines = [line for line in item.splitlines() if line.strip()]
@@ -1947,8 +1946,8 @@ class MetaHarness:
 
         return _impl()
 
-    def sync_current_plan_item(self, *, reset_stall_count: bool = False) -> str:
-        def _impl():
+    def sync_current_plan_item(self, *, reset_stall_count: bool = False) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             next_item = self.current_plan_item_text()
             if next_item != self.current_plan_item:
                 self.current_plan_item = next_item
@@ -1964,8 +1963,8 @@ class MetaHarness:
 
         return _impl()
 
-    def build_worker_retry_context(self, limit: int = 3) -> str:
-        def _impl():
+    def build_worker_retry_context(self, limit: int = 3) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             logs = self.recent_worker_iteration_logs(limit=limit)
             if not logs:
                 return ""
@@ -1994,7 +1993,7 @@ class MetaHarness:
         return _impl()
 
     def _normalize_worker_progress_text(self, text: str) -> str:
-        def _impl():
+        def _impl():  # noqa: ANN202
             normalized_lines: list[str] = []
             skip_next_numeric_line = False
             for raw_line in text.splitlines():
@@ -2020,8 +2019,8 @@ class MetaHarness:
 
         return _impl()
 
-    def worker_iteration_is_repeated_no_progress(self, log_file: Path, *, threshold: int = 3) -> bool:
-        def _impl():
+    def worker_iteration_is_repeated_no_progress(self, log_file: Path, *, threshold: int = 3) -> bool:  # noqa: D102
+        def _impl():  # noqa: ANN202
             if self.current_cycle_dir is None or threshold <= 1 or not log_file.exists():
                 return False
             current_text = self._normalize_worker_progress_text(log_file.read_text(encoding="utf-8", errors="replace"))
@@ -2040,8 +2039,8 @@ class MetaHarness:
 
         return _impl()
 
-    def build_worker_focus_context(self) -> str:
-        def _impl():
+    def build_worker_focus_context(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             parts: list[str] = []
             current_packet = self.current_task_packet_block()
             if current_packet:
@@ -2053,8 +2052,8 @@ class MetaHarness:
 
         return _impl()
 
-    def update_policy_decision(self, decision_name: str, reason: str, **details: object) -> None:
-        def _impl():
+    def update_policy_decision(self, decision_name: str, reason: str, **details: object) -> None:  # noqa: D102
+        def _impl() -> None:
             self.last_policy_decision = {
                 "decision": decision_name,
                 "reason": reason,
@@ -2065,39 +2064,39 @@ class MetaHarness:
 
         return _impl()
 
-    def extract_green_level(self, log_file: Path) -> str:
-        def _impl():
+    def extract_green_level(self, log_file: Path) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             text = log_file.read_text(encoding="utf-8", errors="replace") if log_file.exists() else ""
             match = re.search(r"Green level:\s*([A-Za-z0-9_-]+)", text)
             return match.group(1).strip().lower() if match else ""
 
         return _impl()
 
-    def extract_task_packet_status(self, log_file: Path) -> str:
-        def _impl():
+    def extract_task_packet_status(self, log_file: Path) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             text = log_file.read_text(encoding="utf-8", errors="replace") if log_file.exists() else ""
             match = re.search(r"Task packet status:\s*(done|partial|blocked|rewrite)", text, re.IGNORECASE)
             return match.group(1).strip().lower() if match else ""
 
         return _impl()
 
-    def save_role_markers(self, role: str, log_file: Path, remaining: str | None = None) -> None:
-        def _impl():
+    def save_role_markers(self, role: str, log_file: Path, remaining: str | None = None) -> None:  # noqa: D102
+        def _impl() -> None:
             if remaining is not None:
                 (self.cfg.state_dir / f"{role}.remaining").write_text(remaining + "\n", encoding="utf-8")
             (self.cfg.state_dir / f"{role}.lastlog").write_text(str(log_file) + "\n", encoding="utf-8")
 
         return _impl()
 
-    def last_role_log_file(self, role: str) -> str:
-        def _impl():
+    def last_role_log_file(self, role: str) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             path = self.cfg.state_dir / f"{role}.lastlog"
             return path.read_text(encoding="utf-8").strip() if path.exists() else ""
 
         return _impl()
 
     def _reset_oversized_worker_resume_session(self, role: str, resume: bool) -> bool:
-        def _impl():
+        def _impl() -> bool:
             if role != "worker" or not resume:
                 return False
             session_file = self.role_session_file(role)
@@ -2130,7 +2129,7 @@ class MetaHarness:
         return _impl()
 
     def _run_llm_attempt(self, role: str, model: str, prompt: str, resume: bool = False) -> Path:
-        def _impl():
+        def _impl() -> None:
             provider = self.llm_cfg.provider_for_key(role)
             prompt_file = self.cfg.prompt_dir / f"{role}.prompt.txt"
             log_file = self.cfg.log_dir / f"{self.timestamp()}_{role}.log"
@@ -2141,7 +2140,7 @@ class MetaHarness:
             mode = "new"
 
             def _raise_role_error(message: str, exit_code: int | None = None) -> None:
-                def _impl():
+                def _impl() -> Never:
                     if log_file.exists():
                         shutil.copy2(log_file, self.cfg.last_log_file)
                         self.save_role_markers(role, log_file)
@@ -2293,10 +2292,10 @@ class MetaHarness:
 
         return _impl()
         self.trim_old_logs()
-        return log_file
+        return log_file  # noqa: F821
 
-    def run_role(self, role: str, model: str, prompt: str, resume: bool = False, *, resume_context: str = "") -> Path:
-        def _impl():
+    def run_role(self, role: str, model: str, prompt: str, resume: bool = False, *, resume_context: str = "") -> Path:  # noqa: D102
+        def _impl():  # noqa: ANN202
             comments = self.consume_operator_comments(role)
             provider = self.llm_cfg.provider_for_key(role)
             if backend_supports_sessions(provider):
@@ -2330,11 +2329,11 @@ class MetaHarness:
         consecutive_failures: int,
         failure_limit: int,
     ) -> int:
-        def _impl():
+        def _impl():  # noqa: ANN202
             suffix = "resume-timeout" if resumed else "timeout"
             self.capture_cycle_artifact(exc.log_file, f"worker.iter{iteration:02d}.{suffix}.log")
             self.clear_role_session("worker")
-            consecutive_failures += 1
+            consecutive_failures += 1  # noqa: F823
             self.log(
                 f"Worker iteration {iteration} timed out"
                 f"{' during resume' if resumed else ''}; retrying next iteration with fresh context"
@@ -2379,8 +2378,8 @@ class MetaHarness:
 
         return _impl()
 
-    def sweep_step(self) -> None:
-        def _impl():
+    def sweep_step(self) -> None:  # noqa: D102
+        def _impl() -> None:
             self.check_stop_file()
             self.preflight_resource_check("full-sweep")
             self.mark_cycle_step(
@@ -2518,8 +2517,8 @@ class MetaHarness:
 
         return _impl()
 
-    def _run_logged_sweep_command(self, cmd: list[str], env: dict[str, str], out, mirror) -> int:
-        def _impl():
+    def _run_logged_sweep_command(self, cmd: list[str], env: dict[str, str], out, mirror) -> int:  # noqa: ANN001
+        def _impl():  # noqa: ANN202
             proc = subprocess.Popen(
                 cmd,
                 cwd=self.cfg.root_dir,
@@ -2546,8 +2545,8 @@ class MetaHarness:
 
         return _impl()
 
-    def checker_step(self) -> None:
-        def _impl():
+    def checker_step(self) -> None:  # noqa: D102
+        def _impl() -> None:
             self.check_stop_file()
             self.preflight_resource_check("checker")
             self.mark_cycle_step("checker", "running")
@@ -2571,8 +2570,8 @@ class MetaHarness:
 
         return _impl()
 
-    def planner_step(self) -> None:
-        def _impl():
+    def planner_step(self) -> None:  # noqa: D102
+        def _impl() -> None:
             self.check_stop_file()
             self.preflight_resource_check("planner")
             self.mark_cycle_step("planner", "running")
@@ -2619,8 +2618,8 @@ class MetaHarness:
 
         return _impl()
 
-    def worker_cycle(self) -> None:
-        def _impl():
+    def worker_cycle(self) -> None:  # noqa: D102
+        def _impl() -> None:
             self.mark_cycle_step("worker", "running")
             consecutive_failures = 0
             for i in range(1, self.cfg.max_worker_iters + 1):
@@ -2815,8 +2814,8 @@ class MetaHarness:
 
         return _impl()
 
-    def reviewer_step(self) -> str:
-        def _impl():
+    def reviewer_step(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             self.check_stop_file()
             self.preflight_resource_check("reviewer")
             self.mark_cycle_step("reviewer", "running")
@@ -2881,8 +2880,8 @@ class MetaHarness:
 
         return _impl()
 
-    def run_crash_review(self, exit_code: int) -> None:
-        def _impl():
+    def run_crash_review(self, exit_code: int) -> None:  # noqa: D102
+        def _impl() -> None:
             if self.crash_review_active:
                 return
             self.crash_review_active = True
@@ -2902,8 +2901,8 @@ class MetaHarness:
 
         return _impl()
 
-    def run(self, resume: bool = False) -> int:
-        def _impl():
+    def run(self, resume: bool = False) -> int:  # noqa: D102
+        def _impl() -> int | None:
             self.ensure_prereqs()
             self.acquire_lock()
             cleanup_stale_child_processes(self.cfg.state_dir, self.cfg.root_dir)

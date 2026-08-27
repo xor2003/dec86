@@ -28,6 +28,7 @@ def test_sortd_sidecar_free_inventory_matches_reviewed_migration_baseline() -> N
     assert payload["exact"] is False
     assert tuple(report["function_addr"] for report in payload["functions"]) == EXPECTED_SORTD_FUNCTION_ADDRS
     stats = payload["stats"]
+    # Byte-safe indexed words add five raw byte facts that normalization coalesces.
     assert stats == {
         "alias_failure_count": 1,
         "alias_materialized_count": 35,
@@ -38,7 +39,7 @@ def test_sortd_sidecar_free_inventory_matches_reviewed_migration_baseline() -> N
         "alias_copy_failure_count": 6,
         "alias_copy_materialized_count": 2,
         "classified_fact_count": 36,
-        "coalesced_fact_count": 6,
+        "coalesced_fact_count": 11,
         "copy_failure_count": 5,
         "copy_materialized_count": 3,
         "copy_raw_fact_count": 8,
@@ -58,7 +59,7 @@ def test_sortd_sidecar_free_inventory_matches_reviewed_migration_baseline() -> N
         "normalized_fact_count": 36,
         "normalized_key_count": 74,
         "pointer_relative_count": 4,
-        "raw_fact_count": 42,
+        "raw_fact_count": 47,
         "raw_key_count": 74,
     }
     assert tuple(

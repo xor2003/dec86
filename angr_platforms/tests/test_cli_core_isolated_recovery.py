@@ -100,3 +100,35 @@ def test_sidecar_slice_tail_validation_summary_uses_slice_snapshot(monkeypatch):
         "snapshot": snapshot,
         "binary_path": Path("SORTDEMO.EXE"),
     }
+
+
+def test_parallel_clean_worker_timeout_model_covers_cold_start() -> None:
+    default_model = cli_core.build_parallel_clean_worker_timeout_model(
+        60,
+        explicit_timeout=False,
+    )
+    explicit_model = cli_core.build_parallel_clean_worker_timeout_model(
+        60,
+        explicit_timeout=True,
+    )
+
+    assert default_model.timeout_for_byte_count(200) == 240
+    assert explicit_model.timeout_for_byte_count(200) == 60
+
+
+def test_retry_timeout_uses_observed_default_attempt_cost() -> None:
+    assert cli_core.retry_timeout_after_failed_attempt(
+        60,
+        elapsed_seconds=307.33,
+        timed_out=True,
+        explicit_timeout=False,
+    ) == 338
+
+
+def test_retry_timeout_keeps_explicit_user_limit() -> None:
+    assert cli_core.retry_timeout_after_failed_attempt(
+        60,
+        elapsed_seconds=307.33,
+        timed_out=True,
+        explicit_timeout=True,
+    ) == 60

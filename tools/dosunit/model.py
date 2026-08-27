@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import hashlib
 import json
@@ -50,7 +50,7 @@ REFUSAL_REASONS = {
 }
 
 
-def parse_int(value: object, *, field: str = "value") -> int:
+def parse_int(value: object, *, field: str = "value") -> int:  # noqa: D103
     if isinstance(value, bool):
         raise DosUnitError(f"{field} must be an integer or hex string")
     if isinstance(value, int):
@@ -68,7 +68,7 @@ def parse_int(value: object, *, field: str = "value") -> int:
     raise DosUnitError(f"{field} must be an integer or hex string")
 
 
-def normalize_hex(value: object, *, width: int | None = None, field: str = "value") -> str:
+def normalize_hex(value: object, *, width: int | None = None, field: str = "value") -> str:  # noqa: D103
     number = parse_int(value, field=field)
     if width is None:
         return f"0x{number:x}"
@@ -78,46 +78,46 @@ def normalize_hex(value: object, *, width: int | None = None, field: str = "valu
     return f"0x{number:0{width}x}"
 
 
-def normalize_auto_hex(value: object, *, width: int | None = None, field: str = "value") -> str:
+def normalize_auto_hex(value: object, *, width: int | None = None, field: str = "value") -> str:  # noqa: D103
     if isinstance(value, str) and value.strip().lower() == "auto":
         return "auto"
     return normalize_hex(value, width=width, field=field)
 
 
-def canonical_json_bytes(value: object) -> bytes:
+def canonical_json_bytes(value: object) -> bytes:  # noqa: D103
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
 
 
-def stable_id(prefix: str, value: object) -> str:
+def stable_id(prefix: str, value: object) -> str:  # noqa: D103
     digest = hashlib.sha256(canonical_json_bytes(value)).hexdigest()
     return f"{prefix}:{digest}"
 
 
-def load_json(path: Path) -> Any:
+def load_json(path: Path) -> Any:  # noqa: ANN401, D103
     try:
         return json.loads(path.read_text())
     except json.JSONDecodeError as ex:
         raise DosUnitError(f"failed to parse JSON {path}: {ex}") from ex
 
 
-def write_json(path: Path, value: object) -> None:
+def write_json(path: Path, value: object) -> None:  # noqa: D103
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n")
 
 
-def require_mapping(value: object, *, field: str) -> dict[str, Any]:
+def require_mapping(value: object, *, field: str) -> dict[str, Any]:  # noqa: D103
     if not isinstance(value, dict):
         raise DosUnitError(f"{field} must be an object")
     return value
 
 
-def require_list(value: object, *, field: str) -> list[Any]:
+def require_list(value: object, *, field: str) -> list[Any]:  # noqa: D103
     if not isinstance(value, list):
         raise DosUnitError(f"{field} must be an array")
     return value
 
 
-def vectors_from_document(document: object) -> list[dict[str, Any]]:
+def vectors_from_document(document: object) -> list[dict[str, Any]]:  # noqa: D103
     root = require_mapping(document, field="vectors document")
     if root.get("schema") == "dosunit.vector.v1":
         return [root]
@@ -125,7 +125,7 @@ def vectors_from_document(document: object) -> list[dict[str, Any]]:
     return [require_mapping(item, field=f"vectors[{idx}]") for idx, item in enumerate(vectors)]
 
 
-def normalize_vector(vector: dict[str, Any]) -> dict[str, Any]:
+def normalize_vector(vector: dict[str, Any]) -> dict[str, Any]:  # noqa: D103
     normalized = json.loads(json.dumps(vector))
     normalized["schema"] = "dosunit.vector.v1"
 
@@ -185,7 +185,7 @@ def normalize_vector(vector: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def compare_observations(
+def compare_observations(  # noqa: D103
     expected: dict[str, Any], candidate: dict[str, Any], *, ignore_fields: set[str] | None = None
 ) -> tuple[bool, list[str]]:
     changed: list[str] = []
@@ -198,7 +198,7 @@ def compare_observations(
     return not changed, changed
 
 
-def refusal(reason: str, detail: dict[str, Any] | None = None) -> dict[str, Any]:
+def refusal(reason: str, detail: dict[str, Any] | None = None) -> dict[str, Any]:  # noqa: D103
     if reason not in REFUSAL_REASONS:
         raise DosUnitError(f"unsupported refusal reason: {reason}")
     return {"status": "refused", "reason": reason, "detail": detail or {}}

@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 import pytest
 from pytest import MonkeyPatch
@@ -380,10 +381,8 @@ def test_worker_termination_kills_detached_descendants(tmp_path: Path) -> None:
         assert not _process_is_active(child_pid)
     finally:
         for pid in (child_pid, parent.pid):
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
 
 
 def _process_is_active(pid: int) -> bool:
@@ -546,8 +545,8 @@ def test_partitioned_controller_runs_short_lived_heavy_waves_exactly_once(
         return (
             tuple(sorted(nodes_by_path.values())),
             {"heavy": ("heavy-a.py", "heavy-b.py"), "light": ("light.py",)},
-            {nodeid: 1.0 for nodeid in nodes_by_path.values()},
-            {path: 1.0 for path in nodes_by_path},
+            dict.fromkeys(nodes_by_path.values(), 1.0),
+            dict.fromkeys(nodes_by_path, 1.0),
             frozenset({"heavy-b.py"}),
             frozenset(),
             {},

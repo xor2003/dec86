@@ -134,7 +134,7 @@ def test_life_pause_screen_does_not_use_verbatim_source_sidecar() -> None:
     )
     function = cfg.kb.functions.floor_func(0x107E3)
 
-    status, payload = decompile._decompile_function(
+    _status, payload = decompile._decompile_function(
         project,
         cfg,
         function,
@@ -163,7 +163,7 @@ def test_life_timer_does_not_use_verbatim_source_sidecar() -> None:
     )
     function = cfg.kb.functions.floor_func(0x10467)
 
-    status, payload = decompile._decompile_function(
+    _status, payload = decompile._decompile_function(
         project,
         cfg,
         function,
@@ -192,7 +192,7 @@ def test_life_rand_dist_does_not_use_verbatim_source_sidecar() -> None:
     )
     function = cfg.kb.functions.floor_func(0x103AB)
 
-    status, payload = decompile._decompile_function(
+    _status, payload = decompile._decompile_function(
         project,
         cfg,
         function,

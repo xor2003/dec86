@@ -40,6 +40,7 @@ class WideCarryBorrowStorageFailure8616(StrEnum):
 
     ALIAS_REFUSED = "alias_refused"
     FUNCTION_IDENTITY_MISMATCH = "function_identity_mismatch"
+    STORAGE_CONTAINMENT_MISMATCH = "storage_containment_mismatch"
     STORAGE_JOIN_FAILED = "storage_join_failed"
     VALUE_PROVENANCE_MISMATCH = "value_provenance_mismatch"
 
@@ -52,7 +53,7 @@ class WideCarryBorrowStorage8616:
     destination: CarryBorrowDestinationAliasFact8616
     address: IRAddress
     storage: AliasStorageFacts
-    source_versions: tuple[int, int]
+    source_versions: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,10 +138,19 @@ def _materialize(
         fact.low_store.storage,
         fact.high_store.storage,
     )
-    low_version = low.version
-    high_version = high.version
-    if storage is None or not isinstance(low_version, int) or not isinstance(high_version, int):
+    source_versions = fact.low_store.versions + fact.high_store.versions
+    if storage is None or len(source_versions) != low.size + high.size:
         return _refusal(alias, WideCarryBorrowStorageFailure8616.STORAGE_JOIN_FAILED)
+    owners = (fact.low_store, fact.high_store)
+    if any(
+        not storage.contains(owner.storage)
+        or any(not owner.storage.contains(item.storage) for item in owner.slices)
+        for owner in owners
+    ):
+        return _refusal(
+            alias,
+            WideCarryBorrowStorageFailure8616.STORAGE_CONTAINMENT_MISMATCH,
+        )
     address = IRAddress(
         space=low.space,
         base=low.base,
@@ -158,7 +168,7 @@ def _materialize(
             destination=fact,
             address=address,
             storage=storage,
-            source_versions=(low_version, high_version),
+            source_versions=source_versions,
         ),
     )
 

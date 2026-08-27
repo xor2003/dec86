@@ -205,7 +205,7 @@ class TestStructureFieldMerger:
 
         # Should have one struct for obj_ptr and one for data_ptr
         assert len(structs) >= 1
-        assert any("obj_ptr" in name for name in structs.keys())
+        assert any("obj_ptr" in name for name in structs)
 
     def test_detect_union_in_merge(self):
         """Test detecting union types during merge."""
@@ -219,7 +219,7 @@ class TestStructureFieldMerger:
         structs = merger.merge_structs(patterns)
 
         # Should mark struct as union due to overlapping field
-        struct = list(structs.values())[0]
+        struct = next(iter(structs.values()))
         assert struct.is_union
 
     def test_confidence_from_multi_function_access(self):
@@ -234,7 +234,7 @@ class TestStructureFieldMerger:
 
         structs = merger.merge_structs(patterns)
 
-        struct = list(structs.values())[0]
+        struct = next(iter(structs.values()))
         # More functions accessing = higher confidence
         assert struct.confidence > 0.5
 
@@ -305,7 +305,7 @@ class TestPhase23Integration:
         structs = merger.merge_structs(collector.patterns)
 
         assert len(structs) > 0
-        struct = list(structs.values())[0]
+        struct = next(iter(structs.values()))
         assert "x" in [f.name for f in struct.fields.values()]
         assert "y" in [f.name for f in struct.fields.values()]
 

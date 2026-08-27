@@ -29,8 +29,8 @@ from .decompiler_postprocess_utils import (
 
 __all__ = [
     "_global_load_addr_8616",
-    "_segmented_load_addr_8616",
     "_match_global_scaled_high_byte_8616",
+    "_segmented_load_addr_8616",
 ]
 
 

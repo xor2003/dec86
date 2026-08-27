@@ -21,7 +21,6 @@ from angr_platforms.X86_16.instruction import CHK_MODRM, MAX_OPCODE, SIB, InstrD
 class _DummyEmu:
     """Minimal emulator placeholder for constructor benchmarks."""
 
-    pass
 
 
 class _TableHost:

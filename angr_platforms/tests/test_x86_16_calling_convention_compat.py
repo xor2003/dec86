@@ -54,15 +54,15 @@ def test_seed_calling_conventions_caches_progress_per_cfg_function(monkeypatch) 
     terminal_calls: list[int] = []
     terminal_register_calls: list[int] = []
 
-    def _track_stack_byte(project: object, function: SimpleNamespace) -> bool:  # noqa: ARG001
+    def _track_stack_byte(project: object, function: SimpleNamespace) -> bool:
         stack_byte_calls.append(_analysis_function_addr_8616(function))
         return False
 
-    def _track_wide_stack(project: object, function: SimpleNamespace) -> bool:  # noqa: ARG001
+    def _track_wide_stack(project: object, function: SimpleNamespace) -> bool:
         wide_stack_calls.append(_analysis_function_addr_8616(function))
         return False
 
-    def _track_terminal(project: object, function: SimpleNamespace) -> object:  # noqa: ARG001
+    def _track_terminal(project: object, function: SimpleNamespace) -> object:
         terminal_calls.append(_analysis_function_addr_8616(function))
         return SimpleNamespace(
             evidence=SimpleNamespace(
@@ -75,7 +75,7 @@ def test_seed_calling_conventions_caches_progress_per_cfg_function(monkeypatch) 
             changed=False,
         )
 
-    def _track_terminal_register(project: object, function: SimpleNamespace) -> object:  # noqa: ARG001
+    def _track_terminal_register(project: object, function: SimpleNamespace) -> object:
         terminal_register_calls.append(_analysis_function_addr_8616(function))
         return SimpleNamespace(
             stats=SimpleNamespace(

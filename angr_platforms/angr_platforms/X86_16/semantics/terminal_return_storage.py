@@ -32,6 +32,7 @@ class TerminalReturnStorage8616(StrEnum):
     """Exact register carrier shared by every reachable terminal path."""
 
     NONE = "none"
+    CALL_OUTPUT = "call_output"
     AL = "al"
     AH = "ah"
     AX = "ax"
@@ -42,10 +43,13 @@ def _path_storage_8616(
     state: TerminalReturnStorageState8616,
 ) -> TerminalReturnStorage8616 | None:
     """Classify one terminal path without discarding split-pair provenance."""
+    if state.call_output_only:
+        return TerminalReturnStorage8616.CALL_OUTPUT
+    explicit_lanes = state.explicit_ax_lanes
     if state.dx_ax_pair_proven:
         return (
             TerminalReturnStorage8616.DX_AX
-            if state.ax_lanes is TerminalAxReturnLane8616.WORD
+            if explicit_lanes is TerminalAxReturnLane8616.WORD
             else None
         )
     return {
@@ -53,7 +57,7 @@ def _path_storage_8616(
         TerminalAxReturnLane8616.LOW: TerminalReturnStorage8616.AL,
         TerminalAxReturnLane8616.HIGH: TerminalReturnStorage8616.AH,
         TerminalAxReturnLane8616.WORD: TerminalReturnStorage8616.AX,
-    }.get(state.ax_lanes)
+    }.get(explicit_lanes)
 
 
 def consistent_terminal_return_storage_8616(

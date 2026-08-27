@@ -135,6 +135,36 @@ def test_sidecar_free_ratchet_rejects_required_function_acceptance_regression() 
     assert f"required decompiled function regressions: {required_addr:#x}" in result.violations
 
 
+def test_sidecar_free_ratchet_uses_successful_retry_as_terminal_acceptance() -> None:
+    required_addr = REQUIRED_DECOMPILED_SORTD_FUNCTION_ADDRS[-1]
+    transcript = _passing_transcript().replace(
+        f"/* == function {required_addr:#x} sub_{required_addr:x} == */\n"
+        "/* failure family: status=ok",
+        f"/* == function {required_addr:#x} sub_{required_addr:x} == */\n"
+        "/* failure family: status=validation_failed",
+        1,
+    )
+    transcript = transcript.replace(
+        f"/* summary: decompiled {DEFAULT_MINIMUM_DECOMPILED}/20 selected functions */",
+        f"/* info: function {required_addr:#x} sub_{required_addr:x} "
+        "attempt=decompiled validation=passed */\n"
+        f"/* summary: decompiled {DEFAULT_MINIMUM_DECOMPILED}/20 selected functions */",
+    )
+
+    result = evaluate_sortd_transcript(
+        transcript,
+        decompiler_returncode=2,
+        minimum_decompiled=DEFAULT_MINIMUM_DECOMPILED,
+        maximum_empty=0,
+        maximum_timeouts=0,
+        maximum_tracebacks=0,
+    )
+
+    assert result.passed
+    assert result.validation_failed_count == 0
+    assert required_addr in result.decompiled_function_addrs
+
+
 def test_sidecar_free_ratchet_rejects_runmenu_without_proven_escape_exit() -> None:
     transcript = _passing_transcript().replace("case 27: return;", "case 27: break;")
 
@@ -203,6 +233,47 @@ def test_sidecar_free_ratchet_rejects_unmaterialized_positive_bp_arguments() -> 
 
     assert not result.passed
     assert "DrawTime lacks its canonical void positive-BP signature" in result.violations
+
+
+def test_sidecar_free_ratchet_rejects_drawtime_semantic_artifacts() -> None:
+    cases = (
+        (
+            "sub_10e70(arg * 60, 75);",
+            "sub_10e70(arg, 75);",
+            "DrawTime lacks its binary-proven frequency and duration arguments",
+        ),
+        (
+            "void sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return; }",
+            "void sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); /* unsupported instruction */ return; }",
+            "generated output retains unsupported or unknown instructions",
+        ),
+        (
+            "void sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return; }",
+            "void sub_10498(unsigned short arg) { unsigned short flags; sub_10e70(arg * 60, 75); return; }",
+            "generated output retains raw flag-state artifacts",
+        ),
+        (
+            "void sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return; }",
+            "void sub_10498(unsigned short arg) { if (arg * 60) { } else { } sub_10e70(arg * 60, 75); return; }",
+            "DrawTime retains an empty flag-only branch",
+        ),
+        (
+            "void sub_10498(unsigned short arg) { sub_10e70(arg * 60, 75); return; }",
+            "void sub_10498(unsigned short arg) { arg = inertia_ss << 4; sub_10e70(arg * 60, 75); return; }",
+            "DrawTime retains raw SS linear-address arithmetic",
+        ),
+    )
+    for old, new, expected in cases:
+        result = evaluate_sortd_transcript(
+            _passing_transcript().replace(old, new, 1),
+            decompiler_returncode=2,
+            minimum_decompiled=DEFAULT_MINIMUM_DECOMPILED,
+            maximum_empty=0,
+            maximum_timeouts=0,
+            maximum_tracebacks=0,
+        )
+
+        assert expected in result.violations
 
 
 def test_sidecar_free_ratchet_rejects_beep_scalar_return() -> None:

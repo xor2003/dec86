@@ -28,6 +28,10 @@ class _Codegen:
         """Return one deterministic structured-C node index."""
         self._next_idx += 1
         return self._next_idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _loop_fixture() -> tuple[_Codegen, CForLoop, CStatements, ConditionIR]:

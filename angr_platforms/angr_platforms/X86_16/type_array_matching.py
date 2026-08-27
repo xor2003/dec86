@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import typing
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional, Set, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -48,7 +48,7 @@ _MappingKey = TypeVar("_MappingKey")
 _MappingValue = TypeVar("_MappingValue")
 
 
-def _limit_sorted_mapping_8616(
+def _limit_sorted_mapping_8616[MappingKey, MappingValue](
     mapping: dict[_MappingKey, _MappingValue], limit: int
 ) -> dict[_MappingKey, _MappingValue]:
     if limit <= 0 or len(mapping) <= limit:
@@ -164,7 +164,7 @@ class InductionVariable:
     var_name: str
     stride: int  # Bytes per iteration
     base_value: int  # Initial value
-    loop_bound: Optional[int]  # Upper bound if known
+    loop_bound: int | None  # Upper bound if known
     element_width: int  # Bit width of element (8, 16, 32)
 
     def __repr__(self) -> str:
@@ -207,7 +207,7 @@ class ArrayRecoveryInfo:
     element_type: str
     element_width: int
     element_stride: int
-    access_patterns: Set[str]  # Collected access patterns
+    access_patterns: set[str]  # Collected access patterns
     confidence: float  # 0.0-1.0 based on pattern consistency
 
     def __repr__(self) -> str:
@@ -307,7 +307,7 @@ class ArrayExpressionMatcher:
 
     def _extract_array_pattern(
         self, expr: str, induction_vars: dict[str, InductionVariable]
-    ) -> Optional[ArrayAccessPattern]:
+    ) -> ArrayAccessPattern | None:
         """Extract array pattern from expression if possible."""
         # Placeholder: would parse expression into base, index, stride, offset
         # For now, return generic pattern
@@ -633,10 +633,9 @@ def _rewrite_induction_loops_8616(codegen: object) -> bool:
             simplified = _unwrap_double_negation_8616(node.condition)
             if simplified is not None:
                 index_key = _condition_index_key_8616(simplified)
-                if index_key is not None:
-                    if _has_induction_evidence_for_key_8616(codegen, index_key):
-                        node.condition = simplified
-                        changed = True
+                if index_key is not None and _has_induction_evidence_for_key_8616(codegen, index_key):
+                    node.condition = simplified
+                    changed = True
             return node
         if not isinstance(node, CWhileLoop):
             return node
@@ -682,7 +681,7 @@ def _rewrite_induction_loops_8616(codegen: object) -> bool:
         changed = True
         return node
 
-    cfunc = cast(Any, getattr(codegen, "cfunc"))
+    cfunc = cast(Any, codegen.cfunc)
     root = cfunc.statements
     new_root = transform(root)
     if new_root is not root:

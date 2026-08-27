@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
@@ -38,7 +38,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 
 
-class SwitchLoopTailBreakDecision8616(str, Enum):
+class SwitchLoopTailBreakDecision8616(StrEnum):
     """Typed outcome for one adjacent switch-and-label candidate."""
 
     MATERIALIZED = "materialized"

@@ -17,8 +17,8 @@ from .analysis_helpers import canonicalize_x86_16_padding_call_target_8616
 __all__ = (
     "normalize_x86_16_call_target_addr_8616",
     "normalize_x86_16_direct_call_target_8616",
-    "resolve_x86_16_canonical_call_target_function_8616",
     "resolve_x86_16_call_target_function_8616",
+    "resolve_x86_16_canonical_call_target_function_8616",
     "x86_16_call_targets_equivalent_8616",
 )
 

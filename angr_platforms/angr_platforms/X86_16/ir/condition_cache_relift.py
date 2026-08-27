@@ -20,7 +20,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol, cast
 
 import pyvex
@@ -81,7 +81,7 @@ class ConditionReliftBlock8616:
     size: int
 
 
-class ConditionCacheReliftFailureReason8616(str, Enum):
+class ConditionCacheReliftFailureReason8616(StrEnum):
     """Typed reasons why an exact condition-cache relift did not close."""
 
     INVALID_BLOCK_RANGE = "invalid_block_range"
@@ -179,9 +179,9 @@ def relift_cached_project_blocks_8616(project: object, block_addrs: tuple[int, .
         except TypeError:
             try:
                 block_lifter(block_addr)
-            except Exception:  # noqa: BLE001 - third-party fixture boundary
+            except Exception:
                 continue
-        except Exception:  # noqa: BLE001 - third-party fixture boundary
+        except Exception:
             continue
 
 
@@ -265,7 +265,7 @@ def relift_function_condition_cache_8616(
                     continue
                 try:
                     data = bytes(cast(Any, memory.load(block.address, block.size)))
-                except Exception as error:  # noqa: BLE001 - third-party loader boundary
+                except Exception as error:
                     failures.append(
                         ConditionCacheReliftFailure8616(
                             block_addr=block.address,
@@ -285,7 +285,7 @@ def relift_function_condition_cache_8616(
                     continue
                 try:
                     _direct_lift_8616(data, block.address, arch)
-                except Exception as error:  # noqa: BLE001 - third-party VEX boundary
+                except Exception as error:
                     failures.append(
                         ConditionCacheReliftFailure8616(
                             block_addr=block.address,
@@ -312,7 +312,7 @@ def relift_function_condition_cache_8616(
             }
             failed_block_addresses = {failure.block_addr for failure in failures}
             for address in sorted(expected_condition_blocks - materialized_blocks - failed_block_addresses):
-                failures.append(
+                failures.append(  # noqa: PERF401
                     ConditionCacheReliftFailure8616(
                         block_addr=address,
                         reason=ConditionCacheReliftFailureReason8616.EXPECTED_CONDITION_MISSING,

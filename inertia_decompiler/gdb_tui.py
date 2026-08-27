@@ -27,14 +27,15 @@ Key bindings (adapted):
 
 Usage:
     python -m inertia_decompiler.gdb_tui --host 127.0.0.1 --port 1234
-"""
+"""  # noqa: RUF002
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 from collections.abc import Iterable
-from typing import Optional, Protocol, cast
+from typing import ClassVar, Protocol, cast
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -109,7 +110,7 @@ def disasm_x86(data: bytes, addr: int, count: int = 20, arch: str = "x86") -> li
     md.detail = False
     lines: list[tuple[int, str, str]] = []
     for insn in md.disasm(data, addr, count):
-        lines.append((insn.address, insn.mnemonic, insn.op_str))
+        lines.append((insn.address, insn.mnemonic, insn.op_str))  # noqa: PERF401
     return lines
 
 
@@ -119,7 +120,7 @@ def disasm_x86(data: bytes, addr: int, count: int = 20, arch: str = "x86") -> li
 
 
 class GDBTUIApp(App):  # type: ignore[misc, unused-ignore] # dynamic Textual UI base
-    """GDB client TUI – insight.124 inspired layout."""
+    """GDB client TUI – insight.124 inspired layout."""  # noqa: RUF002
 
     CSS = """
     Screen {
@@ -189,7 +190,7 @@ class GDBTUIApp(App):  # type: ignore[misc, unused-ignore] # dynamic Textual UI 
     }
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("f4", "go_to_cursor", "F4 Go to IP"),
         ("f5", "refresh", "F5 Redraw"),
         ("f6", "skip", "F6 Skip"),
@@ -210,7 +211,7 @@ class GDBTUIApp(App):  # type: ignore[misc, unused-ignore] # dynamic Textual UI 
         self._host = host
         self._port = port
         self._arch = arch
-        self._client: Optional[GDBClient] = None
+        self._client: GDBClient | None = None
         self._regs: dict[str, int] = {}
         self._bps: dict[int, dict[str, object]] = {}
         self._helper_info: dict[str, object] = {}
@@ -360,10 +361,8 @@ class GDBTUIApp(App):  # type: ignore[misc, unused-ignore] # dynamic Textual UI 
                     self._toggle_breakpoint(addr)
             elif action in ("d", "delete"):
                 if len(parts) >= 2:
-                    try:
+                    with contextlib.suppress(ValueError):
                         await self._remove_breakpoint(int(parts[1], 0))
-                    except ValueError:
-                        pass
             elif action in ("g", "go"):
                 if len(parts) >= 2:
                     try:
@@ -405,7 +404,7 @@ class GDBTUIApp(App):  # type: ignore[misc, unused-ignore] # dynamic Textual UI 
     # -- GDB actions -------------------------------------------------------
 
     def _action(self, name: str, count: int = 1) -> None:
-        asyncio.create_task(self._do_action(name, count=max(1, count)))
+        asyncio.create_task(self._do_action(name, count=max(1, count)))  # noqa: RUF006
 
     async def _do_action(self, name: str, count: int = 1) -> None:
         async def _impl() -> None:
@@ -434,10 +433,8 @@ class GDBTUIApp(App):  # type: ignore[misc, unused-ignore] # dynamic Textual UI 
                     await self._client.connect(self._host, self._port)
                 elif name == "reset":
                     self._append_console("Reset: disconnect")
-                    try:
+                    with contextlib.suppress(Exception):
                         await self._client.disconnect()
-                    except Exception:
-                        pass
 
                 await self._refresh_all()
             except GDBClientError as e:
@@ -489,10 +486,8 @@ class GDBTUIApp(App):  # type: ignore[misc, unused-ignore] # dynamic Textual UI 
             return await self._client.continue_()
         finally:
             if not had_existing_breakpoint:
-                try:
+                with contextlib.suppress(GDBClientError):
                     await self._client.remove_breakpoint(next_ip)
-                except GDBClientError:
-                    pass
 
     @staticmethod
     def _parse_count(parts: list[str]) -> int:
@@ -559,25 +554,21 @@ class GDBTUIApp(App):  # type: ignore[misc, unused-ignore] # dynamic Textual UI 
 
     def _toggle_breakpoint(self, addr: int) -> None:
         if addr in self._bps:
-            asyncio.create_task(self._remove_breakpoint(addr))
+            asyncio.create_task(self._remove_breakpoint(addr))  # noqa: RUF006
         else:
             self._bps[addr] = {"enabled": True, "hits": 0}
-            asyncio.create_task(self._insert_breakpoint(addr))
+            asyncio.create_task(self._insert_breakpoint(addr))  # noqa: RUF006
         self._refresh_breakpoints()
 
     async def _insert_breakpoint(self, addr: int) -> None:
         if self._client:
-            try:
+            with contextlib.suppress(GDBClientError):
                 await self._client.insert_breakpoint(addr)
-            except GDBClientError:
-                pass
 
     async def _remove_breakpoint(self, addr: int) -> None:
         if self._client:
-            try:
+            with contextlib.suppress(GDBClientError):
                 await self._client.remove_breakpoint(addr)
-            except GDBClientError:
-                pass
         self._bps.pop(addr, None)
         self._refresh_breakpoints()
 

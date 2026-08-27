@@ -11,10 +11,26 @@ from __future__ import annotations
 import sys
 import typing
 from collections.abc import Callable
-from typing import Any, TypeAlias, cast
+from typing import Any, Protocol, cast
 
-ContextSuffixCallbacks: TypeAlias = tuple[Callable[[object], tuple[object, object, object]], Callable[[object], str]]
-GuardHandler: TypeAlias = Callable[[Any, Any], object]
+type ContextSuffixCallbacks = tuple[Callable[[object], tuple[object, object, object]], Callable[[object], str]]
+type GuardHandler = Callable[[Any, Any], object]
+
+
+class _DerivedTypeVariableFactory8616(Protocol):
+    """Third-party typevars constructors supported by the compatibility guard."""
+
+    DerivedTypeVariable: Callable[[object, object], object]
+    new_dtv: Callable[..., object]
+
+
+def _derived_type_variable_8616(typevars: object, typevar: object, label: object) -> object:
+    """Build a derived type variable across supported third-party angr APIs."""
+    factory = cast(_DerivedTypeVariableFactory8616, typevars)
+    try:
+        return factory.DerivedTypeVariable(typevar, label)
+    except AttributeError:
+        return factory.new_dtv(typevar, label=label)
 
 
 def _coerce_bv_width_8616(data: object, bits: int) -> object:
@@ -45,7 +61,7 @@ def _sign_bit_is_set_8616(data: object) -> bool:
         # Dynamic angr boundary: claripy AST concreteness is optional by expression kind.
         if getattr(data_bv, "concrete", False):
             # Dynamic angr boundary: concrete_value exists only for concrete claripy ASTs.
-            value = int(getattr(data_bv, "concrete_value"))
+            value = int(data_bv.concrete_value)
             return bool(value & (1 << (size - 1)))
     except Exception:
         return False
@@ -211,12 +227,16 @@ def build_guarded_handle_binop_sub_8616(
 
             type_constraints = set()
             if r0.typevar is not None and r1.data.concrete and isinstance(r0.typevar, typevars.TypeVariable):
-                typevar = typevars.new_dtv(r0.typevar, label=typevars.SubN(r1.data.concrete_value))
+                typevar = _derived_type_variable_8616(
+                    typevars,
+                    r0.typevar,
+                    typevars.SubN(r1.data.concrete_value),
+                )
             else:
                 typevar = typevars.TypeVariable()
                 if r0.typevar is not None and r1.typevar is not None:
                     type_constraints.add(typevars.Sub(r0.typevar, r1.typevar, typevar))
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             _log_variable_recovery_guard_fallback_once_8616(self, expr, ex, project, context_suffix)
             # Dynamic angr boundary: expr.bits may be missing on malformed third-party nodes.
             compute = self_engine.state.top(getattr(expr_obj, "bits", 1) or 1)
@@ -266,7 +286,7 @@ def build_guarded_handle_binop_mul_8616(
             type_constraints = set()
             if r0.typevar is not None and r1.typevar is not None and hasattr(typevars, "Mul"):
                 type_constraints.add(typevars.Mul(r0.typevar, r1.typevar, typevar))
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             _log_variable_recovery_guard_fallback_once_8616(self, expr, ex, project, context_suffix)
             # Dynamic angr boundary: expr.bits may be missing on malformed third-party nodes.
             compute = self_engine.state.top(getattr(expr_obj, "bits", 1) or 1)

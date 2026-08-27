@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import re
 from dataclasses import dataclass
@@ -60,7 +60,7 @@ class _CODProcedure:
     instructions: tuple[_CODInstruction, ...]
 
 
-def read_mz_program_info(exe_path: Path | None) -> dict[str, Any]:
+def read_mz_program_info(exe_path: Path | None) -> dict[str, Any]:  # noqa: D103
     if exe_path is None:
         return {"program_kind": "unknown"}
     data = exe_path.read_bytes()
@@ -193,7 +193,7 @@ def _merge_entry(existing: dict[str, Any], incoming: dict[str, Any]) -> None:
         seen_ranges.add(key)
 
 
-def parse_mzre_segments(map_path: Path) -> list[dict[str, Any]]:
+def parse_mzre_segments(map_path: Path) -> list[dict[str, Any]]:  # noqa: D103
     segments: list[dict[str, Any]] = []
     for line in map_path.read_text(errors="ignore").splitlines():
         segment_match = _MZRE_SEGMENT_RE.match(line.strip())
@@ -210,7 +210,7 @@ def parse_mzre_segments(map_path: Path) -> list[dict[str, Any]]:
     return segments
 
 
-def parse_linker_segments(map_path: Path) -> list[dict[str, Any]]:
+def parse_linker_segments(map_path: Path) -> list[dict[str, Any]]:  # noqa: D103
     segments: list[dict[str, Any]] = []
     in_group_section = False
     for line in map_path.read_text(errors="ignore").splitlines():
@@ -248,7 +248,7 @@ def parse_linker_segments(map_path: Path) -> list[dict[str, Any]]:
     return segments
 
 
-def parse_mzre_map(map_path: Path, *, module: str) -> list[dict[str, Any]]:
+def parse_mzre_map(map_path: Path, *, module: str) -> list[dict[str, Any]]:  # noqa: D103
     segment_paragraphs: dict[str, int] = {}
     entries: list[dict[str, Any]] = []
     for line in map_path.read_text(errors="ignore").splitlines():
@@ -283,7 +283,7 @@ def parse_mzre_map(map_path: Path, *, module: str) -> list[dict[str, Any]]:
     return entries
 
 
-def parse_linker_map(map_path: Path, *, module: str) -> list[dict[str, Any]]:
+def parse_linker_map(map_path: Path, *, module: str) -> list[dict[str, Any]]:  # noqa: D103
     segments: list[dict[str, Any]] = []
     entries_by_key: dict[tuple[str, int], dict[str, Any]] = {}
     for line in map_path.read_text(errors="ignore").splitlines():
@@ -336,7 +336,7 @@ def _linear_in_code_segment(linear: int, segments: list[dict[str, Any]]) -> bool
     return False
 
 
-def parse_cod_listing(
+def parse_cod_listing(  # noqa: D103
     cod_path: Path,
     *,
     module: str,
@@ -561,7 +561,7 @@ def _code_segment_for_linear(linear: int, code_segments: list[dict[str, Any]]) -
     return None
 
 
-def parse_ida_listing(listing_path: Path, *, module: str) -> list[dict[str, Any]]:
+def parse_ida_listing(listing_path: Path, *, module: str) -> list[dict[str, Any]]:  # noqa: D103
     segment_classes: dict[str, str] = {}
     entries: list[dict[str, Any]] = []
     current_entry: dict[str, Any] | None = None
@@ -615,7 +615,7 @@ def parse_ida_listing(listing_path: Path, *, module: str) -> list[dict[str, Any]
     return entries
 
 
-def discover_functions(
+def discover_functions(  # noqa: D103
     *,
     exe_path: Path | None = None,
     map_path: Path | None = None,
@@ -640,7 +640,7 @@ def discover_functions(
         try:
             segments.extend(parse_mzre_segments(map_path))
             segments.extend(parse_linker_segments(map_path))
-        except Exception as ex:  # noqa: BLE001 - surfaced as structured diagnostic
+        except Exception as ex:
             diagnostics.append(
                 {
                     "source": str(map_path),
@@ -663,7 +663,7 @@ def discover_functions(
             continue
         try:
             entries = parser(source_path)
-        except Exception as ex:  # noqa: BLE001 - surfaced as structured diagnostic
+        except Exception as ex:
             diagnostics.append(
                 {
                     "source": str(source_path),
@@ -704,7 +704,7 @@ def discover_functions(
     return catalog
 
 
-def function_for_linear(catalog: dict[str, Any], linear: int) -> dict[str, Any] | None:
+def function_for_linear(catalog: dict[str, Any], linear: int) -> dict[str, Any] | None:  # noqa: D103
     best: dict[str, Any] | None = None
     best_start = -1
     for function in catalog.get("functions", ()) or ():

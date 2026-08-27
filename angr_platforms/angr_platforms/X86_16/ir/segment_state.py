@@ -27,8 +27,8 @@ from .ssa_function import SSAFunctionArtifact
 __all__ = [
     "SegmentRegisterState",
     "SegmentRestoreSource",
-    "SegmentValueKind8616",
     "SegmentStateArtifact",
+    "SegmentValueKind8616",
     "apply_x86_16_segment_state_artifact",
     "build_x86_16_segment_state_artifact",
 ]
@@ -183,7 +183,7 @@ def build_x86_16_segment_state_artifact(
     )
 
 
-def apply_x86_16_segment_state_artifact(project: object, codegen: object) -> bool:  # noqa: ARG001
+def apply_x86_16_segment_state_artifact(project: object, codegen: object) -> bool:
     """Attach the segment-state artifact to codegen for later IR consumers."""
     boundary = cast(_SegmentStateCodegenBoundary, codegen)
     try:

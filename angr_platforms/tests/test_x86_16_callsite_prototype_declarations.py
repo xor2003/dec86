@@ -35,7 +35,9 @@ from angr_platforms.X86_16.lowering.call_argument_shape import (
     LogicalArgumentShapeEvidence8616,
     LogicalArgumentShapeEvidenceSource8616,
     accounted_target_prototype_shape_evidence_8616,
+    accounted_variadic_target_shape_evidence_8616,
     carry_forward_logical_call_argument_shape_8616,
+    exact_call_return_pair_shape_evidence_8616,
     exact_caller_stack_object_for_word_pair_8616,
     exact_caller_stack_object_shape_evidence_8616,
     reconcile_materialized_call_argument_shape_8616,
@@ -63,6 +65,10 @@ class _Codegen:
         index = self._next_index
         self._next_index += 1
         return index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 class _BytesMemory:
@@ -325,8 +331,14 @@ def test_reconcile_call_shape_groups_exact_nested_dx_ax_return_argument() -> Non
         logical_arg_classes=(CallsiteArgumentClass8616.VALUE,) * 4,
     )
 
-    result = reconcile_materialized_call_argument_shape_8616(summary, (4, 2, 4))
+    evidence = exact_call_return_pair_shape_evidence_8616(summary)
+    result = reconcile_materialized_call_argument_shape_8616(summary, (16, 4, 2))
 
+    assert evidence == LogicalArgumentShapeEvidence8616(
+        widths=(2, 2, 4),
+        source=LogicalArgumentShapeEvidenceSource8616.EXACT_CALL_RETURN_PAIR,
+        return_argument_indices=(2,),
+    )
     assert result.summary.logical_arg_widths == (2, 2, 4)
     assert result.summary.logical_arg_classes == ()
     assert result.decision is CallsiteArgumentShapeDecision8616.MATERIALIZED_PROVEN_LOGICAL_SHAPE
@@ -371,6 +383,50 @@ def test_accounted_target_prototype_proves_nested_two_dword_shape() -> None:
     )
 
 
+def test_accounted_variadic_target_proves_wide_suffix_from_complete_stack() -> None:
+    summary = replace(
+        _summary(0x1010),
+        arg_count=4,
+        arg_widths=(2, 2, 2, 2),
+        stack_cleanup=8,
+        push_arg_sources=(
+            ("ret_reg", 0x1006, "dx"),
+            ("ret_reg", 0x1006, "ax"),
+            ("imm", 0x16A),
+            ("bp_addr", -18),
+        ),
+    )
+
+    evidence = accounted_variadic_target_shape_evidence_8616(
+        summary,
+        (2, 2, 4),
+        (2, 2),
+    )
+
+    assert evidence == LogicalArgumentShapeEvidence8616(
+        widths=(2, 2, 4),
+        source=LogicalArgumentShapeEvidenceSource8616.ACCOUNTED_VARIADIC_TARGET_PROTOTYPE,
+    )
+
+
+def test_accounted_variadic_target_refuses_bad_prefix_or_incomplete_stack() -> None:
+    summary = replace(
+        _summary(0x1010),
+        arg_count=4,
+        arg_widths=(2, 2, 2, 2),
+        stack_cleanup=8,
+        push_arg_sources=(),
+    )
+
+    assert accounted_variadic_target_shape_evidence_8616(summary, (4, 2, 2), (2, 2)) is None
+    incomplete = replace(summary, stack_cleanup=None)
+    assert accounted_variadic_target_shape_evidence_8616(
+        incomplete,
+        (2, 2, 4),
+        (2, 2),
+    ) is None
+
+
 def test_exact_caller_stack_object_groups_reversed_word_pushes() -> None:
     """Group adjacent high/low PUSH slices into one logical caller argument."""
     summary = replace(
@@ -406,7 +462,7 @@ def test_carry_forward_logical_shape_requires_identical_physical_call_facts() ->
     carried = carry_forward_logical_call_argument_shape_8616(fresh, previous)
 
     assert carried.logical_arg_widths == (2, 2, 2, 4)
-    changed_physical_facts = replace(fresh, push_arg_sources=(("bp", 10),) + fresh.push_arg_sources[1:])
+    changed_physical_facts = replace(fresh, push_arg_sources=(("bp", 10), *fresh.push_arg_sources[1:]))
     assert (
         carry_forward_logical_call_argument_shape_8616(changed_physical_facts, previous)
         is changed_physical_facts

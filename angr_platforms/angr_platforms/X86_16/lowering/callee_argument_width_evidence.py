@@ -119,13 +119,24 @@ def _logical_widths_for_proven_count_8616(
     argument_count: int,
 ) -> tuple[int, ...] | None:
     """Project widths after arity proof without requiring value provenance."""
+    explicit_widths: tuple[int, ...] = summary.logical_arg_widths
+    physical_widths: tuple[int, ...] = summary.arg_widths
+    if explicit_widths:
+        if (
+            len(explicit_widths) != argument_count
+            or any(width <= 0 for width in explicit_widths)
+            or any(width <= 0 for width in physical_widths)
+            or sum(explicit_widths) != sum(physical_widths)
+            or summary.stack_cleanup != sum(explicit_widths)
+        ):
+            return None
+        return explicit_widths
     widths: tuple[int, ...] | None = logical_argument_widths_from_callsite_8616(
         summary,
         expected_arg_count=argument_count,
     )
     if widths is not None:
         return widths
-    physical_widths = summary.arg_widths
     if (
         len(physical_widths) != argument_count
         or summary.stack_cleanup != sum(physical_widths)

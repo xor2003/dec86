@@ -118,7 +118,7 @@ def _low_result(
     definitions: CarryBorrowDefinitions8616,
     kind: CarryBorrowKind8616,
 ) -> tuple[CarryBorrowDefinitionSite8616, CarryBorrowDefinitionSite8616] | None:
-    """Find the unique arithmetic register effect owned by the flags instruction."""
+    """Find the unique post-FLAGS register effect owned by the instruction."""
     flags_source = single_source_8616(flags_definition)
     if flags_source is None:
         return None
@@ -128,7 +128,7 @@ def _low_result(
     for site in sites:
         dst = site.instruction.dst
         if (
-            site.instr_index >= flags_definition.instr_index
+            site.instr_index <= flags_definition.instr_index
             or site.instruction.addr != flags_definition.instruction.addr
             or ir_op_8616(site.instruction) is not CarryBorrowIROp8616.MOV
             or dst is None
@@ -205,8 +205,16 @@ def _resolve_candidate(
     if len(low_args) != 2 or len(high_args) != 2:
         return _refusal(candidate, CarryBorrowFailure8616.FLAGS_PROVENANCE_MISMATCH)
     operand_uses = tuple(
-        operand_use_8616(value, flags_owner.block.definitions) for value in low_args
-    ) + tuple(operand_use_8616(value, definitions) for value in high_args)
+        operand_use_8616(
+            value,
+            flags_owner.block.definitions,
+            artifact.logical_memory,
+        )
+        for value in low_args
+    ) + tuple(
+        operand_use_8616(value, definitions, artifact.logical_memory)
+        for value in high_args
+    )
     if any(item is None for item in operand_uses):
         return _refusal(candidate, CarryBorrowFailure8616.OPERAND_DEFINITION_MISSING)
     low_lhs, low_rhs, high_lhs, high_rhs = operand_uses
@@ -271,7 +279,7 @@ def analyze_carry_borrow_links_8616(artifact: SSAFunctionArtifact) -> CarryBorro
     blocks = build_carry_borrow_block_ssa_8616(artifact)
     for block in blocks:
         for candidate in _candidate_sites(block.sites, block.definitions):
-            resolutions.append(
+            resolutions.append(  # noqa: PERF401
                 _resolve_candidate(candidate, block, blocks, artifact)
             )
     materialized = sum(item.link is not None for item in resolutions)

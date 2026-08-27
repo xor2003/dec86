@@ -78,7 +78,7 @@ def _make_codegen():
         project=project,
         next_idx=lambda _name: 0,
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     lhs = structured_c.CVariable(
         SimStackVariable(0, 2, base="bp", name="s_0", region=0x10010),
         codegen=codegen,

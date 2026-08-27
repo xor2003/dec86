@@ -16,11 +16,11 @@ from pathlib import Path
 from .mz_image import MZHeaderView, UnpackedMZImage
 
 __all__ = (
+    "MZHeaderView",
     "PackedMZError",
     "PackedMZErrorKind",
     "PackerDetection",
     "PackerType",
-    "MZHeaderView",
     "UnpackedMZImage",
     "detect_packer",
     "detect_packer_in_bytes",

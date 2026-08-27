@@ -43,11 +43,11 @@ class TestStructuringIntegration:
 
         # Run structuring
         analysis = StructureAnalysis(graph)
-        result = analysis.structure()
+        analysis.structure()
 
         # Verify structuring completed
         assert analysis.stats.iterations > 0, "Should iterate"
-        assert analysis.stats.max_iterations_reached == False, "Should complete without limit"
+        assert not analysis.stats.max_iterations_reached, "Should complete without limit"
         # Verify some reductions occurred (loop or if-then-else reduction)
         assert analysis.stats.cycles_resolved > 0 or analysis.stats.regions_reduced > 0, (
             "Should apply some structural reductions"
@@ -68,7 +68,7 @@ class TestStructuringIntegration:
 
         # Run with listener
         analysis = StructureAnalysis(graph, event_listener=listener)
-        result = analysis.structure()
+        analysis.structure()
 
         # Should receive at least one message
         assert len(messages) > 0, "Should receive event messages"
@@ -89,7 +89,7 @@ class TestStructuringIntegration:
         graph.add_edge(a, b)
 
         analysis = StructureAnalysis(graph)
-        result = analysis.structure()
+        analysis.structure()
 
         # Verify dominators were computed
         assert analysis.dominators is not None, "Dominators should be computed"
@@ -111,7 +111,7 @@ class TestStructuringIntegration:
         graph.add_edge(a, exit_region)
 
         analysis = StructureAnalysis(graph)
-        result = analysis.structure()
+        analysis.structure()
 
         # Verify post-dominators were computed
         assert analysis.dominators is not None, "Dominators should be computed"
@@ -129,7 +129,7 @@ class TestStructuringIntegration:
 
         # Set very low iteration limit
         analysis = StructureAnalysis(graph, max_iterations=1)
-        result = analysis.structure()
+        analysis.structure()
 
         assert analysis.stats.iterations <= 2, "Should respect iteration limit"
 
@@ -214,7 +214,7 @@ class TestStructuringIntegration:
         # Time the structuring
         start = time.time()
         analysis = StructureAnalysis(graph)
-        result = analysis.structure()
+        analysis.structure()
         elapsed = time.time() - start
 
         # Should complete in reasonable time (< 5 seconds)

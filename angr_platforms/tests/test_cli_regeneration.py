@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CFunctionCall, CTypeCast, CVariable
 from angr.sim_type import SimTypeLong, SimTypeShort
 from angr.sim_variable import SimRegisterVariable
+from angr_platforms.X86_16 import decompiler_postprocess_stage
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.lowering import stack_variable_display_names
 
 from inertia_decompiler import cli_decompilation
 
@@ -25,6 +27,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
     def render_text(self, cfunc):
         return cfunc.c_repr()
@@ -121,6 +127,7 @@ def test_regenerate_codegen_text_replays_call_arguments_after_broad_simplificati
     )
     replay_count = 0
     events: list[str] = []
+    render_name_events: list[str] = []
 
     def replay_call_arguments(_project: object, replay_codegen: object) -> bool:
         nonlocal replay_count
@@ -142,6 +149,16 @@ def test_regenerate_codegen_text_replays_call_arguments_after_broad_simplificati
         return True
 
     monkeypatch.setattr(cli_decompilation, "repair_cfunctioncall_render_targets_8616", lambda _codegen: None)
+    monkeypatch.setattr(
+        decompiler_postprocess_stage,
+        "_normalize_stack_variable_identifiers_8616",
+        lambda _codegen: render_name_events.append("normalize"),
+    )
+    monkeypatch.setattr(
+        stack_variable_display_names,
+        "reapply_stack_variable_projection_names_8616",
+        lambda _codegen: render_name_events.append("reapply") or True,
+    )
     monkeypatch.setattr(cli_decompilation, "_bind_codegen_render_variable_types_8616", lambda _codegen: None)
     monkeypatch.setattr(
         cli_decompilation,
@@ -168,7 +185,99 @@ def test_regenerate_codegen_text_replays_call_arguments_after_broad_simplificati
     assert regenerated is True
     assert replay_count >= 3
     assert events[-2:] == ["stack", "call"]
+    assert render_name_events[-2:] == ["normalize", "reapply"]
     assert text == correct_text
+
+
+def test_render_restore_replays_call_arguments_without_pruning_stack_setup(monkeypatch):
+    stale_text = "void f(void) { stack[-2] = 21; ScaleRotate(vvar_324); }\n"
+    candidate_text = "void f(void) { ScaleRotate(21); }\n"
+    restored_text = "void f(void) { stack[-2] = 21; ScaleRotate(21); }\n"
+
+    class _TextCFunc:
+        def __init__(self, text: str) -> None:
+            self.text = text
+            self.functy = None
+
+        def c_repr(self) -> str:
+            return self.text
+
+    codegen = SimpleNamespace(
+        text=stale_text,
+        cfunc=_TextCFunc(stale_text),
+        project=SimpleNamespace(arch=SimpleNamespace(name="86_16")),
+        _inertia_postprocess_changed=True,
+        _inertia_callsite_args_ast_materialized_8616=True,
+    )
+    events: list[str] = []
+
+    def replay_calls(_project: object, replay_codegen: object) -> bool:
+        replay_codegen.cfunc.text = candidate_text
+        return True
+
+    def replay_restored(
+        _project: object,
+        replay_codegen: object,
+        *,
+        preserve_setup: bool = False,
+    ) -> bool:
+        assert preserve_setup is True
+        events.append("restore-call-arguments")
+        replay_codegen.cfunc.text = restored_text
+        return True
+
+    decisions = iter(
+        (
+            cli_decompilation.RenderRefreshPreservationDecision8616.RESTORE_STACK_WRITE_EFFECTS,
+            cli_decompilation.RenderRefreshPreservationDecision8616.PRESERVE_REPLAY,
+        )
+    )
+
+    monkeypatch.setattr(cli_decompilation, "repair_cfunctioncall_render_targets_8616", lambda _codegen: None)
+    monkeypatch.setattr(cli_decompilation, "_bind_codegen_render_variable_types_8616", lambda _codegen: None)
+    monkeypatch.setattr(cli_decompilation, "_finalize_typed_call_interfaces_before_render_8616", lambda _codegen: False)
+    monkeypatch.setattr(cli_decompilation, "_finalize_callsite_arguments_after_noncall_regen_8616", lambda _codegen: False)
+    monkeypatch.setattr(cli_decompilation, "replay_callsite_stack_arguments_after_regeneration_8616", replay_calls)
+    monkeypatch.setattr(cli_decompilation, "_replay_bound_callsite_argument_consumer_8616", replay_restored)
+    monkeypatch.setattr(cli_decompilation, "_collect_render_refresh_tail_summary_8616", lambda _codegen: object())
+    monkeypatch.setattr(cli_decompilation, "_render_refresh_replay_preserves_live_out_8616", lambda *_args: False)
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_render_refresh_lost_stack_writes_are_validated_materialization_8616",
+        lambda *_args: False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_render_refresh_lost_stack_writes_have_direct_stack_evidence_8616",
+        lambda *_args: False,
+    )
+    monkeypatch.setattr(
+        cli_decompilation,
+        "_render_refresh_preservation_evidence_8616",
+        lambda *_args: SimpleNamespace(
+            decision=next(decisions),
+            lost_stack_slots=("stack[-2]",),
+        ),
+    )
+    for name in (
+        "_replay_named_segmented_global_lowering_after_regen_8616",
+        "_replay_indexed_segmented_global_lowering_after_regen_8616",
+        "_replay_stack_address_lowering_after_regen_8616",
+        "_replay_direct_stack_semantics_after_regen_8616",
+        "_replay_runtime_segment_lowering_after_regen_8616",
+        "_finalize_regenerated_noncall_ast_8616",
+    ):
+        monkeypatch.setattr(cli_decompilation, name, lambda _codegen: False)
+
+    text, regenerated = cli_decompilation._regenerate_codegen_text_safely(
+        codegen,
+        context="0x1000 f",
+    )
+
+    assert regenerated is True
+    assert text == restored_text
+    assert codegen.cfunc.text == restored_text
+    assert events == ["restore-call-arguments"]
 
 
 def test_callsite_finalize_enforces_structuring_identity_after_call_replay(monkeypatch):
@@ -193,7 +302,7 @@ def test_callsite_finalize_enforces_structuring_identity_after_call_replay(monke
     monkeypatch.setattr(
         cli_decompilation,
         "finalize_shared_call_occurrences_8616",
-        lambda _codegen: events.append("occurrences") or False,
+        lambda _project, _codegen: events.append("occurrences") or False,
     )
 
     changed = cli_decompilation._finalize_callsite_arguments_after_noncall_regen_8616(codegen)

@@ -1,8 +1,9 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import json
 import time
 from pathlib import Path
+from typing import Never
 
 import pytest
 
@@ -19,7 +20,7 @@ from meta_harness.runtime_records import (
 )
 
 
-def _make_cfg(monkeypatch, tmp_path: Path) -> tuple[RuntimeConfig, LlmConfig]:
+def _make_cfg(monkeypatch, tmp_path: Path) -> tuple[RuntimeConfig, LlmConfig]:  # noqa: ANN001
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     cfg = RuntimeConfig.from_env([])
     llm_cfg = LlmConfig.from_env()
@@ -56,7 +57,7 @@ def _write_cycle_state(
     (cycle_dir / "cycle.state.json").write_text(json.dumps(state), encoding="utf-8")
 
 
-def test_peek_resume_step_reads_latest_cycle_state(monkeypatch, tmp_path):
+def test_peek_resume_step_reads_latest_cycle_state(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     latest = cfg.runs_dir / "20260401_000001_cycle001"
     _write_cycle_state(
@@ -74,7 +75,7 @@ def test_peek_resume_step_reads_latest_cycle_state(monkeypatch, tmp_path):
     assert harness.peek_resume_step() == "worker"
 
 
-def test_peek_resume_step_treats_done_with_failures_as_completed(monkeypatch, tmp_path):
+def test_peek_resume_step_treats_done_with_failures_as_completed(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     latest = cfg.runs_dir / "20260401_000001_cycle001"
     _write_cycle_state(
@@ -93,7 +94,7 @@ def test_peek_resume_step_treats_done_with_failures_as_completed(monkeypatch, tm
     assert harness.peek_resume_step() == "worker"
 
 
-def test_run_resume_skips_completed_steps(monkeypatch, tmp_path):
+def test_run_resume_skips_completed_steps(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     latest = cfg.runs_dir / "20260401_000001_cycle001"
     _write_cycle_state(
@@ -129,7 +130,7 @@ def test_run_resume_skips_completed_steps(monkeypatch, tmp_path):
     assert "worker" in calls
 
 
-def test_run_keeps_loop_open_when_reviewer_claims_zero_but_evidence_has_failures(monkeypatch, tmp_path):
+def test_run_keeps_loop_open_when_reviewer_claims_zero_but_evidence_has_failures(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.evidence_log_file.parent.mkdir(parents=True, exist_ok=True)
     cfg.evidence_log_file.write_text("done in 1.0s; failures=4/21\n", encoding="utf-8")
@@ -168,7 +169,7 @@ def test_run_keeps_loop_open_when_reviewer_claims_zero_but_evidence_has_failures
     assert "evidence_failures=4" in state["steps"]["reviewer"]["extra"]
 
 
-def test_run_fresh_uses_persisted_worker_stall_handoff_after_restart(monkeypatch, tmp_path):
+def test_run_fresh_uses_persisted_worker_stall_handoff_after_restart(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     latest = cfg.runs_dir / "20260404_000001_cycle001"
     _write_cycle_state(
@@ -217,7 +218,7 @@ def test_run_fresh_uses_persisted_worker_stall_handoff_after_restart(monkeypatch
     }
 
 
-def test_run_fresh_uses_persisted_planner_handoff_for_stuck_item(monkeypatch, tmp_path):
+def test_run_fresh_uses_persisted_planner_handoff_for_stuck_item(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     current_item = "1. `decompile.py:10` giant item still too broad"
     latest = cfg.runs_dir / "20260404_000001_cycle001"
@@ -257,7 +258,7 @@ def test_run_fresh_uses_persisted_planner_handoff_for_stuck_item(monkeypatch, tm
     assert calls == ["planner", "worker"]
 
 
-def test_worker_cycle_stalls_when_repeated_failed_test_is_outside_current_task_packet(monkeypatch, tmp_path):
+def test_worker_cycle_stalls_when_repeated_failed_test_is_outside_current_task_packet(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.plan_path.write_text(
         "1. `scripts/repro_decompiler_boundary.py:11-140`, `angr_platforms/tests/test_x86_16_cli.py:2103-2178`: "
@@ -291,7 +292,7 @@ def test_worker_cycle_stalls_when_repeated_failed_test_is_outside_current_task_p
     assert repeated_failure in str(harness.last_policy_decision["details"]["reason_detail"])
 
 
-def test_current_plan_item_requires_replan_when_rewrite_target_matches_item(monkeypatch, tmp_path):
+def test_current_plan_item_requires_replan_when_rewrite_target_matches_item(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     current_item = "1. `decompile.py:10` fix boundary.\n"
@@ -302,7 +303,7 @@ def test_current_plan_item_requires_replan_when_rewrite_target_matches_item(monk
     assert harness.current_plan_item_requires_replan() is True
 
 
-def test_run_role_uses_delta_resume_prompt_for_codex_sessions(monkeypatch, tmp_path):
+def test_run_role_uses_delta_resume_prompt_for_codex_sessions(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -312,7 +313,7 @@ def test_run_role_uses_delta_resume_prompt_for_codex_sessions(monkeypatch, tmp_p
 
     monkeypatch.setattr(harness, "consume_operator_comments", lambda _role: "Use only the current plan delta.")
 
-    def fake_run(role, model, prompt, resume=False):
+    def fake_run(role, model, prompt, resume=False):  # noqa: ANN001, ANN202
         captured["role"] = role
         captured["model"] = model
         captured["prompt"] = prompt
@@ -337,7 +338,7 @@ def test_run_role_uses_delta_resume_prompt_for_codex_sessions(monkeypatch, tmp_p
     assert "Primary plan item:" in str(captured["prompt"])
 
 
-def test_run_role_emits_status_heartbeat_during_long_provider_call(monkeypatch, tmp_path):
+def test_run_role_emits_status_heartbeat_during_long_provider_call(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("STATUS_HEARTBEAT_SECS", "0.01")
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
@@ -348,7 +349,7 @@ def test_run_role_emits_status_heartbeat_during_long_provider_call(monkeypatch, 
     def fake_write_status(step: str, status: str, extra: str = "") -> None:
         status_updates.append((step, status, extra))
 
-    def fake_run_provider_once(provider, mode, model, prompt, prompt_file, log_file, config, session_id="", **_kwargs):
+    def fake_run_provider_once(provider, mode, model, prompt, prompt_file, log_file, config, session_id="", **_kwargs) -> int:  # noqa: ANN001, ANN003
         time.sleep(0.05)
         log_file.write_text("x" * 200 + "\nGlobal Remaining steps: 1\n", encoding="utf-8")
         return 0
@@ -364,7 +365,7 @@ def test_run_role_emits_status_heartbeat_during_long_provider_call(monkeypatch, 
     assert status_updates[-1][1] == "done"
 
 
-def test_ensure_prereqs_writes_preflight_state(monkeypatch, tmp_path):
+def test_ensure_prereqs_writes_preflight_state(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
 
@@ -386,7 +387,7 @@ def test_ensure_prereqs_writes_preflight_state(monkeypatch, tmp_path):
     assert payload["python_ok"] is True
 
 
-def test_ensure_profiler_tools_installs_missing_tools(monkeypatch, tmp_path):
+def test_ensure_profiler_tools_installs_missing_tools(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     probes = {"line_profiler": False, "memray": True}
@@ -400,7 +401,7 @@ def test_ensure_profiler_tools_installs_missing_tools(monkeypatch, tmp_path):
         stdout = "installed\n"
         stderr = ""
 
-    def fake_run(cmd, **_kwargs):
+    def fake_run(cmd, **_kwargs):  # noqa: ANN001, ANN003, ANN202
         install_calls.append([str(part) for part in cmd])
         probes["line_profiler"] = True
         return FakeCompleted()
@@ -416,12 +417,12 @@ def test_ensure_profiler_tools_installs_missing_tools(monkeypatch, tmp_path):
     assert install_calls[0][-3:] == ["line_profiler", "memray", "py-spy"]
 
 
-def test_run_role_records_session_ledger_and_history(monkeypatch, tmp_path):
+def test_run_role_records_session_ledger_and_history(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
 
-    def fake_run_provider_once(provider, mode, model, prompt, prompt_file, log_file, config, session_id="", **_kwargs):
+    def fake_run_provider_once(provider, mode, model, prompt, prompt_file, log_file, config, session_id="", **_kwargs) -> int:  # noqa: ANN001, ANN003
         log_file.write_text("tokens used: 1234\nGlobal Remaining steps: 1\n", encoding="utf-8")
         return 0
 
@@ -443,7 +444,7 @@ def test_run_role_records_session_ledger_and_history(monkeypatch, tmp_path):
     assert history_rows[-1]["message"] == "finished worker"
 
 
-def test_cycle_state_uses_explicit_schema_version(monkeypatch, tmp_path):
+def test_cycle_state_uses_explicit_schema_version(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
 
@@ -453,7 +454,7 @@ def test_cycle_state_uses_explicit_schema_version(monkeypatch, tmp_path):
     assert payload["schema_version"] == CYCLE_STATE_SCHEMA_VERSION
 
 
-def test_event_taxonomy_has_expected_surface_area():
+def test_event_taxonomy_has_expected_surface_area() -> None:  # noqa: D103
     assert len(EVENT_NAMES) >= 10
     assert {
         "cycle.started",
@@ -474,7 +475,7 @@ def test_event_taxonomy_has_expected_surface_area():
     assert len(FAILURE_CLASSES) >= 8
 
 
-def test_sync_current_plan_item_populates_task_packet(monkeypatch, tmp_path):
+def test_sync_current_plan_item_populates_task_packet(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.plan_path.write_text(
         "1. `decompile.py:10-20`, `tests/test_byteops.py:1-20`: fix byteops. Done when pytest tests/test_byteops.py -k byteops passes.\n",
@@ -489,7 +490,7 @@ def test_sync_current_plan_item_populates_task_packet(monkeypatch, tmp_path):
     assert harness.current_task_packet["acceptance_tests"]
 
 
-def test_sync_current_plan_item_skips_completed_items(monkeypatch, tmp_path):
+def test_sync_current_plan_item_skips_completed_items(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.plan_path.write_text(
         "1. [completed] `done.py`: already landed.\n"
@@ -505,7 +506,7 @@ def test_sync_current_plan_item_skips_completed_items(monkeypatch, tmp_path):
     assert "decompile.py" in harness.current_task_packet["target_files"]
 
 
-def test_reviewer_step_updates_green_level(monkeypatch, tmp_path):
+def test_reviewer_step_updates_green_level(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -515,7 +516,7 @@ def test_reviewer_step_updates_green_level(monkeypatch, tmp_path):
     )
     harness.sync_current_plan_item()
 
-    def fake_run_role(role, model, prompt, resume=False, **_kwargs):
+    def fake_run_role(role, model, prompt, resume=False, **_kwargs):  # noqa: ANN001, ANN003, ANN202
         log_file = cfg.log_dir / "reviewer.log"
         log_file.parent.mkdir(parents=True, exist_ok=True)
         log_file.write_text(
@@ -537,7 +538,7 @@ def test_reviewer_step_updates_green_level(monkeypatch, tmp_path):
     assert harness.current_task_packet_status == "done"
 
 
-def test_run_role_with_mock_provider_uses_deterministic_script(monkeypatch, tmp_path):
+def test_run_role_with_mock_provider_uses_deterministic_script(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("WORKER_PROVIDER", "mock")
     monkeypatch.setenv("MOCK_PROVIDER_SCRIPT", str(tmp_path / "mock.jsonl"))
     monkeypatch.setenv("MOCK_PROVIDER_INDEX_FILE", str(tmp_path / "mock.idx"))
@@ -555,7 +556,7 @@ def test_run_role_with_mock_provider_uses_deterministic_script(monkeypatch, tmp_
     assert "focused-item-green" in log_file.read_text(encoding="utf-8")
 
 
-def test_perform_maintenance_writes_summary(monkeypatch, tmp_path):
+def test_perform_maintenance_writes_summary(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     cfg.session_ledger_file.parent.mkdir(parents=True, exist_ok=True)
@@ -588,7 +589,7 @@ def test_perform_maintenance_writes_summary(monkeypatch, tmp_path):
     assert payload["compaction"]["top_failure_classes"][0]["name"] == "worker_timeout"
 
 
-def test_auto_commit_current_cycle_respects_gates_and_can_commit(monkeypatch, tmp_path):
+def test_auto_commit_current_cycle_respects_gates_and_can_commit(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("AUTO_COMMIT_ENABLED", "1")
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
@@ -597,14 +598,14 @@ def test_auto_commit_current_cycle_respects_gates_and_can_commit(monkeypatch, tm
     harness.cycle_state["git_clean_start"] = True
 
     class Result:
-        def __init__(self, returncode=0, stdout="", stderr=""):
+        def __init__(self, returncode=0, stdout="", stderr="") -> None:  # noqa: ANN001
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
 
     calls: list[list[str]] = []
 
-    def fake_run(cmd, *args, **kwargs):
+    def fake_run(cmd, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
         calls.append(cmd)
         if cmd[-2:] == ["status", "--porcelain"]:
             return Result(stdout=" M meta_harness/orchestrator.py\n")
@@ -623,7 +624,7 @@ def test_auto_commit_current_cycle_respects_gates_and_can_commit(monkeypatch, tm
     assert any("commit" in cmd for cmd in calls)
 
 
-def test_auto_commit_current_packet_uses_packet_commit_message(monkeypatch, tmp_path):
+def test_auto_commit_current_packet_uses_packet_commit_message(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("AUTO_COMMIT_ENABLED", "1")
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
@@ -637,14 +638,14 @@ def test_auto_commit_current_packet_uses_packet_commit_message(monkeypatch, tmp_
     }
 
     class Result:
-        def __init__(self, returncode=0, stdout="", stderr=""):
+        def __init__(self, returncode=0, stdout="", stderr="") -> None:  # noqa: ANN001
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
 
     calls: list[list[str]] = []
 
-    def fake_run(cmd, *args, **kwargs):
+    def fake_run(cmd, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
         calls.append(cmd)
         if cmd[-2:] == ["status", "--porcelain"]:
             return Result(stdout=" M meta_harness/orchestrator.py\n")
@@ -666,7 +667,7 @@ def test_auto_commit_current_packet_uses_packet_commit_message(monkeypatch, tmp_
     assert any("commit" in cmd for cmd in calls)
 
 
-def test_auto_commit_current_packet_skips_when_changes_escape_packet_scope(monkeypatch, tmp_path):
+def test_auto_commit_current_packet_skips_when_changes_escape_packet_scope(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("AUTO_COMMIT_ENABLED", "1")
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
@@ -676,12 +677,12 @@ def test_auto_commit_current_packet_skips_when_changes_escape_packet_scope(monke
     harness.last_completed_task_packet = {"item_id": "2", "target_files": ["meta_harness/orchestrator.py"]}
 
     class Result:
-        def __init__(self, returncode=0, stdout="", stderr=""):
+        def __init__(self, returncode=0, stdout="", stderr="") -> None:  # noqa: ANN001
             self.returncode = returncode
             self.stdout = stdout
             self.stderr = stderr
 
-    def fake_run(cmd, *args, **kwargs):
+    def fake_run(cmd, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
         if cmd[-2:] == ["status", "--porcelain"]:
             return Result(stdout=" M meta_harness/orchestrator.py\n M meta_harness/webui.py\n")
         return Result(returncode=0)
@@ -694,7 +695,7 @@ def test_auto_commit_current_packet_skips_when_changes_escape_packet_scope(monke
     assert "outside task packet scope" in reason
 
 
-def test_current_worker_model_uses_manual_override_from_cycle_state(monkeypatch, tmp_path):
+def test_current_worker_model_uses_manual_override_from_cycle_state(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -706,7 +707,7 @@ def test_current_worker_model_uses_manual_override_from_cycle_state(monkeypatch,
     assert harness.current_worker_failure_limit() == cfg.worker_stall_failure_limit
 
 
-def test_run_background_maintenance_writes_compaction(monkeypatch, tmp_path):
+def test_run_background_maintenance_writes_compaction(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     cfg.session_ledger_file.parent.mkdir(parents=True, exist_ok=True)
@@ -744,7 +745,7 @@ def test_run_background_maintenance_writes_compaction(monkeypatch, tmp_path):
     assert payload["compaction"]["top_plan_items_by_sessions"][0]["item"] == "1. focused packet"
 
 
-def test_maybe_run_scheduled_maintenance_fires_on_interval(monkeypatch, tmp_path):
+def test_maybe_run_scheduled_maintenance_fires_on_interval(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("SCHEDULED_MAINTENANCE_INTERVAL_CYCLES", "2")
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
@@ -757,7 +758,7 @@ def test_maybe_run_scheduled_maintenance_fires_on_interval(monkeypatch, tmp_path
     assert calls == ["scheduled-cycle-interval"]
 
 
-def test_run_stops_when_unattended_cycle_budget_reached(monkeypatch, tmp_path):
+def test_run_stops_when_unattended_cycle_budget_reached(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("UNATTENDED_MAX_CYCLES", "1")
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
@@ -785,7 +786,7 @@ def test_run_stops_when_unattended_cycle_budget_reached(monkeypatch, tmp_path):
     assert "unattended-budget-reached" in cfg.status_file.read_text(encoding="utf-8")
 
 
-def test_log_appends_harness_events_to_last_log(monkeypatch, tmp_path):
+def test_log_appends_harness_events_to_last_log(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
 
@@ -794,7 +795,7 @@ def test_log_appends_harness_events_to_last_log(monkeypatch, tmp_path):
     assert "Starting curated evidence sweep" in cfg.last_log_file.read_text(encoding="utf-8")
 
 
-def test_run_role_drops_oversized_worker_session_before_resume(monkeypatch, tmp_path):
+def test_run_role_drops_oversized_worker_session_before_resume(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("MAX_WORKER_SESSION_LOG_BYTES", "100")
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
@@ -810,7 +811,7 @@ def test_run_role_drops_oversized_worker_session_before_resume(monkeypatch, tmp_
 
     captured: dict[str, object] = {}
 
-    def fake_run(role, model, prompt, resume=False):
+    def fake_run(role, model, prompt, resume=False):  # noqa: ANN001, ANN202
         captured["resume"] = resume
         captured["prompt"] = prompt
         return cfg.log_dir / "worker.log"
@@ -825,7 +826,7 @@ def test_run_role_drops_oversized_worker_session_before_resume(monkeypatch, tmp_
     assert not session_file.exists()
 
 
-def test_sweep_step_does_not_tee_back_into_evidence_log(monkeypatch, tmp_path):
+def test_sweep_step_does_not_tee_back_into_evidence_log(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -842,25 +843,25 @@ def test_sweep_step_does_not_tee_back_into_evidence_log(monkeypatch, tmp_path):
         pid = 4321
         stdout = iter(["sweep output\n"])
 
-        def wait(self):
+        def wait(self) -> int:
             return 0
 
-        def __enter__(self):
+        def __enter__(self):  # noqa: ANN204
             return self
 
-        def __exit__(self, exc_type, exc, tb):
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001, ANN204
             return False
 
-    def fake_popen(cmd, cwd=None, env=None, stdout=None, stderr=None, **kwargs):
+    def fake_popen(cmd, cwd=None, env=None, stdout=None, stderr=None, **kwargs):  # noqa: ANN001, ANN003, ANN202
         calls["cmd"] = cmd
         return DummyProc()
 
     class RunResult:
-        def __init__(self, stdout=""):
+        def __init__(self, stdout="") -> None:  # noqa: ANN001
             self.stdout = stdout
             self.returncode = 0
 
-    def fake_run(*args, **kwargs):
+    def fake_run(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
         return RunResult("")
 
     monkeypatch.setattr(harness, "check_stop_file", lambda: None)
@@ -880,7 +881,7 @@ def test_sweep_step_does_not_tee_back_into_evidence_log(monkeypatch, tmp_path):
     assert "sweep output" in last_log
 
 
-def test_sweep_step_allows_completed_sweep_with_failures(monkeypatch, tmp_path):
+def test_sweep_step_allows_completed_sweep_with_failures(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -895,20 +896,20 @@ def test_sweep_step_allows_completed_sweep_with_failures(monkeypatch, tmp_path):
         pid = 4322
         stdout = iter(["done in 1.0s; failures=1/2\n"])
 
-        def wait(self):
+        def wait(self) -> int:
             return 1
 
-        def __enter__(self):
+        def __enter__(self):  # noqa: ANN204
             return self
 
-        def __exit__(self, exc_type, exc, tb):
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001, ANN204
             return False
 
-    def fake_popen(cmd, cwd=None, env=None, stdout=None, stderr=None, **kwargs):
+    def fake_popen(cmd, cwd=None, env=None, stdout=None, stderr=None, **kwargs):  # noqa: ANN001, ANN003, ANN202
         return DummyProc()
 
     class RunResult:
-        def __init__(self):
+        def __init__(self) -> None:
             self.stdout = ""
             self.returncode = 0
 
@@ -930,7 +931,7 @@ def test_sweep_step_allows_completed_sweep_with_failures(monkeypatch, tmp_path):
     assert any(fact["key"] == "failures" for fact in facts["facts"])
 
 
-def test_sweep_step_marks_low_confidence_observations_as_needing_more_evidence(monkeypatch, tmp_path):
+def test_sweep_step_marks_low_confidence_observations_as_needing_more_evidence(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -945,11 +946,11 @@ def test_sweep_step_marks_low_confidence_observations_as_needing_more_evidence(m
         pid = 4999
         stdout = iter(["fallback lane hit after timeout\n", "done in 1.0s; failures=0/1\n"])
 
-        def wait(self):
+        def wait(self) -> int:
             return 0
 
     class RunResult:
-        def __init__(self):
+        def __init__(self) -> None:
             self.stdout = ""
             self.returncode = 0
 
@@ -969,7 +970,7 @@ def test_sweep_step_marks_low_confidence_observations_as_needing_more_evidence(m
     assert any(fact["key"] == "observed_fallback" and fact["needs_more_evidence"] for fact in facts["facts"])
 
 
-def test_sweep_step_retries_thread_exhaustion_in_forced_serial_mode(monkeypatch, tmp_path):
+def test_sweep_step_retries_thread_exhaustion_in_forced_serial_mode(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -983,12 +984,12 @@ def test_sweep_step_retries_thread_exhaustion_in_forced_serial_mode(monkeypatch,
     popen_envs: list[dict[str, str]] = []
 
     class DummyProc:
-        def __init__(self, lines: list[str], rc: int, pid: int):
+        def __init__(self, lines: list[str], rc: int, pid: int) -> None:
             self.pid = pid
             self.stdout = iter(lines)
             self._rc = rc
 
-        def wait(self):
+        def wait(self):  # noqa: ANN202
             return self._rc
 
     attempts = [
@@ -1010,12 +1011,12 @@ def test_sweep_step_retries_thread_exhaustion_in_forced_serial_mode(monkeypatch,
         ),
     ]
 
-    def fake_popen(cmd, cwd=None, env=None, stdout=None, stderr=None, **kwargs):
+    def fake_popen(cmd, cwd=None, env=None, stdout=None, stderr=None, **kwargs):  # noqa: ANN001, ANN003, ANN202
         popen_envs.append(dict(env))
         return attempts.pop(0)
 
     class RunResult:
-        def __init__(self):
+        def __init__(self) -> None:
             self.stdout = ""
             self.returncode = 0
 
@@ -1041,7 +1042,7 @@ def test_sweep_step_retries_thread_exhaustion_in_forced_serial_mode(monkeypatch,
     assert "disabled (forced serial)" in evidence
 
 
-def test_finalize_run_marks_terminated_cycle_and_captures_snapshot(monkeypatch, tmp_path):
+def test_finalize_run_marks_terminated_cycle_and_captures_snapshot(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1058,7 +1059,7 @@ def test_finalize_run_marks_terminated_cycle_and_captures_snapshot(monkeypatch, 
     assert captured == ["terminated"]
 
 
-def test_preflight_resource_check_marks_low_disk_as_blocked(monkeypatch, tmp_path):
+def test_preflight_resource_check_marks_low_disk_as_blocked(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1077,7 +1078,7 @@ def test_preflight_resource_check_marks_low_disk_as_blocked(monkeypatch, tmp_pat
     assert "required=8192MB" in state["steps"]["full-sweep"]["extra"]
 
 
-def test_maybe_self_restart_writes_restarting_status_before_exec(monkeypatch, tmp_path):
+def test_maybe_self_restart_writes_restarting_status_before_exec(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1096,7 +1097,7 @@ def test_maybe_self_restart_writes_restarting_status_before_exec(monkeypatch, tm
     assert "reason=reviewer" in status_text
 
 
-def test_note_cycle_outcome_persists_worker_stall_handoff(monkeypatch, tmp_path):
+def test_note_cycle_outcome_persists_worker_stall_handoff(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1110,7 +1111,7 @@ def test_note_cycle_outcome_persists_worker_stall_handoff(monkeypatch, tmp_path)
     assert state["worker_stall_streak"] == 1
 
 
-def test_note_cycle_outcome_routes_to_planner_when_current_item_is_broad(monkeypatch, tmp_path):
+def test_note_cycle_outcome_routes_to_planner_when_current_item_is_broad(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.plan_path.write_text(
         "1. `decompile.py:10`, `a.py:20`, `b.py:30`, `c.py:40`, `d.py:50`, `e.py:60`, `f.py:70`, `g.py:80`, `h.py:90`, `i.py:100` giant item\n",
@@ -1129,7 +1130,7 @@ def test_note_cycle_outcome_routes_to_planner_when_current_item_is_broad(monkeyp
     assert state["current_plan_item_stall_count"] == 1
 
 
-def test_worker_cycle_retries_after_failed_fresh_run(monkeypatch, tmp_path):
+def test_worker_cycle_retries_after_failed_fresh_run(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1143,7 +1144,7 @@ def test_worker_cycle_retries_after_failed_fresh_run(monkeypatch, tmp_path):
 
     calls = {"count": 0}
 
-    def fake_run_role(role, model, prompt, resume=False, **_kwargs):
+    def fake_run_role(role, model, prompt, resume=False, **_kwargs):  # noqa: ANN001, ANN003, ANN202
         calls["count"] += 1
         if calls["count"] == 1:
             raise RoleRunError(role, failed_log, "worker resume failed")
@@ -1166,7 +1167,7 @@ def test_worker_cycle_retries_after_failed_fresh_run(monkeypatch, tmp_path):
     assert (harness.current_cycle_dir / "worker.iter02.log").exists()
 
 
-def test_worker_cycle_does_not_retry_fresh_immediately_after_resume_timeout(monkeypatch, tmp_path):
+def test_worker_cycle_does_not_retry_fresh_immediately_after_resume_timeout(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1180,7 +1181,7 @@ def test_worker_cycle_does_not_retry_fresh_immediately_after_resume_timeout(monk
 
     calls = {"count": 0}
 
-    def fake_run_role(role, model, prompt, resume=False, **_kwargs):
+    def fake_run_role(role, model, prompt, resume=False, **_kwargs):  # noqa: ANN001, ANN003, ANN202
         calls["count"] += 1
         if calls["count"] == 1:
             raise RoleRunError(role, timed_out_log, "worker resume timed out", 124)
@@ -1201,7 +1202,7 @@ def test_worker_cycle_does_not_retry_fresh_immediately_after_resume_timeout(monk
     assert (harness.current_cycle_dir / "worker.iter02.log").exists()
 
 
-def test_worker_cycle_retries_when_worker_claims_zero_but_plan_has_steps(monkeypatch, tmp_path):
+def test_worker_cycle_retries_when_worker_claims_zero_but_plan_has_steps(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.plan_path.write_text(
         "## Remaining steps\n\n1. First\n2. Second\n\nGlobal Remaining steps: 2\n", encoding="utf-8"
@@ -1222,7 +1223,7 @@ def test_worker_cycle_retries_when_worker_claims_zero_but_plan_has_steps(monkeyp
 
     calls = {"count": 0}
 
-    def fake_run_role(role, model, prompt, resume=False, **_kwargs):
+    def fake_run_role(role, model, prompt, resume=False, **_kwargs):  # noqa: ANN001, ANN003, ANN202
         calls["count"] += 1
         if calls["count"] == 1:
             return stale_log
@@ -1244,7 +1245,7 @@ def test_worker_cycle_retries_when_worker_claims_zero_but_plan_has_steps(monkeyp
     assert (harness.current_cycle_dir / "worker.iter02.log").exists()
 
 
-def test_role_timeout_secs_uses_shorter_budget_for_non_worker(monkeypatch, tmp_path):
+def test_role_timeout_secs_uses_shorter_budget_for_non_worker(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
 
@@ -1254,7 +1255,7 @@ def test_role_timeout_secs_uses_shorter_budget_for_non_worker(monkeypatch, tmp_p
     assert harness.role_timeout_secs("checker") == min(cfg.codex_timeout_secs, 120)
 
 
-def test_planner_timeout_continues_with_existing_plan(monkeypatch, tmp_path):
+def test_planner_timeout_continues_with_existing_plan(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.plan_path.write_text("1. existing item\n", encoding="utf-8")
     harness = MetaHarness(cfg, llm_cfg)
@@ -1287,7 +1288,7 @@ def test_planner_timeout_continues_with_existing_plan(monkeypatch, tmp_path):
     assert (harness.current_cycle_dir / "planner.timeout.log").exists()
 
 
-def test_reviewer_timeout_returns_plan_remaining(monkeypatch, tmp_path):
+def test_reviewer_timeout_returns_plan_remaining(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.plan_path.write_text("1. one\n2. two\n", encoding="utf-8")
     harness = MetaHarness(cfg, llm_cfg)
@@ -1317,7 +1318,7 @@ def test_reviewer_timeout_returns_plan_remaining(monkeypatch, tmp_path):
     assert (harness.current_cycle_dir / "reviewer.timeout.log").exists()
 
 
-def test_consume_operator_comments_archives_and_clears_file(monkeypatch, tmp_path):
+def test_consume_operator_comments_archives_and_clears_file(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1332,7 +1333,7 @@ def test_consume_operator_comments_archives_and_clears_file(monkeypatch, tmp_pat
     assert "retry logic" in archived[0].read_text(encoding="utf-8")
 
 
-def test_prepare_cycle_workspace_clears_legacy_worker_session(monkeypatch, tmp_path):
+def test_prepare_cycle_workspace_clears_legacy_worker_session(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     legacy = cfg.state_dir / "worker.session"
     legacy.parent.mkdir(parents=True, exist_ok=True)
@@ -1344,7 +1345,7 @@ def test_prepare_cycle_workspace_clears_legacy_worker_session(monkeypatch, tmp_p
     assert not legacy.exists()
 
 
-def test_worker_cycle_stalls_after_consecutive_failures(monkeypatch, tmp_path):
+def test_worker_cycle_stalls_after_consecutive_failures(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1353,7 +1354,7 @@ def test_worker_cycle_stalls_after_consecutive_failures(monkeypatch, tmp_path):
     failed_log.parent.mkdir(parents=True, exist_ok=True)
     failed_log.write_text("partial output\n", encoding="utf-8")
 
-    def fake_run_role(role, model, prompt, resume=False, **_kwargs):
+    def fake_run_role(role, model, prompt, resume=False, **_kwargs) -> Never:  # noqa: ANN001, ANN003
         raise RoleRunError(role, failed_log, "worker failed")
 
     monkeypatch.setattr(harness, "check_stop_file", lambda: None)
@@ -1368,7 +1369,7 @@ def test_worker_cycle_stalls_after_consecutive_failures(monkeypatch, tmp_path):
     assert "consecutive_failures=3" in state["steps"]["worker"]["extra"]
 
 
-def test_worker_cycle_stalls_after_repeated_no_progress_logs(monkeypatch, tmp_path):
+def test_worker_cycle_stalls_after_repeated_no_progress_logs(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1386,7 +1387,7 @@ def test_worker_cycle_stalls_after_repeated_no_progress_logs(monkeypatch, tmp_pa
 
     calls = {"count": 0}
 
-    def fake_run_role(role, model, prompt, resume=False, **_kwargs):
+    def fake_run_role(role, model, prompt, resume=False, **_kwargs):  # noqa: ANN001, ANN003, ANN202
         calls["count"] += 1
         return repeated_log
 
@@ -1403,7 +1404,7 @@ def test_worker_cycle_stalls_after_repeated_no_progress_logs(monkeypatch, tmp_pa
     assert calls["count"] == 3
 
 
-def test_worker_cycle_stalls_after_max_worker_iters(monkeypatch, tmp_path):
+def test_worker_cycle_stalls_after_max_worker_iters(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg = cfg.__class__(**{**cfg.__dict__, "max_worker_iters": 2})
     harness = MetaHarness(cfg, llm_cfg)
@@ -1418,7 +1419,7 @@ def test_worker_cycle_stalls_after_max_worker_iters(monkeypatch, tmp_path):
 
     calls = {"count": 0}
 
-    def fake_run_role(role, model, prompt, resume=False, **_kwargs):
+    def fake_run_role(role, model, prompt, resume=False, **_kwargs):  # noqa: ANN001, ANN003, ANN202
         calls["count"] += 1
         return progress_log
 
@@ -1435,7 +1436,7 @@ def test_worker_cycle_stalls_after_max_worker_iters(monkeypatch, tmp_path):
     assert calls["count"] == 2
 
 
-def test_reviewer_step_receives_worker_stall_context(monkeypatch, tmp_path):
+def test_reviewer_step_receives_worker_stall_context(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1451,7 +1452,7 @@ def test_reviewer_step_receives_worker_stall_context(monkeypatch, tmp_path):
     monkeypatch.setattr(harness, "check_stop_file", lambda: None)
     monkeypatch.setattr(harness, "preflight_resource_check", lambda _context: None)
 
-    def fake_run_role(role, model, prompt, resume=False, **_kwargs):
+    def fake_run_role(role, model, prompt, resume=False, **_kwargs):  # noqa: ANN001, ANN003, ANN202
         captured["role"] = role
         captured["prompt"] = prompt
         return reviewer_log
@@ -1466,7 +1467,7 @@ def test_reviewer_step_receives_worker_stall_context(monkeypatch, tmp_path):
     assert "worker.iter03.resume-timeout.log" in str(captured["prompt"])
 
 
-def test_run_fast_resumes_next_cycle_at_worker_after_stall(monkeypatch, tmp_path):
+def test_run_fast_resumes_next_cycle_at_worker_after_stall(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     calls: list[str] = []
@@ -1532,7 +1533,7 @@ def test_run_fast_resumes_next_cycle_at_worker_after_stall(monkeypatch, tmp_path
     assert cycle_numbers == [1, 2]
 
 
-def test_worker_cycle_uses_escalated_model_and_failure_limit_after_stall(monkeypatch, tmp_path):
+def test_worker_cycle_uses_escalated_model_and_failure_limit_after_stall(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1544,7 +1545,7 @@ def test_worker_cycle_uses_escalated_model_and_failure_limit_after_stall(monkeyp
 
     calls: list[tuple[str, bool]] = []
 
-    def fake_run_role(role, model, prompt, resume=False, **_kwargs):
+    def fake_run_role(role, model, prompt, resume=False, **_kwargs) -> Never:  # noqa: ANN001, ANN003
         calls.append((model, resume))
         raise RoleRunError(role, timed_out_log, "worker timed out", 124)
 
@@ -1561,7 +1562,7 @@ def test_worker_cycle_uses_escalated_model_and_failure_limit_after_stall(monkeyp
     assert all(model == cfg.worker_stall_model for model, _resume in calls)
 
 
-def test_current_worker_model_auto_escalates_after_recent_timeout_log(monkeypatch, tmp_path):
+def test_current_worker_model_auto_escalates_after_recent_timeout_log(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1574,7 +1575,7 @@ def test_current_worker_model_auto_escalates_after_recent_timeout_log(monkeypatc
     assert harness.current_worker_failure_limit() == cfg.worker_stall_failure_limit
 
 
-def test_first_plan_item_text_returns_first_numbered_item(monkeypatch, tmp_path):
+def test_first_plan_item_text_returns_first_numbered_item(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.plan_path.write_text(
         "1. `decompile.py:10` fix BYTEOPS first\nstill same item detail\n2. `other.py:20` later item\n",
@@ -1585,7 +1586,7 @@ def test_first_plan_item_text_returns_first_numbered_item(monkeypatch, tmp_path)
     assert harness.first_plan_item_text() == "1. `decompile.py:10` fix BYTEOPS first\nstill same item detail"
 
 
-def test_build_worker_retry_context_reports_recent_failures(monkeypatch, tmp_path):
+def test_build_worker_retry_context_reports_recent_failures(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1605,7 +1606,7 @@ def test_build_worker_retry_context_reports_recent_failures(monkeypatch, tmp_pat
     assert "repeated failing test:" in context
 
 
-def test_current_worker_model_auto_escalates_on_repeated_failed_test(monkeypatch, tmp_path):
+def test_current_worker_model_auto_escalates_on_repeated_failed_test(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1624,7 +1625,7 @@ def test_current_worker_model_auto_escalates_on_repeated_failed_test(monkeypatch
     assert harness.current_worker_failure_limit() == cfg.worker_stall_failure_limit
 
 
-def test_worker_cycle_recomputes_model_after_first_timeout(monkeypatch, tmp_path):
+def test_worker_cycle_recomputes_model_after_first_timeout(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     harness = MetaHarness(cfg, llm_cfg)
     harness.prepare_cycle_workspace()
@@ -1638,7 +1639,7 @@ def test_worker_cycle_recomputes_model_after_first_timeout(monkeypatch, tmp_path
 
     calls: list[tuple[str, bool]] = []
 
-    def fake_run_role(role, model, prompt, resume=False, **_kwargs):
+    def fake_run_role(role, model, prompt, resume=False, **_kwargs):  # noqa: ANN001, ANN003, ANN202
         calls.append((model, resume))
         if len(calls) == 1:
             raise RoleRunError(role, timeout_log, "worker timed out", 124)

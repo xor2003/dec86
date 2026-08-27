@@ -206,11 +206,11 @@ class DebuggerApp:
 
 
 __all__ = [
+    "BreakpointPane",
     "DebuggerApp",
     "DebuggerTUI",
-    "RegisterPane",
     "DisassemblyPane",
     "MemoryPane",
+    "RegisterPane",
     "StackPane",
-    "BreakpointPane",
 ]

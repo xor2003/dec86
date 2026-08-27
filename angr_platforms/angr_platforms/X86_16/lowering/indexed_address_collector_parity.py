@@ -13,9 +13,10 @@ Do not perform structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Callable, Protocol, cast
+from typing import Protocol, cast
 
 from ..alias.indexed_address_contracts import (
     IndexedAddressAliasEvidence8616,
@@ -246,9 +247,7 @@ def compare_indexed_address_collectors_8616(
             layer="lowering",
         )
     alias_keys = tuple(_alias_key_8616(fact) for fact in alias_evidence.facts)
-    legacy_keys = tuple(
-        (*(_load_key_8616(fact) for fact in legacy_loads), *(_store_key_8616(fact) for fact in legacy_stores))
-    )
+    legacy_keys = (*(_load_key_8616(fact) for fact in legacy_loads), *(_store_key_8616(fact) for fact in legacy_stores))
     alias_set = frozenset(alias_keys)
     legacy_set = frozenset(legacy_keys)
     matched = tuple(sorted(alias_set & legacy_set, key=_key_sort_8616))

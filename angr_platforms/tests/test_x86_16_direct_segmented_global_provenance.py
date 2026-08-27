@@ -24,6 +24,10 @@ class _Codegen:
     def next_idx(self, _name: str) -> int:
         self._next_idx += 1
         return self._next_idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def test_direct_segmented_global_load_retains_evidence_instruction() -> None:

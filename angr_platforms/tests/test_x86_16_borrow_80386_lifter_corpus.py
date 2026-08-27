@@ -244,8 +244,8 @@ def test_division_emits_guarded_zero_and_overflow_fault_exits(code: bytes) -> No
     assert len(fault_exits) == 2
 
 
-def test_address32_memory_operand_emits_guarded_real_mode_segment_limit_fault() -> None:
-    """Require a #GP-style exit when a dword effective offset exceeds 64 KiB."""
+def test_address32_memory_operand_omits_out_of_scope_segment_limit_fault() -> None:
+    """Keep excluded segment-limit faults out of practical-DOS control-flow IR."""
     irsb = pyvex.lift(b"\x66\x67\x8e\x97\x72\x91\xff\xff", 0x1000, Arch86_16(), max_inst=1, opt_level=0)
     fault_exits = [
         statement
@@ -253,7 +253,8 @@ def test_address32_memory_operand_emits_guarded_real_mode_segment_limit_fault() 
         if isinstance(statement, pyvex.stmt.Exit) and statement.jumpkind == "Ijk_SigSEGV"
     ]
     assert irsb.jumpkind == "Ijk_Boring"
-    assert len(fault_exits) == 1
+    assert irsb.instructions == 1
+    assert not fault_exits
 
 
 def test_invalid_lock_encoding_emits_illegal_instruction_fault() -> None:

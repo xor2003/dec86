@@ -10,8 +10,9 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol, Sequence, cast
+from typing import Protocol, cast
 
 from capstone import CS_AC_WRITE
 from capstone.x86_const import (
@@ -244,7 +245,7 @@ def _collect_near_pointer_argument_facts_uncached_8616(
                         stack_offset=carrier.stack_offset,
                         carrier_load_ins_addr=carrier.carrier_load_ins_addr,
                         source_version_delta=carrier.source_version_delta + delta,
-                        source_update_ins_addrs=carrier.source_update_ins_addrs + (insn_addr,),
+                        source_update_ins_addrs=(*carrier.source_update_ins_addrs, insn_addr),
                     )
             if not operands or operands[0].type != X86_OP_REG:
                 continue

@@ -24,15 +24,15 @@ from angr_platforms.X86_16.widening.store_width import (
 )
 
 __all__ = [
-    "_global_memory_addr",
-    "_global_load_addr",
-    "_match_scaled_high_byte",
     "_extract_dereference_addr_expr",
+    "_global_load_addr",
+    "_global_memory_addr",
+    "_high_byte_store_addr",
+    "_make_word_dereference_from_addr_expr",
     "_match_byte_load_addr_expr",
     "_match_byte_store_addr_expr",
+    "_match_scaled_high_byte",
     "_match_shifted_high_byte_addr_expr",
-    "_match_word_pair_low_addr_expr",
-    "_make_word_dereference_from_addr_expr",
     "_match_word_dereference_addr_expr",
-    "_high_byte_store_addr",
+    "_match_word_pair_low_addr_expr",
 ]

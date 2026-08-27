@@ -7,8 +7,8 @@ Forbidden: treating cache hits as semantic proof or validation success.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
 from .tail_validation import build_x86_16_validation_cache_descriptor
 

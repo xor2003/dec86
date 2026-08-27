@@ -20,7 +20,7 @@ decoder helpers below; owned summaries and contracts use direct typed access.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, TypeAlias, cast
+from typing import Any, cast
 
 from capstone import CS_AC_WRITE
 from capstone.x86_const import (
@@ -55,7 +55,7 @@ from .call_contracts import (
 
 __all__ = ["binary_call_return_contract_8616"]
 
-DynamicValue: TypeAlias = Any
+type DynamicValue = Any
 
 _MAX_FUNCTION_BLOCKS_8616 = 128
 _MAX_RECURSION_DEPTH_8616 = 8

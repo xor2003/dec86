@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 from meta_harness.config import RuntimeConfig
 from meta_harness.prompts import (
@@ -12,12 +12,12 @@ from meta_harness.prompts import (
 from meta_harness.task_intake import write_pending_task
 
 
-def _cfg(monkeypatch, tmp_path):
+def _cfg(monkeypatch, tmp_path):  # noqa: ANN001, ANN202
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     return RuntimeConfig.from_env([])
 
 
-def test_planner_prompt_mentions_plan_and_remaining_steps(monkeypatch, tmp_path):
+def test_planner_prompt_mentions_plan_and_remaining_steps(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = build_planner_prompt(cfg)
     assert str(cfg.plan_path) in prompt
@@ -72,7 +72,7 @@ def test_planner_prompt_mentions_plan_and_remaining_steps(monkeypatch, tmp_path)
     assert "Green level: red" in prompt
 
 
-def test_planner_prompt_includes_pending_operator_task(monkeypatch, tmp_path):
+def test_planner_prompt_includes_pending_operator_task(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     write_pending_task(tmp_path, "Add deterministic PLAN.md task intake.")
 
@@ -82,7 +82,7 @@ def test_planner_prompt_includes_pending_operator_task(monkeypatch, tmp_path):
     assert "Add deterministic PLAN.md task intake." in prompt
 
 
-def test_planner_prompt_accepts_current_item_and_rewrite_target(monkeypatch, tmp_path):
+def test_planner_prompt_accepts_current_item_and_rewrite_target(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = build_planner_prompt(
         cfg,
@@ -95,7 +95,7 @@ def test_planner_prompt_accepts_current_item_and_rewrite_target(monkeypatch, tmp
     assert "giant item to split" in prompt
 
 
-def test_planner_prompt_avoids_duplicate_rewrite_body_when_task_packet_matches(monkeypatch, tmp_path):
+def test_planner_prompt_avoids_duplicate_rewrite_body_when_task_packet_matches(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     item = "1. [rewrite] giant item to split"
     packet = "Task packet id: 1\nObjective: split item"
@@ -106,7 +106,7 @@ def test_planner_prompt_avoids_duplicate_rewrite_body_when_task_packet_matches(m
     assert "Current task packet" in prompt
 
 
-def test_worker_prompt_mentions_implementation_role(monkeypatch, tmp_path):
+def test_worker_prompt_mentions_implementation_role(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = build_worker_prompt(cfg)
     assert "Continue implementing the unfinished steps" in prompt
@@ -126,7 +126,7 @@ def test_worker_prompt_mentions_implementation_role(monkeypatch, tmp_path):
     assert "Green level: focused-item-green|cycle-green|merge-safe-green|red" in prompt
 
 
-def test_worker_prompt_accepts_focus_item_and_retry_context(monkeypatch, tmp_path):
+def test_worker_prompt_accepts_focus_item_and_retry_context(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = build_worker_prompt(
         cfg,
@@ -143,7 +143,7 @@ def test_worker_prompt_accepts_focus_item_and_retry_context(monkeypatch, tmp_pat
     )
 
 
-def test_worker_and_planner_prompts_accept_task_packet(monkeypatch, tmp_path):
+def test_worker_and_planner_prompts_accept_task_packet(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     task_packet = "Task packet id: 1\nObjective: fix BYTEOPS\nAcceptance tests: pytest test_byteops"
     worker = build_worker_prompt(cfg, task_packet=task_packet)
@@ -154,7 +154,7 @@ def test_worker_and_planner_prompts_accept_task_packet(monkeypatch, tmp_path):
     assert "pytest test_byteops" in planner
 
 
-def test_master_prompts_include_repo_standing_tasks(monkeypatch, tmp_path):
+def test_master_prompts_include_repo_standing_tasks(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("REPO_STANDING_TASKS", "keep COD tail validation active\nfix remaining COD deltas")
     cfg = RuntimeConfig.from_env([])
@@ -168,7 +168,7 @@ def test_master_prompts_include_repo_standing_tasks(monkeypatch, tmp_path):
     assert "Repo standing tasks" in worker
 
 
-def test_reviewer_prompt_allows_harness_improvements(monkeypatch, tmp_path):
+def test_reviewer_prompt_allows_harness_improvements(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = build_reviewer_prompt(cfg)
     assert "improve the harness itself" in prompt
@@ -181,7 +181,7 @@ def test_reviewer_prompt_allows_harness_improvements(monkeypatch, tmp_path):
     assert "Green level: focused-item-green|cycle-green|merge-safe-green|red" in prompt
 
 
-def test_reviewer_prompt_accepts_worker_stall_context(monkeypatch, tmp_path):
+def test_reviewer_prompt_accepts_worker_stall_context(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = build_reviewer_prompt(
         cfg,
@@ -194,7 +194,7 @@ def test_reviewer_prompt_accepts_worker_stall_context(monkeypatch, tmp_path):
     assert "Active task packet" in prompt
 
 
-def test_checker_and_crash_prompts_reference_evidence(monkeypatch, tmp_path):
+def test_checker_and_crash_prompts_reference_evidence(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     checker = build_checker_prompt(cfg)
     crash = build_crash_reviewer_prompt(cfg, "/tmp/cycle", 7)
@@ -208,14 +208,14 @@ def test_checker_and_crash_prompts_reference_evidence(monkeypatch, tmp_path):
     assert "too complex for the current lane" in crash
 
 
-def test_checker_prompt_mentions_evidence_facts_artifact(monkeypatch, tmp_path):
+def test_checker_prompt_mentions_evidence_facts_artifact(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     checker = build_checker_prompt(cfg)
     assert str(cfg.state_dir / "evidence_facts.json") in checker
     assert "confidence percentages" in checker
 
 
-def test_resume_prompt_is_short_and_keeps_required_marker(monkeypatch, tmp_path):
+def test_resume_prompt_is_short_and_keeps_required_marker(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = build_resume_prompt(
         "worker",

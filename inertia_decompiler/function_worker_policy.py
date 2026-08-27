@@ -8,10 +8,10 @@ or parallel clean-process execution without owning decompiler semantics.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class CleanProcessOverride8616(str, Enum):
+class CleanProcessOverride8616(StrEnum):
     """Typed interpretation of the legacy clean-worker environment switch."""
 
     DEFAULT = "default"
@@ -19,7 +19,7 @@ class CleanProcessOverride8616(str, Enum):
     DISABLED = "disabled"
 
 
-class FunctionWorkerMode8616(str, Enum):
+class FunctionWorkerMode8616(StrEnum):
     """Execution isolation selected for one CLI function batch."""
 
     SHARED = "shared"

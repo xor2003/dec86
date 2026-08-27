@@ -83,6 +83,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _project():
@@ -179,7 +183,7 @@ def test_direct_stack_move_consumes_previous_materialization_evidence():
 
 
 def test_direct_stack_update_resolution_applies_preferred_stack_identity_name():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([])  # noqa: RUF059
     codegen._func = SimpleNamespace(info={"x86_16_annotations": {"stack_vars": {-6: "changed"}}})
     variable = SimStackVariable(-6, 2, base="bp", name="arg_3", region=0x4010)
     cvar = CVariable(variable, variable_type=SimTypeShort(False), codegen=codegen)
@@ -199,7 +203,7 @@ def test_direct_stack_update_resolution_applies_preferred_stack_identity_name():
 
 
 def test_direct_stack_move_fallback_refuses_structured_control_scope():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([])  # noqa: RUF059
     body = CStatements([CAssignment(_stack(-2, codegen), _const(1, codegen), codegen=codegen)], codegen=codegen)
     root = CStatements([CForLoop(None, None, None, body, codegen=codegen)], codegen=codegen)
 
@@ -1062,7 +1066,7 @@ def test_real_mode_linear_stack_lowering_reuses_vvar_chain_with_constant_tail():
 
 
 def test_real_mode_linear_stack_lowering_replaces_stack_base_with_unresolved_segment_carrier():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([])  # noqa: RUF059
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", -2, 2, region=0x4010)
     ]
@@ -1138,7 +1142,7 @@ def test_real_mode_linear_stack_carrier_delta_uses_multiple_ss_alias_observation
         _stack_storage_facts_for_segmented_address_8616("ss", 4, 2, region=0x4010),
         _stack_storage_facts_for_segmented_address_8616("ss", 6, 2, region=0x4010),
     ]
-    segment_carrier = _dirty_vvar(19, codegen, reg_offset=30)
+    segment_carrier = _dirty_vvar(19, codegen, reg_offset=project.arch.registers["ss"][0])
     offset_carrier = _dirty_vvar(21, codegen, reg_offset=8)
     first = _dirty_ss_vvar_deref(segment_carrier, offset_carrier, 0, codegen)
     second = _dirty_ss_vvar_deref(segment_carrier, offset_carrier, 2, codegen)
@@ -1171,7 +1175,7 @@ def test_real_mode_linear_stack_carrier_delta_alias_observation_overrides_sp_see
         _stack_storage_facts_for_segmented_address_8616("ss", 4, 2, region=0x4010),
         _stack_storage_facts_for_segmented_address_8616("ss", 6, 2, region=0x4010),
     ]
-    segment_carrier = _dirty_vvar(19, codegen, reg_offset=30)
+    segment_carrier = _dirty_vvar(19, codegen, reg_offset=project.arch.registers["ss"][0])
     offset_carrier = _dirty_vvar(21, codegen, reg_offset=8)
     first = _dirty_ss_vvar_deref(segment_carrier, offset_carrier, 0, codegen)
     second = _dirty_ss_vvar_deref(segment_carrier, offset_carrier, 2, codegen)
@@ -1225,7 +1229,7 @@ def test_real_mode_linear_stack_carrier_delta_refuses_single_ss_alias_observatio
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", 4, 2, region=0x4010),
     ]
-    segment_carrier = _dirty_vvar(19, codegen, reg_offset=30)
+    segment_carrier = _dirty_vvar(19, codegen, reg_offset=project.arch.registers["ss"][0])
     offset_carrier = _dirty_vvar(21, codegen, reg_offset=8)
     deref = _dirty_ss_vvar_deref(segment_carrier, offset_carrier, 0, codegen)
     codegen.cfunc.statements = CStatements(
@@ -1275,7 +1279,7 @@ def test_real_mode_linear_stack_base_bias_uses_recovered_arg_list_offsets_withou
 
 
 def test_real_mode_linear_stack_carrier_delta_uses_recovered_arg_list_offsets_without_alias_facts():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([])  # noqa: RUF059
     arg_a = CVariable(
         SimStackVariable(4, 2, base="bp", name="a", region=0x4010),
         variable_type=SimTypeShort(False),
@@ -1287,7 +1291,7 @@ def test_real_mode_linear_stack_carrier_delta_uses_recovered_arg_list_offsets_wi
         codegen=codegen,
     )
     codegen.cfunc.arg_list = [arg_a, arg_b]
-    segment_carrier = _dirty_vvar(19, codegen, reg_offset=30)
+    segment_carrier = _dirty_vvar(19, codegen, reg_offset=project.arch.registers["ss"][0])
     offset_carrier = _dirty_vvar(21, codegen, reg_offset=8)
     first = _dirty_ss_vvar_deref(segment_carrier, offset_carrier, 0, codegen)
     second = _dirty_ss_vvar_deref(segment_carrier, offset_carrier, 2, codegen)
@@ -1309,7 +1313,7 @@ def test_real_mode_linear_stack_carrier_delta_uses_recovered_arg_list_offsets_wi
 
 
 def test_real_mode_linear_stack_carrier_delta_uses_arg_offsets_to_disambiguate_bp_slots():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([])  # noqa: RUF059
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", -2, 2, region=0x4010),
         _stack_storage_facts_for_segmented_address_8616("ss", 0, 2, region=0x4010),
@@ -1328,7 +1332,7 @@ def test_real_mode_linear_stack_carrier_delta_uses_arg_offsets_to_disambiguate_b
         codegen=codegen,
     )
     codegen.cfunc.arg_list = [arg_a, arg_b]
-    segment_carrier = _dirty_vvar(19, codegen, reg_offset=30)
+    segment_carrier = _dirty_vvar(19, codegen, reg_offset=project.arch.registers["ss"][0])
     base_carrier = _dirty_vvar(14, codegen, reg_offset=8)
     intermediate_carrier = _dirty_vvar(20, codegen, reg_offset=8)
     offset_carrier = _dirty_vvar(21, codegen, reg_offset=8)
@@ -1363,14 +1367,14 @@ def test_real_mode_linear_stack_carrier_delta_uses_arg_offsets_to_disambiguate_b
 
 
 def test_real_mode_linear_stack_carrier_delta_prefers_abi_arg_region_over_return_address_slot():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([])  # noqa: RUF059
     codegen._inertia_semantic_alias_facts = [
         _stack_storage_facts_for_segmented_address_8616("ss", -2, 2, region=0x4010),
         _stack_storage_facts_for_segmented_address_8616("ss", 2, 2, region=0x4010),
         _stack_storage_facts_for_segmented_address_8616("ss", 4, 2, region=0x4010),
         _stack_storage_facts_for_segmented_address_8616("ss", 6, 2, region=0x4010),
     ]
-    segment_carrier = _dirty_vvar(19, codegen, reg_offset=30)
+    segment_carrier = _dirty_vvar(19, codegen, reg_offset=project.arch.registers["ss"][0])
     offset_carrier = _dirty_vvar(21, codegen, reg_offset=8)
     first = _dirty_ss_vvar_deref(segment_carrier, offset_carrier, 0, codegen)
     second = _dirty_ss_vvar_deref(segment_carrier, offset_carrier, 2, codegen)
@@ -2612,7 +2616,7 @@ def test_stack_lowering_entrypoint_runs_typed_ss_lowering_before_cli_cleanup():
 
 
 def test_stack_lowering_entrypoint_builds_typed_stack_probe_return_facts_from_summaries():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([])  # noqa: RUF059
     probe = SimpleNamespace()
     codegen._inertia_callsite_summaries = {
         id(probe): CallsiteSummary8616(
@@ -2653,7 +2657,7 @@ def test_stack_lowering_entrypoint_builds_typed_stack_probe_return_facts_from_su
 
 
 def test_stack_lowering_builder_refuses_non_ss_or_unknown_width_facts():
-    project, codegen = _codegen([])
+    project, codegen = _codegen([])  # noqa: RUF059
     codegen._inertia_callsite_summaries = {
         1: CallsiteSummary8616(
             callsite_addr=0x4010,

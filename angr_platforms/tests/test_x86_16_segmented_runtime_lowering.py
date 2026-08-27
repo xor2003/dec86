@@ -76,6 +76,7 @@ from angr_platforms.X86_16.lowering.segmented_memory_lowering import (
     apply_runtime_segment_lowering_8616,
     lower_runtime_segment_access_8616,
     lower_runtime_segment_address_8616,
+    materialize_runtime_helper_segment_carriers_8616,
 )
 from angr_platforms.X86_16.lowering.stack_aggregate_objects import StackAggregateObjectFact8616
 from angr_platforms.X86_16.lowering.storage_identity_facts import (
@@ -140,6 +141,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _project():
@@ -694,6 +699,34 @@ def test_materialize_direct_stack_mov_reload_preserves_stack_slot_identity():
     assert stats["reload_failure_count"] == 0
 
 
+def test_register_read_classification_reuses_memoized_subtree(monkeypatch):
+    project, codegen = _project()
+    ax_cvar = _reg(project, "ax", codegen)
+    expr = CBinaryOp(
+        "Add",
+        ax_cvar,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    classifications = 0
+    original = real_mode_linear._same_register_cvar_name_8616
+
+    def count_classification(node, reg_name):
+        nonlocal classifications
+        classifications += 1
+        return original(node, reg_name)
+
+    monkeypatch.setattr(real_mode_linear, "_same_register_cvar_name_8616", count_classification)
+    memo: dict[int, bool] = {}
+
+    assert real_mode_linear._node_reads_register_name_8616(expr, "ax", memo=memo) is True
+    first_classifications = classifications
+    assert real_mode_linear._node_reads_register_name_8616(expr, "ax", memo=memo) is True
+
+    assert first_classifications == 1
+    assert classifications == first_classifications
+
+
 def test_direct_stack_move_signed_byte_source_projects_promoted_aggregate_field():
     project, codegen = _project()
     aggregate_type = SimStruct(
@@ -771,7 +804,7 @@ def test_direct_stack_move_signed_word_arg_source_projects_local_slot():
 
 
 def test_direct_stack_move_duplicate_check_matches_structural_indexed_rhs():
-    project, codegen = _project()
+    project, codegen = _project()  # noqa: RUF059
     dst_var = SimStackVariable(-4, 2, base="bp", name="pivot", region=0x4010)
     dst_cvar = CVariable(dst_var, variable_type=SimTypeShort(False), codegen=codegen)
     global_var = SimMemoryVariable(0x0BAA, 2, name="abarWork")
@@ -9509,7 +9542,7 @@ def test_prune_frame_prologue_stack_assignments_removes_typed_bp_dirty_carrier()
     bp_offset = project.arch.registers["bp"][0]
     artifact = CAssignment(
         saved_frame,
-        CDirtyExpression(SimpleNamespace(reg=bp_offset), codegen=codegen),
+        CDirtyExpression(SimpleNamespace(reg=bp_offset, bits=16), codegen=codegen),
         codegen=codegen,
         tags={"ins_addr": 0x4010},
     )
@@ -9566,7 +9599,7 @@ def test_prune_frame_prologue_stack_assignments_refuses_non_bp_dirty_carrier():
     ax_offset = project.arch.registers["ax"][0]
     artifact = CAssignment(
         saved_frame,
-        CDirtyExpression(SimpleNamespace(reg=ax_offset), codegen=codegen),
+        CDirtyExpression(SimpleNamespace(reg=ax_offset, bits=16), codegen=codegen),
         codegen=codegen,
         tags={"ins_addr": 0x4010},
     )
@@ -10323,6 +10356,92 @@ def test_apply_runtime_segment_lowering_consumes_typed_pointer_register_store_ca
     assert result.rhs is value
 
 
+def test_apply_runtime_segment_lowering_reassembles_pointer_word_store_byte_pair():
+    project, codegen = _project()
+    scalar_type = SimTypeShort(False).with_arch(project.arch)
+    argv = CVariable(
+        SimStackVariable(6, 2, base="bp", name="argv", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    bx = _reg(project, "bx", codegen)
+    value = CVariable(
+        SimRegisterVariable(*project.arch.registers["ax"], name="value"),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    codegen.cfunc.arg_list = [argv]
+    codegen.cfunc.functy = SimTypeFunction(
+        [scalar_type],
+        SimTypeShort(False),
+        arg_names=["argv"],
+    ).with_arch(project.arch)
+    low_helper = CFunctionCall(
+        "SEG_U8",
+        None,
+        [_reg(project, "ss", codegen), bx],
+        codegen=codegen,
+        tags={"inertia_x86_16_runtime_segment_helper": "SEG_U8"},
+    )
+    high_helper = CFunctionCall(
+        "SEG_U8",
+        None,
+        [
+            _reg(project, "ss", codegen),
+            CBinaryOp("Add", bx, _const(1, codegen), codegen=codegen),
+        ],
+        codegen=codegen,
+        tags={"inertia_x86_16_runtime_segment_helper": "SEG_U8"},
+    )
+    codegen.cfunc.statements.statements.extend(
+        [
+            CAssignment(bx, argv, codegen=codegen),
+            CAssignment(low_helper, value, codegen=codegen),
+            CAssignment(
+                high_helper,
+                CBinaryOp("Shr", value, _const(8, codegen), codegen=codegen),
+                codegen=codegen,
+            ),
+        ]
+    )
+    load_argv = SimpleNamespace(
+        address=0x4014,
+        id=X86_INS_MOV,
+        operands=(_reg_operand(X86_REG_BX), _bp_mem_operand(6)),
+    )
+    store_argv = SimpleNamespace(
+        address=0x4018,
+        id=X86_INS_MOV,
+        operands=(_reg_indirect_mem_operand(X86_REG_BX), _reg_operand(X86_REG_AX)),
+    )
+    function = SimpleNamespace(
+        blocks=(
+            SimpleNamespace(
+                addr=0x4014,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(insn=load_argv),
+                        SimpleNamespace(insn=store_argv),
+                    )
+                ),
+            ),
+        )
+    )
+    project.kb = SimpleNamespace(functions=SimpleNamespace(get=lambda _addr: function))
+
+    changed = apply_runtime_segment_lowering_8616(codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.statements.statements) == 1
+    result = codegen.cfunc.statements.statements[0]
+    assert isinstance(result, CAssignment)
+    assert isinstance(result.lhs, CIndexedVariable)
+    assert result.lhs.variable is argv
+    assert isinstance(result.lhs.index, CConstant)
+    assert result.lhs.index.value == 0
+    assert result.rhs is value
+
+
 def test_lower_runtime_segment_access_joins_cloned_argument_to_canonical_pointer_type():
     project, codegen = _project()
     scalar_type = SimTypeShort(False).with_arch(project.arch)
@@ -10364,6 +10483,37 @@ def test_lower_runtime_segment_access_joins_cloned_argument_to_canonical_pointer
     assert lowered.variable is cloned_argv
     assert lowered.index is index
     assert cloned_argv.variable_type is pointer_type
+
+
+def test_runtime_segment_carrier_refuses_to_override_explicit_ds_with_stack_offset_proof():
+    project, codegen = _project()
+    scalar_type = SimTypeShort(False).with_arch(project.arch)
+    argument = CVariable(
+        SimStackVariable(4, 2, base="bp", name="argument", region=0x4010),
+        variable_type=scalar_type,
+        codegen=codegen,
+    )
+    explicit_ds = _reg(project, "ds", codegen)
+    helper = CFunctionCall(
+        "SEG_U16",
+        None,
+        [
+            explicit_ds,
+            CBinaryOp("Add", _const(0, codegen), argument, codegen=codegen),
+        ],
+        codegen=codegen,
+        tags={"inertia_x86_16_runtime_segment_helper": "SEG_U16"},
+    )
+    codegen.cfunc.arg_list = [argument]
+    codegen.cfunc.statements.statements.append(CExpressionStatement(helper, codegen=codegen))
+
+    changed = materialize_runtime_helper_segment_carriers_8616(codegen, project=project)
+
+    assert changed is False
+    assert helper.args[0] is explicit_ds
+    assert codegen._inertia_runtime_helper_segment_carrier_candidate_count_8616 == 1
+    assert codegen._inertia_runtime_helper_segment_carrier_materialized_count_8616 == 0
+    assert codegen._inertia_runtime_helper_segment_carrier_refused_count_8616 == 1
 
 
 def test_apply_runtime_segment_lowering_promotes_only_binary_proven_pointer_argument():
@@ -10927,8 +11077,10 @@ def test_runtime_segment_lowering_resolves_dirty_ds_copy_chain_before_helper_mat
     )
 
     changed = apply_runtime_segment_lowering_8616(codegen, target="portable-flat")
+    replayed = apply_runtime_segment_lowering_8616(codegen, target="portable-flat")
 
     assert changed is True
+    assert replayed is False
     lowered_helper = codegen.cfunc.statements.statements[2].expr
     assert isinstance(lowered_helper, CFunctionCall)
     lowered_segment = lowered_helper.args[0]
@@ -11034,7 +11186,7 @@ def test_apply_runtime_segment_lowering_preserves_ss_stack_dereferences():
 
 
 def test_architecture_guard_rejects_raw_linear_segment_arithmetic():
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         assert_final_c_quality_8616("x = *((unsigned short *)((ds << 4) + 2978));", function_addr=0x10498)
 
 
@@ -11055,7 +11207,7 @@ def test_architecture_guard_accepts_segment_helpers():
 
 
 def test_architecture_guard_rejects_unreachable_call_after_return():
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         assert_final_c_quality_8616(
             "int f(void)\n{\n    helper();\n    return 2;\n    aNchkstk();\n}\n",
             function_addr=0x1000,
@@ -11063,12 +11215,12 @@ def test_architecture_guard_rejects_unreachable_call_after_return():
 
 
 def test_architecture_guard_rejects_unary_not_shift_precedence_leak():
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         assert_final_c_quality_8616(
             "int f(void)\n{\n    if (!clPause >> 16)\n        return 1;\n    return 0;\n}\n",
             function_addr=0x1000,
         )
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         assert_final_c_quality_8616(
             "int f(void)\n{\n    if (!(clPause) >> 16)\n        return 1;\n    return 0;\n}\n",
             function_addr=0x1000,
@@ -11091,12 +11243,12 @@ def test_architecture_guard_accepts_conditional_single_line_return_before_call()
 
 
 def test_segment_linearization_through_tmp_is_rejected():
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         assert_final_c_quality_8616(
             "unsigned short tmp;\nunsigned long linear;\ntmp = ss;\nlinear = tmp << 4;\n",
             function_addr=0x10498,
         )
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         assert_final_c_quality_8616(
             "unsigned short tmp;\nunsigned long linear;\ntmp = ds;\nlinear = tmp * 16;\n",
             function_addr=0x10498,
@@ -11154,7 +11306,7 @@ def test_architecture_guard_does_not_infer_semantics_from_arg_names():
 
 
 def test_architecture_guard_rejects_heapsort_stack_placeholder_noise():
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         assert_final_c_quality_8616(
             "short HeapSort(void)\n"
             "{\n"

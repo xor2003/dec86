@@ -12,12 +12,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TypeAlias
 
 from .core import IRAddress, IRCallStackEffect8616, IRRefusal
+from .logical_memory_contracts import IRLogicalMemoryArtifact8616
 from .ssa import SSABlock
 
-MemoryRangeKey8616: TypeAlias = tuple[str, tuple[str, ...], int, int]
+type MemoryRangeKey8616 = tuple[str, tuple[str, ...], int, int]
 
 
 class SSAMemoryOverlapRelation8616(StrEnum):
@@ -212,6 +212,7 @@ class SSAFunctionMemoryResult8616:
     overlaps: tuple[SSAMemoryOverlap8616, ...] = ()
     accesses: tuple[SSAMemoryAccess8616, ...] = ()
     call_effects: tuple[SSACallStackEffectSite8616, ...] = ()
+    logical_memory: IRLogicalMemoryArtifact8616 | None = None
 
 
 __all__ = [

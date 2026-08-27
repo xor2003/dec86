@@ -31,6 +31,10 @@ class _Codegen:
         index = self._next_index
         self._next_index += 1
         return index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _summary(callsite_addr: int, *, target_addr: int = 0x2000) -> CallsiteSummary8616:
@@ -50,7 +54,7 @@ def _summary(callsite_addr: int, *, target_addr: int = 0x2000) -> CallsiteSummar
 def _call(codegen: _Codegen, callsite_addr: int) -> CFunctionCall:
     return CFunctionCall(
         "sample_counter",
-        None,
+        SimpleNamespace(addr=0x2000),
         [],
         tags={"ins_addr": callsite_addr},
         codegen=codegen,
@@ -99,6 +103,58 @@ def test_assignment_and_standalone_duplicate_fail_exact_callsite_multiplicity() 
     assert report.issues[0].kind is CallsiteMultiplicityIssueKind8616.DUPLICATE_FINAL_CALLSITE
     assert report.issue_tokens() == (
         "callsite-multiplicity:duplicate-final-callsite:callsite=0x1010:"
+        "target=0x2000:expected=1:actual=2",
+    )
+
+
+def test_shared_call_node_at_two_ast_edges_fails_exact_callsite_multiplicity() -> None:
+    """A shared node renders twice and must count as two call evaluations."""
+    codegen = _Codegen()
+    call = _call(codegen, 0x1010)
+    destination = CVariable(SimMemoryVariable(0x3000, 2), codegen=codegen)
+    root = CStatements(
+        [
+            CExpressionStatement(call, codegen=codegen),
+            CAssignment(destination, call, codegen=codegen),
+        ],
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries = {id(call): _summary(0x1010)}
+
+    report = validate_required_callsite_multiplicity_8616(codegen, root)
+
+    assert not report.passed
+    assert report.raw_fact_count == 2
+    assert report.failure_count == 1
+    assert report.issues[0].actual_count == 2
+
+
+def test_untagged_same_target_clone_fails_aggregate_multiplicity() -> None:
+    """Catch a condition clone even when only the assignment retained callsite tags."""
+    codegen = _Codegen()
+    exact_call = _call(codegen, 0x1010)
+    untagged_clone = CFunctionCall(
+        "sample_counter",
+        SimpleNamespace(addr=0x2000),
+        [],
+        codegen=codegen,
+    )
+    root = CStatements([exact_call, untagged_clone], codegen=codegen)
+    codegen._inertia_callsite_summaries = {id(exact_call): _summary(0x1010)}
+
+    report = validate_required_callsite_multiplicity_8616(codegen, root)
+
+    assert not report.passed
+    assert report.raw_fact_count == 2
+    assert report.failure_count == 1
+    issue = report.issues[0]
+    assert issue.kind is CallsiteMultiplicityIssueKind8616.DUPLICATE_FINAL_TARGET
+    assert issue.callsite_addr is None
+    assert issue.target_addr == 0x2000
+    assert issue.expected_count == 1
+    assert issue.actual_count == 2
+    assert report.issue_tokens() == (
+        "callsite-multiplicity:duplicate-final-target:callsite=aggregate:"
         "target=0x2000:expected=1:actual=2",
     )
 

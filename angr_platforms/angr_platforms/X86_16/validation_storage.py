@@ -16,7 +16,7 @@ import os
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -45,6 +45,9 @@ from .lowering.stack_aggregate_objects import (
     StackAggregateEvidenceKind8616,
     StackAggregateObjectFact8616,
     stack_aggregate_object_facts_8616,
+)
+from .lowering.stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
 )
 from .lowering.storage_identity_facts import (
     GlobalStorageIdentityFact8616,
@@ -274,7 +277,7 @@ class IndexedGlobalStackAggregateCopyIssue8616:
         return token
 
 
-StorageValidationIssue8616: TypeAlias = (
+type StorageValidationIssue8616 = (
     StorageIdentityIssue8616
     | StackAggregateObjectIssue8616
     | StackFieldProjectionIssue8616
@@ -590,6 +593,7 @@ def _normalized_indexed_global_stack_copy_facts_8616(
 
 
 def _stack_storage_matches_8616(
+    codegen: object,
     variable: CVariable,
     *,
     base: str,
@@ -599,7 +603,7 @@ def _stack_storage_matches_8616(
     return any(
         isinstance(storage, SimStackVariable)
         and storage.base == base
-        and storage.offset == offset
+        and machine_bp_offset_for_stack_variable_8616(codegen, storage) == offset
         for storage in _cvariable_storage_views_8616(variable)
     )
 
@@ -623,6 +627,7 @@ def _struct_name_8616(struct_type: object) -> str:
 
 
 def _final_stack_field_projections_8616(
+    codegen: object,
     root: object,
     fact: StackAggregateFieldProjectionFact8616,
 ) -> tuple[_FinalStackFieldProjection8616, ...]:
@@ -633,6 +638,7 @@ def _final_stack_field_projections_8616(
             not isinstance(node, CAssignment)
             or not isinstance(node.lhs, CVariable)
             or not _stack_storage_matches_8616(
+                codegen,
                 node.lhs,
                 base=fact.destination_base,
                 offset=fact.destination_offset,
@@ -660,7 +666,11 @@ def _final_stack_field_projections_8616(
         projections.add(
             _FinalStackFieldProjection8616(
                 source_base=source_storage.base,
-                source_offset=source_storage.offset,
+                source_offset=(
+                    machine_bp_offset_for_stack_variable_8616(codegen, source_storage)
+                    if source_storage.base == "bp"
+                    else source_storage.offset
+                ),
                 field_offset=rhs.field.offset,
                 struct_name=_struct_name_8616(rhs.field.struct_type),
                 struct_type=rhs.field.struct_type,
@@ -780,11 +790,12 @@ def _registered_named_global_copy_type_matches_8616(
 
 
 def _final_stack_index_identity_8616(
+    codegen: object,
     expression: object,
 ) -> tuple[str, int, int] | None:
     """Return one final BP-stack index identity and logical adjustment."""
     if isinstance(expression, CTypeCast):
-        return _final_stack_index_identity_8616(expression.expr)
+        return _final_stack_index_identity_8616(codegen, expression.expr)
     if isinstance(expression, CVariable):
         storage = next(
             (
@@ -798,10 +809,15 @@ def _final_stack_index_identity_8616(
         )
         if storage is None:
             return None
-        return storage.base, storage.offset, 0
+        storage_offset = (
+            machine_bp_offset_for_stack_variable_8616(codegen, storage)
+            if storage.base == "bp"
+            else storage.offset
+        )
+        return storage.base, storage_offset, 0
     if not isinstance(expression, CBinaryOp) or expression.op not in {"Add", "Sub"}:
         return None
-    base = _final_stack_index_identity_8616(expression.lhs)
+    base = _final_stack_index_identity_8616(codegen, expression.lhs)
     if base is None or not isinstance(expression.rhs, CConstant):
         return None
     amount = expression.rhs.value
@@ -816,6 +832,7 @@ def _final_stack_index_identity_8616(
 
 
 def _final_indexed_global_stack_copies_8616(
+    codegen: object,
     root: object,
     fact: IndexedGlobalStackAggregateCopyFact8616,
 ) -> tuple[_FinalIndexedGlobalStackAggregateCopy8616, ...]:
@@ -826,6 +843,7 @@ def _final_indexed_global_stack_copies_8616(
             not isinstance(node, CAssignment)
             or not isinstance(node.lhs, CVariable)
             or not _stack_storage_matches_8616(
+                codegen,
                 node.lhs,
                 base=fact.destination_base,
                 offset=fact.destination_offset,
@@ -854,12 +872,13 @@ def _final_indexed_global_stack_copies_8616(
                 for storage in _cvariable_storage_views_8616(node.lhs)
                 if isinstance(storage, SimStackVariable)
                 and storage.base == fact.destination_base
-                and storage.offset == fact.destination_offset
+                and machine_bp_offset_for_stack_variable_8616(codegen, storage)
+                == fact.destination_offset
                 and isinstance(storage.size, int)
             ),
             None,
         )
-        index_identity = _final_stack_index_identity_8616(rhs.index)
+        index_identity = _final_stack_index_identity_8616(codegen, rhs.index)
         if (
             source_storage is None
             or destination_storage is None
@@ -1319,7 +1338,7 @@ def validate_storage_identities_8616(
                 )
             )
             continue
-        actual = _final_stack_field_projections_8616(root, field_fact)
+        actual = _final_stack_field_projections_8616(codegen, root, field_fact)
         if not actual:
             issues.append(
                 _stack_field_projection_issue_8616(
@@ -1444,7 +1463,7 @@ def validate_storage_identities_8616(
                 )
             )
             continue
-        copy_actual = _final_indexed_global_stack_copies_8616(root, copy_fact)
+        copy_actual = _final_indexed_global_stack_copies_8616(codegen, root, copy_fact)
         if not copy_actual:
             issues.append(
                 _indexed_global_stack_copy_issue_8616(
@@ -1548,7 +1567,7 @@ def validate_storage_identities_8616(
             "named_global_facts=%r issues=%r counters=%r",
             copy_facts,
             tuple(
-                (fact, _final_indexed_global_stack_copies_8616(root, fact))
+                (fact, _final_indexed_global_stack_copies_8616(codegen, root, fact))
                 for fact in copy_facts
             ),
             named_global_facts,

@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import time
 from dataclasses import dataclass
@@ -30,7 +30,7 @@ INVERTED_CONDITION = {
 
 
 @dataclass(frozen=True)
-class SolvedEdge:
+class SolvedEdge:  # noqa: D101
     label: str
     regs: dict[str, int]
     constraints: tuple[str, ...]
@@ -40,13 +40,13 @@ class SolvedEdge:
 
 
 @dataclass(frozen=True)
-class EdgeSolveFailure:
+class EdgeSolveFailure:  # noqa: D101
     reason: str
     message: str
     label: str
 
 
-def solve_branch_edge(
+def solve_branch_edge(  # noqa: D103
     target: BranchTarget,
     *,
     label: str,
@@ -70,7 +70,7 @@ def solve_branch_edge(
         )
     try:
         import z3  # type: ignore
-    except Exception:  # noqa: BLE001
+    except Exception:
         return EdgeSolveFailure("unsupported_ir", "z3 is unavailable and no manual solution exists", label)
 
     regs = {name: z3.BitVec(name, 16) for name in _condition_regs(condition)}
@@ -163,7 +163,7 @@ def _condition_regs(condition: ConditionIR) -> set[str]:
     return regs
 
 
-def _z3_operand(operand: Operand, regs: dict[str, Any], z3: Any) -> Any:
+def _z3_operand(operand: Operand, regs: dict[str, Any], z3: Any) -> Any:  # noqa: ANN401
     if operand.kind == "reg":
         return regs[str(operand.value)]
     if operand.kind == "reg8":
@@ -172,7 +172,7 @@ def _z3_operand(operand: Operand, regs: dict[str, Any], z3: Any) -> Any:
     return z3.BitVecVal(int(operand.value) & ((1 << operand.width) - 1), operand.width)
 
 
-def _z3_condition(condition: ConditionIR, regs: dict[str, Any], z3: Any) -> Any:
+def _z3_condition(condition: ConditionIR, regs: dict[str, Any], z3: Any) -> Any:  # noqa: ANN401
     left = _z3_operand(condition.left, regs, z3)
     right = _z3_operand(condition.right, regs, z3) if condition.right is not None else None
     if condition.kind == "eq":
@@ -194,5 +194,5 @@ def _z3_condition(condition: ConditionIR, regs: dict[str, Any], z3: Any) -> Any:
     raise ValueError(f"unsupported condition kind: {condition.kind}")
 
 
-def regs_as_hex(regs: dict[str, int]) -> dict[str, str]:
+def regs_as_hex(regs: dict[str, int]) -> dict[str, str]:  # noqa: D103
     return {name: normalize_hex(value, width=4) for name, value in sorted(regs.items())}

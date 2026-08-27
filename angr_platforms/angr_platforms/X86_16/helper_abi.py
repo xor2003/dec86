@@ -7,9 +7,9 @@ or overriding binary callsite evidence.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Mapping
 
 from angr.sim_type import SimTypeFunction
 from angr.utils.library import convert_cproto_to_py

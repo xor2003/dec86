@@ -27,6 +27,10 @@ class _Codegen:
     def next_idx(self, _name):
         self._next_idx += 1
         return self._next_idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def test_condition_origin_tags_preserve_branch_provenance():

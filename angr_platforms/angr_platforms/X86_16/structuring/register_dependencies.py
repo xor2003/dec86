@@ -16,14 +16,13 @@ lowering owns their conversion to typed ``Address``/stack variables.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import TypeAlias
 
 from angr import ailment
 from angr.ailment.expression import Expression
 
-RegisterNameResolver8616: TypeAlias = Callable[[object], str | None]
-TemporaryResolver8616: TypeAlias = Callable[[object, Sequence[object], int], object]
-ExpressionCopier8616: TypeAlias = Callable[[object], object]
+type RegisterNameResolver8616 = Callable[[object], str | None]
+type TemporaryResolver8616 = Callable[[object, Sequence[object], int], object]
+type ExpressionCopier8616 = Callable[[object], object]
 
 _DATA_REGISTERS_8616 = frozenset(
     {

@@ -24,7 +24,7 @@ def test_memory_prune_keeps_observable_global_and_drops_dead_global() -> None:
         project=project,
         next_idx=lambda _name: 0,
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     used_var = SimMemoryVariable(0x200, 1, name="g_200", region=0x10010)
     dead_var = SimMemoryVariable(0x201, 1, name="g_201", region=0x10010)
@@ -76,7 +76,7 @@ def test_memory_prune_drops_unused_generated_mem_declaration() -> None:
         project=project,
         next_idx=lambda _name: 0,
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     used_var = SimMemoryVariable(0x200, 1, name="mem_0200", region=0x10010)
     dead_var = SimMemoryVariable(0x42, 1, name="mem_0042", region=0x10010)

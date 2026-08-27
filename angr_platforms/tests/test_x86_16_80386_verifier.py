@@ -61,6 +61,22 @@ def test_80386_cwde_matches_hardware_edge_state(case_index: int) -> None:
     assert result.passed, result.error or result.mismatches
 
 
+def test_80386_xchg_preserves_effective_address_when_index_register_changes() -> None:
+    """XCHG must store through the pre-exchange address when ESI contributes SI."""
+    _cpu_name, cases = load_moo_cases(_moo("6687"))
+    result = verify_straightline_case_80386(cases[22], opcode="6687")
+
+    assert result.passed, result.error or result.mismatches
+
+
+def test_80386_locked_btc_compares_only_defined_flags() -> None:
+    """LOCK must not hide BTC's architecturally undefined non-carry flags."""
+    _cpu_name, cases = load_moo_cases(_moo("67660FBB"))
+    result = verify_straightline_case_80386(cases[145], opcode="67660FBB")
+
+    assert result.passed, result.error or result.mismatches
+
+
 @pytest.mark.parametrize("opcode", tuple(f"0F{value:02X}" for value in range(0x90, 0xA0)))
 def test_80386_setcc_matches_hardware_state(opcode: str) -> None:
     """Every SETcc predicate must write one complete byte to register or memory destinations."""

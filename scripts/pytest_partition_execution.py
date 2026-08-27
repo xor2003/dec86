@@ -12,10 +12,10 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 if __package__:
     from .pytest_partition_plugin import (

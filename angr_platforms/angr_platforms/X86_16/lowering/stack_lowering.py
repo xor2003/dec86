@@ -244,12 +244,12 @@ def run_stack_lowering_pass_8616(
 
 
 __all__ = (
+    "TypedStackProbeReturnFact8616",
     "_canonicalize_stack_cvar_expr",
     "_canonicalize_stack_cvars",
     "_materialize_stack_cvar_at_offset",
     "_resolve_stack_cvar_at_offset",
     "_resolve_stack_cvar_from_addr_expr",
-    "TypedStackProbeReturnFact8616",
     "build_typed_stack_probe_return_facts_8616",
     "run_stack_lowering_pass_8616",
 )

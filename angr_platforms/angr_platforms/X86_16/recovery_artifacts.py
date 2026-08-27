@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import TypeAlias
 
 from .function_effect_summary import FunctionEffectSummary, summarize_x86_16_function_effects
 from .function_state_summary import FunctionStateSummary, summarize_x86_16_function_state
@@ -25,7 +24,7 @@ __all__ = [
     "build_x86_16_function_recovery_artifact",
 ]
 
-RecoverySource: TypeAlias = Mapping[str, object]
+type RecoverySource = Mapping[str, object]
 
 
 def _value(source: RecoverySource, name: str, default: object = None) -> object:
@@ -124,7 +123,7 @@ def _mapping_rows(value: object) -> tuple[dict[str, object], ...]:
     rows: list[dict[str, object]] = []
     for item in value:
         if isinstance(item, Mapping):
-            rows.append({str(key): row_value for key, row_value in item.items()})
+            rows.append({str(key): row_value for key, row_value in item.items()})  # noqa: PERF401
     return tuple(rows)
 
 

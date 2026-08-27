@@ -9,7 +9,6 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TypeAlias
 
 from .function_effect_summary import FunctionEffectSource, FunctionEffectSummary, summarize_x86_16_function_effects
 from .function_state_summary import FunctionStateSummary, summarize_x86_16_function_state
@@ -18,19 +17,19 @@ from .helper_family_routing import summarize_x86_16_helper_family_routes
 from .ir_readiness import IRReadinessSummary, summarize_x86_16_ir_readiness
 
 __all__ = [
+    "RECOVERY_CONFIDENCE_AXES",
     "FunctionEffectSummary",
     "FunctionStateSummary",
     "HelperEligibilitySummary",
     "RecoveryAssumption",
     "RecoveryConfidenceSummary",
     "RecoveryEvidence",
-    "RECOVERY_CONFIDENCE_AXES",
     "classify_x86_16_recovery_confidence",
     "describe_x86_16_recovery_confidence_axes",
     "summarize_recovery_confidence",
 ]
 
-RecoveryConfidenceSource: TypeAlias = FunctionEffectSource
+type RecoveryConfidenceSource = FunctionEffectSource
 
 
 @dataclass(frozen=True, slots=True)

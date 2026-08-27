@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from dataclasses import replace
 from types import SimpleNamespace
 
 import angr
@@ -13,6 +14,8 @@ from angr_platforms.X86_16.ir import (
     IRBlock,
     IRFunctionArtifact,
     IRInstr,
+    IRLogicalMemoryAccess8616,
+    IRMemoryAccessKind8616,
     IRValue,
     MemSpace,
     SegmentOrigin,
@@ -55,13 +58,29 @@ def _memory_address(instruction: IRInstr) -> IRAddress:
     return address
 
 
-def test_push_indexed_word_normalizes_to_one_machine_load() -> None:
-    evidence = collect_indexed_address_evidence_8616(
-        build_x86_16_function_ssa(
-            _lift(bytes.fromhex("55 89 e5 83 ec 02 c7 46 fe 01 00 8b 5e fe ff b7 36 01 c9 c3"))
-        )
-    )
+def _logical_accesses_at(
+    artifact: IRFunctionArtifact,
+    address: int,
+) -> tuple[IRLogicalMemoryAccess8616, ...]:
+    logical = artifact.logical_memory
+    assert logical is not None and logical.closed
+    return tuple(item for item in logical.accesses if item.key.insn_addr == address)
 
+
+def test_push_indexed_word_is_one_typed_machine_load() -> None:
+    artifact = _lift(bytes.fromhex("55 89 e5 83 ec 02 c7 46 fe 01 00 8b 5e fe ff b7 36 01 c9 c3"))
+    evidence = collect_indexed_address_evidence_8616(build_x86_16_function_ssa(artifact))
+    memory_ops = _memory_instructions_at(artifact, 0x100E)
+    loads = tuple(item for item in memory_ops if item.op == "LOAD")
+    stack_stores = tuple(item for item in memory_ops if item.op == "STORE")
+    indexed_load, stack_store = _logical_accesses_at(artifact, 0x100E)
+
+    assert len(loads) == len(stack_stores) == 2
+    assert all(item.size == _memory_address(item).size == 1 for item in memory_ops)
+    assert indexed_load.kind is IRMemoryAccessKind8616.READ
+    assert indexed_load.address.space is MemSpace.DS and indexed_load.address.size == 2
+    assert stack_store.kind is IRMemoryAccessKind8616.WRITE
+    assert stack_store.address.space is MemSpace.SS and stack_store.address.size == 2
     assert evidence.closed
     assert evidence.refusals == ()
     assert evidence.stats.raw_fact_count == 2
@@ -72,6 +91,19 @@ def test_push_indexed_word_normalizes_to_one_machine_load() -> None:
     assert fact.address.space is MemSpace.DS
     assert fact.address.offset == 0x136
     assert fact.address.size == 2
+    assert fact.index_source.space is MemSpace.SS
+    assert fact.index_source.base == ("bp",)
+    assert fact.index_source.offset == -2
+    assert fact.index_source.size == 2
+    assert tuple(site.op for site in fact.definition_path) == (
+        "MOV",
+        "Iop_Or16",
+        "MOV",
+        "LOAD",
+        "Iop_Shl16",
+        "MOV",
+        "LOAD",
+    )
 
 
 def test_byte_immediate_store_uses_vex_constant_width() -> None:
@@ -85,13 +117,17 @@ def test_byte_immediate_store_uses_vex_constant_width() -> None:
     assert store.args[1].size == 1
 
 
-def test_indexed_word_store_normalizes_to_one_machine_store() -> None:
-    evidence = collect_indexed_address_evidence_8616(
-        build_x86_16_function_ssa(
-            _lift(bytes.fromhex("55 89 e5 83 ec 02 c7 46 fe 01 00 8b 5e fe 89 87 4c 0b c9 c3"))
-        )
-    )
+def test_indexed_word_store_is_one_typed_machine_store() -> None:
+    artifact = _lift(bytes.fromhex("55 89 e5 83 ec 02 c7 46 fe 01 00 8b 5e fe 89 87 4c 0b c9 c3"))
+    evidence = collect_indexed_address_evidence_8616(build_x86_16_function_ssa(artifact))
+    stores = _memory_instructions_at(artifact, 0x100E)
+    (logical_store,) = _logical_accesses_at(artifact, 0x100E)
 
+    assert len(stores) == 2
+    assert all(item.op == "STORE" and item.size == _memory_address(item).size == 1 for item in stores)
+    assert logical_store.kind is IRMemoryAccessKind8616.WRITE
+    assert logical_store.address.space is MemSpace.DS
+    assert logical_store.address.size == 2
     assert evidence.closed
     assert evidence.refusals == ()
     assert evidence.stats.raw_fact_count == 2
@@ -102,6 +138,71 @@ def test_indexed_word_store_normalizes_to_one_machine_store() -> None:
     assert fact.address.space is MemSpace.DS
     assert fact.address.offset == 0xB4C
     assert fact.address.size == 2
+
+
+def test_indexed_word_value_refuses_without_logical_memory_evidence() -> None:
+    artifact = build_x86_16_function_ssa(
+        _lift(bytes.fromhex("55 89 e5 83 ec 02 c7 46 fe 01 00 8b 5e fe ff b7 36 01 c9 c3"))
+    )
+
+    evidence = collect_indexed_address_evidence_8616(
+        replace(artifact, logical_memory=None)
+    )
+
+    assert evidence.closed
+    assert evidence.facts == ()
+    assert len(evidence.refusals) == 1
+    assert (
+        evidence.refusals[0].failure
+        is IndexedAddressFailureKind8616.INDEX_SOURCE_UNPROVEN
+    )
+    assert evidence.stats.raw_fact_count == 2
+    assert evidence.stats.normalized_fact_count == 1
+    assert evidence.stats.coalesced_fact_count == 1
+
+
+def test_indexed_word_value_refuses_mismatched_logical_execution_slice() -> None:
+    artifact = build_x86_16_function_ssa(
+        _lift(bytes.fromhex("55 89 e5 83 ec 02 c7 46 fe 01 00 8b 5e fe ff b7 36 01 c9 c3"))
+    )
+    logical = artifact.logical_memory
+    assert logical is not None and logical.closed
+    source_read = next(
+        access
+        for access in logical.accesses
+        if access.kind is IRMemoryAccessKind8616.READ
+        and access.key.insn_addr == 0x100B
+        and access.address.space is MemSpace.SS
+        and access.address.size == 2
+    )
+    low_slice, high_slice = source_read.execution_slices
+    mismatched_read = replace(
+        source_read,
+        execution_slices=(
+            low_slice,
+            replace(high_slice, instr_index=high_slice.instr_index + 1),
+        ),
+    )
+    mismatched_logical = replace(
+        logical,
+        accesses=tuple(
+            mismatched_read if access.key == source_read.key else access
+            for access in logical.accesses
+        ),
+    )
+    assert mismatched_read.complete and mismatched_logical.closed
+
+    evidence = collect_indexed_address_evidence_8616(
+        replace(artifact, logical_memory=mismatched_logical)
+    )
+
+    assert evidence.closed
+    assert evidence.facts == ()
+    assert len(evidence.refusals) == 1
+    assert (
+        evidence.refusals[0].failure
+        is IndexedAddressFailureKind8616.INDEX_SOURCE_UNPROVEN
+    )
 
 
 def test_noncontiguous_same_instruction_micro_ops_refuse_normalization() -> None:

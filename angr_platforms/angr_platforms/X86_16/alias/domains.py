@@ -2,6 +2,7 @@
 
 Layer: Alias.
 Responsibility: owns storage identity for register domains and bit views.
+Owns canonical register-domain and slice identities.
 Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting
 work here.
 """
@@ -32,11 +33,11 @@ class View:
         """Return the exclusive bit offset for this view."""
         return self.bit_offset + self.bit_width
 
-    def can_join(self, other: "View") -> bool:
+    def can_join(self, other: View) -> bool:
         """Return whether two views are adjacent and can form a wider view."""
         return self.bit_end == other.bit_offset or other.bit_end == self.bit_offset
 
-    def join(self, other: "View") -> "View | None":
+    def join(self, other: View) -> View | None:
         """Return a combined view when two views are adjacent."""
         if not self.can_join(other):
             return None
@@ -155,7 +156,6 @@ __all__ = [
     "CX",
     "DI",
     "DX",
-    "DomainKey",
     "FULL16",
     "HIGH8",
     "LOW8",
@@ -164,6 +164,7 @@ __all__ = [
     "REGISTER_VIEWS",
     "SI",
     "SP",
+    "DomainKey",
     "View",
     "join_register_views",
     "register_domain_for_name",

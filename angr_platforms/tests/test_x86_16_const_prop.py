@@ -11,7 +11,7 @@ from angr_platforms.X86_16.postprocess.optimization.const_prop import _constant_
 
 
 class _FakeCodegen:
-    const_formats = {}
+    const_formats = {}  # noqa: RUF012
 
     def __init__(self):
         self._next_idx = 0
@@ -21,6 +21,10 @@ class _FakeCodegen:
     def next_idx(self, _kind: str) -> int:
         self._next_idx += 1
         return self._next_idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _const(value: int, codegen):

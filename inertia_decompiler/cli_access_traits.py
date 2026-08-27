@@ -7,7 +7,7 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -29,18 +29,18 @@ from inertia_decompiler.cli_induction_rewrite import (
     _ProjectLike as InductionProjectLike,
 )
 
-BaseKey: TypeAlias = tuple[object, ...]
-TraitBucket: TypeAlias = dict[BaseKey, object]
-Traits: TypeAlias = dict[str, TraitBucket]
-AddressSummary: TypeAlias = tuple[list[object], int, list[tuple[BaseKey, int]]]
-AddressSummarizer: TypeAlias = Callable[[object], AddressSummary]
-BaseKeyResolver: TypeAlias = Callable[[object], BaseKey | None]
-TraitRecorder: TypeAlias = Callable[[str, BaseKey], None]
-NodeIterator: TypeAlias = Callable[[object], Iterable[object]]
-CastUnwrapper: TypeAlias = Callable[[object], object]
-ConstantResolver: TypeAlias = Callable[[object], int | None]
-StackIdentityResolver: TypeAlias = Callable[[object], "_StackSlotIdentityLike | None"]
-StrideEvidenceRecorder: TypeAlias = Callable[..., None]
+type BaseKey = tuple[object, ...]
+type TraitBucket = dict[BaseKey, object]
+type Traits = dict[str, TraitBucket]
+type AddressSummary = tuple[list[object], int, list[tuple[BaseKey, int]]]
+type AddressSummarizer = Callable[[object], AddressSummary]
+type BaseKeyResolver = Callable[[object], BaseKey | None]
+type TraitRecorder = Callable[[str, BaseKey], None]
+type NodeIterator = Callable[[object], Iterable[object]]
+type CastUnwrapper = Callable[[object], object]
+type ConstantResolver = Callable[[object], int | None]
+type StackIdentityResolver = Callable[[object], "_StackSlotIdentityLike | None"]
+type StrideEvidenceRecorder = Callable[..., None]
 
 
 class _ArchLike(Protocol):

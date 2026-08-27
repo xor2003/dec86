@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-from angr.analyses.decompiler.structuring.structurer_nodes import (
+from angr import ailment
+from angr.analyses.decompiler.structurer_nodes import (
     BreakNode,
     ConditionNode,
     LoopNode,
@@ -88,6 +89,10 @@ def test_typed_switch_seqnode_materializes_complete_structuring_evidence() -> No
     assert result.case_count == 2
     assert result.default_target_addr == 0x3000
     assert type(replacement).__name__ == "SwitchCaseNode"
+    assert isinstance(replacement.switch_expr, ailment.Expr.Register)
+    assert replacement.switch_expr.reg_offset == 0
+    assert replacement.switch_expr.bits == 16
+    assert replacement.switch_expr.tags["reg_name"] == "ax"
     assert list(replacement.cases) == [1, 2]
     assert replacement.cases[1] is case_a
     assert replacement.cases[2] is case_b

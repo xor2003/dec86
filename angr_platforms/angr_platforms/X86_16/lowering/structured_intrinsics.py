@@ -14,8 +14,7 @@ Incomplete or effectful forms are retained; rewrite and CLI must not hide them.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
-from contextlib import suppress
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -23,10 +22,9 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimType, SimTypeShort
 
 from ..c_ast_utils import (
+    _iter_c_node_occurrences_8616,
     _iter_c_nodes_deep_8616,
     _replace_c_children_8616,
-    _structured_codegen_node_8616,
-    _structured_slot_names_8616,
 )
 from ..callsite_summary import StructuredCallKind8616, structured_call_kind_8616
 
@@ -229,32 +227,6 @@ def _cvariable_is_unread_elsewhere_8616(
     """Return whether one exact variable identity has no other AST occurrence."""
     identity = lhs.unified_variable or lhs.variable
     return identity_occurrence_counts.get(id(identity), 0) <= 1
-
-
-def _iter_c_node_occurrences_8616(
-    value: object,
-    active_node_ids: frozenset[int] = frozenset(),
-) -> Iterator[object]:
-    """Yield every owned AST edge occurrence while refusing active-path cycles."""
-    if isinstance(value, dict):
-        for child in value.values():
-            yield from _iter_c_node_occurrences_8616(child, active_node_ids)
-        return
-    if isinstance(value, (list, tuple)):
-        for child in value:
-            yield from _iter_c_node_occurrences_8616(child, active_node_ids)
-        return
-    if not _structured_codegen_node_8616(value):
-        return
-    node_id = id(value)
-    if node_id in active_node_ids:
-        return
-    yield value
-    child_active_ids = active_node_ids | {node_id}
-    for attr in _structured_slot_names_8616(value):
-        with suppress(Exception):
-            # Dynamic boundary: angr C node child slots vary by node class and version.
-            yield from _iter_c_node_occurrences_8616(getattr(value, attr), child_active_ids)
 
 
 def _unused_insert_statement_8616(

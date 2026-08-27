@@ -8,6 +8,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CVariable,
 )
+from angr.knowledge_plugins.functions.function import PrototypeSource
 from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -28,7 +29,7 @@ def test_unify_positive_bp_argument_identity_propagates_pointer_type() -> None:
     codegen = SimpleNamespace(
         project=SimpleNamespace(arch=arch),
         next_idx=lambda _name: 1,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     pointer_type = SimTypePointer(SimTypeShort(False)).with_arch(arch)
     scalar_type = SimTypeShort(False).with_arch(arch)
     argument = CVariable(
@@ -80,7 +81,7 @@ def test_unify_positive_bp_argument_identity_refuses_ambiguous_header() -> None:
     codegen = SimpleNamespace(
         project=SimpleNamespace(arch=arch),
         next_idx=lambda _name: 1,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     scalar_type = SimTypeShort(False).with_arch(arch)
     arguments = [
         CVariable(
@@ -131,7 +132,7 @@ def test_reconcile_renames_provisional_local_positive_bp_argument() -> None:
     codegen = SimpleNamespace(
         project=project,
         next_idx=lambda _name: 1,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     argument = CVariable(
         SimStackVariable(6, 2, base="bp", name="local_6", region=0x1000),
         variable_type=scalar_type,
@@ -162,6 +163,7 @@ def test_materialize_positive_bp_body_slot_replaces_guessed_zero_arg_interface()
     prototype = SimTypeFunction([], scalar_type).with_arch(arch)
     function = SimpleNamespace(
         prototype=prototype,
+        prototype_source=PrototypeSource.GUESSED,
         is_prototype_guessed=False,
         info={},
     )
@@ -171,7 +173,7 @@ def test_materialize_positive_bp_body_slot_replaces_guessed_zero_arg_interface()
             functions=SimpleNamespace(function=lambda addr, create=False: function),
         ),
     )
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     body_argument = CVariable(
         SimStackVariable(4, 2, base="bp", name="local_4", region=0x1000),
         variable_type=scalar_type,
@@ -206,14 +208,18 @@ def test_materialize_positive_bp_arguments_replaces_contained_stale_byte_arg() -
     word_type = SimTypeShort(False).with_arch(arch)
     byte_type = SimTypeChar().with_arch(arch)
     prototype = SimTypeFunction([byte_type, word_type], word_type).with_arch(arch)
-    function = SimpleNamespace(prototype=prototype, is_prototype_guessed=True)
+    function = SimpleNamespace(
+        prototype=prototype,
+        prototype_source=PrototypeSource.GUESSED,
+        is_prototype_guessed=True,
+    )
     project = SimpleNamespace(
         arch=arch,
         kb=SimpleNamespace(
             functions=SimpleNamespace(function=lambda addr, create=False: function),
         ),
     )
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     frequency = CVariable(
         SimStackVariable(4, 2, base="bp", name="local_5", region=0x1000),
         variable_type=word_type,
@@ -265,7 +271,7 @@ def test_materialize_positive_bp_arguments_ignores_stale_unused_stack_cvar() -> 
     codegen = SimpleNamespace(
         project=SimpleNamespace(arch=arch),
         next_idx=lambda _name: 1,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     stale = CVariable(
         SimStackVariable(4, 2, base="bp", name="local_4", region=0x1000),
         variable_type=scalar_type,
@@ -298,7 +304,7 @@ def test_materialize_positive_bp_arguments_preserves_coherent_signed_types() -> 
     codegen = SimpleNamespace(
         project=SimpleNamespace(arch=arch),
         next_idx=lambda _name: 1,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     arguments = [
         CVariable(
             SimStackVariable(offset, 2, base="bp", name=name, region=0x1000),

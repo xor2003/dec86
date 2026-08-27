@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Protocol, cast
 
 from ..ir.condition_ir import ConditionIR
+from ..structured_tags import copy_structured_tags_8616
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +35,36 @@ class _ConditionReplayCodegen8616(Protocol):
     """Owned metadata slot retained on the active codegen surface."""
 
     _inertia_structuring_condition_replay_facts_8616: tuple[StructuringConditionReplayFact8616, ...]
+
+
+class _ConditionReplayExpression8616(Protocol):
+    """Third-party structured expression tag surface."""
+
+    tags: object
+
+
+def bind_condition_replay_identity_8616(
+    expression: object,
+    condition: ConditionIR,
+) -> bool:
+    """Restamp one structured condition with its authoritative typed identity."""
+    if not isinstance(condition.src_insn, int) or not isinstance(condition.block_addr, int):
+        return False
+    surface = cast(_ConditionReplayExpression8616, expression)
+    try:
+        tags = copy_structured_tags_8616(surface.tags) or {}
+    except AttributeError:
+        return False
+    expected = {
+        "ins_addr": condition.src_insn,
+        "vex_block_addr": condition.block_addr,
+    }
+    if isinstance(condition.producer_insn, int):
+        expected["condition_producer_insn"] = condition.producer_insn
+    changed = any(tags.get(key) != value for key, value in expected.items())
+    tags.update(expected)
+    surface.tags = tags
+    return changed
 
 
 def condition_replay_facts_8616(codegen: object) -> tuple[StructuringConditionReplayFact8616, ...]:

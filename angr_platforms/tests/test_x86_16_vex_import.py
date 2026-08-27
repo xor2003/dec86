@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.core import (
     AddressStatus,
     IRAddress,
@@ -28,6 +29,13 @@ def _const(value: int):
 
 def _get(offset: int):
     return SimpleNamespace(tag="Iex_Get", offset=offset)
+
+
+_ARCH = Arch86_16()
+
+
+def _get_register(name: str):
+    return _get(_ARCH.registers[name][0])
 
 
 def _rdtmp(tmp: int):
@@ -61,7 +69,7 @@ def _ite(cond, iftrue, iffalse):
 def _flag_test(mask: int, *, is_set: bool):
     return _binop(
         "Iop_CmpNE8" if is_set else "Iop_CmpEQ8",
-        _binop("Iop_And16", _get(18), _const(mask)),
+        _binop("Iop_And16", _get_register("flags"), _const(mask)),
         _const(0),
     )
 
@@ -94,7 +102,9 @@ class _FakeFactory:
     def __init__(self, blocks):
         self._blocks = blocks
 
-    def block(self, addr, opt_level=0):  # noqa: ARG002
+    def block(self, addr, opt_level=0, collect_data_refs=False):
+        assert opt_level == 0
+        assert collect_data_refs is True
         return self._blocks[addr]
 
 
@@ -153,7 +163,7 @@ def test_vex_import_maps_si_based_store_to_typed_provisional_ds_address() -> Non
             0x1000: _block(
                 0x1000,
                 _imark(0x0FFE, 2),
-                _wrtmp(0, _get(12)),
+                _wrtmp(0, _get_register("si")),
                 _wrtmp(1, _const(4)),
                 _wrtmp(2, _binop("Iop_Add16", _rdtmp(0), _rdtmp(1))),
                 _wrtmp(3, SimpleNamespace(tag="Iex_Const", con=SimpleNamespace(value=0x55), ty="Ity_I8")),
@@ -186,7 +196,7 @@ def test_vex_import_keeps_load_arguments_typed_as_address() -> None:
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(12)),
+                _wrtmp(0, _get_register("si")),
                 _wrtmp(1, SimpleNamespace(tag="Iex_Load", addr=_rdtmp(0), result_size=2)),
             )
         },
@@ -207,7 +217,7 @@ def test_vex_import_uses_vex_type_token_for_byte_load_width() -> None:
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(10)),
+                _wrtmp(0, _get_register("bp")),
                 _wrtmp(1, _binop("Iop_Add16", _rdtmp(0), _const(7))),
                 _wrtmp(
                     2,
@@ -239,7 +249,7 @@ def test_vex_import_maps_bp_sub_offset_to_proven_ss_frame_slot() -> None:
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(10)),
+                _wrtmp(0, _get_register("bp")),
                 _wrtmp(1, _const(6)),
                 _wrtmp(2, _binop("Iop_Sub16", _rdtmp(0), _rdtmp(1))),
                 _store(_rdtmp(2), _const(1)),
@@ -269,9 +279,9 @@ def test_vex_import_recovers_explicit_ss_linearized_bp_offset_as_segmented_frame
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(10)),
+                _wrtmp(0, _get_register("bp")),
                 _wrtmp(1, _binop("Iop_Add16", _rdtmp(0), _const(0xFFFE))),
-                _wrtmp(2, _get(30)),
+                _wrtmp(2, _get_register("ss")),
                 _wrtmp(3, _unop("Iop_16Uto32", _rdtmp(2))),
                 _wrtmp(4, _binop("Iop_Shl32", _rdtmp(3), _const(4))),
                 _wrtmp(5, _unop("Iop_16Uto32", _rdtmp(1))),
@@ -300,8 +310,8 @@ def test_vex_import_keeps_register_pair_address_tuple_for_alias() -> None:
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(6)),
-                _wrtmp(1, _get(12)),
+                _wrtmp(0, _get_register("bx")),
+                _wrtmp(1, _get_register("si")),
                 _wrtmp(2, _binop("Iop_Add16", _rdtmp(0), _rdtmp(1))),
                 _store(_rdtmp(2), _const(0x33)),
             )
@@ -324,7 +334,7 @@ def test_vex_import_marks_string_destination_di_as_proven_es() -> None:
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(14)),
+                _wrtmp(0, _get_register("di")),
                 _store(_rdtmp(0), _const(0x33)),
                 insns=(_insn("rep movsb"),),
             )
@@ -348,8 +358,8 @@ def test_vex_import_lifts_comparison_exit_to_typed_condition() -> None:
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(0)),
-                _wrtmp(1, _get(6)),
+                _wrtmp(0, _get_register("ax")),
+                _wrtmp(1, _get_register("bx")),
                 _wrtmp(2, _binop("Iop_CmpEQ16", _rdtmp(0), _rdtmp(1))),
                 _exit(_rdtmp(2), _const(0x1010)),
             )
@@ -374,7 +384,7 @@ def test_vex_import_folds_compare_with_zero_to_nonzero_condition() -> None:
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(12)),
+                _wrtmp(0, _get_register("si")),
                 _wrtmp(1, _binop("Iop_CmpNE16", _rdtmp(0), _const(0))),
                 _exit(_rdtmp(1), _const(0x1010)),
             )
@@ -396,8 +406,8 @@ def test_vex_import_lifts_unsigned_compare_condition() -> None:
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(0)),
-                _wrtmp(1, _get(6)),
+                _wrtmp(0, _get_register("ax")),
+                _wrtmp(1, _get_register("bx")),
                 _wrtmp(2, _binop("Iop_CmpLT16U", _rdtmp(0), _rdtmp(1))),
                 _exit(_rdtmp(2), _const(0x1010)),
             )
@@ -419,7 +429,7 @@ def test_vex_import_lifts_masked_nonzero_exit_to_typed_condition() -> None:
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(12)),
+                _wrtmp(0, _get_register("si")),
                 _wrtmp(1, _const(1)),
                 _wrtmp(2, _binop("Iop_And16", _rdtmp(0), _rdtmp(1))),
                 _exit(_rdtmp(2), _const(0x1010)),
@@ -445,7 +455,7 @@ def test_vex_import_preserves_ite_wrapped_condition_temp_for_exit() -> None:
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(12)),
+                _wrtmp(0, _get_register("si")),
                 _wrtmp(1, _const(0)),
                 _wrtmp(2, _binop("Iop_CmpNE16", _rdtmp(0), _rdtmp(1))),
                 _wrtmp(3, _ite(_rdtmp(2), _const(0), _const(1))),
@@ -484,8 +494,8 @@ def test_vex_import_lifts_flag_formula_jcc_variants_to_typed_compare(guard_expr,
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(0)),
-                _wrtmp(1, _get(6)),
+                _wrtmp(0, _get_register("ax")),
+                _wrtmp(1, _get_register("bx")),
                 _wrtmp(2, _binop("Iop_CmpEQ16", _rdtmp(0), _rdtmp(1))),
                 _wrtmp(3, guard_expr),
                 _exit(_rdtmp(3), _const(0x1010)),
@@ -509,8 +519,8 @@ def test_vex_import_inverts_ite_wrapped_flag_formula_to_complement_compare() -> 
         {
             0x1000: _block(
                 0x1000,
-                _wrtmp(0, _get(0)),
-                _wrtmp(1, _get(6)),
+                _wrtmp(0, _get_register("ax")),
+                _wrtmp(1, _get_register("bx")),
                 _wrtmp(2, _binop("Iop_CmpEQ16", _rdtmp(0), _rdtmp(1))),
                 _wrtmp(3, _ite(sgt_formula, _const(0), _const(1))),
                 _exit(_rdtmp(3), _const(0x1010)),
@@ -531,9 +541,9 @@ def test_vex_import_records_successor_addrs_and_function_ssa() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000, 0x1010, 0x1020}, info={})
     project = _project(
         {
-            0x1000: _block(0x1000, _wrtmp(0, _get(0)), next_expr=_const(0x1010)),
-            0x1010: _block(0x1010, _wrtmp(0, _get(0)), next_expr=_const(0x1020)),
-            0x1020: _block(0x1020, _wrtmp(0, _get(0))),
+            0x1000: _block(0x1000, _wrtmp(0, _get_register("ax")), next_expr=_const(0x1010)),
+            0x1010: _block(0x1010, _wrtmp(0, _get_register("ax")), next_expr=_const(0x1020)),
+            0x1020: _block(0x1020, _wrtmp(0, _get_register("ax"))),
         },
         function,
     )
@@ -547,6 +557,26 @@ def test_vex_import_records_successor_addrs_and_function_ssa() -> None:
     assert function.info["x86_16_vex_ir_function_ssa"]["summary"]["block_count"] == 3
 
 
+def test_vex_import_reuses_coherent_artifacts_for_same_codegen_function() -> None:
+    function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
+    project = _project(
+        {0x1000: _block(0x1000, _wrtmp(0, _get_register("ax")))},
+        function,
+    )
+    codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000))
+
+    apply_x86_16_vex_ir_artifact(project, codegen)
+    first_artifact = codegen._inertia_vex_ir_artifact
+    first_frame = codegen._inertia_vex_ir_frame
+    first_ssa = codegen._inertia_vex_ir_function_ssa
+
+    apply_x86_16_vex_ir_artifact(project, codegen)
+
+    assert codegen._inertia_vex_ir_artifact is first_artifact
+    assert codegen._inertia_vex_ir_frame is first_frame
+    assert codegen._inertia_vex_ir_function_ssa is first_ssa
+
+
 def test_vex_import_prefers_exact_function_graph_edges_over_low16_vex_successors() -> None:
     entry_node = SimpleNamespace(addr=0x11000)
     body_node = SimpleNamespace(addr=0x11010)
@@ -558,8 +588,8 @@ def test_vex_import_prefers_exact_function_graph_edges_over_low16_vex_successors
     )
     project = _project(
         {
-            0x11000: _block(0x11000, _wrtmp(0, _get(0)), next_expr=_const(0x0010)),
-            0x11010: _block(0x11010, _wrtmp(0, _get(0)), next_expr=_const(0x0000)),
+            0x11000: _block(0x11000, _wrtmp(0, _get_register("ax")), next_expr=_const(0x0010)),
+            0x11010: _block(0x11010, _wrtmp(0, _get_register("ax")), next_expr=_const(0x0000)),
         },
         function,
     )
@@ -579,7 +609,7 @@ def test_vex_import_prefers_exact_function_graph_edges_over_low16_vex_successors
 def test_apply_vex_ir_artifact_attaches_summary_to_codegen_and_function_info() -> None:
     function = SimpleNamespace(addr=0x1000, block_addrs_set={0x1000}, info={})
     project = _project(
-        {0x1000: _block(0x1000, _wrtmp(0, _get(14)), _store(_rdtmp(0), _const(2)))},
+        {0x1000: _block(0x1000, _wrtmp(0, _get_register("di")), _store(_rdtmp(0), _const(2)))},
         function,
     )
     codegen = SimpleNamespace(cfunc=SimpleNamespace(addr=0x1000))

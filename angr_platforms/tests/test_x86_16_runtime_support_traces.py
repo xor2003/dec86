@@ -3,15 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+from angr import ailment
 from angr.ailment.expression import BasePointerOffset
-from angr.analyses.decompiler.structuring.structurer_nodes import BreakNode, LoopNode
-from angr.analyses.decompiler.structuring.structurer_nodes import SequenceNode as AngrSequenceNode
+from angr.analyses.decompiler.block_simplifier import BlockSimplifier
+from angr.analyses.decompiler.structurer_nodes import BreakNode, LoopNode
+from angr.analyses.decompiler.structurer_nodes import SequenceNode as AngrSequenceNode
 
 from inertia_decompiler.runtime_support import (
     _expanded_root_body_shape_status_8616,
     _materialize_loop_break_default_switch_8616,
     _maybe_materialize_pre_codegen_typed_switch_8616,
     _seqnode_switch_artifact_mappings_8616,
+    guard_angr_clinic_stage_markers,
     install_angr_basepointeroffset_codegen_guard,
     install_angr_peephole_expr_bitwidth_guard,
     install_angr_pre_codegen_seqnode_probe_guard,
@@ -34,14 +37,14 @@ class _Block:
 
 
 class _IdentityHandleExpr:
-    def _handle_expr(self, expr_idx, expr, stmt_idx, stmt, block):  # noqa: ANN001
+    def _handle_expr(self, expr_idx, expr, stmt_idx, stmt, block):
         return expr
 
 
 class _ExprOpt:
     expr_classes = (_Expr,)
 
-    def optimize(self, expr, stmt_idx=None, block=None):  # noqa: ANN001
+    def optimize(self, expr, stmt_idx=None, block=None):
         return BasePointerOffset(None, 32, "stack_base", 0)
 
 
@@ -50,7 +53,7 @@ class _Walker(_IdentityHandleExpr):
         self.expr_opts = [_ExprOpt()]
         self.any_update = False
 
-    def _handle_expr(self, expr_idx, expr, stmt_idx, stmt, block):  # noqa: ANN001
+    def _handle_expr(self, expr_idx, expr, stmt_idx, stmt, block):
         return super()._handle_expr(expr_idx, expr, stmt_idx, stmt, block)
 
 
@@ -97,7 +100,7 @@ def test_peephole_bitwidth_guard_logs_mismatch(capsys) -> None:
 class _GenericExprOpt:
     expr_classes = (_Expr,)
 
-    def optimize(self, expr, stmt_idx=None, block=None):  # noqa: ANN001
+    def optimize(self, expr, stmt_idx=None, block=None):
         return _Expr(bits=32, text="wide_tmp")
 
 
@@ -106,7 +109,7 @@ class _GenericWalker(_IdentityHandleExpr):
         self.expr_opts = [_GenericExprOpt()]
         self.any_update = False
 
-    def _handle_expr(self, expr_idx, expr, stmt_idx, stmt, block):  # noqa: ANN001
+    def _handle_expr(self, expr_idx, expr, stmt_idx, stmt, block):
         return super()._handle_expr(expr_idx, expr, stmt_idx, stmt, block)
 
 
@@ -147,7 +150,7 @@ class _FakeBV:
             value |= ((1 << nbits) - 1) << self._bits
         return _FakeBV(self._bits + nbits, value)
 
-    def __getitem__(self, item) -> _FakeBV:  # noqa: ANN001
+    def __getitem__(self, item) -> _FakeBV:
         hi, lo = item.start, item.stop
         width = hi - lo + 1
         if self.concrete_value is None:
@@ -164,18 +167,23 @@ class _FakeBV:
 
 
 class _FakeRichR:
-    def __init__(self, data, typevar=None, type_constraints=None):  # noqa: ANN001
+    def __init__(self, data, typevar=None, type_constraints=None):
         self.data = data
         self.typevar = typevar
         self.type_constraints = type_constraints or set()
 
 
 class _FakeStructuredCodegen:
-    def _handle(self, node, **kwargs):  # noqa: ANN001
+    def _handle(self, node, **kwargs):
         raise TypeError(type(node).__name__)
 
-    def _handle_Expr_StackBaseOffset(self, node, **kwargs):  # noqa: ANN001
+    def _handle_Expr_StackBaseOffset(self, node, **kwargs):
         return ("stackbase", node.offset, kwargs.get("lvalue", False))
+
+
+class _RustTaggedCodegen:
+    def _handle(self, node, **kwargs):
+        return SimpleNamespace(tags=ailment.Expr.Register(None, 0, 16, ins_addr=0x1000).tags)
 
 
 def test_basepointeroffset_codegen_guard_reuses_stackbase_handler():
@@ -189,8 +197,19 @@ def test_basepointeroffset_codegen_guard_reuses_stackbase_handler():
     assert result == ("stackbase", -8, True)
 
 
+def test_codegen_guard_normalizes_rust_backed_tags_once_at_boundary() -> None:
+    original = install_angr_basepointeroffset_codegen_guard(_RustTaggedCodegen)
+    try:
+        result = _RustTaggedCodegen()._handle(object())
+    finally:
+        _RustTaggedCodegen._handle = original
+
+    assert result.tags == {"ins_addr": 0x1000}
+    assert isinstance(result.tags, dict)
+
+
 class _FakeCodegenWithInit:
-    def __init__(self, func, sequence, **kwargs):  # noqa: ANN001
+    def __init__(self, func, sequence, **kwargs):
         self.func = func
         self.sequence = sequence
         self.kwargs = kwargs
@@ -206,27 +225,27 @@ class _FakeProject:
 
 
 class SequenceNode:
-    def __init__(self, addr, nodes):  # noqa: ANN001
+    def __init__(self, addr, nodes):
         self.addr = addr
         self.nodes = nodes
 
 
 class SwitchCaseNode:
-    def __init__(self, addr, cases, default_node=None):  # noqa: ANN001
+    def __init__(self, addr, cases, default_node=None):
         self.addr = addr
         self.cases = cases
         self.default_node = default_node
 
 
 class ConditionNode:
-    def __init__(self, addr, true_node=None, false_node=None):  # noqa: ANN001
+    def __init__(self, addr, true_node=None, false_node=None):
         self.addr = addr
         self.true_node = true_node
         self.false_node = false_node
 
 
 class CodeNode:
-    def __init__(self, node):  # noqa: ANN001
+    def __init__(self, node):
         self.node = node
 
 
@@ -667,16 +686,23 @@ class _FakeTypevars:
         pass
 
     @staticmethod
-    def new_dtv(typevar, label=None):  # noqa: ANN001
+    def new_dtv(typevar, label=None):
         return ("dtv", typevar, label)
 
     @staticmethod
-    def SubN(value):  # noqa: ANN001
+    def SubN(value):
         return ("SubN", value)
 
     @staticmethod
-    def Sub(lhs, rhs, out):  # noqa: ANN001
+    def Sub(lhs, rhs, out):
         return ("Sub", lhs, rhs, out)
+
+
+class _CurrentTypevars(_FakeTypevars):
+    class DerivedTypeVariable:
+        def __init__(self, typevar, label) -> None:
+            self.typevar = typevar
+            self.label = label
 
 
 class _FakeExpr:
@@ -688,12 +714,12 @@ class _Engine:
     def __init__(self) -> None:
         self.state = _FakeState()
 
-    def _expr_pair(self, arg0, arg1):  # noqa: ANN001
+    def _expr_pair(self, arg0, arg1):
         lhs = _FakeRichR(_FakeBV(16), typevar=None)
         rhs = _FakeRichR(_FakeBV(32), typevar=None)
         return lhs, rhs
 
-    def _handle_binop_Sub(self, expr):  # noqa: ANN001
+    def _handle_binop_Sub(self, expr):
         raise AssertionError("guard not installed")
 
 
@@ -715,8 +741,41 @@ def test_variable_recovery_guard_skips_size_mismatch_log_when_width_coercion_suc
     assert "clinic:variable-recovery-size-mismatch" not in captured.err
 
 
+class _ConcreteOffsetEngine(_Engine):
+    def _expr_pair(self, arg0, arg1):
+        lhs = _FakeRichR(_FakeBV(16), typevar=_CurrentTypevars.TypeVariable())
+        rhs = _FakeRichR(_FakeBV(16, 2), typevar=None)
+        return lhs, rhs
+
+
+def test_variable_recovery_guard_uses_current_derived_type_variable_contract() -> None:
+    original = install_angr_variable_recovery_binop_sub_size_guard(
+        _ConcreteOffsetEngine,
+        richr_cls=_FakeRichR,
+        typevars_module=_CurrentTypevars,
+    )
+    try:
+        result = _ConcreteOffsetEngine()._handle_binop_Sub(_FakeExpr())
+    finally:
+        _ConcreteOffsetEngine._handle_binop_Sub = original
+
+    assert isinstance(result.typevar, _CurrentTypevars.DerivedTypeVariable)
+    assert result.typevar.label == ("SubN", 2)
+
+
+def test_clinic_peephole_skip_preserves_angr_tuple_contract() -> None:
+    project = SimpleNamespace(_inertia_skip_clinic_simplify_block=True)
+    block = ailment.Block(0x1000, statements=[])
+    simplifier = object.__new__(BlockSimplifier)
+
+    with guard_angr_clinic_stage_markers(project):
+        result = BlockSimplifier._peephole_optimize(simplifier, block)
+
+    assert result == (block, False, False)
+
+
 class _SignedOffsetEngine(_Engine):
-    def _expr_pair(self, arg0, arg1):  # noqa: ANN001
+    def _expr_pair(self, arg0, arg1):
         lhs = _FakeRichR(_FakeBV(32, 0x00010020), typevar=None)
         rhs = _FakeRichR(_FakeBV(16, 0xFFEC), typevar=None)
         return lhs, rhs
@@ -740,15 +799,15 @@ def test_variable_recovery_guard_sign_extends_negative_16bit_sub_operand() -> No
 
 
 class _BrokenBV(_FakeBV):
-    def zero_extend(self, nbits: int) -> _FakeBV:  # noqa: ARG002
+    def zero_extend(self, nbits: int) -> _FakeBV:
         raise RuntimeError("cannot widen")
 
-    def __getitem__(self, item) -> _FakeBV:  # noqa: ANN001
+    def __getitem__(self, item) -> _FakeBV:
         raise RuntimeError("cannot slice")
 
 
 class _BrokenWidthEngine(_Engine):
-    def _expr_pair(self, arg0, arg1):  # noqa: ANN001
+    def _expr_pair(self, arg0, arg1):
         lhs = _FakeRichR(_BrokenBV(16), typevar=None)
         rhs = _FakeRichR(_FakeBV(32), typevar=None)
         return lhs, rhs

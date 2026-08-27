@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeShort
+from angr.sim_type import SimTypeBottom, SimTypeChar, SimTypeFunction, SimTypeShort
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseEvidence8616,
@@ -11,8 +11,10 @@ from angr_platforms.X86_16.callsite_summary import (
 )
 from angr_platforms.X86_16.lowering import terminal_call_return_types
 from angr_platforms.X86_16.lowering.terminal_call_return_types import (
+    CalleeResultContract8616,
     TerminalCallReturnTypeSource8616,
     apply_terminal_call_return_type_evidence_8616,
+    callee_result_contract_8616,
 )
 from angr_platforms.X86_16.semantics.terminal_call_paths import (
     TerminalCallPathStatus8616,
@@ -123,6 +125,27 @@ def _record_used_result(project: object) -> None:
             callsite_addrs=(0x3000,),
         ),
     )
+
+
+def test_callee_result_contract_refuses_guessed_prototype() -> None:
+    prototype = SimTypeFunction([], SimTypeShort(False)).with_arch(Arch86_16())
+    callee = SimpleNamespace(prototype=prototype, is_prototype_guessed=True)
+
+    assert callee_result_contract_8616(callee) is CalleeResultContract8616.UNKNOWN
+
+
+def test_callee_result_contract_accepts_explicit_value_prototype() -> None:
+    prototype = SimTypeFunction([], SimTypeShort(False)).with_arch(Arch86_16())
+    callee = SimpleNamespace(prototype=prototype, is_prototype_guessed=False)
+
+    assert callee_result_contract_8616(callee) is CalleeResultContract8616.VALUE
+
+
+def test_callee_result_contract_accepts_explicit_void_prototype() -> None:
+    prototype = SimTypeFunction([], SimTypeBottom(label="void")).with_arch(Arch86_16())
+    callee = SimpleNamespace(prototype=prototype, is_prototype_guessed=False)
+
+    assert callee_result_contract_8616(callee) is CalleeResultContract8616.VOID
 
 
 def test_terminal_call_path_proves_frame_teardown_to_return() -> None:

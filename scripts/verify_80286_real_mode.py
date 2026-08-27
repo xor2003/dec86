@@ -91,23 +91,23 @@ def _update_passed_cache(path: Path, file_summaries: list[dict[str, object]]) ->
 
     ordered = []
     for opcode in sorted(existing):
-        ordered.append(opcode)
+        ordered.append(opcode)  # noqa: PERF402
     path.write_text("\n".join(ordered), encoding="utf-8")
     return existing
 
 
 __all__ = [
     "REPO_ROOT",
-    "load_moo_cases",
-    "summarize_results",
-    "summary_to_json",
-    "verify_case",
-    "verify_moo_file",
     "_exclude_cached_passes",
     "_exclude_compare_covered",
     "_load_passed_cache",
     "_sample_compare_covered",
     "_update_passed_cache",
+    "load_moo_cases",
+    "summarize_results",
+    "summary_to_json",
+    "verify_case",
+    "verify_moo_file",
 ]
 
 

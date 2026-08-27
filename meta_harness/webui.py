@@ -1,5 +1,6 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
+import contextlib
 import html
 import json
 import re
@@ -799,8 +800,8 @@ HTML_PAGE = """<!doctype html>
 """
 
 
-def append_chat_entry(path: Path, role: str, message: str, *, at: str | None = None) -> None:
-    def _impl():
+def append_chat_entry(path: Path, role: str, message: str, *, at: str | None = None) -> None:  # noqa: D103
+    def _impl() -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "role": role,
@@ -814,7 +815,7 @@ def append_chat_entry(path: Path, role: str, message: str, *, at: str | None = N
 
 
 def _parse_kv_file(path: Path) -> dict[str, str]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if not path.exists():
             return {}
         data: dict[str, str] = {}
@@ -829,7 +830,7 @@ def _parse_kv_file(path: Path) -> dict[str, str]:
 
 
 def _tail_text(path: Path, max_bytes: int = 64 * 1024) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if not path.exists():
             return ""
         with path.open("rb") as fp:
@@ -842,7 +843,7 @@ def _tail_text(path: Path, max_bytes: int = 64 * 1024) -> str:
 
 
 def _load_json(path: Path) -> dict[str, object] | list[object] | None:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if not path.exists():
             return None
         try:
@@ -854,7 +855,7 @@ def _load_json(path: Path) -> dict[str, object] | list[object] | None:
 
 
 def _load_chat(path: Path, limit: int = 50) -> list[dict[str, str]]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if not path.exists():
             return []
         messages: list[dict[str, str]] = []
@@ -877,7 +878,7 @@ def _load_chat(path: Path, limit: int = 50) -> list[dict[str, str]]:
 
 
 def _role_log_stats(log_dir: Path) -> dict[str, dict[str, int]]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         stats: dict[str, dict[str, int]] = defaultdict(lambda: {"count": 0, "total_bytes": 0, "max_bytes": 0})
         for path in log_dir.glob("*.log"):
             role = path.stem.split("_", 2)[-1]
@@ -893,7 +894,7 @@ def _role_log_stats(log_dir: Path) -> dict[str, dict[str, int]]:
 
 
 def _free_disk_mb(root_dir: Path) -> int | None:
-    def _impl():
+    def _impl():  # noqa: ANN202
         try:
             result = subprocess.run(["df", "-Pm", str(root_dir)], capture_output=True, text=True, check=True)
         except (OSError, subprocess.CalledProcessError):
@@ -910,7 +911,7 @@ def _free_disk_mb(root_dir: Path) -> int | None:
 
 
 def _free_ram_mb() -> int | None:
-    def _impl():
+    def _impl():  # noqa: ANN202
         try:
             for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
                 if line.startswith("MemAvailable:"):
@@ -923,7 +924,7 @@ def _free_ram_mb() -> int | None:
 
 
 def _state_dir_mb(state_dir: Path) -> int | None:
-    def _impl():
+    def _impl():  # noqa: ANN202
         try:
             result = subprocess.run(["du", "-sm", str(state_dir)], capture_output=True, text=True, check=False)
         except OSError:
@@ -939,21 +940,21 @@ def _state_dir_mb(state_dir: Path) -> int | None:
 
 
 def _read_text(path: Path) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         return path.read_text(encoding="utf-8", errors="replace").strip() if path.exists() else ""
 
     return _impl()
 
 
 def _remaining_steps_for_role(state_dir: Path, role: str) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         return _read_text(state_dir / f"{role}.remaining")
 
     return _impl()
 
 
 def _latest_log_for_role(state_dir: Path, role: str) -> Path | None:
-    def _impl():
+    def _impl():  # noqa: ANN202
         text = _read_text(state_dir / f"{role}.lastlog")
         return Path(text) if text else None
 
@@ -968,7 +969,7 @@ def _role_activity(
     cycle_steps: dict[str, object],
     log_stats: dict[str, dict[str, int]],
 ) -> list[dict[str, object]]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         roles: list[dict[str, object]] = []
         role_to_model = {
             "checker": cfg.checker_model,
@@ -1015,7 +1016,7 @@ def _role_activity(
 
 
 def _usage_summary(log_dir: Path) -> dict[str, object]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         prompt_tokens = 0
         completion_tokens = 0
         total_tokens = 0
@@ -1062,14 +1063,14 @@ def _usage_summary(log_dir: Path) -> dict[str, object]:
 
 
 def _html_escape(value: object) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         return html.escape("" if value is None else str(value))
 
     return _impl()
 
 
 def _status_class(status: object) -> str:
-    def _impl():
+    def _impl() -> str:
         text = str(status or "unknown").lower()
         cleaned = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
         return f"status-{cleaned or 'unknown'}"
@@ -1078,7 +1079,7 @@ def _status_class(status: object) -> str:
 
 
 def _pretty_bytes(bytes_value: object) -> str:
-    def _impl():
+    def _impl() -> str:
         if bytes_value is None:
             return "-"
         try:
@@ -1098,7 +1099,7 @@ def _pretty_bytes(bytes_value: object) -> str:
 
 
 def _render_stat_cards(data: dict[str, object]) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         log_stats = data.get("log_stats", {})
         worker_stats = log_stats.get("worker", {}) if isinstance(log_stats, dict) else {}
         stats = [
@@ -1124,7 +1125,7 @@ def _render_stat_cards(data: dict[str, object]) -> str:
 
 
 def _render_task_packet_html(packet: dict[str, object], packet_status: str) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         rows = [
             ("Item", packet.get("item_id", "-"), packet.get("objective", "")),
             ("Status", packet_status or "-", ""),
@@ -1163,7 +1164,7 @@ def _render_task_packet_html(packet: dict[str, object], packet_status: str) -> s
 
 
 def _render_policy_html(policy: dict[str, object], green_level: str) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         rows = [
             ("Green", green_level or "-", ""),
             ("Decision", policy.get("decision", "-"), policy.get("reason", "")),
@@ -1184,7 +1185,7 @@ def _render_policy_html(policy: dict[str, object], green_level: str) -> str:
 
 
 def _render_steps_html(state: dict[str, object]) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         step_order = state.get("step_order", [])
         cycle_steps = state.get("cycle_steps", {})
         if not isinstance(step_order, list) or not step_order:
@@ -1211,7 +1212,7 @@ def _render_steps_html(state: dict[str, object]) -> str:
 
 
 def _render_processes_html(processes: object) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if not isinstance(processes, list) or not processes:
             return '<div class="hint">No registered subprocesses.</div>'
         items = []
@@ -1233,7 +1234,7 @@ def _render_processes_html(processes: object) -> str:
 
 
 def _render_resources_html(resources: dict[str, object]) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         rows = [
             (
                 "Free Disk",
@@ -1267,7 +1268,7 @@ def _render_resources_html(resources: dict[str, object]) -> str:
 
 
 def _render_usage_html(usage: dict[str, object]) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if not usage.get("available"):
             return (
                 '<div class="step"><div><strong>Unavailable</strong><div class="meta">'
@@ -1299,7 +1300,7 @@ def _render_usage_html(usage: dict[str, object]) -> str:
 
 
 def _render_preflight_html(preflight: dict[str, object]) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         commands = preflight.get("commands", {})
         providers = preflight.get("providers", {})
         command_text = (
@@ -1338,7 +1339,7 @@ def _render_preflight_html(preflight: dict[str, object]) -> str:
 
 
 def _render_sessions_html(summary: dict[str, object]) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         by_role = summary.get("by_role", {})
         by_role_text = (
             " ".join(f"{name}:{count}" for name, count in by_role.items()) if isinstance(by_role, dict) else "-"
@@ -1369,7 +1370,7 @@ def _render_sessions_html(summary: dict[str, object]) -> str:
 
 
 def _render_roles_html(roles: object) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if not isinstance(roles, list) or not roles:
             return '<div class="hint">No role activity yet.</div>'
         items = []
@@ -1402,7 +1403,7 @@ def _render_roles_html(roles: object) -> str:
 
 
 def _render_chat_html(chat: object) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if not isinstance(chat, list) or not chat:
             return '<div class="hint">No messages yet.</div>'
         items = []
@@ -1426,7 +1427,7 @@ def _render_chat_html(chat: object) -> str:
 
 
 def _history_events(path: Path, limit: int = 20) -> list[dict[str, object]]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         rows = load_jsonl(path, limit=limit)
         events: list[dict[str, object]] = []
         for row in rows:
@@ -1451,7 +1452,7 @@ def _history_events(path: Path, limit: int = 20) -> list[dict[str, object]]:
 
 
 def _render_history_html(history: object) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if not isinstance(history, list) or not history:
             return '<div class="hint">No recent events yet.</div>'
         items = []
@@ -1489,7 +1490,7 @@ def _render_history_html(history: object) -> str:
 
 
 def _operator_actions(history: list[dict[str, object]], limit: int = 10) -> list[dict[str, object]]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         rows = [
             event for event in history if isinstance(event, dict) and event.get("event") == "operator.action_requested"
         ]
@@ -1499,7 +1500,7 @@ def _operator_actions(history: list[dict[str, object]], limit: int = 10) -> list
 
 
 def _render_actions_html(actions: object) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if not isinstance(actions, list) or not actions:
             return '<div class="hint">No operator actions recorded yet.</div>'
         items = []
@@ -1525,7 +1526,7 @@ def _render_actions_html(actions: object) -> str:
 
 
 def _render_blockers_html(blockers: object) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if not isinstance(blockers, list) or not blockers:
             return '<div class="hint">No blockers or recovery activity recorded.</div>'
         items = []
@@ -1549,7 +1550,7 @@ def _render_blockers_html(blockers: object) -> str:
 
 
 def _render_autonomy_html(autonomy: dict[str, object]) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         rows = [
             (
                 "Closeout",
@@ -1576,7 +1577,7 @@ def _render_autonomy_html(autonomy: dict[str, object]) -> str:
 
 
 def _current_blockers(history: list[dict[str, object]]) -> list[dict[str, object]]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         blockers: list[dict[str, object]] = []
         for event in reversed(history):
             if not isinstance(event, dict):
@@ -1607,7 +1608,7 @@ def _current_blockers(history: list[dict[str, object]]) -> list[dict[str, object
 
 
 def _safe_bootstrap_json(payload: dict[str, object]) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         return (
             json.dumps(payload, sort_keys=True)
             .replace("</", "<\\/")
@@ -1618,9 +1619,9 @@ def _safe_bootstrap_json(payload: dict[str, object]) -> str:
     return _impl()
 
 
-class HarnessWebUI:
-    def __init__(self, cfg: RuntimeConfig, harness: object | None = None):
-        def _impl():
+class HarnessWebUI:  # noqa: D101
+    def __init__(self, cfg: RuntimeConfig, harness: object | None = None) -> None:  # noqa: D107
+        def _impl() -> None:
             self.cfg = cfg
             self.llm_cfg = LlmConfig.from_env()
             self.harness = harness
@@ -1639,7 +1640,7 @@ class HarnessWebUI:
         return _impl()
 
     def _usage_marker(self) -> str:
-        def _impl():
+        def _impl():  # noqa: ANN202
             try:
                 logs = sorted(self.cfg.log_dir.glob("*.log"))
             except OSError:
@@ -1659,7 +1660,7 @@ class HarnessWebUI:
         return _impl()
 
     def _cached_usage_summary(self) -> dict[str, object]:
-        def _impl():
+        def _impl():  # noqa: ANN202
             session_rows = load_jsonl(self.cfg.session_ledger_file, limit=200)
             if session_rows:
                 summary = summarize_session_rows(session_rows)
@@ -1684,7 +1685,7 @@ class HarnessWebUI:
         return _impl()
 
     def _render_html_page(self, payload: dict[str, object]) -> str:
-        def _impl():
+        def _impl():  # noqa: ANN202
             status = payload.get("status", {}) if isinstance(payload.get("status"), dict) else {}
             history = payload.get("history", []) if isinstance(payload.get("history"), list) else []
             latest_event = history[-1] if history else {}
@@ -1742,7 +1743,7 @@ class HarnessWebUI:
         return _impl()
 
     def _state_payload(self) -> dict[str, object]:
-        def _impl():
+        def _impl():  # noqa: ANN202
             status = _parse_kv_file(self.cfg.status_file)
             latest_cycle = self.cfg.state_dir / "latest_cycle"
             cycle_dir = latest_cycle.resolve() if latest_cycle.exists() else None
@@ -1798,7 +1799,7 @@ class HarnessWebUI:
                 "project_name": self.cfg.project_name,
                 "current_cycle": cycle_dir.name if cycle_dir is not None else "",
                 "status": status,
-                "step_order": list(("full-sweep", "checker", "planner", "worker", "reviewer")),
+                "step_order": ["full-sweep", "checker", "planner", "worker", "reviewer"],
                 "cycle_steps": cycle_steps,
                 "current_task_packet": cycle_state.get("current_task_packet", {})
                 if isinstance(cycle_state, dict)
@@ -1854,7 +1855,7 @@ class HarnessWebUI:
         return _impl()
 
     def _write_operator_comment(self, message: str) -> None:
-        def _impl():
+        def _impl() -> None:
             existing = ""
             if self.cfg.operator_comments_file.exists():
                 existing = self.cfg.operator_comments_file.read_text(encoding="utf-8", errors="replace").strip()
@@ -1865,7 +1866,7 @@ class HarnessWebUI:
         return _impl()
 
     def _apply_action(self, action: str) -> dict[str, object]:
-        def _impl():
+        def _impl():  # noqa: ANN202
             harness = self.harness
             if action == "pause":
                 if harness is not None and hasattr(harness, "pause_requested_by_operator"):
@@ -1922,19 +1923,19 @@ class HarnessWebUI:
 
         return _impl()
 
-    def _build_handler(self):
-        def _impl():
+    def _build_handler(self):  # noqa: ANN202
+        def _impl() -> None:
             outer = self
 
             class Handler(BaseHTTPRequestHandler):
                 def log_message(self, _format: str, *_args: object) -> None:
-                    def _impl():
+                    def _impl() -> None:
                         return
 
                     return _impl()
 
                 def _send_json(self, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
-                    def _impl():
+                    def _impl() -> None:
                         body = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
                         self.send_response(status)
                         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1947,7 +1948,7 @@ class HarnessWebUI:
                     return _impl()
 
                 def _send_html(self, body: str) -> None:
-                    def _impl():
+                    def _impl() -> None:
                         data = body.encode("utf-8")
                         self.send_response(HTTPStatus.OK)
                         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1960,7 +1961,7 @@ class HarnessWebUI:
                     return _impl()
 
                 def do_GET(self) -> None:
-                    def _impl():
+                    def _impl() -> None:
                         parsed = urlparse(self.path)
                         if parsed.path == "/":
                             self._send_html(outer._render_html_page(outer._state_payload()))
@@ -1986,7 +1987,7 @@ class HarnessWebUI:
                     return _impl()
 
                 def do_POST(self) -> None:
-                    def _impl():
+                    def _impl() -> None:
                         content_length = int(self.headers.get("Content-Length", "0"))
                         raw = self.rfile.read(content_length).decode("utf-8", errors="replace")
                         try:
@@ -2016,10 +2017,10 @@ class HarnessWebUI:
 
                     return _impl()
 
-        return Handler
+        return Handler  # noqa: F821
 
-    def start(self) -> str:
-        def _impl():
+    def start(self) -> str:  # noqa: D102
+        def _impl():  # noqa: ANN202
             host = self.cfg.web_ui_host
             port = self.cfg.web_ui_port
             try:
@@ -2031,16 +2032,14 @@ class HarnessWebUI:
             self.thread = threading.Thread(target=self.server.serve_forever, name="meta-harness-webui", daemon=True)
             self.thread.start()
             if self.cfg.web_ui_auto_open:
-                try:
+                with contextlib.suppress(Exception):
                     webbrowser.open(self.url)
-                except Exception:
-                    pass
             return self.url
 
         return _impl()
 
-    def stop(self) -> None:
-        def _impl():
+    def stop(self) -> None:  # noqa: D102
+        def _impl() -> None:
             if self.server is None:
                 return
             self.server.shutdown()
@@ -2051,8 +2050,8 @@ class HarnessWebUI:
         return _impl()
 
 
-def launch_web_ui(cfg: RuntimeConfig, harness: object | None = None) -> HarnessWebUI | None:
-    def _impl():
+def launch_web_ui(cfg: RuntimeConfig, harness: object | None = None) -> HarnessWebUI | None:  # noqa: D103
+    def _impl():  # noqa: ANN202
         if not cfg.web_ui_enabled:
             return None
         ui = HarnessWebUI(cfg, harness=harness)

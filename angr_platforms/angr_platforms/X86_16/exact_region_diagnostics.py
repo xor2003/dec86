@@ -13,8 +13,8 @@ __all__ = [
     "ExactRegionDiagnostics",
     "RegionSplitDiagnostics",
     "build_exact_region_diagnostics_8616",
-    "format_exact_region_diagnostics_8616",
     "classify_region_split_8616",
+    "format_exact_region_diagnostics_8616",
 ]
 
 
@@ -110,7 +110,7 @@ def build_exact_region_diagnostics_8616(
         entries: list[int] = []
         for addr in sorted(cfg_functions.keys()):
             if isinstance(addr, int) and requested_start <= addr < requested_end:
-                entries.append(addr)
+                entries.append(addr)  # noqa: PERF401
         actual_entries = tuple(entries)
         cfg_function_count = max(len(actual_entries), 1)
     else:

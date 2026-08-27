@@ -65,16 +65,16 @@ class _PointerSwapCodegenBoundary8616(Protocol):
 
     cfunc: _PointerSwapCFunctionBoundary8616
     project: _PointerSwapProjectBoundary8616
-    _inertia_pointer_swap_splice_stats_8616: "PointerSwapSpliceStats8616"
+    _inertia_pointer_swap_splice_stats_8616: PointerSwapSpliceStats8616
 
 
 class _PointerMemoryCodegenBoundary8616(Protocol):
     """Typed view of codegen state owned by pointer-memory Lowering."""
 
     cfunc: _PointerSwapCFunctionBoundary8616
-    _inertia_pointer_memory_idiom_facts_8616: tuple["PointerMemoryIdiomMaterializationFact8616", ...]
+    _inertia_pointer_memory_idiom_facts_8616: tuple[PointerMemoryIdiomMaterializationFact8616, ...]
     _inertia_pointer_memory_materialized_8616: str
-    _inertia_pointer_swap_splice_stats_8616: "PointerSwapSpliceStats8616"
+    _inertia_pointer_swap_splice_stats_8616: PointerSwapSpliceStats8616
 
 
 class PointerMemoryIdiomKind8616(StrEnum):

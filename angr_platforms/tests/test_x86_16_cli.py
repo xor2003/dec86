@@ -34,6 +34,7 @@ from angr_platforms.X86_16.lowering.segmented_global_loads import SegmentedGloba
 from angr_platforms.X86_16.lowering.segmented_lowering import _SegmentedAccess
 from angr_platforms.X86_16.lst_extract import LSTMetadata, extract_lst_metadata
 from angr_platforms.X86_16.turbo_debug_tdinfo import TDInfoSymbolClass, parse_tdinfo_exe
+from x86_16_timeout_support import scaled_decompile_timeout
 
 import decompile
 import inertia_decompiler.cache as recovery_cache
@@ -203,22 +204,6 @@ def test_decompilation_preserves_source_label_refuses_named_retry_conflict():
 
     assert cli_decompilation._preserve_source_label_for_same_addr_function_8616(source, recovered) is False
     assert recovered.name == "other_name"
-
-
-def test_missing_return_chain_values_checks_suffix_materialization():
-    codegen = SimpleNamespace(
-        _inertia_return_chain_flattened_8616=False,
-        _inertia_return_chain_suffix_materialized_8616=True,
-        _inertia_return_chain_materialized_values_8616=(1, 2, 3),
-        _inertia_return_chain_final_value_8616=255,
-    )
-
-    missing = cli_decompilation._missing_return_chain_values_from_text_8616(
-        codegen,
-        "int main(void)\n{\n    return 255;\n}\n",
-    )
-
-    assert missing == [1, 2, 3]
 
 
 def test_codegen_render_refresh_signal_is_structured_and_consumed():
@@ -535,14 +520,13 @@ def test_evidence_recovered_c_replaces_split_abi_signature_text():
     assert cli_decompilation._select_evidence_recovered_c_8616(formatted, evidence) == evidence
 
 
-def test_nontrivial_x86_16_refuses_legacy_cli_rewrite_after_tail_validation():
+def test_nontrivial_x86_16_refuses_legacy_cli_semantic_rewrite():
     project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
 
     assert (
         cli_decompilation._should_refuse_legacy_cli_rewrite_8616(
             project,
             small_function=False,
-            tail_validation_complete=True,
             sidecar_free=True,
         )
         is True
@@ -551,7 +535,6 @@ def test_nontrivial_x86_16_refuses_legacy_cli_rewrite_after_tail_validation():
         cli_decompilation._should_refuse_legacy_cli_rewrite_8616(
             project,
             small_function=True,
-            tail_validation_complete=True,
             sidecar_free=True,
         )
         is False
@@ -560,16 +543,6 @@ def test_nontrivial_x86_16_refuses_legacy_cli_rewrite_after_tail_validation():
         cli_decompilation._should_refuse_legacy_cli_rewrite_8616(
             project,
             small_function=False,
-            tail_validation_complete=False,
-            sidecar_free=True,
-        )
-        is False
-    )
-    assert (
-        cli_decompilation._should_refuse_legacy_cli_rewrite_8616(
-            project,
-            small_function=False,
-            tail_validation_complete=True,
             sidecar_free=False,
         )
         is False
@@ -1394,7 +1367,7 @@ def test_decompile_function_with_stats_skips_same_family_retry_without_new_proof
         cli_decompilation, "_guard_angr_clinic_stage_markers", lambda *_args, **_kwargs: contextlib.nullcontext()
     )
 
-    status, payload, partial_payload, block_count, byte_count, elapsed = (
+    status, _payload, partial_payload, block_count, byte_count, elapsed = (
         cli_decompilation._decompile_function_with_stats(
             project,
             cfg,
@@ -1751,16 +1724,9 @@ def _run_decompile_proc(
     subprocess_timeout: int = 30,
     scale_for_xdist: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    raw_scale = os.environ.get("INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE", "").strip()
-    if not raw_scale and os.environ.get("PYTEST_XDIST_WORKER"):
-        raw_scale = "1.5"
-    try:
-        scale = float(raw_scale) if raw_scale else 1.0
-    except ValueError:
-        scale = 1.0
-    if scale_for_xdist and scale > 1.0:
-        analysis_timeout = max(analysis_timeout, int(round(analysis_timeout * scale)))
-        subprocess_timeout = max(subprocess_timeout, int(round(subprocess_timeout * scale)))
+    if scale_for_xdist:
+        analysis_timeout = scaled_decompile_timeout(analysis_timeout)
+        subprocess_timeout = scaled_decompile_timeout(subprocess_timeout)
     return subprocess.run(
         [
             sys.executable,
@@ -3784,7 +3750,7 @@ def test_recover_candidate_function_pair_retries_richer_bounded_region_when_exac
     monkeypatch.setattr(
         decompile,
         "_richest_bounded_recovery_region",
-        lambda _addr, *, image_end, region_span: bounded_region if image_end and region_span else bounded_region,
+        lambda _addr, *, image_end, region_span: bounded_region if image_end and region_span else bounded_region,  # noqa: RUF034
     )
     monkeypatch.setattr(
         decompile,
@@ -4299,6 +4265,7 @@ def test_emit_function_result_retry_budget_stays_with_configured_timeout(monkeyp
         interactive_stdout=False,
         use_serial_fork_per_function=False,
         fallback_tail_validation_by_index={},
+        timeout_was_explicit=True,
     )
 
     assert (decompiled, failed) == (1, 0)
@@ -4318,12 +4285,12 @@ def test_retry_recovered_candidate_is_bounded_by_worker_timeout(monkeypatch, tmp
     )
     wrapper_calls = {}
 
-    def _fake_daemon_thread(fn, *, timeout, thread_name_prefix):  # noqa: ANN001
+    def _fake_daemon_thread(fn, *, timeout, thread_name_prefix):
         wrapper_calls["timeout"] = timeout
         wrapper_calls["thread_name_prefix"] = thread_name_prefix
         return fn()
 
-    def _fake_work_item(work_item, **_kwargs):  # noqa: ANN001
+    def _fake_work_item(work_item, **_kwargs):
         return decompile.FunctionWorkResult(
             index=work_item.index,
             status="ok",
@@ -4379,15 +4346,15 @@ def test_retry_recovered_candidate_uses_thread_when_tail_validation_enabled(monk
     )
     wrapper_calls = {}
 
-    def _fake_fork(*_args, **_kwargs):  # noqa: ANN001
+    def _fake_fork(*_args, **_kwargs):
         raise AssertionError("tail-validation retry must not use fork isolation")
 
-    def _fake_daemon_thread(fn, *, timeout, thread_name_prefix):  # noqa: ANN001
+    def _fake_daemon_thread(fn, *, timeout, thread_name_prefix):
         wrapper_calls["timeout"] = timeout
         wrapper_calls["thread_name_prefix"] = thread_name_prefix
         return fn()
 
-    def _fake_work_item(work_item, **_kwargs):  # noqa: ANN001
+    def _fake_work_item(work_item, **_kwargs):
         return decompile.FunctionWorkResult(
             index=work_item.index,
             status="ok",
@@ -4436,7 +4403,7 @@ def test_retry_recovered_candidate_refuses_raw_memory_payload(monkeypatch, tmp_p
         alternate_source_c=False,
     )
 
-    def _fake_work_item(work_item, **_kwargs):  # noqa: ANN001
+    def _fake_work_item(work_item, **_kwargs):
         return decompile.FunctionWorkResult(
             index=work_item.index,
             status="ok",
@@ -4512,11 +4479,11 @@ def test_retry_recovered_candidate_refuses_stale_result_snapshot(monkeypatch, tm
     def _fake_build_project(*_args, **_kwargs):
         return fresh_project
 
-    def _fake_recover_lst_function(project_arg, metadata_arg, offset, name, **_kwargs):  # noqa: ANN001
+    def _fake_recover_lst_function(project_arg, metadata_arg, offset, name, **_kwargs):
         seen["recover"] = (project_arg, metadata_arg, offset, name)
         return recovered_cfg, recovered_function
 
-    def _fake_work_item(work_item, **_kwargs):  # noqa: ANN001
+    def _fake_work_item(work_item, **_kwargs):
         seen.setdefault("work_items", []).append(work_item)
         seen.setdefault("allow_isolated_retries", []).append(_kwargs.get("allow_isolated_retry"))
         return decompile.FunctionWorkResult(
@@ -4591,11 +4558,11 @@ def test_retry_recovered_candidate_uses_fresh_sidecar_work_item(monkeypatch, tmp
     def _fake_build_project(*_args, **_kwargs):
         return fresh_project
 
-    def _fake_recover_lst_function(project_arg, metadata_arg, offset, name, **_kwargs):  # noqa: ANN001
+    def _fake_recover_lst_function(project_arg, metadata_arg, offset, name, **_kwargs):
         seen["recover"] = (project_arg, metadata_arg, offset, name)
         return recovered_cfg, recovered_function
 
-    def _fake_work_item(work_item, **_kwargs):  # noqa: ANN001
+    def _fake_work_item(work_item, **_kwargs):
         seen["work_item"] = work_item
         seen["allow_isolated_retry"] = _kwargs.get("allow_isolated_retry")
         return decompile.FunctionWorkResult(
@@ -4673,7 +4640,7 @@ def test_fresh_sidecar_retry_disables_rebased_exact_slice_after_sliced_failure(m
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: fresh_project)
     monkeypatch.setattr(decompile, "attach_lst_metadata_to_project", lambda *_args, **_kwargs: None)
 
-    def _fake_recover_lst_function(project_arg, metadata_arg, offset, name, **_kwargs):  # noqa: ANN001
+    def _fake_recover_lst_function(project_arg, metadata_arg, offset, name, **_kwargs):
         seen["recover"] = (project_arg, metadata_arg, offset, name)
         seen["allow_rebased_exact_slice"] = _kwargs.get("allow_rebased_exact_slice")
         return recovered_cfg, recovered_function
@@ -4690,6 +4657,7 @@ def test_fresh_sidecar_retry_disables_rebased_exact_slice_after_sliced_failure(m
     assert retry_item is not None
     assert retry_item.function is recovered_function
     assert retry_item.function_cfg is recovered_cfg
+    assert retry_item.retained_project is fresh_project
     assert seen["recover"] == (fresh_project, metadata, 0x10CE0, "QuickSort")
     assert seen["allow_rebased_exact_slice"] is False
     assert fresh_project._inertia_rebased_exact_slice_retry_disabled_8616 is True
@@ -4760,7 +4728,7 @@ def test_run_function_work_item_uses_recovery_for_source_backed_quality_blocker(
     function = SimpleNamespace(addr=0x10672, name="ReInitBars", project=project, info={})
     item = decompile.FunctionWorkItem(index=1, function_cfg=SimpleNamespace(), function=function)
 
-    def _fake_decompile(_project, _cfg, function_arg, *_args, **_kwargs):  # noqa: ANN001
+    def _fake_decompile(_project, _cfg, function_arg, *_args, **_kwargs):
         calls["decompile"] += 1
         function_arg.info = {
             "x86_16_tail_validation": {
@@ -4777,7 +4745,7 @@ def test_run_function_work_item_uses_recovery_for_source_backed_quality_blocker(
             0.01,
         )
 
-    def _fake_recover(_project, _function):  # noqa: ANN001
+    def _fake_recover(_project, _function):
         calls["recover"] += 1
         return (
             "void ReInitBars(void)\n{\n    return;\n}\n",
@@ -5395,7 +5363,7 @@ def test_decompile_function_timeout_returns_partial_codegen_text(monkeypatch):
     @contextlib.contextmanager
     def _fake_timeout(_seconds):
         yield
-        raise decompile._AnalysisTimeout()
+        raise decompile._AnalysisTimeout
 
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
@@ -5435,7 +5403,7 @@ def test_resolve_stack_cvar_from_addr_expr_materializes_derived_word_stack_local
         unified_local_vars={},
         variables_in_use={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project)
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     base_var = SimStackVariable(-2, 1, base="bp", name="s_2", region=0x10010)
     base_cvar = structured_c.CVariable(base_var, codegen=codegen)
@@ -5478,7 +5446,7 @@ def test_coalesce_segmented_word_store_statements_prefers_derived_stack_local_wo
         unified_local_vars={},
         variables_in_use={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project)
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     base_var = SimStackVariable(-2, 1, base="bp", name="s_2", region=0x10010)
     base_cvar = structured_c.CVariable(base_var, codegen=codegen)
@@ -5561,7 +5529,7 @@ def test_coalesce_segmented_word_store_statements_refuses_non_joinable_stack_slo
         unified_local_vars={},
         variables_in_use={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project)
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     base_var = SimStackVariable(-2, 1, base="bp", name="s_2", region=0x10010)
     base_cvar = structured_c.CVariable(base_var, codegen=codegen)
@@ -5606,7 +5574,7 @@ def test_coalesce_segmented_word_store_statements_accepts_stable_ds_segment_cons
         unified_local_vars={},
         variables_in_use={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project)
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     low_addr_expr = object()
     high_addr_expr = object()
@@ -5674,7 +5642,7 @@ def test_coalesce_segmented_word_store_statements_refuses_over_associated_ds_pai
         unified_local_vars={},
         variables_in_use={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project)
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     low_addr_expr = object()
     high_addr_expr = object()
@@ -5738,7 +5706,7 @@ def test_coalesce_segmented_word_store_statements_refuses_cross_segment_byte_pai
         unified_local_vars={},
         variables_in_use={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project)
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     low_addr_expr = object()
     high_addr_expr = object()
@@ -5795,7 +5763,7 @@ def test_coalesce_segmented_word_store_statements_refuses_cross_segment_byte_pai
 
 def test_match_byte_store_addr_expr_accepts_word_typed_dereference_split_store():
     project = SimpleNamespace(arch=Arch86_16())
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     addr_expr = structured_c.CBinaryOp(
         "Add",
@@ -5810,7 +5778,7 @@ def test_match_byte_store_addr_expr_accepts_word_typed_dereference_split_store()
 
 def test_match_byte_load_addr_expr_accepts_cast_wrapped_byte_dereference():
     project = SimpleNamespace(arch=Arch86_16())
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     addr_expr = structured_c.CVariable(
         SimRegisterVariable(10, 2, name="bp"),
@@ -5836,7 +5804,7 @@ def test_coalesce_segmented_word_store_statements_rewrites_word_typed_split_stor
         unified_local_vars={},
         variables_in_use={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     low_addr_expr = structured_c.CBinaryOp(
         "Add",
@@ -5916,7 +5884,7 @@ def test_coalesce_segmented_word_store_statements_folds_preceding_byte_load_pair
         unified_local_vars={},
         variables_in_use={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     low_addr_expr = object()
     high_addr_expr = object()
@@ -6009,7 +5977,7 @@ def test_coalesce_segmented_word_store_statements_uses_byte_lhs_for_wide_typed_l
         unified_local_vars={},
         variables_in_use={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     base_addr = structured_c.CVariable(SimRegisterVariable(10, 2, name="bp"), codegen=codegen)
     low_addr_expr = base_addr
@@ -6103,7 +6071,7 @@ def test_coalesce_segmented_word_store_statements_folds_stack_word_byte_carriers
         unified_local_vars={},
         variables_in_use={},
     )
-    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, next_idx=lambda _name: 0, project=project, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     word_var = SimStackVariable(-2, 2, base="bp", name="total", region=0x10010)
     word_def = structured_c.CVariable(word_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -6160,7 +6128,7 @@ def test_coalesce_segmented_word_store_statements_folds_stack_word_byte_carriers
 def test_coalesce_segmented_word_load_expressions_preserves_existing_dereference_evidence(monkeypatch):
     project = SimpleNamespace(arch=Arch86_16())
     cfunc = SimpleNamespace(addr=0x10010)
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     addr_var = SimRegisterVariable(0, 2)
     addr_cvar = structured_c.CVariable(addr_var, codegen=codegen)
@@ -6230,7 +6198,7 @@ def test_coalesce_segmented_word_load_expressions_preserves_existing_dereference
 def test_simplify_nested_mk_fp_calls_collapses_only_zero_offset_forms():
     project = SimpleNamespace(arch=Arch86_16())
     cfunc = SimpleNamespace(addr=0x10010)
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     inner_seg = structured_c.CConstant(0x40, SimTypeShort(False), codegen=codegen)
     inner_off = structured_c.CConstant(0x17, SimTypeShort(False), codegen=codegen)
@@ -6267,7 +6235,7 @@ def test_simplify_nested_mk_fp_calls_collapses_only_zero_offset_forms():
 def test_simplify_nested_mk_fp_calls_keeps_nonzero_inner_offset():
     project = SimpleNamespace(arch=Arch86_16())
     cfunc = SimpleNamespace(addr=0x10010)
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     nested = structured_c.CFunctionCall(
         "MK_FP",
@@ -6304,7 +6272,7 @@ def test_attach_ss_stack_variables_preserves_far_pointer_stack_local_width(monke
         arg_list=(),
         sort_local_vars=lambda: None,
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     promoted_var = SimStackVariable(2, 1, base="bp", name="s_2", region=0x10010)
     promoted_cvar = structured_c.CVariable(promoted_var, codegen=codegen)
@@ -6352,7 +6320,7 @@ def test_attach_ss_stack_variables_does_not_reuse_covering_stack_slot_for_far_po
         arg_list=(),
         sort_local_vars=lambda: None,
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     covering_var = SimStackVariable(0, 8, base="bp", name="cover", region=0x10010)
     covering_cvar = structured_c.CVariable(covering_var, codegen=codegen)
@@ -6394,7 +6362,7 @@ def test_attach_ss_stack_variables_does_not_reuse_covering_stack_slot_for_far_po
 def test_rewrite_ss_stack_byte_offsets_refuses_large_unsigned_addr_expr(monkeypatch):
     project = SimpleNamespace(arch=Arch86_16())
     cfunc = SimpleNamespace(addr=0x10010, project=SimpleNamespace(loader=None))
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     ptr_type = decompile.SimTypePointer(SimTypeChar(False)).with_arch(project.arch)
     node = structured_c.CUnaryOp(
@@ -6445,7 +6413,7 @@ def test_coalesce_direct_ss_local_word_statements_refuses_region_mismatch(monkey
         arg_list=(),
         sort_local_vars=lambda: None,
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     low_var = SimStackVariable(0, 1, base="bp", name="s_0", region=0x10010)
     low_cvar = structured_c.CVariable(low_var, codegen=codegen)
@@ -6502,7 +6470,7 @@ def test_coalesce_direct_ss_local_word_statements_rewrites_stack_address_split_s
         arg_list=(),
         sort_local_vars=lambda: None,
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     low_var = SimStackVariable(0, 1, base="bp", name="s_0", region=0x10010)
     low_cvar = structured_c.CVariable(low_var, codegen=codegen)
@@ -6580,7 +6548,7 @@ def test_coalesce_direct_ss_local_word_statements_refuses_nonadjacent_stack_addr
         arg_list=(),
         sort_local_vars=lambda: None,
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     low_var = SimStackVariable(0, 1, base="bp", name="s_0", region=0x10010)
     low_cvar = structured_c.CVariable(low_var, codegen=codegen)
@@ -6637,7 +6605,7 @@ def test_coalesce_far_pointer_stack_expressions_avoids_byte_local_alias_for_far_
         arg_list=(),
         sort_local_vars=lambda: None,
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     byte_var = SimStackVariable(0, 1, base="bp", name="s_0", region=0x10010)
     byte_cvar = structured_c.CVariable(byte_var, codegen=codegen)
@@ -6708,7 +6676,7 @@ def test_coalesce_cod_word_global_loads_refuses_stable_member_hint(monkeypatch):
     cfunc = SimpleNamespace(
         addr=0x10010, variables_in_use={}, unified_local_vars={}, arg_list=(), sort_local_vars=lambda: None
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     root = structured_c.CStatements(
         [
@@ -6760,7 +6728,7 @@ def test_prune_unused_unnamed_memory_declarations_keeps_only_used_globals():
     cfunc = SimpleNamespace(
         addr=0x10010, variables_in_use={}, unified_local_vars={}, arg_list=(), sort_local_vars=lambda: None
     )
-    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(cfunc=cfunc, project=project, next_idx=lambda _name: 0, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
     used_var = SimMemoryVariable(0x200, 1, name="g_200", region=0x10010)
     dead_var = SimMemoryVariable(0x201, 1, name="g_201", region=0x10010)
@@ -7143,7 +7111,7 @@ def test_register_direct_call_target_function_stubs_falls_back_to_capstone_direc
     }
     function = SimpleNamespace(
         block_addrs_set=set(blocks),
-        get_call_sites=lambda: [],
+        get_call_sites=list,
         get_call_target=lambda _site: None,
     )
     project = SimpleNamespace(
@@ -8261,9 +8229,9 @@ def test_main_emits_uncollected_tail_validation_for_direct_nonoptimized_fallback
         },
     )
 
-    def _fake_timeout(fn, **kwargs):  # noqa: ANN001
+    def _fake_timeout(fn, **kwargs):
         if kwargs.get("thread_name_prefix") == "recovery":
-            raise decompile._AnalysisTimeout()
+            raise decompile._AnalysisTimeout
         return fn()
 
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
@@ -8303,9 +8271,9 @@ def test_main_renders_direct_nonoptimized_outcome_payload_instead_of_repr(monkey
         ),
     )
 
-    def _fake_timeout(fn, **kwargs):  # noqa: ANN001
+    def _fake_timeout(fn, **kwargs):
         if kwargs.get("thread_name_prefix") == "recovery":
-            raise decompile._AnalysisTimeout()
+            raise decompile._AnalysisTimeout
         return fn()
 
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
@@ -8347,9 +8315,9 @@ def test_main_emits_current_run_tail_validation_for_direct_nonoptimized_fallback
         loader=SimpleNamespace(memory=SimpleNamespace(load=lambda _start, size: b"\x90" * size)),
     )
 
-    def _fake_timeout(fn, **kwargs):  # noqa: ANN001
+    def _fake_timeout(fn, **kwargs):
         if kwargs.get("thread_name_prefix") == "recovery":
-            raise decompile._AnalysisTimeout()
+            raise decompile._AnalysisTimeout
         return fn()
 
     def _fake_decompile_function_with_stats(slice_project_arg, *_args, **_kwargs):
@@ -8766,11 +8734,11 @@ def test_main_direct_source_quality_blocker_allows_fallback_paths(monkeypatch, t
 
     fallback_calls = {"known": 0}
 
-    def _known_fallback(*_args, **_kwargs):  # noqa: ANN001
+    def _known_fallback(*_args, **_kwargs):
         fallback_calls["known"] += 1
         return "int sub_10010(void) { return 7; }"
 
-    def _unused_fallback(*_args, **_kwargs):  # noqa: ANN001
+    def _unused_fallback(*_args, **_kwargs):
         return None
 
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
@@ -8817,9 +8785,9 @@ def test_main_direct_timeout_reports_nonoptimized_failure_before_string_fallback
     cfg = SimpleNamespace()
     func = SimpleNamespace(addr=0x10010, name="sub_10010", project=project)
 
-    def _fake_timeout(fn, **kwargs):  # noqa: ANN001
+    def _fake_timeout(fn, **kwargs):
         if kwargs.get("thread_name_prefix") == "recovery":
-            raise decompile._AnalysisTimeout()
+            raise decompile._AnalysisTimeout
         return fn()
 
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
@@ -8945,9 +8913,9 @@ def test_main_direct_sidecar_bounded_asm_fallback_does_not_reuse_stale_project_s
         source_format="cod_listing",
     )
 
-    def _fake_timeout(fn, **kwargs):  # noqa: ANN001
+    def _fake_timeout(fn, **kwargs):
         if kwargs.get("thread_name_prefix") == "recovery":
-            raise decompile._AnalysisTimeout()
+            raise decompile._AnalysisTimeout
         return fn()
 
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
@@ -10269,8 +10237,8 @@ def test_main_reports_sidecar_debug_assisted_recovery_mode(monkeypatch, tmp_path
     )
     metadata = LSTMetadata(
         source_format="codeview_nb00",
-        code_labels={0x10010: "sub_10010"},
-        code_ranges={0x10010: (0x10010, 0x10020)},
+        code_labels={0x10010: "sub_10010", 0x10020: "sub_10020"},
+        code_ranges={0x10010: (0x10010, 0x10020), 0x10020: (0x10020, 0x10030)},
         data_labels={},
         absolute_addrs=True,
     )
@@ -10298,11 +10266,11 @@ def test_main_reports_sidecar_debug_assisted_recovery_mode(monkeypatch, tmp_path
             SimpleNamespace(addr=offset, name=name, project=project),
         ),
     )
-    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 1)
+    monkeypatch.setattr(decompile, "_choose_function_parallelism", lambda _count: 2)
     monkeypatch.setattr(
         decompile,
-        "_run_function_work_item",
-        lambda item, **_kwargs: decompile.FunctionWorkResult(
+        "_run_serial_clean_process_work_item_8616",
+        lambda _context, item, **_kwargs: decompile.FunctionWorkResult(
             index=item.index,
             status="ok",
             payload=f"int {item.function.name}(void) {{ return 0; }}",
@@ -10313,11 +10281,12 @@ def test_main_reports_sidecar_debug_assisted_recovery_mode(monkeypatch, tmp_path
         ),
     )
 
-    rc = decompile.main([str(binary), "--timeout", "2", "--max-functions", "1"])
+    rc = decompile.main([str(binary), "--timeout", "2"])
     out = capsys.readouterr().out
 
     assert rc in {0, 2}
     assert "/* info: recovery evidence: sidecar/debug-assisted recovery (codeview_nb00) */" in out
+    assert "/* info: decompilation attempted for 2/2 selected function(s) */" in out
 
 
 def test_main_limits_sidecar_catalog_preview_for_responsiveness(monkeypatch, tmp_path, capsys):
@@ -10459,7 +10428,7 @@ def test_main_falls_back_after_fast_exe_catalog_timeout(monkeypatch, tmp_path, c
 
     def _fake_timeout(fn, *, thread_name_prefix, **_kwargs):
         if thread_name_prefix == "fast-catalog":
-            raise decompile.FuturesTimeoutError()
+            raise decompile.FuturesTimeoutError
         return fn()
 
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
@@ -10756,7 +10725,7 @@ def test_main_serial_function_timeout_does_not_stall_whole_run(monkeypatch, tmp_
     def _fake_timeout(fn, *, thread_name_prefix, **_kwargs):
         if thread_name_prefix == "func-serial" and calls["work"] == 0:
             calls["work"] += 1
-            raise decompile.FuturesTimeoutError()
+            raise decompile.FuturesTimeoutError
         return fn()
 
     monkeypatch.setattr(decompile, "_build_project", lambda *_args, **_kwargs: project)
@@ -10834,7 +10803,7 @@ def test_batch_function_timeout_preserves_complex_sortd_budget(monkeypatch):
 
     timeout = cli_core._batch_function_decompile_timeout_8616(context, function, model)
 
-    assert timeout == 240
+    assert timeout == 360
 
 
 def test_batch_function_timeout_covers_large_sortd_validation_overhead(monkeypatch):
@@ -10860,7 +10829,7 @@ def test_batch_function_timeout_covers_large_sortd_validation_overhead(monkeypat
 
     timeout = cli_core._batch_function_decompile_timeout_8616(context, function, model)
 
-    assert timeout == 240
+    assert timeout == 360
 
 
 def test_batch_function_timeout_promotes_project_large_floor_for_clean_finalization(monkeypatch):
@@ -11374,9 +11343,13 @@ def test_serial_clean_worker_evidence_protocol_round_trips_and_hydrates(monkeypa
     )
     source_project = SimpleNamespace()
     decompile.record_caller_return_use_evidence_8616(source_project, 0x10CE0, evidence)
+    layout_evidence = decompile.GlobalObjectLayoutEvidence8616((), 0, 0, 0, 0)
+    source_project._inertia_project_global_object_layout_evidence_8616 = layout_evidence
 
     assert decompile._write_serial_clean_worker_evidence_8616(source_project, evidence_path) == 1
-    assert decompile._read_serial_clean_worker_evidence_8616(evidence_path) == {0x10CE0: evidence}
+    transported = decompile._read_serial_clean_worker_evidence_8616(evidence_path)
+    assert transported.caller_return_use_by_addr == {0x10CE0: evidence}
+    assert transported.global_object_layout == layout_evidence
     source_project._inertia_caller_return_use_evidence_by_addr_8616 = {}
     assert (
         decompile._write_serial_clean_worker_evidence_8616(
@@ -11386,12 +11359,15 @@ def test_serial_clean_worker_evidence_protocol_round_trips_and_hydrates(monkeypa
         )
         == 1
     )
-    assert decompile._read_serial_clean_worker_evidence_8616(evidence_path) == {0x10CE0: evidence}
+    transported = decompile._read_serial_clean_worker_evidence_8616(evidence_path)
+    assert transported.caller_return_use_by_addr == {0x10CE0: evidence}
+    assert transported.global_object_layout == layout_evidence
 
     destination_project = SimpleNamespace()
     monkeypatch.setenv(decompile._SERIAL_CLEAN_WORKER_EVIDENCE_ENV_8616, str(evidence_path))
     assert decompile._hydrate_serial_clean_worker_evidence_8616(destination_project) == 1
     assert decompile.caller_return_use_evidence_by_addr_8616(destination_project) == {0x10CE0: evidence}
+    assert destination_project._inertia_project_global_object_layout_evidence_8616 == layout_evidence
 
 
 def test_serial_clean_worker_evidence_protocol_refuses_unknown_schema(tmp_path):
@@ -11499,7 +11475,7 @@ def test_serial_clean_worker_uses_single_process_and_protocol_overhead(monkeypat
             stderr="[12:34:56] child diagnostic\n[12:34:57] /* == c == */\n",
         )
 
-    monkeypatch.setattr(decompile.subprocess, "run", fake_run)
+    monkeypatch.setattr(decompile, "run_captured_subprocess_tree", fake_run)
     monkeypatch.setattr(decompile, "_ARCHITECTURE_GUARD_STATUS_8616", True)
     monkeypatch.setattr(
         decompile,
@@ -11516,7 +11492,8 @@ def test_serial_clean_worker_uses_single_process_and_protocol_overhead(monkeypat
     assert seen["env"]["INERTIA_OTEL_PROFILE_IN_PROCESS"] == "1"
     assert seen["env"]["INERTIA_DIRECT_ADDR_PREFER_LST"] == "0"
     assert seen["env"][decompile.ARCHITECTURE_GUARD_VERIFIED_PARENT_PID_ENV] == str(os.getpid())
-    assert seen["evidence"] == {0x10CE0: return_use_evidence}
+    assert seen["evidence"].caller_return_use_by_addr == {0x10CE0: return_use_evidence}
+    assert seen["evidence"].global_object_layout is None
     assert seen["command"][1:3] == ["-m", "inertia_decompiler.serial_clean_worker_cli"]
     assert "--ignore-local-sidecar-hints" in seen["command"]
     assert seen["command"][seen["command"].index("--addr") + 1] == "0x10ce0"
@@ -12287,7 +12264,7 @@ def test_recover_candidate_with_timeout_uses_thread_timeout_off_main_thread(monk
     assert calls == ["recover-candidate:3"]
 
 
-def test_recover_candidate_with_timeout_uses_fork_timeout_on_main_thread(monkeypatch, tmp_path):
+def test_recover_candidate_with_timeout_uses_analysis_timeout_once_on_main_thread(monkeypatch, tmp_path):
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
     project = SimpleNamespace()
@@ -12298,15 +12275,18 @@ def test_recover_candidate_with_timeout_uses_fork_timeout_on_main_thread(monkeyp
         "_recover_candidate_function_pair",
         lambda *_args, **_kwargs: (SimpleNamespace(), SimpleNamespace(addr=0x1000, blocks=())),
     )
-    monkeypatch.setattr(decompile.os, "name", "posix")
     monkeypatch.setattr(decompile.threading, "current_thread", lambda: decompile.threading.main_thread())
-    monkeypatch.setattr(decompile.threading, "active_count", lambda: 1)
 
-    def _fake_fork_timeout(fn, *, timeout):
+    def _fake_analysis_timeout(timeout):
         seen["timeout"] = timeout
-        return fn()
+        return contextlib.nullcontext()
 
-    monkeypatch.setattr(decompile, "_run_with_timeout_in_fork", _fake_fork_timeout)
+    monkeypatch.setattr(decompile, "_analysis_timeout", _fake_analysis_timeout)
+    monkeypatch.setattr(
+        decompile,
+        "_run_with_timeout_in_fork",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("angr objects must remain in the parent")),
+    )
     monkeypatch.setattr(
         decompile,
         "_run_with_timeout_in_daemon_thread",
@@ -12327,7 +12307,7 @@ def test_recover_candidate_with_timeout_uses_fork_timeout_on_main_thread(monkeyp
 
     assert cfg is not None
     assert func.addr == 0x1000
-    assert seen["timeout"] == 4
+    assert seen["timeout"] == 3
 
 
 def test_recover_candidate_with_timeout_reuses_runtime_candidate_cache(monkeypatch, tmp_path):
@@ -13205,7 +13185,7 @@ def test_recover_seeded_exe_functions_cached_supplement_timeout_uses_cached_reco
 
     def _fake_timeout(fn, *, thread_name_prefix, **_kwargs):
         if thread_name_prefix == "cached-supplement":
-            raise decompile.FuturesTimeoutError()
+            raise decompile.FuturesTimeoutError
         return fn()
 
     monkeypatch.setattr(decompile, "_rank_exe_function_seeds", lambda _project, **_kwargs: [0x114CD])
@@ -14194,8 +14174,8 @@ def test_load_lst_metadata_reuses_cached_flair_metadata(monkeypatch, tmp_path):
         assert pat_backend == "python"
         assert signature_catalog is None
         seen["calls"] += 1
-        setattr(_project, "_inertia_flair_startup_matches", ("startup/demo.pat",))
-        setattr(_project, "_inertia_signature_compiler_names", ("Microsoft C v5.1",))
+        _project._inertia_flair_startup_matches = "startup/demo.pat",
+        _project._inertia_signature_compiler_names = "Microsoft C v5.1",
         return {0x1010: "sig_func"}, {0x1010: (0x1010, 0x1020)}, ("startup_flair_pat",)
 
     monkeypatch.setattr(sidecar_metadata, "_detect_flair_metadata", fake_detect_flair_metadata)
@@ -14319,7 +14299,7 @@ def test_parse_ida_map_metadata_classifies_msvc_data_segments(tmp_path):
     assert 0x163F1 not in code_labels
 
 
-def test_sidecar_cache_fingerprints_case_insensitive_siblings(tmp_path):
+def test_sidecar_cache_content_fingerprints_case_insensitive_siblings(tmp_path):
     binary = tmp_path / "DEMO.EXE"
     binary.write_bytes(b"MZ")
     (tmp_path / "DEMO.MAP").write_text("map")
@@ -14327,8 +14307,8 @@ def test_sidecar_cache_fingerprints_case_insensitive_siblings(tmp_path):
 
     sidecars = recovery_cache._cache_sidecar_fingerprints(binary)
 
-    assert sidecars[".map"]["path"].endswith("DEMO.MAP")
-    assert sidecars[".cod"]["path"].endswith("demo.COD")
+    assert sidecars[".map"] == recovery_cache._cache_content_fingerprint(tmp_path / "DEMO.MAP")
+    assert sidecars[".cod"] == recovery_cache._cache_content_fingerprint(tmp_path / "demo.COD")
 
 
 def test_lst_code_region_uses_nearest_containing_start_for_overlaps():
@@ -14755,7 +14735,7 @@ def test_fallback_entry_function_uses_full_timeout_budget_for_fast_cod_helpers(m
             def __enter__(self):
                 return None
 
-            def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            def __exit__(self, exc_type, exc, tb):
                 return False
 
         return _Ctx()
@@ -14833,7 +14813,7 @@ def test_fallback_entry_function_propagates_timeout_without_retrying(monkeypatch
 
     def fake_pick_function(project_arg, addr, *, regions=None, data_references=None, force_smart_scan=None):
         calls.append(("pick", regions, data_references, force_smart_scan))
-        raise decompile._AnalysisTimeout()
+        raise decompile._AnalysisTimeout
 
     monkeypatch.setattr(decompile, "_infer_x86_16_linear_region", fake_infer)
     monkeypatch.setattr(decompile, "_pick_function", fake_pick_function)
@@ -15149,13 +15129,11 @@ def test_recover_blob_entry_function_enables_data_references(monkeypatch):
 
 
 def test_decompile_cli_reports_monoprin_partial_validation_without_source_fallback():
-    result = subprocess.run(
-        [sys.executable, str(CLI_PATH), str(MONOPRIN_COD), "--proc", "_mset_pos", "--timeout", "10"],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
+    result = _run_decompile_proc(
+        MONOPRIN_COD,
+        "_mset_pos",
+        analysis_timeout=10,
+        subprocess_timeout=30,
     )
 
     assert result.returncode in (0, 4), result.stderr + result.stdout
@@ -15407,6 +15385,10 @@ def test_dedupe_codegen_variable_names_tolerates_none_sort_fields():
         def next_idx(self, _name: str) -> int:
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _Codegen()
     mem_var = SimMemoryVariable(addr=None, size=2)
@@ -15437,6 +15419,10 @@ def test_dedupe_codegen_variable_names_normalizes_mixed_ident_sort_fields():
         def next_idx(self, _name: str) -> int:
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _Codegen()
     reg_a = SimRegisterVariable(0, 2, name="alpha", ident=None)
@@ -15529,10 +15515,13 @@ def test_decompile_cli_recovers_dos_load_program_pointer_stores():
     assert "unsigned short file, unsigned long cmdline, unsigned short *cs, unsigned short *ss" in result.stdout
     assert "if (err)" in result.stdout
     assert "return err;" in result.stdout
-    assert "ax_2 = exeLoadParams[10];" in result.stdout
-    assert "cs[0] = ax_2;" in result.stdout
-    assert "ax_3 = exeLoadParams[8];" in result.stdout
-    assert "ss[0] = ax_3;" in result.stdout
+    assert "ax = exeLoadParams[10];" in result.stdout
+    assert "cs[0] = ax;" in result.stdout
+    assert "ax_2 = exeLoadParams[8];" in result.stdout
+    assert "ss[0] = ax_2;" in result.stdout
+    assert "return 0;" in result.stdout
+    assert "cs[1]" not in result.stdout
+    assert "ss[1]" not in result.stdout
     assert "SEG_U" not in result.stdout[result.stdout.index("short _dos_loadProgram") :]
     assert "g_0000" not in result.stdout
     assert "ds * 16 +" not in result.stdout
@@ -15579,16 +15568,14 @@ def test_decompile_cli_recovers_configcrts_copy_loop():
     result = _run_decompile_proc(REPO_ROOT / "cod" / "f14" / "COCKPIT.COD", "_ConfigCrts")
 
     assert "UnboundLocalError" not in result.stderr + result.stdout
-    if result.returncode == 4:
-        _assert_explicit_partial_or_fallback_failure(result)
-        return
     assert result.returncode == 0, result.stderr + result.stdout
+    assert "whole-tail validation clean" in result.stderr
     assert "function: 0x1000 _ConfigCrts" in result.stdout
     assert "unsigned short _ConfigCrts(void)" in result.stdout
     assert "i = 0;" in result.stdout
-    assert "field_1 = i * 2;" in result.stdout
+    assert "tmp_4112 = CrtConfig[i];" in result.stdout
     assert "do" in result.stdout
-    assert "return v7;" in result.stdout
+    assert "return tmp_4112;" in result.stdout
 
 
 def test_decompile_cli_recovers_rotate_pt_logic():
@@ -15629,6 +15616,11 @@ def test_decompile_cli_recovers_sethook_branch_logic():
     assert "HookDown" in result.stdout
     assert "HookDown !=" in result.stdout or "HookDown ==" in result.stdout
     assert "g_7000 =" in result.stdout or "HookDown =" in result.stdout
+    assert "return 1;" in result.stdout
+    assert "return 0;" in result.stdout
+    assert "Message(ax_2, 5);" in result.stdout
+    assert "Message(28674, 28674)" not in result.stdout
+    assert "Message(28676, 28676)" not in result.stdout
     assert "if (!(...))" not in result.stdout
     assert "v2 = &v3;" not in result.stdout
     assert "return" in result.stdout
@@ -15699,24 +15691,33 @@ def test_decompile_cli_keeps_query_interrupts_wrapper_calls_classified_in_matrix
 
 
 def test_decompile_cli_recovers_tidshowrange_layout_logic():
-    try:
-        result = _run_decompile_proc(
-            REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
-            "_TIDShowRange",
-            scale_for_xdist=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        pytest.skip(f"_TIDShowRange exceeds bounded live subprocess budget: {exc}")
+    result = _run_decompile_proc(
+        REPO_ROOT / "cod" / "f14" / "COCKPIT.COD",
+        "_TIDShowRange",
+        analysis_timeout=240,
+        subprocess_timeout=300,
+    )
 
-    assert result.returncode in (0, 3), result.stderr + result.stdout
-    if result.returncode == 3:
-        timeout_arg = result.args[result.args.index("--timeout") + 1]
-        assert f"Timed out while recovering a function after {timeout_arg}s." in result.stdout
-        return
+    assert result.returncode == 0, result.stderr + result.stdout
     assert "function: 0x1000 _TIDShowRange" in result.stdout
-    assert "void _TIDShowRange(void)" in result.stdout
-    assert "RectFill(Rp2,146,21,29,9,BLACK);" in result.stdout
-    assert "MapInEMSSprite(MISCSPRTSEG,0)" in result.stdout
+    assert "_TIDShowRange(void)" in result.stdout
+    body = result.stdout.split("_TIDShowRange(void)", maxsplit=1)[1]
+    for required_call, expected_count in {
+        "RectFill(": 1,
+        "itoa(": 1,
+        "pstrlen(": 1,
+        "RpPrint(": 1,
+        "RectCopy(": 2,
+        "MapInEMSSprite(": 1,
+        "ScaleRotate(": 2,
+    }.items():
+        assert body.count(required_call) == expected_count
+    assert "mseg = MapInEMSSprite(2, 0);" in body
+    assert "if (mseg)" in body
+    assert "Timed out while recovering" not in result.stdout
+    assert "== asm fallback ==" not in result.stdout
+    assert "validation=passed" in result.stderr
+    assert "whole-tail validation clean" in result.stderr
 
 
 def test_decompile_cli_recovers_drawradaralt_branch_logic():
@@ -15941,41 +15942,6 @@ def test_decompile_cli_show_summary_matrix(path: Path, proc_kind: str):
             30,
             ("function: 0x1000 _InBoxLng", "if (x < xl || x > xh || z < zl || z > zh)", "return 0;", "return 1;"),
             ("if (...)", "!(v4", "& &"),
-        ),
-        (
-            REPO_ROOT / "cod" / "f14" / "CARR.COD",
-            "_SetHook",
-            "NEAR",
-            10,
-            30,
-                (
-                    "function: 0x1000 _SetHook",
-                    "return 1;",
-                    "HookDown == Hook",
-                    "HookDown = ax;",
-                    "Message(ax_2, 5);",
-                    "return 0;",
-                ),
-            ("Message(28674, 28674)", "Message(28676, 28676)"),
-        ),
-        (
-            REPO_ROOT / "cod" / "f14" / "CARR.COD",
-            "_SetGear",
-            "NEAR",
-            10,
-            30,
-                (
-                    "function: 0x1000 _SetGear",
-                    "void _SetGear(unsigned short G)",
-                    "if (!ejected)",
-                    "if (!G)",
-                    "else if (G == 1)",
-                    "else if (Knots <= 350)",
-                    "Status = Status | 1;",
-                    "Status = Status & -2;",
-                    "Message(ax, 2);",
-                ),
-            (),
         ),
         (
             REPO_ROOT / "cod" / "f14" / "CARR.COD",

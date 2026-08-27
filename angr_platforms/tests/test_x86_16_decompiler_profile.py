@@ -18,8 +18,8 @@ _decompile = module_from_spec(_spec)
 sys.modules[_spec.name] = _decompile
 _spec.loader.exec_module(_decompile)
 
-from angr_platforms.X86_16 import decompiler_postprocess as postprocess  # noqa: E402
-from angr_platforms.X86_16.annotations import (  # noqa: E402
+from angr_platforms.X86_16 import decompiler_postprocess as postprocess
+from angr_platforms.X86_16.annotations import (
     ANNOTATION_KEY,
     _parse_c_prototype_8616,
     _source_decl_from_cod_source_lines,
@@ -28,7 +28,7 @@ from angr_platforms.X86_16.annotations import (  # noqa: E402
 from angr_platforms.X86_16.annotations import (
     _normalize_arg_names as _normalize_annotation_arg_names,
 )
-from angr_platforms.X86_16.decompiler_postprocess import (  # noqa: E402
+from angr_platforms.X86_16.decompiler_postprocess import (
     _apply_annotations_8616,
     _apply_stack_arg_cvar_type_8616,
     _classify_return_shape_8616,
@@ -36,7 +36,7 @@ from angr_platforms.X86_16.decompiler_postprocess import (  # noqa: E402
     _normalize_function_prototype_arg_names_8616,
     _return_value_is_unresolved_synthetic_carrier_8616,
 )
-from angr_platforms.X86_16.decompiler_postprocess_stage import (  # noqa: E402
+from angr_platforms.X86_16.decompiler_postprocess_stage import (
     DECOMPILER_POSTPROCESS_PASSES,
     _decompiler_postprocess_passes_for_function,
     _is_exposed_nonvoid_stack_arg_scalar_return_delta_8616,
@@ -85,7 +85,7 @@ class _FakeFactory:
     def __init__(self, blocks):
         self._blocks = blocks
 
-    def block(self, addr, opt_level=0):  # noqa: ARG002
+    def block(self, addr, opt_level=0):
         return self._blocks[addr]
 
 
@@ -193,11 +193,11 @@ def test_tiny_wrapper_like_postprocess_keeps_argument_normalization():
         "_prune_unused_unnamed_memory_declarations_8616",
     )
     assert "_lower_stable_ss_stack_accesses_8616" in pass_names
-    assert (
+    assert tuple(name for name in pass_names if "callsite" in name or "direct_calls" in name) == (
         "_attach_callsite_summaries_8616",
         "_materialize_callsite_stack_arguments_8616",
         "_materialize_callsite_prototypes_8616",
-    ) == tuple(name for name in pass_names if "callsite" in name or "direct_calls" in name)
+    )
 
 
 def test_call_heavy_small_function_postprocess_keeps_full_pass_list():
@@ -362,7 +362,7 @@ def test_attach_cod_variable_names_uses_normalized_bp_displacements():
 def test_attach_cod_variable_names_keeps_exact_source_backed_arg_offsets():
     value_var = SimStackVariable(4, 2, base="bp", name="value", region=0x1000)
     limit_var = SimStackVariable(6, 2, base="bp", name="limit", region=0x1000)
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     value_cvar = structured_c.CVariable(value_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     limit_cvar = structured_c.CVariable(limit_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     codegen = SimpleNamespace(
@@ -409,7 +409,7 @@ def test_attach_cod_variable_names_prefers_exact_negative_bp_displacements():
 
 def test_attach_cod_variable_names_visits_stack_nodes_missing_from_variables_in_use():
     stack_var = SimStackVariable(-8, 2, base="bp", name="arg_6", region=0x1000)
-    codegen = SimpleNamespace(next_idx=lambda _kind: 0)
+    codegen = SimpleNamespace(next_idx=lambda _kind: 0, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     stack_node = structured_c.CVariable(stack_var, codegen=codegen)
     codegen.cfunc = SimpleNamespace(
         statements=stack_node,
@@ -473,6 +473,10 @@ def test_apply_annotations_deduplicates_stack_variable_names():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     stack_a = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
     stack_b = SimStackVariable(6, 2, base="bp", name="s", region=0x1000)
@@ -515,6 +519,10 @@ def test_apply_annotations_keeps_structurally_equal_codegen_prototype_unchanged(
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     current_prototype = SimTypeFunction(
         [SimTypeShort(False)],
@@ -600,6 +608,10 @@ def test_materialize_missing_register_local_declarations_keeps_distinct_register
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     cnode_codegen = _FakeCodegen()
     raw_cvar = structured_c.CVariable(raw_ax, variable_type=SimTypeShort(False), codegen=cnode_codegen)
@@ -652,6 +664,10 @@ def test_apply_annotations_resolves_direct_bp_stack_loads_to_annotated_slots(mon
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     project_stub = SimpleNamespace(arch=SimpleNamespace())
     stack_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
@@ -697,6 +713,10 @@ def test_apply_annotations_materializes_stack_arguments_from_annotations():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     class _FakePrototype:
         def __init__(self, args, returnty, *, arg_names=None, variadic=False):
@@ -746,6 +766,10 @@ def test_apply_annotations_shrinks_overguessed_stack_arguments():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     class _FakePrototype:
         def __init__(self, args, returnty, *, arg_names=None, variadic=False):
@@ -796,6 +820,10 @@ def test_return_shape_classify_ignores_cfg_proven_switch_loop_unreachable_tail_r
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     class _FakePrototype:
         def __init__(self, args, returnty, *, arg_names=None, variadic=False):
@@ -865,6 +893,10 @@ def test_return_shape_classify_keeps_unobserved_default_scalar_synthetic_return(
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     codegen.project = SimpleNamespace(arch=Arch86_16())
@@ -1022,6 +1054,10 @@ def test_simplify_structured_expressions_rewrites_far_pointer_stack_pairs_to_mk_
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     codegen.project = SimpleNamespace(arch=SimpleNamespace())

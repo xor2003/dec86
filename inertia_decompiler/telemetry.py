@@ -88,7 +88,7 @@ class _OtelProvider(Protocol):
         """Register a span processor."""
         ...
 
-    def force_flush(self, *, timeout_millis: int) -> None:  # noqa: V107 - OpenTelemetry keyword contract
+    def force_flush(self, *, timeout_millis: int) -> None:
         """Flush queued spans."""
         ...
 
@@ -164,9 +164,7 @@ def _env_float(name: str, default: float) -> float:
 def _compact_attr(value: object) -> object:
     if value is None or isinstance(value, bool | int | float):
         return value
-    if isinstance(value, Path):
-        value = str(value)
-    elif not isinstance(value, str):
+    if isinstance(value, Path) or not isinstance(value, str):
         value = str(value)
     if len(value) > _MAX_ATTR_TEXT:
         return value[: _MAX_ATTR_TEXT - 1] + "~"
@@ -414,13 +412,13 @@ def _configure_otlp_exporter() -> tuple[_OtelProvider | None, str]:
         trace_sdk_module = importlib.import_module("opentelemetry.sdk.trace")
         trace_export_module = importlib.import_module("opentelemetry.sdk.trace.export")
         # Dynamic third-party boundary: optional OpenTelemetry modules are imported by name.
-        otlp_span_exporter = cast(_ExporterFactory, getattr(exporter_module, "OTLPSpanExporter"))
+        otlp_span_exporter = cast(_ExporterFactory, exporter_module.OTLPSpanExporter)
         # Dynamic third-party boundary: optional OpenTelemetry modules are imported by name.
-        resource_factory = cast(_ResourceFactory, getattr(resources_module, "Resource"))
+        resource_factory = cast(_ResourceFactory, resources_module.Resource)
         # Dynamic third-party boundary: optional OpenTelemetry SDK classes are absent-tolerant.
-        provider_factory = cast(_ProviderFactory, getattr(trace_sdk_module, "TracerProvider"))
+        provider_factory = cast(_ProviderFactory, trace_sdk_module.TracerProvider)
         # Dynamic third-party boundary: optional OpenTelemetry SDK classes are absent-tolerant.
-        processor_factory = cast(_ProcessorFactory, getattr(trace_export_module, "BatchSpanProcessor"))
+        processor_factory = cast(_ProcessorFactory, trace_export_module.BatchSpanProcessor)
     except Exception as ex:
         return None, f"unavailable:{type(ex).__name__}"
 
@@ -500,10 +498,8 @@ def _collect_function_attrs(attrs: dict[str, object], function: object) -> None:
     # Dynamic third-party payload boundary: angr function objects provide optional fields.
     block_addrs = getattr(function, "block_addrs_set", None)
     if block_addrs:
-        try:
+        with contextlib.suppress(Exception):
             attrs.setdefault("blocks", len(block_addrs))
-        except Exception:
-            pass
 
 
 def _collect_project_attrs(attrs: dict[str, object], project: object) -> None:
@@ -589,31 +585,29 @@ def span_here(**attrs: object) -> contextlib.AbstractContextManager[None]:
     return span(caller_span_name(stacklevel=2), **attrs)
 
 
-@overload  # noqa: D418
-def trace_function(  # noqa: D418
+@overload
+def trace_function[**P](  # noqa: D418
     func: None = None,
     *,
     name: str | None = None,
     attrs: dict[str, object] | None = None,
     attr_factory: Callable[_P, dict[str, object] | None] | None = None,
-) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:  # noqa: D418
+) -> Callable[[Callable[_P, _R]], Callable[_P, _R]]:
     """Return a decorator configured for a function discovered later."""
-    ...
 
 
-@overload  # noqa: D418
-def trace_function(  # noqa: D418
+@overload
+def trace_function[**P, R](  # noqa: D418
     func: Callable[_P, _R],
     *,
     name: str | None = None,
     attrs: dict[str, object] | None = None,
     attr_factory: Callable[_P, dict[str, object] | None] | None = None,
-) -> Callable[_P, _R]:  # noqa: D418
+) -> Callable[_P, _R]:
     """Decorate an already supplied function with an optional telemetry span."""
-    ...
 
 
-def trace_function(
+def trace_function[**P, R](
     func: Callable[_P, _R] | None = None,
     *,
     name: str | None = None,

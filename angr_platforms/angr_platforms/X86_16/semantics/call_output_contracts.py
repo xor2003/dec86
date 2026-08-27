@@ -12,11 +12,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TypeAlias
 
-from ..ir import IRCallOutputShape8616, IRValue
-
-CallOutputShape8616: TypeAlias = IRCallOutputShape8616
+from ..ir import IRCallOutputShape8616 as CallOutputShape8616
+from ..ir import IRValue
 
 
 class CallOutputVerdict8616(StrEnum):

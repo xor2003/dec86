@@ -15,7 +15,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, TypeAlias
+from typing import Any
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -47,11 +47,12 @@ from .c_ast_utils import (
 )
 from .semantics.expression_analysis import describe_virtual_value_identity_8616
 from .structuring.indexed_stack_ranges import IndexedStackReadProof8616
+from .validation.status_flag_preservation import PackedStatusFlagPreservationEvidence8616
 from .validation_predicates import PredicateToken8616, invert_predicate_token_8616
 
 __all__ = [
-    "DefUseIssue8616",
     "DefUseCallOutputDefinition8616",
+    "DefUseIssue8616",
     "DefUseStorageKey8616",
     "DefUseStorageKind8616",
     "DefUseValidationReport8616",
@@ -62,7 +63,7 @@ __all__ = [
 # The node is an angr structured-codegen object.  Keep this dynamic only at
 # the third-party AST boundary; mypyc cannot import a dataclass field typed as
 # the builtin ``object`` in this package.
-OpaqueValidationNode8616: TypeAlias = Any
+type OpaqueValidationNode8616 = Any
 
 
 class DefUseStorageKind8616(StrEnum):
@@ -818,6 +819,7 @@ def validate_structured_def_use_8616(
     entry_defined_registers: tuple[object, ...] = (),
     segment_register_offsets: frozenset[int] = frozenset(),
     entry_defined_segment_register_offsets: frozenset[int] = frozenset(),
+    packed_status_flag_preservation: PackedStatusFlagPreservationEvidence8616 | None = None,
     include_virtual_carriers: bool = False,
 ) -> DefUseValidationReport8616:
     """Validate definitely assigned stack and register reads in structured C.
@@ -844,6 +846,7 @@ def validate_structured_def_use_8616(
         defined: set[_DefUseStorageByte8616],
         *,
         context: str,
+        architectural_live_in_register_offsets: frozenset[int] = frozenset(),
     ) -> None:
         reads = _value_read_keys_8616(
             expr,
@@ -869,7 +872,11 @@ def validate_structured_def_use_8616(
                 key.kind is DefUseStorageKind8616.SEGMENT_CARRIER
                 and key.offset in entry_defined_segment_register_offsets
             )
-            if proof_matches or segment_live_in or (
+            packed_preservation_live_in = (
+                key.kind is DefUseStorageKind8616.REGISTER_CARRIER
+                and key.offset in architectural_live_in_register_offsets
+            )
+            if proof_matches or segment_live_in or packed_preservation_live_in or (
                 key.definition_trackable
                 and _storage_bytes_8616(key).issubset(defined)
             ):
@@ -957,7 +964,17 @@ def validate_structured_def_use_8616(
                     rhs_op,
                     node.tags,
                 )
-            _check_reads(node.rhs, state.defined, context=f"{context}.rhs")
+            preservation_offsets: frozenset[int] = frozenset()
+            if packed_status_flag_preservation is not None and packed_status_flag_preservation.covers_instruction(
+                node.tags.get("ins_addr")
+            ):
+                preservation_offsets = frozenset({packed_status_flag_preservation.register_offset})
+            _check_reads(
+                node.rhs,
+                state.defined,
+                context=f"{context}.rhs",
+                architectural_live_in_register_offsets=preservation_offsets,
+            )
             _apply_call_output_definitions(node.rhs, state, context=f"{context}.rhs")
             predicate_lhs_key = _predicate_storage_key_8616(node.lhs, segment_register_offsets)
             if predicate_lhs_key is not None:

@@ -26,6 +26,9 @@ def test_source_tree_snapshot_ignores_generated_directories(tmp_path: Path) -> N
     generated_path = tmp_path / "build" / "generated.py"
     generated_path.parent.mkdir()
     generated_path.write_text("VALUE = 2\n", encoding="utf-8")
+    nested_venv_path = tmp_path / "borrow" / "tool" / "venv" / "lib" / "python.py"
+    nested_venv_path.parent.mkdir(parents=True)
+    nested_venv_path.write_text("VALUE = 3\n", encoding="utf-8")
 
     snapshot = source_tree_snapshot(tmp_path)
 

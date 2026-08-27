@@ -84,6 +84,26 @@ void sub_107b8(void) { g_0BA4 = 2; }
     assert "sub_107b8" not in functions[0x10808].source
 
 
+def test_timestamped_diagnostic_markers_do_not_capture_worker_logs() -> None:
+    transcript = """
+[03:18:00] /* == function 0x107b8 sub_107b8 == */
+/* -- c -- */
+void sub_107b8(void) { g_0BA4 = 1; }
+[dbg] clean parallel function worker: start 0x107b8
+[03:18:01] /* info: function 0x107b8 sub_107b8 attempt=decompiled validation=passed */
+extern unsigned short g_0BA4;
+void sub_107b8(void) { g_0BA4 = 2; }
+"""
+
+    functions = extract_generated_functions(transcript)
+
+    assert tuple(functions) == (0x107B8,)
+    assert "[dbg]" not in functions[0x107B8].source
+    assert "g_0BA4 = 1" not in functions[0x107B8].source
+    assert "g_0BA4 = 2" in functions[0x107B8].source
+    assert functions[0x107B8].source.endswith("}\n")
+
+
 def test_loads_exact_address_named_function_artifact(tmp_path: Path) -> None:
     artifact = tmp_path / "000107b8-sub_107b8.c"
     artifact.write_text("void sub_107b8(void) { return; }\n")

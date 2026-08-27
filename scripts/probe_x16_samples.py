@@ -59,7 +59,7 @@ for path in sorted(SAMPLES.rglob("*")):
         fallback_reasons.append("ellipsis_fallback")
 
     status = "ok" if not fallback_reasons else "fallback"
-    summary = fallback_reasons[:3] if fallback_reasons else [line for line in out.splitlines()[:6]]
+    summary = fallback_reasons[:3] if fallback_reasons else list(out.splitlines()[:6])
     snippet = "\n".join(out.splitlines()[:200])
     results.append({"file": str(rel), "status": status, "summary": summary, "snippet": snippet})
 

@@ -19,7 +19,7 @@ class _Memory:
     def load(self, addr: int, size: int) -> bytes:
         for base, data in self._regions.items():
             offset = addr - base
-            if 0 <= offset and offset + size <= len(data):
+            if offset >= 0 and offset + size <= len(data):
                 return data[offset : offset + size]
         raise KeyError(addr)
 

@@ -21,21 +21,21 @@ Ownership rule:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from .decompiler_postprocess_stage import DECOMPILER_POSTPROCESS_PASSES
 
 __all__ = [
     "DecompilerPostprocessPassInventoryItem",
+    "DecompilerPostprocessPassInventoryViolation",
     "DecompilerPostprocessPassKind8616",
     "DecompilerPostprocessPassMigrationStatus8616",
-    "DecompilerPostprocessPassInventoryViolation",
     "describe_x86_16_decompiler_postprocess_inventory_8616",
     "validate_x86_16_decompiler_postprocess_inventory_8616",
 ]
 
 
-class DecompilerPostprocessPassKind8616(str, Enum):
+class DecompilerPostprocessPassKind8616(StrEnum):
     """Ownership class for a postprocess pass."""
 
     CLEANUP = "cleanup"
@@ -44,7 +44,7 @@ class DecompilerPostprocessPassKind8616(str, Enum):
     SEMANTIC_MATERIALIZATION = "semantic-materialization"
 
 
-class DecompilerPostprocessPassMigrationStatus8616(str, Enum):
+class DecompilerPostprocessPassMigrationStatus8616(StrEnum):
     """Migration state for a postprocess quarantine inventory row."""
 
     ACTIVE_POSTPROCESS_DEBT = "active-postprocess-debt"
@@ -109,26 +109,11 @@ _POSTPROCESS_SEMANTIC_MATERIALIZATION_PASS_NAMES_8616 = frozenset(
         "_materialize_cfg_selector_return_branches_early_8616",
         "_materialize_cfg_selector_return_branches_8616",
         "_materialize_cfg_mask_accumulator_8616",
-        "_materialize_global_byte_index_sum_loop_8616",
-        "_materialize_nested_stack_counter_accumulator_loop_8616",
-        "_materialize_stack_arg_accumulator_loop_8616",
-        "_materialize_direct_stack_mov_instructions_8616",
-        "_materialize_direct_stack_mov_instructions_final_8616",
-        "_materialize_direct_stack_incdec_instructions_8616",
-        "_materialize_direct_stack_incdec_instructions_final_8616",
-        "_materialize_direct_global_incdec_instructions_8616",
-        "_materialize_direct_global_incdec_instructions_final_8616",
-        "_materialize_callsite_stack_arguments_8616",
         "_materialize_callsite_stack_arguments_after_ss_lowering_8616",
         "_materialize_callsite_stack_arguments_final_8616",
-        "_materialize_recovered_callsite_stack_arguments_8616",
-        "_recover_missing_direct_calls_from_evidence_early_8616",
         "_recover_missing_direct_calls_from_evidence_8616",
         "_recover_missing_direct_calls_final_8616",
-        "_materialize_callsite_prototypes_8616",
         "_materialize_missing_terminal_ax_return_8616",
-        "_materialize_stack_byte_pair_return_8616",
-        "_materialize_pointer_memory_idioms_8616",
         "_materialize_empty_if_return_branches_8616",
         "_materialize_empty_if_return_branches_final_8616",
         "_repair_loop_exit_return_guards_8616",
@@ -139,9 +124,6 @@ _POSTPROCESS_SEMANTIC_MATERIALIZATION_PASS_NAMES_8616 = frozenset(
         "_repair_hoisted_jcc_target_copies_after_direct_stack_mov_final_8616",
         "_repair_switch_loop_exit_returns_from_evidence_8616",
         "_repair_switch_loop_exit_returns_from_evidence_final_8616",
-        "_rewrite_flag_condition_pairs_8616",
-        "_rewrite_flag_bit_value_uses_8616",
-        "_fix_interval_guard_conditions_8616",
     }
 )
 

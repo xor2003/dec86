@@ -11,6 +11,7 @@ from angr_platforms.X86_16.ir.condition_cache_relift import (
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
 from angr_platforms.X86_16.lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
+from pytest import MonkeyPatch
 
 from inertia_decompiler.project_loading import _build_project
 from scripts.check_sortd_sidecar_free import mz_executable_image
@@ -163,3 +164,54 @@ def test_transfer_refreshes_empty_condition_owner_cache_without_pending_evidence
     assert relifted == [0x4010]
     assert transferred == 1
     assert codegen._inertia_typed_conditions == [condition]
+
+
+def test_transfer_rejects_complete_ambient_cache_from_rebased_sibling(monkeypatch: MonkeyPatch) -> None:
+    from angr_platforms.X86_16.ir import condition_cache_relift as relift
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    def condition(lhs: str) -> ConditionIR:
+        return ConditionIR(
+            "ne",
+            lhs,
+            2,
+            source=("cmp", "jne"),
+            src_insn=0x4014,
+            block_addr=0x4010,
+            taken_target=0x4020,
+            fallthrough_target=0x4016,
+        )
+
+    stale = condition("sibling")
+    current = condition("current")
+    terminal = SimpleNamespace(
+        address=0x4014,
+        size=2,
+        mnemonic="jne",
+        operands=(SimpleNamespace(imm=0x4020),),
+    )
+    block = SimpleNamespace(
+        addr=0x4010,
+        size=6,
+        capstone=SimpleNamespace(insns=(SimpleNamespace(insn=terminal),)),
+    )
+    function = SimpleNamespace(block_addrs_set={0x4010}, blocks=(block,), graph=None)
+    project = SimpleNamespace(
+        arch=object(),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda _addr, size: bytes(size))),
+        kb=SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: function)),
+    )
+
+    def direct_lift(_data: bytes, address: int, _arch: object) -> None:
+        Instruction_ANY._inertia_module_condition_cache[address] = [current]
+
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {0x4010: [stale]})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {})
+    monkeypatch.setattr(relift, "_direct_lift_8616", direct_lift)
+
+    codegen = SimpleNamespace()
+    transferred = transfer_typed_conditions_to_codegen_8616(project, 0x4010, codegen)
+
+    assert transferred == 1
+    assert codegen._inertia_typed_conditions == [current]
+    assert Instruction_ANY._inertia_module_condition_cache == {0x4010: [stale]}

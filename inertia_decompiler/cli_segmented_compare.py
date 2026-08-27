@@ -7,11 +7,10 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import TypeAlias
 
 from angr_platforms.X86_16.lowering.segmented_lowering import _SegmentedAccess
 
-ClassifySegmentedAddrExpr: TypeAlias = Callable[[object, object], _SegmentedAccess | None]
+type ClassifySegmentedAddrExpr = Callable[[object, object], _SegmentedAccess | None]
 
 
 def _split_expr_const_offset(
@@ -71,9 +70,9 @@ def _addr_exprs_are_same(
         low_class = classify_segmented_addr_expr(low_addr_expr, project)
         high_class = classify_segmented_addr_expr(high_addr_expr, project)
 
-        if low_class is not None and high_class is not None:
+        if low_class is not None and high_class is not None:  # noqa: SIM102
             if low_class.kind == high_class.kind and low_class.seg_name == high_class.seg_name:
-                if low_class.kind == "stack" and low_class.cvar is not None and high_class.cvar is not None:
+                if low_class.kind == "stack" and low_class.cvar is not None and high_class.cvar is not None:  # noqa: SIM102
                     if same_c_expression(low_class.cvar, high_class.cvar):
                         return bool(low_class.extra_offset == high_class.extra_offset)
                 if low_class.kind in {"extra", "segment_const"}:
@@ -119,10 +118,9 @@ def _addr_exprs_are_byte_pair(
                         low_class.kind == "stack"
                         and low_class.stack_var is not None
                         and high_class.stack_var is not None
-                    ):
-                        if stack_slot_identity_can_join_var(low_class.stack_var, high_class.stack_var):
-                            return bool(high_class.extra_offset == low_class.extra_offset + 1)
-                    if low_class.kind in {"extra", "segment_const"}:
+                    ) and stack_slot_identity_can_join_var(low_class.stack_var, high_class.stack_var):
+                        return bool(high_class.extra_offset == low_class.extra_offset + 1)
+                    if low_class.kind in {"extra", "segment_const"}:  # noqa: SIM102
                         if low_class.linear is not None and high_class.linear is not None:
                             return bool(high_class.linear == low_class.linear + 1)
 

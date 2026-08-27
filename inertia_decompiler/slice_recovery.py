@@ -7,11 +7,12 @@ Responsibility: orchestrate bounded slice fallback attempts without accepting th
 from __future__ import annotations
 
 import time
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import asdict, dataclass, replace
-from typing import Any, Callable, Iterator, Sequence, TypeAlias
+from typing import Any
 
-SliceRecoverCallable: TypeAlias = Callable[[Any], tuple[Any, Any]]
-SliceRecoveryRunner: TypeAlias = Callable[
+type SliceRecoverCallable = Callable[[Any], tuple[Any, Any]]
+type SliceRecoveryRunner = Callable[
     [str, Callable[[], "SliceRecoveryAttemptOutcome"], Callable[[], "SliceRecoveryAttemptTrace"]],
     "SliceRecoveryAttemptOutcome",
 ]
@@ -205,33 +206,33 @@ def run_bounded_slice_recovery(
 
         def _trace_snapshot() -> SliceRecoveryAttemptTrace:
             return SliceRecoveryAttemptTrace(
-                failure_stage=str(trace_state["failure_stage"]),
-                build_ms=trace_state["build_ms"] if isinstance(trace_state["build_ms"], int) else None,
-                recover_ms=trace_state["recover_ms"] if isinstance(trace_state["recover_ms"], int) else None,
-                decompile_ms=trace_state["decompile_ms"] if isinstance(trace_state["decompile_ms"], int) else None,
+                failure_stage=str(trace_state["failure_stage"]),  # noqa: B023
+                build_ms=trace_state["build_ms"] if isinstance(trace_state["build_ms"], int) else None,  # noqa: B023
+                recover_ms=trace_state["recover_ms"] if isinstance(trace_state["recover_ms"], int) else None,  # noqa: B023
+                decompile_ms=trace_state["decompile_ms"] if isinstance(trace_state["decompile_ms"], int) else None,  # noqa: B023
             )
 
         def _run_one_attempt() -> SliceRecoveryAttemptOutcome:
             try:
                 started = time.perf_counter()
                 slice_project = build_slice_project()
-                trace_state["build_ms"] = round((time.perf_counter() - started) * 1000)
+                trace_state["build_ms"] = round((time.perf_counter() - started) * 1000)  # noqa: B023
                 inherit_runtime_policy(slice_project)
-                trace_state["failure_stage"] = "recover"
+                trace_state["failure_stage"] = "recover"  # noqa: B023
                 started = time.perf_counter()
-                cfg, func = recover(slice_project)
-                trace_state["recover_ms"] = round((time.perf_counter() - started) * 1000)
-            except Exception as ex:  # noqa: BLE001
+                cfg, func = recover(slice_project)  # noqa: B023
+                trace_state["recover_ms"] = round((time.perf_counter() - started) * 1000)  # noqa: B023
+            except Exception as ex:
                 return SliceRecoveryAttemptOutcome(
-                    attempt_name=attempt_name,
+                    attempt_name=attempt_name,  # noqa: B023
                     status="error",
-                    payload=f"{attempt_name} recovery: {describe_exception(ex)}",
+                    payload=f"{attempt_name} recovery: {describe_exception(ex)}",  # noqa: B023
                     attempt_trace=_trace_snapshot(),
                 )
-            trace_state["failure_stage"] = "decompile"
+            trace_state["failure_stage"] = "decompile"  # noqa: B023
             started = time.perf_counter()
-            outcome = decompile(attempt_name, slice_project, cfg, func)
-            trace_state["decompile_ms"] = round((time.perf_counter() - started) * 1000)
+            outcome = decompile(attempt_name, slice_project, cfg, func)  # noqa: B023
+            trace_state["decompile_ms"] = round((time.perf_counter() - started) * 1000)  # noqa: B023
             return replace(outcome, attempt_trace=_trace_snapshot())
 
         outcome = (

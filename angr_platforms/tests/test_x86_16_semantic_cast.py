@@ -22,7 +22,7 @@ def _codegen() -> SimpleNamespace:
     return SimpleNamespace(
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=ArchX86()),
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
 
 def test_semantic_cast_renders_when_cosmetic_casts_are_hidden() -> None:
@@ -31,7 +31,7 @@ def test_semantic_cast_renders_when_cosmetic_casts_are_hidden() -> None:
         project=SimpleNamespace(arch=ArchX86()),
         show_casts=False,
         display_vvar_ids=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     source = structured_c.CVariable(
         SimStackVariable(-8, 2, base="bp", name="local_8"),
         variable_type=SimTypeShort(False),

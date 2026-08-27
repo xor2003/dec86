@@ -324,7 +324,7 @@ def test_decompile_env_derives_child_trace_file(monkeypatch, tmp_path):
     assert env["INERTIA_OTEL_SPAN_FILE"] == str(tmp_path / "msc.trace.CMP32.compare_unsigned.txt")
 
 
-def test_acceptance_rejects_function_validation_failure_despite_final_clean_tail():
+def test_acceptance_requires_successful_process_to_supersede_failed_attempt():
     stderr = """
 [dbg] direct failure family: status=empty validation=failed
 [tail-validation] whole-tail validation clean across 1 functions
@@ -335,6 +335,12 @@ def test_acceptance_rejects_function_validation_failure_despite_final_clean_tail
 
     assert ok is False
     assert reason == "validation_failed"
+
+    profile["returncode"] = 0
+    ok, reason = _is_decompile_output_acceptable("int f(void) { return 1; }", stderr, profile)
+
+    assert ok is True
+    assert reason is None
 
 
 def test_acceptance_uses_final_clean_tail_validation_over_changed_attempt():

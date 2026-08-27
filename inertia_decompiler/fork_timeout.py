@@ -14,6 +14,7 @@ import os
 import pickle
 import select
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -136,7 +137,7 @@ def _configure_child_stack_dump() -> None:
             faulthandler.dump_traceback_later(stack_dump_sec, repeat=True, file=stack_dump_file)
 
 
-def _run_child(func: Callable[[], _ResultT], write_fd: int, read_fd: int, *, owns_process_group: bool) -> typing.NoReturn:
+def _run_child[ResultT](func: Callable[[], _ResultT], write_fd: int, read_fd: int, *, owns_process_group: bool) -> typing.NoReturn:
     """Execute and report one callable from the fork child."""
     global _ROOT_PROCESS_GROUP
 
@@ -148,7 +149,7 @@ def _run_child(func: Callable[[], _ResultT], write_fd: int, read_fd: int, *, own
         _configure_child_stack_dump()
         try:
             result = _ForkResult(kind=_ForkResultKind.OK, value=func())
-        except BaseException as ex:  # noqa: BLE001
+        except BaseException as ex:
             result = _ForkResult(
                 kind=_ForkResultKind.ERROR,
                 error_type=type(ex).__name__,
@@ -156,7 +157,7 @@ def _run_child(func: Callable[[], _ResultT], write_fd: int, read_fd: int, *, own
             )
         try:
             _write_result(write_fd, result)
-        except BaseException as ex:  # noqa: BLE001
+        except BaseException as ex:
             fallback = _ForkResult(
                 kind=_ForkResultKind.ERROR,
                 error_type=type(ex).__name__,
@@ -169,7 +170,7 @@ def _run_child(func: Callable[[], _ResultT], write_fd: int, read_fd: int, *, own
         os._exit(0)
 
 
-def run_with_timeout_in_fork(
+def run_with_timeout_in_fork[ResultT](
     func: Callable[[], _ResultT],
     *,
     timeout: int,
@@ -229,7 +230,7 @@ def run_with_timeout_in_fork(
                 f"fork child returned invalid payload ({_child_exit_detail(child_status)})"
             )
         if result.kind is _ForkResultKind.OK:
-            return typing.cast(_ResultT, result.value)
+            return typing.cast(ResultT, result.value)
         if result.error_type in {"TimeoutError", "AnalysisTimeout"}:
             raise TimeoutError(result.error_detail or f"Timed out after {timeout}s.")
         raise RuntimeError(
@@ -246,3 +247,43 @@ def run_with_timeout_in_fork(
             # The group can outlive its leader when nested work leaked a child.
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(pid, signal.SIGKILL)
+
+
+def run_captured_subprocess_tree(
+    command: typing.Sequence[str],
+    *,
+    env: typing.Mapping[str, str],
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    """Run a captured command and reap its entire process tree on timeout."""
+    bounded_timeout = max(1, int(timeout))
+    if os.name != "posix":
+        return subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            env=dict(env),
+            text=True,
+            timeout=bounded_timeout,
+        )
+
+    process = subprocess.Popen(
+        command,
+        env=dict(env),
+        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=bounded_timeout)
+    except subprocess.TimeoutExpired as ex:
+        _terminate_child(process.pid, owns_process_group=True)
+        stdout, stderr = process.communicate()
+        raise subprocess.TimeoutExpired(
+            command,
+            bounded_timeout,
+            output=stdout,
+            stderr=stderr,
+        ) from ex
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)

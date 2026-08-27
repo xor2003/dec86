@@ -29,7 +29,7 @@ def test_match_stack_cvar_and_offset_resolves_dirty_virtual_assignment_chain():
         project=project,
         cstyle_null_cmp=False,
         next_idx=lambda _name: 0,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     stack_var = SimStackVariable(-10, 1, base="bp", name="s_a", region=0x10010)
     stack_cvar = structured_c.CVariable(
         stack_var, variable_type=SimTypeShort(False).with_arch(project.arch), codegen=codegen
@@ -80,7 +80,7 @@ def test_match_stack_cvar_and_offset_resolves_indexed_stack_reference():
         project=project,
         cstyle_null_cmp=False,
         next_idx=lambda _name: 0,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     stack_var = SimStackVariable(-6, 1, base="bp", name="s_6", region=0x10010)
     stack_cvar = structured_c.CVariable(
         stack_var, variable_type=SimTypeShort(False).with_arch(project.arch), codegen=codegen

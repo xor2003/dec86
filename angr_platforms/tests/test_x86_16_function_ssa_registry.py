@@ -12,9 +12,17 @@ from angr_platforms.X86_16.ir.function_ssa_registry import (
 )
 from angr_platforms.X86_16.ir.ssa_function import SSAFunctionArtifact
 from angr_platforms.X86_16.semantics import call_stack_effect_pipeline
+from angr_platforms.X86_16.semantics.call_output_contracts import CallOutputStats8616
+from angr_platforms.X86_16.semantics.call_outputs import CallOutputArtifact8616
+from angr_platforms.X86_16.semantics.call_stack_effect_contracts import (
+    CallStackEffectStats8616,
+)
 from angr_platforms.X86_16.semantics.call_stack_effect_pipeline import (
     apply_x86_16_call_stack_effects_8616,
     semantic_function_ssa_artifact_at_address_8616,
+)
+from angr_platforms.X86_16.semantics.call_stack_effects import (
+    CallStackEffectArtifact8616,
 )
 
 
@@ -131,9 +139,11 @@ def test_main_semantics_path_publishes_its_exact_ssa(monkeypatch) -> None:
     function_addr = 0x1000
     project = _project(function_addr)
     raw_ir = IRFunctionArtifact(function_addr, ())
+    semantic_ir = IRFunctionArtifact(function_addr, (), summary={"stage": "semantic"})
     semantic_ssa = _ssa(function_addr, "semantic")
-    effects = object()
-    outputs = SimpleNamespace(function=raw_ir)
+    effects = CallStackEffectArtifact8616(raw_ir, (), CallStackEffectStats8616())
+    outputs = CallOutputArtifact8616(semantic_ir, (), CallOutputStats8616())
+    build_count = 0
 
     def _build(
         _project: object,
@@ -141,6 +151,8 @@ def test_main_semantics_path_publishes_its_exact_ssa(monkeypatch) -> None:
         *,
         ir_artifact: IRFunctionArtifact | None = None,
     ) -> tuple[object, object, SSAFunctionArtifact]:
+        nonlocal build_count
+        build_count += 1
         assert function.addr == function_addr
         assert ir_artifact is raw_ir
         return effects, outputs, semantic_ssa
@@ -153,15 +165,19 @@ def test_main_semantics_path_publishes_its_exact_ssa(monkeypatch) -> None:
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(addr=function_addr),
         _inertia_vex_ir_artifact=raw_ir,
+        _inertia_raw_vex_ir_artifact_8616=raw_ir,
     )
 
+    assert apply_x86_16_call_stack_effects_8616(project, codegen) is False
     assert apply_x86_16_call_stack_effects_8616(project, codegen) is False
 
     registered = registered_function_ssa_artifact_8616(project, function_addr)
     assert registered.artifact is semantic_ssa
     assert registered.stage is FunctionSSAArtifactStage8616.SEMANTIC
     assert codegen._inertia_vex_ir_function_ssa is semantic_ssa
+    assert codegen._inertia_vex_ir_artifact is semantic_ir
     assert (
         codegen._inertia_vex_ir_function_ssa_stage_8616
         is FunctionSSAArtifactStage8616.SEMANTIC
     )
+    assert build_count == 1

@@ -11,21 +11,21 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
-from .physical_registers import physical_register_view_8616
+from .physical_registers import physical_register_name_8616, physical_register_view_8616
 from .segment_register_state import runtime_segment_name_for_variable_8616
 
-_CacheMap8616: TypeAlias = MutableMapping[str, MutableMapping[int, object]]
-_ProjectRewriteCache8616: TypeAlias = Callable[[object], _CacheMap8616]
-_UnaryObjectCallback8616: TypeAlias = Callable[[object], object]
-_ConstantValueCallback8616: TypeAlias = Callable[[object], int | None]
-_NormalizeOffsetCallback8616: TypeAlias = Callable[[object], int]
-_StackMatchCallback8616: TypeAlias = Callable[[object], tuple[object, object] | None]
-_StackIdentityCallback8616: TypeAlias = Callable[[SimStackVariable], object | None]
+type _CacheMap8616 = MutableMapping[str, MutableMapping[int, object]]
+type _ProjectRewriteCache8616 = Callable[[object], _CacheMap8616]
+type _UnaryObjectCallback8616 = Callable[[object], object]
+type _ConstantValueCallback8616 = Callable[[object], int | None]
+type _NormalizeOffsetCallback8616 = Callable[[object], int]
+type _StackMatchCallback8616 = Callable[[object], tuple[object, object] | None]
+type _StackIdentityCallback8616 = Callable[[SimStackVariable], object | None]
 
 
 class _ArchRegisterNames8616(Protocol):
@@ -60,7 +60,7 @@ def _dynamic_c_attr_8616(obj: object | None, name: str, default: object | None =
     try:
         # Dynamic third-party angr/codegen boundary: C AST nodes expose optional attributes by shape.
         return getattr(obj, name, default)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return default
 
 
@@ -149,9 +149,11 @@ def _segment_reg_name(
 
 
 def _register_offset_for_node_8616(node: object) -> int | None:
+    """Return an exact physical-register offset from one structured-C node."""
     register_view = physical_register_view_8616(node)
     if register_view is not None:
-        return register_view.reg_offset
+        reg_offset = register_view.reg_offset
+        return reg_offset if isinstance(reg_offset, int) else None
     if isinstance(node, structured_c.CVariable):
         variable = _dynamic_c_attr_8616(node, "variable")
         if isinstance(variable, SimRegisterVariable):
@@ -167,9 +169,11 @@ def _register_offset_for_node_8616(node: object) -> int | None:
 
 
 def _register_size_for_node_8616(node: object) -> int | None:
+    """Return an exact physical-register width in bytes from one structured-C node."""
     register_view = physical_register_view_8616(node)
     if register_view is not None:
-        return register_view.width
+        width = register_view.width
+        return width if isinstance(width, int) else None
     if isinstance(node, structured_c.CVariable):
         variable = _dynamic_c_attr_8616(node, "variable")
         size = _dynamic_c_attr_8616(variable, "size")
@@ -214,8 +218,7 @@ def _classify_segmented_addr_expr(
         resolved_term_cache: dict[int, object] = {}
 
         def _synthetic_sp_anchor(term: object) -> tuple[structured_c.CVariable, int] | None:
-            reg_offset = _register_offset_for_node_8616(term)
-            reg_name = project.arch.register_names.get(reg_offset) if isinstance(reg_offset, int) else None
+            reg_name = physical_register_name_8616(term)
             if reg_name not in {"bp", "sp"}:
                 return None
             codegen = _dynamic_c_attr_8616(term, "codegen")
@@ -307,7 +310,7 @@ def _classify_segmented_addr_expr(
                 nested_statements = _dynamic_c_attr_8616(current, "statements")
                 if isinstance(nested_statements, (list, tuple)):
                     for item in reversed(tuple(nested_statements)):
-                        stack.append(item)
+                        stack.append(item)  # noqa: PERF402
                 body = _dynamic_c_attr_8616(current, "body")
                 if body is not None:
                     stack.append(body)
@@ -319,7 +322,7 @@ def _classify_segmented_addr_expr(
                     for pair in reversed(tuple(condition_and_nodes)):
                         if isinstance(pair, tuple):
                             for item in reversed(pair):
-                                stack.append(item)
+                                stack.append(item)  # noqa: PERF402
 
         def _single_assignment_rhs_for_cvar(term: object) -> object | None:
             if not isinstance(term, structured_c.CVariable):

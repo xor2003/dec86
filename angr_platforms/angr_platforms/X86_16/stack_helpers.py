@@ -224,10 +224,22 @@ def push_flags16(emu: StackEmulator) -> None:
     push16(emu, emu.get_flags())
 
 
+def _normalize_flags16(
+    emu: StackEmulator, flags: StackExpr, writable_mask: int = 0x0FD5, fixed_mask: int = 0x0002
+) -> StackExpr:
+    """Apply the architectural 16-bit writable and fixed FLAGS bits."""
+    return (flags & emu.constant(writable_mask, Type.int_16)) | emu.constant(fixed_mask, Type.int_16)
+
+
+def _normalize_flags32(emu: StackEmulator, flags: StackExpr) -> StackExpr:
+    """Force the architecturally fixed EFLAGS bit while preserving writable state."""
+    return flags | emu.constant(0x00000002, Type.int_32)
+
+
 def pop_flags16(emu: StackEmulator, writable_mask: int = 0x0FD5, fixed_mask: int = 0x0002) -> StackExpr:
     """Pop FLAGS and apply the 16-bit writable/fixed flag mask contract."""
     flags = pop16(emu)
-    masked = (flags & emu.constant(writable_mask, Type.int_16)) | emu.constant(fixed_mask, Type.int_16)
+    masked = _normalize_flags16(emu, flags, writable_mask, fixed_mask)
     emu.set_flags(masked)
     return masked
 
@@ -239,7 +251,7 @@ def push_flags32(emu: StackEmulator) -> None:
 
 def pop_flags32(emu: StackEmulator) -> StackExpr:
     """Pop EFLAGS from SS:ESP and install the resulting value."""
-    flags = pop32(emu)
+    flags = _normalize_flags32(emu, pop32(emu))
     emu.set_eflags(flags)
     return flags
 
@@ -556,12 +568,13 @@ def return_far16(emu: StackEmulator, stack_adjust: int = 0) -> StackPair:
 
 def return_interrupt16(emu: StackEmulator) -> StackTriple:
     """Emit a 16-bit interrupt return and restore CS:IP plus FLAGS."""
-    ip, cs, flags = pop_interrupt_frame16(emu)
+    ip, cs, raw_flags = pop_interrupt_frame16(emu)
+    flags = _normalize_flags16(emu, raw_flags)
     emu.set_gpreg(reg16_t.FLAGS, flags)
     emu.set_sgreg(sgreg_t.CS, cs)
     emu.set_gpreg(reg16_t.IP, ip)
     emu.lifter_instruction.jump(None, ip, jumpkind=JumpKind.Ret)
-    return ip, cs, flags
+    return ip, cs, raw_flags
 
 
 def return_far32(emu: StackEmulator, stack_adjust: int = 0) -> StackPair:
@@ -584,13 +597,14 @@ def return_far32(emu: StackEmulator, stack_adjust: int = 0) -> StackPair:
 
 def return_interrupt32(emu: StackEmulator) -> StackTriple:
     """Emit a 32-bit interrupt return and restore CS:EIP plus EFLAGS."""
-    eip, cs, flags = pop_interrupt_frame32(emu)
+    eip, cs, raw_flags = pop_interrupt_frame32(emu)
+    flags = _normalize_flags32(emu, raw_flags)
     selector = cs & 0xFFFF if isinstance(cs, int) else cs.cast_to(Type.int_16)
     emu.set_eflags(flags)
     emu.set_segment(sgreg_t.CS, selector)
     emu.set_eip(eip)
     emu.lifter_instruction.jump(None, eip, jumpkind=JumpKind.Ret)
-    return eip, cs, flags
+    return eip, cs, raw_flags
 
 
 def _branch_rel(
@@ -681,9 +695,17 @@ def enter32(emu: StackEmulator, frame_size: int, nesting_level: int) -> None:
     push32(emu, emu.get_gpreg(reg32_t.EBP))
     frame_temp = emu.get_gpreg(reg32_t.ESP)
     if nesting_level:
-        frame_pointer = emu.get_gpreg(reg32_t.EBP)
+        raw_frame_pointer = emu.get_gpreg(reg32_t.EBP)
+        frame_pointer = (
+            raw_frame_pointer & 0xFFFF
+            if isinstance(raw_frame_pointer, int)
+            else cast(StackExpr, raw_frame_pointer).cast_to(Type.int_16)
+        )
         for _ in range(1, nesting_level):
-            frame_pointer -= emu.constant(4, Type.int_32)
+            if isinstance(frame_pointer, int):
+                frame_pointer = (frame_pointer - 4) & 0xFFFF
+            else:
+                frame_pointer -= emu.constant(4, Type.int_16)
             push32(emu, emu.read_mem32_seg(sgreg_t.SS, frame_pointer))
         push32(emu, frame_temp)
     emu.set_gpreg(reg32_t.EBP, frame_temp)

@@ -1,11 +1,11 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 from typing import Any
 
 from tools.dosunit.model import normalize_vector, stable_id, vectors_from_document
 
 
-def select_vectors(
+def select_vectors(  # noqa: D103
     vectors_document: dict[str, Any],
     *,
     names: list[str] | None = None,

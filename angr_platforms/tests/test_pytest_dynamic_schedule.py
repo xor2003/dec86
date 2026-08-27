@@ -66,6 +66,6 @@ def test_schedule_backfills_worker_past_blocked_large_reservation(tmp_path: Path
 
     assert marker_path.is_file()
     assert not result.memory_exceeded
-    assert result.exit_codes == {name: 0 for name in ("wait", "fast", "blocked", "backfill")}
+    assert result.exit_codes == dict.fromkeys(("wait", "fast", "blocked", "backfill"), 0)
     assert len(result.reports) == 4
     assert sum(len(report.selected_nodeids) for report in result.reports) == 4

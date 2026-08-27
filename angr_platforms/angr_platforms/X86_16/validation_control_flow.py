@@ -9,12 +9,13 @@ mutation, or using validation findings to rewrite control flow.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -107,7 +108,7 @@ class LoopBranchGuardIssue8616:
         )
 
 
-ControlFlowValidationIssue8616: TypeAlias = (
+type ControlFlowValidationIssue8616 = (
     BranchConditionIssue8616
     | ControlFlowIssue8616
     | LoopBranchGuardIssue8616
@@ -536,7 +537,7 @@ def validate_structured_control_flow_8616(
     for sequence_index, sequence in enumerate(sequences):
         statements = tuple(sequence.statements)
         for statement_index, (first, second) in enumerate(
-            zip(statements, statements[1:], strict=False)
+            itertools.pairwise(statements)
         ):
             if not isinstance(first, CIfBreak) or not isinstance(second, CIfElse):
                 continue

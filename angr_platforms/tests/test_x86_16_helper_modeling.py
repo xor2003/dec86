@@ -114,7 +114,7 @@ def test_interrupt_wrapper_helper_call_expr_carries_bios_int10_selector():
     codegen = SimpleNamespace(
         project=SimpleNamespace(arch=_decompile.Arch86_16()),
         next_idx=lambda _name: 1,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     sig = _decompile.InterruptWrapperCall(
         callee_name="int86",
         canonical_name="int86",
@@ -141,7 +141,7 @@ def test_interrupt_wrapper_result_lowering_rewrites_bios_int10_results_with_sele
         project=SimpleNamespace(arch=_decompile.Arch86_16()),
         next_idx=lambda _name: 1,
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
     regs_struct = SimStruct({"h": h_struct}, name="REGS")
 
@@ -221,7 +221,7 @@ def test_interrupt_wrapper_result_lowering_rewrites_int10_cursor_shape_reads():
         project=SimpleNamespace(arch=_decompile.Arch86_16()),
         next_idx=lambda _name: 1,
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
     x_struct = SimStruct({"cx": SimTypeShort()}, name="REGS_X")
     regs_struct = SimStruct({"h": h_struct, "x": x_struct}, name="REGS")
@@ -301,7 +301,7 @@ def test_interrupt_wrapper_result_lowering_rewrites_whole_outregs_reads():
         project=SimpleNamespace(arch=_decompile.Arch86_16()),
         next_idx=lambda _name: 1,
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
     regs_struct = SimStruct({"h": h_struct}, name="REGS")
 
@@ -368,7 +368,7 @@ def test_interrupt_wrapper_placeholder_calls_are_recovered_from_argument_shape(m
         cfunc=SimpleNamespace(addr=0x2345, statements=SimpleNamespace()),
         project=SimpleNamespace(arch=_decompile.Arch86_16()),
         next_idx=lambda _name: 1,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     project = SimpleNamespace()
     callee_func = SimpleNamespace(name="CallReturn")
     call = _decompile.structured_c.CFunctionCall(
@@ -397,7 +397,7 @@ def test_interrupt_wrapper_callees_are_classified_and_canonicalized(monkeypatch)
         cfunc=SimpleNamespace(addr=0x1234, statements=SimpleNamespace()),
         project=SimpleNamespace(arch=_decompile.Arch86_16()),
         next_idx=lambda _name: 1,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     project = SimpleNamespace()
     callee_func = SimpleNamespace(name="_int86x")
     call = _decompile.structured_c.CFunctionCall(
@@ -423,7 +423,7 @@ def test_interrupt_wrapper_field_paths_capture_regs_subfields():
     codegen = SimpleNamespace(
         project=SimpleNamespace(arch=_decompile.Arch86_16()),
         next_idx=lambda _name: 1,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
     x_struct = SimStruct({"ax": SimTypeShort()}, name="REGS_X")
     regs_struct = SimStruct({"h": h_struct, "x": x_struct}, name="REGS")
@@ -462,7 +462,7 @@ def test_interrupt_wrapper_result_lowering_rewrites_known_output_reads():
         cfunc=SimpleNamespace(addr=0x3456, statements=None),
         project=SimpleNamespace(arch=_decompile.Arch86_16()),
         next_idx=lambda _name: 1,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
     x_struct = SimStruct({"ax": SimTypeShort(), "bx": SimTypeShort()}, name="REGS_X")
     regs_struct = SimStruct({"h": h_struct, "x": x_struct}, name="REGS")
@@ -600,7 +600,7 @@ def test_interrupt_wrapper_result_lowering_keeps_byte_reads_byte_sized():
         project=SimpleNamespace(arch=_decompile.Arch86_16()),
         next_idx=lambda _name: 1,
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
     regs_struct = SimStruct({"h": h_struct}, name="REGS")
 
@@ -679,7 +679,7 @@ def test_interrupt_wrapper_result_lowering_rewrites_wrapper_call_and_composite_a
         project=SimpleNamespace(arch=_decompile.Arch86_16()),
         next_idx=lambda _name: 1,
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
     x_struct = SimStruct({"ax": SimTypeShort()}, name="REGS_X")
     regs_struct = SimStruct({"h": h_struct, "x": x_struct}, name="REGS")
@@ -772,7 +772,7 @@ def test_interrupt_wrapper_result_lowering_falls_back_to_wrapper_call_when_servi
         project=SimpleNamespace(arch=_decompile.Arch86_16()),
         next_idx=lambda _name: 1,
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     h_struct = SimStruct({"ah": SimTypeShort(), "al": SimTypeShort()}, name="REGS_H")
     x_struct = SimStruct({"ax": SimTypeShort()}, name="REGS_X")
     regs_struct = SimStruct({"h": h_struct, "x": x_struct}, name="REGS")

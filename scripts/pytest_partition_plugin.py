@@ -10,9 +10,10 @@ from __future__ import annotations
 import json
 import os
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence, cast
+from typing import Any, cast
 
 SHARD_COUNT_ENV: str = "PYTEST_PARTITION_COUNT"
 SHARD_INDEX_ENV: str = "PYTEST_PARTITION_INDEX"

@@ -26,7 +26,7 @@ def _codegen() -> SimpleNamespace:
         project=project,
         cfunc=SimpleNamespace(addr=0x4010, statements=None),
         next_idx=next_idx,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda: 0)
 
 
 def _ax(codegen: SimpleNamespace, *, name: str = "ax") -> structured_c.CVariable:

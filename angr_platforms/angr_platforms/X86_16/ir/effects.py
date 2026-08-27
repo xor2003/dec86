@@ -16,10 +16,10 @@ from .core import IRAddress, IRValue
 
 __all__ = [
     "EffectKind",
-    "LoadEffect",
-    "StoreEffect",
-    "RegisterWriteEffect",
     "FlagWriteEffect",
+    "LoadEffect",
+    "RegisterWriteEffect",
+    "StoreEffect",
     "effect_to_ir_instr_op_8616",
 ]
 

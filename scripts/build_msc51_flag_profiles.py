@@ -8,6 +8,7 @@ Responsibility: build optional compiler flag-profile diagnostics without proving
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 import re
@@ -62,7 +63,7 @@ def extract_tokens(text: str) -> Counter[str]:
         tl = t.lower()
         if tl in SKIP:
             continue
-        if tl.startswith("__") or tl.startswith("$") or tl.startswith("_"):
+        if tl.startswith(("__", "$", "_")):
             c[tl] += 1
     return c
 
@@ -179,10 +180,8 @@ def main(argv: list[str] | None = None) -> int:
                 for ext in (".EXE", ".OBJ"):
                     p = base.with_suffix(ext)
                     if p.exists():
-                        try:
+                        with contextlib.suppress(Exception):
                             profiles[combo].update(extract_byte_ngram_tokens(p.read_bytes()))
-                        except Exception:
-                            pass
                 counts[combo] += 1
                 used_files += 1
 

@@ -1,11 +1,11 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import json
 from collections import Counter, defaultdict
 from typing import Any
 
 
-def render_failure_report(
+def render_failure_report(  # noqa: D103
     document: dict[str, Any],
     *,
     limit: int = 0,
@@ -186,7 +186,7 @@ def _render_vector_results(document: dict[str, Any], *, limit: int, mismatch_lim
                 lines.append(f"  - `{field}` candidate: `{_compact_json(candidate.get(field))}`")
         diagnostics = [item for item in result.get("diagnostics", []) or [] if isinstance(item, dict)]
         for diagnostic in diagnostics[:mismatch_limit]:
-            lines.append(f"- Diagnostic `{diagnostic.get('reason')}`: {diagnostic.get('message')}")
+            lines.append(f"- Diagnostic `{diagnostic.get('reason')}`: {diagnostic.get('message')}")  # noqa: PERF401
         lines.append("")
     if len(failing) > len(shown_failing):
         lines.append(f"... {len(failing) - len(shown_failing)} more failed/refused vectors not shown.")
@@ -194,7 +194,7 @@ def _render_vector_results(document: dict[str, Any], *, limit: int, mismatch_lim
     return "\n".join(lines) + "\n"
 
 
-def _collect_ssa_compare_data(
+def _collect_ssa_compare_data(  # noqa: ANN202
     document: dict[str, Any], *, show_unresolved_call_targets: bool, failed_only: bool = False
 ):
     summary = document.get("summary", {}) if isinstance(document.get("summary"), dict) else {}
@@ -303,7 +303,7 @@ def _render_data_compare(document: dict[str, Any], *, limit: int, mismatch_limit
         lines.append(f"- Mismatches: {item.get('mismatch_count')}")
         for mismatch in (item.get("mismatches", []) or [])[:mismatch_limit]:
             if isinstance(mismatch, dict):
-                lines.append(
+                lines.append(  # noqa: PERF401
                     f"  - Offset `{mismatch.get('offset')}` oracle `{mismatch.get('oracle')}` candidate `{mismatch.get('candidate')}`"
                 )
         lines.append("")
@@ -316,7 +316,7 @@ def _render_data_compare(document: dict[str, Any], *, limit: int, mismatch_limit
         lines.append("## Failed Normalizations")
         lines.append("")
         for item in _limited(failed_norms, limit):
-            lines.append(
+            lines.append(  # noqa: PERF401
                 f"- `{item.get('symbol')}` oracle `{item.get('oracle_value')}` expected `{item.get('oracle_expected')}`; candidate `{item.get('candidate_value')}` expected `{item.get('candidate_expected')}`"
             )
     return "\n".join(lines) + "\n"
@@ -416,7 +416,7 @@ def _render_ssa_compare(
 ) -> str:
     (
         summary,
-        failing,
+        _failing,
         skipped_function_missing,
         skipped_region_function_missing,
         unresolved_call_target_failures,
@@ -749,7 +749,7 @@ def _render_ssa_compare_grouped(
                 if isinstance(pair, dict)
             ]
             for pair in pairs[:4]:
-                lines.append(
+                lines.append(  # noqa: PERF401
                     f"  - candidate `{pair.get('candidate')}` -> oracle `{pair.get('oracle')}` ({pair.get('reason', 'unknown')})"
                 )
             if len(pairs) > 4:
@@ -800,7 +800,7 @@ def _format_ssa_region_result(result: dict[str, Any], *, index: int, mismatch_li
                 total = len(instructions) + int(detail.get("instructions_truncated") or 0)
                 lines.append(f"    - Instruction preview: first `{len(instructions)}` of `{total}`")
             for instruction in instructions:
-                lines.append(f"    - `{_format_instruction(instruction)}`")
+                lines.append(f"    - `{_format_instruction(instruction)}`")  # noqa: PERF401
     for label, key in (("Oracle summary", "oracle_summary"), ("Candidate summary", "candidate_summary")):
         summary = result.get(key) if isinstance(result.get(key), dict) else None
         if not summary:
@@ -1029,7 +1029,7 @@ def _format_layout_normalization(layout_normalization: dict[str, Any]) -> list[s
         return []
     lines = ["- Layout constant normalization:"]
     for pair in pairs[:8]:
-        lines.append(
+        lines.append(  # noqa: PERF401
             f"  - candidate `{pair.get('candidate')}` -> oracle `{pair.get('oracle')}` ({pair.get('reason', 'unknown')})"
         )
     if len(pairs) > 8:
@@ -1062,7 +1062,7 @@ def _format_ssa_side(label: str, detail: dict[str, Any] | None) -> list[str]:
     if instructions:
         lines.append(f"- {label} instructions:")
         for instruction in instructions:
-            lines.append(f"  - `{_format_instruction(instruction)}`")
+            lines.append(f"  - `{_format_instruction(instruction)}`")  # noqa: PERF401
         truncated = int(detail.get("instructions_truncated", 0) or 0)
         if truncated:
             lines.append(
@@ -1124,7 +1124,7 @@ def _format_ssa_call_side(label: str, call: dict[str, Any] | None) -> list[str]:
         if instructions:
             lines.append("    - Target first instructions:")
             for instruction in instructions:
-                lines.append(f"      - `{_format_instruction(instruction)}`")
+                lines.append(f"      - `{_format_instruction(instruction)}`")  # noqa: PERF401
         return lines
     reason = call.get("reason", "unresolved")
     return [f"  - {label}: target `{target}` low16 `{low16}` -> unresolved ({reason})"]
@@ -1270,7 +1270,7 @@ def _format_ssa_mismatch(mismatch: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _format_ssa_entry(entry: Any) -> str:
+def _format_ssa_entry(entry: Any) -> str:  # noqa: ANN401
     if not isinstance(entry, dict):
         return "<unknown>"
     cs = entry.get("cs")
@@ -1434,7 +1434,7 @@ def _render_unknown(document: dict[str, Any]) -> str:
     )
 
 
-def _compact_json(value: Any) -> str:
+def _compact_json(value: Any) -> str:  # noqa: ANN401
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
@@ -1462,7 +1462,7 @@ def _format_candidate_only_part(part: dict[str, Any], *, index: int) -> list[str
     if instructions:
         lines.append("- First instructions:")
         for instruction in instructions[:4]:
-            lines.append(f"  - `{_format_instruction(instruction)}`")
+            lines.append(f"  - `{_format_instruction(instruction)}`")  # noqa: PERF401
     lines.append("")
     return lines
 
@@ -1475,7 +1475,7 @@ def _format_instruction(instruction: dict[str, Any]) -> str:
     return str(disassembly)
 
 
-def _format_address(address: Any) -> str | None:
+def _format_address(address: Any) -> str | None:  # noqa: ANN401
     if not isinstance(address, dict):
         return None
     ip = address.get("ip")

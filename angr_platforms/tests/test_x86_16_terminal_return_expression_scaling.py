@@ -17,6 +17,10 @@ class _Codegen:
     def next_idx(self, _name: str) -> int:
         self.index += 1
         return self.index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def test_deep_terminal_expression_uses_one_structural_clone(monkeypatch) -> None:

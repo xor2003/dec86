@@ -6,7 +6,7 @@ Forbidden: decompiler helper recovery, source-backed IO semantics, or validation
 
 from __future__ import annotations
 
-from typing import Protocol, TypeAlias
+from typing import Protocol
 
 from pyvex.expr import Const as PyVexConst
 from pyvex.lifting.util.vex_helper import Type
@@ -31,7 +31,7 @@ class _DirtyEmitter(Protocol):
         """Emit a VEX dirty helper call."""
 
 
-_PortArg: TypeAlias = int | PyVexConst | _CastablePortArg
+type _PortArg = int | PyVexConst | _CastablePortArg
 
 
 class IO:

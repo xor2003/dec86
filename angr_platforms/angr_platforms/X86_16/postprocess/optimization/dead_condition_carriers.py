@@ -36,34 +36,16 @@ from ...c_ast_utils import (
     _iter_c_nodes_deep_8616,
     _structured_slot_names_8616,
 )
+from .dce_purity import PURE_LOCAL_BINARY_OPS_8616, PURE_LOCAL_UNARY_OPS_8616
 
 __all__ = [
     "DeadConditionCarrierStats8616",
     "VirtualConditionCarrierIdentity8616",
-    "prune_unread_pure_condition_carriers_pass_8616",
     "prune_unread_pure_condition_carriers_8616",
+    "prune_unread_pure_condition_carriers_pass_8616",
 ]
 
-_PURE_BINARY_OPS_8616: frozenset[str] = frozenset(
-    {
-        "Add",
-        "And",
-        "CmpEQ",
-        "CmpGE",
-        "CmpGT",
-        "CmpLE",
-        "CmpLT",
-        "CmpNE",
-        "Or",
-        "Sar",
-        "Shl",
-        "Shr",
-        "Sub",
-        "Xor",
-    }
-)
 _CONDITION_OPS_8616: frozenset[str] = frozenset({"CmpEQ", "CmpGE", "CmpGT", "CmpLE", "CmpLT", "CmpNE"})
-_PURE_UNARY_OPS_8616: frozenset[str] = frozenset({"BitwiseNegate", "LogicalNot", "Neg", "Not"})
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -92,7 +74,7 @@ class DeadConditionCarrierStats8616:
         """Return whether at least one dead carrier was removed."""
         return self.materialized_count > 0
 
-    def merge(self, other: "DeadConditionCarrierStats8616") -> "DeadConditionCarrierStats8616":
+    def merge(self, other: DeadConditionCarrierStats8616) -> DeadConditionCarrierStats8616:
         """Return cumulative evidence across repeated cleanup rounds."""
         return DeadConditionCarrierStats8616(
             raw_fact_count=self.raw_fact_count + other.raw_fact_count,
@@ -108,7 +90,7 @@ class DeadConditionCarrierStats8616:
 class _DeadConditionCarrierCodegen8616(Protocol):
     """Owned telemetry slot and dynamic C-function boundary used by the pass."""
 
-    cfunc: "_DeadConditionCarrierCFunction8616"
+    cfunc: _DeadConditionCarrierCFunction8616
     _inertia_dead_condition_carrier_stats_8616: DeadConditionCarrierStats8616
 
 
@@ -136,10 +118,10 @@ def _is_pure_expression_8616(node: object) -> bool:
     if isinstance(node, CTypeCast):
         return _is_pure_expression_8616(node.expr)
     if isinstance(node, CUnaryOp):
-        return node.op in _PURE_UNARY_OPS_8616 and _is_pure_expression_8616(node.operand)
+        return node.op in PURE_LOCAL_UNARY_OPS_8616 and _is_pure_expression_8616(node.operand)
     if isinstance(node, CBinaryOp):
         return (
-            node.op in _PURE_BINARY_OPS_8616
+            node.op in PURE_LOCAL_BINARY_OPS_8616
             and _is_pure_expression_8616(node.lhs)
             and _is_pure_expression_8616(node.rhs)
         )

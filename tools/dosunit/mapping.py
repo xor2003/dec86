@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import copy
 from dataclasses import dataclass
@@ -8,15 +8,15 @@ from tools.dosunit.model import DosUnitError, normalize_hex, parse_int, stable_i
 
 
 @dataclass(frozen=True)
-class MappingResolutionError(DosUnitError):
+class MappingResolutionError(DosUnitError):  # noqa: D101
     reason: str
     message: str
 
-    def __str__(self) -> str:
+    def __str__(self) -> str:  # noqa: D105
         return self.message
 
 
-def apply_candidate_mapping(
+def apply_candidate_mapping(  # noqa: D103
     vector: dict[str, Any],
     *,
     mapping_document: dict[str, Any] | None,
@@ -108,7 +108,7 @@ def _segment_para_for_name(functions_catalog: dict[str, Any] | None, name: str) 
     return None
 
 
-def make_mapping_document(
+def make_mapping_document(  # noqa: D103
     *,
     oracle_catalog: dict[str, Any],
     candidate_catalog: dict[str, Any],

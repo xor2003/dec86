@@ -37,29 +37,28 @@ run under isolated state and must close all five evidence counters. Lowering may
 transfer the resulting `ConditionIR`, but must not recreate operands or branch
 meaning. The eventual replacement is direct cross-block condition-source
 provenance in `IRFunctionArtifact`, after which the cache bridge can be removed.
-
-Indexed segmented addresses are also IR facts. `IRAddress.base_values` retains
-their exact versioned dynamic terms, and `X86_16/ir/indexed_address_evidence.py`
-owns tracing a supported term to its SSA definition and stable stack source.
-That producer must publish either a typed fact or a typed refusal; it must not
-infer aliases, bounds, arrays, structures, or C types. Alias owns storage/range
-identity in `X86_16/alias/indexed_address_projection.py` without collapsing the
-dynamic term to a direct-memory displacement. Widening owns proven aggregate
-views, and Types/Lowering owns object materialization. During migration,
-`X86_16/lowering/indexed_address_collector_parity.py` may compare identities
-from both producers but may not select evidence or change C. The legacy
-instruction-backed global collectors remain migration debt until each consumer
-has switched to the earlier typed evidence with an exact corpus parity census.
-`X86_16/lowering/indexed_address_parity_inventory.py` and its contracts extend
-that read-only census across a discovered function set. The tooling entry point
-`scripts/indexed_address_parity_inventory.py` always isolates the executable
-from local sidecars and reports non-library functions by default; divergence is
-diagnostic evidence, never permission for Lowering to choose whichever producer
-looks more convenient.
-`X86_16/alias/indexed_address_access_classification.py` classifies only two
-unambiguous post-Alias forms: zero-displacement unscaled pointer-relative access
-and scaled global-index candidates. IR owns exact indexed LOAD-to-STORE SSA lane
-paths; Alias owns endpoint/index identity; Widening proves families and bounds.
+Stored call-return ownership is specified in [`stored-call-return-contract.md`](stored-call-return-contract.md).
+Selector returns have two owners: Structuring's
+`structuring/single_branch_return_orientation.py` maps a no-else return body to
+its edge from target-return expressions and CFG reachability; Tail Validation's
+`tail_validation_selector_returns.py` fingerprints condition and both outcomes.
+Only swapping outcomes makes inverted conditions equivalent; neither owner may
+infer from rendered C or repair semantics in Rewrite.
+Indexed segmented addresses are IR facts. `IRAddress.base_values` retains exact
+versioned terms; `X86_16/ir/indexed_address_evidence.py` traces each supported
+term to SSA and stable stack storage, producing a typed fact or refusal. Alias
+owns storage identity in `alias/indexed_address_projection.py`, access roles,
+copy endpoint identity, and the closed discovered-function census in
+`alias/indexed_address_program.py`. `widening/indexed_global_object_layout.py`
+alone joins proven byte/word views and whole-value copy families; Lowering only
+consumes its closed artifact and materializes accepted objects. The CLI module
+`inertia_decompiler/indexed_alias_program_context.py` transports a complete
+discovery catalog into Alias once and never classifies semantic evidence.
+`lowering/global_object_program_requirement.py` owns that typed need decision from local Alias roles and proven outgoing pointer-call sources; CLI only sequences it.
+Legacy instruction-backed collectors are per-function rendering/parity debt, not an alternate project-layout owner. The read-only parity modules in Lowering may
+report divergence but never select evidence or change C; the inventory script
+isolates the executable from sidecars and reports non-library functions.
+Alias accepts only unambiguous unscaled pointer-relative or scaled global forms; IR owns exact LOAD-to-STORE SSA lanes, Alias endpoint/index identity, and Widening families and bounds without defaults or numeric proximity.
 For interprocedural global-memory outputs, Semantics owns exact store and
 terminal-path facts, Alias owns segmented range identity and overlapping-view
 ownership, Widening owns exact caller-load projections into those ranges, and

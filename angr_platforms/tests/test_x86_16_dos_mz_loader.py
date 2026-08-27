@@ -7,7 +7,7 @@ import angr
 import pytest
 import pyvex
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.load_dos_mz import DOSMZ, DOSMZHeader  # noqa: F401
+from angr_platforms.X86_16.load_dos_mz import DOSMZ, DOSMZHeader
 from angr_platforms.X86_16.simos_86_16 import (
     INTERRUPT_VECTOR_COUNT,
     BIOSInt12MemorySize,

@@ -6,6 +6,7 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from collections.abc import Callable
@@ -339,48 +340,48 @@ _THIS_MODULE.__class__ = _CompatModule
 
 
 __all__: tuple[str, ...] = (
-    "main",
-    "_rewrite_ss_stack_byte_offsets",
-    "_canonicalize_stack_cvars",
-    "_match_adjacent_register_pair_var_expr",
-    "_classify_segmented_addr_expr",
-    "_addr_exprs_are_byte_pair",
-    "_match_ss_local_plus_const",
-    "_stack_slot_identity_can_join",
-    "_match_byte_store_addr_expr",
-    "_match_word_rhs_from_byte_pair",
-    "_make_word_dereference_from_addr_expr",
-    "_match_byte_load_addr_expr",
-    "_match_shifted_high_byte_addr_expr",
-    "_match_shift_right_8_expr",
-    "_match_duplicate_word_increment_shift_expr",
-    "_resolve_stack_cvar_from_addr_expr",
-    "_coalesce_segmented_word_store_statements",
-    "_coalesce_segmented_word_load_expressions",
-    "_coalesce_direct_ss_local_word_statements",
-    "_coalesce_far_pointer_stack_expressions",
-    "_canonicalize_stack_cvar_expr",
-    "_coalesce_cod_word_global_loads",
-    "_seed_adjacent_byte_pair_aliases",
-    "_coalesce_linear_recurrence_statements",
-    "_same_c_expression",
-    "_simplify_x86_16_stack_byte_pointers",
-    "_simplify_x86_16_conditions",
-    "_linear_disassembly",
-    "_probe_lift_break",
-    "_materialize_missing_stack_local_declarations",
-    "describe_alias_storage",
-    "analyze_adjacent_storage_slices",
-    "join_adjacent_register_slices",
-    "can_join_adjacent_register_slices",
-    "structured_c",
-    "SimTypePointer",
-    "SimTypeShort",
     "SimMemoryVariable",
     "SimRegisterVariable",
     "SimStackVariable",
+    "SimTypePointer",
+    "SimTypeShort",
     "_AccessTraitEvidenceProfile",
     "_AccessTraitStrideEvidence",
+    "_addr_exprs_are_byte_pair",
+    "_canonicalize_stack_cvar_expr",
+    "_canonicalize_stack_cvars",
+    "_classify_segmented_addr_expr",
+    "_coalesce_cod_word_global_loads",
+    "_coalesce_direct_ss_local_word_statements",
+    "_coalesce_far_pointer_stack_expressions",
+    "_coalesce_linear_recurrence_statements",
+    "_coalesce_segmented_word_load_expressions",
+    "_coalesce_segmented_word_store_statements",
+    "_linear_disassembly",
+    "_make_word_dereference_from_addr_expr",
+    "_match_adjacent_register_pair_var_expr",
+    "_match_byte_load_addr_expr",
+    "_match_byte_store_addr_expr",
+    "_match_duplicate_word_increment_shift_expr",
+    "_match_shift_right_8_expr",
+    "_match_shifted_high_byte_addr_expr",
+    "_match_ss_local_plus_const",
+    "_match_word_rhs_from_byte_pair",
+    "_materialize_missing_stack_local_declarations",
+    "_probe_lift_break",
+    "_resolve_stack_cvar_from_addr_expr",
+    "_rewrite_ss_stack_byte_offsets",
+    "_same_c_expression",
+    "_seed_adjacent_byte_pair_aliases",
+    "_simplify_x86_16_conditions",
+    "_simplify_x86_16_stack_byte_pointers",
+    "_stack_slot_identity_can_join",
+    "analyze_adjacent_storage_slices",
+    "can_join_adjacent_register_slices",
+    "describe_alias_storage",
+    "join_adjacent_register_slices",
+    "main",
+    "structured_c",
 )
 
 
@@ -396,10 +397,8 @@ def _prime_eager_cli_exports() -> None:
         _import_cli_module(module_name)
     for name in list(__all__):
         if name not in globals():
-            try:
+            with contextlib.suppress(AttributeError):
                 globals()[name] = _resolve_proxy_attr(name)
-            except AttributeError:
-                pass
     for module in _PROXY_MODULE_CACHE.values():
         try:
             public_names = ModuleType.__getattribute__(module, "__all__")

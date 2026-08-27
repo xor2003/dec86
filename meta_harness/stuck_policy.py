@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import math
 import re
@@ -8,7 +8,7 @@ DEFAULT_ESTIMATED_ROUNDS = 1
 
 
 @dataclass(frozen=True)
-class StuckDecision:
+class StuckDecision:  # noqa: D101
     category: str
     playbook: str
     estimated_rounds: int
@@ -16,8 +16,8 @@ class StuckDecision:
     is_stuck: bool
 
 
-def estimated_rounds(item_text: str) -> int:
-    def _impl():
+def estimated_rounds(item_text: str) -> int:  # noqa: D103
+    def _impl():  # noqa: ANN202
         """Extract the item round budget from an execution specification."""
         match = re.search(r"Estimated rounds:\s*(\d+)", item_text, re.IGNORECASE)
         if not match:
@@ -27,16 +27,16 @@ def estimated_rounds(item_text: str) -> int:
     return _impl()
 
 
-def stuck_after_rounds(item_text: str) -> int:
-    def _impl():
+def stuck_after_rounds(item_text: str) -> int:  # noqa: D103
+    def _impl():  # noqa: ANN202
         """Return the deterministic 1.5x stuck threshold for a plan item."""
         return max(2, math.ceil(estimated_rounds(item_text) * 1.5))
 
     return _impl()
 
 
-def classify_stuck_reason(item_text: str, runtime_context: str = "") -> str:
-    def _impl():
+def classify_stuck_reason(item_text: str, runtime_context: str = "") -> str:  # noqa: D103
+    def _impl() -> str:
         """Classify the likely stuck family from structured item and runtime clues."""
         text = f"{item_text}\n{runtime_context}".lower()
         if "timeout" in text or "hang" in text or "no-output" in text or "no output" in text:
@@ -52,8 +52,8 @@ def classify_stuck_reason(item_text: str, runtime_context: str = "") -> str:
     return _impl()
 
 
-def stuck_playbook(category: str) -> str:
-    def _impl():
+def stuck_playbook(category: str) -> str:  # noqa: D103
+    def _impl():  # noqa: ANN202
         """Map a stuck category to the next deterministic harness action."""
         return {
             "timeout-or-silent-agent": "restart fresh context, capture smallest repro/profile, then split timeout work before implementation",
@@ -66,8 +66,8 @@ def stuck_playbook(category: str) -> str:
     return _impl()
 
 
-def decide_stuck(item_text: str, completed_rounds: int, runtime_context: str = "") -> StuckDecision:
-    def _impl():
+def decide_stuck(item_text: str, completed_rounds: int, runtime_context: str = "") -> StuckDecision:  # noqa: D103
+    def _impl():  # noqa: ANN202
         """Decide whether a task exceeded its 1.5x round budget and choose playbook."""
         threshold = stuck_after_rounds(item_text)
         category = classify_stuck_reason(item_text, runtime_context)

@@ -40,49 +40,49 @@ from .cli_interrupt_modeling import _interrupt_wrapper_call_text
 
 print: Any = _timestamped_print
 __all__ = [
-    "_normalize_anonymous_call_targets",
-    "_prune_void_function_return_values_text",
-    "_prune_void_call_assignments_text",
+    "_annotate_cod_proc_output",
+    "_coalesce_redundant_split_global_incdec_text",
+    "_collapse_annotated_stack_aliases_text",
+    "_collapse_duplicate_type_keywords_text",
     "_contains_void_function_definition_text",
-    "_normalize_function_signature_arg_names",
-    "_materialize_missing_generic_local_declarations_text",
+    "_dedupe_adjacent_prototype_lines",
+    "_dedupe_duplicate_local_declarations_text",
+    "_format_bp_disp",
+    "_format_known_helper_calls",
     "_hoist_c89_local_declarations_text",
     "_materialize_annotated_cod_declarations_text",
+    "_materialize_missing_generic_local_declarations_text",
     "_materialize_opaque_pointer_typedefs_text",
-    "_source_args_from_cod_source_lines",
-    "_repair_missing_cod_function_header_text",
-    "_dedupe_duplicate_local_declarations_text",
-    "_normalize_spurious_duplicate_local_suffixes",
-    "_collapse_duplicate_type_keywords_text",
-    "_dedupe_adjacent_prototype_lines",
-    "_sanitize_mangled_autonames_text",
-    "_prune_trailing_generic_return_text",
-    "_collapse_annotated_stack_aliases_text",
-    "_split_top_level_binary",
-    "_simplify_negated_condition",
-    "_simplify_condition_line",
-    "_simplify_x86_16_conditions",
-    "_normalize_unary_not_shift_precedence_text",
-    "_split_simple_assignment_conditions",
-    "_simplify_x86_16_wrapped_stack_offsets",
-    "_simplify_x86_16_stack_byte_pointers",
-    "_format_bp_disp",
-    "_annotate_cod_proc_output",
-    "_prune_standalone_memory_helper_reads_text",
-    "_prune_unused_staging_assignments",
-    "_coalesce_redundant_split_global_incdec_text",
-    "_rewrite_known_helper_signature_text",
-    "_prune_invalid_simple_function_prototypes_text",
-    "_prune_unused_local_declarations_text",
-    "_format_known_helper_calls",
-    "_repair_missing_fallthrough_returns",
+    "_normalize_anonymous_call_targets",
     "_normalize_boolean_conditions",
+    "_normalize_function_signature_arg_names",
     "_normalize_mk_fp_segment_names",
+    "_normalize_spurious_duplicate_local_suffixes",
+    "_normalize_unary_not_shift_precedence_text",
+    "_prune_invalid_simple_function_prototypes_text",
+    "_prune_standalone_memory_helper_reads_text",
+    "_prune_trailing_generic_return_text",
+    "_prune_unused_local_declarations_text",
+    "_prune_unused_staging_assignments",
+    "_prune_void_call_assignments_text",
+    "_prune_void_function_return_values_text",
+    "_repair_missing_cod_function_header_text",
+    "_repair_missing_fallthrough_returns",
+    "_rewrite_known_helper_signature_text",
+    "_sanitize_mangled_autonames_text",
+    "_simplify_condition_line",
+    "_simplify_negated_condition",
+    "_simplify_x86_16_conditions",
+    "_simplify_x86_16_stack_byte_pointers",
     "_simplify_x86_16_stack_references",
+    "_simplify_x86_16_wrapped_stack_offsets",
+    "_source_args_from_cod_source_lines",
+    "_split_simple_assignment_conditions",
+    "_split_top_level_binary",
 ]
 
 
-def _dynamic_text_attr(obj: object, name: str, default: Any = None) -> Any:  # noqa: ANN401
+def _dynamic_text_attr(obj: object, name: str, default: Any = None) -> Any:
     """Read a dynamic CLI/codegen/angr text-postprocess attribute."""
     # Dynamic codegen boundary: angr functions, prototypes, and project plugins expose version-dependent fields.
     return getattr(obj, name, default)
@@ -688,9 +688,7 @@ def _normalize_function_signature_arg_names(c_text: str) -> str:
             prefix, name = split
             candidate = name
             suffix_match = re.fullmatch(r"(?P<base>.+?)_(?P<suffix>\d+)", name)
-            if re.fullmatch(r"arg_\d+", name):
-                candidate = name
-            elif re.fullmatch(r"local_\d+", name) and name not in declared_local_names:
+            if re.fullmatch(r"arg_\d+", name) or (re.fullmatch(r"local_\d+", name) and name not in declared_local_names):
                 candidate = name
             elif suffix_match is not None:
                 unsuffixed = suffix_match.group("base")
@@ -939,7 +937,7 @@ def _hoist_c89_local_declarations_text(c_text: str) -> str:
             insertion = brace_index + 1
             while insertion < body_end:
                 stripped = lines[insertion].strip()
-                if not stripped or stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*"):
+                if not stripped or stripped.startswith(("//", "/*", "*")):
                     insertion += 1
                     continue
                 if any(entry_index == insertion for entry_index, _name, _line in decl_entries):
@@ -1056,10 +1054,7 @@ def _materialize_annotated_cod_declarations_text(
                 return arg_text
             prefix = arg_text[: split_match.start(1)].rstrip()
             suffix = arg_text[split_match.end(1) :]
-            if prefix:
-                prefix = f"{prefix} *"
-            else:
-                prefix = "*"
+            prefix = f"{prefix} *" if prefix else "*"
             return f"{prefix}{arg_name}{suffix}"
 
         current_match = header_re.match(lines[header_index])
@@ -1098,7 +1093,7 @@ def _materialize_annotated_cod_declarations_text(
         )
 
         if prototype_declarations:
-            lines[header_index:header_index] = prototype_declarations + [""]
+            lines[header_index:header_index] = [*prototype_declarations, ""]
             header_index += len(prototype_declarations) + 1
             brace_index += len(prototype_declarations) + 1
             body_start += len(prototype_declarations) + 1
@@ -1247,7 +1242,7 @@ def _source_header_args_unmaterialized_8616(
         return False
     body_text = c_text[current_header.end() :]
     allowed_aliases = set(allowed_positive_arg_aliases or ())
-    for current_part, source_part in zip(current_parts, source_parts):
+    for current_part, source_part in zip(current_parts, source_parts, strict=False):
         current_name = _decl_arg_name_8616(current_part)
         source_name = _decl_arg_name_8616(source_part)
         if not current_name or not source_name or current_name == source_name:
@@ -1321,7 +1316,7 @@ def _normalize_existing_decl_names_8616(
     decl_re: re.Pattern[str],
     declared_names: set[str],
 ) -> None:
-    for scan_index in range(0, body_start):
+    for scan_index in range(body_start):
         line = lines[scan_index]
         stripped = line.split("//", 1)[0].strip()
         if not stripped or stripped.startswith(("/*", "*")):
@@ -1656,7 +1651,7 @@ def _prototype_for_direct_call(
                 helper_arg_count = 0
             else:
                 helper_arg_count = len([part for part in arg_text.split(",") if part.strip()])
-        if isinstance(helper_arg_count, int) and isinstance(observed_arg_count, int):
+        if isinstance(helper_arg_count, int) and isinstance(observed_arg_count, int):  # noqa: SIM102
             if helper_arg_count != observed_arg_count:
                 return _return_only_helper_decl_8616(name, helper_decl)
         return str(helper_decl).rstrip(";").strip() + ";"
@@ -2124,7 +2119,7 @@ def _synthetic_name_width_map_8616(synthetic_globals: dict[int, tuple[str, int]]
     name_to_width: dict[str, int] = {}
     if not synthetic_globals:
         return name_to_width
-    for _addr, (global_name, width) in synthetic_globals.items():
+    for (global_name, width) in synthetic_globals.values():
         if _is_strict_c_identifier_8616(global_name) and isinstance(width, int):
             name_to_width[global_name] = max(name_to_width.get(global_name, 0), width)
     return name_to_width
@@ -2167,7 +2162,7 @@ def _used_global_names_8616(
             return used
         for name in sorted(candidate_names):
             if name not in declared and re.search(rf"(?<![A-Za-z_]){re.escape(name)}(?![A-Za-z0-9_])", body_text):
-                used.append(name)
+                used.append(name)  # noqa: PERF401
         return used
 
     return _impl()
@@ -2825,7 +2820,7 @@ def _rewrite_or_prune_duplicate_locals(
                     old_line = lines[entry.line_index]
                     def replace_decl(match: re.Match[str]) -> str:
                         return (
-                            f"{match.group('indent')}{match.group('type')} {unique_name}{match.group('array') or ''};"
+                            f"{match.group('indent')}{match.group('type')} {unique_name}{match.group('array') or ''};"  # noqa: B023
                             + (f" {match.group('comment')}" if match.group("comment") else "")
                         )
 
@@ -3092,7 +3087,7 @@ def _materialize_opaque_pointer_typedefs_text(c_text: str) -> str:
 
         typedef_lines = [f"typedef struct {type_name} {type_name};" for type_name in needed]
         insert_at = next((idx for idx, line in enumerate(lines) if prototype_re.match(line.strip())), 0)
-        lines[insert_at:insert_at] = typedef_lines + [""]
+        lines[insert_at:insert_at] = [*typedef_lines, ""]
         normalized = "\n".join(lines)
         if c_text.endswith("\n"):
             normalized += "\n"
@@ -3376,7 +3371,7 @@ def _simplify_x86_16_stack_byte_pointers(c_text: str, metadata: CODProcMetadata 
         immutable_pointer_names: set[str] = set()
         for line in lines:
             stripped = line.strip()
-            if not stripped or stripped.startswith("/*") or stripped.startswith("extern "):
+            if not stripped or stripped.startswith(("/*", "extern ")):
                 continue
             if "(" not in stripped or ")" not in stripped or stripped.endswith(";"):
                 continue
@@ -4432,7 +4427,7 @@ def _normalize_shift_add_precedence_in_assignments(c_text: str) -> str:
         if full_match is None:
             return match.group(0)
         base_expr = full_match.group("base").rstrip()
-        if base_expr.endswith(">>") or base_expr.endswith("<<") or base_expr.endswith("&"):
+        if base_expr.endswith((">>", "<<", "&")):
             return match.group(0)
         if base_expr.startswith("(") and base_expr.endswith(")"):
             return match.group(0)
@@ -4496,14 +4491,14 @@ def _rewrite_known_helper_signature_text(c_text: str, function: object, *, codeg
 
         renamed_pairs: list[tuple[str, str]] = [
             (old_name, new_name)
-            for old_name, new_name in zip(old_arg_names, helper_arg_names)
+            for old_name, new_name in zip(old_arg_names, helper_arg_names, strict=False)
             if old_name and old_name != new_name
         ]
         if not renamed_pairs:
             annotated_arg_names = _annotated_bp_arg_names_8616(lines[:header_index])
             renamed_pairs = [
                 (old_name, new_name)
-                for old_name, new_name in zip(annotated_arg_names, helper_arg_names)
+                for old_name, new_name in zip(annotated_arg_names, helper_arg_names, strict=False)
                 if old_name and old_name != new_name
             ]
 

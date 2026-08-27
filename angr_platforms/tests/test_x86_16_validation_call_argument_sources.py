@@ -12,6 +12,9 @@ from angr.sim_type import SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.lowering.call_argument_stack_sources import containing_stack_cvariable_8616
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.validation_calls import validate_call_argument_classes_8616
 from archinfo import ArchX86
 
@@ -27,6 +30,10 @@ class _Codegen:
         index = self._next_index
         self._next_index += 1
         return index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _summary() -> CallsiteSummary8616:
@@ -99,6 +106,58 @@ def test_call_argument_source_validation_accepts_exact_stack_dependencies() -> N
 
     assert report.passed
     assert report.classified_fact_count == 1
+    assert report.materialized_count == 1
+
+
+def test_call_argument_source_validation_uses_machine_bp_projection() -> None:
+    codegen = _Codegen()
+    short_type = SimTypeShort(False)
+    producer_variable = SimStackVariable(-4, 2, base="bp", name="local_2")
+    producer_cvar = CVariable(
+        producer_variable,
+        variable_type=short_type,
+        codegen=codegen,
+    )
+    variable = SimStackVariable(-4, 2, base="bp", name="local_2")
+    argument = CVariable(
+        variable,
+        variable_type=short_type,
+        codegen=codegen,
+    )
+    call = CFunctionCall(
+        "consume",
+        None,
+        [argument],
+        tags={"ins_addr": 0x1040},
+        codegen=codegen,
+    )
+    codegen._inertia_callsite_summaries[id(call)] = CallsiteSummary8616(
+        callsite_addr=0x1040,
+        target_addr=0x2000,
+        return_addr=0x1043,
+        kind="direct_near",
+        arg_count=1,
+        arg_widths=(2,),
+        stack_cleanup=2,
+        return_register=None,
+        return_used=False,
+        push_arg_sources=(("bp", -2, 2),),
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=producer_variable,
+        cvar=producer_cvar,
+        bp_offset=-2,
+        entry_sp_offset=-4,
+        size=2,
+    )
+
+    report = validate_call_argument_classes_8616(
+        codegen,
+        CStatements([call], codegen=codegen),
+    )
+
+    assert report.passed
     assert report.materialized_count == 1
 
 
@@ -207,6 +266,29 @@ def test_containing_stack_source_prefers_exact_word_over_wider_overlap() -> None
     selected = containing_stack_cvariable_8616(codegen, {}, offset=4, size_hint=2)
 
     assert selected is argument
+
+
+def test_containing_stack_source_prefers_exact_width_at_same_offset() -> None:
+    codegen = _Codegen()
+    exact = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="err"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    widened = CVariable(
+        SimStackVariable(-2, 4, base="bp", name="err"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        arg_list=(),
+        statements=None,
+        variables_in_use={widened.variable: widened, exact.variable: exact},
+    )
+
+    selected = containing_stack_cvariable_8616(codegen, {}, offset=-2, size_hint=2)
+
+    assert selected is exact
 
 
 def test_call_argument_source_validation_accepts_high_byte_projection() -> None:

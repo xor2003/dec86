@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TypeAlias
 
 from ..interrupt_contract import interrupt_vector_from_core_addr_8616
 from ..ir.core import (
@@ -27,7 +26,7 @@ from ..ir.core import (
     MemSpace,
 )
 
-IRScalarValue8616: TypeAlias = IRValue | IRBinaryValue
+type IRScalarValue8616 = IRValue | IRBinaryValue
 
 __all__ = [
     "IRScalarValue8616",

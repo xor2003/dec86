@@ -28,6 +28,9 @@ from angr_platforms.X86_16.tail_validation import (
     refresh_x86_16_final_semantic_validation_8616,
     x86_16_tail_validation_snapshot_passed,
 )
+from angr_platforms.X86_16.validation.status_flag_preservation import (
+    PackedStatusFlagPreservationEvidence8616,
+)
 from angr_platforms.X86_16.validation_dataflow import (
     DefUseCallOutputDefinition8616,
     validate_structured_def_use_8616,
@@ -44,6 +47,10 @@ class _Codegen:
         index = self._next_index
         self._next_index += 1
         return index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 class _Project:
@@ -935,6 +942,32 @@ def test_def_use_accepts_structured_register_carrier_after_assignment() -> None:
     assert report.materialized_count == 1
 
 
+def test_def_use_accepts_only_exact_typed_packed_flag_preservation_site() -> None:
+    codegen = _codegen()
+    flags = _register_carrier(36, codegen, "flags", ident="flags_in")
+    result = _register_carrier(100, codegen, "flags_result", ident="flags_result")
+    assignment = CAssignment(result, flags, codegen=codegen)
+    assignment.tags["ins_addr"] = 0x1010
+    root = CStatements([assignment], codegen=codegen)
+    evidence = PackedStatusFlagPreservationEvidence8616(36, frozenset({0x1010}))
+
+    accepted = validate_structured_def_use_8616(
+        root,
+        packed_status_flag_preservation=evidence,
+    )
+    refused = validate_structured_def_use_8616(
+        root,
+        packed_status_flag_preservation=PackedStatusFlagPreservationEvidence8616(
+            36,
+            frozenset({0x1020}),
+        ),
+    )
+
+    assert accepted.passed
+    assert accepted.materialized_count == 1
+    assert refused.failure_count == 1
+
+
 def test_def_use_accepts_explicit_register_argument_at_entry() -> None:
     codegen = _codegen()
     argument = _register_carrier(6, codegen, "bx")
@@ -1119,6 +1152,19 @@ def test_tail_validation_refuses_def_use_failure_even_when_baseline_already_lost
     assert final_result["changed"] is True
     assert final_result["status"] == "failed"
     assert final_result["semantic_failures"] == {"def_use": (issue,)}
+
+
+def test_tail_validation_comparison_refuses_new_def_use_failure():
+    issue = "uninitialized-read:register-carrier:reg+0x24:size2:root.stmt0"
+
+    diff = compare_x86_16_tail_validation_summaries(
+        _empty_summary(),
+        _empty_summary(def_use_issues=(issue,)),
+    )
+
+    assert diff["changed"] is True
+    assert diff["status"] == "failed"
+    assert diff["semantic_failures"] == {"def_use": (issue,)}
 
 
 def test_tail_validation_summary_cache_keys_def_use_state_separately():

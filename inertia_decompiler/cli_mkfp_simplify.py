@@ -6,11 +6,12 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 
 from __future__ import annotations
 
-from typing import Callable, Protocol, TypeAlias
+from collections.abc import Callable
+from typing import Protocol
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 
-ReplaceCChildren: TypeAlias = Callable[[object, Callable[[object], object]], bool]
+type ReplaceCChildren = Callable[[object, Callable[[object], object]], bool]
 
 
 class _CFunctionLike(Protocol):

@@ -11,6 +11,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from .core import IRAddress, IRAtom, IRCallStackEffect8616, IRCondition, IRInstr, IRRefusal
+from .logical_memory_contracts import IRLogicalMemoryArtifact8616
 from .ssa import SSABlock
 from .ssa_memory_contracts import (
     MemoryRangeKey8616,
@@ -26,15 +27,14 @@ from .ssa_memory_contracts import (
 )
 from .ssa_memory_ranges import (
     build_stack_memory_cell_layout_8616,
+    close_refused_stack_ranges_8616,
     collect_stack_memory_accesses_8616,
     memory_range_key_8616,
     stack_memory_access_8616,
     versioned_memory_address_8616,
 )
 
-__all__ = [
-    "build_x86_16_function_memory_ssa",
-]
+__all__ = ["build_x86_16_function_memory_ssa"]
 
 
 def _rewrite_atom_8616(
@@ -71,15 +71,18 @@ def build_x86_16_function_memory_ssa(
     function_addr: int,
     blocks: tuple[SSABlock, ...],
     predecessor_map: dict[int, tuple[int, ...]],
+    logical_memory: IRLogicalMemoryArtifact8616 | None = None,
 ) -> SSAFunctionMemoryResult8616:
     """Version canonical stack cells and join reaching definitions to a fixed point."""
+    if logical_memory is not None and (
+        logical_memory.function_addr != function_addr or not logical_memory.closed
+    ):
+        raise ValueError("memory SSA requires closed function-owned logical memory")
     accesses = collect_stack_memory_accesses_8616(blocks)
     layout = build_stack_memory_cell_layout_8616(accesses)
     range_addresses = {item.key: item.address for item in layout.ranges}
     cells_by_range = {
-        item.key: tuple(
-            (cell.space.value, cell.base, cell.offset, cell.size) for cell in item.cells
-        )
+        item.key: tuple((cell.space.value, cell.base, cell.offset, cell.size) for cell in item.cells)
         for item in layout.ranges
     }
     cell_addresses = {
@@ -101,19 +104,10 @@ def build_x86_16_function_memory_ssa(
         for key, address in range_addresses.items()
         if any(not site.effect.preserves(address) for site in call_effects)
     }
-    refused_ranges = set(range_addresses) if not layout.complete else set(call_refused_ranges)
-    while True:
-        refused_cells = {
-            cell_key for key in refused_ranges for cell_key in cells_by_range[key]
-        }
-        expanded = {
-            key
-            for key, cell_keys in cells_by_range.items()
-            if any(cell_key in refused_cells for cell_key in cell_keys)
-        }
-        if expanded <= refused_ranges:
-            break
-        refused_ranges.update(expanded)
+    refused_ranges = close_refused_stack_ranges_8616(
+        set(range_addresses) if not layout.complete else set(call_refused_ranges),
+        cells_by_range,
+    )
     refusals = tuple(
         IRRefusal(
             kind=(
@@ -228,6 +222,7 @@ def build_x86_16_function_memory_ssa(
             ),
             overlaps=layout.overlaps,
             call_effects=call_effects,
+            logical_memory=logical_memory,
         )
 
     bindings: list[SSAMemoryBinding8616] = []
@@ -325,7 +320,6 @@ def build_x86_16_function_memory_ssa(
         )
         > 1
     )
-    failure_count = len(refusals)
     return SSAFunctionMemoryResult8616(
         blocks=tuple(rewritten_blocks),
         bindings=tuple(bindings),
@@ -336,9 +330,10 @@ def build_x86_16_function_memory_ssa(
             normalized_fact_count=materialized_count,
             classified_fact_count=materialized_count,
             materialized_count=materialized_count,
-            failure_count=failure_count,
+            failure_count=len(refusals),
         ),
         overlaps=layout.overlaps,
         accesses=tuple(versioned_accesses),
         call_effects=call_effects,
+        logical_memory=logical_memory,
     )

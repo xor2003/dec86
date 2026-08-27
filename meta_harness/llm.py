@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import json
 import os
@@ -7,9 +7,9 @@ import shlex
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 try:
     import resource
@@ -29,22 +29,22 @@ LOCAL_BAD_PATTERNS = (
 )
 
 
-def backend_supports_sessions(provider: str) -> bool:
-    def _impl():
+def backend_supports_sessions(provider: str) -> bool:  # noqa: D103
+    def _impl():  # noqa: ANN202
         return provider == "codex"
 
     return _impl()
 
 
-def is_local_provider(provider: str) -> bool:
-    def _impl():
+def is_local_provider(provider: str) -> bool:  # noqa: D103
+    def _impl():  # noqa: ANN202
         return provider in {"ollama", "llamacpp"}
 
     return _impl()
 
 
-def extract_session_id(text: str) -> str:
-    def _impl():
+def extract_session_id(text: str) -> str:  # noqa: D103
+    def _impl():  # noqa: ANN202
         match = SESSION_RE.search(text)
         return match.group(1) if match else ""
 
@@ -52,21 +52,21 @@ def extract_session_id(text: str) -> str:
 
 
 def _timestamp() -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         return datetime.now().astimezone().isoformat(timespec="seconds")
 
     return _impl()
 
 
 def _build_codex_memory_preexec_fn(memory_limit_mb: int) -> Callable[[], None] | None:
-    def _impl():
+    def _impl() -> None:
         if memory_limit_mb <= 0 or resource is None:
             return None
 
         limit_bytes = memory_limit_mb * 1024 * 1024
 
         def _set_limits() -> None:
-            def _impl():
+            def _impl() -> None:
                 resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
                 if hasattr(resource, "RLIMIT_DATA"):
                     resource.setrlimit(resource.RLIMIT_DATA, (limit_bytes, limit_bytes))
@@ -75,11 +75,11 @@ def _build_codex_memory_preexec_fn(memory_limit_mb: int) -> Callable[[], None] |
 
     return _impl()
 
-    return _set_limits
+    return _set_limits  # noqa: F821
 
 
 def _provider_env(config: LlmConfig) -> dict[str, str]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         env = os.environ.copy()
         root = str(config.root_dir)
         existing = env.get("PYTHONPATH", "")
@@ -89,14 +89,14 @@ def _provider_env(config: LlmConfig) -> dict[str, str]:
     return _impl()
 
 
-def build_effective_prompt(
+def build_effective_prompt(  # noqa: D103
     key: str,
     provider: str,
     base_prompt: str,
     config: LlmConfig,
     previous_log_path: str,
 ) -> str:
-    def _impl():
+    def _impl():  # noqa: ANN202
         if not is_local_provider(provider):
             return base_prompt
         extra = [
@@ -115,8 +115,8 @@ def build_effective_prompt(
     return _impl()
 
 
-def validate_output(key: str, provider: str, log_path: Path, config: LlmConfig) -> bool:
-    def _impl():
+def validate_output(key: str, provider: str, log_path: Path, config: LlmConfig) -> bool:  # noqa: D103
+    def _impl() -> bool:
         if not is_local_provider(provider):
             return True
         if not log_path.exists() or log_path.stat().st_size < config.local_model_min_output_bytes:
@@ -133,15 +133,13 @@ def validate_output(key: str, provider: str, log_path: Path, config: LlmConfig) 
         lowered = text.lower()
         if any(pattern in lowered for pattern in LOCAL_BAD_PATTERNS):
             return False
-        if key == "planner" and not config.plan_path.exists():
-            return False
-        return True
+        return not (key == "planner" and not config.plan_path.exists())
 
     return _impl()
 
 
 def _append_to_logs(outputs: tuple[object, ...], text: str) -> None:
-    def _impl():
+    def _impl() -> None:
         for out in outputs:
             out.write(text)
             out.flush()
@@ -150,7 +148,7 @@ def _append_to_logs(outputs: tuple[object, ...], text: str) -> None:
 
 
 def _file_size(path: Path) -> int:
-    def _impl():
+    def _impl():  # noqa: ANN202
         try:
             return path.stat().st_size
         except OSError:
@@ -160,7 +158,7 @@ def _file_size(path: Path) -> int:
 
 
 def _agent_no_output_restart_secs() -> int:
-    def _impl():
+    def _impl():  # noqa: ANN202
         try:
             return max(0, int(os.environ.get("AGENT_NO_OUTPUT_RESTART_SECS", "180")))
         except ValueError:
@@ -170,7 +168,7 @@ def _agent_no_output_restart_secs() -> int:
 
 
 def _agent_no_output_max_restarts() -> int:
-    def _impl():
+    def _impl():  # noqa: ANN202
         try:
             return max(0, int(os.environ.get("AGENT_NO_OUTPUT_MAX_RESTARTS", "1")))
         except ValueError:
@@ -180,7 +178,7 @@ def _agent_no_output_max_restarts() -> int:
 
 
 def _terminate_process(proc: subprocess.Popen[str]) -> None:
-    def _impl():
+    def _impl() -> None:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         except (OSError, ProcessLookupError):
@@ -206,7 +204,7 @@ def _stream_process_output(
     idle_timeout_secs: int,
     activity_log_file: Path,
 ) -> tuple[int, bool]:
-    def _impl():
+    def _impl():  # noqa: ANN202
         assert proc.stdout is not None
         try:
             stdout_fd = proc.stdout.fileno()
@@ -268,10 +266,10 @@ def _run_and_mirror_output(
     header: str,
     env: dict[str, str],
     proc_name: str,
-    stdin=None,
+    stdin=None,  # noqa: ANN001
     preexec_fn: Callable[[], None] | None = None,
 ) -> int:
-    def _impl():
+    def _impl():  # noqa: ANN202
         config.last_log_file.parent.mkdir(parents=True, exist_ok=True)
         with log_file.open("w", encoding="utf-8") as out, config.last_log_file.open("w", encoding="utf-8") as mirror:
             outputs = (out, mirror)
@@ -320,7 +318,7 @@ def _run_and_mirror_output(
     return _impl()
 
 
-def run_provider_once(
+def run_provider_once(  # noqa: D103
     provider: str,
     mode: str,
     model: str,
@@ -331,8 +329,8 @@ def run_provider_once(
     session_id: str = "",
     timeout_secs: int | None = None,
 ) -> int:
-    def _impl():
-        del timeout_secs
+    def _impl():  # noqa: ANN202
+        del timeout_secs  # noqa: F821
         codex_preexec = _build_codex_memory_preexec_fn(config.codex_memory_limit_mb)
         provider_env = _provider_env(config)
         header = (

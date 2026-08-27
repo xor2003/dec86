@@ -18,9 +18,9 @@ from angr_platforms.X86_16.lowering.segmented_lowering import (
 )
 
 __all__ = [
-    "_segment_reg_name",
     "_classify_segmented_addr_expr",
     "_classify_segmented_dereference",
     "_match_real_mode_linear_expr",
     "_match_segmented_dereference",
+    "_segment_reg_name",
 ]

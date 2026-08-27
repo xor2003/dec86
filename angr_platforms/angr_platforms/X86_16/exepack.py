@@ -69,7 +69,7 @@ class _EXEPACKHeader:
 
 def _locate_relocation_table(stub: bytes) -> int:
     """Locate the packed relocation table after a recognized common stub suffix."""
-    for position in range(0, len(stub) - len(_STUB_SUFFIX) + 1):
+    for position in range(len(stub) - len(_STUB_SUFFIX) + 1):
         if stub[position : position + len(_STUB_SUFFIX)] != _STUB_SUFFIX:
             continue
         table_offset = position + len(_STUB_SUFFIX) + _ERROR_MESSAGE_LENGTH

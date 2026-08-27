@@ -155,7 +155,7 @@ def _parse_pat_line(
 def _pattern_matches(entry_bytes: bytes, pattern_bytes: list[int | None]) -> bool:
     if len(entry_bytes) < len(pattern_bytes):
         return False
-    for actual, expected in zip(entry_bytes, pattern_bytes):
+    for actual, expected in zip(entry_bytes, pattern_bytes, strict=False):
         if expected is None:
             continue
         if actual != expected:

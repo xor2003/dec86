@@ -145,7 +145,7 @@ def _must_write_keys_8616(
     """Solve definite direct stores to every terminal over the exact SSA CFG."""
     blocks = {block.addr: block for block in artifact.blocks if block.addr in reachable}
     predecessors = {
-        address: set(predecessor for predecessor in artifact.predecessor_map[address] if predecessor in reachable)
+        address: {predecessor for predecessor in artifact.predecessor_map[address] if predecessor in reachable}
         for address in reachable
     }
     terminals = tuple(sorted(address for address in reachable if not successors[address]))
@@ -169,8 +169,8 @@ def _must_write_keys_8616(
         )
         for block in blocks.values()
     }
-    incoming = {address: candidate_keys for address in reachable}
-    outgoing = {address: candidate_keys for address in reachable}
+    incoming = dict.fromkeys(reachable, candidate_keys)
+    outgoing = dict.fromkeys(reachable, candidate_keys)
     incoming[artifact.function_addr] = frozenset()
     changed = True
     while changed:

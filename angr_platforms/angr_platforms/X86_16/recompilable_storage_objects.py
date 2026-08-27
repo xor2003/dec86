@@ -6,8 +6,9 @@ Forbidden: object-shape guessing, source-backed names, or semantic recovery.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping, Protocol, TypeAlias, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from angr_platforms.X86_16.lowering.object_lowering import BaseKey, _build_stable_access_object_hints
 from inertia_decompiler.cli_access_profiles import build_access_trait_evidence_profiles
@@ -24,8 +25,8 @@ __all__ = [
     "summarize_recompilable_storage_object_artifact",
 ]
 
-AccessTraitTraits: TypeAlias = dict[str, dict[BaseKey, object]]
-AccessTraitCache: TypeAlias = Mapping[int | None, AccessTraitTraits]
+type AccessTraitTraits = dict[str, dict[BaseKey, object]]
+type AccessTraitCache = Mapping[int | None, AccessTraitTraits]
 
 
 @runtime_checkable

@@ -91,7 +91,7 @@ def _extract_proc_text_from_evidence(
             return None
         for start_idx, line in enumerate(section_lines):
             stripped = line.strip()
-            if not stripped or stripped.startswith("/*") or stripped.startswith("*"):
+            if not stripped or stripped.startswith(("/*", "*")):
                 continue
             if "(" not in stripped:
                 continue

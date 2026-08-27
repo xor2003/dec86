@@ -13,9 +13,8 @@ import sys
 from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TypeAlias
 
-LineTrackedNode: TypeAlias = (
+type LineTrackedNode = (
     ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Assign | ast.AnnAssign | ast.AugAssign
 )
 
@@ -49,8 +48,7 @@ def _changed_lines_for_tracked_path(path: Path) -> set[int]:
     result = subprocess.run(
         ["git", "diff", "--unified=0", "--", str(path)],
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
     )
     if result.returncode != 0:
@@ -91,7 +89,7 @@ def _function_missing_annotations(node: ast.FunctionDef | ast.AsyncFunctionDef) 
     positional = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
     for arg in positional:
         if _arg_missing_annotation(arg):
-            missing.append(arg.arg)
+            missing.append(arg.arg)  # noqa: PERF401
     if node.args.vararg is not None and _arg_missing_annotation(node.args.vararg):
         missing.append(f"*{node.args.vararg.arg}")
     if node.args.kwarg is not None and _arg_missing_annotation(node.args.kwarg):
@@ -160,7 +158,7 @@ def _changed_definitions_missing_docstrings(path: Path) -> list[str]:
                 if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
             )
     for node in public_defs:
-        if _is_public_definition_name(node.name) and _definition_touches_changed_lines(node, changed):
+        if _is_public_definition_name(node.name) and _definition_touches_changed_lines(node, changed):  # noqa: SIM102
             if not (ast.get_docstring(node) or "").strip():
                 diagnostics.append(f"{path}:{node.lineno}: {node.name} missing docstring")
     return diagnostics
@@ -224,7 +222,7 @@ def _changed_dataclass_fields_missing_annotations(path: Path) -> list[str]:
                 continue
             for field_name in _assignment_target_names(stmt):
                 if _is_public_definition_name(field_name):
-                    diagnostics.append(f"{path}:{stmt.lineno}: {class_node.name}.{field_name} missing annotation")
+                    diagnostics.append(f"{path}:{stmt.lineno}: {class_node.name}.{field_name} missing annotation")  # noqa: PERF401
     return diagnostics
 
 
@@ -246,7 +244,7 @@ def _changed_enum_members_missing_string_values(path: Path) -> list[str]:
                 continue
             for member_name in _assignment_target_names(stmt):
                 if _is_public_definition_name(member_name):
-                    diagnostics.append(
+                    diagnostics.append(  # noqa: PERF401
                         f"{path}:{stmt.lineno}: {class_node.name}.{member_name} must use an explicit string value"
                     )
     return diagnostics

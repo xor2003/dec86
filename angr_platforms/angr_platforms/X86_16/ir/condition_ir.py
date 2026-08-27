@@ -12,18 +12,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, replace
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal
 
+from .condition_fingerprint_masks import normalize_condition_full_width_masks_8616
 from .core import IRBinaryValue, IRCondition, IRValue
 
 __all__ = (
-    "ConditionEdgeEvidence",
-    "ConditionFailure",
-    "ConditionIR",
-    "ConditionOp",
-    "ConditionRegisterBindingIR",
-    "ConditionResult",
-    "ConditionSource",
     "JCC_EQ_MNEMONICS_8616",
     "JCC_NE_MNEMONICS_8616",
     "JCC_SGE_MNEMONICS_8616",
@@ -35,6 +29,13 @@ __all__ = (
     "JCC_UGT_MNEMONICS_8616",
     "JCC_ULE_MNEMONICS_8616",
     "JCC_ULT_MNEMONICS_8616",
+    "ConditionEdgeEvidence",
+    "ConditionFailure",
+    "ConditionIR",
+    "ConditionOp",
+    "ConditionRegisterBindingIR",
+    "ConditionResult",
+    "ConditionSource",
     "build_condition_from_cmp_8616",
     "build_condition_from_compare_8616",
     "build_condition_from_test_8616",
@@ -61,7 +62,7 @@ _STACK_ARG_STORAGE_FINGERPRINT_RE_8616 = re.compile(
     r"(?::size(?P<size>\d+))?:bp(?P<offset>[+-]0x[0-9a-fA-F]+)"
 )
 
-ConditionOp: TypeAlias = Literal[
+type ConditionOp = Literal[
     "and",
     "carry_compare",
     "compare",
@@ -109,17 +110,17 @@ JCC_SGT_MNEMONICS_8616: frozenset[str] = frozenset({"jg", "jnle"})
 
 _JCC_COMPARISON_MNEMONICS_8616: frozenset[str] = frozenset({"jo", "jno", "js", "jns", "jp", "jpe", "jpo", "jnp"})
 
-JCC_TO_COND_8616: dict[str, ConditionOp] = {mnemonic: "eq" for mnemonic in JCC_EQ_MNEMONICS_8616}
-JCC_TO_COND_8616.update({mnemonic: "ne" for mnemonic in JCC_NE_MNEMONICS_8616})
-JCC_TO_COND_8616.update({mnemonic: "ult" for mnemonic in JCC_ULT_MNEMONICS_8616})
-JCC_TO_COND_8616.update({mnemonic: "uge" for mnemonic in JCC_UGE_MNEMONICS_8616})
-JCC_TO_COND_8616.update({mnemonic: "ule" for mnemonic in JCC_ULE_MNEMONICS_8616})
-JCC_TO_COND_8616.update({mnemonic: "ugt" for mnemonic in JCC_UGT_MNEMONICS_8616})
-JCC_TO_COND_8616.update({mnemonic: "slt" for mnemonic in JCC_SLT_MNEMONICS_8616})
-JCC_TO_COND_8616.update({mnemonic: "sge" for mnemonic in JCC_SGE_MNEMONICS_8616})
-JCC_TO_COND_8616.update({mnemonic: "sle" for mnemonic in JCC_SLE_MNEMONICS_8616})
-JCC_TO_COND_8616.update({mnemonic: "sgt" for mnemonic in JCC_SGT_MNEMONICS_8616})
-JCC_TO_COND_8616.update({mnemonic: "compare" for mnemonic in _JCC_COMPARISON_MNEMONICS_8616})
+JCC_TO_COND_8616: dict[str, ConditionOp] = dict.fromkeys(JCC_EQ_MNEMONICS_8616, "eq")
+JCC_TO_COND_8616.update(dict.fromkeys(JCC_NE_MNEMONICS_8616, "ne"))
+JCC_TO_COND_8616.update(dict.fromkeys(JCC_ULT_MNEMONICS_8616, "ult"))
+JCC_TO_COND_8616.update(dict.fromkeys(JCC_UGE_MNEMONICS_8616, "uge"))
+JCC_TO_COND_8616.update(dict.fromkeys(JCC_ULE_MNEMONICS_8616, "ule"))
+JCC_TO_COND_8616.update(dict.fromkeys(JCC_UGT_MNEMONICS_8616, "ugt"))
+JCC_TO_COND_8616.update(dict.fromkeys(JCC_SLT_MNEMONICS_8616, "slt"))
+JCC_TO_COND_8616.update(dict.fromkeys(JCC_SGE_MNEMONICS_8616, "sge"))
+JCC_TO_COND_8616.update(dict.fromkeys(JCC_SLE_MNEMONICS_8616, "sle"))
+JCC_TO_COND_8616.update(dict.fromkeys(JCC_SGT_MNEMONICS_8616, "sgt"))
+JCC_TO_COND_8616.update(dict.fromkeys(_JCC_COMPARISON_MNEMONICS_8616, "compare"))
 
 # Canonical list of all supported jcc synonyms, used for coverage checks.
 _SUPPORTED_JCC_MNEMONICS_8616: frozenset[str] = frozenset(JCC_TO_COND_8616.keys())
@@ -230,7 +231,7 @@ class ConditionFailure:
 
 
 # Type alias for condition-or-failure returns
-ConditionResult: TypeAlias = ConditionIR | ConditionFailure
+type ConditionResult = ConditionIR | ConditionFailure
 
 
 def build_condition_from_cmp_8616(
@@ -750,7 +751,9 @@ def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
             if value.startswith(prefix):
                 return prefix + normalize_condition_fingerprint_algebraic_8616(value[len(prefix) :])
 
-        normalized_value = _normalize_segmented_index_duplicate_displacement_8616(value)
+        normalized_value = _normalize_segmented_index_duplicate_displacement_8616(
+            normalize_condition_full_width_masks_8616(value)
+        )
 
         call = _split_fingerprint_call_8616(normalized_value)
         if call is None:
@@ -772,48 +775,44 @@ def normalize_condition_fingerprint_algebraic_8616(value: str) -> str:
 
         # Rule: CmpEQ(Sub(x,const:c),const:0) → CmpEQ(x,const:c)
         # Rule: CmpNE(Sub(x,const:c),const:0) → CmpNE(x,const:c)
-        if op in ("CmpEQ", "CmpNE"):
-            if len(args) == 2 and args[1] == "const:0":
-                lhs_call = _split_fingerprint_call_8616(args[0])
-                if lhs_call is not None:
-                    lhs_op, lhs_args = lhs_call
-                    if lhs_op == "Sub":
-                        sub_args = _split_fingerprint_args_8616(lhs_args)
-                        if len(sub_args) == 2:
-                            # Sub(x, const:c) == 0  →  x == const:c
-                            if sub_args[1].startswith("const:"):
-                                return f"{op}({sub_args[0]},{sub_args[1]})"
-                            # Sub(x, y) == 0  →  x == y
+        if op in ("CmpEQ", "CmpNE") and len(args) == 2 and args[1] == "const:0":
+            lhs_call = _split_fingerprint_call_8616(args[0])
+            if lhs_call is not None:
+                lhs_op, lhs_args = lhs_call
+                if lhs_op == "Sub":
+                    sub_args = _split_fingerprint_args_8616(lhs_args)
+                    if len(sub_args) == 2:
+                        # Sub(x, const:c) == 0  →  x == const:c
+                        if sub_args[1].startswith("const:"):
                             return f"{op}({sub_args[0]},{sub_args[1]})"
-                        # Handle nested Sub: Sub(Sub(x, a), b) == 0  →  x == a+b
-                        if len(sub_args) == 2:
-                            inner_call = _split_fingerprint_call_8616(sub_args[0])
-                            if inner_call is not None and inner_call[0] == "Sub":
-                                inner_args = _split_fingerprint_args_8616(inner_call[1])
-                                if (
-                                    len(inner_args) == 2
-                                    and inner_args[1].startswith("const:")
-                                    and sub_args[1].startswith("const:")
-                                ):
-                                    try:
-                                        a = (
-                                            int(inner_args[1].split(":")[-1], 0)
-                                            if inner_args[1].startswith("const:")
-                                            else 0
-                                        )
-                                        b = (
-                                            int(sub_args[1].split(":")[-1], 0)
-                                            if sub_args[1].startswith("const:")
-                                            else 0
-                                        )
-                                    except (ValueError, IndexError):
-                                        return normalized_value
-                                    c_sum = a + b
-                                    if c_sum >= 0:
-                                        c_str = f"const:{c_sum:#x}"
-                                    else:
-                                        c_str = f"const:{c_sum}"
-                                    return f"{op}({inner_args[0]},{c_str})"
+                        # Sub(x, y) == 0  →  x == y
+                        return f"{op}({sub_args[0]},{sub_args[1]})"
+                    # Handle nested Sub: Sub(Sub(x, a), b) == 0  →  x == a+b
+                    if len(sub_args) == 2:
+                        inner_call = _split_fingerprint_call_8616(sub_args[0])
+                        if inner_call is not None and inner_call[0] == "Sub":
+                            inner_args = _split_fingerprint_args_8616(inner_call[1])
+                            if (
+                                len(inner_args) == 2
+                                and inner_args[1].startswith("const:")
+                                and sub_args[1].startswith("const:")
+                            ):
+                                try:
+                                    a = (
+                                        int(inner_args[1].split(":")[-1], 0)
+                                        if inner_args[1].startswith("const:")
+                                        else 0
+                                    )
+                                    b = (
+                                        int(sub_args[1].split(":")[-1], 0)
+                                        if sub_args[1].startswith("const:")
+                                        else 0
+                                    )
+                                except (ValueError, IndexError):
+                                    return normalized_value
+                                c_sum = a + b
+                                c_str = f"const:{c_sum:#x}" if c_sum >= 0 else f"const:{c_sum}"
+                                return f"{op}({inner_args[0]},{c_str})"
 
         # Recurse into args for nested normalization
         normalized_args = [_normalize_arg_fingerprint_8616(a) for a in args]
@@ -930,9 +929,8 @@ def _linear_ds_offset_fingerprint_8616(value: str) -> tuple[bool, int] | None:
         return None
     op, args_str = call
     args = _split_fingerprint_args_8616(args_str)
-    if op == "Mul" and len(args) == 2:
-        if (args[0], args[1]) in {("reg:ds", "const:16"), ("const:16", "reg:ds")}:
-            return True, 0
+    if op == "Mul" and len(args) == 2 and (args[0], args[1]) in {("reg:ds", "const:16"), ("const:16", "reg:ds")}:
+        return True, 0
     if op == "Shl" and len(args) == 2 and args[0] == "reg:ds" and args[1] == "const:4":
         return True, 0
     if op != "Add" or len(args) != 2:

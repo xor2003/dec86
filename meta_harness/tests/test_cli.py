@@ -1,26 +1,28 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
+
+from typing import Never
 
 from meta_harness import cli
 from meta_harness.orchestrator import ResourceBlockedError, RoleRunError
 
 
-def test_cli_main_invokes_harness_run(monkeypatch):
+def test_cli_main_invokes_harness_run(monkeypatch) -> None:  # noqa: ANN001, D103
     called = {}
 
     class DummyHarness:
-        def __init__(self, cfg, llm_cfg):
+        def __init__(self, cfg, llm_cfg) -> None:  # noqa: ANN001
             called["cfg"] = cfg
             called["llm_cfg"] = llm_cfg
 
-        def run(self, resume=False):
+        def run(self, resume=False) -> int:  # noqa: ANN001
             called["run"] = True
             called["resume"] = resume
             return 0
 
-        def run_crash_review(self, exit_code):
+        def run_crash_review(self, exit_code) -> None:  # noqa: ANN001
             called["crash"] = exit_code
 
-        def finalize_run(self, reason, exit_code):
+        def finalize_run(self, reason, exit_code) -> None:  # noqa: ANN001
             called["finalize"] = (reason, exit_code)
 
     monkeypatch.setattr(cli, "MetaHarness", DummyHarness)
@@ -32,21 +34,21 @@ def test_cli_main_invokes_harness_run(monkeypatch):
     assert "finalize" not in called
 
 
-def test_cli_main_persists_positional_task(monkeypatch, tmp_path):
+def test_cli_main_persists_positional_task(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     called = {}
 
     class DummyHarness:
-        def __init__(self, cfg, llm_cfg):
+        def __init__(self, cfg, llm_cfg) -> None:  # noqa: ANN001
             called["cfg"] = cfg
 
-        def run(self, resume=False):
+        def run(self, resume=False) -> int:  # noqa: ANN001
             called["resume"] = resume
             return 0
 
-        def run_crash_review(self, exit_code):
+        def run_crash_review(self, exit_code) -> None:  # noqa: ANN001
             called["crash"] = exit_code
 
-        def finalize_run(self, reason, exit_code):
+        def finalize_run(self, reason, exit_code) -> None:  # noqa: ANN001
             called["finalize"] = (reason, exit_code)
 
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
@@ -59,25 +61,25 @@ def test_cli_main_persists_positional_task(monkeypatch, tmp_path):
     assert called["resume"] is False
 
 
-def test_cli_main_passes_resume_flag(monkeypatch):
+def test_cli_main_passes_resume_flag(monkeypatch) -> None:  # noqa: ANN001, D103
     called = {}
 
     class DummyHarness:
-        def __init__(self, cfg, llm_cfg):
+        def __init__(self, cfg, llm_cfg) -> None:  # noqa: ANN001
             called["cfg"] = cfg
             called["llm_cfg"] = llm_cfg
 
-        def peek_resume_step(self):
+        def peek_resume_step(self) -> None:
             return None
 
-        def run(self, resume=False):
+        def run(self, resume=False) -> int:  # noqa: ANN001
             called["resume"] = resume
             return 0
 
-        def run_crash_review(self, exit_code):
+        def run_crash_review(self, exit_code) -> None:  # noqa: ANN001
             called["crash"] = exit_code
 
-        def finalize_run(self, reason, exit_code):
+        def finalize_run(self, reason, exit_code) -> None:  # noqa: ANN001
             called["finalize"] = (reason, exit_code)
 
     monkeypatch.setattr(cli, "MetaHarness", DummyHarness)
@@ -87,24 +89,24 @@ def test_cli_main_passes_resume_flag(monkeypatch):
     assert "finalize" not in called
 
 
-def test_cli_main_marks_sigterm_exit_as_terminated(monkeypatch):
+def test_cli_main_marks_sigterm_exit_as_terminated(monkeypatch) -> None:  # noqa: ANN001, D103
     called = {}
 
     class DummyHarness:
-        def __init__(self, cfg, llm_cfg):
+        def __init__(self, cfg, llm_cfg) -> None:  # noqa: ANN001
             called["cfg"] = cfg
             called["llm_cfg"] = llm_cfg
 
-        def peek_resume_step(self):
+        def peek_resume_step(self) -> None:
             return None
 
-        def run(self, resume=False):
+        def run(self, resume=False) -> Never:  # noqa: ANN001
             raise SystemExit(143)
 
-        def run_crash_review(self, exit_code):
+        def run_crash_review(self, exit_code) -> None:  # noqa: ANN001
             called["crash"] = exit_code
 
-        def finalize_run(self, reason, exit_code):
+        def finalize_run(self, reason, exit_code) -> None:  # noqa: ANN001
             called["finalize"] = (reason, exit_code)
 
     monkeypatch.setattr(cli, "MetaHarness", DummyHarness)
@@ -119,24 +121,24 @@ def test_cli_main_marks_sigterm_exit_as_terminated(monkeypatch):
     assert called["finalize"] == ("terminated", 143)
 
 
-def test_cli_main_treats_planner_timeout_as_terminated(monkeypatch):
+def test_cli_main_treats_planner_timeout_as_terminated(monkeypatch) -> None:  # noqa: ANN001, D103
     called = {}
 
     class DummyHarness:
-        def __init__(self, cfg, llm_cfg):
+        def __init__(self, cfg, llm_cfg) -> None:  # noqa: ANN001
             called["cfg"] = cfg
             called["llm_cfg"] = llm_cfg
 
-        def peek_resume_step(self):
+        def peek_resume_step(self) -> None:
             return None
 
-        def run(self, resume=False):
+        def run(self, resume=False) -> Never:  # noqa: ANN001
             raise RoleRunError("planner", object(), "planner timed out", 124)
 
-        def run_crash_review(self, exit_code):
+        def run_crash_review(self, exit_code) -> None:  # noqa: ANN001
             called["crash"] = exit_code
 
-        def finalize_run(self, reason, exit_code):
+        def finalize_run(self, reason, exit_code) -> None:  # noqa: ANN001
             called["finalize"] = (reason, exit_code)
 
     monkeypatch.setattr(cli, "MetaHarness", DummyHarness)
@@ -146,24 +148,24 @@ def test_cli_main_treats_planner_timeout_as_terminated(monkeypatch):
     assert "crash" not in called
 
 
-def test_cli_main_treats_resource_block_as_blocked(monkeypatch):
+def test_cli_main_treats_resource_block_as_blocked(monkeypatch) -> None:  # noqa: ANN001, D103
     called = {}
 
     class DummyHarness:
-        def __init__(self, cfg, llm_cfg):
+        def __init__(self, cfg, llm_cfg) -> None:  # noqa: ANN001
             called["cfg"] = cfg
             called["llm_cfg"] = llm_cfg
 
-        def peek_resume_step(self):
+        def peek_resume_step(self) -> None:
             return None
 
-        def run(self, resume=False):
+        def run(self, resume=False) -> Never:  # noqa: ANN001
             raise ResourceBlockedError("full-sweep", "low disk", exit_code=75)
 
-        def run_crash_review(self, exit_code):
+        def run_crash_review(self, exit_code) -> None:  # noqa: ANN001
             called["crash"] = exit_code
 
-        def finalize_run(self, reason, exit_code):
+        def finalize_run(self, reason, exit_code) -> None:  # noqa: ANN001
             called["finalize"] = (reason, exit_code)
 
     monkeypatch.setattr(cli, "MetaHarness", DummyHarness)
@@ -173,28 +175,28 @@ def test_cli_main_treats_resource_block_as_blocked(monkeypatch):
     assert "crash" not in called
 
 
-def test_cli_main_starts_and_stops_web_ui(monkeypatch):
+def test_cli_main_starts_and_stops_web_ui(monkeypatch) -> None:  # noqa: ANN001, D103
     called = {}
 
     class DummyHarness:
-        def __init__(self, cfg, llm_cfg):
+        def __init__(self, cfg, llm_cfg) -> None:  # noqa: ANN001
             called["cfg"] = cfg
             called["llm_cfg"] = llm_cfg
 
-        def run(self, resume=False):
+        def run(self, resume=False) -> int:  # noqa: ANN001
             called["resume"] = resume
             return 0
 
-        def run_crash_review(self, exit_code):
+        def run_crash_review(self, exit_code) -> None:  # noqa: ANN001
             called["crash"] = exit_code
 
-        def finalize_run(self, reason, exit_code):
+        def finalize_run(self, reason, exit_code) -> None:  # noqa: ANN001
             called["finalize"] = (reason, exit_code)
 
     class DummyUI:
         url = "http://127.0.0.1:8765/"
 
-        def stop(self):
+        def stop(self) -> None:
             called["stopped"] = True
 
     monkeypatch.setattr(cli, "MetaHarness", DummyHarness)

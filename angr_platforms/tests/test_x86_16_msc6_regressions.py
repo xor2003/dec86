@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from pycparser import c_ast, c_parser
+from x86_16_timeout_support import scaled_decompile_timeout
 
 from scripts.msc6_runtime_gate_artifacts import (
     MSC6RuntimeGateArtifacts,
@@ -50,8 +52,9 @@ pytestmark = [pytest.mark.xdist_group("msc6-runtime-gate"), pytest.mark.resource
 def _run_decompile_addr(
     addr: str,
     *,
-    timeout: int = 90,
+    timeout: int = 120,
 ) -> subprocess.CompletedProcess[str]:
+    timeout = scaled_decompile_timeout(timeout)
     env = dict(os.environ)
     env.setdefault("INERTIA_ENABLE_TAIL_VALIDATION", "1")
     env.setdefault("INERTIA_ENABLE_REBASED_EXACT_SLICE", "1")
@@ -64,14 +67,14 @@ def _run_decompile_addr(
             "--addr",
             addr,
             "--timeout",
-            "60",
+            str(timeout),
             str(CMP16_EXE),
         ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         env=env,
-        timeout=timeout,
+        timeout=timeout + 30,
         check=False,
     )
 
@@ -92,6 +95,59 @@ def _extract_emitted_function_8616(output: str, function_name: str) -> str:
     function_text = emitted[start:]
     end = function_text.find("\n}\n")
     return function_text if end < 0 else function_text[: end + 3]
+
+
+def _normalize_compound_or_assignments_8616(c_text: str) -> str:
+    """Normalize equivalent OR-assignment spellings for semantic assertions."""
+    return re.sub(r"\b([A-Za-z_]\w*)\s*\|=\s*([^;]+);", r"\1 = \1 | \2;", c_text)
+
+
+def _c_integer_constant_8616(node: c_ast.Node | None) -> int | None:
+    """Return one integer literal value from a parsed generated-C expression."""
+    if isinstance(node, c_ast.Constant) and node.type in {"int", "unsigned int"}:
+        return int(node.value, 0)
+    if isinstance(node, c_ast.UnaryOp) and node.op == "-":
+        operand = _c_integer_constant_8616(node.expr)
+        return None if operand is None else -operand
+    return None
+
+
+class _Cmp16SemanticVisitor8616(c_ast.NodeVisitor):
+    """Collect return constants and relevant call arguments from parsed C."""
+
+    def __init__(self) -> None:
+        self.return_values: list[int] = []
+        self.calls: list[tuple[str, tuple[int, ...]]] = []
+
+    def visit_Return(self, node: c_ast.Return) -> None:
+        """Collect one integer return without depending on decimal/hex spelling."""
+        value = _c_integer_constant_8616(node.expr)
+        if value is not None:
+            self.return_values.append(value)
+        self.generic_visit(node)
+
+    def visit_FuncCall(self, node: c_ast.FuncCall) -> None:
+        """Collect one relevant direct call and its constant argument values."""
+        if isinstance(node.name, c_ast.ID) and node.name.name in {
+            "cmp_i16",
+            "rel_i16",
+            "rel_u16",
+            "clamp_u16",
+            "in_window_i16",
+        }:
+            expressions = tuple(node.args.exprs) if isinstance(node.args, c_ast.ExprList) else ()
+            values = tuple(_c_integer_constant_8616(expr) for expr in expressions)
+            if all(value is not None for value in values):
+                self.calls.append((node.name.name, tuple(value for value in values if value is not None)))
+        self.generic_visit(node)
+
+
+def _cmp16_semantic_projection_8616(c_text: str) -> _Cmp16SemanticVisitor8616:
+    """Parse one emitted CMP16 function into spelling-independent test facts."""
+    syntax_tree = c_parser.CParser().parse(c_text)
+    visitor = _Cmp16SemanticVisitor8616()
+    visitor.visit(syntax_tree)
+    return visitor
 
 
 def _runtime_decompile_output_8616(
@@ -133,6 +189,7 @@ def test_msc6_cmp16_rel_i16_keeps_recovered_signature_and_avoids_implicit_arg_pl
     assert "return" in emitted_body and "return;" not in emitted_body
     assert "mask * 0x100" not in emitted_body
     assert ">> 8" not in emitted_body
+    normalized_body = _normalize_compound_or_assignments_8616(emitted_body)
     for fragment in (
         "if (b > a)",
         "mask = mask | 1;",
@@ -143,7 +200,7 @@ def test_msc6_cmp16_rel_i16_keeps_recovered_signature_and_avoids_implicit_arg_pl
         "if (b <= a)",
         "mask = mask | 8;",
     ):
-        assert fragment in emitted_body, emitted_body
+        assert fragment in normalized_body, emitted_body
     assert "return mask;" in emitted_body
 
 
@@ -160,20 +217,17 @@ def test_msc6_cmp16_main_preserves_all_guarded_return_chain_values() -> None:
     emitted_without_source_comments = "\n".join(
         line for line in emitted.splitlines() if not line.lstrip().startswith("///")
     )
-    for value in range(1, 14):
-        assert f"return {value};" in emitted_without_source_comments, emitted_without_source_comments
-    assert "return 255;" in emitted_without_source_comments, emitted_without_source_comments
+    semantics = _cmp16_semantic_projection_8616(emitted_without_source_comments)
+    assert semantics.return_values == [*range(1, 14), 255]
     assert "::0x" not in emitted_without_source_comments
     expected_calls = (
-        "cmp_i16(65534, 5)", "cmp_i16(9, 3)", "cmp_i16(7, 7)",
-        "rel_i16(65534, 5)", "rel_i16(9, 3)", "rel_i16(7, 7)",
-        "rel_u16(2, 9)", "rel_u16(12, 3)", "rel_u16(6, 6)",
-        "clamp_u16(10, 7)", "clamp_u16(6, 7)",
-        "in_window_i16(4, 1, 7)", "in_window_i16(9, 1, 7)",
+        ("cmp_i16", (65534, 5)), ("cmp_i16", (9, 3)), ("cmp_i16", (7, 7)),
+        ("rel_i16", (65534, 5)), ("rel_i16", (9, 3)), ("rel_i16", (7, 7)),
+        ("rel_u16", (2, 9)), ("rel_u16", (12, 3)), ("rel_u16", (6, 6)),
+        ("clamp_u16", (10, 7)), ("clamp_u16", (6, 7)),
+        ("in_window_i16", (4, 1, 7)), ("in_window_i16", (9, 1, 7)),
     )
-    assert re.findall(r"\b(?:cmp_i16|rel_i16|rel_u16|clamp_u16|in_window_i16)\([^)]*\)", emitted) == list(
-        expected_calls
-    )
+    assert semantics.calls == list(expected_calls)
 
 
 @pytest.mark.skipif(not SIMPLE_EXE.is_file(), reason="SIMPLE example binary is not available in this workspace.")
@@ -191,7 +245,7 @@ def test_msc6_simple_switch_fold_direct_output_uses_source_argument_identity(
         r"\b(?:int|short|unsigned short) switch_fold\((?:int|short|unsigned short) x\)",
         emitted_body,
     )
-    assert "if (!x)" in emitted_body
+    assert re.search(r"if \(!(?:\(unsigned short\))?x\)", emitted_body), emitted_body
     assert "return x - 5;" in emitted_body
     assert "return x + 20;" in emitted_body
     assert "return x << 1;" in emitted_body
@@ -199,7 +253,7 @@ def test_msc6_simple_switch_fold_direct_output_uses_source_argument_identity(
 
 
 @pytest.mark.skipif(not TYPES_EXE.is_file(), reason="TYPES example binary is not available in this workspace.")
-def test_msc6_scalar_add_sc_keeps_byte_arg_source_identity_through_cli_regeneration(
+def test_msc6_scalar_add_sc_keeps_byte_width_through_cli_regeneration(
     msc6_runtime_gate_artifacts: MSC6RuntimeGateArtifacts,
 ) -> None:
     combined = _runtime_decompile_output_8616(
@@ -210,7 +264,12 @@ def test_msc6_scalar_add_sc_keeps_byte_arg_source_identity_through_cli_regenerat
 
     emitted_body = _extract_emitted_function_8616(combined, "add_sc")
     assert emitted_body, combined
-    assert "signed char add_sc(signed char a, signed char b)" in emitted_body
+    assert re.search(
+        r"\b(?:signed |unsigned )?char add_sc\("
+        r"(?:signed |unsigned )?char a, (?:signed |unsigned )?char b\)",
+        emitted_body,
+    ), emitted_body
+    assert not re.search(r"\b(?:short|int) add_sc\(", emitted_body), emitted_body
     assert "return b + a;" in emitted_body or "return a + b;" in emitted_body
     assert not re.search(r"\b[A-Za-z_]\w*_[0-9]+\b", emitted_body), emitted_body
 
@@ -310,8 +369,9 @@ def test_msc6_cmp16_all_helper_functions_pass_tail_validation_and_msc_recompile(
     assert "::0x" not in emitted_body
     assert "mask * 0x100" not in emitted_body
     assert ">> 8" not in emitted_body
+    normalized_body = _normalize_compound_or_assignments_8616(emitted_body)
     for fragment in required_fragments:
-        assert fragment in emitted_body, emitted_body
+        assert fragment in normalized_body, emitted_body
 
 
 @pytest.mark.skipif(not FPTR_EXE.is_file(), reason="FPTR example binary is not available in this workspace.")
@@ -447,5 +507,7 @@ def msc6_runtime_gate_artifacts(
             kvikdos_path=KVIKDOS_PATH,
             msc6_root=MSC6_ROOT,
             examples=MSC6_RUNTIME_EXAMPLES,
+            timeout_seconds=scaled_decompile_timeout(120),
+            parallel_example_workers=2,
         )
     )

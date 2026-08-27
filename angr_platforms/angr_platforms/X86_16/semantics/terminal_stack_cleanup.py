@@ -11,12 +11,16 @@ Forbidden: source/COD/name evidence, rendered-text recovery, or prototype repair
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 from angr.errors import SimEngineError, SimTranslationError
 
-from ..frontend_instruction_reachability import decoded_block_instructions_8616
+from ..frontend_instruction_reachability import (
+    collect_instruction_reachability_8616,
+    decoded_block_instructions_8616,
+)
 
 __all__ = [
     "TerminalStackCleanupEvidence8616",
@@ -29,7 +33,45 @@ class _FunctionSurface8616(Protocol):
     """angr function fields consumed by terminal cleanup semantics."""
 
     addr: int
-    block_addrs_set: set[int]
+    block_addrs_set: Collection[int]
+
+
+class _LoadedObjectSurface8616(Protocol):
+    """Loaded-object bounds used for bounded callee reachability."""
+
+    min_addr: int
+    max_addr: int
+
+
+class _LoaderSurface8616(Protocol):
+    """Third-party loader lookup needed for bodyless callee recovery."""
+
+    def find_object_containing(self, address: int) -> _LoadedObjectSurface8616 | None:
+        """Return the loaded object containing ``address``."""
+        ...
+
+
+class _ProjectLoaderSurface8616(Protocol):
+    """Project loader boundary used by terminal cleanup recovery."""
+
+    loader: _LoaderSurface8616
+
+
+class _ProjectCleanupCacheSurface8616(Protocol):
+    """Owned project extension retaining complete immutable cleanup proofs."""
+
+    _inertia_terminal_stack_cleanup_cache_8616: dict[
+        int,
+        TerminalStackCleanupEvidence8616,
+    ]
+
+
+@dataclass(frozen=True, slots=True)
+class _ReachableFunctionSurface8616:
+    """Request-local function boundary proven by frontend reachability."""
+
+    addr: int
+    block_addrs_set: frozenset[int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +102,21 @@ class TerminalStackCleanupEvidence8616:
         if not self.complete or len(self.cleanup_amounts) != 1:
             return None
         return next(iter(self.cleanup_amounts))
+
+
+def _terminal_cleanup_cache_8616(
+    project: object,
+) -> dict[int, TerminalStackCleanupEvidence8616]:
+    """Return the project-owned cache of complete callee cleanup proofs."""
+    surface = cast(_ProjectCleanupCacheSurface8616, project)
+    try:
+        cache = surface._inertia_terminal_stack_cleanup_cache_8616
+    except AttributeError:
+        cache = {}
+        surface._inertia_terminal_stack_cleanup_cache_8616 = cache
+    if not isinstance(cache, dict):
+        raise TypeError("terminal stack cleanup cache must be a dict")
+    return cache
 
 
 def _inner_instruction_8616(insn: object) -> object:
@@ -204,25 +261,62 @@ def terminal_stack_cleanup_at_address_8616(
     project: object,
     address: int,
 ) -> TerminalStackCleanupEvidence8616:
-    """Collect a known function or a direct one-block bodyless cleanup contract."""
+    """Collect cleanup from a known or bounded binary-reachable callee body."""
+    cache = _terminal_cleanup_cache_8616(project)
+    cached = cache.get(address)
+    if cached is not None:
+        return cached
     try:
         function = cast(Any, project).kb.functions.function(addr=address, create=False)
     except (AttributeError, KeyError):
         function = None
     if function is not None:
-        return collect_terminal_stack_cleanup_evidence_8616(project, function)
+        known = collect_terminal_stack_cleanup_evidence_8616(project, function)
+        if known.complete:
+            cache[address] = known
+            return known
+    else:
+        known = None
     try:
         insns = decoded_block_instructions_8616(cast(Any, project), address, opt_level=0)
     except (KeyError, SimEngineError, SimTranslationError, ValueError):
         insns = ()
-    if not insns or any(
+    direct_body_is_branched = any(
         _is_conditional_branch_8616(_mnemonic_8616(insn))
         or _mnemonic_8616(insn) in {"jmp", "jmpw", "ljmp"}
         for insn in insns
-    ):
-        return TerminalStackCleanupEvidence8616(frozenset(), 1, 0, 0, 0, 1)
-    terminal = insns[-1]
-    cleanup = _return_cleanup_8616(terminal) if _mnemonic_8616(terminal).startswith("ret") else None
-    if not isinstance(cleanup, int):
-        return TerminalStackCleanupEvidence8616(frozenset(), 1, 0, 0, 0, 1)
-    return TerminalStackCleanupEvidence8616(frozenset({cleanup}), 1, 1, 1, 1, 0)
+    )
+    terminal = None if not insns or direct_body_is_branched else insns[-1]
+    cleanup = (
+        _return_cleanup_8616(terminal)
+        if terminal is not None and _mnemonic_8616(terminal).startswith("ret")
+        else None
+    )
+    if isinstance(cleanup, int):
+        evidence = TerminalStackCleanupEvidence8616(frozenset({cleanup}), 1, 1, 1, 1, 0)
+        cache[address] = evidence
+        return evidence
+
+    try:
+        loaded = cast(_ProjectLoaderSurface8616, project).loader.find_object_containing(address)
+    except (AttributeError, KeyError, TypeError):
+        loaded = None
+    if loaded is not None and isinstance(loaded.min_addr, int) and isinstance(loaded.max_addr, int):
+        reachability = collect_instruction_reachability_8616(
+            project,
+            entry=address,
+            region_start=loaded.min_addr,
+            region_end=loaded.max_addr + 1,
+        )
+        if reachability.complete:
+            reachable = _ReachableFunctionSurface8616(
+                address,
+                frozenset(reachability.reachable_block_addrs),
+            )
+            evidence = collect_terminal_stack_cleanup_evidence_8616(project, reachable)
+            if evidence.complete:
+                cache[address] = evidence
+                return evidence
+    if known is not None:
+        return known
+    return TerminalStackCleanupEvidence8616(frozenset(), 1, 0, 0, 0, 1)

@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import os
 import subprocess
@@ -24,7 +24,7 @@ def _run_python_snippet(args: list[str], snippet: str, memory_mb: int = 512) -> 
     return [line for line in result.stdout.splitlines() if line.strip()]
 
 
-def test_sitecustomize_caps_python_stdin_one_liners():
+def test_sitecustomize_caps_python_stdin_one_liners() -> None:  # noqa: D103
     lines = _run_python_snippet(
         ["-"],
         "import resource\nimport sys\nprint(sys.argv[0])\nprint(resource.getrlimit(resource.RLIMIT_AS)[0])\n",
@@ -33,7 +33,7 @@ def test_sitecustomize_caps_python_stdin_one_liners():
     assert int(lines[1]) == 512 * 1024 * 1024
 
 
-def test_sitecustomize_caps_python_dash_c_one_liners():
+def test_sitecustomize_caps_python_dash_c_one_liners() -> None:  # noqa: D103
     env = os.environ.copy()
     env["INERTIA_ONELINER_MAX_MEMORY_MB"] = "384"
     env["PYTHONPATH"] = str(ROOT)

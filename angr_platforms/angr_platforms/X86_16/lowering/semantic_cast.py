@@ -9,10 +9,9 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Callable
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 

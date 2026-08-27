@@ -102,7 +102,7 @@ def test_default_tier_keeps_full_msc6_tiny_pipeline():
     args = test_pipeline._parse_args([])
 
     assert args.ultra_quickc_decompile_timeout == 180
-    assert args.sortdemo_decompile_timeout == 240
+    assert args.sortdemo_decompile_timeout == 360
     assert args.sortdemo_run_timeout == 2400
     assert test_pipeline._selected_lanes(args) == (
         "unit-focused",

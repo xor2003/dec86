@@ -29,7 +29,7 @@ def _make_codegen():
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=SimpleNamespace()),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
 
 def test_storage_domain_classifier_distinguishes_variable_domains():

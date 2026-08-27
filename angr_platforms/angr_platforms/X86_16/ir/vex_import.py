@@ -30,9 +30,14 @@ from .core import (
     MemSpace,
     SegmentOrigin,
 )
+from .logical_memory_capture import (
+    collect_accesses_for_block,
+    collect_accesses_for_function,
+)
+from .logical_memory_resolution import resolve_logical_memory_accesses_8616
 from .regs import register_name_from_offset
 from .ssa import build_x86_16_block_local_ssa
-from .ssa_function import build_x86_16_function_ssa
+from .ssa_function import SSAFunctionArtifact, build_x86_16_function_ssa
 from .vex_addressing import SegmentHintMap, block_segment_hints, expr_to_address
 from .vex_condition_lifting import build_condition_from_binop, expr_to_condition
 from .vex_condition_transport import (
@@ -159,6 +164,10 @@ class _CodegenBoundary(Protocol):
     """Codegen boundary fields where IR artifacts are attached."""
 
     cfunc: _CFuncBoundary | None
+    _inertia_vex_ir_source_function_8616: object
+    _inertia_raw_vex_ir_artifact_8616: IRFunctionArtifact
+    _inertia_raw_vex_ir_frame_8616: object
+    _inertia_raw_vex_ir_function_ssa_8616: SSAFunctionArtifact
     _inertia_vex_ir_artifact: IRFunctionArtifact
     _inertia_vex_ir_summary: dict[str, object]
     _inertia_vex_ir_frame: object
@@ -434,10 +443,13 @@ def _int_size(
     type_environment: object | None = None,
 ) -> int:
     """Return the byte width advertised by a VEX expression boundary."""
-    return vex_expr_size_bytes(
-        expr,
-        type_environment=type_environment,
-        default=default,
+    return cast(
+        int,
+        vex_expr_size_bytes(
+            expr,
+            type_environment=type_environment,
+            default=default,
+        ),
     )
 
 
@@ -463,7 +475,7 @@ def _expr_to_value(
                 name=inner.name,
                 offset=inner.offset,
                 const=inner.const,
-                size=inner.size,
+                size=_int_size(expr, type_environment=type_environment),
                 expr=(op,),
                 source_tmp=inner.source_tmp,
             )
@@ -508,11 +520,12 @@ def _expr_to_value(
                 return IRValue(MemSpace.TMP, name=f"cond_t{tmp_id}", size=1, expr=("condition_tmp",))
             return IRValue(MemSpace.TMP, name=f"t{tmp_id}")
         if tag == "Iex_Get":
-            name = register_name_from_offset(_expr_offset(expr))
+            size = _int_size(expr, type_environment=type_environment)
+            name = register_name_from_offset(_expr_offset(expr), size=size)
             return IRValue(
                 MemSpace.REG,
                 name=name,
-                size=_int_size(expr, type_environment=type_environment),
+                size=size,
             )
         if tag == "Iex_Const":
             return IRValue(
@@ -655,8 +668,11 @@ def _stmt_to_instr(
             return IRInstr(op="MOV", dst=dst, args=(value,), size=value.size, addr=instruction_addr)
         if tag == "Ist_Put":
             offset = _stmt_offset(stmt)
-            dst = IRValue(MemSpace.REG, name=register_name_from_offset(offset), size=2)
             src = convert(_stmt_data(stmt), tmps, conditions)
+            # Byte registers share their 16-bit parent's storage identity;
+            # true 32-bit writes retain the full 80386 parent width.
+            dst_size = 4 if src.size == 4 else 2
+            dst = IRValue(MemSpace.REG, name=register_name_from_offset(offset, size=dst_size), size=dst_size)
             return IRInstr(op="MOV", dst=dst, args=(src,), size=src.size or dst.size, addr=instruction_addr)
         if tag == "Ist_Store":
             data_expr = _stmt_data(stmt)
@@ -765,20 +781,26 @@ def _block_to_ir(
 
 def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFunctionArtifact:
     """Build a typed IR function artifact from an angr function boundary."""
+    function_addr = _function_addr(function)
     blocks: list[IRBlock] = []
     refusals: list[IRRefusal] = []
     transport_reports: list[VexConditionTransportStats8616] = []
     project_boundary = cast(_ProjectBoundary, project)
-    for block_addr in _function_block_addrs(function):
-        try:
-            block = project_boundary.factory.block(block_addr, opt_level=0)
-        except Exception as ex:  # noqa: BLE001
-            refusals.append(IRRefusal("block_decode_failed", str(ex), _external_int(block_addr)))
-            continue
-        ir_block, transport_report = _block_to_ir(block)
-        blocks.append(ir_block)
-        transport_reports.append(transport_report)
-        refusals.extend(ir_block.refusals)
+    with collect_accesses_for_function(function_addr) as captured:
+        for block_addr in _function_block_addrs(function):
+            block_addr_int = _external_int(block_addr)
+            capture_start = len(captured.accesses)
+            try:
+                with collect_accesses_for_block(block_addr_int):
+                    block = project_boundary.factory.block(block_addr, opt_level=0, collect_data_refs=True)
+            except Exception as ex:
+                del captured.accesses[capture_start:]
+                refusals.append(IRRefusal("block_decode_failed", str(ex), block_addr_int))
+                continue
+            ir_block, transport_report = _block_to_ir(block)
+            blocks.append(ir_block)
+            transport_reports.append(transport_report)
+            refusals.extend(ir_block.refusals)
     graph_successors = _function_graph_successors(
         function,
         frozenset(block.addr for block in blocks),
@@ -795,14 +817,29 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
         ]
     ownership = canonicalize_ir_block_ownership_8616(tuple(blocks))
     blocks = list(ownership.blocks)
+    captured_accesses = tuple(captured.accesses)
+    removed_capture_sites = frozenset(
+        (removal.source_block_addr, removal.instr_addr)
+        for removal in ownership.removals
+    )
+    owned_captures = tuple(
+        capture
+        for capture in captured_accesses
+        if (capture.block_addr, capture.insn_addr) not in removed_capture_sites
+    )
+    logical_memory = resolve_logical_memory_accesses_8616(
+        function_addr,
+        tuple(blocks),
+        owned_captures,
+    )
     transport_stats = aggregate_vex_condition_transport_stats_8616(
         tuple(transport_reports)
     )
-    function_addr = _function_addr(function)
     artifact = IRFunctionArtifact(
         function_addr=function_addr,
         blocks=tuple(blocks),
         refusals=tuple(refusals),
+        logical_memory=logical_memory,
     )
     return IRFunctionArtifact(
         function_addr=artifact.function_addr,
@@ -812,7 +849,17 @@ def build_x86_16_ir_function_artifact(project: object, function: object) -> IRFu
             **build_x86_16_ir_function_artifact_summary(artifact),
             **ownership.stats.to_summary(),
             **transport_stats.to_summary(),
+            **{
+                f"logical_memory_{name}": count
+                for name, count in logical_memory.stats.to_dict().items()
+            },
+            "logical_memory_closed": logical_memory.closed,
+            "logical_memory_capture_raw_fact_count": len(captured_accesses),
+            "logical_memory_capture_owned_fact_count": len(owned_captures),
+            "logical_memory_capture_ownership_discarded_count": len(captured_accesses)
+            - len(owned_captures),
         },
+        logical_memory=logical_memory,
     )
 
 
@@ -887,7 +934,7 @@ def build_x86_16_ir_function_artifact_summary(artifact: IRFunctionArtifact) -> d
 
 
 def apply_x86_16_vex_ir_artifact(project: object, codegen: object) -> bool:
-    """Attach a typed VEX IR artifact to codegen and function metadata."""
+    """Attach or reuse typed IR for one immutable codegen function snapshot."""
     codegen_boundary = cast(_CodegenBoundary, codegen)
     try:
         cfunc = codegen_boundary.cfunc
@@ -905,6 +952,23 @@ def apply_x86_16_vex_ir_artifact(project: object, codegen: object) -> bool:
     function = project_boundary.kb.functions.function(addr=func_addr, create=False)
     if function is None:
         return False
+    try:
+        existing_source = codegen_boundary._inertia_vex_ir_source_function_8616
+        existing_artifact = codegen_boundary._inertia_raw_vex_ir_artifact_8616
+        existing_frame = codegen_boundary._inertia_raw_vex_ir_frame_8616
+        existing_ssa = codegen_boundary._inertia_raw_vex_ir_function_ssa_8616
+    except AttributeError:
+        existing_source = None
+    else:
+        if (
+            existing_source is function
+            and isinstance(existing_artifact, IRFunctionArtifact)
+            and existing_artifact.function_addr == func_addr
+            and existing_frame is not None
+            and isinstance(existing_ssa, SSAFunctionArtifact)
+            and existing_ssa.function_addr == func_addr
+        ):
+            return False
     artifact = build_x86_16_ir_function_artifact(project, function)
     frame_artifact = build_x86_16_ir_frame_access_artifact(artifact)
     function_ssa = build_x86_16_function_ssa(artifact)
@@ -912,6 +976,10 @@ def apply_x86_16_vex_ir_artifact(project: object, codegen: object) -> bool:
     codegen_boundary._inertia_vex_ir_summary = artifact.summary
     codegen_boundary._inertia_vex_ir_frame = frame_artifact
     codegen_boundary._inertia_vex_ir_function_ssa = function_ssa
+    codegen_boundary._inertia_vex_ir_source_function_8616 = function
+    codegen_boundary._inertia_raw_vex_ir_artifact_8616 = artifact
+    codegen_boundary._inertia_raw_vex_ir_frame_8616 = frame_artifact
+    codegen_boundary._inertia_raw_vex_ir_function_ssa_8616 = function_ssa
     info = _function_info(function)
     if info is not None:
         info["x86_16_vex_ir_artifact"] = artifact.to_dict()

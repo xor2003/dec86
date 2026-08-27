@@ -12,6 +12,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, cast
 
 from ..callsite_summary import build_callsite_summary_inventory_8616
@@ -75,8 +76,40 @@ class _CodegenBoundary8616(Protocol):
     _inertia_vex_ir_summary: dict[str, object]
     _inertia_vex_ir_function_ssa: SSAFunctionArtifact
     _inertia_vex_ir_function_ssa_stage_8616: FunctionSSAArtifactStage8616
+    _inertia_raw_vex_ir_artifact_8616: IRFunctionArtifact
     _inertia_call_stack_effect_artifact_8616: CallStackEffectArtifact8616
     _inertia_call_output_artifact_8616: CallOutputArtifact8616
+    _inertia_call_semantic_projection_8616: CallSemanticProjection8616
+
+
+@dataclass(frozen=True, slots=True)
+class CallSemanticProjection8616:
+    """Coherent immutable IR-to-Semantics projection for one function snapshot."""
+
+    source_ir: IRFunctionArtifact
+    effects: CallStackEffectArtifact8616
+    outputs: CallOutputArtifact8616
+    function_ssa: SSAFunctionArtifact
+
+    @property
+    def complete(self) -> bool:
+        """Return whether every projection has closed evidence accounting."""
+        function_addr = self.source_ir.function_addr
+        return bool(
+            self.effects.stats.closed
+            and self.outputs.stats.closed
+            and self.effects.function.function_addr == function_addr
+            and self.outputs.function.function_addr == function_addr
+            and self.function_ssa.function_addr == function_addr
+        )
+
+    def matches_codegen(
+        self,
+        current_ir: IRFunctionArtifact,
+        current_ssa: SSAFunctionArtifact,
+    ) -> bool:
+        """Return whether dynamic codegen fields still expose this projection."""
+        return self.outputs.function is current_ir and self.function_ssa is current_ssa
 
 
 def semantic_function_ssa_artifact_at_address_8616(
@@ -181,6 +214,15 @@ def apply_x86_16_call_stack_effects_8616(project: object, codegen: object) -> bo
         return False
     if not isinstance(raw_ir, IRFunctionArtifact) or raw_ir.function_addr != cfunc.addr:
         return False
+    try:
+        source_ir = boundary._inertia_raw_vex_ir_artifact_8616
+    except AttributeError:
+        try:
+            source_ir = boundary._inertia_call_semantic_projection_8616.source_ir
+        except AttributeError:
+            source_ir = raw_ir
+    if not isinstance(source_ir, IRFunctionArtifact) or source_ir.function_addr != cfunc.addr:
+        return False
     project_boundary = cast(_ProjectBoundary8616, project)
     try:
         function = project_boundary.kb.functions.function(addr=cfunc.addr, create=False)
@@ -188,10 +230,28 @@ def apply_x86_16_call_stack_effects_8616(project: object, codegen: object) -> bo
         return False
     if function is None:
         return False
+    try:
+        existing_projection = boundary._inertia_call_semantic_projection_8616
+        existing_stage = boundary._inertia_vex_ir_function_ssa_stage_8616
+        existing_ssa = boundary._inertia_vex_ir_function_ssa
+    except AttributeError:
+        existing_projection = None
+    if (
+        isinstance(existing_projection, CallSemanticProjection8616)
+        and existing_projection.source_ir is source_ir
+        and existing_stage is FunctionSSAArtifactStage8616.SEMANTIC
+        and existing_projection.matches_codegen(raw_ir, existing_ssa)
+    ):
+        if not existing_projection.complete:
+            raise PipelineHardError(
+                "cached call Semantics projection has incomplete evidence accounting",
+                layer="semantics",
+            )
+        return False
     effects, outputs, function_ssa = build_semantic_function_ssa_8616(
         project,
         function,
-        ir_artifact=raw_ir,
+        ir_artifact=source_ir,
     )
     if not outputs.function.refusals:
         publication = publish_function_ssa_artifact_8616(
@@ -225,6 +285,12 @@ def apply_x86_16_call_stack_effects_8616(project: object, codegen: object) -> bo
     )
     boundary._inertia_call_stack_effect_artifact_8616 = effects
     boundary._inertia_call_output_artifact_8616 = outputs
+    boundary._inertia_call_semantic_projection_8616 = CallSemanticProjection8616(
+        source_ir,
+        effects,
+        outputs,
+        function_ssa,
+    )
     typed_function = cast(_FunctionBoundary8616, function)
     try:
         info: dict[str, object] | None = typed_function.info

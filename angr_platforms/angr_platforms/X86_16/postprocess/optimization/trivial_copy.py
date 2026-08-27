@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Iterable
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CAssignment, CConstant, CFunctionCall, CStatements, CVariable
 from angr.sim_variable import SimStackVariable
@@ -19,7 +19,7 @@ from ...decompiler_postprocess_utils import _iter_c_nodes_deep_8616
 
 __all__ = ["prune_adjacent_temporary_copy_assignments_8616"]
 
-TrivialCopyKey8616: TypeAlias = tuple[object, ...]
+type TrivialCopyKey8616 = tuple[object, ...]
 
 
 class TrivialCopyCodegen8616(Protocol):

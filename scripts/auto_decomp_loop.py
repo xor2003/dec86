@@ -261,9 +261,7 @@ def _goals_met(cfg: LoopConfig, stats: IterationStats) -> bool:
         return False
     if cfg.gate_require_zero_asm_fallback and stats.asm_fallback_count != 0:
         return False
-    if stats.dead_setup_escaped != 0:
-        return False
-    return True
+    return stats.dead_setup_escaped == 0
 
 
 def _print_status(stats: IterationStats, best: IterationStats | None, stagnation: int) -> None:

@@ -13,8 +13,8 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "angr_platforms"))
 
 
-def test_byteops_decompilation():
-    """Test BYTEOPS.COD decompilation for byte-register correctness"""
+def test_byteops_decompilation():  # noqa: ANN201
+    """Test BYTEOPS.COD decompilation for byte-register correctness."""
     import archinfo
 
     from decompile import Project, decompile_one

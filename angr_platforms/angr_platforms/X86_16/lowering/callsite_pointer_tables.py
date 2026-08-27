@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CFunctionCall, CIndexedVariable, CVariable
 from angr.sim_type import SimType, SimTypeArray, SimTypeFixedSizeArray, SimTypePointer
@@ -28,7 +28,7 @@ from .global_declarations import (
     replace_global_declaration_spec_from_stronger_typed_evidence_8616,
 )
 
-CallsitePushSource8616: TypeAlias = tuple[object, ...]
+type CallsitePushSource8616 = tuple[object, ...]
 
 __all__ = [
     "CallsitePointerTableStats8616",

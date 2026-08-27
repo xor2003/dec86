@@ -100,7 +100,7 @@ def _label_looks_like_function(name: str) -> bool:
     if "_" not in lowered:
         return True
     prefix, suffix = lowered.rsplit("_", 1)
-    if suffix and all(ch in "0123456789abcdef" for ch in suffix):
+    if suffix and all(ch in "0123456789abcdef" for ch in suffix):  # noqa: SIM102
         if any(token in prefix for token in _CONTROL_FLOW_LABEL_TOKENS):
             return False
     return True

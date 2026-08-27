@@ -16,11 +16,11 @@ from .stack_helpers import (
     StackEmulator,
     pop_far_return_frame16,
     pop_far_return_frame32,
-    pop_interrupt_frame16,
-    pop_interrupt_frame32,
     push_far_return_frame16,
     push_far_return_frame32,
     push_privilege_stack32,
+    return_interrupt16,
+    return_interrupt32,
 )
 
 
@@ -85,15 +85,9 @@ class EmuInstr(X86Instruction):
     def iret(self, _instr: dict[str, object]) -> None:
         """Pop an interrupt return frame and restore flags plus CS:IP/EIP."""
         if self.mode32:
-            eip, cs, flags = pop_interrupt_frame32(cast(StackEmulator, self.emu))
-            self.emu.set_eflags(flags)
-            self.emu.set_segment(sgreg_t.CS, cs)
-            self.emu.set_eip(eip)
+            return_interrupt32(cast(StackEmulator, self.emu))
         else:
-            ip, cs, flags = pop_interrupt_frame16(cast(StackEmulator, self.emu))
-            self.emu.set_flags(flags)
-            self.emu.set_segment(sgreg_t.CS, cs)
-            self.emu.set_ip(ip)
+            return_interrupt16(cast(StackEmulator, self.emu))
 
     def chk_ring(self, _dpl: int) -> bool:
         """Return whether the current privilege level permits an operation."""

@@ -87,9 +87,8 @@ def test_agent_trace_text_is_compact_and_pipe_delimited(monkeypatch):
     monkeypatch.setenv("INERTIA_OTEL_MIN_MS", "0")
 
     assert configure_telemetry_from_env()
-    with span("test.parent", addr="0x1000"):
-        with span("test.child", function_label="cmp_i16", low_memory_path=False):
-            pass
+    with span("test.parent", addr="0x1000"), span("test.child", function_label="cmp_i16", low_memory_path=False):
+        pass
 
     text = build_agent_trace_text()
 

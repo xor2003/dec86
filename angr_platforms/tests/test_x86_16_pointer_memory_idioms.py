@@ -114,7 +114,7 @@ def test_pointer_memory_idiom_normalizes_byte_fill_as_for_loop_with_return() -> 
         cstyle_null_cmp=False,
         next_idx=lambda _name: 0,
         project=SimpleNamespace(arch=Arch86_16()),
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     index = CVariable(SimStackVariable(-2, 2, base="bp", name="index"), codegen=codegen)
     initializer = CAssignment(index, CConstant(0, SimTypeShort(False), codegen=codegen), codegen=codegen)
     iterator = CAssignment(
@@ -226,7 +226,7 @@ def test_pointer_swap_validation_accepts_only_symbolic_write_precision_delta() -
 def test_pointer_swap_splice_preserves_unrelated_counter_effect() -> None:
     project = SimpleNamespace(arch=Arch86_16())
     cfunc = _SlottedCFunction()
-    codegen = SimpleNamespace(project=project, cfunc=cfunc, next_idx=lambda _name: 0)
+    codegen = SimpleNamespace(project=project, cfunc=cfunc, next_idx=lambda _name: 0, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     word_type = SimTypeShort(False).with_arch(project.arch)
     pointer_type = SimTypePointer(word_type).with_arch(project.arch)
     left = CVariable(
@@ -309,7 +309,7 @@ def test_pointer_swap_splice_preserves_unrelated_counter_effect() -> None:
 def test_pointer_swap_splice_refuses_without_exact_statement_provenance() -> None:
     project = SimpleNamespace(arch=Arch86_16())
     cfunc = _SlottedCFunction()
-    codegen = SimpleNamespace(project=project, cfunc=cfunc, next_idx=lambda _name: 0)
+    codegen = SimpleNamespace(project=project, cfunc=cfunc, next_idx=lambda _name: 0, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     word_type = SimTypeShort(False).with_arch(project.arch)
     pointer_type = SimTypePointer(word_type).with_arch(project.arch)
     left = CVariable(SimStackVariable(4, 2, base="bp", name="left"), variable_type=pointer_type, codegen=codegen)
@@ -343,7 +343,7 @@ def test_pointer_swap_splice_refuses_without_exact_statement_provenance() -> Non
 def test_pointer_swap_splice_is_idempotent_for_exact_materialized_sequence() -> None:
     project = SimpleNamespace(arch=Arch86_16())
     cfunc = _SlottedCFunction()
-    codegen = SimpleNamespace(project=project, cfunc=cfunc, next_idx=lambda _name: 0)
+    codegen = SimpleNamespace(project=project, cfunc=cfunc, next_idx=lambda _name: 0, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     word_type = SimTypeShort(False).with_arch(project.arch)
     pointer_type = SimTypePointer(word_type).with_arch(project.arch)
     left = CVariable(SimStackVariable(4, 2, base="bp", name="left"), variable_type=pointer_type, codegen=codegen)

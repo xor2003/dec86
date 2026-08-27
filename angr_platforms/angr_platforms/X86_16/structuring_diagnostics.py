@@ -21,7 +21,7 @@ from __future__ import annotations
 import typing
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from .codegen_metadata import get_codegen_side_metadata
 from .structuring_cfg_grouping import CFGGroupingArtifact, build_cfg_grouping_artifact
@@ -31,13 +31,13 @@ from .structuring_cfg_snapshot import CFGSnapshot
 from .structuring_ir_hints import StructuringIRHintArtifact, build_structuring_ir_hint_artifact
 
 __all__ = [
-    "StructuringFailureReason",
-    "StructuringDiagnostic",
     "DiagnosticsCollector",
+    "StructuringDiagnostic",
     "StructuringDiagnosticsReport",
+    "StructuringFailureReason",
+    "apply_x86_16_structuring_diagnostics",
     "build_failure_reason_from_stats",
     "suggest_recovery_hints",
-    "apply_x86_16_structuring_diagnostics",
 ]
 
 
@@ -85,7 +85,7 @@ class StructuringDiagnostic:
     message: str
     region_ids: tuple[int, ...] = ()  # Affected region IDs if applicable
     iteration: int = 0  # Iteration when diagnostic occurred
-    reason: Optional[StructuringFailureReason] = None
+    reason: StructuringFailureReason | None = None
 
 
 @dataclass(slots=True)
@@ -105,7 +105,7 @@ class DiagnosticsCollector:
         kind: str,
         message: str,
         region_ids: tuple[int, ...] = (),
-        reason: Optional[StructuringFailureReason] = None,
+        reason: StructuringFailureReason | None = None,
     ) -> None:
         """Add a diagnostic entry."""
         diag = StructuringDiagnostic(
@@ -177,19 +177,19 @@ class StructuringDiagnosticsReport:
     final_iteration: int
     max_iterations: int
     diagnostics_collector: DiagnosticsCollector
-    failure_reason: Optional[StructuringFailureReason] = None
+    failure_reason: StructuringFailureReason | None = None
     recovery_hints: list[str] = field(default_factory=list)
-    cfg_snapshot: Optional[CFGSnapshot] = None
-    cfg_ownership: Optional[CFGOwnershipArtifact] = None
-    cfg_indirect: Optional[CFGIndirectSiteArtifact] = None
-    cfg_grouping: Optional[CFGGroupingArtifact] = None
-    ir_hints: Optional[StructuringIRHintArtifact] = None
+    cfg_snapshot: CFGSnapshot | None = None
+    cfg_ownership: CFGOwnershipArtifact | None = None
+    cfg_indirect: CFGIndirectSiteArtifact | None = None
+    cfg_grouping: CFGGroupingArtifact | None = None
+    ir_hints: StructuringIRHintArtifact | None = None
 
     def add_recovery_hint(self, hint: str) -> None:
         """Add a recovery hint for debugging."""
         self.recovery_hints.append(hint)
 
-    def last_failure_reason(self) -> Optional[StructuringFailureReason]:
+    def last_failure_reason(self) -> StructuringFailureReason | None:
         """Get reason of last failure, if any."""
         for diag in reversed(self.diagnostics_collector.diagnostics):
             if diag.kind == "failure" and diag.reason:
@@ -228,7 +228,7 @@ class StructuringDiagnosticsReport:
         }
 
 
-def build_failure_reason_from_stats(stats: object) -> Optional[StructuringFailureReason]:
+def build_failure_reason_from_stats(stats: object) -> StructuringFailureReason | None:
     """Classify failure reason from structuring statistics.
 
     Args:

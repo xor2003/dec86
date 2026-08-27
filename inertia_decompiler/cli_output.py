@@ -31,11 +31,7 @@ def _looks_like_diagnostic_line(line: str) -> bool:
     if re.match(r"^\[\d{2}:\d{2}:\d{2}\]\s+", stripped):
         stripped = re.sub(r"^\[\d{2}:\d{2}:\d{2}\]\s+", "", stripped, count=1)
     return (
-        stripped.startswith("/*")
-        or stripped.startswith("[dbg]")
-        or stripped.startswith("summary:")
-        or stripped.startswith("WARNING")
-        or stripped.startswith("ERROR")
+        stripped.startswith(("/*", "[dbg]", "summary:", "WARNING", "ERROR"))
     )
 
 

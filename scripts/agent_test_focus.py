@@ -282,7 +282,7 @@ def _run_git_changed_files() -> tuple[str, ...]:
         completed = subprocess.run(command, check=False, text=True, capture_output=True)
         if completed.returncode != 0:
             continue
-        lines.extend((line.strip() for line in completed.stdout.splitlines()))
+        lines.extend(line.strip() for line in completed.stdout.splitlines())
     return tuple(sorted({line for line in lines if line}))
 
 
@@ -318,7 +318,7 @@ def _infer_layers_for_path(path: str) -> tuple[str, ...]:
     if not detected:
         if normalized.startswith("scripts/"):
             detected.append("quality")
-        elif normalized.startswith("inertia_decompiler/") or normalized.startswith("angr_platforms/angr_platforms/X86_16/"):
+        elif normalized.startswith(("inertia_decompiler/", "angr_platforms/angr_platforms/X86_16/")):
             detected.append("frontend")
     return _ordered_unique(detected)
 
@@ -343,9 +343,9 @@ def _collect_layer_focus(layer_to_files: dict[str, tuple[str, ...]]) -> dict[str
         return {
             "quality": LayerPlan(
                 layer="quality",
-                files=tuple(),
+                files=(),
                 tests=quality_anchor_tests,
-                focused_tests=tuple(),
+                focused_tests=(),
                 anchor_tests=quality_anchor_tests,
             ),
         }
@@ -359,7 +359,7 @@ def _collect_layer_focus(layer_to_files: dict[str, tuple[str, ...]]) -> dict[str
             if file_tests:
                 focused_tests.extend(file_tests)
         # Explicit layer calls with no file list still keep anchor coverage.
-        ordered_tests = _ordered_unique(tuple((*focused_tests, *anchor_tests)))
+        ordered_tests = _ordered_unique((*focused_tests, *anchor_tests))
         layer_plans[layer] = LayerPlan(
             layer=layer,
             files=files,
@@ -376,9 +376,9 @@ def _collect_layer_focus_fallback() -> dict[str, LayerPlan]:
     return {
         "quality": LayerPlan(
             layer="quality",
-            files=tuple(),
+            files=(),
             tests=anchor_tests,
-            focused_tests=tuple(),
+            focused_tests=(),
             anchor_tests=anchor_tests,
         ),
     }
@@ -419,22 +419,22 @@ def _plan(
 
     layer_to_files = _resolve_layers_for_files(selected_files, layer_filter)
     if not layer_to_files and layer_filter is None:
-        layer_to_files = {"quality": tuple()}
+        layer_to_files = {"quality": ()}
 
     layer_to_plans = _collect_layer_focus(layer_to_files) if layer_to_files else _collect_layer_focus_fallback()
 
     plans: list[LayerPlan] = []
     for layer in LAYER_ORDER:
         if layer in layer_to_plans:
-            plans.append(layer_to_plans[layer])
+            plans.append(layer_to_plans[layer])  # noqa: PERF401
 
     if include_shared:
         plans.append(
             LayerPlan(
                 layer="shared-baseline",
-                files=tuple(),
+                files=(),
                 tests=LAYER_SHARED_TESTS,
-                focused_tests=tuple(),
+                focused_tests=(),
                 anchor_tests=LAYER_SHARED_TESTS,
             )
         )
@@ -557,9 +557,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.json_only:
         print("\nRunning:")
-    if truncated:
-        if not args.json_only:
-            print("  (max-tests reached; trimmed after ordered, high-signal-first selection)")
+    if truncated and not args.json_only:
+        print("  (max-tests reached; trimmed after ordered, high-signal-first selection)")
     for target in selected_tests:
         if not args.json_only:
             print(f"  - {target}")

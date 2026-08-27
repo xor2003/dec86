@@ -36,7 +36,12 @@ SORT_FUNCTIONS: tuple[int, ...] = (
     0x10CE0, 0x10E70, 0x10F38,
 )
 _FUNCTION_MARKER_RE = re.compile(
-    r"/\* == function (?P<addr>0x[0-9a-f]+) (?P<name>[A-Za-z_][A-Za-z0-9_]*) == \*/",
+    r"(?m)^/\* == function (?P<addr>0x[0-9a-f]+) (?P<name>[A-Za-z_][A-Za-z0-9_]*) == \*/",
+    re.IGNORECASE,
+)
+_FUNCTION_RESULT_RE = re.compile(
+    r"(?m)^(?:\[[^\n]*\][ \t]+)?/\* info: function 0x[0-9a-f]+ "
+    r"[A-Za-z_][A-Za-z0-9_]* attempt=[a-z_]+ validation=[a-z_]+ \*/[ \t]*$",
     re.IGNORECASE,
 )
 _GLOBAL_ARRAY_RE = re.compile(
@@ -100,12 +105,28 @@ def _definition_end(source: str, function_name: str) -> int:
     return int(generated_function_definition_span(source, function_name)[1])
 
 
+def _last_definition_span(source: str, function_name: str) -> tuple[int, int]:
+    """Return the last balanced definition, after parallel-worker diagnostics."""
+    latest: tuple[int, int] | None = None
+    cursor = 0
+    while cursor < len(source):
+        try:
+            start, end = generated_function_definition_span(source[cursor:], function_name)
+        except ValueError:
+            break
+        latest = (cursor + start, cursor + end)
+        cursor += end
+    if latest is None:
+        raise ValueError(f"missing generated definition for {function_name}")
+    return latest
+
+
 def _extract_generated_functions_plain(transcript: str) -> dict[int, GeneratedFunction]:
     """Extract functions from transcripts without the legacy function markers."""
     spans: dict[int, tuple[int, int]] = {}
     for address in SORT_FUNCTIONS:
         try:
-            spans[address] = generated_function_definition_span(
+            spans[address] = _last_definition_span(
                 transcript,
                 _function_name_from_address(address),
             )
@@ -114,8 +135,12 @@ def _extract_generated_functions_plain(transcript: str) -> dict[int, GeneratedFu
     if not spans:
         return {}
     first_definition = min(start for start, _end in spans.values())
-    declaration_start = transcript.rfind("#include", 0, first_definition)
-    prelude = transcript[max(0, declaration_start) : first_definition]
+    function_results = tuple(_FUNCTION_RESULT_RE.finditer(transcript, 0, first_definition))
+    if function_results:
+        declaration_start = transcript.find("\n", function_results[-1].end()) + 1
+    else:
+        declaration_start = max(0, transcript.rfind("#include", 0, first_definition))
+    prelude = transcript[declaration_start:first_definition]
     functions: dict[int, GeneratedFunction] = {}
     for address, (start, end) in spans.items():
         name = _function_name_from_address(address)
@@ -267,8 +292,7 @@ def build_and_run(
         ],
         cwd=REPO_ROOT,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     if compile_process.returncode != 0:
@@ -277,8 +301,7 @@ def build_and_run(
         [str(executable)],
         cwd=REPO_ROOT,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         timeout=30,
         check=False,
     )

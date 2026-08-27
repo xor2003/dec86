@@ -9,13 +9,13 @@ C-AST mutation.
 
 from __future__ import annotations
 
-from typing import TypeAlias, cast
+from typing import cast
 
 from .ir.condition_ir import inverted_comparison_op_8616
 
 __all__ = ["PredicateToken8616", "invert_predicate_token_8616"]
 
-PredicateToken8616: TypeAlias = tuple[object, ...]
+type PredicateToken8616 = tuple[object, ...]
 
 
 def invert_predicate_token_8616(token: PredicateToken8616) -> PredicateToken8616:

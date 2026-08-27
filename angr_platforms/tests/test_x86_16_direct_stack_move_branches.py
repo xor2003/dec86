@@ -22,6 +22,9 @@ from angr_platforms.X86_16.lowering.real_mode_linear import (
     DirectStackMoveFact8616,
     DirectStackMoveSourceKind8616,
 )
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.structuring.condition_replay import (
     StructuringConditionReplayFact8616,
@@ -124,7 +127,7 @@ def _surface(
         next_idx=lambda _name: 1,
         cstyle_null_cmp=False,
         project=project,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     source = CVariable(SimStackVariable(-2, 2, base="bp", name="next"), codegen=codegen)
     destination = CVariable(SimStackVariable(-4, 2, base="bp", name="minimum"), codegen=codegen)
     condition = CBinaryOp(
@@ -255,6 +258,34 @@ def test_replays_unique_typed_stack_move_after_codegen_drops_assignment_tag() ->
     assert materialize_direct_stack_move_branch_ownership_8616(
         project, codegen, function
     )
+    assert root.statements == [root.statements[0]]
+    assert body.statements[1] is assignment
+
+
+def test_replays_assignment_through_bp_to_entry_sp_projection() -> None:
+    project, function, codegen, root, body, assignment = _surface()
+    destination = assignment.lhs.variable
+    source = assignment.rhs.variable
+    destination.offset = -6
+    source.offset = -4
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=destination,
+        cvar=assignment.lhs,
+        bp_offset=-4,
+        entry_sp_offset=-6,
+        size=2,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=source,
+        cvar=assignment.rhs,
+        bp_offset=-2,
+        entry_sp_offset=-4,
+        size=2,
+    )
+
+    assert materialize_direct_stack_move_branch_ownership_8616(project, codegen, function)
     assert root.statements == [root.statements[0]]
     assert body.statements[1] is assignment
 
@@ -429,7 +460,7 @@ def test_refuses_assignment_relocation_without_condition_provenance() -> None:
 
 
 def test_finalizer_fails_when_proven_branch_assignment_is_absent() -> None:
-    project, function, codegen, root, _body, assignment = _surface()
+    project, function, codegen, _root, _body, assignment = _surface()
     assignment.lhs = CVariable(
         SimStackVariable(-6, 2, base="bp", name="wrong_destination"),
         codegen=codegen,

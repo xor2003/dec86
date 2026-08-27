@@ -22,11 +22,11 @@ __all__ = [
     "build_stack_variable_bindings_8616",
     "select_normalized_stack_argument_annotation_spec_8616",
     "select_stack_annotation_spec_8616",
-    "stable_stack_binding_tags_8616",
-    "stack_binding_inherits_containing_name_8616",
-    "stack_binding_from_tags_8616",
     "stable_ss_address_to_ir_value_8616",
     "stable_ss_offset_to_ir_address_8616",
+    "stable_stack_binding_tags_8616",
+    "stack_binding_from_tags_8616",
+    "stack_binding_inherits_containing_name_8616",
 ]
 
 STACK_SLOT_BINDING_TAG_8616: str = "inertia_stack_slot_binding_8616"
@@ -74,7 +74,7 @@ class StackVariableBinding:
     - No cross-segment ambiguity exists
     """
 
-    __slots__ = ("bp_offset", "size", "var_name", "is_stable")
+    __slots__ = ("bp_offset", "is_stable", "size", "var_name")
 
     def __init__(self, bp_offset: int, size: int, *, var_name: str | None = None, is_stable: bool = True) -> None:
         """Create a proven stack binding for one SS:BP-relative slot."""

@@ -10,7 +10,7 @@ import contextlib
 import os
 import typing
 from collections.abc import Callable, Iterator
-from typing import Any, Protocol, TypeAlias, cast
+from typing import Any, Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -26,6 +26,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
     CWhileLoop,
 )
+from angr.sim_variable import SimRegisterVariable
 from capstone.x86_const import X86_OP_IMM, X86_OP_MEM, X86_REG_BP, X86_REG_INVALID
 
 from .c_ast_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
@@ -41,10 +42,14 @@ from .decompiler_postprocess_jcc import (
     _translate_cmp_jcc_guard_8616,
 )
 from .tail_validation_fingerprint import _expr_fingerprint
+from .validation_call_return_storage import (
+    direct_call_return_condition_projection_8616,
+    stored_call_return_condition_projection_8616,
+)
 
 __all__ = ["build_x86_16_contextual_condition_fingerprints"]
 
-FlagTestInfo8616: TypeAlias = tuple[object, int, bool] | tuple[object, int, int, bool]
+type FlagTestInfo8616 = tuple[object, int, bool] | tuple[object, int, int, bool]
 
 
 class _RegisterNameProvider8616(Protocol):
@@ -133,6 +138,11 @@ def _owned_materialized_condition_fingerprint_8616(cond: object, project: object
     fingerprint = raw_fingerprint if isinstance(raw_fingerprint, str) else ""
     if any(isinstance(current, CFunctionCall) for current in _iter_c_nodes_deep_8616(cond)):
         return fingerprint
+    if any(
+        isinstance(current, CVariable) and isinstance(current.variable, SimRegisterVariable)
+        for current in _iter_c_nodes_deep_8616(cond)
+    ):
+        return None
     if _fingerprint_contains_raw_register_8616(fingerprint) or "virtual:" in fingerprint:
         return None
     return fingerprint
@@ -143,13 +153,31 @@ def _decoded_jcc_condition_fingerprint(cond: object, project: object) -> str | N
     key = _condition_tags_8616(cond)
     if key is None:
         return None
-    materialized_fingerprint = _owned_materialized_condition_fingerprint_8616(cond, project)
-    if materialized_fingerprint is not None:
-        return materialized_fingerprint
     ins_addr, block_addr = key
     codegen = _dynamic_attr_8616(project, "_inertia_tail_validation_active_codegen", None) or _dynamic_attr_8616(
         cond, "codegen", None
     )
+    direct_return = direct_call_return_condition_projection_8616(
+        project,
+        codegen,
+        jcc_addr=ins_addr,
+        block_addr=block_addr,
+        structured_condition=cond,
+    )
+    if direct_return is not None:
+        return direct_return.fingerprint
+    materialized_fingerprint = _owned_materialized_condition_fingerprint_8616(cond, project)
+    if materialized_fingerprint is not None:
+        return materialized_fingerprint
+    stored_return = stored_call_return_condition_projection_8616(
+        project,
+        codegen,
+        jcc_addr=ins_addr,
+        block_addr=block_addr,
+        structured_condition=cond,
+    )
+    if stored_return is not None:
+        return stored_return.fingerprint
     direct_cmp_fingerprint = _direct_cmp_immediate_jcc_fingerprint(cond, project, codegen, block_addr, ins_addr)
     decoded = _translate_cmp_jcc_guard_8616(project, codegen, block_addr, ins_addr)
     if decoded is None:

@@ -32,6 +32,10 @@ class _Codegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _identity(space: MemSpace, offset: int, *, width: int = 1) -> SegmentedLoadIdentity8616:

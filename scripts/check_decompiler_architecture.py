@@ -47,6 +47,12 @@ _POSTPROCESS_LEGACY_IMPORT_ALLOWLIST: dict[str, frozenset[str]] = {
             # Compatibility-only edges: logical call-shape reconciliation and
             # indirect-call parameter recovery remain owned by Types/Lowering.
             ".lowering.call_argument_shape",
+            # Compatibility-only edge: typed call-argument expression
+            # materialization is owned by Types/Lowering.
+            ".lowering.call_argument_expression",
+            # Cache-only edge: the legacy call bridge compares materialized
+            # argument tokens owned by Lowering; it must not produce proof.
+            ".lowering.call_argument_semantic_token",
             # Compatibility-only edge: the legacy call bridge consumes typed
             # stack objects selected by Lowering; it must not discover them.
             ".lowering.call_argument_stack_sources",
@@ -92,6 +98,9 @@ _POSTPROCESS_LEGACY_IMPORT_ALLOWLIST: dict[str, frozenset[str]] = {
             # Orchestration-only edge: aggregate proof and array typing remain
             # in lowering; postprocess may replay its bounded final consumer.
             ".lowering.stack_aggregate_objects",
+            # Orchestration-only edge: Lowering owns exact BP/entry-SP storage
+            # identity; final rendering may replay only its proven display name.
+            ".lowering.stack_variable_display_names",
             ".lowering.stack_prototype_materialization",
             # Orchestration-only edge: final AST regeneration replays exact
             # ConditionIR access provenance before Types/Lowering consumes it.
@@ -283,6 +292,9 @@ _CLI_ALLOWED_X86_16_IMPORTS = frozenset(
         "angr_platforms.X86_16.decompiler_postprocess_stage",
         "angr_platforms.X86_16.decompiler_postprocess_typed_conditions",
         "angr_platforms.X86_16.decompiler_postprocess_utils",
+        # CLI only scopes an IR-owned typed publication bridge around angr lift;
+        # flag effects and liveness remain owned by X86_16 Semantics and IR.
+        "angr_platforms.X86_16.ir.status_flag_lift_context",
         "angr_platforms.X86_16.lowering.condition_transfer",
         # CLI may replay final typed declaration metadata before rendering.
         "angr_platforms.X86_16.lowering.callsite_prototype_declarations",
@@ -313,6 +325,9 @@ _CLI_ALLOWED_X86_16_IMPORTS = frozenset(
         "angr_platforms.X86_16.lowering.stack_aggregate_objects",
         "angr_platforms.X86_16.lowering.stack_lowering",
         "angr_platforms.X86_16.lowering.stack_lowering_from_facts",
+        # CLI may replay Lowering-owned display names after third-party stack
+        # identifier normalization; storage identity remains outside the CLI.
+        "angr_platforms.X86_16.lowering.stack_variable_display_names",
         # CLI only replays the idempotent Types/Lowering width consumer after
         # codegen regeneration; Widening evidence remains owned under X86_16.
         "angr_platforms.X86_16.lowering.stack_prototype_materialization",
@@ -376,6 +391,11 @@ _VALIDATION_HEADER_MARKERS: dict[str, tuple[str, ...]] = {
         "Layer: Tail Validation",
         "build contextual condition fingerprints from recovered structured C and IR evidence",
         "semantic recovery from source, COD, assembly, or rendered C text",
+    ),
+    "tail_validation_frame_spills.py": (
+        "Layer: Tail Validation",
+        "consume closed Types/Lowering frame-prune evidence",
+        "semantic recovery, frame inference, or AST cleanup in validation",
     ),
     "tail_validation_fingerprint.py": (
         "Layer: Tail Validation",
@@ -460,6 +480,11 @@ _VALIDATION_HEADER_MARKERS: dict[str, tuple[str, ...]] = {
     "validation/canonicalize.py": (
         "Layer: Validation",
         "Owns canonical equivalence checking and validation diagnostics",
+        "Do not mutate IR, rewrite emitted C, recover semantics, or accept source/COD-backed proof",
+    ),
+    "validation/status_flag_preservation.py": (
+        "Layer: Validation",
+        "identify exact structured instruction sites",
         "Do not mutate IR, rewrite emitted C, recover semantics, or accept source/COD-backed proof",
     ),
 }
@@ -1245,6 +1270,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/alias/alias_model.py",
     "angr_platforms/angr_platforms/X86_16/alias/alias_model_impl.py",
     "angr_platforms/angr_platforms/X86_16/alias/callsite_stack_merge.py",
+    "angr_platforms/angr_platforms/X86_16/alias/register_reaching_source.py",
     "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_contracts.py",
     "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_destinations.py",
     "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_projection.py",
@@ -1255,6 +1281,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_contracts.py",
     "angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_projection.py",
     "angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py",
+    "angr_platforms/angr_platforms/X86_16/alias/indexed_address_program.py",
     "angr_platforms/angr_platforms/X86_16/alias/storage_fact_join.py",
     "angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py",
     "angr_platforms/angr_platforms/X86_16/alias/condition_register_carriers.py",
@@ -1264,6 +1291,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/alias/stack_lowering.py",
     "angr_platforms/angr_platforms/X86_16/alias/segment_stack_fragments.py",
     "angr_platforms/angr_platforms/X86_16/alias/segment_stack_restore.py",
+    "angr_platforms/angr_platforms/X86_16/alias/logical_stack_memory_projection.py",
     "angr_platforms/angr_platforms/X86_16/alias/stack_memory_access_projection.py",
     "angr_platforms/angr_platforms/X86_16/alias/stack_memory_ssa.py",
     "angr_platforms/angr_platforms/X86_16/alias/stack_memory_ssa_contracts.py",
@@ -1276,19 +1304,24 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/arch_86_16.py",
     "angr_platforms/angr_platforms/X86_16/access.py",
     "angr_platforms/angr_platforms/X86_16/addressing_helpers.py",
+    "angr_platforms/angr_platforms/X86_16/segment_offset_execution.py",
     "angr_platforms/angr_platforms/X86_16/address_ir.py",
     "angr_platforms/angr_platforms/X86_16/alu_helpers.py",
     "angr_platforms/angr_platforms/X86_16/annotations.py",
+    "angr_platforms/angr_platforms/X86_16/borrow_verification.py",
     "angr_platforms/angr_platforms/X86_16/condition_ir.py",
     "angr_platforms/angr_platforms/X86_16/condition_trace.py",
+    "angr_platforms/angr_platforms/X86_16/condition_call_effects.py",
     "angr_platforms/angr_platforms/X86_16/function_evidence_inventory.py",
     "angr_platforms/angr_platforms/X86_16/helper_abi.py",
     "angr_platforms/angr_platforms/X86_16/regs.py",
     "angr_platforms/angr_platforms/X86_16/ir/__init__.py",
     "angr_platforms/angr_platforms/X86_16/ir/address_ir.py",
+    "angr_platforms/angr_platforms/X86_16/ir/condition_fingerprint_masks.py",
     "angr_platforms/angr_platforms/X86_16/ir/condition_ir.py",
     "angr_platforms/angr_platforms/X86_16/ir/condition_register_bindings.py",
     "angr_platforms/angr_platforms/X86_16/ir/core.py",
+    "angr_platforms/angr_platforms/X86_16/ir/function_artifact.py",
     "angr_platforms/angr_platforms/X86_16/ir/block_ownership.py",
     "angr_platforms/angr_platforms/X86_16/ir/effects.py",
     "angr_platforms/angr_platforms/X86_16/ir/indexed_address_access_normalization.py",
@@ -1299,8 +1332,17 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/ir/indexed_address_evidence.py",
     "angr_platforms/angr_platforms/X86_16/ir/indexed_address_pipeline.py",
     "angr_platforms/angr_platforms/X86_16/ir/ir_canonicalize_8616.py",
+    "angr_platforms/angr_platforms/X86_16/ir/logical_memory_capture.py",
+    "angr_platforms/angr_platforms/X86_16/ir/logical_memory_contracts.py",
+    "angr_platforms/angr_platforms/X86_16/ir/logical_memory_matching.py",
+    "angr_platforms/angr_platforms/X86_16/ir/logical_memory_rebase.py",
+    "angr_platforms/angr_platforms/X86_16/ir/logical_memory_resolution.py",
+    "angr_platforms/angr_platforms/X86_16/ir/logical_memory_value_trace.py",
     "angr_platforms/angr_platforms/X86_16/ir/regs.py",
     "angr_platforms/angr_platforms/X86_16/ir/scalar_definitions.py",
+    "angr_platforms/angr_platforms/X86_16/ir/status_flag_binary_cfg.py",
+    "angr_platforms/angr_platforms/X86_16/ir/status_flag_cfg_projection.py",
+    "angr_platforms/angr_platforms/X86_16/ir/status_flag_lift_context.py",
     "angr_platforms/angr_platforms/X86_16/ir/segment_contract.py",
     "angr_platforms/angr_platforms/X86_16/ir/segment_state.py",
     "angr_platforms/angr_platforms/X86_16/ir/segment_state_solver.py",
@@ -1331,12 +1373,16 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/callsite_target_inventory.py",
     "angr_platforms/angr_platforms/X86_16/caller_return_use_contracts.py",
     "angr_platforms/angr_platforms/X86_16/callsite_summary.py",
+    "angr_platforms/angr_platforms/X86_16/callsite_register_provenance.py",
+    "angr_platforms/angr_platforms/X86_16/synthetic_call_stub_evidence.py",
     "angr_platforms/angr_platforms/X86_16/call_target_identity.py",
     "angr_platforms/angr_platforms/X86_16/callsite_stack_metadata.py",
     "angr_platforms/angr_platforms/X86_16/stack_probe_fact_trace.py",
     "angr_platforms/angr_platforms/X86_16/tail_validation_condition_context.py",
+    "angr_platforms/angr_platforms/X86_16/tail_validation_frame_spills.py",
     "angr_platforms/angr_platforms/X86_16/tail_validation_fingerprint.py",
     "angr_platforms/angr_platforms/X86_16/tail_validation_routing.py",
+    "angr_platforms/angr_platforms/X86_16/tail_validation_selector_returns.py",
     "angr_platforms/angr_platforms/X86_16/tail_validation_stack_policy.py",
     "angr_platforms/angr_platforms/X86_16/targeted_recovery_artifact.py",
     "angr_platforms/angr_platforms/X86_16/layer_module_status.py",
@@ -1344,6 +1390,8 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/corpus_scan.py",
     "angr_platforms/angr_platforms/X86_16/milestone_report.py",
     "angr_platforms/angr_platforms/X86_16/exact_region_diagnostics.py",
+    "angr_platforms/angr_platforms/X86_16/frontend_function_instructions.py",
+    "angr_platforms/angr_platforms/X86_16/frontend_instruction_kinds.py",
     "angr_platforms/angr_platforms/X86_16/frontend_instruction_reachability.py",
     "angr_platforms/angr_platforms/X86_16/recovery_instruction_coverage.py",
     "angr_platforms/angr_platforms/X86_16/flair_extract.py",
@@ -1458,6 +1506,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/validation_calls.py",
     "angr_platforms/angr_platforms/X86_16/validation_call_multiplicity.py",
     "angr_platforms/angr_platforms/X86_16/validation_call_argument_sources.py",
+    "angr_platforms/angr_platforms/X86_16/validation_call_return_storage.py",
     "angr_platforms/angr_platforms/X86_16/validation_branch_conditions.py",
     "angr_platforms/angr_platforms/X86_16/validation_condition_identity.py",
     "angr_platforms/angr_platforms/X86_16/validation_control_flow.py",
@@ -1489,9 +1538,13 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/__init__.py",
     "angr_platforms/angr_platforms/X86_16/lowering/annotated_global_refs.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_argument_shape.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/call_argument_expression.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/call_argument_semantic_token.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_argument_state.py",
     "angr_platforms/angr_platforms/X86_16/callsite_argument_value_sources.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_execution_frame_carriers.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/call_argument_carrier_liveness.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/call_return_frame.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_output_stack_objects.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_return_selectors.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_return_stack_stores.py",
@@ -1540,6 +1593,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_return_pointer_flow.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_return_types.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_reaching_defs.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_physical_defs.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_trial_types.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_trial_collection.py",
     "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_solver.py",
@@ -1548,6 +1602,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/callee_argument_interface.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_collection.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_evidence.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/global_object_program_requirement.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_interface.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_sources.py",
     "angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_type_surface.py",
@@ -1567,6 +1622,7 @@ _PROMOTED_TYPED_FILES = (
     "scripts/generated_translation_unit_assembly.py",
     "scripts/indexed_address_parity_inventory.py",
     "inertia_decompiler/cli_batch_c_output.py",
+    "inertia_decompiler/indexed_alias_program_context.py",
     "inertia_decompiler/generated_external_function_contracts.py",
     "inertia_decompiler/generated_c_function_extraction.py",
     "inertia_decompiler/generated_translation_unit_assembly.py",
@@ -1618,6 +1674,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/stack_argument_identity.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_declaration_identity.py",
     "angr_platforms/angr_platforms/X86_16/lowering/call_argument_stack_sources.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/call_return_stack_conditions.py",
     "angr_platforms/angr_platforms/X86_16/lowering/structured_intrinsics.py",
     "angr_platforms/angr_platforms/X86_16/lowering/terminal_call_return_types.py",
     "angr_platforms/angr_platforms/X86_16/lowering/terminal_register_return_values.py",
@@ -1630,14 +1687,28 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/lowering/stack_lowering.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_from_facts.py",
     "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_stack_storage.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_bit_ast.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_bit_contracts.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_bit_placement.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_bit_predicate.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_bit_scope.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_bit_values.py",
     "angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_ast.py",
     "angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_contracts.py",
     "angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_evidence.py",
     "angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_placement.py",
     "angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignments.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/call_return_frame_arguments.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/wide_call_return_recombine.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_memory_ssa.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_memory_ssa_contracts.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/instruction_bp_stack_access.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_projection_retirement.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/stack_variable_coordinates.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/stack_variable_display_names.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/stack_word_load_materialization.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/stack_word_load_projection.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/stack_word_projection.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_impl.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_prototype_materialization.py",
     "angr_platforms/angr_platforms/X86_16/lowering/stack_probe_return_facts.py",
@@ -1656,6 +1727,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/const_prop.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/copy_prop.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce.py",
+    "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_purity.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/dce_walk.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_liveness.py",
     "angr_platforms/angr_platforms/X86_16/postprocess/optimization/local_declarations.py",
@@ -1669,11 +1741,15 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/semantics/binary_call_contracts.py",
     "angr_platforms/angr_platforms/X86_16/semantics/branch_target_return.py",
     "angr_platforms/angr_platforms/X86_16/semantics/call_contracts.py",
+    "angr_platforms/angr_platforms/X86_16/semantics/call_register_effects.py",
+    "angr_platforms/angr_platforms/X86_16/semantics/call_return_frame_effects.py",
+    "angr_platforms/angr_platforms/X86_16/semantics/call_return_frame_projections.py",
     "angr_platforms/angr_platforms/X86_16/semantics/call_output_contracts.py",
     "angr_platforms/angr_platforms/X86_16/semantics/call_outputs.py",
     "angr_platforms/angr_platforms/X86_16/semantics/call_stack_effect_contracts.py",
     "angr_platforms/angr_platforms/X86_16/semantics/call_stack_effect_pipeline.py",
     "angr_platforms/angr_platforms/X86_16/semantics/call_stack_effects.py",
+    "angr_platforms/angr_platforms/X86_16/semantics/register_value_preservation.py",
     "angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_cfg.py",
     "angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_contracts.py",
     "angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_links.py",
@@ -1682,10 +1758,14 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/semantics/evidence_cache.py",
     "angr_platforms/angr_platforms/X86_16/semantics/expression_analysis.py",
     "angr_platforms/angr_platforms/X86_16/semantics/flag_semantics.py",
+    "angr_platforms/angr_platforms/X86_16/semantics/immediate_semantics.py",
     "angr_platforms/angr_platforms/X86_16/semantics/direct_call_result_storage.py",
     "angr_platforms/angr_platforms/X86_16/semantics/direct_global_ordering.py",
     "angr_platforms/angr_platforms/X86_16/semantics/memory_semantics.py",
     "angr_platforms/angr_platforms/X86_16/semantics/software_interrupt_inputs.py",
+    "angr_platforms/angr_platforms/X86_16/semantics/status_flag_contracts.py",
+    "angr_platforms/angr_platforms/X86_16/semantics/status_flag_cfg_liveness.py",
+    "angr_platforms/angr_platforms/X86_16/semantics/status_flag_liveness.py",
     "angr_platforms/angr_platforms/X86_16/semantics/stack_frame_recovery.py",
     "angr_platforms/angr_platforms/X86_16/semantics/terminal_call_paths.py",
     "angr_platforms/angr_platforms/X86_16/semantics/terminal_memory_output_contracts.py",
@@ -1699,8 +1779,20 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/structuring/call_argument_join_conditions.py",
     "angr_platforms/angr_platforms/X86_16/structuring/call_argument_joins.py",
     "angr_platforms/angr_platforms/X86_16/structuring/call_return_conditions.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/call_return_register_placement.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/call_return_store_placement.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/stored_call_result_contracts.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/stored_call_result_occurrences.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/stored_call_result_assignments.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/stored_call_return_early_exit.py",
     "angr_platforms/angr_platforms/X86_16/structuring/control_flow.py",
     "angr_platforms/angr_platforms/X86_16/structuring/condition_materialization.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/single_branch_return_orientation.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/shared_call_occurrence_finalization.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/shared_call_result_aliases.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/shared_tail_call_ownership.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/shared_tail_cfg_topology.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/shared_tail_structured_ancestry.py",
     "angr_platforms/angr_platforms/X86_16/structuring/multi_arm_condition_ownership.py",
     "angr_platforms/angr_platforms/X86_16/structuring/clinic_option_policy.py",
     "angr_platforms/angr_platforms/X86_16/structuring/loop_condition_materialization.py",
@@ -1724,16 +1816,26 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_branches.py",
     "angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_ownership.py",
     "angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loop_entries.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_pretest_body.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_pretest_body_evidence.py",
     "angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loop_evidence.py",
     "angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loop_sites.py",
     "angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_pretest_initializers.py",
     "angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loops.py",
     "angr_platforms/angr_platforms/X86_16/structuring/direct_stack_move_loop_tail_replay.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/canonical_for_loops.py",
     "angr_platforms/angr_platforms/X86_16/structuring/loop_body_repair.py",
     "angr_platforms/angr_platforms/X86_16/structuring/loop_break_jcc.py",
     "angr_platforms/angr_platforms/X86_16/structuring/loop_exit_return_guards.py",
     "angr_platforms/angr_platforms/X86_16/structuring/loop_recovery.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/natural_loop_topology.py",
     "angr_platforms/angr_platforms/X86_16/structuring/return_chains.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/condition_storage_identity.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/surplus_guard_contracts.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/return_chain_integrity.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/selector_return_projection.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/loop_carried_terminal_return_contracts.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/loop_carried_terminal_returns.py",
     "angr_platforms/angr_platforms/X86_16/structuring/terminal_register_values.py",
     "angr_platforms/angr_platforms/X86_16/structuring/software_interrupt_returns.py",
     "angr_platforms/angr_platforms/X86_16/structuring/scalar_return_evidence.py",
@@ -1744,11 +1846,14 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/structuring/__init__.py",
     "angr_platforms/angr_platforms/X86_16/validation/__init__.py",
     "angr_platforms/angr_platforms/X86_16/validation/canonicalize.py",
+    "angr_platforms/angr_platforms/X86_16/validation/status_flag_preservation.py",
     "angr_platforms/angr_platforms/X86_16/validation_interrupt_calls.py",
     "angr_platforms/angr_platforms/X86_16/widening_alias.py",
     "angr_platforms/angr_platforms/X86_16/widening_model.py",
     "angr_platforms/angr_platforms/X86_16/widening/__init__.py",
     "angr_platforms/angr_platforms/X86_16/widening/global_object_layout.py",
+    "angr_platforms/angr_platforms/X86_16/widening/global_object_layout_codec.py",
+    "angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_layout.py",
     "angr_platforms/angr_platforms/X86_16/widening/register_widening.py",
     "angr_platforms/angr_platforms/X86_16/widening/segmented_load_identity.py",
     "angr_platforms/angr_platforms/X86_16/widening/segmented_load_widening.py",
@@ -1777,6 +1882,7 @@ _PROMOTED_TYPED_FILES = (
     "angr_platforms/angr_platforms/X86_16/pipeline/render_authority.py",
     "inertia_decompiler/__init__.py",
     "inertia_decompiler/acceptance_scorecard.py",
+    "inertia_decompiler/analysis_timeout.py",
     "inertia_decompiler/architecture_runtime_guard.py",
     "inertia_decompiler/project_evidence_transport.py",
     "inertia_decompiler/cod_module_caller_evidence.py",
@@ -1784,6 +1890,10 @@ _PROMOTED_TYPED_FILES = (
     "inertia_decompiler/cache.py",
     "inertia_decompiler/cache_io.py",
     "inertia_decompiler/cache_lock.py",
+    "inertia_decompiler/cache_runtime_contract.py",
+    "inertia_decompiler/direct_request_cache.py",
+    "inertia_decompiler/direct_request_fast_path.py",
+    "inertia_decompiler/direct_request_identity.py",
     "inertia_decompiler/cli.py",
     "inertia_decompiler/cli_core.py",
     "inertia_decompiler/serial_clean_worker_cli.py",
@@ -1883,6 +1993,21 @@ _PROMOTED_TYPED_FILES = (
     "scripts/test_ownership_manifest.py",
     "scripts/check_changed_non_test_types.py",
     "scripts/sortdemo_decompiler_status.py",
+    "inertia_decompiler/accepted_payload_integrity.py",
+    "inertia_decompiler/angr_codegen_tags.py",
+    "angr_platforms/angr_platforms/X86_16/alias/condition_register_bindings.py",
+    "angr_platforms/angr_platforms/X86_16/callsite_register_instruction_facts.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/consumed_call_push_evidence.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/frame_instruction_evidence.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/frame_register_carriers.py",
+    "angr_platforms/angr_platforms/X86_16/lowering/stack_prototype_layout.py",
+    "angr_platforms/angr_platforms/X86_16/msvc_x87_interrupts.py",
+    "angr_platforms/angr_platforms/X86_16/structured_tags.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/boolean_condition_ites.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/call_argument_branch_carriers.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/call_argument_path_conditions.py",
+    "angr_platforms/angr_platforms/X86_16/structuring/call_argument_path_joins.py",
+    "angr_platforms/angr_platforms/X86_16/verification_80386.py",
 )
 
 _INERTIA_TYPED_PROMOTION_DEBT_FILES = ()
@@ -1956,8 +2081,7 @@ _OWNERSHIP_MANIFEST_FALLBACK_RULES = {
 }
 
 _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
-    "architecture-guard": (
-        "decompile.py",
+    "architecture-guard": ("decompile.py",
         "inertia_decompiler/architecture_runtime_guard.py",
         "inertia_decompiler/cli.py",
         "inertia_decompiler/cli_core.py",
@@ -1970,8 +2094,7 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "x86-16-alias-model-impl": ("angr_platforms/angr_platforms/X86_16/alias/alias_model_impl.py",),
     "x86-16-lowering-fact-transfer": ("angr_platforms/angr_platforms/X86_16/lowering/fact_transfer.py",),
     "x86-16-lowering-segmented": ("angr_platforms/angr_platforms/X86_16/lowering/segmented_lowering.py",),
-    "x86-16-lowering-segmented-runtime": (
-        "angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py",
+    "x86-16-lowering-segmented-runtime": ("angr_platforms/angr_platforms/X86_16/lowering/segmented_memory_lowering.py",
     ),
     "x86-16-condition-lowering": ("angr_platforms/angr_platforms/X86_16/structuring/condition_lowering.py",),
     "x86-16-structuring-condition-materialization": (
@@ -1989,17 +2112,14 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "pipeline-architecture-final-emission-guard": (
         "angr_platforms/angr_platforms/X86_16/pipeline/architecture_guard.py",
     ),
-    "x86-16-validation-dataflow": (
-        "angr_platforms/angr_platforms/X86_16/validation_dataflow.py",
+    "x86-16-validation-dataflow": ("angr_platforms/angr_platforms/X86_16/validation_dataflow.py",
         "angr_platforms/angr_platforms/X86_16/validation_predicates.py",
     ),
     "x86-16-validation-semantic-failures": ("angr_platforms/angr_platforms/X86_16/validation_semantic_failures.py",),
-    "x86-16-validation-calls": (
-        "angr_platforms/angr_platforms/X86_16/validation_calls.py",
+    "x86-16-validation-calls": ("angr_platforms/angr_platforms/X86_16/validation_calls.py",
         "angr_platforms/angr_platforms/X86_16/validation_call_multiplicity.py",
     ),
-    "x86-16-validation-control-flow": (
-        "angr_platforms/angr_platforms/X86_16/validation_condition_identity.py",
+    "x86-16-validation-control-flow": ("angr_platforms/angr_platforms/X86_16/validation_condition_identity.py",
         "angr_platforms/angr_platforms/X86_16/validation_control_flow.py",
     ),
     "x86-16-validation-storage": ("angr_platforms/angr_platforms/X86_16/validation_storage.py",),
@@ -2007,16 +2127,14 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
         "angr_platforms/angr_platforms/X86_16/lowering/callsite_prototype_declarations.py",
     ),
     "x86-16-return-type-evidence": ("angr_platforms/angr_platforms/X86_16/lowering/return_type_evidence.py",),
-    "x86-16-unobserved-return-lowering": (
-        "angr_platforms/angr_platforms/X86_16/lowering/unobserved_returns.py",
+    "x86-16-unobserved-return-lowering": ("angr_platforms/angr_platforms/X86_16/lowering/unobserved_returns.py",
         "angr_platforms/angr_platforms/X86_16/lowering/unused_void_return_types.py",
     ),
     "x86-16-terminal-return-lowering": (
         "angr_platforms/angr_platforms/X86_16/lowering/terminal_register_return_values.py",
         "angr_platforms/angr_platforms/X86_16/lowering/terminal_return_expressions.py",
     ),
-    "x86-16-frame-carrier-lowering": (
-        "angr_platforms/angr_platforms/X86_16/lowering/callee_saved_frame.py",
+    "x86-16-frame-carrier-lowering": ("angr_platforms/angr_platforms/X86_16/lowering/callee_saved_frame.py",
         "angr_platforms/angr_platforms/X86_16/lowering/frame_prologue_carriers.py",
         "angr_platforms/angr_platforms/X86_16/lowering/physical_registers.py",
     ),
@@ -2024,21 +2142,18 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     "x86-16-widening-copyprop": ("angr_platforms/angr_platforms/X86_16/widening/widening_copyprop_8616.py",),
     "x86-16-widening-memory-fold": ("angr_platforms/angr_platforms/X86_16/widening/widening_memory_fold_8616.py",),
     "x86-16-widening-rules": ("angr_platforms/angr_platforms/X86_16/widening/widening_rules.py",),
-    "x86-16-stack-subview-projection": (
-        "angr_platforms/angr_platforms/X86_16/widening/stack_subview_expression.py",
+    "x86-16-stack-subview-projection": ("angr_platforms/angr_platforms/X86_16/widening/stack_subview_expression.py",
         "angr_platforms/angr_platforms/X86_16/widening/stack_subview_projection.py",
         "angr_platforms/angr_platforms/X86_16/widening/stack_subview_proof.py",
     ),
-    "x86-16-stack-memory-object-widening": (
-        "angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects.py",
+    "x86-16-stack-memory-object-widening": ("angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects.py",
         "angr_platforms/angr_platforms/X86_16/widening/stack_memory_objects_contracts.py",
     ),
     "x86-16-semantics-expression-analysis": ("angr_platforms/angr_platforms/X86_16/semantics/expression_analysis.py",),
     "x86-16-semantics-alias-query": ("angr_platforms/angr_platforms/X86_16/semantics/alias_query.py",),
     "x86-16-semantics-alu": ("angr_platforms/angr_platforms/X86_16/semantics/alu_semantics.py",),
     "x86-16-semantics-condition-recovery": ("angr_platforms/angr_platforms/X86_16/semantics/condition_recovery.py",),
-    "x86-16-semantics-stack-frame-recovery": (
-        "angr_platforms/angr_platforms/X86_16/semantics/stack_frame_recovery.py",
+    "x86-16-semantics-stack-frame-recovery": ("angr_platforms/angr_platforms/X86_16/semantics/stack_frame_recovery.py",
     ),
     "x86-16-lowering-stack-probe-return-facts": (
         "angr_platforms/angr_platforms/X86_16/lowering/stack_probe_return_facts.py",
@@ -2048,25 +2163,19 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
     ),
     "x86-16-lowering-ss-bp-substitution": ("angr_platforms/angr_platforms/X86_16/lowering/ss_bp_substitution.py",),
     "x86-16-lowering-object-lowering": ("angr_platforms/angr_platforms/X86_16/lowering/object_lowering.py",),
-    "x86-16-lowering-pointer-memory-idioms": (
-        "angr_platforms/angr_platforms/X86_16/lowering/pointer_memory_idioms.py",
+    "x86-16-lowering-pointer-memory-idioms": ("angr_platforms/angr_platforms/X86_16/lowering/pointer_memory_idioms.py",
     ),
-    "x86-16-ir-condition-cache-relift": (
-        "angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift.py",
-    ),
+    "x86-16-ir-condition-cache-relift": ("angr_platforms/angr_platforms/X86_16/ir/condition_cache_relift.py",),
     "x86-16-lowering-condition-transfer": ("angr_platforms/angr_platforms/X86_16/lowering/condition_transfer.py",),
-    "x86-16-lowering-call-return-selectors": (
-        "angr_platforms/angr_platforms/X86_16/lowering/call_return_selectors.py",
+    "x86-16-lowering-call-return-selectors": ("angr_platforms/angr_platforms/X86_16/lowering/call_return_selectors.py",
     ),
     "x86-16-lowering-stack-coordinator": ("angr_platforms/angr_platforms/X86_16/lowering/stack_lowering.py",),
-    "x86-16-lowering-stack-from-facts": (
-        "angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_from_facts.py",
+    "x86-16-lowering-stack-from-facts": ("angr_platforms/angr_platforms/X86_16/lowering/stack_lowering_from_facts.py",
         "angr_platforms/angr_platforms/X86_16/lowering/stack_memory_ssa.py",
         "angr_platforms/angr_platforms/X86_16/lowering/stack_memory_ssa_contracts.py",
         "angr_platforms/angr_platforms/X86_16/lowering/stack_projection_retirement.py",
     ),
-    "x86-16-interprocedural-storage-contracts": (
-        "angr_platforms/angr_platforms/X86_16/ir/function_ssa_registry.py",
+    "x86-16-interprocedural-storage-contracts": ("angr_platforms/angr_platforms/X86_16/ir/function_ssa_registry.py",
         "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_collection_contracts.py",
         "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_contracts.py",
         "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_storage_function_solver.py",
@@ -2105,9 +2214,7 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
         "angr_platforms/angr_platforms/X86_16/semantics/terminal_memory_output_contracts.py",
         "angr_platforms/angr_platforms/X86_16/semantics/terminal_memory_outputs.py",
     ),
-    "x86-16-terminal-memory-output-alias": (
-        "angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py",
-    ),
+    "x86-16-terminal-memory-output-alias": ("angr_platforms/angr_platforms/X86_16/alias/terminal_memory_outputs.py",),
     "x86-16-terminal-memory-output-widening": (
         "angr_platforms/angr_platforms/X86_16/widening/terminal_memory_output_views.py",
     ),
@@ -2116,16 +2223,39 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
         "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_objects.py",
         "angr_platforms/angr_platforms/X86_16/lowering/interprocedural_memory_output_validation.py",
     ),
-    "x86-16-call-semantics": (
+    "x86-16-call-semantics": ("angr_platforms/angr_platforms/X86_16/lowering/call_argument_carrier_liveness.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/call_return_frame.py",
+        "angr_platforms/angr_platforms/X86_16/semantics/call_register_effects.py",
+        "angr_platforms/angr_platforms/X86_16/semantics/call_return_frame_effects.py",
         "angr_platforms/angr_platforms/X86_16/semantics/call_output_contracts.py",
         "angr_platforms/angr_platforms/X86_16/semantics/call_outputs.py",
         "angr_platforms/angr_platforms/X86_16/semantics/call_stack_effect_contracts.py",
         "angr_platforms/angr_platforms/X86_16/semantics/call_stack_effect_pipeline.py",
         "angr_platforms/angr_platforms/X86_16/semantics/call_stack_effects.py",
+        "angr_platforms/angr_platforms/X86_16/semantics/register_value_preservation.py",
+        "angr_platforms/angr_platforms/X86_16/synthetic_call_stub_evidence.py",
     ),
-    "x86-16-ir-ssa": (
-        "angr_platforms/angr_platforms/X86_16/ir/ssa.py",
+    "x86-16-ir-ssa": ("angr_platforms/angr_platforms/X86_16/ir/ssa.py",
         "angr_platforms/angr_platforms/X86_16/ir/ssa_function.py",
+    ),
+    "x86-16-ir-logical-memory": ("angr_platforms/angr_platforms/X86_16/access.py",
+        "angr_platforms/angr_platforms/X86_16/lift_86_16.py",
+        "angr_platforms/angr_platforms/X86_16/segment_offset_execution.py",
+        "angr_platforms/angr_platforms/X86_16/alias/logical_stack_memory_projection.py",
+        "angr_platforms/angr_platforms/X86_16/ir/function_artifact.py",
+        "angr_platforms/angr_platforms/X86_16/ir/logical_memory_capture.py",
+        "angr_platforms/angr_platforms/X86_16/ir/logical_memory_contracts.py",
+        "angr_platforms/angr_platforms/X86_16/ir/logical_memory_matching.py",
+        "angr_platforms/angr_platforms/X86_16/ir/logical_memory_resolution.py",
+        "angr_platforms/angr_platforms/X86_16/ir/logical_memory_value_trace.py",
+        "angr_platforms/angr_platforms/X86_16/ir/ssa_function.py",
+        "angr_platforms/angr_platforms/X86_16/ir/ssa_memory.py",
+        "angr_platforms/angr_platforms/X86_16/ir/ssa_memory_contracts.py",
+        "angr_platforms/angr_platforms/X86_16/ir/ssa_memory_ranges.py",
+        "angr_platforms/angr_platforms/X86_16/ir/vex_import.py",
+        "angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_links.py",
+        "angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_ssa.py",
+        "angr_platforms/angr_platforms/X86_16/semantics/evidence_cache.py",
     ),
     "x86-16-indexed-address-evidence": (
         "angr_platforms/angr_platforms/X86_16/ir/indexed_address_access_normalization.py",
@@ -2142,23 +2272,30 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
         "angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_contracts.py",
         "angr_platforms/angr_platforms/X86_16/alias/indexed_address_copy_projection.py",
         "angr_platforms/angr_platforms/X86_16/alias/indexed_address_projection.py",
+        "angr_platforms/angr_platforms/X86_16/alias/indexed_address_program.py",
         "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_collector_parity.py",
         "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory.py",
         "angr_platforms/angr_platforms/X86_16/lowering/indexed_address_parity_inventory_contracts.py",
         "scripts/indexed_address_parity_inventory.py",
     ),
-    "x86-16-carry-borrow-widening": (
-        "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_contracts.py",
+    "x86-16-carry-borrow-widening": ("angr_platforms/angr_platforms/X86_16/alias/carry_borrow_contracts.py",
         "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_destinations.py",
         "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_projection.py",
         "angr_platforms/angr_platforms/X86_16/alias/carry_borrow_sources.py",
         "angr_platforms/angr_platforms/X86_16/alias/storage_fact_join.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_bit_ast.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_bit_contracts.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_bit_placement.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_bit_predicate.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_bit_scope.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_bit_values.py",
         "angr_platforms/angr_platforms/X86_16/lowering/carry_borrow_stack_storage.py",
         "angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_ast.py",
         "angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_contracts.py",
         "angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_evidence.py",
         "angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignment_placement.py",
         "angr_platforms/angr_platforms/X86_16/lowering/wide_call_output_assignments.py",
+        "angr_platforms/angr_platforms/X86_16/lowering/wide_call_return_recombine.py",
         "angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_cfg.py",
         "angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_contracts.py",
         "angr_platforms/angr_platforms/X86_16/semantics/carry_borrow_links.py",
@@ -2170,8 +2307,7 @@ _OWNERSHIP_MANIFEST_REQUIRED_RULES = {
 }
 
 _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
-    "x86-16-indexed-address-evidence": (
-        "angr_platforms/tests/test_x86_16_indexed_address_copies.py::"
+    "x86-16-indexed-address-evidence": ("angr_platforms/tests/test_x86_16_indexed_address_copies.py::"
         "test_main_path_publishes_ir_and_alias_copy_evidence_atomically",
         "angr_platforms/tests/test_x86_16_indexed_address_aliases.py::"
         "test_indexed_load_projects_symbolic_target_and_exact_stack_source",
@@ -2180,8 +2316,7 @@ _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
         "angr_platforms/tests/test_x86_16_indexed_address_parity_inventory.py::"
         "test_identity_conflict_is_classified_on_exact_instruction_site",
     ),
-    "pipeline-architecture-final-emission-guard": (
-        "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
+    "pipeline-architecture-final-emission-guard": ("angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
         "test_architecture_guard_rejects_raw_linear_segment_arithmetic",
         "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
         "test_architecture_guard_ignores_forbidden_tokens_inside_comments",
@@ -2190,21 +2325,18 @@ _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
         "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
         "test_architecture_guard_rejects_unary_not_shift_precedence_leak",
     ),
-    "x86-16-validation-dataflow": (
-        "angr_platforms/tests/test_x86_16_validation_dataflow.py",
+    "x86-16-validation-dataflow": ("angr_platforms/tests/test_x86_16_validation_dataflow.py",
         "angr_platforms/tests/test_x86_16_validation_predicates.py",
         "angr_platforms/tests/test_x86_16_validation_virtual_carriers.py",
     ),
     "x86-16-validation-semantic-failures": ("angr_platforms/tests/test_x86_16_validation_semantic_failures.py",),
     "x86-16-lowering-call-return-selectors": ("angr_platforms/tests/test_x86_16_call_return_selectors.py",),
-    "x86-16-validation-calls": (
-        "angr_platforms/tests/test_x86_16_validation_calls.py",
+    "x86-16-validation-calls": ("angr_platforms/tests/test_x86_16_validation_calls.py",
         "angr_platforms/tests/test_x86_16_validation_call_multiplicity.py",
     ),
     "x86-16-validation-control-flow": ("angr_platforms/tests/test_x86_16_validation_control_flow.py",),
     "x86-16-validation-storage": ("angr_platforms/tests/test_x86_16_validation_storage.py",),
-    "x86-16-lowering-storage-identity-facts": (
-        "angr_platforms/tests/test_x86_16_validation_storage.py",
+    "x86-16-lowering-storage-identity-facts": ("angr_platforms/tests/test_x86_16_validation_storage.py",
         "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py::"
         "test_materialize_direct_global_inc_instruction_from_binary_evidence",
     ),
@@ -2225,11 +2357,8 @@ _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
         "angr_platforms/tests/test_x86_16_interprocedural_storage_trials.py",
         "angr_platforms/tests/test_x86_16_interprocedural_storage_simtypes.py",
     ),
-    "x86-16-terminal-memory-output-semantics": (
-        "angr_platforms/tests/test_x86_16_terminal_memory_outputs.py",
-    ),
-    "x86-16-terminal-memory-output-alias": (
-        "angr_platforms/tests/test_x86_16_terminal_memory_output_aliases.py",
+    "x86-16-terminal-memory-output-semantics": ("angr_platforms/tests/test_x86_16_terminal_memory_outputs.py",),
+    "x86-16-terminal-memory-output-alias": ("angr_platforms/tests/test_x86_16_terminal_memory_output_aliases.py",
         "angr_platforms/tests/test_x86_16_interprocedural_storage_live_out.py",
     ),
     "x86-16-terminal-memory-output-widening": (
@@ -2247,14 +2376,23 @@ _OWNERSHIP_MANIFEST_REQUIRED_TESTS = {
         "angr_platforms/tests/test_x86_16_call_outputs.py",
         "angr_platforms/tests/test_x86_16_call_stack_effects.py",
     ),
-    "x86-16-ir-condition-cache-relift": (
-        "angr_platforms/tests/test_x86_16_condition_cache_relift.py",
-    ),
+    "x86-16-ir-condition-cache-relift": ("angr_platforms/tests/test_x86_16_condition_cache_relift.py",),
     "x86-16-ir-ssa": ("angr_platforms/tests/test_x86_16_ir_ssa.py",),
+    "x86-16-ir-logical-memory": (
+        "angr_platforms/tests/test_x86_16_semantics_evidence_cache.py",
+        "angr_platforms/tests/test_x86_16_vex_import.py",
+        "angr_platforms/tests/test_x86_16_vex_memory_access_fidelity.py",
+        "angr_platforms/tests/test_x86_16_carry_borrow_cfg.py",
+        "angr_platforms/tests/test_x86_16_carry_borrow_sources.py",
+        "angr_platforms/tests/test_x86_16_carry_borrow_stack_storage.py",
+        "angr_platforms/tests/test_x86_16_carry_borrow_widening.py",
+    ),
     "x86-16-carry-borrow-widening": (
         "angr_platforms/tests/test_x86_16_carry_borrow_call_output.py",
         "angr_platforms/tests/test_x86_16_wide_call_output_assignments.py",
         "angr_platforms/tests/test_x86_16_carry_borrow_cfg.py",
+        "angr_platforms/tests/test_x86_16_carry_borrow_bit_cfg_ownership.py",
+        "angr_platforms/tests/test_x86_16_carry_borrow_bit_lowering.py",
         "angr_platforms/tests/test_x86_16_carry_borrow_sources.py",
         "angr_platforms/tests/test_x86_16_carry_borrow_stack_storage.py",
         "angr_platforms/tests/test_x86_16_carry_borrow_widening.py",
@@ -2749,7 +2887,7 @@ def _check_postprocess_imports(root: Path) -> tuple[ArchitectureViolation, ...]:
         allowed = _POSTPROCESS_LEGACY_IMPORT_ALLOWLIST.get(path.name, frozenset())
         for module in _import_modules(tree):
             if _is_protected_import(module) and module not in allowed:
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(path, REPO_ROOT),
                         "postprocess-protected-import",
@@ -2828,10 +2966,7 @@ def _semantic_layer_import_targets(tree: ast.Module) -> tuple[str, ...]:
 
 def _is_postprocess_import(module: str) -> bool:
     return (
-        "decompiler_postprocess" in module
-        or module.startswith("angr_platforms.X86_16.postprocess")
-        or module.startswith(".postprocess")
-        or module.startswith("..postprocess")
+        "decompiler_postprocess" in module or module.startswith(("angr_platforms.X86_16.postprocess", ".postprocess", "..postprocess"))
     )
 
 
@@ -2853,7 +2988,7 @@ def _check_semantic_layers_do_not_import_postprocess(root: Path) -> tuple[Archit
         tree = _parse_python(path)
         for module in _semantic_layer_import_targets(tree):
             if _is_postprocess_import(module) and module not in allowed:
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(path, REPO_ROOT),
                         "semantic-layer-postprocess-import",
@@ -2886,7 +3021,7 @@ def _check_cli_imports(path: Path) -> tuple[ArchitectureViolation, ...]:
         & _CLI_FORBIDDEN_SEMANTIC_CALLS
     )
     for name in sorted(forbidden_imports):
-        violations.append(
+        violations.append(  # noqa: PERF401
             ArchitectureViolation(
                 _relative(path, REPO_ROOT),
                 "cli-semantic-mutation",
@@ -2933,7 +3068,7 @@ def _check_cli_c_text_cleanup(path: Path) -> tuple[ArchitectureViolation, ...]:
     violations: list[ArchitectureViolation] = []
     for node in _walk_ast(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in _BANNED_C_TEXT_SEMANTIC_HELPERS:
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     "cli-c-text-semantic-recovery",
@@ -3064,7 +3199,7 @@ def _check_cli_acceptance_not_source_evidence_gated(path: Path) -> tuple[Archite
 
     for helper_name in ("_with_source_evidence_comments_8616", "_source_evidence_payload_for_function_8616"):
         if _find_function(tree, helper_name) is not None:
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     "cli-source-evidence-acceptance-gate",
@@ -3972,7 +4107,7 @@ def _check_identical_assignment_arm_structuring_ownership(
         owner_tree = _parse_python(owner_path)
         for name in owner_names:
             if _find_function(owner_tree, name) is None:
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(owner_path, REPO_ROOT),
                         rule,
@@ -4031,7 +4166,7 @@ def _check_identical_assignment_arm_structuring_ownership(
         tree = _parse_python(path)
         for name in owner_names:
             if _find_function(tree, name) is not None:
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(path, REPO_ROOT),
                         rule,
@@ -4081,7 +4216,7 @@ def _check_terminal_call_result_structuring_ownership(
         owner_classes = {node.name for node in _walk_ast(owner_tree) if isinstance(node, ast.ClassDef)}
         for class_name in owner_class_names:
             if class_name not in owner_classes:
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(owner_path, REPO_ROOT),
                         rule,
@@ -4170,7 +4305,7 @@ def _check_terminal_call_result_structuring_ownership(
                 imported_owner_names.update(alias.name for alias in node.names if alias.name in owner_names)
         forbidden_names = sorted((defined_names | imported_owner_names).intersection(owner_names))
         for name in forbidden_names:
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     rule,
@@ -4271,7 +4406,7 @@ def _check_shared_body_wide_condition_ownership(
                     postprocess_imported_names.add(alias.asname)
         for name in protected_names:
             if _find_function(tree, name) is not None or name in postprocess_imported_names:
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(path, REPO_ROOT),
                         rule,
@@ -4324,7 +4459,7 @@ def _check_condition_origin_tags_use_dot_access(root: Path) -> tuple[Architectur
     violations: list[ArchitectureViolation] = []
     for node in _walk_ast(function):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "getattr":
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     "condition-origin-tags-dot-access",
@@ -4636,15 +4771,7 @@ def _check_postprocess_calls_source_evidence_is_inert(path: Path) -> tuple[Archi
         return isinstance(stmt, ast.Return) and isinstance(stmt.value, ast.Tuple) and len(stmt.value.elts) == 0
 
     gate = _find_function(tree, "_source_call_floor_enabled_8616")
-    if gate is None:
-        violations.append(
-            ArchitectureViolation(
-                _relative(path, REPO_ROOT),
-                "source-call-floor-default",
-                "source-call floor recovery must stay inert",
-            )
-        )
-    elif not _function_returns_constant_false(gate):
+    if gate is None or not _function_returns_constant_false(gate):
         violations.append(
             ArchitectureViolation(
                 _relative(path, REPO_ROOT),
@@ -5181,7 +5308,7 @@ def _check_compatibility_shims(root: Path) -> tuple[ArchitectureViolation, ...]:
         docstring = ast.get_docstring(tree) or ""
         for marker in _COMPATIBILITY_SHIM_HEADER_MARKERS:
             if not _contains_marker(docstring, marker):
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(path, REPO_ROOT),
                         "compat-shim-header",
@@ -5201,7 +5328,7 @@ def _check_compatibility_shims(root: Path) -> tuple[ArchitectureViolation, ...]:
             )
         for node in _walk_ast(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(path, REPO_ROOT),
                         "compat-shim-behavior",
@@ -5363,7 +5490,7 @@ def _function_missing_annotation_labels(node: ast.FunctionDef | ast.AsyncFunctio
     positional = (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
     for arg in positional:
         if arg.arg not in {"self", "cls"} and arg.annotation is None:
-            missing.append(arg.arg)
+            missing.append(arg.arg)  # noqa: PERF401
     if node.args.vararg is not None and node.args.vararg.annotation is None:
         missing.append(f"*{node.args.vararg.arg}")
     if node.args.kwarg is not None and node.args.kwarg.annotation is None:
@@ -5515,7 +5642,7 @@ def _check_promoted_typed_dataclass_fields(repo_root: Path = REPO_ROOT) -> tuple
                     continue
                 for target in stmt.targets:
                     if isinstance(target, ast.Name) and not target.id.startswith("_"):
-                        violations.append(
+                        violations.append(  # noqa: PERF401
                             ArchitectureViolation(
                                 _relative(path, repo_root),
                                 "promoted-typed-dataclass-field-annotation",
@@ -5975,7 +6102,7 @@ def _check_makefile_gate_targets(repo_root: Path = REPO_ROOT) -> tuple[Architect
     violations: list[ArchitectureViolation] = []
     for marker in _MAKEFILE_MARKERS:
         if not _contains_marker(makefile_text, marker):
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(makefile_path, repo_root),
                     "makefile-gate-marker",
@@ -5984,7 +6111,7 @@ def _check_makefile_gate_targets(repo_root: Path = REPO_ROOT) -> tuple[Architect
             )
     for marker in _MAKEFILE_FORBIDDEN_MARKERS:
         if _contains_marker(makefile_text, marker):
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(makefile_path, repo_root),
                     "makefile-type-ratchet-legacy-debt",
@@ -6012,7 +6139,7 @@ def _check_makefile_gate_targets(repo_root: Path = REPO_ROOT) -> tuple[Architect
             )
     for filename in _PYRIGHT_ONLY_TYPED_PROMOTION_FILES:
         if filename not in typed_targets:
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(makefile_path, repo_root),
                     "makefile-pyright-only-typed-file",
@@ -6023,7 +6150,7 @@ def _check_makefile_gate_targets(repo_root: Path = REPO_ROOT) -> tuple[Architect
         frozenset(_INERTIA_TYPED_PROMOTION_DEBT_FILES) | frozenset(_X86_16_TYPED_PROMOTION_DEBT_FILES)
     ) - frozenset(_PYRIGHT_ONLY_TYPED_PROMOTION_FILES)
     for filename in sorted(full_promotion_debt_files & typed_targets):
-        violations.append(
+        violations.append(  # noqa: PERF401
             ArchitectureViolation(
                 _relative(makefile_path, repo_root),
                 "makefile-full-promotion-debt-typed-target",
@@ -6031,7 +6158,7 @@ def _check_makefile_gate_targets(repo_root: Path = REPO_ROOT) -> tuple[Architect
             )
         )
     for filename in sorted(full_promotion_debt_files & ruff_targets):
-        violations.append(
+        violations.append(  # noqa: PERF401
             ArchitectureViolation(
                 _relative(makefile_path, repo_root),
                 "makefile-full-promotion-debt-ruff-target",
@@ -6040,7 +6167,7 @@ def _check_makefile_gate_targets(repo_root: Path = REPO_ROOT) -> tuple[Architect
         )
     for marker in _FOCUSED_PYTEST_MARKERS:
         if not _contains_marker(makefile_text, marker):
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(makefile_path, repo_root),
                     "makefile-focused-contract-test",
@@ -6052,7 +6179,7 @@ def _check_makefile_gate_targets(repo_root: Path = REPO_ROOT) -> tuple[Architect
         makefile_pytest_targets = frozenset(_makefile_variable_words(makefile_text, "QA_PYTEST_TARGETS"))
         for target in _focused_pytest_literals(_parse_python(pipeline_path)):
             if target not in makefile_pytest_targets:
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(makefile_path, repo_root),
                         "makefile-pipeline-fast-target",
@@ -6063,7 +6190,7 @@ def _check_makefile_gate_targets(repo_root: Path = REPO_ROOT) -> tuple[Architect
     for variable_name in ("QA_PYTEST_TARGETS", "QA_RUFF_TARGETS", "QA_TYPED_FILES"):
         targets = _makefile_variable_words(makefile_text, variable_name)
         for target in _duplicate_items(targets):
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(makefile_path, repo_root),
                     "makefile-duplicate-qa-target",
@@ -6110,7 +6237,7 @@ def _check_inertia_decompiler_typed_promotion_coverage(
     violations: list[ArchitectureViolation] = []
 
     for filename in sorted(debt & promoted):
-        violations.append(
+        violations.append(  # noqa: PERF401
             ArchitectureViolation(
                 filename,
                 "inertia-typed-promotion-debt-stale",
@@ -6119,7 +6246,7 @@ def _check_inertia_decompiler_typed_promotion_coverage(
         )
 
     for filename in sorted(pyright_only & promoted):
-        violations.append(
+        violations.append(  # noqa: PERF401
             ArchitectureViolation(
                 filename,
                 "inertia-pyright-only-promotion-stale",
@@ -6128,7 +6255,7 @@ def _check_inertia_decompiler_typed_promotion_coverage(
         )
 
     for filename in sorted(pyright_only - debt):
-        violations.append(
+        violations.append(  # noqa: PERF401
             ArchitectureViolation(
                 filename,
                 "inertia-pyright-only-promotion-untracked-debt",
@@ -6138,7 +6265,7 @@ def _check_inertia_decompiler_typed_promotion_coverage(
 
     for filename in sorted(debt):
         if not (repo_root / filename).exists():
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     filename,
                     "inertia-typed-promotion-debt-stale",
@@ -6148,7 +6275,7 @@ def _check_inertia_decompiler_typed_promotion_coverage(
 
     for filename in sorted(pyright_only):
         if not (repo_root / filename).exists():
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     filename,
                     "inertia-pyright-only-promotion-stale",
@@ -6184,7 +6311,7 @@ def _check_x86_16_typed_promotion_coverage(
     violations: list[ArchitectureViolation] = []
 
     for filename in sorted(debt & promoted):
-        violations.append(
+        violations.append(  # noqa: PERF401
             ArchitectureViolation(
                 filename,
                 "x86-16-typed-promotion-debt-stale",
@@ -6194,7 +6321,7 @@ def _check_x86_16_typed_promotion_coverage(
 
     for filename in sorted(debt):
         if not (repo_root / filename).exists():
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     filename,
                     "x86-16-typed-promotion-debt-stale",
@@ -6343,7 +6470,7 @@ def _check_test_pipeline_fast_targets(repo_root: Path = REPO_ROOT) -> tuple[Arch
             )
     for marker in _FOCUSED_PYTEST_MARKERS:
         if not _contains_marker(pipeline_text, marker):
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(pipeline_path, repo_root),
                     "focused-pipeline-contract-test",
@@ -6352,7 +6479,7 @@ def _check_test_pipeline_fast_targets(repo_root: Path = REPO_ROOT) -> tuple[Arch
             )
     focused_targets = _focused_pytest_literals(pipeline_tree)
     for duplicate_target in _duplicate_items(focused_targets):
-        violations.append(
+        violations.append(  # noqa: PERF401
             ArchitectureViolation(
                 _relative(pipeline_path, repo_root),
                 "focused-pipeline-duplicate-target",
@@ -6361,7 +6488,7 @@ def _check_test_pipeline_fast_targets(repo_root: Path = REPO_ROOT) -> tuple[Arch
         )
     for marker in _FOCUSED_PYTEST_FORBIDDEN_MARKERS:
         if marker in focused_targets:
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(pipeline_path, repo_root),
                     "focused-pipeline-slow-target",
@@ -6369,7 +6496,7 @@ def _check_test_pipeline_fast_targets(repo_root: Path = REPO_ROOT) -> tuple[Arch
                 )
             )
     for target in focused_targets:
-        path_text, *selectors = target.split("::")
+        path_text, *_selectors = target.split("::")
         target_path = repo_root / path_text
         if not target_path.exists():
             violations.append(
@@ -6391,7 +6518,7 @@ def _check_test_pipeline_fast_targets(repo_root: Path = REPO_ROOT) -> tuple[Arch
             )
             continue
         for line_no in skip_xfail_lines:
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(target_path, repo_root),
                     "focused-pipeline-skip-xfail",
@@ -6578,7 +6705,7 @@ def _check_ownership_manifest_contract(repo_root: Path = REPO_ROOT) -> tuple[Arc
         paths, _fallback, _reason = rules.get(owner, (frozenset(), False, ""))
         for required_path in required_paths:
             if required_path not in paths:
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(manifest_path, repo_root),
                         "ownership-manifest-required-rule",
@@ -6589,7 +6716,7 @@ def _check_ownership_manifest_contract(repo_root: Path = REPO_ROOT) -> tuple[Arc
         tests = tests_by_owner.get(owner, frozenset())
         for required_test in required_tests:
             if required_test not in tests:
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(manifest_path, repo_root),
                         "ownership-manifest-required-test",
@@ -6600,7 +6727,7 @@ def _check_ownership_manifest_contract(repo_root: Path = REPO_ROOT) -> tuple[Arc
         target_path = repo_root / target.split("::", 1)[0]
         _target_exists, skip_xfail_lines = _fast_pytest_target_contract(repo_root, target, skip_calls)
         for line_no in skip_xfail_lines:
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(target_path, repo_root),
                     "ownership-manifest-fast-skip-xfail",
@@ -6613,10 +6740,7 @@ def _check_ownership_manifest_contract(repo_root: Path = REPO_ROOT) -> tuple[Arc
 def _module_calls_function(tree: ast.Module, function_name: str) -> bool:
     """Return whether a module contains a call to the named helper."""
 
-    for node in _walk_ast(tree):
-        if isinstance(node, ast.Call) and _call_name(node.func) == function_name:
-            return True
-    return False
+    return any(isinstance(node, ast.Call) and _call_name(node.func) == function_name for node in _walk_ast(tree))
 
 
 def _function_calls_function(function: ast.FunctionDef | ast.AsyncFunctionDef | None, function_name: str) -> bool:
@@ -6624,10 +6748,7 @@ def _function_calls_function(function: ast.FunctionDef | ast.AsyncFunctionDef | 
 
     if function is None:
         return False
-    for node in _walk_ast(function):
-        if isinstance(node, ast.Call) and _call_name(node.func) == function_name:
-            return True
-    return False
+    return any(isinstance(node, ast.Call) and _call_name(node.func) == function_name for node in _walk_ast(function))
 
 
 def _stmt_calls_function(stmt: ast.stmt, function_name: str) -> bool:
@@ -6670,9 +6791,7 @@ def _first_protected_runtime_import_line(tree: ast.Module) -> int | None:
             module = stmt.module or ""
             if module in allowed_modules or module == "architecture_runtime_guard":
                 continue
-            if module.startswith(protected_prefixes):
-                protected_lines.append(stmt.lineno)
-            elif stmt.level > 0 and module != "architecture_runtime_guard":
+            if module.startswith(protected_prefixes) or (stmt.level > 0 and module != "architecture_runtime_guard"):
                 protected_lines.append(stmt.lineno)
     return min(protected_lines) if protected_lines else None
 
@@ -6687,7 +6806,7 @@ def _first_module_call_line(tree: ast.Module, function_name: str) -> int | None:
                 lines.append(stmt.lineno)
         elif isinstance(stmt, ast.Try):
             for try_stmt in stmt.body:
-                if isinstance(try_stmt, ast.Expr) and isinstance(try_stmt.value, ast.Call):
+                if isinstance(try_stmt, ast.Expr) and isinstance(try_stmt.value, ast.Call):  # noqa: SIM102
                     if _call_name(try_stmt.value.func) == function_name:
                         lines.append(try_stmt.lineno)
     return min(lines) if lines else None
@@ -6703,9 +6822,8 @@ def _handler_terminates_startup(handler: ast.ExceptHandler) -> bool:
             call_name = _call_name(stmt.value.func)
             if call_name in {"sys.exit", "exit", "quit"}:
                 return True
-        if isinstance(stmt, ast.If):
-            if any(isinstance(child, ast.Raise) for child in _walk_ast(stmt)):
-                return True
+        if isinstance(stmt, ast.If) and any(isinstance(child, ast.Raise) for child in _walk_ast(stmt)):
+            return True
     return False
 
 
@@ -6752,7 +6870,7 @@ def _check_runtime_architecture_guard_entrypoints(repo_root: Path = REPO_ROOT) -
                 )
             )
         for line_no in _swallowed_module_guard_try_lines(tree, "assert_decompiler_architecture_clean"):
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(path, repo_root),
                     "runtime-architecture-guard-swallowed",
@@ -6878,7 +6996,7 @@ def _check_architecture_table_unique_keys(repo_root: Path = REPO_ROOT) -> tuple[
                 )
             )
         for required_test in required_tests:
-            path_text, *selectors = required_test.split("::")
+            path_text, *_selectors = required_test.split("::")
             if path_text in _FOCUSED_PYTEST_FORBIDDEN_MARKERS:
                 violations.append(
                     ArchitectureViolation(
@@ -6908,7 +7026,7 @@ def _check_architecture_table_unique_keys(repo_root: Path = REPO_ROOT) -> tuple[
                 )
                 continue
             for skip_line in skip_xfail_lines:
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(target_path, repo_root),
                         "architecture-required-test-skip-xfail",
@@ -7051,7 +7169,7 @@ def _check_project_awareness_docs(
             )
         for marker in _AGENT_DOC_MARKERS:
             if not _contains_marker(agents_text, marker):
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(agents_path, repo_root),
                         "agent-doc-marker",
@@ -7060,7 +7178,7 @@ def _check_project_awareness_docs(
                 )
         for marker in _AGENT_DOC_FORBIDDEN_MARKERS:
             if _contains_marker(agents_text, marker):
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(agents_path, repo_root),
                         "agent-doc-duplicate-rulebook",
@@ -7089,7 +7207,7 @@ def _check_project_awareness_docs(
             )
         for marker in _PROJECT_MAP_MARKERS:
             if not _contains_marker(project_map_text, marker):
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(project_map_path, repo_root),
                         "project-map-marker",
@@ -7098,7 +7216,7 @@ def _check_project_awareness_docs(
                 )
         for marker in _REFERENCE_MAP_FORBIDDEN_RULEBOOK_MARKERS:
             if _contains_marker(project_map_text, marker):
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(project_map_path, repo_root),
                         "project-map-duplicate-rulebook",
@@ -7127,7 +7245,7 @@ def _check_project_awareness_docs(
             )
         for marker in _DECOMPILER_MAP_MARKERS:
             if not _contains_marker(decompiler_map_text, marker):
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(decompiler_map_path, repo_root),
                         "decompiler-map-marker",
@@ -7136,7 +7254,7 @@ def _check_project_awareness_docs(
                 )
         for marker in _DECOMPILER_MAP_FORBIDDEN_MARKERS:
             if _contains_marker(decompiler_map_text, marker):
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(decompiler_map_path, repo_root),
                         "decompiler-map-duplicate-rulebook",
@@ -7165,7 +7283,7 @@ def _check_project_awareness_docs(
             )
         for marker in _AGENT_RULES_MARKERS:
             if not _contains_marker(agent_rules_text, marker):
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(agent_rules_path, repo_root),
                         "agent-rules-canonical-contract",
@@ -7174,7 +7292,7 @@ def _check_project_awareness_docs(
                 )
         for marker in _AGENT_RULES_FORBIDDEN_MARKERS:
             if _contains_marker(agent_rules_text, marker):
-                violations.append(
+                violations.append(  # noqa: PERF401
                     ArchitectureViolation(
                         _relative(agent_rules_path, repo_root),
                         "agent-rules-duplicate-rulebook",
@@ -7265,7 +7383,9 @@ def _check_sortdemo_status_reporting_typed_state(path: Path) -> tuple[Architectu
     required_enums = ("TerminalStatus", "FailureStatus", "ValidationStatus", "AttemptStatus")
     for enum_name in required_enums:
         class_node = _find_class(tree, enum_name)
-        if class_node is None or not any(_decorator_name(base) == "Enum" for base in class_node.bases):
+        if class_node is None or not any(
+            _decorator_name(base) in {"Enum", "StrEnum"} for base in class_node.bases
+        ):
             violations.append(
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
@@ -8756,7 +8876,7 @@ def _check_ss_bp_substitution_binding_dot_access(path: Path) -> tuple[Architectu
     violations: list[ArchitectureViolation] = []
     for arg in substitution.args.args:
         if arg.arg == "bindings" and "StackVariableBinding" not in _annotation_type_names(arg.annotation):
-            violations.append(
+            violations.append(  # noqa: PERF401
                 ArchitectureViolation(
                     _relative(path, REPO_ROOT),
                     "ss-bp-substitution-typed-bindings",

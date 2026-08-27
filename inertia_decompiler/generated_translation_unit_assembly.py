@@ -11,9 +11,9 @@ contracts without changing any function-body AST.
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Sequence
 
 from pycparser import c_ast, c_generator, c_parser
 
@@ -162,7 +162,7 @@ def assemble_generated_translation_unit(
         for node in payload_nodes:
             if isinstance(node, c_ast.FuncDef):
                 continue
-            if isinstance(node, c_ast.Decl) and isinstance(node.type, c_ast.FuncDecl):
+            if isinstance(node, c_ast.Decl) and isinstance(node.type, c_ast.FuncDecl):  # noqa: SIM102
                 if node.name in definition_names:
                     continue
             identity = _declaration_identity(node, generator)

@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol, TypeVar, cast
+from typing import Protocol, cast
 
 
 class FunctionEvidenceKind8616(Enum):
@@ -109,16 +109,13 @@ def _function_binary_surface_8616(function: object) -> FunctionBinarySurface8616
     return FunctionBinarySurface8616(identity, function_size, tuple(sorted(extents)))
 
 
-_EvidenceT8616 = TypeVar("_EvidenceT8616")
-
-
-def collect_function_binary_evidence_8616(
+def collect_function_binary_evidence_8616[EvidenceT8616](
     project: object | None,
     function: object,
     *,
     kind: FunctionEvidenceKind8616,
-    builder: Callable[[object | None, object], Iterable[_EvidenceT8616]],
-) -> tuple[_EvidenceT8616, ...]:
+    builder: Callable[[object | None, object], Iterable[EvidenceT8616]],
+) -> tuple[EvidenceT8616, ...]:
     """Return cached immutable evidence or collect it for the current surface."""
     if project is None:
         return tuple(builder(project, function))
@@ -136,7 +133,7 @@ def collect_function_binary_evidence_8616(
         and (surface.identity.address is not None or cached.fallback_owner is function)
     )
     if cached is not None and cached.surface == surface and fallback_owner_matches:
-        return cast(tuple[_EvidenceT8616, ...], cached.evidence)
+        return cast(tuple[EvidenceT8616, ...], cached.evidence)
     evidence = tuple(builder(project, function))
     fallback_owner = function if surface.identity.address is None else None
     inventories[key] = FunctionEvidenceInventory8616(

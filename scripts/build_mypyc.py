@@ -12,9 +12,9 @@ import importlib.machinery
 import os
 import shutil
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -338,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
         packages=["inertia_decompiler"],
         ext_modules=extension_modules,
         script_name=sys.argv[0],
-        script_args=default_setup_args if not setup_args else setup_args,
+        script_args=setup_args if setup_args else default_setup_args,
     )
     _refresh_markers(stale_module_states)
     if not parsed.inplace:

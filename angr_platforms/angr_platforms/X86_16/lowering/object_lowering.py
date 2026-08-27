@@ -8,19 +8,19 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
-from collections.abc import MutableMapping
+from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass
-from typing import Any, Callable, TypeAlias
+from typing import Any
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimRegisterVariable
 
-ClassifySegmentedDereference: TypeAlias = Callable[[object, object], object | None]
-FlattenCAddTerms: TypeAlias = Callable[[object], list[object]]
-UnwrapCCasts: TypeAlias = Callable[[object], object]
-CConstantValue: TypeAlias = Callable[[object], int | None]
-SegmentRegName: TypeAlias = Callable[[object, object], str | None]
-ProjectRewriteCache: TypeAlias = Callable[[object], MutableMapping[str, MutableMapping[int, object]]]
+type ClassifySegmentedDereference = Callable[[object, object], object | None]
+type FlattenCAddTerms = Callable[[object], list[object]]
+type UnwrapCCasts = Callable[[object], object]
+type CConstantValue = Callable[[object], int | None]
+type SegmentRegName = Callable[[object, object], str | None]
+type ProjectRewriteCache = Callable[[object], MutableMapping[str, MutableMapping[int, object]]]
 
 
 def _dynamic_attr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
@@ -172,11 +172,11 @@ def _match_ss_stack_reference(
     return None
 
 
-BaseKey: TypeAlias = tuple[object, ...]
-NamingCandidate: TypeAlias = tuple[int, int, int]
-TraitCache: TypeAlias = dict[str, dict[BaseKey, object]]
-BuildAccessTraitEvidenceProfiles: TypeAlias = Callable[[TraitCache], dict[BaseKey, Any]]
-AccessTraitFieldName: TypeAlias = Callable[[int, int], str]
+type BaseKey = tuple[object, ...]
+type NamingCandidate = tuple[int, int, int]
+type TraitCache = dict[str, dict[BaseKey, object]]
+type BuildAccessTraitEvidenceProfiles = Callable[[TraitCache], dict[BaseKey, Any]]
+type AccessTraitFieldName = Callable[[int, int], str]
 
 
 @dataclass(frozen=True)

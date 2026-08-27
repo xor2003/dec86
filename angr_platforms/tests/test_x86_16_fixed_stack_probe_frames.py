@@ -28,7 +28,7 @@ def _fixed_probe_codegen(
         cstyle_null_cmp=False,
         next_idx=lambda _name: 0,
         project=SimpleNamespace(arch=Arch86_16()),
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     call = CFunctionCall(
         "chkstk",
         SimpleNamespace(addr=0x11222),

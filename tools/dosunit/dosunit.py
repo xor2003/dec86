@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import argparse
 import os
@@ -56,7 +56,7 @@ def _default_max_rss_mb() -> int:
 
 def _current_rss_kib() -> int | None:
     try:
-        with open("/proc/self/status", "r", encoding="ascii") as status_file:
+        with open("/proc/self/status", encoding="ascii") as status_file:
             for line in status_file:
                 if line.startswith("VmRSS:"):
                     parts = line.split()
@@ -110,7 +110,7 @@ def _add_max_rss_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def cmd_discover(args: argparse.Namespace) -> int:
+def cmd_discover(args: argparse.Namespace) -> int:  # noqa: D103
     catalog = discover_functions(
         exe_path=_path_or_none(args.exe),
         map_path=_path_or_none(args.map),
@@ -122,7 +122,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_gen_vectors(args: argparse.Namespace) -> int:
+def cmd_gen_vectors(args: argparse.Namespace) -> int:  # noqa: D103
     catalog = load_json(Path(args.functions))
     document = generate_vectors(
         functions_catalog=catalog,
@@ -138,7 +138,7 @@ def cmd_gen_vectors(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_import_libdosbox(args: argparse.Namespace) -> int:
+def cmd_import_libdosbox(args: argparse.Namespace) -> int:  # noqa: D103
     document = import_libdosbox_trace(
         trace_path=Path(args.trace),
         functions_path=_path_or_none(args.functions),
@@ -149,7 +149,7 @@ def cmd_import_libdosbox(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_regions(args: argparse.Namespace) -> int:
+def cmd_regions(args: argparse.Namespace) -> int:  # noqa: D103
     catalog = load_json(Path(args.functions))
     document = summarize_region_effects(
         exe_path=Path(args.exe),
@@ -162,7 +162,7 @@ def cmd_regions(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_complexity(args: argparse.Namespace) -> int:
+def cmd_complexity(args: argparse.Namespace) -> int:  # noqa: D103
     catalog = load_json(Path(args.functions))
     document = analyze_function_complexity(
         exe_path=Path(args.exe),
@@ -179,7 +179,7 @@ def cmd_complexity(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_ssa(args: argparse.Namespace) -> int:
+def cmd_ssa(args: argparse.Namespace) -> int:  # noqa: D103
     _start_rss_watchdog(args.max_rss_mb, "ssa")
     catalog = load_json(Path(args.functions))
     output_regs = tuple(args.output_reg or ABI_OUTPUT_REGS[args.abi])
@@ -201,7 +201,7 @@ def cmd_ssa(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_compare_ssa(args: argparse.Namespace) -> int:
+def cmd_compare_ssa(args: argparse.Namespace) -> int:  # noqa: D103
     _start_rss_watchdog(args.max_rss_mb, "compare-ssa")
     oracle = load_json(Path(args.oracle_ssa))
     candidate = load_json(Path(args.candidate_ssa))
@@ -232,7 +232,7 @@ def cmd_compare_ssa(args: argparse.Namespace) -> int:
     return 0 if summary.get("failed") == 0 and summary.get("refused") == 0 else 1
 
 
-def cmd_compare_ssa_batched(args: argparse.Namespace) -> int:
+def cmd_compare_ssa_batched(args: argparse.Namespace) -> int:  # noqa: D103
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     oracle = load_json(Path(args.oracle_ssa))
@@ -331,7 +331,7 @@ def cmd_compare_ssa_batched(args: argparse.Namespace) -> int:
     return 0 if document["summary"]["failed"] == 0 and document["summary"]["refused"] == 0 and not document["summary"]["rc_nonzero"] else 1
 
 
-def cmd_compare_ssa_abi(args: argparse.Namespace) -> int:
+def cmd_compare_ssa_abi(args: argparse.Namespace) -> int:  # noqa: D103
     _start_rss_watchdog(args.max_rss_mb, "compare-ssa-abi")
     oracle = load_json(Path(args.oracle_ssa))
     candidate = load_json(Path(args.candidate_ssa))
@@ -353,7 +353,7 @@ def cmd_compare_ssa_abi(args: argparse.Namespace) -> int:
     return 0 if summary.get("failed") == 0 and summary.get("refused") == 0 else 1
 
 
-def cmd_compare_regions(args: argparse.Namespace) -> int:
+def cmd_compare_regions(args: argparse.Namespace) -> int:  # noqa: D103
     oracle = load_json(Path(args.oracle_regions))
     candidate = load_json(Path(args.candidate_regions))
     document = compare_region_effect_documents(oracle=oracle, candidate=candidate)
@@ -363,7 +363,7 @@ def cmd_compare_regions(args: argparse.Namespace) -> int:
     )
 
 
-def cmd_make_mapping(args: argparse.Namespace) -> int:
+def cmd_make_mapping(args: argparse.Namespace) -> int:  # noqa: D103
     oracle = load_json(Path(args.oracle_functions))
     candidate = load_json(Path(args.candidate_functions))
     document = make_mapping_document(oracle_catalog=oracle, candidate_catalog=candidate, mode=args.mode)
@@ -371,14 +371,14 @@ def cmd_make_mapping(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_select_vectors(args: argparse.Namespace) -> int:
+def cmd_select_vectors(args: argparse.Namespace) -> int:  # noqa: D103
     vectors = load_json(Path(args.vectors))
     document = select_vectors(vectors, names=args.function, limit=args.limit)
     write_json(Path(args.out), document)
     return 0
 
 
-def cmd_record_oracle(args: argparse.Namespace) -> int:
+def cmd_record_oracle(args: argparse.Namespace) -> int:  # noqa: D103
     vectors = load_json(Path(args.vectors))
     functions = load_json(Path(args.functions)) if args.functions else None
     document = record_oracle(
@@ -392,7 +392,7 @@ def cmd_record_oracle(args: argparse.Namespace) -> int:
     return 0 if _all_results_passed(document) else 1
 
 
-def cmd_compare(args: argparse.Namespace) -> int:
+def cmd_compare(args: argparse.Namespace) -> int:  # noqa: D103
     vectors = load_json(Path(args.vectors))
     functions = load_json(Path(args.functions)) if args.functions else None
     mapping = load_json(Path(args.mapping)) if args.mapping else None
@@ -409,7 +409,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0 if _all_results_passed(document) else 1
 
 
-def cmd_compare_data(args: argparse.Namespace) -> int:
+def cmd_compare_data(args: argparse.Namespace) -> int:  # noqa: D103
     oracle_catalog = load_json(Path(args.oracle_functions))
     candidate_catalog = load_json(Path(args.candidate_functions))
     document = compare_loaded_data_images(
@@ -426,7 +426,7 @@ def cmd_compare_data(args: argparse.Namespace) -> int:
     return 0 if document.get("status") == "passed" else 1
 
 
-def cmd_summarize(args: argparse.Namespace) -> int:
+def cmd_summarize(args: argparse.Namespace) -> int:  # noqa: D103
     document = load_json(Path(args.results))
     results = document.get("results", []) if isinstance(document, dict) else []
     summary = summarize_results(results if isinstance(results, list) else [])
@@ -438,7 +438,7 @@ def cmd_summarize(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_report_failures(args: argparse.Namespace) -> int:
+def cmd_report_failures(args: argparse.Namespace) -> int:  # noqa: D103
     document = load_json(Path(args.results))
     if not isinstance(document, dict):
         raise DosUnitError("--results must be a JSON object")
@@ -591,7 +591,7 @@ def _ssa_batch_connectivity_rollup(connectivity: dict[str, Any]) -> dict[str, An
     }
 
 
-def _count_or_int(value: Any) -> int:
+def _count_or_int(value: Any) -> int:  # noqa: ANN401
     if isinstance(value, list | tuple | set | dict):
         return len(value)
     try:
@@ -785,7 +785,7 @@ def _compare_doc_candidate_references(compare_doc: dict[str, Any]) -> list[str]:
 def _candidate_only_parts_for_batched(candidate_ssa_path: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
     try:
         candidate = load_json(candidate_ssa_path)
-    except Exception as ex:  # noqa: BLE001
+    except Exception as ex:
         return {
             "enabled": False,
             "reason": f"candidate_ssa_unavailable: {ex}",
@@ -830,7 +830,7 @@ def _candidate_only_parts_for_batched(candidate_ssa_path: Path, rows: list[dict[
     }
 
 
-def _add_candidate_ref(refs: set[str], value: Any) -> None:
+def _add_candidate_ref(refs: set[str], value: Any) -> None:  # noqa: ANN401
     if isinstance(value, str) and value:
         refs.add(value)
 
@@ -885,8 +885,8 @@ def _parse_cli_int(value: str, *, field: str) -> int:
         raise DosUnitError(f"{field} must be an integer or hex string") from ex
 
 
-def build_parser(*, prog: str = "dosunit") -> argparse.ArgumentParser:
-    def subparser_factory(*args: Any, **kwargs: Any) -> argparse.ArgumentParser:
+def build_parser(*, prog: str = "dosunit") -> argparse.ArgumentParser:  # noqa: D103
+    def subparser_factory(*args: Any, **kwargs: Any) -> argparse.ArgumentParser:  # noqa: ANN401
         kwargs.setdefault("formatter_class", argparse.ArgumentDefaultsHelpFormatter)
         return argparse.ArgumentParser(*args, **kwargs)
 
@@ -1287,7 +1287,7 @@ def build_parser(*, prog: str = "dosunit") -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None, *, prog: str = "dosunit") -> int:
+def main(argv: list[str] | None = None, *, prog: str = "dosunit") -> int:  # noqa: D103
     parser = build_parser(prog=prog)
     args = parser.parse_args(argv)
     try:

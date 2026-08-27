@@ -167,35 +167,35 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
         nontrivial_definition_guard
     )
     try:
-        typed_codegen.widening_copyprop_nested_replacements_8616
+        typed_codegen.widening_copyprop_nested_replacements_8616  # noqa: B018
     except AttributeError:
         typed_codegen.widening_copyprop_nested_replacements_8616 = 0
     try:
-        typed_codegen.widening_copyprop_address_context_refused_8616
+        typed_codegen.widening_copyprop_address_context_refused_8616  # noqa: B018
     except AttributeError:
         typed_codegen.widening_copyprop_address_context_refused_8616 = 0
     try:
-        typed_codegen.widening_copyprop_memory_kills_8616
+        typed_codegen.widening_copyprop_memory_kills_8616  # noqa: B018
     except AttributeError:
         typed_codegen.widening_copyprop_memory_kills_8616 = 0
     try:
-        typed_codegen.widening_copyprop_nontrivial_stack_definitions_refused_8616
+        typed_codegen.widening_copyprop_nontrivial_stack_definitions_refused_8616  # noqa: B018
     except AttributeError:
         typed_codegen.widening_copyprop_nontrivial_stack_definitions_refused_8616 = 0
     try:
-        typed_codegen.widening_copyprop_nontrivial_assignment_uses_refused_8616
+        typed_codegen.widening_copyprop_nontrivial_assignment_uses_refused_8616  # noqa: B018
     except AttributeError:
         typed_codegen.widening_copyprop_nontrivial_assignment_uses_refused_8616 = 0
     try:
-        typed_codegen.widening_copyprop_recursive_definitions_refused_8616
+        typed_codegen.widening_copyprop_recursive_definitions_refused_8616  # noqa: B018
     except AttributeError:
         typed_codegen.widening_copyprop_recursive_definitions_refused_8616 = 0
     try:
-        typed_codegen.widening_copyprop_typed_cast_definitions_refused_8616
+        typed_codegen.widening_copyprop_typed_cast_definitions_refused_8616  # noqa: B018
     except AttributeError:
         typed_codegen.widening_copyprop_typed_cast_definitions_refused_8616 = 0
     try:
-        typed_codegen.widening_copyprop_unknown_identity_refused_8616
+        typed_codegen.widening_copyprop_unknown_identity_refused_8616  # noqa: B018
     except AttributeError:
         typed_codegen.widening_copyprop_unknown_identity_refused_8616 = 0
 
@@ -357,7 +357,7 @@ def _widening_copy_propagation_8616(codegen: object, *, enable_nested: bool = Fa
 
             def _should_process_child(parent: object, attr: str) -> bool:
                 """Filter children through the dynamic third-party angr C AST boundary."""
-                if isinstance(parent, structured_c.CUnaryOp) and parent.op in {"Dereference", "Reference"}:
+                if isinstance(parent, structured_c.CUnaryOp) and parent.op in {"Dereference", "Reference"}:  # noqa: SIM102
                     if attr == "operand":
                         typed_codegen.widening_copyprop_address_context_refused_8616 = (
                             int(typed_codegen.widening_copyprop_address_context_refused_8616 or 0) + 1

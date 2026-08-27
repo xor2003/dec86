@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from ..ir.core import IRAddress, IRRefusal
 from ..ir.ssa_memory_contracts import (
@@ -21,6 +22,13 @@ from ..ir.ssa_memory_contracts import (
     SSAMemoryOverlap8616,
 )
 from .alias_model_impl import AliasStorageFacts
+
+if TYPE_CHECKING:
+    from ..ir.ssa_function import SSAFunctionArtifact
+    from .logical_stack_memory_projection import (
+        LogicalStackMemoryAliasAccess8616,
+        LogicalStackMemoryAliasRefusal8616,
+    )
 
 
 class StackMemoryAliasFactKind8616(StrEnum):
@@ -185,7 +193,8 @@ class StackMemoryAliasStats8616:
 class StackMemorySSAAliasArtifact8616:
     """Alias facts and refusals projected from one function SSA artifact."""
 
-    function_addr: int = 0
+    function_addr: int
+    source_ssa: SSAFunctionArtifact
     facts: tuple[StackMemorySSAAliasFact8616, ...] = ()
     accesses: tuple[StackMemorySSAAliasAccess8616, ...] = ()
     overlaps: tuple[StackMemorySSAAliasOverlap8616, ...] = ()
@@ -194,16 +203,34 @@ class StackMemorySSAAliasArtifact8616:
     call_effects: tuple[SSACallStackEffectSite8616, ...] = ()
     stats: StackMemoryAliasStats8616 = StackMemoryAliasStats8616()
     upstream_complete: bool = True
+    logical_accesses: tuple[LogicalStackMemoryAliasAccess8616, ...] = ()
+    logical_refusals: tuple[LogicalStackMemoryAliasRefusal8616, ...] = ()
+    logical_stats: StackMemoryAliasStats8616 = StackMemoryAliasStats8616()
+
+    def __post_init__(self) -> None:
+        """Reject artifacts whose function identity disagrees with their source."""
+        if self.function_addr != self.source_ssa.function_addr:
+            raise ValueError("Alias artifact function address must match its exact SSA source")
+
+    @property
+    def logical_complete(self) -> bool:
+        """Return whether the separate logical Alias evidence loop closes."""
+        return (
+            self.logical_stats.complete
+            and len(self.logical_accesses) == self.logical_stats.materialized_count
+            and len(self.logical_refusals) == self.logical_stats.failure_count
+        )
 
     @property
     def complete(self) -> bool:
         """Return whether upstream and Alias evidence accounting both close."""
-        return self.upstream_complete and self.stats.complete
+        return self.upstream_complete and self.stats.complete and self.logical_complete
 
     def to_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-friendly representation."""
         return {
             "function_addr": self.function_addr,
+            "source_ssa_function_addr": self.source_ssa.function_addr,
             "facts": [fact.to_dict() for fact in self.facts],
             "accesses": [access.to_dict() for access in self.accesses],
             "overlaps": [overlap.to_dict() for overlap in self.overlaps],
@@ -212,6 +239,10 @@ class StackMemorySSAAliasArtifact8616:
             "call_effects": [effect.to_dict() for effect in self.call_effects],
             "stats": self.stats.to_dict(),
             "upstream_complete": self.upstream_complete,
+            "logical_accesses": [access.to_dict() for access in self.logical_accesses],
+            "logical_refusals": [refusal.to_dict() for refusal in self.logical_refusals],
+            "logical_stats": self.logical_stats.to_dict(),
+            "logical_complete": self.logical_complete,
             "complete": self.complete,
         }
 

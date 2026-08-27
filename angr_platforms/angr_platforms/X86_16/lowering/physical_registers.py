@@ -16,6 +16,8 @@ from angr.ailment.expression import VirtualVariable, VirtualVariableCategory
 from angr.analyses.decompiler.structured_codegen.c import CDirtyExpression, CVariable
 from angr.sim_variable import SimRegisterVariable
 
+from ..ir.regs import REG16_OFFSET_MAP, REG32_OFFSET_MAP
+
 
 @dataclass(frozen=True, slots=True)
 class PhysicalRegisterView8616:
@@ -58,7 +60,7 @@ def physical_register_view_8616(value: object) -> PhysicalRegisterView8616 | Non
         return PhysicalRegisterView8616(reg_offset, width) if isinstance(width, int) and width > 0 else None
 
     dirty = value.dirty if isinstance(value, CDirtyExpression) else value
-    if isinstance(dirty, VirtualVariable):
+    if isinstance(dirty, VirtualVariable):  # noqa: SIM108
         bits = dirty.bits
     else:
         # Dynamic boundary: legacy angr dirty payloads expose width by shape.
@@ -68,8 +70,19 @@ def physical_register_view_8616(value: object) -> PhysicalRegisterView8616 | Non
     return PhysicalRegisterView8616(reg_offset, bits // 8)
 
 
+def physical_register_name_8616(value: object) -> str | None:
+    """Return the width-correct storage name for an exact physical register view."""
+    view = physical_register_view_8616(value)
+    if view is None:
+        return None
+    names = REG32_OFFSET_MAP if view.width == 4 else REG16_OFFSET_MAP
+    name = names.get(view.reg_offset)
+    return name if isinstance(name, str) else None
+
+
 __all__ = [
     "PhysicalRegisterView8616",
+    "physical_register_name_8616",
     "physical_register_offset_8616",
     "physical_register_view_8616",
 ]

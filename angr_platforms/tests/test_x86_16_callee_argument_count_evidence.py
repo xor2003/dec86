@@ -3,10 +3,14 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
+from angr_platforms.X86_16.lowering import callee_argument_count_evidence as count_module
 from angr_platforms.X86_16.lowering import callee_callsite_census as census_module
 from angr_platforms.X86_16.lowering.callee_argument_count_evidence import (
     CalleeArgumentCountVerdict8616,
     collect_callee_argument_count_evidence_8616,
+)
+from angr_platforms.X86_16.widening.stack_argument_widths import (
+    WideStackArgumentWidthEvidence8616,
 )
 
 
@@ -91,6 +95,38 @@ def test_callee_argument_count_evidence_preserves_one_push_per_logical_argument(
 
     assert evidence.verdict is CalleeArgumentCountVerdict8616.CONSISTENT
     assert evidence.argument_count == 2
+
+
+def test_callee_argument_count_evidence_groups_word_pushes_from_closed_callee_widening(
+    monkeypatch,
+) -> None:
+    callers = [SimpleNamespace(name="caller_a", addr=0x100)]
+    callee = SimpleNamespace(addr=0x200)
+    manager = SimpleNamespace(
+        values=lambda: callers,
+        function=lambda *, addr, create=False: callee if addr == 0x200 else None,
+    )
+    project = SimpleNamespace(kb=SimpleNamespace(functions=manager))
+    target = SimpleNamespace(callsite_addr=0x110, target_addr=0x200, return_addr=0x113, kind="near")
+    monkeypatch.setattr(census_module, "collect_neighbor_call_targets", lambda _function: [target])
+    monkeypatch.setattr(
+        census_module,
+        "summarize_x86_16_callsite",
+        lambda _function, _addr: _summary(0x110, 0x200, 2),
+    )
+    monkeypatch.setattr(
+        count_module,
+        "collect_wide_stack_argument_width_evidence_8616",
+        lambda _project, _function: WideStackArgumentWidthEvidence8616(1, 1, (4,)),
+    )
+
+    evidence = collect_callee_argument_count_evidence_8616(project, 0x200)
+
+    assert evidence.verdict is CalleeArgumentCountVerdict8616.CONSISTENT
+    assert evidence.argument_count == 1
+    assert evidence.closes_census is True
+    assert evidence.callsite_summaries[0].logical_arg_widths == (4,)
+    assert evidence.callsite_facts[0].summary is evidence.callsite_summaries[0]
 
 
 def test_callee_argument_count_evidence_accepts_one_unknown_source_word(monkeypatch) -> None:

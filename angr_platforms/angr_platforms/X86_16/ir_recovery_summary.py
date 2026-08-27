@@ -8,11 +8,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TypeAlias
 
 __all__ = ["IRRecoverySummary", "summarize_x86_16_ir_recovery"]
 
-IRRecoverySource: TypeAlias = Mapping[str, object]
+type IRRecoverySource = Mapping[str, object]
 
 
 def _value(source: IRRecoverySource, name: str, default: object = None) -> object:

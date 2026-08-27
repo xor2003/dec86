@@ -119,7 +119,7 @@ class StackMemorySSALoweringArtifact8616:
     candidates: tuple[StackMemorySSALoweringCandidate8616, ...] = ()
     refusals: tuple[StackMemorySSALoweringRefusal8616, ...] = ()
     result: StackLoweringResult | None = None
-    projection_retirement: StackProjectionRetirementArtifact8616 = StackProjectionRetirementArtifact8616()
+    projection_retirement: StackProjectionRetirementArtifact8616 = StackProjectionRetirementArtifact8616()  # noqa: RUF009
     stats: StackMemorySSALoweringStats8616 = StackMemorySSALoweringStats8616()
 
     @property

@@ -6,8 +6,9 @@ Forbidden: segment recovery, alias ownership, or source/COD-backed storage synth
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Protocol, TypeAlias
+from typing import Protocol
 
 from .recompilable_storage_map import (
     RecompilableStorageMapArtifact,
@@ -21,9 +22,9 @@ __all__ = [
     "export_recompilable_storage_map_from_codegen",
 ]
 
-SegmentSummaryEntry: TypeAlias = Mapping[str, object]
-SegmentSummaryBuckets: TypeAlias = Mapping[str, Mapping[str, SegmentSummaryEntry]]
-SegmentLoweringMap: TypeAlias = Mapping[str, SegmentSummaryEntry]
+type SegmentSummaryEntry = Mapping[str, object]
+type SegmentSummaryBuckets = Mapping[str, Mapping[str, SegmentSummaryEntry]]
+type SegmentLoweringMap = Mapping[str, SegmentSummaryEntry]
 
 
 class SegmentedCodegenStorageSurface(Protocol):

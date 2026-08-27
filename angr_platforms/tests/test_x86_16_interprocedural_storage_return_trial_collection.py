@@ -56,7 +56,7 @@ class _Functions8616:
     def __init__(self, functions: tuple[object, ...]) -> None:
         self._functions = functions
 
-    def function(self, *, addr: int, create: bool = False) -> object | None:  # noqa: ARG002
+    def function(self, *, addr: int, create: bool = False) -> object | None:
         """Return the unique exact function address, if present."""
         return next(
             (
@@ -354,11 +354,21 @@ def test_dx_ax_wide_condition_materializes_exact_split_return_uses() -> None:
         _evidence(CallsiteReturnUseKind8616.CONDITION, 0x1003),
     )
 
-    assert result.complete
+    assert result.complete, result.failures
+    assert result.failures == ()
+    assert result.stats == StorageTrialStats8616(1, 1, 1, 1)
     returns = result.trials.callsites[0].returns
-    assert tuple((trial.storage.register, trial.use.instr_addr) for trial in returns) == (
-        ("ax", 0x100E),
-        ("dx", 0x1003),
+    assert tuple(
+        (
+            trial.storage.register,
+            trial.use.block_addr,
+            trial.use.instr_index,
+            trial.use.instr_addr,
+        )
+        for trial in returns
+    ) == (
+        ("ax", 0x100E, 0, 0x100E),
+        ("dx", 0x1003, 0, 0x1003),
     )
     assert all(trial.signedness is StorageTrialSignedness8616.SIGNED for trial in returns)
     assert all(trial.value_class is StorageTrialValueClass8616.VALUE for trial in returns)

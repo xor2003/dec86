@@ -103,6 +103,90 @@ def test_terminal_ax_evidence_closes_mixed_defined_and_undefined_return_paths(mo
     assert set(project.factory.calls) == set(blocks)
 
 
+def test_terminal_storage_refuses_mixed_call_output_and_explicit_ax_paths(monkeypatch) -> None:
+    branch = _insn(0x1000, "je", size=2, target=0x1010)
+    write_ax = _insn(0x1002, "mov")
+    value_ret = _insn(0x1003, "ret")
+    call = _insn(0x1010, "call")
+    call_ret = _insn(0x1011, "ret")
+    blocks = {
+        0x1000: SimpleNamespace(capstone=SimpleNamespace(insns=(branch,))),
+        0x1002: SimpleNamespace(capstone=SimpleNamespace(insns=(write_ax, value_ret))),
+        0x1010: SimpleNamespace(capstone=SimpleNamespace(insns=(call, call_ret))),
+    }
+    project = SimpleNamespace(factory=_Factory(blocks))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set=set(blocks))
+
+    def _effect(insn: object) -> object:
+        if insn is call:
+            return SimpleNamespace(kind=TerminalAxReturnEffectKind8616.CALL_CLOBBER, dst_reg=None)
+        return SimpleNamespace(
+            kind=TerminalAxReturnEffectKind8616.OTHER,
+            dst_reg="ax" if insn is write_ax else None,
+        )
+
+    monkeypatch.setattr(terminal_register_returns, "terminal_ax_return_effect_8616", _effect)
+
+    evidence = collect_terminal_ax_return_evidence_8616(project, function)
+
+    assert evidence.complete is True
+    assert {state.call_output_only for state in evidence.storage_states} == {False, True}
+    assert consistent_terminal_return_storage_8616(evidence) is None
+
+
+def test_terminal_storage_classifies_only_call_output_paths() -> None:
+    evidence = TerminalAxReturnEvidence8616(
+        frozenset(
+            {
+                TerminalReturnStorageState8616(
+                    TerminalAxReturnLane8616.WORD,
+                    False,
+                    TerminalAxReturnLane8616.WORD,
+                )
+            }
+        ),
+        1,
+        1,
+        1,
+        1,
+        0,
+    )
+
+    assert (
+        consistent_terminal_return_storage_8616(evidence)
+        is TerminalReturnStorage8616.CALL_OUTPUT
+    )
+
+
+def test_terminal_storage_excludes_call_derived_high_lane_after_al_write(monkeypatch) -> None:
+    call = _insn(0x1000, "call")
+    write_al = _insn(0x1001, "mov")
+    terminal = _insn(0x1002, "ret")
+    blocks = {
+        0x1000: SimpleNamespace(capstone=SimpleNamespace(insns=(call, write_al, terminal))),
+    }
+    project = SimpleNamespace(factory=_Factory(blocks))
+    function = SimpleNamespace(addr=0x1000, block_addrs_set=set(blocks))
+
+    def _effect(insn: object) -> object:
+        if insn is call:
+            return SimpleNamespace(kind=TerminalAxReturnEffectKind8616.CALL_CLOBBER, dst_reg=None)
+        return SimpleNamespace(
+            kind=TerminalAxReturnEffectKind8616.OTHER,
+            dst_reg="al" if insn is write_al else None,
+        )
+
+    monkeypatch.setattr(terminal_register_returns, "terminal_ax_return_effect_8616", _effect)
+
+    evidence = collect_terminal_ax_return_evidence_8616(project, function)
+    state = next(iter(evidence.storage_states))
+
+    assert state.ax_lanes is TerminalAxReturnLane8616.WORD
+    assert state.call_output_lanes is TerminalAxReturnLane8616.HIGH
+    assert state.explicit_ax_lanes is TerminalAxReturnLane8616.LOW
+    assert consistent_terminal_return_storage_8616(evidence) is TerminalReturnStorage8616.AL
+
+
 def test_terminal_wide_return_requires_every_terminal_path(monkeypatch) -> None:
     branch = _insn(0x1000, "je", size=2, target=0x1010)
     wide_ax = _insn(0x1002, "mov")

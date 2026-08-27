@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import typing
 from collections.abc import Callable
-from typing import Protocol, TypeAlias
+from typing import Protocol
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
@@ -17,8 +17,8 @@ from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVa
 from .cli_access_object_hints import AccessTraitObjectHint, BaseKey
 from .cli_access_rewrite_artifact import AccessRewriteArtifact
 
-StableHints: TypeAlias = dict[BaseKey, AccessTraitObjectHint]
-ReplaceCChildren: TypeAlias = Callable[[object, Callable[[object], object]], bool]
+type StableHints = dict[BaseKey, AccessTraitObjectHint]
+type ReplaceCChildren = Callable[[object, Callable[[object], object]], bool]
 
 
 class _CFunctionLike(Protocol):

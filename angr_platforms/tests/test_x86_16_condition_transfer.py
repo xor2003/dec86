@@ -117,7 +117,8 @@ def test_sub_register_memory_semantics_are_classified_before_cmp() -> None:
         0x4000,
     )
 
-    assert instruction.simple_semantics == (
+    assert instruction.simple_semantics is None
+    assert instruction.condition_value_semantics == (
         "sub_reg_mem16",
         "ax",
         ("bp", 6, 6),
@@ -136,7 +137,8 @@ def test_sub_register_memory_semantics_are_classified_before_dec() -> None:
         0x4000,
     )
 
-    assert instruction.simple_semantics == (
+    assert instruction.simple_semantics is None
+    assert instruction.condition_value_semantics == (
         "sub_reg_mem16",
         "ax",
         ("bp", 4, 4),
@@ -875,7 +877,7 @@ def test_indexed_byte_load_provenance_refuses_noncontiguous_word_cmp():
 def test_cbw_is_simple_sign_extension_semantics() -> None:
     from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
 
-    instruction = SimpleNamespace(cs=SimpleNamespace(mnemonic="cwde"))
+    instruction = SimpleNamespace(cs=SimpleNamespace(mnemonic="cwde", bytes=b"\x98"))
 
     assert (
         Instruction_ANY._match_simple_unary_semantics_8616(instruction, ())
@@ -1065,6 +1067,41 @@ def test_emit_simple_jcc_consumes_pending_fallthrough_condition_source():
         ]
     finally:
         Instruction_ANY._inertia_pending_condition_sources_by_addr = original_pending
+
+
+def test_direct_jcc_rebuilds_pending_cmp_guard_without_packed_flags():
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    class _SignedValue:
+        def __ge__(self, _other):
+            return object()
+
+    original_pending = dict(Instruction_ANY._inertia_pending_condition_sources_by_addr)
+    source = ConditionSource(
+        kind="cmp",
+        lhs=IRValue(MemSpace.REG, name="dx", size=2),
+        rhs=IRValue(MemSpace.SS, offset=-2, size=2),
+        semantics=("cmp_reg_mem16", "dx", ("bp", -2)),
+        addr=0x10F55,
+        block_addr=0x10F55,
+    )
+    signed_lhs = _SignedValue()
+    signed_rhs = object()
+    lhs = SimpleNamespace(signed=signed_lhs)
+    rhs = SimpleNamespace(signed=signed_rhs)
+    instr = SimpleNamespace(
+        addr=0x10F5D,
+        _past_instructions=[],
+        _cmp_operands_from_semantics=lambda _semantics: (lhs, rhs),
+    )
+
+    try:
+        Instruction_ANY._inertia_pending_condition_sources_by_addr = {0x10F5D: source}
+        condition = Instruction_ANY._direct_jcc_condition(instr, "jge")
+    finally:
+        Instruction_ANY._inertia_pending_condition_sources_by_addr = original_pending
+
+    assert condition is not None
 
 
 def test_emit_simple_jcc_prefers_normalized_condition_operands():

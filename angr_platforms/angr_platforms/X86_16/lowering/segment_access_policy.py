@@ -17,12 +17,13 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol, cast
 
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..ir.segment_contract import (
     SegmentAccessFact,
+    SegmentAccessKind,
     SegmentFactVerdict,
     SegmentFunctionContract,
     SegmentInstructionStateFact,
@@ -56,7 +57,7 @@ class _CodegenBoundary8616(Protocol):
     _inertia_segment_access_lowering_stats_8616: SegmentAccessLoweringStats8616
 
 
-class SegmentAccessLoweringDecision8616(str, Enum):
+class SegmentAccessLoweringDecision8616(StrEnum):
     """Fail-closed object-lowering decision for one segmented access."""
 
     ENTRY_DS_OBJECT = "entry_ds_object"
@@ -119,6 +120,7 @@ def classify_local_segment_access_8616(
     contract: SegmentFunctionContract,
     *,
     instruction_addrs: frozenset[int] = frozenset(),
+    access_kind: SegmentAccessKind | None = None,
     segment_register: str | None,
     offset: int | None,
     width: int | None,
@@ -130,6 +132,7 @@ def classify_local_segment_access_8616(
         for fact in contract.accesses
         if segment_access_matches_query_8616(
             fact,
+            access_kind=access_kind,
             segment_register=register,
             offset=offset,
             width=width,
@@ -138,7 +141,12 @@ def classify_local_segment_access_8616(
     )
     used_split_coverage = False
     if not candidates and isinstance(width, int) and width > 1 and register is not None:
-        split_facts = tuple(fact for fact in contract.accesses if fact.segment_register == register)
+        split_facts = tuple(
+            fact
+            for fact in contract.accesses
+            if fact.segment_register == register
+            and (access_kind is None or fact.kind is access_kind)
+        )
         candidates = select_contiguous_segment_access_facts_8616(
             split_facts,
             instruction_addrs=instruction_addrs,
@@ -214,15 +222,15 @@ def classify_local_segment_address_8616(
 
 def instruction_addrs_from_node_8616(node: object) -> frozenset[int]:
     """Collect exact instruction provenance from a dynamic angr C subtree."""
-    addresses: set[int] = set()
-    for candidate in _iter_c_nodes_deep_8616(node):
-        dynamic_candidate = cast(Any, candidate)
+    def _collect_owner_tags_8616(owner: object, addresses: set[int]) -> None:
+        """Collect exact tags from one dynamic AST or wrapped dirty owner."""
+        dynamic_owner = cast(Any, owner)
         try:
-            tags = dynamic_candidate.tags
+            tags = dynamic_owner.tags
         except AttributeError:
-            continue
+            return
         if not isinstance(tags, dict):
-            continue
+            return
         for key in ("ins_addr", "inertia_relocated_from_ins_addr"):
             value = tags.get(key)
             if isinstance(value, int):
@@ -230,6 +238,15 @@ def instruction_addrs_from_node_8616(node: object) -> frozenset[int]:
         source_addrs = tags.get("inertia_source_instruction_addrs", ())
         if isinstance(source_addrs, tuple):
             addresses.update(value for value in source_addrs if isinstance(value, int))
+
+    addresses: set[int] = set()
+    for candidate in _iter_c_nodes_deep_8616(node):
+        _collect_owner_tags_8616(candidate, addresses)
+        try:
+            dirty_payload = cast(Any, candidate).dirty
+        except AttributeError:
+            continue
+        _collect_owner_tags_8616(dirty_payload, addresses)
     return frozenset(addresses)
 
 
@@ -238,6 +255,7 @@ def classify_codegen_segment_access_8616(
     node: object,
     *,
     instruction_addrs: frozenset[int] = frozenset(),
+    access_kind: SegmentAccessKind | None = None,
     segment_register: str | None,
     offset: int | None,
     width: int | None,
@@ -253,6 +271,7 @@ def classify_codegen_segment_access_8616(
     return classify_local_segment_access_8616(
         contract,
         instruction_addrs=instruction_addrs | instruction_addrs_from_node_8616(node),
+        access_kind=access_kind,
         segment_register=segment_register,
         offset=offset,
         width=width,
@@ -308,6 +327,7 @@ def may_lower_codegen_access_to_entry_ds_object_8616(
     node: object,
     *,
     instruction_addrs: frozenset[int] = frozenset(),
+    access_kind: SegmentAccessKind | None = None,
     segment_register: str | None,
     offset: int | None,
     width: int | None,
@@ -322,13 +342,15 @@ def may_lower_codegen_access_to_entry_ds_object_8616(
         codegen,
         node,
         instruction_addrs=instruction_addrs,
+        access_kind=access_kind,
         segment_register=segment_register,
         offset=offset,
         width=width,
     )
     if os.environ.get("INERTIA_DEBUG_SEGMENT_ACCESS_POLICY") == "1":
         _LOGGER.warning(
-            "segment access policy register=%s offset=%r width=%r instructions=%s decision=%s facts=%s states=%s",
+            "segment access policy kind=%s register=%s offset=%r width=%r instructions=%s decision=%s facts=%s states=%s",
+            None if access_kind is None else access_kind.value,
             segment_register,
             offset,
             width,

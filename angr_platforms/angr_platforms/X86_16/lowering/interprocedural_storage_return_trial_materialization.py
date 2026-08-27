@@ -93,6 +93,7 @@ def return_output_storages_8616(
     """Lower one Semantics-owned terminal carrier to exact Alias identities."""
     pieces = {
         TerminalReturnStorage8616.NONE: (),
+        TerminalReturnStorage8616.CALL_OUTPUT: (),
         TerminalReturnStorage8616.AL: (("al", 1),),
         TerminalReturnStorage8616.AH: (("ah", 1),),
         TerminalReturnStorage8616.AX: (("ax", 2),),

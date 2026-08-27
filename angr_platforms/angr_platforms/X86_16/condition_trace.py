@@ -9,7 +9,8 @@ from __future__ import annotations
 import logging
 import os
 import typing
-from typing import Any, Iterable, cast
+from collections.abc import Iterable
+from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CForLoop, CIfBreak, CIfElse
 
@@ -76,7 +77,7 @@ def _render_c_expr_8616(expr: object) -> str | None:
         return None
     try:
         return cast(str, cast(Any, expr).c_repr(indent=0))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return str(expr)
 
 

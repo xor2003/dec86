@@ -13,9 +13,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
 
@@ -118,7 +118,7 @@ def _strip_msc_dos_header_aggregate_typedefs_8616(text: str) -> str:
         )
         alias = f"typedef {kind} {name} {name};\n"
         cleaned = pattern.sub(
-            lambda match: alias + "\n" * max(0, match.group(0).count("\n") - 1),
+            lambda match: alias + "\n" * max(0, match.group(0).count("\n") - 1),  # noqa: B023
             cleaned,
         )
     return cleaned

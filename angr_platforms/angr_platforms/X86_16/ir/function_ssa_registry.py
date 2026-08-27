@@ -28,6 +28,7 @@ __all__ = [
     "FunctionSSAArtifactVerdict8616",
     "function_boundary_at_address_8616",
     "function_ssa_artifact_at_address_8616",
+    "function_ssa_artifact_for_boundary_8616",
     "publish_function_ssa_artifact_8616",
     "registered_function_ssa_artifact_8616",
 ]
@@ -51,6 +52,7 @@ class FunctionSSAArtifactFailure8616(StrEnum):
     """Stable reasons why one exact caller SSA artifact is unavailable."""
 
     FUNCTION_NOT_FOUND = "function_not_found"
+    FUNCTION_BOUNDARY_CONFLICT = "function_boundary_conflict"
     IR_BUILD_FAILED = "ir_build_failed"
     IR_BUILD_REFUSED = "ir_build_refused"
     SEMANTIC_BUILD_FAILED = "semantic_build_failed"
@@ -75,6 +77,12 @@ class _FunctionManager8616(Protocol):
     def function(self, *, addr: int, create: bool = False) -> object | None:
         """Return an existing function without inventing a boundary."""
         ...
+
+
+class _FunctionBoundary8616(Protocol):
+    """Third-party function boundary with one canonical entry address."""
+
+    addr: object
 
 
 class _KnowledgeBase8616(Protocol):
@@ -270,6 +278,36 @@ def function_ssa_artifact_at_address_8616(
             FunctionSSAArtifactFailure8616.FUNCTION_NOT_FOUND,
             None,
         )
+    return function_ssa_artifact_for_boundary_8616(
+        project,
+        function_addr,
+        function,
+    )
+
+
+def function_ssa_artifact_for_boundary_8616(
+    project: object,
+    function_addr: int,
+    function: object,
+) -> FunctionSSAArtifactResolution8616:
+    """Build or return one exact SSA artifact from a supplied boundary."""
+    try:
+        boundary_addr = cast(_FunctionBoundary8616, function).addr
+    except AttributeError:
+        boundary_addr = None
+    if boundary_addr != function_addr:
+        return FunctionSSAArtifactResolution8616(
+            function_addr,
+            FunctionSSAArtifactVerdict8616.UNKNOWN_REFUSE,
+            None,
+            FunctionSSAArtifactFailure8616.FUNCTION_BOUNDARY_CONFLICT,
+            None,
+        )
+    registered = registered_function_ssa_artifact_8616(project, function_addr)
+    if registered.verdict is FunctionSSAArtifactVerdict8616.PROVEN:
+        return registered
+    if registered.failure is FunctionSSAArtifactFailure8616.ARTIFACT_CONFLICT:
+        return registered
     try:
         ir_artifact = build_x86_16_ir_function_artifact(project, function)
         function_ssa = build_x86_16_function_ssa(ir_artifact)

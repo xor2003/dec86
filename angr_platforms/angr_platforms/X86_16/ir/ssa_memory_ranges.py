@@ -10,8 +10,8 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
-from typing import TypeAlias
 
 from .core import AddressStatus, IRAddress, IRInstr, MemSpace
 from .ssa import SSABlock
@@ -21,7 +21,7 @@ from .ssa_memory_contracts import (
     SSAMemoryOverlapRelation8616,
 )
 
-StackMemoryAccessInput8616: TypeAlias = tuple[int, int, IRAddress]
+type StackMemoryAccessInput8616 = tuple[int, int, IRAddress]
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +72,24 @@ def memory_range_key_8616(address: IRAddress) -> MemoryRangeKey8616 | None:
     ):
         return None
     return (address.space.value, address.base, address.offset, address.size)
+
+
+def close_refused_stack_ranges_8616(
+    refused_ranges: set[MemoryRangeKey8616],
+    cells_by_range: dict[MemoryRangeKey8616, tuple[MemoryRangeKey8616, ...]],
+) -> frozenset[MemoryRangeKey8616]:
+    """Refuse every stack range sharing a canonical cell with a refusal."""
+    closed = set(refused_ranges)
+    while True:
+        refused_cells = {cell for key in closed for cell in cells_by_range[key]}
+        expanded = {
+            key
+            for key, cells in cells_by_range.items()
+            if any(cell in refused_cells for cell in cells)
+        }
+        if expanded <= closed:
+            return frozenset(closed)
+        closed.update(expanded)
 
 
 def versioned_memory_address_8616(address: IRAddress, version: int) -> IRAddress:
@@ -163,7 +181,7 @@ def build_stack_memory_cell_layout_8616(
             address.offset + address.size,
         )
         cells: list[IRAddress] = []
-        for start, end in zip(points[:-1], points[1:], strict=True):
+        for start, end in itertools.pairwise(points):
             cell_key = (key[0], key[1], start, end - start)
             cell = canonical_cells.setdefault(
                 cell_key,
@@ -198,6 +216,7 @@ __all__ = [
     "StackMemoryCellLayout8616",
     "StackMemoryRangeCells8616",
     "build_stack_memory_cell_layout_8616",
+    "close_refused_stack_ranges_8616",
     "collect_stack_memory_accesses_8616",
     "memory_overlap_8616",
     "memory_range_key_8616",

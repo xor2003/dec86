@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from angr import ailment
-from angr.ailment.expression import BasePointerOffset, Expression
+from angr.ailment.expression import BasePointerOffset, Expression, StackBaseOffset
 from angr.analyses.decompiler.return_maker import ReturnMaker
 from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
@@ -47,10 +47,18 @@ from .callsite_summary import (
     record_caller_return_use_evidence_8616,
 )
 from .lowering.return_type_evidence import proven_function_result_observation_8616
-from .lowering.terminal_return_expressions import uncollapse_safe_scalar_expression_8616
+from .lowering.terminal_return_expressions import (
+    return_expression_contains_dereference_8616,
+    uncollapse_safe_scalar_expression_8616,
+)
 from .lowering.unobserved_returns import (
     return_expr_is_unresolved_carrier_8616,
     return_value_needs_neutralization_8616,
+)
+from .msvc_x87_interrupts import msvc_x87_escape_opcode_8616
+from .semantics.branch_target_return import (
+    TerminalAxReturnEffectKind8616,
+    terminal_ax_return_effect_8616,
 )
 from .structuring.register_dependencies import resolve_same_block_data_register_dependencies_8616
 from .structuring.wide_return_values import combine_word_return_sources_8616
@@ -287,7 +295,6 @@ def _make_return_register_expr_8616(self: object, stmt: object, reg_arg: SimRegA
         reg_name = reg_arg.reg_name
     reg_expr = ailment.Expr.Register(
         self_dynamic._next_atom(),
-        None,
         reg[0],
         reg_arg.size * self_dynamic.arch.byte_width,
         reg_name=reg_name,
@@ -372,7 +379,7 @@ def _resolve_same_block_tmps_in_expr_8616(
             pass
     if hasattr(copy, "operands"):
         try:
-            operands = getattr(copy, "operands")
+            operands = copy.operands
             typing.cast(typing.Any, copy).operands = [
                 _resolve_same_block_tmps_in_expr_8616(child, statements, before_index=before_index, depth=depth + 1)
                 for child in operands
@@ -447,6 +454,16 @@ def _bp_offset_expr_8616(self: object, expr: object) -> int | None:
     if isinstance(expr, BasePointerOffset):
         offset = expr.offset
         return offset if expr.base == "bp" and isinstance(offset, int) else None
+    if isinstance(expr, StackBaseOffset):
+        variable = expr.tags.get("variable")
+        offset = expr.offset
+        return (
+            offset
+            if isinstance(variable, SimStackVariable)
+            and variable.base == "bp"
+            and isinstance(offset, int)
+            else None
+        )
     if _ail_register_name_8616(self, expr) == "bp":
         return 0
     if not isinstance(expr, ailment.Expr.BinaryOp):
@@ -512,10 +529,9 @@ def _materialize_return_stack_load_8616(self: object, expr: object) -> object:
         size = max(bits // self_dynamic.arch.byte_width, 1) if isinstance(bits, int) and bits > 0 else 2
         region = getattr(getattr(self, "function", None), "addr", None)
         variable = SimStackVariable(offset, size, base="bp", region=region)
-        materialized_addr = BasePointerOffset(
+        materialized_addr = StackBaseOffset(
             self_dynamic._next_atom(),
             size * self_dynamic.arch.byte_width,
-            "bp",
             offset,
             variable=variable,
             ins_addr=expr.tags.get("ins_addr", None),
@@ -531,15 +547,11 @@ def _materialize_return_stack_load_8616(self: object, expr: object) -> object:
     for attr in ("addr", "operand", "expr"):
         if not hasattr(result, attr):
             continue
-        try:
+        with contextlib.suppress(Exception):
             setattr(result, attr, _materialize_return_stack_load_8616(self, getattr(result, attr)))
-        except Exception:
-            pass
     if hasattr(result, "operands"):
-        try:
+        with contextlib.suppress(Exception):
             result.operands = [_materialize_return_stack_load_8616(self, operand) for operand in result.operands]
-        except Exception:
-            pass
     return result
 
 
@@ -1287,14 +1299,6 @@ def _make_c_stack_value_8616(
     return cvar
 
 
-_MSVC_X87_INT_TO_OPCODE_8616 = {
-    0x34: 0xD8,
-    0x35: 0xD9,
-    0x38: 0xDC,
-    0x39: 0xDD,
-}
-
-
 def _return_scan_project_and_addr_8616(project: object, function: object) -> tuple[object, int]:
     start = getattr(function, "addr", None)
     if not isinstance(start, int):
@@ -1414,7 +1418,7 @@ def x86_16_msvc_x87_scalar_stack_args(project: object, function: object) -> dict
             index += 1
             continue
         int_no = data[index + 1]
-        opcode = _MSVC_X87_INT_TO_OPCODE_8616.get(int_no)
+        opcode = msvc_x87_escape_opcode_8616(int_no)
         if opcode is None:
             index += 2
             continue
@@ -1545,7 +1549,7 @@ def _decode_msvc_x87_return_expr_8616(codegen: object) -> object | None:
         byte = data[index]
         if byte == 0xCD and index + 1 < len(data):
             int_no = data[index + 1]
-            opcode = _MSVC_X87_INT_TO_OPCODE_8616.get(int_no)
+            opcode = msvc_x87_escape_opcode_8616(int_no)
             if opcode is None:
                 index += 2
                 continue
@@ -1587,12 +1591,10 @@ def _decode_msvc_x87_return_expr_8616(codegen: object) -> object | None:
     return_pattern = bytes((0xB8, final_store_offset & 0xFF, (final_store_offset >> 8) & 0xFF))
     if data.find(return_pattern, final_store_index + 1) < 0:
         return None
-    try:
+    with contextlib.suppress(Exception):
         function._inertia_msvc_x87_return_materialized_count = (
             int(getattr(function, "_inertia_msvc_x87_return_materialized_count", 0) or 0) + 1
         )
-    except Exception:
-        pass
     return final_expr
 
 
@@ -1663,6 +1665,12 @@ def _infer_x86_16_c_return_value_from_ax_8616(codegen: object) -> object | None:
         offsets.add(bp_disp)
         sizes.add(size)
     if len(offsets) != 1:
+        instruction_fact = _terminal_ax_stack_load_from_instructions_8616(function)
+        if instruction_fact is not None:
+            bp_disp, size = instruction_fact
+            retval = _make_c_stack_return_value_8616(codegen, bp_disp=bp_disp, size=size)
+            _increment_dynamic_int_counter_8616(function, "_inertia_return_compat_c_ast_materialized_count")
+            return cast(object, retval)
         _debug_refuse(f"offset-count:{len(offsets)}")
         _increment_dynamic_int_counter_8616(function, "_inertia_return_compat_c_ast_refused_count")
         return None
@@ -1673,13 +1681,73 @@ def _infer_x86_16_c_return_value_from_ax_8616(codegen: object) -> object | None:
     return cast(object, retval)
 
 
+def _terminal_ax_stack_load_from_instructions_8616(function: object) -> tuple[int, int] | None:
+    """Return one stack range when every terminal block proves the same AX load."""
+    terminal_facts: list[tuple[int, int]] = []
+    # Dynamic angr Function and capstone boundary. Typed instruction effects
+    # below own the semantic classification.
+    for block in tuple(getattr(function, "blocks", ()) or ()):
+        capstone = getattr(block, "capstone", None)
+        wrappers = tuple(getattr(capstone, "insns", ()) or ())
+        if not wrappers:
+            continue
+        instructions = tuple(getattr(wrapper, "insn", wrapper) for wrapper in wrappers)
+        terminal_mnemonic = str(getattr(instructions[-1], "mnemonic", "") or "").lower()
+        if terminal_mnemonic not in {"ret", "retf", "retn"}:
+            continue
+        terminal_fact: tuple[int, int] | None = None
+        for instruction in reversed(instructions[:-1]):
+            effect = terminal_ax_return_effect_8616(instruction)
+            if effect.kind is TerminalAxReturnEffectKind8616.CALL_CLOBBER:
+                break
+            if effect.dst_reg not in {"ax", "al", "ah"}:
+                continue
+            if (
+                effect.kind is TerminalAxReturnEffectKind8616.MOV_REG_STACK
+                and effect.dst_reg == "ax"
+                and isinstance(effect.mem_disp, int)
+                and isinstance(effect.mem_size, int)
+                and effect.mem_size == 2
+            ):
+                terminal_fact = (effect.mem_disp, effect.mem_size)
+            break
+        if terminal_fact is None:
+            return None
+        terminal_facts.append(terminal_fact)
+    if not terminal_facts or len(set(terminal_facts)) != 1:
+        return None
+    return terminal_facts[0]
+
+
 def _make_return_combo_expr_8616(
     self: object, stmt: object, block: object | None, ret_val: SimComboArg
 ) -> object | None:
     self_dynamic = cast(Any, self)
     stmt_dynamic = cast(Any, stmt)
+    function = getattr(self, "function", None)
+    project = _return_compat_function_project_8616(function)
+    wide_evidence = (
+        collect_wide_stack_argument_width_evidence_8616(project, function)
+        if project is not None and function is not None
+        else None
+    )
+    locations = tuple(ret_val.locations)
+    if (
+        wide_evidence is not None
+        and len(wide_evidence.terminal_return_offsets) == 1
+        and all(isinstance(location, SimRegArg) for location in locations)
+        and tuple(location.reg_name for location in locations) == ("ax", "dx")
+    ):
+        terminal_owner = _make_bp_stack_load_expr_8616(
+            self,
+            stmt,
+            bp_disp=wide_evidence.terminal_return_offsets[0],
+            size=4,
+        )
+        if isinstance(terminal_owner, Expression):
+            return cast(object, terminal_owner)
     parts: list[Expression] = []
-    for loc in reversed(ret_val.locations):
+    for loc in reversed(locations):
         if isinstance(loc, SimRegArg) and _is_stack_base_return_register_8616(loc):
             return None
         if not isinstance(loc, SimRegArg):
@@ -1706,13 +1774,7 @@ def _make_return_combo_expr_8616(
             if isinstance(part, ailment.Expr.Load)
             else None
         )
-        function = getattr(self, "function", None)
-        project = _return_compat_function_project_8616(function)
-        wide_offsets = (
-            collect_wide_stack_argument_width_evidence_8616(project, function).classified_offsets
-            if project is not None and function is not None
-            else ()
-        )
+        wide_offsets = wide_evidence.classified_offsets if wide_evidence is not None else ()
         wide_stack_owner = None
         if (
             isinstance(high_stack_offset, int)
@@ -1782,7 +1844,7 @@ def _insn_mnemonic_8616(insn: object) -> str:
 
 
 def _match_wide_stack_arith_sequence_8616(insns: Sequence[object]) -> tuple[str, int, int] | None:
-    for index in range(0, max(0, len(insns) - 3)):
+    for index in range(max(0, len(insns) - 3)):
         first, second, third, fourth = insns[index : index + 4]
         if _insn_mnemonic_8616(first) != "mov" or _reg_operand_name_8616(first, 0) != "ax":
             continue
@@ -1829,10 +1891,9 @@ def _make_bp_stack_load_expr_8616(self: object, stmt: object, *, bp_disp: int, s
     function = getattr(self, "function", None)
     variable = SimStackVariable(bp_disp, size, base="bp", region=getattr(function, "addr", None))
     ins_addr = getattr(stmt, "tags", {}).get("ins_addr", None)
-    addr = BasePointerOffset(
+    addr = StackBaseOffset(
         self_dynamic._next_atom(),
         size * self_dynamic.arch.byte_width,
-        "bp",
         bp_disp,
         variable=variable,
         ins_addr=ins_addr,
@@ -1972,7 +2033,7 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                         "_inertia_return_compat_unused_caller_proven_return_materialized_count",
                     )
                     new_stmt = cast(Any, stmt.copy())
-                    new_stmt.ret_exprs.append(cast(Any, ret_expr))
+                    new_stmt.ret_exprs = [*new_stmt.ret_exprs, cast(Any, ret_expr)]
                     return cast(object, new_stmt)
                 return cast(object, stmt.copy())
             if guessed_caller_use is not True:
@@ -1986,7 +2047,7 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                     ret_expr = _return_compat_unknown_caller_unconditional_predecessor_expr_8616(self, block, ret_val)
                 if ret_expr is not None:
                     new_stmt = cast(Any, stmt.copy())
-                    new_stmt.ret_exprs.append(cast(Any, ret_expr))
+                    new_stmt.ret_exprs = [*new_stmt.ret_exprs, cast(Any, ret_expr)]
                     return cast(object, new_stmt)
                 if _return_compat_unknown_caller_reaching_register_proven_8616(self, block, ret_val):
                     ret_expr = _make_return_register_expr_8616(self, stmt, ret_val)
@@ -1996,7 +2057,7 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                             "_inertia_return_compat_unknown_caller_reaching_ax_count",
                         )
                         new_stmt = cast(Any, stmt.copy())
-                        new_stmt.ret_exprs.append(cast(Any, ret_expr))
+                        new_stmt.ret_exprs = [*new_stmt.ret_exprs, cast(Any, ret_expr)]
                         return cast(object, new_stmt)
                 _increment_dynamic_int_counter_8616(
                     function_dynamic,
@@ -2013,7 +2074,7 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                 ret_expr = _infer_x86_16_ax_return_expr_8616(self, stmt, block)
                 if ret_expr is not None:
                     new_stmt = cast(Any, stmt.copy())
-                    new_stmt.ret_exprs.append(cast(Any, ret_expr))
+                    new_stmt.ret_exprs = [*new_stmt.ret_exprs, cast(Any, ret_expr)]
                     if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
                         print(
                             f"[dbg-return] compat-inferred-ax-ret-stmt-count={len(new_stmt.ret_exprs)} "
@@ -2125,7 +2186,7 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
                     raise
 
             new_stmt = cast(Any, stmt.copy())
-            new_stmt.ret_exprs.append(cast(Any, ret_expr))
+            new_stmt.ret_exprs = [*new_stmt.ret_exprs, cast(Any, ret_expr)]
             if os.environ.get("INERTIA_DEBUG_RETURN_COMPAT") == "1":
                 print(
                     f"[dbg-return] compat-ret-stmt-count={len(new_stmt.ret_exprs)} "
@@ -2169,10 +2230,11 @@ def apply_x86_16_decompiler_return_compatibility() -> None:
             observation_function is not None
             and _return_compat_proven_result_observation_8616(observation_function) is CallerReturnUseVerdict8616.UNUSED
         )
+        current_retval = getattr(obj_dynamic, "retval", None)
+        recoverable_dereference = return_expression_contains_dereference_8616(current_retval)
         if (
-            getattr(obj_dynamic, "retval", None) is None
-            and codegen is not None
-            and not unobserved_result
+            codegen is not None
+            and (recoverable_dereference or (current_retval is None and not unobserved_result))
             and return_type is not None
             and not isinstance(return_type, SimTypeBottom)
             and isinstance(return_type_size, int)

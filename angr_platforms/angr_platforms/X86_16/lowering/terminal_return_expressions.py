@@ -29,6 +29,7 @@ from .runtime_memory_helpers import memory_pointer_helper_8616, segmented_memory
 __all__ = [
     "contains_effectful_call_8616",
     "resolve_linear_virtual_return_expression_8616",
+    "return_expression_contains_dereference_8616",
     "return_expression_has_wide_word_composition_8616",
     "return_expression_requires_materialization_8616",
     "uncollapse_safe_scalar_expression_8616",
@@ -241,18 +242,29 @@ def return_expression_has_wide_word_composition_8616(expression: object | None) 
     return _is_high_word(expression.lhs) or _is_high_word(expression.rhs)
 
 
+def return_expression_contains_dereference_8616(expression: object | None) -> bool:
+    """Return whether one generated expression reads through a pointer."""
+    return any(
+        isinstance(node, structured_c.CUnaryOp) and node.op == "Dereference"
+        for node in _iter_c_nodes_deep_8616(expression)
+    )
+
+
 def return_expression_requires_materialization_8616(
     statements_before_return: tuple[object, ...],
     expression: object | None,
 ) -> bool:
-    """Accept a bare or provably unusable generated return expression."""
+    """Return whether a generated return expression must be made renderable."""
     if expression is None:
         return True
     if contains_effectful_call_8616(expression):
         return False
-    definitions = _linear_virtual_definitions_8616(statements_before_return)
-    resolved = _resolve_virtual_expression_8616(expression, definitions)
-    return _contains_unresolved_virtual_value_8616(resolved)
+    del statements_before_return
+    nodes = (expression, *_iter_c_nodes_deep_8616(expression))
+    return any(
+        isinstance(node, structured_c.CExpression) and node.collapsed
+        for node in nodes
+    ) or _contains_unresolved_virtual_value_8616(expression)
 
 
 def resolve_linear_virtual_return_expression_8616(

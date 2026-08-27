@@ -10,6 +10,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CExpressionStatement,
     CForLoop,
     CFunctionCall,
+    CIfBreak,
     CIfElse,
     CIndexedVariable,
     CStatements,
@@ -28,6 +29,9 @@ from angr_platforms.X86_16.ir.core import (
 from angr_platforms.X86_16.lowering.real_mode_linear import (
     DirectStackMoveFact8616,
     DirectStackMoveSourceKind8616,
+)
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
 )
 from angr_platforms.X86_16.semantics.call_contracts import (
     CallContractEvidenceKind8616,
@@ -59,6 +63,10 @@ class _Codegen:
         index = self._next_index
         self._next_index += 1
         return index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _const(value: int, codegen: _Codegen) -> CConstant:
@@ -123,6 +131,7 @@ def _while_loop(
     boolified_guard: bool = False,
     guard_after_body: bool = False,
     guard_induction: CVariable | None = None,
+    duplicate_guard: bool = False,
 ) -> tuple[CAssignment, CWhileLoop]:
     continuation: object = CBinaryOp(
         "CmpGT",
@@ -158,6 +167,11 @@ def _while_loop(
         codegen=codegen,
     )
     statements = [*body.statements, guard, increment] if guard_after_body else [guard, *body.statements, increment]
+    if duplicate_guard and not guard_after_body:
+        statements.insert(
+            1,
+            CIfBreak(guard.condition_and_nodes[0][0], codegen=codegen),
+        )
     return (
         CAssignment(induction, _const(0, codegen), codegen=codegen),
         CWhileLoop(
@@ -222,6 +236,7 @@ def _two_loop_fixture(
     predecessor_uses_segment_load: bool = False,
     duplicate_call_carrier: bool = False,
     insert_intrinsic_carrier: bool = False,
+    duplicate_prefix_guard: bool = False,
 ) -> tuple[CStatements, CIndexedVariable, CIndexedVariable]:
     codegen = _Codegen()
     array = _array(codegen)
@@ -293,6 +308,7 @@ def _two_loop_fixture(
                 if mixed_stack_regions
                 else None
             ),
+            duplicate_guard=duplicate_prefix_guard,
         )
     else:
         prefix_nodes = (
@@ -497,6 +513,24 @@ def test_structuring_proves_canonical_while_break_guard_prefix_reads() -> None:
     }
 
 
+def test_structuring_proves_duplicate_equivalent_while_break_guards() -> None:
+    root, random_read, high_read = _two_loop_fixture(
+        while_shape=True,
+        duplicate_prefix_guard=True,
+    )
+
+    report = collect_indexed_stack_read_proofs_8616(
+        root,
+        direct_stack_move_facts=(_signed_remainder_fact(),),
+    )
+
+    assert report.failure_count == 0
+    assert {proof.read_node_id for proof in report.proofs} == {
+        id(random_read),
+        id(high_read),
+    }
+
+
 def test_structuring_joins_cloned_stack_variables_across_codegen_regions() -> None:
     root, random_read, high_read = _two_loop_fixture(
         while_shape=True,
@@ -513,6 +547,48 @@ def test_structuring_joins_cloned_stack_variables_across_codegen_regions() -> No
         id(random_read),
         id(high_read),
     }
+
+
+def test_structuring_joins_machine_bp_facts_to_entry_sp_ast_offsets() -> None:
+    root, random_read, high_read = _two_loop_fixture()
+    codegen = root.codegen
+    for cvar, bp_offset in ((random_read.index, -12), (high_read.index, -10)):
+        assert isinstance(cvar, CVariable)
+        variable = cvar.variable
+        assert isinstance(variable, SimStackVariable)
+        record_stack_variable_coordinate_projection_8616(
+            codegen,
+            variable=variable,
+            cvar=cvar,
+            bp_offset=bp_offset,
+            entry_sp_offset=variable.offset,
+            size=variable.size,
+        )
+    fact = replace(
+        _signed_remainder_fact(),
+        dst_offset=-12,
+        source_offset=-10,
+    )
+
+    without_registry = collect_indexed_stack_read_proofs_8616(
+        root,
+        direct_stack_move_facts=(fact,),
+    )
+    report = collect_indexed_stack_read_proofs_8616(
+        root,
+        direct_stack_move_facts=(fact,),
+        codegen=codegen,
+    )
+
+    assert {proof.read_node_id for proof in without_registry.proofs} == {
+        id(high_read),
+    }
+    assert report.materialized_count == 2
+    assert {proof.read_node_id for proof in report.proofs} == {
+        id(random_read),
+        id(high_read),
+    }
+    assert {proof.index_storage_offset for proof in report.proofs} == {-14, -12}
 
 
 def test_structuring_proves_boolified_while_break_guard_prefix_reads() -> None:

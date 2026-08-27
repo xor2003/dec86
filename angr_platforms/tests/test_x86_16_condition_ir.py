@@ -353,7 +353,7 @@ class TestFlagMaskDecoding:
         assert flag == "OF"
 
     def test_unknown_mask(self):
-        flag, value = classify_flag_mask_bit_8616(0x4)
+        flag, _value = classify_flag_mask_bit_8616(0x4)
         assert flag is None
 
 

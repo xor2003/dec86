@@ -50,6 +50,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _constant(value: int, codegen: _DummyCodegen) -> CConstant:
@@ -111,8 +115,7 @@ def _attach_word_proof(
             blocks=(
                 IRBlock(
                     addr=FUNCTION_ADDR,
-                    instrs=(_store(_bp_slot(offset, 2)),)
-                    + tuple(_load(_bp_slot(offset + delta, 1)) for delta in view_offsets),
+                    instrs=(_store(_bp_slot(offset, 2)), *tuple(_load(_bp_slot(offset + delta, 1)) for delta in view_offsets)),
                 ),
             ),
         )

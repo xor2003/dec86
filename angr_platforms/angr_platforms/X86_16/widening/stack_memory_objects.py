@@ -3,10 +3,8 @@
 Layer: Widening.
 Responsibility: resolve each composed stack overlap component to one unique
 containing storage range, or emit one typed refusal for the whole component.
-Consumes alias-proven storage identity from typed IR/Alias artifacts only. Do
-not infer C types, materialize locals, or recover semantics from assembly or
-sidecars. Do not join values from rendered text, cosmetic shape, postprocess,
-or CLI/reporting evidence.
+Consumes alias-proven storage identity; do not infer C types or materialize locals.
+Do not join values from rendered text, cosmetic shape, postprocess, or CLI/reporting evidence.
 """
 
 from __future__ import annotations
@@ -14,7 +12,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from ..alias.alias_model_impl import AliasStorageFacts
 from ..alias.stack_memory_ssa_contracts import (
@@ -24,11 +22,7 @@ from ..alias.stack_memory_ssa_contracts import (
     StackMemorySSAAliasFact8616,
 )
 from ..ir.core import IRAddress
-from ..ir.ssa_memory_contracts import (
-    SSACallStackEffectSite8616,
-    SSAMemoryAccessKind8616,
-    SSAMemoryOverlapRelation8616,
-)
+from ..ir.ssa_memory_contracts import SSACallStackEffectSite8616, SSAMemoryAccessKind8616, SSAMemoryOverlapRelation8616
 from ..pipeline.errors import PipelineHardError
 from .stack_memory_objects_contracts import (
     StackMemoryObjectWideningArtifact8616,
@@ -38,12 +32,11 @@ from .stack_memory_objects_contracts import (
     StackMemoryObjectWideningStats8616,
 )
 
-_RangeKey8616: TypeAlias = tuple[str, tuple[str, ...], int, int]
+type _RangeKey8616 = tuple[str, tuple[str, ...], int, int]
 
 
 class _CodegenBoundary8616(Protocol):
     """Owned artifacts carried across the dynamic angr codegen boundary."""
-
     _inertia_stack_memory_ssa_alias_artifact: object
     _inertia_stack_memory_object_widening_artifact: StackMemoryObjectWideningArtifact8616
 
@@ -51,7 +44,6 @@ class _CodegenBoundary8616(Protocol):
 @dataclass(frozen=True, slots=True)
 class _RangeEvidence8616:
     """Alias storage and source records for one unversioned stack range."""
-
     address: IRAddress
     storages: tuple[AliasStorageFacts, ...]
     accesses: tuple[StackMemorySSAAliasAccess8616, ...]
@@ -69,6 +61,11 @@ class _RangeEvidence8616:
 def _range_key_8616(address: IRAddress) -> _RangeKey8616:
     """Return deterministic unversioned segmented range identity."""
     return (address.space.value, address.base, address.offset, address.size)
+
+
+def _composed_accesses_8616(source: StackMemorySSAAliasArtifact8616) -> tuple[StackMemorySSAAliasAccess8616, ...]:
+    """Return raw composed views plus separately proven logical owners."""
+    return source.accesses + tuple(item.alias_access for item in source.logical_accesses)
 
 
 def _contains_range_8616(owner: IRAddress, member: IRAddress) -> bool:
@@ -101,8 +98,7 @@ def _connected_components_8616(
         remaining.difference_update(component)
         if component & composed_keys:
             components.append(frozenset(component))
-    for key in sorted(composed_keys - set(adjacency)):
-        components.append(frozenset((key,)))
+    components.extend(frozenset((key,)) for key in sorted(composed_keys - set(adjacency)))
     return tuple(sorted(components, key=lambda item: min(item)))
 
 
@@ -114,7 +110,7 @@ def _range_evidence_8616(
     storages: dict[_RangeKey8616, list[AliasStorageFacts]] = defaultdict(list)
     accesses: dict[_RangeKey8616, list[StackMemorySSAAliasAccess8616]] = defaultdict(list)
     facts: dict[_RangeKey8616, list[StackMemorySSAAliasFact8616]] = defaultdict(list)
-    for access in source.accesses:
+    for access in _composed_accesses_8616(source):
         key = _range_key_8616(access.source.address)
         addresses[key] = replace(access.source.address, version=None)
         storages[key].append(access.storage)
@@ -221,7 +217,7 @@ def _candidate_for_component_8616(
     versions.update(
         version
         for fact in source_facts
-        for version in ((fact.address.version,) + fact.incoming_versions)
+        for version in ((fact.address.version, *fact.incoming_versions))
         if version is not None
     )
     fact_kinds = {fact.kind for fact in source_facts}
@@ -255,7 +251,8 @@ def build_x86_16_stack_memory_object_widening_artifact(
             layer="widening",
         )
     evidence = _range_evidence_8616(source)
-    composed_keys = {_range_key_8616(access.source.address) for access in source.accesses}
+    composed_accesses = _composed_accesses_8616(source)
+    composed_keys = {_range_key_8616(access.source.address) for access in composed_accesses}
     adjacency: dict[_RangeKey8616, set[_RangeKey8616]] = defaultdict(set)
     partial_pairs: set[frozenset[_RangeKey8616]] = set()
     for overlap in source.overlaps:
@@ -265,7 +262,7 @@ def build_x86_16_stack_memory_object_widening_artifact(
         adjacency[right].add(left)
         if overlap.source.relation is SSAMemoryOverlapRelation8616.PARTIAL:
             partial_pairs.add(frozenset((left, right)))
-    for access in source.accesses:
+    for access in composed_accesses:
         owner = _range_key_8616(access.source.address)
         for item in access.slices:
             slice_key = _range_key_8616(item.source.address)
@@ -274,7 +271,10 @@ def build_x86_16_stack_memory_object_widening_artifact(
             adjacency[owner].add(slice_key)
             adjacency[slice_key].add(owner)
     candidates: list[StackMemoryObjectWideningCandidate8616] = []
-    refusals: list[StackMemoryObjectWideningRefusal8616] = []
+    refusals = [
+        StackMemoryObjectWideningRefusal8616(StackMemoryObjectWideningRefusalKind8616.SOURCE_LOGICAL_ALIAS_REFUSAL, refusal.detail, () if refusal.source is None else (refusal.source.address,), refusal)
+        for refusal in source.logical_refusals
+    ]
     components = _connected_components_8616(adjacency, composed_keys)
     for component in components:
         if len(component) == 1:
@@ -298,7 +298,7 @@ def build_x86_16_stack_memory_object_widening_artifact(
         else:
             refusals.append(outcome)
     stats = StackMemoryObjectWideningStats8616(
-        raw_fact_count=len(components),
+        raw_fact_count=len(components) + len(source.logical_refusals),
         normalized_fact_count=len(candidates),
         classified_fact_count=len(candidates),
         materialized_count=len(candidates),

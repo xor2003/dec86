@@ -69,7 +69,11 @@ def record_cod_module_caller_return_use_evidence_8616(
     try:
         cod_path = Path(cod_metadata.cod_path)
         listing = extract_cod_listing_metadata(cod_path)
-        module_image = build_cod_module_analysis_image_8616(cod_path, listing)
+        module_image = build_cod_module_analysis_image_8616(
+            cod_path,
+            listing,
+            image_base=_ANALYSIS_IMAGE_BASE,
+        )
         target_original_addr = cod_metadata.instruction_offsets[0]
         target_analysis_addr = module_image.analysis_addr(
             target_original_addr,
@@ -92,13 +96,33 @@ def record_cod_module_caller_return_use_evidence_8616(
             target_analysis_addr,
             isolated_surface._inertia_caller_function_ranges_8616,
         )
+        remapped_facts = tuple(
+            replace(
+                fact,
+                caller_addr=module_image.original_addr(
+                    fact.caller_addr,
+                    image_base=_ANALYSIS_IMAGE_BASE,
+                ),
+                callsite_addr=module_image.original_addr(
+                    fact.callsite_addr,
+                    image_base=_ANALYSIS_IMAGE_BASE,
+                ),
+                witness_instruction_addr=(
+                    module_image.original_addr(
+                        fact.witness_instruction_addr,
+                        image_base=_ANALYSIS_IMAGE_BASE,
+                    )
+                    if isinstance(fact.witness_instruction_addr, int)
+                    else None
+                ),
+            )
+            for fact in evidence.facts
+        )
         remapped = replace(
             evidence,
             target_addr=isolated_target_addr,
-            callsite_addrs=tuple(
-                module_image.original_addr(addr, image_base=_ANALYSIS_IMAGE_BASE)
-                for addr in evidence.callsite_addrs
-            ),
+            callsite_addrs=tuple(fact.callsite_addr for fact in remapped_facts),
+            facts=remapped_facts,
         )
     except (OSError, TypeError, ValueError) as exc:
         _LOGGER.debug("COD module caller evidence unavailable: %s", exc)

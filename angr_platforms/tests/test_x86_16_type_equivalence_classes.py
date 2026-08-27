@@ -267,7 +267,7 @@ class TestPhase2Integration:
 
         class MockCodegen:
             cfunc = object()
-            _inertia_vex_ir_summary = {
+            _inertia_vex_ir_summary = {  # noqa: RUF012
                 "aliasable_value_count": 3,
                 "frame_slot_count": 1,
                 "space_counts": {"ds": 2, "ss": 1},
@@ -288,7 +288,7 @@ class TestPhase2Integration:
 
         class MockCodegen:
             cfunc = object()
-            _inertia_vex_ir_summary = {
+            _inertia_vex_ir_summary = {  # noqa: RUF012
                 "aliasable_value_count": 0,
                 "frame_slot_count": 0,
                 "space_counts": {},

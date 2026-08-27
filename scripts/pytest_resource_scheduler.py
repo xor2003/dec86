@@ -9,8 +9,9 @@ unknown-work limit.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Final, Sequence
+from typing import Final
 
 if __package__:
     from .pytest_partition_execution import WorkerSpec

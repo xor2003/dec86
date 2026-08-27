@@ -10,6 +10,9 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    stack_variable_coordinate_registry_8616,
+)
 from angr_platforms.X86_16.lowering.wide_call_output_assignment_contracts import (
     WideCallOutputAssignmentFailure8616,
 )
@@ -34,6 +37,9 @@ def test_lowering_materializes_wide_call_output_assignment_once() -> None:
     assert assignment.rhs.op == "Add"
     assert assignment.rhs.lhs is call
     assert assignment.rhs.rhs is source
+    registry = stack_variable_coordinate_registry_8616(codegen)
+    assert registry.for_bp_range(-4, 4).entry_sp_offset == -6
+    assert registry.for_bp_range(4, 4).entry_sp_offset == 2
 
     replayed = lower_wide_call_output_stack_assignments_8616(codegen)
     assert replayed is not None and replayed.complete
@@ -95,7 +101,7 @@ def test_lowering_materializes_missing_exact_source_object_from_fact() -> None:
     assert isinstance(source.variable, SimStackVariable)
     assert (source.variable.base, source.variable.offset, source.variable.size) == (
         "bp",
-        4,
+        2,
         4,
     )
 

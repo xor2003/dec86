@@ -11,6 +11,7 @@ Do not perform alias-state ownership, widening, lowering/materialization, struct
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
@@ -93,7 +94,7 @@ def recover_direct_global_ordering_facts_8616(
     """Classify adjacent direct DS word CMP and ordering-JCC instructions."""
     ordered = tuple(instructions)
     facts: list[DirectGlobalOrderingFact8616] = []
-    for compare, branch in zip(ordered, ordered[1:], strict=False):
+    for compare, branch in itertools.pairwise(ordered):
         offset = _direct_ds_word_compare_offset_8616(compare)
         ordering = _branch_ordering_8616(branch.instruction_id)
         if (

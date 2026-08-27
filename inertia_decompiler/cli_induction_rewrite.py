@@ -7,14 +7,14 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
-from typing import Protocol, TypeAlias
+from typing import Protocol
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 
-BaseKey: TypeAlias = tuple[object, ...]
-BuildAccessTraitEvidenceProfiles: TypeAlias = Callable[[dict[str, dict[BaseKey, object]]], dict[BaseKey, object]]
-InferInductionVariable: TypeAlias = Callable[[object], object | None]
+type BaseKey = tuple[object, ...]
+type BuildAccessTraitEvidenceProfiles = Callable[[dict[str, dict[BaseKey, object]]], dict[BaseKey, object]]
+type InferInductionVariable = Callable[[object], object | None]
 
 
 class _CFunctionLike(Protocol):

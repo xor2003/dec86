@@ -7,6 +7,7 @@ Responsibility: enter the CLI only after the runtime architecture guard.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sys
@@ -54,6 +55,17 @@ def _ensure_deterministic_hash_seed() -> None:
     os.execvpe(executable, [executable, str(Path(__file__).resolve()), *sys.argv[1:]], env)
 
 
+def _ensure_python_jit() -> None:
+    """Restart before application imports with the CPython JIT enabled."""
+    if os.environ.get("PYTHON_JIT") == "1":
+        return
+    env = os.environ.copy()
+    env["PYTHON_JIT"] = "1"
+    env["PYTHONHASHSEED"] = "0"
+    executable = sys.executable
+    os.execvpe(executable, [executable, str(Path(__file__).resolve()), *sys.argv[1:]], env)
+
+
 def _install_early_log_levels() -> None:
     for logger_name, level in (
         ("angr.state_plugins.unicorn_engine", logging.CRITICAL),
@@ -74,17 +86,15 @@ def _enable_line_buffered_stdio() -> None:
         stream = getattr(sys, stream_name, None)
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
-            try:
+            with contextlib.suppress(Exception):
                 reconfigure(line_buffering=True)
-            except Exception:
-                pass
 
 
 def _install_msgspec_shim_if_missing() -> None:
     try:
         import msgspec  # noqa: F401
     except ModuleNotFoundError:
-        try:
+        try:  # noqa: SIM105
             # Explicit import keeps fallback deterministic for environments where
             # sitecustomize.py is not auto-discovered (e.g. PyPy packaging paths).
             import sitecustomize  # noqa: F401
@@ -112,6 +122,7 @@ def _configure_python_recursion_limit() -> None:
 # Tests import this module for helper access and must not exec-replace the process.
 if __name__ == "__main__":
     _ensure_project_venv()
+    _ensure_python_jit()
     _ensure_deterministic_hash_seed()
 _install_early_log_levels()
 _enable_line_buffered_stdio()
@@ -178,11 +189,23 @@ class _EntrypointCompatModule(ModuleType):
 sys.modules[__name__].__class__ = _EntrypointCompatModule
 
 
-if __name__ == "__main__":
-    from inertia_decompiler.telemetry import emit_compact_summary
+def _run_entrypoint() -> int:
+    """Use lightweight validated reuse before loading the full CLI stack."""
+    from inertia_decompiler.direct_request_fast_path import try_direct_request_fast_path_8616
 
+    fast_status = try_direct_request_fast_path_8616()
+    if fast_status is not None:
+        return fast_status
+    cli_module = _ensure_cli()
+    return int(cli_module.main())
+
+
+if __name__ == "__main__":
     try:
-        cli_module = _ensure_cli()
-        raise SystemExit(cli_module.main())
+        _entrypoint_status = _run_entrypoint()
     finally:
-        emit_compact_summary()
+        if _CLI_MODULE is not None:
+            from inertia_decompiler.telemetry import emit_compact_summary
+
+            emit_compact_summary()
+    raise SystemExit(_entrypoint_status)

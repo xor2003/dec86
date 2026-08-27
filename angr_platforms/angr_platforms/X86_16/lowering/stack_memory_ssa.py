@@ -10,7 +10,7 @@ text. Do not perform structuring, rewrite, postprocess, or CLI/reporting work he
 
 from __future__ import annotations
 
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from ..alias.alias_model_impl import AliasStorageFacts
 from ..alias.stack_memory_ssa_contracts import (
@@ -37,9 +37,9 @@ from .stack_memory_ssa_contracts import (
     StackMemorySSALoweringRefusalKind8616,
     StackMemorySSALoweringStats8616,
 )
-from .stack_projection_retirement import retire_materialized_entry_sp_projections_8616
+from .stack_variable_coordinates import reset_stack_variable_coordinate_registry_8616
 
-_StorageKey8616: TypeAlias = tuple[str, tuple[str, ...], int, int]
+type _StorageKey8616 = tuple[str, tuple[str, ...], int, int]
 
 __all__ = [
     "StackMemoryObjectKind8616",
@@ -224,8 +224,9 @@ def lower_x86_16_stack_memory_ssa_alias_artifact(
             "stack-memory SSA Alias artifact is incomplete before Lowering",
             layer="stack_lowering",
         )
+    reset_stack_variable_coordinate_registry_8616(codegen)
     object_widening: StackMemoryObjectWideningArtifact8616 | None = None
-    if source.accesses:
+    if source.accesses or source.logical_accesses or source.logical_refusals:
         try:
             candidate_widening = boundary._inertia_stack_memory_object_widening_artifact
         except AttributeError as ex:
@@ -298,17 +299,16 @@ def lower_x86_16_stack_memory_ssa_alias_artifact(
             required_bp_ranges=frozenset(
                 (candidate.address.offset, candidate.address.size) for candidate in candidates
             ),
+            entry_sp_offsets_by_bp_range={
+                (candidate.address.offset, candidate.address.size): candidate.entry_sp_offset
+                for candidate in candidates
+            },
         )
         if candidates
         else StackLoweringResult(status=StackLoweringStatus.OK)
     )
     materialized_offsets = {offset for offset, _name in result.materialized}
     missing = [candidate for candidate in candidates if candidate.address.offset not in materialized_offsets]
-    projection_retirement = retire_materialized_entry_sp_projections_8616(
-        codegen,
-        candidates,
-        frozenset(materialized_offsets),
-    )
     refusals.extend(
         StackMemorySSALoweringRefusal8616(
             StackMemorySSALoweringRefusalKind8616.MATERIALIZATION_FAILED,
@@ -322,7 +322,6 @@ def lower_x86_16_stack_memory_ssa_alias_artifact(
         candidates=tuple(candidates),
         refusals=tuple(refusals),
         result=result,
-        projection_retirement=projection_retirement,
         stats=StackMemorySSALoweringStats8616(
             raw_fact_count=len(candidates) + len(refusals) - len(missing),
             normalized_fact_count=len(candidates),

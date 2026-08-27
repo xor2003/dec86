@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 import angr_platforms.X86_16.tail_validation as tail_validation_module
 import angr_platforms.X86_16.tail_validation_fingerprint as tail_validation_fingerprint_module
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -13,6 +12,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CConstant,
     CContinue,
     CExpressionStatement,
+    CForLoop,
     CFunctionCall,
     CIfElse,
     CReturn,
@@ -42,6 +42,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _project():
@@ -565,6 +569,152 @@ def test_tail_validation_micro_slice_detects_control_flow_effect_regression():
     assert diff["changed"] is True
     assert diff["delta"]["control_flow_effects"]["added"]
     assert diff["delta"]["control_flow_effects"]["removed"]
+
+
+def test_tail_validation_canonicalizes_proven_pretest_while_and_for() -> None:
+    project = _project()
+    before_codegen = _DummyCodegen()
+    after_codegen = _DummyCodegen()
+    before_i = _stack(-6, before_codegen, name="i")
+    after_i = _stack(-6, after_codegen, name="i")
+    before_init = CAssignment(before_i, _const(4, before_codegen), codegen=before_codegen)
+    after_init = CAssignment(after_i, _const(4, after_codegen), codegen=after_codegen)
+    before_iterator = CAssignment(
+        before_i,
+        CBinaryOp("Sub", before_i, _const(1, before_codegen), codegen=before_codegen),
+        codegen=before_codegen,
+    )
+    after_iterator = CAssignment(
+        after_i,
+        CBinaryOp("Sub", after_i, _const(1, after_codegen), codegen=after_codegen),
+        codegen=after_codegen,
+    )
+    before_payload = CAssignment(
+        _global(0xBAA, before_codegen),
+        before_i,
+        codegen=before_codegen,
+    )
+    after_payload = CAssignment(
+        _global(0xBAA, after_codegen),
+        after_i,
+        codegen=after_codegen,
+    )
+    before_guard = CIfElse(
+        [
+            (
+                CBinaryOp("CmpEQ", before_i, _const(0, before_codegen), codegen=before_codegen),
+                CBreak(codegen=before_codegen),
+            )
+        ],
+        codegen=before_codegen,
+    )
+    before = _codegen(
+        [
+            CStatements([before_init], codegen=before_codegen),
+            CWhileLoop(
+                _const(1, before_codegen),
+                CStatements(
+                    [
+                        CStatements([], codegen=before_codegen),
+                        before_guard,
+                        CStatements([before_payload], codegen=before_codegen),
+                        CStatements([before_iterator], codegen=before_codegen),
+                    ],
+                    codegen=before_codegen,
+                ),
+                codegen=before_codegen,
+            ),
+        ],
+        before_codegen,
+    )
+    after = _codegen(
+        [
+            CForLoop(
+                after_init,
+                after_i,
+                after_iterator,
+                CStatements([after_payload], codegen=after_codegen),
+                codegen=after_codegen,
+            )
+        ],
+        after_codegen,
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(
+        collect_x86_16_tail_validation_summary(project, before, mode="live_out"),
+        collect_x86_16_tail_validation_summary(project, after, mode="live_out"),
+    )
+
+    assert diff["changed"] is False
+
+
+def test_tail_validation_refuses_while_for_equivalence_with_continue() -> None:
+    project = _project()
+    before_codegen = _DummyCodegen()
+    after_codegen = _DummyCodegen()
+    before_i = _stack(-6, before_codegen, name="i")
+    after_i = _stack(-6, after_codegen, name="i")
+    before_iterator = CAssignment(
+        before_i,
+        CBinaryOp("Sub", before_i, _const(1, before_codegen), codegen=before_codegen),
+        codegen=before_codegen,
+    )
+    after_iterator = CAssignment(
+        after_i,
+        CBinaryOp("Sub", after_i, _const(1, after_codegen), codegen=after_codegen),
+        codegen=after_codegen,
+    )
+    before = _codegen(
+        [
+            CAssignment(before_i, _const(4, before_codegen), codegen=before_codegen),
+            CWhileLoop(
+                _const(1, before_codegen),
+                CStatements(
+                    [
+                        CIfElse(
+                            [
+                                (
+                                    CBinaryOp(
+                                        "CmpEQ",
+                                        before_i,
+                                        _const(0, before_codegen),
+                                        codegen=before_codegen,
+                                    ),
+                                    CBreak(codegen=before_codegen),
+                                )
+                            ],
+                            codegen=before_codegen,
+                        ),
+                        CContinue(codegen=before_codegen),
+                        before_iterator,
+                    ],
+                    codegen=before_codegen,
+                ),
+                codegen=before_codegen,
+            ),
+        ],
+        before_codegen,
+    )
+    after = _codegen(
+        [
+            CForLoop(
+                CAssignment(after_i, _const(4, after_codegen), codegen=after_codegen),
+                after_i,
+                after_iterator,
+                CStatements([CContinue(codegen=after_codegen)], codegen=after_codegen),
+                codegen=after_codegen,
+            )
+        ],
+        after_codegen,
+    )
+
+    diff = compare_x86_16_tail_validation_summaries(
+        collect_x86_16_tail_validation_summary(project, before, mode="live_out"),
+        collect_x86_16_tail_validation_summary(project, after, mode="live_out"),
+    )
+
+    assert diff["changed"] is True
+    assert diff["delta"]["control_flow_effects"]["added"]
 
 
 def test_tail_validation_micro_slice_live_out_records_register_write_used_by_condition():

@@ -11,9 +11,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TypeAlias
 
-CODCommentEntry: TypeAlias = Mapping[str, object]
+type CODCommentEntry = Mapping[str, object]
 
 __all__ = (
     "CODCommentEntry",

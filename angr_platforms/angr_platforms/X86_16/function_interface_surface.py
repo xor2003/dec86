@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
-from typing import Protocol, TypeAlias
+from typing import Protocol
 
 from .analysis_helpers import collect_neighbor_call_targets
 from .function_state_summary import FunctionStateSummary, summarize_x86_16_function_state
@@ -17,7 +17,7 @@ from .low_memory_regions import format_x86_16_low_memory_access
 __all__ = ["apply_x86_16_function_interface_surface"]
 
 _PROTOTYPE_RE = re.compile(r"^\s*[A-Za-z_][\w\s\*\[\]]*?\s+[A-Za-z_][\w$?@]*\s*\([^)]*\)\s*;\s*$")
-_RenderText: TypeAlias = Callable[[object], object]
+type _RenderText = Callable[[object], object]
 
 
 class _FunctionInfoSurface(Protocol):
@@ -28,7 +28,7 @@ class _FunctionInfoSurface(Protocol):
     info: Mapping[str, object]
 
 
-_FunctionLookup: TypeAlias = Callable[..., _FunctionInfoSurface | None]
+type _FunctionLookup = Callable[..., _FunctionInfoSurface | None]
 
 
 class _CodegenFunctionSurface(Protocol):
@@ -113,8 +113,8 @@ def _has_surface_data(summary: FunctionStateSummary) -> bool:
 def _function_header_lines(name: str, summary: FunctionStateSummary) -> list[str]:
     if not _has_surface_data(summary):
         return []
-    inputs = tuple((*summary.gp_register_inputs, *summary.segment_register_inputs, *summary.flag_inputs))
-    outputs = tuple((*summary.gp_register_outputs, *summary.segment_register_outputs, *summary.flag_outputs))
+    inputs = (*summary.gp_register_inputs, *summary.segment_register_inputs, *summary.flag_inputs)
+    outputs = (*summary.gp_register_outputs, *summary.segment_register_outputs, *summary.flag_outputs)
     lines = [
         f"// interface {name}",
         f"//   in:  {_join(inputs)}",
@@ -135,8 +135,8 @@ def _function_header_lines(name: str, summary: FunctionStateSummary) -> list[str
 def _call_comment(name: str, summary: FunctionStateSummary) -> str | None:
     if not _has_surface_data(summary):
         return None
-    inputs = tuple((*summary.gp_register_inputs, *summary.segment_register_inputs, *summary.flag_inputs))
-    outputs = tuple((*summary.gp_register_outputs, *summary.segment_register_outputs, *summary.flag_outputs))
+    inputs = (*summary.gp_register_inputs, *summary.segment_register_inputs, *summary.flag_inputs)
+    outputs = (*summary.gp_register_outputs, *summary.segment_register_outputs, *summary.flag_outputs)
     return f"/* io {name}: in={_join(inputs)}; out={_join(outputs)}; ret={summary.return_kind} */"
 
 

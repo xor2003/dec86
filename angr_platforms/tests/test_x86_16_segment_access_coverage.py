@@ -44,12 +44,14 @@ def _byte_fact(
 def _classify(
     *facts: SegmentAccessFact,
     instruction_addrs: frozenset[int] = frozenset({0x1010}),
+    access_kind: SegmentAccessKind | None = None,
     offset: int | None = None,
 ) -> SegmentAccessLoweringResult8616:
     contract = SegmentFunctionContract(function_addr=0x1000, accesses=facts)
     return classify_local_segment_access_8616(
         contract,
         instruction_addrs=instruction_addrs,
+        access_kind=access_kind,
         segment_register="ds",
         offset=offset,
         width=2,
@@ -105,3 +107,22 @@ def test_segment_access_policy_refuses_incomplete_or_incoherent_byte_pair() -> N
     )
     for facts in cases:
         assert _classify(*facts).decision is SegmentAccessLoweringDecision8616.UNKNOWN_REFUSE
+
+
+def test_segment_access_policy_selects_read_from_rmw_byte_fragments() -> None:
+    facts = (
+        _byte_fact(0, kind=SegmentAccessKind.READ),
+        _byte_fact(1, kind=SegmentAccessKind.READ),
+        _byte_fact(0, kind=SegmentAccessKind.WRITE),
+        _byte_fact(1, kind=SegmentAccessKind.WRITE),
+    )
+
+    ambiguous = _classify(*facts)
+    read = _classify(*facts, access_kind=SegmentAccessKind.READ)
+    write = _classify(*facts, access_kind=SegmentAccessKind.WRITE)
+
+    assert ambiguous.decision is SegmentAccessLoweringDecision8616.UNKNOWN_REFUSE
+    assert read.decision is SegmentAccessLoweringDecision8616.ENTRY_DS_OBJECT
+    assert write.decision is SegmentAccessLoweringDecision8616.ENTRY_DS_OBJECT
+    assert {fact.kind for fact in read.facts} == {SegmentAccessKind.READ}
+    assert {fact.kind for fact in write.facts} == {SegmentAccessKind.WRITE}

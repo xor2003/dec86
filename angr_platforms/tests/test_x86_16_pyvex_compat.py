@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import itertools
+
 import angr_platforms.X86_16  # noqa: F401
 import pyvex.block
 import pyvex.const as pyvex_const
@@ -24,13 +26,13 @@ def test_arch_register_layout_is_stable_across_instances() -> None:
     assert second_layout == first_layout
     assert second.registers == first.registers
     ordered_spans = sorted((offset, offset + size, name) for name, (offset, size) in second_layout.items())
-    assert all(left_end <= right_start for (_, left_end, _), (right_start, _, _) in zip(ordered_spans, ordered_spans[1:]))
+    assert all(left_end <= right_start for (_, left_end, _), (right_start, _, _) in itertools.pairwise(ordered_spans))
 
 
 def test_pyvex_runtime_compatibility_avoids_eager_irsb_stringification(monkeypatch) -> None:
     original_str = pyvex.block.IRSB.__str__
 
-    def _boom(self):  # noqa: ANN001
+    def _boom(self):
         raise AssertionError("IRSB.__str__ should not be called when debug logging is disabled")
 
     monkeypatch.setattr(pyvex.block.IRSB, "__str__", _boom)

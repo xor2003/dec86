@@ -137,11 +137,11 @@ def test_run_work_item_preserves_timeout_without_scan_safe_fallback(monkeypatch,
     )
     scan_safe_called = False
 
-    def fake_child(_command, *, stdout_path, **_kwargs):  # noqa: ANN001
+    def fake_child(_command, *, stdout_path, **_kwargs):
         stdout_path.write_text("/* Timed out while recovering a function after 20s. */\n", encoding="utf-8")
         return 3, "", False
 
-    def fake_scan_safe(*_args, **_kwargs):  # noqa: ANN001
+    def fake_scan_safe(*_args, **_kwargs):
         nonlocal scan_safe_called
         scan_safe_called = True
         return None
@@ -169,7 +169,7 @@ def test_run_work_item_normalizes_timeout_expired_bytes(monkeypatch, tmp_path):
         code=b"\x90",
     )
 
-    def fake_child(_command, *, stdout_path, **_kwargs):  # noqa: ANN001
+    def fake_child(_command, *, stdout_path, **_kwargs):
         stdout_path.write_text("stdout bytes\n", encoding="utf-8")
         return None, "stderr bytes\n", True
 
@@ -195,7 +195,7 @@ def test_run_work_item_extracts_tail_validation_metadata_from_stderr(monkeypatch
         code=b"\x90",
     )
 
-    def fake_child(_command, *, stdout_path, **_kwargs):  # noqa: ANN001
+    def fake_child(_command, *, stdout_path, **_kwargs):
         stdout_path.write_text("/* == c == */\nreturn 1;\n", encoding="utf-8")
         return (
             0,
@@ -243,7 +243,7 @@ def test_run_work_item_reuses_success_only_cache(monkeypatch, tmp_path):
     monkeypatch.setattr(_script, "_SUCCESS_CACHE_DIR", tmp_path / "success-cache")
     monkeypatch.setattr(_script, "_cache_source_digest", lambda _paths: "digest-a")
 
-    def fake_child(_command, *, stdout_path, **_kwargs):  # noqa: ANN001
+    def fake_child(_command, *, stdout_path, **_kwargs):
         calls["child"] += 1
         stdout_path.write_text("/* == c == */\nreturn 1;\n", encoding="utf-8")
         return (
@@ -285,7 +285,7 @@ def test_run_work_item_does_not_cache_timeout(monkeypatch, tmp_path):
     monkeypatch.setattr(_script, "_cache_source_digest", lambda _paths: "digest-a")
     monkeypatch.setattr(_script, "_run_scan_safe_fallback", lambda *_args, **_kwargs: None)
 
-    def fake_child(_command, *, stdout_path, **_kwargs):  # noqa: ANN001
+    def fake_child(_command, *, stdout_path, **_kwargs):
         calls["child"] += 1
         stdout_path.write_text("/* Timed out while recovering a function after 20s. */\n", encoding="utf-8")
         return 3, "", False
@@ -318,7 +318,7 @@ def test_run_work_item_does_not_cache_zero_exit_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(_script, "_cache_source_digest", lambda _paths: "digest-a")
     monkeypatch.setattr(_script, "_run_scan_safe_fallback", lambda *_args, **_kwargs: None)
 
-    def fake_child(_command, *, stdout_path, **_kwargs):  # noqa: ANN001
+    def fake_child(_command, *, stdout_path, **_kwargs):
         calls["child"] += 1
         stdout_path.write_text(
             "/* Function recovery timed out; produced non-optimized slice decompilation. */\n"
@@ -350,7 +350,7 @@ def test_run_work_item_replaces_null_tail_validation_identity(monkeypatch, tmp_p
         code=b"\x90",
     )
 
-    def fake_child(_command, *, stdout_path, **_kwargs):  # noqa: ANN001
+    def fake_child(_command, *, stdout_path, **_kwargs):
         stdout_path.write_text("/* == c == */\nreturn 1;\n", encoding="utf-8")
         return (
             0,
@@ -394,7 +394,7 @@ def test_run_work_item_uses_bounded_child_timeout(monkeypatch, tmp_path):
     )
     seen: dict[str, object] = {}
 
-    def fake_child(_command, *, stdout_path, child_timeout, **_kwargs):  # noqa: ANN001
+    def fake_child(_command, *, stdout_path, child_timeout, **_kwargs):
         seen["timeout"] = child_timeout
         stdout_path.write_text("/* == c == */\nreturn 1;\n", encoding="utf-8")
         return 0, "", False
@@ -580,15 +580,15 @@ def test_scheduler_timeout_flows_into_named_tail_validation_aggregate(tmp_path, 
     future = FakeFuture()
 
     class FakeExecutor:
-        def submit(self, *_args, **_kwargs):  # noqa: ANN001
+        def submit(self, *_args, **_kwargs):
             return future
 
-        def shutdown(self, **_kwargs):  # noqa: ANN003
+        def shutdown(self, **_kwargs):
             return None
 
     monotonic_values = iter((0.0, 2.0))
 
-    def fake_aggregate(records, *, scanned):  # noqa: ANN001
+    def fake_aggregate(records, *, scanned):
         captured["records"] = list(records)
         captured["scanned"] = scanned
         return {"summary": {}, "surface": {"severity": "uncollected"}}
@@ -777,7 +777,7 @@ def test_main_flushes_stdout_before_tail_validation_summary(tmp_path, monkeypatc
     fake_stdout = FakeStdout()
     seen: dict[str, bool] = {}
 
-    def fake_emit(**_kwargs):  # noqa: ANN001
+    def fake_emit(**_kwargs):
         seen["flushed_before_emit"] = fake_stdout.flushed
 
     monkeypatch.setattr(sys, "argv", ["decompile_cod_dir.py", str(cod_dir)])

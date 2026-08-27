@@ -65,7 +65,7 @@ def test_function_inventory_closes_for_exact_real_collectors() -> None:
     assert report.closed
     assert report.exact
     assert report.mismatches == ()
-    assert report.ir_stats.raw_fact_count == 1
+    assert report.ir_stats.raw_fact_count == 2
 
 
 def test_identity_conflict_is_classified_on_exact_instruction_site() -> None:

@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Literal, TypeAlias, cast
+from typing import Literal, cast
 
 from ..ir.condition_ir import ConditionIR, ConditionOp
 from ..ir.core import IRValue
@@ -27,7 +27,7 @@ from .wide_stack_condition_chains import (
     wide_stack_operator_result_8616,
 )
 
-WidePredicateExitClassifier8616: TypeAlias = Callable[[int], bool | None]
+type WidePredicateExitClassifier8616 = Callable[[int], bool | None]
 
 
 class WidePredicateGraphStatus8616(Enum):
@@ -62,7 +62,7 @@ class WidePredicateBinary8616:
     rhs: WidePredicateExpr8616
 
 
-WidePredicateExpr8616: TypeAlias = (
+type WidePredicateExpr8616 = (
     WidePredicateLeaf8616 | WidePredicateNot8616 | WidePredicateBinary8616
 )
 

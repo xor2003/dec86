@@ -16,13 +16,14 @@ from angr import SimProcedure
 from .callee_name_normalization import normalize_callee_name_8616
 
 __all__ = [
-    "CompilerHelperEvidenceKind8616",
     "CompilerHelperEvidence8616",
+    "CompilerHelperEvidenceKind8616",
     "X86_16MscStackProbeSimProcedure8616",
     "hook_x86_16_compiler_helper_at_8616",
     "hook_x86_16_known_compiler_helpers_8616",
     "identify_x86_16_compiler_helper_at_8616",
     "is_x86_16_registered_stack_probe_target_8616",
+    "is_x86_16_stack_probe_helper_at_8616",
     "is_x86_16_stack_probe_name_8616",
     "transfer_x86_16_compiler_helper_evidence_8616",
     "x86_16_compiler_helper_targets_8616",
@@ -33,6 +34,7 @@ class CompilerHelperEvidenceKind8616(Enum):
     """Binary evidence category for a recognized compiler helper."""
 
     STACK_PROBE = "stack_probe"
+    SIGNED_LONG_DIVIDE = "signed_long_divide"
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +98,10 @@ _MSC_ANCHKSTK_PATTERN_8616: tuple[int | None, ...] = (
     0xE1,  # jmp cx
 )
 
+_MSC_ANLDIV_PATTERN_8616: tuple[int | None, ...] = tuple(
+    bytes.fromhex("55 8b ec 57 56 53 33 ff 8b 46 06 0b c0 7d 11 47 8b 56 04 f7 d8 f7 da 1d 00 00 89 46 06 89 56 04")
+)
+
 
 class _ArchWithStackProbeRegistry8616(Protocol):
     _inertia_stack_probe_helper_targets_8616: frozenset[int]
@@ -155,10 +161,7 @@ def _main_object_addr_range_8616(project: object) -> tuple[int, int] | None:
 def _matches_masked_prefix_8616(data: bytes, pattern: tuple[int | None, ...]) -> bool:
     if len(data) < len(pattern):
         return False
-    for index, expected in enumerate(pattern):
-        if expected is not None and data[index] != expected:
-            return False
-    return True
+    return all(not (expected is not None and data[index] != expected) for index, expected in enumerate(pattern))
 
 
 def identify_x86_16_compiler_helper_at_8616(
@@ -183,8 +186,15 @@ def identify_x86_16_compiler_helper_at_8616(
         if key in seen:
             continue
         seen.add(key)
-        code = _load_project_bytes_8616(candidate_project, candidate_addr, len(_MSC_ANCHKSTK_PATTERN_8616))
-        if code is not None and _matches_masked_prefix_8616(code, _MSC_ANCHKSTK_PATTERN_8616):
+        stack_probe_code = _load_project_bytes_8616(
+            candidate_project,
+            candidate_addr,
+            len(_MSC_ANCHKSTK_PATTERN_8616),
+        )
+        if stack_probe_code is not None and _matches_masked_prefix_8616(
+            stack_probe_code,
+            _MSC_ANCHKSTK_PATTERN_8616,
+        ):
             return CompilerHelperEvidence8616(
                 addr=addr,
                 name="aNchkstk",
@@ -192,7 +202,29 @@ def identify_x86_16_compiler_helper_at_8616(
                 pattern_name="msc_aNchkstk_popcx_sp_ax",
                 matched_bytes=len(_MSC_ANCHKSTK_PATTERN_8616),
             )
+        signed_divide_code = _load_project_bytes_8616(
+            candidate_project,
+            candidate_addr,
+            len(_MSC_ANLDIV_PATTERN_8616),
+        )
+        if signed_divide_code is not None and _matches_masked_prefix_8616(
+            signed_divide_code,
+            _MSC_ANLDIV_PATTERN_8616,
+        ):
+            return CompilerHelperEvidence8616(
+                addr=addr,
+                name="aNldiv",
+                kind=CompilerHelperEvidenceKind8616.SIGNED_LONG_DIVIDE,
+                pattern_name="msc_aNldiv_signed_dx_ax",
+                matched_bytes=len(_MSC_ANLDIV_PATTERN_8616),
+            )
     return None
+
+
+def is_x86_16_stack_probe_helper_at_8616(project: object, addr: int | None) -> bool:
+    """Return whether binary evidence identifies exactly a stack-probe helper."""
+    evidence = identify_x86_16_compiler_helper_at_8616(project, addr)
+    return evidence is not None and evidence.kind is CompilerHelperEvidenceKind8616.STACK_PROBE
 
 
 def hook_x86_16_compiler_helper_at_8616(project: object, addr: int | None) -> CompilerHelperEvidence8616 | None:
@@ -227,7 +259,7 @@ def hook_x86_16_known_compiler_helpers_8616(
 
     found: list[CompilerHelperEvidence8616] = []
     pattern_len = len(_MSC_ANCHKSTK_PATTERN_8616)
-    for offset in range(0, max(0, len(data) - pattern_len + 1)):
+    for offset in range(max(0, len(data) - pattern_len + 1)):
         if not _matches_masked_prefix_8616(data[offset : offset + pattern_len], _MSC_ANCHKSTK_PATTERN_8616):
             continue
         evidence = hook_x86_16_compiler_helper_at_8616(project, start + offset)

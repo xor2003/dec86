@@ -12,10 +12,12 @@ codegen boundary, where upstream classes expose version-dependent attributes.
 from __future__ import annotations
 
 import builtins
+import contextlib
 import typing
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import Protocol, Sequence, TypeAlias, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimType, SimTypeChar, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
@@ -30,6 +32,7 @@ from .near_pointer_argument import (
     collect_near_pointer_argument_facts_8616,
 )
 from .near_pointer_type import near_pointer_type_8616, with_near_pointer_parameter_8616
+from .physical_registers import physical_register_name_8616
 from .positive_bp_arguments import materialize_positive_bp_arguments_8616
 from .real_mode_linear import (
     RealModeLinearStackAccess8616,
@@ -49,6 +52,7 @@ from .segment_access_policy import (
 from .segment_register_state import (
     SegmentRegisterStateLoweringStats8616,
     lower_architectural_segment_register_state_8616,
+    runtime_segment_name_for_variable_8616,
     runtime_segment_push_source_cvar_8616,
 )
 from .semantic_cast import CSemanticCast8616
@@ -63,7 +67,7 @@ from .stack_prototype_materialization import (
     materialize_exact_trailing_stack_argument_8616,
 )
 
-_CarrierKey8616: TypeAlias = tuple[str, int | str]
+type _CarrierKey8616 = tuple[str, int | str]
 
 
 class _AngrFunctionTypeBoundary8616(Protocol):
@@ -622,7 +626,7 @@ def _lower_typed_pointer_register_carrier_stores_8616(
     changed = False
     for root in roots_by_id.values():
         statements = list(root.statements)
-        consumed_setups: set[int] = set()
+        consumed_indexes: set[int] = set()
         for setup_index, setup in enumerate(statements):
             if not isinstance(setup, structured_c.CAssignment):
                 continue
@@ -681,7 +685,9 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                 proven_width = max(fact.access_width_bytes for fact in matching_facts)
                 if _pointer_element_width_bits_8616(pointer_type) != proven_width * 8:
                     break
-                pair: list[tuple[structured_c.CAssignment, int]] = [(use, byte_index)]
+                pair: list[tuple[structured_c.CAssignment, int, int]] = [
+                    (use, use_index, byte_index)
+                ]
                 if proven_width > helper_width:
                     if helper_width != 1:
                         break
@@ -704,7 +710,7 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                             for fact in matching_facts
                         ):
                             break
-                        pair.append((pair_statement, next_index))
+                        pair.append((pair_statement, pair_index, next_index))
                         break
                     if len(pair) != proven_width:
                         break
@@ -714,21 +720,38 @@ def _lower_typed_pointer_register_carrier_stores_8616(
                         sorted(fact.dereference_ins_addr for fact in matching_facts)
                     )
                 }
-                for pair_statement, pair_index in pair:
-                    pair_statement.lhs = structured_c.CIndexedVariable(
+                if proven_width > helper_width:
+                    if byte_index % proven_width != 0:
+                        break
+                    word_source = _word_source_from_pointer_byte_pair_8616(
+                        pair[0][0].rhs,
+                        pair[1][0].rhs,
+                    )
+                    if word_source is None:
+                        break
+                    use.lhs = structured_c.CIndexedVariable(
                         pointer,
-                        structured_c.CConstant(pair_index, index_type, codegen=codegen),
+                        structured_c.CConstant(byte_index // proven_width, index_type, codegen=codegen),
                         codegen=codegen,
                         tags=tags,
                     )
-                consumed_setups.add(setup_index)
+                    use.rhs = word_source
+                    consumed_indexes.update(item[1] for item in pair[1:])
+                else:
+                    use.lhs = structured_c.CIndexedVariable(
+                        pointer,
+                        structured_c.CConstant(byte_index, index_type, codegen=codegen),
+                        codegen=codegen,
+                        tags=tags,
+                    )
+                consumed_indexes.add(setup_index)
                 changed = True
                 break
-        if consumed_setups:
+        if consumed_indexes:
             root.statements = [
                 statement
                 for index, statement in enumerate(statements)
-                if index not in consumed_setups
+                if index not in consumed_indexes
             ]
     return changed
 
@@ -923,6 +946,35 @@ def _pointer_store_byte_index_8616(
         return _constant_value_8616(offset.rhs)
     if _carrier_key_8616(offset.rhs) == carrier_key:
         return _constant_value_8616(offset.lhs)
+    return None
+
+
+def _word_source_from_pointer_byte_pair_8616(
+    low_rhs: object,
+    high_rhs: object,
+) -> object | None:
+    """Recover one word source from its proven little-endian byte projections."""
+    low_source = _strip_casts_8616(low_rhs)
+    high_projection = _strip_casts_8616(high_rhs)
+    if (
+        not isinstance(high_projection, structured_c.CBinaryOp)
+        or high_projection.op != "Shr"
+        or _constant_value_8616(high_projection.rhs) != 8
+    ):
+        return None
+    high_source = _strip_casts_8616(high_projection.lhs)
+    if _same_c_expression_8616(low_source, high_source):
+        return low_source
+    if isinstance(low_source, structured_c.CBinaryOp) and low_source.op == "And":
+        for source, mask in (
+            (low_source.lhs, low_source.rhs),
+            (low_source.rhs, low_source.lhs),
+        ):
+            if _constant_value_8616(mask) == 0xFF and _same_c_expression_8616(
+                _strip_casts_8616(source),
+                high_source,
+            ):
+                return high_source
     return None
 
 
@@ -1498,10 +1550,8 @@ def _sp_relative_stack_offset_for_segment_proof_8616(
     finally:
         typing.cast(typing.Any, codegen)._inertia_allow_runtime_helper_sp_segment_proof_8616 = old_allow
         if old_cache is None:
-            try:
+            with contextlib.suppress(AttributeError):
                 delattr(codegen, "_inertia_stack_offset_cache")
-            except AttributeError:
-                pass
         else:
             typing.cast(typing.Any, codegen)._inertia_stack_offset_cache = old_cache
     after = _dynamic_angr_int_attr_8616(codegen, "_inertia_runtime_helper_sp_segment_proof_count_8616")
@@ -1609,6 +1659,17 @@ def materialize_runtime_helper_segment_carriers_8616(
         proof = carrier_proofs.get(key) if key is not None and key not in ambiguous else None
         if proof is None:
             refused_count += 1
+            return preserved
+        current_segment = _strip_casts_8616(args[0])
+        current_variable = current_segment.variable if isinstance(current_segment, structured_c.CVariable) else None
+        current_segment_name = runtime_segment_name_for_variable_8616(current_variable)
+        if current_segment_name is None:
+            current_segment_name = physical_register_name_8616(current_segment)
+        if isinstance(current_segment_name, str) and current_segment_name.lower() in {"cs", "ds", "es", "ss"}:
+            if current_segment_name.upper() == proof:
+                materialized_count += 1
+            else:
+                refused_count += 1
             return preserved
         segment_expr = _register_segment_expr_8616(typed_codegen, project, proof)
         if segment_expr is None:

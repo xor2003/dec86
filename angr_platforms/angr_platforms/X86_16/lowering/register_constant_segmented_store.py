@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias
+from typing import Protocol
 
 from capstone.x86_const import (
     X86_INS_ADD,
@@ -28,7 +28,7 @@ from capstone.x86_const import (
 
 from ..ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 
-RegisterNameResolver8616: TypeAlias = Callable[[object, int | None], str | None]
+type RegisterNameResolver8616 = Callable[[object, int | None], str | None]
 
 
 class MemoryOperandView8616(Protocol):

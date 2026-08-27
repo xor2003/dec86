@@ -8,9 +8,9 @@ angr/codegen compatibility objects and optional diagnostic metadata.
 
 from __future__ import annotations
 
+import contextlib
 import typing
 from enum import Enum
-from typing import TypeAlias
 
 __all__ = [
     "GlobalDeclarationArrayExtent8616",
@@ -28,7 +28,7 @@ class GlobalDeclarationArrayExtent8616(Enum):
     UNKNOWN = "unknown"
 
 
-GlobalDeclarationArrayLength8616: TypeAlias = (
+type GlobalDeclarationArrayLength8616 = (
     int | GlobalDeclarationArrayExtent8616 | None
 )
 
@@ -84,8 +84,6 @@ def set_codegen_sequence_attr(codegen: object, cfunc: object, name: str, values:
     """
     merged_tuple = tuple(dict.fromkeys(values))
     setattr(codegen, name, merged_tuple)
-    try:
+    with contextlib.suppress(Exception):
         setattr(cfunc, name, merged_tuple)
-    except Exception:
-        pass
     return merged_tuple

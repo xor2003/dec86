@@ -189,7 +189,7 @@ def build_x86_16_block_local_ssa(block: IRBlock) -> SSABlock:
     for index, instr in enumerate(block.instrs):
         rewritten_args: list[IRAtom] = []
         for arg in instr.args:
-            rewritten_args.append(_rewrite_atom(arg, versions, snapshots, definitions))
+            rewritten_args.append(_rewrite_atom(arg, versions, snapshots, definitions))  # noqa: PERF401
         rewritten_dst = instr.dst
         if rewritten_dst is not None and rewritten_dst.space not in {MemSpace.CONST, MemSpace.UNKNOWN}:
             key = _version_key(rewritten_dst)

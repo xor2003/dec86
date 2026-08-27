@@ -24,7 +24,7 @@ class _FakeFactory:
     def __init__(self, blocks):
         self._blocks = blocks
 
-    def block(self, addr, opt_level=0):  # noqa: ARG002
+    def block(self, addr, opt_level=0):
         return self._blocks[addr]
 
 
@@ -103,5 +103,5 @@ def test_apply_string_instruction_artifact_attaches_to_codegen_and_function_info
     changed = apply_x86_16_string_instruction_artifact(project, codegen)
 
     assert changed is False
-    assert getattr(codegen, "_inertia_string_instruction_artifact").records[0].width == 2
+    assert codegen._inertia_string_instruction_artifact.records[0].width == 2
     assert function.info["x86_16_string_instruction_artifact"]["records"][0]["family"] == "movs"

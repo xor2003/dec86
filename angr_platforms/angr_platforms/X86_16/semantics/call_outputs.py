@@ -13,8 +13,8 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
-from typing import Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 
 from ..callsite_summary import CallsiteSummary8616, callsite_machine_frame_kind_8616
 from ..ir import (
@@ -25,6 +25,7 @@ from ..ir import (
     IRValue,
     MemSpace,
 )
+from ..ir.logical_memory_rebase import rebase_logical_memory_prefix_insertions_8616
 from .call_output_contracts import (
     CallOutputFact8616,
     CallOutputFailure8616,
@@ -45,7 +46,7 @@ class CallOutputArtifact8616:
     @property
     def complete(self) -> bool:
         """Return whether every CALL output decision is positively proven."""
-        return self.stats.complete
+        return bool(self.stats.complete)
 
     def to_dict(self) -> dict[str, object]:
         """Return deterministic diagnostics without duplicating full IR."""
@@ -316,6 +317,11 @@ def materialize_call_outputs_8616(
         )
         for block in artifact.blocks
     )
+    logical_memory = rebase_logical_memory_prefix_insertions_8616(
+        artifact.logical_memory,
+        prefix_lengths={address: len(items) for address, items in injections.items()},
+        rewritten_blocks=rewritten_blocks,
+    )
     failure_count = sum(fact.failure is not None for fact in facts)
     stats = CallOutputStats8616(
         raw_fact_count=len(calls),
@@ -333,11 +339,11 @@ def materialize_call_outputs_8616(
         "call_output_failure_count": stats.failure_count,
     }
     return CallOutputArtifact8616(
-        IRFunctionArtifact(
-            artifact.function_addr,
-            rewritten_blocks,
-            artifact.refusals,
-            summary,
+        replace(
+            artifact,
+            blocks=rewritten_blocks,
+            summary=summary,
+            logical_memory=logical_memory,
         ),
         tuple(facts),
         stats,

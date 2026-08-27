@@ -68,17 +68,16 @@ def copy_flair_patterns_to_local(
 
     for subdir in ("bin",):
         source_dir = source / subdir
-        if source_dir.exists():
-            if source_dir.is_dir():
-                for source_entry in sorted(source_dir.rglob("*")):
-                    if source_entry.is_dir():
-                        continue
-                    relative = source_entry.relative_to(source)
-                    destination = target / relative
+        if source_dir.exists() and source_dir.is_dir():
+            for source_entry in sorted(source_dir.rglob("*")):
+                if source_entry.is_dir():
+                    continue
+                relative = source_entry.relative_to(source)
+                destination = target / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if not destination.exists():
                     destination.parent.mkdir(parents=True, exist_ok=True)
-                    if not destination.exists():
-                        destination.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(source_entry, destination)
-                        copied.append(destination)
+                    shutil.copy2(source_entry, destination)
+                    copied.append(destination)
 
     return tuple(copied)

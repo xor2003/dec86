@@ -83,7 +83,7 @@ def compare_states(instruction, state32_, state16_, fallthrough32=None, fallthro
     control_flow = _is_control_flow_instruction(instruction)
     state32_ = sorted(state32_, key=_state_ip16)
     state16_ = sorted(state16_, key=_state_ip16)
-    for state32, state16 in zip(state32_, state16_):
+    for state32, state16 in zip(state32_, state16_, strict=False):
         state16.regs.eip &= 0xFFFF
         skip_regs = {"eflags", "flags", "d"}
         if not control_flow:

@@ -12,6 +12,7 @@ Unknown register writes erase carriers. Ambiguous address terms are refused.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -301,10 +302,8 @@ def recover_far_pointer_segmented_loads_8616(
                     stack_indices[destination] = (stack_slot[0], stack_slot[1], 0)
                 if copied_far is not None:
                     far_offsets[destination] = copied_far
-                try:
+                with contextlib.suppress(ValueError):
                     segment_sources.pop(FarPointerSegmentRegister8616(destination), None)
-                except ValueError:
-                    pass
             continue
         if instruction.instruction_id in {X86_INS_SHL, X86_INS_SAL} and len(operands) == 2:
             destination = register_name(instruction.raw, operands[0].register) if operands[0].kind == X86_OP_REG else None
@@ -321,8 +320,6 @@ def recover_far_pointer_segmented_loads_8616(
             destination = register_name(instruction.raw, operands[0].register)
             if destination is not None:
                 _forget_register_8616(destination, stack_indices, far_offsets)
-                try:
+                with contextlib.suppress(ValueError):
                     segment_sources.pop(FarPointerSegmentRegister8616(destination), None)
-                except ValueError:
-                    pass
     return tuple(dict.fromkeys(recovered))

@@ -17,6 +17,6 @@ from angr_platforms.X86_16.lowering.object_lowering import (
 
 __all__ = [
     "_match_segment_register_based_dereference",
-    "_strip_segment_scale_from_addr_expr",
     "_match_ss_stack_reference",
+    "_strip_segment_scale_from_addr_expr",
 ]

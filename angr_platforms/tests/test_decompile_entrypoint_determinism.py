@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 import runpy
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable, NoReturn, cast
+from typing import NoReturn, cast
 
 import pytest
 

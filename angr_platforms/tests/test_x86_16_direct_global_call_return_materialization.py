@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
+    CBinaryOp,
+    CConstant,
     CExpressionStatement,
     CFunctionCall,
     CStatements,
@@ -18,6 +20,9 @@ from angr_platforms.X86_16.lowering.segmented_global_loads import (
     SegmentedGlobalLoadStats8616,
     materialize_direct_global_symbol_stores_from_evidence_8616,
 )
+from angr_platforms.X86_16.lowering.wide_call_return_recombine import (
+    DIRECT_CALL_RETURN_STORE_EVIDENCE_TAG_8616,
+)
 
 
 class _DummyCodegen:
@@ -31,6 +36,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _register(codegen: _DummyCodegen, name: str) -> CVariable:
@@ -229,3 +238,56 @@ def test_synthesized_dword_return_call_keeps_exact_callsite_identity() -> None:
     assert isinstance(assignment, CAssignment)
     assert isinstance(assignment.rhs, CFunctionCall)
     assert assignment.rhs.tags["ins_addr"] == 0x8100
+
+
+def test_tagged_materialized_dword_recombine_folds_to_original_call() -> None:
+    codegen = _DummyCodegen()
+    evidence = DirectGlobalCallReturnStoreEvidence8616(
+        offset=0x5670,
+        width=4,
+        source_call_name="sample_counter",
+        source_call_target=0xA200,
+        source_call_ins_addr=0x9100,
+        low_store_ins_addr=0x9103,
+        high_store_ins_addr=0x9106,
+    )
+    call = CFunctionCall(
+        "sample_counter",
+        None,
+        [],
+        codegen=codegen,
+        tags={"ins_addr": evidence.source_call_ins_addr},
+    )
+    dword = CVariable(SimMemoryVariable(0x5670, 4, name="sample"), codegen=codegen)
+    recombine = CBinaryOp(
+        "Or",
+        call,
+        CBinaryOp(
+            "Shl",
+            _register(codegen, "dx"),
+            CConstant(16, SimTypeShort(False), codegen=codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    assignment = CAssignment(
+        dword,
+        recombine,
+        codegen=codegen,
+        tags={DIRECT_CALL_RETURN_STORE_EVIDENCE_TAG_8616: evidence},
+    )
+    root = CStatements([assignment], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x9000, statements=root, body=root)
+    refs = (DirectGlobalSymbolRef8616(0x5670, "sample", 0, 4, 4),)
+    stats = SegmentedGlobalLoadStats8616()
+
+    changed = materialize_direct_global_symbol_stores_from_evidence_8616(
+        codegen,
+        refs,
+        direct_call_return_stores=(evidence,),
+        stats=stats,
+    )
+
+    assert changed is True
+    assert assignment.rhs is call
+    assert stats.direct_symbol_call_return_materialized_count == 1

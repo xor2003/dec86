@@ -13,9 +13,10 @@ work here.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Iterable, Protocol, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 
@@ -25,6 +26,7 @@ from ..semantics.software_interrupt_inputs import (
     SoftwareInterruptInputArtifact8616,
     SoftwareInterruptInputFact8616,
 )
+from ..structured_tags import copy_structured_tags_8616
 from .return_chains import (
     TerminalCallResultReturnCallbacks8616,
     TerminalCallResultReturnStatus8616,
@@ -101,8 +103,8 @@ def _leaf_statement_8616(statement: object) -> object | None:
 
 def _callsite_addr_8616(call: structured_c.CFunctionCall) -> int | None:
     """Read one exact callsite tag from angr's structured-C boundary."""
-    tags = call.tags
-    if not isinstance(tags, dict):
+    tags = copy_structured_tags_8616(call.tags)
+    if tags is None:
         return None
     addr = tags.get("ins_addr")
     return addr if isinstance(addr, int) else None

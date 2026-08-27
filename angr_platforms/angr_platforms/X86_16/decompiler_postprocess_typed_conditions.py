@@ -58,6 +58,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimType, SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeLong, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
+from .condition_call_effects import classify_condition_call_effects_8616
 from .condition_trace import record_materialized_condition_trace_8616
 from .decompiler_postprocess_utils import (
     _iter_c_nodes_deep_8616,
@@ -82,8 +83,8 @@ from .structuring.condition_lowering import (
 from .tail_validation_fingerprint import _expr_fingerprint
 
 __all__ = [
-    "_apply_typed_conditions_to_codegen_8616",
     "_apply_typed_condition_stack_arg_signedness_8616",
+    "_apply_typed_conditions_to_codegen_8616",
 ]
 
 log: logging.Logger = logging.getLogger(__name__)
@@ -180,10 +181,8 @@ def _register_exprs_by_ins_addr_8616(codegen: object, project: object) -> dict[t
                     else rhs
                 )
                 reg_exprs[(ins_addr, reg_name.lower(), int(reg_size))] = expr
-    try:
+    with contextlib.suppress(Exception):
         typing.cast(typing.Any, codegen)._inertia_typed_condition_register_exprs_by_ins_addr_8616 = reg_exprs
-    except Exception:
-        pass
     return reg_exprs
 
 
@@ -598,7 +597,7 @@ def _stack_arg_offsets_read_by_expr_8616(expr: object) -> frozenset[int]:
             continue
         variable = _dynamic_typed_condition_getattr_8616(node, "variable", None)
         offset = _dynamic_typed_condition_getattr_8616(variable, "offset", None)
-        if isinstance(variable, SimStackVariable) and _dynamic_typed_condition_getattr_8616(variable, "base", None) == "bp" and isinstance(
+        if isinstance(variable, SimStackVariable) and _dynamic_typed_condition_getattr_8616(variable, "base", None) == "bp" and isinstance(  # noqa: SIM102
             offset, int
         ):
             if offset >= 4:
@@ -1245,6 +1244,8 @@ def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: S
     def _replacement_for_condition_node(cond: object) -> object | None:
         if isinstance(cond, CBinaryOp) and cond.op in {"LogicalAnd", "LogicalOr"}:
             return None
+        if classify_condition_call_effects_8616(cond).has_semantic_call:
+            return None
         key = _condition_key_from_tags(cond)
         flag_based = _is_flag_based_condition_node(cond)
         cite_carrier = key is not None and _contains_cite_node_8616(cond)
@@ -1288,10 +1289,7 @@ def _apply_typed_conditions_to_codegen_8616(project: SimpleNamespace, codegen: S
         nonlocal changed
         raw = _dynamic_typed_condition_getattr_8616(statements_obj, "statements", ()) or ()
         raw_statements = _dynamic_typed_condition_getattr_8616(raw, "statements", raw) or ()
-        if _structured_codegen_node_8616(raw_statements):
-            stmts = (raw_statements,)
-        else:
-            stmts = tuple(raw_statements)
+        stmts = (raw_statements,) if _structured_codegen_node_8616(raw_statements) else tuple(raw_statements)
         for stmt in stmts:
             _walk(stmt)
 

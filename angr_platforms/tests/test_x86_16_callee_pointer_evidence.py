@@ -8,6 +8,7 @@ from angr_platforms.X86_16.lowering.callee_pointer_evidence import (
     apply_callee_pointer_argument_evidence_at_address_8616,
     callee_pointer_argument_indices_at_address_8616,
     callee_pointer_argument_is_proven_8616,
+    recover_callee_pointer_argument_evidence_at_address_8616,
 )
 from capstone.x86_const import (
     X86_INS_MOV,
@@ -118,6 +119,42 @@ def test_promotes_two_binary_proven_near_pointer_parameters() -> None:
         "sub_107b8",
         1,
     )
+
+
+def test_read_only_pointer_classification_does_not_mutate_prototype() -> None:
+    arch = Arch86_16()
+    instructions = (
+        _insn(X86_INS_MOV, "mov", _reg(X86_REG_BX), _mem(X86_REG_BP, displacement=4)),
+        _insn(X86_INS_MOV, "mov", _reg(X86_REG_AX), _mem(X86_REG_BX)),
+        _insn(X86_INS_RET, "ret"),
+    )
+    prototype = SimTypeFunction(
+        [SimTypeShort(False)],
+        SimTypeShort(False),
+    ).with_arch(arch)
+    function = SimpleNamespace(
+        addr=0x107B8,
+        info={},
+        prototype=prototype,
+        is_prototype_guessed=True,
+    )
+    block = SimpleNamespace(capstone=SimpleNamespace(insns=instructions))
+    project = SimpleNamespace(
+        arch=arch,
+        factory=SimpleNamespace(block=lambda _address, **_kwargs: block),
+        kb=SimpleNamespace(functions=_Functions(function)),
+    )
+
+    evidence = recover_callee_pointer_argument_evidence_at_address_8616(
+        project,
+        0x107B8,
+        prototype,
+    )
+
+    assert evidence.closes_classification
+    assert evidence.pointer_argument_indices == (0,)
+    assert function.prototype is prototype
+    assert isinstance(function.prototype.args[0], SimTypeShort)
 
 
 def test_records_contiguous_pointer_prefix_before_prototype_exists() -> None:

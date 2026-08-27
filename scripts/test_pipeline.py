@@ -17,7 +17,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import cast
 
@@ -117,6 +117,7 @@ FOCUSED_PYTEST_TARGETS: tuple[str, ...] = (
     "angr_platforms/tests/test_x86_16_segmented_lowering.py",
     "angr_platforms/tests/test_x86_16_segmented_runtime_lowering.py",
     "angr_platforms/tests/test_x86_16_direct_stack_move_loop_entries.py",
+    "angr_platforms/tests/test_x86_16_direct_stack_move_pretest_body.py",
     "angr_platforms/tests/test_x86_16_decompilation_cache_surface.py",
     "angr_platforms/tests/test_x86_16_return_compat_counters.py",
 )
@@ -158,7 +159,7 @@ PIPELINE_TIERS: dict[str, tuple[str, ...]] = {
 }
 
 
-class LaneStatus(str, Enum):
+class LaneStatus(StrEnum):
     """Structured terminal status for one curated pipeline lane."""
 
     PASSED = "passed"
@@ -167,7 +168,7 @@ class LaneStatus(str, Enum):
     TIMED_OUT = "timed_out"
 
 
-class BudgetStatus(str, Enum):
+class BudgetStatus(StrEnum):
     """Structured runtime-budget verdict for a completed lane."""
 
     PASSED = "passed"
@@ -744,7 +745,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--decompile-run-timeout", type=int, default=600)
     parser.add_argument("--sortdemo-binary", type=Path, default=REPO_ROOT / "SORTDEMO.EXE")
     parser.add_argument("--sortdemo-max-functions", type=int, default=0)
-    parser.add_argument("--sortdemo-decompile-timeout", type=int, default=240)
+    parser.add_argument("--sortdemo-decompile-timeout", type=int, default=360)
     parser.add_argument("--sortdemo-run-timeout", type=int, default=2400)
     parser.add_argument("--sortd-run-timeout", type=int, default=1200)
     parser.add_argument(

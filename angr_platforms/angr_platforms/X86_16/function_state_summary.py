@@ -6,8 +6,8 @@ Forbidden: manufacturing state facts, hiding unknowns, or changing validation ve
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping, TypeAlias
 
 from .low_memory_regions import LowMemoryAccess, classify_x86_16_low_memory_access
 
@@ -95,7 +95,7 @@ class FunctionStateSummary:
         }
 
 
-FunctionStateSource: TypeAlias = Mapping[str, object]
+type FunctionStateSource = Mapping[str, object]
 
 
 def _value(source: FunctionStateSource, name: str, default: object) -> object:

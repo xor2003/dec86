@@ -11,9 +11,9 @@ from collections.abc import Mapping
 
 __all__ = [
     "X86_16QualityMetrics",
+    "format_x86_16_quality_report_8616",
     "measure_x86_16_codegen_quality_8616",
     "measure_x86_16_function_quality_8616",
-    "format_x86_16_quality_report_8616",
 ]
 
 
@@ -21,15 +21,15 @@ class X86_16QualityMetrics:
     """Decompilation quality metrics for a single function."""
 
     __slots__ = (
-        "function_name",
+        "asm_fallback_count",
         "function_addr",
-        "tmp_condition_count",
+        "function_name",
+        "named_local_count",
         "raw_flag_condition_count",
         "raw_ss_linear_expr_count",
-        "asm_fallback_count",
-        "validation_uncollected_count",
+        "tmp_condition_count",
         "typed_condition_count",
-        "named_local_count",
+        "validation_uncollected_count",
     )
 
     def __init__(

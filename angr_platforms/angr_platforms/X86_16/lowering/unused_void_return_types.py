@@ -297,7 +297,10 @@ def materialize_unused_caller_void_codegen_type_8616(
     terminal_storage = (
         None if terminal_value_empty else terminal_return_storage_8616(project, function)
     )
-    terminal_register_empty = terminal_storage is TerminalReturnStorage8616.NONE
+    terminal_register_empty = terminal_storage in {
+        TerminalReturnStorage8616.NONE,
+        TerminalReturnStorage8616.CALL_OUTPUT,
+    }
     if (
         not terminal_value_empty
         and not terminal_register_empty

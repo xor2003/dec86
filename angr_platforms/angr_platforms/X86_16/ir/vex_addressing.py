@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeAlias, cast
+from typing import Any, Protocol, cast
 
 from .core import AddressStatus, IRAddress, IRCondition, IRValue, MemSpace, SegmentOrigin
 
@@ -75,7 +75,7 @@ def _parse_string_family(mnemonic: str) -> str | None:
     return None
 
 
-SegmentHintMap: TypeAlias = dict[tuple[str, ...], tuple[MemSpace, AddressStatus, SegmentOrigin]]
+type SegmentHintMap = dict[tuple[str, ...], tuple[MemSpace, AddressStatus, SegmentOrigin]]
 
 
 @dataclass(frozen=True, slots=True)

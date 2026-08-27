@@ -13,7 +13,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from angr_platforms.X86_16.callsite_summary import caller_return_use_evidence_by_addr_8616
 from angr_platforms.X86_16.cod_extract import CODProcMetadata
@@ -24,7 +24,7 @@ from inertia_decompiler.cache import _function_decompilation_cache_key
 from inertia_decompiler.sidecar_cache import lst_metadata_content_digest_8616
 from inertia_decompiler.work_items import FunctionWorkItem
 
-StableJsonValue: TypeAlias = None | bool | int | float | str | list["StableJsonValue"] | dict[str, "StableJsonValue"]
+type StableJsonValue = bool | int | float | str | list["StableJsonValue"] | dict[str, "StableJsonValue"] | None
 
 
 class _GraphSurface8616(Protocol):

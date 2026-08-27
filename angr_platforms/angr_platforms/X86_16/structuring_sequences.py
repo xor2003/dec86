@@ -75,8 +75,6 @@ def sequence_merge_is_safe(
             return False
         if succ not in region.successors:
             return False
-        if merge_would_hide_cycle(graph, dominators, region, succ):
-            return False
-        return True
+        return not merge_would_hide_cycle(graph, dominators, region, succ)
 
     return _impl()

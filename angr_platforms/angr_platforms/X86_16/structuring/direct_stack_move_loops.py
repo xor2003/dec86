@@ -16,8 +16,9 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable, cast
+from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from capstone import CS_GRP_JUMP
@@ -132,7 +133,9 @@ def _loopback_after_move_8616(
         )
         if len(move_indexes) != 1:
             continue
-        decoded_move_addr = int(getattr(instructions[move_indexes[0]], "address"))
+        decoded_move_addr = getattr(instructions[move_indexes[0]], "address", None)
+        if not isinstance(decoded_move_addr, int):
+            continue
         following = instructions[move_indexes[0] + 1 :]
         if not following:
             continue
@@ -313,7 +316,11 @@ def place_direct_stack_move_loop_tail_assignment_8616(
     cfunc = getattr(codegen, "cfunc", None)
     root = getattr(cfunc, "statements", None)
     sites = _loop_tail_sites_8616(project, root, edge) if edge is not None and root is not None else ()
-    locations = tagged_assignment_locations_8616(project, root, move_fact) if root is not None else ()
+    locations = (
+        tagged_assignment_locations_8616(project, codegen, root, move_fact)
+        if root is not None
+        else ()
+    )
     best_sites: tuple[_LoopTailSite8616, ...] = ()
     if sites:
         best_gap = min(site.gap for site in sites)

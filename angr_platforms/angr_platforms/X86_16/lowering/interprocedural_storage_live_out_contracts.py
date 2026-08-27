@@ -197,8 +197,8 @@ class FunctionMemoryLiveOutCollection8616:
 __all__ = [
     "CallsiteMemoryLiveOutEvidence8616",
     "FunctionMemoryLiveOutCollection8616",
-    "MemoryLiveOutCollectionVerdict8616",
     "MemoryLiveOutCandidateResult8616",
+    "MemoryLiveOutCollectionVerdict8616",
     "MemoryLiveOutFailure8616",
     "MemoryLiveOutFailureKind8616",
     "MemoryLiveOutUseDisposition8616",

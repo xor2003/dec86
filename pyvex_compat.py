@@ -18,11 +18,11 @@ _APPLIED = False
 class _InstructionWindow:
     """Zero-copy view over an instruction list slice.
     Used to avoid per-instruction list allocations in GymratLifter._lift.
-    """
+    """  # noqa: D205
 
-    __slots__ = ("_seq", "_start", "_end")
+    __slots__ = ("_end", "_seq", "_start")
 
-    def __init__(self, seq, start: int, end: int):
+    def __init__(self, seq, start: int, end: int) -> None:  # noqa: ANN001
         self._seq = seq
         self._start = start
         self._end = end
@@ -37,7 +37,7 @@ class _InstructionWindow:
     def __len__(self) -> int:
         return self._end - self._start
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx):  # noqa: ANN001, ANN204
         length = self._end - self._start
         if isinstance(idx, slice):
             lo, hi, step = idx.indices(length)
@@ -48,12 +48,12 @@ class _InstructionWindow:
             raise IndexError(idx)
         return self._seq[self._start + idx]
 
-    def __iter__(self):
+    def __iter__(self):  # noqa: ANN204
         for i in range(self._start, self._end):
             yield self._seq[i]
 
 
-def apply_pyvex_runtime_compatibility() -> None:
+def apply_pyvex_runtime_compatibility() -> None:  # noqa: D103
     global _APPLIED
     if _APPLIED:
         return
@@ -71,8 +71,8 @@ def apply_pyvex_runtime_compatibility() -> None:
         if getattr(pyvex_const.get_type_size, "__name__", "") != "_inertia_cached_get_type_size":
             original_get_type_size = pyvex_const.get_type_size
 
-            @functools.lru_cache(maxsize=None)
-            def _inertia_cached_get_type_size(ty):
+            @functools.cache
+            def _inertia_cached_get_type_size(ty):  # noqa: ANN001, ANN202
                 return original_get_type_size(ty)
 
             pyvex_const.get_type_size = _inertia_cached_get_type_size
@@ -80,8 +80,8 @@ def apply_pyvex_runtime_compatibility() -> None:
         if getattr(pyvex_const.get_type_spec_size, "__name__", "") != "_inertia_cached_get_type_spec_size":
             original_get_type_spec_size = pyvex_const.get_type_spec_size
 
-            @functools.lru_cache(maxsize=None)
-            def _inertia_cached_get_type_spec_size(ty):
+            @functools.cache
+            def _inertia_cached_get_type_spec_size(ty):  # noqa: ANN001, ANN202
                 return original_get_type_spec_size(ty)
 
             pyvex_const.get_type_spec_size = _inertia_cached_get_type_spec_size
@@ -91,7 +91,7 @@ def apply_pyvex_runtime_compatibility() -> None:
             original_getattr = type_meta.__getattr__
             cache: dict[str, object] = {}
 
-            def _inertia_cached_type_getattr(self, name):
+            def _inertia_cached_type_getattr(self, name):  # noqa: ANN001, ANN202
                 cached = cache.get(name)
                 if cached is not None:
                     return cached
@@ -111,7 +111,7 @@ def apply_pyvex_runtime_compatibility() -> None:
             vex_int_class = lifter_helper.vex_int_class
             log = lifter_helper.log
 
-            def _inertia_safe_lift(self):
+            def _inertia_safe_lift(self):  # noqa: ANN001, ANN202
                 debug_enabled = log.isEnabledFor(logging.DEBUG)
                 data = self.data
                 if isinstance(data, (bytes, bytearray, memoryview)):
@@ -129,10 +129,7 @@ def apply_pyvex_runtime_compatibility() -> None:
                 if debug_enabled:
                     log.debug("Decoding complete.")
                 max_inst = self.max_inst
-                if max_inst is None or max_inst <= 0:
-                    max_inst = len(instructions)
-                else:
-                    max_inst = min(max_inst, len(instructions))
+                max_inst = len(instructions) if max_inst is None or max_inst <= 0 else min(max_inst, len(instructions))
                 past_window = _InstructionWindow(instructions, 0, 0)
                 future_window = _InstructionWindow(instructions, 1, len(instructions))
                 for i in range(max_inst):
@@ -144,7 +141,7 @@ def apply_pyvex_runtime_compatibility() -> None:
                     try:
                         instr(irsb_c, past_window, future_window)
                     except AnalysisTimeout:
-                        raise LiftingException("Instruction lifting timed out")
+                        raise LiftingException("Instruction lifting timed out")  # noqa: B904
                     if irsb_c.irsb.jumpkind != JumpKind.Invalid:
                         break
                     if (i + 1) == max_inst:

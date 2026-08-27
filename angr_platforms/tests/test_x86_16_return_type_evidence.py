@@ -146,7 +146,7 @@ def test_closed_unused_evidence_lowers_unresolved_return_without_inferring_void(
     project = SimpleNamespace(arch=arch)
     return_type = SimTypeShort(False).with_arch(arch)
     prototype = SimTypeFunction([], return_type).with_arch(arch)
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     variable = SimRegisterVariable(0, 2, ident="ir_2", name="v5", region=0x1000)
     carrier = CVariable(
         variable,
@@ -185,7 +185,7 @@ def test_unobserved_return_lowering_keeps_assigned_scalar_carrier() -> None:
     project = SimpleNamespace(arch=arch)
     return_type = SimTypeShort(False).with_arch(arch)
     prototype = SimTypeFunction([], return_type).with_arch(arch)
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     variable = SimRegisterVariable(0, 2, ident="ir_3", name="v10", region=0x1000)
     assigned = CVariable(variable, unified_variable=variable, variable_type=return_type, codegen=codegen)
     returned = CVariable(variable, unified_variable=variable, variable_type=return_type, codegen=codegen)
@@ -214,7 +214,7 @@ def test_unobserved_return_lowering_keeps_function_argument() -> None:
     project = SimpleNamespace(arch=arch)
     return_type = SimTypeShort(False).with_arch(arch)
     prototype = SimTypeFunction([return_type], return_type).with_arch(arch)
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     variable = SimStackVariable(4, 2, base="bp", name="DLC", region=0x1000)
     argument = CVariable(variable, variable_type=return_type, codegen=codegen)
     returned = CVariable(variable, variable_type=return_type, codegen=codegen)
@@ -241,7 +241,7 @@ def test_unobserved_return_lowering_preserves_side_effecting_call_result() -> No
     project = SimpleNamespace(arch=arch)
     return_type = SimTypeShort(False).with_arch(arch)
     prototype = SimTypeFunction([], return_type).with_arch(arch)
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     call = CFunctionCall("probe", None, [], codegen=codegen)
     return_node = CReturn(call, codegen=codegen)
     codegen.cfunc = SimpleNamespace(

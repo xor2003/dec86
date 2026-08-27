@@ -21,11 +21,11 @@ from typing import Any, cast
 from ..c_ast_utils import _iter_c_nodes_deep_8616
 
 __all__ = [
-    "InvariantStatus",
     "InvariantCheck",
     "InvariantReport",
-    "validate_before_rewrite_8616",
+    "InvariantStatus",
     "format_invariant_report_8616",
+    "validate_before_rewrite_8616",
 ]
 
 
@@ -565,7 +565,7 @@ def classify_stack_blocker_8616(diag: dict[str, int]) -> str | None:
     Returns a human-readable blocker label, or None if no hard blocker is found.
     This is the canonical blocker taxonomy for stack lowering.
     """
-    if diag.get("ss_stack_accesses", 0) > 0 and diag.get("stack_facts", 0) == 0:
+    if diag.get("ss_stack_accesses", 0) > 0 and diag.get("stack_facts", 0) == 0:  # noqa: SIM102
         if diag.get("bp_stable_accesses", 0) == 0:
             return "stack activity detected but no stable frame"
 

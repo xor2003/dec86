@@ -6,10 +6,11 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Callable, Mapping, TypeAlias, cast
+from typing import cast
 
-NamingCandidate: TypeAlias = tuple[int, int, int]
+type NamingCandidate = tuple[int, int, int]
 
 
 @dataclass(frozen=True)

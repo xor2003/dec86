@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol, cast
 
 from .analysis_helpers import CallTargetKind8616, CallTargetSeed, collect_neighbor_call_targets
@@ -59,14 +59,14 @@ class _ProjectBoundary8616(Protocol):
     _inertia_segment_function_summaries_8616: dict[int, SegmentFunctionSummary8616]
 
 
-class SegmentControlTransferKind8616(str, Enum):
+class SegmentControlTransferKind8616(StrEnum):
     """Architectural operation performed by one inter-function transfer."""
 
     CALL = "call"
     TAIL_JUMP = "tail_jump"
 
 
-class SegmentControlTransferDistance8616(str, Enum):
+class SegmentControlTransferDistance8616(StrEnum):
     """Proven near/far distance, or an explicit refusal when unknown."""
 
     NEAR = "near"

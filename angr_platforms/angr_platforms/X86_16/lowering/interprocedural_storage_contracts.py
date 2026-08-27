@@ -21,9 +21,26 @@ if TYPE_CHECKING:
     from .interprocedural_storage_live_out_contracts import MemoryLiveOutUseFact8616
 
 __all__ = [
-    "CallsiteStorageBinding8616", "CallsiteStorageTrials8616", "FunctionStorageContract8616", "FunctionStorageResolution8616", "FunctionStorageTrials8616", "ProgramStorageResolution8616",
-    "StorageIdentity8616", "StorageIdentityKind8616", "StorageDefinitionKind8616", "StorageReachingDefinition8616", "StorageSlotContract8616", "StorageTrial8616", "StorageTrialFailureKind8616",
-    "StorageTrialRole8616", "StorageTrialSignedness8616", "StorageTrialStats8616", "StorageTrialValueClass8616", "StorageTrialVerdict8616", "StorageUseEvidence8616", "ValueProvenance8616",
+    "CallsiteStorageBinding8616",
+    "CallsiteStorageTrials8616",
+    "FunctionStorageContract8616",
+    "FunctionStorageResolution8616",
+    "FunctionStorageTrials8616",
+    "ProgramStorageResolution8616",
+    "StorageDefinitionKind8616",
+    "StorageIdentity8616",
+    "StorageIdentityKind8616",
+    "StorageReachingDefinition8616",
+    "StorageSlotContract8616",
+    "StorageTrial8616",
+    "StorageTrialFailureKind8616",
+    "StorageTrialRole8616",
+    "StorageTrialSignedness8616",
+    "StorageTrialStats8616",
+    "StorageTrialValueClass8616",
+    "StorageTrialVerdict8616",
+    "StorageUseEvidence8616",
+    "ValueProvenance8616",
 ]
 
 

@@ -889,7 +889,7 @@ def _rewrite_ss_stack_byte_offsets(
         original_deref = _stack_deref_identity(original)
         replacement_deref = _stack_deref_identity(replacement)
         if original_deref is not None and original_deref == replacement_deref:
-            if isinstance(original, structured_c.CUnaryOp) and original.op == "Dereference":
+            if isinstance(original, structured_c.CUnaryOp) and original.op == "Dereference":  # noqa: SIM102
                 if _expr_contains_rewrite_alias_carrier(_dynamic_codegen_attr(original, "operand", None)):
                     return replacement
             return original

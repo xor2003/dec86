@@ -264,7 +264,7 @@ def test_clean_worker_parent_reuses_validated_result_without_second_process(monk
         )
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="child diagnostic\n")
 
-    monkeypatch.setattr(cli_core.subprocess, "run", fake_run)
+    monkeypatch.setattr(cli_core, "run_captured_subprocess_tree", fake_run)
     monkeypatch.setattr(cli_core, "_ARCHITECTURE_GUARD_STATUS_8616", True)
     monkeypatch.setattr(
         cli_core,

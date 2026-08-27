@@ -6,7 +6,7 @@ Forbidden: decompiler alias/type ownership, source-backed recovery, or rendered-
 
 from __future__ import annotations
 
-from typing import Any, TypeAlias, cast
+from typing import Any, cast
 
 from pyvex.expr import Binop, Const, Get, Load, Unop
 from pyvex.lifting.util.syntax_wrapper import VexValue
@@ -24,8 +24,8 @@ from .regs import dtreg_t, reg8_t, reg16_t, reg32_t, register_name_8616, sgreg_t
 # Constants for descriptor table registers
 
 
-RegisterName: TypeAlias = reg8_t | reg16_t | reg32_t | sgreg_t
-RegisterValue: TypeAlias = int | VexValue
+type RegisterName = reg8_t | reg16_t | reg32_t | sgreg_t
+type RegisterValue = int | VexValue
 
 TYPES: dict[type[RegisterName], object] = {
     reg8_t: Type.int_8,
@@ -229,6 +229,7 @@ class Processor(Eflags, CR):  # type: ignore[misc, unused-ignore] # dynamic fron
         super().__init__()
         self.lifter_instruction: Any | None = None
         self.vex_offsets: dict[str, int] | None = None
+        self._is_mode32: bool = False
         self._last_condition: object | None = None
         self.flags: int = 0
         self.eip: int = 0  # X86Instruction pointer
@@ -574,7 +575,11 @@ class Processor(Eflags, CR):  # type: ignore[misc, unused-ignore] # dynamic fron
 
     def is_mode32(self) -> bool:
         """Return whether the frontend currently executes 32-bit code."""
-        return False
+        return self._is_mode32
+
+    def set_mode32(self, value: bool) -> None:
+        """Set the processor width mode for next instruction decode."""
+        self._is_mode32 = bool(value)
 
     def set_lifter_instruction(self, lifter_instruction: object | None) -> None:
         """Set the active PyVEX lifter instruction context."""

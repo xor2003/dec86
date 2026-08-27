@@ -8,6 +8,7 @@ from angr_platforms.X86_16.stack_helpers import (
     emit_near_jump16,
     emit_near_jump32,
     enter16,
+    enter32,
     leave16,
     near_relative_target16,
     near_relative_target32,
@@ -207,6 +208,20 @@ def test_stack_helpers_push16_register_preserves_original_sp_value():
     assert emu.memory[(sgreg_t.SS, 0x0FFE)] == 0x1000
 
 
+def test_stack_helpers_enter32_uses_real_mode_16bit_nesting_addresses():
+    emu = _StackEmu()
+    emu.gpregs[reg32_t.EBP] = 0x12340010
+    emu.memory[(sgreg_t.SS, 0x000C)] = 0xAABBCCDD
+
+    enter32(emu, 0x10, 2)
+
+    assert emu.memory[(sgreg_t.SS, 0x1FFC)] == 0x12340010
+    assert emu.memory[(sgreg_t.SS, 0x1FF8)] == 0xAABBCCDD
+    assert emu.memory[(sgreg_t.SS, 0x1FF4)] == 0x1FFC
+    assert emu.get_gpreg(reg32_t.EBP) == 0x1FFC
+    assert emu.get_gpreg(reg32_t.ESP) == 0x1FE4
+
+
 def test_stack_helpers_segment16_helpers_round_trip_segment_registers():
     emu = _StackEmu()
     emu.sgregs[sgreg_t.DS] = 0xBEEF
@@ -272,7 +287,7 @@ def test_stack_helpers_return_helpers_restore_far_and_interrupt_state():
     assert return_interrupt16(emu) == (0xAAAA, 0xBBBB, 0xCCCC)
     assert emu.get_gpreg(reg16_t.IP) == 0xAAAA
     assert emu.get_sgreg(sgreg_t.CS) == 0xBBBB
-    assert emu.get_flags() == 0xCCCC
+    assert emu.get_flags() == (0xCCCC & 0x0FD5) | 0x0002
     assert emu.irsb.jumpkind == "Ijk_Ret"
 
 
@@ -311,7 +326,7 @@ def test_stack_helpers_32bit_far_and_interrupt_helpers_use_dword_frames():
     assert return_interrupt32(emu) == (0x11112222, 0x33334444, 0x55556666)
     assert emu.get_gpreg(reg32_t.EIP) == 0x11112222
     assert emu.get_sgreg(sgreg_t.CS) == 0x4444
-    assert emu.get_eflags() == 0x55556666
+    assert emu.get_eflags() == 0x55556666 | 0x00000002
 
 
 def test_stack_helpers_privilege_stack_save_uses_ss_and_esp_order():

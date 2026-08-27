@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
-_X87_INTERRUPT_ESCAPES_8616 = frozenset({0x34, 0x35, 0x38, 0x39, 0x3D})
+from ..msvc_x87_interrupts import is_msvc_x87_emulation_interrupt_8616
 
 
 class BranchTargetReturnEffectKind8616(Enum):
@@ -107,7 +107,7 @@ def _is_software_interrupt_boundary_8616(
         mnemonic == "int"
         and len(operands) == 1
         and _operand_kind_8616(operands[0]) == 2
-        and int(getattr(operands[0], "imm", -1)) in _X87_INTERRUPT_ESCAPES_8616
+        and is_msvc_x87_emulation_interrupt_8616(int(getattr(operands[0], "imm", -1)))
     )
 
 
@@ -438,7 +438,7 @@ def terminal_ax_return_effect_8616(insn: object) -> TerminalAxReturnEffect8616:
             return TerminalAxReturnEffect8616(TerminalAxReturnEffectKind8616.OTHER)
         rhs_kind, rhs_imm, mem_disp, mem_size, rhs_reg = value_operand
         return TerminalAxReturnEffect8616(
-            TerminalAxReturnEffectKind8616.AX_MUL_VALUE,
+            TerminalAxReturnEffectKind8616.AX_MUL_VALUE, dst_reg="ax",
             rhs_kind=rhs_kind,
             rhs_reg=rhs_reg,
             imm=rhs_imm,

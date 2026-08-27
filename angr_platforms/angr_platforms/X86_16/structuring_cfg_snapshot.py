@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 from .structuring_graph_builder import build_region_graph
 
+type CFGStatementProvenanceKey8616 = tuple[str, int, int]
+
 
 @dataclass(frozen=True, slots=True)
 class CFGSnapshotNode:
@@ -21,6 +23,8 @@ class CFGSnapshotNode:
     successor_ids: tuple[int, ...]
     ownership: str
     reachable_from_entry: bool
+    statement_ins_addrs: tuple[int, ...] = ()
+    statement_provenance_keys: tuple[CFGStatementProvenanceKey8616, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,10 +64,44 @@ class CFGSnapshot:
                     "successor_ids": [hex(region_id) for region_id in node.successor_ids],
                     "ownership": node.ownership,
                     "reachable_from_entry": node.reachable_from_entry,
+                    "statement_ins_addrs": [hex(ins_addr) for ins_addr in node.statement_ins_addrs],
+                    "statement_provenance_keys": [
+                        [kind, hex(block_addr), statement_index]
+                        for kind, block_addr, statement_index in node.statement_provenance_keys
+                    ],
                 }
                 for node in self.nodes
             ],
         }
+
+
+def _statement_ins_addrs_8616(metadata: dict[str, object]) -> tuple[int, ...]:
+    """Copy a complete typed instruction-address tuple or refuse malformed metadata."""
+    raw_addrs = metadata.get("region_statement_ins_addrs", ())
+    if not isinstance(raw_addrs, tuple) or any(not isinstance(addr, int) for addr in raw_addrs):
+        return ()
+    return tuple(raw_addrs)
+
+
+def _statement_provenance_keys_8616(
+    metadata: dict[str, object],
+) -> tuple[CFGStatementProvenanceKey8616, ...]:
+    """Copy complete typed statement provenance or refuse malformed metadata."""
+    raw_keys = metadata.get("region_statement_provenance_keys", ())
+    if not isinstance(raw_keys, tuple):
+        return ()
+    keys: list[CFGStatementProvenanceKey8616] = []
+    for key in raw_keys:
+        if not (
+            isinstance(key, tuple)
+            and len(key) == 3
+            and isinstance(key[0], str)
+            and isinstance(key[1], int)
+            and isinstance(key[2], int)
+        ):
+            return ()
+        keys.append((key[0], key[1], key[2]))
+    return tuple(keys)
 
 
 def build_cfg_snapshot(codegen: object) -> CFGSnapshot | None:
@@ -86,7 +124,7 @@ def build_cfg_snapshot(codegen: object) -> CFGSnapshot | None:
                 reachable_from_entry.add(region.region_id)
             for succ in graph.successors(region):
                 if succ not in seen:
-                    worklist.append(succ)
+                    worklist.append(succ)  # noqa: PERF401
 
     snapshot_nodes: list[CFGSnapshotNode] = []
     edge_count = 0
@@ -111,6 +149,8 @@ def build_cfg_snapshot(codegen: object) -> CFGSnapshot | None:
                 successor_ids=successor_ids,
                 ownership=ownership,
                 reachable_from_entry=(region.region_id in reachable_from_entry),
+                statement_ins_addrs=_statement_ins_addrs_8616(region.metadata),
+                statement_provenance_keys=_statement_provenance_keys_8616(region.metadata),
             )
         )
 

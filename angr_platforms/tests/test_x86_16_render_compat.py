@@ -22,6 +22,10 @@ class _Codegen(SimpleNamespace):
     def next_idx(self, _name):
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def test_render_compat_disables_disambiguation_for_projectless_callee():

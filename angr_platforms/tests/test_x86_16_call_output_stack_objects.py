@@ -34,6 +34,9 @@ from angr_platforms.X86_16.lowering.call_output_stack_objects import (
     select_wide_call_return_condition_chain_8616,
 )
 from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 
 
 class _Types:
@@ -75,6 +78,10 @@ class _Codegen:
     def next_idx(self, _name):
         self._next_idx += 1
         return self._next_idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _condition(offset, src_insn):
@@ -91,12 +98,13 @@ def _fixture(
     include_array_boundary,
     materialized_call_argument=True,
     include_base_variable=True,
+    entry_sp_bias=0,
 ):
     codegen = _Codegen()
-    vc_variable = SimStackVariable(-112, 112, base="bp", name="vc", region=0x1000)
-    field_14_variable = SimStackVariable(-98, 2, base="bp", name="local_62", region=0x1000)
-    field_18_variable = SimStackVariable(-94, 2, base="bp", name="local_5e", region=0x1000)
-    array_variable = SimStackVariable(-90, 86, base="bp", name="aTemp", region=0x1000)
+    vc_variable = SimStackVariable(-112 + entry_sp_bias, 112, base="bp", name="vc", region=0x1000)
+    field_14_variable = SimStackVariable(-98 + entry_sp_bias, 2, base="bp", name="local_62", region=0x1000)
+    field_18_variable = SimStackVariable(-94 + entry_sp_bias, 2, base="bp", name="local_5e", region=0x1000)
+    array_variable = SimStackVariable(-90 + entry_sp_bias, 86, base="bp", name="aTemp", region=0x1000)
     vc = CVariable(vc_variable, variable_type=SimTypeBottom(), codegen=codegen)
     field_14 = CVariable(field_14_variable, variable_type=SimTypeShort(False), codegen=codegen)
     field_18 = CVariable(field_18_variable, variable_type=SimTypeShort(False), codegen=codegen)
@@ -143,6 +151,20 @@ def _fixture(
     if include_base_variable:
         variables_in_use[vc_variable] = vc
     codegen.cfunc = _CFunction(root, variables_in_use)
+    for variable, cvar, bp_offset in (
+        (vc_variable, vc, -112),
+        (field_14_variable, field_14, -98),
+        (field_18_variable, field_18, -94),
+        (array_variable, array, -90),
+    ):
+        record_stack_variable_coordinate_projection_8616(
+            codegen,
+            variable=variable,
+            cvar=cvar,
+            bp_offset=bp_offset,
+            entry_sp_offset=variable.offset,
+            size=variable.size,
+        )
     summary = CallsiteSummary8616(
         callsite_addr=0x1035,
         target_addr=0x3000,
@@ -185,6 +207,23 @@ def test_call_output_stack_fields_use_typed_call_ir_and_aggregate_boundary():
     assert removed == 2
     assert all(variable not in codegen.cfunc.variables_in_use for variable in carrier_variables)
     assert codegen.cfunc.refresh_count == 1
+
+
+def test_call_output_stack_fields_use_machine_bp_coordinate_registry():
+    codegen, condition, carrier_variables = _fixture(
+        include_array_boundary=True,
+        entry_sp_bias=-2,
+    )
+    conditions = (_condition(-94, 0x103F), _condition(-98, 0x1048))
+
+    result = lower_call_output_stack_fields_in_condition_8616(codegen, condition, conditions)
+
+    assert result.stats.classified_fact_count == 2
+    assert result.stats.materialized_count == 2
+    assert isinstance(result.expression.lhs.lhs, CVariableField)
+    assert isinstance(result.expression.rhs.lhs, CVariableField)
+    assert prune_materialized_call_output_stack_carriers_8616(codegen) == 2
+    assert all(variable not in codegen.cfunc.variables_in_use for variable in carrier_variables)
 
 
 def test_call_output_stack_fields_refuse_without_closed_aggregate_boundary():

@@ -553,7 +553,7 @@ class TestIntegration:
 
         class MockCodegen:
             cfunc = MockCFunc()
-            _inertia_vex_ir_summary = {
+            _inertia_vex_ir_summary = {  # noqa: RUF012
                 "block_count": 2,
                 "address_status_counts": {"provisional": 2},
                 "segment_origin_counts": {"defaulted": 2},

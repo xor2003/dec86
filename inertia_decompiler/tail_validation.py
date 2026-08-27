@@ -53,7 +53,7 @@ class TailValidationResultStatus(Enum):
     OTHER = "other"
 
     @classmethod
-    def from_result_status(cls, raw_status: object) -> "TailValidationResultStatus":
+    def from_result_status(cls, raw_status: object) -> TailValidationResultStatus:
         """Normalize raw string or enum work-result statuses."""
         if isinstance(raw_status, Enum):
             raw_status = raw_status.value
@@ -143,9 +143,7 @@ def tail_validation_enabled_for_run(binary_path: Path | None, *, proc: str | Non
     if os.environ.get(TAIL_VALIDATION_METADATA_ENV) == "1":
         return True
     suffix = binary_path.suffix.lower() if isinstance(binary_path, Path) else ""
-    if proc is not None or suffix in {".cod", ".exe"}:
-        return True
-    return False
+    return bool(proc is not None or suffix in {".cod", ".exe"})
 
 
 def _compute_cfg_hash_from_result(result: object, item: object) -> str | None:

@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.structuring.loop_recovery import (
     LoopBackEdge,
+    LoopTopologyStats8616,
+    LoopTopologyVerdict8616,
+    classify_natural_loop_topology_8616,
     compute_dominators,
     find_back_edges,
     recover_loops,
@@ -240,3 +245,77 @@ def test_negative_step_induction():
     assert recovered.induction.step == -1
     assert recovered.guard is not None
     assert recovered.guard.op == "GT"
+
+
+def _cfg_snapshot(cfg: SimpleCFG, nodes: tuple[int, ...]) -> tuple[tuple[int, tuple[int, ...], tuple[int, ...]], ...]:
+    """Capture adjacency without normalizing insertion order."""
+    return tuple((node, tuple(cfg.successors(node)), tuple(cfg.predecessors(node))) for node in nodes)
+
+
+def test_exact_natural_loop_topology_is_proven_without_graph_mutation():
+    """P->H, H->B/E, B->L, L->H produces one exact closed artifact."""
+    cfg = SimpleCFG([(0, 1), (1, 2), (1, 4), (2, 3), (3, 1)])
+    before = _cfg_snapshot(cfg, (0, 1, 2, 3, 4))
+
+    topology = classify_natural_loop_topology_8616(cfg, header=1, latch=3)
+
+    assert topology.verdict is LoopTopologyVerdict8616.PROVEN
+    assert topology.header == 1
+    assert topology.latch == 3
+    assert topology.body == (1, 2, 3)
+    assert topology.entry_edges == ((0, 1),)
+    assert topology.backedges == ((3, 1),)
+    assert topology.exit_edges == ((1, 4),)
+    assert topology.stats == LoopTopologyStats8616(1, 1, 1, 1, 0)
+    assert topology.stats.is_closed is True
+    assert _cfg_snapshot(cfg, (0, 1, 2, 3, 4)) == before
+
+
+def test_external_non_header_entry_refuses_topology():
+    """An external P->B edge makes the candidate unprovable."""
+    cfg = SimpleCFG([(0, 1), (1, 2), (1, 4), (2, 3), (3, 1), (0, 2)])
+
+    topology = classify_natural_loop_topology_8616(cfg, header=1, latch=3)
+
+    assert topology.verdict is LoopTopologyVerdict8616.UNKNOWN_REFUSE
+    assert topology.refusal_reason == "external-non-header-entry"
+    assert topology.stats == LoopTopologyStats8616(1, 1, 0, 0, 1)
+    assert topology.stats.is_closed is True
+
+
+def test_multiple_latches_refuse_topology():
+    """Two reachable predecessors returning to H are ambiguous in this slice."""
+    cfg = SimpleCFG([(0, 1), (1, 2), (1, 3), (1, 4), (2, 1), (3, 1)])
+
+    topology = classify_natural_loop_topology_8616(cfg, header=1, latch=2)
+
+    assert topology.verdict is LoopTopologyVerdict8616.UNKNOWN_REFUSE
+    assert topology.refusal_reason == "non-unique-latch"
+    assert topology.stats.is_closed is True
+
+
+def test_multiple_exit_targets_refuse_topology():
+    """Exit edges to two distinct targets are outside the exact first slice."""
+    cfg = SimpleCFG([(0, 1), (1, 2), (1, 4), (2, 3), (2, 5), (3, 1)])
+
+    topology = classify_natural_loop_topology_8616(cfg, header=1, latch=3)
+
+    assert topology.verdict is LoopTopologyVerdict8616.UNKNOWN_REFUSE
+    assert topology.refusal_reason == "non-unique-exit-target"
+    assert topology.stats.is_closed is True
+
+
+def test_reversed_edge_insertion_produces_equivalent_topology():
+    """Graph edge insertion order cannot affect the immutable artifact."""
+    edges = [(0, 1), (1, 2), (1, 4), (2, 3), (3, 1)]
+
+    forward = classify_natural_loop_topology_8616(SimpleCFG(edges), header=1, latch=3)
+    reversed_order = classify_natural_loop_topology_8616(SimpleCFG(list(reversed(edges))), header=1, latch=3)
+
+    assert reversed_order == forward
+
+
+def test_classified_topology_without_materialization_hard_fails():
+    """The closed-counter contract cannot strand classified topology evidence."""
+    with pytest.raises(PipelineHardError, match="classified natural-loop topology"):
+        LoopTopologyStats8616(1, 1, 1, 0, 1)

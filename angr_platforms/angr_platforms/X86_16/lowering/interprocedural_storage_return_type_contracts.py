@@ -31,12 +31,12 @@ __all__ = [
     "ReturnPointerFlowScan8616",
     "ReturnPointerPhiEvidence8616",
     "ReturnPointerUseEvidence8616",
-    "SplitReturnRelation8616",
     "ReturnSplitConditionUseEvidence8616",
     "ReturnSplitPieceUse8616",
     "ReturnStorageTypeFailure8616",
     "ReturnStorageTypeResult8616",
     "ReturnStorageTypeVerdict8616",
+    "SplitReturnRelation8616",
 ]
 
 

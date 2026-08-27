@@ -37,12 +37,12 @@ for node in cfg.graph.nodes():
     block.vex.pp()
     print()
 
-for addr, func in cfg.functions.items():
+for func in cfg.functions.values():
     _ = project.analyses[VariableRecoveryFast].prep()(func)
     cca = project.analyses[CallingConventionAnalysis].prep()(func, cfg=cfg.model)
     func.calling_convention = cca.cc
     func.prototype = cca.prototype
 
     dec = project.analyses[Decompiler].prep()(func, cfg=cfg.model)
-    assert dec.codegen is not None, "Failed to decompile function %s." % repr(func)
-    print("Decompiled function %s\n%s" % (repr(func), dec.codegen.text))
+    assert dec.codegen is not None, f"Failed to decompile function {func!r}."
+    print(f"Decompiled function {func!r}\n{dec.codegen.text}")

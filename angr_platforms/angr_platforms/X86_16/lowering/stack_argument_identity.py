@@ -11,8 +11,9 @@ prototype and alias facts already materialized by earlier pipeline owners.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol, Sequence, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimStackVariable
@@ -71,6 +72,23 @@ def _positive_stack_variable_8616(node: object) -> SimStackVariable | None:
     return variable
 
 
+def _indexed_stack_base_argument_offset_8616(node: object) -> int | None:
+    """Return an exact positive argument offset from angr's stack-base view."""
+    if not isinstance(node, structured_c.CIndexedVariable):
+        return None
+    base = node.variable
+    index = node.index
+    if (
+        not isinstance(base, structured_c.CFakeVariable)
+        or base.name != "stack_base"
+        or not isinstance(index, structured_c.CConstant)
+        or not isinstance(index.value, int)
+        or index.value <= 0
+    ):
+        return None
+    return index.value
+
+
 def _mark_stack_identity_change_8616(
     codegen: _ArgumentIdentityCodegen8616,
 ) -> None:
@@ -127,7 +145,7 @@ def unify_positive_bp_argument_identity_8616(
     except AttributeError:
         pass
 
-    changed = prune_unreferenced_pre_argument_declarations_8616(typed_codegen)
+    changed = bool(prune_unreferenced_pre_argument_declarations_8616(typed_codegen))
 
     arguments_by_identity: dict[object, list[structured_c.CVariable]] = {}
     for candidate in argument_list:
@@ -142,6 +160,16 @@ def unify_positive_bp_argument_identity_8616(
     canonical_by_identity = {
         identity: arguments[0]
         for identity, arguments in arguments_by_identity.items()
+        if len(arguments) == 1
+    }
+    arguments_by_offset: dict[int, list[structured_c.CVariable]] = {}
+    for argument in canonical_by_identity.values():
+        variable = _positive_stack_variable_8616(argument)
+        if variable is not None:
+            arguments_by_offset.setdefault(variable.offset, []).append(argument)
+    canonical_by_offset = {
+        offset: arguments[0]
+        for offset, arguments in arguments_by_offset.items()
         if len(arguments) == 1
     }
     if not canonical_by_identity:
@@ -160,19 +188,23 @@ def unify_positive_bp_argument_identity_8616(
         nonlocal raw_count, normalized_count, classified_count
         nonlocal materialized_count, changed
         variable = _positive_stack_variable_8616(node)
-        if variable is None:
+        indexed_offset = _indexed_stack_base_argument_offset_8616(node)
+        if variable is None and indexed_offset is None:
             return node
         raw_count += 1
-        identity = _stack_slot_identity_for_variable(variable)
-        if identity is None:
-            return node
+        if variable is not None:
+            identity = _stack_slot_identity_for_variable(variable)
+            if identity is None:
+                return node
+            argument = canonical_by_identity.get(identity)
+        else:
+            argument = canonical_by_offset.get(cast(int, indexed_offset))
         normalized_count += 1
-        argument = canonical_by_identity.get(identity)
         if argument is None:
             return node
         classified_count += 1
         materialized_count += 1
-        if variable is argument.variable:
+        if variable is not None and variable is argument.variable:
             return node
         changed = True
         return _clone_argument_reference_8616(argument)

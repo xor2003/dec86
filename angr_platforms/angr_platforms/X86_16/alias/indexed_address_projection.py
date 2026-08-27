@@ -168,7 +168,7 @@ def project_indexed_address_aliases_8616(
 
 
 def apply_x86_16_indexed_address_aliases_8616(
-    project: object,  # noqa: ARG001
+    project: object,
     codegen: object,
 ) -> bool:
     """Publish Alias projection and fail if the preceding IR owner is absent."""
@@ -177,7 +177,7 @@ def apply_x86_16_indexed_address_aliases_8616(
         source = boundary._inertia_indexed_address_evidence_8616
     except AttributeError as error:
         try:
-            boundary._inertia_vex_ir_function_ssa
+            boundary._inertia_vex_ir_function_ssa  # noqa: B018
         except AttributeError:
             return False
         raise PipelineHardError(

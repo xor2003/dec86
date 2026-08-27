@@ -235,9 +235,7 @@ def _proven_call_return_condition_8616(
         and value.const == constants[0].value
         for value in values
     )
-    if not register_matches or not constant_matches:
-        return False
-    return True
+    return not (not register_matches or not constant_matches)
 
 
 def _proven_stored_call_return_condition_8616(

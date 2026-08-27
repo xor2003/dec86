@@ -15,7 +15,7 @@ import sys
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import Enum, IntEnum
+from enum import IntEnum, StrEnum
 from pathlib import Path
 from typing import Any, cast
 
@@ -87,7 +87,7 @@ _C_PARSE_PREFIX = (
 )
 
 
-class TerminalStatus(str, Enum):
+class TerminalStatus(StrEnum):
     """Canonical terminal verdict for one function status record."""
 
     UNKNOWN = "unknown"
@@ -102,7 +102,7 @@ class TerminalStatus(str, Enum):
     SOURCE_CONTRACT_REFUSED = "source-contract-refused"
 
 
-class FailureStatus(str, Enum):
+class FailureStatus(StrEnum):
     """Structured failure-family status parsed from transcript markers."""
 
     UNKNOWN = "unknown"
@@ -112,7 +112,7 @@ class FailureStatus(str, Enum):
     VALIDATION_FAILED = "validation_failed"
 
     @classmethod
-    def from_token(cls, token: str | None) -> "FailureStatus":
+    def from_token(cls, token: str | None) -> FailureStatus:
         """Return the known failure status, or UNKNOWN for new transcript tokens."""
 
         normalized = (token or "").strip().lower()
@@ -122,7 +122,7 @@ class FailureStatus(str, Enum):
         return cls.UNKNOWN
 
 
-class ValidationStatus(str, Enum):
+class ValidationStatus(StrEnum):
     """Structured validation verdict parsed from transcript markers."""
 
     UNKNOWN = "unknown"
@@ -131,7 +131,7 @@ class ValidationStatus(str, Enum):
     UNCOLLECTED = "uncollected"
 
     @classmethod
-    def from_token(cls, token: str | None) -> "ValidationStatus":
+    def from_token(cls, token: str | None) -> ValidationStatus:
         """Return the known validation status, or UNKNOWN for new transcript tokens."""
 
         normalized = (token or "").strip().rstrip("*/ ").lower()
@@ -141,7 +141,7 @@ class ValidationStatus(str, Enum):
         return cls.UNKNOWN
 
 
-class AttemptStatus(str, Enum):
+class AttemptStatus(StrEnum):
     """Structured decompilation attempt status parsed from transcript markers."""
 
     UNKNOWN = "unknown"
@@ -152,7 +152,7 @@ class AttemptStatus(str, Enum):
     EMPTY = "empty"
 
     @classmethod
-    def from_token(cls, token: str | None) -> "AttemptStatus":
+    def from_token(cls, token: str | None) -> AttemptStatus:
         """Return the known attempt status, or UNKNOWN for new transcript tokens."""
 
         normalized = (token or "").strip().lower()
@@ -162,7 +162,7 @@ class AttemptStatus(str, Enum):
         return cls.UNKNOWN
 
 
-class ArgumentClass(str, Enum):
+class ArgumentClass(StrEnum):
     """Source-level argument class required at one generated C callsite."""
 
     VALUE = "value"
@@ -170,14 +170,14 @@ class ArgumentClass(str, Enum):
     POINTER_OR_NULL = "pointer-or-null"
 
 
-class GeneratedCMarker(str, Enum):
+class GeneratedCMarker(StrEnum):
     """Accepted clean generated-C block markers emitted by CLI modes."""
 
     NORMAL = "/* -- c -- */"
     ALTERNATE_SOURCE = "/* == c == */"
 
     @classmethod
-    def from_line(cls, line: str) -> "GeneratedCMarker | None":
+    def from_line(cls, line: str) -> GeneratedCMarker | None:
         """Return the clean C marker represented by a transcript line."""
         return next((marker for marker in cls if marker.value in line), None)
 
@@ -513,9 +513,9 @@ def _leakage_count_text(lines: list[str]) -> str:
         stripped = line.lstrip()
         if stripped.startswith("#define"):
             continue
-        if stripped.startswith("[") or stripped.startswith("WARNING  |") or stripped.startswith("ERROR    |"):
+        if stripped.startswith(("[", "WARNING  |", "ERROR    |")):
             continue
-        if stripped.startswith("Traceback ") or stripped.startswith("File "):
+        if stripped.startswith(("Traceback ", "File ")):
             continue
         if "PipelineHardError:" in stripped:
             continue
@@ -546,6 +546,7 @@ class FunctionStatus:
     timeout_message: str | None = None
     source_contract: SourceContractResult | None = None
     generated_c: str | None = None
+    ignore_next_traceback: bool = False
 
     def generated_c_marker(self) -> GeneratedCMarker | None:
         """Return the clean generated-C marker present in this record."""
@@ -758,9 +759,14 @@ def _update_flags(record: FunctionStatus, line: str) -> None:
         record.timeout_message = line.strip()
         if record.failure_stage is None:
             record.failure_stage = stage_timeout_match.group("stage")
+    if "exception ignored while calling deallocator" in lowered:
+        record.ignore_next_traceback = True
     if "traceback (most recent call last):" in lowered:
-        record.error = True
-        record.failure_status = FailureStatus.ERROR
+        if record.ignore_next_traceback:
+            record.ignore_next_traceback = False
+        else:
+            record.error = True
+            record.failure_status = FailureStatus.ERROR
 
     failure_match = _FAILURE_FAMILY_RE.search(line)
     if failure_match is not None:
@@ -1024,11 +1030,18 @@ class _ConditionalBreakCollector:
             condition = node.cond
             while isinstance(condition, c_ast.Cast):
                 condition = condition.expr
+            negated = isinstance(condition, c_ast.UnaryOp) and condition.op == "!"
+            if negated:
+                condition = condition.expr
             comparison_op = (
                 condition.op
                 if isinstance(condition, c_ast.BinaryOp)
                 else None
             )
+            if negated and comparison_op is not None:
+                comparison_op = {"<": ">=", "<=": ">", ">": "<=", ">=": "<", "==": "!=", "!=": "=="}.get(
+                    comparison_op
+                )
             self.observations.append(
                 ConditionalBreakObservation(
                     comparison_op=comparison_op,
@@ -1122,7 +1135,7 @@ def _argument_classes_match(
             expected_class is ArgumentClass.POINTER_OR_NULL
             and (actual_class is ArgumentClass.POINTER or null_arguments[index])
         )
-        for index, (expected_class, actual_class) in enumerate(zip(expected, actual))
+        for index, (expected_class, actual_class) in enumerate(zip(expected, actual, strict=False))
     )
 
 
@@ -1272,9 +1285,15 @@ def _attach_canonical_generated_definitions(
     """Associate deferred canonical definitions with their function records."""
     deferred: list[tuple[int, int, FunctionStatus]] = []
     for record in records:
-        if record.generated_c_marker() is not None:
-            continue
         numeric_name = f"sub_{int(record.addr, 16):04x}"
+        emitted_c = _emitted_c_for_record(record)
+        if emitted_c is not None:
+            try:
+                _parse_generated_contract_observations(record.name, emitted_c)
+            except (ParseError, ValueError):
+                pass
+            else:
+                continue
         for function_name in (record.name, numeric_name):
             try:
                 start, end = generated_function_definition_span(transcript, function_name)
@@ -1285,12 +1304,16 @@ def _attach_canonical_generated_definitions(
     if not deferred:
         return
     deferred.sort(key=lambda item: item[0])
-    summary_start = transcript.rfind("/* info: decompilation attempted", 0, deferred[0][0])
-    previous_end = transcript.find("\n", summary_start) + 1 if summary_start >= 0 else None
+    function_results = tuple(_FUNCTION_INFO_RE.finditer(transcript, 0, deferred[0][0]))
+    result_end = function_results[-1].end() if function_results else -1
+    prelude_start = transcript.find("\n", result_end) + 1 if result_end >= 0 else deferred[0][0]
+    canonical_prelude = transcript[prelude_start : deferred[0][0]]
+    previous_end: int | None = None
     for start, end, record in deferred:
-        record.generated_c = transcript[previous_end if previous_end is not None else start : end]
-        if previous_end is not None:
-            previous_end = end
+        record.generated_c = _leakage_count_text(
+            (canonical_prelude + transcript[previous_end if previous_end is not None else start : end]).splitlines()
+        )
+        previous_end = end
 
 
 def parse_status_text(text: str, *, check_source_contracts: bool = False) -> dict[str, Any]:
@@ -1397,9 +1420,7 @@ def _required_status_gate_passes(
             return False
 
     command = result.get("command")
-    if isinstance(command, dict) and command.get("returncode") != 0:
-        return False
-    return True
+    return not (isinstance(command, dict) and command.get("returncode") != 0)
 
 
 def _build_triage(records: list[FunctionStatus]) -> dict[str, list[dict[str, Any]]]:

@@ -10,14 +10,318 @@ rewrite cleanup, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
-from typing import cast
+import contextlib
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
+from enum import Enum
+from typing import Protocol, cast
 
-from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CExpression
-from angr.sim_type import SimTypeShort
+from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CConstant, CExpression, CReturn
+from angr.sim_type import SimTypeBottom, SimTypeShort
 
-from ..c_ast_utils import _clone_c_ast_tree_8616
+from ..c_ast_utils import _clone_c_ast_tree_8616, _iter_c_nodes_deep_8616
 
-__all__ = ["compose_ax_byte_lanes_8616"]
+__all__ = [
+    "TerminalReturnValueMaterializationRefusal8616",
+    "TerminalReturnValueMaterializationResult8616",
+    "TerminalReturnValueMaterializationStatus8616",
+    "compose_ax_byte_lanes_8616",
+    "materialize_linear_terminal_return_value_8616",
+    "materialize_proven_terminal_return_value_8616",
+    "proven_terminal_value_extends_existing_8616",
+    "terminal_ax_value_supports_widths_8616",
+]
+
+
+class _TerminalReturnCodegenSurface8616(Protocol):
+    """Third-party codegen fields consumed by terminal return Structuring."""
+
+    cfunc: object | None
+    _inertia_missing_terminal_ax_return_terminal_value_block_count_8616: int
+
+
+class _TerminalReturnCFunctionSurface8616(Protocol):
+    """Third-party C function fields consumed by terminal return Structuring."""
+
+    statements: object | None
+    body: object | None
+    functy: object | None
+    prototype: object | None
+
+
+class _TerminalReturnFunctionSurface8616(Protocol):
+    """Third-party function fields consumed by terminal return Structuring."""
+
+    prototype: object | None
+
+
+class _TerminalReturnPrototypeSurface8616(Protocol):
+    """Third-party prototype field consumed by terminal return Structuring."""
+
+    returnty: object | None
+
+
+class _TerminalReturnTypeSurface8616(Protocol):
+    """Third-party return-type fields consumed by terminal return Structuring."""
+
+    size: int | None
+    label: str | None
+
+
+class TerminalReturnValueMaterializationStatus8616(Enum):
+    """Outcome of consuming one proven terminal register-value lineage."""
+
+    MATERIALIZED = "materialized"
+    ALREADY_MATERIALIZED = "already_materialized"
+    REFUSED = "refused"
+
+
+class TerminalReturnValueMaterializationRefusal8616(Enum):
+    """Typed reason why a terminal register value was not consumed."""
+
+    NONE = "none"
+    MISSING_CFUNCTION = "missing_cfunction"
+    MISSING_ROOT = "missing_root"
+    MISSING_FUNCTION = "missing_function"
+    RETURN_WIDTH = "return_width"
+    MISSING_PROVEN_VALUE = "missing_proven_value"
+    PROVEN_VALUE_NOT_EXTENSION = "proven_value_not_extension"
+    TERMINAL_BLOCK_COUNT = "terminal_block_count"
+    RETURN_COUNT = "return_count"
+
+
+@dataclass(frozen=True)
+class TerminalReturnValueMaterializationResult8616:
+    """Closed evidence result for one terminal return-value materialization."""
+
+    status: TerminalReturnValueMaterializationStatus8616
+    refusal: TerminalReturnValueMaterializationRefusal8616
+    changed: bool
+    raw_fact_count: int
+    normalized_fact_count: int
+    classified_fact_count: int
+    materialized_count: int
+    failure_count: int
+
+    @property
+    def accepted(self) -> bool:
+        """Return whether the proven value is present in the structured return."""
+        return self.status is not TerminalReturnValueMaterializationStatus8616.REFUSED
+
+
+def _refused_result_8616(
+    refusal: TerminalReturnValueMaterializationRefusal8616,
+    *,
+    raw_fact_count: int = 0,
+    normalized_fact_count: int = 0,
+) -> TerminalReturnValueMaterializationResult8616:
+    """Build one typed refusal without claiming classified or consumed evidence."""
+    return TerminalReturnValueMaterializationResult8616(
+        TerminalReturnValueMaterializationStatus8616.REFUSED,
+        refusal,
+        False,
+        raw_fact_count,
+        normalized_fact_count,
+        0,
+        0,
+        0,
+    )
+
+
+def terminal_ax_value_supports_widths_8616(return_widths: Iterable[int | None]) -> bool:
+    """Return whether AX alone satisfies every owned return-width projection."""
+    widths = tuple(return_widths)
+    return bool(widths) and all(isinstance(bits, int) and 0 < bits <= 16 for bits in widths)
+
+
+def _prototype_return_type_8616(prototype: object | None) -> object | None:
+    """Read one return type through the explicit third-party prototype surface."""
+    if prototype is None:
+        return None
+    try:
+        return cast(_TerminalReturnPrototypeSurface8616, prototype).returnty
+    except AttributeError:
+        return None
+
+
+def _return_type_width_8616(return_type: object) -> int | None:
+    """Read one return width through the explicit third-party type surface."""
+    try:
+        return cast(_TerminalReturnTypeSurface8616, return_type).size
+    except (AttributeError, ValueError):
+        return None
+
+
+def _is_explicit_void_return_type_8616(return_type: object) -> bool:
+    """Recognize an explicit third-party void type without text-based inference."""
+    if type(return_type) is not SimTypeBottom:
+        return False
+    try:
+        return cast(_TerminalReturnTypeSurface8616, return_type).label == "void"
+    except AttributeError:
+        return False
+
+
+def proven_terminal_value_extends_existing_8616(
+    existing_value: object,
+    proven_value: CExpression,
+    expressions_equivalent: Callable[[object, object], bool],
+) -> bool:
+    """Require a proven AX read-modify-write lineage to extend the existing value."""
+    candidate: object = proven_value
+    while isinstance(candidate, CBinaryOp):
+        if expressions_equivalent(existing_value, candidate.lhs):
+            return True
+        candidate = candidate.lhs
+    return False
+
+
+def materialize_proven_terminal_return_value_8616(
+    return_nodes: Sequence[CReturn],
+    proven_value: CExpression,
+    *,
+    terminal_value_block_count: int,
+    expressions_equivalent: Callable[[object, object], bool],
+) -> TerminalReturnValueMaterializationResult8616:
+    """Install one fully proven terminal register value into one C return node."""
+    raw_fact_count = max(1, terminal_value_block_count)
+    if terminal_value_block_count != 1:
+        return _refused_result_8616(
+            TerminalReturnValueMaterializationRefusal8616.TERMINAL_BLOCK_COUNT,
+            raw_fact_count=raw_fact_count,
+            normalized_fact_count=max(0, terminal_value_block_count),
+        )
+    if len(return_nodes) != 1:
+        return _refused_result_8616(
+            TerminalReturnValueMaterializationRefusal8616.RETURN_COUNT,
+            raw_fact_count=raw_fact_count,
+            normalized_fact_count=1,
+        )
+    return_node = return_nodes[0]
+    if expressions_equivalent(return_node.retval, proven_value):
+        return TerminalReturnValueMaterializationResult8616(
+            TerminalReturnValueMaterializationStatus8616.ALREADY_MATERIALIZED,
+            TerminalReturnValueMaterializationRefusal8616.NONE,
+            False,
+            raw_fact_count,
+            1,
+            1,
+            1,
+            0,
+        )
+    return_node.retval = proven_value
+    result = TerminalReturnValueMaterializationResult8616(
+        TerminalReturnValueMaterializationStatus8616.MATERIALIZED,
+        TerminalReturnValueMaterializationRefusal8616.NONE,
+        True,
+        raw_fact_count,
+        1,
+        1,
+        1,
+        0,
+    )
+    if result.classified_fact_count > 0 and result.materialized_count == 0:
+        raise RuntimeError("terminal register return value was classified but not materialized")
+    return result
+
+
+def materialize_linear_terminal_return_value_8616(
+    project: object,
+    codegen: object,
+    function: object | None,
+    *,
+    recover_proven_value: Callable[[object, object, object], object | None],
+    expressions_equivalent: Callable[[object, object], bool],
+) -> TerminalReturnValueMaterializationResult8616:
+    """Consume one linear terminal-register proof at the Structuring boundary."""
+    codegen_surface = cast(_TerminalReturnCodegenSurface8616, codegen)
+    try:
+        cfunc_value = codegen_surface.cfunc
+    except AttributeError:
+        cfunc_value = None
+    if cfunc_value is None:
+        return _refused_result_8616(TerminalReturnValueMaterializationRefusal8616.MISSING_CFUNCTION)
+    cfunc = cast(_TerminalReturnCFunctionSurface8616, cfunc_value)
+    try:
+        root = cfunc.statements
+    except AttributeError:
+        root = None
+    if root is None:
+        try:
+            root = cfunc.body
+        except AttributeError:
+            root = None
+    if root is None:
+        return _refused_result_8616(TerminalReturnValueMaterializationRefusal8616.MISSING_ROOT)
+    if function is None:
+        return _refused_result_8616(TerminalReturnValueMaterializationRefusal8616.MISSING_FUNCTION)
+    return_nodes = tuple(node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CReturn))
+    if len(return_nodes) != 1:
+        return _refused_result_8616(
+            TerminalReturnValueMaterializationRefusal8616.RETURN_COUNT,
+            raw_fact_count=len(return_nodes),
+        )
+    function_surface = cast(_TerminalReturnFunctionSurface8616, function)
+    try:
+        function_prototype = function_surface.prototype
+    except AttributeError:
+        function_prototype = None
+    try:
+        cfunc_functy = cfunc.functy
+    except AttributeError:
+        cfunc_functy = None
+    try:
+        cfunc_prototype = cfunc.prototype
+    except AttributeError:
+        cfunc_prototype = None
+    return_types = tuple(
+        return_type
+        for candidate in (function_prototype, cfunc_functy, cfunc_prototype)
+        if (return_type := _prototype_return_type_8616(candidate)) is not None
+    )
+    concrete_return_types = tuple(return_type for return_type in return_types if type(return_type) is not SimTypeBottom)
+    return_widths = tuple(_return_type_width_8616(return_type) for return_type in concrete_return_types)
+    explicit_void = any(_is_explicit_void_return_type_8616(return_type) for return_type in return_types)
+    if explicit_void or not terminal_ax_value_supports_widths_8616(return_widths):
+        return _refused_result_8616(
+            TerminalReturnValueMaterializationRefusal8616.RETURN_WIDTH,
+            raw_fact_count=1,
+            normalized_fact_count=1,
+        )
+    proven_value = recover_proven_value(project, codegen, function)
+    if not isinstance(proven_value, CExpression):
+        return _refused_result_8616(
+            TerminalReturnValueMaterializationRefusal8616.MISSING_PROVEN_VALUE,
+            raw_fact_count=1,
+            normalized_fact_count=1,
+        )
+    if not expressions_equivalent(return_nodes[0].retval, proven_value) and not proven_terminal_value_extends_existing_8616(
+        return_nodes[0].retval,
+        proven_value,
+        expressions_equivalent,
+    ):
+        return _refused_result_8616(
+            TerminalReturnValueMaterializationRefusal8616.PROVEN_VALUE_NOT_EXTENSION,
+            raw_fact_count=1,
+            normalized_fact_count=1,
+        )
+    try:
+        terminal_value_block_count = int(
+            codegen_surface._inertia_missing_terminal_ax_return_terminal_value_block_count_8616 or 0
+        )
+    except AttributeError:
+        terminal_value_block_count = 0
+    result = materialize_proven_terminal_return_value_8616(
+        return_nodes,
+        proven_value,
+        terminal_value_block_count=terminal_value_block_count,
+        expressions_equivalent=expressions_equivalent,
+    )
+    if result.changed:
+        cfunc.statements = root
+        with contextlib.suppress(AttributeError):
+            cfunc.body = root
+    return result
 
 
 def compose_ax_byte_lanes_8616(

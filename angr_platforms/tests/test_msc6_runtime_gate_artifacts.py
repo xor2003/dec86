@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import subprocess
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
+from scripts import msc6_runtime_gate_artifacts as artifact_gate
 from scripts.msc6_runtime_gate_artifacts import (
     MSC6RuntimeGateInputs,
     load_or_run_msc6_runtime_gate,
@@ -112,3 +119,79 @@ def test_runtime_gate_cache_serializes_concurrent_producers(tmp_path: Path) -> N
 
     assert sorted(result.cache_hit for result in results) == [False, True]
     assert (inputs.cache_root / "producer-count.txt").read_text(encoding="utf-8") == "1"
+
+
+def test_runtime_gate_defaults_to_one_example_controller(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    inputs = replace(
+        _inputs(tmp_path),
+        examples=(("first", tmp_path / "FIRST.EXE"), ("second", tmp_path / "SECOND.EXE")),
+    )
+    active_count = 0
+    peak_active_count = 0
+    lock = threading.Lock()
+
+    def fake_run_example(
+        item: tuple[str, Path],
+        _inputs_value: MSC6RuntimeGateInputs,
+        _output_root: Path,
+    ) -> tuple[str, None]:
+        nonlocal active_count, peak_active_count
+        with lock:
+            active_count += 1
+            peak_active_count = max(peak_active_count, active_count)
+        time.sleep(0.02)
+        with lock:
+            active_count -= 1
+        return item[0], None
+
+    monkeypatch.setattr(artifact_gate, "_run_example", fake_run_example)
+
+    assert set(artifact_gate._run_all(inputs, tmp_path / "outputs")) == {"first", "second"}
+    assert peak_active_count == 1
+
+
+def test_runtime_gate_controller_watchdog_scales_with_function_budget(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    inputs = replace(_inputs(tmp_path), timeout_seconds=120)
+    captured_timeout = 0
+
+    def fake_run(*_args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal captured_timeout
+        captured_timeout = int(kwargs["timeout"])
+        return subprocess.CompletedProcess([], 0, "status=passed\nrun_exit=255\n", "")
+
+    monkeypatch.setattr(artifact_gate.subprocess, "run", fake_run)
+
+    name, result = artifact_gate._run_example(inputs.examples[0], inputs, tmp_path / "outputs")
+
+    assert name == "sample"
+    assert isinstance(result, subprocess.CompletedProcess)
+    assert captured_timeout == 1440
+
+
+def test_parallel_example_controllers_share_two_nested_decompiler_workers(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    inputs = replace(_inputs(tmp_path), parallel_example_workers=2)
+    captured_workers = ""
+
+    def fake_run(*_args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal captured_workers
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        captured_workers = str(env["INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS"])
+        return subprocess.CompletedProcess([], 0, "status=passed\nrun_exit=255\n", "")
+
+    monkeypatch.delenv("INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS", raising=False)
+    monkeypatch.setattr(artifact_gate.subprocess, "run", fake_run)
+
+    _name, result = artifact_gate._run_example(inputs.examples[0], inputs, tmp_path / "outputs")
+
+    assert isinstance(result, subprocess.CompletedProcess)
+    assert captured_workers == "1"

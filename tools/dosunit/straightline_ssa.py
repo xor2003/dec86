@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import copy
 import hashlib
@@ -7,9 +7,10 @@ import pickle
 import re
 import signal
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from tools.dosunit.data_compare import load_mz_image
 from tools.dosunit.ir_edges import _load_lifter_project
@@ -17,20 +18,22 @@ from tools.dosunit.model import DosUnitError, canonical_json_bytes, normalize_he
 
 REG_BY_OFFSET = {
     0: ("ax", 16),
-    2: ("cx", 16),
-    4: ("dx", 16),
-    6: ("bx", 16),
-    8: ("sp", 16),
-    10: ("bp", 16),
-    12: ("si", 16),
-    14: ("di", 16),
-    16: ("ip", 16),
-    18: ("flags", 16),
-    20: ("cs", 16),
-    22: ("ds", 16),
-    24: ("es", 16),
-    30: ("ss", 16),
-    32: ("dflag", 32),
+    4: ("cx", 16),
+    8: ("dx", 16),
+    12: ("bx", 16),
+    16: ("sp", 16),
+    20: ("bp", 16),
+    24: ("si", 16),
+    28: ("di", 16),
+    32: ("ip", 16),
+    36: ("flags", 16),
+    40: ("cs", 16),
+    42: ("ds", 16),
+    44: ("es", 16),
+    46: ("fs", 16),
+    48: ("gs", 16),
+    50: ("ss", 16),
+    52: ("dflag", 32),
 }
 RAW_OUTPUT_REGS = ("ax", "bx", "cx", "dx", "si", "di", "bp", "sp")
 ABI_OUTPUT_REGS = {
@@ -40,7 +43,7 @@ ABI_OUTPUT_REGS = {
 DEFAULT_ABI = "msc16-near"
 DEFAULT_OUTPUT_REGS = ABI_OUTPUT_REGS[DEFAULT_ABI]
 SUPPORTED_SOURCE_IRS = {"vex", "ail"}
-LIFTER_CACHE_SCHEMA = "dosunit.lifter_cache.v3"
+LIFTER_CACHE_SCHEMA = "dosunit.lifter_cache.v4"
 CALL_TARGET_PREVIEW_INSTRUCTION_LIMIT = 4
 BINARY_CALL_TARGET_SIGNATURE_BYTES = 32
 CONTROL_MNEMONICS = {
@@ -130,19 +133,19 @@ SUPPORTED_BINOPS = {
 
 
 @dataclass(frozen=True)
-class SsaExpr:
+class SsaExpr:  # noqa: D101
     op: str
     width: int
-    args: tuple["SsaExpr", ...] = ()
+    args: tuple[SsaExpr, ...] = ()
     value: int | None = None
     name: str | None = None
 
-    def key(self) -> tuple[Any, ...]:
+    def key(self) -> tuple[Any, ...]:  # noqa: D102
         return (self.op, self.width, self.value, self.name, tuple(arg.key() for arg in self.args))
 
 
 @dataclass(frozen=True)
-class LowerFailure(Exception):
+class LowerFailure(Exception):  # noqa: D101
     reason: str
     message: str
 
@@ -153,20 +156,20 @@ class _VexDeps:
     regs: set[str]
     memory: bool = False
 
-    def update(self, other: "_VexDeps") -> None:
+    def update(self, other: _VexDeps) -> None:
         self.temps.update(other.temps)
         self.regs.update(other.regs)
         self.memory = self.memory or other.memory
 
 
 @dataclass(frozen=True)
-class LiftedBlock:
+class LiftedBlock:  # noqa: D101
     irsb: Any
     instructions: list[dict[str, Any]]
     lifted: bool
 
 
-def lower_straightline_ssa_document(
+def lower_straightline_ssa_document(  # noqa: D103
     *,
     exe_path: Path,
     functions_catalog: dict[str, Any],
@@ -253,7 +256,7 @@ def lower_straightline_ssa_document(
     if cache_dir is not None and cache_document is not None and cache_document.pop("_dirty", False):
         try:
             _save_vex_cache(cache_dir=cache_dir, exe_digest=exe_digest, cache_document=cache_document)
-        except Exception:  # noqa: BLE001
+        except Exception:
             cache_stats["errors"] += 1
 
     counters["lifter_cache_hits"] = cache_stats["hits"]
@@ -285,7 +288,7 @@ def lower_straightline_ssa_document(
     return document
 
 
-def compare_ssa_documents(
+def compare_ssa_documents(  # noqa: D103
     *,
     oracle: dict[str, Any],
     candidate: dict[str, Any],
@@ -444,7 +447,7 @@ def compare_ssa_documents(
                 )
         if candidate_function is None:
             if mapped is not None and _ssa_part_outside_declared_body(oracle_function):
-                skipped_external_oracle_parts += 1
+                skipped_external_oracle_parts += 1  # noqa: F821, F841
                 continue
             missing_reason = "mapping_missing" if mapped is None else "candidate_ssa_missing"
             missing_detail = (
@@ -722,7 +725,7 @@ def _referenced_candidate_ssa_ids(results: list[dict[str, Any]], external_parts:
     return referenced
 
 
-def _add_candidate_reference(referenced: set[str], value: Any) -> None:
+def _add_candidate_reference(referenced: set[str], value: Any) -> None:  # noqa: ANN401
     if isinstance(value, str) and value:
         referenced.add(value)
 
@@ -775,7 +778,7 @@ def _empty_connectivity_report(*, enabled: bool) -> dict[str, Any]:
 
 def _current_process_rss_kib() -> int | None:
     try:
-        with open("/proc/self/status", "r", encoding="ascii") as status_file:
+        with open("/proc/self/status", encoding="ascii") as status_file:
             for line in status_file:
                 if line.startswith("VmRSS:"):
                     parts = line.split()
@@ -866,7 +869,7 @@ def _memory_limited_external_parts_report(aborted: dict[str, Any] | None) -> dic
     }
 
 
-def compare_ssa_abi_documents(
+def compare_ssa_abi_documents(  # noqa: D103
     *,
     oracle: dict[str, Any],
     candidate: dict[str, Any],
@@ -1091,7 +1094,7 @@ def _linear_range_end(ranges: list[tuple[int, int]], address: int) -> int | None
     return None
 
 
-def _can_add_dynamic_successor_range(*, project: Any, function_base: int, successor: int) -> bool:
+def _can_add_dynamic_successor_range(*, project: Any, function_base: int, successor: int) -> bool:  # noqa: ANN401
     if successor < function_base or successor >= function_base + 0x10000:
         return False
     probe = _loader_bytes(project, successor, 1)
@@ -1100,7 +1103,7 @@ def _can_add_dynamic_successor_range(*, project: Any, function_base: int, succes
 
 def _lower_function(
     *,
-    project: Any,
+    project: Any,  # noqa: ANN401
     linked_base: int,
     exe_path: Path,
     exe_digest: str,
@@ -1179,7 +1182,7 @@ def _lower_function(
                 )
             )
             continue
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             refusals.append(
                 _refusal(
                     function,
@@ -1293,7 +1296,7 @@ def _lower_function(
                 elif source_ir == "ail":
                     try:
                         ail_block = _vex_irsb_to_ail_block(project=project, irsb=irsb)
-                    except Exception as ex:  # noqa: BLE001
+                    except Exception as ex:
                         refusals.append(
                             _refusal(
                                 function,
@@ -1605,7 +1608,7 @@ def _lower_repeat_string_summary(
     }
 
 
-def _vex_live_statement_indices(irsb: Any, output_regs: tuple[str, ...]) -> set[int]:
+def _vex_live_statement_indices(irsb: Any, output_regs: tuple[str, ...]) -> set[int]:  # noqa: ANN401
     statements = list(getattr(irsb, "statements", []) or [])
     tyenv = getattr(irsb, "tyenv", None)
     needed_regs = set(output_regs)
@@ -1685,39 +1688,39 @@ def _vex_live_statement_indices(irsb: Any, output_regs: tuple[str, ...]) -> set[
     return live
 
 
-def _vex_put_target(statement: Any, tyenv: Any) -> tuple[str, int] | None:
+def _vex_put_target(statement: Any, tyenv: Any) -> tuple[str, int] | None:  # noqa: ANN401
     width = _vex_expr_width(getattr(statement, "data", None), tyenv)
     return _register_write_target(int(getattr(statement, "offset", -1)), width)
 
 
-def _vex_expr_width(expr: Any, tyenv: Any) -> int | None:
+def _vex_expr_width(expr: Any, tyenv: Any) -> int | None:  # noqa: ANN401
     if expr is None:
         return None
     if hasattr(expr, "result_size"):
         try:
             return int(expr.result_size(tyenv))
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
     if hasattr(expr, "size"):
         try:
             return int(expr.size)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
     if hasattr(expr, "con") and hasattr(expr.con, "size"):
         try:
             return int(expr.con.size)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return None
     return None
 
 
-def _vex_expr_deps(expr: Any, tyenv: Any) -> _VexDeps:
+def _vex_expr_deps(expr: Any, tyenv: Any) -> _VexDeps:  # noqa: ANN401
     deps = _VexDeps(set(), set())
     _collect_vex_expr_deps(expr, tyenv, deps, set())
     return deps
 
 
-def _vex_dirty_deps(statement: Any, tyenv: Any) -> _VexDeps:
+def _vex_dirty_deps(statement: Any, tyenv: Any) -> _VexDeps:  # noqa: ANN401
     deps = _VexDeps(set(), set())
     for expr in getattr(statement, "args", ()) or ():
         deps.update(_vex_expr_deps(expr, tyenv))
@@ -1725,7 +1728,7 @@ def _vex_dirty_deps(statement: Any, tyenv: Any) -> _VexDeps:
     return deps
 
 
-def _collect_vex_expr_deps(expr: Any, tyenv: Any, deps: _VexDeps, seen: set[int]) -> None:
+def _collect_vex_expr_deps(expr: Any, tyenv: Any, deps: _VexDeps, seen: set[int]) -> None:  # noqa: ANN401
     if expr is None:
         return
     marker = id(expr)
@@ -1765,7 +1768,7 @@ def _collect_vex_expr_deps(expr: Any, tyenv: Any, deps: _VexDeps, seen: set[int]
 
 
 def _lower_irsb(
-    irsb: Any, *, output_regs: tuple[str, ...], max_assignments_per_function: int
+    irsb: Any, *, output_regs: tuple[str, ...], max_assignments_per_function: int  # noqa: ANN401
 ) -> dict[str, Any] | LowerFailure:
     live_statements = _vex_live_statement_indices(irsb, output_regs)
     temp_defs: dict[int, SsaExpr] = {}
@@ -1974,12 +1977,12 @@ def _lower_irsb(
 
 
 def _lower_dirty_io_statement(
-    statement: Any,
+    statement: Any,  # noqa: ANN401
     *,
     temp_defs: dict[int, SsaExpr],
     temp_failures: dict[int, LowerFailure],
     reg_versions: dict[str, SsaExpr],
-    tyenv: Any,
+    tyenv: Any,  # noqa: ANN401
     memory: SsaExpr,
     io: SsaExpr,
     event_index: int,
@@ -2111,16 +2114,16 @@ def _lower_dirty_io_statement(
 BYTE_REGISTER_ACCESS = {
     0: ("ax", False),
     1: ("ax", True),
-    2: ("cx", False),
-    3: ("cx", True),
-    4: ("dx", False),
-    5: ("dx", True),
-    6: ("bx", False),
-    7: ("bx", True),
+    4: ("cx", False),
+    5: ("cx", True),
+    8: ("dx", False),
+    9: ("dx", True),
+    12: ("bx", False),
+    13: ("bx", True),
 }
 
 
-def _vex_irsb_to_ail_block(*, project: Any, irsb: Any) -> Any:
+def _vex_irsb_to_ail_block(*, project: Any, irsb: Any) -> Any:  # noqa: ANN401
     from angr.ailment.converter_vex import VEXIRSBConverter
     from angr.ailment.manager import Manager
 
@@ -2128,7 +2131,7 @@ def _vex_irsb_to_ail_block(*, project: Any, irsb: Any) -> Any:
 
 
 def _lower_ail_block(
-    block: Any, *, output_regs: tuple[str, ...], max_assignments_per_function: int
+    block: Any, *, output_regs: tuple[str, ...], max_assignments_per_function: int  # noqa: ANN401
 ) -> dict[str, Any] | LowerFailure:
     temp_defs: dict[int, SsaExpr] = {}
     temp_failures: dict[int, LowerFailure] = {}
@@ -2141,10 +2144,10 @@ def _lower_ail_block(
     exits: list[tuple[SsaExpr, SsaExpr]] = []
 
     for statement in getattr(block, "statements", []) or []:
-        kind = statement.__class__.__name__
+        kind = str(getattr(statement, "kind_name", statement.__class__.__name__))
         if kind in {"Assignment", "WeakAssignment"}:
             dst = statement.dst
-            dst_kind = dst.__class__.__name__
+            dst_kind = str(getattr(dst, "kind_name", dst.__class__.__name__))
             if dst_kind == "Register" and _is_unobserved_flags_write(int(dst.reg_offset), output_regs):
                 continue
             src = _lower_ail_expr(
@@ -2332,7 +2335,7 @@ def _lower_ail_block(
 
 
 def _lower_ail_expr(
-    expr: Any,
+    expr: Any,  # noqa: ANN401
     *,
     temp_defs: dict[int, SsaExpr],
     temp_failures: dict[int, LowerFailure],
@@ -2341,7 +2344,7 @@ def _lower_ail_expr(
 ) -> SsaExpr | LowerFailure:
     if expr is None:
         return LowerFailure("unsupported_ir", "AIL expression is missing")
-    kind = expr.__class__.__name__
+    kind = str(getattr(expr, "kind_name", expr.__class__.__name__))
     if kind == "Const":
         bits = int(getattr(expr, "bits", 0))
         value = getattr(expr, "value", None)
@@ -2437,7 +2440,7 @@ def _lower_ail_expr(
 
 
 def _lower_ail_binop(
-    expr: Any,
+    expr: Any,  # noqa: ANN401
     *,
     temp_defs: dict[int, SsaExpr],
     temp_failures: dict[int, LowerFailure],
@@ -2496,7 +2499,7 @@ def _lower_ail_binop(
 
 
 def _lower_ail_unop(
-    expr: Any,
+    expr: Any,  # noqa: ANN401
     *,
     temp_defs: dict[int, SsaExpr],
     temp_failures: dict[int, LowerFailure],
@@ -2518,7 +2521,7 @@ def _lower_ail_unop(
 
 
 def _lower_ail_extract(
-    expr: Any,
+    expr: Any,  # noqa: ANN401
     *,
     temp_defs: dict[int, SsaExpr],
     temp_failures: dict[int, LowerFailure],
@@ -2545,7 +2548,7 @@ def _lower_ail_extract(
 
 
 def _lower_ail_insert(
-    expr: Any,
+    expr: Any,  # noqa: ANN401
     *,
     temp_defs: dict[int, SsaExpr],
     temp_failures: dict[int, LowerFailure],
@@ -2641,12 +2644,12 @@ def _is_unobserved_flags_write(offset: int, output_regs: tuple[str, ...]) -> boo
 
 
 def _lower_expr(
-    expr: Any,
+    expr: Any,  # noqa: ANN401
     *,
     temp_defs: dict[int, SsaExpr],
     temp_failures: dict[int, LowerFailure],
     reg_versions: dict[str, SsaExpr],
-    tyenv: Any,
+    tyenv: Any,  # noqa: ANN401
     memory: SsaExpr,
 ) -> SsaExpr | LowerFailure:
     if not hasattr(expr, "tag") and hasattr(expr, "size") and hasattr(expr, "value"):
@@ -2736,12 +2739,12 @@ def _lower_expr(
 
 
 def _lower_binop(
-    expr: Any,
+    expr: Any,  # noqa: ANN401
     *,
     temp_defs: dict[int, SsaExpr],
     temp_failures: dict[int, LowerFailure],
     reg_versions: dict[str, SsaExpr],
-    tyenv: Any,
+    tyenv: Any,  # noqa: ANN401
     memory: SsaExpr,
 ) -> SsaExpr | LowerFailure:
     op = _strip_iop(str(expr.op))
@@ -2770,12 +2773,12 @@ def _lower_binop(
 
 
 def _lower_unop(
-    expr: Any,
+    expr: Any,  # noqa: ANN401
     *,
     temp_defs: dict[int, SsaExpr],
     temp_failures: dict[int, LowerFailure],
     reg_versions: dict[str, SsaExpr],
-    tyenv: Any,
+    tyenv: Any,  # noqa: ANN401
     memory: SsaExpr,
 ) -> SsaExpr | LowerFailure:
     op = _strip_iop(str(expr.op))
@@ -2858,7 +2861,7 @@ def _materialized_expr_key(expr: SsaExpr, args: list[dict[str, Any]]) -> tuple[A
     return (expr.op, expr.width, expr.value, expr.name, tuple(_freeze_json_like(arg) for arg in args))
 
 
-def _freeze_json_like(value: Any) -> Any:
+def _freeze_json_like(value: Any) -> Any:  # noqa: ANN401
     if isinstance(value, dict):
         return tuple((key, _freeze_json_like(value[key])) for key in sorted(value))
     if isinstance(value, list):
@@ -2977,7 +2980,7 @@ def _compare_ssa_pair(
     oracle_index: dict[str, dict[Any, dict[str, Any]]],
     candidate_index: dict[str, dict[Any, dict[str, Any]]],
     allow_aliased_call_targets: bool,
-    proof_cache: "_SemanticEqualityCache | None",
+    proof_cache: _SemanticEqualityCache | None,
     timeout_ms: int,
     max_solver_assignments: int,
     max_solver_inputs: int,
@@ -3109,7 +3112,7 @@ def _compare_external_oracle_parts(
     oracle_index: dict[str, dict[Any, dict[str, Any]]],
     candidate_index: dict[str, dict[Any, dict[str, Any]]],
     allow_aliased_call_targets: bool,
-    proof_cache: "_SemanticEqualityCache | None",
+    proof_cache: _SemanticEqualityCache | None,
     timeout_ms: int,
     max_solver_assignments: int,
     max_solver_inputs: int,
@@ -3502,7 +3505,7 @@ def _pattern_subsequence_offset(
 ) -> int | None:
     if not needle or len(needle) > len(haystack):
         return None
-    for offset in range(0, len(haystack) - len(needle) + 1):
+    for offset in range(len(haystack) - len(needle) + 1):
         matched = True
         for index, expected in enumerate(needle):
             actual = haystack[offset + index]
@@ -3641,7 +3644,7 @@ def _ssa_instruction_shape_signature(function: dict[str, Any]) -> tuple[Any, ...
         return None
     try:
         import capstone  # type: ignore
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
     try:
         md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_16)
@@ -3672,7 +3675,7 @@ def _ssa_instruction_shape_signature(function: dict[str, Any]) -> tuple[Any, ...
                     operands.append(("other", size, int(operand_type or 0)))
             items.append((str(insn.mnemonic).lower(), tuple(operands)))
         return tuple(items) if items else None
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -3706,7 +3709,7 @@ def _compare_ssa_region_equality(
     allow_aliased_call_targets: bool,
     max_loop_unroll: int,
     skip_binary_equal: bool,
-    proof_cache: "_SemanticEqualityCache | None",
+    proof_cache: _SemanticEqualityCache | None,
     max_rss_mb: int = 0,
 ) -> dict[str, Any]:
     oracle_groups = _unique_ssa_function_groups(list(oracle.get("functions", []) or []))
@@ -4060,7 +4063,7 @@ def _compare_ssa_region_equality(
     }
 
 
-def _region_reason(reason: Any) -> str:
+def _region_reason(reason: Any) -> str:  # noqa: ANN401
     if not reason:
         return "region_equal"
     if reason == "ssa_equal":
@@ -4892,7 +4895,7 @@ def _apply_external_successor_edge_coverage(connectivity: dict[str, Any], extern
     connectivity["external_successor_edges_unproved"] = unproved
 
 
-def _external_edge_delta_key(value: Any) -> str:
+def _external_edge_delta_key(value: Any) -> str:  # noqa: ANN401
     try:
         parsed = parse_int(value, field="external_successor_delta")
     except DosUnitError:
@@ -5274,7 +5277,7 @@ def _connectivity_state_check(
         for name in candidate_missing
         if name in CONNECTIVITY_IMPLICIT_STATE or name in CONNECTIVITY_OPTIONALLY_IMPLICIT_STATE
     )
-    ignored = {name for name in oracle_ignored_missing + candidate_ignored_missing}
+    ignored = set(oracle_ignored_missing + candidate_ignored_missing)
     oracle_missing = sorted(name for name in oracle_missing if name not in ignored)
     candidate_missing = sorted(name for name in candidate_missing if name not in ignored)
     if not oracle_missing and not candidate_missing:
@@ -5394,7 +5397,7 @@ def _project_ssa_outputs(function: dict[str, Any], names: list[str]) -> dict[str
     return projected
 
 
-def _ssa_missing_successor_inputs(predecessor_detail: Any, successor_detail: Any) -> set[str]:
+def _ssa_missing_successor_inputs(predecessor_detail: Any, successor_detail: Any) -> set[str]:  # noqa: ANN401
     predecessor_outputs = _ssa_detail_outputs(predecessor_detail)
     successor_inputs = _ssa_detail_inputs(successor_detail)
     return _missing_successor_inputs_from_sets(predecessor_outputs, successor_inputs)
@@ -5404,7 +5407,7 @@ def _missing_successor_inputs_from_sets(predecessor_outputs: set[str], successor
     return {name for name in successor_inputs if name not in predecessor_outputs}
 
 
-def _successor_required_inputs(successor_detail: Any, successor_body: dict[str, Any] | None) -> set[str]:
+def _successor_required_inputs(successor_detail: Any, successor_body: dict[str, Any] | None) -> set[str]:  # noqa: ANN401
     if successor_body is None:
         return _ssa_detail_inputs(successor_detail)
     outputs = successor_body.get("outputs", {}) if isinstance(successor_body.get("outputs"), dict) else {}
@@ -5464,7 +5467,7 @@ def _delta_in_set_mod16(delta: int, values: set[int]) -> bool:
     return any(((delta - value) & 0xFFFF) == 0 for value in values)
 
 
-def _ssa_detail_entry_delta(detail: Any) -> int | None:
+def _ssa_detail_entry_delta(detail: Any) -> int | None:  # noqa: ANN401
     if not isinstance(detail, dict):
         return None
     part = detail.get("part") if isinstance(detail.get("part"), dict) else {}
@@ -5480,14 +5483,14 @@ def _ssa_detail_entry_delta(detail: Any) -> int | None:
     return entry_linear - function_linear
 
 
-def _ssa_detail_entry_linear(detail: Any) -> int | None:
+def _ssa_detail_entry_linear(detail: Any) -> int | None:  # noqa: ANN401
     if not isinstance(detail, dict):
         return None
     entry = detail.get("entry") if isinstance(detail.get("entry"), dict) else {}
     return _optional_int(entry.get("linear"))
 
 
-def _ssa_detail_direct_successor_deltas(detail: Any) -> list[int]:
+def _ssa_detail_direct_successor_deltas(detail: Any) -> list[int]:  # noqa: ANN401
     if not isinstance(detail, dict):
         return []
     transfer = detail.get("transfer") if isinstance(detail.get("transfer"), dict) else {}
@@ -5508,7 +5511,7 @@ def _ssa_detail_direct_successor_deltas(detail: Any) -> list[int]:
     return _unique_ints(deltas)
 
 
-def _ssa_detail_direct_successor_linears(detail: Any) -> list[int]:
+def _ssa_detail_direct_successor_linears(detail: Any) -> list[int]:  # noqa: ANN401
     if not isinstance(detail, dict):
         return []
     transfer = detail.get("transfer") if isinstance(detail.get("transfer"), dict) else {}
@@ -5524,7 +5527,7 @@ def _ssa_detail_direct_successor_linears(detail: Any) -> list[int]:
     return _unique_ints(linears)
 
 
-def _ssa_detail_delta_inside_function(detail: Any, delta: int) -> bool:
+def _ssa_detail_delta_inside_function(detail: Any, delta: int) -> bool:  # noqa: ANN401
     if not isinstance(detail, dict):
         return True
     source = detail.get("source") if isinstance(detail.get("source"), dict) else detail
@@ -5572,13 +5575,13 @@ def _format_ssa_delta(delta: int) -> str:
     return normalize_hex(delta, width=4)
 
 
-def _ssa_detail_outputs(detail: Any) -> set[str]:
+def _ssa_detail_outputs(detail: Any) -> set[str]:  # noqa: ANN401
     if not isinstance(detail, dict):
         return set()
     return {str(name) for name in detail.get("outputs", []) or []}
 
 
-def _ssa_detail_inputs(detail: Any) -> set[str]:
+def _ssa_detail_inputs(detail: Any) -> set[str]:  # noqa: ANN401
     if not isinstance(detail, dict):
         return set()
     return {str(name) for name in detail.get("inputs", []) or []}
@@ -5717,7 +5720,7 @@ def _apply_call_scc_gate(results: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _call_compare_oracle_target_id(call_compare: Any) -> str | None:
+def _call_compare_oracle_target_id(call_compare: Any) -> str | None:  # noqa: ANN401
     if not isinstance(call_compare, dict):
         return None
     oracle = call_compare.get("oracle") if isinstance(call_compare.get("oracle"), dict) else {}
@@ -5734,7 +5737,7 @@ def _strongly_connected_components(graph: dict[Any, set[Any]]) -> list[list[Any]
     lowlinks: dict[Any, int] = {}
     components: list[list[Any]] = []
 
-    def visit(node: Any) -> None:
+    def visit(node: Any) -> None:  # noqa: ANN401
         nonlocal index
         indexes[node] = index
         lowlinks[node] = index
@@ -5773,7 +5776,7 @@ def _compare_functions(
 ) -> dict[str, Any]:
     try:
         import z3  # type: ignore
-    except Exception:  # noqa: BLE001
+    except Exception:
         return {
             "status": "refused",
             "reason": "unsupported_ir",
@@ -5894,10 +5897,10 @@ def _compare_functions(
     return {"status": "failed", "reason": "observable_mismatch", "mismatches": mismatches, "solver_time_ms": elapsed}
 
 
-def _is_z3_array(expr: Any, z3: Any) -> bool:
+def _is_z3_array(expr: Any, z3: Any) -> bool:  # noqa: ANN401
     try:
         return expr.sort().kind() == z3.Z3_ARRAY_SORT
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
@@ -6755,7 +6758,7 @@ def _abi_call_target_values_for_block(transfer: dict[str, Any]) -> list[tuple[in
         values.append(_abi_target_value_pair(target))
     for key in ("target_candidates", "targets", "candidate_targets", "recovered_targets"):
         for item in transfer.get(key, []) or []:
-            values.append(_abi_target_value_pair(item))
+            values.append(_abi_target_value_pair(item))  # noqa: PERF401
     unique: list[tuple[int | None, int | None]] = []
     seen: set[tuple[int | None, int | None]] = set()
     for raw, low16 in values:
@@ -6769,7 +6772,7 @@ def _abi_call_target_values_for_block(transfer: dict[str, Any]) -> list[tuple[in
     return unique
 
 
-def _abi_target_value_pair(item: Any) -> tuple[int | None, int | None]:
+def _abi_target_value_pair(item: Any) -> tuple[int | None, int | None]:  # noqa: ANN401
     if isinstance(item, dict):
         raw = None
         for key in ("target", "target_raw", "raw", "linear", "target_linear"):
@@ -6790,11 +6793,8 @@ def _abi_target_value_pair(item: Any) -> tuple[int | None, int | None]:
     return value, value & 0xFFFF
 
 
-def _iter_optional_ints(value: Any) -> list[int]:
-    if isinstance(value, list):
-        values = value
-    else:
-        values = [value]
+def _iter_optional_ints(value: Any) -> list[int]:  # noqa: ANN401
+    values = value if isinstance(value, list) else [value]
     result: list[int] = []
     for item in values:
         parsed = _optional_int(item)
@@ -6905,7 +6905,7 @@ def _apply_abi_call_returns_and_clobbers(
             state[reg] = {"op": "input", "name": f"callclobber_{call_key}_{reg}", "width": width}
 
 
-def _abi_location_name(item: Any) -> str:
+def _abi_location_name(item: Any) -> str:  # noqa: ANN401
     if isinstance(item, dict):
         return str(item.get("location") or item.get("reg") or item.get("name") or "").lower()
     return str(item or "").lower()
@@ -7404,7 +7404,7 @@ def _stable_abi_summary_id(body_without_id: dict[str, Any]) -> str:
     return f"ssa-function-abi:{digest.hexdigest()}"
 
 
-def _term_input_items(terms: Any, assignments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _term_input_items(terms: Any, assignments: list[dict[str, Any]]) -> list[dict[str, Any]]:  # noqa: ANN401
     widths: dict[str, int] = {}
     memory_inputs: set[str] = set()
     assignment_by_id = {
@@ -7497,11 +7497,11 @@ def _ssa_function_index(functions: list[dict[str, Any]]) -> dict[str, dict[Any, 
     return indexed
 
 
-def _append_index(table: dict[Any, list[dict[str, Any]]], key: Any, function: dict[str, Any]) -> None:
+def _append_index(table: dict[Any, list[dict[str, Any]]], key: Any, function: dict[str, Any]) -> None:  # noqa: ANN401
     table.setdefault(key, []).append(function)
 
 
-def _set_unique_index(table: dict[Any, dict[str, Any] | None], key: Any, function: dict[str, Any]) -> None:
+def _set_unique_index(table: dict[Any, dict[str, Any] | None], key: Any, function: dict[str, Any]) -> None:  # noqa: ANN401
     if key not in table:
         table[key] = function
         return
@@ -7519,7 +7519,7 @@ def _attach_binary_signature_context(
         return
     try:
         image = load_mz_image(Path(str(exe))).memory
-    except Exception:  # noqa: BLE001 - signature fallback must not break SSA comparison.
+    except Exception:
         return
     linked_base = _ssa_document_linked_base(functions)
     if linked_base is None:
@@ -7621,7 +7621,7 @@ def _binary_call_signature_fields(blob: bytes, linear: int) -> dict[str, Any]:
 def _binary_signature_prefix(blob: bytes, linear: int) -> bytes:
     try:
         import capstone  # type: ignore
-    except Exception:  # noqa: BLE001
+    except Exception:
         return blob
     try:
         consumed = 0
@@ -7631,7 +7631,7 @@ def _binary_signature_prefix(blob: bytes, linear: int) -> bytes:
             mnemonic = str(insn.mnemonic).lower()
             if consumed >= 8 and mnemonic in {"ret", "retf", "iret", "jmp", "ljmp"}:
                 return blob[:consumed]
-    except Exception:  # noqa: BLE001
+    except Exception:
         return blob
     return blob
 
@@ -7639,7 +7639,7 @@ def _binary_signature_prefix(blob: bytes, linear: int) -> bytes:
 def _normalized_binary_signature_pattern(blob: bytes, linear: int) -> tuple[int | None, ...]:
     try:
         import capstone  # type: ignore
-    except Exception:  # noqa: BLE001
+    except Exception:
         return tuple(blob)
     try:
         md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_16)
@@ -7656,20 +7656,20 @@ def _normalized_binary_signature_pattern(blob: bytes, linear: int) -> tuple[int 
                     continue
                 for idx in range(offset, min(offset + size, len(mask))):
                     mask[idx] = True
-            pattern.extend(None if masked else byte for byte, masked in zip(encoded, mask))
+            pattern.extend(None if masked else byte for byte, masked in zip(encoded, mask, strict=False))
             if len(pattern) >= len(blob):
                 break
         if len(pattern) < len(blob):
             pattern.extend(blob[len(pattern) :])
         return tuple(pattern[: len(blob)])
-    except Exception:  # noqa: BLE001
+    except Exception:
         return tuple(blob)
 
 
 def _layout_binary_signature_pattern(blob: bytes, linear: int) -> tuple[int | None, ...]:
     try:
         import capstone  # type: ignore
-    except Exception:  # noqa: BLE001
+    except Exception:
         return tuple(blob)
     try:
         md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_16)
@@ -7681,7 +7681,7 @@ def _layout_binary_signature_pattern(blob: bytes, linear: int) -> tuple[int | No
             mask = [False] * len(encoded)
             mnemonic = str(insn.mnemonic).lower()
             encoding = getattr(insn, "encoding", None)
-            operands = list(getattr(insn, "operands", []) or [])
+            list(getattr(insn, "operands", []) or [])
             if mnemonic in CONTROL_MNEMONICS:
                 for offset_name, size_name in (("imm_offset", "imm_size"), ("disp_offset", "disp_size")):
                     offset = int(getattr(encoding, offset_name, 0) or 0)
@@ -7725,20 +7725,20 @@ def _layout_binary_signature_pattern(blob: bytes, linear: int) -> tuple[int | No
                     elif mnemonic in {"add", "sub", "cmp"} and (imm_value & 0xFFFF) >= 0x1000:
                         for idx in range(imm_offset, min(imm_offset + imm_size, len(mask))):
                             mask[idx] = True
-            pattern.extend(None if masked else byte for byte, masked in zip(encoded, mask))
+            pattern.extend(None if masked else byte for byte, masked in zip(encoded, mask, strict=False))
             if len(pattern) >= len(blob):
                 break
         if len(pattern) < len(blob):
             pattern.extend(blob[len(pattern) :])
         return tuple(pattern[: len(blob)])
-    except Exception:  # noqa: BLE001
+    except Exception:
         return tuple(blob)
 
 
-def _insn_has_layout_memory_operand(insn: Any) -> bool:
+def _insn_has_layout_memory_operand(insn: Any) -> bool:  # noqa: ANN401
     try:
         import capstone  # type: ignore
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
     for operand in getattr(insn, "operands", []) or []:
         if getattr(operand, "type", None) != capstone.x86.X86_OP_MEM:
@@ -7757,10 +7757,10 @@ def _insn_has_layout_memory_operand(insn: Any) -> bool:
     return False
 
 
-def _insn_has_ivt_vector_memory_operand(insn: Any) -> bool:
+def _insn_has_ivt_vector_memory_operand(insn: Any) -> bool:  # noqa: ANN401
     try:
         import capstone  # type: ignore
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
     for operand in getattr(insn, "operands", []) or []:
         if getattr(operand, "type", None) != capstone.x86.X86_OP_MEM:
@@ -7777,10 +7777,10 @@ def _insn_has_ivt_vector_memory_operand(insn: Any) -> bool:
     return False
 
 
-def _insn_register_immediate(insn: Any) -> tuple[str, int] | None:
+def _insn_register_immediate(insn: Any) -> tuple[str, int] | None:  # noqa: ANN401
     try:
         import capstone  # type: ignore
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
     operands = list(getattr(insn, "operands", []) or [])
     if len(operands) < 2:
@@ -7795,10 +7795,10 @@ def _insn_register_immediate(insn: Any) -> tuple[str, int] | None:
     return reg_name, int(getattr(operands[1], "imm", 0) or 0)
 
 
-def _insn_source_register_names(insn: Any) -> list[str]:
+def _insn_source_register_names(insn: Any) -> list[str]:  # noqa: ANN401
     try:
         import capstone  # type: ignore
-    except Exception:  # noqa: BLE001
+    except Exception:
         return []
     result: list[str] = []
     operands = list(getattr(insn, "operands", []) or [])
@@ -8485,7 +8485,7 @@ def _layout_constant_pairs(oracle_function: dict[str, Any], candidate_function: 
         return []
     has_ivt_segment_store = any(
         _is_ivt_segment_store(oracle) and _is_ivt_segment_store(candidate)
-        for oracle, candidate in zip(oracle_instructions, candidate_instructions)
+        for oracle, candidate in zip(oracle_instructions, candidate_instructions, strict=False)
     )
     data_segment_immediate_indexes = _data_segment_immediate_indexes(oracle_instructions, candidate_instructions)
     pairs: list[dict[str, Any]] = []
@@ -8493,7 +8493,7 @@ def _layout_constant_pairs(oracle_function: dict[str, Any], candidate_function: 
     absolute_memory_pairs: list[dict[str, Any]] = []
     deferred: list[dict[str, Any]] = []
     pointer_arithmetic_by_index = _pointer_arithmetic_evidence_by_index(oracle_instructions, candidate_instructions)
-    for instruction_index, (oracle, candidate) in enumerate(zip(oracle_instructions, candidate_instructions)):
+    for instruction_index, (oracle, candidate) in enumerate(zip(oracle_instructions, candidate_instructions, strict=False)):
         instruction_pairs = _instruction_layout_constant_pairs(
             oracle,
             candidate,
@@ -8504,10 +8504,7 @@ def _layout_constant_pairs(oracle_function: dict[str, Any], candidate_function: 
         for pair in instruction_pairs:
             if pair.get("reason") == "absolute_memory_operand":
                 absolute_memory_pairs.append(pair)
-            elif pair.get("reason") == "code_segment_memory_operand":
-                memory_pairs.append((int(pair["oracle"]), int(pair["candidate"])))
-                pairs.append(pair)
-            elif pair.get("reason") == "memory_operand":
+            elif pair.get("reason") == "code_segment_memory_operand" or pair.get("reason") == "memory_operand":
                 memory_pairs.append((int(pair["oracle"]), int(pair["candidate"])))
                 pairs.append(pair)
             elif pair.get("reason") in {
@@ -8582,7 +8579,7 @@ def _call_argument_immediate_layout_pairs(
     if not any(str(item.get("mnemonic", "")).lower() in {"call", "lcall"} for item in candidate_instructions):
         return []
     pairs: list[dict[str, Any]] = []
-    for index in range(0, min(len(oracle_instructions), len(candidate_instructions)) - 1):
+    for index in range(min(len(oracle_instructions), len(candidate_instructions)) - 1):
         oracle = oracle_instructions[index]
         candidate = candidate_instructions[index]
         oracle_next = oracle_instructions[index + 1]
@@ -8742,7 +8739,7 @@ def _instruction_layout_constant_pairs(
     if len(oracle_numbers) != len(candidate_numbers):
         return []
     pairs: list[dict[str, Any]] = []
-    for index, (oracle_number, candidate_number) in enumerate(zip(oracle_numbers, candidate_numbers)):
+    for index, (oracle_number, candidate_number) in enumerate(zip(oracle_numbers, candidate_numbers, strict=False)):
         oracle_value = oracle_number & 0xFFFF
         candidate_value = candidate_number & 0xFFFF
         if oracle_value == candidate_value:
@@ -8871,7 +8868,7 @@ def _data_segment_immediate_indexes(
     candidate_instructions: list[dict[str, Any]],
 ) -> set[int]:
     indexes: set[int] = set()
-    for index in range(0, min(len(oracle_instructions), len(candidate_instructions)) - 1):
+    for index in range(min(len(oracle_instructions), len(candidate_instructions)) - 1):
         oracle = oracle_instructions[index]
         candidate = candidate_instructions[index]
         if str(oracle.get("mnemonic", "")).lower() != "mov" or str(candidate.get("mnemonic", "")).lower() != "mov":
@@ -8919,7 +8916,7 @@ def _pointer_arithmetic_evidence_by_index(
     candidate_instructions: list[dict[str, Any]],
 ) -> dict[int, set[str]]:
     evidence: dict[int, set[str]] = {}
-    for index, (oracle, candidate) in enumerate(zip(oracle_instructions, candidate_instructions)):
+    for index, (oracle, candidate) in enumerate(zip(oracle_instructions, candidate_instructions, strict=False)):
         oracle_reg = _pointer_arithmetic_destination_register(oracle)
         candidate_reg = _pointer_arithmetic_destination_register(candidate)
         if oracle_reg is None or oracle_reg != candidate_reg:
@@ -9426,7 +9423,7 @@ def _const_json_term_value(term: dict[str, Any] | None) -> int | None:
             return signed & mask
         if op == "concat" and concrete:
             value = 0
-            for arg, arg_value in zip(args, concrete):
+            for arg, arg_value in zip(args, concrete, strict=False):
                 arg_width = max(1, _term_width(arg))
                 value = (value << arg_width) | (arg_value & _mask(arg_width))
             return value & mask
@@ -9474,7 +9471,7 @@ def _signed_value(value: int, width: int) -> int:
     return value - (1 << width) if value & sign_bit else value
 
 
-def _optional_int(value: Any) -> int | None:
+def _optional_int(value: Any) -> int | None:  # noqa: ANN401
     if value is None:
         return None
     try:
@@ -9485,7 +9482,7 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
-def _z3_inputs(oracle: dict[str, Any], candidate: dict[str, Any], z3: Any) -> dict[str, tuple[Any, int]]:
+def _z3_inputs(oracle: dict[str, Any], candidate: dict[str, Any], z3: Any) -> dict[str, tuple[Any, int]]:  # noqa: ANN401
     widths: dict[str, int] = {}
     memory_inputs: set[str] = set()
     for document in (oracle, candidate):
@@ -9503,7 +9500,7 @@ def _z3_inputs(oracle: dict[str, Any], candidate: dict[str, Any], z3: Any) -> di
 
 
 def _add_z3_input_constraints(
-    solver: Any, inputs: dict[str, tuple[Any, int]], constraints: list[dict[str, Any]], z3: Any
+    solver: Any, inputs: dict[str, tuple[Any, int]], constraints: list[dict[str, Any]], z3: Any  # noqa: ANN401
 ) -> None:
     for item in constraints:
         if not isinstance(item, dict):
@@ -9533,11 +9530,11 @@ def _z3_term(
     *,
     document: dict[str, Any],
     inputs: dict[str, tuple[Any, int]],
-    z3: Any,
+    z3: Any,  # noqa: ANN401
     assignments: dict[str, dict[str, Any]] | None = None,
     cache: dict[str, Any] | None = None,
     output_name: str | None = None,
-) -> Any:
+) -> Any:  # noqa: ANN401
     if "ref" in term:
         if assignments is None:
             assignments = {
@@ -9575,10 +9572,10 @@ def _z3_assignment(
     assignments: dict[str, dict[str, Any]],
     document: dict[str, Any],
     inputs: dict[str, tuple[Any, int]],
-    z3: Any,
+    z3: Any,  # noqa: ANN401
     cache: dict[str, Any],
     output_name: str | None = None,
-) -> Any:
+) -> Any:  # noqa: ANN401
     if ident in cache:
         return cache[ident]
     item = assignments[ident]
@@ -9601,7 +9598,7 @@ def _z3_assignment(
     return result
 
 
-def _z3_apply(op: str, width: int, args: list[Any], z3: Any) -> Any:
+def _z3_apply(op: str, width: int, args: list[Any], z3: Any) -> Any:  # noqa: ANN401
     if op.startswith("summary_"):
         return _z3_uninterpreted_summary(op, width, args, z3)
     if op == "add":
@@ -9727,18 +9724,15 @@ def _z3_apply(op: str, width: int, args: list[Any], z3: Any) -> Any:
     raise DosUnitError(f"unsupported SSA op: {op}")
 
 
-def _z3_uninterpreted_summary(op: str, width: int, args: list[Any], z3: Any) -> Any:
+def _z3_uninterpreted_summary(op: str, width: int, args: list[Any], z3: Any) -> Any:  # noqa: ANN401
     domain = [arg.sort() for arg in args]
-    if width == 0:
-        range_sort = z3.ArraySort(z3.BitVecSort(32), z3.BitVecSort(8))
-    else:
-        range_sort = z3.BitVecSort(width)
+    range_sort = z3.ArraySort(z3.BitVecSort(32), z3.BitVecSort(8)) if width == 0 else z3.BitVecSort(width)
     name = re.sub(r"[^A-Za-z0-9_]", "_", op)
     fn = z3.Function(name, *domain, range_sort)
     return fn(*args)
 
 
-def _align_z3_pair(left: Any, right: Any, width: int, *, signed: bool, z3: Any) -> tuple[Any, Any, int]:
+def _align_z3_pair(left: Any, right: Any, width: int, *, signed: bool, z3: Any) -> tuple[Any, Any, int]:  # noqa: ANN401
     target_width = max(1, int(width), int(left.size()), int(right.size()))
     return (
         _resize_z3(left, left.size(), target_width, signed=signed, z3=z3),
@@ -9747,7 +9741,7 @@ def _align_z3_pair(left: Any, right: Any, width: int, *, signed: bool, z3: Any) 
     )
 
 
-def _z3_load(memory: Any, address: Any, *, width: int, little_endian: bool, z3: Any) -> Any:
+def _z3_load(memory: Any, address: Any, *, width: int, little_endian: bool, z3: Any) -> Any:  # noqa: ANN401
     if width % 8 != 0:
         raise DosUnitError(f"memory load width must be byte-addressable: {width}")
     address = _resize_z3(address, address.size(), 32, signed=False, z3=z3)
@@ -9758,7 +9752,7 @@ def _z3_load(memory: Any, address: Any, *, width: int, little_endian: bool, z3: 
     return z3.Concat(*ordered)
 
 
-def _z3_store(memory: Any, address: Any, value: Any, *, little_endian: bool, z3: Any) -> Any:
+def _z3_store(memory: Any, address: Any, value: Any, *, little_endian: bool, z3: Any) -> Any:  # noqa: ANN401
     width = int(value.size())
     if width % 8 != 0:
         raise DosUnitError(f"memory store width must be byte-addressable: {width}")
@@ -9772,7 +9766,7 @@ def _z3_store(memory: Any, address: Any, value: Any, *, little_endian: bool, z3:
     return stored
 
 
-def _resize_z3(value: Any, from_width: int, to_width: int, *, signed: bool, z3: Any) -> Any:
+def _resize_z3(value: Any, from_width: int, to_width: int, *, signed: bool, z3: Any) -> Any:  # noqa: ANN401
     if from_width == to_width:
         return value
     if from_width > to_width:
@@ -9781,7 +9775,7 @@ def _resize_z3(value: Any, from_width: int, to_width: int, *, signed: bool, z3: 
     return extend(to_width - from_width, value)
 
 
-def _align_z3_widths(left: Any, right: Any, z3: Any) -> tuple[Any, Any]:
+def _align_z3_widths(left: Any, right: Any, z3: Any) -> tuple[Any, Any]:  # noqa: ANN401
     left_width = int(left.size())
     right_width = int(right.size())
     width = max(left_width, right_width)
@@ -9841,7 +9835,7 @@ def _expr_failure(expr: SsaExpr, seen: set[int] | None = None) -> LowerFailure |
     return None
 
 
-def _collect_inputs(expressions: Any, seen: set[int] | None = None) -> set[str]:
+def _collect_inputs(expressions: Any, seen: set[int] | None = None) -> set[str]:  # noqa: ANN401
     if seen is None:
         seen = set()
     found: set[str] = set()
@@ -9931,7 +9925,7 @@ def _load_vex_cache(*, cache_dir: Path, exe_digest: str) -> dict[str, Any]:
     try:
         with path.open("rb") as handle:
             document = pickle.load(handle)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return _new_vex_cache(exe_digest)
     if not isinstance(document, dict):
         return _new_vex_cache(exe_digest)
@@ -9963,7 +9957,7 @@ def _vex_cache_key(*, start: int, size: int, opt_level: int) -> str:
 
 def _lift_vex_block_cached(
     *,
-    project: Any,
+    project: Any,  # noqa: ANN401
     exe_path: Path,
     exe_digest: str,
     start: int,
@@ -10019,7 +10013,7 @@ class _BlockLiftTimeout:
         self.previous_timer: tuple[float, float] | None = None
         self.enabled = False
 
-    def __enter__(self) -> "_BlockLiftTimeout":
+    def __enter__(self) -> _BlockLiftTimeout:
         if self.timeout_ms <= 0 or not hasattr(signal, "setitimer"):
             return self
         self.previous_handler = signal.getsignal(signal.SIGALRM)
@@ -10029,7 +10023,7 @@ class _BlockLiftTimeout:
         self.enabled = True
         return self
 
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:  # noqa: ANN401
         if self.enabled:
             signal.setitimer(signal.ITIMER_REAL, 0)
             if self.previous_handler is not None:
@@ -10040,7 +10034,7 @@ class _BlockLiftTimeout:
                     signal.setitimer(signal.ITIMER_REAL, delay, interval)
         return False
 
-    def _handle_timeout(self, _signum: int, _frame: Any) -> None:
+    def _handle_timeout(self, _signum: int, _frame: Any) -> None:  # noqa: ANN401
         raise TimeoutError(self.message)
 
 
@@ -10330,13 +10324,13 @@ def _ssa_candidate_mapping(mapping_document: dict[str, Any] | None) -> dict[str,
     return indexed
 
 
-def _instruction_disassembly(insn: Any) -> str:
+def _instruction_disassembly(insn: Any) -> str:  # noqa: ANN401
     mnemonic = str(insn.mnemonic).lower()
     op_str = str(insn.op_str).lower()
     return mnemonic if not op_str else f"{mnemonic} {op_str}"
 
 
-def _instruction_record(insn: Any) -> dict[str, Any]:
+def _instruction_record(insn: Any) -> dict[str, Any]:  # noqa: ANN401
     mnemonic = str(insn.mnemonic).lower()
     op_str = str(insn.op_str).lower()
     machine_code = bytes(getattr(insn, "bytes", b""))
@@ -10367,7 +10361,7 @@ def _instruction_text_from_record(record: dict[str, Any], *, function_base: int)
     }
 
 
-def _instruction_text(insn: Any, *, function_base: int) -> dict[str, Any]:
+def _instruction_text(insn: Any, *, function_base: int) -> dict[str, Any]:  # noqa: ANN401
     mnemonic = str(insn.mnemonic).lower()
     op_str = str(insn.op_str).lower()
     display_op_str = _display_op_str(mnemonic, op_str, linear=int(insn.address), function_base=function_base)
@@ -10383,7 +10377,7 @@ def _instruction_text(insn: Any, *, function_base: int) -> dict[str, Any]:
     }
 
 
-def _transfer_info(irsb: Any, instructions: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _transfer_info(irsb: Any, instructions: list[dict[str, Any]]) -> dict[str, Any] | None:  # noqa: ANN401
     nonreturning = _nonreturning_interrupt_transfer(instructions)
     if nonreturning is not None:
         return nonreturning
@@ -10535,7 +10529,7 @@ def _display_op_str(mnemonic: str, op_str: str, *, linear: int, function_base: i
 
 
 def _ssa_block_successors(
-    irsb: Any,
+    irsb: Any,  # noqa: ANN401
     instructions: list[dict[str, Any]],
     *,
     follow_call_fallthrough: bool = False,
@@ -10551,7 +10545,7 @@ def _ssa_block_successors(
             return []
         fallthrough = _call_fallthrough_linear_from_instructions(instructions)
         return [] if fallthrough is None else [fallthrough]
-    if jumpkind.startswith("Ijk_Ret") or jumpkind.startswith("Ijk_Sig"):
+    if jumpkind.startswith(("Ijk_Ret", "Ijk_Sig")):
         return []
     if jumpkind != "Ijk_Boring":
         return []
@@ -10573,7 +10567,7 @@ def _ssa_block_successors(
     return _unique_ints(successors)
 
 
-def _is_incomplete_noncontrol_block(irsb: Any, instructions: list[dict[str, Any]]) -> bool:
+def _is_incomplete_noncontrol_block(irsb: Any, instructions: list[dict[str, Any]]) -> bool:  # noqa: ANN401
     if str(getattr(irsb, "jumpkind", "")) != "Ijk_Boring":
         return False
     if _last_instruction_is_repeat_string(instructions):
@@ -10583,7 +10577,7 @@ def _is_incomplete_noncontrol_block(irsb: Any, instructions: list[dict[str, Any]
     return not _last_instruction_is_control(instructions)
 
 
-def _boring_fallthrough_successor(irsb: Any, instructions: list[dict[str, Any]]) -> int | None:
+def _boring_fallthrough_successor(irsb: Any, instructions: list[dict[str, Any]]) -> int | None:  # noqa: ANN401
     if str(getattr(irsb, "jumpkind", "")) != "Ijk_Boring" or not instructions:
         return None
     last = instructions[-1]
@@ -10702,10 +10696,10 @@ def _machine_code_size(instructions: list[dict[str, Any]]) -> int | None:
     return None if data is None else len(data)
 
 
-def _loader_bytes(project: Any, start: int, size: int) -> bytes | None:
+def _loader_bytes(project: Any, start: int, size: int) -> bytes | None:  # noqa: ANN401
     try:
         return bytes(project.loader.memory.load(start, size))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -10759,7 +10753,7 @@ def _semantic_ssa_payload(function: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _const_expr_value(expr: Any) -> int | None:
+def _const_expr_value(expr: Any) -> int | None:  # noqa: ANN401
     if expr is None:
         return None
     if not hasattr(expr, "tag") and hasattr(expr, "size") and hasattr(expr, "value"):

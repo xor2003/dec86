@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import argparse
 import sys
@@ -9,8 +9,8 @@ from .task_intake import write_pending_task
 from .webui import launch_web_ui
 
 
-def build_parser() -> argparse.ArgumentParser:
-    def _impl():
+def build_parser() -> argparse.ArgumentParser:  # noqa: D103
+    def _impl():  # noqa: ANN202
         parser = argparse.ArgumentParser(
             description="Python orchestration harness for iterative repository improvement."
         )
@@ -24,9 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
     return _impl()
 
 
-def main(argv: list[str] | None = None) -> int:
-    def _impl():
-        argv = list(sys.argv[1:] if argv is None else argv)
+def main(argv: list[str] | None = None) -> int:  # noqa: D103
+    def _impl():  # noqa: ANN202
+        argv = list(sys.argv[1:] if argv is None else argv)  # noqa: F823
         args = build_parser().parse_args(argv)
         cfg = RuntimeConfig.from_env(argv)
         if args.task:
@@ -75,10 +75,7 @@ def main(argv: list[str] | None = None) -> int:
             if web_ui is not None:
                 web_ui.stop()
             if exit_code not in (0, 10):
-                if exit_code == 75:
-                    reason = "blocked"
-                else:
-                    reason = "terminated" if exit_code in (124, 143) else "interrupted"
+                reason = "blocked" if exit_code == 75 else "terminated" if exit_code in (124, 143) else "interrupted"
                 harness.finalize_run(reason, exit_code)
 
     return _impl()

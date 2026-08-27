@@ -20,10 +20,10 @@ from ..callsite_summary import (
 )
 
 __all__ = [
-    "caller_return_use_evidence_proves_used_8616",
-    "caller_return_use_evidence_proves_unused_8616",
-    "function_result_is_proven_unobserved_8616",
     "FunctionReturnClass8616",
+    "caller_return_use_evidence_proves_unused_8616",
+    "caller_return_use_evidence_proves_used_8616",
+    "function_result_is_proven_unobserved_8616",
     "proven_function_result_observation_8616",
     "proven_function_return_class_8616",
 ]

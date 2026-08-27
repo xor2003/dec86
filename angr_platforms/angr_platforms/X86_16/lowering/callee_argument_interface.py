@@ -9,9 +9,10 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol, Sequence, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CVariable
 from angr.sim_type import SimType, SimTypeFunction, SimTypeShort

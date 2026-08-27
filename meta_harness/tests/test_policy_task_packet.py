@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 from meta_harness.policy import (
     GREEN_CYCLE,
@@ -32,7 +32,7 @@ from meta_harness.task_packet import (
 )
 
 
-def test_parse_task_packet_extracts_core_fields():
+def test_parse_task_packet_extracts_core_fields() -> None:  # noqa: D103
     item = (
         "1. `decompile.py:10-20`, `tests/test_byteops.py:1-20`: fix byteops handling. "
         "Done when `BYTEOPS.dec` contains `printf` and pytest tests/test_byteops.py -k byteops passes."
@@ -46,7 +46,7 @@ def test_parse_task_packet_extracts_core_fields():
     assert packet.done_conditions
 
 
-def test_task_packet_prompt_block_filters_noise_and_compacts_fields():
+def test_task_packet_prompt_block_filters_noise_and_compacts_fields() -> None:  # noqa: D103
     item = (
         "6. [rewrite] Goal: Keep wrapper and direct fallback aligned. "
         "Edit `/tmp/repo/a.py:1-2`, `detail_cache_path`, `/tmp/repo/b.py:3-4`, "
@@ -65,7 +65,7 @@ def test_task_packet_prompt_block_filters_noise_and_compacts_fields():
     assert "Objective: Keep wrapper and direct fallback aligned." in block
 
 
-def test_parse_plan_task_packets_splits_numbered_items():
+def test_parse_plan_task_packets_splits_numbered_items() -> None:  # noqa: D103
     plan = (
         "1. `a.py:1-2`: first item. Done when pytest tests/test_a.py passes.\n"
         "2. `b.py:3-4`: second item. Done when pytest tests/test_b.py passes.\n"
@@ -74,7 +74,7 @@ def test_parse_plan_task_packets_splits_numbered_items():
     assert [packet.item_id for packet in packets] == ["1", "2"]
 
 
-def test_prune_completed_plan_text_removes_done_items_and_keeps_unfinished():
+def test_prune_completed_plan_text_removes_done_items_and_keeps_unfinished() -> None:  # noqa: D103
     plan = (
         "1. Done: finish the first item.\n"
         "Why now: the first item is finished.\n\n"
@@ -92,7 +92,7 @@ def test_prune_completed_plan_text_removes_done_items_and_keeps_unfinished():
     assert "finish the third item" not in result.updated_text
 
 
-def test_prune_completed_plan_file_writes_pruned_text(tmp_path):
+def test_prune_completed_plan_file_writes_pruned_text(tmp_path) -> None:  # noqa: ANN001, D103
     plan_path = tmp_path / "PLAN.md"
     plan_path.write_text(
         "1. Done: remove me.\nWhy now: already completed.\n\n2. [pending] keep me.\nWhy now: still active.\n",
@@ -106,7 +106,7 @@ def test_prune_completed_plan_file_writes_pruned_text(tmp_path):
     assert plan_path.read_text(encoding="utf-8") == "2. [pending] keep me.\nWhy now: still active.\n"
 
 
-def test_split_and_count_remaining_plan_steps_ignore_done_numbered_items():
+def test_split_and_count_remaining_plan_steps_ignore_done_numbered_items() -> None:  # noqa: D103
     plan = (
         "1. Done: completed item.\n"
         "Why now: already done.\n\n"
@@ -120,7 +120,7 @@ def test_split_and_count_remaining_plan_steps_ignore_done_numbered_items():
     assert count_remaining_plan_steps(plan) == 1
 
 
-def test_worker_runtime_policy_escalates_on_recent_reason():
+def test_worker_runtime_policy_escalates_on_recent_reason() -> None:  # noqa: D103
     decision = decide_worker_runtime(
         WorkerRuntimeContext(
             escalation_reason="recent-timeout",
@@ -135,12 +135,12 @@ def test_worker_runtime_policy_escalates_on_recent_reason():
     assert decision.actions[0].details["model"] == "gpt-5.4"
 
 
-def test_worker_timeout_policy_escalates_at_limit():
+def test_worker_timeout_policy_escalates_at_limit() -> None:  # noqa: D103
     decision = decide_worker_timeout(WorkerTimeoutContext(consecutive_failures=3, failure_limit=3))
     assert decision.primary_action() == "escalate_to_reviewer"
 
 
-def test_cycle_followup_policy_requests_rewrite_for_broad_stalled_item():
+def test_cycle_followup_policy_requests_rewrite_for_broad_stalled_item() -> None:  # noqa: D103
     decision = decide_cycle_followup(
         CycleOutcomeContext(
             reviewer_remaining="3",
@@ -152,7 +152,7 @@ def test_cycle_followup_policy_requests_rewrite_for_broad_stalled_item():
     assert decision.primary_action() == "rewrite_current_item"
 
 
-def test_green_level_policy_infers_focused_and_cycle_levels():
+def test_green_level_policy_infers_focused_and_cycle_levels() -> None:  # noqa: D103
     focused = decide_green_level(GreenLevelContext(worker_remaining="0"))
     cycle = decide_green_level(GreenLevelContext(reviewer_remaining="0", evidence_failures=0))
     red = decide_green_level(GreenLevelContext(reviewer_remaining="1", evidence_failures=0))
@@ -161,7 +161,7 @@ def test_green_level_policy_infers_focused_and_cycle_levels():
     assert red.actions[0].details["green_level"] == GREEN_RED
 
 
-def test_stuck_policy_uses_one_and_half_round_budget():
+def test_stuck_policy_uses_one_and_half_round_budget() -> None:  # noqa: D103
     item = "1. Goal: fix focused thing.\nEstimated rounds: 4\nDefinition of done: pytest passes.\n"
     decision = decide_stuck(item, completed_rounds=6, runtime_context="timeout")
 
@@ -172,12 +172,12 @@ def test_stuck_policy_uses_one_and_half_round_budget():
     assert "restart fresh context" in decision.playbook
 
 
-def test_stuck_policy_classifies_broad_item():
+def test_stuck_policy_classifies_broad_item() -> None:  # noqa: D103
     item = "1. Goal: broad.\n" + ("`file.py:1` " * 20)
     assert classify_stuck_reason(item) == "plan-item-too-broad"
 
 
-def test_stuck_policy_has_category_specific_playbooks():
+def test_stuck_policy_has_category_specific_playbooks() -> None:  # noqa: D103
     categories = {
         "timeout-or-silent-agent": "restart fresh context",
         "test-or-runtime-failure": "keep the failing command fixed",

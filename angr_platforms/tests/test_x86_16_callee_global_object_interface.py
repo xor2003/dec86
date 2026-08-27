@@ -106,8 +106,8 @@ def test_callee_object_interface_joins_exact_and_adjacent_family_sources() -> No
         (fact.callsite_addr, fact.argument_index, fact.base_offset)
         for fact in evidence.source_facts
     ) == (
-        (0x10929, 0, 0x0B4E),
-        (0x10929, 1, 0x0B4C),
+        (0x10929, 0, 0x0B4C),
+        (0x10929, 1, 0x0B4E),
         (0x109C1, 0, 0x0B4C),
         (0x109C1, 1, 0x0B4C),
     )
@@ -160,7 +160,7 @@ def test_callee_object_interface_anchors_known_global_calls_with_unknown_callers
         0x10929,
         0x10929,
     )
-    assert evidence.failure_count == 1
+    assert evidence.failure_count == 2
 
 
 def test_callee_object_interface_refuses_incomplete_callee_pointer_contract() -> None:
@@ -168,13 +168,30 @@ def test_callee_object_interface_refuses_incomplete_callee_pointer_contract() ->
         0x107B8,
         (_summary(0x10929, _indexed_source(0x0B4C), _indexed_source(0x0B4C)),),
         _layout_evidence(),
-        (0,),
+        (2,),
     )
 
     assert evidence.family_base_offset is None
     assert evidence.pointer_argument_indices == ()
     assert evidence.classified_fact_count == 0
     assert evidence.materialized_count == 0
+
+
+def test_callee_object_interface_selects_pointer_from_mixed_arguments() -> None:
+    evidence = recover_callee_global_object_interface_evidence_8616(
+        0x107B8,
+        (_summary(0x10929, ("imm", 7), ("imm", 0x0B4C)),),
+        _layout_evidence(),
+        (0,),
+    )
+
+    assert evidence.verdict is CalleeGlobalObjectInterfaceVerdict8616.COMPLETE
+    assert evidence.raw_fact_count == evidence.normalized_fact_count == 1
+    assert evidence.failure_count == 0
+    assert tuple(
+        (fact.argument_index, fact.base_offset)
+        for fact in evidence.source_facts
+    ) == ((0, 0x0B4C),)
 
 
 def test_callee_object_interface_consumes_closed_binary_pointer_evidence() -> None:
@@ -246,7 +263,7 @@ def test_callee_object_interface_updates_replayed_local_declaration_type() -> No
     codegen = SimpleNamespace(
         next_idx=lambda _name: 0,
         project=SimpleNamespace(arch=Arch86_16()),
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     expression_cvar = CVariable(
         local,
         variable_type=scalar_type,

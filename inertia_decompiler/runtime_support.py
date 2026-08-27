@@ -18,7 +18,6 @@ import pickle
 import re
 import resource
 import select
-import signal
 import sys
 import threading
 import time
@@ -32,6 +31,8 @@ from concurrent.futures import TimeoutError as _FuturesTimeoutError
 from concurrent.futures.thread import _threads_queues, _worker
 from datetime import datetime
 
+from .analysis_timeout import AnalysisTimeout, analysis_timeout
+from .angr_codegen_tags import normalize_codegen_node_tags_8616
 from .fork_timeout import run_with_timeout_in_fork as run_with_timeout_in_fork
 from .variable_recovery_sub_guard import (
     build_guarded_handle_binop_mul_8616,
@@ -54,9 +55,9 @@ PEEPHOLE_COMPLEX_EXPR_NODE_LIMIT: int = 96
 # Probe artifacts mirror heterogeneous angr node/plugin metadata and prefork
 # worker payloads. Keep their dynamic values behind one explicit boundary type;
 # owned runtime decisions and public results remain concretely annotated.
-DynamicRecord: typing.TypeAlias = dict[str, typing.Any]
-AngrProjectSurface: typing.TypeAlias = typing.Any
-AngrPatchSurface: typing.TypeAlias = typing.Any
+type DynamicRecord = dict[str, typing.Any]
+type AngrProjectSurface = typing.Any
+type AngrPatchSurface = typing.Any
 
 
 def _dynamic_record(value: object) -> DynamicRecord:
@@ -317,10 +318,8 @@ def enable_line_buffered_stdio() -> None:
     for stream in (_REAL_STDOUT, _REAL_STDERR):
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
-            try:
+            with contextlib.suppress(Exception):
                 reconfigure(line_buffering=True)
-            except Exception:
-                pass
 
 
 def _project_current_function_context(project: AngrProjectSurface) -> tuple[int | None, str | None, int | None]:
@@ -361,7 +360,7 @@ def install_angr_variable_recovery_binop_sub_size_guard(
         from angr.analyses.typehoon import typevars as angr_typevars
         from angr.analyses.variable_recovery import engine_ail as variable_recovery_engine
 
-        richr_cls = getattr(variable_recovery_engine, "RichR")
+        richr_cls = variable_recovery_engine.RichR
         typevars_module = angr_typevars
     resolved_richr_cls = typing.cast(Callable[..., object], richr_cls)
 
@@ -401,8 +400,8 @@ def install_angr_basepointeroffset_codegen_guard(codegen_cls: AngrPatchSurface) 
         if isinstance(node, BasePointerOffset):
             stackbase_handler = getattr(self, "_handle_Expr_StackBaseOffset", None)
             if callable(stackbase_handler):
-                return stackbase_handler(node, *args, **kwargs)
-        return original_handle(self, node, *args, **kwargs)
+                return normalize_codegen_node_tags_8616(stackbase_handler(node, *args, **kwargs))
+        return normalize_codegen_node_tags_8616(original_handle(self, node, *args, **kwargs))
 
     codegen_cls._handle = _guarded_handle
     return original_handle
@@ -1029,22 +1028,22 @@ def _seqnode_switch_artifact_mappings_8616(
                     continue
                 for region_id in split.get("current_case_region_ids", ()) or ():
                     if isinstance(region_id, int):
-                        case_region_ids.append(region_id)
+                        case_region_ids.append(region_id)  # noqa: PERF401
                 for value in split.get("current_case_values", ()) or ():
                     if isinstance(value, int):
-                        case_values.append(value)
+                        case_values.append(value)  # noqa: PERF401
                 for subtree in split.get("subtrees", ()) or ():
                     if not isinstance(subtree, dict):
                         continue
                     for region_id in subtree.get("normalized_case_region_ids", ()) or ():
                         if isinstance(region_id, int):
-                            case_region_ids.append(region_id)
+                            case_region_ids.append(region_id)  # noqa: PERF401
                     for value in subtree.get("normalized_case_values", ()) or ():
                         if isinstance(value, int):
-                            case_values.append(value)
+                            case_values.append(value)  # noqa: PERF401
                     for region_id in subtree.get("default_candidate_region_ids", ()) or ():
                         if isinstance(region_id, int):
-                            default_region_ids.append(region_id)
+                            default_region_ids.append(region_id)  # noqa: PERF401
         return {
             "default_region_ids": list(dict.fromkeys(default_region_ids)),
             "normalized_case_region_ids": list(dict.fromkeys(case_region_ids)),
@@ -1226,22 +1225,22 @@ def _expanded_root_normalized_body_from_summary_8616(summary: DynamicRecord) -> 
                 continue
             for region_id in split.get("current_case_region_ids", ()) or ():
                 if isinstance(region_id, int):
-                    case_region_ids.append(region_id)
+                    case_region_ids.append(region_id)  # noqa: PERF401
             for value in split.get("current_case_values", ()) or ():
                 if isinstance(value, int):
-                    case_values.append(value)
+                    case_values.append(value)  # noqa: PERF401
             for subtree in split.get("subtrees", ()) or ():
                 if not isinstance(subtree, dict):
                     continue
                 for region_id in subtree.get("normalized_case_region_ids", ()) or ():
                     if isinstance(region_id, int):
-                        case_region_ids.append(region_id)
+                        case_region_ids.append(region_id)  # noqa: PERF401
                 for value in subtree.get("normalized_case_values", ()) or ():
                     if isinstance(value, int):
-                        case_values.append(value)
+                        case_values.append(value)  # noqa: PERF401
                 for region_id in subtree.get("default_candidate_region_ids", ()) or ():
                     if isinstance(region_id, int):
-                        default_region_ids.append(region_id)
+                        default_region_ids.append(region_id)  # noqa: PERF401
     return {
         "default_region_ids": list(dict.fromkeys(default_region_ids)),
         "normalized_case_region_ids": list(dict.fromkeys(case_region_ids)),
@@ -1593,7 +1592,7 @@ def _build_grouped_switch_artifacts_from_source_graph_8616(
         pending_sources = Instruction_ANY._inertia_pending_condition_sources_by_addr
         cache_snapshot = (
             {key: list(value) if isinstance(value, list) else value for key, value in dict(module_cache).items()},
-            {key: value for key, value in dict(pending_sources).items()},
+            dict(dict(pending_sources).items()),
         )
         conditions, edge_evidence = collect_typed_condition_artifacts_8616(project, func_addr)
         if not edge_evidence:
@@ -2442,12 +2441,10 @@ def guard_angr_clinic_stage_markers(project: AngrProjectSurface) -> Iterator[Non
     ) -> object:
         project._inertia_decompiler_stage = "core:clinic:simplify_block"
         block = args[0] if args else kwargs.get("block")
-        if getattr(project, "_inertia_skip_clinic_simplify_block", False):
-            if block is not None:
-                return block
-        if getattr(project, "_inertia_tiny_core_disable_peephole", False):
-            if block is not None:
-                return block
+        if getattr(project, "_inertia_skip_clinic_simplify_block", False) and block is not None:
+            return block
+        if getattr(project, "_inertia_tiny_core_disable_peephole", False) and block is not None:
+            return block
         _simplify_count[0] += 1
         _t_start = _time.perf_counter()
         try:
@@ -2526,17 +2523,17 @@ def guard_angr_clinic_stage_markers(project: AngrProjectSurface) -> Iterator[Non
                             file=sys.stderr,
                         )
                         sys.stderr.flush()
-                    return block
-                return block
+                    return block, False, False
+                return block, False, False
             if block is not None and getattr(project, "_inertia_tiny_core_disable_peephole", False):
-                return block
+                return block, False, False
             if block is not None and getattr(project, "_inertia_fast_block_peephole", False):
                 statements, stmts_updated = peephole_optimize_stmts(block, self._stmt_peephole_opts)
                 new_block = block.copy(statements=statements) if stmts_updated else block
                 statements, multi_stmts_updated = peephole_optimize_multistmts(new_block, self._multistmt_peephole_opts)
-                if not multi_stmts_updated:
-                    return new_block
-                return new_block.copy(statements=statements)
+                if multi_stmts_updated:
+                    new_block = new_block.copy(statements=statements)
+                return new_block, bool(stmts_updated or multi_stmts_updated), False
             if block is not None and _block_has_pathologically_complex_expr(block):
                 skipped = getattr(project, "_inertia_complex_block_skip_seen", None)
                 if not isinstance(skipped, set):
@@ -2555,9 +2552,9 @@ def guard_angr_clinic_stage_markers(project: AngrProjectSurface) -> Iterator[Non
                 statements, stmts_updated = peephole_optimize_stmts(block, self._stmt_peephole_opts)
                 new_block = block.copy(statements=statements) if stmts_updated else block
                 statements, multi_stmts_updated = peephole_optimize_multistmts(new_block, self._multistmt_peephole_opts)
-                if not multi_stmts_updated:
-                    return new_block
-                return new_block.copy(statements=statements)
+                if multi_stmts_updated:
+                    new_block = new_block.copy(statements=statements)
+                return new_block, bool(stmts_updated or multi_stmts_updated), False
             return orig_peephole_optimize(self, *args, **kwargs)
         finally:
             elapsed = _time.perf_counter() - _t_start
@@ -2582,10 +2579,15 @@ def guard_angr_clinic_stage_markers(project: AngrProjectSurface) -> Iterator[Non
                     )
                     sys.stderr.flush()
 
-    def _peephole_optimize_exprs_guarded(block: object, expr_opts: object) -> object:
+    def _peephole_optimize_exprs_guarded(
+        block: object,
+        expr_opts: object,
+        *args: typing.Any,
+        **kwargs: typing.Any,
+    ) -> object:
         if getattr(project, "_inertia_skip_clinic_simplify_block", False):
-            return block
-        return orig_peephole_optimize_exprs(block, expr_opts)
+            return False
+        return orig_peephole_optimize_exprs(block, expr_opts, *args, **kwargs)
 
     class _NoPropagationResult:
         def __init__(self) -> None:
@@ -2767,10 +2769,8 @@ class ThreadBoundTextIO(io.TextIOBase):
 
     def flush(self) -> None:
         """Flush the active stream unless it has already closed."""
-        try:
+        with contextlib.suppress(ValueError):
             self._stream().flush()
-        except ValueError:
-            pass
 
     def isatty(self) -> bool:
         """Report whether the active stream is attached to a terminal."""
@@ -2800,7 +2800,7 @@ sys.stderr = _THREAD_STDERR
 class DaemonThreadPoolExecutor(ThreadPoolExecutor):
     """Run executor workers as daemons through CPython's private pool contract."""
 
-    def _adjust_thread_count(self) -> None:  # noqa: D401
+    def _adjust_thread_count(self) -> None:
         executor = typing.cast(AngrPatchSurface, self)
         work_queue = executor._work_queue
         if executor._idle_semaphore.acquire(timeout=0):
@@ -2811,7 +2811,7 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
 
         num_threads = len(executor._threads)
         if num_threads < executor._max_workers:
-            thread_name = "%s_%d" % (executor._thread_name_prefix or self, num_threads)
+            thread_name = "%s_%d" % (executor._thread_name_prefix or self, num_threads)  # noqa: UP031
             worker_args: tuple[object, ...]
             if hasattr(executor, "_create_worker_context"):
                 worker_args = (
@@ -2837,7 +2837,7 @@ class DaemonThreadPoolExecutor(ThreadPoolExecutor):
             thread_queues = typing.cast(MutableMapping[threading.Thread, object], _threads_queues)
             thread_queues[t] = work_queue
 
-    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:  # noqa: D401
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
         """Shut down workers and detach daemon queues when not waiting."""
         try:
             super().shutdown(wait=wait, cancel_futures=cancel_futures)
@@ -2885,15 +2885,6 @@ class JumpkindLoggingHandler(logging.Handler):
                 print(f"[dbg] {msg}")
 
 
-class AnalysisTimeout(BaseException):
-    """Signal expiration of a bounded in-process analysis scope."""
-
-
-def raise_timeout(_signum: int, _frame: object | None) -> typing.NoReturn:
-    """Translate a process alarm signal into ``AnalysisTimeout``."""
-    raise AnalysisTimeout()
-
-
 def _faulthandler_output_file() -> typing.TextIO | None:
     for stream in (getattr(sys, "stderr", None), getattr(sys, "__stderr__", None)):
         if stream is None:
@@ -2906,35 +2897,13 @@ def _faulthandler_output_file() -> typing.TextIO | None:
     return None
 
 
-@contextlib.contextmanager
-def analysis_timeout(timeout: int) -> typing.Iterator[None]:
-    """Bound an analysis scope with a main-thread process alarm."""
-    if timeout <= 0:
-        yield
-        return
-    if threading.current_thread() is not threading.main_thread():
-        yield
-        return
-
-    old_handler = signal.signal(signal.SIGALRM, raise_timeout)
-    signal.alarm(timeout)
-    try:
-        yield
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
-
-
-_TimeoutResultT = typing.TypeVar("_TimeoutResultT")
-
-
-def run_with_timeout_in_daemon_thread(
-    func: Callable[[], _TimeoutResultT],
+def run_with_timeout_in_daemon_thread[TimeoutResultT](
+    func: Callable[[], TimeoutResultT],
     *,
     timeout: int,
     thread_name_prefix: str,
     prefer_process_alarm: bool = False,
-) -> _TimeoutResultT:
+) -> TimeoutResultT:
     """Run a callable with a process alarm or daemon-thread bounded wait.
 
     Main-thread callers may request the process alarm when timed-out work must
@@ -2951,7 +2920,7 @@ def run_with_timeout_in_daemon_thread(
         try:
             result_box["result"] = func()
             result_box["kind"] = "ok"
-        except BaseException as ex:  # noqa: BLE001
+        except BaseException as ex:
             result_box["kind"] = "err"
             result_box["error"] = ex
             result_box["traceback"] = traceback.format_exc()
@@ -2979,7 +2948,7 @@ def run_with_timeout_in_daemon_thread(
             raise RuntimeError(f"daemon thread failed: {result_box.get('traceback')}")
         if "result" not in result_box:
             raise RuntimeError(f"daemon thread completed without result after {timeout_seconds}s")
-        return typing.cast(_TimeoutResultT, result_box["result"])
+        return typing.cast(TimeoutResultT, result_box["result"])
     finally:
         if stack_dump_sec is not None:
             with contextlib.suppress(Exception):
@@ -3064,7 +3033,7 @@ class PreforkJobPool:
                             try:
                                 result = self._worker_func(payload)
                                 _write_framed_pickle(result_write, (job_id, "ok", result))
-                            except BaseException as ex:  # noqa: BLE001
+                            except BaseException as ex:
                                 _write_framed_pickle(result_write, (job_id, "err", type(ex).__name__, str(ex)))
                     finally:
                         with contextlib.suppress(OSError):
@@ -3167,17 +3136,15 @@ def apply_memory_limit(max_memory_mb: int | None) -> None:
     if max_memory_mb is None or max_memory_mb <= 0:
         return
     limit = max_memory_mb * 1024 * 1024
-    try:
+    with contextlib.suppress(ValueError, OSError):
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-    except (ValueError, OSError):
-        pass
 
 
 def memory_available_mb() -> int | None:
     """Read available Linux memory in megabytes when procfs is available."""
     try:
         meminfo = {}
-        with open("/proc/meminfo", "r", encoding="utf-8") as fp:
+        with open("/proc/meminfo", encoding="utf-8") as fp:
             for line in fp:
                 if ":" not in line:
                     continue
@@ -3201,10 +3168,8 @@ def prefer_low_memory_path() -> bool:
 
 def lower_process_priority() -> None:
     """Lower process scheduling priority on hosts that support ``nice``."""
-    try:
+    with contextlib.suppress(AttributeError, OSError):
         os.nice(10)
-    except (AttributeError, OSError):
-        pass
 
 
 def choose_function_parallelism(function_count: int) -> int:

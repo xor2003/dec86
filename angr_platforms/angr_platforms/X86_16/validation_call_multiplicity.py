@@ -9,16 +9,24 @@ or treating an untagged call as evidence for or against multiplicity.
 
 from __future__ import annotations
 
+import logging
+import os
 from collections import Counter, defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CFunctionCall
 
-from .c_ast_utils import _iter_c_nodes_deep_8616
+from .c_ast_utils import (
+    _iter_c_node_occurrences_8616,
+    _structured_codegen_node_8616,
+    _structured_slot_names_8616,
+)
 from .callsite_summary import CallsiteSummary8616
+
+log: logging.Logger = logging.getLogger(__name__)
 
 __all__ = [
     "CallsiteMultiplicityIssue8616",
@@ -34,27 +42,78 @@ class _CodegenCallsiteSurface8616(Protocol):
     _inertia_callsite_summaries: object
 
 
+class _CallTargetFunction8616(Protocol):
+    """Dynamic third-party function target used for exact target identity."""
+
+    addr: int
+
+
+def _iter_c_node_occurrence_paths_8616(
+    value: object,
+    path: str = "root",
+    active_node_ids: frozenset[int] = frozenset(),
+) -> Iterator[tuple[object, str]]:
+    """Yield render-authoritative AST occurrences with diagnostic edge paths."""
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            yield from _iter_c_node_occurrence_paths_8616(
+                child,
+                f"{path}[{key!r}]",
+                active_node_ids,
+            )
+        return
+    if isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            yield from _iter_c_node_occurrence_paths_8616(
+                child,
+                f"{path}[{index}]",
+                active_node_ids,
+            )
+        return
+    if not _structured_codegen_node_8616(value):
+        return
+    node_id = id(value)
+    if node_id in active_node_ids:
+        return
+    yield value, path
+    child_active_ids = active_node_ids | {node_id}
+    for attr in _structured_slot_names_8616(value):
+        try:
+            # Dynamic third-party angr C-AST boundary: child slots vary by release.
+            child = getattr(value, attr)
+        except Exception:
+            continue
+        yield from _iter_c_node_occurrence_paths_8616(
+            child,
+            f"{path}.{attr}",
+            child_active_ids,
+        )
+
+
 class CallsiteMultiplicityIssueKind8616(StrEnum):
     """Typed contradictions between one machine callsite and final C calls."""
 
     DUPLICATE_FINAL_CALLSITE = "duplicate-final-callsite"
+    DUPLICATE_FINAL_TARGET = "duplicate-final-target"
 
 
-@dataclass(frozen=True, order=True, slots=True)
+@dataclass(frozen=True, slots=True)
 class CallsiteMultiplicityIssue8616:
     """One binary callsite projected more than once into final structured C."""
 
     kind: CallsiteMultiplicityIssueKind8616
-    callsite_addr: int
+    callsite_addr: int | None
     target_addr: int | None
     actual_count: int
+    expected_count: int = 1
 
     def token(self) -> str:
         """Return a deterministic token for tail-validation diagnostics."""
+        callsite = "aggregate" if self.callsite_addr is None else f"{self.callsite_addr:#x}"
         target = "unknown" if self.target_addr is None else f"{self.target_addr:#x}"
         return (
-            f"callsite-multiplicity:{self.kind}:callsite={self.callsite_addr:#x}:"
-            f"target={target}:expected=1:actual={self.actual_count}"
+            f"callsite-multiplicity:{self.kind}:callsite={callsite}:"
+            f"target={target}:expected={self.expected_count}:actual={self.actual_count}"
         )
 
 
@@ -113,6 +172,27 @@ def _callsite_addr_8616(call: CFunctionCall) -> int | None:
     return None
 
 
+def _call_target_addr_8616(codegen: object, call: CFunctionCall) -> int | None:
+    """Return exact target identity from owned summary or third-party function."""
+    try:
+        summaries = cast(_CodegenCallsiteSurface8616, codegen)._inertia_callsite_summaries
+    except AttributeError:
+        summaries = None
+    if isinstance(summaries, Mapping):
+        summary = summaries.get(id(call))
+        if isinstance(summary, CallsiteSummary8616) and isinstance(summary.target_addr, int):
+            return summary.target_addr
+    callee_func = call.callee_func
+    if callee_func is not None:
+        try:
+            target_addr = cast(_CallTargetFunction8616, callee_func).addr
+        except AttributeError:
+            target_addr = None
+        if isinstance(target_addr, int):
+            return target_addr
+    return call.callee_target if isinstance(call.callee_target, int) else None
+
+
 def validate_required_callsite_multiplicity_8616(
     codegen: object,
     root: object,
@@ -122,15 +202,46 @@ def validate_required_callsite_multiplicity_8616(
     if not targets_by_callsite:
         return CallsiteMultiplicityValidationReport8616()
 
+    required_by_target: Counter[int] = Counter(
+        targets[0]
+        for targets in targets_by_callsite.values()
+        if len(targets) == 1
+    )
     observed: Counter[int] = Counter()
-    for node in _iter_c_nodes_deep_8616(root):
+    observed_by_target: Counter[int] = Counter()
+    debug_occurrences: defaultdict[int, list[tuple[int, int | None]]] = defaultdict(list)
+    for node in _iter_c_node_occurrences_8616(root):
         if not isinstance(node, CFunctionCall):
             continue
         callsite_addr = _callsite_addr_8616(node)
         if callsite_addr in targets_by_callsite:
             observed[callsite_addr] += 1
+        target_addr = _call_target_addr_8616(codegen, node)
+        if target_addr is not None and target_addr in required_by_target:
+            observed_by_target[target_addr] += 1
+        if callsite_addr in targets_by_callsite:
+            debug_occurrences[callsite_addr].append((id(node), target_addr))
 
-    issues = tuple(
+    if os.environ.get("INERTIA_DEBUG_CALLSITE_MULTIPLICITY") == "1":
+        occurrence_paths = tuple(
+            (callsite_addr, id(node), path)
+            for node, path in _iter_c_node_occurrence_paths_8616(root)
+            if isinstance(node, CFunctionCall)
+            for callsite_addr in (_callsite_addr_8616(node),)
+            if callsite_addr in targets_by_callsite
+        )
+        log.warning(
+            "[callsite-multiplicity] required=%r observed=%r occurrences=%r paths=%r",
+            targets_by_callsite,
+            dict(sorted(observed.items())),
+            tuple(
+                (callsite_addr, tuple(occurrences))
+                for callsite_addr, occurrences in sorted(debug_occurrences.items())
+            ),
+            occurrence_paths,
+        )
+
+    callsite_issues = tuple(
         CallsiteMultiplicityIssue8616(
             kind=CallsiteMultiplicityIssueKind8616.DUPLICATE_FINAL_CALLSITE,
             callsite_addr=callsite_addr,
@@ -141,8 +252,26 @@ def validate_required_callsite_multiplicity_8616(
         if count > 1
         for targets in (targets_by_callsite[callsite_addr],)
     )
+    callsite_issue_targets = frozenset(
+        issue.target_addr
+        for issue in callsite_issues
+        if isinstance(issue.target_addr, int)
+    )
+    target_issues = tuple(
+        CallsiteMultiplicityIssue8616(
+            kind=CallsiteMultiplicityIssueKind8616.DUPLICATE_FINAL_TARGET,
+            callsite_addr=None,
+            target_addr=target_addr,
+            actual_count=count,
+            expected_count=required_by_target[target_addr],
+        )
+        for target_addr, count in sorted(observed_by_target.items())
+        if count > required_by_target[target_addr]
+        and target_addr not in callsite_issue_targets
+    )
+    issues = (*callsite_issues, *target_issues)
     return CallsiteMultiplicityValidationReport8616(
-        raw_fact_count=sum(observed.values()),
+        raw_fact_count=max(sum(observed.values()), sum(observed_by_target.values())),
         normalized_fact_count=len(observed),
         classified_fact_count=len(observed),
         materialized_count=sum(count == 1 for count in observed.values()),

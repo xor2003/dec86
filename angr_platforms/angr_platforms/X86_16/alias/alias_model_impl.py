@@ -64,13 +64,13 @@ class _StorageView:
             return None
         return self.bit_offset + self.bit_width
 
-    def can_join(self, other: "_StorageView") -> bool:
+    def can_join(self, other: _StorageView) -> bool:
         """Return whether two bit views are adjacent and fully bounded."""
         if self.bit_width is None or other.bit_width is None:
             return False
         return self.end_bit() == other.bit_offset or other.end_bit() == self.bit_offset
 
-    def contains(self, other: "_StorageView") -> bool:
+    def contains(self, other: _StorageView) -> bool:
         """Return whether this bounded bit view fully contains another view."""
         end_bit = self.end_bit()
         other_end_bit = other.end_bit()
@@ -78,7 +78,7 @@ class _StorageView:
             return False
         return self.bit_offset <= other.bit_offset and other_end_bit <= end_bit
 
-    def join(self, other: "_StorageView") -> "_StorageView | None":
+    def join(self, other: _StorageView) -> _StorageView | None:
         """Return a combined bit view when two storage views are adjacent."""
         bit_width = self.bit_width
         other_bit_width = other.bit_width
@@ -113,7 +113,7 @@ class _StackSlotIdentity:
             return None
         return self.offset + self.width
 
-    def can_join(self, other: "_StackSlotIdentity") -> bool:
+    def can_join(self, other: _StackSlotIdentity) -> bool:
         """Return whether two stack slots are adjacent within one frame region."""
         if self.base != other.base:
             return False
@@ -123,7 +123,7 @@ class _StackSlotIdentity:
             return False
         return self.end_offset() == other.offset or other.end_offset() == self.offset
 
-    def contains(self, other: "_StackSlotIdentity") -> bool:
+    def contains(self, other: _StackSlotIdentity) -> bool:
         """Return whether this stack slot fully contains another frame view."""
         if self.base != other.base:
             return False
@@ -135,7 +135,7 @@ class _StackSlotIdentity:
             return False
         return self.offset <= other.offset and other_end_offset <= end_offset
 
-    def join(self, other: "_StackSlotIdentity") -> "_StackSlotIdentity | None":
+    def join(self, other: _StackSlotIdentity) -> _StackSlotIdentity | None:
         """Return a combined stack slot identity when adjacent slots match."""
         if not self.can_join(other):
             return None
@@ -215,7 +215,7 @@ class _StorageDomainSignature:
             return self.space
         return f"{self.space}:{self.width}"
 
-    def can_join(self, other: "_StorageDomainSignature") -> bool:
+    def can_join(self, other: _StorageDomainSignature) -> bool:
         """Return whether two storage domains can join without changing identity."""
         if self.space != other.space:
             return False
@@ -228,7 +228,7 @@ class _StorageDomainSignature:
                 return False
         return self.view.can_join(other.view)
 
-    def contains(self, other: "_StorageDomainSignature") -> bool:
+    def contains(self, other: _StorageDomainSignature) -> bool:
         """Return whether this storage domain fully contains another domain."""
         if self.space != other.space:
             return False
@@ -241,7 +241,7 @@ class _StorageDomainSignature:
                 return False
         return self.view.contains(other.view)
 
-    def join(self, other: "_StorageDomainSignature") -> "_StorageDomainSignature | None":
+    def join(self, other: _StorageDomainSignature) -> _StorageDomainSignature | None:
         """Return a joined storage domain when identity and views agree."""
         if not self.can_join(other):
             return None
@@ -270,7 +270,7 @@ class _CopyAliasState:
         """Return whether this copy alias can be inlined without synthesis."""
         return not self.domain.is_mixed() and not self.needs_synthesis
 
-    def merge(self, other: "_CopyAliasState") -> "_CopyAliasState":
+    def merge(self, other: _CopyAliasState) -> _CopyAliasState:
         """Merge two copy-alias states while preserving synthesis requirements."""
         merged_domain = _merge_storage_domains(self.domain, other.domain)
         merged_expr = self.expr if self.expr is not None else other.expr
@@ -286,7 +286,7 @@ class _StackPointerAliasState:
     base: structured_c.CVariable
     offset: int = 0
 
-    def shifted(self, delta: int) -> "_StackPointerAliasState":
+    def shifted(self, delta: int) -> _StackPointerAliasState:
         """Return this stack-pointer alias state shifted by a byte delta."""
         return _StackPointerAliasState(self.base, self.offset + delta)
 
@@ -298,7 +298,7 @@ class AliasStorageFacts:
     domain: _StorageDomainSignature
     identity: tuple[str, object] | None = None
 
-    def same_domain(self, other: "AliasStorageFacts") -> bool:
+    def same_domain(self, other: AliasStorageFacts) -> bool:
         """Return whether two facts refer to the same alias storage domain."""
         if self.domain.space != other.domain.space:
             return False
@@ -320,13 +320,13 @@ class AliasStorageFacts:
             return value == other_value
         return value == other_value
 
-    def compatible_view(self, other: "AliasStorageFacts") -> bool:
+    def compatible_view(self, other: AliasStorageFacts) -> bool:
         """Return whether two facts describe adjacent or compatible storage views."""
         if self.domain.view is None or other.domain.view is None:
             return False
         return self.domain.view.can_join(other.domain.view)
 
-    def contains(self, other: "AliasStorageFacts") -> bool:
+    def contains(self, other: AliasStorageFacts) -> bool:
         """Return whether this proven storage identity contains another view."""
         if self.needs_synthesis() or other.needs_synthesis():
             return False
@@ -349,7 +349,7 @@ class AliasStorageFacts:
         """Return whether this storage fact must remain explicitly synthesized."""
         return self.domain.is_mixed() or self.domain.is_unknown()
 
-    def can_join(self, other: "AliasStorageFacts") -> bool:
+    def can_join(self, other: AliasStorageFacts) -> bool:
         """Return whether two facts can be joined without guessing storage identity."""
         return (
             self.same_domain(other)
@@ -500,12 +500,12 @@ class AliasFailure:
     """
 
     reason: str
-    address: "object | None" = None
+    address: object | None = None
     space: str | None = None
     offset: int | None = None
 
 
-def alias_facts_for_ir_address_8616(addr: "object") -> AliasStorageFacts | AliasFailure | None:
+def alias_facts_for_ir_address_8616(addr: object) -> AliasStorageFacts | AliasFailure | None:
     """Build alias storage facts from a typed IRAddress.
 
     This is the canonical IR to Alias entry point. It must be called at IR
@@ -686,23 +686,23 @@ def _unwrap_c_casts(expr: object) -> object:
 
 
 __all__ = [
-    "_StorageView",
-    "_StackSlotIdentity",
-    "_StorageDomainSignature",
+    "ALIAS_RECOVERY_API",
+    "AliasFailure",
+    "AliasRecoveryAPISpec",
+    "AliasStorageFacts",
     "_CopyAliasState",
     "_StackPointerAliasState",
-    "_stack_slot_identity_for_variable",
-    "_stack_storage_facts_for_segmented_address_8616",
+    "_StackSlotIdentity",
+    "_StorageDomainSignature",
+    "_StorageView",
+    "_merge_storage_domains",
     "_same_stack_slot_identity",
     "_stack_slot_identity_can_join",
-    "_storage_view_for_variable",
-    "_storage_domain_for_variable",
+    "_stack_slot_identity_for_variable",
+    "_stack_storage_facts_for_segmented_address_8616",
     "_storage_domain_for_expr",
-    "_merge_storage_domains",
-    "AliasFailure",
-    "AliasStorageFacts",
-    "AliasRecoveryAPISpec",
-    "ALIAS_RECOVERY_API",
+    "_storage_domain_for_variable",
+    "_storage_view_for_variable",
     "alias_facts_for_ir_address_8616",
     "can_join_alias_storage",
     "compatible_alias_storage_views",

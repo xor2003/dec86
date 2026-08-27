@@ -19,7 +19,7 @@ from .interprocedural_storage_contracts import (
 )
 from .interprocedural_storage_reaching_contracts import (
     CallArgumentDefinitionFailure8616,
-    PhysicalCallArgument8616,
+    PhysicalCallArgumentPiece8616,
     SSAInstructionSite8616,
 )
 
@@ -34,7 +34,7 @@ def _storage_for_address_8616(address: IRAddress) -> StorageIdentity8616:
 
 def _load_definitions_8616(
     sites: tuple[SSAInstructionSite8616, ...],
-    fact: PhysicalCallArgument8616,
+    fact: PhysicalCallArgumentPiece8616,
     *,
     space: MemSpace | None,
     base: tuple[str, ...],
@@ -87,7 +87,7 @@ def _load_definitions_8616(
 
 def _store_data_sites_8616(
     sites: tuple[SSAInstructionSite8616, ...],
-    fact: PhysicalCallArgument8616,
+    fact: PhysicalCallArgumentPiece8616,
 ) -> tuple[tuple[SSAInstructionSite8616, IRValue], ...]:
     """Return outgoing SS:SP stores emitted by one physical push."""
     stores: list[tuple[SSAInstructionSite8616, IRValue]] = []
@@ -189,7 +189,7 @@ def _has_bp_address_origin_8616(
 
 def _store_definition_8616(
     sites: tuple[SSAInstructionSite8616, ...],
-    fact: PhysicalCallArgument8616,
+    fact: PhysicalCallArgumentPiece8616,
     *,
     expected_const: int | None = None,
     source_storage: StorageIdentity8616 | None = None,
@@ -226,7 +226,7 @@ def _store_definition_8616(
 
 def _bp_address_definition_8616(
     sites: tuple[SSAInstructionSite8616, ...],
-    fact: PhysicalCallArgument8616,
+    fact: PhysicalCallArgumentPiece8616,
     *,
     offset: int,
 ) -> tuple[
@@ -292,7 +292,7 @@ def _source_kind_8616(
 
 def resolve_argument_source_definitions_8616(
     sites: tuple[SSAInstructionSite8616, ...],
-    fact: PhysicalCallArgument8616,
+    fact: PhysicalCallArgumentPiece8616,
 ) -> tuple[tuple[StorageReachingDefinition8616, ...] | None, CallArgumentDefinitionFailure8616 | None]:
     """Resolve one structured physical source to exact IR/SSA definitions."""
     source = fact.source

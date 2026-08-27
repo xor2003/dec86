@@ -14,11 +14,12 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Iterator, Protocol, TypeAlias
+from typing import IO, Protocol
 
 from scripts.pytest_source_state import source_tree_snapshot
 
@@ -37,12 +38,12 @@ class _Digest(Protocol):
         """Return the completed lowercase hexadecimal digest."""
 
 
-GateProcessResult: TypeAlias = subprocess.CompletedProcess[str] | subprocess.TimeoutExpired | None
+type GateProcessResult = subprocess.CompletedProcess[str] | subprocess.TimeoutExpired | None
 
 
 @dataclass(frozen=True, slots=True)
 class MSC6RuntimeGateInputs:
-    """Exact tools, examples, and policy needed by one complete runtime gate."""
+    """Exact tools, examples, and bounded concurrency for one runtime gate."""
 
     repo_root: Path
     cache_root: Path
@@ -53,6 +54,7 @@ class MSC6RuntimeGateInputs:
     examples: tuple[tuple[str, Path], ...]
     expected_exit_code: int = 255
     timeout_seconds: int = 60
+    parallel_example_workers: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,13 +217,19 @@ def _run_example(
         str(output_root / f"{example_name}_runtime_gate"),
         "--clean",
     ]
+    env = dict(os.environ)
+    env.setdefault(
+        "INERTIA_MSC_RUNTIME_DECOMPILE_WORKERS",
+        "1" if inputs.parallel_example_workers > 1 else "2",
+    )
     try:
         result: GateProcessResult = subprocess.run(
             command,
             cwd=inputs.repo_root,
             capture_output=True,
             text=True,
-            timeout=300,
+            env=env,
+            timeout=max(300, inputs.timeout_seconds * 12),
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
@@ -230,8 +238,12 @@ def _run_example(
 
 
 def _run_all(inputs: MSC6RuntimeGateInputs, output_root: Path) -> dict[str, GateProcessResult]:
-    """Run all examples with the established two-controller memory bound."""
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    """Run every example under the caller's aggregate-memory worker bound."""
+    worker_count = min(
+        len(inputs.examples),
+        max(1, inputs.parallel_example_workers),
+    )
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
         return dict(executor.map(lambda item: _run_example(item, inputs, output_root), inputs.examples))
 
 

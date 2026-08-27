@@ -113,10 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", help="Output path. Writes stdout when omitted.")
     args = parser.parse_args(argv)
 
-    if args.trace and args.trace != "-":
-        text = Path(args.trace).read_text(encoding="utf-8")
-    else:
-        text = sys.stdin.read()
+    text = Path(args.trace).read_text(encoding="utf-8") if args.trace and args.trace != "-" else sys.stdin.read()
     output = convert_otlp_jsonl_text(text)
     if args.output:
         Path(args.output).write_text(output, encoding="utf-8")

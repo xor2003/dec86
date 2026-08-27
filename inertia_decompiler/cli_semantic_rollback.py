@@ -94,15 +94,37 @@ def rollback_final_semantic_drift_8616(
     report = refresh_validation(project, codegen)
     if not report.semantic_failures() or trusted is None:
         return False
+    dynamic_codegen = cast(Any, codegen)
+    dynamic_project = cast(Any, project)
+    try:
+        current_cfunc = dynamic_codegen.cfunc
+    except AttributeError:
+        return False
+    try:
+        current_codegen_tail_snapshot = copy.deepcopy(
+            dynamic_codegen._inertia_tail_validation_snapshot
+        )
+    except AttributeError:
+        current_codegen_tail_snapshot = None
+    try:
+        current_project_tail_snapshot = copy.deepcopy(
+            dynamic_project._inertia_last_tail_validation_snapshot
+        )
+    except AttributeError:
+        current_project_tail_snapshot = None
     if not restore_cfunc(trusted.cfunc):
         return False
 
     restored_tail_snapshot = copy.deepcopy(trusted.tail_validation_snapshot)
-    dynamic_codegen = cast(Any, codegen)
-    dynamic_project = cast(Any, project)
     dynamic_codegen._inertia_tail_validation_snapshot = restored_tail_snapshot
     dynamic_project._inertia_last_tail_validation_snapshot = dict(restored_tail_snapshot)
     if refresh_validation(project, codegen).semantic_failures():
+        if not restore_cfunc(current_cfunc):
+            raise RuntimeError(
+                "failed to restore the current C AST after rejecting an invalid rollback snapshot"
+            )
+        dynamic_codegen._inertia_tail_validation_snapshot = current_codegen_tail_snapshot
+        dynamic_project._inertia_last_tail_validation_snapshot = current_project_tail_snapshot
         return False
 
     logging.getLogger(__name__).warning(

@@ -53,7 +53,7 @@ def _dynamic_vex_attr_8616(obj: object | None, name: str, default: object | None
     try:
         # Dynamic third-party VEX/emulator boundary: symbolic objects do not expose an owned contract.
         return getattr(obj, name, default)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return default
 
 
@@ -281,12 +281,12 @@ def binary_operation(
     update_flags: _FlagUpdater8616,
     operator: _DynamicOperator8616,
 ) -> None:
-    """Apply a binary ALU operation and record its typed flag condition."""
-    lhs = get_lhs()
-    rhs = get_rhs()
-    set_result(operator(lhs, rhs))
+    """Emit flags from pre-write operands, then apply a binary ALU result."""
+    lhs, rhs = get_lhs(), get_rhs()
+    result = operator(lhs, rhs)
     update_flags(lhs, rhs)
     _record_last_condition_from_update_flags(emu, lhs, rhs, update_flags)
+    set_result(result)
 
 
 def binary_operation_with_carry(
@@ -298,17 +298,17 @@ def binary_operation_with_carry(
     operator: _DynamicOperator8616,
     width_bits: int,
 ) -> None:
-    """Apply a carry-aware ALU operation and record its typed flag condition."""
-    lhs = get_lhs()
-    rhs = get_rhs()
+    """Emit flags from pre-write operands, then apply a carry-aware result."""
+    lhs, rhs = get_lhs(), get_rhs()
     carry = emu.is_carry()
     if hasattr(carry, "cast_to"):
         carry = carry.cast_to(type_for_bits(width_bits))
     else:
         carry = emu.constant(int(bool(carry)), type_for_bits(width_bits))
-    set_result(operator(lhs, rhs, carry))
+    result = operator(lhs, rhs, carry)
     update_flags(lhs, rhs, carry)
     _record_last_condition_from_carry_update_flags(emu, lhs, rhs, carry, update_flags)
+    set_result(result)
 
 
 def compare_operation(
@@ -329,12 +329,12 @@ def unary_operation(
     update_flags: _FlagUpdater8616 | None,
     operator: _DynamicOperator8616,
 ) -> None:
-    """Apply a unary ALU operation and record the resulting flag condition."""
+    """Emit flags from the pre-write operand, then apply a unary result."""
     value = get_value()
-    set_result(operator(value))
     if update_flags is not None:
         update_flags(value)
         _record_last_condition_from_update_flags(None, value, 0, update_flags)
+    set_result(operator(value))
 
 
 def masked_shift_count(
@@ -386,11 +386,11 @@ def shift_left_operation(
     count: _SymbolicValue8616,
     width_bits: int,
 ) -> None:
-    """Apply an x86 logical left shift and update flags."""
+    """Update flags from the pre-write value, then apply a logical left shift."""
     value = get_value()
     shift = masked_shift_count(emu, count, width_bits)
-    set_result(value << shift)
     update_flags(value, shift)
+    set_result(value << shift)
 
 
 def shift_right_operation(
@@ -401,11 +401,11 @@ def shift_right_operation(
     count: _SymbolicValue8616,
     width_bits: int,
 ) -> None:
-    """Apply an x86 logical right shift and update flags."""
+    """Update flags from the pre-write value, then apply a logical right shift."""
     value = get_value()
     shift = masked_shift_count(emu, count, width_bits)
-    set_result(value >> shift)
     update_flags(value, shift)
+    set_result(value >> shift)
 
 
 def shift_right_arithmetic_operation(
@@ -416,11 +416,11 @@ def shift_right_arithmetic_operation(
     count: _SymbolicValue8616,
     width_bits: int,
 ) -> None:
-    """Apply an x86 arithmetic right shift and update flags."""
+    """Update flags from the pre-write value, then apply an arithmetic shift."""
     value = get_value()
     shift = masked_shift_count(emu, count, width_bits)
-    set_result(value.sar(shift))
     update_flags(value, shift)
+    set_result(value.sar(shift))
 
 
 def rotate_left_operation(
@@ -431,13 +431,13 @@ def rotate_left_operation(
     count: _SymbolicValue8616,
     width_bits: int,
 ) -> None:
-    """Apply an x86 rotate-left operation and update flags."""
+    """Update flags from the pre-write value, then apply a rotate-left result."""
     value = get_value()
     shift = rotate_count(emu, count, width_bits, width_bits)
     width = emu.constant(width_bits, type_for_bits(width_bits))
     mask = emu.constant((1 << width_bits) - 1, type_for_bits(width_bits))
+    update_flags(value, count)
     set_result(((value << shift) | (value >> (width - shift))) & mask)
-    update_flags(value, shift)
 
 
 def rotate_right_operation(
@@ -448,13 +448,13 @@ def rotate_right_operation(
     count: _SymbolicValue8616,
     width_bits: int,
 ) -> None:
-    """Apply an x86 rotate-right operation and update flags."""
+    """Update flags from the pre-write value, then apply a rotate-right result."""
     value = get_value()
     shift = rotate_count(emu, count, width_bits, width_bits)
     width = emu.constant(width_bits, type_for_bits(width_bits))
     mask = emu.constant((1 << width_bits) - 1, type_for_bits(width_bits))
+    update_flags(value, count)
     set_result(((value >> shift) | (value << (width - shift))) & mask)
-    update_flags(value, shift)
 
 
 def rotate_through_carry_left_state(

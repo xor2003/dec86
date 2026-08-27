@@ -32,6 +32,9 @@ from angr_platforms.X86_16.lowering.stack_memory_ssa import (
     StackMemorySSALoweringRefusalKind8616,
     lower_x86_16_stack_memory_ssa_alias_artifact,
 )
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+)
 from angr_platforms.X86_16.widening.stack_memory_objects import (
     build_x86_16_stack_memory_object_widening_artifact,
 )
@@ -76,6 +79,10 @@ class _Codegen:
     def next_idx(self, _name: str) -> int:
         self._index += 1
         return self._index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def test_one_branch_sp_change_refuses_join_stack_materialization() -> None:
@@ -207,5 +214,6 @@ def test_equal_offset_ds_and_ss_accesses_materialize_only_ss_owner() -> None:
         if isinstance(variable, SimStackVariable)
     ]
     assert [(variable.base, variable.offset, variable.size) for variable in stack_variables] == [
-        ("bp", -2, 2)
+        ("bp", -4, 2)
     ]
+    assert machine_bp_offset_for_stack_variable_8616(codegen, stack_variables[0]) == -2

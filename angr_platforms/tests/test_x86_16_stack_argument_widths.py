@@ -6,7 +6,16 @@ from angr.sim_type import SimTypeChar, SimTypeFunction, SimTypeLong, SimTypeShor
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.annotations import ANNOTATION_KEY
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
+from angr_platforms.X86_16.ir import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from angr_platforms.X86_16.lowering import stack_prototype_materialization as prototype_lowering
+from angr_platforms.X86_16.lowering.callee_argument_count_evidence import (
+    CalleeArgumentCountEvidence8616,
+    CalleeArgumentCountVerdict8616,
+)
+from angr_platforms.X86_16.lowering.callee_argument_width_evidence import (
+    CalleeArgumentWidthEvidence8616,
+    CalleeArgumentWidthVerdict8616,
+)
 from angr_platforms.X86_16.lowering.stack_prototype_materialization import (
     FunctionParameterWidthFact8616,
     materialize_annotated_stack_prototype_8616,
@@ -17,6 +26,7 @@ from angr_platforms.X86_16.widening.stack_argument_widths import (
     StackWordRegisterRole8616,
     WideStackArgumentWidthEvidence8616,
     analyze_wide_stack_argument_widths_8616,
+    project_logical_stack_argument_widths_8616,
 )
 
 
@@ -48,7 +58,7 @@ def _short_parameter_fixture() -> tuple[object, object, object]:
             functions=SimpleNamespace(function=lambda addr, create=False: function if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     wait_variable = SimStackVariable(4, 2, base="bp", name="wait", region=0x1000)
     wait = structured_c.CVariable(wait_variable, variable_type=short_type, codegen=c_codegen)
     cfunc = SimpleNamespace(
@@ -56,6 +66,73 @@ def _short_parameter_fixture() -> tuple[object, object, object]:
         arg_list=[wait],
         functy=prototype,
         unified_local_vars={},
+    )
+    codegen = SimpleNamespace(cfunc=cfunc, _inertia_callsite_summaries={})
+    return project, codegen, function
+
+
+def _closed_one_long_argument_evidence() -> CalleeArgumentWidthEvidence8616:
+    count_evidence = CalleeArgumentCountEvidence8616(
+        target_addr=0x1000,
+        verdict=CalleeArgumentCountVerdict8616.CONSISTENT,
+        argument_count=1,
+        raw_fact_count=1,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=1,
+    )
+    storage = IRAddress(
+        space=MemSpace.SS,
+        base=("bp",),
+        offset=4,
+        size=4,
+        status=AddressStatus.STABLE,
+        segment_origin=SegmentOrigin.DEFAULTED,
+    )
+    return CalleeArgumentWidthEvidence8616(
+        target_addr=0x1000,
+        verdict=CalleeArgumentWidthVerdict8616.CONSISTENT,
+        widths_by_offset=((4, 4),),
+        raw_fact_count=1,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=1,
+        argument_count=1,
+        argument_storage=(storage,),
+        count_evidence=count_evidence,
+    )
+
+
+def _surplus_long_parameter_fixture() -> tuple[object, object, object]:
+    arch = Arch86_16()
+    long_type = SimTypeLong(True).with_arch(arch)
+    prototype = SimTypeFunction(
+        [long_type, long_type],
+        SimTypeShort(False).with_arch(arch),
+        arg_names=("wait", "surplus"),
+    ).with_arch(arch)
+    function = SimpleNamespace(prototype=prototype, is_prototype_guessed=False)
+    project = SimpleNamespace(
+        arch=arch,
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(function=lambda addr, create=False: function if addr == 0x1000 else None)
+        ),
+    )
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
+    variables = (
+        SimStackVariable(4, 4, base="bp", name="wait", region=0x1000),
+        SimStackVariable(8, 4, base="bp", name="surplus", region=0x1000),
+    )
+    cvars = tuple(
+        structured_c.CVariable(variable, variable_type=long_type, codegen=c_codegen)
+        for variable in variables
+    )
+    cfunc = SimpleNamespace(
+        addr=0x1000,
+        arg_list=list(cvars),
+        functy=prototype,
+        unified_local_vars={},
+        variables_in_use=dict(zip(variables, cvars, strict=False)),
     )
     codegen = SimpleNamespace(cfunc=cfunc, _inertia_callsite_summaries={})
     return project, codegen, function
@@ -74,6 +151,7 @@ def test_carry_linked_adjacent_bp_words_prove_one_wide_parameter() -> None:
     assert evidence.raw_fact_count == 1
     assert evidence.normalized_fact_count == 1
     assert evidence.classified_offsets == (4,)
+    assert evidence.terminal_return_offsets == ()
     assert evidence.failure_count == 0
 
 
@@ -89,6 +167,7 @@ def test_terminal_dx_ax_stack_passthrough_proves_one_wide_parameter() -> None:
     )
 
     assert evidence.classified_offsets == (4,)
+    assert evidence.terminal_return_offsets == (4,)
     assert evidence.failure_count == 0
 
 
@@ -105,6 +184,7 @@ def test_terminal_dx_ax_stack_passthrough_refuses_later_low_word_write() -> None
     )
 
     assert evidence.classified_offsets == ()
+    assert evidence.terminal_return_offsets == ()
     assert evidence.failure_count == 1
 
 
@@ -175,6 +255,30 @@ def test_high_word_compare_refuses_mismatched_register_identity() -> None:
     assert evidence.failure_count == 1
 
 
+def test_wide_stack_projection_joins_two_word_pushes_into_one_logical_argument() -> None:
+    assert project_logical_stack_argument_widths_8616((2, 2), (4,)) == (4,)
+
+
+def test_wide_stack_projection_preserves_source_order_around_wide_argument() -> None:
+    assert project_logical_stack_argument_widths_8616((2, 2, 2), (6,)) == (2, 4)
+
+
+@pytest.mark.parametrize(
+    ("physical_widths", "wide_offsets"),
+    (
+        ((2,), (4,)),
+        ((4,), (6,)),
+        ((2, 2, 2), (4, 6)),
+        ((1, 1, 2), (4,)),
+    ),
+)
+def test_wide_stack_projection_refuses_incomplete_or_overlapping_proofs(
+    physical_widths: tuple[int, ...],
+    wide_offsets: tuple[int, ...],
+) -> None:
+    assert project_logical_stack_argument_widths_8616(physical_widths, wide_offsets) is None
+
+
 def test_parameter_lowering_materializes_proven_wide_body_argument(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -221,6 +325,65 @@ def test_parameter_lowering_refuses_conflicting_body_and_callsite_widths(
     assert codegen._inertia_stack_prototype_width_stats_8616.failure_count == 1
 
 
+def test_parameter_lowering_prunes_surplus_argument_from_closed_incoming_layout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, codegen, function = _surplus_long_parameter_fixture()
+    monkeypatch.setattr(
+        prototype_lowering,
+        "collect_callee_argument_width_evidence_8616",
+        lambda _project, _target: _closed_one_long_argument_evidence(),
+    )
+    monkeypatch.setattr(
+        prototype_lowering,
+        "collect_wide_stack_argument_width_evidence_8616",
+        lambda _project, _function: WideStackArgumentWidthEvidence8616(1, 1, (4,)),
+    )
+    monkeypatch.setattr(
+        prototype_lowering,
+        "collect_bp_stack_access_widths_from_instructions_8616",
+        lambda _project, _codegen: {4: 2, 6: 2},
+    )
+
+    changed = reconcile_exact_stack_argument_prototype_8616(project, codegen)
+
+    assert changed is True
+    assert len(codegen.cfunc.arg_list) == 1
+    assert len(codegen.cfunc.functy.args) == 1
+    assert len(function.prototype.args) == 1
+    assert codegen.cfunc.arg_list[0].variable.offset == 4
+    assert codegen._inertia_stack_prototype_width_stats_8616.failure_count == 0
+
+
+def test_parameter_lowering_refuses_to_prune_accessed_surplus_argument(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, codegen, function = _surplus_long_parameter_fixture()
+    monkeypatch.setattr(
+        prototype_lowering,
+        "collect_callee_argument_width_evidence_8616",
+        lambda _project, _target: _closed_one_long_argument_evidence(),
+    )
+    monkeypatch.setattr(
+        prototype_lowering,
+        "collect_wide_stack_argument_width_evidence_8616",
+        lambda _project, _function: WideStackArgumentWidthEvidence8616(1, 1, (4,)),
+    )
+    monkeypatch.setattr(
+        prototype_lowering,
+        "collect_bp_stack_access_widths_from_instructions_8616",
+        lambda _project, _codegen: {4: 2, 6: 2, 8: 2},
+    )
+
+    changed = reconcile_exact_stack_argument_prototype_8616(project, codegen)
+
+    assert changed is False
+    assert len(codegen.cfunc.arg_list) == 2
+    assert len(codegen.cfunc.functy.args) == 2
+    assert len(function.prototype.args) == 2
+    assert codegen._inertia_stack_prototype_width_stats_8616.failure_count == 1
+
+
 def test_annotated_slots_ignore_overlapping_high_byte_argument_type() -> None:
     arch = Arch86_16()
     unsigned_word = SimTypeShort(False).with_arch(arch)
@@ -242,7 +405,7 @@ def test_annotated_slots_ignore_overlapping_high_byte_argument_type() -> None:
             functions=SimpleNamespace(function=lambda addr, create=False: function if addr == 0x1000 else None)
         ),
     )
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     variables = (
         SimStackVariable(4, 2, base="bp", name="frequency", region=0x1000),
         SimStackVariable(5, 1, base="bp", name="arg_5", region=0x1000),
@@ -258,7 +421,7 @@ def test_annotated_slots_ignore_overlapping_high_byte_argument_type() -> None:
         arg_list=list(cvars),
         functy=stale_prototype,
         unified_local_vars={},
-        variables_in_use=dict(zip(variables, cvars)),
+        variables_in_use=dict(zip(variables, cvars, strict=False)),
     )
     codegen._inertia_callsite_summaries = {}
 
@@ -292,7 +455,7 @@ def test_annotated_slots_preserve_width_correct_prototype_signedness() -> None:
             functions=SimpleNamespace(function=lambda addr, create=False: function if addr == 0x1000 else None)
         ),
     )
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     variables = (
         SimStackVariable(4, 2, base="bp", name="left", region=0x1000),
         SimStackVariable(6, 2, base="bp", name="right", region=0x1000),
@@ -306,7 +469,7 @@ def test_annotated_slots_preserve_width_correct_prototype_signedness() -> None:
         arg_list=list(cvars),
         functy=prototype,
         unified_local_vars={},
-        variables_in_use=dict(zip(variables, cvars)),
+        variables_in_use=dict(zip(variables, cvars, strict=False)),
     )
 
     materialize_annotated_stack_prototype_8616(project, codegen)
@@ -334,7 +497,7 @@ def test_shifted_header_keeps_char_value_width_separate_from_word_slot_spacing()
             functions=SimpleNamespace(function=lambda addr, create=False: function if addr == 0x1000 else None)
         ),
     )
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     variables = (
         SimStackVariable(2, 1, base="bp", name="left", region=0x1000),
         SimStackVariable(4, 2, base="bp", name="right", region=0x1000),
@@ -348,7 +511,7 @@ def test_shifted_header_keeps_char_value_width_separate_from_word_slot_spacing()
         arg_list=list(cvars),
         functy=prototype,
         unified_local_vars={},
-        variables_in_use=dict(zip(variables, cvars)),
+        variables_in_use=dict(zip(variables, cvars, strict=False)),
     )
     codegen._inertia_callsite_summaries = {}
 

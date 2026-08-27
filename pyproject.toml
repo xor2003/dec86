@@ -7,27 +7,29 @@ name = "vextest-x86-16"
 version = "0.1"
 description = "angr-based 16-bit x86 real-mode decompiler workspace"
 readme = "angr_platforms/README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 dependencies = [
-    "angr==9.2.205",
-    "archinfo==9.2.205",
-    "cle==9.2.205",
-    "claripy==9.2.205",
-    "pyvex==9.2.205",
-    "capstone==5.0.6",
+    "angr==9.3.3",
+    "archinfo==9.3.3",
+    "cle==9.3.3",
+    "claripy==9.3.3",
+    "pyvex==9.3.3",
+    "capstone==5.0.9",
     "pycparser>=3,<4",
-    "textual==8.2.1",
+    "textual==8.2.8",
     "z3-solver==4.13.0.0",
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest>=9,<10",
+    "pytest-xdist>=3.8,<4",
     "keystone-engine==0.9.2",
     "monkeytype",
 ]
 dev = [
     "pytest>=9,<10",
+    "pytest-xdist>=3.8,<4",
     "keystone-engine==0.9.2",
     "monkeytype",
     "mypy",
@@ -37,11 +39,11 @@ dev = [
     "ruff",
     "pyright",
     "vulture",
-    "radon",
+    "lizard",
 ]
 mypyc = [
     "mypy",
-    "mypyc",
+    "setuptools",
 ]
 
 [project.scripts]
@@ -55,7 +57,7 @@ where = ["angr_platforms"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py314"
 extend-exclude = [
     ".venv",
     "angr_platforms/vextest_x86_16.egg-info",
@@ -72,6 +74,15 @@ select = [
     "E",
     "F",
     "I",
+    "PERF",
+    "B",
+    "C4",
+    "LOG",
+    "PIE",
+    "RSE",
+    "RUF",
+    "SIM",
+    "UP",
 ]
 ignore = [
     "E501",
@@ -113,7 +124,7 @@ convention = "google"
 "scripts/*.py" = ["D"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 files = [
     "angr_platforms/angr_platforms/X86_16",
     "inertia_decompiler",

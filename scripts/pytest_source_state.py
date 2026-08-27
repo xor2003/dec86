@@ -30,6 +30,7 @@ _IGNORED_DIRECTORY_NAMES: frozenset[str] = frozenset(
         "build",
         "dist",
         "node_modules",
+        "venv",
     }
 )
 _SOURCE_SUFFIXES: frozenset[str] = frozenset(

@@ -10,13 +10,13 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(_ROOT / "angr_platforms"))
 
-import decompile
+import decompile  # noqa: E402
 
 _COD_DIR = _ROOT / "cod"
 _DEC_OUTPUT_PATH = _ROOT / ".codex_automation/evidence_subset/cod/default/BYTEOPS.dec"
 
 
-def regenerate_byteops_dec():
+def regenerate_byteops_dec() -> bool:  # noqa: D103
     proc_path = _COD_DIR / "default" / "BYTEOPS.COD"
 
     # Extract the function from COD

@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 
 def merge_step_extra(*parts: str | None) -> str:

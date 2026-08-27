@@ -13,8 +13,9 @@ rendered C, source text, symbols, or variable names.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable, cast
+from typing import Any, cast
 
 from capstone import CS_GRP_CALL, CS_GRP_JUMP, CS_GRP_RET
 from capstone.x86_const import X86_OP_IMM

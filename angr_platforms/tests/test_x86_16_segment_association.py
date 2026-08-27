@@ -20,7 +20,7 @@ def _make_codegen():
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=archinfo.ArchX86()),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
 
 def _make_segmented_expr(stack_vars, *, seg_name="es", offset=0):

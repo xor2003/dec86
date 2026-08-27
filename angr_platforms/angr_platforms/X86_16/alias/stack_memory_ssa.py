@@ -16,6 +16,7 @@ from ..ir.core import IRAddress, IRInstr, IRRefusal, MemSpace
 from ..ir.ssa_function import SSAFunctionArtifact
 from ..ir.ssa_memory_contracts import SSAMemoryOverlap8616, SSAMemoryOverlapRelation8616
 from ..pipeline.errors import PipelineHardError
+from .logical_stack_memory_projection import project_logical_stack_memory_alias_8616
 from .stack_memory_access_projection import (
     alias_stack_memory_storage_8616,
     project_stack_memory_access_8616,
@@ -127,8 +128,10 @@ def _incomplete_upstream_artifact_8616(
         for overlap in function_ssa.memory_overlaps
     )
     refusals = access_refusals + phi_refusals + overlap_refusals
+    logical = project_logical_stack_memory_alias_8616(function_ssa, (), ())
     return StackMemorySSAAliasArtifact8616(
         function_addr=function_ssa.function_addr,
+        source_ssa=function_ssa,
         refusals=refusals,
         source_refusals=function_ssa.memory_refusals,
         call_effects=function_ssa.memory_call_effects,
@@ -137,6 +140,9 @@ def _incomplete_upstream_artifact_8616(
             failure_count=len(refusals),
         ),
         upstream_complete=False,
+        logical_accesses=logical.accesses,
+        logical_refusals=logical.refusals,
+        logical_stats=logical.stats,
     )
 
 
@@ -262,8 +268,14 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
         materialized_count=materialized_count,
         failure_count=len(refusals),
     )
+    logical = project_logical_stack_memory_alias_8616(
+        function_ssa,
+        tuple(facts),
+        tuple(composed_accesses),
+    )
     return StackMemorySSAAliasArtifact8616(
         function_addr=function_ssa.function_addr,
+        source_ssa=function_ssa,
         facts=tuple(facts),
         accesses=tuple(composed_accesses),
         overlaps=tuple(overlaps),
@@ -271,10 +283,13 @@ def build_x86_16_stack_memory_ssa_alias_artifact(
         source_refusals=function_ssa.memory_refusals,
         call_effects=function_ssa.memory_call_effects,
         stats=stats,
+        logical_accesses=logical.accesses,
+        logical_refusals=logical.refusals,
+        logical_stats=logical.stats,
     )
 
 
-def apply_x86_16_stack_memory_ssa_alias_artifact(project: object, codegen: object) -> bool:  # noqa: ARG001
+def apply_x86_16_stack_memory_ssa_alias_artifact(_project: object, codegen: object) -> bool:
     """Attach the Alias projection immediately after typed function SSA exists."""
     boundary = cast(_CodegenBoundary8616, codegen)
     try:
@@ -287,7 +302,13 @@ def apply_x86_16_stack_memory_ssa_alias_artifact(project: object, codegen: objec
         existing = boundary._inertia_stack_memory_ssa_alias_artifact
     except AttributeError:
         existing = None
-    if isinstance(existing, StackMemorySSAAliasArtifact8616) and existing.function_addr == function_ssa.function_addr:
+    if isinstance(existing, StackMemorySSAAliasArtifact8616) and existing.source_ssa is function_ssa:
+        if not existing.complete:
+            raise PipelineHardError(
+                "cached stack-memory SSA Alias evidence is incomplete",
+                layer="alias",
+                details=existing.to_dict(),
+            )
         return False
     artifact = build_x86_16_stack_memory_ssa_alias_artifact(function_ssa)
     if not artifact.complete:

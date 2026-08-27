@@ -11,14 +11,16 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Protocol, cast
 
+from ..calling_convention_compat import collect_wide_stack_argument_width_evidence_8616
 from ..callsite_summary import (
     CallsiteSummary8616,
     logical_argument_widths_from_callsite_8616,
 )
+from ..widening.stack_argument_widths import project_logical_stack_argument_widths_8616
 from .callee_callsite_census import (
     CalleeCallsiteFact8616,
     collect_callee_callsite_census_8616,
@@ -79,6 +81,26 @@ class _ProjectSurface8616(Protocol):
     _inertia_callee_argument_count_evidence_8616: dict[int, CalleeArgumentCountEvidence8616]
 
 
+class _FunctionManager8616(Protocol):
+    """Third-party angr function lookup used at the evidence boundary."""
+
+    def function(self, *, addr: int, create: bool) -> object | None:
+        """Return an existing function at one exact address."""
+        ...
+
+
+class _KnowledgeBase8616(Protocol):
+    """Third-party knowledge-base surface needed for callee lookup."""
+
+    functions: _FunctionManager8616
+
+
+class _EvidenceProject8616(Protocol):
+    """Third-party project surface needed for callee Widening evidence."""
+
+    kb: _KnowledgeBase8616
+
+
 def _logical_argument_count_8616(summary: CallsiteSummary8616) -> int | None:
     """Project one summary to logical arity without splitting wide values."""
     if summary.logical_arg_widths:
@@ -93,6 +115,61 @@ def _logical_argument_count_8616(summary: CallsiteSummary8616) -> int | None:
         expected_arg_count=summary.arg_count,
     )
     return len(widths) if widths is not None else None
+
+
+def _project_summary_through_callee_widening_8616(
+    fact: CalleeCallsiteFact8616,
+    wide_offsets_by_target: dict[tuple[int, int], tuple[int, ...] | None],
+) -> CalleeCallsiteFact8616:
+    """Attach logical widths when the callee proves a closed wide stack object."""
+    summary = fact.summary
+    if summary is None or summary.logical_arg_widths:
+        return fact
+    physical_widths = summary.arg_widths
+    if (
+        not physical_widths
+        or summary.arg_count != len(physical_widths)
+        or summary.stack_cleanup != sum(physical_widths)
+    ):
+        return fact
+    evidence_key = (id(fact.evidence_project), fact.evidence_target_addr)
+    if evidence_key not in wide_offsets_by_target:
+        try:
+            function = cast(_EvidenceProject8616, fact.evidence_project).kb.functions.function(
+                addr=fact.evidence_target_addr,
+                create=False,
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            function = None
+        if function is None:
+            wide_offsets_by_target[evidence_key] = None
+        else:
+            wide_evidence = collect_wide_stack_argument_width_evidence_8616(
+                fact.evidence_project,
+                function,
+            )
+            wide_offsets_by_target[evidence_key] = (
+                wide_evidence.classified_offsets
+                if wide_evidence.closes_classification
+                else None
+            )
+    wide_offsets = wide_offsets_by_target[evidence_key]
+    if wide_offsets is None:
+        return fact
+    logical_widths = project_logical_stack_argument_widths_8616(
+        physical_widths,
+        wide_offsets,
+    )
+    if logical_widths is None:
+        return fact
+    return replace(
+        fact,
+        summary=replace(
+            summary,
+            logical_arg_widths=logical_widths,
+            logical_arg_classes=(),
+        ),
+    )
 
 
 def _evidence_cache_8616(project: object) -> dict[int, CalleeArgumentCountEvidence8616]:
@@ -119,9 +196,17 @@ def collect_callee_argument_count_evidence_8616(
         return cached
 
     census = collect_callee_callsite_census_8616(project, target_addr)
+    wide_offsets_by_target: dict[tuple[int, int], tuple[int, ...] | None] = {}
+    facts = tuple(
+        _project_summary_through_callee_widening_8616(
+            fact,
+            wide_offsets_by_target,
+        )
+        for fact in census.facts
+    )
     counts: dict[tuple[int, int], int] = {}
     summaries: list[CallsiteSummary8616] = []
-    for fact in census.facts:
+    for fact in facts:
         summary = fact.summary
         if summary is None:
             continue
@@ -150,9 +235,9 @@ def collect_callee_argument_count_evidence_8616(
         classified_fact_count=len(counts),
         materialized_count=len(counts),
         failure_count=unclassified_count + int(verdict is CalleeArgumentCountVerdict8616.CONFLICT),
-        callsite_addrs=tuple(fact.callsite_addr for fact in census.facts),
+        callsite_addrs=tuple(fact.callsite_addr for fact in facts),
         callsite_summaries=tuple(summaries),
-        callsite_facts=census.facts,
+        callsite_facts=facts,
     )
     if os.environ.get("INERTIA_DEBUG_CALLEE_ARITY") == "1":
         _LOGGER.warning(

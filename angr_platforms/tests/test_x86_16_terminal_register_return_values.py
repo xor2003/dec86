@@ -27,6 +27,10 @@ class _Codegen(SimpleNamespace):
         index = self._indices.get(kind, 0)
         self._indices[kind] = index + 1
         return index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 class _FunctionManager:
@@ -157,6 +161,35 @@ def test_terminal_ax_value_refuses_structured_control_flow(monkeypatch) -> None:
     assert result.status is TerminalRegisterReturnValueStatus8616.REFUSED
     assert result.refusal is TerminalRegisterReturnValueRefusal8616.NONLINEAR_AX_DEFINITION
     assert return_node.retval is None
+
+
+def test_terminal_ax_value_accepts_linear_suffix_after_structured_control_flow(monkeypatch) -> None:
+    project, codegen, assignment, return_node = _fixture()
+    condition = structured_c.CConstant(
+        1,
+        SimTypeShort(signed=True),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements.statements.insert(
+        0,
+        structured_c.CIfElse(
+            condition,
+            structured_c.CStatements([], codegen=codegen),
+            None,
+            codegen=codegen,
+        ),
+    )
+    monkeypatch.setattr(
+        terminal_register_return_values,
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
+    )
+
+    result = materialize_terminal_register_return_value_8616(project, codegen)
+
+    assert result.status is TerminalRegisterReturnValueStatus8616.MATERIALIZED
+    assert isinstance(return_node.retval, structured_c.CBinaryOp)
+    assert return_node.retval is not assignment.rhs
 
 
 def test_terminal_ax_value_allows_proven_segmented_frame_read(monkeypatch) -> None:
@@ -349,3 +382,21 @@ def test_terminal_ax_value_preserves_existing_resolved_return(monkeypatch) -> No
     assert result.status is TerminalRegisterReturnValueStatus8616.REFUSED
     assert result.refusal is TerminalRegisterReturnValueRefusal8616.INCOMPLETE_TERMINAL_SHAPE
     assert return_node.retval is assignment.rhs
+
+
+def test_terminal_ax_value_uncollapses_existing_resolved_return(monkeypatch) -> None:
+    project, codegen, assignment, return_node = _fixture()
+    return_node.retval = assignment.rhs
+    assignment.rhs.collapsed = True
+    monkeypatch.setattr(
+        terminal_register_return_values,
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
+    )
+
+    result = materialize_terminal_register_return_value_8616(project, codegen)
+
+    assert result.status is TerminalRegisterReturnValueStatus8616.MATERIALIZED
+    assert isinstance(return_node.retval, structured_c.CBinaryOp)
+    assert return_node.retval is not assignment.rhs
+    assert return_node.retval.collapsed is False

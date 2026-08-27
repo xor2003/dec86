@@ -11,7 +11,7 @@ Dynamic boundary: project and codegen are third-party angr plugin objects.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, TypeAlias, cast
+from typing import Any, cast
 
 from ..widening.segmented_load_widening import apply_segmented_load_widening_8616
 from .dos_interrupt_aggregate_globals import materialize_dos_interrupt_aggregate_globals_8616
@@ -23,8 +23,8 @@ from .segmented_global_loads import (
 )
 from .segmented_memory_lowering import apply_runtime_segment_lowering_8616
 
-ProjectBoundary8616: TypeAlias = Any
-CodegenBoundary8616: TypeAlias = Any
+type ProjectBoundary8616 = Any
+type CodegenBoundary8616 = Any
 
 __all__ = [
     "SegmentGlobalMaterializationResult8616",
@@ -95,10 +95,6 @@ def run_segment_global_materialization_8616(
     include_runtime_segment: bool = False,
 ) -> SegmentGlobalMaterializationResult8616:
     """Run proven segment/global materializers in Types/Lowering-owned order."""
-    target = str(getattr(project, "_inertia_c_target", "portable-flat") or "portable-flat")
-    runtime_segment_changed = (
-        bool(apply_runtime_segment_lowering_8616(codegen, target=target)) if include_runtime_segment else False
-    )
     named_global_changed = bool(
         materialize_named_segmented_global_loads_8616(
             project,
@@ -130,6 +126,10 @@ def run_segment_global_materialization_8616(
         materialize_dos_interrupt_aggregate_globals_8616(codegen)
     )
     segmented_load_widening_changed = bool(apply_segmented_load_widening_8616(codegen))
+    target = str(getattr(project, "_inertia_c_target", "portable-flat") or "portable-flat")
+    runtime_segment_changed = (
+        bool(apply_runtime_segment_lowering_8616(codegen, target=target)) if include_runtime_segment else False
+    )
     result = SegmentGlobalMaterializationResult8616(
         runtime_segment_changed=runtime_segment_changed,
         segmented_load_widening_changed=segmented_load_widening_changed,

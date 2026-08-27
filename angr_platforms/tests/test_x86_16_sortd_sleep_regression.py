@@ -54,16 +54,19 @@ def test_sortd_sleep_preserves_both_wide_clock_calls_sidecar_free(
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
-    function_start = max(
-        result.stdout.rfind("void sub_10f38("),
-        result.stdout.rfind("unsigned short sub_10f38("),
-    )
+    signature = re.search(r"void sub_10f38\(([^()]*)\)", result.stdout)
+    assert signature is not None, result.stdout
+    parameters = tuple(parameter.strip() for parameter in signature.group(1).split(",") if parameter.strip())
+    assert len(parameters) == 1, signature.group(0)
+    assert "long" in parameters[0]
+    function_start = result.stdout.rfind(signature.group(0))
     assert function_start >= 0
     body = result.stdout[function_start:]
     assert body.count("sub_1137e()") == 2
     assert "local_4 = sub_1137e() +" in body
     assert re.search(r"if \((?:\(long\))?sub_1137e\(\) > local_4\)", body)
     assert "sub_137e" not in combined
+    assert "local_6" not in body
     assert "vvar_" not in body
     assert "stack_base" not in body
     assert "flags" not in body

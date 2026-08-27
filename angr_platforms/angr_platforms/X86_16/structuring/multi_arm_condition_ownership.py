@@ -10,10 +10,10 @@ Do not perform alias-state ownership, widening, type/materialization recovery, r
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import itertools
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
 
 from angr.analyses.decompiler.structured_codegen.c import CExpression
 
@@ -126,7 +126,7 @@ def select_multi_arm_condition_owners_8616(
                 MultiArmConditionOwnershipStatus8616.CFG_EDGE_MISMATCH,
                 detail=f"block={block_addr:#x}",
             )
-    for current, following in zip(selected, selected[1:], strict=False):
+    for current, following in itertools.pairwise(selected):
         if current.fallthrough_target != following.block_addr:
             return _refuse_8616(
                 MultiArmConditionOwnershipStatus8616.DISCONNECTED_FALLTHROUGH,

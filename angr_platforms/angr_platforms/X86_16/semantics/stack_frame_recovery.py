@@ -26,8 +26,8 @@ Rule:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from ..ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from ..pipeline.errors import PipelineHardError
@@ -185,12 +185,11 @@ def _looks_like_frame_evidence(obj: object) -> bool:
                         return True
 
             # mov bp, sp
-            elif mnem_str == "mov":
-                if len(operands) >= 2:
-                    dst_reg = _dynamic_angr_attr_8616(operands[0], "reg")
-                    src_reg = _dynamic_angr_attr_8616(operands[1], "reg")
-                    if isinstance(dst_reg, int) and dst_reg == 6 and isinstance(src_reg, int) and src_reg == 47:
-                        return True
+            elif mnem_str == "mov" and len(operands) >= 2:
+                dst_reg = _dynamic_angr_attr_8616(operands[0], "reg")
+                src_reg = _dynamic_angr_attr_8616(operands[1], "reg")
+                if isinstance(dst_reg, int) and dst_reg == 6 and isinstance(src_reg, int) and src_reg == 47:
+                    return True
 
             return False
 
@@ -247,7 +246,7 @@ def _vex_irsb_has_bp_frame(irsb: object) -> bool:
                     # PUT(BP) = GET(SP)  →  mov bp, sp
                     if _is_reg_get(data, sp_off):
                         has_mov_bp_sp = True
-                elif put_off == sp_off and data is not None:
+                elif put_off == sp_off and data is not None:  # noqa: SIM102
                     # PUT(SP) = SUB(GET(SP), 2)  →  sub sp, 2 (push)
                     if _is_sub_constant(data, 2):
                         has_push_bp = True
@@ -298,7 +297,7 @@ def _gather_ir_artifacts_from_function_blocks(project: object | None, function_a
         return []
     artifacts: list[object] = []
     for blk in _tuple_dynamic_attr_8616(func, "blocks"):
-        artifacts.append(blk)
+        artifacts.append(blk)  # noqa: PERF402
     return artifacts
 
 
@@ -481,7 +480,7 @@ def compute_bp_offset(addr: IRAddress, frame: StackFrameInfo8616) -> int | None:
     if _is_sp_stable(addr):
         return addr.offset
 
-    if frame.uses_bp_frame and frame.bp_established:
+    if frame.uses_bp_frame and frame.bp_established:  # noqa: SIM102
         if addr.base in {("ss",), ("sp",), ()} and addr.status == AddressStatus.STABLE:
             return addr.offset
 
@@ -556,16 +555,16 @@ def assert_no_unresolved_stable_ss_before_alias_8616(
 
 __all__ = [
     "StackFrameInfo8616",
-    "detect_stack_frame_8616",
-    "compute_bp_offset",
-    "normalize_stack_address_8616",
-    "normalize_semantic_accesses_8616",
-    "assert_no_unresolved_stable_ss_before_alias_8616",
-    "_count_ss_accesses",
+    "_count_bp_stable",
     "_count_sp_provisional",
     "_count_sp_stable",
-    "_count_bp_stable",
-    "_gather_ir_artifacts_from_function_blocks",
+    "_count_ss_accesses",
     "_detect_sp_proven_delta_from_blocks",
+    "_gather_ir_artifacts_from_function_blocks",
     "_looks_like_frame_evidence",
+    "assert_no_unresolved_stable_ss_before_alias_8616",
+    "compute_bp_offset",
+    "detect_stack_frame_8616",
+    "normalize_semantic_accesses_8616",
+    "normalize_stack_address_8616",
 ]

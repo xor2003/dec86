@@ -24,9 +24,10 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, Iterator, cast
+from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimStackVariable
@@ -37,6 +38,7 @@ from ..lowering.real_mode_linear import (
     DirectStackMoveFact8616,
     DirectStackMoveSourceKind8616,
 )
+from ..lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 from ..pipeline.errors import PipelineHardError
 from .condition_replay import (
     StructuringConditionReplayFact8616,
@@ -296,7 +298,7 @@ def _statement_lists_8616(root: object) -> tuple[list[Any], ...]:
     return tuple(result)
 
 
-def _stack_variable_offset_8616(node: object) -> int | None:
+def _stack_variable_offset_8616(codegen: object, node: object) -> int | None:
     """Return the canonical BP-relative offset of one typed C variable."""
     while isinstance(node, structured_c.CTypeCast):
         node = node.expr
@@ -305,26 +307,27 @@ def _stack_variable_offset_8616(node: object) -> int | None:
     variable = node.variable
     if not isinstance(variable, SimStackVariable) or variable.base != "bp":
         return None
-    offset = variable.offset
+    offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
     if not isinstance(offset, int):
         return None
     return offset - 0x10000 if offset >= 0x8000 else offset
 
 
-def _indexed_stack_offsets_8616(node: object) -> tuple[int, int] | None:
+def _indexed_stack_offsets_8616(codegen: object, node: object) -> tuple[int, int] | None:
     """Return the base and index BP offsets of one typed indexed stack access."""
     while isinstance(node, structured_c.CTypeCast):
         node = node.expr
     if not isinstance(node, structured_c.CIndexedVariable):
         return None
-    base_offset = _stack_variable_offset_8616(node.variable)
-    index_offset = _stack_variable_offset_8616(node.index)
+    base_offset = _stack_variable_offset_8616(codegen, node.variable)
+    index_offset = _stack_variable_offset_8616(codegen, node.index)
     if not isinstance(base_offset, int) or not isinstance(index_offset, int):
         return None
     return base_offset, index_offset
 
 
 def _assignment_destination_matches_stack_move_fact_8616(
+    codegen: object,
     assignment: object,
     move_fact: DirectStackMoveFact8616,
 ) -> bool:
@@ -332,14 +335,15 @@ def _assignment_destination_matches_stack_move_fact_8616(
     if not isinstance(assignment, structured_c.CAssignment):
         return False
     if isinstance(move_fact.dst_index_stack_offset, int):
-        return _indexed_stack_offsets_8616(assignment.lhs) == (
+        return _indexed_stack_offsets_8616(codegen, assignment.lhs) == (
             move_fact.dst_offset,
             move_fact.dst_index_stack_offset,
         )
-    return bool(_stack_variable_offset_8616(assignment.lhs) == move_fact.dst_offset)
+    return bool(_stack_variable_offset_8616(codegen, assignment.lhs) == move_fact.dst_offset)
 
 
 def _assignment_matches_stack_move_fact_8616(
+    codegen: object,
     assignment: object,
     fact: DirectStackMoveBranchFact8616,
     move_fact: DirectStackMoveFact8616,
@@ -349,6 +353,7 @@ def _assignment_matches_stack_move_fact_8616(
         not isinstance(assignment, structured_c.CAssignment)
         or fact.move_ins_addr != move_fact.ins_addr
         or not _assignment_destination_matches_stack_move_fact_8616(
+            codegen,
             assignment,
             move_fact,
         )
@@ -356,13 +361,13 @@ def _assignment_matches_stack_move_fact_8616(
         return False
     if move_fact.source_kind is DirectStackMoveSourceKind8616.STACK_SLOT:
         return isinstance(move_fact.source_offset, int) and (
-            _stack_variable_offset_8616(assignment.rhs) == move_fact.source_offset
+            _stack_variable_offset_8616(codegen, assignment.rhs) == move_fact.source_offset
         )
     if move_fact.source_kind is DirectStackMoveSourceKind8616.STACK_AGGREGATE_ELEMENT:
         return (
             isinstance(move_fact.source_aggregate_base_offset, int)
             and isinstance(move_fact.source_index_offset, int)
-            and _indexed_stack_offsets_8616(assignment.rhs)
+            and _indexed_stack_offsets_8616(codegen, assignment.rhs)
             == (
                 move_fact.source_aggregate_base_offset,
                 move_fact.source_index_offset,
@@ -488,6 +493,13 @@ def _condition_branch_site_8616(
         (id(candidate.statements), candidate.start_index): candidate
         for candidate in candidates
     }
+    if os.environ.get("INERTIA_DEBUG_STACK_NOISE") and len(unique) != 1:
+        log.warning(
+            "[direct-stack-move-branch-site] condition=%#x candidates=%d replays=%r",
+            fact.condition_ins_addr,
+            len(unique),
+            replay_facts,
+        )
     return next(iter(unique.values())) if len(unique) == 1 else None
 
 
@@ -681,6 +693,7 @@ def materialize_direct_stack_move_branch_ownership_8616(
                 (assignment := _transparent_assignment_8616(statement))
                 is not None
                 and _assignment_destination_matches_stack_move_fact_8616(
+                    codegen,
                     assignment,
                     move_fact,
                 )
@@ -692,6 +705,7 @@ def materialize_direct_stack_move_branch_ownership_8616(
             for node in _tree_nodes_8616(root)
             if (assignment := _transparent_assignment_8616(node)) is not None
             and _assignment_destination_matches_stack_move_fact_8616(
+                codegen,
                 assignment,
                 move_fact,
             )
@@ -711,6 +725,7 @@ def materialize_direct_stack_move_branch_ownership_8616(
                     (assignment := _transparent_assignment_8616(statement))
                     is not None
                     and _assignment_matches_stack_move_fact_8616(
+                        codegen,
                         assignment,
                         fact,
                         move_fact,

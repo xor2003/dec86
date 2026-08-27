@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import json
 from urllib.request import Request, urlopen
@@ -8,7 +8,7 @@ from meta_harness.orchestrator import MetaHarness
 from meta_harness.webui import HarnessWebUI, _usage_summary
 
 
-def _make_cfg(monkeypatch, tmp_path):
+def _make_cfg(monkeypatch, tmp_path):  # noqa: ANN001, ANN202
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("WEB_UI_PORT", "0")
     monkeypatch.setenv("WEB_UI_AUTO_OPEN", "0")
@@ -17,7 +17,7 @@ def _make_cfg(monkeypatch, tmp_path):
     return cfg, llm_cfg
 
 
-def test_web_ui_serves_state_and_accepts_comments(monkeypatch, tmp_path):
+def test_web_ui_serves_state_and_accepts_comments(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, _llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.status_file.parent.mkdir(parents=True, exist_ok=True)
     cfg.log_dir.mkdir(parents=True, exist_ok=True)
@@ -253,7 +253,7 @@ def test_web_ui_serves_state_and_accepts_comments(monkeypatch, tmp_path):
         ui.stop()
 
 
-def test_web_ui_console_endpoint_tracks_last_log_updates(monkeypatch, tmp_path):
+def test_web_ui_console_endpoint_tracks_last_log_updates(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, _llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.status_file.parent.mkdir(parents=True, exist_ok=True)
     cfg.last_log_file.write_text("first line\n", encoding="utf-8")
@@ -274,7 +274,7 @@ def test_web_ui_console_endpoint_tracks_last_log_updates(monkeypatch, tmp_path):
         ui.stop()
 
 
-def test_usage_summary_parses_codex_tokens_used(tmp_path):
+def test_usage_summary_parses_codex_tokens_used(tmp_path) -> None:  # noqa: ANN001, D103
     log_dir = tmp_path / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     (log_dir / "20260404_000000_worker.log").write_text(
@@ -286,7 +286,7 @@ def test_usage_summary_parses_codex_tokens_used(tmp_path):
     assert usage["total_tokens"] == 141689
 
 
-def test_web_ui_root_embeds_bootstrap_state(monkeypatch, tmp_path):
+def test_web_ui_root_embeds_bootstrap_state(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, _llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.status_file.parent.mkdir(parents=True, exist_ok=True)
     cfg.status_file.write_text("step=planner\nstatus=running\nupdated_at=2026-04-04T00:00:00+00:00\n", encoding="utf-8")
@@ -338,7 +338,7 @@ def test_web_ui_root_embeds_bootstrap_state(monkeypatch, tmp_path):
         ui.stop()
 
 
-def test_web_ui_root_escapes_script_breakers(monkeypatch, tmp_path):
+def test_web_ui_root_escapes_script_breakers(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, _llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.status_file.parent.mkdir(parents=True, exist_ok=True)
     cfg.status_file.write_text("step=planner\nstatus=running\nupdated_at=2026-04-04T00:00:00+00:00\n", encoding="utf-8")

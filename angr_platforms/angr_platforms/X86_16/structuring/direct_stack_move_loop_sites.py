@@ -7,8 +7,7 @@ Owns CFG shape, loops, switches, and structured condition lowering from proven
 IR/semantic evidence.
 Do not perform alias-state ownership, widening, type/materialization recovery,
 rewrite cleanup, postprocess, or CLI/reporting work here.
-This module changes control-flow placement only; it does not infer storage, values,
-types, signatures, or call semantics.
+This module changes placement only; it never infers storage, types, or semantics.
 """
 
 from __future__ import annotations
@@ -20,6 +19,9 @@ from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimStackVariable
 
 from ..lowering.real_mode_linear import DirectStackMoveFact8616
+from ..lowering.stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+)
 from .direct_stack_move_loop_evidence import (
     DirectStackMoveLoopEntryEdge8616,
     boundary_tuple_8616,
@@ -81,15 +83,17 @@ def _tree_tag_addresses_8616(root: object) -> frozenset[int]:
     return frozenset(addresses)
 
 
-def _stack_offset_8616(expression: object) -> int | None:
-    """Return an explicit BP-stack offset from a structured variable."""
+def _stack_offset_8616(codegen: object, expression: object) -> int | None:
+    """Return the registry-proven machine-BP offset for one C variable."""
     if not isinstance(expression, structured_c.CVariable):
         return None
     variable = expression.variable
-    return variable.offset if isinstance(variable, SimStackVariable) else None
+    if isinstance(variable, SimStackVariable):
+        return machine_bp_offset_for_stack_variable_8616(codegen, variable)
+    return None
 
 
-def _tree_reads_stack_offset_8616(root: object, offset: int) -> bool:
+def _tree_reads_stack_offset_8616(codegen: object, root: object, offset: int) -> bool:
     """Return whether a structured subtree reads one exact stack slot."""
     seen: set[int] = set()
     stack = [root]
@@ -104,12 +108,17 @@ def _tree_reads_stack_offset_8616(root: object, offset: int) -> bool:
         if isinstance(node, structured_c.CAssignment):
             stack.append(node.rhs)
             continue
-        if _stack_offset_8616(node) == offset:
+        if _stack_offset_8616(codegen, node) == offset:
             return True
-        for attr in ("lhs", "rhs", "expr", "operand", "operands", "condition"):
+        for attr in (
+            "lhs", "rhs", "expr", "operand", "operands",
+            "condition", "body", "else_node", "statements",
+        ):
             child = _ast_field_8616(node, attr)
             if child is not None:
                 stack.append(child)
+        for pair in boundary_tuple_8616(_ast_field_8616(node, "condition_and_nodes") or ()):
+            stack.extend(boundary_tuple_8616(pair))
     return False
 
 
@@ -167,6 +176,7 @@ def _same_unique_binary_block_8616(
 
 def loop_entry_sites_8616(
     project: object,
+    codegen: object,
     root: object,
     edge: DirectStackMoveLoopEntryEdge8616,
     dst_offset: int,
@@ -229,7 +239,7 @@ def loop_entry_sites_8616(
                     (
                         isinstance(node, structured_c.CDoWhileLoop)
                         and jump_owns_posttest_condition
-                        and _tree_reads_stack_offset_8616(condition, dst_offset)
+                        and _tree_reads_stack_offset_8616(codegen, condition, dst_offset)
                     )
                     or (
                         isinstance(node, structured_c.CWhileLoop)
@@ -260,6 +270,7 @@ def loop_entry_sites_8616(
 
 def tagged_assignment_locations_8616(
     project: object,
+    codegen: object,
     root: object,
     move_fact: DirectStackMoveFact8616,
 ) -> tuple[DirectStackMoveAssignmentLocation8616, ...]:
@@ -270,7 +281,7 @@ def tagged_assignment_locations_8616(
         for index, statement in enumerate(tuple(statements)):
             if not isinstance(statement, structured_c.CAssignment):
                 continue
-            if _stack_offset_8616(statement.lhs) != move_fact.dst_offset:
+            if _stack_offset_8616(codegen, statement.lhs) != move_fact.dst_offset:
                 continue
             if _tree_tag_addresses_8616(statement) & candidates:
                 locations.append(
@@ -281,6 +292,7 @@ def tagged_assignment_locations_8616(
 
 def _ordered_insertion_index_8616(
     project: object,
+    codegen: object,
     statements: list[Any],
     move_addr: int,
     dst_offset: int,
@@ -305,13 +317,14 @@ def _ordered_insertion_index_8616(
     prior_read_indexes = tuple(
         index
         for index, statement in enumerate(statements[:tagged_index])
-        if _tree_reads_stack_offset_8616(statement, dst_offset)
+        if _tree_reads_stack_offset_8616(codegen, statement, dst_offset)
     )
     return min((tagged_index, *prior_read_indexes))
 
 
 def place_assignment_8616(
     project: object,
+    codegen: object,
     site: DirectStackMoveLoopEntrySite8616,
     move_fact: DirectStackMoveFact8616,
     assignment: structured_c.CAssignment,
@@ -322,6 +335,7 @@ def place_assignment_8616(
     ordered_target = [statement for statement in target if statement is not assignment]
     insertion_index = _ordered_insertion_index_8616(
         project,
+        codegen,
         ordered_target,
         move_fact.ins_addr,
         move_fact.dst_offset,

@@ -14,7 +14,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from ..callsite_summary import CallsiteReturnUseKind8616, CallsiteSummary8616
+from ..caller_return_use_contracts import CallsiteReturnUseKind8616
+from ..callsite_summary import CallsiteSummary8616
 
 __all__ = [
     "CallReturnStackStoreEvidence8616",
@@ -34,6 +35,7 @@ class CallReturnStackStoreEvidence8616:
     dst_offset: int
     width: int
     source_register_name: str
+    store_ins_addr: int | None
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,7 @@ def classify_call_return_stack_store_8616(
         dst_offset=destination[1],
         width=width,
         source_register_name=source_register,
+        store_ins_addr=summary.return_store_instruction_addr,
     )
 
 

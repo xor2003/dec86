@@ -35,11 +35,11 @@ __all__ = [
 
 class _ConditionExpr(Protocol):
     @property
-    def signed(self) -> "_ConditionExpr":
+    def signed(self) -> _ConditionExpr:
         """Return the signed comparison view for a pyvex-like expression."""
         ...
 
-    def __and__(self, _other: object) -> "_ConditionExpr":
+    def __and__(self, _other: object) -> _ConditionExpr:
         """Return a bitwise conjunction expression."""
         ...
 
@@ -181,7 +181,7 @@ def _direct_jcc_condition_from_last_condition_8616(
         if len(args) != len(condition.args):
             return None
         op = str(condition.op)
-        if condition.expr and condition.expr[0] in {"update_eflags_inc", "update_eflags_dec"}:
+        if condition.expr and condition.expr[0] in {"update_eflags_inc", "update_eflags_dec"}:  # noqa: SIM102
             if kind not in JCC_EQ_MNEMONICS_8616 | JCC_NE_MNEMONICS_8616:
                 return None
         if op in {

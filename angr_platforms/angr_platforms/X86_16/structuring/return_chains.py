@@ -12,6 +12,7 @@ out of legacy postprocess code.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import typing
@@ -43,6 +44,8 @@ from angr.sim_type import SimTypeLong, SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 
 from ..callsite_summary import CallerReturnUseVerdict8616
+from ..frontend_function_instructions import FunctionInstructionInventory8616
+from ..lowering.terminal_call_return_types import CalleeResultContract8616 as TerminalCallResultContract8616
 from ..lowering.terminal_return_expressions import (
     return_expression_has_wide_word_composition_8616 as return_expression_has_wide_word_composition_8616,
 )
@@ -71,8 +74,21 @@ from ..semantics.terminal_call_paths import (
 )
 from .expression_substitution import unique_tagged_conditions_8616
 from .multi_arm_return_chains import multi_arm_wide_return_obligation_count_8616
+from .selector_return_projection import (
+    assess_selector_return_projection_8616,
+    require_selector_return_projection_8616,
+)
+from .surplus_guard_contracts import (
+    SurplusGuardCleanupEvidence8616 as SurplusGuardCleanupEvidence8616,
+)
+from .surplus_guard_contracts import (
+    SurplusGuardCleanupStats8616 as SurplusGuardCleanupStats8616,
+)
 from .terminal_register_values import (
     compose_ax_byte_lanes_8616 as compose_ax_byte_lanes_8616,
+)
+from .terminal_register_values import (
+    terminal_ax_value_supports_widths_8616,
 )
 
 
@@ -336,6 +352,7 @@ class DuplicateEmptyReturnGuardPrunePlan8616:
 class ReturnChainFlattenCallbacks8616:
     """Dynamic adapters needed to compare and rebuild angr C AST return chains."""
 
+    set_cfunc_statements_root: Callable[[_ReturnChainCodegen8616, CStatements], None]
     final_return_value: Callable[[object, object], int | None]
     expr_fingerprint: Callable[[object, object], str]
     iter_c_nodes_deep: Callable[[object], Iterable[object]]
@@ -375,10 +392,8 @@ def condition_identity_keys_8616(
         tags = None
     if isinstance(tags, tuple) and len(tags) == 2 and all(isinstance(item, int) for item in tags):
         keys.add(("tags", tags))
-    try:
+    with contextlib.suppress(Exception):
         keys.add(("fp", callbacks.expr_fingerprint(cond, project)))
-    except Exception:
-        pass
     return frozenset(keys)
 
 
@@ -424,10 +439,8 @@ def call_argument_fingerprints_8616(
     """Return fingerprints for direct call arguments from a dynamic boundary: angr codegen C AST calls."""
     fingerprints: set[str] = set()
     for arg in tuple(getattr(call, "args", ()) or ()):
-        try:
+        with contextlib.suppress(Exception):
             fingerprints.add(callbacks.expr_fingerprint(arg, project))
-        except Exception:
-            pass
     return frozenset(fingerprints)
 
 
@@ -440,10 +453,8 @@ def call_argument_component_fingerprints_8616(
     fingerprints: set[str] = set(call_argument_fingerprints_8616(project, call, callbacks))
     for arg in tuple(getattr(call, "args", ()) or ()):
         for node in (arg, *callbacks.iter_c_nodes_deep(arg)):
-            try:
+            with contextlib.suppress(Exception):
                 fingerprints.add(callbacks.expr_fingerprint(node, project))
-            except Exception:
-                pass
     return frozenset(fingerprints)
 
 
@@ -455,10 +466,8 @@ def node_component_fingerprints_8616(
     """Return fingerprints for a C AST node and its nested components."""
     fingerprints: set[str] = set()
     for item in (node, *callbacks.iter_c_nodes_deep(node)):
-        try:
+        with contextlib.suppress(Exception):
             fingerprints.add(callbacks.expr_fingerprint(item, project))
-        except Exception:
-            pass
     return frozenset(fingerprints)
 
 
@@ -711,6 +720,7 @@ class SelectorStackExprCallbacks8616:
 class SequentialDecrementSwitchCallbacks8616:
     """Dynamic adapters for sequential decrement-switch return materialization."""
 
+    set_cfunc_statements_root: Callable[[_ReturnChainCodegen8616, CStatements], None]
     selector_stack_expr: Callable[[object, _ReturnChainCodegen8616], CExpression | None]
     selector_function_has_unsafe_effects: Callable[[object, _ReturnChainCodegen8616], bool]
     selector_raw_stack_aliases: Callable[[object, CExpression], dict[str, tuple[str, ...]]]
@@ -727,6 +737,7 @@ class SequentialDecrementSwitchCallbacks8616:
 class ComplexDecrementSwitchCallbacks8616:
     """Dynamic adapters for complex decrement-switch return materialization."""
 
+    set_cfunc_statements_root: Callable[[_ReturnChainCodegen8616, CStatements], None]
     selector_stack_expr: Callable[[object, _ReturnChainCodegen8616], CExpression | None]
     selector_function_has_unsafe_effects: Callable[[object, _ReturnChainCodegen8616], bool]
     selector_raw_stack_aliases: Callable[[object, CExpression], dict[str, tuple[str, ...]]]
@@ -743,7 +754,10 @@ class ComplexDecrementSwitchCallbacks8616:
 class SelectorUnsafeEffectsCallbacks8616:
     """Dynamic adapters for selector-return unsafe instruction-effect scans."""
 
-    function_insns: Callable[[object, _ReturnChainCodegen8616], Iterable[object]]
+    function_inventory: Callable[
+        [object, _ReturnChainCodegen8616],
+        FunctionInstructionInventory8616,
+    ]
     direct_call_target: Callable[[object], int | None]
     callee_name_for_target: Callable[[object, int], tuple[str | None, object | None]]
     target_is_stack_probe_helper: Callable[[object, int | None, str | None], bool]
@@ -842,6 +856,7 @@ class TerminalCallResultReturnStatus8616(Enum):
     AMBIGUOUS_AST_CANDIDATE = "ambiguous_ast_candidate"
     CALL_TAG_MISSING = "call_tag_missing"
     CALLEE_RETURNS_VOID = "callee_returns_void"
+    CALLEE_RESULT_CONTRACT_UNKNOWN = "callee_result_contract_unknown"
     CALLER_USE_PROVEN_UNUSED = "caller_use_proven_unused"
     CALLER_USE_NOT_PROVEN = "caller_use_not_proven"
     CALL_BLOCK_MISSING_OR_AMBIGUOUS = "call_block_missing_or_ambiguous"
@@ -849,14 +864,6 @@ class TerminalCallResultReturnStatus8616(Enum):
     CFG_PATH_AMBIGUOUS = "cfg_path_ambiguous"
     UNSAFE_POST_CALL_EFFECT = "unsafe_post_call_effect"
     RETURN_NOT_REACHED = "return_not_reached"
-
-
-class TerminalCallResultContract8616(Enum):
-    """Typed value contract for one structured terminal call."""
-
-    VALUE = "value"
-    VOID = "void"
-    UNKNOWN = "unknown"
 
 
 def _unknown_terminal_call_result_contract_8616(
@@ -1217,10 +1224,8 @@ def materialize_terminal_call_result_return_8616(
             materialized_count=0,
             failure_count=1,
         )
-    if (
-        callbacks.call_result_contract(candidate.call)
-        is TerminalCallResultContract8616.VOID
-    ):
+    call_result_contract = callbacks.call_result_contract(candidate.call)
+    if call_result_contract is TerminalCallResultContract8616.VOID:
         return TerminalCallResultReturnStats8616(
             status=TerminalCallResultReturnStatus8616.CALLEE_RETURNS_VOID,
             raw_fact_count=1,
@@ -1238,6 +1243,16 @@ def materialize_terminal_call_result_return_8616(
             classified_fact_count=0,
             materialized_count=0,
             failure_count=0,
+            call_ins_addr=call_ins_addr,
+        )
+    if call_result_contract is not TerminalCallResultContract8616.VALUE:
+        return TerminalCallResultReturnStats8616(
+            status=TerminalCallResultReturnStatus8616.CALLEE_RESULT_CONTRACT_UNKNOWN,
+            raw_fact_count=1,
+            normalized_fact_count=1,
+            classified_fact_count=0,
+            materialized_count=0,
+            failure_count=1,
             call_ins_addr=call_ins_addr,
         )
     if (
@@ -1929,9 +1944,8 @@ def combine_dx_ax_return_expr_8616(
 
 
 def terminal_ax_fallback_supports_widths_8616(return_widths: Iterable[int | None]) -> bool:
-    """Return whether AX alone satisfies every owned return-width projection."""
-    widths = tuple(return_widths)
-    return bool(widths) and all(isinstance(bits, int) and 0 < bits <= 16 for bits in widths)
+    """Preserve the compatibility name for the Structuring value-width contract."""
+    return bool(terminal_ax_value_supports_widths_8616(return_widths))
 
 
 def branch_target_return_expr_8616(
@@ -2309,7 +2323,7 @@ def materialize_sequential_decrement_switch_return_chain_8616(
             if all_ax_registers:
                 chain.append(insn)
                 continue
-        if mnemonic == "dec" and len(operands) == 1:
+        if mnemonic == "dec" and len(operands) == 1:  # noqa: SIM102
             if int(getattr(operands[0], "type", -1)) == 1 and _return_chain_reg_name_8616(insn, operands[0]) == "ax":
                 chain.append(insn)
     if len(chain) < 2:
@@ -2351,6 +2365,7 @@ def materialize_sequential_decrement_switch_return_chain_8616(
         return False
 
     statements: list[CStatement] = []
+    condition_fingerprints: list[str] = []
     for case_value, expr in enumerate(case_exprs):
         if expr is None:
             return False
@@ -2360,6 +2375,7 @@ def materialize_sequential_decrement_switch_return_chain_8616(
             CConstant(int(case_value), SimTypeShort(False), codegen=codegen),
             codegen=codegen,
         )
+        condition_fingerprints.append(callbacks.expr_fingerprint(cond, project))
         statements.append(
             CIfElse(
                 [
@@ -2377,11 +2393,12 @@ def materialize_sequential_decrement_switch_return_chain_8616(
             )
         )
     statements.append(CReturn(callbacks.clone_c_value(default_expr), codegen=codegen))
-    codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
+    callbacks.set_cfunc_statements_root(codegen, CStatements(statements=statements, codegen=codegen))
     codegen._inertia_decrement_switch_return_materialized_8616 = True
     codegen._inertia_sequential_decrement_switch_return_materialized_8616 = True
     codegen._inertia_return_expr_chain_materialized_8616 = True
     codegen._inertia_return_selector_materialized_8616 = True
+    codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(condition_fingerprints)
     codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(
         callbacks.expr_fingerprint(expr, project) for expr in (*case_exprs, default_expr)
     )
@@ -2418,7 +2435,7 @@ def materialize_complex_decrement_switch_return_chain_8616(
             if all_ax_registers:
                 chain.append(insn)
                 continue
-        if mnemonic == "dec" and len(operands) == 1:
+        if mnemonic == "dec" and len(operands) == 1:  # noqa: SIM102
             if int(getattr(operands[0], "type", -1)) == 1 and _return_chain_reg_name_8616(insn, operands[0]) == "ax":
                 chain.append(insn)
     if len(chain) < 4:
@@ -2515,13 +2532,17 @@ def materialize_complex_decrement_switch_return_chain_8616(
         for cond, expr in ordered
     ]
     statements.append(CReturn(callbacks.clone_c_value(expr_default), codegen=codegen))
-    codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
+    callbacks.set_cfunc_statements_root(codegen, CStatements(statements=statements, codegen=codegen))
     codegen._inertia_decrement_switch_return_materialized_8616 = True
     codegen._inertia_return_expr_chain_materialized_8616 = True
     codegen._inertia_return_selector_materialized_8616 = True
-    codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(
-        callbacks.expr_fingerprint(expr, project) for _cond, expr in ordered
-    ) + (callbacks.expr_fingerprint(expr_default, project),)
+    codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(
+        callbacks.expr_fingerprint(cond, project) for cond, _expr in ordered
+    )
+    codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = (
+        *tuple(callbacks.expr_fingerprint(expr, project) for _cond, expr in ordered),
+        callbacks.expr_fingerprint(expr_default, project),
+    )
     codegen._inertia_return_selector_raw_stack_slot_aliases_8616 = callbacks.selector_raw_stack_aliases(
         project, selector
     )
@@ -2536,9 +2557,12 @@ def selector_function_has_unsafe_effects_8616(
     allowed_call_addrs: frozenset[int] = frozenset(),
 ) -> bool:
     """Return side-effect risk from a dynamic boundary: third-party Capstone instructions."""
+    inventory = callbacks.function_inventory(project, codegen)
+    if not inventory.complete:
+        return True
     previous_insn: object | None = None
     seen_branch = False
-    for insn in callbacks.function_insns(project, codegen):
+    for insn in inventory.instructions:
         # Dynamic third-party capstone boundary: instructions expose mnemonic/operands/address/size.
         mnemonic = str(getattr(insn, "mnemonic", "")).lower()
         raw_operands = getattr(insn, "operands", ())
@@ -2596,7 +2620,7 @@ def selector_function_has_unsafe_effects_8616(
         }
         if mnemonic in memory_write_mnemonics and operands and int(getattr(operands[0], "type", -1)) == 3:
             return True
-        if mnemonic.startswith("stos") or mnemonic.startswith("movs"):
+        if mnemonic.startswith(("stos", "movs")):
             return True
         previous_insn = insn
     return False
@@ -2609,8 +2633,22 @@ def materialize_cfg_selector_return_branches_8616(
 ) -> bool:
     """Materialize selector returns into a dynamic boundary: angr codegen C AST."""
     ensure_return_chain_codegen_state_8616(codegen)
-    if codegen._inertia_return_selector_materialized_8616:
+    projection_before = assess_selector_return_projection_8616(codegen, project, callbacks.expr_fingerprint)
+    if projection_before.active and projection_before.accepted:
         return False
+    repairing_stale_projection = projection_before.active
+
+    def _refuse(reason: str) -> bool:
+        """Refuse initial discovery, but hard-fail a classified stale projection."""
+        if repairing_stale_projection:
+            require_selector_return_projection_8616(
+                codegen,
+                project,
+                callbacks.expr_fingerprint,
+                context=f"selector-return-replay:{reason}",
+            )
+        return False
+
     debug = os.environ.get("INERTIA_DEBUG_RETURN_BRANCH")
     log = logging.getLogger(__name__)
     stats = codegen._inertia_cfg_selector_return_stats_8616
@@ -2629,9 +2667,15 @@ def materialize_cfg_selector_return_branches_8616(
                 multi_arm_obligations,
                 stats,
             )
-        return False
+        return _refuse("multi-arm-obligation")
     if callbacks.materialize_decrement_switch_return_chain(project, codegen):
         stats["materialized"] += 1
+        require_selector_return_projection_8616(
+            codegen,
+            project,
+            callbacks.expr_fingerprint,
+            context="selector-return-replay:decrement-switch",
+        )
         return True
     pairs = callbacks.ordered_32bit_selector_return_expr_pairs(project, codegen)
     pair_source = "32bit"
@@ -2642,12 +2686,12 @@ def materialize_cfg_selector_return_branches_8616(
     if debug:
         log.warning("[cfg-selector-return] candidates=%d source=%s stats=%r", len(pairs), pair_source, stats)
     if not pairs:
-        return False
+        return _refuse("missing-pairs")
     if len(pairs) > 1:
         fingerprints = [callbacks.expr_fingerprint(cond, project) for cond, _true_expr, _false_expr in pairs]
         if len(set(fingerprints)) != len(fingerprints):
             stats["refused"] += len(pairs)
-            return False
+            return _refuse("duplicate-conditions")
     allowed_call_addrs = callbacks.selector_condition_call_addrs(
         pairs
     ) | callbacks.selector_condition_call_addrs_from_cfg(project, codegen)
@@ -2659,7 +2703,7 @@ def materialize_cfg_selector_return_branches_8616(
                 stats,
                 tuple(sorted(allowed_call_addrs)),
             )
-        return False
+        return _refuse("unsafe-effects")
     statements: list[object] = []
     return_fingerprints: list[str] = []
     for cond, true_expr, false_expr in pairs:
@@ -2693,13 +2737,13 @@ def materialize_cfg_selector_return_branches_8616(
     codegen._inertia_return_expr_chain_materialized_8616 = True
     codegen._inertia_return_selector_materialized_8616 = True
     condition_fingerprints = tuple(callbacks.expr_fingerprint(cond, project) for cond, _true_expr, _false_expr in pairs)
-    previous_condition_fingerprints = codegen._inertia_return_chain_materialized_condition_fingerprints_8616
-    previous_return_fingerprints = codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616
-    codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(
-        dict.fromkeys((*previous_condition_fingerprints, *condition_fingerprints))
-    )
-    codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(
-        dict.fromkeys((*previous_return_fingerprints, *return_fingerprints))
+    codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = condition_fingerprints
+    codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 = tuple(return_fingerprints)
+    require_selector_return_projection_8616(
+        codegen,
+        project,
+        callbacks.expr_fingerprint,
+        context="selector-return-replay:cfg-pairs",
     )
     if debug:
         debug_cfunc = codegen.cfunc
@@ -2827,7 +2871,7 @@ def single_if_return_8616(stmt: object) -> tuple[object, object] | None:
     cond_nodes = stmt.condition_and_nodes or ()
     if len(cond_nodes) != 1:
         return None
-    cond_body = tuple(cond_nodes)[0]
+    cond_body = next(iter(cond_nodes))
     if len(cond_body) != 2:
         return None
     cond, body = cond_body
@@ -2874,7 +2918,7 @@ def duplicate_empty_return_guard_prune_plan_8616(
     if not expected_values or len(indexed_statements) <= len(expected_values):
         return None
 
-    for index in range(0, len(indexed_statements) - 1):
+    for index in range(len(indexed_statements) - 1):
         previous = callbacks.single_if_return(indexed_statements[index])
         following = callbacks.single_if_return(indexed_statements[index + 1])
         if previous is None or following is None:
@@ -2898,7 +2942,7 @@ def duplicate_empty_return_guard_prune_plan_8616(
         )
 
     chain_index: int | None = None
-    for index in range(0, len(indexed_statements) - len(expected_values) + 1):
+    for index in range(len(indexed_statements) - len(expected_values) + 1):
         matched = True
         for offset, expected_value in enumerate(expected_values):
             item = callbacks.single_if_return(indexed_statements[index + offset])
@@ -2966,7 +3010,7 @@ def root_matches_flattened_return_chain_8616(
     statements = list(getattr(root, "statements", ()) or ())
     if len(statements) != len(cond_return_pairs) + 1:
         return False
-    for stmt, (cond, value) in zip(statements[:-1], cond_return_pairs):
+    for stmt, (cond, value) in zip(statements[:-1], cond_return_pairs, strict=False):
         existing = callbacks.single_if_return(stmt)
         if existing is None:
             return False
@@ -3006,7 +3050,7 @@ def flatten_conditional_return_chain_8616(
         )
         statements.append(CIfElse([(cast(CExpression, cond), body)], else_node=None, cstyle_ifs=True, codegen=codegen))
     statements.append(CReturn(CConstant(int(final_value), SimTypeShort(False), codegen=codegen), codegen=codegen))
-    codegen.cfunc.statements = CStatements(statements=statements, codegen=codegen)
+    callbacks.set_cfunc_statements_root(codegen, CStatements(statements=statements, codegen=codegen))
     materialized_ifs = sum(
         1 for node in callbacks.iter_c_nodes_deep(codegen.cfunc.statements) if isinstance(node, CIfElse)
     )
@@ -3206,7 +3250,7 @@ def surplus_empty_guard_condition_8616(
     cond_nodes = stmt.condition_and_nodes or ()
     if len(cond_nodes) != 1:
         return None
-    cond_body = tuple(cond_nodes)[0]
+    cond_body = next(iter(cond_nodes))
     if len(cond_body) != 2:
         return None
     cond, body = cond_body
@@ -3230,7 +3274,7 @@ def identical_assignment_arm_condition_8616(
     cond_nodes = stmt.condition_and_nodes or ()
     if len(cond_nodes) != 1:
         return None
-    cond_body = tuple(cond_nodes)[0]
+    cond_body = next(iter(cond_nodes))
     if len(cond_body) != 2:
         return None
     cond, body = cond_body
@@ -3449,7 +3493,7 @@ def materialize_cfg_conditional_return_suffix_8616(
         )
         rebuilt.append(CIfElse([(cast(CExpression, cond), body)], else_node=None, cstyle_ifs=True, codegen=codegen))
     rebuilt.append(CReturn(CConstant(int(final_value), SimTypeShort(False), codegen=codegen), codegen=codegen))
-    codegen.cfunc.statements = CStatements(statements=rebuilt, codegen=codegen)
+    callbacks.set_cfunc_statements_root(codegen, CStatements(statements=rebuilt, codegen=codegen))
     codegen._inertia_return_chain_suffix_materialized_8616 = True
     codegen._inertia_return_chain_materialized_values_8616 = tuple(int(value) for _cond, value in cond_return_pairs)
     codegen._inertia_return_chain_materialized_condition_fingerprints_8616 = tuple(
@@ -3600,7 +3644,7 @@ def materialize_empty_if_return_branches_8616(
                 assignment_fps = []
                 for child in child_items:
                     if isinstance(child, CAssignment):
-                        assignment_fps.append(
+                        assignment_fps.append(  # noqa: PERF401
                             (
                                 callbacks.expr_fingerprint(child.lhs, project),
                                 callbacks.expr_fingerprint(child.rhs, project),
@@ -3680,7 +3724,7 @@ def materialize_empty_if_return_branches_8616(
             cfg_expr_pairs = callbacks.ordered_return_expr_pairs(project, codegen)
             if len(cfg_expr_pairs) >= len(empty_if_nodes):
                 rebuilt_statements: list[CIfElse] = []
-                for node, (cond, true_expr, false_expr) in zip(empty_if_nodes, cfg_expr_pairs):
+                for node, (cond, true_expr, false_expr) in zip(empty_if_nodes, cfg_expr_pairs, strict=False):
                     true_body = CStatements(statements=[CReturn(true_expr, codegen=codegen)], codegen=codegen)
                     false_body = CStatements(statements=[CReturn(false_expr, codegen=codegen)], codegen=codegen)
                     _set_if_true_body_compat_8616(node, cond, true_body)

@@ -30,7 +30,7 @@ class _CodegenBoundary8616(Protocol):
 
 
 def apply_x86_16_indexed_address_evidence_8616(
-    project: object,  # noqa: ARG001
+    project: object,
     codegen: object,
 ) -> bool:
     """Publish closed indexed-address evidence after function SSA exists."""

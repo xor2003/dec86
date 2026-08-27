@@ -83,7 +83,11 @@ def materialize_direct_stack_move_loop_tail_ownership_8616(
         if fact.ins_addr in branch_owned:
             refused_branch_owner_count += 1
             continue
-        locations = tagged_assignment_locations_8616(project, root, fact) if root is not None else ()
+        locations = (
+            tagged_assignment_locations_8616(project, codegen, root, fact)
+            if root is not None
+            else ()
+        )
         if len(locations) != 1:
             failure_count += int(len(locations) > 1)
             continue
@@ -101,7 +105,7 @@ def materialize_direct_stack_move_loop_tail_ownership_8616(
             continue
         classified_count += 1
         materialized_count += 1
-        relocated = tagged_assignment_locations_8616(project, root, fact)
+        relocated = tagged_assignment_locations_8616(project, codegen, root, fact)
         moved = bool(
             len(relocated) == 1
             and (

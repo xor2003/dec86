@@ -19,7 +19,7 @@ import os
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 
@@ -90,7 +90,7 @@ def _metadata_provenance_keys_8616(value: object) -> tuple[tuple[str, int, int],
             and isinstance(item[1], int)
             and isinstance(item[2], int)
         ):
-            result.append((item[0], item[1], item[2]))
+            result.append((item[0], item[1], item[2]))  # noqa: PERF401
     return tuple(result)
 
 
@@ -125,7 +125,7 @@ def _c_ifelse_pairs_8616(
             and isinstance(pair[0], structured_c.CExpression)
             and (pair[1] is None or isinstance(pair[1], structured_c.CStatement))
         ):
-            result.append((pair[0], pair[1]))
+            result.append((pair[0], pair[1]))  # noqa: PERF401
     return tuple(result)
 
 
@@ -137,7 +137,7 @@ def _c_switch_cases_8616(node: object) -> tuple[tuple[object, object], ...]:
     result: list[tuple[object, object]] = []
     for case in cases:
         if isinstance(case, tuple) and len(case) == 2:
-            result.append((case[0], case[1]))
+            result.append((case[0], case[1]))  # noqa: PERF401
     return tuple(result)
 
 
@@ -161,11 +161,11 @@ class LoopCodegenInfo:
     """Information for rendering a loop region as C code."""
 
     loop_type: str  # "while", "do_while", "for"
-    condition_expr: Optional[str]  # Condition to evaluate
-    init_stmt: Optional[str]  # Initialization (for loops)
-    increment_stmt: Optional[str]  # Increment (for loops)
+    condition_expr: str | None  # Condition to evaluate
+    init_stmt: str | None  # Initialization (for loops)
+    increment_stmt: str | None  # Increment (for loops)
     body_regions: list[Region]  # Regions in loop body
-    exit_label: Optional[str]  # Label for break target (if needed)
+    exit_label: str | None  # Label for break target (if needed)
     uses_goto: bool  # True if fallback gotos needed
     structuring_variables: tuple[str, ...]  # Explicit abnormal loop selectors
 
@@ -174,9 +174,9 @@ class LoopCodegenInfo:
 class SwitchCodegenInfo:
     """Information for rendering a switch region as C code."""
 
-    switch_expr: Optional[str]  # Expression being switched on
+    switch_expr: str | None  # Expression being switched on
     case_targets: dict[str, Region]  # Constant->Region mapping
-    default_target: Optional[Region]  # Default case target
+    default_target: Region | None  # Default case target
     uses_fallthrough: bool  # True if case fallthrough
     uses_goto: bool  # True if complex gotos needed
 
@@ -309,7 +309,7 @@ class StructuringCodegenPass:
 
         code = f"switch ({switch_info.switch_expr or 'value'}) {{\n"
 
-        for case_label, case_region in switch_info.case_targets.items():
+        for case_label in switch_info.case_targets:
             code += f"  case {case_label}:\n"
             code += "    // case body\n"
             if switch_info.uses_fallthrough:
@@ -1189,7 +1189,7 @@ def _populate_region_statements_from_cfunc_8616(graph: RegionGraph, codegen: obj
     regions: list[Region] = list(graph.nodes)
     for switch_region in _typed_edge_switch_regions_8616(graph):
         for case_region in _metadata_regions_8616(switch_region.metadata.get("switch_candidates")):
-            regions.append(case_region)
+            regions.append(case_region)  # noqa: PERF402
         default_region = switch_region.metadata.get("switch_default_target")
         if isinstance(default_region, Region):
             regions.append(default_region)

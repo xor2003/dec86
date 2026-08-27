@@ -18,10 +18,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Iterator
 
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -37,14 +37,14 @@ DECOMPILE_SCRIPT: Path = REPO_ROOT / "decompile.py"
 _ARTIFACT_RE = re.compile(r"^(?P<address>[0-9a-fA-F]{8})-(?P<name>.+)\.c$")
 
 
-class DecompileMode(str, Enum):
+class DecompileMode(StrEnum):
     """Execution mode for a decompile run."""
 
     DEFAULT = "default"
     PURE_PYTHON = "pure_python"
 
 
-class ValidationStatus(str, Enum):
+class ValidationStatus(StrEnum):
     """Typed validation result for a run."""
 
     PASSED = "passed"
@@ -511,10 +511,7 @@ def main(argv: list[str] | None = None) -> int:
 
         speed_delta = candidate.wall_seconds - baseline.wall_seconds
         speed_ratio = candidate.wall_seconds / baseline.wall_seconds if baseline.wall_seconds > 0 else float("inf")
-        if speed_ratio > 0 and speed_ratio != float("inf"):
-            speedup = 1.0 / speed_ratio
-        else:
-            speedup = float("nan")
+        speedup = 1.0 / speed_ratio if speed_ratio > 0 and speed_ratio != float("inf") else float("nan")
         print(
             f"[metrics] wall_seconds baseline={baseline.wall_seconds:.3f} candidate={candidate.wall_seconds:.3f} "
             f"delta={speed_delta:+.3f} speedup_x={speedup:.3f}"

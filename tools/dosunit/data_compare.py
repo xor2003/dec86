@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,7 +8,7 @@ from tools.dosunit.model import DosUnitError, normalize_hex, parse_int, stable_i
 
 
 @dataclass(frozen=True)
-class LoadedMzImage:
+class LoadedMzImage:  # noqa: D101
     memory: bytes
     image_size: int
     load_base_para: int
@@ -16,7 +16,7 @@ class LoadedMzImage:
 
 
 @dataclass(frozen=True)
-class DataRange:
+class DataRange:  # noqa: D101
     oracle_segment: str
     candidate_segment: str
     start: int
@@ -24,7 +24,7 @@ class DataRange:
 
 
 @dataclass(frozen=True)
-class CodePointerNormalization:
+class CodePointerNormalization:  # noqa: D101
     oracle_segment: str
     oracle_offset: int
     candidate_segment: str
@@ -32,7 +32,7 @@ class CodePointerNormalization:
     symbol: str
 
 
-def compare_loaded_data_images(
+def compare_loaded_data_images(  # noqa: D103
     *,
     oracle_exe: Path,
     candidate_exe: Path,
@@ -97,7 +97,7 @@ def compare_loaded_data_images(
     return document
 
 
-def load_mz_image(path: Path, *, load_base_para: int = 0, min_size: int = 0) -> LoadedMzImage:
+def load_mz_image(path: Path, *, load_base_para: int = 0, min_size: int = 0) -> LoadedMzImage:  # noqa: D103
     data = path.read_bytes()
     if len(data) < 0x1C or data[:2] not in {b"MZ", b"ZM"}:
         raise DosUnitError(f"data comparison currently requires a DOS MZ .exe: {path}")
@@ -184,7 +184,7 @@ def _split_optional_mapping(spec: str, *, field: str) -> tuple[str, str]:
         if not left or not right:
             raise DosUnitError(f"{field} mapping is incomplete: {spec}")
         return left, right
-    segment, body = _split_segment_body(spec, field=field)
+    segment, _body = _split_segment_body(spec, field=field)
     return segment, spec
 
 

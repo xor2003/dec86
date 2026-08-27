@@ -39,12 +39,12 @@ class WideningCandidate:
     view: _StorageView
     expr: object
 
-    def is_joinable_with(self, other: "WideningCandidate") -> bool:
+    def is_joinable_with(self, other: WideningCandidate) -> bool:
         """Return whether this candidate's domain and view can join another."""
         return bool(self.domain.can_join(other.domain) and self.view.can_join(other.view))
 
     @classmethod
-    def from_expr(cls, expr: object) -> "WideningCandidate":
+    def from_expr(cls, expr: object) -> WideningCandidate:
         """Build a candidate from an expression with concrete alias storage."""
         domain = _storage_domain_for_expr(expr)
         if domain.view is None:
@@ -197,40 +197,39 @@ def prove_adjacent_storage_slices(
             return WideningProof(
                 False, "view_mismatch", low_facts, high_facts, left_version=low_version, right_version=high_version
             )
-        if alias_state is not None:
-            if (
-                low_facts.identity is not None
-                and high_facts.identity is not None
-                and low_facts.identity[0] == "register"
-                and high_facts.identity[0] == "register"
-            ):
-                if register_pair is None:
-                    return WideningProof(
-                        False,
-                        "register_pair_mismatch",
-                        low_facts,
-                        high_facts,
-                        left_version=low_version,
-                        right_version=high_version,
-                    )
-                if low_version is None or high_version is None:
-                    return WideningProof(
-                        False,
-                        "missing_version_evidence",
-                        low_facts,
-                        high_facts,
-                        left_version=low_version,
-                        right_version=high_version,
-                    )
-                if low_version != high_version:
-                    return WideningProof(
-                        False,
-                        "version_mismatch",
-                        low_facts,
-                        high_facts,
-                        left_version=low_version,
-                        right_version=high_version,
-                    )
+        if alias_state is not None and (
+            low_facts.identity is not None
+            and high_facts.identity is not None
+            and low_facts.identity[0] == "register"
+            and high_facts.identity[0] == "register"
+        ):
+            if register_pair is None:
+                return WideningProof(
+                    False,
+                    "register_pair_mismatch",
+                    low_facts,
+                    high_facts,
+                    left_version=low_version,
+                    right_version=high_version,
+                )
+            if low_version is None or high_version is None:
+                return WideningProof(
+                    False,
+                    "missing_version_evidence",
+                    low_facts,
+                    high_facts,
+                    left_version=low_version,
+                    right_version=high_version,
+                )
+            if low_version != high_version:
+                return WideningProof(
+                    False,
+                    "version_mismatch",
+                    low_facts,
+                    high_facts,
+                    left_version=low_version,
+                    right_version=high_version,
+                )
 
         merged_domain = _merge_storage_domains(_storage_domain_for_expr(low_expr), _storage_domain_for_expr(high_expr))
         return WideningProof(
@@ -312,7 +311,7 @@ def describe_widening_candidates(exprs: Iterable[object]) -> tuple[dict[str, obj
     """Return deterministic descriptions of joinable widening candidates."""
     descriptions: list[dict[str, object]] = []
     for candidate in collect_widening_candidates(exprs):
-        descriptions.append(
+        descriptions.append(  # noqa: PERF401
             {
                 "domain": str(candidate.domain),
                 "view": {
@@ -377,9 +376,7 @@ def can_join_adjacent_storage_slices(
             return False
         if low_storage_candidate.domain.is_mixed() or high_storage_candidate.domain.is_mixed():
             return False
-        if not low_storage_candidate.is_joinable_with(high_storage_candidate):
-            return False
-        return True
+        return low_storage_candidate.is_joinable_with(high_storage_candidate)
 
     return _impl()
 
@@ -395,16 +392,16 @@ def merge_storage_slice_domains(
 
 
 __all__ = [
+    "WIDENING_PIPELINE",
     "RegisterWideningCandidate",
-    "_StorageDomainSignature",
-    "can_join_adjacent_register_slices",
     "StorageJoinAnalysis",
     "StorageSubviewProof",
     "WideningCandidate",
     "WideningPipelineSpec",
     "WideningProof",
-    "WIDENING_PIPELINE",
+    "_StorageDomainSignature",
     "analyze_adjacent_storage_slices",
+    "can_join_adjacent_register_slices",
     "can_join_adjacent_storage_slices",
     "collect_widening_candidates",
     "describe_widening_candidates",

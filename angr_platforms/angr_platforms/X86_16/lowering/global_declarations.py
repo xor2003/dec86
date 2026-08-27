@@ -110,7 +110,7 @@ def initialize_global_declaration_specs_8616(codegen: object) -> None:
     """Initialize the owned declaration metadata contract on an angr codegen."""
     typed_codegen = cast(GlobalDeclarationCodegen8616, codegen)
     try:
-        typed_codegen._inertia_global_declaration_specs_8616
+        typed_codegen._inertia_global_declaration_specs_8616  # noqa: B018
     except AttributeError:
         typed_codegen._inertia_global_declaration_specs_8616 = ()
 

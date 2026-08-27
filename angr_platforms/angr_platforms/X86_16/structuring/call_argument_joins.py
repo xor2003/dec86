@@ -17,14 +17,9 @@ from enum import StrEnum
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
-    CAssignment,
     CConstant,
     CExpression,
     CFunctionCall,
-    CIfElse,
-    CStatements,
-    CTypeCast,
-    CVariable,
 )
 from angr.sim_type import SimTypeShort
 
@@ -36,9 +31,17 @@ from ..callsite_summary import (
     structured_callsite_addr_8616,
 )
 from ..pipeline.errors import PipelineHardError
+from .call_argument_branch_carriers import (
+    branch_dominates_call_8616,
+    unique_branch_carrier_8616,
+)
 from .call_argument_join_conditions import (
     conditional_call_argument_join_expression_8616,
     exact_call_argument_immediate_8616,
+)
+from .call_argument_path_joins import (
+    CallArgumentPathJoinDecision8616,
+    materialize_call_argument_path_join_8616,
 )
 
 __all__ = [
@@ -96,16 +99,6 @@ class _NormalizedJoin8616:
     immediate_values: tuple[int, ...]
 
 
-def _constant_value_8616(expression: object) -> int | None:
-    """Return an exact integer C constant after transparent typed casts."""
-    while isinstance(expression, CTypeCast):
-        expression = expression.expr
-    if not isinstance(expression, CConstant):
-        return None
-    value = expression.value
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
 def _normalize_join_8616(summary: CallsiteSummary8616) -> _NormalizedJoin8616 | None:
     """Validate that one summary completely describes a binary register join."""
     merge = summary.predecessor_stack_merge
@@ -146,103 +139,6 @@ def _normalize_join_8616(summary: CallsiteSummary8616) -> _NormalizedJoin8616 | 
     ):
         return None
     return _NormalizedJoin8616(join, join_lane, immediate_values)
-
-
-def _assignments_of_value_8616(node: object, value: int) -> tuple[CAssignment, ...]:
-    """Collect exact constant assignments in one already structured arm."""
-    return tuple(
-        candidate
-        for candidate in _iter_c_nodes_deep_8616(node)
-        if isinstance(candidate, CAssignment) and _constant_value_8616(candidate.rhs) == value
-    )
-
-
-def _branch_carrier_8616(branch: CIfElse, values: tuple[int, int]) -> CVariable | None:
-    """Return the unique lvalue assigned the two incoming values by both arms."""
-    arms = tuple(node for _condition, node in branch.condition_and_nodes if node is not None)
-    if branch.else_node is not None:
-        arms += (branch.else_node,)
-    if len(arms) < 2:
-        return None
-    assignments_by_value = tuple(
-        tuple(
-            (arm_index, assignment)
-            for arm_index, arm in enumerate(arms)
-            for assignment in _assignments_of_value_8616(arm, value)
-        )
-        for value in values
-    )
-    if any(len(assignments) != 1 for assignments in assignments_by_value):
-        return None
-    (left_arm, left_assignment), (right_arm, right_assignment) = (
-        assignments[0] for assignments in assignments_by_value
-    )
-    left_lhs = left_assignment.lhs
-    right_lhs = right_assignment.lhs
-    if (
-        left_arm == right_arm
-        or not isinstance(left_lhs, CVariable)
-        or not isinstance(right_lhs, CVariable)
-        or not _same_c_expression_8616(left_lhs, right_lhs)
-    ):
-        return None
-    return left_lhs
-
-
-def _unique_branch_carrier_8616(root: object, values: tuple[int, int]) -> tuple[CIfElse, CVariable] | None:
-    """Find one unambiguous structured binary branch carrying both values."""
-    matches = tuple(
-        (node, carrier)
-        for node in _iter_c_nodes_deep_8616(root)
-        if isinstance(node, CIfElse)
-        if (carrier := _branch_carrier_8616(node, values)) is not None
-    )
-    return matches[0] if len(matches) == 1 else None
-
-
-def _contains_node_8616(root: object, target: object) -> bool:
-    """Return whether one AST subtree contains the exact target node."""
-    return any(node is target for node in _iter_c_nodes_deep_8616(root))
-
-
-def _assigns_carrier_8616(root: object, carrier: CVariable) -> bool:
-    """Return whether one subtree redefines the selected branch carrier."""
-    return any(
-        isinstance(node, CAssignment) and _same_c_expression_8616(node.lhs, carrier)
-        for node in _iter_c_nodes_deep_8616(root)
-    )
-
-
-def _branch_dominates_call_8616(
-    root: object,
-    branch: CIfElse,
-    carrier: CVariable,
-    call: CFunctionCall,
-) -> bool:
-    """Prove statement order and absence of carrier redefinitions before the call."""
-    placements = 0
-    for container in _iter_c_nodes_deep_8616(root):
-        if not isinstance(container, CStatements):
-            continue
-        branch_indices = tuple(index for index, statement in enumerate(container.statements) if statement is branch)
-        if len(branch_indices) != 1:
-            continue
-        branch_index = branch_indices[0]
-        call_indices = tuple(
-            index
-            for index, statement in enumerate(container.statements)
-            if index > branch_index and _contains_node_8616(statement, call)
-        )
-        if len(call_indices) != 1:
-            continue
-        call_index = call_indices[0]
-        if any(
-            _assigns_carrier_8616(statement, carrier)
-            for statement in container.statements[branch_index + 1 : call_index + 1]
-        ):
-            continue
-        placements += 1
-    return placements == 1
 
 
 def _expected_arguments_8616(
@@ -287,7 +183,7 @@ def materialize_call_argument_joins_8616(project: object, codegen: object) -> bo
         if not isinstance(summary, CallsiteSummary8616):
             continue
         merge = summary.predecessor_stack_merge
-        if merge is None or merge.register_join is None:
+        if merge is None or (merge.register_join is None and not merge.traces):
             continue
         grouped.setdefault(summary.callsite_addr, []).append((node, summary))
 
@@ -301,6 +197,27 @@ def materialize_call_argument_joins_8616(project: object, codegen: object) -> bo
             decisions.append(CallArgumentJoinDecision8616.REFUSED_CALL_IDENTITY)
             continue
         call, summary = pairs[0]
+        path_result = materialize_call_argument_path_join_8616(
+            project,
+            codegen,
+            call,
+            summary,
+        )
+        if path_result.decision is not CallArgumentPathJoinDecision8616.NOT_APPLICABLE:
+            normalized_count += path_result.normalized_fact_count
+            classified += path_result.classified_fact_count
+            materialized += path_result.materialized_count
+            failed += path_result.failure_count
+            changed |= path_result.changed
+            decisions.append(
+                {
+                    CallArgumentPathJoinDecision8616.MATERIALIZED: CallArgumentJoinDecision8616.MATERIALIZED,
+                    CallArgumentPathJoinDecision8616.ALREADY_MATERIALIZED: CallArgumentJoinDecision8616.ALREADY_MATERIALIZED,
+                    CallArgumentPathJoinDecision8616.REFUSED_CONDITION: CallArgumentJoinDecision8616.REFUSED_CONDITION,
+                    CallArgumentPathJoinDecision8616.REFUSED_EVIDENCE: CallArgumentJoinDecision8616.REFUSED_EVIDENCE,
+                }[path_result.decision]
+            )
+            continue
         normalized = _normalize_join_8616(summary)
         if normalized is None:
             failed += 1
@@ -308,12 +225,12 @@ def materialize_call_argument_joins_8616(project: object, codegen: object) -> bo
             continue
         normalized_count += 1
         values = cast(tuple[int, int], normalized.immediate_values)
-        branch_carrier = _unique_branch_carrier_8616(root, values)
+        branch_carrier = unique_branch_carrier_8616(root, values)
         join_expression: CExpression | None = None
         refusal = CallArgumentJoinDecision8616.REFUSED_BRANCH
         if branch_carrier is not None:
             branch, carrier = branch_carrier
-            if _branch_dominates_call_8616(root, branch, carrier, call):
+            if branch_dominates_call_8616(root, branch, carrier, call):
                 join_expression = carrier
             else:
                 refusal = CallArgumentJoinDecision8616.REFUSED_ORDER

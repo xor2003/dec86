@@ -184,7 +184,7 @@ def parse_codeview_nb0204_bytes(data: bytes, *, load_base_linear: int = 0) -> Co
             if debug_base + 8 > len(data):
                 return None
 
-            sig, subdir_offset = struct.unpack_from("<4sI", data, debug_base)
+            _sig, subdir_offset = struct.unpack_from("<4sI", data, debug_base)
             debug_offset = debug_base + subdir_offset
 
             if not (0 <= debug_offset < len(data)):
@@ -371,7 +371,7 @@ def _parse_public_symbols(
     while offset + 6 < len(blob):
         try:
             # struct: offset (2), segment (2), type (2), name_len (1)
-            sym_offset, segment, sym_type, name_len = struct.unpack_from("<HHHB", blob, offset)
+            sym_offset, segment, _sym_type, name_len = struct.unpack_from("<HHHB", blob, offset)
             offset += 7
 
             if name_len > 0 and offset + name_len <= len(blob):
@@ -703,7 +703,7 @@ def _collect_cv4_type_members(blob: bytes) -> tuple[_nb00.CodeViewNB00TypeMember
     for type_index, leaf, payload in records:
         if leaf != _CV4_LF_FIELDLIST:
             continue
-        for leaf_index, name, offset, member_type_index in _parse_cv4_fieldlist_members(payload):
+        for leaf_index, name, offset, _member_type_index in _parse_cv4_fieldlist_members(payload):
             key = (type_index, name, offset)
             if key in seen:
                 continue
@@ -808,9 +808,7 @@ def _is_debug_identifier_name(name: str) -> bool:
     allowed_extra = "_$?@"
     if not all(ch.isalnum() or ch in allowed_extra for ch in name):
         return False
-    if not any(ch.isalpha() or ch == "_" for ch in name):
-        return False
-    return True
+    return any(ch.isalpha() or ch == "_" for ch in name)
 
 
 def _parse_module_names(blob: bytes) -> list[str]:

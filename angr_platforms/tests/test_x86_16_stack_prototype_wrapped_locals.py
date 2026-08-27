@@ -28,7 +28,7 @@ def test_reconcile_refuses_wrapped_negative_local_byte_carriers_as_arguments() -
             )
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     carriers = [
         structured_c.CVariable(
             SimStackVariable(offset, 1, base="bp", name=name, region=0x1000),

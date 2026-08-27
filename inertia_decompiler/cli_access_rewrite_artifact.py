@@ -7,8 +7,8 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 from __future__ import annotations
 
 import typing
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from .cli_access_object_hints import AccessTraitObjectHint, BaseKey
 from .cli_storage_objects import (

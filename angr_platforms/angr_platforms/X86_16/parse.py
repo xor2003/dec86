@@ -27,6 +27,7 @@ from .instruction import (
     InstrFlags,
     X86Instruction,
 )
+from .msvc_x87_interrupts import is_msvc_x87_emulation_interrupt_8616, msvc_x87_escape_opcode_8616
 from .regs import sgreg_t
 
 CHSZ_NONE: int = 0
@@ -143,13 +144,15 @@ class ParseInstr(X86Instruction):
                 # self.emu.update_eip(2)
             if opcode_flags & CHK_IMM8:
                 self.instr.imm8 = struct.unpack("b", struct.pack("B", self.emu.get_code8(0)))[0]
-                # self.emu.update_eip(1)
-                if opcode == 0xCD and self.instr.imm8 in (0x34, 0x35, 0x38, 0x39):
-                    # Microsoft C can encode x87 instructions as INT 34h/35h/38h/39h
-                    # followed by the original x87 ModR/M form. Treat the trailing
-                    # bytes as part of this instruction so later decoding does not
-                    # split the FPU operand into bogus integer instructions.
+                remaining_bits = self.emu.bitstream.len - self.emu.bitstream.pos
+                if (
+                    opcode == 0xCD
+                    and msvc_x87_escape_opcode_8616(self.instr.imm8) is not None
+                    and remaining_bits >= 8
+                ):
+                    self.instr.msvc_x87_escape = True
                     self.parse_modrm_sib_disp()
+                # self.emu.update_eip(1)
             if opcode_flags & CHK_PTR16:
                 self.instr.ptr16 = self.emu.get_code16(0)
                 # self.emu.update_eip(2)
@@ -160,9 +163,12 @@ class ParseInstr(X86Instruction):
             if opcode == 0xF6 and self.instr.modrm.reg in (0, 1):  # test
                 self.instr.imm8 = self.emu.get_code8(0)
             if opcode == 0xF7 and self.instr.modrm.reg in (0, 1):  # test
-                self.instr.imm16 = self.emu.get_code16(0)
+                if self.instr.operand_bits == 32:
+                    self.instr.imm32 = self.emu.get_code32(0)
+                else:
+                    self.instr.imm16 = self.emu.get_code16(0)
 
-            self.instr.size = self.instr.prefix_len + (self.emu.bitstream.bytepos - start)
+            self.instr.size = max(self.instr.size, self.instr.prefix_len + (self.emu.bitstream.bytepos - start))
             self.instr.repeat_class = self._repeat_class_name()
             self.instr.control_flow_class = self._classify_control_flow(opcode)
 
@@ -177,7 +183,10 @@ class ParseInstr(X86Instruction):
 
     def _classify_control_flow(self, opcode: int) -> str:
         def _impl() -> str:
-            if opcode == 0xCD and self.instr.imm8 in (0x34, 0x35, 0x38, 0x39, 0x3D):
+            if opcode == 0xCD and (
+                self.instr.msvc_x87_escape
+                or (is_msvc_x87_emulation_interrupt_8616(self.instr.imm8) and (self.instr.imm8 & 0xFF) == 0x3D)
+            ):
                 return "none"
             if opcode in {0xCC, 0xCD, 0xCE}:
                 return "interrupt"

@@ -189,10 +189,7 @@ def _normalize_string_mnemonic(mnemonic: str) -> tuple[str, str]:
     if parts[0] in {"rep", "repe", "repz", "repne", "repnz"}:
         prefix = parts[0]
         base = parts[-1]
-        if prefix in {"rep", "repe", "repz"}:
-            repeat_kind = "repz" if prefix != "rep" else "rep"
-        else:
-            repeat_kind = "repnz"
+        repeat_kind = ("repz" if prefix != "rep" else "rep") if prefix in {"rep", "repe", "repz"} else "repnz"
         return repeat_kind, base
     return "none", parts[-1]
 

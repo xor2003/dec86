@@ -28,10 +28,10 @@ from .interrupt_contract import (
 )
 
 __all__ = (
-    "BIOSInt12MemorySize",
-    "DOSInt21",
     "INTERRUPT_BASE_ADDR",
     "INTERRUPT_VECTOR_COUNT",
+    "BIOSInt12MemorySize",
+    "DOSInt21",
     "InterruptHandler",
     "SimCC8616MSC",
     "SimCC8616MSCmedium",
@@ -360,7 +360,7 @@ class SimDOS86_16(SimOS):  # type: ignore[misc, unused-ignore] # dynamic angr Si
 
 
 class SimCC8616MSCsmall(SimCC):  # type: ignore[misc, unused-ignore] # dynamic angr calling-convention base
-    """Microsoft C small-model 16-bit calling convention."""
+    """Microsoft C small-model 16-bit caller-cleanup convention."""
 
     ARG_REGS: ClassVar[list[str]] = []
     FP_ARG_REGS: ClassVar[list[str]] = []
@@ -370,11 +370,11 @@ class SimCC8616MSCsmall(SimCC):  # type: ignore[misc, unused-ignore] # dynamic a
     OVERFLOW_RETURN_VAL: ClassVar[SimRegArg] = SimRegArg("dx", 2)
     ARCH: ClassVar[type[Arch86_16]] = Arch86_16
     STACK_ALIGNMENT: ClassVar[int] = 2
-    CALLEE_CLEANUP: ClassVar[bool] = True
+    CALLEE_CLEANUP: ClassVar[bool] = False
 
 
 class SimCC8616MSCmedium(SimCC):  # type: ignore[misc, unused-ignore] # dynamic angr calling-convention base
-    """Microsoft C medium-model 16-bit calling convention."""
+    """Microsoft C medium-model 16-bit caller-cleanup convention."""
 
     ARG_REGS: ClassVar[list[str]] = []
     FP_ARG_REGS: ClassVar[list[str]] = []
@@ -384,7 +384,7 @@ class SimCC8616MSCmedium(SimCC):  # type: ignore[misc, unused-ignore] # dynamic 
     OVERFLOW_RETURN_VAL: ClassVar[SimRegArg] = SimRegArg("dx", 2)
     ARCH: ClassVar[type[Arch86_16]] = Arch86_16
     STACK_ALIGNMENT: ClassVar[int] = 2
-    CALLEE_CLEANUP: ClassVar[bool] = True
+    CALLEE_CLEANUP: ClassVar[bool] = False
 
 
 # Legacy compatibility alias for callers that imported the pre-memory-model

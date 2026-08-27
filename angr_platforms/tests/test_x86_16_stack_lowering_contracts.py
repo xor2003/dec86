@@ -42,6 +42,7 @@ from angr_platforms.X86_16.lowering.stack_variable_binding import (
     stable_stack_binding_tags_8616,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
+from capstone.x86_const import X86_OP_MEM, X86_REG_BP
 
 from inertia_decompiler.cli_c_ast_rewrites import _canonicalize_stack_cvar_expr
 
@@ -137,6 +138,10 @@ def test_bound_stack_cvar_resolution_uses_binding_bp_offset() -> None:
         def next_idx(self, _name: str) -> int:
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = FakeCodegen()
     variable = SimStackVariable(-6, 2, base="bp", name="local_6")
@@ -163,6 +168,10 @@ def test_named_stack_fallback_preserves_exact_slot_identity() -> None:
         def next_idx(self, _name: str) -> int:
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = FakeCodegen()
     source_var = SimStackVariable(-4, 2, base="bp", name="local_4")
@@ -190,6 +199,10 @@ def test_exact_stack_condition_binding_refuses_inferred_bp_rebase() -> None:
         def next_idx(self, _name: str) -> int:
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = FakeCodegen()
     target_var = SimStackVariable(-2, 2, base="bp", name="local_2")
@@ -241,6 +254,35 @@ def test_known_bp_stack_offsets_uses_typed_alias_facts() -> None:
     )
 
     assert _known_bp_stack_offsets_8616(codegen) == {-10}
+
+
+def test_known_bp_stack_offsets_caches_function_block_disassembly() -> None:
+    class CountingBlock:
+        def __init__(self) -> None:
+            self.capstone_reads = 0
+
+        @property
+        def capstone(self) -> SimpleNamespace:
+            self.capstone_reads += 1
+            operand = SimpleNamespace(type=X86_OP_MEM, mem=SimpleNamespace(base=X86_REG_BP, disp=4))
+            return SimpleNamespace(insns=(SimpleNamespace(operands=(operand,)),))
+
+    block = CountingBlock()
+    function = SimpleNamespace(blocks=(block,))
+    codegen = SimpleNamespace(
+        cfunc=SimpleNamespace(addr=0x1000, variables_in_use={}, arg_list=()),
+        _inertia_current_function_8616=function,
+        _inertia_semantic_alias_facts=[],
+        _inertia_stack_variable_bindings=(),
+    )
+
+    assert _known_bp_stack_offsets_8616(codegen) == {4}
+    assert _known_bp_stack_offsets_8616(codegen) == {4}
+    assert block.capstone_reads == 1
+
+    codegen.cfunc = SimpleNamespace(addr=0x2000, variables_in_use={}, arg_list=())
+    assert _known_bp_stack_offsets_8616(codegen) == {4}
+    assert block.capstone_reads == 2
 
 
 def test_stack_lowering_impl_uses_typed_alias_fact_fields() -> None:

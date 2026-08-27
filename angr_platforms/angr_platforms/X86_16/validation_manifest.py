@@ -251,7 +251,7 @@ __all__ = [
     "VALIDATION_LAYERS",
     "ValidationFamilySpec",
     "ValidationLayerSpec",
-    "describe_x86_16_validation_triage",
     "describe_x86_16_validation_families",
     "describe_x86_16_validation_layers",
+    "describe_x86_16_validation_triage",
 ]

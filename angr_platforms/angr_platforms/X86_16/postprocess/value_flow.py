@@ -42,9 +42,7 @@ def _is_side_effecting(expr: object) -> bool:
     """Check for side effects that prevent inlining."""
     if isinstance(expr, CFunctionCall):
         return True
-    if isinstance(expr, CAssignment):
-        return True
-    return False
+    return bool(isinstance(expr, CAssignment))
 
 
 def _has_variable_use(expr: object, target: object) -> bool:
@@ -153,7 +151,7 @@ def _apply_value_flow_renaming_8616(codegen: object) -> bool:
             if isinstance(rhs, CVariable):
                 rhs_id = id(rhs)
                 if rhs_id in defs:
-                    def_idx, def_expr = defs[rhs_id]
+                    _def_idx, def_expr = defs[rhs_id]
                     # Only inline if rhs is used exactly once (this use)
                     if use_counts.get(rhs_id, 0) == 1 and not _is_side_effecting(def_expr):
                         stmt.rhs = def_expr
@@ -177,7 +175,7 @@ def _apply_value_flow_renaming_8616(codegen: object) -> bool:
             if child is not None:
                 _walk_node(child)
         if hasattr(node, "condition_and_nodes"):
-            for cond, body in getattr(node, "condition_and_nodes", ()) or ():
+            for _cond, body in getattr(node, "condition_and_nodes", ()) or ():
                 _walk_node(body)
         if hasattr(node, "cases"):
             for case_body in getattr(node, "cases", {}).values():

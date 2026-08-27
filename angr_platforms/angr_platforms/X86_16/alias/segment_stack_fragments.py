@@ -10,7 +10,6 @@ rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TypeAlias
 
 from ..ir.core import AddressStatus, IRAddress, IRAtom, IRInstr, IRValue, MemSpace
 from ..ir.segment_state_transfer import SEGMENT_REGISTERS
@@ -37,7 +36,7 @@ class SegmentStackByteOrigin8616:
     stack_offset: int | None = None
 
 
-SegmentStackFragments8616: TypeAlias = frozenset[SegmentStackByteOrigin8616]
+type SegmentStackFragments8616 = frozenset[SegmentStackByteOrigin8616]
 
 
 def _expr_narrows_to_byte(value: IRValue) -> bool:

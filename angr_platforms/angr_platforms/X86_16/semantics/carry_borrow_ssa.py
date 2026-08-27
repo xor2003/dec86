@@ -12,19 +12,25 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TypeAlias
 
 from ..ir import IRAddress, IRInstr, IRValue, MemSpace
+from ..ir.logical_memory_contracts import (
+    IRLogicalMemoryAccess8616,
+    IRLogicalMemoryArtifact8616,
+    IRMemoryAccessKind8616,
+    logical_memory_execution_address_matches_8616,
+)
 from .carry_borrow_contracts import (
     CarryBorrowConversion8616,
     CarryBorrowDefinitionSite8616,
     CarryBorrowIROp8616,
     CarryBorrowKind8616,
+    CarryBorrowMemoryLoadUse8616,
     CarryBorrowMemoryWordUse8616,
     CarryBorrowOperandUse8616,
 )
 
-CarryBorrowDefinitions8616: TypeAlias = dict[int, CarryBorrowDefinitionSite8616]
+type CarryBorrowDefinitions8616 = dict[int, CarryBorrowDefinitionSite8616]
 
 
 def ir_op_8616(instruction: IRInstr) -> CarryBorrowIROp8616 | None:
@@ -109,6 +115,7 @@ def same_operands_8616(lhs: Iterable[IRValue], rhs: Iterable[IRValue]) -> bool:
 def operand_use_8616(
     value: IRValue,
     definitions: CarryBorrowDefinitions8616,
+    logical_memory: IRLogicalMemoryArtifact8616 | None = None,
 ) -> CarryBorrowOperandUse8616 | None:
     """Retain an operand together with its exact temporary definition."""
     if value.space is MemSpace.CONST:
@@ -119,7 +126,7 @@ def operand_use_8616(
     return CarryBorrowOperandUse8616(
         value,
         definition,
-        _memory_word_use_8616(definition, definitions),
+        _memory_word_use_8616(definition, definitions, logical_memory),
     )
 
 
@@ -161,10 +168,54 @@ def _shifted_high_byte_8616(
     return _load_byte_8616(args[0], definitions)
 
 
+def _authoritative_word_access_8616(
+    execution_loads: tuple[CarryBorrowMemoryLoadUse8616, ...],
+    logical_memory: IRLogicalMemoryArtifact8616 | None,
+) -> IRLogicalMemoryAccess8616 | None:
+    """Return the unique complete logical word owning these exact load sites."""
+    if logical_memory is None or not logical_memory.closed or len(execution_loads) != 2:
+        return None
+    matches = tuple(
+        access
+        for access in logical_memory.accesses
+        if access.complete
+        and access.kind is IRMemoryAccessKind8616.READ
+        and access.key.function_addr == logical_memory.function_addr
+        and access.address.size == 2
+        and len(access.execution_slices) == len(execution_loads)
+        and all(
+            logical_memory_execution_address_matches_8616(
+                load.address,
+                access.address,
+                source_byte_offset,
+                access.address_bits,
+            )
+            and load.address.size == 1
+            and execution.source_byte_offset == source_byte_offset
+            and execution.block_addr == load.site.block_addr
+            and execution.instr_index == load.site.instr_index
+            and execution.insn_addr == load.site.instruction.addr
+            and execution.address.size == load.address.size
+            and logical_memory_execution_address_matches_8616(
+                load.address,
+                execution.address,
+                0,
+                access.address_bits,
+            )
+            for source_byte_offset, (load, execution) in enumerate(
+                zip(execution_loads, access.execution_slices, strict=True)
+            )
+        )
+    )
+    return matches[0] if len(matches) == 1 else None
+
+
 def _memory_word_use_8616(
     definition: CarryBorrowDefinitionSite8616,
     definitions: CarryBorrowDefinitions8616,
+    logical_memory: IRLogicalMemoryArtifact8616 | None,
 ) -> CarryBorrowMemoryWordUse8616 | None:
+    """Retain direct words or exact byte sites with optional logical ownership."""
     destination = definition.instruction.dst
     direct_args = definition.instruction.args
     if (
@@ -175,9 +226,11 @@ def _memory_word_use_8616(
         and isinstance(direct_args[0], IRAddress)
         and direct_args[0].size == 2
     ):
+        execution_load = CarryBorrowMemoryLoadUse8616(definition, direct_args[0])
         return CarryBorrowMemoryWordUse8616(
-            loads=(definition,),
-            addresses=(direct_args[0],),
+            execution_loads=(execution_load,),
+            logical_address=direct_args[0],
+            address_bits=16,
         )
     if ir_op_8616(definition.instruction) is not CarryBorrowIROp8616.OR16:
         return None
@@ -195,9 +248,20 @@ def _memory_word_use_8616(
     if len(choices) != 1:
         return None
     (low_load, low_address), (high_load, high_address) = choices[0]
+    execution_loads = (
+        CarryBorrowMemoryLoadUse8616(low_load, low_address),
+        CarryBorrowMemoryLoadUse8616(high_load, high_address),
+    )
+    logical_access = _authoritative_word_access_8616(
+        execution_loads,
+        logical_memory,
+    )
+    if logical_access is None:
+        return None
     return CarryBorrowMemoryWordUse8616(
-        loads=(low_load, high_load),
-        addresses=(low_address, high_address),
+        execution_loads=execution_loads,
+        logical_address=logical_access.address,
+        address_bits=logical_access.address_bits,
     )
 
 

@@ -10,6 +10,7 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -81,13 +82,11 @@ def _record_result_8616(
     result: FunctionStoragePrototypeApplicationResult8616,
 ) -> FunctionStoragePrototypeApplicationResult8616:
     """Retain the typed application result at the dynamic codegen boundary."""
-    try:
+    with contextlib.suppress(AttributeError):
         cast(
             _CodegenSurface8616,
             codegen,
         )._inertia_storage_prototype_application_8616 = result
-    except AttributeError:
-        pass
     return result
 
 

@@ -929,9 +929,7 @@ def _classify_tdinfo_name(name: str) -> TDInfoNameKind:
 
 def _tdinfo_name_looks_like_code(name: str) -> bool:
     lowered = name.lower()
-    if lowered.startswith(("dgroup@", "byte_", "word_", "dword_", "off_", "stru_")):
-        return False
-    return True
+    return not lowered.startswith(("dgroup@", "byte_", "word_", "dword_", "off_", "stru_"))
 
 
 def _tdinfo_type_name_looks_user_defined(name: str) -> bool:

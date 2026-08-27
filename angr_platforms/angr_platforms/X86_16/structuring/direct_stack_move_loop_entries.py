@@ -30,6 +30,7 @@ from .direct_stack_move_loop_evidence import (
     repeated_sequence_edges_8616,
 )
 from .direct_stack_move_loop_sites import (
+    DirectStackMoveLoopEntrySite8616,
     loop_entry_sites_8616,
     place_assignment_8616,
     tagged_assignment_locations_8616,
@@ -37,6 +38,10 @@ from .direct_stack_move_loop_sites import (
 from .direct_stack_move_ownership import (
     direct_stack_move_branch_claims_8616,
     direct_stack_move_loop_entry_supersedes_branch_claim_8616,
+)
+from .direct_stack_move_pretest_body import (
+    materialize_direct_stack_move_pretest_body_ownership_8616,
+    place_direct_stack_move_pretest_body_assignment_8616,
 )
 from .direct_stack_move_pretest_initializers import (
     materialize_direct_stack_move_pretest_initializers_8616,
@@ -96,9 +101,10 @@ def place_direct_stack_move_loop_entry_assignment_8616(
         )
     ):
         return False
-    sites = (
+    sites: tuple[DirectStackMoveLoopEntrySite8616, ...] = (
         loop_entry_sites_8616(
             project,
+            codegen,
             root,
             edges[0],
             move_fact.dst_offset,
@@ -108,7 +114,7 @@ def place_direct_stack_move_loop_entry_assignment_8616(
         else ()
     )
     locations = (
-        tagged_assignment_locations_8616(project, root, move_fact)
+        tagged_assignment_locations_8616(project, codegen, root, move_fact)
         if root is not None
         else ()
     )
@@ -116,18 +122,25 @@ def place_direct_stack_move_loop_entry_assignment_8616(
         return False
     location = locations[0] if locations else None
     owned_assignment = location.assignment if location is not None else assignment
-    materialized, _already = (
-        place_assignment_8616(
+    materialized = False
+    if len(sites) == 1:
+        materialized, _already = place_assignment_8616(
             project,
+            codegen,
             sites[0],
             move_fact,
             owned_assignment,
             location,
         )
-        if len(sites) == 1
-        else (False, False)
-    )
     if materialized:
+        return True
+    if place_direct_stack_move_pretest_body_assignment_8616(
+        project,
+        codegen,
+        function,
+        move_fact,
+        assignment,
+    ):
         return True
     return place_direct_stack_move_pretest_initializer_assignment_8616(
         project,
@@ -206,6 +219,7 @@ def materialize_direct_stack_move_loop_entry_ownership_8616(
             continue
         sites = loop_entry_sites_8616(
             project,
+            codegen,
             root,
             edges[0],
             move_fact.dst_offset,
@@ -222,7 +236,7 @@ def materialize_direct_stack_move_loop_entry_ownership_8616(
                     edges[0],
                 )
             continue
-        locations = tagged_assignment_locations_8616(project, root, move_fact)
+        locations = tagged_assignment_locations_8616(project, codegen, root, move_fact)
         if len(locations) != 1:
             refused_assignment += 1
             failures += int(len(locations) > 1)
@@ -236,6 +250,7 @@ def materialize_direct_stack_move_loop_entry_ownership_8616(
         classified += 1
         placed, already = place_assignment_8616(
             project,
+            codegen,
             sites[0],
             move_fact,
             locations[0].assignment,
@@ -265,6 +280,12 @@ def materialize_direct_stack_move_loop_entry_ownership_8616(
     ):
         log.warning("[direct-stack-move-loop-entry] stats=%r", stats)
     return (
+        materialize_direct_stack_move_pretest_body_ownership_8616(
+            project,
+            codegen,
+            function,
+        )
+        or
         materialize_direct_stack_move_pretest_initializers_8616(
             project,
             codegen,

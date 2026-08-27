@@ -18,6 +18,8 @@ from angr_platforms.X86_16.annotations import apply_x86_16_metadata_annotations,
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 from angr_platforms.X86_16.simos_86_16 import SimCC8616MSCsmall  # noqa: F401
+from pyvex.expr import Const as VexConst
+from pyvex.stmt import Exit as VexExit
 
 from decompile import _resolve_stack_cvar_at_offset
 
@@ -95,24 +97,20 @@ def test_simple_je_short_targets_branch_destination():
     project = _project_from_bytes(bytes.fromhex("74 02 b8 01 00 c3"))  # je +2; mov ax,1; ret
 
     block = project.factory.block(0x1000, opt_level=0)
-    vex_text = block.vex._pp_str()
-
     assert block.vex.jumpkind == "Ijk_Boring"
-    assert "if (" in vex_text
-    assert "PUT(ip) = 0x1004" in vex_text
-    assert "if (" in vex_text and "PUT(ip) = 0x1002" in vex_text
+    assert isinstance(block.vex.next, VexConst)
+    assert block.vex.next.con.value == 0x1004
+    assert [statement.dst.value for statement in block.vex.statements if isinstance(statement, VexExit)] == [0x1002]
 
 
 def test_simple_je_near_targets_branch_destination():
     project = _project_from_bytes(bytes.fromhex("0f840200b80100c3"))  # je +2; mov ax,1; ret
 
     block = project.factory.block(0x1000, opt_level=0)
-    vex_text = block.vex._pp_str()
-
     assert block.vex.jumpkind == "Ijk_Boring"
-    assert "if (" in vex_text
-    assert "PUT(ip) = 0x1006" in vex_text
-    assert "if (" in vex_text and "PUT(ip) = 0x1004" in vex_text
+    assert isinstance(block.vex.next, VexConst)
+    assert block.vex.next.con.value == 0x1006
+    assert [statement.dst.value for statement in block.vex.statements if isinstance(statement, VexExit)] == [0x1004]
 
 
 def test_bound_16bit_addressing_lifts():
@@ -153,6 +151,10 @@ def test_resolve_stack_cvar_at_offset_prefers_exact_stack_slots():
         def next_idx(self, _kind):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _DummyCodegen()
     frame = SimStackVariable(0, 2, base="bp", name="frame", region=0x1000)
@@ -176,6 +178,10 @@ def test_resolve_stack_cvar_at_offset_prefers_arg_list_candidates():
         def next_idx(self, _kind):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _DummyCodegen()
     arg = SimStackVariable(4, 2, base="bp", name="arg", region=0x1000)
@@ -398,13 +404,24 @@ def test_movsb_lifts_and_updates_indices():
     assert "PUT(di)" in vex_text
 
 
-def test_direct_absolute_memory_add_lifts_as_single_semantic_write():
+def test_direct_absolute_memory_add_executes_as_bytes_with_one_semantic_write():
+    from angr_platforms.X86_16.ir.logical_memory_capture import (
+        collect_accesses_for_block,
+        collect_accesses_for_function,
+    )
+    from angr_platforms.X86_16.ir.logical_memory_contracts import IRMemoryAccessKind8616
+
     project = _project_from_bytes(bytes.fromhex("8306480002"))  # add word ptr [0x48],2
 
-    block = project.factory.block(0x1000, num_inst=1, opt_level=0)
+    with collect_accesses_for_function(0x1000) as capture, collect_accesses_for_block(0x1000):
+        block = project.factory.block(0x1000, num_inst=1, opt_level=0, collect_data_refs=True)
     store_count = sum(1 for stmt in block.vex.statements if stmt.tag == "Ist_Store")
+    writes = tuple(access for access in capture.accesses if access.kind is IRMemoryAccessKind8616.WRITE)
 
-    assert store_count == 1
+    assert store_count == 2
+    assert tuple((write.block_addr, write.insn_addr, write.address_bits, write.address.size) for write in writes) == (
+        (0x1000, 0x1000, 16, 2),
+    )
     assert "0x0048" in block.vex._pp_str()
 
 
@@ -412,10 +429,9 @@ def test_wait_lifts_as_a_boring_noop():
     project = _project_from_bytes(bytes.fromhex("9b"))
 
     block = project.factory.block(0x1000, opt_level=0)
-    vex_text = block.vex._pp_str()
-
     assert block.vex.jumpkind == "Ijk_Boring"
-    assert "PUT(ip) = 0x1001" in vex_text
+    assert isinstance(block.vex.next, VexConst)
+    assert block.vex.next.con.value == 0x1001
     assert block.capstone.insns[0].mnemonic == "wait"
 
 
@@ -423,10 +439,9 @@ def test_hlt_lifts_as_a_boring_stop_instruction():
     project = _project_from_bytes(bytes.fromhex("f4"))
 
     block = project.factory.block(0x1000, opt_level=0)
-    vex_text = block.vex._pp_str()
-
     assert block.vex.jumpkind == "Ijk_Boring"
-    assert "PUT(ip) = 0x1001" in vex_text
+    assert isinstance(block.vex.next, VexConst)
+    assert block.vex.next.con.value == 0x1001
     assert block.capstone.insns[0].mnemonic == "hlt"
 
 

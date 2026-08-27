@@ -181,6 +181,31 @@ def test_materialize_codegen_global_externs_is_idempotent_for_named_types():
     assert "extern REGS rin;" in second
 
 
+def test_materialize_codegen_global_extern_follows_existing_named_type_definition():
+    entry_definition = (
+        "typedef struct g_08F0_entry {\n"
+        "    char field_0;\n"
+        "    char field_1;\n"
+        "} g_08F0_entry;"
+    )
+    codegen = SimpleNamespace(
+        _inertia_global_declaration_specs_8616=(
+            ("g_08F0_entry", "g_0B4C", GlobalDeclarationArrayExtent8616.UNKNOWN),
+        ),
+        _inertia_named_type_definitions_8616=(entry_definition,),
+    )
+    c_text = (
+        "void helper(void);\n\n"
+        f"{entry_definition}\n\n"
+        "void sort(void)\n{\n    g_0B4C[0].field_0 = 1;\n}\n"
+    )
+
+    updated = _materialize_codegen_global_externs_text_8616(c_text, codegen)
+
+    extern = "extern g_08F0_entry g_0B4C[];"
+    assert updated.index(entry_definition) < updated.index(extern) < updated.index("void sort(void)")
+
+
 def test_cli_cod_global_typer_refuses_name_based_aggregate_recovery():
     variable = SimMemoryVariable(0x7000, 14)
     cvariable = SimpleNamespace(variable_type=None, unified_variable=None)

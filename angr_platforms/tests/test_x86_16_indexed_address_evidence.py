@@ -55,7 +55,12 @@ def test_real_lifter_retains_versioned_index_and_stack_shift_path() -> None:
 
     assert evidence.closed
     assert evidence.refusals == ()
-    assert evidence.stats.raw_fact_count == evidence.stats.materialized_count == 1
+    assert evidence.stats.raw_fact_count == 2
+    assert evidence.stats.normalized_fact_count == 1
+    assert evidence.stats.classified_fact_count == 1
+    assert evidence.stats.materialized_count == 1
+    assert evidence.stats.failure_count == 0
+    assert evidence.stats.coalesced_fact_count == 1
     fact = evidence.facts[0]
     assert fact.kind is IndexedAddressAccessKind8616.LOAD
     assert fact.address.space is MemSpace.DS

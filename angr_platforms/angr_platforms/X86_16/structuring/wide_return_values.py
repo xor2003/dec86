@@ -35,12 +35,12 @@ def combine_word_return_sources_8616(
         value = ((int(high_word.value) & 0xFFFF) << 16) | (int(low_word.value) & 0xFFFF)
         if value & 0x80000000:
             value -= 0x100000000
-        return ailment.Expr.Const(next_atom(), None, value, 32, ins_addr=ins_addr)
+        return ailment.Expr.Const(next_atom(), value, 32, ins_addr=ins_addr)
     if wide_stack_owner is not None:
         return wide_stack_owner
     high_wide = ailment.Expr.Convert(next_atom(), 16, 32, False, high_word, ins_addr=ins_addr)
     low_wide = ailment.Expr.Convert(next_atom(), 16, 32, False, low_word, ins_addr=ins_addr)
-    shift = ailment.Expr.Const(next_atom(), None, 16, 8, ins_addr=ins_addr)
+    shift = ailment.Expr.Const(next_atom(), 16, 8, ins_addr=ins_addr)
     shifted_high = ailment.Expr.BinaryOp(
         next_atom(),
         "Shl",

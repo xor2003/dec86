@@ -7,7 +7,7 @@ from pathlib import Path
 import angr
 import pytest
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
-from angr_platforms.X86_16.load_dos_ne import DOSNE, DOSNEHeader  # noqa: F401
+from angr_platforms.X86_16.load_dos_ne import DOSNE, DOSNEHeader
 
 import decompile
 

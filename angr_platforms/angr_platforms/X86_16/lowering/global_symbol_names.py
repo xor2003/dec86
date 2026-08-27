@@ -25,8 +25,8 @@ from ..c_ast_utils import _iter_c_nodes_deep_8616
 from ..pipeline.errors import PipelineHardError
 
 __all__ = [
-    "DSGlobalSymbolNameFact8616",
     "DSGlobalLocalDeclarationStats8616",
+    "DSGlobalSymbolNameFact8616",
     "reconcile_ds_global_local_declarations_8616",
     "synchronize_ds_global_symbol_names_8616",
 ]

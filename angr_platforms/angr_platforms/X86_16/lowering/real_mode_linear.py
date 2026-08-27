@@ -23,11 +23,11 @@ import logging
 import os
 import re
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
 from types import SimpleNamespace
-from typing import Any, Iterable, Iterator, Protocol, TypeAlias, cast
+from typing import Any, Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import (
@@ -91,6 +91,7 @@ from capstone.x86_const import (
 
 from ..alias.alias_model import _stack_storage_facts_for_segmented_address_8616
 from ..alias.alias_model_impl import AliasStorageFacts, _StackSlotIdentity
+from ..alias.stack_memory_ssa_contracts import StackMemorySSAAliasArtifact8616
 from ..analysis_helpers import canonicalize_x86_16_padding_call_target_8616
 from ..annotations import ANNOTATION_KEY
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _iter_c_statement_nodes_8616
@@ -108,19 +109,45 @@ from ..semantics.call_contracts import (
     RuntimeCallReturnContract8616,
     runtime_call_return_contract_8616,
 )
+from ..semantics.call_register_effects import (
+    MSC16_CALLEE_SAVED_GENERAL_REGISTERS_8616,
+)
+from ..structured_tags import copy_structured_tags_8616
 from ..widening.stack_widening import prove_adjacent_storage_slices
 from .c_runtime_header import LOWERED_ZERO_ARG_RUNTIME_HELPER_DECLARATIONS_8616
-from .call_return_stack_stores import recover_zero_arg_call_return_stack_store_8616
-from .callee_saved_frame import callee_saved_frame_pairs_8616
-from .condition_stack_operands import materialize_typed_condition_stack_operand_8616
-from .frame_prologue_carriers import (
-    canonical_frame_instruction_addresses_8616,
-    is_exact_push_bp_carrier_8616,
+from .call_argument_carrier_liveness import (
+    CallArgumentCarrierLivenessVerdict8616,
+    classify_call_argument_carrier_liveness_8616,
 )
+from .call_return_frame import (
+    CallReturnFrameCarrierPrune8616,
+    prune_exact_call_return_frame_projections_8616,
+)
+from .call_return_stack_stores import recover_zero_arg_call_return_stack_store_8616
+from .callee_saved_frame import (
+    CalleeSavedFrameCarrierKind8616,
+    CalleeSavedFrameInstructionRole8616,
+    CalleeSavedFramePair8616,
+    CalleeSavedFramePruneFact8616,
+    CalleeSavedFramePruneRecord8616,
+    callee_saved_frame_pairs_8616,
+)
+from .condition_stack_operands import materialize_typed_condition_stack_operand_8616
+from .consumed_call_push_evidence import (
+    ConsumedCallPushEvidenceStatus8616,
+    normalize_consumed_call_push_evidence_8616,
+)
+from .frame_instruction_evidence import canonical_frame_instruction_addresses_8616
+from .frame_prologue_carriers import is_exact_push_bp_carrier_8616
+from .frame_register_carriers import collect_frame_register_carriers_8616
 from .global_declarations import (
     ctype_for_global_width_8616,
     record_global_declaration_spec_8616,
     record_scalar_global_declaration_spec_8616,
+)
+from .instruction_bp_stack_access import (
+    InstructionBpStackAccessIndex8616,
+    ensure_instruction_bp_stack_access_index_8616,
 )
 from .physical_registers import physical_register_offset_8616
 from .runtime_memory_helpers import memory_pointer_helper_8616
@@ -145,15 +172,32 @@ from .stack_variable_binding import (
     select_stack_annotation_spec_8616,
     stack_binding_inherits_containing_name_8616,
 )
+from .stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+    publish_selected_stack_cvar_projection_8616,
+    stack_cvar_for_machine_bp_range_8616,
+)
+from .stack_word_load_materialization import (
+    materialize_stack_word_load_recompositions_8616,
+)
 from .storage_identity_facts import (
     GlobalStorageIdentityFact8616,
     StorageIdentityEvidenceKind8616,
     record_global_storage_identity_fact_8616,
 )
 
-AngrProjectValue: TypeAlias = Any
-StructuredCodegenValue: TypeAlias = Any
-StructuredAstValue: TypeAlias = Any
+type AngrProjectValue = Any
+type StructuredCodegenValue = Any
+type StructuredAstValue = Any
+
+
+@dataclass(frozen=True, slots=True)
+class _BpMemoryOperandOffsetCache8616:
+    """Cache immutable BP-relative disassembly facts for one function context."""
+
+    code_function_identity: int
+    function_identities: tuple[int, ...]
+    offsets: frozenset[int]
 
 
 def _boundary_tuple_8616(value: StructuredAstValue) -> tuple[StructuredAstValue, ...]:
@@ -361,6 +405,8 @@ class ConsumedCallPushCarrierPrune8616:
     classified_fact_count: int
     materialized_count: int
     failure_count: int
+    preserved_live_definition_count: int = 0
+    liveness_refusal_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,17 +431,6 @@ class MaterializedCallCleanupReplay8616:
     materialized_count: int
     failure_count: int
     consumed_cleanup_instruction_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class CallReturnFrameCarrierPrune8616:
-    """Evidence census for impossible BP-local assignments emitted for CALL return frames."""
-
-    raw_fact_count: int
-    normalized_fact_count: int
-    classified_fact_count: int
-    materialized_count: int
-    failure_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -824,7 +859,7 @@ def _stack_bindings_from_codegen_8616(codegen: StructuredCodegenValue) -> tuple[
     for variable in variables_in_use:
         if not isinstance(variable, SimStackVariable):
             continue
-        offset = variable.offset
+        offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
         size = variable.size
         if not isinstance(offset, int) or not isinstance(size, int) or size <= 0:
             continue
@@ -912,7 +947,9 @@ def _ensure_positive_bp_stack_arg_8616(
     variable = getattr(cvar, "variable", None)
     if cfunc is None or not isinstance(variable, SimStackVariable):
         return
-    offset = _canonical_stack_offset_8616(getattr(variable, "offset", None))
+    offset = _canonical_stack_offset_8616(
+        machine_bp_offset_for_stack_variable_8616(codegen, variable)
+    )
     if not isinstance(offset, int) or offset <= 2:
         return
     if getattr(variable, "base", None) != "bp":
@@ -929,7 +966,13 @@ def _ensure_positive_bp_stack_arg_8616(
     arg_by_offset: dict[int, StructuredAstValue] = {}
     for arg in _boundary_tuple_8616(getattr(cfunc, "arg_list", ()) or ()):
         arg_var = getattr(arg, "variable", None)
-        arg_offset = _canonical_stack_offset_8616(getattr(arg_var, "offset", None))
+        arg_offset = (
+            _canonical_stack_offset_8616(
+                machine_bp_offset_for_stack_variable_8616(codegen, arg_var)
+            )
+            if isinstance(arg_var, SimStackVariable)
+            else None
+        )
         if isinstance(arg_var, SimStackVariable) and isinstance(arg_offset, int) and arg_offset > 2:
             arg_by_offset[arg_offset] = arg
     existing_arg = arg_by_offset.get(offset)
@@ -944,7 +987,13 @@ def _ensure_positive_bp_stack_arg_8616(
     unified = getattr(cfunc, "unified_local_vars", None)
     if isinstance(unified, dict):
         for existing in tuple(unified.keys()):
-            existing_offset = _canonical_stack_offset_8616(getattr(existing, "offset", None))
+            existing_offset = (
+                _canonical_stack_offset_8616(
+                    machine_bp_offset_for_stack_variable_8616(codegen, existing)
+                )
+                if isinstance(existing, SimStackVariable)
+                else None
+            )
             if isinstance(existing, SimStackVariable) and existing_offset == offset:
                 del unified[existing]
 
@@ -953,7 +1002,13 @@ def _ensure_positive_bp_stack_arg_8616(
     arg_types = []
     for arg in cfunc.arg_list:
         arg_var = getattr(arg, "variable", None)
-        arg_offset = _canonical_stack_offset_8616(getattr(arg_var, "offset", None))
+        arg_offset = (
+            _canonical_stack_offset_8616(
+                machine_bp_offset_for_stack_variable_8616(codegen, arg_var)
+            )
+            if isinstance(arg_var, SimStackVariable)
+            else None
+        )
         proto_arg_type = (
             _prototype_arg_type_for_bp_offset_8616(codegen, arg_offset) if isinstance(arg_offset, int) else None
         )
@@ -994,12 +1049,33 @@ def stack_cvar_for_stable_ss_linear_access_8616(
     target_type = _type_for_access_width_8616(access.width)
     requested_size = int(access.width) if isinstance(access.width, int) and access.width > 0 else None
     variables_in_use = getattr(cfunc, "variables_in_use", None)
+    projected = (
+        stack_cvar_for_machine_bp_range_8616(
+            codegen,
+            displacement,
+            requested_size,
+        )
+        if requested_size is not None
+        else None
+    )
+    if isinstance(projected, structured_c.CVariable):
+        if projected.variable_type is None:
+            projected.variable_type = target_type
+        _apply_preferred_stack_cvar_name_8616(projected, displacement, codegen)
+        variable = projected.variable
+        if isinstance(variables_in_use, dict) and isinstance(variable, SimStackVariable):
+            variables_in_use.setdefault(variable, projected)
+        _ensure_positive_bp_stack_arg_8616(codegen, projected, target_type)
+        return projected
     for arg in getattr(cfunc, "arg_list", ()) or ():
         variable = getattr(arg, "variable", None)
         if (
             isinstance(arg, structured_c.CVariable)
             and isinstance(variable, SimStackVariable)
-            and _canonical_stack_offset_8616(getattr(variable, "offset", None)) == displacement
+            and _canonical_stack_offset_8616(
+                machine_bp_offset_for_stack_variable_8616(codegen, variable)
+            )
+            == displacement
         ):
             existing_size = _cvar_storage_size_bytes_8616(arg, variable)
             if requested_size is not None and isinstance(existing_size, int) and existing_size < requested_size:
@@ -1022,7 +1098,10 @@ def stack_cvar_for_stable_ss_linear_access_8616(
         for variable, cvar in variables_in_use.items():
             if (
                 isinstance(variable, SimStackVariable)
-                and _canonical_stack_offset_8616(getattr(variable, "offset", None)) == displacement
+                and _canonical_stack_offset_8616(
+                    machine_bp_offset_for_stack_variable_8616(codegen, variable)
+                )
+                == displacement
             ):
                 existing_size = _cvar_storage_size_bytes_8616(cvar, variable)
                 if requested_size is not None and isinstance(existing_size, int) and existing_size < requested_size:
@@ -1329,7 +1408,9 @@ def _known_bp_stack_offsets_8616(codegen: StructuredAstValue) -> set[int]:
         for variable in variables_in_use:
             if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
                 continue
-            candidate_offset = _canonical_stack_offset_8616(getattr(variable, "offset", None))
+            candidate_offset = _canonical_stack_offset_8616(
+                machine_bp_offset_for_stack_variable_8616(codegen, variable)
+            )
             if isinstance(candidate_offset, int):
                 offsets.add(candidate_offset)
 
@@ -1337,7 +1418,9 @@ def _known_bp_stack_offsets_8616(codegen: StructuredAstValue) -> set[int]:
         variable = getattr(arg, "variable", None)
         if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
             continue
-        candidate_offset = _canonical_stack_offset_8616(getattr(variable, "offset", None))
+        candidate_offset = _canonical_stack_offset_8616(
+            machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        )
         if isinstance(candidate_offset, int):
             offsets.add(candidate_offset)
 
@@ -1368,7 +1451,9 @@ def _bp_stack_arg_offsets_8616(codegen: StructuredCodegenValue) -> set[int]:
         variable = getattr(arg, "variable", None)
         if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
             continue
-        offset = _canonical_stack_offset_8616(getattr(variable, "offset", None))
+        offset = _canonical_stack_offset_8616(
+            machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        )
         if isinstance(offset, int):
             offsets.add(offset)
 
@@ -1422,10 +1507,8 @@ def _candidate_function_prototypes_8616(codegen: StructuredCodegenValue) -> tupl
     ]
     kb = getattr(project, "kb", None) if project is not None else None
     if kb is not None and isinstance(func_addr, int):
-        try:
+        with contextlib.suppress(Exception):
             owner_candidates.append(kb.functions.function(addr=func_addr, create=False))
-        except Exception:
-            pass
 
     deferred_owner_prototypes: list[StructuredAstValue] = []
     for owner in owner_candidates:
@@ -1515,8 +1598,21 @@ def _candidate_functions_for_stack_facts_8616(
 
 
 def _bp_memory_operand_offsets_from_function_blocks_8616(codegen: StructuredCodegenValue) -> set[int]:
+    """Return BP-relative displacements from one cached scan of function blocks."""
+    functions = _candidate_functions_for_stack_facts_8616(codegen)
+    cfunc = getattr(codegen, "cfunc", None)
+    code_function_identity = id(cfunc)
+    function_identities = tuple(id(function) for function in functions)
+    cached = getattr(codegen, "_inertia_bp_memory_operand_offset_cache_8616", None)
+    if (
+        isinstance(cached, _BpMemoryOperandOffsetCache8616)
+        and cached.code_function_identity == code_function_identity
+        and cached.function_identities == function_identities
+    ):
+        return set(cached.offsets)
+
     offsets: set[int] = set()
-    for function in _candidate_functions_for_stack_facts_8616(codegen):
+    for function in functions:
         for block in getattr(function, "blocks", ()) or ():
             capstone = getattr(block, "capstone", None)
             for insn in getattr(capstone, "insns", ()) or ():
@@ -1529,6 +1625,11 @@ def _bp_memory_operand_offsets_from_function_blocks_8616(codegen: StructuredCode
                     disp = getattr(mem, "disp", None)
                     if isinstance(disp, int):
                         offsets.add(disp)
+    codegen._inertia_bp_memory_operand_offset_cache_8616 = _BpMemoryOperandOffsetCache8616(
+        code_function_identity=code_function_identity,
+        function_identities=function_identities,
+        offsets=frozenset(offsets),
+    )
     if offsets:
         codegen._inertia_stack_bp_offsets_from_capstone_count_8616 = len(offsets)
     return offsets
@@ -1606,7 +1707,7 @@ def _iter_stack_base_displacements_8616(root: StructuredAstValue) -> tuple[int, 
                 continue
             try:
                 value = getattr(node, attr)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
             if value is None:
                 continue
@@ -2414,12 +2515,15 @@ def _build_vvar_carrier_delta_map_8616(codegen: StructuredAstValue) -> dict[int,
 
 
 def _ensure_vvar_carrier_delta_map_8616(codegen: StructuredCodegenValue) -> dict[int, int]:
-    """Return cached vvar_deltas or build and cache them on codegen."""
+    """Return carrier deltas cached for the current structured-C root."""
+    root = getattr(getattr(codegen, "cfunc", None), "statements", None)
     cached = getattr(codegen, "_inertia_vvar_carrier_deltas", None)
-    if cached is not None:
+    cached_root = getattr(codegen, "_inertia_vvar_carrier_delta_root_8616", None)
+    if cached is not None and cached_root is root:
         return cast(dict[int, int], cached)
     deltas = _build_vvar_carrier_delta_map_8616(codegen)
     codegen._inertia_vvar_carrier_deltas = deltas
+    codegen._inertia_vvar_carrier_delta_root_8616 = root
     return deltas
 
 
@@ -2667,7 +2771,7 @@ def _vvar_carrier_delta_from_name_8616(
 def _resolve_virtual_name_offset_8616(
     node_name: str, project: AngrProjectValue, codegen: StructuredCodegenValue, seen: set[int]
 ) -> int | None:
-    if not (node_name.startswith("vvar_") or node_name.startswith("tmp_") or node_name.startswith("ir_")):
+    if not (node_name.startswith(("vvar_", "tmp_", "ir_"))):
         return None
     carrier_delta = _vvar_carrier_delta_from_name_8616(node_name, codegen)
     if carrier_delta is not None and carrier_delta[1] is StackCarrierDeltaSource8616.ALIAS_OBSERVATION:
@@ -2685,6 +2789,9 @@ def _resolve_stack_offset_from_variable_8616(
     node: StructuredAstValue, project: AngrProjectValue, codegen: StructuredCodegenValue, seen: set[int]
 ) -> int | None:
     variable = getattr(node, "variable", None)
+    if isinstance(variable, SimStackVariable):
+        stack_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        return stack_offset if isinstance(stack_offset, int) else None
     if isinstance(variable, SimRegisterVariable):
         carrier_offset = _stack_pointer_carrier_offset_8616(node, project, codegen, seen)
         if carrier_offset is not None:
@@ -2740,7 +2847,7 @@ def _dirty_name_offset_8616(
     resolved = _resolve_virtual_name_offset_8616(dirty_name, project, codegen, seen)
     if resolved is not None:
         return resolved
-    if dirty_name.startswith("vvar_") or dirty_name.startswith("tmp_") or dirty_name.startswith("ir_"):
+    if dirty_name.startswith(("vvar_", "tmp_", "ir_")):
         rhs = _single_assignment_rhs_for_virtual_name_8616(codegen, dirty_name)
         if rhs is None:
             diag["rhs_not_found"] = True
@@ -2968,9 +3075,14 @@ def _stack_offset_from_expr_8616(
         if isinstance(node, structured_c.CUnaryOp) and node.op == "Reference":
             operand = _strip_casts_8616(node.operand)
             variable = getattr(operand, "variable", None) if isinstance(operand, structured_c.CVariable) else None
-            if isinstance(variable, SimStackVariable) and isinstance(getattr(variable, "offset", None), int):
-                offset_cache[node_id] = variable.offset
-                return variable.offset
+            if isinstance(variable, SimStackVariable):
+                variable_offset = machine_bp_offset_for_stack_variable_8616(
+                    codegen,
+                    variable,
+                )
+                if isinstance(variable_offset, int):
+                    offset_cache[node_id] = variable_offset
+                    return variable_offset
             offset_cache[node_id] = _UNRESOLVED_STACK_OFFSET_8616
             return None
 
@@ -3127,15 +3239,9 @@ def match_stable_ss_linear_stack_access_8616(
             return None
 
         if segment_name == "ss" and not all(_is_stack_offset_term_direct_8616(term) for term in offset_terms):
-            if _has_stack_storage_evidence_for_displacement_8616(codegen, base_offset + offset_total, width):
-                codegen._inertia_ss_segment_inferred_from_stack_offset_count += 1
-            elif all(_stack_offset_term_stackish_8616(term, project, codegen) for term in offset_terms):
-                codegen._inertia_ss_segment_inferred_from_stack_offset_count += 1
-            elif base_offset + offset_total in known_offsets:
-                codegen._inertia_ss_segment_inferred_from_stack_offset_count += 1
-            elif _ss_probe_enabled_8616(codegen) and all(
+            if _has_stack_storage_evidence_for_displacement_8616(codegen, base_offset + offset_total, width) or all(_stack_offset_term_stackish_8616(term, project, codegen) for term in offset_terms) or base_offset + offset_total in known_offsets or (_ss_probe_enabled_8616(codegen) and all(
                 _stack_offset_term_stackish_8616(term, project, codegen) for term in offset_terms
-            ):
+            )):
                 codegen._inertia_ss_segment_inferred_from_stack_offset_count += 1
             else:
                 _log_refusal_8616(
@@ -3499,7 +3605,7 @@ def _callee_saved_register_names_from_frame_evidence_8616(
         )
     if not insns:
         return frozenset()
-    callee_saved = {"bx", "si", "di"}
+    callee_saved = MSC16_CALLEE_SAVED_GENERAL_REGISTERS_8616
     pushed: list[str] = []
     for insn in insns:
         if getattr(insn, "id", None) == X86_INS_PUSH:
@@ -3563,55 +3669,13 @@ def _expr_register_name_8616(node: StructuredAstValue, project: AngrProjectValue
 
 
 def _statement_ins_addr_8616(stmt: StructuredAstValue) -> int | None:
-    tags = getattr(stmt, "tags", None)
-    if isinstance(tags, dict):
+    tags = copy_structured_tags_8616(getattr(stmt, "tags", None))
+    if tags is not None:
         ins_addr = tags.get("ins_addr")
         if isinstance(ins_addr, int):
             return ins_addr
     ins_addr = getattr(stmt, "ins_addr", None)
     return ins_addr if isinstance(ins_addr, int) else None
-
-
-def _callee_saved_push_insn_matches_8616(
-    project: AngrProjectValue,
-    function_addr: int,
-    ins_addr: int | None,
-    reg_name: str,
-    *,
-    function: StructuredAstValue | None = None,
-) -> bool:
-    """Return whether exact function evidence identifies the register's frame PUSH.
-
-    A callee-saved register may also be pushed later as a call argument.  Only
-    the first push of a register restored by the epilogue is frame evidence.
-    """
-    if not isinstance(ins_addr, int) or not isinstance(reg_name, str):
-        return False
-    saved_regs = _callee_saved_register_names_from_frame_evidence_8616(
-        project,
-        function_addr,
-        function=function,
-    )
-    if reg_name.lower() not in saved_regs:
-        return False
-    first_push_addr: int | None = None
-    for insn in _decode_function_insns_8616(
-        project,
-        function_addr,
-        function=function,
-    ):
-        if getattr(insn, "id", None) != X86_INS_PUSH:
-            continue
-        reg_id = _op_reg_id_8616(insn, 0)
-        if not isinstance(reg_id, int):
-            continue
-        if insn.reg_name(reg_id).lower() != reg_name.lower():
-            continue
-        address = getattr(insn, "address", None)
-        if isinstance(address, int):
-            first_push_addr = address
-            break
-    return first_push_addr == ins_addr
 
 
 def _remove_callee_saved_stack_spills_8616(
@@ -3641,11 +3705,19 @@ def _remove_callee_saved_stack_spills_8616(
         ),
         saved_regs,
     )
-    frame_instruction_addresses = frozenset(
-        address
-        for pair in frame_pairs
-        for address in pair.instruction_addresses
-    )
+    frame_instruction_roles: dict[
+        int,
+        tuple[CalleeSavedFramePair8616, CalleeSavedFrameInstructionRole8616],
+    ] = {}
+    for pair in frame_pairs:
+        frame_instruction_roles[pair.push_addr] = (
+            pair,
+            CalleeSavedFrameInstructionRole8616.PUSH,
+        )
+        frame_instruction_roles[pair.pop_addr] = (
+            pair,
+            CalleeSavedFrameInstructionRole8616.POP,
+        )
     stats = getattr(codegen, "_inertia_callee_saved_spill_prune_stats", None)
     if not isinstance(stats, dict):
         stats = {
@@ -3660,72 +3732,86 @@ def _remove_callee_saved_stack_spills_8616(
         }
         codegen._inertia_callee_saved_spill_prune_stats = stats
 
+    try:
+        prior_record = codegen._inertia_callee_saved_frame_prune_record_8616
+    except AttributeError:
+        prior_record = None
+    prior_facts = (
+        prior_record.evidence
+        if isinstance(prior_record, CalleeSavedFramePruneRecord8616)
+        else ()
+    )
+    pruned_facts: list[CalleeSavedFramePruneFact8616] = []
+
+    def carrier_storage(
+        stmt: StructuredAstValue,
+        pair: CalleeSavedFramePair8616,
+        role: CalleeSavedFrameInstructionRole8616,
+    ) -> tuple[CalleeSavedFrameCarrierKind8616, int | None, int | None]:
+        """Classify the observable storage carried by one frame assignment."""
+        if role is not CalleeSavedFrameInstructionRole8616.PUSH:
+            return CalleeSavedFrameCarrierKind8616.FRAME_BOOKKEEPING, None, None
+        lhs = _strip_casts_8616(stmt.lhs)
+        if _expr_register_name_8616(stmt.rhs, project) != pair.register_name:
+            return CalleeSavedFrameCarrierKind8616.FRAME_BOOKKEEPING, None, None
+        if isinstance(lhs, structured_c.CVariable):
+            variable = lhs.variable
+            if isinstance(variable, SimStackVariable) and variable.base == "bp":
+                return (
+                    CalleeSavedFrameCarrierKind8616.STACK_SLOT_WRITE,
+                    machine_bp_offset_for_stack_variable_8616(codegen, variable),
+                    variable.size,
+                )
+            return CalleeSavedFrameCarrierKind8616.FRAME_BOOKKEEPING, None, None
+        if not isinstance(lhs, structured_c.CUnaryOp) or lhs.op != "Dereference":
+            return CalleeSavedFrameCarrierKind8616.FRAME_BOOKKEEPING, None, None
+        previous_allow_sp = getattr(codegen, "_inertia_allow_direct_sp_for_callee_save_spill", False)
+        previous_offset_cache = getattr(codegen, "_inertia_stack_offset_cache", None)
+        codegen._inertia_allow_direct_sp_for_callee_save_spill = True
+        codegen._inertia_stack_offset_cache = None
+        try:
+            access = match_stable_ss_linear_stack_access_8616(lhs, project, codegen)
+        finally:
+            codegen._inertia_allow_direct_sp_for_callee_save_spill = previous_allow_sp
+            codegen._inertia_stack_offset_cache = previous_offset_cache
+        if access is None:
+            return CalleeSavedFrameCarrierKind8616.FRAME_BOOKKEEPING, None, None
+        return (
+            CalleeSavedFrameCarrierKind8616.SEGMENTED_STACK_WRITE,
+            access.displacement,
+            access.width,
+        )
+
     def is_prunable(stmt: StructuredAstValue) -> bool:
         if not isinstance(stmt, structured_c.CAssignment):
             return False
         ins_addr = _statement_ins_addr_8616(stmt)
-        if ins_addr in frame_instruction_addresses:
+        if not isinstance(ins_addr, int):
+            return False
+        frame_owner = frame_instruction_roles.get(ins_addr)
+        if frame_owner is not None:
+            pair, role = frame_owner
+            carrier_kind, displacement, access_width = carrier_storage(stmt, pair, role)
             stats["raw_fact_count"] = int(stats.get("raw_fact_count", 0) or 0) + 1
             stats["normalized_fact_count"] = int(stats.get("normalized_fact_count", 0) or 0) + 1
             stats["classified_fact_count"] = int(stats.get("classified_fact_count", 0) or 0) + 1
-            return True
-        lhs = _strip_casts_8616(stmt.lhs)
-        rhs_reg = _expr_register_name_8616(stmt.rhs, project)
-        if rhs_reg not in saved_regs:
-            stats["refused"] = int(stats.get("refused", 0) or 0) + 1
-            if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
-                log.warning(
-                    "[callee-save-prune] refuse rhs_reg=%r saved=%r rhs=%s",
-                    rhs_reg,
-                    sorted(saved_regs),
-                    _debug_c_repr_8616(stmt.rhs),
+            stats["candidates"] = int(stats.get("candidates", 0) or 0) + 1
+            pruned_facts.append(
+                CalleeSavedFramePruneFact8616(
+                    function_addr=function_addr,
+                    register_name=pair.register_name,
+                    push_addr=pair.push_addr,
+                    pop_addr=pair.pop_addr,
+                    instruction_addr=ins_addr,
+                    carrier_ordinal=len(prior_facts) + len(pruned_facts),
+                    instruction_role=role,
+                    carrier_kind=carrier_kind,
+                    stack_displacement=displacement,
+                    access_width=access_width,
                 )
-            return False
-        displacement = None
-        push_evidenced = _callee_saved_push_insn_matches_8616(
-            project,
-            function_addr,
-            _statement_ins_addr_8616(stmt),
-            rhs_reg,
-            function=function,
-        )
-        if not push_evidenced:
-            if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
-                log.warning(
-                    "[callee-save-prune] refuse non-frame-push ins_addr=%r "
-                    "rhs_reg=%s stmt=%s",
-                    _statement_ins_addr_8616(stmt),
-                    rhs_reg,
-                    _debug_c_repr_8616(stmt),
-                )
-            return False
-        if isinstance(lhs, structured_c.CUnaryOp) and lhs.op == "Dereference":
-            previous_allow_sp = getattr(codegen, "_inertia_allow_direct_sp_for_callee_save_spill", False)
-            previous_offset_cache = getattr(codegen, "_inertia_stack_offset_cache", None)
-            codegen._inertia_allow_direct_sp_for_callee_save_spill = True
-            codegen._inertia_stack_offset_cache = None
-            try:
-                access = match_stable_ss_linear_stack_access_8616(lhs, project, codegen)
-            finally:
-                codegen._inertia_allow_direct_sp_for_callee_save_spill = previous_allow_sp
-                codegen._inertia_stack_offset_cache = previous_offset_cache
-            displacement = getattr(access, "displacement", None) if access is not None else None
-        elif isinstance(lhs, structured_c.CVariable):
-            variable = lhs.variable
-            if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
-                return False
-            displacement = getattr(variable, "offset", None)
-        else:
-            return False
-        stats["candidates"] = int(stats.get("candidates", 0) or 0) + 1
-        if os.environ.get("INERTIA_DEBUG_CALLEE_SAVE_PRUNE"):
-            log.warning(
-                "[callee-save-prune] prune displacement=%r rhs_reg=%s stmt=%s",
-                displacement,
-                rhs_reg,
-                _debug_c_repr_8616(stmt),
             )
-        return True
+            return True
+        return False
 
     changed = False
 
@@ -3761,6 +3847,10 @@ def _remove_callee_saved_stack_spills_8616(
         rewrite_statement_list(root.statements)
     elif isinstance(root, list):
         rewrite_statement_list(root)
+    if pruned_facts:
+        codegen._inertia_callee_saved_frame_prune_record_8616 = (
+            CalleeSavedFramePruneRecord8616.closed((*prior_facts, *pruned_facts))
+        )
     return changed
 
 
@@ -3850,7 +3940,11 @@ def lower_stable_ds_es_linear_global_dereferences_8616(
                     if getattr(cvar, "variable_type", None) is None:
                         cvar.variable_type = target_type
                     return cvar
-                if isinstance(variable, SimStackVariable) and getattr(variable, "offset", None) == access.displacement:
+                if (
+                    isinstance(variable, SimStackVariable)
+                    and machine_bp_offset_for_stack_variable_8616(codegen, variable)
+                    == access.displacement
+                ):
                     replacement = SimMemoryVariable(
                         addr,
                         scalar_width,
@@ -4402,10 +4496,7 @@ def _capstone_insns_for_direct_global_update_8616(
     block_size = getattr(block, "size", None)
     if not isinstance(block_size, int) or block_size <= 0:
         block_bytes = getattr(block, "bytes", None)
-        if isinstance(block_bytes, (bytes, bytearray)):
-            block_size = len(block_bytes)
-        else:
-            block_size = None
+        block_size = len(block_bytes) if isinstance(block_bytes, (bytes, bytearray)) else None
     with contextlib.suppress(Exception):
         if isinstance(block_size, int) and block_size > 0:
             decoded = project.factory.block(block_addr, size=block_size, opt_level=0)
@@ -4421,7 +4512,7 @@ def _capstone_insns_for_direct_global_update_8616(
 def _dedup_sorted_capstone_insns_by_addr_8616(wrappers: StructuredAstValue) -> tuple[StructuredAstValue, ...]:
     """Return a deterministic instruction stream from overlapping evidence blocks."""
     ordered = sorted(
-        tuple(wrappers),
+        wrappers,
         key=lambda wrapper: int(getattr(getattr(wrapper, "insn", wrapper), "address", 0) or 0),
     )
     deduped: list[StructuredAstValue] = []
@@ -6203,12 +6294,12 @@ def _direct_stack_move_instruction_facts_8616(
                 facts.append(
                     replace(
                         fact,
-                        source_register_offset=source_register_offset,
-                        dst_index_global_displacement=dst_index_global_displacement,
-                        dst_index_stack_offset=dst_index_stack_offset,
-                        dst_index_immediate=dst_index_immediate,
-                        dst_index_scale=dst_index_scale,
-                        dst_index_byte_scale=dst_index_byte_scale,
+                        source_register_offset=source_register_offset,  # noqa: B023
+                        dst_index_global_displacement=dst_index_global_displacement,  # noqa: B023
+                        dst_index_stack_offset=dst_index_stack_offset,  # noqa: B023
+                        dst_index_immediate=dst_index_immediate,  # noqa: B023
+                        dst_index_scale=dst_index_scale,  # noqa: B023
+                        dst_index_byte_scale=dst_index_byte_scale,  # noqa: B023
                     )
                 )
 
@@ -6796,10 +6887,7 @@ def _is_same_global_update_assignment_8616(stmt: StructuredAstValue, dst_cvar: S
 def _list_has_global_update_assignment_8616(
     statements: list[StructuredAstValue], dst_cvar: StructuredAstValue, delta: int
 ) -> bool:
-    for stmt in statements:
-        if _is_same_global_update_assignment_8616(stmt, dst_cvar, delta):
-            return True
-    return False
+    return any(_is_same_global_update_assignment_8616(stmt, dst_cvar, delta) for stmt in statements)
 
 
 def _tree_has_global_update_assignment_8616(root: StructuredAstValue, dst_cvar: StructuredAstValue, delta: int) -> bool:
@@ -6856,8 +6944,8 @@ def _tree_has_untagged_global_update_assignment_8616(
     root: StructuredAstValue, dst_cvar: StructuredAstValue, delta: int
 ) -> bool:
     for node in _iter_structured_c_nodes_8616(root):
-        tags = getattr(node, "tags", None)
-        if isinstance(tags, dict) and isinstance(tags.get("ins_addr"), int):
+        tags = copy_structured_tags_8616(getattr(node, "tags", None))
+        if tags is not None and isinstance(tags.get("ins_addr"), int):
             continue
         if _is_same_global_update_assignment_8616(node, dst_cvar, delta):
             return True
@@ -6933,10 +7021,10 @@ def _candidate_function_ins_addrs_8616(
 def _node_has_instruction_address_8616(node: StructuredAstValue, project: AngrProjectValue, ins_addr: int) -> bool:
     """Return whether a C node carries the instruction's current or relocated origin tag."""
     try:
-        tags = node.tags
+        tags = copy_structured_tags_8616(node.tags)
     except AttributeError:
         return False
-    if not isinstance(tags, dict):
+    if tags is None:
         return False
     candidate_addrs = _candidate_ins_addrs_8616(project, ins_addr)
     return any(
@@ -7006,7 +7094,9 @@ def _apply_annotation_names_to_existing_stack_cvars_8616(codegen: StructuredAstV
             variable = variable_hint
         if not isinstance(variable, SimStackVariable) or variable.base != "bp":
             return
-        offset = _canonical_stack_offset_8616(variable.offset)
+        offset = _canonical_stack_offset_8616(
+            machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        )
         if not isinstance(offset, int):
             return
         preferred_name = _preferred_stack_object_name_8616(
@@ -7135,7 +7225,13 @@ def _ensure_stack_cvar_min_width_8616(codegen: StructuredAstValue, cvar: Structu
     if not isinstance(cvar, structured_c.CVariable) or width <= 0:
         return
     variable = getattr(cvar, "variable", None)
-    offset = _canonical_stack_offset_8616(getattr(variable, "offset", None))
+    offset = (
+        _canonical_stack_offset_8616(
+            machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        )
+        if isinstance(variable, SimStackVariable)
+        else None
+    )
     if isinstance(variable, SimStackVariable):
         size = variable.size
         if not isinstance(size, int) or size < width:
@@ -7158,7 +7254,12 @@ def _ensure_stack_cvar_min_width_8616(codegen: StructuredAstValue, cvar: Structu
                 continue
             if getattr(existing, "base", None) != "bp":
                 continue
-            if _canonical_stack_offset_8616(getattr(existing, "offset", None)) == offset:
+            if (
+                _canonical_stack_offset_8616(
+                    machine_bp_offset_for_stack_variable_8616(codegen, existing)
+                )
+                == offset
+            ):
                 del variables_in_use[existing]
         if isinstance(variable, SimStackVariable):
             variables_in_use[variable] = cvar
@@ -7169,7 +7270,12 @@ def _ensure_stack_cvar_min_width_8616(codegen: StructuredAstValue, cvar: Structu
                 continue
             if getattr(existing, "base", None) != "bp":
                 continue
-            if _canonical_stack_offset_8616(getattr(existing, "offset", None)) == offset:
+            if (
+                _canonical_stack_offset_8616(
+                    machine_bp_offset_for_stack_variable_8616(codegen, existing)
+                )
+                == offset
+            ):
                 del unified[existing]
         if isinstance(variable, SimStackVariable):
             unified[variable] = {(cvar, getattr(cvar, "variable_type", None))}
@@ -7179,6 +7285,12 @@ def _resolve_direct_stack_update_cvar_8616(
     codegen: StructuredAstValue, offset: int, width: int
 ) -> StructuredAstValue | None:
     """Resolve the C variable representing a direct stack update slot."""
+    projected = stack_cvar_for_machine_bp_range_8616(codegen, offset, width)
+    if isinstance(projected, structured_c.CVariable):
+        _apply_preferred_stack_cvar_name_8616(projected, offset, codegen)
+        _ensure_stack_cvar_has_identifier_8616(codegen, projected, offset)
+        _ensure_stack_cvar_min_width_8616(codegen, projected, width)
+        return projected
     root = getattr(getattr(codegen, "cfunc", None), "statements", None)
     candidates = []
     seen_candidate_ids: set[int] = set()
@@ -7187,7 +7299,12 @@ def _resolve_direct_stack_update_cvar_8616(
         for variable, cvar in tuple(variables_in_use.items()):
             if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
                 continue
-            if _canonical_stack_offset_8616(getattr(variable, "offset", None)) != offset:
+            if (
+                _canonical_stack_offset_8616(
+                    machine_bp_offset_for_stack_variable_8616(codegen, variable)
+                )
+                != offset
+            ):
                 continue
             size = getattr(variable, "size", None)
             if isinstance(size, int) and size > 0 and size < width:
@@ -7217,6 +7334,7 @@ def _resolve_direct_stack_update_cvar_8616(
         candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
         selected = candidates[0][2]
         _ensure_stack_cvar_min_width_8616(codegen, selected, width)
+        publish_selected_stack_cvar_projection_8616(codegen, selected, bp_offset=offset, size=width)
         return selected
 
     target_type = _prototype_arg_type_for_bp_offset_8616(codegen, offset) or _type_for_access_width_8616(width)
@@ -7233,6 +7351,7 @@ def _resolve_direct_stack_update_cvar_8616(
     unified = getattr(getattr(codegen, "cfunc", None), "unified_local_vars", None)
     if isinstance(unified, dict):
         unified[variable] = {(cvar, getattr(cvar, "variable_type", None))}
+    publish_selected_stack_cvar_projection_8616(codegen, cvar, bp_offset=offset, size=width)
     return cvar
 
 
@@ -8372,10 +8491,7 @@ def _replace_tagged_assignment_8616(
                     if list_changed:
                         value[:] = new_items
                 elif value is not None:
-                    if attr in {"iteration", "iterator"}:
-                        replacement = transform_iterator(value)
-                    else:
-                        replacement = transform(value)
+                    replacement = transform_iterator(value) if attr in {"iteration", "iterator"} else transform(value)
                     if replacement is not value:
                         setattr(node, attr, replacement)
                         value = replacement
@@ -8463,11 +8579,7 @@ def _replace_tagged_statement_assignment_8616(
                 ):
                     replacement = replacement_factory(stmt.tags)
                     materialized = True
-                    if _is_same_stack_move_assignment_8616(
-                        stmt,
-                        replacement.lhs,
-                        replacement.rhs,
-                    ):
+                    if _is_same_stack_move_assignment_surface_8616(stmt, replacement):
                         new_statements.append(stmt)
                         visit(stmt)
                     else:
@@ -8492,11 +8604,8 @@ def _replace_tagged_statement_assignment_8616(
                     and _node_has_instruction_address_8616(child, project, ins_addr)
                 ):
                     replacement = replacement_factory(child.tags)
-                    if _is_same_stack_move_assignment_8616(
-                        child,
-                        getattr(replacement, "lhs", None),
-                        getattr(replacement, "rhs", None),
-                    ):
+                    if _is_same_stack_move_assignment_surface_8616(child, replacement):
+                        materialized = True
                         visit(child)
                         continue
                     setattr(node, attr, replacement)
@@ -9322,12 +9431,21 @@ def _replace_stack_update_loop_iterator_8616(
 
 
 def _stack_cvar_identity_8616(cvar: StructuredAstValue) -> tuple[int, int | None] | None:
+    """Return one CVariable's machine-BP identity and storage width."""
     if not isinstance(cvar, structured_c.CVariable):
         return None
     variable = cvar.variable
     if not isinstance(variable, SimStackVariable) or getattr(variable, "base", None) != "bp":
         return None
-    offset = _canonical_stack_offset_8616(getattr(variable, "offset", None))
+    try:
+        variable_codegen = cvar.codegen
+    except AttributeError:
+        variable_codegen = None
+    offset = _canonical_stack_offset_8616(
+        machine_bp_offset_for_stack_variable_8616(variable_codegen, variable)
+        if variable_codegen is not None
+        else variable.offset
+    )
     if not isinstance(offset, int):
         return None
     size = getattr(variable, "size", None)
@@ -10218,7 +10336,7 @@ def _record_direct_stack_move_evidence_8616(
         getattr(codegen, "_inertia_direct_stack_move_evidence_8616", ()) or ()
     )
     codegen._inertia_direct_stack_move_evidence_8616 = tuple(
-        dict.fromkeys(evidence + (record,))
+        dict.fromkeys((*evidence, record))
     )
 
 
@@ -10509,8 +10627,8 @@ def _comparable_instruction_addr_8616(project: AngrProjectValue, tagged_addr: in
 
 
 def _statement_instruction_addr_8616(stmt: StructuredAstValue, project: AngrProjectValue, ins_addr: int) -> int | None:
-    tags = getattr(stmt, "tags", None)
-    if not isinstance(tags, dict):
+    tags = copy_structured_tags_8616(getattr(stmt, "tags", None))
+    if tags is None:
         return None
     tagged_addr = tags.get("ins_addr")
     if not isinstance(tagged_addr, int):
@@ -10860,10 +10978,15 @@ def prune_materialized_call_push_stack_assignments_8616(
         if summary.push_arg_instruction_addrs
     }
     raw_count = len(push_summaries)
+    push_evidence_by_callsite = {
+        callsite_addr: normalize_consumed_call_push_evidence_8616(summary)
+        for callsite_addr, summary in push_summaries.items()
+    }
     normalized_summaries = {
         callsite_addr: summary
         for callsite_addr, summary in push_summaries.items()
-        if all(isinstance(address, int) for address in summary.push_arg_instruction_addrs)
+        if push_evidence_by_callsite[callsite_addr].status
+        is ConsumedCallPushEvidenceStatus8616.NORMALIZED
     }
     normalized_count = len(normalized_summaries)
     classified_callsite_addrs: set[int] = set()
@@ -10896,12 +11019,12 @@ def prune_materialized_call_push_stack_assignments_8616(
     consumed_push_instruction_addrs = frozenset(
         address
         for callsite_addr in classified_callsite_addrs
-        for address in normalized_summaries[callsite_addr].push_arg_instruction_addrs
+        for address in push_evidence_by_callsite[callsite_addr].instruction_addrs
     )
     materialized_args_by_push_instruction_addr = {
         address: materialized_args_by_callsite[callsite_addr]
         for callsite_addr in classified_callsite_addrs
-        for address in normalized_summaries[callsite_addr].push_arg_instruction_addrs
+        for address in push_evidence_by_callsite[callsite_addr].instruction_addrs
     }
     consumed_cleanup_instruction_addrs = frozenset(
         cast(
@@ -11009,57 +11132,75 @@ def prune_consumed_call_push_stack_assignments_8616(
         return False
     insn_by_addr = _instruction_by_addr_map_8616(project, function)
     raw_count = 0
+    normalized_count = 0
     classified_count = 0
     materialized_count = 0
+    preserved_live_definition_count = 0
+    liveness_refusal_count = 0
     def is_false_push_carrier(statement: StructuredAstValue) -> bool:
         """Classify one assignment against exact consumed PUSH evidence."""
-        nonlocal raw_count, classified_count
+        nonlocal classified_count, liveness_refusal_count, normalized_count
+        nonlocal preserved_live_definition_count, raw_count
         if not isinstance(statement, structured_c.CAssignment):
             return False
-        tags = statement.tags
-        ins_addr = tags.get("ins_addr") if isinstance(tags, dict) else None
+        tags = copy_structured_tags_8616(statement.tags)
+        statement_ins_addr = tags.get("ins_addr") if tags is not None else None
         lhs = statement.lhs
         lhs_helper = (
             _call_target_name_8616(lhs)
             if isinstance(lhs, structured_c.CFunctionCall)
             else None
         )
-        is_consumed = isinstance(ins_addr, int) and ins_addr in consumed_push_instruction_addrs
-        if debug and (is_consumed or lhs_helper in {"SEG_U8", "SEG_U16", "SEG_U32"}):
+        candidate_addrs = instruction_addrs_from_node_8616(lhs) & consumed_push_instruction_addrs
+        if isinstance(statement_ins_addr, int) and statement_ins_addr in consumed_push_instruction_addrs:
+            candidate_addrs |= frozenset({statement_ins_addr})
+        if debug and (candidate_addrs or lhs_helper in {"SEG_U8", "SEG_U16", "SEG_U32"}):
             log.warning(
-                "[consumed-call-push] ins_addr=%r consumed=%s lhs_type=%s "
+                "[consumed-call-push] statement_ins_addr=%r candidate_addrs=%s lhs_type=%s "
                 "lhs_helper=%r rhs_type=%s rhs_pure=%s",
-                None if not isinstance(ins_addr, int) else hex(ins_addr),
-                is_consumed,
+                None if not isinstance(statement_ins_addr, int) else hex(statement_ins_addr),
+                tuple(hex(address) for address in sorted(candidate_addrs)),
                 type(lhs).__name__,
                 lhs_helper,
                 type(statement.rhs).__name__,
                 _pure_consumed_push_carrier_expression_8616(statement.rhs),
             )
-        if (
-            not isinstance(ins_addr, int)
-            or ins_addr not in consumed_push_instruction_addrs
-        ):
+        if not candidate_addrs:
             return False
         raw_count += 1
+        if len(candidate_addrs) != 1:
+            return False
+        normalized_count += 1
+        ins_addr = next(iter(candidate_addrs))
         insn = _instruction_at_or_decode_8616(project, ins_addr, insn_by_addr)
         if getattr(insn, "id", None) != X86_INS_PUSH:
+            return False
+        if not (
+            _is_consumed_push_stack_carrier_lhs_8616(project, lhs)
+            or _is_consumed_push_ss_store_lhs_8616(project, codegen, lhs)
+        ):
             return False
         materialized_args = (
             materialized_args_by_push_instruction_addr.get(ins_addr, ())
             if materialized_args_by_push_instruction_addr is not None
             else ()
         )
+        if isinstance(lhs, structured_c.CDirtyExpression) and materialized_args_by_push_instruction_addr is not None:
+            liveness = classify_call_argument_carrier_liveness_8616(
+                lhs,
+                materialized_args,
+            )
+            if liveness.verdict is CallArgumentCarrierLivenessVerdict8616.LIVE_ARGUMENT_DEFINITION:
+                preserved_live_definition_count += 1
+                return False
+            if liveness.verdict is CallArgumentCarrierLivenessVerdict8616.UNKNOWN_REFUSE:
+                liveness_refusal_count += 1
+                return False
         if not _pure_consumed_push_carrier_expression_8616(
             statement.rhs
         ) and not any(
             _same_stack_move_rhs_8616(statement.rhs, argument)
             for argument in materialized_args
-        ):
-            return False
-        if not (
-            _is_consumed_push_stack_carrier_lhs_8616(project, lhs)
-            or _is_consumed_push_ss_store_lhs_8616(project, codegen, lhs)
         ):
             return False
         classified_count += 1
@@ -11078,11 +11219,13 @@ def prune_consumed_call_push_stack_assignments_8616(
 
     result = ConsumedCallPushCarrierPrune8616(
         raw_fact_count=raw_count,
-        normalized_fact_count=raw_count,
+        normalized_fact_count=normalized_count,
         classified_fact_count=classified_count,
         materialized_count=materialized_count,
         failure_count=max(raw_count - classified_count, 0)
         + max(classified_count - materialized_count, 0),
+        preserved_live_definition_count=preserved_live_definition_count,
+        liveness_refusal_count=liveness_refusal_count,
     )
     codegen._inertia_consumed_call_push_carrier_prune_8616 = result
     if debug:
@@ -11096,7 +11239,7 @@ def prune_consumed_call_push_stack_assignments_8616(
             result.materialized_count,
             result.failure_count,
         )
-    return materialized_count > 0
+    return bool(materialized_count > 0)
 
 
 def _is_far_call_cs_frame_value_8616(
@@ -11174,18 +11317,24 @@ def prune_call_return_frame_stack_assignments_8616(
     if function is None:
         return False
     insn_by_addr = _instruction_by_addr_map_8616(project, function)
-    raw_count = 0
-    normalized_count = 0
-    classified_count = 0
-    materialized_count = 0
+    exact_result = prune_exact_call_return_frame_projections_8616(
+        project,
+        codegen,
+        function,
+        return_addr_by_callsite,
+    )
+    raw_count = exact_result.raw_fact_count
+    normalized_count = exact_result.normalized_fact_count
+    classified_count = exact_result.classified_fact_count
+    materialized_count = exact_result.materialized_count
     def is_call_return_frame_carrier(statement: StructuredAstValue) -> bool:
         """Classify one assignment against exact callsite return-frame evidence."""
         nonlocal raw_count, normalized_count, classified_count
         if not isinstance(statement, structured_c.CAssignment):
             return False
         lhs = statement.lhs
-        tags = statement.tags
-        ins_addr = tags.get("ins_addr") if isinstance(tags, dict) else None
+        tags = copy_structured_tags_8616(statement.tags)
+        ins_addr = tags.get("ins_addr") if tags is not None else None
         rhs = statement.rhs
         if debug_return_frame and isinstance(ins_addr, int) and (
             ins_addr in return_addr_by_callsite
@@ -11308,7 +11457,7 @@ def prune_call_return_frame_stack_assignments_8616(
         materialized=materialized_count,
         failures=result.failure_count,
     )
-    return materialized_count > 0
+    return bool(materialized_count > 0)
 
 
 def prune_frame_prologue_stack_assignments_8616(
@@ -11350,10 +11499,30 @@ def prune_frame_prologue_stack_assignments_8616(
         insn_by_addr,
         function_addr,
     )
+    register_carriers = collect_frame_register_carriers_8616(root, project, function_addr)
     push_carrier_proven = any(
-        is_exact_push_bp_carrier_8616(node, root, project, function_addr)
+        is_exact_push_bp_carrier_8616(
+            node,
+            root,
+            project,
+            function_addr,
+            canonical_frame_proven=function_addr in frame_instruction_addresses,
+            codegen=codegen,
+            register_carriers=register_carriers,
+        )
         for node in _iter_c_nodes_deep_8616(root)
     )
+    register_carriers = register_carriers.with_materialization(push_carrier_proven)
+    if register_carriers.raw_fact_count:
+        _record_semantic_lane_8616(
+            codegen,
+            name="frame-prologue-register-carriers",
+            raw=register_carriers.raw_fact_count,
+            normalized=register_carriers.normalized_fact_count,
+            classified=register_carriers.classified_fact_count,
+            materialized=register_carriers.materialized_count,
+            failures=register_carriers.failure_count,
+        )
 
     raw_count = 0
     normalized_count = 0
@@ -11366,8 +11535,8 @@ def prune_frame_prologue_stack_assignments_8616(
         nonlocal raw_count, normalized_count, classified_count
         if not push_carrier_proven or not isinstance(statement, structured_c.CAssignment):
             return False
-        tags = statement.tags
-        ins_addr = tags.get("ins_addr") if isinstance(tags, dict) else None
+        tags = copy_structured_tags_8616(statement.tags)
+        ins_addr = tags.get("ins_addr") if tags is not None else None
         if ins_addr not in frame_instruction_addresses:
             return False
         raw_count += 1
@@ -11537,10 +11706,7 @@ def _strict_same_instruction_block_8616(
 def _list_has_stack_move_assignment_8616(
     statements: list[StructuredAstValue], dst_cvar: StructuredAstValue, source_expr: StructuredAstValue
 ) -> bool:
-    for stmt in statements:
-        if _is_same_stack_move_assignment_8616(stmt, dst_cvar, source_expr):
-            return True
-    return False
+    return any(_is_same_stack_move_assignment_8616(stmt, dst_cvar, source_expr) for stmt in statements)
 
 
 def _tree_has_stack_move_assignment_8616(
@@ -11678,11 +11844,13 @@ def _prune_unsupported_function_pointer_stack_move_assignments_8616(
         dst_identity = _stack_cvar_identity_8616(stmt.lhs)
         if dst_identity not in allowed_sources:
             return False
-        tags = stmt.tags
-        if isinstance(tags, dict) and isinstance(tags.get("ins_addr"), int):
-            tagged_addr = int(tags["ins_addr"])
-            if tagged_addr in direct_write_addrs.get(dst_identity, set()):
-                return False
+        tags = copy_structured_tags_8616(stmt.tags)
+        if (
+            tags is not None
+            and isinstance(tagged_addr := tags.get("ins_addr"), int)
+            and tagged_addr in direct_write_addrs.get(dst_identity, set())
+        ):
+            return False
         rhs = stmt.rhs
         for allowed_source in allowed_sources[dst_identity]:
             if _same_stack_move_rhs_8616(rhs, allowed_source):
@@ -11794,6 +11962,28 @@ def _is_same_stack_move_assignment_8616(
     )
 
 
+def _is_same_stack_move_assignment_surface_8616(
+    actual: StructuredAstValue,
+    expected: StructuredAstValue,
+) -> bool:
+    """Return whether equivalent assignments already use the canonical storage surface."""
+    if not isinstance(expected, structured_c.CAssignment) or not _is_same_stack_move_assignment_8616(
+        actual,
+        expected.lhs,
+        expected.rhs,
+    ):
+        return False
+    if not isinstance(actual.lhs, structured_c.CVariable) or not isinstance(
+        expected.lhs,
+        structured_c.CVariable,
+    ):
+        return True
+    return (
+        actual.lhs.variable is expected.lhs.variable
+        and actual.lhs.unified_variable is expected.lhs.unified_variable
+    )
+
+
 def _removable_tagged_stack_move_assignment_count_8616(
     root: StructuredAstValue,
     project: AngrProjectValue,
@@ -11899,8 +12089,8 @@ def _remove_duplicate_stack_move_assignments_8616(
             stmt, dst_cvar, source_expr
         ):
             return False
-        tags = stmt.tags
-        if not isinstance(tags, dict):
+        tags = copy_structured_tags_8616(stmt.tags)
+        if tags is None:
             return True
         tagged_addr = tags.get("ins_addr")
         if not isinstance(tagged_addr, int):
@@ -12218,8 +12408,10 @@ def _relocate_tagged_stack_move_before_proven_loop_8616(
                             return removed
                         insertion_index = index
                         while insertion_index > 0:
-                            previous_tags = getattr(statements[insertion_index - 1], "tags", None)
-                            if not isinstance(previous_tags, dict):
+                            previous_tags = copy_structured_tags_8616(
+                                getattr(statements[insertion_index - 1], "tags", None)
+                            )
+                            if previous_tags is None:
                                 break
                             previous_origin = previous_tags.get("inertia_relocated_from_ins_addr")
                             if not isinstance(previous_origin, int):
@@ -12948,7 +13140,7 @@ def _conditional_branch_ranges_for_jcc_8616(
         for index, wrapper in enumerate(insns)
         if (
             isinstance(getattr(getattr(wrapper, "insn", wrapper), "address", None), int)
-            and abs(int(getattr(getattr(wrapper, "insn", wrapper), "address")) - jcc_addr) <= 8
+            and abs(int(getattr(wrapper, "insn", wrapper).address) - jcc_addr) <= 8
             and str(getattr(getattr(wrapper, "insn", wrapper), "mnemonic", "") or "").lower().startswith("j")
             and str(getattr(getattr(wrapper, "insn", wrapper), "mnemonic", "") or "").lower() != "jmp"
         )
@@ -13304,9 +13496,9 @@ def _insert_at_do_while_body_start_8616(
             repeated_prefix_count = 0
             if isinstance(body_statements, list):
                 for statement in body_statements:
-                    tags = getattr(statement, "tags", None)
-                    statement_addr = tags.get("ins_addr") if isinstance(tags, dict) else None
-                    if not isinstance(statement_addr, int) and isinstance(tags, dict):
+                    tags = copy_structured_tags_8616(getattr(statement, "tags", None))
+                    statement_addr = tags.get("ins_addr") if tags is not None else None
+                    if not isinstance(statement_addr, int) and tags is not None:
                         statement_addr = tags.get("inertia_relocated_from_ins_addr")
                     comparable_addr = (
                         _comparable_instruction_addr_8616(project, statement_addr, ins_addr)
@@ -13884,60 +14076,80 @@ def _same_register_cvar_name_8616(node: StructuredAstValue, reg_name: str) -> bo
     return _cvar_register_name_8616(node) == reg_name
 
 
-def _node_reads_register_name_8616(node: StructuredAstValue, reg_name: str, *, seen: set[int] | None = None) -> bool:
+def _node_reads_register_name_8616(
+    node: StructuredAstValue,
+    reg_name: str,
+    *,
+    seen: set[int] | None = None,
+    memo: dict[int, bool] | None = None,
+) -> bool:
+    """Return whether one C-AST node reads a register, memoizing shared subtrees."""
     if node is None:
         return False
     if seen is None:
         seen = set()
     node_id = id(node)
+    if memo is not None and node_id in memo:
+        return memo[node_id]
     if node_id in seen:
         return False
     seen.add(node_id)
     if isinstance(node, structured_c.CVariable):
-        return _same_register_cvar_name_8616(node, reg_name)
-    if isinstance(node, structured_c.CAssignment):
-        return _node_reads_register_name_8616(node.rhs, reg_name, seen=seen)
-    if not type(node).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
-        return False
-    for attr in (
-        "condition",
-        "cond",
-        "lhs",
-        "rhs",
-        "operand",
-        "expr",
-        "iftrue",
-        "iffalse",
-        "body",
-        "else_node",
-        "args",
-        "operands",
-        "statements",
-    ):
-        value = None
-        with contextlib.suppress(Exception):
-            value = getattr(node, attr, None)
-        if isinstance(value, (list, tuple)):
-            for item in tuple(value):
-                if isinstance(item, tuple):
-                    if any(_node_reads_register_name_8616(part, reg_name, seen=seen) for part in item):
-                        return True
-                elif _node_reads_register_name_8616(item, reg_name, seen=seen):
-                    return True
-        elif _node_reads_register_name_8616(value, reg_name, seen=seen):
-            return True
-    pairs = None
-    with contextlib.suppress(Exception):
-        pairs = getattr(node, "condition_and_nodes", None)
-    if pairs:
-        for condition, body in tuple(pairs):
-            if _node_reads_register_name_8616(condition, reg_name, seen=seen) or _node_reads_register_name_8616(
-                body,
-                reg_name,
-                seen=seen,
-            ):
-                return True
-    return False
+        result = _same_register_cvar_name_8616(node, reg_name)
+    elif isinstance(node, structured_c.CAssignment):
+        result = _node_reads_register_name_8616(node.rhs, reg_name, seen=seen, memo=memo)
+    elif not type(node).__module__.startswith("angr.analyses.decompiler.structured_codegen"):
+        result = False
+    else:
+        result = False
+        for attr in (
+            "condition",
+            "cond",
+            "lhs",
+            "rhs",
+            "operand",
+            "expr",
+            "iftrue",
+            "iffalse",
+            "body",
+            "else_node",
+            "args",
+            "operands",
+            "statements",
+        ):
+            value = None
+            with contextlib.suppress(Exception):
+                value = getattr(node, attr, None)
+            if isinstance(value, (list, tuple)):
+                for item in tuple(value):
+                    if isinstance(item, tuple):
+                        if any(
+                            _node_reads_register_name_8616(part, reg_name, seen=seen, memo=memo)
+                            for part in item
+                        ):
+                            result = True
+                            break
+                    elif _node_reads_register_name_8616(item, reg_name, seen=seen, memo=memo):
+                        result = True
+                        break
+                if result:
+                    break
+            elif _node_reads_register_name_8616(value, reg_name, seen=seen, memo=memo):
+                result = True
+                break
+        if not result:
+            pairs = None
+            with contextlib.suppress(Exception):
+                pairs = getattr(node, "condition_and_nodes", None)
+            if pairs:
+                result = any(
+                    _node_reads_register_name_8616(condition, reg_name, seen=seen, memo=memo)
+                    or _node_reads_register_name_8616(body, reg_name, seen=seen, memo=memo)
+                    for condition, body in tuple(pairs)
+                )
+    if memo is not None:
+        memo[node_id] = result
+    return result
 
 
 def _find_first_register_cvar_use_8616(
@@ -14017,10 +14229,7 @@ def _is_same_register_move_assignment_8616(
 def _list_has_register_move_assignment_8616(
     statements: list[StructuredAstValue], reg_name: str, source_expr: StructuredAstValue
 ) -> bool:
-    for stmt in statements:
-        if _is_same_register_move_assignment_8616(stmt, reg_name, source_expr):
-            return True
-    return False
+    return any(_is_same_register_move_assignment_8616(stmt, reg_name, source_expr) for stmt in statements)
 
 
 def _insertion_point_has_register_move_assignment_8616(
@@ -14031,19 +14240,14 @@ def _insertion_point_has_register_move_assignment_8616(
 ) -> bool:
     if insert_index > 0 and _is_same_register_move_assignment_8616(statements[insert_index - 1], reg_name, source_expr):
         return True
-    if insert_index < len(statements) and _is_same_register_move_assignment_8616(
-        statements[insert_index],
-        reg_name,
-        source_expr,
-    ):
-        return True
-    return False
+    return bool(insert_index < len(statements) and _is_same_register_move_assignment_8616(statements[insert_index], reg_name, source_expr))
 
 
 def _insert_before_first_register_cvar_use_8616(
     root: StructuredAstValue, reg_name: str, source_expr: StructuredAstValue, codegen: StructuredAstValue
 ) -> bool:
     seen: set[int] = set()
+    read_memo: dict[int, bool] = {}
 
     def visit(node: StructuredAstValue) -> bool:
         """Insert a register assignment before the first visible register read."""
@@ -14062,7 +14266,7 @@ def _insert_before_first_register_cvar_use_8616(
                     or isinstance(nested_statements, list)
                 ) and visit(stmt):
                     return True
-                if _node_reads_register_name_8616(stmt, reg_name):
+                if _node_reads_register_name_8616(stmt, reg_name, memo=read_memo):
                     if _insertion_point_has_register_move_assignment_8616(statements, index, reg_name, source_expr):
                         root._inertia_stack_mov_assignment_already_present_8616 = True
                         return True
@@ -14658,10 +14862,10 @@ def materialize_direct_global_incdec_instructions_8616(
                 codegen,
                 GlobalStorageIdentityFact8616(
                     space=MemSpace.DS,
-                    offset=addr,
-                    width=width,
-                    name=name,
-                    evidence_addr=fact.ins_addr,
+                    offset=addr,  # noqa: B023
+                    width=width,  # noqa: B023
+                    name=name,  # noqa: B023
+                    evidence_addr=fact.ins_addr,  # noqa: B023
                     kind=StorageIdentityEvidenceKind8616.DIRECT_GLOBAL_UPDATE,
                 ),
             )
@@ -14833,16 +15037,7 @@ def materialize_direct_global_incdec_instructions_8616(
         evidence = _boundary_tuple_8616(getattr(codegen, "_inertia_direct_global_update_evidence_8616", ()) or ())
         codegen._inertia_direct_global_update_evidence_8616 = tuple(
             dict.fromkeys(
-                evidence
-                + (
-                    (
-                        ("displacement", addr),
-                        ("width", width),
-                        ("delta", delta),
-                        ("ins_addr", fact.ins_addr),
-                        ("name", name),
-                    ),
-                )
+                (*evidence, (("displacement", addr), ("width", width), ("delta", delta), ("ins_addr", fact.ins_addr), ("name", name)))
             )
         )
         record_storage_identity()
@@ -15111,23 +15306,7 @@ def materialize_direct_stack_incdec_instructions_8616(
         evidence = _boundary_tuple_8616(getattr(codegen, "_inertia_direct_stack_update_evidence_8616", ()) or ())
         codegen._inertia_direct_stack_update_evidence_8616 = _boundary_tuple_8616(
                 dict.fromkeys(
-                    evidence
-                    + (
-                        (
-                            ("offset", fact.offset),
-                            ("width", width),
-                            ("delta", fact.delta),
-                            ("source_kind", fact.source_kind),
-                            ("source_value", fact.source_value),
-                            ("source_offset", fact.source_offset),
-                            ("source_base_offset", fact.source_base_offset),
-                            ("source_index_offset", fact.source_index_offset),
-                            ("source_index_scale", fact.source_index_scale),
-                            ("operation", fact.operation),
-                            ("ins_addr", fact.ins_addr),
-                            ("name", getattr(getattr(cvar, "variable", None), "name", None)),
-                        ),
-                    )
+                    (*evidence, (("offset", fact.offset), ("width", width), ("delta", fact.delta), ("source_kind", fact.source_kind), ("source_value", fact.source_value), ("source_offset", fact.source_offset), ("source_base_offset", fact.source_base_offset), ("source_index_offset", fact.source_index_offset), ("source_index_scale", fact.source_index_scale), ("operation", fact.operation), ("ins_addr", fact.ins_addr), ("name", getattr(getattr(cvar, "variable", None), "name", None))))
                 )
             )
         changed = fact_changed or changed
@@ -16506,9 +16685,9 @@ def lower_stable_ss_linear_stack_dereferences_8616(
     if project is None or root is None:
         return False
 
-    # Invalidate cached maps so they are rebuilt against current codegen state
+    # Expression caches are local to this rewrite. Carrier deltas are SSA facts
+    # and remain valid until Structuring replaces the root object.
     codegen._inertia_assignment_maps = None
-    codegen._inertia_vvar_carrier_deltas = None
     codegen._inertia_stack_offset_cache = None
 
     def _candidate_functions_for_indexed_stack_facts_8616() -> StructuredAstValue:
@@ -16593,7 +16772,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(
         variable = node.variable
         if not isinstance(variable, SimStackVariable):
             return None
-        offset = variable.offset
+        offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
         return _canonical_stack_offset_8616(offset) if isinstance(offset, int) else None
 
     def _match_indexed_bp_stack_address_terms_8616(
@@ -16629,9 +16808,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(
                 if value is not None:
                     constant_residual += int(sign) * int(value)
             sizes = fact_sizes.get(matched_displacement, frozenset())
-            if constant_residual % 2:
-                width = 1
-            elif 1 in sizes:
+            if constant_residual % 2 or 1 in sizes:
                 width = 1
             elif 2 in sizes:
                 width = 2
@@ -16691,10 +16868,7 @@ def lower_stable_ss_linear_stack_dereferences_8616(
         expr = None
         for sign, term in terms:
             term_expr = _term_expr_with_sign_8616(sign, term)
-            if expr is None:
-                expr = term_expr
-            else:
-                expr = structured_c.CBinaryOp("Add", expr, term_expr, codegen=codegen)
+            expr = term_expr if expr is None else structured_c.CBinaryOp("Add", expr, term_expr, codegen=codegen)
         return expr
 
     def _materialize_indexed_bp_stack_pointer_8616(access: RealModeIndexedStackAddress8616) -> StructuredAstValue:
@@ -16732,39 +16906,47 @@ def lower_stable_ss_linear_stack_dereferences_8616(
             cast(Any, deref).type = access_type
         return deref
 
-    changed = False
+    word_load_result = materialize_stack_word_load_recompositions_8616(
+        codegen,
+        root,
+    )
+    if word_load_result.root is not root:
+        codegen.cfunc.statements = word_load_result.root
+        root = word_load_result.root
+    changed: bool = bool(word_load_result.changed)
     candidate_count = 0
     materialized_count = 0
     refused_count = 0
     instruction_bp_access_lane = SemanticLaneState(name="instruction_bp_stack_access")
     codegen._inertia_instruction_bp_stack_access_lane_8616 = instruction_bp_access_lane
+    instruction_bp_access_index: InstructionBpStackAccessIndex8616 | None = None
 
     def _instruction_bp_stack_access_8616(
         node: StructuredAstValue,
         shaped_access: RealModeLinearStackAccess8616,
     ) -> RealModeLinearStackAccess8616 | None:
         """Bind one SS-shaped access to its exact direct BP instruction operand."""
+        nonlocal instruction_bp_access_index
         source_addrs = instruction_addrs_from_node_8616(node)
         if not source_addrs:
             return None
+        if instruction_bp_access_index is None:
+            try:
+                source_alias = codegen._inertia_stack_memory_ssa_alias_artifact
+            except AttributeError:
+                return None
+            if not isinstance(source_alias, StackMemorySSAAliasArtifact8616):
+                return None
+            instruction_bp_access_index = ensure_instruction_bp_stack_access_index_8616(
+                codegen,
+                source_alias,
+            )
         candidates: set[tuple[int, int]] = set()
-        for function in _candidate_functions_for_stack_facts_8616(codegen, project):
-            for block in _boundary_tuple_8616(getattr(function, "blocks", ()) or ()):
-                for wrapper in _boundary_tuple_8616(getattr(getattr(block, "capstone", None), "insns", ()) or ()):
-                    insn = getattr(wrapper, "insn", wrapper)
-                    if getattr(insn, "address", None) not in source_addrs:
-                        continue
-                    for operand in _boundary_tuple_8616(getattr(wrapper, "operands", ()) or ()):
-                        mem = getattr(operand, "mem", None)
-                        index = int(getattr(mem, "index", 0) or 0)
-                        if getattr(operand, "type", None) != X86_OP_MEM or getattr(mem, "base", None) != X86_REG_BP:
-                            continue
-                        if index not in {0, X86_REG_INVALID}:
-                            continue
-                        displacement = _canonical_stack_offset_8616(int(getattr(mem, "disp", 0) or 0))
-                        size = int(getattr(operand, "size", 0) or 0)
-                        if isinstance(displacement, int):
-                            candidates.add((displacement, size))
+        for source_addr in source_addrs:
+            candidates.update(
+                (fact.displacement, fact.size)
+                for fact in instruction_bp_access_index.by_instruction_addr.get(source_addr, ())
+            )
         instruction_bp_access_lane.raw += len(candidates)
         instruction_bp_access_lane.normalized += len(candidates)
         if len(candidates) != 1:
@@ -16972,24 +17154,24 @@ def lower_stable_ss_linear_stack_dereferences_8616(
 
 
 __all__ = (
-    "RealModeLinearGlobalAddress8616",
     "DirectGlobalUpdateFact8616",
     "DirectStackMoveFact8616",
+    "DirectStackUpdateFact8616",
     "DirectStackWriteClassification8616",
     "DirectStackWriteInventory8616",
     "DirectStackWriteSite8616",
-    "DirectStackUpdateFact8616",
+    "RealModeLinearGlobalAddress8616",
     "RealModeLinearStackAccess8616",
+    "_direct_stack_move_materialized_ins_addrs_8616",
     "lower_stable_ds_es_linear_global_addresses_8616",
+    "lower_stable_ds_es_linear_global_dereferences_8616",
+    "lower_stable_ss_linear_stack_dereferences_8616",
+    "match_stable_ds_es_linear_global_access_8616",
+    "match_stable_ds_es_linear_global_address_8616",
+    "match_stable_ss_linear_stack_access_8616",
     "materialize_direct_global_incdec_instructions_8616",
     "materialize_direct_stack_incdec_instructions_8616",
     "materialize_direct_stack_mov_instructions_8616",
-    "_direct_stack_move_materialized_ins_addrs_8616",
-    "lower_stable_ss_linear_stack_dereferences_8616",
-    "lower_stable_ds_es_linear_global_dereferences_8616",
-    "prune_materialized_call_push_stack_assignments_8616",
     "prune_callee_saved_stack_spills_8616",
-    "match_stable_ds_es_linear_global_address_8616",
-    "match_stable_ss_linear_stack_access_8616",
-    "match_stable_ds_es_linear_global_access_8616",
+    "prune_materialized_call_push_stack_assignments_8616",
 )

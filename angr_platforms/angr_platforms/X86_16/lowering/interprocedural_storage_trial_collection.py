@@ -98,7 +98,14 @@ def _callsite_trials_8616(
     summary = fact.summary
     if not isinstance(caller_addr, int):
         return None, (_failure_8616(StorageTrialCollectionFailureKind8616.CALLER_ADDRESS_UNKNOWN, callee_addr, fact),), False
-    if summary is None or len(argument_storage) != summary.arg_count:
+    logical_argument_count = (
+        None
+        if summary is None
+        else len(summary.logical_arg_widths)
+        if summary.logical_arg_widths
+        else summary.arg_count
+    )
+    if summary is None or len(argument_storage) != logical_argument_count:
         return None, (_failure_8616(StorageTrialCollectionFailureKind8616.ARGUMENT_STORAGE_UNKNOWN, callee_addr, fact),), False
     if not isinstance(summary.stack_cleanup, int) or summary.stack_cleanup < 0:
         return None, (_failure_8616(StorageTrialCollectionFailureKind8616.STACK_DELTA_UNKNOWN, callee_addr, fact),), False

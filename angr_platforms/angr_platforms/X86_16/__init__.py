@@ -14,133 +14,134 @@ except Exception:
     pass
 
 import sys
+from collections.abc import Callable
 from importlib import import_module
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 __all__ = [
     "COD_SOURCE_REWRITE_REGISTRY",
     "CODSourceRewriteStatusKind",
+    "DecompilerPostprocessPassInventoryItem",
+    "DecompilerPostprocessPassInventoryViolation",
+    "DecompilerPostprocessPassKind8616",
+    "DecompilerPostprocessPassMigrationStatus8616",
+    "DecompilerPostprocessPassSpec",
+    "DecompilerStructuringPassSpec",
+    "X86_16TailValidationSummary",
+    "X86_16ValidationCacheDescriptor",
+    "address_ir",
+    "alias_domains",
+    "alias_model",
+    "alias_state",
+    "alias_transfer",
     "annotations",
-    "apply_x86_16_metadata_annotations",
-    "arch_86_16",
-    "cod_extract",
-    "corpus_scan",
-    "corpus_recovery_artifact",
-    "structuring_grouped_units",
-    "structuring_grouped_graph_builder",
-    "structuring_grouped_pass",
-    "structuring_cross_entry",
-    "cod_source_rewrites",
     "apply_cod_source_rewrites",
-    "lift_86_16",
-    "load_dos_mz",
-    "load_dos_ne",
+    "apply_x86_16_bootstrap",
+    "apply_x86_16_calling_convention_compatibility",
+    "apply_x86_16_compatibility",
+    "apply_x86_16_decompiler_postprocess",
+    "apply_x86_16_decompiler_return_compatibility",
+    "apply_x86_16_metadata_annotations",
+    "apply_x86_16_stack_compatibility",
+    "arch_86_16",
+    "bootstrap",
+    "build_x86_16_tail_validation_aggregate",
+    "build_x86_16_tail_validation_cached_result",
+    "build_x86_16_tail_validation_surface",
+    "build_x86_16_tail_validation_verdict",
+    "build_x86_16_validation_cache_descriptor",
+    "calling_convention_compat",
+    "callsite_summary",
+    "check_x86_16_tail_validation_surface_consistency",
+    "cod_extract",
     "cod_source_rewrite_description",
     "cod_source_rewrite_names",
     "cod_source_rewrite_summary",
-    "describe_x86_16_source_backed_rewrite_status",
-    "describe_x86_16_source_backed_rewrite_debt",
-    "describe_x86_16_cod_known_objects",
-    "apply_x86_16_compatibility",
-    "stack_compat",
-    "apply_x86_16_stack_compatibility",
-    "get_cod_source_rewrite_spec",
+    "cod_source_rewrites",
+    "collect_x86_16_tail_validation_summary",
+    "compare_x86_16_tail_validation_summaries",
     "compat",
-    "patch_dirty",
-    "typehoon_compat",
-    "alias_model",
-    "alias_domains",
-    "alias_state",
-    "alias_transfer",
-    "address_ir",
+    "corpus_recovery_artifact",
+    "corpus_scan",
+    "correctness_goals",
+    "decompiler_postprocess",
+    "decompiler_postprocess_calls",
+    "decompiler_postprocess_flags",
+    "decompiler_postprocess_globals",
+    "decompiler_postprocess_inventory",
+    "decompiler_postprocess_simplify",
+    "decompiler_postprocess_stage",
+    "decompiler_postprocess_utils",
+    "decompiler_return_compat",
+    "decompiler_structuring_stage",
     "describe_x86_16_alias_recovery_api",
+    "describe_x86_16_cod_known_objects",
+    "describe_x86_16_correctness_goals",
+    "describe_x86_16_decode_width_matrix",
+    "describe_x86_16_decompiler_postprocess_inventory_8616",
+    "describe_x86_16_decompiler_postprocess_stage",
+    "describe_x86_16_decompiler_structuring_stage",
+    "describe_x86_16_instruction_metadata_surface",
     "describe_x86_16_interrupt_api_surface",
     "describe_x86_16_interrupt_core_surface",
     "describe_x86_16_interrupt_lowering_boundary",
-    "describe_x86_16_instruction_metadata_surface",
-    "describe_x86_16_decode_width_matrix",
     "describe_x86_16_mixed_width_extension_surface",
     "describe_x86_16_mixed_width_instruction_surface",
+    "describe_x86_16_object_recovery_focus",
     "describe_x86_16_projection_cleanup_rules",
     "describe_x86_16_readability_goals",
-    "rank_readability_goal_queue",
-    "summarize_readability_focus",
-    "describe_x86_16_correctness_goals",
-    "describe_x86_16_validation_triage",
-    "simos_86_16",
-    "rewrite_cod_source_stage",
-    "decompiler_postprocess",
-    "decompiler_postprocess_globals",
-    "decompiler_postprocess_calls",
-    "decompiler_postprocess_utils",
-    "decompiler_postprocess_flags",
-    "decompiler_postprocess_simplify",
-    "callsite_summary",
-    "function_summary",
-    "decompiler_structuring_stage",
-    "widening_alias",
-    "widening_model",
-    "describe_x86_16_widening_pipeline",
-    "describe_x86_16_object_recovery_focus",
-    "describe_x86_16_recovery_layers",
-    "recovery_artifacts",
-    "recovery_artifact_writer",
-    "recovery_artifact_cache",
-    "recovery_artifact_manifest",
-    "recovery_confidence",
     "describe_x86_16_recovery_confidence_axes",
-    "summarize_x86_16_function_effects",
-    "validation_manifest",
-    "readability_set",
-    "readability_goals",
-    "correctness_goals",
-    "milestone_report",
-    "render_x86_16_tail_validation_console_summary",
-    "recovery_manifest",
-    "targeted_recovery_artifact",
-    "recompilable_subset",
-    "calling_convention_compat",
-    "decompiler_return_compat",
-    "apply_x86_16_calling_convention_compatibility",
-    "apply_x86_16_decompiler_return_compatibility",
-    "apply_x86_16_decompiler_postprocess",
-    "bootstrap",
-    "apply_x86_16_bootstrap",
-    "decompiler_postprocess_inventory",
-    "decompiler_postprocess_stage",
-    "describe_x86_16_decompiler_postprocess_inventory_8616",
-    "validate_x86_16_decompiler_postprocess_inventory_8616",
-    "describe_x86_16_decompiler_postprocess_stage",
-    "describe_x86_16_decompiler_structuring_stage",
-    "tail_validation",
-    "X86_16TailValidationSummary",
-    "X86_16ValidationCacheDescriptor",
-    "build_x86_16_tail_validation_aggregate",
-    "build_x86_16_tail_validation_surface",
-    "build_x86_16_tail_validation_cached_result",
-    "build_x86_16_validation_cache_descriptor",
-    "check_x86_16_tail_validation_surface_consistency",
-    "persist_x86_16_tail_validation_snapshot",
+    "describe_x86_16_recovery_layers",
+    "describe_x86_16_source_backed_rewrite_debt",
+    "describe_x86_16_source_backed_rewrite_status",
+    "describe_x86_16_tail_validation_scope",
+    "describe_x86_16_validation_triage",
+    "describe_x86_16_widening_pipeline",
     "extract_x86_16_tail_validation_snapshot",
-    "x86_16_tail_validation_snapshot_passed",
-    "collect_x86_16_tail_validation_summary",
-    "compare_x86_16_tail_validation_summaries",
-    "build_x86_16_tail_validation_verdict",
     "fingerprint_x86_16_tail_validation_boundary",
     "format_x86_16_tail_validation_diff",
-    "resolve_x86_16_validation_cached_artifact",
-    "summarize_x86_16_tail_validation_records",
-    "describe_x86_16_tail_validation_scope",
-    "DecompilerPostprocessPassInventoryItem",
-    "DecompilerPostprocessPassKind8616",
-    "DecompilerPostprocessPassMigrationStatus8616",
-    "DecompilerPostprocessPassInventoryViolation",
-    "DecompilerPostprocessPassSpec",
-    "DecompilerStructuringPassSpec",
     "function_effect_summary",
+    "function_summary",
+    "get_cod_source_rewrite_spec",
+    "lift_86_16",
+    "load_dos_mz",
+    "load_dos_ne",
+    "milestone_report",
+    "patch_dirty",
+    "persist_x86_16_tail_validation_snapshot",
+    "rank_readability_goal_queue",
+    "readability_goals",
+    "readability_set",
+    "recompilable_subset",
+    "recovery_artifact_cache",
+    "recovery_artifact_manifest",
+    "recovery_artifact_writer",
+    "recovery_artifacts",
+    "recovery_confidence",
+    "recovery_manifest",
+    "render_x86_16_tail_validation_console_summary",
+    "resolve_x86_16_validation_cached_artifact",
+    "rewrite_cod_source_stage",
+    "simos_86_16",
+    "stack_compat",
+    "structuring_cross_entry",
+    "structuring_grouped_graph_builder",
+    "structuring_grouped_pass",
+    "structuring_grouped_units",
+    "summarize_readability_focus",
+    "summarize_x86_16_function_effects",
+    "summarize_x86_16_tail_validation_records",
+    "tail_validation",
+    "targeted_recovery_artifact",
+    "typehoon_compat",
+    "validate_x86_16_decompiler_postprocess_inventory_8616",
+    "validation_manifest",
+    "widening_alias",
+    "widening_model",
+    "x86_16_tail_validation_snapshot_passed",
 ]
 
-from . import (  # noqa: F401  # noqa: F401
+from . import (
     address_ir,
     alias_domains,
     alias_model,
@@ -154,7 +155,7 @@ from . import (  # noqa: F401  # noqa: F401
     compat,
     corpus_recovery_artifact,
     corpus_scan,
-    correctness_goals,  # noqa: F401
+    correctness_goals,
     decompiler_postprocess,
     decompiler_postprocess_calls,
     decompiler_postprocess_flags,
@@ -169,7 +170,7 @@ from . import (  # noqa: F401  # noqa: F401
     load_dos_ne,
     milestone_report,
     patch_dirty,
-    readability_goals,  # noqa: F401
+    readability_goals,
     readability_set,
     recompilable_subset,
     recovery_artifact_cache,
@@ -195,20 +196,20 @@ from . import (
     annotations as _annotations,  # noqa: F401  # keep package module export
 )
 from .addressing_helpers import (
-    describe_x86_16_decode_width_matrix,  # noqa: F401
-    describe_x86_16_mixed_width_extension_surface,  # noqa: F401
-    describe_x86_16_mixed_width_instruction_surface,  # noqa: F401
+    describe_x86_16_decode_width_matrix,
+    describe_x86_16_mixed_width_extension_surface,
+    describe_x86_16_mixed_width_instruction_surface,
 )
-from .alias.alias_model_impl import describe_x86_16_alias_recovery_api  # noqa: F401
+from .alias.alias_model_impl import describe_x86_16_alias_recovery_api
 from .analysis_helpers import (
-    describe_x86_16_interrupt_api_surface,  # noqa: F401
-    describe_x86_16_interrupt_core_surface,  # noqa: F401
-    describe_x86_16_interrupt_lowering_boundary,  # noqa: F401
+    describe_x86_16_interrupt_api_surface,
+    describe_x86_16_interrupt_core_surface,
+    describe_x86_16_interrupt_lowering_boundary,
 )
-from .annotations import apply_x86_16_metadata_annotations  # noqa: F401
-from .calling_convention_compat import apply_x86_16_calling_convention_compatibility  # noqa: F401
-from .cod_known_objects import describe_x86_16_cod_known_objects  # noqa: F401
-from .cod_source_rewrites import (  # noqa: F401
+from .annotations import apply_x86_16_metadata_annotations
+from .calling_convention_compat import apply_x86_16_calling_convention_compatibility
+from .cod_known_objects import describe_x86_16_cod_known_objects
+from .cod_source_rewrites import (
     COD_SOURCE_REWRITE_REGISTRY,
     CODSourceRewriteStatusKind,
     apply_cod_source_rewrites,
@@ -220,22 +221,22 @@ from .cod_source_rewrites import (  # noqa: F401
     get_cod_source_rewrite_spec,
     rewrite_cod_source_stage,
 )
-from .compat import apply_x86_16_compatibility  # noqa: F401
-from .correctness_goals import describe_x86_16_correctness_goals  # noqa: F401
-from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules  # noqa: F401
-from .decompiler_return_compat import apply_x86_16_decompiler_return_compatibility  # noqa: F401
-from .function_effect_summary import summarize_x86_16_function_effects  # noqa: F401
-from .instruction import describe_x86_16_instruction_metadata_surface  # noqa: F401
-from .milestone_report import render_x86_16_tail_validation_console_summary  # noqa: F401
-from .readability_goals import (  # noqa: F401
+from .compat import apply_x86_16_compatibility
+from .correctness_goals import describe_x86_16_correctness_goals
+from .decompiler_postprocess_simplify import describe_x86_16_projection_cleanup_rules
+from .decompiler_return_compat import apply_x86_16_decompiler_return_compatibility
+from .function_effect_summary import summarize_x86_16_function_effects
+from .instruction import describe_x86_16_instruction_metadata_surface
+from .milestone_report import render_x86_16_tail_validation_console_summary
+from .readability_goals import (
     describe_x86_16_readability_goals,
     rank_readability_goal_queue,
     summarize_readability_focus,
 )
-from .recovery_confidence import describe_x86_16_recovery_confidence_axes  # noqa: F401
-from .recovery_manifest import describe_x86_16_object_recovery_focus, describe_x86_16_recovery_layers  # noqa: F401
-from .stack_compat import apply_x86_16_stack_compatibility  # noqa: F401
-from .tail_validation import (  # noqa: F401
+from .recovery_confidence import describe_x86_16_recovery_confidence_axes
+from .recovery_manifest import describe_x86_16_object_recovery_focus, describe_x86_16_recovery_layers
+from .stack_compat import apply_x86_16_stack_compatibility
+from .tail_validation import (
     X86_16TailValidationSummary,
     X86_16ValidationCacheDescriptor,
     build_x86_16_tail_validation_aggregate,
@@ -255,18 +256,18 @@ from .tail_validation import (  # noqa: F401
     summarize_x86_16_tail_validation_records,
     x86_16_tail_validation_snapshot_passed,
 )
-from .validation_manifest import describe_x86_16_validation_triage  # noqa: F401
-from .widening.stack_widening import describe_x86_16_widening_pipeline  # noqa: F401
+from .validation_manifest import describe_x86_16_validation_triage
+from .widening.stack_widening import describe_x86_16_widening_pipeline
 
 if TYPE_CHECKING:
-    from . import (  # noqa: F401
+    from . import (
         bootstrap,
         decompiler_postprocess_inventory,
         decompiler_postprocess_stage,
         decompiler_structuring_stage,
     )
-    from .bootstrap import apply_x86_16_bootstrap  # noqa: F401
-    from .decompiler_postprocess_inventory import (  # noqa: F401
+    from .bootstrap import apply_x86_16_bootstrap
+    from .decompiler_postprocess_inventory import (
         DecompilerPostprocessPassInventoryItem,
         DecompilerPostprocessPassInventoryViolation,
         DecompilerPostprocessPassKind8616,
@@ -274,12 +275,12 @@ if TYPE_CHECKING:
         describe_x86_16_decompiler_postprocess_inventory_8616,
         validate_x86_16_decompiler_postprocess_inventory_8616,
     )
-    from .decompiler_postprocess_stage import (  # noqa: F401
+    from .decompiler_postprocess_stage import (
         DecompilerPostprocessPassSpec,
         apply_x86_16_decompiler_postprocess,
         describe_x86_16_decompiler_postprocess_stage,
     )
-    from .decompiler_structuring_stage import (  # noqa: F401
+    from .decompiler_structuring_stage import (
         DecompilerStructuringPassSpec,
         describe_x86_16_decompiler_structuring_stage,
     )

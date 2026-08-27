@@ -54,7 +54,7 @@ def test_access_rewrite_artifact_loader_uses_cache_without_raw_traits():
 
 def test_attach_access_trait_field_names_uses_prebuilt_artifact_cache():
     variable = SimStackVariable(-4, 2, base="bp", name="v1", region=0x4010)
-    codegen = SimpleNamespace(cstyle_null_cmp=False, next_idx=lambda _name: 0)
+    codegen = SimpleNamespace(cstyle_null_cmp=False, next_idx=lambda _name: 0, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     cfunc = SimpleNamespace(addr=0x4010, statements=structured_c.CVariable(variable, codegen=codegen))
     codegen.cfunc = cfunc
     project = SimpleNamespace(
@@ -128,7 +128,7 @@ def test_access_rewrite_artifact_loader_preserves_storage_object_refusal_reason(
 
 def test_attach_access_trait_field_names_refuses_mixed_or_unstable_evidence():
     variable = SimStackVariable(-4, 2, base="bp", name="v1", region=0x4010)
-    codegen = SimpleNamespace(cstyle_null_cmp=False, next_idx=lambda _name: 0)
+    codegen = SimpleNamespace(cstyle_null_cmp=False, next_idx=lambda _name: 0, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
     cfunc = SimpleNamespace(addr=0x4010, statements=structured_c.CVariable(variable, codegen=codegen))
     codegen.cfunc = cfunc
     project = SimpleNamespace(

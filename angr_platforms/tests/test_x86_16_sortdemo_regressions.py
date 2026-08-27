@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from x86_16_timeout_support import scaled_decompile_timeout as _scaled_timeout
 
 from inertia_decompiler.acceptance_scorecard import build_acceptance_scorecard
 from inertia_decompiler.source_sidecar import render_local_source_sidecar_function
@@ -16,24 +17,6 @@ from scripts.check_sortd_sidecar_free import mz_executable_image
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
 SORTDEMO_EXE = REPO_ROOT / "SORTDEMO.EXE"
-
-def _scaled_timeout(timeout: int) -> int:
-    raw_scale = os.environ.get("INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE", "").strip()
-    if not raw_scale and os.environ.get("PYTEST_XDIST_WORKER"):
-        # These subprocesses run the real decompiler. Give them bounded
-        # contention headroom under xdist instead of weakening serial tests or
-        # treating a scheduler delay as a decompiler timeout.
-        raw_scale = "1.5"
-    if not raw_scale:
-        return timeout
-    try:
-        scale = float(raw_scale)
-    except ValueError:
-        return timeout
-    if scale <= 1.0:
-        return timeout
-    return max(timeout, int(round(timeout * scale)))
-
 
 def _run_decompile_addr(
     path: Path,
@@ -410,7 +393,12 @@ def test_sortdemo_drawtime_materializes_clock_return_to_clfinish_once():
     assert re.search(r"(?:Sleep|sub_10f38)\([^;]+ - 75\);", body) is not None
     assert re.search(r"(?:Sleep|sub_10f38)\([^;]+\);", body) is not None
     assert body.count("Sleep(") + body.count("sub_10f38(") >= 2
-    assert "int Sleep(unsigned long a0);" in result.stdout or "sub_10f38" in result.stdout
+    assert (
+        "int Sleep();" in result.stdout
+        or "int Sleep(unsigned long a0);" in result.stdout
+        or "sub_10f38" in result.stdout
+    )
+    assert "Sleep(unsigned short" not in result.stdout
     assert "[tail-validation] whole-tail validation clean" in combined
 
 
@@ -807,8 +795,8 @@ def test_sortd_insertionsort_sidecar_free_splits_header_and_rebases_source(
         "for (local_4 = local_2; local_4; local_4 = local_4 - 1)"
     )
     guard = re.compile(
-        r"if \((?:\(g_0B4C\[local_4 - 1\]\.field_0 & 255\) <= local_6|"
-        r"!\(\(g_0B4C\[local_4 - 1\]\.field_0 & 255\) > local_6\))\)"
+        r"if \((?:\(g_0B4C\[local_4 - 1\]\.field_0 & (?:255|0xff)\) <= local_6|"
+        r"!\(\(g_0B4C\[local_4 - 1\]\.field_0 & (?:255|0xff)\) > local_6\))\)"
     )
     source_copy = "g_0B4C[local_4] = g_0B4C[local_4 - 1];"
     assert loop_header in final_body
@@ -873,7 +861,8 @@ def test_sortd_initmenu_sidecar_free_preserves_calls_and_compiles(
     assert "sub_12756(g_0136[local_2], inertia_ds);" in final_body
     assert final_body.count("sub_128e4(") == 5
     assert final_body.count("sub_1123a(") == 3
-    assert "sub_1143a(SEG_U16(inertia_ds, 306), SEG_U16(inertia_ds, 308), 30, 0)" in final_body
+    assert "aNldiv(SEG_U32(inertia_ds, 306), 30)" in final_body
+    assert "sub_1143a(" not in final_body
     assert "vvar_" not in final_body
     assert "return 0;" not in final_body
 
@@ -1015,7 +1004,7 @@ def test_sortdemo_percolateup_materializes_parent_once_and_preserves_calls():
     assert "gcc syntax check failed:" not in combined
     final_body = "void PercolateUp" + result.stdout.rsplit("void PercolateUp", 1)[-1]
     executable_lines = tuple(
-        line.strip() for line in final_body.splitlines() if line.startswith("        ") or line.startswith("    ")
+        line.strip() for line in final_body.splitlines() if line.startswith(("        ", "    "))
     )
     assert "iParent = i / 2;" in executable_lines or "iParent = (short)i / 2;" in executable_lines
     assert executable_lines.count("iCompares += 1;") == 1

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -73,6 +74,7 @@ def test_stack_memory_ssa_alias_projects_accesses_and_phi_exactly() -> None:
 
     artifact = build_x86_16_stack_memory_ssa_alias_artifact(function_ssa)
 
+    assert artifact.source_ssa is function_ssa
     assert artifact.complete is True
     assert artifact.stats.raw_fact_count == 4
     assert artifact.stats.materialized_count == 4
@@ -266,6 +268,21 @@ def test_stack_memory_ssa_alias_apply_attaches_typed_artifact() -> None:
     assert apply_x86_16_stack_memory_ssa_alias_artifact(SimpleNamespace(), codegen) is False
     assert codegen._inertia_stack_memory_ssa_alias_artifact.complete is True
     assert apply_x86_16_stack_memory_ssa_alias_artifact(SimpleNamespace(), SimpleNamespace()) is False
+
+
+def test_stack_memory_ssa_alias_apply_rebuilds_for_replaced_ssa_source() -> None:
+    first_ssa = build_x86_16_function_ssa(_branching_stack_artifact())
+    second_ssa = replace(first_ssa, summary={"generation": 2})
+    codegen = SimpleNamespace(_inertia_vex_ir_function_ssa=first_ssa)
+
+    assert apply_x86_16_stack_memory_ssa_alias_artifact(SimpleNamespace(), codegen) is False
+    first_alias = codegen._inertia_stack_memory_ssa_alias_artifact
+    codegen._inertia_vex_ir_function_ssa = second_ssa
+
+    assert apply_x86_16_stack_memory_ssa_alias_artifact(SimpleNamespace(), codegen) is False
+    second_alias = codegen._inertia_stack_memory_ssa_alias_artifact
+    assert second_alias is not first_alias
+    assert second_alias.source_ssa is second_ssa
 
 
 def test_stack_memory_ssa_alias_apply_hard_fails_open_upstream_accounting() -> None:

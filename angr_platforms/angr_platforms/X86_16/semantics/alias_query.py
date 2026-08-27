@@ -116,10 +116,10 @@ def contains_alias_storage(container: object, subview: object) -> bool:
 
 __all__ = [
     "_storage_domain_for_expr",
+    "can_join_alias_storage",
+    "compatible_alias_storage_views",
     "contains_alias_storage",
     "describe_alias_storage",
-    "same_alias_storage_domain",
-    "compatible_alias_storage_views",
     "needs_alias_synthesis",
-    "can_join_alias_storage",
+    "same_alias_storage_domain",
 ]

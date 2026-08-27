@@ -236,7 +236,6 @@ def test_pre_validation_callsite_prime_materializes_arguments_before_baseline(mo
         "_invalidate_tail_validation_derived_caches_8616",
         lambda _codegen: calls.append("invalidate"),
     )
-
     assert post_stage._prime_callsite_summaries_before_validation_baseline_8616(SimpleNamespace(), codegen) is True
     assert codegen._inertia_pre_validation_callsite_summaries_primed is True
     assert calls == ["attach", "materialize", "invalidate"]
@@ -342,7 +341,11 @@ def test_unchanged_postprocess_pass_skips_validation_summary_collection(monkeypa
         lambda _project, _codegen, _pass_specs: (None, True, True, set(), baseline_summary),
     )
     monkeypatch.setattr(post_stage, "_postprocess_run_bootstrap_steps_8616", lambda *_args: True)
-    monkeypatch.setattr(post_stage, "_postprocess_run_optimization_step_8616", lambda *_args: True)
+
+    def run_stable_optimization(_project, _codegen, _per_pass_validation_enabled, apply_step):
+        return apply_step("optimization:const_prop", lambda: False)
+
+    monkeypatch.setattr(post_stage, "_postprocess_run_optimization_step_8616", run_stable_optimization)
     monkeypatch.setattr(post_stage, "_repair_cfunc_statements_wrapper", lambda _codegen: None)
     monkeypatch.setattr(post_stage, "_snapshot_codegen_cfunc", lambda _codegen: object())
     monkeypatch.setattr(post_stage, "_snapshot_codegen_inertia_metadata_8616", lambda _codegen: {})
@@ -374,8 +377,11 @@ def test_unchanged_postprocess_pass_skips_validation_summary_collection(monkeypa
 
     assert post_stage._postprocess_codegen_8616(project, codegen) is True
 
-    assert codegen._inertia_postprocess_unchanged_validation_skipped_passes_8616 == ("stable_pass",)
-    assert codegen._inertia_postprocess_unchanged_validation_skip_count_8616 == 1
+    assert codegen._inertia_postprocess_unchanged_validation_skipped_passes_8616 == (
+        "optimization:const_prop",
+        "stable_pass",
+    )
+    assert codegen._inertia_postprocess_unchanged_validation_skip_count_8616 == 2
     assert len(collected_summaries) == 1
     assert compared_summaries == [(baseline_summary, collected_summaries[0])]
     assert any("changed_pass:validation" in context for context in regenerated_contexts)
@@ -426,6 +432,11 @@ def test_regeneration_replays_stack_aggregate_types_before_render(monkeypatch) -
     )
     monkeypatch.setattr(
         post_stage,
+        "reapply_stack_variable_projection_names_8616",
+        lambda *_args: calls.append("replay_stack_names") or True,
+    )
+    monkeypatch.setattr(
+        post_stage,
         "_bind_codegen_variable_types_to_arch_8616",
         lambda *_args: calls.append("bind_types"),
     )
@@ -442,6 +453,7 @@ def test_regeneration_replays_stack_aggregate_types_before_render(monkeypatch) -
         "repair_calls",
         "normalize_stack",
         "replay_aggregate",
+        "replay_stack_names",
         "bind_types",
         "render",
     ]
@@ -961,6 +973,10 @@ class _CodegenWithIndexes:
     def next_idx(self, _name):
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 class _VariableManagerWithUnified:

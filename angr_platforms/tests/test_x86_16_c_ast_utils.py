@@ -15,6 +15,7 @@ from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.c_ast_utils import (
     _c_ast_cycle_path_8616,
     _clone_c_ast_tree_8616,
+    _iter_c_nodes_deep_8616,
     _iter_c_statement_nodes_8616,
 )
 
@@ -28,6 +29,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._index += 1
         return self._index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def test_c_ast_cycle_path_reports_active_path_cycle() -> None:
@@ -76,3 +81,15 @@ def test_statement_walk_does_not_descend_into_expression_trees() -> None:
 
     assert nodes == (root, statement)
     assert expression not in nodes
+
+
+def test_deep_walk_visits_shared_nodes_once_and_refuses_cycles() -> None:
+    codegen = _DummyCodegen()
+    constant = CConstant(1, SimTypeShort(False), codegen=codegen)
+    expression = CBinaryOp("Or", constant, constant, codegen=codegen)
+    expression.lhs = expression
+    root = CStatements([expression, expression], codegen=codegen)
+
+    nodes = tuple(_iter_c_nodes_deep_8616(root))
+
+    assert nodes == (root, expression, constant)

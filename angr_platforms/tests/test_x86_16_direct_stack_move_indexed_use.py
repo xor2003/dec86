@@ -12,10 +12,12 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CVariable,
 )
+from angr.rustylib.ailment import Tags
 from angr.sim_type import SimTypeFixedSizeArray, SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.lowering.real_mode_linear import (
     _insert_before_first_stack_cvar_use_8616,
+    _node_has_instruction_address_8616,
 )
 from archinfo import ArchX86
 
@@ -33,6 +35,10 @@ class _Codegen:
         index = self._next_index
         self._next_index += 1
         return index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def test_inserts_before_first_stack_index_read() -> None:
@@ -70,3 +76,21 @@ def test_inserts_before_first_stack_index_read() -> None:
         ignore_existing_assignment=True,
     )
     assert root.statements == [assignment, read]
+
+
+def test_instruction_address_accepts_current_ail_tags_mapping() -> None:
+    """Current angr AIL tags retain exact instruction-origin evidence."""
+    codegen = _Codegen()
+    local = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="local"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    assignment = CAssignment(
+        local,
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    assignment.tags = Tags({"ins_addr": 0x100C})
+
+    assert _node_has_instruction_address_8616(assignment, codegen.project, 0x100C)

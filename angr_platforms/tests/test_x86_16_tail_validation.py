@@ -117,6 +117,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def test_call_output_definitions_rebind_regenerated_call_by_exact_tag() -> None:
@@ -1619,7 +1623,7 @@ def test_tail_validation_compare_classifies_switch_helper_structuring_precision(
             "const:10",
         ),
         conditions=before_conditions,
-        control_flow_effects=tuple(f"if:{condition}" for condition in before_conditions) + ("if:else", "return"),
+        control_flow_effects=(*tuple(f"if:{condition}" for condition in before_conditions), "if:else", "return"),
     )
     after = X86_16TailValidationSummary(
         helper_calls=(),
@@ -1634,7 +1638,7 @@ def test_tail_validation_compare_classifies_switch_helper_structuring_precision(
             "const:10",
         ),
         conditions=after_conditions,
-        control_flow_effects=tuple(f"if:{condition}" for condition in after_conditions) + ("return",),
+        control_flow_effects=(*tuple(f"if:{condition}" for condition in after_conditions), "return"),
     )
 
     diff = compare_x86_16_tail_validation_summaries(before, after)
@@ -1667,7 +1671,7 @@ def test_tail_validation_compare_classifies_switch_decision_tree_without_helper_
             "Add(stack_slot:SS:BP+0x4:size2,const:-1)",
         ),
         conditions=before_conditions,
-        control_flow_effects=tuple(f"if:{condition}" for condition in before_conditions) + ("if:else", "return"),
+        control_flow_effects=(*tuple(f"if:{condition}" for condition in before_conditions), "if:else", "return"),
     )
     after = X86_16TailValidationSummary(
         helper_calls=(),
@@ -1681,7 +1685,7 @@ def test_tail_validation_compare_classifies_switch_decision_tree_without_helper_
             "Shl(stack_slot:SS:BP+0x4:size2,const:1)",
         ),
         conditions=after_conditions,
-        control_flow_effects=tuple(f"if:{condition}" for condition in after_conditions) + ("return",),
+        control_flow_effects=(*tuple(f"if:{condition}" for condition in after_conditions), "return"),
     )
 
     diff = compare_x86_16_tail_validation_summaries(before, after)
@@ -1716,7 +1720,7 @@ def test_tail_validation_compare_classifies_switch_decision_tree_condition_only_
         segmented_writes=(),
         returns=returns,
         conditions=before_conditions,
-        control_flow_effects=tuple(f"if:{condition}" for condition in before_conditions) + ("if:else",),
+        control_flow_effects=(*tuple(f"if:{condition}" for condition in before_conditions), "if:else"),
     )
     after = X86_16TailValidationSummary(
         helper_calls=(),
@@ -1789,7 +1793,7 @@ def test_tail_validation_compare_classifies_switch_helper_fake_variable_returns_
             "Mul(Dereference(Add(Mul(reg:ss,const:16),CFakeVariable,const:2)),const:2)",
         ),
         conditions=before_conditions,
-        control_flow_effects=tuple(f"if:{condition}" for condition in before_conditions) + ("if:else",),
+        control_flow_effects=(*tuple(f"if:{condition}" for condition in before_conditions), "if:else"),
     )
     after = X86_16TailValidationSummary(
         helper_calls=(),
@@ -1837,7 +1841,7 @@ def test_tail_validation_compare_classifies_switch_helper_cite_and_ax_scratch_de
             "Mul(Dereference(Add(Mul(reg:ss,const:16),CFakeVariable,const:2)),const:2)",
         ),
         conditions=before_conditions,
-        control_flow_effects=tuple(f"if:{condition}" for condition in before_conditions) + ("if:else",),
+        control_flow_effects=(*tuple(f"if:{condition}" for condition in before_conditions), "if:else"),
     )
     after = X86_16TailValidationSummary(
         helper_calls=(),
@@ -1887,7 +1891,7 @@ def test_tail_validation_compare_classifies_switch_helper_eq_ax_zero_selector_de
             "Mul(Dereference(Add(Mul(reg:ss,const:16),CFakeVariable,const:2)),const:2)",
         ),
         conditions=before_conditions,
-        control_flow_effects=tuple(f"if:{condition}" for condition in before_conditions) + ("if:else",),
+        control_flow_effects=(*tuple(f"if:{condition}" for condition in before_conditions), "if:else"),
     )
     after = X86_16TailValidationSummary(
         helper_calls=(),
@@ -7192,7 +7196,7 @@ def test_postprocess_codegen_refuses_large_function_annotations_without_local_va
     } in codegen._inertia_postprocess_refused_passes_8616
 
 
-def test_postprocess_force_validates_large_function_return_address_prune(monkeypatch):
+def test_postprocess_force_validates_nonmandatory_large_function_pass(monkeypatch):
     class _Functions:
         def function(self, _addr=None, **_kwargs):
             return SimpleNamespace(block_addrs_set=tuple(range(80)), info={})
@@ -7259,7 +7263,7 @@ def test_postprocess_force_validates_large_function_return_address_prune(monkeyp
                 True,
             ),
             postprocess_stage.DecompilerPostprocessPassSpec(
-                "_apply_annotations_8616",
+                "_non_mandatory_debug_probe_8616",
                 _bad_annotation,
                 True,
             ),
@@ -7288,13 +7292,12 @@ def test_postprocess_force_validates_large_function_return_address_prune(monkeyp
     changed = postprocess_stage._postprocess_codegen_8616(project, codegen)
 
     assert changed is False
-    assert calls == ["return-prune", "annotation", "dce", "pointer-memory"]
+    assert calls == ["return-prune", "annotation"]
     assert codegen.cfunc.state == "baseline"
-    assert codegen._inertia_postprocess_validation_failed is False
+    assert codegen._inertia_postprocess_validation_failed is True
     assert codegen._inertia_postprocess_rejected_passes == (
         "_prune_return_address_stack_arguments_8616",
-        "_apply_annotations_8616",
-        "optimization:dce",
+        "_non_mandatory_debug_probe_8616",
     )
 
 

@@ -46,9 +46,9 @@ from .interprocedural_storage_return_type_contracts import (
 )
 
 __all__ = [
-    "ReturnStorageTypeFailure8616",
     "ReturnPointerAliasStep8616",
     "ReturnPointerUseEvidence8616",
+    "ReturnStorageTypeFailure8616",
     "ReturnStorageTypeResult8616",
     "ReturnStorageTypeVerdict8616",
     "classify_return_storage_type_8616",

@@ -23,10 +23,11 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
-from typing import Any, Iterator, TextIO
+from typing import Any, TextIO
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MAX_MEMORY_MB = 1024
@@ -737,25 +738,21 @@ def _filter_work_items_by_proc_names(
 
 
 def _lower_process_priority() -> None:
-    try:
+    with contextlib.suppress(AttributeError, OSError):
         os.nice(10)
-    except (AttributeError, OSError):
-        pass
 
 
 def _apply_memory_limit(max_memory_mb: int | None) -> None:
     if max_memory_mb is None or max_memory_mb <= 0:
         return
     limit = max_memory_mb * 1024 * 1024
-    try:
+    with contextlib.suppress(ValueError, OSError):
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-    except (ValueError, OSError):
-        pass
 
 
 def _mem_available_mb() -> int | None:
     try:
-        with open("/proc/meminfo", "r", encoding="utf-8") as fp:
+        with open("/proc/meminfo", encoding="utf-8") as fp:
             for line in fp:
                 if line.startswith("MemAvailable:"):
                     return int(line.split()[1]) // 1024
@@ -997,10 +994,7 @@ def _run_work_item(item: CodWorkItem, *, timeout: int, max_memory_mb: int) -> Co
 def _extract_proc_body(raw_output: str) -> str:
     marker = "/* == c == */"
     idx = raw_output.rfind(marker)
-    if idx == -1:
-        body = raw_output.strip()
-    else:
-        body = raw_output[idx + len(marker) :].lstrip("\n").rstrip()
+    body = raw_output.strip() if idx == -1 else raw_output[idx + len(marker):].lstrip("\n").rstrip()
     return _strip_nonsemantic_fallback_markers(body)
 
 
@@ -1025,10 +1019,7 @@ def _render_result_block(result: CodWorkResult) -> str:
         stderr_text = _coerce_output_text(result.stderr)
         if result.exit_kind == "ok":
             body = _extract_proc_body(raw_output)
-            if body:
-                rendered = body
-            else:
-                rendered = raw_output.strip()
+            rendered = body or raw_output.strip()
         elif result.scan_safe_result is not None:
             rendered = _render_scan_safe_block(result, result.scan_safe_result)
         else:
@@ -1410,7 +1401,7 @@ def main() -> int:
                 if executor is not None:
                     executor.shutdown(wait=not scheduler_timed_out, cancel_futures=True)
 
-        for cod_path, writer in file_writers.items():
+        for cod_path, writer in file_writers.items():  # noqa: B007
             if not writer.closed:
                 writer.close()
             if writer.received_count > 0 and not writer.reported and writer.out_path.exists():

@@ -12,6 +12,9 @@ from angr_platforms.X86_16.lowering.condition_stack_operands import (
     materialize_typed_condition_stack_operand_8616,
 )
 from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 
 
 class _FakeCodegen:
@@ -24,6 +27,10 @@ class _FakeCodegen:
     def next_idx(self, _kind: str) -> int:
         self._next_idx += 1
         return self._next_idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _declare_unsigned_local(codegen: _FakeCodegen) -> tuple[SimStackVariable, structured_c.CVariable]:
@@ -89,3 +96,42 @@ def test_missing_stack_storage_is_materialized_in_function_region() -> None:
     assert expr.variable.region == 0x108D0
     assert tuple(codegen.cfunc.variables_in_use) == (expr.variable,)
     assert tuple(codegen.cfunc.unified_local_vars) == (expr.variable,)
+
+
+def test_machine_bp_condition_reuses_projected_entry_sp_declaration() -> None:
+    codegen = _FakeCodegen()
+    projected_variable = SimStackVariable(-8, 2, base="bp", name="local_6", region=0x108D0)
+    projected = structured_c.CVariable(
+        projected_variable,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    competing_variable = SimStackVariable(-6, 2, base="bp", name="local_4", region=0x108D0)
+    competing = structured_c.CVariable(
+        competing_variable,
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    codegen.cfunc.variables_in_use.update(
+        {competing_variable: competing, projected_variable: projected}
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=projected_variable,
+        cvar=projected,
+        bp_offset=-6,
+        entry_sp_offset=-8,
+        size=2,
+    )
+
+    expression = materialize_typed_condition_stack_operand_8616(
+        codegen,
+        base="bp",
+        offset=-6,
+        size=2,
+        name="local_6",
+        signed=False,
+    )
+
+    assert isinstance(expression, structured_c.CVariable)
+    assert expression.variable is projected_variable

@@ -32,8 +32,9 @@ from angr.sim_type import (
 )
 from archinfo import Arch
 
-from ..analysis_helpers import canonicalize_x86_16_padding_call_target_8616, preferred_known_helper_signature_decl
+from ..analysis_helpers import preferred_known_helper_signature_decl
 from ..c_ast_utils import _iter_c_nodes_deep_8616
+from ..call_target_identity import normalize_x86_16_call_target_addr_8616
 from ..callsite_summary import (
     CallsiteSummary8616,
     caller_return_use_evidence_by_addr_8616,
@@ -344,7 +345,7 @@ def canonicalize_callsite_target_identities_8616(
             stats.normalized_fact_count += 1
             decisions.append((current_addr, summary.target_addr, "already-canonical"))
             continue
-        canonical_addr = canonicalize_x86_16_padding_call_target_8616(
+        canonical_addr = normalize_x86_16_call_target_addr_8616(
             project,
             current_addr,
         )
@@ -541,7 +542,7 @@ def _joined_return_type_8616(
             )
         except (AttributeError, KeyError, TypeError):
             prototype = None
-        if isinstance(prototype, SimTypeFunction) and isinstance(prototype.returnty, SimTypeBottom):
+        if isinstance(prototype, SimTypeFunction) and isinstance(prototype.returnty, SimTypeBottom):  # noqa: SIM102
             if prototype.returnty.label == "void":
                 return "void"
     evidence = (

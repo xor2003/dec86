@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 from pathlib import Path
 from typing import Any
@@ -37,7 +37,7 @@ RISK_WEIGHTS = {
 }
 
 
-def analyze_function_complexity(
+def analyze_function_complexity(  # noqa: D103
     *,
     exe_path: Path,
     functions_catalog: dict[str, Any],
@@ -124,7 +124,7 @@ def analyze_function_complexity(
 
 def _analyze_one_function(
     *,
-    project: Any,
+    project: Any,  # noqa: ANN401
     linked_base: int,
     function: dict[str, Any],
     max_blocks: int,
@@ -173,7 +173,7 @@ def _analyze_one_function(
         try:
             block = project.factory.block(at, size=min(0x80, end - at), opt_level=0)
             _ = block.vex
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             refusals.append(
                 _refusal(
                     function_id,

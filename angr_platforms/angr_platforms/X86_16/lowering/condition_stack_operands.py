@@ -19,6 +19,10 @@ from angr.sim_type import SimType, SimTypeChar, SimTypeLong, SimTypeShort
 from angr.sim_variable import SimStackVariable
 
 from .semantic_cast import CSemanticCast8616
+from .stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+    stack_cvar_for_machine_bp_range_8616,
+)
 
 
 class _ProjectLike(Protocol):
@@ -86,17 +90,27 @@ def _condition_integer_type(codegen: object, size: int, *, signed: bool) -> SimT
     return type_.with_arch(cast(_CodegenLike, codegen).project.arch)
 
 
-def _matches_stack_storage(variable: object, *, base: str, offset: int, size: int) -> bool:
-    """Return whether a variable denotes the exact proven stack object."""
-    return (
-        isinstance(variable, SimStackVariable)
-        and variable.base == base
-        and variable.offset == offset
-        and variable.size == size
+def _matches_stack_storage(
+    codegen: object,
+    variable: object,
+    *,
+    base: str,
+    offset: int,
+    size: int,
+) -> bool:
+    """Match an exact machine stack identity across projected C coordinates."""
+    if not isinstance(variable, SimStackVariable) or variable.base != base or variable.size != size:
+        return False
+    storage_offset = (
+        machine_bp_offset_for_stack_variable_8616(codegen, variable)
+        if base == "bp"
+        else variable.offset if isinstance(variable.offset, int) else None
     )
+    return storage_offset == offset
 
 
 def _existing_stack_cvar(
+    codegen: object,
     cfunc: _CFunctionLike,
     *,
     base: str,
@@ -107,14 +121,14 @@ def _existing_stack_cvar(
     variables_in_use = _variables_in_use(cfunc)
     if isinstance(variables_in_use, dict):
         for variable, cvar in variables_in_use.items():
-            if _matches_stack_storage(variable, base=base, offset=offset, size=size) and isinstance(
+            if _matches_stack_storage(codegen, variable, base=base, offset=offset, size=size) and isinstance(
                 cvar, structured_c.CVariable
             ):
                 return cvar
     unified_local_vars = _unified_local_vars(cfunc)
     if isinstance(unified_local_vars, dict):
         for variable, entries in unified_local_vars.items():
-            if not _matches_stack_storage(variable, base=base, offset=offset, size=size):
+            if not _matches_stack_storage(codegen, variable, base=base, offset=offset, size=size):
                 continue
             if not isinstance(entries, (list, set, tuple)):
                 continue
@@ -125,6 +139,7 @@ def _existing_stack_cvar(
 
 
 def _existing_wide_stack_cvar(
+    codegen: object,
     cfunc: _CFunctionLike,
     *,
     base: str,
@@ -153,7 +168,12 @@ def _existing_wide_stack_cvar(
             continue
         if variable.base != base or variable.size != 4:
             continue
-        if offset not in {variable.offset, variable.offset + 2}:
+        variable_offset = (
+            machine_bp_offset_for_stack_variable_8616(codegen, variable)
+            if base == "bp"
+            else variable.offset
+        )
+        if not isinstance(variable_offset, int) or offset not in {variable_offset, variable_offset + 2}:
             continue
         return cvar
     return None
@@ -241,6 +261,7 @@ def materialize_typed_condition_stack_operand_8616(
         and storage_size > size
     ):
         storage_declaration = _existing_stack_cvar(
+            codegen,
             cfunc,
             base=base,
             offset=offset,
@@ -280,16 +301,22 @@ def materialize_typed_condition_stack_operand_8616(
 
     declaration = preferred
     if declaration is not None and not _matches_stack_storage(
+        codegen,
         declaration.variable,
         base=base,
         offset=offset,
         size=size,
     ):
         declaration = None
+    if declaration is None and base == "bp":
+        projected = stack_cvar_for_machine_bp_range_8616(codegen, offset, size)
+        if isinstance(projected, structured_c.CVariable):
+            declaration = projected
     if declaration is None and cfunc is not None:
-        declaration = _existing_stack_cvar(cfunc, base=base, offset=offset, size=size)
+        declaration = _existing_stack_cvar(codegen, cfunc, base=base, offset=offset, size=size)
     if declaration is None and cfunc is not None and size == 2:
         wide_declaration = _existing_wide_stack_cvar(
+            codegen,
             cfunc,
             base=base,
             offset=offset,

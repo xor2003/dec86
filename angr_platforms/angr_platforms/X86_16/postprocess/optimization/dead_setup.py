@@ -34,8 +34,8 @@ from ...decompiler_postprocess_utils import _iter_c_nodes_deep_8616
 
 __all__ = [
     "DeadSetupDecision8616",
-    "_prune_dead_setup_carriers_8616",
     "_count_dead_setup_escaped_8616",
+    "_prune_dead_setup_carriers_8616",
 ]
 
 
@@ -173,9 +173,7 @@ def _is_observable_storage(lhs: CVariable) -> bool:
     region = getattr(var, "region", None)
     # Local stack/register carriers are removable when def-use proves dead.
     # Keep globals/args conservative.
-    if isinstance(region, str) and region.lower() in {"global", "argument", "arg"}:
-        return True
-    return False
+    return bool(isinstance(region, str) and region.lower() in {"global", "argument", "arg"})
 
 
 def _is_candidate_lhs(lhs: object) -> TypeGuard[CVariable]:
@@ -220,10 +218,7 @@ def _is_setup_rhs(rhs: object) -> bool:
 def _rhs_has_side_effects(rhs: object) -> bool:
     if rhs is None:
         return False
-    for node in _iter_c_nodes_deep_8616(rhs):
-        if isinstance(node, CFunctionCall):
-            return True
-    return False
+    return any(isinstance(node, CFunctionCall) for node in _iter_c_nodes_deep_8616(rhs))
 
 
 def _collect_read_counts(root: object) -> dict[tuple[str, int | str], int]:
@@ -281,7 +276,7 @@ def _iter_statement_blocks(root: object) -> Iterator[object]:
             if hasattr(node, "statements"):
                 yield node
                 for stmt in list(getattr(node, "statements", ()) or ()):
-                    stack.append(stmt)
+                    stack.append(stmt)  # noqa: PERF402
             for attr in (
                 "condition",
                 "cond",
@@ -305,7 +300,7 @@ def _iter_statement_blocks(root: object) -> Iterator[object]:
             cases = getattr(node, "cases", None)
             if isinstance(cases, dict):
                 for body in cases.values():
-                    stack.append(body)
+                    stack.append(body)  # noqa: PERF402
             default = getattr(node, "default", None)
             if default is not None:
                 stack.append(default)
@@ -335,7 +330,7 @@ def _rhs_mentions_flag_like_state(rhs: object) -> bool:
         if not isinstance(node, CVariable):
             continue
         name = _var_name(node).lower()
-        if name.startswith("flags") or name.startswith("eflags"):
+        if name.startswith(("flags", "eflags")):
             return True
     return False
 
@@ -346,7 +341,7 @@ def _rhs_looks_like_stack_carrier(rhs: object) -> bool:
         if not isinstance(node, CVariable):
             continue
         name = _var_name(node)
-        if name.startswith("s_") or name.startswith("arg_"):
+        if name.startswith(("s_", "arg_")):
             return True
     return False
 
@@ -359,7 +354,7 @@ def _classify_candidate_8616(
 ) -> DeadSetupDecision8616:
     if _is_observable_storage(cand.lhs):
         return DeadSetupDecision8616.LIVE_CALL_ARG_SETUP
-    if call_indices:
+    if call_indices:  # noqa: SIM102
         # Conservative production rule: setup/carrier statements in call-bearing
         # regions can encode outgoing argument staging. Refuse pruning unless
         # we have stronger evidence than local shape/liveness.

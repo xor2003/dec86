@@ -1,10 +1,10 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import importlib.util
 from pathlib import Path
 
 
-def _load_module():
+def _load_module():  # noqa: ANN202
     script_path = Path(__file__).resolve().parents[2] / "scripts" / "capture_sortdemo_debug_bundle.py"
     spec = importlib.util.spec_from_file_location("capture_sortdemo_debug_bundle", script_path)
     assert spec is not None
@@ -14,7 +14,7 @@ def _load_module():
     return module
 
 
-def test_collect_cod_window_lines_keeps_nearby_source_comments():
+def test_collect_cod_window_lines_keeps_nearby_source_comments() -> None:  # noqa: D103
     module = _load_module()
     cod_text = "\n".join(
         [

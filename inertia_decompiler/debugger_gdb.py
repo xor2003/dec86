@@ -25,13 +25,14 @@ Commands:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import socket
 import struct
 import threading
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 import angr
 import claripy
@@ -120,7 +121,7 @@ class GDBServer:
         self.running = False
 
         # Simulation state
-        self.state: Optional[angr.SimState] = None
+        self.state: angr.SimState | None = None
         self.breakpoints: dict[int, Breakpoint] = {}
         self.b_idx_counter = 0
 
@@ -332,10 +333,8 @@ class GDBServer:
                     print(f"[GDB] Error: {e}")
                 finally:
                     if self.client is not None:
-                        try:
+                        with contextlib.suppress(OSError):
                             self.client.close()
-                        except OSError:
-                            pass
                         self.client = None
 
         return _impl()
@@ -414,7 +413,7 @@ class GDBServer:
                 self._send_packet("")
                 return True
             if cmd == "qfThreadInfo":
-                threads_hex = ",".join(f"{tid:x}" for tid in self.threads.keys())
+                threads_hex = ",".join(f"{tid:x}" for tid in self.threads)
                 self._send_packet(f"m{threads_hex}")
                 return True
             if cmd == "qsThreadInfo":
@@ -451,7 +450,7 @@ class GDBServer:
         return True
 
     def _handle_thread_command(self, cmd: str) -> bool:
-        if cmd.startswith("Hg") or cmd.startswith("Hc"):
+        if cmd.startswith(("Hg", "Hc")):
             self._send_packet("OK")
             return True
         return False
@@ -496,13 +495,13 @@ class GDBServer:
         return False
 
     def _handle_breakpoint_command(self, cmd: str) -> bool:
-        if cmd.startswith("Z0,") or cmd.startswith("Z1,"):
+        if cmd.startswith(("Z0,", "Z1,")):
             self._handle_set_breakpoint(cmd)
             return True
-        if cmd.startswith("z0,") or cmd.startswith("z1,"):
+        if cmd.startswith(("z0,", "z1,")):
             self._handle_remove_breakpoint(cmd)
             return True
-        if cmd.startswith("Z") or cmd.startswith("z"):
+        if cmd.startswith(("Z", "z")):
             self._send_packet("")
             return True
         return False
@@ -511,13 +510,13 @@ class GDBServer:
         def _impl() -> None:
             """Dispatch GDB RSP command."""
             current_cmd = cmd
-            print(f"[GDB] Received raw command: {repr(current_cmd)}")
+            print(f"[GDB] Received raw command: {current_cmd!r}")
             if not current_cmd or current_cmd.startswith("+"):
                 return
 
             if current_cmd.startswith("$"):
                 current_cmd = current_cmd[1:].split("#")[0]
-            print(f"[GDB] Parsed command: {repr(current_cmd)}")
+            print(f"[GDB] Parsed command: {current_cmd!r}")
             if self._handle_q_command(current_cmd):
                 return
             if self._handle_vcont_command(current_cmd):
@@ -716,7 +715,7 @@ class GDBServer:
                         # Approximate length
                         insn_len = 2
                         if (modrm & 0xC0) == 0x00:
-                            if (modrm & 0x07) == 0x05:
+                            if (modrm & 0x07) == 0x05:  # noqa: SIM108
                                 insn_len = 6  # disp32
                             else:
                                 insn_len = 2
@@ -884,7 +883,7 @@ class GDBServer:
 
 
 __all__ = [
+    "Breakpoint",
     "GDBServer",
     "GDBStopReason",
-    "Breakpoint",
 ]

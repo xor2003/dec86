@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 from contextlib import nullcontext
 from pathlib import Path
@@ -43,7 +43,7 @@ def _mapping_failure_result(vector: dict[str, Any], *, reason: str, message: str
     }
 
 
-def record_oracle(
+def record_oracle(  # noqa: D103
     vectors_document: dict[str, Any],
     *,
     backend: str = "fixture",
@@ -124,7 +124,7 @@ def record_oracle(
     return document
 
 
-def compare_vectors(
+def compare_vectors(  # noqa: D103
     vectors_document: dict[str, Any],
     *,
     backend: str = "fixture",
@@ -232,7 +232,7 @@ def compare_vectors(
     return document
 
 
-def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:  # noqa: D103
     counts: dict[str, int] = {}
     changed_fields: dict[str, int] = {}
     refusals: dict[str, int] = {}

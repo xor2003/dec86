@@ -26,7 +26,7 @@ from __future__ import annotations
 import typing
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional, cast
+from typing import Any, cast
 
 from .codegen_metadata import get_codegen_sequence_attr, get_codegen_side_metadata
 
@@ -36,8 +36,8 @@ __all__ = [
     "ConfidenceTracker",
     "FunctionConfidenceReport",
     "ScanConfidenceSummary",
-    "build_function_with_confidence_markers",
     "apply_x86_16_confidence_and_assumptions",
+    "build_function_with_confidence_markers",
 ]
 
 
@@ -57,7 +57,7 @@ class ConfidenceMarker:
     fact_detail: str  # Description of what was recovered
     confidence: ConfidenceLevel
     evidence_count: int  # Number of sources supporting this
-    reason: Optional[str] = None  # Why we chose this confidence level
+    reason: str | None = None  # Why we chose this confidence level
 
 
 @dataclass(slots=True)
@@ -72,7 +72,7 @@ class ConfidenceTracker:
         fact_detail: str,
         confidence: ConfidenceLevel,
         evidence_count: int = 1,
-        reason: Optional[str] = None,
+        reason: str | None = None,
     ) -> None:
         """Add a confidence marker."""
         marker = ConfidenceMarker(
@@ -178,14 +178,14 @@ class FunctionConfidenceReport:
         if self.assumptions:
             lines.append(f"// Assumptions: {len(self.assumptions)} recorded")
             for assumption in self.assumptions[:3]:  # Show first 3
-                lines.append(f"//   - {assumption}")
+                lines.append(f"//   - {assumption}")  # noqa: PERF401
             if len(self.assumptions) > 3:
                 lines.append(f"//   ... and {len(self.assumptions) - 3} more")
 
         if self.critical_unknowns:
             lines.append("// ⚠️ CRITICAL UNKNOWNS:")
             for unknown in self.critical_unknowns:
-                lines.append(f"//   - {unknown}")
+                lines.append(f"//   - {unknown}")  # noqa: PERF401
 
         return "\n".join(lines)
 

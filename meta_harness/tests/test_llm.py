@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import io
 import sys
@@ -16,26 +16,26 @@ from meta_harness.llm import (
 )
 
 
-def _cfg(monkeypatch, tmp_path):
+def _cfg(monkeypatch, tmp_path):  # noqa: ANN001, ANN202
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     return LlmConfig.from_env()
 
 
-def test_build_effective_prompt_adds_local_guardrails(monkeypatch, tmp_path):
+def test_build_effective_prompt_adds_local_guardrails(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = build_effective_prompt("worker", "ollama", "Base prompt", cfg, "")
     assert "Local-model guardrails" in prompt
     assert "Global Remaining steps: N" in prompt
 
 
-def test_validate_output_rejects_bad_local_output(monkeypatch, tmp_path):
+def test_validate_output_rejects_bad_local_output(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     log = tmp_path / "bad.log"
     log.write_text("As an AI, I need more context.\nGlobal Remaining steps: 3\n", encoding="utf-8")
     assert not validate_output("worker", "ollama", log, cfg)
 
 
-def test_validate_output_accepts_good_local_output(monkeypatch, tmp_path):
+def test_validate_output_accepts_good_local_output(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     log = tmp_path / "good.log"
     log.write_text(
@@ -50,13 +50,13 @@ def test_validate_output_accepts_good_local_output(monkeypatch, tmp_path):
     assert validate_output("reviewer", "ollama", log, cfg)
 
 
-def test_extract_session_id_and_provider_kind():
+def test_extract_session_id_and_provider_kind() -> None:  # noqa: D103
     assert extract_session_id("session id: abc-123\n") == "abc-123"
     assert is_local_provider("ollama")
     assert not is_local_provider("codex")
 
 
-def test_run_provider_once_writes_timestamps(monkeypatch, tmp_path):
+def test_run_provider_once_writes_timestamps(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = tmp_path / "prompt.txt"
     prompt.write_text("hello", encoding="utf-8")
@@ -66,10 +66,10 @@ def test_run_provider_once_writes_timestamps(monkeypatch, tmp_path):
         pid = 1234
         stdout = io.StringIO("provider output\n")
 
-        def wait(self):
+        def wait(self) -> int:
             return 0
 
-    def fake_popen(*args, **kwargs):
+    def fake_popen(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
         assert str(cfg.root_dir) in kwargs["env"].get("PYTHONPATH", "")
         return Proc()
 
@@ -85,7 +85,7 @@ def test_run_provider_once_writes_timestamps(monkeypatch, tmp_path):
     assert "provider output" in cfg.last_log_file.read_text(encoding="utf-8")
 
 
-def test_run_provider_once_applies_codex_memory_limit(monkeypatch, tmp_path):
+def test_run_provider_once_applies_codex_memory_limit(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("CODEX_MEMORY_LIMIT_MB", "512")
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
     cfg = _cfg(monkeypatch, tmp_path)
@@ -101,10 +101,10 @@ def test_run_provider_once_applies_codex_memory_limit(monkeypatch, tmp_path):
         pid = 1235
         stdout = io.StringIO("")
 
-        def wait(self):
+        def wait(self) -> int:
             return 0
 
-    def fake_popen(*args, **kwargs):
+    def fake_popen(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
         seen["kwargs"] = kwargs
         preexec = kwargs.get("preexec_fn")
         assert preexec is not None
@@ -114,7 +114,7 @@ def test_run_provider_once_applies_codex_memory_limit(monkeypatch, tmp_path):
 
     calls = []
 
-    def fake_setrlimit(limit_type, limits):
+    def fake_setrlimit(limit_type, limits) -> None:  # noqa: ANN001
         calls.append((limit_type, limits))
 
     monkeypatch.setattr(llm_mod.resource, "setrlimit", fake_setrlimit)
@@ -127,7 +127,7 @@ def test_run_provider_once_applies_codex_memory_limit(monkeypatch, tmp_path):
     assert calls
 
 
-def test_run_provider_once_does_not_wrap_agent_in_wall_clock_timeout(monkeypatch, tmp_path):
+def test_run_provider_once_does_not_wrap_agent_in_wall_clock_timeout(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = tmp_path / "prompt.txt"
     prompt.write_text("hello", encoding="utf-8")
@@ -138,10 +138,10 @@ def test_run_provider_once_does_not_wrap_agent_in_wall_clock_timeout(monkeypatch
         pid = 1236
         stdout = io.StringIO("provider output\n")
 
-        def wait(self):
+        def wait(self) -> int:
             return 0
 
-    def fake_popen(cmd, *args, **kwargs):
+    def fake_popen(cmd, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
         seen["cmd"] = list(cmd)
         return Proc()
 
@@ -156,7 +156,7 @@ def test_run_provider_once_does_not_wrap_agent_in_wall_clock_timeout(monkeypatch
     assert cmd[0] == "codex"
 
 
-def test_run_provider_once_streams_live_output_into_last_log(monkeypatch, tmp_path):
+def test_run_provider_once_streams_live_output_into_last_log(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = tmp_path / "prompt.txt"
     prompt.write_text("hello", encoding="utf-8")
@@ -164,7 +164,7 @@ def test_run_provider_once_streams_live_output_into_last_log(monkeypatch, tmp_pa
     events: list[str] = []
 
     class StreamingStdout:
-        def __iter__(self):
+        def __iter__(self):  # noqa: ANN204
             yield "first line\n"
             events.append(cfg.last_log_file.read_text(encoding="utf-8"))
             yield "second line\n"
@@ -173,7 +173,7 @@ def test_run_provider_once_streams_live_output_into_last_log(monkeypatch, tmp_pa
         pid = 9999
         stdout = StreamingStdout()
 
-        def wait(self):
+        def wait(self) -> int:
             return 0
 
     monkeypatch.setattr("meta_harness.llm.subprocess.Popen", lambda *args, **kwargs: Proc())
@@ -186,7 +186,7 @@ def test_run_provider_once_streams_live_output_into_last_log(monkeypatch, tmp_pa
     assert "second line" in cfg.last_log_file.read_text(encoding="utf-8")
 
 
-def test_run_provider_once_supports_mock_provider(monkeypatch, tmp_path):
+def test_run_provider_once_supports_mock_provider(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     prompt = tmp_path / "worker.prompt.txt"
     prompt.write_text("hello", encoding="utf-8")
@@ -208,7 +208,7 @@ def test_run_provider_once_supports_mock_provider(monkeypatch, tmp_path):
     assert "Global Remaining steps: 0" in text
 
 
-def test_run_and_mirror_output_restarts_silent_agent(monkeypatch, tmp_path):
+def test_run_and_mirror_output_restarts_silent_agent(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg = _cfg(monkeypatch, tmp_path)
     monkeypatch.setenv("AGENT_NO_OUTPUT_RESTART_SECS", "1")
     monkeypatch.setenv("AGENT_NO_OUTPUT_MAX_RESTARTS", "1")

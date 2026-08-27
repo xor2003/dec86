@@ -9,12 +9,11 @@ Unknown identity must make callers preserve code.
 from __future__ import annotations
 
 from collections.abc import Hashable
-from typing import TypeAlias
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
-LocalLivenessKey8616: TypeAlias = tuple[str, Hashable]
+type LocalLivenessKey8616 = tuple[str, Hashable]
 
 __all__ = [
     "LocalLivenessKey8616",

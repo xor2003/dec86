@@ -37,6 +37,79 @@ def test_direct_byte_test_mask_is_classified_before_a_jcc() -> None:
     assert instruction.simple_semantics == ("test_abs_imm8", 0x1234, 1)
 
 
+def test_inc_ax_before_jne_emits_exact_zero_boundary_condition(monkeypatch) -> None:
+    """The simple frontend path must retain INC-produced branch evidence."""
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
+
+    pyvex.lift(
+        bytes.fromhex("83c40440750190c3"),
+        0x4000,
+        Arch86_16(),
+        opt_level=0,
+    )
+
+    conditions = Instruction_ANY._inertia_module_condition_cache[0x4000]
+    assert len(conditions) == 1
+    condition = conditions[0]
+    assert isinstance(condition, ConditionIR)
+    assert condition.op == "ne"
+    assert condition.lhs == IRValue(
+        MemSpace.REG,
+        name="ax",
+        offset=0,
+        size=2,
+        expr=("cmp-reg",),
+    )
+    assert condition.rhs == IRValue(
+        MemSpace.CONST,
+        const=0xFFFF,
+        size=2,
+        expr=("cmp-imm",),
+    )
+    assert condition.producer_insn == 0x4003
+    assert condition.src_insn == 0x4004
+    assert condition.producer_semantics == ("inc_reg16", "ax", 1)
+
+
+@pytest.mark.parametrize(
+    ("machine_code", "producer_semantics", "expected_boundary"),
+    (
+        ("4040750190c3", ("inc_reg16", "ax", 2), 0xFFFE),
+        ("4848750190c3", ("dec_reg16", "ax", 2), 2),
+    ),
+    ids=("two-increments", "two-decrements"),
+)
+def test_repeated_inc_dec_before_jne_uses_original_value_boundary(
+    monkeypatch,
+    machine_code: str,
+    producer_semantics: tuple[str, str, int],
+    expected_boundary: int,
+) -> None:
+    """Repeated unary updates compare the pre-chain value with the exact boundary."""
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
+
+    pyvex.lift(
+        bytes.fromhex(machine_code),
+        0x4000,
+        Arch86_16(),
+        opt_level=0,
+    )
+
+    condition = Instruction_ANY._inertia_module_condition_cache[0x4000][0]
+    assert isinstance(condition, ConditionIR)
+    assert condition.op == "ne"
+    assert isinstance(condition.rhs, IRValue)
+    assert condition.rhs.space is MemSpace.CONST
+    assert condition.rhs.const == expected_boundary
+    assert condition.producer_insn == 0x4001
+    assert condition.src_insn == 0x4002
+    assert condition.producer_semantics == producer_semantics
+
+
 def test_byte_register_copy_preserves_direct_load_condition_evidence(monkeypatch) -> None:
     monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
     monkeypatch.setattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {})

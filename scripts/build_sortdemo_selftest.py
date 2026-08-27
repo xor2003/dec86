@@ -42,8 +42,7 @@ def _fail(stage: SortdemoSelftestStage, message: str) -> int:
 def _run(cmd: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         timeout=timeout,
         check=False,

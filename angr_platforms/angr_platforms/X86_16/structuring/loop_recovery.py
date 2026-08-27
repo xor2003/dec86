@@ -14,26 +14,38 @@ Forbidden: text matching, asm/C regex, sample-specific address hacks.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, Protocol
+from typing import Protocol
+
+from .natural_loop_topology import (
+    LoopTopologyStats8616,
+    LoopTopologyVerdict8616,
+    NaturalLoopTopology8616,
+    classify_natural_loop_topology_8616,
+)
 
 __all__ = [
-    "LoopBackEdge",
-    "NaturalLoop",
-    "InductionUpdate",
-    "LoopGuard",
-    "RecoveredLoop",
-    "CFGView",
     "BlockSemantics",
+    "CFGView",
+    "InductionUpdate",
+    "LoopBackEdge",
+    "LoopGuard",
+    "LoopTopologyStats8616",
+    "LoopTopologyVerdict8616",
+    "NaturalLoop",
+    "NaturalLoopTopology8616",
+    "RecoveredLoop",
+    "build_natural_loop",
+    "classify_natural_loop_topology_8616",
     "compute_dominators",
     "find_back_edges",
-    "build_natural_loop",
-    "recover_natural_loops",
-    "match_induction_update",
-    "find_loop_induction",
-    "match_loop_guard",
     "find_loop_guard",
+    "find_loop_induction",
+    "match_induction_update",
+    "match_loop_guard",
     "recover_loops",
+    "recover_natural_loops",
 ]
 
 
@@ -124,10 +136,7 @@ def compute_dominators(cfg: CFGView, entry: int, blocks: Iterable[int]) -> dict[
             if b == entry:
                 continue
             preds = [p for p in cfg.predecessors(b) if p in block_set]
-            if not preds:
-                new_dom = {b}
-            else:
-                new_dom = set.intersection(*(dom[p] for p in preds)) | {b}
+            new_dom = {b} if not preds else set.intersection(*(dom[p] for p in preds)) | {b}
             if new_dom != dom[b]:
                 dom[b] = new_dom
                 changed = True
@@ -139,12 +148,12 @@ def find_back_edges(cfg: CFGView, entry: int, blocks: Iterable[int]) -> list[Loo
     """Find CFG edges whose destination dominates their source."""
     block_list = list(blocks)
     dom = compute_dominators(cfg, entry, block_list)
-    edges: list[LoopBackEdge] = []
-
-    for src in block_list:
-        for dst in cfg.successors(src):
-            if dst in dom.get(src, set()):
-                edges.append(LoopBackEdge(header=dst, latch=src))
+    edges = [
+        LoopBackEdge(header=dst, latch=src)
+        for src in block_list
+        for dst in cfg.successors(src)
+        if dst in dom.get(src, set())
+    ]
 
     return sorted(edges, key=lambda e: (e.header, e.latch))
 
@@ -176,11 +185,6 @@ def recover_natural_loops(cfg: CFGView, entry: int, blocks: Iterable[int]) -> li
 # ── Induction variable detection ──
 
 
-def _is_const(expr: object) -> bool:
-    """Return whether a dynamic angr/compatibility boundary expression carries an int constant."""
-    return hasattr(expr, "value") and isinstance(getattr(expr, "value"), int)
-
-
 def _same_var(a: object, b: object) -> bool:
     return repr(a) == repr(b)
 
@@ -206,10 +210,11 @@ def match_induction_update(stmt: object) -> InductionUpdate | None:
             return None
         if not _same_var(target, left):
             return None
-        if not _is_const(right):
+        constant = getattr(right, "value", None)
+        if not isinstance(constant, int):
             return None
 
-        c = int(getattr(right, "value"))
+        c = constant
         step = c if op == "Add" else -c
 
         return InductionUpdate(variable=target, initial=None, step=step, update_block=-1, confidence=0.75)

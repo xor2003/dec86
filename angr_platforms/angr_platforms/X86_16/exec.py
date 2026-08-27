@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from pyvex.lifting.util.syntax_wrapper import VexValue
 
@@ -76,7 +76,7 @@ class _ExecEmulatorHooks(Protocol):
         ...
 
 
-OpcodeExecHandler: TypeAlias = Callable[["ExecInstr"], None]
+type OpcodeExecHandler = Callable[["ExecInstr"], None]
 
 
 class ExecInstr(X86Instruction):  # type: ignore[misc, unused-ignore]  # dynamic frontend base contract

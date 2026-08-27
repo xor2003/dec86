@@ -42,6 +42,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _const(value: int, codegen):
@@ -876,8 +880,9 @@ def test_deref_location_fingerprint_refuses_unproven_unresolved_segment_carrier_
 def test_dirty_register_backed_fingerprint_uses_register_identity_not_varid():
     codegen = _DummyCodegen()
     project = codegen.project
-    left = CDirtyExpression(SimpleNamespace(varid=31, reg=30, bits=16), codegen=codegen)
-    right = CDirtyExpression(SimpleNamespace(varid=224, reg=30, bits=16), codegen=codegen)
+    ss_offset, ss_size = project.arch.registers["ss"]
+    left = CDirtyExpression(SimpleNamespace(varid=31, reg=ss_offset, bits=ss_size * 8), codegen=codegen)
+    right = CDirtyExpression(SimpleNamespace(varid=224, reg=ss_offset, bits=ss_size * 8), codegen=codegen)
 
     assert _expr_fingerprint(left, project) == "reg:ss"
     assert _expr_fingerprint(left, project) == _expr_fingerprint(right, project)
@@ -886,8 +891,10 @@ def test_dirty_register_backed_fingerprint_uses_register_identity_not_varid():
 def test_dirty_register_backed_fingerprint_preserves_distinct_registers():
     codegen = _DummyCodegen()
     project = codegen.project
-    ss_carrier = CDirtyExpression(SimpleNamespace(varid=31, reg=30, bits=16), codegen=codegen)
-    sp_carrier = CDirtyExpression(SimpleNamespace(varid=31, reg=8, bits=16), codegen=codegen)
+    ss_offset, ss_size = project.arch.registers["ss"]
+    sp_offset, sp_size = project.arch.registers["sp"]
+    ss_carrier = CDirtyExpression(SimpleNamespace(varid=31, reg=ss_offset, bits=ss_size * 8), codegen=codegen)
+    sp_carrier = CDirtyExpression(SimpleNamespace(varid=31, reg=sp_offset, bits=sp_size * 8), codegen=codegen)
 
     assert _expr_fingerprint(ss_carrier, project) == "reg:ss"
     assert _expr_fingerprint(sp_carrier, project) == "reg:sp"

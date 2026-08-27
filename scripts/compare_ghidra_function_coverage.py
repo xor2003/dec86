@@ -16,9 +16,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Final, Sequence
+from typing import Final
 
 _GHIDRA_FILE_RE: Final[re.Pattern[str]] = re.compile(
     r"^(?:thunk_)?FUN_(?P<segment>[0-9a-fA-F]{4})_(?P<offset>[0-9a-fA-F]{4})_.*\.c$"

@@ -237,7 +237,7 @@ def main() -> None:
             print("Available backends:")
             print(f"  angr:    {'available' if WORKSPACE_PATH / 'angr_platforms' else 'not found'}")
             dosbox_bin = find_libdosbox_binary()
-            print(f"  dosbox:  {'available ({})'.format(dosbox_bin) if dosbox_bin else 'not found'}")
+            print(f"  dosbox:  {f'available ({dosbox_bin})' if dosbox_bin else 'not found'}")
             print(
                 f"  gdbserver: {'available' if subprocess.run(['which', 'gdbserver'], capture_output=True).returncode == 0 else 'not found'}"
             )
@@ -268,10 +268,7 @@ def main() -> None:
         backend = args.backend
         if backend is None:
             # Auto-detect: prefer angr for DOS MZ, dosbox if available
-            if has_libdosbox_gdb_support():
-                backend = "dosbox"
-            else:
-                backend = "angr"
+            backend = "dosbox" if has_libdosbox_gdb_support() else "angr"
 
         # Start GDB server
         server: DebugServer | None = None

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any, cast
 
 from pycparser import c_ast, c_parser
@@ -25,7 +25,7 @@ _PARSE_PREFIX = (
 )
 
 
-class GeneratedCContractStatus(str, Enum):
+class GeneratedCContractStatus(StrEnum):
     """Typed terminal status for one generated-C fixture contract."""
 
     NOT_REQUIRED = "not_required"

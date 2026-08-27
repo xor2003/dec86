@@ -1,25 +1,23 @@
-"""Abnormal loop-entry and loop-exit normalization for region structuring.
+"""Fail-closed abnormal-loop eligibility for region structuring.
 
 Layer: Structuring.
-Responsibility: normalize abnormal loop-entry and loop-exit shapes as explicit
-CFG metadata before code generation.
-Forbidden: guessing prettier loop C without CFG loop-shape evidence.
-
-This keeps dedicated abnormal-loop policy out of the main structuring driver.
-The goal is not to guess prettier C late. The goal is to make loop-shape
-evidence explicit at the CFG layer so later codegen can stay honest.
+Responsibility: require explicit typed eligibility before any future abnormal-loop work.
+Forbidden: default-allow eligibility, graph mutation, region collapse, or C mutation.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .structuring.natural_loop_topology import (
+    LoopTopologyVerdict8616,
+    NaturalLoopTopology8616,
+)
 from .structuring_analysis import StructureAnalysis
-from .structuring_loops import NaturalLoopInfo
-from .structuring_region import DominatorInfo, Region, RegionGraph, RegionType
+from .structuring_region import DominatorInfo, Region, RegionGraph
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class LoopEdgeRef:
     """Stable metadata reference for an edge between two region ids."""
 
@@ -34,16 +32,18 @@ class LoopEdgeRef:
         }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AbnormalLoopNormalizationPlan:
-    """Plan for preserving abnormal loop shape with explicit selector metadata."""
+    """Typed eligibility result for a future abnormal-loop normalization slice."""
 
-    header_region_id: int | None
-    body_region_ids: tuple[int | None, ...]
+    verdict: LoopTopologyVerdict8616
+    header_region_id: int
+    body_region_ids: tuple[int, ...]
     abnormal_entries: tuple[LoopEdgeRef, ...]
     abnormal_exits: tuple[LoopEdgeRef, ...]
     entry_variable_name: str | None
     exit_variable_name: str | None
+    refusal_reason: str | None = None
 
     @property
     def needs_entry_variable(self) -> bool:
@@ -57,161 +57,82 @@ class AbnormalLoopNormalizationPlan:
 
     @property
     def can_normalize(self) -> bool:
-        """Return whether the plan has enough metadata to normalize safely."""
-        return bool(self.entry_variable_name or self.exit_variable_name)
+        """Return whether exact proof authorizes a selector materialization."""
+        return self.verdict is LoopTopologyVerdict8616.PROVEN and bool(
+            self.entry_variable_name or self.exit_variable_name
+        )
 
     def to_dict(self) -> dict[str, object]:
         """Serialize this plan for region metadata and diagnostics."""
         return {
+            "verdict": self.verdict.value,
             "header_region_id": self.header_region_id,
             "body_region_ids": list(self.body_region_ids),
             "abnormal_entries": [edge.to_dict() for edge in self.abnormal_entries],
             "abnormal_exits": [edge.to_dict() for edge in self.abnormal_exits],
             "entry_variable_name": self.entry_variable_name,
             "exit_variable_name": self.exit_variable_name,
+            "refusal_reason": self.refusal_reason,
             "can_normalize": self.can_normalize,
         }
-
-
-def _sorted_regions(regions: set[Region]) -> list[Region]:
-    return sorted(
-        regions,
-        key=lambda region: (
-            region.region_id is None,
-            region.region_id if region.region_id is not None else -1,
-        ),
-    )
 
 
 def build_abnormal_loop_normalization_plan(
     graph: RegionGraph,
     dominators: DominatorInfo | None,
-    loop_info: NaturalLoopInfo,
+    topology: NaturalLoopTopology8616,
 ) -> AbnormalLoopNormalizationPlan:
-    """Build a CFG-evidence-backed plan for abnormal loop normalization."""
+    """Default-deny abnormal normalization without exact typed eligibility."""
+    del dominators
+    matching_headers = tuple(region for region in graph.nodes if region.region_id == topology.header)
+    reason: str | None
+    if len(matching_headers) != 1:
+        verdict = LoopTopologyVerdict8616.UNKNOWN_REFUSE
+        reason = "missing-topology-header"
+    else:
+        header = matching_headers[0]
+        eligibility_key = "typed_ir_allow_abnormal_loop_normalization"
+        if eligibility_key not in header.metadata:
+            verdict = LoopTopologyVerdict8616.UNKNOWN_REFUSE
+            reason = "missing-typed-condition-eligibility"
+        elif header.metadata[eligibility_key] is not True:
+            verdict = LoopTopologyVerdict8616.UNKNOWN_REFUSE
+            reason = "typed-condition-eligibility-not-proven"
+        else:
+            verdict = topology.verdict
+            reason = topology.refusal_reason
 
-    def _impl() -> AbnormalLoopNormalizationPlan:
-        _ = dominators
-
-        header = loop_info.header
-        body_regions = set(loop_info.body_regions)
-        body_regions.add(header)
-
-        external_entry_edges: list[LoopEdgeRef] = []
-        for body_region in _sorted_regions(body_regions):
-            for pred in graph.predecessors(body_region):
-                if pred in body_regions:
-                    continue
-                if body_region == header:
-                    continue
-                external_entry_edges.append(LoopEdgeRef(pred.region_id, body_region.region_id))
-
-        exit_targets = {target for _, target in loop_info.exit_edges}
-        abnormal_exit_edges: list[LoopEdgeRef] = []
-        if len(exit_targets) > 1:
-            for source, target in sorted(
-                loop_info.exit_edges,
-                key=lambda edge: (
-                    edge[0].region_id is None,
-                    edge[0].region_id if edge[0].region_id is not None else -1,
-                    edge[1].region_id is None,
-                    edge[1].region_id if edge[1].region_id is not None else -1,
-                ),
-            ):
-                abnormal_exit_edges.append(LoopEdgeRef(source.region_id, target.region_id))
-
-        header_id = header.region_id
-        body_ids = tuple(region.region_id for region in _sorted_regions(body_regions))
-        typed_ir_allow = header.metadata.get("typed_ir_allow_abnormal_loop_normalization", True)
-        entry_var = (
-            f"__loop_entry_sel_{header_id:x}"
-            if external_entry_edges and isinstance(header_id, int) and typed_ir_allow
-            else None
-        )
-        exit_var = (
-            f"__loop_exit_sel_{header_id:x}"
-            if abnormal_exit_edges and isinstance(header_id, int) and typed_ir_allow
-            else None
-        )
-
-        return AbnormalLoopNormalizationPlan(
-            header_region_id=header_id,
-            body_region_ids=body_ids,
-            abnormal_entries=tuple(external_entry_edges),
-            abnormal_exits=tuple(abnormal_exit_edges),
-            entry_variable_name=entry_var,
-            exit_variable_name=exit_var,
-        )
-
-    return _impl()
+    return AbnormalLoopNormalizationPlan(
+        verdict=verdict,
+        header_region_id=topology.header,
+        body_region_ids=topology.body,
+        abnormal_entries=(),
+        abnormal_exits=(),
+        entry_variable_name=None,
+        exit_variable_name=None,
+        refusal_reason=reason,
+    )
 
 
 def apply_abnormal_loop_normalization(
     graph: RegionGraph,
     header: Region,
-    loop_info: NaturalLoopInfo,
+    topology: NaturalLoopTopology8616,
     plan: AbnormalLoopNormalizationPlan,
 ) -> bool:
-    """Apply an abnormal loop normalization plan to the region graph."""
-
-    def _impl() -> bool:
-        if not plan.can_normalize:
-            return False
-
-        body_regions = set(loop_info.body_regions)
-        body_regions.add(header)
-
-        for body_region in _sorted_regions(body_regions):
-            if body_region == header or body_region not in graph.nodes:
-                continue
-            graph.merge_regions(body_region, header, transfer_edges="both")
-
-        header.region_type = RegionType.Loop
-        header.metadata["loop_info"] = loop_info
-        header.metadata["abnormal_loop_plan"] = plan.to_dict()
-        if plan.abnormal_entries:
-            header.metadata["unstructured_entries"] = [
-                (edge.source_region_id, edge.target_region_id) for edge in plan.abnormal_entries
-            ]
-        if plan.abnormal_exits:
-            header.metadata["unstructured_exits"] = [(source, target) for source, target in loop_info.exit_edges]
-        structuring_variables = [name for name in (plan.entry_variable_name, plan.exit_variable_name) if name]
-        if structuring_variables:
-            header.metadata["structuring_variables"] = structuring_variables
-        return True
-
-    return _impl()
+    """Refuse mutation until a later slice proves abnormal topology and conditions."""
+    del graph, header, topology, plan
+    return False
 
 
 class AbnormalLoopStructureAnalysis(StructureAnalysis):
-    """Structuring analysis with explicit abnormal loop normalization.
-
-    This normalizes multi-entry / multi-exit loop shapes as typed metadata
-    instead of leaving them as anonymous low-confidence leftovers.
-    """
-
-    def _try_natural_loop(self, region: Region) -> bool:
-        loop_info = self._detect_natural_loop(region)
-        if not loop_info:
-            return False
-
-        plan = build_abnormal_loop_normalization_plan(
-            self.graph,
-            self.dominators,
-            loop_info,
-        )
-        if plan.can_normalize:
-            if apply_abnormal_loop_normalization(self.graph, region, loop_info, plan):
-                self.stats.regions_reduced += 1
-                return True
-
-        return super()._try_natural_loop(region)
+    """Analysis variant that inherits mutation-free natural-loop publication."""
 
 
 __all__ = [
-    "LoopEdgeRef",
     "AbnormalLoopNormalizationPlan",
-    "build_abnormal_loop_normalization_plan",
-    "apply_abnormal_loop_normalization",
     "AbnormalLoopStructureAnalysis",
+    "LoopEdgeRef",
+    "apply_abnormal_loop_normalization",
+    "build_abnormal_loop_normalization_plan",
 ]

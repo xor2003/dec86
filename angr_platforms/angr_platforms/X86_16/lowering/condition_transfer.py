@@ -26,10 +26,10 @@ import typing
 # and transfers them to codegen before the invariant gate runs.
 
 __all__ = [
-    "transfer_typed_conditions_to_codegen_8616",
     "collect_typed_condition_artifacts_8616",
     "collect_typed_conditions_from_emulator_8616",
     "transfer_typed_conditions_from_emulator_8616",
+    "transfer_typed_conditions_to_codegen_8616",
 ]
 
 import logging
@@ -37,6 +37,7 @@ import os
 from dataclasses import dataclass, replace
 from typing import Any
 
+from ..alias.condition_register_bindings import bind_condition_register_sources_8616
 from ..alias.condition_register_carriers import normalize_condition_register_carriers_8616
 from ..alias.condition_register_liveness import (
     ConditionRegisterTopology8616,
@@ -557,11 +558,12 @@ def _collect_typed_condition_artifacts_8616(
         _ConditionOwnershipStats8616,
         ConditionCacheReliftStats8616 | None,
     ]:
-        """Collect ConditionIR objects from the module-level cache in lift_86_16.
+        """Collect function-owned ConditionIR objects from exact lifted bytes.
 
-        During lifting, _record_typed_condition_8616() writes ConditionIR objects
-        into Instruction_ANY._inertia_module_condition_cache (keyed by block address).
-        This function reads from that cache instead of re-lifting.
+        The lifter's module cache is keyed only by rebased block address, so it
+        cannot prove ownership when separate extracted functions share addresses.
+        Real projects therefore use an isolated relift artifact; the ambient
+        cache remains only for synthetic fixtures without loader bytes.
 
         Returns a deduplicated, deterministically sorted list of ConditionIR.
         """
@@ -578,7 +580,7 @@ def _collect_typed_condition_artifacts_8616(
             return [], [], _ConditionOwnershipStats8616(0, 0, 0, 0, 0), None
         ownership = _current_function_condition_ownership_8616(func)
 
-        # Read from the module-level cache populated during the initial lift
+        # Seed loader-less fixtures from the ambient lifter compatibility cache.
         try:
             from ..lift_86_16 import Instruction_ANY
 
@@ -597,29 +599,26 @@ def _collect_typed_condition_artifacts_8616(
 
         condition_block_addrs = sorted(ownership.conditional_owners) or block_addrs
 
-        cached_block_count = sum(
-            1
-            for block_addr in condition_block_addrs
-            if has_typed_condition_cache_evidence_8616(module_cache, pending_sources, block_addr)
-        )
         relift_stats: ConditionCacheReliftStats8616 | None = None
-        if cached_block_count != len(condition_block_addrs):
-            relift_artifact = relift_function_condition_cache_8616(
-                project,
-                ownership.relift_blocks,
-                frozenset(condition_block_addrs),
-            )
-            if relift_artifact is not None:
-                module_cache = relift_artifact.condition_cache()
-                pending_sources = relift_artifact.pending_source_cache()
-                relift_stats = relift_artifact.stats
-            else:
-                if "Instruction_ANY" in locals():
-                    reset_lifter_condition_state_8616()
-                relift_cached_project_blocks_8616(project, tuple(block_addrs))
+        relift_artifact = relift_function_condition_cache_8616(
+            project,
+            ownership.relift_blocks,
+            frozenset(condition_block_addrs),
+        )
+        if relift_artifact is not None:
+            module_cache = relift_artifact.condition_cache()
+            pending_sources = relift_artifact.pending_source_cache()
+            relift_stats = relift_artifact.stats
+        elif any(
+            not has_typed_condition_cache_evidence_8616(module_cache, pending_sources, block_addr)
+            for block_addr in condition_block_addrs
+        ):
+            if "Instruction_ANY" in locals():
+                reset_lifter_condition_state_8616()
+            relift_cached_project_blocks_8616(project, tuple(block_addrs))
         if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
-            cache_keys = tuple(sorted(k for k in module_cache.keys() if isinstance(k, int)))
-            pending_keys = tuple(sorted(k for k in pending_sources.keys() if isinstance(k, int)))
+            cache_keys = tuple(sorted(k for k in module_cache if isinstance(k, int)))
+            pending_keys = tuple(sorted(k for k in pending_sources if isinstance(k, int)))
             log.warning(
                 "[condition-transfer] func=%#x blocks=%s cache_keys=%s pending_keys=%s",
                 func_addr,
@@ -658,13 +657,24 @@ def _collect_typed_condition_artifacts_8616(
             all_conditions.extend(pending_conditions)
             edge_evidence.extend(pending_edges)
 
-        conditions, ownership_stats = _filter_conditions_to_current_function_8616(all_conditions, ownership)
+        binding_resolution = bind_condition_register_sources_8616(func, all_conditions)
+        conditions, ownership_stats = _filter_conditions_to_current_function_8616(
+            list(binding_resolution.conditions), ownership
+        )
+        ownership_stats = replace(
+            ownership_stats,
+            failure_count=(
+                ownership_stats.failure_count
+                + binding_resolution.stats.failure_count
+            ),
+        )
         if relift_stats is not None and relift_stats.failure_count:
             ownership_stats = replace(
                 ownership_stats,
                 failure_count=ownership_stats.failure_count + relift_stats.failure_count,
             )
         if os.environ.get("INERTIA_DEBUG_CONDITION_TRANSFER"):
+            log.warning("[condition-transfer] source-bindings=%s", binding_resolution.stats)
             log.warning("[condition-transfer] ownership=%s", ownership_stats)
         return conditions, edge_evidence, ownership_stats, relift_stats
 
@@ -713,7 +723,7 @@ def transfer_typed_conditions_from_emulator_8616(
             if isinstance(conds, list):
                 for cond in conds:
                     if isinstance(cond, ConditionIR):
-                        all_conditions.append(cond)
+                        all_conditions.append(cond)  # noqa: PERF401
 
     unique = deduplicate_conditions_8616(all_conditions)
     typing.cast(typing.Any, codegen)._inertia_typed_conditions = unique

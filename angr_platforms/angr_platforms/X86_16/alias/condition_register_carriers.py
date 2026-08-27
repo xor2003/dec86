@@ -11,12 +11,15 @@ Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting wor
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TypeAlias
 
 from ..ir.condition_ir import ConditionIR, condition_sort_key_8616
 from ..ir.core import IRValue, MemSpace
+from .condition_register_bindings import (
+    condition_self_test_register_binding_8616,
+    condition_self_test_storage_bindings_8616,
+)
 
-_BranchIdentity8616: TypeAlias = tuple[
+type _BranchIdentity8616 = tuple[
     object,
     int,
     tuple[str, ...],
@@ -110,14 +113,45 @@ def _carrier_seeds_8616(
                 and condition.lhs.space in {MemSpace.SS, MemSpace.DS, MemSpace.ES}
             ]
         )
-        if not register_values or not storage_values:
-            continue
-        if len(register_values) != 1 or len(storage_values) != 1:
+        if len(register_values) > 1 or len(storage_values) > 1:
             failures += 1
             continue
-        register = register_values[0]
-        storage = storage_values[0]
-        if register.size != storage.size:
+        proofs: list[tuple[str, IRValue]] = []
+        if register_values and storage_values:
+            register = register_values[0]
+            register_name = register.name
+            if not isinstance(register_name, str) or register.size != storage_values[0].size:
+                failures += 1
+                continue
+            proofs.append((register_name.lower(), storage_values[0]))
+        for condition in group:
+            binding = condition_self_test_register_binding_8616(condition)
+            if binding is None:
+                continue
+            register_name, operand = binding
+            if (
+                isinstance(operand, IRValue)
+                and operand.space in {MemSpace.SS, MemSpace.DS, MemSpace.ES}
+                and operand.size == max(1, condition.width_bits // 8)
+            ):
+                proofs.append((register_name, operand))
+            for bound_register, bound_operand in condition_self_test_storage_bindings_8616(
+                condition
+            ):
+                if (
+                    isinstance(bound_operand, IRValue)
+                    and bound_operand.space in {MemSpace.SS, MemSpace.DS, MemSpace.ES}
+                    and bound_operand.size == max(1, condition.width_bits // 8)
+                ):
+                    proofs.append((bound_register, bound_operand))
+        unique_proofs = tuple(dict.fromkeys(proofs))
+        if not unique_proofs:
+            continue
+        if len(unique_proofs) != 1:
+            failures += 1
+            continue
+        register_name, storage = unique_proofs[0]
+        if storage_values and storage_values[0] != storage:
             failures += 1
             continue
         representative = group[0]
@@ -125,10 +159,6 @@ def _carrier_seeds_8616(
             failures += 1
             continue
         if any(condition.rhs != representative.rhs for condition in group):
-            failures += 1
-            continue
-        register_name = register.name
-        if not isinstance(register_name, str):
             failures += 1
             continue
         candidates.append(
@@ -170,6 +200,36 @@ def _dec_semantics_8616(condition: ConditionIR) -> tuple[str, int] | None:
     ):
         return None
     return semantics[1].lower(), semantics[2]
+
+
+def _next_dec_block_8616(
+    condition: ConditionIR,
+    by_block: dict[int, list[tuple[int, ConditionIR]]],
+    *,
+    register_name: str,
+    width_bits: int,
+) -> tuple[int | None, bool]:
+    """Return the unique successor with a compatible typed ``DEC`` fact.
+
+    Compiler dispatch chains may continue on either edge: ``JE`` commonly
+    continues on fallthrough, while ``JNE`` commonly continues on the taken
+    edge.  Follow only an exact successor carrying the same register/width
+    evidence and refuse when both edges could continue the chain.
+    """
+    candidates: list[int] = []
+    for target in (condition.fallthrough_target, condition.taken_target):
+        if not isinstance(target, int) or target in candidates:
+            continue
+        if any(
+            candidate.width_bits == width_bits
+            and (semantics := _dec_semantics_8616(candidate)) is not None
+            and semantics[0] == register_name
+            for _index, candidate in by_block.get(target, ())
+        ):
+            candidates.append(target)
+    if len(candidates) > 1:
+        return None, True
+    return (candidates[0] if candidates else None), False
 
 
 def normalize_condition_register_carriers_8616(
@@ -240,9 +300,18 @@ def normalize_condition_register_carriers_8616(
                     continue
                 replacements[index] = replacement
             materialized += 1
-            if not isinstance(representative.fallthrough_target, int):
+            next_block, ambiguous = _next_dec_block_8616(
+                representative,
+                by_block,
+                register_name=seed.register_name,
+                width_bits=seed.width_bits,
+            )
+            if ambiguous:
+                failures += 1
                 break
-            block_addr = representative.fallthrough_target
+            if next_block is None:
+                break
+            block_addr = next_block
 
     normalized = tuple(
         replacements.get(index, condition)

@@ -18,6 +18,7 @@ from angr_platforms.X86_16.cod_extract import (
 )
 from angr_platforms.X86_16.lift_86_16 import Lifter86_16  # noqa: F401
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
+from x86_16_timeout_support import scaled_decompile_timeout
 
 import decompile
 
@@ -1172,7 +1173,7 @@ def test_dosfunc_cod_sample_deduplicates_stack_local_names():
             "--proc",
             "_dos_free",
             "--timeout",
-            "20",
+            str(scaled_decompile_timeout(20)),
         ],
         cwd=_ROOT,
         capture_output=True,

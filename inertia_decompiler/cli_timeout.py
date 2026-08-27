@@ -11,6 +11,8 @@ import sys
 
 _MEDIUM_FUNCTION_TIMEOUT_FLOOR: int = 150
 _LARGE_FUNCTION_TIMEOUT_FLOOR: int = 240
+_COLD_CLEAN_WORKER_TIMEOUT_FLOOR: int = 240
+PARALLEL_CLEAN_WORKER_TIMEOUT_CAP: int = 360
 
 
 def _default_recovery_timeout(configured_timeout: int, *, explicit_timeout: bool) -> int:
@@ -59,6 +61,47 @@ class _AdaptivePerByteTimeoutModel:
             static_floor = _MEDIUM_FUNCTION_TIMEOUT_FLOOR
         observed_budget = math.ceil(self._seed_rate() * max(0, byte_count) * self.margin)
         return max(base, static_floor, observed_budget)
+
+
+def build_parallel_clean_worker_timeout_model(
+    configured_timeout: int,
+    *,
+    explicit_timeout: bool,
+) -> _AdaptivePerByteTimeoutModel:
+    """Build the bounded timeout model for fresh parallel worker processes.
+
+    A clean worker pays interpreter, project, and whole-program evidence setup
+    before function-size-dependent work begins. The default sweep policy must
+    cover that measured cold cost, while an explicit user timeout remains
+    authoritative.
+    """
+    effective_timeout = (
+        configured_timeout
+        if explicit_timeout
+        else max(configured_timeout, _COLD_CLEAN_WORKER_TIMEOUT_FLOOR)
+    )
+    return _AdaptivePerByteTimeoutModel(
+        effective_timeout,
+        explicit_timeout=explicit_timeout,
+        margin=1.5,
+    )
+
+
+def retry_timeout_after_failed_attempt(
+    configured_timeout: int,
+    *,
+    elapsed_seconds: float | None,
+    timed_out: bool,
+    explicit_timeout: bool,
+) -> int:
+    """Return a retry budget derived from the failed attempt's measured cost."""
+    configured = max(1, configured_timeout)
+    if explicit_timeout:
+        return configured
+    retry_timeout = max(configured, _COLD_CLEAN_WORKER_TIMEOUT_FLOOR)
+    if timed_out and elapsed_seconds is not None and math.isfinite(elapsed_seconds):
+        retry_timeout = max(retry_timeout, math.ceil(elapsed_seconds) + 30)
+    return min(retry_timeout, PARALLEL_CLEAN_WORKER_TIMEOUT_CAP)
 
 
 def _stdout_is_interactive() -> bool:

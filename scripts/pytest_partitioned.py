@@ -14,9 +14,9 @@ import os
 import tempfile
 import time
 from collections import Counter
-from enum import Enum
+from collections.abc import Sequence
+from enum import StrEnum
 from pathlib import Path
-from typing import Sequence
 
 if __package__:
     from .pytest_dynamic_schedule import ScheduledWorkerSpec, run_pytest_schedule
@@ -58,7 +58,7 @@ else:
 REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 
 
-class PytestOutcome(str, Enum):
+class PytestOutcome(StrEnum):
     """Typed pytest terminal outcomes used for history comparisons."""
 
     PASSED = "passed"
@@ -345,7 +345,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="pytest-partition-", dir=REPO_ROOT / ".cache" / "pytest") as raw_run_root:
         run_root = Path(raw_run_root)
         weights_path = run_root / "weights.json"
-        atomic_json_write(weights_path, {nodeid: weight for nodeid, weight in sorted(weights.items())})
+        atomic_json_write(weights_path, dict(sorted(weights.items())))
         light_slots = max(1, args.workers - args.heavy_workers)
         heavy_waves = build_resource_aware_heavy_worker_waves(
             lane_paths["heavy"],

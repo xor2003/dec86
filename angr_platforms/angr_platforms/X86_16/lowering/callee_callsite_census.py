@@ -11,9 +11,10 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Iterable, Protocol, Sequence, cast
+from typing import Protocol, cast
 
 from capstone.x86_const import X86_OP_IMM
 

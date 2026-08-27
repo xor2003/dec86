@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 from pathlib import Path
 from typing import Any
@@ -11,7 +11,7 @@ from tools.dosunit.solver_slice import EdgeSolveFailure, SolvedEdge, solve_branc
 def _solve_entry_seed() -> dict[str, str]:
     try:
         import z3  # type: ignore
-    except Exception:  # noqa: BLE001
+    except Exception:
         return {
             "sp": "0xff00",
             "flags": "0x0202",
@@ -35,7 +35,7 @@ def _solve_entry_seed() -> dict[str, str]:
     }
 
 
-def generate_vectors(
+def generate_vectors(  # noqa: D103
     *,
     functions_catalog: dict[str, Any],
     exe_path: Path | None = None,
@@ -229,7 +229,7 @@ def _generate_edge_vectors(
     refusals: list[dict[str, Any]] = []
     if exe_path is None:
         for function in functions:
-            refusals.append(
+            refusals.append(  # noqa: PERF401
                 {
                     "status": "refused",
                     "reason": "unsupported_ir",
@@ -247,7 +247,7 @@ def _generate_edge_vectors(
 
     if max_loop_unroll != 0:
         for function in functions:
-            refusals.append(
+            refusals.append(  # noqa: PERF401
                 {
                     "status": "refused",
                     "reason": "unsupported_ir",
@@ -272,7 +272,7 @@ def _generate_edge_vectors(
         )
     except DosUnitError as ex:
         for function in functions:
-            refusals.append(
+            refusals.append(  # noqa: PERF401
                 {
                     "status": "refused",
                     "reason": "unsupported_ir",

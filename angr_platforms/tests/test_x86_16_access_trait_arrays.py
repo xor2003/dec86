@@ -46,6 +46,10 @@ def test_access_trait_array_evidence_can_rename_stack_objects():
         def next_idx(self, _):
             self._i += 1
             return self._i
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = DummyCodegen()
     stack_var = _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)
@@ -86,6 +90,10 @@ def test_access_trait_stack_like_evidence_uses_stack_object_naming():
         def next_idx(self, _):
             self._i += 1
             return self._i
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = DummyCodegen()
     stack_var = _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)
@@ -137,6 +145,10 @@ def test_mixed_access_trait_evidence_does_not_rename_stack_object():
         def next_idx(self, _):
             self._i += 1
             return self._i
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = DummyCodegen()
     stack_var = _decompile.SimStackVariable(-4, 2, base="bp", name="v1", region=0x1000)

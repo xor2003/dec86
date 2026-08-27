@@ -7,9 +7,9 @@ Responsibility: classify optional library labels for reporting without proving f
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Mapping
 
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 
@@ -189,11 +189,7 @@ def classify_library_function_name(name: str) -> LibraryFunctionClass:
     raw = (name or "").strip()
     lowered = raw.lower()
     if (
-        lowered.startswith("sym.imp.")
-        or lowered.startswith("fcn.imp.")
-        or ".imp." in lowered
-        or lowered.startswith("import_")
-        or lowered.startswith("imp.")
+        lowered.startswith(("sym.imp.", "fcn.imp.", "import_", "imp.")) or ".imp." in lowered
     ):
         return LibraryFunctionClass.IMPORT_STUB
     normalized = normalize_library_symbol_name(raw)

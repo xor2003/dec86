@@ -6,8 +6,8 @@ Forbidden: writing artifacts, changing recovery behavior, or hiding missing outp
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 from .recovery_artifact_cache import describe_x86_16_recovery_artifact_cache_surface
 from .recovery_artifact_writer import RecoveryArtifactWriteResult

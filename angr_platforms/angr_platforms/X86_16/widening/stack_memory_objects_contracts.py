@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from ..alias.alias_model_impl import AliasStorageFacts
 from ..alias.stack_memory_ssa_contracts import (
@@ -24,6 +25,9 @@ from ..alias.stack_memory_ssa_contracts import (
 from ..ir.core import IRAddress
 from ..ir.ssa_memory_contracts import SSACallStackEffectSite8616
 
+if TYPE_CHECKING:
+    from ..alias.logical_stack_memory_projection import LogicalStackMemoryAliasRefusal8616
+
 
 class StackMemoryObjectWideningRefusalKind8616(StrEnum):
     """Typed reason why one overlap component has no canonical object."""
@@ -33,6 +37,7 @@ class StackMemoryObjectWideningRefusalKind8616(StrEnum):
     OWNER_NOT_COMPOSED_ACCESS = "owner_not_composed_access"
     INCONSISTENT_STORAGE = "inconsistent_storage"
     ORPHAN_COMPOSED_ACCESS = "orphan_composed_access"
+    SOURCE_LOGICAL_ALIAS_REFUSAL = "source_logical_alias_refusal"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +85,7 @@ class StackMemoryObjectWideningRefusal8616:
     kind: StackMemoryObjectWideningRefusalKind8616
     detail: str
     addresses: tuple[IRAddress, ...]
+    source_logical_refusal: LogicalStackMemoryAliasRefusal8616 | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-friendly representation."""
@@ -87,6 +93,11 @@ class StackMemoryObjectWideningRefusal8616:
             "kind": self.kind.value,
             "detail": self.detail,
             "addresses": [address.to_dict() for address in self.addresses],
+            "source_logical_refusal": (
+                None
+                if self.source_logical_refusal is None
+                else self.source_logical_refusal.to_dict()
+            ),
         }
 
 

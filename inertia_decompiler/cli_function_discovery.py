@@ -22,7 +22,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Literal, Self, TypeAlias, cast
+from typing import Any, Literal, Self, cast
 
 import angr
 from angr_platforms.X86_16.analysis_helpers import (
@@ -108,10 +108,10 @@ from inertia_decompiler.x86_16_exact_slice import (
 # high-address range, well above real 16-bit image code.
 DOS_SERVICE_BASE_ADDR: int = 0xF000_0000
 
-_AngrCfg: TypeAlias = Any
-_AngrFunction: TypeAlias = Any
-_AngrBlock: TypeAlias = Any
-_AngrObject: TypeAlias = Any
+type _AngrCfg = Any
+type _AngrFunction = Any
+type _AngrBlock = Any
+type _AngrObject = Any
 _FunctionCfgPair = tuple[_AngrCfg, _AngrFunction]
 _SeededRecoveryResult = list[_FunctionCfgPair] | tuple[list[_FunctionCfgPair], list[int]]
 _CandidateRecoveryCacheValue = tuple[Literal["ok"], _FunctionCfgPair] | tuple[Literal["keyerror"], str]
@@ -459,77 +459,77 @@ def _collect_direct_callee_return_use_evidence_8616(
 
 print: Callable[..., object] = _timestamped_print
 __all__ = [
-    "_seed_scan_windows",
-    "_entry_window_seed_targets",
-    "_linear_function_seed_targets",
-    "_looks_like_x86_16_function_prologue",
-    "_looks_like_x86_16_entry_byte",
-    "_resolve_x86_16_function_start",
-    "_resolve_x86_16_call_target",
-    "_infer_x86_16_linear_region",
-    "_pick_function",
-    "_pick_function_lean",
-    "_x86_16_recovery_windows",
-    "_x86_16_fast_recovery_windows",
-    "_recover_cfg",
-    "_recover_partial_cfg",
-    "_function_skip_reason",
-    "_function_recovery_score",
-    "_function_covered_ranges",
-    "_function_binary_exact_region_8616",
-    "_addr_in_ranges",
-    "_candidate_recovery_regions",
-    "_richest_bounded_recovery_region",
-    "_recovery_score_good_enough",
-    "_exact_region_recovery_looks_truncated",
-    "_count_region_local_functions",
-    "_function_recovery_truncated",
-    "_needs_pre_entry_body_supplement",
-    "_prioritized_pre_entry_follow_on_targets",
-    "_mark_function_recovery_truncated",
-    "_recover_candidate_function_pair",
-    "_interesting_functions",
-    "_rank_function_cfg_pairs_for_display",
-    "_expanded_exe_discovery_limit",
-    "_supplement_cached_seeded_recovery",
     "DisplayCatalogCachePolicy8616",
     "SourceRegionCatalogEvidence8616",
-    "_configure_display_catalog_cache_policy_8616",
-    "_catalog_address_cache_key_8616",
-    "_source_region_catalog_evidence_8616",
-    "_store_catalog_address_cache",
-    "_load_catalog_address_cache",
-    "_supplement_functions_from_prologue_scan",
-    "_rank_gap_scan_candidate_addrs",
-    "_rank_prologue_scan_candidate_addrs",
-    "_relocation_seed_targets",
-    "_rank_exe_function_seeds",
-    "record_direct_target_caller_return_use_evidence_8616",
-    "_recover_fast_seed_functions",
-    "_recover_fast_exe_catalog",
-    "_recover_hidden_sidecar_display_pairs",
-    "_rank_hidden_sidecar_pairs_for_display_throughput",
-    "_recover_cached_function_pairs",
+    "_addr_in_ranges",
     "_candidate_recovery_cache_key",
-    "_lookup_candidate_recovery_cache",
-    "_store_candidate_recovery_cache",
-    "_persistent_recovery_attempt_cache_key",
-    "_lookup_persistent_recovery_timeout",
-    "_recover_candidate_with_timeout",
-    "_recover_seeded_exe_functions",
+    "_candidate_recovery_regions",
+    "_catalog_address_cache_key_8616",
+    "_configure_display_catalog_cache_policy_8616",
+    "_count_region_local_functions",
     "_direct_recovery_inventory_count",
+    "_entry_window_seed_targets",
+    "_exact_region_recovery_looks_truncated",
+    "_expanded_exe_discovery_limit",
     "_fallback_entry_function",
-    "_recover_lst_function",
-    "_recover_ranked_binary_function",
-    "_make_placeholder_function",
-    "_is_zero_filled_region",
-    "_rank_labeled_function_entries",
-    "_sidecar_label_ranking_cache_key",
-    "_rank_labeled_function_entries_cached",
-    "_select_sidecar_showcase_entries",
     "_format_sidecar_function_catalog",
+    "_function_binary_exact_region_8616",
+    "_function_covered_ranges",
+    "_function_recovery_score",
+    "_function_recovery_truncated",
+    "_function_skip_reason",
+    "_infer_x86_16_linear_region",
+    "_interesting_functions",
+    "_is_zero_filled_region",
+    "_linear_function_seed_targets",
+    "_load_catalog_address_cache",
+    "_looks_like_x86_16_entry_byte",
+    "_looks_like_x86_16_function_prologue",
+    "_lookup_candidate_recovery_cache",
+    "_lookup_persistent_recovery_timeout",
+    "_make_placeholder_function",
+    "_mark_function_recovery_truncated",
+    "_needs_pre_entry_body_supplement",
+    "_persistent_recovery_attempt_cache_key",
+    "_pick_function",
+    "_pick_function_lean",
+    "_prioritized_pre_entry_follow_on_targets",
+    "_rank_exe_function_seeds",
+    "_rank_function_cfg_pairs_for_display",
+    "_rank_gap_scan_candidate_addrs",
+    "_rank_hidden_sidecar_pairs_for_display_throughput",
+    "_rank_labeled_function_entries",
+    "_rank_labeled_function_entries_cached",
+    "_rank_prologue_scan_candidate_addrs",
     "_recover_blob_entry_function",
+    "_recover_cached_function_pairs",
+    "_recover_candidate_function_pair",
+    "_recover_candidate_with_timeout",
+    "_recover_cfg",
     "_recover_direct_addr_function",
+    "_recover_fast_exe_catalog",
+    "_recover_fast_seed_functions",
+    "_recover_hidden_sidecar_display_pairs",
+    "_recover_lst_function",
+    "_recover_partial_cfg",
+    "_recover_ranked_binary_function",
+    "_recover_seeded_exe_functions",
+    "_recovery_score_good_enough",
+    "_relocation_seed_targets",
+    "_resolve_x86_16_call_target",
+    "_resolve_x86_16_function_start",
+    "_richest_bounded_recovery_region",
+    "_seed_scan_windows",
+    "_select_sidecar_showcase_entries",
+    "_sidecar_label_ranking_cache_key",
+    "_source_region_catalog_evidence_8616",
+    "_store_candidate_recovery_cache",
+    "_store_catalog_address_cache",
+    "_supplement_cached_seeded_recovery",
+    "_supplement_functions_from_prologue_scan",
+    "_x86_16_fast_recovery_windows",
+    "_x86_16_recovery_windows",
+    "record_direct_target_caller_return_use_evidence_8616",
 ]
 
 
@@ -788,7 +788,7 @@ def _pick_function(
                         force_smart_scan=smart_scan,
                         force_complete_scan=complete_scan,
                     )
-                except Exception as ex:  # noqa: BLE001
+                except Exception as ex:
                     logging.getLogger(__name__).debug(
                         "CFGFast recovery attempt failed for %s (complete=%s smart=%s): %s",
                         hex(target_addr),
@@ -843,6 +843,7 @@ def _pick_function_lean(
     regions: Sequence[tuple[int, int]] | None = None,
     data_references: bool = False,
     extend_far_calls: bool = True,
+    seed_calling_conventions_enabled: bool = True,
 ) -> _FunctionCfgPair:
     def _impl() -> _FunctionCfgPair:
         """Recover a known entry point with a deliberately cheap CFGFast pass.
@@ -894,7 +895,8 @@ def _pick_function_lean(
                 cfg = extended_cfg
                 function = cfg.functions[target_addr]
             patch_interrupt_service_call_sites(function, _dynamic_attr(project.loader.main_object, "binary", None))
-        seed_calling_conventions(cfg)
+        if seed_calling_conventions_enabled:
+            seed_calling_conventions(cfg)
         return cfg, function
 
     return _impl()
@@ -920,10 +922,7 @@ def _x86_16_fast_recovery_windows(window: int | None, *, low_memory: bool = Fals
     candidate_windows = (0x40, 0x80, 0x100) if low_memory else (0x80, 0x100, 0x200)
     windows: list[int] = []
     for candidate in candidate_windows:
-        if effective_window <= candidate:
-            current_window = effective_window
-        else:
-            current_window = candidate
+        current_window = effective_window if effective_window <= candidate else candidate
         if current_window not in windows:
             windows.append(current_window)
     if not windows:
@@ -1016,7 +1015,7 @@ def _recover_partial_cfg(
                         data_references=data_refs,
                         force_smart_scan=False if project.arch.name == "86_16" else None,
                     )
-                except Exception as ex:  # noqa: BLE001
+                except Exception as ex:
                     last_error = ex
                     continue
                 if project.entry not in cfg.functions:
@@ -1644,7 +1643,7 @@ def _repair_x86_16_function_graph_8616(project: angr.Project, function: _AngrFun
         return
 
     block_addrs = sorted(
-        (addr for addr in (_dynamic_attr(block, "addr", None) for block in existing_blocks) if isinstance(addr, int))
+        addr for addr in (_dynamic_attr(block, "addr", None) for block in existing_blocks) if isinstance(addr, int)
     )
     if not block_addrs:
         return
@@ -1805,7 +1804,7 @@ def _count_region_local_functions(cfg: _AngrCfg, exact_region: tuple[int, int] |
     if functions is None:
         return 0
     start, end = exact_region
-    return sum(1 for addr in functions.keys() if isinstance(addr, int) and start <= addr < end)
+    return sum(1 for addr in functions if isinstance(addr, int) and start <= addr < end)
 
 
 def _best_region_function_candidate(
@@ -1923,6 +1922,7 @@ def _recover_candidate_function_pair(
     project_entry: int,
     region_span: int,
     exact_region: tuple[int, int] | None = None,
+    seed_calling_conventions_enabled: bool = True,
 ) -> _FunctionCfgPair:
     def _impl() -> _FunctionCfgPair:
         block = candidate_project.factory.block(candidate_addr, size=8, opt_level=0)
@@ -1952,6 +1952,7 @@ def _recover_candidate_function_pair(
                     regions=[candidate_region],
                     data_references=False,
                     extend_far_calls=False,
+                    seed_calling_conventions_enabled=seed_calling_conventions_enabled,
                 )
                 score = _function_recovery_score(recovered_pair[1])
                 if score > best_score:
@@ -1961,7 +1962,7 @@ def _recover_candidate_function_pair(
                     candidate_addr < project_entry and score[1] <= 0x20 and candidate_region != candidate_regions[-1]
                 ):
                     break
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 last_error = exc
                 continue
         truncated = False
@@ -2002,7 +2003,7 @@ def _recover_candidate_function_pair(
                         data_references=data_references,
                         force_smart_scan=False,
                     )
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     last_error = exc
                     continue
                 richer_score = _function_recovery_score(richer_pair[1])
@@ -2029,7 +2030,7 @@ def _recover_candidate_function_pair(
                 if richer_score > best_score:
                     best_pair = richer_pair
                     best_score = richer_score
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 last_error = exc
         if best_pair is not None:
             _repair_x86_16_function_graph_8616(candidate_project, best_pair[1])
@@ -2814,24 +2815,26 @@ def _load_seed_ranking_cache(cache_key: dict[str, object] | None) -> list[int] |
 
 
 def _collect_neighbor_targets_for_seed_ranking(project: angr.Project, code: bytes, linked_base: int) -> set[int]:
-    neighbor_targets: set[int] = set()
-    try:
-        _entry_cfg, entry_function = _run_with_timeout_in_daemon_thread(
-            lambda: _pick_function_lean(
-                project,
-                project.entry,
-                regions=[(project.entry, min(project.entry + 0x200, linked_base + len(code)))],
-                data_references=False,
-                extend_far_calls=True,
-            ),
-            timeout=1,
-            thread_name_prefix="seed-rank",
+    """Collect bounded entry-call targets without mutating the parent angr project."""
+
+    def _collect_in_child() -> tuple[int, ...]:
+        """Return the picklable target-address projection from isolated recovery."""
+        _entry_cfg, entry_function = _pick_function_lean(
+            project,
+            project.entry,
+            regions=[(project.entry, min(project.entry + 0x200, linked_base + len(code)))],
+            data_references=False,
+            extend_far_calls=True,
         )
-        for target in collect_neighbor_call_targets(entry_function):
-            neighbor_targets.add(target.target_addr)
+        return tuple(sorted({target.target_addr for target in collect_neighbor_call_targets(entry_function)}))
+
+    try:
+        return set(_run_with_timeout_in_fork(
+            _collect_in_child,
+            timeout=1,
+        ))
     except Exception:
-        pass
-    return neighbor_targets
+        return set()
 
 
 def _scan_opcode_seed_targets_8616(
@@ -2933,9 +2936,7 @@ def _final_seed_priority_8616(
         in_relocation_pointer = addr in relocation_pointer_targets
         entry_descends_from_stub = in_entry_window and addr < project_entry
         in_source_region = source_region_start is not None and source_region_start <= addr < project_entry
-        if metadata_span_len is not None:
-            final_priority = 0
-        elif entry_descends_from_stub and (in_neighbor or in_near_call or in_far_call):
+        if metadata_span_len is not None or (entry_descends_from_stub and (in_neighbor or in_near_call or in_far_call)):
             final_priority = 0
         elif entry_descends_from_stub:
             final_priority = 1
@@ -2951,9 +2952,7 @@ def _final_seed_priority_8616(
             final_priority = 2
         elif in_relocation_control:
             final_priority = 3
-        elif in_neighbor and in_prologue:
-            final_priority = 2
-        elif in_entry_window:
+        elif (in_neighbor and in_prologue) or in_entry_window:
             final_priority = 2
         elif in_neighbor:
             final_priority = 3
@@ -2969,9 +2968,7 @@ def _final_seed_priority_8616(
             final_priority = 4
         elif in_terminal_next:
             final_priority = 5
-        elif in_far_call:
-            final_priority = 6
-        elif in_near_call and in_tracer_call:
+        elif in_far_call or (in_near_call and in_tracer_call):
             final_priority = 6
         elif in_near_call:
             final_priority = 8
@@ -3057,7 +3054,7 @@ def _rank_exe_function_seeds(
             metadata_labels = recovery_labels
         if not metadata_labels and metadata is not None:
             metadata_labels = recovery_labels
-        for addr, _name in metadata_labels.items():
+        for addr in metadata_labels:
             if (span := _lst_code_region(metadata, addr)) is None:
                 continue
             span_len = span[1] - span[0]
@@ -3299,6 +3296,7 @@ def _recover_pre_entry_source_catalog_8616(
     per_function_timeout: int = 2,
     region_span: int = 0x120,
     raw_fact_count: int | None = None,
+    seed_calling_conventions_enabled: bool = True,
 ) -> tuple[list[_FunctionCfgPair], SourceRegionCatalogEvidence8616]:
     """Materialize each independently framed entry in a startup-bounded region."""
     main_object = _dynamic_attr(project.loader, "main_object", None)
@@ -3347,6 +3345,8 @@ def _recover_pre_entry_source_catalog_8616(
                 timeout=max(1, candidate_timeout),
                 binary_path=Path(binary_path),
                 linked_base=linked_base,
+                exact_region=exact_region_by_addr.get(addr),
+                seed_calling_conventions_enabled=seed_calling_conventions_enabled,
             )
             exact_region = exact_region_by_addr.get(addr)
             if exact_region is not None:
@@ -3444,6 +3444,7 @@ def _recover_fast_exe_catalog(
     window: int,
     low_memory: bool,
     limit: int | None,
+    seed_calling_conventions_enabled: bool = True,
 ) -> list[_FunctionCfgPair]:
     recovered: list[_FunctionCfgPair] = []
     seen_addrs: set[int] = set()
@@ -3484,6 +3485,7 @@ def _recover_fast_exe_catalog(
             timeout=source_budget,
             per_function_timeout=2,
             raw_fact_count=len(source_seeds),
+            seed_calling_conventions_enabled=seed_calling_conventions_enabled,
         )
         cast(Any, project)._inertia_source_region_catalog_evidence = source_evidence
         seed_limit: int | None = len(selected_source_seeds)
@@ -3896,14 +3898,20 @@ def _recover_candidate_with_timeout(
     binary_path: Path,
     linked_base: int,
     exact_region: tuple[int, int] | None = None,
+    seed_calling_conventions_enabled: bool = True,
 ) -> _FunctionCfgPair:
-    cached_result = _lookup_candidate_recovery_cache(
-        project,
-        candidate_addr=candidate_addr,
-        image_end=image_end,
-        project_entry=project_entry,
-        region_span=region_span,
-        exact_region=exact_region,
+    """Recover one candidate once under the timeout lane available to this thread."""
+    cached_result = (
+        _lookup_candidate_recovery_cache(
+            project,
+            candidate_addr=candidate_addr,
+            image_end=image_end,
+            project_entry=project_entry,
+            region_span=region_span,
+            exact_region=exact_region,
+        )
+        if seed_calling_conventions_enabled
+        else None
     )
     if isinstance(cached_result, tuple):
         cache_status = cached_result[0]
@@ -3921,31 +3929,34 @@ def _recover_candidate_with_timeout(
             project_entry=project_entry,
             region_span=region_span,
             exact_region=exact_region,
+            seed_calling_conventions_enabled=seed_calling_conventions_enabled,
         ))
 
     def _recover_once() -> _FunctionCfgPair:
         try:
             recovered_pair = _recover_candidate(project)
-            _store_candidate_recovery_cache(
-                project,
-                candidate_addr=candidate_addr,
-                image_end=image_end,
-                project_entry=project_entry,
-                region_span=region_span,
-                exact_region=exact_region,
-                value=("ok", recovered_pair),
-            )
+            if seed_calling_conventions_enabled:
+                _store_candidate_recovery_cache(
+                    project,
+                    candidate_addr=candidate_addr,
+                    image_end=image_end,
+                    project_entry=project_entry,
+                    region_span=region_span,
+                    exact_region=exact_region,
+                    value=("ok", recovered_pair),
+                )
             return recovered_pair
         except KeyError as exc:
-            _store_candidate_recovery_cache(
-                project,
-                candidate_addr=candidate_addr,
-                image_end=image_end,
-                project_entry=project_entry,
-                region_span=region_span,
-                exact_region=exact_region,
-                value=("keyerror", str(exc)),
-            )
+            if seed_calling_conventions_enabled:
+                _store_candidate_recovery_cache(
+                    project,
+                    candidate_addr=candidate_addr,
+                    image_end=image_end,
+                    project_entry=project_entry,
+                    region_span=region_span,
+                    exact_region=exact_region,
+                    value=("keyerror", str(exc)),
+                )
             raise
         except Exception:
             candidate_project = _build_project_cached(
@@ -3955,26 +3966,19 @@ def _recover_candidate_with_timeout(
                 entry_point=project_entry,
             )
             recovered_pair = _recover_candidate(candidate_project)
-            _store_candidate_recovery_cache(
-                project,
-                candidate_addr=candidate_addr,
-                image_end=image_end,
-                project_entry=project_entry,
-                region_span=region_span,
-                exact_region=exact_region,
-                value=("ok", recovered_pair),
-            )
+            if seed_calling_conventions_enabled:
+                _store_candidate_recovery_cache(
+                    project,
+                    candidate_addr=candidate_addr,
+                    image_end=image_end,
+                    project_entry=project_entry,
+                    region_span=region_span,
+                    exact_region=exact_region,
+                    value=("ok", recovered_pair),
+                )
             return recovered_pair
 
     timeout = max(1, int(timeout))
-    if os.name == "posix" and threading.current_thread() is threading.main_thread() and threading.active_count() == 1:
-        try:
-            return _function_cfg_pair_object(_run_with_timeout_in_fork(
-                _recover_once,
-                timeout=timeout + 1,
-            ))
-        except Exception:
-            pass
     if threading.current_thread() is threading.main_thread():
         with _analysis_timeout(timeout):
             return _recover_once()
@@ -4018,7 +4022,7 @@ def _load_seeded_recovery_from_cache(
     )
     if not cached_recovered:
         return None
-    try:
+    with contextlib.suppress(FuturesTimeoutError):
         cached_recovered, cached_addrs = _run_with_timeout_in_daemon_thread(
             lambda: _supplement_cached_seeded_recovery(
                 project,
@@ -4032,8 +4036,6 @@ def _load_seeded_recovery_from_cache(
             timeout=min(max(2, timeout), 4),
             thread_name_prefix="cached-supplement",
         )
-    except FuturesTimeoutError:
-        pass
     return (cached_recovered, cached_addrs) if return_addrs else cached_recovered
 
 
@@ -4275,7 +4277,7 @@ def _fallback_entry_function(
                     function,
                     region,
                 )
-            except Exception as ex:  # noqa: BLE001
+            except Exception as ex:
                 logging.getLogger(__name__).debug(
                     "x86-16 fallback entry stitching failed for %s: %s",
                     hex(project.entry),
@@ -4309,7 +4311,7 @@ def _fallback_entry_function(
                         )
                     except (KeyError, _AnalysisTimeout):
                         continue
-                    except Exception as ex:  # noqa: BLE001
+                    except Exception as ex:
                         logging.getLogger(__name__).debug(
                             "Skipping fast x86-16 recovery for %s after %s",
                             hex(project.entry),
@@ -4350,7 +4352,7 @@ def _fallback_entry_function(
                     raise
                 except KeyError:
                     continue
-            raise _AnalysisTimeout()
+            raise _AnalysisTimeout
 
     return _impl()
 
@@ -4626,7 +4628,7 @@ def _recover_lst_function(
                         last_error = ex
                     except _AnalysisTimeout:
                         raise
-                    except Exception as ex:  # noqa: BLE001
+                    except Exception as ex:
                         # Lean CFGFast is a best-effort acceleration path.
                         # If a lightweight test/project stub cannot support it,
                         # fall back to regular bounded recovery windows.
@@ -5079,7 +5081,7 @@ def _select_sidecar_showcase_entries(
         if max_count <= 0 or not ranked:
             return []
 
-        by_addr = {addr: name for addr, name in ranked}
+        by_addr = dict(ranked)
         selected: list[tuple[int, str]] = []
         seen: set[int] = set()
 
@@ -5236,7 +5238,7 @@ def _try_recover_direct_addr_from_sidecar_region(
             )
         except _AnalysisTimeout:
             return None
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             logging.getLogger(__name__).debug(
                 "sidecar region lst recovery failed for %s: %s",
                 hex(recover_addr),
@@ -5284,7 +5286,7 @@ def _try_recover_direct_addr_from_sidecar_label(
             )
         except _AnalysisTimeout:
             return None
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             logging.getLogger(__name__).debug(
                 "sidecar label lst recovery failed for %s: %s",
                 hex(recover_addr),

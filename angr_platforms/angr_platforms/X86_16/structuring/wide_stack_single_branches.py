@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
-from typing import TypeAlias
 
 from ..ir.condition_ir import ConditionIR, ConditionOp
 from .wide_stack_condition_chains import (
@@ -31,7 +30,7 @@ from .wide_stack_condition_chains import (
     wide_stack_operator_result_8616,
 )
 
-WideStackExitClassifier8616: TypeAlias = Callable[[int], bool | None]
+type WideStackExitClassifier8616 = Callable[[int], bool | None]
 
 
 def _candidate_implies_root_outcome_8616(

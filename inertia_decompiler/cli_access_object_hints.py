@@ -18,9 +18,9 @@ from angr_platforms.X86_16.lowering.object_lowering import (
 )
 
 __all__ = [
-    "BaseKey",
     "AccessTraitObjectHint",
+    "BaseKey",
     "_build_stable_access_object_hints",
-    "_stable_access_object_hint_for_key",
     "_has_stable_access_object_hints",
+    "_stable_access_object_hint_for_key",
 ]

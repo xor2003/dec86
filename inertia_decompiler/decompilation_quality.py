@@ -178,7 +178,7 @@ def assess_final_generated_c_text(rendered_text: str) -> DecompilationQualityAss
         return DecompilationQualityAssessment(reject_as_decompiled=False, markers=())
 
     code_only_text = _code_only_text(rendered_text)
-    markers = list(label for label, pattern in _FINAL_OUTPUT_LEAKAGE_MARKERS if pattern.search(code_only_text))
+    markers = [label for label, pattern in _FINAL_OUTPUT_LEAKAGE_MARKERS if pattern.search(code_only_text)]
     if _unresolved_virtual_temporaries(code_only_text):
         markers.append("unresolved-vvar")
     if _bp_stack_locals_read_without_assignment(rendered_text):

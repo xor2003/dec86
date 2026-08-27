@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 from pathlib import Path
 
@@ -6,14 +6,14 @@ from meta_harness.config import LlmConfig, RuntimeConfig
 from meta_harness.orchestrator import MetaHarness
 
 
-def _make_cfg(monkeypatch, tmp_path: Path) -> tuple[RuntimeConfig, LlmConfig]:
+def _make_cfg(monkeypatch, tmp_path: Path) -> tuple[RuntimeConfig, LlmConfig]:  # noqa: ANN001
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     cfg = RuntimeConfig.from_env([])
     llm_cfg = LlmConfig.from_env()
     return cfg, llm_cfg
 
 
-def test_reviewer_step_prunes_completed_plan_items(monkeypatch, tmp_path):
+def test_reviewer_step_prunes_completed_plan_items(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     cfg, llm_cfg = _make_cfg(monkeypatch, tmp_path)
     cfg.plan_path.write_text(
         "1. Done: remove me.\nWhy now: already completed.\n\n2. [pending] keep me.\nWhy now: still active.\n",

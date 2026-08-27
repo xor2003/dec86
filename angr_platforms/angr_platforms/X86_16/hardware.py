@@ -19,6 +19,6 @@ class Hardware(Processor, Memory, IO):  # type: ignore[misc, unused-ignore] # in
 
     def __init__(self, size: int = 0) -> None:
         """Initialize processor state, backing memory size, and IO maps."""
-        super(Hardware, self).__init__()  # Processor
+        super().__init__()  # Processor
         super(CR, self).__init__(size)  # Memory
         super(Memory, self).__init__(self)  # IO

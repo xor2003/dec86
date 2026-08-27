@@ -935,7 +935,7 @@ def test_dosunit_straightline_ssa_models_port_input_as_symbolic_io_value(tmp_pat
 
 
 def test_dosunit_straightline_ssa_models_arch_dflag_register_offset():
-    expr = straightline_ssa._read_register({}, 32, 32, source="AIL")
+    expr = straightline_ssa._read_register({}, 52, 32, source="AIL")
 
     assert not isinstance(expr, straightline_ssa.LowerFailure)
     assert expr.op == "input"
@@ -7944,8 +7944,7 @@ def test_root_dosunit_wrapper_exposes_cli_help():
     result = subprocess.run(
         [sys.executable, str(root / "dosunit.py"), "--help"],
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
     )
 

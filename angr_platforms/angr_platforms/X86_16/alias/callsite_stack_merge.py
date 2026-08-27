@@ -11,7 +11,6 @@ Do not perform lowering, structuring, rewrite, postprocess, or CLI/reporting wor
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
 
 __all__ = [
     "CallsitePredecessorStackMerge8616",
@@ -23,7 +22,7 @@ __all__ = [
     "merge_callsite_register_join_traces_8616",
 ]
 
-CallsiteSource8616: TypeAlias = tuple[object, ...]
+type CallsiteSource8616 = tuple[object, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +32,7 @@ class CallsitePushTrace8616:
     widths: tuple[int, ...]
     sources: tuple[CallsiteSource8616 | None, ...]
     instruction_addrs: tuple[int, ...]
+    predecessor_addr: int | None = None
 
     def is_well_formed(self) -> bool:
         """Return whether every physical push has width, source, and address slots."""
@@ -76,6 +76,7 @@ class CallsitePredecessorStackMerge8616:
     materialized_count: int
     failure_count: int
     register_join: CallsiteRegisterJoin8616 | None = None
+    traces: tuple[CallsitePushTrace8616, ...] = ()
 
 
 def merge_callsite_register_join_traces_8616(
@@ -133,4 +134,5 @@ def merge_callsite_predecessor_stack_traces_8616(
         materialized_count=1,
         failure_count=0,
         register_join=register_join,
+        traces=normalized,
     )

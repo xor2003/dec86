@@ -183,7 +183,7 @@ def test_unknown_jobs_remain_at_conservative_worker_limit() -> None:
 
     waves = build_resource_aware_heavy_worker_waves(
         ("a.py", "b.py", "c.py", "d.py"),
-        {path: 1.0 for path in ("a.py", "b.py", "c.py", "d.py")},
+        dict.fromkeys(("a.py", "b.py", "c.py", "d.py"), 1.0),
         batch_count=4,
         conservative_worker_slots=2,
         max_worker_slots=7,
@@ -198,7 +198,7 @@ def test_exact_measured_jobs_use_available_cpu_slots_with_headroom() -> None:
     """Pack measured low-memory jobs above the conservative unknown-work limit."""
 
     paths = ("a.py", "b.py", "c.py", "d.py")
-    weights = {path: 1.0 for path in paths}
+    weights = dict.fromkeys(paths, 1.0)
     jobs = build_heavy_worker_jobs(paths, weights, batch_count=4, worker_slots=2)
     specs = tuple(spec for job in jobs.parallel for spec in job)
 
@@ -221,7 +221,7 @@ def test_observed_lower_bound_can_only_split_an_accepted_wave() -> None:
     """Never let an aborted high-water mark authorize or preserve unsafe packing."""
 
     paths = ("a.py", "b.py", "c.py", "d.py")
-    weights = {path: 1.0 for path in paths}
+    weights = dict.fromkeys(paths, 1.0)
     jobs = build_heavy_worker_jobs(paths, weights, batch_count=4, worker_slots=2)
     specs = tuple(spec for job in jobs.parallel for spec in job)
     accepted = _accepted_history(specs, 300_000)
@@ -254,7 +254,7 @@ def test_accepted_path_groups_survive_duration_rebalancing() -> None:
     """Do not discard RSS evidence merely because newer durations changed."""
 
     paths = ("a.py", "b.py", "c.py", "d.py")
-    original_weights = {path: 1.0 for path in paths}
+    original_weights = dict.fromkeys(paths, 1.0)
     original_jobs = build_heavy_worker_jobs(
         paths,
         original_weights,
@@ -281,7 +281,7 @@ def test_import_wide_measured_contract_is_conservatively_repartitioned() -> None
     """Retire coarse exact RSS evidence before admitting smaller import owners."""
 
     paths = tuple(f"test_{index:02d}.py" for index in range(65))
-    weights = {path: 1.0 for path in paths}
+    weights = dict.fromkeys(paths, 1.0)
     coarse = WorkerSpec("coarse", paths)
 
     waves = build_resource_aware_heavy_worker_waves(
@@ -305,7 +305,7 @@ def test_measured_jobs_respect_rss_headroom_and_exclusive_paths() -> None:
     """Keep estimated peaks below budget and marked paths in isolated waves."""
 
     paths = ("a.py", "b.py", "c.py", "exclusive.py")
-    weights = {path: 1.0 for path in paths}
+    weights = dict.fromkeys(paths, 1.0)
     exclusive = frozenset({"exclusive.py"})
     jobs = build_heavy_worker_jobs(
         paths,

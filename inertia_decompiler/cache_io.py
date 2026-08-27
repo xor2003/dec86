@@ -10,13 +10,13 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 CACHE_OBSERVATION_PATH_ENV: str = "PYTEST_INERTIA_CACHE_EVENTS"
 
 
-class CacheIoAction(str, Enum):
+class CacheIoAction(StrEnum):
     """Typed outcomes for one content-addressed cache operation."""
 
     HIT = "hit"
@@ -26,7 +26,7 @@ class CacheIoAction(str, Enum):
     STORE_FAILED = "store-failed"
 
 
-class ValidationObservationStatus(str, Enum):
+class ValidationObservationStatus(StrEnum):
     """Typed validation statuses preserved in accepted cache records."""
 
     STABLE = "stable"

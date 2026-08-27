@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import SimpleNamespace
 
+import pytest
+
 from inertia_decompiler import cli_core
 from inertia_decompiler.cli_semantic_rollback import (
     TrustedCoreSnapshot8616,
@@ -91,6 +93,42 @@ def test_semantic_rollback_restores_and_revalidates_trusted_core() -> None:
     assert codegen._inertia_force_codegen_regeneration_8616 is True
 
 
+def test_semantic_rollback_rejects_invalid_snapshot_transactionally() -> None:
+    project = SimpleNamespace(_inertia_last_tail_validation_snapshot={"current": "passed"})
+    codegen = SimpleNamespace(
+        cfunc="current",
+        _inertia_tail_validation_snapshot={"current": "passed"},
+    )
+    trusted = TrustedCoreSnapshot8616(
+        cfunc="invalid-trusted",
+        tail_validation_snapshot={"structuring": {"status": "stable"}},
+    )
+    reports = iter(
+        (
+            _Report({"required_memory_effects": ("lost-write",)}),
+            _Report({"def_use": ("virtual-carrier:v324",)}),
+        )
+    )
+
+    def restore(cfunc: object) -> bool:
+        codegen.cfunc = cfunc
+        return True
+
+    changed = rollback_final_semantic_drift_8616(
+        project,
+        codegen,
+        trusted,
+        refresh_validation=lambda _project, _codegen: next(reports),
+        restore_cfunc=restore,
+        function_addr=0x10678,
+    )
+
+    assert changed is False
+    assert codegen.cfunc == "current"
+    assert codegen._inertia_tail_validation_snapshot == {"current": "passed"}
+    assert project._inertia_last_tail_validation_snapshot == {"current": "passed"}
+
+
 def test_semantic_rollback_leaves_clean_ast_unchanged() -> None:
     project = SimpleNamespace()
     codegen = SimpleNamespace(cfunc="current")
@@ -110,13 +148,23 @@ def test_semantic_rollback_leaves_clean_ast_unchanged() -> None:
     assert codegen.cfunc == "current"
 
 
-def test_sidecar_retry_falls_back_to_pure_binary_clean_worker(monkeypatch, tmp_path, capsys) -> None:
+@pytest.mark.parametrize("metadata_available", (False, True))
+def test_x86_retry_falls_back_to_pure_binary_clean_worker(
+    monkeypatch,
+    tmp_path,
+    capsys,
+    metadata_available: bool,
+) -> None:
     binary = tmp_path / "sample.exe"
     binary.write_bytes(b"MZ")
     project = SimpleNamespace(arch=SimpleNamespace(name="86_16"), _inertia_c_target="portable-flat")
     function = SimpleNamespace(addr=0x10C18, name="ShellSort", project=project)
     item = cli_core.FunctionWorkItem(index=9, function_cfg=SimpleNamespace(), function=function)
-    metadata = LSTMetadata(data_labels={}, code_labels={}, absolute_addrs=True)
+    metadata = (
+        LSTMetadata(data_labels={}, code_labels={}, absolute_addrs=True)
+        if metadata_available
+        else None
+    )
     args = SimpleNamespace(binary=binary, timeout=60, api_style="default", alternate_source_c=True)
     failed_snapshot = {
         "structuring": {"status": "stable", "changed": False},
@@ -146,7 +194,7 @@ def test_sidecar_retry_falls_back_to_pure_binary_clean_worker(monkeypatch, tmp_p
         ),
     )
 
-    def _clean_worker(context, clean_item, **kwargs):  # noqa: ANN001
+    def _clean_worker(context, clean_item, **kwargs):
         clean_calls.append((context, clean_item, kwargs))
         return cli_core.FunctionWorkResult(
             index=clean_item.index,

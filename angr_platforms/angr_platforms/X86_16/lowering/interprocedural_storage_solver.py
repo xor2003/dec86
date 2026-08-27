@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TypeAlias
 
 from ..pipeline.errors import PipelineHardError
 from .interprocedural_storage_contracts import (
@@ -32,7 +31,7 @@ from .interprocedural_storage_function_solver import (
 
 __all__ = ["resolve_program_storage_trials_8616"]
 
-_OutputSeed8616: TypeAlias = tuple[StorageSlotContract8616, ...]
+type _OutputSeed8616 = tuple[StorageSlotContract8616, ...]
 
 
 @dataclass(frozen=True, slots=True)

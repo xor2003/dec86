@@ -6,8 +6,8 @@ Forbidden: segment flattening, guessed objects, or text-derived storage identity
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 __all__ = [
     "RecompilableStorageMapArtifact",

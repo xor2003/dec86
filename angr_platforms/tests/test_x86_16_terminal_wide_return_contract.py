@@ -12,7 +12,7 @@ from angr_platforms.X86_16.lowering.terminal_register_return_values import (
     TerminalRegisterReturnValueStatus8616,
     materialize_terminal_register_return_value_8616,
 )
-from angr_platforms.X86_16.semantics.terminal_register_returns import TerminalAxReturnLane8616
+from angr_platforms.X86_16.semantics.terminal_return_storage import TerminalReturnStorage8616
 
 
 class _Functions:
@@ -33,6 +33,10 @@ class _Codegen(SimpleNamespace):
         index = self._indices.get(kind, 0)
         self._indices[kind] = index + 1
         return index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def test_terminal_ax_materialization_preserves_explicit_dx_ax_composition(monkeypatch) -> None:
@@ -77,8 +81,8 @@ def test_terminal_ax_materialization_preserves_explicit_dx_ax_composition(monkey
     project = SimpleNamespace(arch=arch, kb=SimpleNamespace(functions=_Functions(function)))
     monkeypatch.setattr(
         terminal_register_return_values,
-        "terminal_ax_return_lane_states_8616",
-        lambda _project, _function: frozenset({TerminalAxReturnLane8616.WORD}),
+        "terminal_return_storage_8616",
+        lambda _project, _function: TerminalReturnStorage8616.AX,
     )
 
     result = materialize_terminal_register_return_value_8616(project, codegen)

@@ -22,7 +22,7 @@ UPSTREAM_DECOMPILER_PATH = (
 def _format_variables(variable_manager: Any) -> list[str]:  # noqa: ANN401
     try:
         variables = list(variable_manager.get_variables())
-    except Exception as ex:  # noqa: BLE001
+    except Exception as ex:
         return [f"variable_manager.get_variables failed: {type(ex).__name__}: {ex}"]
     if not variables:
         return ["(none)"]
@@ -38,7 +38,7 @@ def _format_variables(variable_manager: Any) -> list[str]:  # noqa: ANN401
 
     rendered: list[str] = []
     for variable in sorted(variables, key=_sort_key):
-        rendered.append(
+        rendered.append(  # noqa: PERF401
             f"{type(variable).__name__} offset={getattr(variable, 'offset', None)!r} "
             f"size={getattr(variable, 'size', None)!r} "
             f"base={getattr(variable, 'base', None)!r} "
@@ -66,7 +66,7 @@ def _probe_decompiler(
     regen_clinic: bool | None = None,
 ) -> Any:  # noqa: ANN401
     cli_runtime: Any = cast(Any, cli)
-    with cli_runtime._guard_angr_peephole_expr_bitwidth_assertion():
+    with cli_runtime._guard_angr_peephole_expr_bitwidth_assertion():  # noqa: SIM117
         with cli_runtime._guard_angr_variable_recovery_binop_sub_size_mismatch():
             kwargs = {"cfg": None, "options": decompiler_options, "generate_code": generate_code}
             if regen_clinic is not None:
@@ -94,7 +94,7 @@ def main() -> int:
         )
         cli_runtime: Any = cast(Any, cli)
         region = cli_runtime._infer_x86_16_linear_region(project, args.addr, window=args.window)
-        cfg, function = cli_runtime._pick_function(project, args.addr, regions=[region], data_references=True)
+        _cfg, function = cli_runtime._pick_function(project, args.addr, regions=[region], data_references=True)
         cli_runtime._prepare_function_for_decompilation(project, function)
 
         print(f"binary={args.binary}")
@@ -103,7 +103,7 @@ def main() -> int:
 
         try:
             project.analyses.Clinic(function)
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             print(f"clinic_without_guards=error {type(ex).__name__}: {ex}")
         else:
             print("clinic_without_guards=ok")

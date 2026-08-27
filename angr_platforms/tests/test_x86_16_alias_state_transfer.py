@@ -67,6 +67,6 @@ def test_x86_16_alias_transfer_synthesizes_full_from_byte_writes() -> None:
 def test_x86_16_alias_transfer_refuses_unknown_registers() -> None:
     state = AliasState()
 
-    assert write_register(state, "sp", object()) is None
-    assert read_register(state, "sp") is None
-    assert synthesize_full_register(state, "sp") is None
+    assert write_register(state, "unknown", object()) is None
+    assert read_register(state, "unknown") is None
+    assert synthesize_full_register(state, "unknown") is None

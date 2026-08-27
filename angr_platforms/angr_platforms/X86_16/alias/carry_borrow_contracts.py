@@ -50,7 +50,17 @@ class CarryBorrowAliasFailure8616(StrEnum):
     SOURCE_CARRIER_MISMATCH = "source_carrier_mismatch"
     SOURCE_DEFINITION_MISMATCH = "source_definition_mismatch"
     SOURCE_RANGE_MISMATCH = "source_range_mismatch"
+    SOURCE_RANGE_WRAP_UNSUPPORTED = "source_range_wrap_unsupported"
     WIDTH_MISMATCH = "width_mismatch"
+
+
+class CarryBorrowOperandRole8616(StrEnum):
+    """Stable role of one operand in a split carry/borrow operation."""
+
+    LOW_LHS = "low_lhs"
+    LOW_RHS = "low_rhs"
+    HIGH_LHS = "high_lhs"
+    HIGH_RHS = "high_rhs"
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +115,7 @@ class CarryBorrowAliasResolution8616:
     verdict: CarryBorrowAliasVerdict8616
     fact: CarryBorrowAliasFact8616 | None = None
     failure: CarryBorrowAliasFailure8616 | None = None
+    failure_operand: CarryBorrowOperandRole8616 | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,4 +166,5 @@ __all__ = [
     "CarryBorrowAliasVerdict8616",
     "CarryBorrowCallOutputAlias8616",
     "CarryBorrowOperandAlias8616",
+    "CarryBorrowOperandRole8616",
 ]

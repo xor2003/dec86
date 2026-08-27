@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from enum import Enum
 from types import SimpleNamespace
-from typing import Any, Iterator, cast
+from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
@@ -866,7 +866,7 @@ def _recover_switch_loop_exit_return_evidence_from_original_slice_8616(
     active_size = getattr(function, "size", None)
     size = int(active_size) if isinstance(active_size, int) and active_size > 0 else 0x300
     recovered: list[SwitchLoopExitReturnEvidence8616] = []
-    for prologue_bytes in range(0, 0x21):
+    for prologue_bytes in range(0x21):
         start = original_addr - prologue_bytes
         if start < 0:
             continue
@@ -2231,9 +2231,7 @@ def _assignment_is_unit_stack_update_for_slots_8616(stmt: object, slots: frozens
     rhs_node = getattr(rhs, "rhs", None)
     if _stack_offset_8616(lhs) == lhs_offset and _constant_int_8616(rhs_node) == 1:
         return True
-    if rhs.op == "Add" and _stack_offset_8616(rhs_node) == lhs_offset and _constant_int_8616(lhs) == 1:
-        return True
-    return False
+    return bool(rhs.op == "Add" and _stack_offset_8616(rhs_node) == lhs_offset and _constant_int_8616(lhs) == 1)
 
 
 def _constant_int_8616(node: object) -> int | None:
@@ -2375,9 +2373,7 @@ def _is_consumed_call_return_carrier_prefix_8616(
     condition_call = _matching_condition_call_8616(rhs_call, break_condition)
     if condition_call is None:
         return False
-    if _carrier_lhs_read_by_nodes_8616(stmt, (break_condition, *tuple(later_prefix))):
-        return False
-    return True
+    return not _carrier_lhs_read_by_nodes_8616(stmt, (break_condition, *tuple(later_prefix)))
 
 
 def _single_function_call_8616(node: object) -> CFunctionCall | None:
@@ -2686,7 +2682,7 @@ def _repair_hoisted_jcc_target_copy_in_node_8616(
     changed = False
     if isinstance(node, CStatements):
         raw_statements: list[object] = list(_dynamic_sequence_8616(node.statements))
-        statements, flattened_wrappers = _flatten_direct_statement_wrappers_8616(raw_statements)
+        statements, _flattened_wrappers = _flatten_direct_statement_wrappers_8616(raw_statements)
         idx = 0
         while idx < len(statements):
             stmt = statements[idx]
@@ -2836,9 +2832,7 @@ def _assignment_matches_hoisted_jcc_target_copy_8616(
         return False
     if _assignment_lhs_stack_offset_8616(stmt) != evidence.dest_disp:
         return False
-    if evidence.src_disp not in _stack_offsets_read_8616(stmt.rhs):
-        return False
-    return True
+    return evidence.src_disp in _stack_offsets_read_8616(stmt.rhs)
 
 
 def _node_has_ins_addr_8616(node: object, target_addr: int) -> bool:

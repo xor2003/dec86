@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 from pathlib import Path
 from typing import Any
@@ -34,7 +34,7 @@ def _load_optional_json(path: Path | None) -> dict[str, Any] | None:
     return value
 
 
-def import_libdosbox_trace(
+def import_libdosbox_trace(  # noqa: D103
     *,
     trace_path: Path,
     functions_path: Path | None = None,
@@ -75,7 +75,7 @@ def import_libdosbox_trace(
     access_ranges: list[dict[str, Any]] = []
     access_sites = trace.get("AccessSites", {})
     if isinstance(access_sites, dict):
-        for _key, site in access_sites.items():
+        for site in access_sites.values():
             if not isinstance(site, dict):
                 continue
             min_addr = _int_from_hex_key(site.get("MinAddr"))

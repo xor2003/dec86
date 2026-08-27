@@ -8,7 +8,7 @@ closed census. Detection and generated-C materialization belong elsewhere.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 
 from .ir.segment_contract import SegmentFactVerdict
 from .pipeline.errors import PipelineHardError
@@ -23,7 +23,7 @@ _COUNT_FIELDS = (
 )
 
 
-class SegmentProgramEvidenceCoverage8616(str, Enum):
+class SegmentProgramEvidenceCoverage8616(StrEnum):
     """Completeness of one independent whole-program evidence producer."""
 
     COMPLETE = "complete"
@@ -31,7 +31,7 @@ class SegmentProgramEvidenceCoverage8616(str, Enum):
     UNAVAILABLE = "unavailable"
 
 
-class SegmentProgramLayoutAspect8616(str, Enum):
+class SegmentProgramLayoutAspect8616(StrEnum):
     """Independent layout question answered by the program contract."""
 
     DISCOVERY = "discovery"
@@ -47,7 +47,7 @@ class SegmentProgramLayoutAspect8616(str, Enum):
     SS_DS_ENTRY_RELATION = "ss_ds_entry_relation"
 
 
-class SegmentProgramLayoutVerdict8616(str, Enum):
+class SegmentProgramLayoutVerdict8616(StrEnum):
     """Evidence-backed answer for one program-layout aspect."""
 
     PROVEN = "proven"

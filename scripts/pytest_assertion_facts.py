@@ -42,7 +42,7 @@ def expectation_kind(call_name: str) -> str | None:
     if call_name in {"pytest.raises", "pytest.warns"}:
         return call_name
     leaf = call_name.rsplit(".", 1)[-1]
-    if leaf.startswith("assert_") or leaf.startswith("assertCalled"):
+    if leaf.startswith(("assert_", "assertCalled")):
         return "assertion-call"
     if call_name.startswith("self.assert"):
         return "unittest-assertion"

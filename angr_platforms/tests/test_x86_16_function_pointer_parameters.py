@@ -63,7 +63,7 @@ def _fixture(*, reject_manager: bool = False) -> tuple[object, object, object, _
             functions=SimpleNamespace(function=lambda addr, create=False: function if addr == 0x1000 else None)
         ),
     )
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     fn_variable = SimStackVariable(4, 2, base="bp", name="fn", region=0x1000)
     value_variable = SimStackVariable(6, 2, base="bp", name="value", region=0x1000)
     fn_argument = CVariable(fn_variable, variable_type=word, codegen=codegen)

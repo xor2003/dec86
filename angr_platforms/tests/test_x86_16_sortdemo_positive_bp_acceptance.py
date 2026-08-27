@@ -57,7 +57,8 @@ def test_sortd_beep_sidecar_free_materializes_both_value_arguments(tmp_path: Pat
     frequency, duration = signature.groups()
     assert f"if ({duration} < 75)" in result.stdout
     assert f"sub_10f38({duration});" in result.stdout
-    assert re.search(rf"sub_1143a\([^;]*\b{frequency}\b[^;]*\);", result.stdout)
+    assert re.search(rf"aNldiv\([^;]*\b{frequency}\b[^;]*\);", result.stdout)
+    assert "sub_1143a(" not in result.stdout
     assert "[bp+0x4]" not in result.stdout
     assert "[bp+0x6]" not in result.stdout
     assert "local_4" not in result.stdout
@@ -86,9 +87,20 @@ def test_sortd_drawtime_proves_forwarded_wide_runtime_return(tmp_path: Path) -> 
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "gcc syntax check failed:" not in combined
-    assert re.search(r"\bunsigned long sub_1143a\(unsigned short \w+(?:, unsigned short \w+){3}\);", result.stdout)
+    assert "int32_t aNldiv(int32_t dividend, int32_t divisor);" in result.stdout
     assert "unsigned long sub_12b24(" not in result.stdout
-    assert re.search(r"sub_112ba\([^;]*sub_1143a\([^;]+\)[^;]*\);", result.stdout)
+    assert re.search(r"sub_112ba\([^;]*aNldiv\([^;]+\)[^;]*, g_0BA4, g_0BAA\);", result.stdout)
+    signature = re.search(r"void sub_10498\(unsigned short (\w+)\)", result.stdout)
+    assert signature is not None, combined
+    assert re.search(
+        rf"sub_10e70\(\s*{re.escape(signature.group(1))}\s*\*\s*60\s*,\s*75\s*\);",
+        result.stdout,
+    )
+    assert not re.search(r"(?m)^\s+aNldiv\(", result.stdout)
+    assert not re.search(r"\b(?:unsupported|unknown)\s+instruction\b", result.stdout, re.IGNORECASE)
+    assert not re.search(r"\b(?:e?flags|cc_op|cc_dep[12]?)\b", result.stdout, re.IGNORECASE)
+    assert not re.search(r"\bif\s*\([^{};]*\)\s*\{\s*\}\s*else\s*\{\s*\}", result.stdout)
+    assert not re.search(r"\binertia_ss\s*<<\s*4\b", result.stdout)
 
 
 def test_sortd_shellsort_uses_alias_proven_zero_argument_interface(tmp_path: Path) -> None:

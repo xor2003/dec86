@@ -16,20 +16,20 @@ from collections.abc import Callable
 from typing import cast
 
 __all__ = [
-    "_strengthen_condition_8616",
     "_canonicalize_cmp_sub_8616",
+    "_strengthen_condition_8616",
 ]
 
 
 def _is_const_expr(expr: object) -> bool:
     """Check whether a dynamic third-party angr boundary node is constant."""
-    return hasattr(expr, "value") and isinstance(getattr(expr, "value"), int)
+    return hasattr(expr, "value") and isinstance(expr.value, int)
 
 
 def _get_const_val(expr: object) -> int | None:
     """Extract a constant int from a dynamic third-party angr boundary node."""
     if _is_const_expr(expr):
-        return int(getattr(expr, "value"))
+        return int(expr.value)
     return None
 
 

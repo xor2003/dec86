@@ -20,6 +20,7 @@ from .indexed_address_contracts import (
     IndexedAddressEvidence8616,
     IndexedAddressFact8616,
 )
+from .logical_memory_value_trace import LogicalMemoryValueTrace8616
 from .scalar_definitions import scalar_definition_key_8616
 
 
@@ -52,6 +53,8 @@ class IndexedAddressCopyFailureKind8616(StrEnum):
     SPLIT_LANE_CONFLICT = "split_lane_conflict"
     SOURCE_LOAD_NOT_INDEXED = "source_load_not_indexed"
     SOURCE_LOAD_CONFLICT = "source_load_conflict"
+    LOGICAL_MEMORY_EVIDENCE_UNPROVEN = "logical_memory_evidence_unproven"
+    LOGICAL_MEMORY_EVIDENCE_CONFLICT = "logical_memory_evidence_conflict"
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +111,7 @@ class IndexedAddressCopyStep8616:
 
 @dataclass(frozen=True, slots=True)
 class IndexedAddressCopyValuePath8616:
-    """One destination byte lane traced backward to a LOAD result."""
+    """One destination byte lane traced backward to an exact source value."""
 
     store_instr_index: int
     load_block_addr: int
@@ -118,10 +121,18 @@ class IndexedAddressCopyValuePath8616:
     store_value: IRValue
     load_value: IRValue
     steps: tuple[IndexedAddressCopyStep8616, ...]
+    logical_source: LogicalMemoryValueTrace8616 | None = None
 
     @property
     def complete(self) -> bool:
         """Return whether the path is contiguous and lane-preserving."""
+        logical_loads = (
+            ()
+            if self.logical_source is None
+            else tuple(
+                site for site in self.logical_source.definition_path if site.op == "LOAD"
+            )
+        )
         if (
             self.store_instr_index < 0
             or self.load_block_addr < 0
@@ -129,6 +140,15 @@ class IndexedAddressCopyValuePath8616:
             or self.load_instr_addr < 0
             or self.load_instr_index >= self.store_instr_index
             or not all(step.complete for step in self.steps)
+            or (
+                self.logical_source is not None
+                and (
+                    not self.logical_source.complete
+                    or self.logical_source.source is None
+                    or self.logical_source.source.size != self.load_value.size
+                    or len(logical_loads) != 2
+                )
+            )
         ):
             return False
         if self.steps:
@@ -169,6 +189,32 @@ class IndexedAddressCopyValuePath8616:
         }[self.lane]
         return semantic_steps == expected
 
+    def matches_source(self, source: IndexedAddressFact8616) -> bool:
+        """Return whether this path proves one exact indexed LOAD owner."""
+        if self.logical_source is None:
+            return (
+                self.load_block_addr,
+                self.load_instr_index,
+                self.load_instr_addr,
+            ) == (source.block_addr, source.instr_index, source.instr_addr)
+        logical_address = self.logical_source.source
+        logical_loads = tuple(
+            site for site in self.logical_source.definition_path if site.op == "LOAD"
+        )
+        if logical_address is None or len(logical_loads) != 2:
+            return False
+        low_load = logical_loads[0]
+        return bool(
+            (low_load.block_addr, low_load.instr_index, low_load.instr_addr)
+            == (source.block_addr, source.instr_index, source.instr_addr)
+            and logical_address.space is source.address.space
+            and logical_address.base == source.address.base
+            and logical_address.offset == source.address.offset
+            and logical_address.size == source.address.size
+            and logical_address.status is source.address.status
+            and logical_address.segment_origin is source.address.segment_origin
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class IndexedAddressCopyFact8616:
@@ -204,22 +250,14 @@ class IndexedAddressCopyFact8616:
             == tuple(path.store_instr_index for path in self.value_paths)
             and tuple(path.lane for path in self.value_paths) == expected_lanes
             and all(path.complete for path in self.value_paths)
-            and all(
-                (
-                    path.load_block_addr,
-                    path.load_instr_index,
-                    path.load_instr_addr,
-                )
-                == (
-                    self.source.block_addr,
-                    self.source.instr_index,
-                    self.source.instr_addr,
-                )
-                for path in self.value_paths
-            )
+            and all(path.matches_source(self.source) for path in self.value_paths)
             and all(
                 scalar_definition_key_8616(path.load_value)
                 == scalar_definition_key_8616(self.value_paths[0].load_value)
+                for path in self.value_paths
+            )
+            and all(
+                path.logical_source == self.value_paths[0].logical_source
                 for path in self.value_paths
             )
         )

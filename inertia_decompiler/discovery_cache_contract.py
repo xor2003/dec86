@@ -7,8 +7,8 @@ Forbidden: discovering functions or deriving call/return semantics from cached t
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseEvidence8616,

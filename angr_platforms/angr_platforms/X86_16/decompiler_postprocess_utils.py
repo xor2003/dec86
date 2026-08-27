@@ -39,10 +39,10 @@ from __future__ import annotations
 import builtins
 import re
 import typing
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import suppress
 from functools import lru_cache
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CITE,
@@ -117,22 +117,22 @@ def _is_linear_temp_name_8616(name: object) -> bool:
 
 
 __all__ = [
-    "_structured_codegen_node_8616",
-    "_safe_assign_cfunc_statements_8616",
     "_c_constant_value_8616",
-    "_segment_reg_name_8616",
+    "_global_memory_addr_8616",
+    "_is_shifted_high_byte_8616",
+    "_iter_c_nodes_deep_8616",
+    "_make_word_global_8616",
+    "_match_bp_stack_dereference_8616",
+    "_match_bp_stack_load_8616",
     "_match_real_mode_linear_expr_8616",
     "_match_real_mode_segmented_store_shape_8616",
     "_match_segmented_dereference_8616",
     "_replace_c_children_8616",
-    "_iter_c_nodes_deep_8616",
-    "_global_memory_addr_8616",
-    "_make_word_global_8616",
+    "_safe_assign_cfunc_statements_8616",
     "_same_c_expression_8616",
-    "_is_shifted_high_byte_8616",
+    "_segment_reg_name_8616",
     "_stack_bp_displacement_8616",
-    "_match_bp_stack_load_8616",
-    "_match_bp_stack_dereference_8616",
+    "_structured_codegen_node_8616",
 ]
 
 
@@ -174,7 +174,7 @@ def _structured_slot_names_for_type_8616(value_type: type) -> tuple[str, ...]:
             slots = (slots,)
         for slot in slots:
             if isinstance(slot, str) and not slot.startswith("_") and slot not in _STRUCTURED_NON_CHILD_ATTRS_8616:
-                attrs.append(slot)
+                attrs.append(slot)  # noqa: PERF401
 
     seen = set()
     ordered: list[str] = []
@@ -596,7 +596,7 @@ def _iter_c_nodes_deep_8616(node: object, seen: set[int] | None = None) -> Itera
                 continue
             for child in _iter_c_node_children_8616(value, set()):
                 if _structured_codegen_node_8616(child):
-                    node_stack.append(child)
+                    node_stack.append(child)  # noqa: PERF401
 
 
 def _global_memory_addr_8616(node: object) -> int | None:
@@ -776,7 +776,7 @@ def _single_assignment_expr_for_variable_8616(codegen: object, target: object) -
             nested_statements = _dynamic_c_ast_getattr_8616(current, "statements", None)
             if isinstance(nested_statements, (list, tuple)):
                 for item in reversed(tuple(nested_statements)):
-                    stack.append(item)
+                    stack.append(item)  # noqa: PERF402
 
             body = _dynamic_c_ast_getattr_8616(current, "body", None)
             if body is not None:
@@ -791,7 +791,7 @@ def _single_assignment_expr_for_variable_8616(codegen: object, target: object) -
                 for pair in reversed(tuple(condition_and_nodes)):
                     if isinstance(pair, tuple):
                         for item in reversed(pair):
-                            stack.append(item)
+                            stack.append(item)  # noqa: PERF402
 
     matches = []
     for stmt in _iter_statement_nodes(root):

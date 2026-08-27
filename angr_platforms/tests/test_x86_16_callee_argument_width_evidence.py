@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
@@ -77,6 +78,25 @@ def test_width_contract_maps_source_order_to_exact_ss_bp_storage(monkeypatch) ->
         (MemSpace.SS, ("bp",), 4, 4, AddressStatus.STABLE),
         (MemSpace.SS, ("bp",), 8, 2, AddressStatus.STABLE),
     )
+
+
+def test_width_contract_consumes_explicit_logical_widths_over_physical_pushes(monkeypatch) -> None:
+    summary = replace(
+        _summary(0x110, widths_in_push_order=(2, 2)),
+        logical_arg_widths=(4,),
+    )
+    count_evidence = _count_evidence((summary,), argument_count=1)
+    monkeypatch.setattr(
+        width_module,
+        "collect_callee_argument_count_evidence_8616",
+        lambda _project, _target: count_evidence,
+    )
+
+    evidence = collect_callee_argument_width_evidence_8616(SimpleNamespace(), 0x200)
+
+    assert evidence.closes_census is True
+    assert evidence.argument_widths == (4,)
+    assert evidence.widths_by_offset == ((4, 4),)
 
 
 def test_width_contract_accepts_proven_zero_argument_census(monkeypatch) -> None:

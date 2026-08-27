@@ -57,13 +57,13 @@ from ..compiler_helpers import (
 )
 
 __all__ = [
-    "StackAggregateObjectFact8616",
     "StackAggregateCallDecay8616",
     "StackAggregateCarrierPrune8616",
     "StackAggregateEvidenceKind8616",
+    "StackAggregateObjectFact8616",
+    "StackAggregateObjectReplay8616",
     "StackAggregateRecovery8616",
     "StackAggregateRecoveryStatus8616",
-    "StackAggregateObjectReplay8616",
     "collect_stack_aggregate_object_facts_8616",
     "decay_stack_aggregate_call_arguments_8616",
     "materialize_stack_aggregate_objects_8616",
@@ -878,9 +878,7 @@ def collect_stack_aggregate_object_facts_8616(
         if not isinstance(target, int):
             continue
         evidence = identify_x86_16_compiler_helper_at_8616(project, target)
-        if evidence is not None and evidence.kind is CompilerHelperEvidenceKind8616.STACK_PROBE:
-            targets.add(target)
-        elif is_x86_16_registered_stack_probe_target_8616(getattr(project, "arch", None), target):
+        if (evidence is not None and evidence.kind is CompilerHelperEvidenceKind8616.STACK_PROBE) or is_x86_16_registered_stack_probe_target_8616(getattr(project, "arch", None), target):
             targets.add(target)
     return recover_stack_aggregate_object_facts_from_instructions_8616(
         decoded,
@@ -979,7 +977,7 @@ def _materialize_fact(codegen: object, fact: StackAggregateObjectFact8616) -> tu
             unified_local_vars[aggregate_variable] = {(aggregate_cvar, array_type)}
         persist_type(aggregate_variable, array_type)
         changed = True
-    for candidate_variable, candidate_cvar in variables_in_use.items():
+    for candidate_variable, candidate_cvar in variables_in_use.items():  # noqa: B007
         if (
             isinstance(candidate_variable, SimStackVariable)
             and candidate_variable.base == "bp"

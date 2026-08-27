@@ -21,6 +21,10 @@ class _Codegen:
     def next_idx(self, _name: str) -> int:
         self._index += 1
         return self._index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _shellsort_indexed_byte() -> IRValue:

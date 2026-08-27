@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from angr.analyses.decompiler.structured_codegen.c import CVariable
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.alias.stack_memory_ssa import build_x86_16_stack_memory_ssa_alias_artifact
@@ -32,6 +33,10 @@ from angr_platforms.X86_16.lowering.stack_memory_ssa import (
     StackMemoryObjectKind8616,
     StackMemorySSALoweringRefusalKind8616,
     lower_x86_16_stack_memory_ssa_alias_artifact,
+)
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    machine_bp_offset_for_stack_variable_8616,
+    stack_variable_coordinate_registry_8616,
 )
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.widening.stack_memory_objects import (
@@ -108,13 +113,15 @@ class _FakeCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def test_stack_memory_ssa_lowering_materializes_real_stack_cvariable() -> None:
     codegen = _FakeCodegen(_stack_alias_artifact())
-
     artifact = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
-
     assert artifact is not None and artifact.complete is True
     assert artifact.stats.raw_fact_count == artifact.stats.materialized_count == 1
     assert artifact.stats.failure_count == 0
@@ -123,9 +130,15 @@ def test_stack_memory_ssa_lowering_materializes_real_stack_cvariable() -> None:
     stack_variables = [variable for variable in codegen.cfunc.variables_in_use if isinstance(variable, SimStackVariable)]
     assert len(stack_variables) == 1
     assert stack_variables[0].base == "bp"
-    assert stack_variables[0].offset == -2
+    assert stack_variables[0].offset == -4
+    assert machine_bp_offset_for_stack_variable_8616(codegen, stack_variables[0]) == -2
+    projection = stack_variable_coordinate_registry_8616(codegen).for_variable(
+        stack_variables[0]
+    )
+    assert projection is not None and projection.entry_sp_offset == -4
     assert isinstance(codegen.cfunc.variables_in_use[stack_variables[0]].variable_type, SimTypeShort)
     assert artifact.candidates[0].entry_sp_offset == -4
+    assert artifact.result is not None and artifact.result.materialized[0][0] == -2
     assert len(codegen._inertia_semantic_alias_facts) == 1
 
 
@@ -141,19 +154,21 @@ def test_stack_memory_ssa_lowering_refuses_unproven_frame_coordinate() -> None:
     assert codegen.cfunc.variables_in_use == {}
 
 
-def test_stack_memory_ssa_lowering_retires_superseded_entry_sp_projection() -> None:
+def test_stack_memory_ssa_lowering_reuses_proven_entry_sp_projection() -> None:
     codegen = _FakeCodegen(_stack_alias_artifact())
     projected = SimStackVariable(-4, 1, base="bp", name="projected", region=0x1000)
-    codegen.cfunc.variables_in_use[projected] = object()
+    projected_cvar = CVariable(projected, codegen=codegen)
+    codegen.cfunc.variables_in_use[projected] = projected_cvar
     codegen.cfunc.unified_local_vars[projected] = set()
 
     artifact = lower_x86_16_stack_memory_ssa_alias_artifact(codegen)
 
     assert artifact is not None and artifact.complete is True
     assert artifact.projection_retirement.complete is True
-    assert artifact.projection_retirement.retired == ((-4, 1),)
-    assert projected not in codegen.cfunc.variables_in_use
-    assert projected not in codegen.cfunc.unified_local_vars
+    assert artifact.projection_retirement.retired == ()
+    assert projected in codegen.cfunc.variables_in_use
+    assert projected.size == 2
+    assert projected in codegen.cfunc.unified_local_vars
 
 
 def test_stack_memory_ssa_lowering_defers_positive_argument_ranges() -> None:
@@ -300,7 +315,7 @@ def test_stack_memory_ssa_lowering_materializes_nested_byte_view_owner() -> None
     stack_variables = [
         variable for variable in codegen.cfunc.variables_in_use if isinstance(variable, SimStackVariable)
     ]
-    assert [(variable.offset, variable.size) for variable in stack_variables] == [(-4, 2)]
+    assert [(variable.offset, variable.size) for variable in stack_variables] == [(-6, 2)]
     assert isinstance(codegen.cfunc.variables_in_use[stack_variables[0]].variable_type, SimTypeShort)
 
 

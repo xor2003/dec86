@@ -135,6 +135,7 @@ def test_selects_indexed_address_owner_for_ir_core():
         "test_identity_conflict_is_classified_on_exact_instruction_site",
         "angr_platforms/tests/test_x86_16_sortd_indexed_address_parity_inventory.py",
         "angr_platforms/tests/test_x86_16_indexed_address_evidence.py",
+        "angr_platforms/tests/test_x86_16_alias_global_object_layout.py",
         "angr_platforms/tests/test_x86_16_ir_core.py",
         "angr_platforms/tests/test_x86_16_ir_ssa.py",
         "angr_platforms/tests/test_x86_16_vex_memory_access_fidelity.py",
@@ -271,6 +272,7 @@ def test_selects_cli_direct_fallback_focused_tests_for_legacy_cli_file():
         "angr_platforms/tests/test_decompiler_architecture_check.py",
         "angr_platforms/tests/test_serial_clean_worker_cache.py",
         "angr_platforms/tests/test_segment_program_layout_reporting.py",
+        "angr_platforms/tests/test_direct_request_cache.py",
         "angr_platforms/tests/test_x86_16_cli.py::"
         "test_direct_addr_project_local_fallback_addr_uses_rebased_function_addr",
         "angr_platforms/tests/test_x86_16_cli.py::"

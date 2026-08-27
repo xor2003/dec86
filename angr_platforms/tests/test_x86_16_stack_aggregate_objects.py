@@ -98,6 +98,10 @@ class _AggregateCodegen:
         """Return a deterministic structured-C node index."""
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 class _VariableManager:
@@ -375,10 +379,7 @@ def test_refuses_addressed_top_partition_with_conflicting_indexed_access() -> No
 
 
 def test_refuses_ambiguous_stack_probe_allocations() -> None:
-    instructions = _drawframe_shape() + (
-        _Instruction(X86_INS_MOV, (_reg(_AX), _imm(84)), "mov"),
-        _Instruction(X86_INS_CALL, (_imm(0x7000),), "call"),
-    )
+    instructions = (*_drawframe_shape(), _Instruction(X86_INS_MOV, (_reg(_AX), _imm(84)), "mov"), _Instruction(X86_INS_CALL, (_imm(28672),), "call"))
 
     recovery = recover_stack_aggregate_object_facts_from_instructions_8616(
         instructions,

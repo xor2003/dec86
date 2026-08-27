@@ -13,6 +13,7 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -26,8 +27,8 @@ from ..annotations import ANNOTATION_KEY
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
 
 __all__ = [
-    "ScalarReturnTypeResult8616",
     "ScalarReturnTypeEvidenceStatus8616",
+    "ScalarReturnTypeResult8616",
     "ScalarReturnTypeStats8616",
     "materialize_scalar_return_type_8616",
     "record_scalar_return_type_evidence_8616",
@@ -132,14 +133,10 @@ def _return_expressions_8616(cfunc: _CFunctionSurface8616) -> tuple[object, ...]
     expressions: list[object] = []
     seen: set[int] = set()
     roots: list[object] = []
-    try:
+    with contextlib.suppress(AttributeError):
         roots.append(cfunc.statements)
-    except AttributeError:
-        pass
-    try:
+    with contextlib.suppress(AttributeError):
         roots.append(cfunc.body)
-    except AttributeError:
-        pass
     for root in roots:
         for node in _iter_c_nodes_deep_8616(root):
             if not isinstance(node, CReturn) or id(node) in seen:

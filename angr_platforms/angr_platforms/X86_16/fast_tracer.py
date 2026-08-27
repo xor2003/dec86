@@ -90,7 +90,7 @@ def trace_16bit_seed_candidates(
     except Exception:
         disasm = None
     if disasm is None:
-        return FastTraceResult(entries=tuple(), call_targets=tuple(), jump_targets=tuple(), returns=tuple(), scores={})
+        return FastTraceResult(entries=(), call_targets=(), jump_targets=(), returns=(), scores={})
 
     align_bytes = {0x00, 0x90, 0xCC}
     for window_start, window_end in windows:
@@ -120,12 +120,7 @@ def trace_16bit_seed_candidates(
                 target = addr + 3 + rel
                 canonical = _resolve_16bit_function_start(code, target - linked_base)
                 _add(linked_base + canonical, 2, jump_targets) if canonical is not None else None
-            elif opcode == 0xEB and offset + 1 < len(code):
-                rel = int.from_bytes(code[offset + 1 : offset + 2], "little", signed=True)
-                target = addr + 2 + rel
-                canonical = _resolve_16bit_function_start(code, target - linked_base)
-                _add(linked_base + canonical, 2, jump_targets) if canonical is not None else None
-            elif 0x70 <= opcode <= 0x7F and offset + 1 < len(code):
+            elif (opcode == 0xEB and offset + 1 < len(code)) or (0x70 <= opcode <= 0x7F and offset + 1 < len(code)):
                 rel = int.from_bytes(code[offset + 1 : offset + 2], "little", signed=True)
                 target = addr + 2 + rel
                 canonical = _resolve_16bit_function_start(code, target - linked_base)

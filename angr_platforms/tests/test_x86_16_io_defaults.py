@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+
 import angr
 from angr import options as o
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -19,14 +21,10 @@ def _run_one_instruction_local(arch, code: bytes, ax: int = 0x125A, di: int = 0x
     )
     state.regs.ax = ax
     state.regs.es = 0
-    try:
+    with contextlib.suppress(AttributeError):
         state.regs.di = di
-    except AttributeError:
-        pass
-    try:
+    with contextlib.suppress(AttributeError):
         state.regs.edi = di
-    except AttributeError:
-        pass
 
     simgr = project.factory.simgr(state)
     simgr.step(num_inst=1, insn_bytes=code)

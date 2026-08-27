@@ -604,6 +604,8 @@ def _walk_statements_8616(
                 and _dirty_lhs_delete_proven_8616(lhs, rhs)
             ) or (
                 _dirty_temp_cleanup_mode_8616(lhs)
+                and key not in live
+                and outside_reads <= 0
                 and int(observable_reads.get(key, 0)) <= 0
                 and key not in protected
                 and (name_key is None or name_key not in protected)

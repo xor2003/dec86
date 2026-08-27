@@ -16,12 +16,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import TypeAlias
 
 from ..ir.condition_ir import ConditionIR, ConditionOp
 from ..ir.core import IRValue
 
-WideStackPairProver8616: TypeAlias = Callable[[IRValue, IRValue], bool]
+type WideStackPairProver8616 = Callable[[IRValue, IRValue], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,11 +234,14 @@ def reachable_wide_stack_conditions_8616(
     """Collect typed conditions reachable from one root without CFG guessing."""
     pending = [root]
     result: list[ConditionIR] = []
+    seen_conditions: set[int] = set()
     visited: set[int] = set()
     while pending and len(visited) < 48:
         condition = pending.pop()
-        if condition in result:
+        condition_identity = id(condition)
+        if condition_identity in seen_conditions:
             continue
+        seen_conditions.add(condition_identity)
         result.append(condition)
         for initial_target in (condition.taken_target, condition.fallthrough_target):
             target = initial_target
@@ -302,7 +304,7 @@ def recover_wide_stack_condition_chain_8616(
             == outcome
             for (high_relation, low_relation), outcome in outcomes.items()
         ):
-            matching_ops.append(op)
+            matching_ops.append(op)  # noqa: PERF401
     if len(matching_ops) != 1:
         return WideStackConditionChainResult8616(
             condition=None,

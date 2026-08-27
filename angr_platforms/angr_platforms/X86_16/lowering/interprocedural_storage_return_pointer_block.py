@@ -13,7 +13,6 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeVar
 
 from ..alias.domains import (
     AX,
@@ -41,7 +40,6 @@ __all__ = [
     "scan_pointer_carriers_in_block_8616",
 ]
 
-_ProofT = TypeVar("_ProofT")
 _ValueKey8616 = tuple[MemSpace, str | None, int, int, int | None]
 
 
@@ -66,10 +64,10 @@ class PointerBlockScan8616:
     saw_alias_clobber: bool = False
 
 
-def append_unique_pointer_proofs_8616(
-    values: tuple[_ProofT, ...],
-    additions: tuple[_ProofT, ...],
-) -> tuple[_ProofT, ...]:
+def append_unique_pointer_proofs_8616[ProofT](
+    values: tuple[ProofT, ...],
+    additions: tuple[ProofT, ...],
+) -> tuple[ProofT, ...]:
     """Append equal proof records once while preserving deterministic order."""
     merged = list(values)
     for addition in additions:

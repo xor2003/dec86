@@ -90,7 +90,7 @@ def _collect_named_stack_locals(codegen: object) -> list[tuple[str, int, object]
     )
 
     named_locals: list[tuple[str, int, object]] = []
-    for variable, cvar in variables_in_use.items():
+    for variable in variables_in_use:
         if not isinstance(variable, SimStackVariable):
             continue
         base = variable.base
@@ -154,24 +154,19 @@ def _check_declaration_order_feasible(names: list[str], bucket_assignments: dict
                 idx = (idx - 1) % 16
 
         WHITE, GRAY, BLACK = 0, 1, 2
-        color: dict[str, int] = {name: WHITE for name in names}
+        color: dict[str, int] = dict.fromkeys(names, WHITE)
 
         def _dfs_visit(node: str) -> bool:
             color[node] = GRAY
             for pred in must_precede.get(node, set()):
                 if color.get(pred) == GRAY:
                     return False
-                if color.get(pred) == WHITE:
-                    if not _dfs_visit(pred):
-                        return False
+                if color.get(pred) == WHITE and not _dfs_visit(pred):
+                    return False
             color[node] = BLACK
             return True
 
-        for name in names:
-            if color[name] == WHITE:
-                if not _dfs_visit(name):
-                    return False
-        return True
+        return all(not (color[name] == WHITE and not _dfs_visit(name)) for name in names)
 
     return _impl()
 

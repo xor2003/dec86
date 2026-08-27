@@ -7,7 +7,7 @@ Do not mutate IR, rewrite emitted C, recover semantics, or accept source/COD-bac
 Rules:
 - Allowed: x+0→x, x−x→0, (a+b)+c normalization, commutativity for +,&,|
 - Forbidden: modifying IR, modifying C output, creating new variables, guessing structs/arrays.
-"""
+"""  # noqa: RUF002
 
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ from typing import Protocol, cast, runtime_checkable
 
 __all__ = [
     "EquivalenceResult",
+    "canonical_diagnostic_8616",
     "canonicalize_expr_for_validation_8616",
     "equivalent_expr_8616",
-    "canonical_diagnostic_8616",
 ]
 
 
@@ -281,21 +281,23 @@ def _same_value(lhs: object, rhs: object) -> bool:
 def _zero_for_expr(expr: object) -> object:
     """Produce a zero constant matching the type of expr."""
     width = expr.size if isinstance(expr, _HasSize) and isinstance(expr.size, int) else 4
-    return _make_constant(0, width)
+    return _make_constant(0, width, codegen=_codegen_for_expr(expr))
 
 
-def _make_constant(value: int, size: int = 4) -> object:
+def _make_constant(value: int, size: int = 4, *, codegen: object | None = None) -> object:
     """Create a constant node matching the given value and size."""
+    if codegen is None:
+        return value
     try:
         from angr.analyses.decompiler.structured_codegen.c import CConstant
         from angr.sim_type import SimTypeChar, SimTypeInt, SimTypeShort
 
         if size <= 1:
-            return CConstant(value, SimTypeChar(signed=False), codegen=None)
+            return CConstant(value, SimTypeChar(signed=False), codegen=codegen)
         if size <= 2:
-            return CConstant(value, SimTypeShort(signed=False), codegen=None)
-        return CConstant(value, SimTypeInt(signed=False), codegen=None)
-    except (AttributeError, ImportError, TypeError):
+            return CConstant(value, SimTypeShort(signed=False), codegen=codegen)
+        return CConstant(value, SimTypeInt(signed=False), codegen=codegen)
+    except (AssertionError, AttributeError, ImportError, TypeError):
         return value
 
 

@@ -4,6 +4,8 @@ Layer: Types/Lowering.
 Responsibility: join Semantics-owned terminal return storage, the closed binary
 caller-use census, exact caller SSA, and typed scalar/pointer use proofs into
 solver-ready return trials while preserving existing input callsite evidence.
+Canonicalizes multiple SSA operations for one physical split-return comparison
+to one exact instruction-level use, while refusing distinct instruction sites.
 Consumes alias, widening, and typed facts. This module does not infer ABI
 returns, mutate codegen, publish contracts, or repair emitted calls.
 Do not recover semantics from COD, source, assembly, or rendered C text.
@@ -14,6 +16,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Protocol, cast
 
+from ..alias.domains import AX, DX, DomainKey, register_domain_for_name
 from ..caller_return_use_contracts import (
     CallerReturnUseEvidence8616,
     CallerReturnUseFact8616,
@@ -23,9 +26,14 @@ from ..ir.condition_ir import ConditionIR
 from ..ir.function_ssa_registry import (
     FunctionSSAArtifactFailure8616,
 )
+from ..ir.ssa_function import SSAFunctionArtifact
+from ..semantics.call_stack_effect_pipeline import (
+    semantic_function_ssa_artifact_at_address_8616,
+)
 from ..semantics.terminal_return_storage import (
     terminal_return_storage_8616,
 )
+from .condition_transfer import collect_typed_condition_artifacts_8616
 from .interprocedural_storage_collection_contracts import (
     FunctionInputStorageTrialCollection8616,
     StorageTrialCollectionVerdict8616,
@@ -34,7 +42,11 @@ from .interprocedural_storage_contracts import (
     CallsiteStorageTrials8616,
     FunctionStorageTrials8616,
     StorageIdentity8616,
+    StorageTrial8616,
+    StorageTrialRole8616,
     StorageTrialStats8616,
+    StorageTrialValueClass8616,
+    StorageUseEvidence8616,
 )
 from .interprocedural_storage_live_out import (
     attach_callsite_memory_live_out_evidence_8616,
@@ -50,12 +62,19 @@ from .interprocedural_storage_return_collection_contracts import (
     ReturnStorageTrialCollectionFailure8616,
     ReturnStorageTrialCollectionFailureKind8616,
 )
-from .interprocedural_storage_return_defs import CallOutputDefinitionFailure8616
+from .interprocedural_storage_return_defs import (
+    CallOutputDefinitionFailure8616,
+    resolve_call_output_definitions_8616,
+)
 from .interprocedural_storage_return_passthrough import (
     materialize_return_passthrough_trial_8616,
 )
 from .interprocedural_storage_return_passthrough_contracts import (
     ReturnPassThroughTrialFailure8616,
+)
+from .interprocedural_storage_return_split_condition_graph import (
+    select_split_return_condition_8616,
+    split_return_register_matches_8616,
 )
 from .interprocedural_storage_return_trial_materialization import (
     materialize_callsite_return_trials_8616,
@@ -131,6 +150,145 @@ def _return_census_complete_8616(evidence: CallerReturnUseEvidence8616) -> bool:
         and used + unused == len(included)
         and evidence.verdict is expected_verdict
     )
+
+
+def _canonical_instruction_use_8616(
+    artifact: SSAFunctionArtifact,
+    condition: ConditionIR,
+    storage: StorageIdentity8616,
+    callsite_addr: int,
+) -> StorageUseEvidence8616 | None:
+    """Collapse matching SSA operations only when they share one instruction site."""
+    producer = condition.producer_insn
+    if not isinstance(producer, int) or isinstance(producer, bool):
+        return None
+    indices_by_site: dict[tuple[int, int], list[int]] = {}
+    for block in artifact.blocks:
+        for instr_index, instruction in enumerate(block.instrs):
+            if instruction.addr != producer or not any(
+                split_return_register_matches_8616(argument, storage)
+                for argument in instruction.args
+            ):
+                continue
+            indices_by_site.setdefault((block.addr, instruction.addr), []).append(
+                instr_index
+            )
+    if len(indices_by_site) != 1:
+        return None
+    (block_addr, instr_addr), instr_indices = next(iter(indices_by_site.items()))
+    return StorageUseEvidence8616(
+        block_addr=block_addr,
+        instr_index=min(instr_indices),
+        instr_addr=instr_addr,
+        callsite_addr=callsite_addr,
+    )
+
+
+def _materialize_canonical_split_return_trials_8616(
+    project: object,
+    callee_addr: int,
+    fact: CallerReturnUseFact8616,
+    output_storages: tuple[StorageIdentity8616, ...],
+    accepted_target_addrs: tuple[int, ...],
+    conditions_by_caller: dict[int, tuple[ConditionIR, ...]],
+) -> tuple[StorageTrial8616, ...] | None:
+    """Retry a typed split-witness conflict at exact instruction granularity."""
+    if len(output_storages) != 2:
+        return None
+    storages_by_domain: dict[DomainKey, StorageIdentity8616] = {}
+    for storage in output_storages:
+        domain = register_domain_for_name(storage.register)
+        if domain is None or domain in storages_by_domain:
+            return None
+        storages_by_domain[domain] = storage
+    if set(storages_by_domain) != {AX, DX}:
+        return None
+
+    ssa = semantic_function_ssa_artifact_at_address_8616(project, fact.caller_addr)
+    artifact = ssa.artifact
+    if artifact is None:
+        return None
+    definitions = resolve_call_output_definitions_8616(
+        artifact,
+        fact,
+        callee_addr,
+        accepted_target_addrs,
+        output_storages,
+    )
+    if not definitions.complete or len(definitions.definitions) != len(output_storages):
+        return None
+    definition_keys = tuple(
+        None if definition.source_storage is None else definition.source_storage.key
+        for definition in definitions.definitions
+    )
+    if definition_keys != tuple(storage.key for storage in output_storages):
+        return None
+
+    conditions = conditions_by_caller.get(fact.caller_addr)
+    if conditions is None:
+        collected, _edge_evidence = collect_typed_condition_artifacts_8616(
+            project,
+            fact.caller_addr,
+        )
+        conditions = tuple(collected)
+        conditions_by_caller[fact.caller_addr] = conditions
+    witness_addr = fact.witness_instruction_addr
+    if not isinstance(witness_addr, int) or isinstance(witness_addr, bool):
+        return None
+    candidate, selection_failure = select_split_return_condition_8616(
+        artifact,
+        witness_addr,
+        conditions,
+        storages_by_domain[DX],
+        storages_by_domain[AX],
+    )
+    if candidate is None or selection_failure is not None:
+        return None
+
+    uses_by_domain: dict[DomainKey, StorageUseEvidence8616] = {}
+    for domain, storage in storages_by_domain.items():
+        condition = (
+            candidate.high_condition if domain == DX else candidate.low_condition
+        )
+        use = _canonical_instruction_use_8616(
+            artifact,
+            condition,
+            storage,
+            fact.callsite_addr,
+        )
+        if use is None:
+            return None
+        uses_by_domain[domain] = use
+    provenance = definitions.provenance
+    if provenance is None:
+        return None
+    piece_count = len(output_storages)
+    trials: list[StorageTrial8616] = []
+    for piece_index, (storage, definition) in enumerate(
+        zip(output_storages, definitions.definitions, strict=True)
+    ):
+        domain = register_domain_for_name(storage.register)
+        use = None if domain is None else uses_by_domain.get(domain)
+        if use is None:
+            return None
+        trials.append(
+            StorageTrial8616(
+                callee_addr=callee_addr,
+                caller_addr=fact.caller_addr,
+                callsite_addr=fact.callsite_addr,
+                role=StorageTrialRole8616.RETURN,
+                logical_index=0,
+                piece_index=piece_index,
+                piece_count=piece_count,
+                storage=storage,
+                reaching_definition=definition,
+                use=use,
+                signedness=candidate.signedness,
+                value_class=StorageTrialValueClass8616.VALUE,
+                provenance=provenance,
+            )
+        )
+    return tuple(trials)
 
 
 def collect_function_return_storage_trials_8616(
@@ -310,6 +468,23 @@ def collect_function_return_storage_trials_8616(
                 targets,
                 conditions_by_caller,
             )
+            if (
+                failure is not None
+                and failure.kind
+                is ReturnStorageTrialCollectionFailureKind8616.RETURN_TYPE_CONFLICT
+                and failure.type_failure
+                is ReturnStorageTypeFailure8616.SPLIT_WITNESS_CONFLICT
+            ):
+                return_trials = _materialize_canonical_split_return_trials_8616(
+                    project,
+                    callee_addr,
+                    fact,
+                    output_storages,
+                    targets,
+                    conditions_by_caller,
+                )
+                if return_trials is not None:
+                    failure = None
             if failure is not None or return_trials is None:
                 if failure is not None:
                     failures.append(failure)

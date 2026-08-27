@@ -6,8 +6,8 @@ Responsibility: print reporting-only file summaries without changing decompiler 
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from pathlib import Path, PureWindowsPath
-from typing import Iterable, Sequence
 
 
 def _summary_comment(text: str) -> str:

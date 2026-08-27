@@ -32,6 +32,7 @@ from angr_platforms.X86_16.decompiler_return_compat import (
     apply_x86_16_decompiler_return_compatibility,
     codegen_has_explicit_void_return_8616,
 )
+from x86_16_timeout_support import scaled_decompile_timeout
 
 import decompile
 from inertia_decompiler import cli_c_ast_rewrites as _cli_c_ast_rewrites
@@ -50,7 +51,15 @@ sys.modules[_runner_spec.name] = _runner
 _runner_spec.loader.exec_module(_runner)
 
 
-def _run_cod_proc(path: Path, proc: str, *, timeout: int = 20) -> subprocess.CompletedProcess[str]:
+def _run_cod_proc(
+    path: Path,
+    proc: str,
+    *,
+    timeout: int = 20,
+    scale_timeout: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    if scale_timeout:
+        timeout = scaled_decompile_timeout(timeout)
     return subprocess.run(
         [
             sys.executable,
@@ -117,7 +126,12 @@ def test_cod_regression_targets_are_recoverable(cod_name: str, proc_name: str, t
 
 def test_cod_timeout_target_is_classified_deterministically():
     start = time.monotonic()
-    result = _run_cod_proc(COD_DIR / "EGAME11.COD", "_drawCockpit", timeout=1)
+    result = _run_cod_proc(
+        COD_DIR / "EGAME11.COD",
+        "_drawCockpit",
+        timeout=1,
+        scale_timeout=False,
+    )
     elapsed = time.monotonic() - start
 
     assert result.returncode == 3, result.stderr + result.stdout
@@ -164,7 +178,7 @@ def test_cod_runner_hotspots_fall_back_through_scan_safe_classifier(monkeypatch,
         stages=[],
     )
 
-    def fake_run(*args, **kwargs):  # noqa: ANN001
+    def fake_run(*args, **kwargs):
         stdout_file = kwargs["stdout"]
         stdout_file.write("/* Timed out while recovering a function after 20s. */\n")
         return subprocess.CompletedProcess(args=args[0], returncode=3, stdout="", stderr="")
@@ -452,7 +466,7 @@ def test_cod_dos_runprogram_wrapper_returns_loadprog():
 
 
 def test_cod_loadprog_preserves_binary_arguments_and_recompiles():
-    result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", "loadprog")
+    result = _run_cod_proc(COD_DIR / "DOSFUNC.COD", "loadprog", timeout=40)
 
     combined = result.stderr + result.stdout
     assert result.returncode == 0, combined
@@ -626,10 +640,9 @@ def test_cod_dos_loadprogram_wrapper_keeps_err_guard_and_segment_stores():
         result.stdout,
         (
             "if (err)\n        return err;",
-            "cs[0] = ax_2;",
-            "cs[1] = ax_2 >> 8;",
-            "ss[0] = ax_3;",
-            "ss[1] = ax_3 >> 8;",
+            "cs[0] = ax;",
+            "ss[0] = ax_2;",
+            "return 0;",
         ),
     )
     _assert_has_none(
@@ -637,6 +650,8 @@ def test_cod_dos_loadprogram_wrapper_keeps_err_guard_and_segment_stores():
         (
             "MK_FP(ds,",
             "SEG_U8(inertia_ss,",
+            "cs[1]",
+            "ss[1]",
         ),
     )
 
@@ -651,6 +666,10 @@ def test_prune_dead_local_assignments_removes_unused_constant_stores():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     dead_var = SimStackVariable(4, 2, base="bp", name="dead", region=0x1000)
@@ -700,6 +719,10 @@ def test_prune_dead_local_assignments_removes_overwritten_local_stores():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     local_var = SimStackVariable(-2, 2, base="bp", name="local", region=0x1000)
@@ -743,6 +766,10 @@ def test_prune_dead_local_assignments_removes_overwritten_storage_aliases():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     first_var = SimStackVariable(-2, 2, base="bp", name="first", region=0x1000)
@@ -791,6 +818,10 @@ def test_prune_dead_local_assignments_removes_redundant_call_before_same_return(
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     call = structured_c.CFunctionCall(
@@ -847,6 +878,10 @@ def test_prune_dead_local_assignments_matches_normalized_call_signature():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     shared_var = SimStackVariable(-4, 2, base="bp", name="arg", region=0x1000)
@@ -902,6 +937,10 @@ def test_resolve_stack_cvar_at_offset_prefers_canonical_argument_storage():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     arg_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
@@ -1473,7 +1512,7 @@ def test_decompiler_return_compat_requires_unbranched_scalar_for_unused_caller(
 
 def test_decompiler_return_compat_classifies_only_unusable_c_results_for_neutralization():
     arch = Arch86_16()
-    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), next_idx=lambda _name: 1, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     return_type = SimTypeShort(False).with_arch(arch)
     unresolved = structured_c.CVariable(
         SimRegisterVariable(arch.registers["ax"][0], 2, name="vvar_32"),
@@ -1788,7 +1827,7 @@ def test_decompiler_return_compat_keeps_unknown_caller_reaching_ax_register_retu
 
 def test_decompiler_return_compat_keeps_unresolved_c_return_carrier_for_unknown_caller():
     arch = Arch86_16()
-    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     unresolved_var = SimRegisterVariable(0, 2, name="vvar_21")
     unresolved_retval = structured_c.CVariable(unresolved_var, variable_type=SimTypeShort(False), codegen=codegen)
     function = SimpleNamespace(
@@ -1802,7 +1841,7 @@ def test_decompiler_return_compat_keeps_unresolved_c_return_carrier_for_unknown_
 
 def test_decompiler_return_compat_keeps_unresolved_c_return_for_unused_caller():
     arch = Arch86_16()
-    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     unresolved_var = SimRegisterVariable(0, 2, name="vvar_21")
     unresolved_retval = structured_c.CVariable(unresolved_var, variable_type=SimTypeShort(False), codegen=codegen)
     function = SimpleNamespace(
@@ -1817,7 +1856,7 @@ def test_decompiler_return_compat_keeps_unresolved_c_return_for_unused_caller():
 
 def test_decompiler_return_compat_keeps_unresolved_c_return_when_reaching_ax_is_proven():
     arch = Arch86_16()
-    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     unresolved_var = SimRegisterVariable(0, 2, name="vvar_21")
     unresolved_retval = structured_c.CVariable(unresolved_var, variable_type=SimTypeShort(False), codegen=codegen)
     function = SimpleNamespace(
@@ -1953,7 +1992,7 @@ def test_decompiler_return_compat_refuses_nonvoid_prototype():
 
 
 def test_missing_terminal_ax_return_refuses_source_proven_void_over_incomplete_codegen_proto():
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     cfunc = SimpleNamespace(
         addr=0x1000,
         statements=structured_c.CStatements([], codegen=c_codegen),
@@ -1972,7 +2011,7 @@ def test_missing_terminal_ax_return_refuses_source_proven_void_over_incomplete_c
 
 
 def test_ast_void_return_prune_preserves_call_side_effects_and_drops_values():
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     call = structured_c.CFunctionCall("Sleep", None, [], codegen=c_codegen)
     root = structured_c.CStatements(
         [
@@ -2008,7 +2047,7 @@ def test_void_empty_return_guard_prune_requires_surplus_over_real_jcc_budget(mon
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=Arch86_16()),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     real_cond = structured_c.CVariable(
         SimRegisterVariable(0x10, 2, name="real_cond"),
         variable_type=SimTypeShort(False),
@@ -2089,7 +2128,7 @@ def test_void_empty_return_guard_prune_requires_surplus_over_real_jcc_budget(mon
 
 
 def test_void_empty_return_guard_void_evidence_from_structured_prototype():
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     codegen = SimpleNamespace(
         cfunc=SimpleNamespace(
             addr=0x1000,
@@ -2111,7 +2150,7 @@ def test_void_empty_return_guard_prunes_surplus_non_jcc_noop_if(monkeypatch):
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=Arch86_16()),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     real_cond = structured_c.CVariable(
         SimRegisterVariable(0x10, 2, name="real_cond"),
         variable_type=SimTypeShort(False),
@@ -2185,7 +2224,7 @@ def test_void_empty_return_guard_collapses_identical_assignment_arms(monkeypatch
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=Arch86_16()),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     real_cond = structured_c.CVariable(
         SimRegisterVariable(0x10, 2, name="real_cond"),
         variable_type=SimTypeShort(False),
@@ -2279,7 +2318,7 @@ def test_empty_return_branch_refuses_ordered_value_for_non_jcc_condition_tag(mon
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=Arch86_16()),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     real_cond = structured_c.CVariable(
         SimRegisterVariable(0x10, 2, name="real_cond"),
         variable_type=SimTypeShort(False),
@@ -2357,7 +2396,7 @@ def test_decompiler_return_compat_infers_c_return_value_from_terminal_ax_stack_l
         graph=_FakeGraph(block),
         info={"x86_16_annotations": {"stack_vars": {-4: {"name": "mask"}}}},
     )
-    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), _func=function, next_idx=lambda _name: 1)
+    codegen = SimpleNamespace(project=SimpleNamespace(arch=arch), _func=function, next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     mask_var = SimStackVariable(-4, 2, base="bp", name="mask", region=0x1000)
     mask_cvar = structured_c.CVariable(mask_var, variable_type=SimTypeShort(False), codegen=codegen)
     codegen.cfunc = SimpleNamespace(variables_in_use={mask_var: mask_cvar}, unified_local_vars={})
@@ -2371,7 +2410,7 @@ def test_decompiler_return_compat_infers_c_return_value_from_terminal_ax_stack_l
 def test_terminal_stack_arg_expr_does_not_create_fake_arg_for_positive_bp_offset_without_evidence():
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     codegen.cfunc = SimpleNamespace(
         addr=0x1000,
         arg_list=(),
@@ -2393,7 +2432,7 @@ def test_terminal_stack_arg_expr_does_not_create_fake_arg_for_positive_bp_offset
 def test_terminal_stack_arg_expr_reuses_existing_stack_slot_for_positive_offset():
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     local_var = SimStackVariable(6, 2, base="bp", name="v_6", region=0x1000)
     local_cvar = structured_c.CVariable(local_var, variable_type=SimTypeShort(False), codegen=codegen)
     codegen.cfunc = SimpleNamespace(
@@ -2414,7 +2453,7 @@ def test_terminal_stack_arg_expr_reuses_existing_stack_slot_for_positive_offset(
 def test_terminal_stack_arg_expr_uses_prototype_arg_offsets():
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     proto = SimTypeFunction(
         [SimTypeShort(False), SimTypeShort(False)], SimTypeShort(False), arg_names=["a", "b"]
     ).with_arch(arch)
@@ -2439,7 +2478,7 @@ def test_terminal_stack_arg_expr_uses_prototype_arg_offsets():
 def test_terminal_stack_arg_expr_applies_prototype_name_to_existing_stack_slot():
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     arg_var = SimStackVariable(4, 2, base="bp", name="arg_4", region=0x1000)
     arg_cvar = structured_c.CVariable(arg_var, variable_type=SimTypeShort(False), codegen=codegen)
     proto = SimTypeFunction([SimTypeShort(False)], SimTypeShort(False), arg_names=["iTop"]).with_arch(arch)
@@ -2462,7 +2501,7 @@ def test_terminal_stack_arg_expr_applies_prototype_name_to_existing_stack_slot()
 def test_missing_terminal_ax_return_replaces_segmented_artifact_with_direct_global_load():
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     seg = structured_c.CVariable(
         SimRegisterVariable(20, 2, name="ds"),
         variable_type=SimTypeShort(False),
@@ -2529,7 +2568,7 @@ def test_missing_terminal_ax_return_replaces_segmented_artifact_with_direct_glob
 def test_missing_terminal_ax_return_materializes_direct_global_add_return():
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     seg = structured_c.CVariable(
         SimRegisterVariable(20, 2, name="ds"),
         variable_type=SimTypeShort(False),
@@ -2610,7 +2649,7 @@ def test_missing_terminal_ax_return_materializes_direct_global_add_return():
 def test_missing_terminal_ax_return_replaces_artifact_with_ax_byte_pair_from_binary_evidence():
     arch = Arch86_16()
     project = SimpleNamespace(arch=arch)
-    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(project=project, next_idx=lambda _name: 1, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     a_arg = structured_c.CVariable(
         SimStackVariable(4, 2, base="bp", name="a", region=0x1000),
         variable_type=SimTypeChar(True),
@@ -2706,8 +2745,8 @@ def test_decompiler_return_compat_uses_latest_ail_insn_when_c_return_has_no_ail_
     block = SimpleNamespace(statements=[assignment, epilogue])
     function = SimpleNamespace(addr=0x1000, graph=None, info={})
     codegen = SimpleNamespace(
-        project=SimpleNamespace(arch=arch), _func=function, ail_graph=_FakeGraph(block), next_idx=lambda _name: 1
-    )
+        project=SimpleNamespace(arch=arch), _func=function, ail_graph=_FakeGraph(block), next_idx=lambda _name: 1, 
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     mask_var = SimStackVariable(-4, 2, base="bp", name="mask", region=0x1000)
     mask_cvar = structured_c.CVariable(mask_var, variable_type=SimTypeShort(False), codegen=codegen)
     codegen.cfunc = SimpleNamespace(variables_in_use={mask_var: mask_cvar}, unified_local_vars={})
@@ -2727,6 +2766,10 @@ def test_duplicate_word_increment_shift_expr_collapses_to_word_increment():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     source_var = SimStackVariable(4, 2, base="bp", name="s_3", region=0x1000)
@@ -2788,6 +2831,10 @@ def test_duplicate_word_increment_shift_expr_rejects_mismatched_storage_aliases(
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     left_var = SimStackVariable(4, 2, base="bp", name="left", region=0x1000)
@@ -2848,6 +2895,10 @@ def test_adjacent_byte_pair_alias_seed_widens_into_one_word():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     low_tmp_var = SimStackVariable(6, 1, base="bp", name="ir_3", region=0x1000)
@@ -2944,6 +2995,10 @@ def test_adjacent_byte_pair_alias_seed_preserves_dereferenced_source_evidence():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     low_tmp_var = SimStackVariable(6, 1, base="bp", name="ir_3", region=0x1000)
@@ -3003,6 +3058,10 @@ def test_linear_recurrence_keeps_dereference_based_byte_pair_aliases():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     low_tmp_var = SimRegisterVariable(10, 1, name="ir_3")
@@ -3110,6 +3169,10 @@ def test_linear_recurrence_preserves_stack_byte_pair_evidence_for_assignments_an
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     base_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
@@ -3180,6 +3243,10 @@ def test_linear_recurrence_refuses_to_linearize_loaded_byte_value_back_into_ds_a
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     ds_offset, ds_size = codegen.project.arch.registers["ds"]
@@ -3263,6 +3330,10 @@ def test_structured_simplifier_preserves_adjacent_ds_byte_loads_and_word_increme
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     ds_offset, ds_size = codegen.project.arch.registers["ds"]
@@ -3368,6 +3439,10 @@ def test_structured_simplifier_refuses_bare_word_global_promotion_for_adjacent_m
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     low_global = structured_c.CVariable(
@@ -3432,6 +3507,10 @@ def test_structured_simplifier_keeps_dereference_backed_temp_widening_honest():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     ds_offset, ds_size = codegen.project.arch.registers["ds"]
@@ -3538,6 +3617,10 @@ def test_structured_simplifier_does_not_rewrite_inside_dereference_address_subtr
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     ds_offset, ds_size = codegen.project.arch.registers["ds"]
@@ -3641,6 +3724,10 @@ def test_linear_recurrence_assignment_rewrite_refuses_non_dereference_algebraic_
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     base_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
@@ -3694,6 +3781,10 @@ def test_linear_recurrence_condition_rewrite_refuses_non_dereference_algebraic_s
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     base_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
@@ -3748,6 +3839,10 @@ def test_linear_recurrence_tolerates_self_referential_condition_nodes():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     temp_var = SimRegisterVariable(10, 2, name="ir_7")
@@ -3785,6 +3880,10 @@ def test_canonicalize_stack_cvar_expr_prefers_annotated_slot():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     arg_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
@@ -3824,6 +3923,10 @@ def test_canonicalize_stack_cvars_skips_invalid_assignment_lhs_forms():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     slot_var = SimStackVariable(4, 2, base="bp", name="a", region=0x1000)
@@ -3870,6 +3973,10 @@ def test_canonicalize_stack_cvars_keeps_simple_lvalue_canonicalization():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     arg_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
@@ -3907,6 +4014,10 @@ def test_canonicalize_stack_cvar_expr_rewrites_indexed_stack_reference_to_exact_
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     base_var = SimStackVariable(-6, 1, base="bp", name="s_6", region=0x1000)
@@ -3949,6 +4060,10 @@ def test_canonicalize_stack_cvar_expr_collapses_deref_of_reference_to_slot():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     slot_var = SimStackVariable(0, 2, base="bp", name="goal", region=0x1000)
@@ -3976,6 +4091,10 @@ def test_canonicalize_stack_cvar_expr_uses_stack_local_pointer_alias_for_indexed
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     alias_var = SimStackVariable(-2, 2, base="bp", name="s_2", region=0x1000)
@@ -4035,6 +4154,10 @@ def test_canonicalize_stack_cvar_expr_uses_vvar_pointer_alias_for_direct_indexed
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     base_var = SimStackVariable(-8, 1, base="bp", name="s_8", region=0x1000)
@@ -4089,6 +4212,10 @@ def test_canonicalize_stack_cvar_expr_rewrites_ss_linear_deref_from_vvar_carrier
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     ss_off, ss_size = codegen.project.arch.registers["ss"]
@@ -4159,6 +4286,10 @@ def test_canonicalize_stack_cvar_expr_rewrites_plain_deref_from_vvar_carrier():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     carrier_var = SimRegisterVariable(0x20, 2, name="vvar_11")
@@ -4215,6 +4346,10 @@ def test_canonicalize_stack_cvar_expr_rewrites_indexed_stack_base_fake_variable_
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     target_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x1000)
@@ -4252,6 +4387,10 @@ def test_canonicalize_stack_cvar_expr_infers_bare_stack_base_bias_from_bp_slots(
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     i_var = SimStackVariable(-4, 2, base="bp", name="i", region=0x1000)
@@ -4302,6 +4441,10 @@ def test_canonicalize_stack_cvar_expr_rewrites_deref_from_stack_base_fake_variab
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     target_var = SimStackVariable(-2, 2, base="bp", name="i", region=0x1000)
@@ -4339,6 +4482,10 @@ def test_canonicalize_stack_cvar_expr_rewrites_ss_linear_deref_from_stack_base_f
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     ss_off, ss_size = codegen.project.arch.registers["ss"]
@@ -4389,6 +4536,10 @@ def test_canonicalize_stack_cvar_expr_rewrites_ss_linear_deref_from_dirty_vvar_s
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     ss_off, ss_size = codegen.project.arch.registers["ss"]
@@ -4451,6 +4602,10 @@ def test_canonicalize_stack_cvar_expr_rewrites_arithmetic_from_dirty_vvar_stack_
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     ss_off, ss_size = codegen.project.arch.registers["ss"]
@@ -4505,6 +4660,10 @@ def test_canonicalize_stack_cvar_expr_refuses_dirty_vvar_assignment_cycle():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     var20 = SimRegisterVariable(20, 2, name="vvar_20")
@@ -4546,6 +4705,10 @@ def test_canonicalize_stack_cvar_expr_refuses_dirty_vvar_depth_explosion():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     var20 = SimRegisterVariable(20, 2, name="vvar_20")
@@ -4580,6 +4743,10 @@ def test_materialize_missing_stack_local_declarations_adds_live_stack_slots():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     arg_var = SimStackVariable(2, 2, base="bp", name="arg", region=0x1000)
@@ -4615,6 +4782,10 @@ def test_materialize_missing_stack_local_declarations_syncs_live_stack_name_to_e
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     decl_var = SimStackVariable(-4, 2, base="bp", name="local_4", region=0x1000)
@@ -4659,6 +4830,10 @@ def test_materialize_missing_stack_local_declarations_skips_arg_slot_aliases():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     arg_var = SimStackVariable(2, 2, base="bp", name="arg", region=0x1000)
@@ -4693,6 +4868,10 @@ def test_materialize_missing_stack_local_declarations_normalizes_ast_only_negati
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     leaked_local_var = SimStackVariable(-8, 2, base="bp", name="arg_6", region=0x1000)
@@ -4728,6 +4907,10 @@ def test_materialize_missing_stack_local_declarations_keeps_ast_only_arg_slot_as
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     arg_var = SimStackVariable(4, 2, base="bp", name="arg_4", region=0x1000)
@@ -4763,6 +4946,10 @@ def test_normalize_stack_variable_identifiers_declares_ast_only_generic_local():
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     leaked_local_var = SimStackVariable(-8, 2, base="bp", name="arg_6", region=0x1000)
@@ -4793,7 +4980,7 @@ def test_normalize_stack_variable_identifiers_declares_ast_only_generic_local():
 
 def test_normalize_stack_variable_identifiers_preserves_annotated_stack_local_name():
     class _Functions:
-        def function(self, *, addr, create=False):  # noqa: ARG002
+        def function(self, *, addr, create=False):
             assert addr == 0x1000
             return SimpleNamespace(info={"x86_16_annotations": {"stack_vars": {-4: {"name": "i"}}}})
 
@@ -4806,6 +4993,10 @@ def test_normalize_stack_variable_identifiers_preserves_annotated_stack_local_na
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     local_var = SimStackVariable(-4, 2, base="bp", name="local_4", region=0x1000)
@@ -4841,6 +5032,10 @@ def test_materialize_missing_stack_local_declarations_converts_stack_bp_placehol
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _FakeCodegen()
     placeholder_var = SimRegisterVariable(0, 2, name="<0x1000[is_1]|Stack bp-0x6, 1 B>")
@@ -4917,7 +5112,7 @@ def test_tiny_wrapper_staging_locals_are_pruned_structurally():
         cfunc=SimpleNamespace(addr=0x1000, statements=None, variables_in_use={}, unified_local_vars={}),
         project=SimpleNamespace(arch=decompile.Arch86_16()),
         next_idx=lambda _name: 1,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
     source_value = decompile.structured_c.CVariable(
         decompile.SimStackVariable(4, 2, base="bp", name="path", region=0),

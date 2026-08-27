@@ -11,7 +11,7 @@ names, rendered assembly, or C shape.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Protocol, cast
 
 from ..ir.core import IRAddress, IRFunctionArtifact, IRInstr, IRValue, MemSpace
@@ -42,7 +42,7 @@ class _CodegenBoundary8616(Protocol):
     _inertia_segment_stack_restore_artifact: SegmentStackRestoreArtifact8616
 
 
-class SegmentStackRestoreVerdict8616(str, Enum):
+class SegmentStackRestoreVerdict8616(StrEnum):
     """Proof verdict for one stack-composed segment-register write."""
 
     PROVEN = "proven"
@@ -231,7 +231,7 @@ def _solve_stack_states(
     blocks_by_addr = {block.addr: block for block in artifact.blocks}
     predecessors = _predecessor_map(artifact)
     unknown = _SegmentStackAliasState8616(None)
-    exit_states = {addr: unknown for addr in blocks_by_addr}
+    exit_states = dict.fromkeys(blocks_by_addr, unknown)
     changed = True
     while changed:
         changed = False
@@ -268,10 +268,10 @@ def build_x86_16_segment_stack_restore_artifact(artifact: IRFunctionArtifact) ->
             block.addr,
             block.instrs,
             _join_stack_states(
-                (
+                
                     ((_SegmentStackAliasState8616(0),) if block.addr == artifact.function_addr else ())
                     + tuple(exit_states[pred] for pred in predecessors[block.addr])
-                )
+                
             ),
         )[0]
     )
@@ -305,7 +305,7 @@ def build_x86_16_segment_stack_restore_artifact(artifact: IRFunctionArtifact) ->
     )
 
 
-def apply_x86_16_segment_stack_restore_artifact(project: object, codegen: object) -> bool:  # noqa: ARG001
+def apply_x86_16_segment_stack_restore_artifact(project: object, codegen: object) -> bool:
     """Attach Alias-proved segment stack restoration before segment-state transfer."""
     boundary = cast(_CodegenBoundary8616, codegen)
     try:

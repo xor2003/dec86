@@ -13,7 +13,7 @@ from angr_platforms.X86_16.widening.widening_rules import run_typed_widening_pas
 
 _ROOT = Path(__file__).resolve().parents[1] / "angr_platforms" / "X86_16"
 _OWNING_LAYERS = ("semantics", "alias", "widening", "structuring", "lowering")
-_ALL_GUARDED_LAYERS = _OWNING_LAYERS + ("postprocess",)
+_ALL_GUARDED_LAYERS = (*_OWNING_LAYERS, "postprocess")
 
 
 def _iter_layer_py_files(layer: str):
@@ -109,7 +109,7 @@ def test_layer_modules_do_not_import_cli_modules() -> None:
         for path in _iter_layer_py_files(layer):
             for target in _import_targets(path):
                 if target == "inertia_decompiler.cli" or target.startswith("inertia_decompiler.cli_"):
-                    offenders.append(f"{path}: {target}")
+                    offenders.append(f"{path}: {target}")  # noqa: PERF401
     assert offenders == []
 
 
@@ -121,7 +121,7 @@ def test_owning_layers_do_not_import_postprocess_layer() -> None:
                 if target == "angr_platforms.X86_16.postprocess" or target.startswith(
                     "angr_platforms.X86_16.postprocess."
                 ):
-                    offenders.append(f"{path}: {target}")
+                    offenders.append(f"{path}: {target}")  # noqa: PERF401
     assert offenders == []
 
 

@@ -11,6 +11,7 @@ Do not join values from rendered text, cosmetic shape, postprocess, or CLI/repor
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Protocol, cast
 
 from ..alias.carry_borrow_destinations import (
@@ -53,7 +54,7 @@ class CarryBorrowWideningPipeline8616:
     @property
     def complete(self) -> bool:
         """Return whether every owned projection has closed accounting."""
-        return (
+        return bool(
             self.semantics.complete
             and self.aliases.complete
             and self.widening.complete
@@ -79,16 +80,43 @@ class _CarryBorrowCodegenBoundary8616(Protocol):
     _inertia_carry_borrow_widening_pipeline_8616: CarryBorrowWideningPipeline8616
 
 
+class CarryBorrowProjection8616(StrEnum):
+    """Name one closed-loop edge in the carry/borrow pipeline."""
+
+    SEMANTICS_TO_ALIAS = "semantics_to_alias"
+    ALIAS_TO_WIDENING = "alias_to_widening"
+    DESTINATION_ALIAS_TO_WIDENING = "destination_alias_to_widening"
+
+
 def _require_materialization_8616(
     *,
     classified_fact_count: int,
     materialized_count: int,
     layer: str,
+    projection: CarryBorrowProjection8616,
+    failure_contexts: tuple[tuple[StrEnum, StrEnum | None], ...] = (),
 ) -> None:
+    """Fail with the exact projection and counts when classified facts vanish."""
     if classified_fact_count > 0 and materialized_count == 0:
+        reasons = (
+            ",".join(
+                f"{reason.value}@{operand.value if operand is not None else 'projection'}"
+                for reason, operand in failure_contexts
+            )
+            or "none"
+        )
         raise PipelineHardError(
-            "carry/borrow facts were classified but none reached the next projection",
+            "carry/borrow facts were classified but none reached "
+            f"projection={projection.value} "
+            f"classified={classified_fact_count} materialized={materialized_count} "
+            f"failures={reasons}",
             layer=layer,
+            details={
+                "projection": projection,
+                "classified_fact_count": classified_fact_count,
+                "materialized_count": materialized_count,
+                "failure_contexts": failure_contexts,
+            },
         )
 
 
@@ -120,6 +148,12 @@ def build_carry_borrow_widening_pipeline_8616(
         classified_fact_count=semantics.stats.classified_fact_count,
         materialized_count=aliases.stats.materialized_count,
         layer="alias",
+        projection=CarryBorrowProjection8616.SEMANTICS_TO_ALIAS,
+        failure_contexts=tuple(
+            (item.failure, item.failure_operand)
+            for item in aliases.resolutions
+            if item.failure is not None
+        ),
     )
     widening = widen_carry_borrow_values_8616(aliases)
     if not widening.complete:
@@ -131,6 +165,12 @@ def build_carry_borrow_widening_pipeline_8616(
         classified_fact_count=aliases.stats.classified_fact_count,
         materialized_count=widening.stats.materialized_count,
         layer="widening",
+        projection=CarryBorrowProjection8616.ALIAS_TO_WIDENING,
+        failure_contexts=tuple(
+            (item.failure, None)
+            for item in widening.resolutions
+            if item.failure is not None
+        ),
     )
     destination_aliases = project_carry_borrow_destination_aliases_8616(
         function_ssa,
@@ -152,6 +192,12 @@ def build_carry_borrow_widening_pipeline_8616(
         classified_fact_count=destination_aliases.stats.classified_fact_count,
         materialized_count=storage_widening.stats.materialized_count,
         layer="widening",
+        projection=CarryBorrowProjection8616.DESTINATION_ALIAS_TO_WIDENING,
+        failure_contexts=tuple(
+            (item.failure, None)
+            for item in storage_widening.resolutions
+            if item.failure is not None
+        ),
     )
     artifact = CarryBorrowWideningPipeline8616(
         source_ssa=function_ssa,
@@ -210,6 +256,7 @@ def apply_carry_borrow_widening_pipeline_8616(
 
 
 __all__ = [
+    "CarryBorrowProjection8616",
     "CarryBorrowWideningPipeline8616",
     "apply_carry_borrow_widening_pipeline_8616",
     "build_carry_borrow_widening_pipeline_8616",

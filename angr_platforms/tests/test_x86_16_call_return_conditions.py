@@ -7,17 +7,20 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CDirtyExpression,
     CFunctionCall,
     CIfElse,
     CReturn,
     CStatements,
     CVariable,
 )
+from angr.rustylib.ailment import Tags
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.callsite_summary import (
     CallsiteReturnUseKind8616,
     CallsiteSummary8616,
+    bind_structured_callsite_identity_8616,
     structured_callsite_addr_8616,
 )
 from angr_platforms.X86_16.decompiler_postprocess_calls import _callsite_materialization_signature_8616
@@ -54,6 +57,7 @@ def _condition() -> ConditionIR:
         rhs=IRValue(MemSpace.CONST, name="const", const=0, size=2),
         src_insn=0x100AC,
         block_addr=0x100A6,
+        producer_insn=0x100A9,
     )
 
 
@@ -61,7 +65,14 @@ def _surface() -> tuple[SimpleNamespace, SimpleNamespace, CIfElse]:
     callee = SimpleNamespace(addr=0x10010, name="sub_10010")
     functions = SimpleNamespace(function=lambda *, addr, create: callee if addr == 0x10010 and not create else None)
     project = SimpleNamespace(arch=ArchX86(), kb=SimpleNamespace(functions=functions))
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False)
+    next_node_idx = iter(range(1, 1000))
+    next_ident_idx = iter(range(1, 1000))
+    codegen = SimpleNamespace(
+        next_ident=lambda name: f"{name}_{next(next_ident_idx)}",
+        next_node_idx=lambda: next(next_node_idx),
+        project=project,
+        cstyle_null_cmp=False,
+    )
     condition = CBinaryOp(
         "CmpNE",
         CVariable(SimRegisterVariable(8, 2), codegen=codegen),
@@ -90,6 +101,7 @@ def _stored_surface() -> tuple[SimpleNamespace, SimpleNamespace, CAssignment, CI
         return_use_kind=CallsiteReturnUseKind8616.VALUE,
         return_store_destination=("bp", -2),
         return_store_width=2,
+        return_store_instruction_addr=0x100A9,
     )
     callee = project.kb.functions.function(addr=0x10010, create=False)
     call = CFunctionCall("sub_10010", callee, [], codegen=codegen)
@@ -128,6 +140,182 @@ def test_materializes_exact_call_return_condition() -> None:
     assert codegen._inertia_call_return_condition_stats_8616.materialized_count == 1
 
 
+def test_rebinds_stale_condition_tags_from_structured_callsite_identity() -> None:
+    project, codegen, branch = _surface()
+    assert materialize_call_return_conditions_8616(project, codegen)
+    expression = branch.condition_and_nodes[0][0]
+    expression.tags = {"ins_addr": 0x9999, "vex_block_addr": 0x9990}
+
+    assert not materialize_call_return_conditions_8616(project, codegen)
+
+    assert expression.tags["ins_addr"] == 0x100AC
+    assert expression.tags["vex_block_addr"] == 0x100A6
+    assert expression.tags["condition_producer_insn"] == 0x100A9
+
+
+def test_reuses_adjacent_call_assignment_for_return_condition() -> None:
+    """Keep one side-effecting call when its exact AX carrier is adjacent."""
+    project, codegen, branch = _surface()
+    summary = _summary()
+    callee = project.kb.functions.function(addr=summary.target_addr, create=False)
+    call = CFunctionCall("sub_10010", callee, [], codegen=codegen)
+    bind_structured_callsite_identity_8616(call, summary)
+    assignment = CAssignment(
+        CVariable(SimRegisterVariable(8, 2), codegen=codegen),
+        call,
+        codegen=codegen,
+        tags={"ins_addr": _condition().producer_insn},
+    )
+    codegen.cfunc.statements = CStatements([assignment, branch], codegen=codegen)
+    assert materialize_call_return_conditions_8616(project, codegen)
+
+    assert tuple(codegen.cfunc.statements.statements) == (branch,)
+    assert branch.condition_and_nodes[0][0].lhs is call
+    assert structured_callsite_addr_8616(call) == summary.callsite_addr
+    assert codegen._inertia_callsite_summaries[id(call)] == summary
+    stats = codegen._inertia_call_return_condition_stats_8616
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 0
+
+
+def test_consumes_adjacent_assignment_when_condition_reuses_same_call() -> None:
+    """Count one shared AST call occurrence at each rendered evaluation site."""
+    project, codegen, branch = _surface()
+    summary = _summary()
+    callee = project.kb.functions.function(addr=summary.target_addr, create=False)
+    call = CFunctionCall("sub_10010", callee, [], codegen=codegen)
+    bind_structured_callsite_identity_8616(call, summary)
+    assignment = CAssignment(
+        CVariable(SimRegisterVariable(8, 2), codegen=codegen),
+        call,
+        codegen=codegen,
+        tags={"ins_addr": _condition().producer_insn},
+    )
+    branch.condition_and_nodes[0][0].lhs = call
+    codegen.cfunc.statements = CStatements([assignment, branch], codegen=codegen)
+
+    assert materialize_call_return_conditions_8616(project, codegen)
+
+    assert tuple(codegen.cfunc.statements.statements) == (branch,)
+    assert branch.condition_and_nodes[0][0].lhs is call
+    stats = codegen._inertia_call_return_condition_stats_8616
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 0
+
+
+def test_consumes_adjacent_assignment_before_unbound_same_target_call() -> None:
+    """Replace one unbound condition clone with its exact machine call."""
+    project, codegen, branch = _surface()
+    summary = _summary()
+    callee = project.kb.functions.function(addr=summary.target_addr, create=False)
+    exact_call = CFunctionCall("sub_10010", callee, [], codegen=codegen)
+    bind_structured_callsite_identity_8616(exact_call, summary)
+    assignment = CAssignment(
+        CVariable(SimRegisterVariable(8, 2), codegen=codegen),
+        exact_call,
+        codegen=codegen,
+        tags={"ins_addr": _condition().producer_insn},
+    )
+    unbound_call = CFunctionCall("sub_10010", callee, [], codegen=codegen)
+    branch.condition_and_nodes[0][0].lhs = unbound_call
+    codegen.cfunc.statements = CStatements([assignment, branch], codegen=codegen)
+
+    assert materialize_call_return_conditions_8616(project, codegen)
+
+    assert tuple(codegen.cfunc.statements.statements) == (branch,)
+    assert branch.condition_and_nodes[0][0].lhs is exact_call
+    assert branch.condition_and_nodes[0][0].lhs is not unbound_call
+    stats = codegen._inertia_call_return_condition_stats_8616
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 0
+
+
+def test_consumes_adjacent_compare_tagged_call_assignment_clone() -> None:
+    """Collapse the producer and compare clones into one condition evaluation."""
+    project, codegen, branch = _surface()
+    summary = _summary()
+    callee = project.kb.functions.function(addr=summary.target_addr, create=False)
+    exact_call = CFunctionCall("sub_10010", callee, [], codegen=codegen)
+    compare_call = CFunctionCall("sub_10010", callee, [], codegen=codegen)
+    bind_structured_callsite_identity_8616(exact_call, summary)
+    bind_structured_callsite_identity_8616(compare_call, summary)
+    producer = CAssignment(
+        CVariable(SimRegisterVariable(8, 2), codegen=codegen),
+        exact_call,
+        codegen=codegen,
+        tags={"ins_addr": _condition().producer_insn},
+    )
+    compare_clone = CAssignment(
+        CVariable(SimRegisterVariable(8, 2), codegen=codegen),
+        compare_call,
+        codegen=codegen,
+        tags={"ins_addr": _condition().src_insn},
+    )
+    unbound_call = CFunctionCall("sub_10010", callee, [], codegen=codegen)
+    branch.condition_and_nodes[0][0].lhs = unbound_call
+    assignment_group = CStatements([producer, compare_clone], codegen=codegen)
+    codegen.cfunc.statements = CStatements([assignment_group, branch], codegen=codegen)
+
+    assert materialize_call_return_conditions_8616(project, codegen)
+
+    assert tuple(assignment_group.statements) == ()
+    assert branch.condition_and_nodes[0][0].lhs is exact_call
+    assert branch.condition_and_nodes[0][0].lhs is not compare_call
+    assert branch.condition_and_nodes[0][0].lhs is not unbound_call
+    stats = codegen._inertia_call_return_condition_stats_8616
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert stats.failure_count == 0
+
+
+def test_refuses_nonadjacent_bound_call_without_duplicating_it() -> None:
+    """Do not inline an existing exact call across an intervening statement."""
+    project, codegen, branch = _surface()
+    summary = _summary()
+    callee = project.kb.functions.function(addr=summary.target_addr, create=False)
+    call = CFunctionCall("sub_10010", callee, [], codegen=codegen)
+    bind_structured_callsite_identity_8616(call, summary)
+    assignment = CAssignment(
+        CVariable(SimRegisterVariable(8, 2), codegen=codegen),
+        call,
+        codegen=codegen,
+        tags={"ins_addr": _condition().producer_insn},
+    )
+    barrier = CAssignment(
+        CVariable(SimRegisterVariable(20, 2), codegen=codegen),
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements([assignment, barrier, branch], codegen=codegen)
+    original_condition_lhs = branch.condition_and_nodes[0][0].lhs
+
+    assert not materialize_call_return_conditions_8616(project, codegen)
+
+    assert assignment.rhs is call
+    assert branch.condition_and_nodes[0][0].lhs is original_condition_lhs
+    assert not isinstance(original_condition_lhs, CFunctionCall)
+    stats = codegen._inertia_call_return_condition_stats_8616
+    assert stats.classified_fact_count == 0
+    assert stats.materialized_count == 0
+    assert stats.failure_count == 1
+
+
+def test_materializes_condition_with_rust_backed_tags() -> None:
+    project, codegen, branch = _surface()
+    condition = branch.condition_and_nodes[0][0]
+    condition.tags = Tags(condition.tags)
+
+    assert materialize_call_return_conditions_8616(project, codegen)
+
+    expression = branch.condition_and_nodes[0][0]
+    assert isinstance(expression, CBinaryOp)
+    assert isinstance(expression.lhs, CFunctionCall)
+    assert structured_callsite_addr_8616(expression.lhs) == 0x100A3
+
+
 def test_materializes_value_return_store_before_exact_condition() -> None:
     """Bind the call assignment, condition, and return to the proven BP local."""
     project, codegen, assignment, branch, returned = _stored_surface()
@@ -143,6 +331,140 @@ def test_materializes_value_return_store_before_exact_condition() -> None:
     call = assignment.rhs
     assert structured_callsite_addr_8616(call) == 0x100A3
     assert codegen._inertia_callsite_summaries[id(call)].return_store_destination == ("bp", -2)
+
+
+def test_binds_adjacent_dirty_call_assignment_to_proven_return_store() -> None:
+    """Replace unrelated dirty carriers only from exact call/store evidence."""
+    project, codegen, assignment, branch, returned = _stored_surface()
+    call = assignment.rhs
+    destination = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="result"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    stored_assignment = CAssignment(
+        destination,
+        CDirtyExpression(SimpleNamespace(varid=596), codegen=codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x100A9},
+    )
+    setup = CAssignment(
+        CDirtyExpression(SimpleNamespace(varid=129), codegen=codegen),
+        CConstant(4, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    dirty_call_assignment = CAssignment(
+        CDirtyExpression(SimpleNamespace(varid=130), codegen=codegen),
+        call,
+        codegen=codegen,
+        tags={"ins_addr": 0x100A3},
+    )
+    call_group = CStatements([setup, dirty_call_assignment], codegen=codegen)
+    store_group = CStatements([stored_assignment], codegen=codegen)
+    codegen.cfunc.statements = CStatements(
+        [call_group, store_group, branch, returned],
+        codegen=codegen,
+    )
+
+    assert materialize_call_return_conditions_8616(project, codegen)
+
+    statements = tuple(codegen.cfunc.statements.statements)
+    assert statements == (call_group, store_group, branch, returned)
+    assert tuple(call_group.statements) == (setup,)
+    assert stored_assignment.rhs is call
+    condition = branch.condition_and_nodes[0][0]
+    assert condition.lhs is destination
+    assert returned.retval is destination
+
+
+def test_binds_source_tagged_call_result_bridge_and_reused_carriers() -> None:
+    """Consume the current angr call/store bridge without duplicating the call."""
+    project, codegen, assignment, branch, returned = _stored_surface()
+    call = assignment.rhs
+    source = CDirtyExpression(SimpleNamespace(varid=434), codegen=codegen)
+    assignment.lhs = source
+    assignment.tags = Tags(
+        {"ins_addr": 0x100A9, "vex_block_addr": 0x100A6, "vex_stmt_idx": 73}
+    )
+    destination = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="result"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    store = CAssignment(
+        destination,
+        CDirtyExpression(SimpleNamespace(varid=434), codegen=codegen),
+        codegen=codegen,
+        tags=Tags({"ins_addr": 0x100A9, "vex_block_addr": 0x100A6, "vex_stmt_idx": 81}),
+    )
+    aliases = [
+        CAssignment(
+            CDirtyExpression(SimpleNamespace(varid=varid), codegen=codegen),
+            call,
+            codegen=codegen,
+            tags=Tags({"ins_addr": 0x100AC, "vex_block_addr": 0x100A6, "vex_stmt_idx": stmt_idx}),
+        )
+        for varid, stmt_idx in ((435, 83), (436, 84))
+    ]
+    codegen.cfunc.statements = CStatements(
+        [assignment, store, *aliases, branch, returned],
+        codegen=codegen,
+    )
+
+    assert materialize_call_return_conditions_8616(project, codegen)
+
+    assert assignment not in codegen.cfunc.statements.statements
+    assert store.rhs is call
+    assert all(alias.rhs is destination for alias in aliases)
+    assert branch.condition_and_nodes[0][0].lhs is destination
+    assert returned.retval is destination
+    stats = codegen._inertia_call_return_condition_stats_8616
+    assert stats.store_bridge_materialized_count == 1
+    assert stats.store_bridge_reused_carrier_count == 2
+    assert stats.store_bridge_return_registers == ("ax",)
+
+    assert not materialize_call_return_conditions_8616(project, codegen)
+    replay_stats = codegen._inertia_call_return_condition_stats_8616
+    assert replay_stats.store_bridge_materialized_count == 1
+    assert replay_stats.store_bridge_reused_carrier_count == 2
+    assert replay_stats.store_bridge_return_registers == ("ax",)
+    assert structured_callsite_addr_8616(call) == 0x100A3
+
+
+def test_refuses_nonadjacent_standalone_call_return_store() -> None:
+    """Keep a separated call when another statement breaks exact placement."""
+    project, codegen, assignment, branch, returned = _stored_surface()
+    call = assignment.rhs
+    destination = CVariable(
+        SimStackVariable(-2, 2, base="bp", name="result"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    stored_assignment = CAssignment(
+        destination,
+        CVariable(SimRegisterVariable(20, 2), codegen=codegen),
+        codegen=codegen,
+    )
+    barrier = CAssignment(
+        CVariable(SimStackVariable(-4, 2, base="bp"), codegen=codegen),
+        CConstant(1, SimTypeShort(False), codegen=codegen),
+        codegen=codegen,
+    )
+    codegen.cfunc.statements = CStatements(
+        [call, barrier, stored_assignment, branch, returned],
+        codegen=codegen,
+    )
+
+    assert not materialize_call_return_conditions_8616(project, codegen)
+
+    assert tuple(codegen.cfunc.statements.statements) == (
+        call,
+        barrier,
+        stored_assignment,
+        branch,
+        returned,
+    )
+    assert codegen._inertia_call_return_condition_stats_8616.failure_count == 1
 
 
 def test_value_return_store_materialization_is_idempotent() -> None:
@@ -258,6 +580,37 @@ def test_callsite_cache_signature_detects_lost_arguments() -> None:
     call.args = []
 
     assert _callsite_materialization_signature_8616(codegen) != materialized_signature
+
+
+def test_callsite_cache_signature_orders_optional_targets_and_ignores_clone_identity() -> None:
+    project, codegen, _branch = _surface()
+    callee = project.kb.functions.function(addr=0x10010, create=False)
+    first = CFunctionCall(
+        "sub_10010",
+        callee,
+        [CConstant(7, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+    )
+    second = CFunctionCall(
+        "sub_10010",
+        callee,
+        [CConstant(9, SimTypeShort(False), codegen=codegen)],
+        codegen=codegen,
+    )
+    codegen.cfunc = SimpleNamespace(
+        addr=0x10000,
+        statements=CStatements([first, second], codegen=codegen),
+    )
+    codegen._inertia_callsite_summaries = {
+        id(first): _summary(),
+        id(second): replace(_summary(), target_addr=None),
+    }
+
+    signature = _callsite_materialization_signature_8616(codegen)
+    first.args = [CConstant(7, SimTypeShort(False), codegen=codegen)]
+
+    assert signature is not None
+    assert _callsite_materialization_signature_8616(codegen) == signature
 
 
 def test_validation_keeps_materialized_call_with_register_backed_argument() -> None:

@@ -28,6 +28,7 @@ from .carry_borrow_contracts import (
     CarryBorrowAliasVerdict8616,
     CarryBorrowCallOutputAlias8616,
     CarryBorrowOperandAlias8616,
+    CarryBorrowOperandRole8616,
 )
 from .carry_borrow_sources import (
     register_domain_for_value_8616,
@@ -41,11 +42,15 @@ from .storage_fact_join import (
 def _refusal(
     semantics: CarryBorrowResolution8616 | None,
     failure: CarryBorrowAliasFailure8616,
+    *,
+    failure_operand: CarryBorrowOperandRole8616 | None = None,
 ) -> CarryBorrowAliasResolution8616:
+    """Retain one typed Alias refusal and its exact operand when applicable."""
     return CarryBorrowAliasResolution8616(
         semantics=semantics,
         verdict=CarryBorrowAliasVerdict8616.UNKNOWN_REFUSE,
         failure=failure,
+        failure_operand=failure_operand,
     )
 
 
@@ -157,18 +162,31 @@ def _project_link(
     if low_result_domain == high_result_domain:
         return _refusal(semantics, CarryBorrowAliasFailure8616.CARRIER_ALIAS_MISMATCH)
 
-    alias_results = tuple(
-        resolve_carry_borrow_source_alias_8616(use)
-        for use in (link.low_lhs, link.low_rhs, link.high_lhs, link.high_rhs)
+    operand_uses = (
+        (CarryBorrowOperandRole8616.LOW_LHS, link.low_lhs),
+        (CarryBorrowOperandRole8616.LOW_RHS, link.low_rhs),
+        (CarryBorrowOperandRole8616.HIGH_LHS, link.high_lhs),
+        (CarryBorrowOperandRole8616.HIGH_RHS, link.high_rhs),
     )
-    failure = next(
-        (item for item in alias_results if isinstance(item, CarryBorrowAliasFailure8616)),
+    alias_results = tuple(
+        (role, resolve_carry_borrow_source_alias_8616(use))
+        for role, use in operand_uses
+    )
+    failed_operand = next(
+        (
+            (role, item)
+            for role, item in alias_results
+            if isinstance(item, CarryBorrowAliasFailure8616)
+        ),
         None,
     )
-    if failure is not None:
-        return _refusal(semantics, failure)
+    if failed_operand is not None:
+        role, failure = failed_operand
+        return _refusal(semantics, failure, failure_operand=role)
     aliases = tuple(
-        item for item in alias_results if isinstance(item, CarryBorrowOperandAlias8616)
+        item
+        for _role, item in alias_results
+        if isinstance(item, CarryBorrowOperandAlias8616)
     )
     if len(aliases) != 4:
         return _refusal(semantics, CarryBorrowAliasFailure8616.SOURCE_DEFINITION_MISMATCH)

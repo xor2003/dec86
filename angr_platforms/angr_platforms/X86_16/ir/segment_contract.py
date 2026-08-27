@@ -12,7 +12,7 @@ effects without inferring a program memory model.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Protocol, cast
 
 from .core import (
@@ -48,21 +48,21 @@ class _SegmentContractCodegenBoundary(Protocol):
     _inertia_segment_function_contract: SegmentFunctionContract
 
 
-class SegmentFactVerdict(str, Enum):
+class SegmentFactVerdict(StrEnum):
     """Proof status for one segment contract fact."""
 
     PROVEN = "proven"
     UNKNOWN_REFUSE = "unknown_refuse"
 
 
-class SegmentAccessKind(str, Enum):
+class SegmentAccessKind(StrEnum):
     """Direction of one typed memory access."""
 
     READ = "read"
     WRITE = "write"
 
 
-class SegmentWriteKind(str, Enum):
+class SegmentWriteKind(StrEnum):
     """Classification of one explicit segment-register assignment."""
 
     ASSIGN = "assign"
@@ -339,7 +339,7 @@ def build_x86_16_segment_function_contract(
     )
 
 
-def apply_x86_16_segment_function_contract(project: object, codegen: object) -> bool:  # noqa: ARG001
+def apply_x86_16_segment_function_contract(project: object, codegen: object) -> bool:
     """Attach a function-local segment contract after typed IR state analysis."""
     boundary = cast(_SegmentContractCodegenBoundary, codegen)
     try:

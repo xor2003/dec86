@@ -69,7 +69,7 @@ def test_moves_immediate_assignment_into_cfg_proven_branch() -> None:
         next_idx=lambda _name: 1,
         cstyle_null_cmp=False,
         project=project,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     destination = CVariable(
         SimStackVariable(-6, 2, base="bp", name="changed"),
         codegen=codegen,

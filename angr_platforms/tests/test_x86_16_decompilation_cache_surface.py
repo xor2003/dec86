@@ -337,6 +337,6 @@ def test_cache_key_lock_times_out_when_another_producer_holds_it(monkeypatch, tm
     lock_path.parent.mkdir(parents=True)
     lock_path.write_text("other-process\n", encoding="ascii")
 
-    with pytest.raises(TimeoutError, match="cache key lock"):
+    with pytest.raises(TimeoutError, match="cache key lock"):  # noqa: SIM117
         with cache_module._cache_key_lock("function_decompile", key, timeout_seconds=0.1):
             raise AssertionError("lock unexpectedly acquired")

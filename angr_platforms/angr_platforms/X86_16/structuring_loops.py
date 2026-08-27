@@ -1,173 +1,103 @@
-"""Natural-loop detection helpers for region-based structuring.
+"""Adapt typed region graphs to authoritative natural-loop topology evidence.
 
 Layer: Structuring.
-Responsibility: detect natural loops and classify loop exits from typed region graphs.
-Forbidden: rewriting loop bodies, repairing generated C, or using rendered text as evidence.
-
-This module isolates loop-specific CFG reasoning from the main
-`structuring_analysis` driver so later CFG snapshot work can build on a
-smaller, typed surface.
+Responsibility: project RegionGraph identities into the deterministic topology owner.
+Forbidden: confidence scoring, independent topology acceptance, graph mutation,
+region collapse, or rendered-text inference.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
+from .structuring.natural_loop_topology import (
+    LoopTopologyStats8616,
+    LoopTopologyVerdict8616,
+    NaturalLoopTopology8616,
+    classify_natural_loop_topology_8616,
+)
 from .structuring_region import DominatorInfo, Region, RegionGraph
 
-
-@dataclass
-class NaturalLoopInfo:
-    """Information about one detected natural loop."""
-
-    header: Region
-    back_edges: list[Region]
-    body_regions: set[Region]
-    exit_edges: list[tuple[Region, Region]]
-    is_reducible: bool
-    confidence: float
-    has_single_exit: bool
+__all__ = (
+    "LoopTopologyStats8616",
+    "LoopTopologyVerdict8616",
+    "NaturalLoopTopology8616",
+    "detect_natural_loop",
+)
 
 
-@dataclass
-class LoopExitClassification:
-    """Classification of loop exits for later structured rendering."""
+@dataclass(frozen=True, slots=True)
+class _RegionIdGraph8616:
+    """Immutable integer-ID snapshot of one RegionGraph."""
 
-    loop_type: str
-    break_targets: set[Region]
-    continue_target: Optional[Region]
-    confidence: str
-    fallback_needed: bool
+    successor_map: dict[int, tuple[int, ...]]
+    predecessor_map: dict[int, tuple[int, ...]]
 
+    def successors(self, node: int) -> tuple[int, ...]:
+        """Return deterministic successor IDs for one region."""
+        return self.successor_map[node]
 
-def compute_loop_body(
-    graph: RegionGraph,
-    dominators: DominatorInfo,
-    header: Region,
-    back_edges: list[Region],
-) -> set[Region]:
-    """Compute the natural-loop body for `header`.
-
-    The body is the header plus every predecessor chain dominated by the
-    header and feeding a back-edge source.
-    """
-    body = set(back_edges)
-    body.add(header)
-
-    changed = True
-    while changed:
-        changed = False
-        for region in list(body):
-            for pred in graph.predecessors(region):
-                if pred in body:
-                    continue
-                if not dominators.dominates(header, pred):
-                    continue
-                body.add(pred)
-                changed = True
-
-    return body
+    def predecessors(self, node: int) -> tuple[int, ...]:
+        """Return deterministic predecessor IDs for one region."""
+        return self.predecessor_map[node]
 
 
-def is_well_structured_multi_exit(
-    body_regions: set[Region],
-    exit_edges: list[tuple[Region, Region]],
-) -> bool:
-    """Heuristic for reducible multi-exit loops.
+def _region_id_graph_8616(graph: RegionGraph) -> tuple[_RegionIdGraph8616, dict[int, Region]] | None:
+    """Snapshot a RegionGraph only when every node has one unique integer ID."""
+    regions = tuple(graph.nodes)
+    if any(not isinstance(region.region_id, int) for region in regions):
+        return None
+    regions_by_id = {region.region_id: region for region in regions if isinstance(region.region_id, int)}
+    if len(regions_by_id) != len(regions):
+        return None
 
-    If most exits originate from different body regions, treat the loop as a
-    structured loop-with-breaks candidate rather than an irreducible branch fan.
-    """
-    del body_regions
-    exit_sources = {src for src, _ in exit_edges}
-    unique_ratio = len(exit_sources) / max(len(exit_edges), 1)
-    return unique_ratio >= 0.5
-
-
-def compute_loop_confidence(
-    header: Region,
-    back_edges: list[Region],
-    body_regions: set[Region],
-    exit_edges: list[tuple[Region, Region]],
-    is_reducible: bool,
-) -> float:
-    """Score how likely the loop is to be a real natural loop."""
-    del header
-    score = 0.5
-
-    if len(back_edges) == 1:
-        score += 0.3
-    elif len(back_edges) <= 3:
-        score += 0.15
-
-    exit_targets = {dst for _, dst in exit_edges}
-    if len(exit_targets) == 1:
-        score += 0.2
-    elif len(exit_targets) <= 2:
-        score += 0.1
-
-    if is_reducible:
-        score += 0.1
-
-    if len(body_regions) > 50:
-        score -= 0.2
-    elif len(body_regions) > 20:
-        score -= 0.1
-
-    return min(1.0, max(0.0, score))
+    successor_map: dict[int, tuple[int, ...]] = {}
+    predecessor_map: dict[int, tuple[int, ...]] = {}
+    for region_id, region in sorted(regions_by_id.items()):
+        successors = graph.successors(region)
+        predecessors = graph.predecessors(region)
+        if any(
+            not isinstance(neighbor.region_id, int) or neighbor.region_id not in regions_by_id
+            for neighbor in (*successors, *predecessors)
+        ):
+            return None
+        successor_map[region_id] = tuple(
+            sorted({neighbor.region_id for neighbor in successors if neighbor.region_id is not None})
+        )
+        predecessor_map[region_id] = tuple(
+            sorted({neighbor.region_id for neighbor in predecessors if neighbor.region_id is not None})
+        )
+    return _RegionIdGraph8616(successor_map, predecessor_map), regions_by_id
 
 
 def detect_natural_loop(
     graph: RegionGraph,
     dominators: DominatorInfo,
     region: Region,
-) -> Optional[NaturalLoopInfo]:
-    """Detect a natural loop rooted at `region`.
+) -> NaturalLoopTopology8616 | None:
+    """Classify deterministic loop-header candidates without mutating them.
 
-    Returns a typed summary or `None` if the region is not a loop header.
+    Every direct predecessor is submitted to the authoritative classifier so
+    that abnormal entries cannot erase the latch by invalidating dominance.
+    ``None`` means that no predecessor has a loop-body path from the header.
     """
-    if region not in graph.nodes:
+    del dominators
+    if region not in graph.nodes or not isinstance(region.region_id, int):
         return None
-
-    preds = graph.predecessors(region)
-    back_edges = [pred for pred in preds if dominators.strictly_dominates(region, pred)]
-    if not back_edges:
+    snapshot = _region_id_graph_8616(graph)
+    if snapshot is None:
         return None
-
-    body_regions = compute_loop_body(graph, dominators, region, back_edges)
-    if not body_regions:
-        return None
-
-    exit_edges: list[tuple[Region, Region]] = []
-    exit_targets: set[Region] = set()
-    for body_region in body_regions:
-        for succ in graph.successors(body_region):
-            if succ in body_regions or succ == region:
-                continue
-            exit_edges.append((body_region, succ))
-            exit_targets.add(succ)
-
-    is_reducible = len(exit_targets) <= 1
-    if len(exit_targets) > 1:
-        is_reducible = is_well_structured_multi_exit(body_regions, exit_edges)
-
-    confidence = compute_loop_confidence(
-        region,
-        back_edges,
-        body_regions,
-        exit_edges,
-        is_reducible,
+    id_graph, _regions_by_id = snapshot
+    candidates = tuple(
+        classify_natural_loop_topology_8616(id_graph, region.region_id, latch_id)
+        for latch_id in id_graph.predecessors(region.region_id)
     )
-    if confidence < 0.3:
-        return None
-
-    return NaturalLoopInfo(
-        header=region,
-        back_edges=back_edges,
-        body_regions=body_regions,
-        exit_edges=exit_edges,
-        is_reducible=is_reducible,
-        confidence=confidence,
-        has_single_exit=len(exit_targets) <= 1,
+    proven = tuple(candidate for candidate in candidates if candidate.is_proven)
+    if len(proven) == 1:
+        return proven[0]
+    substantive_refusals = tuple(
+        candidate
+        for candidate in candidates
+        if candidate.refusal_reason not in {"incomplete-loop-body", "missing-latch-backedge"}
     )
+    return substantive_refusals[0] if substantive_refusals else None

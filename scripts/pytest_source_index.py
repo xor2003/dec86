@@ -279,7 +279,7 @@ class _PytestSourceVisitor(ast.NodeVisitor):
         lowered = value.lower()
         for selector in self._active_selectors:
             facts = self.facts[selector]
-            if value.startswith("--") or value.startswith("INERTIA_"):
+            if value.startswith(("--", "INERTIA_")):
                 facts.option_hints.add(value)
             if lowered.endswith(_INPUT_SUFFIXES):
                 facts.input_hints.add(value)

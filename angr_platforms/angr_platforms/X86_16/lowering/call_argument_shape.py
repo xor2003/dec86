@@ -28,7 +28,9 @@ __all__ = [
     "ProtectedCallArgument8616",
     "ProtectedCallArgumentStore8616",
     "accounted_target_prototype_shape_evidence_8616",
+    "accounted_variadic_target_shape_evidence_8616",
     "carry_forward_logical_call_argument_shape_8616",
+    "exact_call_return_pair_shape_evidence_8616",
     "exact_caller_stack_object_for_word_pair_8616",
     "exact_caller_stack_object_shape_evidence_8616",
     "reconcile_materialized_call_argument_shape_8616",
@@ -40,6 +42,7 @@ class LogicalArgumentShapeEvidenceSource8616(StrEnum):
 
     EXACT_CALLEE_ABI = "exact-callee-abi"
     ACCOUNTED_TARGET_PROTOTYPE = "accounted-target-prototype"
+    ACCOUNTED_VARIADIC_TARGET_PROTOTYPE = "accounted-variadic-target-prototype"
     EXACT_CALLER_STACK_OBJECT = "exact-caller-stack-object"
     EXACT_CALL_RETURN_PAIR = "exact-call-return-pair"
 
@@ -58,6 +61,7 @@ class LogicalArgumentShapeEvidence8616:
 
     widths: tuple[int, ...]
     source: LogicalArgumentShapeEvidenceSource8616
+    return_argument_indices: tuple[int, ...] = ()
 
 
 class CallsiteArgumentShapeDecision8616(StrEnum):
@@ -173,18 +177,49 @@ def accounted_target_prototype_shape_evidence_8616(
     )
 
 
-def _exact_call_return_pair_shape_evidence_8616(
+def accounted_variadic_target_shape_evidence_8616(
     summary: CallsiteSummary8616,
     live_widths: tuple[int, ...],
+    fixed_prototype_widths: tuple[int, ...],
 ) -> LogicalArgumentShapeEvidence8616 | None:
-    """Group an exact nested DX:AX return pair into one dword argument."""
+    """Prove a variadic live shape from its fixed prefix and complete PUSH extent."""
+    if not _valid_widths_8616(live_widths) or not _valid_widths_8616(fixed_prototype_widths):
+        return None
+    if len(live_widths) < len(fixed_prototype_widths):
+        return None
+    if live_widths[: len(fixed_prototype_widths)] != fixed_prototype_widths:
+        return None
+    physical_widths = summary.arg_widths
+    if not _valid_widths_8616(physical_widths) or len(live_widths) >= len(physical_widths):
+        return None
+    physical_total = sum(physical_widths)
+    if sum(live_widths) != physical_total:
+        return None
+    cleanup = summary.stack_cleanup
+    cleanup_accounts_for_shape = isinstance(cleanup, int) and cleanup > 0 and cleanup == physical_total
+    push_sources = summary.push_arg_sources
+    sources_account_for_shape = (
+        len(push_sources) == len(physical_widths)
+        and bool(push_sources)
+        and all(source is not None for source in push_sources)
+    )
+    if not cleanup_accounts_for_shape and not sources_account_for_shape:
+        return None
+    return LogicalArgumentShapeEvidence8616(
+        widths=live_widths,
+        source=LogicalArgumentShapeEvidenceSource8616.ACCOUNTED_VARIADIC_TARGET_PROTOTYPE,
+    )
+
+
+def exact_call_return_pair_shape_evidence_8616(
+    summary: CallsiteSummary8616,
+) -> LogicalArgumentShapeEvidence8616 | None:
+    """Project exact same-callsite DX:AX PUSH pairs into logical arguments."""
     physical_widths = summary.arg_widths
     sources = summary.push_arg_sources
     if (
         not _valid_widths_8616(physical_widths)
-        or not _valid_widths_8616(live_widths)
         or len(sources) != len(physical_widths)
-        or len(live_widths) >= len(physical_widths)
     ):
         return None
     physical_total = sum(physical_widths)
@@ -235,29 +270,21 @@ def _exact_call_return_pair_shape_evidence_8616(
 
     logical_widths = tuple(reversed(push_order_widths))
     logical_sources = tuple(reversed(push_order_sources))
-    live_shape_matches = len(logical_widths) == len(live_widths) and all(
-        live_width == logical_width
-        or (
-            live_width == 4
-            and logical_width == 2
-            and len(source_group) == 1
-            and source_group[0][0]
-            in {
-                CallsitePushSourceKind8616.BP_ADDRESS.value,
-                CallsitePushSourceKind8616.BP_INDEX_ADDRESS.value,
-            }
-        )
-        for live_width, logical_width, source_group in zip(
-            live_widths,
-            logical_widths,
-            logical_sources,
+    return_argument_indices = tuple(
+        index
+        for index, source_group in enumerate(logical_sources)
+        if len(source_group) == 2
+        and all(
+            source[0] == CallsitePushSourceKind8616.RETURN_REGISTER.value
+            for source in source_group
         )
     )
-    if not grouped or not live_shape_matches or sum(logical_widths) != physical_total:
+    if not grouped or not return_argument_indices or sum(logical_widths) != physical_total:
         return None
     return LogicalArgumentShapeEvidence8616(
         widths=logical_widths,
         source=LogicalArgumentShapeEvidenceSource8616.EXACT_CALL_RETURN_PAIR,
+        return_argument_indices=return_argument_indices,
     )
 
 
@@ -287,7 +314,7 @@ def exact_caller_stack_object_shape_evidence_8616(
         return None
 
     owned_slices: list[CallerStackObject8616 | None] = []
-    for source, width in zip(sources, physical_widths):
+    for source, width in zip(sources, physical_widths, strict=False):
         owner: CallerStackObject8616 | None = None
         if isinstance(source, tuple) and len(source) >= 2 and source[0] == "bp" and isinstance(source[1], int):
             candidates = tuple(
@@ -458,18 +485,17 @@ def reconcile_materialized_call_argument_shape_8616(
                 failure_count=0,
             )
         if logical_evidence is None:
-            logical_evidence = _exact_call_return_pair_shape_evidence_8616(
-                summary,
-                live_widths,
-            )
+            candidate = exact_call_return_pair_shape_evidence_8616(summary)
+            if candidate is not None and len(candidate.widths) == len(live_widths):
+                logical_evidence = candidate
         if logical_evidence is not None:
             evidence_widths = logical_evidence.widths
             logical_widths = tuple(int(width) for width in evidence_widths)
             exact_return_pair_matches = (
                 logical_evidence.source
                 is LogicalArgumentShapeEvidenceSource8616.EXACT_CALL_RETURN_PAIR
-                and _exact_call_return_pair_shape_evidence_8616(summary, live_widths)
-                == logical_evidence
+                and exact_call_return_pair_shape_evidence_8616(summary) == logical_evidence
+                and len(logical_widths) == len(live_widths)
             )
             logical_shape_is_consistent = (
                 (logical_widths == live_widths or exact_return_pair_matches)

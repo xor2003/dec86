@@ -8,6 +8,9 @@ from angr_platforms.X86_16.callsite_summary import (
     caller_return_use_evidence_by_addr_8616,
     record_caller_return_use_evidence_8616,
 )
+from angr_platforms.X86_16.widening.global_object_layout import (
+    GlobalObjectLayoutEvidence8616,
+)
 
 from inertia_decompiler.project_evidence_transport import (
     transfer_caller_return_use_evidence_8616,
@@ -64,4 +67,21 @@ def test_project_transport_preserves_binary_proven_compiler_helper_targets() -> 
 
     assert result.caller_return_use_count == 0
     assert result.compiler_helper_target_count == 2
+    assert result.global_object_layout_artifact_count == 0
     assert destination.arch._inertia_stack_probe_helper_targets_8616 == frozenset({0x11222, 0x1222, 0x1999})
+
+
+def test_project_transport_reuses_closed_global_object_widening() -> None:
+    evidence = GlobalObjectLayoutEvidence8616((), 0, 0, 0, 0)
+    source = SimpleNamespace(
+        arch=SimpleNamespace(_inertia_stack_probe_helper_targets_8616=frozenset()),
+        _inertia_project_global_object_layout_evidence_8616=evidence,
+    )
+    destination = SimpleNamespace(
+        arch=SimpleNamespace(_inertia_stack_probe_helper_targets_8616=frozenset())
+    )
+
+    result = transfer_project_evidence_8616(source, destination)
+
+    assert result.global_object_layout_artifact_count == 1
+    assert destination._inertia_project_global_object_layout_evidence_8616 is evidence

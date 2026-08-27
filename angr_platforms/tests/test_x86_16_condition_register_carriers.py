@@ -25,16 +25,18 @@ def _dec_condition(
     *,
     fallthrough_target: int,
     register_name: str = "ax",
+    op: str = "eq",
+    taken_target: int | None = None,
 ) -> ConditionIR:
     return ConditionIR(
-        op="eq",
+        op=op,
         lhs=IRValue(MemSpace.REG, name=register_name, size=2),
         rhs=IRValue(MemSpace.CONST, const=1, size=2),
-        source=("cmp", "je"),
+        source=("cmp", "je" if op == "eq" else "jne"),
         src_insn=block_addr + 1,
         block_addr=block_addr,
         producer_insn=block_addr,
-        taken_target=block_addr + 0x100,
+        taken_target=block_addr + 0x100 if taken_target is None else taken_target,
         fallthrough_target=fallthrough_target,
         producer_semantics=("dec_reg16", register_name, 1),
     )
@@ -60,6 +62,94 @@ def test_decrement_dispatch_binds_cases_to_proven_stack_carrier() -> None:
     assert result.stats.classified_fact_count == 2
     assert result.stats.materialized_count == 2
     assert result.stats.failure_count == 0
+
+
+def test_decrement_dispatch_follows_unique_taken_or_fallthrough_successor() -> None:
+    """Accumulate a mixed JE/JNE dispatch chain on typed CFG successors."""
+    argument = IRValue(MemSpace.DS, offset=0x7002, size=2)
+    register = IRValue(MemSpace.REG, name="ax", size=2)
+    first = _dec_condition(0x1020, fallthrough_target=0x1030)
+    second = _dec_condition(
+        0x1030,
+        op="ne",
+        taken_target=0x1040,
+        fallthrough_target=0x1200,
+    )
+    third = _dec_condition(
+        0x1040,
+        op="ne",
+        taken_target=0x1050,
+        fallthrough_target=0x1210,
+    )
+
+    result = normalize_condition_register_carriers_8616(
+        (_root_condition(argument), _root_condition(register), first, second, third)
+    )
+
+    by_source = {condition.src_insn: condition for condition in result.conditions}
+    assert by_source[0x1021].rhs == IRValue(MemSpace.CONST, const=1, size=2)
+    assert by_source[0x1031].rhs == IRValue(MemSpace.CONST, const=2, size=2)
+    assert by_source[0x1041].rhs == IRValue(MemSpace.CONST, const=3, size=2)
+    assert result.stats.classified_fact_count == 3
+    assert result.stats.materialized_count == 3
+    assert result.stats.failure_count == 0
+
+
+def test_decrement_dispatch_seeds_from_typed_logical_self_test() -> None:
+    """Use the producer contract when conflict resolution already chose storage."""
+    selector = IRValue(MemSpace.DS, offset=0x7002, size=2)
+    root = ConditionIR(
+        op="zero",
+        lhs=selector,
+        source=("test", "je"),
+        src_insn=0x1012,
+        block_addr=0x1010,
+        producer_insn=0x1010,
+        taken_target=0x1100,
+        fallthrough_target=0x1020,
+        producer_semantics=("or_reg_reg16", "ax", "ax"),
+    )
+    first = _dec_condition(0x1020, fallthrough_target=0x1030)
+    second = _dec_condition(
+        0x1030,
+        op="ne",
+        taken_target=0x1040,
+        fallthrough_target=0x1200,
+    )
+    third = _dec_condition(0x1040, fallthrough_target=0x1050)
+
+    result = normalize_condition_register_carriers_8616((root, first, second, third))
+
+    by_source = {condition.src_insn: condition for condition in result.conditions}
+    assert by_source[0x1021].lhs == selector
+    assert by_source[0x1021].rhs == IRValue(MemSpace.CONST, const=1, size=2)
+    assert by_source[0x1031].rhs == IRValue(MemSpace.CONST, const=2, size=2)
+    assert by_source[0x1041].rhs == IRValue(MemSpace.CONST, const=3, size=2)
+    assert result.stats.normalized_fact_count == 1
+    assert result.stats.classified_fact_count == 3
+    assert result.stats.materialized_count == 3
+    assert result.stats.failure_count == 0
+
+
+def test_decrement_dispatch_refuses_two_compatible_successors() -> None:
+    """Do not guess a chain continuation when both branch edges qualify."""
+    argument = IRValue(MemSpace.SS, name="bp", offset=4, size=2)
+    register = IRValue(MemSpace.REG, name="ax", size=2)
+    first = _dec_condition(0x1020, fallthrough_target=0x1030, taken_target=0x1040)
+    left = _dec_condition(0x1030, fallthrough_target=0x1050)
+    right = _dec_condition(0x1040, fallthrough_target=0x1060)
+
+    result = normalize_condition_register_carriers_8616(
+        (_root_condition(argument), _root_condition(register), first, left, right)
+    )
+
+    by_source = {condition.src_insn: condition for condition in result.conditions}
+    assert by_source[0x1021].lhs == argument
+    assert by_source[0x1031] == left
+    assert by_source[0x1041] == right
+    assert result.stats.classified_fact_count == 1
+    assert result.stats.materialized_count == 1
+    assert result.stats.failure_count == 1
 
 
 def test_decrement_dispatch_refuses_ambiguous_storage_identity() -> None:

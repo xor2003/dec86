@@ -24,7 +24,7 @@ def test_register_coercion_rejects_non_constant_wrapper() -> None:
         def value(self):
             raise ValueError("Non-constant VexValue has no value property")
 
-    with pytest.raises(ValueError, match="Register .* does not exist"):
+    with pytest.raises(ValueError, match="Register .* does not exist"):  # noqa: RUF043
         coerce_reg16_t(_BadValue())
 
 
@@ -34,5 +34,5 @@ def test_register_name_rejects_non_constant_wrapper() -> None:
         def value(self):
             raise ValueError("Non-constant VexValue has no value property")
 
-    with pytest.raises(ValueError, match="Register .* does not exist"):
+    with pytest.raises(ValueError, match="Register .* does not exist"):  # noqa: RUF043
         register_name_8616(_BadValue())

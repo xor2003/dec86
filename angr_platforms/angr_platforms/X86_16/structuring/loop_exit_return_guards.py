@@ -16,7 +16,7 @@ import logging
 import os
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CBreak,
@@ -37,7 +37,7 @@ _RUNTIME_SEGMENT_HELPERS_8616 = frozenset(
     {"SEG_U8", "SEG_U16", "SEG_U32", "MK_FP", "SEG_PTR", "MEM_U8", "MEM_U16", "MEM_U32"}
 )
 
-LoopExitGuardStats8616: TypeAlias = dict[str, int]
+type LoopExitGuardStats8616 = dict[str, int]
 
 
 class _LoopExitGuardCodegenLike8616(Protocol):
@@ -117,10 +117,7 @@ def _emptyish_loop_guard_else_node_8616(node: object) -> bool:
         return False
     statements = list(_dynamic_sequence_8616(_dynamic_attr_8616(node, "statements", ())))
     for child in statements:
-        if isinstance(child, CStatements):
-            if not _emptyish_loop_guard_else_node_8616(child):
-                return False
-        elif isinstance(child, (CReturn, CBreak)):
+        if not isinstance(child, CStatements) or not _emptyish_loop_guard_else_node_8616(child):
             return False
     return True
 

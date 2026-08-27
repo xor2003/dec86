@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import math
 import os
@@ -189,7 +189,7 @@ def _merged_env() -> dict[str, str]:
 
 
 @dataclass(frozen=True)
-class LlmConfig:
+class LlmConfig:  # noqa: D101
     root_dir: Path
     plan_path: Path
     evidence_log_file: Path
@@ -213,7 +213,7 @@ class LlmConfig:
     local_model_fallback_context: str
 
     @classmethod
-    def from_env(cls) -> "LlmConfig":
+    def from_env(cls) -> LlmConfig:  # noqa: D102
         env = _merged_env()
         root_dir = Path(env.get("ROOT_DIR", os.getcwd())).resolve()
         return cls(
@@ -243,7 +243,7 @@ class LlmConfig:
             ),
         )
 
-    def provider_for_key(self, key: str) -> str:
+    def provider_for_key(self, key: str) -> str:  # noqa: D102
         return {
             "planner": self.planner_provider,
             "checker": self.checker_provider,
@@ -254,7 +254,7 @@ class LlmConfig:
 
 
 @dataclass(frozen=True)
-class RuntimeConfig:
+class RuntimeConfig:  # noqa: D101
     root_dir: Path
     harness_config: Path
     run_sh_path: Path
@@ -330,7 +330,7 @@ class RuntimeConfig:
     original_args: list[str]
 
     @classmethod
-    def from_env(cls, argv: list[str]) -> "RuntimeConfig":
+    def from_env(cls, argv: list[str]) -> RuntimeConfig:  # noqa: D102
         env = _merged_env()
         root_dir = Path(env.get("ROOT_DIR", os.getcwd())).resolve()
         state_dir = Path(env.get("STATE_DIR", root_dir / ".codex_automation"))
@@ -430,7 +430,7 @@ class RuntimeConfig:
             original_args=argv,
         )
 
-    def export_env(self) -> dict[str, str]:
+    def export_env(self) -> dict[str, str]:  # noqa: D102
         env = os.environ.copy()
         env.update(
             {

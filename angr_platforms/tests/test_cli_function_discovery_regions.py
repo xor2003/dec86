@@ -164,7 +164,7 @@ def test_source_catalog_retries_only_failed_classified_entries(monkeypatch, tmp_
         attempts[candidate_addr] = attempts.get(candidate_addr, 0) + 1
         exact_regions[candidate_addr] = exact_region
         if candidate_addr == 0x1050 and attempts[candidate_addr] == 1:
-            raise function_discovery._AnalysisTimeout()
+            raise function_discovery._AnalysisTimeout
         function = SimpleNamespace(addr=candidate_addr)
         recovered_functions[candidate_addr] = function
         return SimpleNamespace(), function
@@ -180,7 +180,7 @@ def test_source_catalog_retries_only_failed_classified_entries(monkeypatch, tmp_
 
     assert [function.addr for _cfg, function in recovered] == [0x1000, 0x1050]
     assert attempts == {0x1000: 1, 0x1050: 2}
-    assert exact_regions == {0x1000: None, 0x1050: None}
+    assert exact_regions == {0x1000: (0x1000, 0x1050), 0x1050: (0x1050, 0x1100)}
     assert function_discovery._function_binary_exact_region_8616(recovered_functions[0x1000]) == (
         0x1000,
         0x1050,

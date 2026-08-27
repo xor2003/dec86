@@ -36,9 +36,15 @@ class CR:
             raise ValueError(f"Invalid CR index: {n}")
 
     def set_crn(self, n: int, value: int) -> None:
-        """Accept a control-register write without enabling protected-mode recovery."""
-        del n, value
-        pass
+        """Write an architecturally available 80386 control register."""
+        if n == 0:
+            self.cr0 = value & 0xFFFFFFFF
+        elif n == 2:
+            self.cr2 = value & 0xFFFFFFFF
+        elif n == 3:
+            self.cr3 = value & 0xFFFFFFFF
+        else:
+            raise ValueError(f"Invalid 80386 CR index: {n}")
 
     def is_protected(self) -> bool:
         """Return whether protected mode is modeled by this real-mode frontend."""

@@ -32,7 +32,7 @@ from angr_platforms.X86_16.stack_probe_fact_trace import (
 def _args_match(args: list, expected: list) -> bool:
     if len(args) != len(expected):
         return False
-    return all(_same_c_expression_8616(a, e) for a, e in zip(args, expected))
+    return all(_same_c_expression_8616(a, e) for a, e in zip(args, expected, strict=False))
 
 
 class _DummyCodegen:
@@ -44,6 +44,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _project():

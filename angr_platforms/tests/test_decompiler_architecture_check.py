@@ -3226,7 +3226,7 @@ def test_architecture_check_rejects_new_script_without_responsibility_header(tmp
 
 
 def test_architecture_check_has_no_legacy_script_responsibility_debt():
-    assert arch_check._LEGACY_SCRIPT_RESPONSIBILITY_DEBT == frozenset()
+    assert frozenset() == arch_check._LEGACY_SCRIPT_RESPONSIBILITY_DEBT
 
 
 def test_architecture_check_rejects_new_inertia_module_without_responsibility_header(tmp_path):
@@ -3252,7 +3252,7 @@ def test_architecture_check_rejects_new_inertia_module_without_responsibility_he
 
 
 def test_architecture_check_has_no_legacy_inertia_responsibility_debt():
-    assert arch_check._LEGACY_INERTIA_RESPONSIBILITY_DEBT == frozenset()
+    assert frozenset() == arch_check._LEGACY_INERTIA_RESPONSIBILITY_DEBT
 
 
 def test_architecture_check_rejects_gate_docstring_marker_without_responsibility(tmp_path):
@@ -7134,14 +7134,14 @@ def test_architecture_check_rejects_sortdemo_triage_from_serialized_dicts(tmp_pa
     status_script.write_text(
         "from __future__ import annotations\n"
         "from dataclasses import dataclass\n"
-        "from enum import Enum\n\n"
-        "class TerminalStatus(str, Enum):\n"
+        "from enum import StrEnum\n\n"
+        "class TerminalStatus(StrEnum):\n"
         "    TIMEOUT = 'timeout'\n\n"
-        "class FailureStatus(str, Enum):\n"
+        "class FailureStatus(StrEnum):\n"
         "    TIMEOUT = 'timeout'\n\n"
-        "class ValidationStatus(str, Enum):\n"
+        "class ValidationStatus(StrEnum):\n"
         "    FAILED = 'failed'\n\n"
-        "class AttemptStatus(str, Enum):\n"
+        "class AttemptStatus(StrEnum):\n"
         "    ERROR = 'error'\n\n"
         "@dataclass\n"
         "class FunctionStatus:\n"

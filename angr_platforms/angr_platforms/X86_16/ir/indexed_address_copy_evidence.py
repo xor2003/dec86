@@ -12,6 +12,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
+from .core import IRAddress
 from .indexed_address_access_normalization import (
     NormalizedIndexedAddressAccess8616,
     normalize_indexed_address_accesses_8616,
@@ -32,7 +33,6 @@ from .indexed_address_copy_contracts import (
 )
 from .indexed_address_copy_trace import (
     IndexedAddressCopyPathRefusal8616,
-    order_indexed_store_members_8616,
     trace_indexed_store_member_8616,
 )
 from .scalar_definitions import (
@@ -41,6 +41,33 @@ from .scalar_definitions import (
 )
 from .ssa import SSABlock
 from .ssa_function import SSAFunctionArtifact
+
+
+def _order_indexed_store_members_8616(
+    block: SSABlock,
+    access: NormalizedIndexedAddressAccess8616,
+) -> tuple[int, ...] | None:
+    """Order one direct member or exact little-endian pair by byte offset."""
+    entries: list[tuple[int, int]] = []
+    for instr_index in access.member_instr_indices:
+        if not 0 <= instr_index < len(block.instrs):
+            return None
+        instruction = block.instrs[instr_index]
+        address = instruction.args[0] if instruction.op == "STORE" else None
+        if not isinstance(address, IRAddress):
+            return None
+        entries.append((address.offset, instr_index))
+    ordered_entries = tuple(sorted(entries))
+    ordered = tuple(index for _offset, index in ordered_entries)
+    if len(ordered) == 1:
+        return ordered
+    offsets = tuple(offset for offset, _index in ordered_entries)
+    if len(ordered) == 2 and offsets == (
+        access.address.offset,
+        access.address.offset + 1,
+    ):
+        return ordered
+    return None
 
 
 def _source_fact_8616(
@@ -52,9 +79,7 @@ def _source_fact_8616(
         fact
         for fact in evidence.facts
         if fact.kind is IndexedAddressAccessKind8616.LOAD
-        and fact.block_addr == path.load_block_addr
-        and fact.instr_index == path.load_instr_index
-        and fact.instr_addr == path.load_instr_addr
+        and path.matches_source(fact)
     )
     if not matches:
         return IndexedAddressCopyFailureKind8616.SOURCE_LOAD_NOT_INDEXED
@@ -64,6 +89,7 @@ def _source_fact_8616(
 
 
 def _copy_or_refusal_8616(
+    artifact: SSAFunctionArtifact,
     destination: IndexedAddressFact8616,
     access: NormalizedIndexedAddressAccess8616,
     block: SSABlock,
@@ -71,7 +97,7 @@ def _copy_or_refusal_8616(
     evidence: IndexedAddressEvidence8616,
 ) -> IndexedAddressCopyFact8616 | IndexedAddressCopyRefusal8616:
     """Classify one normalized indexed STORE without inferring Alias identity."""
-    members = order_indexed_store_members_8616(block, access)
+    members = _order_indexed_store_members_8616(block, access)
     if members is None or len(members) not in {1, 2}:
         return IndexedAddressCopyRefusal8616(
             destination,
@@ -93,6 +119,8 @@ def _copy_or_refusal_8616(
             instr_index,
             lane,
             definitions,
+            artifact.logical_memory,
+            function_addr=artifact.function_addr,
         )
         if isinstance(path, IndexedAddressCopyPathRefusal8616):
             return IndexedAddressCopyRefusal8616(
@@ -186,6 +214,7 @@ def collect_indexed_address_copy_evidence_8616(
             )
             continue
         classified = _copy_or_refusal_8616(
+            artifact,
             destination,
             matches[0],
             block,

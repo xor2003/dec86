@@ -32,6 +32,16 @@ def _ret(address: int, cleanup: int) -> object:
     )
 
 
+def _wrapped(insn: object) -> object:
+    """Wrap one fake instruction like angr's Capstone instruction surface."""
+    return SimpleNamespace(
+        address=insn.address,
+        size=insn.size,
+        mnemonic=insn.mnemonic,
+        insn=insn,
+    )
+
+
 def test_terminal_stack_cleanup_refuses_conflicting_return_paths() -> None:
     branch = _insn(0x1000, "je", size=2, target=0x1010)
     blocks = {
@@ -96,6 +106,72 @@ def test_bodyless_stack_cleanup_requires_direct_terminal_block() -> None:
 
     assert terminal_stack_cleanup_at_address_8616(direct_project, 0x2000).consistent_cleanup == 8
     assert terminal_stack_cleanup_at_address_8616(branch_project, 0x2000).complete is False
+
+
+def test_complete_bodyless_stack_cleanup_is_cached_per_project() -> None:
+    factory = _Factory(
+        {0x2000: SimpleNamespace(capstone=SimpleNamespace(insns=(_ret(0x2000, 8),)))}
+    )
+    project = SimpleNamespace(factory=factory)
+
+    first = terminal_stack_cleanup_at_address_8616(project, 0x2000)
+    factory.blocks.clear()
+    second = terminal_stack_cleanup_at_address_8616(project, 0x2000)
+
+    assert first.complete is True
+    assert second is first
+
+
+def test_incomplete_bodyless_stack_cleanup_is_not_cached() -> None:
+    factory = _Factory(
+        {0x2000: SimpleNamespace(capstone=SimpleNamespace(insns=(_insn(0x2000, "jmp", target=0x2010),)))}
+    )
+    project = SimpleNamespace(factory=factory)
+
+    first = terminal_stack_cleanup_at_address_8616(project, 0x2000)
+    factory.blocks[0x2010] = SimpleNamespace(capstone=SimpleNamespace(insns=(_ret(0x2010, 8),)))
+    function = SimpleNamespace(addr=0x2000, block_addrs_set={0x2000, 0x2010})
+    project.kb = SimpleNamespace(
+        functions=SimpleNamespace(function=lambda **_kwargs: function),
+    )
+    second = terminal_stack_cleanup_at_address_8616(project, 0x2000)
+
+    assert first.complete is False
+    assert second.complete is True
+    assert second.consistent_cleanup == 8
+
+
+def test_bodyless_stack_cleanup_follows_complete_loaded_binary_cfg() -> None:
+    blocks = {
+        0x2000: SimpleNamespace(
+            addr=0x2000,
+            size=2,
+            capstone=SimpleNamespace(
+                insns=(_wrapped(_insn(0x2000, "je", size=2, target=0x2010)),)
+            ),
+        ),
+        0x2002: SimpleNamespace(
+            addr=0x2002,
+            size=3,
+            capstone=SimpleNamespace(insns=(_wrapped(_ret(0x2002, 8)),)),
+        ),
+        0x2010: SimpleNamespace(
+            addr=0x2010,
+            size=3,
+            capstone=SimpleNamespace(insns=(_wrapped(_ret(0x2010, 8)),)),
+        ),
+    }
+    loaded = SimpleNamespace(min_addr=0x2000, max_addr=0x2012)
+    project = SimpleNamespace(
+        factory=_Factory(blocks),
+        loader=SimpleNamespace(find_object_containing=lambda _address: loaded),
+    )
+
+    evidence = terminal_stack_cleanup_at_address_8616(project, 0x2000)
+
+    assert evidence.complete is True
+    assert evidence.consistent_cleanup == 8
+    assert evidence.raw_fact_count == evidence.materialized_count == 2
 
 
 def test_bodyless_stack_cleanup_refuses_inaccessible_decode() -> None:

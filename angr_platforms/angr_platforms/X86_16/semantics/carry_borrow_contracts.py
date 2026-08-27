@@ -83,16 +83,25 @@ class CarryBorrowDefinitionSite8616:
 
 
 @dataclass(frozen=True, slots=True)
-class CarryBorrowMemoryWordUse8616:
-    """Exact load sites and addresses composing one 16-bit memory operand."""
+class CarryBorrowMemoryLoadUse8616:
+    """One raw LOAD definition and its exact segmented execution address."""
 
-    loads: tuple[CarryBorrowDefinitionSite8616, ...]
-    addresses: tuple[IRAddress, ...]
+    site: CarryBorrowDefinitionSite8616
+    address: IRAddress
+
+
+@dataclass(frozen=True, slots=True)
+class CarryBorrowMemoryWordUse8616:
+    """Raw load executions and the authoritative address for one memory word."""
+
+    execution_loads: tuple[CarryBorrowMemoryLoadUse8616, ...]
+    logical_address: IRAddress
+    address_bits: int
 
     @property
     def size(self) -> int:
-        """Return the total byte width retained from original load addresses."""
-        return sum(int(address.size) for address in self.addresses)
+        """Return the authoritative logical width of this memory operand."""
+        return int(self.logical_address.size)
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +193,7 @@ __all__ = [
     "CarryBorrowIROp8616",
     "CarryBorrowKind8616",
     "CarryBorrowLink8616",
+    "CarryBorrowMemoryLoadUse8616",
     "CarryBorrowMemoryWordUse8616",
     "CarryBorrowOperandUse8616",
     "CarryBorrowResolution8616",

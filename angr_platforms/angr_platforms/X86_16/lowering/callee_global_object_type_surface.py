@@ -9,7 +9,8 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
-from typing import Protocol, Sequence, cast
+from collections.abc import Sequence
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen.c import CVariable
 from angr.sim_type import SimStruct, SimType, TypeRef
@@ -74,7 +75,7 @@ def materialize_local_struct_declarations_8616(
     cfunc = cast(_CFunctionTypeSurface8616, cfunc_raw)
     changed = False
     for cvar in tuple(cfunc.variables_in_use.values()):
-        if any(same_stack_variable_8616(cvar.variable, local) for local in locals_):
+        if any(same_stack_variable_8616(cvar.variable, local) for local in locals_):  # noqa: SIM102
             if not is_named_struct_type_8616(cvar.variable_type, struct_type):
                 cvar.variable_type = registered_type
                 changed = True

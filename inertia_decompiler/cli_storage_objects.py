@@ -6,15 +6,16 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, TypeAlias
+from typing import Any
 
-BaseKey: TypeAlias = tuple[object, ...]
-AccessTraitObjectHint: TypeAlias = Any
-AccessTraitEvidenceProfile: TypeAlias = Any
+type BaseKey = tuple[object, ...]
+type AccessTraitObjectHint = Any
+type AccessTraitEvidenceProfile = Any
 
-StableHints: TypeAlias = dict[BaseKey, AccessTraitObjectHint]
-EvidenceProfiles: TypeAlias = dict[BaseKey, AccessTraitEvidenceProfile]
+type StableHints = dict[BaseKey, AccessTraitObjectHint]
+type EvidenceProfiles = dict[BaseKey, AccessTraitEvidenceProfile]
 
 __all__ = [
     "StorageObjectArtifact",

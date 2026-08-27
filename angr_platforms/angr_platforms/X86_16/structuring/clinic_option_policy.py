@@ -23,9 +23,9 @@ angr's default until ITE provenance can be selected individually.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
-ClinicOption8616: TypeAlias = tuple[str, object]
+type ClinicOption8616 = tuple[str, object]
 
 _ITE_DIAMOND_OPTION = "rewrite_ites_to_diamonds"
 

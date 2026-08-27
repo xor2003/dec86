@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from .structuring.switch_loop_tail_breaks import (
     SwitchLoopTailBreakDecision8616,
@@ -21,7 +21,7 @@ from .structuring.switch_loop_tail_breaks import (
 )
 
 
-class SwitchLoopTailBreakValidationStatus8616(str, Enum):
+class SwitchLoopTailBreakValidationStatus8616(StrEnum):
     """Typed outcome for one attempted validation-delta consumption."""
 
     ACCEPTED = "accepted"

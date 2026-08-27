@@ -18,7 +18,7 @@ def _make_codegen(statements):
         project=SimpleNamespace(arch=Arch86_16()),
         cfunc=SimpleNamespace(addr=0x1000),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     codegen.cfunc.statements = structured_c.CStatements(statements, codegen=codegen)
     return codegen
 

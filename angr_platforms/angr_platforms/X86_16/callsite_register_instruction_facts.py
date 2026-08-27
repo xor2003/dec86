@@ -1,0 +1,171 @@
+"""Collect decoded register and storage facts for callsite provenance.
+
+Layer: Recovery metadata.
+Responsibility: translate exact Capstone instruction effects into typed sources
+that the Alias layer can propagate across a function CFG.
+Forbidden: CFG joining, argument materialization, structuring, or C rewriting.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from typing import Protocol
+
+from capstone import CS_AC_WRITE
+from capstone.x86_const import X86_OP_IMM, X86_OP_MEM, X86_OP_REG
+
+from .alias.callsite_stack_merge import CallsiteSource8616
+from .semantics.register_value_preservation import register_value_family_8616
+
+__all__ = (
+    "DecodedInstructionFactSurface8616",
+    "instruction_writes_memory_8616",
+    "instruction_writes_register_8616",
+    "register_replacement_source_8616",
+    "register_storage_snapshot_source_8616",
+)
+
+
+class _MemoryOperand8616(Protocol):
+    """Capstone memory fields consumed at the decoded-instruction boundary."""
+
+    base: int
+    index: int
+    segment: int
+    disp: int
+
+
+class _Operand8616(Protocol):
+    """Capstone operand fields consumed by instruction fact collection."""
+
+    type: int
+    reg: int
+    imm: int
+    size: int
+    access: int
+    mem: _MemoryOperand8616
+
+
+class _DecodedInstruction8616(Protocol):
+    """Capstone instruction detail used by exact effect collection."""
+
+    operands: Sequence[_Operand8616]
+
+    def reg_name(self, reg_id: int) -> str:
+        """Return the backend register name for ``reg_id``."""
+
+    def regs_access(self) -> tuple[Sequence[int], Sequence[int]]:
+        """Return registers read and written by this instruction."""
+
+
+class DecodedInstructionFactSurface8616(Protocol):
+    """angr Capstone wrapper fields used by this recovery-metadata module."""
+
+    mnemonic: str
+    insn: _DecodedInstruction8616
+
+
+def _register_name_8616(
+    instruction: DecodedInstructionFactSurface8616,
+    operand: _Operand8616,
+) -> str | None:
+    """Return one normalized register operand name."""
+    if operand.type != X86_OP_REG:
+        return None
+    name = instruction.insn.reg_name(operand.reg)
+    return name.lower() if isinstance(name, str) and name else None
+
+
+def instruction_writes_register_8616(
+    instruction: DecodedInstructionFactSurface8616,
+    register: str,
+) -> bool:
+    """Return whether Capstone proves an overlapping register write."""
+    family = register_value_family_8616(register)
+    try:
+        _reads, writes = instruction.insn.regs_access()
+    except (AttributeError, ValueError):
+        return True
+    names = {
+        name.lower()
+        for reg_id in writes
+        if isinstance((name := instruction.insn.reg_name(reg_id)), str) and name
+    }
+    return bool(names & family)
+
+
+def instruction_writes_memory_8616(
+    instruction: DecodedInstructionFactSurface8616,
+) -> bool:
+    """Return whether an explicit operand may write memory."""
+    for operand in instruction.insn.operands:
+        if operand.type != X86_OP_MEM:
+            continue
+        try:
+            access = int(operand.access)
+        except (AttributeError, TypeError, ValueError):
+            return True
+        if access & CS_AC_WRITE:
+            return True
+    return False
+
+
+def register_replacement_source_8616(
+    instruction: DecodedInstructionFactSurface8616,
+    register: str,
+) -> CallsiteSource8616 | None:
+    """Return an exact source for one complete register definition."""
+    operands = tuple(instruction.insn.operands)
+    if len(operands) != 2 or _register_name_8616(instruction, operands[0]) != register:
+        return None
+    mnemonic = instruction.mnemonic.lower()
+    rhs = operands[1]
+    if mnemonic == "mov":
+        if rhs.type == X86_OP_IMM:
+            return ("imm", int(rhs.imm))
+        if rhs.type == X86_OP_MEM and rhs.mem.index == 0:
+            base_name = (
+                instruction.insn.reg_name(rhs.mem.base).lower()
+                if rhs.mem.base
+                else ""
+            )
+            segment_name = (
+                instruction.insn.reg_name(rhs.mem.segment).lower()
+                if rhs.mem.segment
+                else ""
+            )
+            width = int(rhs.size) if int(rhs.size) > 0 else 2
+            if base_name == "bp" and segment_name in {"", "ss"}:
+                return ("bp", int(rhs.mem.disp), width)
+            if not base_name and segment_name in {"", "ds"}:
+                return ("global", int(rhs.mem.disp), width)
+    if mnemonic in {"sub", "xor"} and _register_name_8616(instruction, rhs) == register:
+        return ("imm", 0)
+    return None
+
+
+def register_storage_snapshot_source_8616(
+    instruction: DecodedInstructionFactSurface8616,
+    register: str,
+) -> CallsiteSource8616 | None:
+    """Return storage proven equal to ``register`` by an exact MOV store."""
+    operands = tuple(instruction.insn.operands)
+    if instruction.mnemonic.lower() != "mov" or len(operands) != 2:
+        return None
+    destination, value = operands
+    if destination.type != X86_OP_MEM or _register_name_8616(instruction, value) != register:
+        return None
+    width = int(destination.size)
+    if width <= 0 or int(value.size) != width:
+        return None
+    base_name = instruction.insn.reg_name(destination.mem.base).lower() if destination.mem.base else ""
+    segment_name = (
+        instruction.insn.reg_name(destination.mem.segment).lower()
+        if destination.mem.segment
+        else ""
+    )
+    if base_name == "bp" and destination.mem.index == 0 and segment_name in {"", "ss"}:
+        return ("bp", int(destination.mem.disp), width)
+    if not base_name and destination.mem.index == 0 and segment_name in {"", "ds"}:
+        return ("global", int(destination.mem.disp), width)
+    return None

@@ -193,20 +193,28 @@ def _defines_any_variable_8616(
     )
 
 
-def _linear_statements_8616(root: CStatements) -> tuple[object, ...] | None:
-    """Flatten nested statement wrappers while refusing structured control flow."""
-    flattened: list[object] = []
-    for statement in tuple(root.statements or ()):
+def _terminal_linear_suffix_8616(root: CStatements) -> tuple[object, ...]:
+    """Return the linear statements after the final structured control-flow node.
+
+    Earlier loops or branches cannot affect placement once a later unconditional
+    AX definition overwrites the carrier. Control flow after that definition
+    clears the candidate suffix and therefore still forces refusal.
+    """
+    suffix: list[object] = []
+
+    def _append(statement: object) -> None:
         if isinstance(statement, CStatements):
-            nested = _linear_statements_8616(statement)
-            if nested is None:
-                return None
-            flattened.extend(nested)
-            continue
-        if not isinstance(statement, (CAssignment, CExpressionStatement, CFunctionCall, CReturn)):
-            return None
-        flattened.append(statement)
-    return tuple(flattened)
+            for nested in tuple(statement.statements or ()):
+                _append(nested)
+            return
+        if isinstance(statement, (CAssignment, CExpressionStatement, CFunctionCall, CReturn)):
+            suffix.append(statement)
+            return
+        suffix.clear()
+
+    for statement in tuple(root.statements or ()):
+        _append(statement)
+    return tuple(suffix)
 
 
 def materialize_terminal_register_return_value_8616(
@@ -260,7 +268,7 @@ def materialize_terminal_register_return_value_8616(
         )
 
     nodes = tuple(_iter_c_nodes_deep_8616(root))
-    assignments = tuple(
+    all_assignments = tuple(
         node
         for node in nodes
         if isinstance(node, CAssignment)
@@ -269,12 +277,12 @@ def materialize_terminal_register_return_value_8616(
         and view.width == ax_width
     )
     returns = tuple(node for node in nodes if isinstance(node, CReturn))
-    raw_count = len(assignments)
+    raw_count = len(all_assignments)
     terminal_shape = (
         terminal_return_storage_8616(project, function) is TerminalReturnStorage8616.AX
         and len(returns) == 1
     )
-    if not terminal_shape or not assignments:
+    if not terminal_shape or not all_assignments:
         return _result_8616(
             codegen_surface,
             TerminalRegisterReturnValueStatus8616.REFUSED,
@@ -282,8 +290,14 @@ def materialize_terminal_register_return_value_8616(
             TerminalRegisterReturnValueRefusal8616.INCOMPLETE_TERMINAL_SHAPE,
         )
 
-    statements = _linear_statements_8616(root)
-    if statements is None:
+    statements = _terminal_linear_suffix_8616(root)
+    assignments = tuple(
+        statement
+        for statement in statements
+        if isinstance(statement, CAssignment)
+        and any(statement is assignment for assignment in all_assignments)
+    )
+    if not assignments:
         return _result_8616(
             codegen_surface,
             TerminalRegisterReturnValueStatus8616.REFUSED,
@@ -291,22 +305,14 @@ def materialize_terminal_register_return_value_8616(
             TerminalRegisterReturnValueRefusal8616.NONLINEAR_AX_DEFINITION,
         )
     return_node = returns[0]
-    direct_assignments = tuple(
-        statement
-        for statement in statements
-        if isinstance(statement, CAssignment)
-        and any(statement is assignment for assignment in assignments)
-    )
-    if len(direct_assignments) != len(assignments) or not any(
-        statement is return_node for statement in statements
-    ):
+    if not any(statement is return_node for statement in statements):
         return _result_8616(
             codegen_surface,
             TerminalRegisterReturnValueStatus8616.REFUSED,
             TerminalRegisterReturnValueEvidence8616(raw_count, 1, 0, 0, 0),
             TerminalRegisterReturnValueRefusal8616.NONLINEAR_AX_DEFINITION,
         )
-    assignment = direct_assignments[-1]
+    assignment = assignments[-1]
     assignment_index = next(
         index for index, statement in enumerate(statements) if statement is assignment
     )

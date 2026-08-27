@@ -18,7 +18,7 @@ import sys
 import textwrap
 import time
 from dataclasses import asdict, dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import cast
 
@@ -59,7 +59,7 @@ DECOMPILE_SLOW_PASS_SECONDS = 1.0
 DECOMPILE_FUNCTION_PROCESS_SETUP_SECONDS: int = 120
 
 
-class HarnessAcceptanceReason(str, Enum):
+class HarnessAcceptanceReason(StrEnum):
     """Reason a harness decompilation result was accepted or stopped."""
 
     ACCEPTANCE_GATE_FAILED = "acceptance_gate_failed"
@@ -74,7 +74,7 @@ class HarnessAcceptanceReason(str, Enum):
     VALIDATION_UNCOLLECTED = "validation_uncollected"
 
 
-class HarnessValidationState(str, Enum):
+class HarnessValidationState(StrEnum):
     """Typed function-level validation state parsed from decompiler output."""
 
     CHANGED = "changed"
@@ -83,7 +83,16 @@ class HarnessValidationState(str, Enum):
     UNCOLLECTED = "uncollected"
 
 
-class FocusedDecompileRetryReason(str, Enum):
+class HarnessTailValidationState(StrEnum):
+    """Typed final whole-tail state parsed from decompiler output."""
+
+    CLEAN = "clean"
+    FAILED = "failed"
+    PASSED = "passed"
+    UNCOLLECTED = "uncollected"
+
+
+class FocusedDecompileRetryReason(StrEnum):
     """Reason to retry focused decompilation with a different fallback mode."""
 
     ASM_FALLBACK = "asm_fallback"
@@ -93,7 +102,7 @@ class FocusedDecompileRetryReason(str, Enum):
     TIMEOUT = "timeout"
 
 
-class GeneratedFunctionSourceContractStatus(str, Enum):
+class GeneratedFunctionSourceContractStatus(StrEnum):
     """Typed result of checking one generated function definition."""
 
     PASSED = "passed"
@@ -106,7 +115,7 @@ class GeneratedFunctionSourceContractStatus(str, Enum):
     RETURNED_CALL_MISSING = "returned_call_missing"
 
 
-class GeneratedFunctionReturnClass(str, Enum):
+class GeneratedFunctionReturnClass(StrEnum):
     """Required return class for one generated-function gate contract."""
 
     ANY = "any"
@@ -1120,8 +1129,7 @@ def _run(
     return subprocess.run(
         cmd,
         cwd=str(cwd) if cwd is not None else None,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         timeout=timeout,
         check=False,
@@ -1144,10 +1152,7 @@ def _prepare_signature_catalog(
     if output_path is None:
         output_path = build_root / "signature_catalogs" / default_catalog_name
 
-    if output_path.is_absolute():
-        prepared_output = output_path
-    else:
-        prepared_output = (build_root / output_path).resolve()
+    prepared_output = output_path if output_path.is_absolute() else (build_root / output_path).resolve()
 
     cache_dir = signature_cache_dir
     if cache_dir is None:
@@ -1208,10 +1213,7 @@ def _sanitize_decompiled_source(raw_c_text: str) -> str:
     for line in raw_c_text.splitlines():
         stripped = line.lstrip()
         if (
-            stripped.startswith("[dbg]")
-            or stripped.startswith("[metric]")
-            or stripped.startswith("[warn]")
-            or stripped.startswith("[err]")
+            stripped.startswith(("[dbg]", "[metric]", "[warn]", "[err]"))
         ):
             continue
         if stripped.startswith(slash_comment_prefix):
@@ -1260,9 +1262,7 @@ def _alias_generic_globals_to_existing_harness_globals(c_text: str) -> str:
             if not (start <= offset < end):
                 continue
             generic_names = (f"g_{offset:04x}", f"g_{offset:x}", f"global_word_{offset:04x}", f"global_u8_{offset:04x}")
-            if count > 1 and width == 1:
-                replacement = name
-            elif offset == start:
+            if (count > 1 and width == 1) or offset == start:
                 replacement = name
             else:
                 continue
@@ -1390,7 +1390,7 @@ def _inject_ms_c89_forward_decls(raw_c_text: str) -> str:
     if insert_idx <= 0:
         return raw_c_text
 
-    decl_block = "\n".join([""] + declarations + [""])
+    decl_block = "\n".join(["", *declarations, ""])
     return "\n".join(lines[:insert_idx]) + "\n" + decl_block + "\n".join(lines[insert_idx:])
 
 
@@ -1657,10 +1657,7 @@ def _resolve_main_candidates_from_metadata(
         map_path: Path | None
         if not map_path_candidate.exists():
             alt_map_path = exe_path.with_suffix(".map")
-            if alt_map_path.exists():
-                map_path = alt_map_path
-            else:
-                map_path = None
+            map_path = alt_map_path if alt_map_path.exists() else None
         else:
             map_path = map_path_candidate
 
@@ -1884,11 +1881,11 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
             continue
         tail_match = tail_validation_re.search(line)
         if tail_match is not None:
-            status = tail_match.group(1).lower()
+            status = HarnessTailValidationState(tail_match.group(1).lower())
             profile["tail_validation_status"] = status
-            if status == "uncollected":
+            if status is HarnessTailValidationState.UNCOLLECTED:
                 profile["tail_validation_uncollected"] = True
-            if status == "failed":
+            if status is HarnessTailValidationState.FAILED:
                 profile["tail_validation_changed"] = True
             continue
         if severity_changed_re.search(line) is not None:
@@ -1919,7 +1916,10 @@ def _parse_decompile_profile(stderr_text: str) -> dict[str, object]:
             assert isinstance(states, list)
             if validation_state not in states:
                 states.append(validation_state)
-    if profile.get("tail_validation_status") in {"passed", "clean"}:
+    if profile.get("tail_validation_status") in {
+        HarnessTailValidationState.PASSED,
+        HarnessTailValidationState.CLEAN,
+    }:
         # A focused decompile can reject an initial direct/postprocess attempt,
         # then emit a validated fallback in the same process. The final whole-tail
         # summary is the acceptance boundary for this harness profile.
@@ -1957,35 +1957,43 @@ def _is_decompile_output_acceptable(
         return False, HarnessAcceptanceReason.TIMEOUT
 
     tail_status = profile.get("tail_validation_status")
-    if tail_status == "failed":
+    final_output_accepted = profile.get("returncode") == 0 and tail_status in {
+        HarnessTailValidationState.PASSED,
+        HarnessTailValidationState.CLEAN,
+    }
+    if tail_status is HarnessTailValidationState.FAILED:
         return False, HarnessAcceptanceReason.TAIL_VALIDATION_FAILED
-    if tail_status == "uncollected":
+    if tail_status is HarnessTailValidationState.UNCOLLECTED:
         return False, HarnessAcceptanceReason.TAIL_VALIDATION_UNCOLLECTED
     if profile.get("tail_validation_changed"):
         return False, HarnessAcceptanceReason.TAIL_VALIDATION_CHANGED
     if profile.get("asm_fallback"):
         return False, HarnessAcceptanceReason.ASM_FALLBACK
 
-    validation_states = _profile_validation_states(profile)
-    if HarnessValidationState.FAILED in validation_states:
-        return False, HarnessAcceptanceReason.VALIDATION_FAILED
-    if HarnessValidationState.CHANGED in validation_states:
-        return False, HarnessAcceptanceReason.VALIDATION_CHANGED
-    if HarnessValidationState.UNCOLLECTED in validation_states:
-        return False, HarnessAcceptanceReason.VALIDATION_UNCOLLECTED
+    if not final_output_accepted:
+        validation_states = _profile_validation_states(profile)
+        if HarnessValidationState.FAILED in validation_states:
+            return False, HarnessAcceptanceReason.VALIDATION_FAILED
+        if HarnessValidationState.CHANGED in validation_states:
+            return False, HarnessAcceptanceReason.VALIDATION_CHANGED
+        if HarnessValidationState.UNCOLLECTED in validation_states:
+            return False, HarnessAcceptanceReason.VALIDATION_UNCOLLECTED
 
     combined = f"{stdout_text}\n{stderr_text}".lower()
     if "== asm fallback ==" in combined:
         return False, HarnessAcceptanceReason.ASM_FALLBACK
     if "decompile timeout" in combined:
         return False, HarnessAcceptanceReason.TIMEOUT
-    if "decompilation validation_failed" in combined:
+    if "decompilation validation_failed" in combined and not final_output_accepted:
         return False, HarnessAcceptanceReason.VALIDATION_FAILED
-    if "acceptance-gate detail:" in combined:
+    if "acceptance-gate detail:" in combined and not final_output_accepted:
         return False, HarnessAcceptanceReason.ACCEPTANCE_GATE_FAILED
     if "missing source-evidenced" in combined:
         return False, HarnessAcceptanceReason.SOURCE_EVIDENCE_FAILED
-    if "whole-tail validation failed" in combined and tail_status not in {"passed", "clean"}:
+    if "whole-tail validation failed" in combined and tail_status not in {
+        HarnessTailValidationState.PASSED,
+        HarnessTailValidationState.CLEAN,
+    }:
         return False, HarnessAcceptanceReason.TAIL_VALIDATION_FAILED
     return True, None
 
@@ -2062,6 +2070,7 @@ def _decompile_function_with_options(
         )
     elapsed = time.perf_counter() - start
     profile = _parse_decompile_profile(_decompile_profile_text(proc.stdout, proc.stderr))
+    profile["returncode"] = proc.returncode
     acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, profile)
     profile_reason = reason.value if reason is not None else None
     if acceptable and proc.returncode != 0:
@@ -2450,9 +2459,8 @@ def _extract_profile_summary(profile: dict[str, object]) -> str:
     slow_passes = profile.get("slow_passes", [])
     if not isinstance(slow_passes, list):
         slow_passes = []
-    if not slow:
-        if not slow_passes:
-            return ""
+    if not slow and not slow_passes:
+        return ""
     slowest = max(
         (item for item in function_times if isinstance(item, dict) and isinstance(item.get("seconds"), (int, float))),
         key=lambda item: float(item["seconds"]),
@@ -2592,10 +2600,7 @@ def _decompile(
                 map_path: Path | None
                 if not map_path_candidate.exists():
                     alt_map_path = exe_path.with_suffix(".map")
-                    if alt_map_path.exists():
-                        map_path = alt_map_path
-                    else:
-                        map_path = None
+                    map_path = alt_map_path if alt_map_path.exists() else None
                 else:
                     map_path = map_path_candidate
                 mapped_addr = _resolve_cod_offset_to_exe_addr(
@@ -2648,6 +2653,7 @@ def _decompile(
             )
             last_proc = proc
             run_profile = _parse_decompile_profile(_decompile_profile_text(proc.stdout, proc.stderr))
+            run_profile["returncode"] = proc.returncode
             acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, run_profile)
             run_profile["acceptance_reason"] = None if acceptable else reason
             run_profile["candidate"] = candidate
@@ -2714,6 +2720,7 @@ def _decompile(
             )
             last_proc = proc
             run_profile = _parse_decompile_profile(_decompile_profile_text(proc.stdout, proc.stderr))
+            run_profile["returncode"] = proc.returncode
             acceptable, reason = _is_decompile_output_acceptable(proc.stdout, proc.stderr, run_profile)
             run_profile["acceptance_reason"] = None if acceptable else reason
             run_profile["candidate"] = fallback_candidate
@@ -3230,7 +3237,7 @@ def main() -> int:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     results: list[ExampleResult] = []
-    only_set = {item for item in args.only_constructs}
+    only_set = set(args.only_constructs)
     dos_names = {
         "compare16": "CMP16.C",
         "simple_control": "SIMPLE.C",

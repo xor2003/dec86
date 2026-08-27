@@ -17,73 +17,71 @@ from archinfo.arch_x86 import ArchX86
 from cffi import FFI as ffi
 from pyvex import IRSB, IRTypeEnv
 from pyvex.const import U1, U8, U16, U32
-from pyvex.expr import *
+from pyvex.expr import *  # noqa: F403
 from pyvex.lifting import LibVEXLifter, lifters
-from pyvex.stmt import *
+from pyvex.stmt import *  # noqa: F403
 from reprmixin import ReprMixin
 
-arch = ArchX86()
+arch = ArchX86()  # noqa: F811
 # Serialization
-IMark.__repr__ = lambda self: "IMark(addr=self.v.addr, length=self.v._size, delta=0)"
-WrTmp.__repr__ = lambda self: f"WrTmp(t{self.tmp},{repr(self.data)})"
-RdTmp.__repr__ = lambda self: "RdTmp(t%d)" % self.tmp
-Binop.__repr__ = lambda self: f"Binop({repr(self.op)},{repr(self.args)})"
-Const.__repr__ = lambda self: "Const(%s)" % repr(self._con)
-U1.__repr__ = lambda self: "U1(%d)" % self.value
-U8.__repr__ = lambda self: "U8(%d)" % self.value
-U16.__repr__ = lambda self: "U16(%d)" % self.value
-U32.__repr__ = lambda self: "U32(%d)" % self.value
+IMark.__repr__ = lambda self: "IMark(addr=self.v.addr, length=self.v._size, delta=0)"  # noqa: F405
+WrTmp.__repr__ = lambda self: f"WrTmp(t{self.tmp},{self.data!r})"  # noqa: F405
+RdTmp.__repr__ = lambda self: "RdTmp(t%d)" % self.tmp  # noqa: F405, UP031
+Binop.__repr__ = lambda self: f"Binop({self.op!r},{self.args!r})"  # noqa: F405
+Const.__repr__ = lambda self: f"Const({self._con!r})"  # noqa: F405
+U1.__repr__ = lambda self: "U1(%d)" % self.value  # noqa: UP031
+U8.__repr__ = lambda self: "U8(%d)" % self.value  # noqa: UP031
+U16.__repr__ = lambda self: "U16(%d)" % self.value  # noqa: UP031
+U32.__repr__ = lambda self: "U32(%d)" % self.value  # noqa: UP031
 IRTypeEnv.__repr__ = lambda self: f"IRTypeEnv(self.arch, types={self.types})"
-Get.__repr__ = lambda self: f"self.get('{arch.translate_register_name(self.offset)}')"
-Put.__repr__ = lambda self: f"self.put('{arch.translate_register_name(self.offset)}',{repr(self.data)})"
+Get.__repr__ = lambda self: f"self.get('{arch.translate_register_name(self.offset)}')"  # noqa: F405
+Put.__repr__ = lambda self: f"self.put('{arch.translate_register_name(self.offset)}',{self.data!r})"  # noqa: F405
 IRSB.__repr__ = lambda self: (
-    f"IRSB(None, {repr(self.addr)}, self.arch)\nv.statements={repr(self.statements)}\nv.next={repr(self.next)}\n"
-    + f"v.jumpkind={repr(self.jumpkind)}\nv.default_exit_target={repr(self.default_exit_target)}\n"
-    + f"v.data_refs={repr(self.data_refs)}\nv._tyenv={repr(self._tyenv)}\n"
-    + f"v._instructions={repr(self._instructions)}\n"
-    + f"v._instruction_addresses={repr(self._instruction_addresses)}"
+    f"IRSB(None, {self.addr!r}, self.arch)\nv.statements={self.statements!r}\nv.next={self.next!r}\n"
+    + f"v.jumpkind={self.jumpkind!r}\nv.default_exit_target={self.default_exit_target!r}\n"
+    + f"v.data_refs={self.data_refs!r}\nv._tyenv={self._tyenv!r}\n"
+    + f"v._instructions={self._instructions!r}\n"
+    + f"v._instruction_addresses={self._instruction_addresses!r}"
 )
 for Class in [
-    Unop,
-    IRExpr,
-    Binder,
-    VECRET,
-    GSPTR,
-    GetI,
-    Qop,
-    Triop,
-    Load,
-    ITE,
-    CCall,
-    IRStmt,
-    NoOp,
-    IMark,
-    AbiHint,
-    Put,
-    PutI,
-    Store,
-    CAS,
-    LLSC,
-    MBE,
-    Dirty,
-    Exit,
-    LoadG,
-    StoreG,
+    Unop,  # noqa: F405
+    IRExpr,  # noqa: F405
+    Binder,  # noqa: F405
+    VECRET,  # noqa: F405
+    GSPTR,  # noqa: F405
+    GetI,  # noqa: F405
+    Qop,  # noqa: F405
+    Triop,  # noqa: F405
+    Load,  # noqa: F405
+    ITE,  # noqa: F405
+    CCall,  # noqa: F405
+    IRStmt,  # noqa: F405
+    NoOp,  # noqa: F405
+    IMark,  # noqa: F405
+    AbiHint,  # noqa: F405
+    Put,  # noqa: F405
+    PutI,  # noqa: F405
+    Store,  # noqa: F405
+    CAS,  # noqa: F405
+    LLSC,  # noqa: F405
+    MBE,  # noqa: F405
+    Dirty,  # noqa: F405
+    Exit,  # noqa: F405
+    LoadG,  # noqa: F405
+    StoreG,  # noqa: F405
 ]:
     Class.__bases__ += (ReprMixin,)
 
 
-def disasm(CODE: bytes, bitness=0, addr: int = 0) -> str:
+def disasm(CODE: bytes, bitness=0, addr: int = 0) -> str:  # noqa: ANN001, D103
     import capstone as cs
 
     md = cs.Cs(cs.CS_ARCH_X86, {16: cs.CS_MODE_16, 32: cs.CS_MODE_32}[bitness])
-    for instr in md.disasm(CODE, addr):
-        # print(instr)
-        yield instr
+    yield from md.disasm(CODE, addr)
     # "0x%x:\t%s\t%s" % (instr.address, instr.mnemonic, instr.op_str))
 
 
-def asm32(line) -> bytes:
+def asm32(line) -> bytes:  # noqa: ANN001, D103
     import keystone as ks
 
     if line:
@@ -96,21 +94,21 @@ def asm32(line) -> bytes:
         return data
 
 
-def assembler(lines, bitness=0) -> bytes:
+def assembler(lines, bitness=0) -> bytes:  # noqa: ANN001, D103
     import keystone as ks
 
     ks_ = ks.Ks(ks.KS_ARCH_X86, {16: ks.KS_MODE_16, 32: ks.KS_MODE_32}[bitness])
-    data, count = ks_.asm(lines, as_bytes=True)
+    data, _count = ks_.asm(lines, as_bytes=True)
     return data
 
 
-data = bytes()
+data = b""
 sizes_16bit = []
 sizes_32bit = []
 
 
-class Lifter16(LibVEXLifter):
-    def __init__(self, *args, **kwargs):
+class Lifter16(LibVEXLifter):  # noqa: D101
+    def __init__(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003, D107
         super().__init__(*args, **kwargs)
         """
         self.arch_16 = ArchX86()  # get architecture
@@ -122,20 +120,20 @@ class Lifter16(LibVEXLifter):
         self.arch_16._ks._syntax = _keystone.KS_OPT_SYNTAX_MASM  # set syntax
         """
 
-    def lift(
+    def lift(  # noqa: ANN201, D102
         self,
-        data,
-        bytes_offset=None,
-        max_bytes=None,
-        max_inst=None,
-        opt_level=1,
-        traceflags=None,
-        allow_arch_optimizations=None,
-        strict_block_end=None,
-        skip_stmts=False,
-        collect_data_refs=False,
-        cross_insn_opt=True,
-        load_from_ro_regions=False,
+        data,  # noqa: ANN001
+        bytes_offset=None,  # noqa: ANN001
+        max_bytes=None,  # noqa: ANN001
+        max_inst=None,  # noqa: ANN001
+        opt_level=1,  # noqa: ANN001
+        traceflags=None,  # noqa: ANN001
+        allow_arch_optimizations=None,  # noqa: ANN001
+        strict_block_end=None,  # noqa: ANN001
+        skip_stmts=False,  # noqa: ANN001
+        collect_data_refs=False,  # noqa: ANN001
+        cross_insn_opt=True,  # noqa: ANN001
+        load_from_ro_regions=False,  # noqa: ANN001
     ):
         print(f"Input: {locals()}")
         collect_data_refs = False
@@ -149,7 +147,7 @@ class Lifter16(LibVEXLifter):
         try:
             bytes16 = ffi().unpack(data, len(data))
             # raise Exception()
-        except:
+        except:  # noqa: E722
             vex = super().lift(
                 data,
                 bytes_offset=bytes_offset,
@@ -235,18 +233,18 @@ class Lifter16(LibVEXLifter):
         print(f"Output: {vex}")
         return vex
 
-    def change_instr_size(self, vex_current, addr16bit, instr16_size):
+    def change_instr_size(self, vex_current, addr16bit, instr16_size):  # noqa: ANN001, ANN201, D102
         vex_current._instruction_addresses = (addr16bit,)
-        assert isinstance(vex_current.statements[0], IMark)
+        assert isinstance(vex_current.statements[0], IMark)  # noqa: F405
         vex_current.statements[0].addr = addr16bit
         vex_current.statements[0].len = instr16_size
-        if isinstance(vex_current.next, Const):
+        if isinstance(vex_current.next, Const):  # noqa: F405
             vex_current.next = pyvex.expr.Const(pyvex.const.U32(addr16bit + instr16_size))
         vex_current.default_exit_target = addr16bit + instr16_size
         return vex_current
 
     @staticmethod
-    def render_vex_to_json(vex):
+    def render_vex_to_json(vex):  # noqa: ANN001, ANN205, D102
         vexx = copy(vex)
         vexx.arch = None
         json = jsonpickle.encode(vexx, indent=2)
@@ -256,7 +254,7 @@ class Lifter16(LibVEXLifter):
 lifters["X86"] = [Lifter16]
 
 # from archinfo.arch_x86 import ArchX86
-from angr.analyses import (
+from angr.analyses import (  # noqa: E402
     CallingConventionAnalysis,
     CFGFast,
     Decompiler,
@@ -264,49 +262,49 @@ from angr.analyses import (
 )
 
 
-class MyVex(IRSB):
-    def __init__(self, addr=0):
+class MyVex(IRSB):  # noqa: D101
+    def __init__(self, addr=0) -> None:  # noqa: ANN001, D107
         self.addr = addr
         self.arch = ArchX86()
         self.v = IRSB(None, self.addr, self.arch)
         self.v._tyenv = IRTypeEnv(self.arch)
 
-    def add_tmp(self, size):
+    def add_tmp(self, size):  # noqa: ANN001, ANN201, D102
         return self.v._tyenv.add(pyvex.expr.int_type_for_size(size))
 
-    def get(self, register):
+    def get(self, register):  # noqa: ANN001, ANN201, D102
         ty = pyvex.expr.int_type_for_size(8 * self.v.arch.registers[register][1])
         # ty_int = pyvex.enums.get_int_from_enum(ty)
-        return Get(self.v.arch.get_register_offset(register), ty)
+        return Get(self.v.arch.get_register_offset(register), ty)  # noqa: F405
 
-    def conv16Uto32(self, source):
-        return Unop("Iop_16Uto32", [source])
+    def conv16Uto32(self, source):  # noqa: ANN001, ANN201, D102
+        return Unop("Iop_16Uto32", [source])  # noqa: F405
 
-    def put(self, register, source):
-        return Put(source, self.v.arch.get_register_offset(register))
+    def put(self, register, source):  # noqa: ANN001, ANN201, D102
+        return Put(source, self.v.arch.get_register_offset(register))  # noqa: F405
 
-    def load_byte(self, addr):
-        return Load("Iend_LE", "Ity_I8", addr)
+    def load_byte(self, addr):  # noqa: ANN001, ANN201, D102
+        return Load("Iend_LE", "Ity_I8", addr)  # noqa: F405
 
-    def load_word(self, addr):
-        return Load("Iend_LE", "Ity_I16", addr)
+    def load_word(self, addr):  # noqa: ANN001, ANN201, D102
+        return Load("Iend_LE", "Ity_I16", addr)  # noqa: F405
 
-    def load_dword(self, addr):
-        return Load("Iend_LE", "Ity_I32", addr)
+    def load_dword(self, addr):  # noqa: ANN001, ANN201, D102
+        return Load("Iend_LE", "Ity_I32", addr)  # noqa: F405
 
-    def add(self, size, *args):
+    def add(self, size, *args):  # noqa: ANN001, ANN002, ANN201, D102
         if size not in [8, 16, 32]:
-            raise ValueError("Invalid op size %d" % size)
+            raise ValueError("Invalid op size %d" % size)  # noqa: UP031
         if len(args) == 1:
-            return Unop("Iop_Add%d" % size, args)
+            return Unop("Iop_Add%d" % size, args)  # noqa: F405, UP031
         elif len(args) == 2:
-            return Binop("Iop_Add%d" % size, args)
+            return Binop("Iop_Add%d" % size, args)  # noqa: F405, UP031
         elif len(args) == 3:
-            return Triop("Iop_Add%d" % size, args)
+            return Triop("Iop_Add%d" % size, args)  # noqa: F405, UP031
         else:
-            raise ValueError("Invalid number of args %s" % args)
+            raise ValueError(f"Invalid number of args {args}")
 
-    def mov(self):
+    def mov(self):  # noqa: ANN201, D102
         self.v._size = 5
         """
         self.v.statements = [
@@ -326,17 +324,17 @@ class MyVex(IRSB):
         t4 = self.add_tmp(32)  # movzx     eax, word ptr [esp + 4]
         t5 = self.add_tmp(16)  # movzx     eax, word ptr [esp + 4]
         self.v.statements = [
-            IMark(addr=self.v.addr, length=self.v._size, delta=0),
-            WrTmp(t2, self.get("es")),
-            WrTmp(t3, Unop(op="Iop_16Uto32", args=[RdTmp(t2)])),
-            WrTmp(t4, Binop("Iop_Shl32", [RdTmp(t3), Const(U8(4))])),
-            WrTmp(t1, Binop("Iop_Add32", [RdTmp(t4), Const(U32(0x2000))])),
-            WrTmp(t5, Load(end="Iend_LE", ty="Ity_I16", addr=RdTmp(t1))),
-            WrTmp(t0, Unop(op="Iop_16Uto32", args=[RdTmp(t5)])),
-            self.put("eax", RdTmp(t0)),
+            IMark(addr=self.v.addr, length=self.v._size, delta=0),  # noqa: F405
+            WrTmp(t2, self.get("es")),  # noqa: F405
+            WrTmp(t3, Unop(op="Iop_16Uto32", args=[RdTmp(t2)])),  # noqa: F405
+            WrTmp(t4, Binop("Iop_Shl32", [RdTmp(t3), Const(U8(4))])),  # noqa: F405
+            WrTmp(t1, Binop("Iop_Add32", [RdTmp(t4), Const(U32(0x2000))])),  # noqa: F405
+            WrTmp(t5, Load(end="Iend_LE", ty="Ity_I16", addr=RdTmp(t1))),  # noqa: F405
+            WrTmp(t0, Unop(op="Iop_16Uto32", args=[RdTmp(t5)])),  # noqa: F405
+            self.put("eax", RdTmp(t0)),  # noqa: F405
         ]
 
-        self.v.next = Const(U32(self.v.addr + self.v._size))
+        self.v.next = Const(U32(self.v.addr + self.v._size))  # noqa: F405
         self.v.jumpkind = "Ijk_Boring"
         self.v._instructions = 1
         self.v.default_exit_target = self.v.addr + self.v._size
@@ -348,27 +346,27 @@ class MyVex(IRSB):
         # print(Lifter16.render_vex_to_json(self.v))
         return self.v
 
-    def make_temp(self):
+    def make_temp(self) -> None:  # noqa: D102
         pass
 
 
 # from keystone import Ks
 
 
-def resolver(symbol, value):
+def resolver(symbol, value) -> bool:  # noqa: ANN001, D103
     if symbol == b"abcd":
         value.contents.value = 0x42
         return True
     return False
 
 
-def vexer(instruction):
+def vexer(instruction):  # noqa: ANN001, ANN201, D103
     global arch_32
     arch_16 = ArchX86()  # get architecture
     # arch_16.bits=16
     arch_16.reg_blacklist = ("gdt", "ldt")  # make cs,ds valid
     arch_16.ks_mode = _keystone.KS_MODE_16 + _keystone.KS_MODE_LITTLE_ENDIAN
-    arch_16.keystone  # init keystone assembler
+    arch_16.keystone  # init keystone assembler  # noqa: B018
     arch_16._ks.sym_resolver = resolver  # set resolver
     arch_16._ks._syntax = _keystone.KS_OPT_SYNTAX_MASM  # set syntax
     _16bit_length = len(arch_16.asm(instruction))
@@ -376,7 +374,7 @@ def vexer(instruction):
     arch_32 = ArchX86()  # get architecture
     # a.bits=16
     # arch_32.reg_blacklist = ('gdt', 'ldt')  # make cs,ds valid
-    arch_32.keystone  # init keystone assembler
+    arch_32.keystone  # init keystone assembler  # noqa: B018
     arch_32._ks.sym_resolver = resolver  # set resolver
     # a._ks_x86_syntax = 'masm'
     # a._configure_keystone()
@@ -394,7 +392,7 @@ def vexer(instruction):
     return vex
 
 
-def get_instructions_sizes(CODE):
+def get_instructions_sizes(CODE):  # noqa: ANN001, ANN201, D103
     from keystone import KS_ARCH_X86, KS_MODE_16, KS_MODE_32, Ks, KsError
 
     sizes16 = []
@@ -423,61 +421,61 @@ def get_instructions_sizes(CODE):
                 sizes16.append(data16_size)
                 sizes32.append(data32_size)
             except KsError as e:
-                print("ERROR: %s" % e)
+                print(f"ERROR: {e}")
                 exit(1)
     return sizes16, sizes32
 
 
-class myContext:
-    def __init__(
+class myContext:  # noqa: D101
+    def __init__(  # noqa: D107
         self,
-    ):
+    ) -> None:
         self.results = []
 
 
-class myRdTmp:
+class myRdTmp:  # noqa: D101
     @staticmethod
-    def get_temp(obj, context):
+    def get_temp(obj, context) -> None:  # noqa: ANN001, D102
         context.results.append(obj._tmp)
 
     @staticmethod
-    def set_temp(obj, context):
+    def set_temp(obj, context) -> None:  # noqa: ANN001, D102
         if len(context.results) == 0:
-            raise Exception()
+            raise Exception
         obj._tmp = context.results.pop(0)
 
 
-class myWrTmp:
+class myWrTmp:  # noqa: D101
     @staticmethod
-    def get_temp(obj, context):
+    def get_temp(obj, context) -> None:  # noqa: ANN001, D102
         context.results.append(obj.tmp)
 
     @staticmethod
-    def set_temp(obj, context):
+    def set_temp(obj, context) -> None:  # noqa: ANN001, D102
         obj.tmp = context.results.pop(0)
 
 
-def arg_walker(args: IRSB, op, context: myContext):
-    if isinstance(args, RdTmp):
+def arg_walker(args: IRSB, op, context: myContext) -> None:  # noqa: ANN001, D103
+    if isinstance(args, RdTmp):  # noqa: F405
         getattr(myRdTmp, op)(args, context)
-    elif isinstance(args, Load):
+    elif isinstance(args, Load):  # noqa: F405
         arg_walker(args.addr, op, context)
-    elif isinstance(args, (Unop, Binop, Triop)):
+    elif isinstance(args, (Unop, Binop, Triop)):  # noqa: F405
         for arg in args.args:
             arg_walker(arg, op, context)
 
 
-def statement_walker(vex: IRSB, op, context: myContext):
+def statement_walker(vex: IRSB, op, context: myContext) -> None:  # noqa: ANN001, D103
     for stmt in vex.statements:
-        if isinstance(stmt, WrTmp):
+        if isinstance(stmt, WrTmp):  # noqa: F405
             getattr(myWrTmp, op)(stmt, context)
             arg_walker(stmt.data, op, context)
-        elif isinstance(stmt, Put):
+        elif isinstance(stmt, Put):  # noqa: F405
             arg_walker(stmt.data, op, context)
     arg_walker(vex.next, op, context)
 
 
-def merge_vexes(vex1, vex2_):
+def merge_vexes(vex1, vex2_):  # noqa: ANN001, ANN201, D103
     vex2 = deepcopy(vex2_)
     # Get temporary variables indexes for instr 1
     max_temp = len(vex1._tyenv.types)  # max(c1.results)
@@ -606,7 +604,7 @@ if __name__ == "__main__":
 
     arch_32 = ArchX86()  # get architecture
     # arch_32.reg_blacklist = ('gdt', 'ldt')  # make cs,ds valid
-    arch_32.keystone  # init keystone assembler
+    arch_32.keystone  # init keystone assembler  # noqa: B018
     arch_32._ks.sym_resolver = resolver  # set resolver
     arch_32._ks._syntax = _keystone.KS_OPT_SYNTAX_MASM  # set syntax
 
@@ -679,5 +677,5 @@ if __name__ == "__main__":
     func.prototype = cca.prototype
 
     dec = project.analyses[Decompiler].prep()(func, cfg=cfg.model)
-    assert dec.codegen is not None, "Failed to decompile function %s." % repr(func)
-    print("Decompiled function %s\n%s" % (repr(func), dec.codegen.text))
+    assert dec.codegen is not None, f"Failed to decompile function {func!r}."
+    print(f"Decompiled function {func!r}\n{dec.codegen.text}")

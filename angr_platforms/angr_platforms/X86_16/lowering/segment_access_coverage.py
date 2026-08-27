@@ -32,18 +32,19 @@ _AccessIdentity8616 = tuple[
 def segment_access_matches_query_8616(
     fact: SegmentAccessFact,
     *,
+    access_kind: SegmentAccessKind | None,
     segment_register: str | None,
     offset: int | None,
     width: int | None,
 ) -> bool:
     """Return whether one typed access matches every exact known query field."""
+    if access_kind is not None and fact.kind is not access_kind:
+        return False
     if segment_register is not None and fact.segment_register != segment_register:
         return False
     if isinstance(offset, int) and (fact.address.offset & 0xFFFF) != (offset & 0xFFFF):
         return False
-    if isinstance(width, int) and width > 0 and fact.address.size != width:
-        return False
-    return True
+    return not (isinstance(width, int) and width > 0 and fact.address.size != width)
 
 
 def _access_identity_8616(fact: SegmentAccessFact) -> _AccessIdentity8616 | None:

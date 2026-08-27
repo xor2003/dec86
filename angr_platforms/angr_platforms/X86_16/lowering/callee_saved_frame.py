@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Set
 from dataclasses import dataclass
+from enum import Enum
 from typing import Protocol, cast
 
 from capstone.x86_const import X86_INS_POP, X86_INS_PUSH, X86_INS_RET, X86_OP_REG
@@ -36,7 +37,7 @@ class _CapstoneInstruction8616(Protocol):
         ...
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CalleeSavedFramePair8616:
     """Pair one exact frame PUSH with its epilogue POP."""
 
@@ -48,6 +49,117 @@ class CalleeSavedFramePair8616:
     def instruction_addresses(self) -> frozenset[int]:
         """Return both machine instruction addresses in the pair."""
         return frozenset((self.push_addr, self.pop_addr))
+
+
+class CalleeSavedFrameInstructionRole8616(Enum):
+    """Machine instruction role for one pruned frame carrier."""
+
+    PUSH = "push"
+    POP = "pop"
+
+
+class CalleeSavedFrameCarrierKind8616(Enum):
+    """Observable storage class of one pruned frame carrier."""
+
+    SEGMENTED_STACK_WRITE = "segmented_stack_write"
+    STACK_SLOT_WRITE = "stack_slot_write"
+    FRAME_BOOKKEEPING = "frame_bookkeeping"
+
+
+@dataclass(frozen=True, slots=True)
+class CalleeSavedFramePruneFact8616:
+    """Describe one AST assignment pruned through an exact PUSH/POP pair."""
+
+    function_addr: int
+    register_name: str
+    push_addr: int
+    pop_addr: int
+    instruction_addr: int
+    carrier_ordinal: int
+    instruction_role: CalleeSavedFrameInstructionRole8616
+    carrier_kind: CalleeSavedFrameCarrierKind8616
+    stack_displacement: int | None
+    access_width: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class CalleeSavedFramePruneRecord8616:
+    """Closed evidence census for callee-saved frame-carrier pruning."""
+
+    evidence: tuple[CalleeSavedFramePruneFact8616, ...]
+    raw_fact_count: int
+    normalized_fact_count: int
+    classified_fact_count: int
+    materialized_count: int
+    failure_count: int
+
+    @classmethod
+    def closed(
+        cls,
+        evidence: Iterable[CalleeSavedFramePruneFact8616],
+    ) -> CalleeSavedFramePruneRecord8616:
+        """Build a deterministic closed record from materialized prune facts."""
+        unique = tuple(dict.fromkeys(evidence))
+        count = len(unique)
+        return cls(
+            evidence=unique,
+            raw_fact_count=count,
+            normalized_fact_count=count,
+            classified_fact_count=count,
+            materialized_count=count,
+            failure_count=0,
+        )
+
+    @property
+    def closes_evidence(self) -> bool:
+        """Return whether every classified fact was materialized without loss."""
+        count = len(self.evidence)
+        return bool(
+            count > 0
+            and self.raw_fact_count == count
+            and self.normalized_fact_count == count
+            and self.classified_fact_count == count
+            and self.materialized_count == count
+            and self.failure_count == 0
+        )
+
+    @property
+    def segmented_stack_write_evidence(
+        self,
+    ) -> tuple[CalleeSavedFramePruneFact8616, ...]:
+        """Return exact pruned carriers visible as segmented stack writes."""
+        return tuple(
+            fact
+            for fact in self.evidence
+            if fact.carrier_kind is CalleeSavedFrameCarrierKind8616.SEGMENTED_STACK_WRITE
+        )
+
+    @property
+    def frame_stack_store_evidence(
+        self,
+    ) -> tuple[CalleeSavedFramePruneFact8616, ...]:
+        """Return one preferred store fact for each exact frame PUSH pair."""
+        stores: dict[tuple[int, int, int, str], CalleeSavedFramePruneFact8616] = {}
+        for fact in self.evidence:
+            if fact.carrier_kind not in {
+                CalleeSavedFrameCarrierKind8616.SEGMENTED_STACK_WRITE,
+                CalleeSavedFrameCarrierKind8616.STACK_SLOT_WRITE,
+            }:
+                continue
+            key = (
+                fact.function_addr,
+                fact.push_addr,
+                fact.pop_addr,
+                fact.register_name,
+            )
+            previous = stores.get(key)
+            if (
+                previous is None
+                or fact.carrier_kind
+                is CalleeSavedFrameCarrierKind8616.SEGMENTED_STACK_WRITE
+            ):
+                stores[key] = fact
+        return tuple(stores.values())
 
 
 def _decoded_register_name_8616(instruction: object, instruction_id: int) -> str | None:
@@ -111,4 +223,11 @@ def callee_saved_frame_pairs_8616(
     )
 
 
-__all__ = ["CalleeSavedFramePair8616", "callee_saved_frame_pairs_8616"]
+__all__ = [
+    "CalleeSavedFrameCarrierKind8616",
+    "CalleeSavedFrameInstructionRole8616",
+    "CalleeSavedFramePair8616",
+    "CalleeSavedFramePruneFact8616",
+    "CalleeSavedFramePruneRecord8616",
+    "callee_saved_frame_pairs_8616",
+]

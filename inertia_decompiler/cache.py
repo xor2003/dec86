@@ -17,6 +17,7 @@ from typing import cast
 
 from inertia_decompiler.cache_io import load_cache_json_path, store_cache_json_path
 from inertia_decompiler.cache_lock import cache_path_lock
+from inertia_decompiler.cache_runtime_contract import cache_runtime_contract_8616
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -147,10 +148,10 @@ def _production_decompiler_source_files() -> tuple[Path, ...]:
 
 _PRODUCTION_DECOMPILER_SOURCE_FILES: tuple[Path, ...] = _production_decompiler_source_files()
 RECOVERY_CACHE_SOURCE_FILES: tuple[Path, ...] = tuple(
-    sorted(set((*BASE_RECOVERY_CACHE_SOURCE_FILES, *_PRODUCTION_DECOMPILER_SOURCE_FILES)))
+    sorted({*BASE_RECOVERY_CACHE_SOURCE_FILES, *_PRODUCTION_DECOMPILER_SOURCE_FILES})
 )
 DECOMPILATION_CACHE_SOURCE_FILES: tuple[Path, ...] = tuple(
-    sorted(set((*BASE_DECOMPILATION_CACHE_SOURCE_FILES, *_PRODUCTION_DECOMPILER_SOURCE_FILES)))
+    sorted({*BASE_DECOMPILATION_CACHE_SOURCE_FILES, *_PRODUCTION_DECOMPILER_SOURCE_FILES})
 )
 
 
@@ -248,7 +249,7 @@ def _cache_sidecar_fingerprints(binary_path: Path | None) -> dict[str, dict[str,
     sidecars: dict[str, dict[str, object]] = {}
     for suffix in (".lst", ".map", ".cod", ".idc", ".inc"):
         sidecar_path = _case_insensitive_sibling_path(binary_path, suffix)
-        fingerprint = _cache_file_fingerprint(sidecar_path)
+        fingerprint = _cache_content_fingerprint(sidecar_path)
         if fingerprint is not None:
             sidecars[suffix] = fingerprint
     return sidecars
@@ -301,6 +302,8 @@ def _function_decompilation_cache_key(
     enable_structured_simplify: bool,
     enable_postprocess: bool,
 ) -> dict[str, object] | None:
+    if not cache_runtime_contract_8616().allows_semantic_cache:
+        return None
     binary_fingerprint = _cache_content_fingerprint(binary_path)
     if binary_fingerprint is None:
         return None
@@ -337,6 +340,8 @@ def _recovery_cache_key(
     extra: dict[str, object] | None = None,
 ) -> dict[str, object] | None:
     """Build recovery identity, excluding sidecar policy when no sidecar exists."""
+    if not cache_runtime_contract_8616().allows_semantic_cache:
+        return None
     binary_fingerprint = _cache_content_fingerprint(binary_path)
     if binary_fingerprint is None:
         return None

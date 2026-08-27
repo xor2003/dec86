@@ -14,7 +14,7 @@ class _Functions:
     def __init__(self, func):
         self._func = func
 
-    def function(self, addr, create=False):  # noqa: ARG002
+    def function(self, addr, create=False):
         return self._func if addr == self._func.addr else None
 
 
@@ -28,6 +28,10 @@ class _Codegen(SimpleNamespace):
     def next_idx(self, _kind: str) -> int:
         self._next += 1
         return self._next
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def test_apply_annotations_matches_negative_normalized_cod_stack_offset():

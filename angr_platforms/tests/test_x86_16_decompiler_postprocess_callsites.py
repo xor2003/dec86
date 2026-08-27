@@ -59,6 +59,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 class _Memory:
@@ -71,7 +75,7 @@ class _Memory:
         return self._data[start : start + size]
 
 
-def test_regeneration_replay_applies_bound_target_identity_after_arguments(monkeypatch):
+def test_regeneration_replay_applies_bound_target_identity_before_arguments(monkeypatch):
     project = SimpleNamespace(arch=SimpleNamespace(name="86_16"))
     codegen = SimpleNamespace(
         project=project,
@@ -101,7 +105,7 @@ def test_regeneration_replay_applies_bound_target_identity_after_arguments(monke
     )
 
     assert changed is True
-    assert calls == ["attach", "stack-args", "target-identity"]
+    assert calls == ["attach", "target-identity", "stack-args"]
 
 
 def test_regeneration_replay_refuses_missing_target_identity_binding(monkeypatch):
@@ -180,6 +184,7 @@ def test_callsite_materialization_stats_expose_standard_evidence_counters():
         "call_arg_materialized_count": 2,
         "physical_arg_width_override_count": 0,
         "direct_push_override_recent_store_count": 0,
+        "live_setup_definition_preserved_count": 0,
         "known_prototype_arg_mismatch_count": 0,
     }
 

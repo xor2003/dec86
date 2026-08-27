@@ -11,7 +11,7 @@ import enum
 import logging
 import os
 import re
-from typing import Any, Protocol, TypeAlias, cast, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from angr.analyses.decompiler.structured_codegen.c import CBinaryOp, CFunctionCall, CTypeCast, CUnaryOp
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
@@ -25,7 +25,7 @@ __all__ = ["prune_materialized_callsite_segment_metadata_8616"]
 
 logger: logging.Logger = logging.getLogger(__name__)
 _PHYSICAL_REGISTER_VERSION_RE_8616 = re.compile(r"^(?:[abcd][xhl]|[sb]p|[sd]i|[cdefgs]s)(?:_\d+)?$")
-_DynamicCodegenValue8616: TypeAlias = Any
+type _DynamicCodegenValue8616 = Any
 
 
 def _dynamic_codegen_getattr_8616(
@@ -79,7 +79,7 @@ def _assignment_nodes_8616(stmt: object) -> tuple[object, ...]:
         candidates.append(stmt)
     for node in _iter_c_nodes_deep_8616(stmt):
         if _is_assignment_node_8616(node):
-            candidates.append(node)
+            candidates.append(node)  # noqa: PERF401
     return tuple(candidates)
 
 
@@ -149,7 +149,7 @@ def _typed_callsite_summary_map_8616(codegen: object) -> dict[int, CallsiteSumma
     }
 
 
-CarrierKey8616: TypeAlias = tuple[str, str | int]
+type CarrierKey8616 = tuple[str, str | int]
 
 
 @runtime_checkable
@@ -296,10 +296,7 @@ def _stmt_has_call_8616(stmt: object) -> bool:
         return False
     if _call_from_statement_8616(stmt) is not None:
         return True
-    for node in _iter_c_nodes_deep_8616(stmt):
-        if isinstance(node, CFunctionCall):
-            return True
-    return False
+    return any(isinstance(node, CFunctionCall) for node in _iter_c_nodes_deep_8616(stmt))
 
 
 def _stmt_has_memory_write_8616(stmt: object) -> bool:

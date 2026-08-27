@@ -148,6 +148,14 @@ def _has_explicit_prototype_8616(function: _FunctionSurface8616) -> bool:
     return isinstance(annotations, Mapping) and isinstance(annotations.get("prototype"), SimTypeFunction)
 
 
+def _refinable_generated_word_return_8616(type_: object) -> bool:
+    """Return whether terminal AX width may refine one generated scalar header."""
+    # Arch86_16 is VEX-wide, so generated SimTypes may not carry an arch and
+    # SimTypeInt.size is not the target C ABI width. These classes are the
+    # complete set of generated scalar headers that fit the 16-bit AX result.
+    return isinstance(type_, (SimTypeChar, SimTypeInt, SimTypeShort))
+
+
 def apply_terminal_register_return_type_evidence_8616(
     project: object,
     function: object,
@@ -176,11 +184,14 @@ def apply_terminal_register_return_type_evidence_8616(
         return TerminalRegisterReturnTypeResult8616(False, TerminalRegisterReturnTypeStats8616())
 
     storage = terminal_return_storage_8616(project, function)
+    caller_use = proven_function_result_observation_8616(
+        project,
+        function_surface.addr,
+    )
     normalized_count = int(storage is not None)
     if (
         storage is not TerminalReturnStorage8616.AX
-        or proven_function_result_observation_8616(project, function_surface.addr)
-        is not CallerReturnUseVerdict8616.USED
+        or caller_use is CallerReturnUseVerdict8616.UNUSED
     ):
         return TerminalRegisterReturnTypeResult8616(
             False,
@@ -249,7 +260,7 @@ def materialize_terminal_register_return_type_8616(
         function is None
         or _has_explicit_prototype_8616(function)
         or not isinstance(prototype, SimTypeFunction)
-        or not isinstance(prototype.returnty, SimTypeChar)
+        or not _refinable_generated_word_return_8616(prototype.returnty)
     ):
         result = TerminalRegisterReturnTypeResult8616(False, TerminalRegisterReturnTypeStats8616())
         codegen_surface._inertia_terminal_register_return_type_result_8616 = result
@@ -268,6 +279,13 @@ def materialize_terminal_register_return_type_8616(
         codegen_surface._inertia_terminal_register_return_type_result_8616 = result
         return result
     terminal_type = _typed_terminal_return_type_8616(cfunc) or SimTypeShort(signed=False).with_arch(project_surface.arch)
+    if prototype.returnty == terminal_type:
+        result = TerminalRegisterReturnTypeResult8616(
+            False,
+            TerminalRegisterReturnTypeStats8616(1, 1, 1, 1, 0),
+        )
+        codegen_surface._inertia_terminal_register_return_type_result_8616 = result
+        return result
     if not isinstance(prototype, SimTypeFunction):
         result = TerminalRegisterReturnTypeResult8616(False, TerminalRegisterReturnTypeStats8616())
         codegen_surface._inertia_terminal_register_return_type_result_8616 = result

@@ -32,6 +32,10 @@ from angr_platforms.X86_16.decompiler_postprocess_stage import (
     _materialize_void_tail_call_guard_from_cfg_pass_8616,
     _prune_duplicate_empty_return_guard_before_cfg_suffix_8616,
 )
+from angr_platforms.X86_16.structuring.surplus_guard_contracts import (
+    SurplusGuardCleanupEvidence8616,
+    SurplusGuardCleanupStats8616,
+)
 
 
 def test_materialized_terminal_return_supersedes_adjacent_unsupported_ail_return():
@@ -58,6 +62,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _const(value: int, codegen):
@@ -535,6 +543,26 @@ def test_surplus_empty_guard_delta_accepts_exact_structuring_proof() -> None:
     )
 
 
+def test_surplus_empty_guard_delta_uses_durable_artifact_after_later_scan() -> None:
+    codegen = _surplus_empty_guard_codegen()
+    codegen._inertia_void_empty_return_guard_decision_8616 = "keep_within_branch_budget"
+    codegen._inertia_surplus_empty_guard_cleanup_artifact_8616 = (
+        SurplusGuardCleanupEvidence8616(
+            branch_count=10,
+            total_if_count=12,
+            noop_materialized_count=2,
+            empty_return_materialized_count=0,
+            identical_arms_materialized_count=0,
+            stats=SurplusGuardCleanupStats8616(2, 2, 2, 2, 0),
+        )
+    )
+
+    assert _is_proven_surplus_empty_guard_cleanup_delta_8616(
+        codegen,
+        _surplus_empty_guard_validation(),
+    )
+
+
 def test_surplus_empty_guard_pass_declares_its_internal_local_proof() -> None:
     codegen = SimpleNamespace()
 
@@ -602,6 +630,45 @@ def test_empty_if_return_materialization_refuses_unsafe_effect_function(monkeypa
     assert codegen._inertia_empty_return_branch_stats_8616["materialized"] == 0
     assert codegen._inertia_empty_return_branch_stats_8616["refused"] >= 1
     assert codegen._inertia_empty_return_branch_refused_unsafe_effects_8616 == 1
+
+
+def test_selector_effect_scan_ignores_stale_rewrite_function_cache() -> None:
+    codegen = _DummyCodegen()
+    root = CStatements(statements=[], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x2000, statements=root, body=root)
+    stale_write = SimpleNamespace(
+        address=0x1000,
+        size=2,
+        mnemonic="add",
+        operands=(SimpleNamespace(type=3), SimpleNamespace(type=2)),
+    )
+    current_register_write = SimpleNamespace(
+        address=0x2000,
+        size=2,
+        mnemonic="add",
+        operands=(SimpleNamespace(type=1), SimpleNamespace(type=2)),
+    )
+    codegen._inertia_jcc_function_insns_8616 = (stale_write,)
+    function = SimpleNamespace(block_addrs_set={0x2000})
+    project = SimpleNamespace(
+        arch=Arch86_16(),
+        factory=SimpleNamespace(
+            block=lambda addr, opt_level=0: SimpleNamespace(
+                capstone=SimpleNamespace(
+                    insns=(current_register_write,) if addr == 0x2000 else ()
+                )
+            )
+        ),
+        kb=SimpleNamespace(
+            functions=SimpleNamespace(
+                function=lambda *, addr, create=False: function
+                if addr == 0x2000 and create is False
+                else None
+            )
+        ),
+    )
+
+    assert post_stage._selector_function_has_unsafe_effects_8616(project, codegen) is False
 
 
 def test_cfg_selector_return_scans_explicit_return_ast(monkeypatch):

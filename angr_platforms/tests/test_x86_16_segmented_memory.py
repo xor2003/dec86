@@ -391,7 +391,7 @@ class TestPhase3Integration:
     def test_segmented_memory_pass_records_stable_and_over_associated_summary(self):
         class MockCodegen:
             cfunc = object()
-            _inertia_segment_assignments = [
+            _inertia_segment_assignments = [  # noqa: RUF012
                 SegmentAssignment(SegmentRegister.DS, 0x1000, "literal", "f1", 0.9),
                 SegmentAssignment(SegmentRegister.DS, 0x1000, "literal", "f2", 0.9),
                 SegmentAssignment(SegmentRegister.ES, 0x2000, "literal", "f3", 0.9),

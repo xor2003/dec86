@@ -43,12 +43,12 @@ from .decompiler_postprocess_utils import (
 )
 
 __all__ = [
-    "_coalesce_word_global_loads_8616",
     "WordGlobalStoreCandidate",
-    "describe_word_global_constant_store_candidates_8616",
-    "_coalesce_word_global_constant_stores_8616",
     "_apply_word_global_types_8616",
+    "_coalesce_word_global_constant_stores_8616",
+    "_coalesce_word_global_loads_8616",
     "_prune_unused_unnamed_memory_declarations_8616",
+    "describe_word_global_constant_store_candidates_8616",
 ]
 
 

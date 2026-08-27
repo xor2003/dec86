@@ -10,9 +10,11 @@ facts. Do not recover semantics from COD, source, assembly, or rendered C text.
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Protocol, Sequence, cast
+from typing import Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeShort
@@ -252,10 +254,8 @@ def _unsigned_short_type_8616(codegen: object | None) -> SimTypeShort:
     """Return an architecture-bound unsigned short for pointer deltas."""
     value_type = SimTypeShort(False)
     if codegen is not None:
-        try:
+        with contextlib.suppress(AttributeError):
             value_type = value_type.with_arch(cast(_CodegenBoundary8616, codegen).project.arch)
-        except AttributeError:
-            pass
     return value_type
 
 

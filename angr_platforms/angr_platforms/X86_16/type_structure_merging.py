@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import typing
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional, Set
+from typing import TYPE_CHECKING
 
 from .ir.core import IRAddress
 from .type_storage_object_bridge import load_storage_object_bridge
@@ -74,7 +74,7 @@ class StructField:
     width: int  # Bit width (8, 16, 32, etc.)
     field_type: str  # "int", "char", "ptr", "struct", etc.
     access_count: int = 0  # How many times accessed
-    functions: Set[str] = field(default_factory=set)  # Functions accessing this field
+    functions: set[str] = field(default_factory=set)  # Functions accessing this field
 
     def __repr__(self) -> str:
         """Render a compact deterministic field description."""
@@ -131,10 +131,10 @@ class FieldAccessPattern:
     struct_base: str  # Pointer to struct
     field_offset: int  # Bytes from base
     field_width: int  # Bit width accessed
-    field_name: Optional[str]  # If known
+    field_name: str | None  # If known
     access_type: str  # "read", "write", "mixed"
     function: str  # Where accessed
-    line_number: Optional[int]  # For tracking
+    line_number: int | None  # For tracking
 
     def __repr__(self) -> str:
         """Render a compact deterministic access pattern description."""

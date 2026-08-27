@@ -57,6 +57,7 @@ from .. import decompiler_postprocess_jcc as _legacy_jcc
 from .. import decompiler_postprocess_typed_conditions as _legacy_typed_conditions
 from ..c_ast_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
 from ..callsite_summary import callsite_machine_frame_kind_8616
+from ..condition_call_effects import classify_condition_call_effects_8616
 from ..ir.condition_ir import ConditionIR
 from ..ir.core import IRValue
 from ..lowering.call_execution_frame_carriers import (
@@ -77,6 +78,7 @@ from ..lowering.scalar_return_types import record_scalar_return_type_evidence_86
 from ..lowering.wide_stack_pair_evidence import proven_wide_stack_ir_pair_8616
 from ..pipeline.errors import PipelineHardError
 from ..postprocess import flags_cleanup as _flags_cleanup
+from ..structured_tags import copy_structured_tags_8616
 from ..validation_condition_precision import record_condition_precision_evidence_8616
 from .branch_return_expressions import (
     recover_branch_target_return_expression_8616,
@@ -110,6 +112,11 @@ from .multi_arm_return_chains import (
     recover_structured_multi_arm_wide_return_chain_8616,
 )
 from .scalar_return_evidence import materialize_complete_scalar_return_leaves_8616
+from .single_branch_return_orientation import (
+    classify_cfg_binary_arm_orientation_8616,
+    classify_direct_or_one_hop_target_orientation_8616,
+    classify_single_branch_return_orientation_8616,
+)
 from .total_return_suffixes import (
     TotalReturnSuffixPruneStats8616,
     prune_unreachable_total_return_suffixes_8616,
@@ -160,6 +167,7 @@ class _ConditionMaterializationCodegen8616(Protocol):
 
     _inertia_structuring_condition_materialization_8616: dict[str, object]
     _inertia_structuring_condition_replay_cleanup_8616: dict[str, object]
+    _inertia_structuring_dead_flag_cleanup_8616: dict[str, object]
     _inertia_condition_materialization_structuring_pass_ran_8616: bool
     _inertia_structuring_condition_chain_stats_8616: StructuringConditionChainStats8616
     _inertia_typed_loop_condition_stats_8616: LoopConditionMaterializationStats8616
@@ -238,6 +246,7 @@ class StructuringConditionChainStats8616:
     classified_fact_count: int = 0
     materialized_count: int = 0
     failure_count: int = 0
+    preserved_side_effect_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +293,19 @@ class StructuringConditionReplayCleanupResult8616:
             or self.unused_flag_assignments_pruned
             or self.overwritten_flag_assignments_pruned
         )
+
+
+@dataclass(frozen=True, slots=True)
+class StructuringDeadFlagCleanupResult8616:
+    """Typed result for final proven-dead flag-assignment cleanup."""
+
+    overwritten_flag_assignments_pruned: bool
+    unused_flag_assignments_pruned: bool
+
+    @property
+    def changed(self) -> bool:
+        """Return whether the final Structuring cleanup changed the AST."""
+        return self.overwritten_flag_assignments_pruned or self.unused_flag_assignments_pruned
 
 
 @dataclass(frozen=True, slots=True)
@@ -354,25 +376,33 @@ def _first_tagged_ins_addr_8616(node: object) -> int | None:
             tags = boundary.tags
         except AttributeError:
             continue
-        ins_addr = tags.get("ins_addr") if isinstance(tags, dict) else None
+        copied_tags = copy_structured_tags_8616(tags)
+        ins_addr = copied_tags.get("ins_addr") if copied_tags is not None else None
         if isinstance(ins_addr, int):
             addresses.append(ins_addr)
     return min(addresses) if addresses else None
 
 
-def _first_tagged_block_addr_8616(node: object) -> int | None:
-    """Return the first VEX block tag in one structured C subtree."""
-    addresses: list[int] = []
+def _tagged_block_addrs_8616(node: object) -> tuple[int, ...]:
+    """Return every VEX block tag in one structured C subtree."""
+    addresses: set[int] = set()
     for current in _iter_c_nodes_deep_8616(node):
         boundary = cast(_ConditionMaterializationTaggedNode8616, current)
         try:
             tags = boundary.tags
         except AttributeError:
             continue
-        block_addr = tags.get("vex_block_addr") if isinstance(tags, dict) else None
+        copied_tags = copy_structured_tags_8616(tags)
+        block_addr = copied_tags.get("vex_block_addr") if copied_tags is not None else None
         if isinstance(block_addr, int):
-            addresses.append(block_addr)
-    return min(addresses) if addresses else None
+            addresses.add(block_addr)
+    return tuple(sorted(addresses))
+
+
+def _first_tagged_block_addr_8616(node: object) -> int | None:
+    """Return the first VEX block tag in one structured C subtree."""
+    addresses = _tagged_block_addrs_8616(node)
+    return addresses[0] if addresses else None
 
 
 def _first_tagged_cfg_target_8616(node: object) -> int | None:
@@ -416,10 +446,11 @@ def _condition_key_from_tags_8616(node: object) -> tuple[int, int] | None:
             tags = boundary.tags
         except AttributeError:
             continue
-        if not isinstance(tags, dict):
+        copied_tags = copy_structured_tags_8616(tags)
+        if copied_tags is None:
             continue
-        ins_addr = tags.get("ins_addr")
-        block_addr = tags.get("vex_block_addr")
+        ins_addr = copied_tags.get("ins_addr")
+        block_addr = copied_tags.get("vex_block_addr")
         if isinstance(ins_addr, int) and isinstance(block_addr, int):
             return ins_addr, block_addr
     return None
@@ -432,9 +463,10 @@ def _direct_tagged_ins_addr_8616(node: object) -> int | None:
         tags = boundary.tags
     except AttributeError:
         return None
-    if not isinstance(tags, dict):
+    copied_tags = copy_structured_tags_8616(tags)
+    if copied_tags is None:
         return None
-    ins_addr = tags.get("ins_addr")
+    ins_addr = copied_tags.get("ins_addr")
     return ins_addr if isinstance(ins_addr, int) else None
 
 
@@ -445,7 +477,7 @@ def _copied_condition_tags_8616(node: object) -> dict[str, object]:
         tags = boundary.tags
     except AttributeError:
         return {}
-    return dict(tags) if isinstance(tags, dict) else {}
+    return copy_structured_tags_8616(tags) or {}
 
 
 def _condition_structure_token_8616(
@@ -562,7 +594,7 @@ def structuring_condition_surface_token_8616(codegen: object) -> tuple[tuple[obj
     return tuple(surface)
 
 
-def _invert_structured_condition_8616(condition: CExpression, codegen: object) -> CExpression:
+def invert_structured_condition_8616(condition: CExpression, codegen: object) -> CExpression:
     """Invert one materialized comparison without recovering new semantics."""
     inverted_ops = {
         "CmpEQ": "CmpNE",
@@ -589,20 +621,20 @@ def _combine_condition_outcomes_8616(
     if isinstance(taken, bool) and isinstance(fallthrough, bool):
         if taken == fallthrough:
             return taken
-        return condition if taken else _invert_structured_condition_8616(condition, codegen)
+        return condition if taken else invert_structured_condition_8616(condition, codegen)
     if taken is True:
         return CBinaryOp("LogicalOr", condition, cast(CExpression, fallthrough), codegen=codegen)
     if fallthrough is True:
         return CBinaryOp(
             "LogicalOr",
-            _invert_structured_condition_8616(condition, codegen),
+            invert_structured_condition_8616(condition, codegen),
             cast(CExpression, taken),
             codegen=codegen,
         )
     if taken is False:
         return CBinaryOp(
             "LogicalAnd",
-            _invert_structured_condition_8616(condition, codegen),
+            invert_structured_condition_8616(condition, codegen),
             cast(CExpression, fallthrough),
             codegen=codegen,
         )
@@ -613,7 +645,7 @@ def _combine_condition_outcomes_8616(
         CBinaryOp("LogicalAnd", condition, cast(CExpression, taken), codegen=codegen),
         CBinaryOp(
             "LogicalAnd",
-            _invert_structured_condition_8616(condition, codegen),
+            invert_structured_condition_8616(condition, codegen),
             cast(CExpression, fallthrough),
             codegen=codegen,
         ),
@@ -1028,6 +1060,7 @@ def _materialize_cfg_single_branch_expr_8616(
     materialize_return: bool = True,
 ) -> CExpression | None:
     """Orient one no-else branch from typed targets and exclusive CFG reachability."""
+    proven_return_orientation: bool | None = None
     body_return = sole_return_statement_8616(body)
     expected_return = sole_return_expression_8616(body)
     if body_return is not None and (expected_return is not None or body_return.retval is None):
@@ -1038,7 +1071,7 @@ def _materialize_cfg_single_branch_expr_8616(
                 root_orientation = True
             elif _same_c_expression_8616(
                 structured_condition,
-                _invert_structured_condition_8616(root_expression, codegen),
+                invert_structured_condition_8616(root_expression, codegen),
             ):
                 root_orientation = False
 
@@ -1139,13 +1172,29 @@ def _materialize_cfg_single_branch_expr_8616(
                     codegen, materialized_wide, (wide_condition,)
                 )
                 return lowering.expression
-    orientation = _single_branch_body_orientation_8616(condition, body, successors)
+        if expected_return is not None:
+            orientation_evidence = classify_single_branch_return_orientation_8616(
+                condition,
+                expected_return,
+                exit_expressions,
+                successors,
+                _same_c_expression_8616,
+                _single_branch_orientation_8616,
+            )
+            proven_return_orientation = orientation_evidence.orientation.as_taken_polarity()
+            _debug_condition_chain_8616(
+                "single-return-orientation",
+                evidence=orientation_evidence,
+            )
+    orientation = proven_return_orientation
+    if orientation is None:
+        orientation = _single_branch_body_orientation_8616(condition, body, successors)
     if orientation is None:
         return None
     materialized = materialize_condition_ir_expression_8616(project, codegen, condition)
     if materialized is None:
         return None
-    oriented = materialized if orientation else _invert_structured_condition_8616(materialized, codegen)
+    oriented = materialized if orientation else invert_structured_condition_8616(materialized, codegen)
     lowering = lower_call_output_stack_fields_in_condition_8616(codegen, oriented, (condition,))
     true_target = condition.taken_target if orientation else condition.fallthrough_target
     false_target = condition.fallthrough_target if orientation else condition.taken_target
@@ -1160,6 +1209,13 @@ def _single_branch_orientation_8616(
     successors: dict[int, tuple[int, ...]],
 ) -> bool | None:
     """Return whether the taken side uniquely owns one structured body."""
+    direct_orientation = classify_direct_or_one_hop_target_orientation_8616(
+        condition,
+        body_target,
+        successors,
+    )
+    if isinstance(direct_orientation, bool):
+        return direct_orientation
     if not isinstance(condition.taken_target, int) or not isinstance(condition.fallthrough_target, int):
         return None
     taken_reaches = _cfg_reaches_address_8616(
@@ -1425,9 +1481,57 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
     classified_count = 0
     materialized_count = 0
     failure_count = 0
+    preserved_side_effect_count = 0
     changed = False
     for node in _iter_c_nodes_deep_8616(root):
         if not isinstance(node, CIfElse):
+            continue
+        call_effects = tuple(
+            classify_condition_call_effects_8616(condition)
+            for condition, _body in node.condition_and_nodes
+        )
+        semantic_call_count = sum(
+            evidence.semantic_call_count for evidence in call_effects
+        )
+        if semantic_call_count:
+            raw_count += semantic_call_count
+            classified_count += semantic_call_count
+            materialized_count += semantic_call_count
+            preserved_side_effect_count += semantic_call_count
+            replay_evidence = None
+            if len(node.condition_and_nodes) == 1:
+                semantic_condition, semantic_body = node.condition_and_nodes[0]
+                key = _condition_key_from_tags_8616(semantic_condition)
+                semantic_root_fact = conditions_by_src.get(key[0]) if key is not None else None
+                if (
+                    semantic_root_fact is not None
+                    and key == (semantic_root_fact.src_insn, semantic_root_fact.block_addr)
+                    and node.else_node is not None
+                ):
+                    replay_evidence = classify_cfg_binary_arm_orientation_8616(
+                        semantic_root_fact,
+                        _tagged_block_addrs_8616(semantic_body),
+                        _tagged_block_addrs_8616(node.else_node),
+                        successors,
+                    )
+                    if replay_evidence.is_complementary:
+                        true_polarity = replay_evidence.true_polarity
+                        record_condition_replay_fact_8616(
+                            codegen,
+                            semantic_root_fact,
+                            semantic_root_fact.taken_target
+                            if true_polarity
+                            else semantic_root_fact.fallthrough_target,
+                            semantic_root_fact.fallthrough_target
+                            if true_polarity
+                            else semantic_root_fact.taken_target,
+                        )
+            _debug_condition_chain_8616(
+                "semantic-call-condition-preserved",
+                replay_evidence=replay_evidence,
+                replay_facts=condition_replay_facts_8616(codegen),
+                semantic_call_count=semantic_call_count,
+            )
             continue
         if len(node.condition_and_nodes) != 1:
             condition_and_nodes = tuple(node.condition_and_nodes)
@@ -1681,6 +1785,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                 )
             tags["inertia_structuring_condition_cfg_materialized_8616"] = True
             tags["inertia_structuring_shared_body_condition_chain_materialized_8616"] = True
+            tags["inertia_structuring_shared_body_target_8616"] = body_target
             replacement.tags = tags
             record_condition_precision_evidence_8616(
                 project, codegen, first_condition, replacement
@@ -1697,6 +1802,22 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             )
             continue
         condition, body = node.condition_and_nodes[0]
+        condition_tags = _copied_condition_tags_8616(condition)
+        shared_body_target = condition_tags.get(
+            "inertia_structuring_shared_body_target_8616"
+        )
+        if (
+            condition_tags.get(
+                "inertia_structuring_shared_body_condition_chain_materialized_8616"
+            )
+            is True
+            and isinstance(shared_body_target, int)
+            and _first_tagged_cfg_target_8616(body) == shared_body_target
+        ):
+            raw_count += 1
+            classified_count += 1
+            materialized_count += 1
+            continue
         key = _condition_key_from_tags_8616(condition)
         node_ins_addr = _direct_tagged_ins_addr_8616(node)
         condition_ins_addr = key[0] if key is not None else None
@@ -1850,6 +1971,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                 true_target=assignment_diamond.true_target,
             )
             continue
+        prune_call_output_carriers = True
         if node.else_node is None:
             replacement = _materialize_cfg_single_branch_expr_8616(
                 project,
@@ -1876,25 +1998,56 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
                     )
             marker = "inertia_structuring_single_branch_materialized_8616"
         else:
-            true_target = _first_tagged_cfg_target_8616(body)
-            false_target = _first_tagged_cfg_target_8616(node.else_node)
-            replacement = (
-                _materialize_cfg_condition_chain_expr_8616(
-                    project,
+            arm_orientation = classify_cfg_binary_arm_orientation_8616(
+                root_fact,
+                _tagged_block_addrs_8616(body),
+                _tagged_block_addrs_8616(node.else_node),
+                successors,
+            )
+            true_orientation = arm_orientation.true_arm
+            false_orientation = arm_orientation.false_arm
+            true_polarity = arm_orientation.true_polarity
+            replacement = None
+            if arm_orientation.is_complementary:
+                materialized = materialize_condition_ir_expression_8616(project, codegen, root_fact)
+                if materialized is not None:
+                    replacement = materialized if true_polarity else invert_structured_condition_8616(
+                        materialized,
+                        codegen,
+                    )
+                    prune_call_output_carriers = False
+            if replacement is not None:
+                record_condition_replay_fact_8616(
                     codegen,
                     root_fact,
-                    conditions_by_block,
-                    successors,
-                    true_target,
-                    false_target,
+                    root_fact.taken_target if true_polarity else root_fact.fallthrough_target,
+                    root_fact.fallthrough_target if true_polarity else root_fact.taken_target,
                 )
-                if true_target is not None and false_target is not None
-                else None
-            )
-            if replacement is not None and true_target is not None and false_target is not None:
-                record_condition_replay_fact_8616(
-                    codegen, root_fact, true_target, false_target
+                _debug_condition_chain_8616(
+                    "if-else-arm-ownership-materialized",
+                    false_evidence=false_orientation,
+                    true_evidence=true_orientation,
                 )
+            else:
+                true_target = _first_tagged_cfg_target_8616(body)
+                false_target = _first_tagged_cfg_target_8616(node.else_node)
+                replacement = (
+                    _materialize_cfg_condition_chain_expr_8616(
+                        project,
+                        codegen,
+                        root_fact,
+                        conditions_by_block,
+                        successors,
+                        true_target,
+                        false_target,
+                    )
+                    if true_target is not None and false_target is not None
+                    else None
+                )
+                if replacement is not None and true_target is not None and false_target is not None:
+                    record_condition_replay_fact_8616(
+                        codegen, root_fact, true_target, false_target
+                    )
             marker = "inertia_structuring_condition_chain_materialized_8616"
         if replacement is None:
             _debug_condition_chain_8616(
@@ -1937,7 +2090,8 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
             project, codegen, cast(CExpression, condition), replacement
         )
         node.condition_and_nodes = [(replacement, body)]
-        prune_materialized_call_output_stack_carriers_8616(codegen)
+        if prune_call_output_carriers:
+            prune_materialized_call_output_stack_carriers_8616(codegen)
         materialized_count += 1
         changed = True
         _debug_condition_chain_8616(
@@ -1976,6 +2130,7 @@ def materialize_structuring_condition_chains_8616(project: object, codegen: obje
         classified_fact_count=classified_count + wide_stats.classified_fact_count,
         materialized_count=materialized_count + wide_stats.materialized_count,
         failure_count=failure_count + wide_stats.failure_count,
+        preserved_side_effect_count=preserved_side_effect_count,
     )
     metadata_codegen._inertia_structuring_condition_chain_stats_8616 = stats
     _debug_condition_chain_8616("stats", stats=stats)
@@ -2095,6 +2250,44 @@ def cleanup_structuring_conditions_after_replay_8616(
         "interval_guards_changed": result.interval_guards_changed,
         "unused_flag_assignments_pruned": result.unused_flag_assignments_pruned,
         "overwritten_flag_assignments_pruned": result.overwritten_flag_assignments_pruned,
+        "changed": result.changed,
+        "owner": "structuring.condition_materialization",
+    }
+    return result
+
+
+def prune_dead_flag_assignments_after_structuring_8616(
+    project: object,
+    codegen: object,
+) -> StructuringDeadFlagCleanupResult8616:
+    """Prune flag chains made dead by later Structuring and Lowering passes.
+
+    Callsite lowering can replace register-carrier argument setup with a
+    self-contained expression after normal condition cleanup. Run only the
+    existing proof-based flag DCE here; never initialize unknown incoming flags.
+    """
+    legacy_project = cast(SimpleNamespace, project)
+    legacy_codegen = cast(SimpleNamespace, codegen)
+    overwritten = bool(
+        _flags_cleanup._prune_overwritten_flag_assignments_8616(
+            legacy_project,
+            legacy_codegen,
+        )
+    )
+    unused = bool(
+        _flags_cleanup._prune_unused_flag_assignments_8616(
+            legacy_project,
+            legacy_codegen,
+        )
+    )
+    result = StructuringDeadFlagCleanupResult8616(
+        overwritten_flag_assignments_pruned=overwritten,
+        unused_flag_assignments_pruned=unused,
+    )
+    metadata_codegen = cast(_ConditionMaterializationCodegen8616, codegen)
+    metadata_codegen._inertia_structuring_dead_flag_cleanup_8616 = {
+        "overwritten_flag_assignments_pruned": overwritten,
+        "unused_flag_assignments_pruned": unused,
         "changed": result.changed,
         "owner": "structuring.condition_materialization",
     }

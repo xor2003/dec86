@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import re
 import typing
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from .stack_variable_binding import StackVariableBinding
 
@@ -100,6 +101,6 @@ def apply_stack_variable_bindings_to_c_text(
 
 
 __all__ = [
-    "substitute_ss_bp_dereferences_with_variables",
     "apply_stack_variable_bindings_to_c_text",
+    "substitute_ss_bp_dereferences_with_variables",
 ]

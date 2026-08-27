@@ -4,7 +4,9 @@ from types import SimpleNamespace
 
 import networkx
 import pytest
+from angr import ailment
 from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeLong, SimTypePointer, SimTypeShort
+from angr_platforms.X86_16.alias.callsite_stack_merge import CallsitePredecessorStackMerge8616
 from angr_platforms.X86_16.analysis_helpers import CallTargetSeed, resolve_direct_call_target_from_block
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import (
@@ -93,6 +95,16 @@ def test_regular_structured_callsite_bind_still_refuses_conflict() -> None:
 
     with pytest.raises(PipelineHardError, match="identity conflicts"):
         bind_structured_callsite_identity_8616(call, summary)
+
+
+def test_structured_callsite_identity_accepts_rust_backed_ail_tags() -> None:
+    summary = _identity_summary(0x4010)
+    call = ailment.Expr.Register(None, 0, 16, block_addr=0x4000)
+
+    bind_structured_callsite_identity_8616(call, summary)
+
+    assert call.tags["ins_addr"] == summary.callsite_addr
+    assert call.tags["block_addr"] == 0x4000
 
 
 def test_callsite_summary_inventory_requires_matching_owned_key() -> None:
@@ -347,6 +359,29 @@ def test_callsite_summary_reports_push_args_cleanup_and_return_use(monkeypatch):
         return_use_kind="condition",
         stack_cleanup_instruction_addr=0x1005,
     )
+
+
+def test_callsite_summary_recovers_far_call_pushes_and_cleanup(monkeypatch):
+    """Capstone ``lcall`` must enter the same evidence pipeline as ``call``."""
+    function = _function_with_block(
+        [
+            _Insn(0x1000, "push", [_Operand(imm=1, size=2)]),
+            _Insn(0x1001, "push", [_Operand(imm=2, size=2)]),
+            _Insn(0x1002, "lcall", size=5),
+            _Insn(0x1007, "add", [_Operand(reg=1), _Operand(imm=4)], reg_names={1: "sp"}),
+        ]
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x1002, 0x11E6, 0x1007, "direct_far")],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1002)
+
+    assert summary.arg_count == 2
+    assert summary.arg_widths == (2, 2)
+    assert summary.stack_cleanup == 4
+    assert summary.stack_cleanup_instruction_addr == 0x1007
 
 
 def test_callsite_summary_classifies_inc_ax_jcc_as_return_condition(monkeypatch):
@@ -725,10 +760,10 @@ def test_callsite_summary_records_register_stack_source_add_push_expr(monkeypatc
     assert summary.push_arg_sources == (
         (
             "expr",
-            ("bp", -4),
-            ((CallsitePushExprOp8616.ADD_SOURCE.value, ("bp", -2)),),
+            ("bp", -4, 2),
+            ((CallsitePushExprOp8616.ADD_SOURCE.value, ("bp", -2, 2)),),
         ),
-        ("bp", -4),
+        ("bp", -4, 2),
     )
     assert summary.push_arg_instruction_addrs == (0x1006, 0x1007)
 
@@ -761,7 +796,7 @@ def test_callsite_summary_records_register_stack_source_or_push_expr(monkeypatch
     assert summary.arg_count == 2
     assert summary.arg_widths == (2, 2)
     assert summary.push_arg_sources == (
-        ("expr", ("bp", -2), ((CallsitePushExprOp8616.OR.value, 3),)),
+        ("expr", ("bp", -2, 2), ((CallsitePushExprOp8616.OR.value, 3),)),
         ("imm", 0x61),
     )
 
@@ -795,10 +830,10 @@ def test_callsite_summary_records_signed_dx_ax_stack_push_sources(monkeypatch):
     assert summary.push_arg_sources == (
         (
             "expr",
-            ("bp", 6),
+            ("bp", 6, 2),
             ((CallsitePushExprOp8616.SIGN_EXT_HI.value, 16),),
         ),
-        ("bp", 6),
+        ("bp", 6, 2),
     )
 
 
@@ -831,7 +866,7 @@ def test_callsite_summary_records_proven_imul_ax_memory_push_source(monkeypatch)
     assert summary.stack_cleanup == 4
     assert summary.push_arg_sources == (
         ("imm", 75),
-        ("expr", ("bp", 4), ((CallsitePushExprOp8616.MUL.value, 60),)),
+        ("expr", ("bp", 4, 2), ((CallsitePushExprOp8616.MUL.value, 60),)),
     )
 
 
@@ -893,7 +928,7 @@ def test_callsite_summary_records_ax_byte_indexed_global_push_source(monkeypatch
     assert summary.arg_count == 1
     assert summary.arg_widths == (2,)
     assert summary.push_arg_sources == (
-        ("global_index", 0x0B4C, 1, ("bp", 4), ((CallsitePushExprOp8616.SHL.value, 1),)),
+        ("global_index", 0x0B4C, 1, ("bp", 4, 2), ((CallsitePushExprOp8616.SHL.value, 1),)),
     )
 
 
@@ -930,7 +965,7 @@ def test_callsite_summary_records_direct_indexed_global_memory_push_source(monke
     assert summary.arg_widths == (2, 2)
     assert summary.push_arg_sources == (
         ("seg", "ds"),
-        ("global_index", 0x00F4, 2, ("bp", -2), ((CallsitePushExprOp8616.SHL.value, 1),)),
+        ("global_index", 0x00F4, 2, ("bp", -2, 2), ((CallsitePushExprOp8616.SHL.value, 1),)),
     )
 
 
@@ -979,14 +1014,14 @@ def test_callsite_summary_records_segmented_indirect_argument_value(monkeypatch)
             "ds",
             2,
             (
-                "expr",
-                ("bp", 6),
-                (
+                    "expr",
+                    ("bp", 6, 2),
                     (
-                        CallsitePushExprOp8616.ADD_SOURCE.value,
-                        ("expr", ("bp", -2), ((CallsitePushExprOp8616.SHL.value, 1),)),
+                        (
+                            CallsitePushExprOp8616.ADD_SOURCE.value,
+                            ("expr", ("bp", -2, 2), ((CallsitePushExprOp8616.SHL.value, 1),)),
+                        ),
                     ),
-                ),
             ),
         ),
     )
@@ -1172,7 +1207,7 @@ def test_callsite_summary_resolves_return_carrier_through_dominating_stack_store
         _Insn(
             0x1006,
             "mov",
-            [_Operand(mem=SimpleNamespace(base=5, index=0, disp=-2), size=2), _Operand(reg=2, size=2)],
+            [_Operand(mem=SimpleNamespace(base=5, index=0, segment=0, disp=-2), size=2), _Operand(reg=2, size=2)],
             reg_names=reg_names,
         ),
         _Insn(0x1009, "cmp", [_Operand(imm=0x7010), _Operand(imm=0)], reg_names=reg_names),
@@ -1197,7 +1232,7 @@ def test_callsite_summary_resolves_return_carrier_through_dominating_stack_store
 
     summary = summarize_x86_16_callsite(function, 0x1015)
 
-    assert summary.push_arg_sources == (("bp", -2), ("bp", 4), ("imm", 0x7012))
+    assert summary.push_arg_sources == (("bp", -2, 2), ("bp", 4, 2), ("imm", 0x7012))
 
 
 def test_callsite_summary_refuses_return_carrier_when_cfg_path_bypasses_producer(monkeypatch):
@@ -1208,7 +1243,7 @@ def test_callsite_summary_refuses_return_carrier_when_cfg_path_bypasses_producer
         _Insn(
             0x1006,
             "mov",
-            [_Operand(mem=SimpleNamespace(base=5, index=0, disp=-2), size=2), _Operand(reg=2, size=2)],
+            [_Operand(mem=SimpleNamespace(base=5, index=0, segment=0, disp=-2), size=2), _Operand(reg=2, size=2)],
             reg_names=reg_names,
         ),
         _Insn(0x1009, "je", [_Operand(imm=0x100E)], reg_names=reg_names),
@@ -1235,7 +1270,15 @@ def test_callsite_summary_refuses_return_carrier_when_cfg_path_bypasses_producer
     assert summary.push_arg_sources == (None,)
 
 
-def test_callsite_summary_keeps_outer_pushes_across_nested_callee_clean_call(monkeypatch):
+@pytest.mark.parametrize(
+    ("callee_ret_operands", "helper_name"),
+    [((_Operand(imm=8),), None), ((), "aNldiv")],
+)
+def test_callsite_summary_keeps_outer_pushes_across_exact_nested_call(
+    monkeypatch,
+    callee_ret_operands,
+    helper_name,
+):
     reg_names = {1: "sp", 2: "ax", 3: "dx", 5: "bp"}
     insns = [
         _Insn(0x1000, "push", [_Operand(imm=0x1111, size=2)], reg_names=reg_names),
@@ -1276,7 +1319,7 @@ def test_callsite_summary_keeps_outer_pushes_across_nested_callee_clean_call(mon
     ]
     main_block = SimpleNamespace(capstone=SimpleNamespace(insns=tuple(insns)))
     callee_block = SimpleNamespace(
-        capstone=SimpleNamespace(insns=(_Insn(0x2000, "ret", [_Operand(imm=8)], reg_names=reg_names),))
+        capstone=SimpleNamespace(insns=(_Insn(0x2000, "ret", list(callee_ret_operands), reg_names=reg_names),))
     )
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
@@ -1287,6 +1330,11 @@ def test_callsite_summary_keeps_outer_pushes_across_nested_callee_clean_call(mon
         "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
         lambda _function: [CallTargetSeed(0x101F, 0x3000, 0x1022, "direct_near")],
     )
+    if helper_name is not None:
+        monkeypatch.setattr(
+            "angr_platforms.X86_16.callsite_summary._lookup_target_name_8616",
+            lambda _function, _target_addr: helper_name,
+        )
 
     summary = summarize_x86_16_callsite(function, 0x101F)
 
@@ -1311,7 +1359,16 @@ def test_callsite_summary_keeps_outer_pushes_across_nested_callee_clean_call(mon
     )
 
 
-def test_callsite_summary_uses_callee_ret_cleanup_for_inner_helper_call(monkeypatch):
+@pytest.mark.parametrize(
+    ("callee_ret_operands", "helper_name", "expected_cleanup"),
+    [((_Operand(imm=8),), None, 8), ((), "aNldiv", 0)],
+)
+def test_callsite_summary_bounds_inner_helper_from_callee_or_known_abi(
+    monkeypatch,
+    callee_ret_operands,
+    helper_name,
+    expected_cleanup,
+):
     reg_names = {1: "sp", 2: "ax", 3: "dx"}
     insns = [
         _Insn(0x1000, "push", [_Operand(imm=0x1111, size=2)], reg_names=reg_names),
@@ -1330,7 +1387,7 @@ def test_callsite_summary_uses_callee_ret_cleanup_for_inner_helper_call(monkeypa
     ]
     main_block = SimpleNamespace(capstone=SimpleNamespace(insns=tuple(insns)))
     callee_block = SimpleNamespace(
-        capstone=SimpleNamespace(insns=(_Insn(0x2000, "ret", [_Operand(imm=8)], reg_names=reg_names),))
+        capstone=SimpleNamespace(insns=(_Insn(0x2000, "ret", list(callee_ret_operands), reg_names=reg_names),))
     )
     project = SimpleNamespace(
         arch=SimpleNamespace(name="86_16"),
@@ -1341,12 +1398,18 @@ def test_callsite_summary_uses_callee_ret_cleanup_for_inner_helper_call(monkeypa
         "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
         lambda _function: [CallTargetSeed(0x1014, 0x2000, 0x1017, "direct_near")],
     )
+    if helper_name is not None:
+        monkeypatch.setattr(
+            "angr_platforms.X86_16.callsite_summary._lookup_target_name_8616",
+            lambda _function, _target_addr: helper_name,
+        )
 
     summary = summarize_x86_16_callsite(function, 0x1014)
 
     assert summary.arg_count == 4
     assert summary.arg_widths == (2, 2, 2, 2)
-    assert summary.stack_cleanup == 8
+    assert summary.stack_cleanup == expected_cleanup
+    assert summary.logical_arg_widths == ((4, 4) if helper_name is not None else ())
     assert ("imm", 0x1111) not in summary.push_arg_sources
     assert ("imm", 0x2222) not in summary.push_arg_sources
 
@@ -1442,7 +1505,104 @@ def test_callsite_summary_records_register_dec_push_expr_source(monkeypatch):
     summary = summarize_x86_16_callsite(function, 0x1005)
 
     assert summary.arg_count == 1
-    assert summary.push_arg_sources == (("expr", ("bp", -2), (("sub", 1),)),)
+    assert summary.push_arg_sources == (("expr", ("bp", -2, 2), (("sub", 1),)),)
+
+
+def test_callsite_summary_records_signed_half_distance_push_source(monkeypatch):
+    function = _function_with_block(
+        [
+            _Insn(
+                0x1000,
+                "lea",
+                [_Operand(reg=2), _Operand(mem=SimpleNamespace(base=5, index=0, disp=-10), size=2)],
+                reg_names={2: "ax", 5: "bp"},
+            ),
+            _Insn(0x1003, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+            _Insn(0x1004, "mov", [_Operand(reg=2), _Operand(imm=23)], reg_names={2: "ax"}),
+            _Insn(0x1007, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+            _Insn(
+                0x1008,
+                "mov",
+                [_Operand(reg=2), _Operand(mem=SimpleNamespace(base=5, index=0, disp=-14), size=2)],
+                reg_names={2: "ax", 3: "dx", 5: "bp"},
+            ),
+            _Insn(0x100B, "cdq", reg_names={2: "ax", 3: "dx"}),
+            _Insn(0x100C, "sub", [_Operand(reg=2), _Operand(reg=3)], reg_names={2: "ax", 3: "dx"}),
+            _Insn(0x100E, "sar", [_Operand(reg=2), _Operand(imm=1)], reg_names={2: "ax"}),
+            _Insn(0x1010, "sub", [_Operand(reg=2), _Operand(imm=160)], reg_names={2: "ax"}),
+            _Insn(0x1013, "neg", [_Operand(reg=2)], reg_names={2: "ax"}),
+            _Insn(0x1015, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
+            _Insn(
+                0x1016,
+                "push",
+                [_Operand(mem=SimpleNamespace(base=0, index=0, disp=0x7000), size=2)],
+            ),
+            _Insn(0x101A, "lcall", size=5),
+            _Insn(0x101F, "add", [_Operand(reg=1), _Operand(imm=8)], reg_names={1: "sp"}),
+        ]
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x101A, 0x1544, 0x101F, "direct_far")],
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x101A)
+
+    assert summary.push_arg_sources == (
+        ("bp_addr", -10),
+        ("imm", 23),
+        (
+            "expr",
+            ("bp", -14, 2),
+            (
+                ("sub_source", ("expr", ("bp", -14, 2), (("sign_ext_hi", 16),))),
+                ("sar", 1),
+                ("sub", 160),
+                ("neg", 0),
+            ),
+        ),
+        ("global", 0x7000, 2),
+    )
+    assert summary.push_arg_instruction_addrs == (0x1003, 0x1007, 0x1015, 0x1016)
+
+
+def test_callsite_summary_does_not_replace_predecessor_merge_with_linear_path(monkeypatch):
+    function = _function_with_block(
+        [
+            _Insn(0x1000, "push", [_Operand(imm=7, size=2)]),
+            _Insn(0x1001, "call"),
+            _Insn(0x1004, "add", [_Operand(reg=1), _Operand(imm=4)], reg_names={1: "sp"}),
+        ]
+    )
+    merge = CallsitePredecessorStackMerge8616(
+        widths=(2,),
+        sources=(None,),
+        representative_instruction_addrs=(0x0FF0,),
+        alternative_instruction_addrs=((0x0FF0, 0x0FF4),),
+        raw_fact_count=2,
+        normalized_fact_count=2,
+        classified_fact_count=1,
+        materialized_count=1,
+        failure_count=0,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary.collect_neighbor_call_targets",
+        lambda _function: [CallTargetSeed(0x1001, 0x1544, 0x1004, "direct_near")],
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary._predecessor_stack_merge_8616",
+        lambda _function, _callsite_addr, **_kwargs: merge,
+    )
+    monkeypatch.setattr(
+        "angr_platforms.X86_16.callsite_summary._linear_window_insns_for_callsite_8616",
+        lambda *_args, **_kwargs: pytest.fail("linear path must not replace a predecessor merge"),
+    )
+
+    summary = summarize_x86_16_callsite(function, 0x1001)
+
+    assert summary.push_arg_sources == (None, ("imm", 7))
+    assert summary.push_arg_instruction_addrs == (0x0FF0, 0x1000)
+    assert summary.predecessor_stack_merge is merge
 
 
 def test_callsite_summary_records_global_add_push_expr_source(monkeypatch):
@@ -1533,9 +1693,9 @@ def test_callsite_summary_keeps_prior_pushes_before_indexed_lea_setup(monkeypatc
             _Insn(0x1006, "push", [_Operand(reg=2, size=2)], reg_names={2: "ax"}),
             _Insn(
                 0x1007,
-                "mov",
-                [_Operand(reg=3), _Operand(mem=SimpleNamespace(base=5, index=0, disp=4))],
-                reg_names={3: "bx", 5: "bp"},
+                    "mov",
+                    [_Operand(reg=3), _Operand(mem=SimpleNamespace(base=5, index=0, disp=4), size=2)],
+                    reg_names={3: "bx", 5: "bp"},
             ),
             _Insn(0x100A, "shl", [_Operand(reg=3), _Operand(imm=1)], reg_names={3: "bx"}),
             _Insn(
@@ -1567,9 +1727,9 @@ def test_callsite_summary_keeps_prior_pushes_before_indexed_lea_setup(monkeypatc
     assert summary.arg_count == 3
     assert summary.arg_widths == (2, 2, 2)
     assert summary.push_arg_sources == (
-        ("bp", -46),
+        ("bp", -46, 2),
         ("imm", 32),
-        ("bp_index_addr", -44, "si", 1, ("global_index", 0xB4C, 2, ("bp", 4), (("shl", 1),))),
+        ("bp_index_addr", -44, "si", 1, ("global_index", 0xB4C, 2, ("bp", 4, 2), (("shl", 1),))),
     )
 
 
@@ -2071,8 +2231,11 @@ def test_callsite_summary_records_byte_stack_return_store(monkeypatch):
 
     assert summary is not None
     assert summary.return_shape == CallsiteReturnShape8616.AX.value
-    assert summary.return_store_destination == ("bp", -2)
-    assert summary.return_store_width == 1
+    assert (
+        summary.return_store_destination,
+        summary.return_store_width,
+        summary.return_store_instruction_addr,
+    ) == (("bp", -2), 1, 0x1005)
 
 
 def test_callsite_summary_does_not_look_past_intervening_call_for_return_store(monkeypatch):

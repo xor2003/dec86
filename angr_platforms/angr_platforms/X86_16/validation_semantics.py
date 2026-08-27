@@ -14,8 +14,8 @@ from enum import Enum
 from .pipeline.errors import PipelineHardError
 
 __all__ = [
-    "KnownCallSemanticIssue8616",
     "KnownCallArgKind8616",
+    "KnownCallSemanticIssue8616",
     "ValidationSemanticsReport8616",
     "assert_known_call_semantics_8616",
     "check_segment_linearization_laundering_8616",
@@ -126,9 +126,7 @@ def _is_pointer_like_8616(arg_text: str) -> bool:
         return False
     if "SEG_PTR(" in text or "MK_FP(" in text:
         return True
-    if re.search(r"&\s*[A-Za-z_]\w*(?:\[[^\]]+\])?", text) is not None:
-        return True
-    return False
+    return re.search(r"&\s*[A-Za-z_]\w*(?:\[[^\]]+\])?", text) is not None
 
 
 def _is_value_like_8616(arg_text: str) -> bool:
@@ -139,9 +137,7 @@ def _is_value_like_8616(arg_text: str) -> bool:
         return False
     if _has_stack_placeholder_8616(text):
         return False
-    if any(token in text for token in ("ds << 4", "es << 4", "ss << 4", "stack[")):
-        return False
-    return True
+    return not any(token in text for token in ("ds << 4", "es << 4", "ss << 4", "stack["))
 
 
 def _normalized_non_preprocessor_lines_8616(c_text: str) -> tuple[str, ...]:

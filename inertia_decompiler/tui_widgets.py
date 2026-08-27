@@ -54,7 +54,7 @@ class RegisterWidget(Static):  # type: ignore[misc]
         lines = ["[b]Registers[/b]"]
         # Group registers
         groups: dict[str, list[str]] = {}
-        for name, value in self.registers.items():
+        for name, value in self.registers.items():  # noqa: B007
             group = self._guess_group(name)
             groups.setdefault(group, []).append(name)
 
@@ -160,10 +160,7 @@ class DisasmWidget(Static):  # type: ignore[misc]
             return "[b]Disassembly[/b]\n  (no code)"
 
         # Format strings based on address size
-        if self.addr_size == 2:
-            off_fmt = "{:04x}"
-        else:
-            off_fmt = "{:08x}"
+        off_fmt = "{:04x}" if self.addr_size == 2 else "{:08x}"
 
         out = ["[b]Disassembly[/b]"]
         for addr, mnemonic, operands in self.lines:
@@ -320,7 +317,7 @@ class HelperWidget(Static):  # type: ignore[misc]
         if signature:
             lines.append(f"  sig:  {signature}")
         for note in notes:
-            lines.append(f"  note: {note}")
+            lines.append(f"  note: {note}")  # noqa: PERF401
         return "\n".join(lines)
 
 
@@ -350,11 +347,11 @@ class ConsoleWidget(Static):  # type: ignore[misc]
 
 
 __all__ = [
-    "RegisterWidget",
-    "DisasmWidget",
-    "MemoryWidget",
-    "StackWidget",
     "BreakpointWidget",
-    "HelperWidget",
     "ConsoleWidget",
+    "DisasmWidget",
+    "HelperWidget",
+    "MemoryWidget",
+    "RegisterWidget",
+    "StackWidget",
 ]

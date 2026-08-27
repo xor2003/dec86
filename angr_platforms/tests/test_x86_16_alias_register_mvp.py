@@ -35,7 +35,7 @@ def _make_codegen():
             arch=SimpleNamespace(registers={"ax": (0, 2), "bx": (6, 2), "cx": (2, 2), "dx": (4, 2)})
         ),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
 
 def _make_reg_var(name: str, reg: int, size: int = 1):

@@ -11,8 +11,27 @@ explicit refusal reasons for shared or disconnected regions.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 from .structuring_cfg_snapshot import CFGSnapshot, build_cfg_snapshot
+
+
+@dataclass(frozen=True, order=True, slots=True)
+class CFGInstructionSite8616:
+    """One exact instruction occurrence in a pre-join CFG block."""
+
+    block_addr: int
+    ins_addr: int
+
+
+class CFGInstructionReachability8616(StrEnum):
+    """Typed result of proving execution order between exact instruction sites."""
+
+    REACHES = "reaches"
+    DOES_NOT_REACH = "does_not_reach"
+    OWNER_MISSING = "owner_missing"
+    OWNER_AMBIGUOUS = "owner_ambiguous"
+    ORDER_CONFLICT = "order_conflict"
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +54,79 @@ class CFGOwnershipArtifact:
     records: tuple[CFGOwnershipRecord, ...]
     shared_region_ids: tuple[int, ...]
     entry_fragment_region_ids: tuple[int, ...]
+
+    def instruction_sites(self, ins_addr: int) -> tuple[CFGInstructionSite8616, ...]:
+        """Return deterministic exact block/instruction sites recorded for one address."""
+        sites = {
+            CFGInstructionSite8616(block_addr=node.block_addr, ins_addr=ins_addr)
+            for node in self.snapshot.nodes
+            if node.block_addr is not None and ins_addr in node.statement_ins_addrs
+        }
+        return tuple(sorted(sites))
+
+    def instruction_owner_region_id(
+        self,
+        site: CFGInstructionSite8616,
+    ) -> int | CFGInstructionReachability8616:
+        """Resolve one exact site to a unique CFG region or a typed refusal."""
+        owners = tuple(
+            node
+            for node in self.snapshot.nodes
+            if node.block_addr == site.block_addr and site.ins_addr in node.statement_ins_addrs
+        )
+        if not owners:
+            return CFGInstructionReachability8616.OWNER_MISSING
+        if len(owners) != 1:
+            return CFGInstructionReachability8616.OWNER_AMBIGUOUS
+        owner = owners[0]
+        if sum(node.region_id == owner.region_id for node in self.snapshot.nodes) != 1:
+            return CFGInstructionReachability8616.OWNER_AMBIGUOUS
+        return owner.region_id
+
+    def instruction_reachability(
+        self,
+        source_site: CFGInstructionSite8616,
+        target_site: CFGInstructionSite8616,
+    ) -> CFGInstructionReachability8616:
+        """Prove whether one exact instruction site can execute before another."""
+        source_owner = self.instruction_owner_region_id(source_site)
+        if isinstance(source_owner, CFGInstructionReachability8616):
+            return source_owner
+        target_owner = self.instruction_owner_region_id(target_site)
+        if isinstance(target_owner, CFGInstructionReachability8616):
+            return target_owner
+
+        if source_owner == target_owner:
+            if source_site.ins_addr > target_site.ins_addr:
+                return CFGInstructionReachability8616.ORDER_CONFLICT
+            return CFGInstructionReachability8616.REACHES
+        return self._region_reachability(source_owner, target_owner)
+
+    def _region_reachability(
+        self,
+        source_region_id: int,
+        target_region_id: int,
+    ) -> CFGInstructionReachability8616:
+        """Traverse the immutable snapshot after validating unique region identities."""
+        nodes_by_id = {node.region_id: node for node in self.snapshot.nodes}
+        if len(nodes_by_id) != len(self.snapshot.nodes):
+            return CFGInstructionReachability8616.OWNER_AMBIGUOUS
+        if source_region_id not in nodes_by_id or target_region_id not in nodes_by_id:
+            return CFGInstructionReachability8616.OWNER_MISSING
+
+        pending = [source_region_id]
+        visited: set[int] = set()
+        while pending:
+            region_id = pending.pop()
+            if region_id in visited:
+                continue
+            visited.add(region_id)
+            for successor_id in nodes_by_id[region_id].successor_ids:
+                if successor_id == target_region_id:
+                    return CFGInstructionReachability8616.REACHES
+                if successor_id in nodes_by_id and successor_id not in visited:
+                    pending.append(successor_id)
+        return CFGInstructionReachability8616.DOES_NOT_REACH
 
     def summary_line(self) -> str:
         """Compact deterministic summary for diagnostics."""

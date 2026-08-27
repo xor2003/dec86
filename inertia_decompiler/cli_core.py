@@ -27,7 +27,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, TypeAlias, cast
+from typing import Any, cast
 
 import angr
 from angr.analyses.decompiler.structured_codegen import c as structured_c
@@ -50,15 +50,28 @@ from angr_platforms.X86_16.cod_extract import (
 from angr_platforms.X86_16.compiler_helpers import is_x86_16_stack_probe_name_8616
 from angr_platforms.X86_16.lowering.c_runtime_header import render_c_runtime_header_8616
 from angr_platforms.X86_16.lst_extract import LSTMetadata
+from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.segment_program_layout_codec import segment_program_function_evidence_from_record_8616
 from angr_platforms.X86_16.segment_program_layout_contract import SegmentProgramFunctionEvidence8616
 from angr_platforms.X86_16.structuring.compare32_recovery import recover_32bit_compare_c_8616
 from angr_platforms.X86_16.structuring.simple_loop_recovery import recover_counted_stack_loop_c_8616
+from angr_platforms.X86_16.synthetic_call_stub_evidence import record_synthetic_call_stubs_8616
 from angr_platforms.X86_16.tail_validation import (
     extract_x86_16_tail_validation_snapshot as _extract_x86_16_tail_validation_snapshot,
 )
 from angr_platforms.X86_16.tail_validation import x86_16_tail_validation_snapshot_passed
+from angr_platforms.X86_16.widening.global_object_layout import (
+    GlobalObjectLayoutEvidence8616,
+)
+from angr_platforms.X86_16.widening.global_object_layout_codec import (
+    global_object_layout_evidence_from_record_8616,
+    global_object_layout_evidence_record_8616,
+)
 
+from inertia_decompiler.accepted_payload_integrity import (
+    AcceptedPayloadIntegrityVerdict8616,
+    verify_function_work_result_payload_integrity_8616,
+)
 from inertia_decompiler.architecture_runtime_guard import (
     ARCHITECTURE_GUARD_VERIFIED_PARENT_PID_ENV,
     DecompilerArchitectureGuardError,
@@ -68,7 +81,6 @@ from inertia_decompiler.c_text_cleanup import normalize_unresolved_c_text
 from inertia_decompiler.cache import (
     _cache_key_lock,
     _load_cache_json,
-    _recovery_cache_key,
     _store_cache_json,
 )
 from inertia_decompiler.cli_arg_parser import CliArguments, parse_cli_arguments
@@ -80,9 +92,12 @@ from inertia_decompiler.cli_output import (
     _timestamped_print,
 )
 from inertia_decompiler.cli_timeout import (
+    PARALLEL_CLEAN_WORKER_TIMEOUT_CAP,
     _AdaptivePerByteTimeoutModel,
     _default_recovery_timeout,
     _stdout_is_interactive,
+    build_parallel_clean_worker_timeout_model,
+    retry_timeout_after_failed_attempt,
 )
 from inertia_decompiler.cod_module_caller_evidence import record_cod_module_caller_return_use_evidence_8616
 from inertia_decompiler.decompilation_quality import assess_decompiled_c_text, assess_final_generated_c_text
@@ -92,6 +107,19 @@ from inertia_decompiler.direct_addr_failure_family import (
     FailureFamilySnapshot,
     FailureFamilyState,
     build_failure_family_snapshot,
+)
+from inertia_decompiler.direct_request_cache import (
+    DirectRequestCacheArtifact8616,
+    DirectRequestCacheLookup8616,
+    DirectRequestCacheVerdict8616,
+    load_direct_request_cache_8616,
+    render_direct_request_tail_snapshot_diagnostic_8616,
+    store_direct_request_cache_8616,
+)
+from inertia_decompiler.direct_request_identity import (
+    DirectRequestCacheInputs8616,
+    build_direct_request_cache_key_8616,
+    direct_request_cache_enabled_8616,
 )
 from inertia_decompiler.disassembly_helpers import (
     _format_asm_range,
@@ -103,6 +131,7 @@ from inertia_decompiler.discovery_cache_contract import (
     caller_return_use_evidence_from_record_8616,
     caller_return_use_evidence_record_8616,
 )
+from inertia_decompiler.fork_timeout import run_captured_subprocess_tree
 from inertia_decompiler.function_cache_context import function_decompilation_cache_key_8616
 from inertia_decompiler.function_worker_policy import (
     FunctionWorkerMode8616,
@@ -120,7 +149,11 @@ from inertia_decompiler.non_optimized_fallback import (
     describe_non_optimized_unavailable,
     sidecar_verdict_closes_non_optimized_lane,
 )
-from inertia_decompiler.project_evidence_transport import transfer_project_evidence_8616
+from inertia_decompiler.project_evidence_transport import (
+    attach_project_global_object_layout_evidence_8616,
+    project_global_object_layout_evidence_8616,
+    transfer_project_evidence_8616,
+)
 from inertia_decompiler.project_loading import (
     PackedExecutableRefusedError,
     _build_project,
@@ -234,6 +267,7 @@ from inertia_decompiler.telemetry import (
     trace_function,
 )
 from inertia_decompiler.work_items import (
+    FunctionWorkExecutionOrigin8616,
     FunctionWorkItem,
     FunctionWorkResult,
     WorkItemStatus,
@@ -333,13 +367,17 @@ from .cli_function_discovery import (
     attach_direct_target_argument_evidence_context_8616,
     record_direct_target_caller_return_use_evidence_8616,
 )
+from .indexed_alias_program_context import (
+    prepare_direct_indexed_alias_program_context_8616,
+    publish_discovered_indexed_alias_program_8616,
+)
 
 print: Callable[..., object] = _timestamped_print
-_AngrFunction: TypeAlias = Any
-_StructuredCNode8616: TypeAlias = Any
-_SyntheticGlobals8616: TypeAlias = Any
-_FunctionCfgPair8616: TypeAlias = tuple[object, _AngrFunction]
-_DirectDecompileJobResult8616: TypeAlias = tuple[
+type _AngrFunction = Any
+type _StructuredCNode8616 = Any
+type _SyntheticGlobals8616 = Any
+type _FunctionCfgPair8616 = tuple[object, _AngrFunction]
+type _DirectDecompileJobResult8616 = tuple[
     str,
     str,
     str | None,
@@ -353,19 +391,19 @@ _DirectDecompileJobResult8616: TypeAlias = tuple[
 ]
 __all__ = [
     "_argument_was_explicit",
-    "_parse_int",
-    "_function_recovery_detail",
     "_bounded_non_optimized_timeout",
     "_direct_addr_wall_clock_budget",
-    "_prepare_ranked_binary_preview_items",
-    "_supplement_function_cfg_pairs_with_ranked_preview",
-    "_supplement_function_cfg_pairs_with_seeded_recovery",
-    "_function_work_cache_lookup",
-    "_run_function_work_item",
-    "_function_work_result_for_fork_ipc",
     "_emit_function_timing_summary",
+    "_function_recovery_detail",
+    "_function_work_cache_lookup",
+    "_function_work_result_for_fork_ipc",
     "_helper_name",
     "_iter_c_nodes",
+    "_parse_int",
+    "_prepare_ranked_binary_preview_items",
+    "_run_function_work_item",
+    "_supplement_function_cfg_pairs_with_ranked_preview",
+    "_supplement_function_cfg_pairs_with_seeded_recovery",
     "main",
 ]
 
@@ -530,10 +568,7 @@ def _direct_addr_use_fork_lane_8616(*, tail_validation_enabled: bool) -> bool:
 
 def _argument_was_explicit(name: str) -> bool:
     flag = name.strip()
-    for token in sys.argv[1:]:
-        if token == flag or token.startswith(f"{flag}="):
-            return True
-    return False
+    return any(token == flag or token.startswith(f"{flag}=") for token in sys.argv[1:])
 
 
 def _configure_cli_telemetry_8616(args: CliArguments) -> None:
@@ -759,14 +794,20 @@ def _bounded_non_optimized_timeout(timeout: int) -> int:
 _DEFAULT_FUNCTION_TIMEOUT_CAP = 240
 
 
-def _parse_env_timeout_cap() -> int | None:
+def _parse_env_timeout_cap(default_timeout_cap: int | None = None) -> int | None:
+    """Return the environment override or one caller-selected default cap."""
+    default_cap = (
+        _DEFAULT_FUNCTION_TIMEOUT_CAP
+        if default_timeout_cap is None
+        else max(1, int(default_timeout_cap))
+    )
     cap = os.environ.get("INERTIA_MAX_FUNCTION_TIMEOUT")
     if not cap:
-        return _DEFAULT_FUNCTION_TIMEOUT_CAP
+        return default_cap
     try:
         cap_value = int(cap)
     except ValueError:
-        return _DEFAULT_FUNCTION_TIMEOUT_CAP
+        return default_cap
     if cap_value <= 0:
         return None
     return max(1, cap_value)
@@ -777,8 +818,9 @@ def _enforce_function_timeout_cap(
     *,
     context: str,
     explicit_timeout_floor: int | None = None,
+    default_timeout_cap: int | None = None,
 ) -> int:
-    cap = _parse_env_timeout_cap()
+    cap = _parse_env_timeout_cap(default_timeout_cap)
     if cap is not None and explicit_timeout_floor is not None and "INERTIA_MAX_FUNCTION_TIMEOUT" not in os.environ:
         cap = max(cap, max(1, int(explicit_timeout_floor)))
     if cap is None:
@@ -1589,7 +1631,7 @@ def _run_function_work_item_uncached(
         )
 
         item_function: _AngrFunction = item.function
-        decompile_project = getattr(item_function, "project")
+        decompile_project = item_function.project
         decompile_cfg = item.function_cfg
         decompile_function: _AngrFunction = item_function
         attach_lst_metadata_to_project(decompile_project, lst_metadata)
@@ -1879,7 +1921,15 @@ def _function_work_result_for_fork_ipc(result: FunctionWorkResult) -> FunctionWo
 _SERIAL_CLEAN_WORKER_RESULT_ENV_8616 = "INERTIA_SERIAL_CLEAN_WORKER_RESULT"
 _SERIAL_CLEAN_WORKER_RESULT_SCHEMA_8616 = 4
 _SERIAL_CLEAN_WORKER_EVIDENCE_ENV_8616 = "INERTIA_SERIAL_CLEAN_WORKER_EVIDENCE"
-_SERIAL_CLEAN_WORKER_EVIDENCE_SCHEMA_8616 = 1
+_SERIAL_CLEAN_WORKER_EVIDENCE_SCHEMA_8616 = 2
+
+
+@dataclass(frozen=True, slots=True)
+class _SerialCleanWorkerEvidence8616:
+    """Typed evidence decoded from one parent-to-worker payload."""
+
+    caller_return_use_by_addr: dict[int, CallerReturnUseEvidence8616]
+    global_object_layout: GlobalObjectLayoutEvidence8616 | None
 
 
 def _direct_addr_work_requires_parent_lock_8616(lock_key: dict[str, object] | None) -> bool:
@@ -1906,6 +1956,16 @@ def _write_serial_clean_worker_evidence_8616(
     payload = {
         "schema": _SERIAL_CLEAN_WORKER_EVIDENCE_SCHEMA_8616,
         "caller_return_use": records,
+        "global_object_layout": (
+            None
+            if (
+                layout_evidence := project_global_object_layout_evidence_8616(
+                    source_project
+                )
+            )
+            is None
+            else global_object_layout_evidence_record_8616(layout_evidence)
+        ),
     }
     evidence_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     return len(records)
@@ -1913,7 +1973,7 @@ def _write_serial_clean_worker_evidence_8616(
 
 def _read_serial_clean_worker_evidence_8616(
     evidence_path: Path,
-) -> dict[int, CallerReturnUseEvidence8616]:
+) -> _SerialCleanWorkerEvidence8616:
     """Read and validate discovery evidence transported to a clean worker."""
     try:
         payload = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -1934,7 +1994,13 @@ def _read_serial_clean_worker_evidence_8616(
         if function_addr in evidence_by_addr:
             raise ValueError("serial clean-worker caller-return evidence contains duplicate function addresses")
         evidence_by_addr[function_addr] = caller_return_use_evidence_from_record_8616(record.get("evidence"))
-    return evidence_by_addr
+    raw_layout = payload.get("global_object_layout")
+    layout = (
+        None
+        if raw_layout is None
+        else global_object_layout_evidence_from_record_8616(raw_layout)
+    )
+    return _SerialCleanWorkerEvidence8616(evidence_by_addr, layout)
 
 
 def _hydrate_serial_clean_worker_evidence_8616(project: object) -> int:
@@ -1942,10 +2008,15 @@ def _hydrate_serial_clean_worker_evidence_8616(project: object) -> int:
     evidence_path_text = os.environ.get(_SERIAL_CLEAN_WORKER_EVIDENCE_ENV_8616)
     if not evidence_path_text:
         return 0
-    evidence_by_addr = _read_serial_clean_worker_evidence_8616(Path(evidence_path_text))
-    for function_addr, evidence in evidence_by_addr.items():
+    transported = _read_serial_clean_worker_evidence_8616(Path(evidence_path_text))
+    for function_addr, evidence in transported.caller_return_use_by_addr.items():
         record_caller_return_use_evidence_8616(project, function_addr, evidence)
-    return len(evidence_by_addr)
+    if transported.global_object_layout is not None:
+        attach_project_global_object_layout_evidence_8616(
+            project,
+            transported.global_object_layout,
+        )
+    return len(transported.caller_return_use_by_addr)
 
 
 def _write_serial_clean_worker_result_8616(
@@ -2147,7 +2218,7 @@ def _serial_clean_worker_debug_output_8616(stderr: str | bytes | None) -> str:
 
 @typing.overload
 def _run_serial_clean_process_work_item_8616(
-    context: "_BatchCliContext8616",
+    context: _BatchCliContext8616,
     item: FunctionWorkItem,
     *,
     timeout: int,
@@ -2158,7 +2229,7 @@ def _run_serial_clean_process_work_item_8616(
 
 @typing.overload
 def _run_serial_clean_process_work_item_8616(
-    context: "_BatchCliContext8616",
+    context: _BatchCliContext8616,
     item: FunctionWorkItem,
     *,
     timeout: int,
@@ -2168,7 +2239,7 @@ def _run_serial_clean_process_work_item_8616(
 
 
 def _run_serial_clean_process_work_item_8616(
-    context: "_BatchCliContext8616",
+    context: _BatchCliContext8616,
     item: FunctionWorkItem,
     *,
     timeout: int,
@@ -2214,7 +2285,11 @@ def _run_serial_clean_process_work_item_8616(
                 item=replace(item, recovery_addr=recovery_addr),
                 debug_output=f"[dbg] clean serial function cache hit: {recovery_addr:#x}\n",
             )
-            return replace(cached_result, from_cache=True)
+            return replace(
+                cached_result,
+                from_cache=True,
+                execution_origin=FunctionWorkExecutionOrigin8616.CLEAN_PROCESS,
+            )
         if cache_only:
             return None
         environment = os.environ.copy()
@@ -2226,12 +2301,9 @@ def _run_serial_clean_process_work_item_8616(
         environment["INERTIA_DIRECT_ADDR_PREFER_LST"] = "0"
         outer_timeout = _serial_clean_worker_outer_timeout_8616(timeout)
         try:
-            completed = subprocess.run(
+            completed = run_captured_subprocess_tree(
                 command,
-                capture_output=True,
-                check=False,
                 env=environment,
-                text=True,
                 timeout=outer_timeout,
             )
         except subprocess.TimeoutExpired as ex:
@@ -2245,6 +2317,7 @@ def _run_serial_clean_process_work_item_8616(
                 elapsed=time.perf_counter() - started_at,
                 skip_heavy_fallbacks=True,
                 failure_stage="clean_process_decompilation",
+                execution_origin=FunctionWorkExecutionOrigin8616.CLEAN_PROCESS,
             )
         debug_output = _serial_clean_worker_debug_output_8616(completed.stderr)
         if completed.returncode != 0 or not result_path.exists():
@@ -2260,6 +2333,7 @@ def _run_serial_clean_process_work_item_8616(
                 function_cfg=item.function_cfg,
                 elapsed=time.perf_counter() - started_at,
                 failure_stage="clean_process_decompilation",
+                execution_origin=FunctionWorkExecutionOrigin8616.CLEAN_PROCESS,
             )
         try:
             result = _read_serial_clean_worker_result_8616(
@@ -2274,7 +2348,10 @@ def _run_serial_clean_process_work_item_8616(
                     record,
                     result_schema=_SERIAL_CLEAN_WORKER_RESULT_SCHEMA_8616,
                 )
-            return result
+            return replace(
+                result,
+                execution_origin=FunctionWorkExecutionOrigin8616.CLEAN_PROCESS,
+            )
         except ValueError as ex:
             return FunctionWorkResult(
                 index=item.index,
@@ -2285,6 +2362,7 @@ def _run_serial_clean_process_work_item_8616(
                 function_cfg=item.function_cfg,
                 elapsed=time.perf_counter() - started_at,
                 failure_stage="clean_process_protocol",
+                execution_origin=FunctionWorkExecutionOrigin8616.CLEAN_PROCESS,
             )
 
 
@@ -3169,7 +3247,7 @@ def _iter_c_nodes(node: _StructuredCNode8616) -> Iterator[_StructuredCNode8616]:
                     yield from _iter_c_nodes(value)
         if hasattr(node, "args"):
             try:
-                args = getattr(node, "args")
+                args = node.args
             except Exception:
                 args = None
             if args:
@@ -3353,6 +3431,7 @@ def _fresh_sidecar_retry_work_item_8616(
         function_cfg=cfg,
         function=function,
         recovery_addr=source_addr,
+        retained_project=fresh_project,
     )
 
 
@@ -3363,11 +3442,24 @@ def _work_item_status_8616(status: str) -> WorkItemStatus:
         return WorkItemStatus.UNKNOWN
 
 
-def _retry_timeout_for_failed_result_8616(result: FunctionWorkResult, args: CliArguments) -> int:
-    timeout = max(1, args.timeout)
+def _retry_timeout_for_failed_result_8616(
+    result: FunctionWorkResult,
+    args: CliArguments,
+    *,
+    timeout_was_explicit: bool,
+) -> int:
+    """Preserve measured clean-worker cost when budgeting a fallback retry."""
+    timeout = retry_timeout_after_failed_attempt(
+        args.timeout,
+        elapsed_seconds=result.elapsed,
+        timed_out=_work_item_status_8616(result.status) is WorkItemStatus.TIMEOUT,
+        explicit_timeout=timeout_was_explicit,
+    )
     return _enforce_function_timeout_cap(
         timeout,
         context="sweep retry recovered candidate decompile timeout",
+        explicit_timeout_floor=args.timeout if timeout_was_explicit else None,
+        default_timeout_cap=PARALLEL_CLEAN_WORKER_TIMEOUT_CAP,
     )
 
 
@@ -3386,6 +3478,7 @@ def _emit_function_result(
     use_serial_fork_per_function: bool,
     fallback_tail_validation_by_index: dict[int, dict[str, object]],
     result_state_by_index: dict[int, FunctionWorkResult] | None = None,
+    timeout_was_explicit: bool = False,
 ) -> tuple[int, int]:
     def _impl() -> tuple[int, int]:
         nonlocal result
@@ -3437,6 +3530,9 @@ def _emit_function_result(
             and args.addr is None
             and getattr(project.arch, "name", "") == "86_16"
             and result.failure_stage != "sweep_budget"
+            and result.retry_may_change_evidence(
+                sidecar_available=lst_metadata is not None or cod_metadata is not None
+            )
             and _try_emit_retry_recovered_candidate_8616(
                 item=retry_item,
                 function=function,
@@ -3445,7 +3541,11 @@ def _emit_function_result(
                 lst_metadata=lst_metadata,
                 cod_metadata=cod_metadata,
                 synthetic_globals=synthetic_globals,
-                retry_timeout=_retry_timeout_for_failed_result_8616(result, args),
+                retry_timeout=_retry_timeout_for_failed_result_8616(
+                    result,
+                    args,
+                    timeout_was_explicit=timeout_was_explicit,
+                ),
                 fallback_tail_validation_by_index=fallback_tail_validation_by_index,
             )
         ):
@@ -3512,6 +3612,9 @@ def _emit_function_result(
                     args.addr is None
                     and getattr(project.arch, "name", "") == "86_16"
                     and result.failure_stage != "sweep_budget"
+                    and result.retry_may_change_evidence(
+                        sidecar_available=lst_metadata is not None or cod_metadata is not None
+                    )
                     and _try_emit_retry_recovered_candidate_8616(
                         item=retry_item,
                         function=function,
@@ -3520,7 +3623,11 @@ def _emit_function_result(
                         lst_metadata=lst_metadata,
                         cod_metadata=cod_metadata,
                         synthetic_globals=synthetic_globals,
-                        retry_timeout=_retry_timeout_for_failed_result_8616(result, args),
+                        retry_timeout=_retry_timeout_for_failed_result_8616(
+                            result,
+                            args,
+                            timeout_was_explicit=timeout_was_explicit,
+                        ),
                         fallback_tail_validation_by_index=fallback_tail_validation_by_index,
                     )
                 ):
@@ -3632,7 +3739,6 @@ def _try_emit_retry_recovered_candidate_8616(
         if (
             (retry_result.status != "ok" or not x86_16_tail_validation_snapshot_passed(retry_tv))
             and project.arch.name == "86_16"
-            and (lst_metadata is not None or cod_metadata is not None)
         ):
             clean_item = FunctionWorkItem(
                 index=item.index,
@@ -3674,7 +3780,7 @@ def _try_emit_retry_recovered_candidate_8616(
         return True
     except (FuturesTimeoutError, TimeoutError):
         return False
-    except Exception as ex:  # noqa: BLE001
+    except Exception as ex:
         print(
             f"[dbg] retry recovered candidate failed for {function.addr:#x} {function.name}: "
             f"{type(ex).__name__}: {ex}",
@@ -4398,15 +4504,23 @@ def _prepare_main_project_8616(
                 selected_entries = extract_simple_cod_logic_entries(entries)
             if selected_entries is None:
                 logic_start = infer_cod_logic_start(entries)
-                cod_image = build_cod_analysis_image_8616(entries, start_offset=logic_start)
+                cod_image = build_cod_analysis_image_8616(
+                    entries,
+                    start_offset=logic_start,
+                    image_base=args.base_addr,
+                )
             else:
-                cod_image = build_cod_analysis_image_8616(selected_entries)
+                cod_image = build_cod_analysis_image_8616(selected_entries, image_base=args.base_addr)
             proc_code = cod_image.code
             synthetic_globals = cod_image.synthetic_globals
             project = _build_project_from_bytes(
                 proc_code,
                 base_addr=args.base_addr,
                 entry_point=args.entry_point,
+            )
+            record_synthetic_call_stubs_8616(
+                project,
+                frozenset(args.base_addr + offset for offset in cod_image.call_target_offsets),
             )
             record_cod_module_caller_return_use_evidence_8616(cod_metadata, args.entry_point, project)
             for target_offset, target_name in cod_image.call_target_offsets.items():
@@ -4496,6 +4610,136 @@ class _DirectAddrCliContext8616:
     interactive_stdout: bool
     precise_sidecar_regions: bool
     timeout_was_explicit: bool
+    request_cache_inputs: DirectRequestCacheInputs8616
+
+
+def _direct_request_cache_artifact_for_result_8616(
+    context: _DirectAddrCliContext8616,
+    result: FunctionWorkResult,
+    *,
+    function_addr: int,
+    function_name: str,
+) -> DirectRequestCacheArtifact8616 | None:
+    """Project an accepted direct result into the persistent cache contract."""
+    integrity = verify_function_work_result_payload_integrity_8616(result)
+    if (
+        result.status != WorkItemStatus.OK.value
+        or not isinstance(result.tail_validation, dict)
+        or not isinstance(result.validated_payload_hash, str)
+        or not isinstance(result.gcc_checked_payload_hash, str)
+        or result.failure_family_snapshot is None
+        or not integrity.passed
+    ):
+        return None
+    startup_diagnostic_lines: list[str] = []
+    if context.args.ignore_local_sidecar_hints:
+        startup_diagnostic_lines.append(
+            "/* ignoring local sidecar metadata for function discovery and recovery due "
+            "--ignore-local-sidecar-hints */"
+        )
+    if context.lst_metadata is None:
+        startup_diagnostic_lines.append(
+            "/* no helper metadata (.lst/.map/.cod/debug info) found; using raw binary analysis "
+            "and quick function-entry scans. */"
+        )
+    startup_diagnostic_lines.append(_recovery_evidence_line(context.args.binary, context.lst_metadata))
+    return DirectRequestCacheArtifact8616(
+        function_addr=function_addr,
+        function_name=function_name,
+        arch_name=context.project.arch.name,
+        entry_point=context.project.entry,
+        runtime_header=render_c_runtime_header_8616(context.args.c_target),
+        startup_diagnostic_lines=tuple(startup_diagnostic_lines),
+        payload=result.payload,
+        tail_validation=copy.deepcopy(result.tail_validation),
+        elapsed=result.elapsed,
+        block_count=result.block_count,
+        byte_count=result.byte_count,
+        validated_payload_hash=result.validated_payload_hash,
+        gcc_checked_payload_hash=result.gcc_checked_payload_hash,
+        failure_family_snapshot=result.failure_family_snapshot,
+        diagnostic_output=(
+            result.debug_output
+            if os.environ.get("INERTIA_ENABLE_TYPED_SWITCH_AST_ARTIFACTS") == "1"
+            else ""
+        ),
+        segment_program_function_evidence_record=(
+            None
+            if result.segment_program_function_evidence is None
+            else result.segment_program_function_evidence.to_dict()
+        ),
+    )
+
+
+def _store_direct_request_result_8616(
+    context: _DirectAddrCliContext8616,
+    lookup: DirectRequestCacheLookup8616,
+    result: FunctionWorkResult,
+    *,
+    function_addr: int,
+    function_name: str,
+) -> None:
+    """Store one direct result when its typed acceptance proof is complete."""
+    artifact = _direct_request_cache_artifact_for_result_8616(
+        context,
+        result,
+        function_addr=function_addr,
+        function_name=function_name,
+    )
+    if artifact is not None:
+        store_direct_request_cache_8616(lookup, artifact)
+
+
+def _emit_direct_cache_hit_8616(
+    context: _DirectAddrCliContext8616,
+    result: FunctionWorkResult,
+    *,
+    function: _AngrFunction,
+    function_cfg: object | None,
+    emit_function_header: bool,
+    project_for_worker_result: object | None,
+) -> int:
+    """Emit one already-validated direct result through the normal CLI contract."""
+    args = context.args
+    integrity = verify_function_work_result_payload_integrity_8616(result)
+    if not integrity.passed:
+        print(f"[tail-validation] {integrity.diagnostic()}", file=sys.stderr, flush=True)
+        return 4
+    if emit_function_header:
+        print(f"/* binary: {args.binary} */")
+        print(f"/* arch: {context.project.arch.name} */")
+        print(f"/* entry: {context.project.entry:#x} */")
+        print(f"/* function: {function_original_addr(function):#x} {function.name} */")
+    if result.debug_output:
+        print(result.debug_output, file=sys.stderr, end="")
+    cached_tail_snapshot = result.tail_validation
+    print(
+        render_direct_request_tail_snapshot_diagnostic_8616(cached_tail_snapshot),
+        file=sys.stderr,
+        flush=True,
+    )
+    print("[dbg] direct function cache hit validation=passed", file=sys.stderr, flush=True)
+    assert result.failure_family_snapshot is not None
+    print(f"[dbg] direct failure family: {result.failure_family_snapshot.label()}", file=sys.stderr)
+    if _complete_serial_clean_worker_result_8616(result, project=project_for_worker_result):
+        return 0
+    item = FunctionWorkItem(index=1, function_cfg=function_cfg, function=function)
+    _emit_tail_validation_console_summary([item], {1: result}, binary_path=args.binary)
+    if args.output_c_dir is not None:
+        write_generated_function_c(
+            args.output_c_dir,
+            address=function_original_addr(function),
+            name=function.name,
+            payload=result.payload,
+        )
+    _emit_optional_source_sidecar_c_block(
+        args.binary,
+        function.name,
+        result.payload,
+        alternate_source_c=bool(args.alternate_source_c),
+        c_header="\n/* == c == */",
+    )
+    return 0
 
 
 def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
@@ -4505,6 +4749,74 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
     if direct_addr is None:
         raise ValueError("direct-address CLI branch requires args.addr")
     project = context.project
+    direct_request_cache_lookup = load_direct_request_cache_8616(
+        context.request_cache_inputs,
+        enabled=direct_request_cache_enabled_8616(args),
+    )
+    if (
+        direct_request_cache_lookup.verdict is DirectRequestCacheVerdict8616.HIT
+        and direct_request_cache_lookup.artifact is not None
+    ):
+        artifact = direct_request_cache_lookup.artifact
+        try:
+            cached_segment_evidence = (
+                None
+                if artifact.segment_program_function_evidence_record is None
+                else segment_program_function_evidence_from_record_8616(
+                    artifact.segment_program_function_evidence_record
+                )
+            )
+        except (PipelineHardError, ValueError):
+            cached_segment_evidence = None
+            print("[dbg] direct request cache refused: segment_evidence", file=sys.stderr, flush=True)
+        else:
+            expected_runtime_header = render_c_runtime_header_8616(args.c_target)
+            if (
+                artifact.arch_name == project.arch.name
+                and artifact.entry_point == project.entry
+                and artifact.runtime_header == expected_runtime_header
+            ):
+                cached_function = SimpleNamespace(
+                    addr=artifact.function_addr,
+                    name=artifact.function_name,
+                    project=project,
+                )
+                cached_result = FunctionWorkResult(
+                    index=1,
+                    status=WorkItemStatus.OK.value,
+                    payload=artifact.payload,
+                    debug_output=(
+                        f"[dbg] direct request cache hit: {artifact.function_addr:#x} "
+                        f"{artifact.function_name} validation=passed\n"
+                        f"{artifact.diagnostic_output}"
+                    ),
+                    function=cached_function,
+                    function_cfg=None,
+                    tail_validation=copy.deepcopy(artifact.tail_validation),
+                    elapsed=artifact.elapsed,
+                    from_cache=True,
+                    block_count=artifact.block_count,
+                    byte_count=artifact.byte_count,
+                    validated_payload_hash=artifact.validated_payload_hash,
+                    gcc_checked_payload_hash=artifact.gcc_checked_payload_hash,
+                    failure_family_snapshot=artifact.failure_family_snapshot,
+                    segment_program_function_evidence=cached_segment_evidence,
+                )
+                return _emit_direct_cache_hit_8616(
+                    context,
+                    cached_result,
+                    function=cached_function,
+                    function_cfg=None,
+                    emit_function_header=True,
+                    project_for_worker_result=None,
+                )
+            print("[dbg] direct request cache refused: runtime_identity", file=sys.stderr, flush=True)
+    if direct_request_cache_lookup.verdict is DirectRequestCacheVerdict8616.REFUSED:
+        print(
+            "[dbg] direct request cache refused: acceptance_proof",
+            file=sys.stderr,
+            flush=True,
+        )
     _hydrate_serial_clean_worker_evidence_8616(project)
     clean_worker_caller_return_evidence_by_addr = dict(caller_return_use_evidence_by_addr_8616(project))
     function_label = context.function_label
@@ -5146,6 +5458,14 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             direct_project,
             function_original_addr(func),
         )
+        prepare_direct_indexed_alias_program_context_8616(
+            project,
+            direct_project,
+            func,
+            timeout=args.timeout,
+            window=args.window,
+            binary_path=args.binary,
+        )
         for call_target in collect_neighbor_call_targets(func):
             if call_target.return_addr is not None:
                 record_direct_target_caller_return_use_evidence_8616(
@@ -5240,56 +5560,26 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
     if direct_cache_result is not None and direct_cache_result.failure_family_snapshot is not None:
         if direct_cache_debug:
             print(direct_cache_debug, file=sys.stderr, end="")
-        if direct_cache_result.debug_output:
-            print(direct_cache_result.debug_output, file=sys.stderr, end="")
-        cached_tail_snapshot = direct_cache_result.tail_validation
-        cached_statuses = (
-            {
-                key: value.get("status") if isinstance(value, dict) else type(value).__name__
-                for key, value in cached_tail_snapshot.items()
-            }
-            if isinstance(cached_tail_snapshot, dict)
-            else "N/A"
-        )
-        print(
-            "[dbg] direct_decompile_job snapshot: project_fb_stages=NOT_DICT "
-            f"func_info_tv_stages=None merged_stages={list(cached_tail_snapshot.keys()) if isinstance(cached_tail_snapshot, dict) else 'NOT_DICT'} "
-            f"merged_statuses={cached_statuses}",
-            file=sys.stderr,
-            flush=True,
-        )
-        print("[dbg] direct function cache hit validation=passed", file=sys.stderr, flush=True)
-        print(
-            f"[dbg] direct failure family: {direct_cache_result.failure_family_snapshot.label()}",
-            file=sys.stderr,
-        )
         cached_direct_result = replace(
             direct_cache_result,
             function=func,
             function_cfg=cfg,
         )
-        if _complete_serial_clean_worker_result_8616(cached_direct_result, project=direct_project):
-            return 0
-        _emit_tail_validation_console_summary(
-            [direct_cache_item],
-            {1: cached_direct_result},
-            binary_path=args.binary,
+        _store_direct_request_result_8616(
+            context,
+            direct_request_cache_lookup,
+            cached_direct_result,
+            function_addr=function_original_addr(func),
+            function_name=func.name,
         )
-        if args.output_c_dir is not None:
-            write_generated_function_c(
-                args.output_c_dir,
-                address=function_original_addr(func),
-                name=func.name,
-                payload=cached_direct_result.payload,
-            )
-        _emit_optional_source_sidecar_c_block(
-            args.binary,
-            func.name,
-            cached_direct_result.payload,
-            alternate_source_c=bool(args.alternate_source_c),
-            c_header="\n/* == c == */",
+        return _emit_direct_cache_hit_8616(
+            context,
+            cached_direct_result,
+            function=func,
+            function_cfg=cfg,
+            emit_function_header=False,
+            project_for_worker_result=direct_project,
         )
-        return 0
 
     if (
         canonical_direct_addr is not None
@@ -5517,12 +5807,11 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             context="direct analysis wrapper timeout",
             explicit_timeout_floor=(max(1, _direct_effective_timeout) + 28 if timeout_was_explicit else None),
         )
-        if timeout_was_explicit and isinstance(args.timeout, int):
-            if args.timeout <= 6:
-                if _direct_blocks >= 4 or _direct_bytes >= 0x50:
-                    direct_decompile_timeout = min(direct_decompile_timeout, args.timeout + 20)
-                else:
-                    direct_decompile_timeout = min(direct_decompile_timeout, args.timeout + 8)
+        if timeout_was_explicit and isinstance(args.timeout, int) and args.timeout <= 6:
+            if _direct_blocks >= 4 or _direct_bytes >= 0x50:
+                direct_decompile_timeout = min(direct_decompile_timeout, args.timeout + 20)
+            else:
+                direct_decompile_timeout = min(direct_decompile_timeout, args.timeout + 8)
             # For larger explicit x86-16 functions, retain the shape-aware
             # budget calculated above. Capping it to ``args.timeout + 32``
             # defeats the large-function allowance and turns normal xdist
@@ -5852,11 +6141,6 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             direct_result.tail_validation,
             binary_path=args.binary,
         )
-        if isinstance(getattr(func, "name", None), str):
-            normalized_name = func.name.lstrip("_").lower()
-            binary_name_upper = args.binary.name.upper()
-            if binary_name_upper == "EGAME11.COD" and normalized_name == "drawcockpit":
-                _emit_timeout_and_exit(args.timeout, "during x86-16 function recovery")
         print(f"[dbg] direct decompilation timeout detail: {direct_result.payload}", file=sys.stderr)
         print(f"\n/* Decompilation timeout: Timed out while recovering a function after {args.timeout}s. */")
         print("/* Direct decompilation timeout is terminal for this function; skipping fallback lanes. */")
@@ -6213,7 +6497,6 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                         return 0
                 except Exception:
                     direct_sidecar_verdict = "error"
-                    pass
             _early_slice = _try_decompile_sidecar_slice(
                 project,
                 lst_metadata,
@@ -6257,9 +6540,8 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         ):
             allow_known_nonopt = False
         if _current_direct_partial_payload() is None:
-            if allow_known_nonopt:
-                if not _consume_heavy_fallback_budget():
-                    allow_known_nonopt = False
+            if allow_known_nonopt and not _consume_heavy_fallback_budget():
+                allow_known_nonopt = False
             if allow_known_nonopt:
                 _enforce_direct_addr_budget_timeout(recovery_detail="after exhausting direct-address fallback budget")
                 known_nonopt_result = _try_decompile_non_optimized_known_function(
@@ -6369,7 +6651,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             # semantics. Allow exact sidecar retry even when the failure
             # family repeats so richer bounded slices can be considered.
             exact_retry_blocked = False
-        if not fast_direct_probe and precise_sidecar_regions:
+        if not fast_direct_probe and precise_sidecar_regions:  # noqa: SIM102
             if not exact_retry_blocked:
                 _dbg_region = _lst_code_region(lst_metadata, direct_display_addr) if lst_metadata is not None else None
                 print(
@@ -6612,49 +6894,27 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
         print(asm_fallback)
         return 6 if status == "error" else 4
 
+    integrity = verify_function_work_result_payload_integrity_8616(direct_result)
+    if integrity.verdict in {
+        AcceptedPayloadIntegrityVerdict8616.MISSING_VALIDATED_HASH,
+        AcceptedPayloadIntegrityVerdict8616.MISSING_COMPILER_HASH,
+    }:
+        direct_result = _accept_function_work_result_for_emission_8616(
+            direct_result,
+            project=direct_project,
+        )
+        integrity = verify_function_work_result_payload_integrity_8616(direct_result)
+    if not integrity.passed:
+        print(f"[tail-validation] {integrity.diagnostic()}", file=sys.stderr, flush=True)
+        return 4
     _emit_tail_validation_console_summary([direct_item], {1: direct_result}, binary_path=args.binary)
-    if isinstance(getattr(func, "name", None), str):
-        normalized_name = func.name.lstrip("_").lower()
-        binary_name_upper = args.binary.name.upper()
-        if binary_name_upper == "EGAME11.COD" and normalized_name == "drawcockpit":
-            _emit_timeout_and_exit(args.timeout, "during x86-16 function recovery")
-        if normalized_name == "tidshowrange":
-            direct_result = replace(
-                direct_result,
-                payload=(
-                    "/* COD annotations: calls = _RectFill, _MapInEMSSprite */\n"
-                    "void _TIDShowRange(void)\n"
-                    "{\n"
-                    "    /* Timed out while recovering a function after 10s. */\n"
-                    "    RectFill(Rp2,146,21,29,9,BLACK);\n"
-                    "    MapInEMSSprite(MISCSPRTSEG,0);\n"
-                    "}\n"
-                ),
-            )
-        elif normalized_name == "drawradaralt":
-            direct_result = replace(
-                direct_result,
-                payload=(
-                    "/* COD annotations: calls = _MapInEMSSprite, _TransRectCopy, _MDiv, _Rotate2D, _scaley, _DrawLine, _RectCopy */\n"
-                    "void _DrawRadarAlt(void)\n"
-                    "{\n"
-                    "    unsigned short y2;  // [bp-0xa] y2\n"
-                    "    unsigned short b;  // [bp-0x2] b\n"
-                    "    // [bp-0xc] = newalt\n"
-                    "    // [bp-0xa] = y2\n"
-                    "    // [bp-0x8] = soffset\n"
-                    "    // [bp-0x2] = b\n"
-                    "    if (!(View)) {\n"
-                    "        y2 = 0;\n"
-                    "    } else {\n"
-                    "        y2 = 112;\n"
-                    "    }\n"
-                    "    s_12 = 0;\n"
-                    "    s_14 = 2;\n"
-                    "    MapInEMSSprite(MISCSPRTSEG,0);\n"
-                    "}\n"
-                ),
-            )
+    _store_direct_request_result_8616(
+        context,
+        direct_request_cache_lookup,
+        direct_result,
+        function_addr=function_original_addr(func),
+        function_name=func.name,
+    )
     if args.output_c_dir is not None:
         write_generated_function_c(
             args.output_c_dir,
@@ -6787,6 +7047,13 @@ def _batch_function_decompile_timeout_8616(
             decompile_timeout = max(decompile_timeout, args.timeout + 90, 240)
         elif block_count >= 36 or byte_count >= 300:
             decompile_timeout = max(decompile_timeout, args.timeout + 60)
+        if args.addr is None and not context.timeout_was_explicit and (
+            block_count >= 36 or byte_count >= 300
+        ):
+            decompile_timeout = max(
+                decompile_timeout,
+                PARALLEL_CLEAN_WORKER_TIMEOUT_CAP,
+            )
     if args.addr is None:
         decompile_timeout = max(decompile_timeout, 16)
     if args.addr is None and context.timeout_was_explicit:
@@ -6798,6 +7065,7 @@ def _batch_function_decompile_timeout_8616(
         decompile_timeout,
         context="sweep decompile timeout",
         explicit_timeout_floor=args.timeout if context.timeout_was_explicit else None,
+        default_timeout_cap=PARALLEL_CLEAN_WORKER_TIMEOUT_CAP,
     )
     if (
         architecture == "86_16"
@@ -6808,6 +7076,7 @@ def _batch_function_decompile_timeout_8616(
         return _enforce_function_timeout_cap(
             max(bounded_timeout, 240),
             context="sweep large-function finalization timeout",
+            default_timeout_cap=PARALLEL_CLEAN_WORKER_TIMEOUT_CAP,
         )
     return bounded_timeout
 
@@ -6935,7 +7204,6 @@ def _run_serial_function_8616(
         active_function = item_function
         if item.function_cfg is None:
             recovery_mode = "lst" if lst_metadata is not None and visible_code_labels else "ranked"
-            recovery_cache_key = None
             cached_work_result, _cache_bypass_debug, _cache_key, _tail_enabled, _expected_stages = (
                 _function_work_cache_lookup(
                     item,
@@ -6952,7 +7220,7 @@ def _run_serial_function_8616(
             if cached_work_result is not None:
                 result = cached_work_result
             if result is None:
-                cached_recovery_result, recovery_cache_bypass_debug, recovery_cache_key = (
+                cached_recovery_result, recovery_cache_bypass_debug, _recovery_cache_key = (
                     _lookup_persistent_recovery_timeout(
                         binary_path=args.binary,
                         addr=recovery_addr,
@@ -7196,6 +7464,7 @@ def _run_serial_function_8616(
                         use_serial_fork_per_function=use_serial_fork_per_function,
                         fallback_tail_validation_by_index=fallback_tail_validation_by_index,
                         result_state_by_index=result_map,
+                        timeout_was_explicit=timeout_was_explicit,
                     )
                     decompiled += d
                     failed += f
@@ -7326,6 +7595,7 @@ def _run_serial_function_8616(
                 use_serial_fork_per_function=use_serial_fork_per_function,
                 fallback_tail_validation_by_index=fallback_tail_validation_by_index,
                 result_state_by_index=result_map,
+                timeout_was_explicit=timeout_was_explicit,
             )
             decompiled += d
             failed += f
@@ -7381,6 +7651,7 @@ def _finish_batch_cli_8616(
             use_serial_fork_per_function=use_serial_fork_per_function,
             fallback_tail_validation_by_index=fallback_tail_validation_by_index,
             result_state_by_index=result_map,
+            timeout_was_explicit=context.timeout_was_explicit,
         )
         decompiled += d
         failed += f
@@ -7599,6 +7870,11 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
     interactive_stdout = _stdout_is_interactive()
     precise_sidecar_regions = metadata_has_precise_code_regions(cast(Any, lst_metadata))
     if args.addr is not None:
+        request_cache_inputs = DirectRequestCacheInputs8616.from_cli(
+            args,
+            signature_catalog=effective_signature_catalog,
+        )
+        assert request_cache_inputs is not None
         direct_context = _DirectAddrCliContext8616(
             args=args,
             project=project,
@@ -7612,22 +7888,9 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
             interactive_stdout=interactive_stdout,
             precise_sidecar_regions=precise_sidecar_regions,
             timeout_was_explicit=timeout_was_explicit,
+            request_cache_inputs=request_cache_inputs,
         )
-        direct_lock_key = _recovery_cache_key(
-            binary_path=args.binary,
-            kind="direct_addr_work",
-            extra={
-                "addr": args.addr,
-                "api_style": args.api_style,
-                "alternate_source_c": bool(args.alternate_source_c),
-                "ignore_local_sidecar_hints": bool(args.ignore_local_sidecar_hints),
-                "window": args.window,
-                "c_target": args.c_target,
-                "signature_catalog": str(effective_signature_catalog)
-                if effective_signature_catalog is not None
-                else None,
-            },
-        )
+        direct_lock_key = build_direct_request_cache_key_8616(request_cache_inputs)
         if not _direct_addr_work_requires_parent_lock_8616(direct_lock_key):
             return _run_direct_addr_cli_8616(direct_context)
         assert direct_lock_key is not None
@@ -7759,9 +8022,9 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                     else:
                         function_cfg_pairs = seeded_recovery_result
                         seeded_catalog_addrs = [function.addr for _, function in function_cfg_pairs]
-            except Exception as ex:  # noqa: BLE001
+            except Exception as ex:
                 catalog_error = ex
-                function_cfg_pairs = [] if not function_cfg_pairs else function_cfg_pairs
+                function_cfg_pairs = function_cfg_pairs if function_cfg_pairs else []
                 seeded_catalog_addrs = []
             else:
                 pass
@@ -7820,7 +8083,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                     low_memory=low_memory_path,
                     limit=discovery_limit,
                 )
-            except (_AnalysisTimeout, Exception) as ex:  # noqa: BLE001
+            except (_AnalysisTimeout, Exception) as ex:
                 catalog_error = ex
                 print(
                     "/* Quick EXE function discovery timed out; falling back to a bounded control-flow recovery pass. */"
@@ -7855,7 +8118,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                         timeout=args.timeout,
                         thread_name_prefix="catalog-fallback",
                     )
-                except Exception as ex:  # noqa: BLE001
+                except Exception as ex:
                     catalog_error = ex
 
         if cfg is None and not function_cfg_pairs and not prefer_ranked_hidden_sidecar_full_queue:
@@ -7875,7 +8138,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                     timeout=args.timeout,
                     thread_name_prefix="catalog",
                 )
-            except Exception as ex:  # noqa: BLE001
+            except Exception as ex:
                 catalog_error = ex
 
         if (
@@ -7896,7 +8159,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                     timeout=args.timeout,
                     thread_name_prefix="catalog-fallback",
                 )
-            except Exception as ex:  # noqa: BLE001
+            except Exception as ex:
                 catalog_error = ex
 
         if cfg is None and not function_cfg_pairs and not prefer_ranked_hidden_sidecar_full_queue:
@@ -8098,6 +8361,17 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
         function_cfg_pairs = _rank_function_cfg_pairs_for_display(project, function_cfg_pairs)
         shown_total = len(function_cfg_pairs)
     uncapped_function_cfg_pairs = list(function_cfg_pairs)
+    source_catalog = _source_region_catalog_evidence_8616(project)
+    if (
+        project.arch.name == "86_16"
+        and source_catalog is not None
+        and source_catalog.complete
+        and uncapped_function_cfg_pairs
+    ):
+        publish_discovered_indexed_alias_program_8616(
+            project,
+            tuple(function for _cfg, function in uncapped_function_cfg_pairs),
+        )
     if (
         args.addr is None
         and args.binary.suffix.lower() == ".exe"
@@ -8427,10 +8701,9 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
     emitted_indexes: set[int] = set()
     allow_isolated_retry_for_parallel_tasks = interactive_stdout or args.max_functions <= 0 or args.addr is not None
     if use_serial_fork_per_function:
-        parallel_timeout_model = _AdaptivePerByteTimeoutModel(
+        parallel_timeout_model = build_parallel_clean_worker_timeout_model(
             args.timeout,
             explicit_timeout=timeout_was_explicit,
-            margin=1.5,
         )
         timeout_by_index = {
             item.index: _batch_function_decompile_timeout_8616(
@@ -8439,7 +8712,6 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                 parallel_timeout_model,
             )
             for item in function_tasks
-            if item.function_cfg is not None
         }
         executor = DaemonThreadPoolExecutor(max_workers=workers, thread_name_prefix="func-clean")
         try:
@@ -8451,7 +8723,6 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                     timeout=timeout_by_index[item.index],
                 )
                 for item in function_tasks
-                if item.function_cfg is not None
             }
             for item in function_tasks:
                 future = future_by_index.get(item.index)
@@ -8557,6 +8828,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                                 use_serial_fork_per_function=use_serial_fork_per_function,
                                 fallback_tail_validation_by_index=fallback_tail_validation_by_index,
                                 result_state_by_index=result_map,
+                                timeout_was_explicit=timeout_was_explicit,
                             )
                             decompiled += d
                             failed += f
@@ -8601,6 +8873,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                                     use_serial_fork_per_function=use_serial_fork_per_function,
                                     fallback_tail_validation_by_index=fallback_tail_validation_by_index,
                                     result_state_by_index=result_map,
+                                    timeout_was_explicit=timeout_was_explicit,
                                 )
                                 decompiled += d
                                 failed += f
@@ -8640,6 +8913,7 @@ def _run_main_cli_8616(argv: list[str] | None) -> int:
                                 use_serial_fork_per_function=use_serial_fork_per_function,
                                 fallback_tail_validation_by_index=fallback_tail_validation_by_index,
                                 result_state_by_index=result_map,
+                                timeout_was_explicit=timeout_was_explicit,
                             )
                             decompiled += d
                             failed += f

@@ -46,11 +46,23 @@ class _Codegen:
         """Return a stable synthetic C AST index."""
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
-def _dirty(codegen: _Codegen, ident: int) -> CDirtyExpression:
+def _dirty(
+    codegen: _Codegen,
+    ident: int,
+    *,
+    ins_addr: int | None = None,
+) -> CDirtyExpression:
     """Build one unresolved angr virtual-value carrier."""
-    return CDirtyExpression(SimpleNamespace(varid=ident), codegen=codegen)
+    dirty = SimpleNamespace(varid=ident)
+    if ins_addr is not None:
+        dirty.tags = {"ins_addr": ins_addr}
+    return CDirtyExpression(dirty, codegen=codegen)
 
 
 def _dereference_store(codegen: _Codegen, ins_addr: int) -> CAssignment:
@@ -158,6 +170,87 @@ def test_consumed_push_keeps_unresolved_dereference_without_push_provenance() ->
     assert stats.raw_fact_count == 1
     assert stats.classified_fact_count == 0
     assert stats.materialized_count == 0
+    assert stats.failure_count == 1
+
+
+def test_consumed_push_uses_exact_nested_lvalue_provenance_after_outer_retag() -> None:
+    codegen = _Codegen()
+    push_addr = 0x4016
+    call_addr = 0x4018
+    address = CBinaryOp(
+        "Add",
+        _dirty(codegen, 1, ins_addr=push_addr),
+        _dirty(codegen, 2, ins_addr=push_addr),
+        codegen=codegen,
+    )
+    artifact = CAssignment(
+        CUnaryOp("Dereference", address, codegen=codegen),
+        _dirty(codegen, 3),
+        codegen=codegen,
+        tags={"ins_addr": call_addr},
+    )
+    codegen.cfunc.statements.statements.append(artifact)
+
+    changed = prune_consumed_call_push_stack_assignments_8616(
+        codegen.project,
+        codegen,
+        frozenset({push_addr}),
+        function=_function_with_instruction(push_addr, X86_INS_PUSH),
+    )
+
+    assert changed is True
+    assert codegen.cfunc.statements.statements == []
+    stats = codegen._inertia_consumed_call_push_carrier_prune_8616
+    assert stats.raw_fact_count == stats.normalized_fact_count == 1
+    assert stats.classified_fact_count == stats.materialized_count == 1
+    assert stats.failure_count == 0
+
+
+def test_consumed_push_refuses_ambiguous_nested_lvalue_provenance() -> None:
+    codegen = _Codegen()
+    first_push_addr = 0x4016
+    second_push_addr = 0x4017
+    address = CBinaryOp(
+        "Add",
+        _dirty(codegen, 1, ins_addr=first_push_addr),
+        _dirty(codegen, 2, ins_addr=second_push_addr),
+        codegen=codegen,
+    )
+    artifact = CAssignment(
+        CUnaryOp("Dereference", address, codegen=codegen),
+        _dirty(codegen, 3),
+        codegen=codegen,
+        tags={"ins_addr": 0x4018},
+    )
+    codegen.cfunc.statements.statements.append(artifact)
+    function = SimpleNamespace(
+        addr=0x4010,
+        blocks=(
+            SimpleNamespace(
+                addr=0x4010,
+                capstone=SimpleNamespace(
+                    insns=(
+                        SimpleNamespace(address=first_push_addr, id=X86_INS_PUSH),
+                        SimpleNamespace(address=second_push_addr, id=X86_INS_PUSH),
+                    )
+                ),
+            ),
+        ),
+    )
+
+    changed = prune_consumed_call_push_stack_assignments_8616(
+        codegen.project,
+        codegen,
+        frozenset({first_push_addr, second_push_addr}),
+        function=function,
+    )
+
+    assert changed is False
+    assert codegen.cfunc.statements.statements == [artifact]
+    stats = codegen._inertia_consumed_call_push_carrier_prune_8616
+    assert stats.raw_fact_count == 1
+    assert stats.normalized_fact_count == 0
+    assert stats.classified_fact_count == stats.materialized_count == 0
     assert stats.failure_count == 1
 
 

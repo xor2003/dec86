@@ -64,6 +64,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _project():
@@ -3247,7 +3251,7 @@ def test_compare_jcc_mapping_stays_in_sync_with_condition_ir_aliases():
         for mnemonic, cond_op in JCC_TO_COND_8616.items()
         if cond_op in _COND_TO_CMP_OP_8616
     }
-    assert _JCC_COMPARE_OPS_8616 == expected
+    assert expected == _JCC_COMPARE_OPS_8616
 
 
 def test_translate_cmp_jcc_guard_decodes_32bit_le_chain():
@@ -3401,7 +3405,7 @@ def test_translate_cmp_jcc_guard_decodes_32bit_call_return_stack_pair():
 def test_translate_cmp_jcc_guard_decodes_call_return_from_previous_linear_block():
     project = _project()
     codegen = _codegen([])
-    codegen.cfunc.addr = 0x10F38
+    codegen.cfunc.addr = 0x4FFA
     hi = _stack(-2, codegen, "goal_hi")
     lo = _stack(-4, codegen, "goal_lo")
     codegen.cfunc.arg_list = ()
@@ -3465,7 +3469,7 @@ def test_translate_cmp_jcc_guard_decodes_call_return_from_previous_linear_block(
             capstone=SimpleNamespace(insns=blocks.get(addr, ()))
         )
     )
-    project.loader = SimpleNamespace(main_object=SimpleNamespace(min_addr=0x4FFA), min_addr=0x4FFA)
+    project.loader = SimpleNamespace(main_object=SimpleNamespace(min_addr=0x1000), min_addr=0x1000)
     project.kb = SimpleNamespace(
         functions=SimpleNamespace(
             function=lambda addr, create=False: (

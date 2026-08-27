@@ -22,7 +22,6 @@ from collections import defaultdict
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TypeAlias
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable
@@ -31,8 +30,8 @@ from ..ir.core import MemSpace
 from ..widening.segmented_load_identity import segmented_load_identity_8616
 from .segment_register_state import runtime_segment_name_for_variable_8616
 
-_VariableKey8616: TypeAlias = tuple[str, object, object, object]
-_AssignmentSources8616: TypeAlias = Mapping[_VariableKey8616, tuple[object, ...]]
+type _VariableKey8616 = tuple[str, object, object, object]
+type _AssignmentSources8616 = Mapping[_VariableKey8616, tuple[object, ...]]
 _CHILD_ATTRIBUTES_8616 = (
     "statements",
     "lhs",

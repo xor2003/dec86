@@ -12,7 +12,7 @@ from __future__ import annotations
 import functools
 import re
 from collections.abc import MutableMapping
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from angr.sim_type import SimTypeFunction
 from angr.utils.library import convert_cproto_to_py
@@ -124,7 +124,7 @@ _C_TYPE_KEYWORDS_8616 = {
     "void",
     "volatile",
 }
-AnnotationSpec8616: TypeAlias = str | dict[str, object]
+type AnnotationSpec8616 = str | dict[str, object]
 
 _SOURCE_DECL_RE_8616 = re.compile(
     r"^(?P<prefix>(?:(?:extern|static|inline|const|volatile|unsigned|signed|struct|union|enum|long|short|int|char|_Bool|[A-Za-z_]\w*)|\s|\*)+?)"

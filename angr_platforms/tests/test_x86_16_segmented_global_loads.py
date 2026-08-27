@@ -96,6 +96,7 @@ from angr_platforms.X86_16.lowering.segmented_global_loads import (
     recover_indexed_segmented_global_load_site_evidence_8616,
     recover_indexed_segmented_global_store_evidence_8616,
 )
+from angr_platforms.X86_16.lowering.semantic_cast import CSemanticCast8616
 from angr_platforms.X86_16.lowering.storage_identity_facts import (
     GlobalStorageIdentityFact8616,
     StorageIdentityEvidenceKind8616,
@@ -138,6 +139,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 class _DummyVariableManager:
@@ -1156,6 +1161,131 @@ def test_indexed_segmented_global_load_materializes_direct_constant_global():
     assert stats.indexed_materialized_count == 1
 
 
+def test_indexed_segmented_global_assignment_preserves_read_write_access_roles():
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    lhs = CFunctionCall(
+        "SEG_U16",
+        None,
+        [_ds(project, codegen), _const(0xBA2, codegen)],
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    rhs = CFunctionCall(
+        "SEG_U16",
+        None,
+        [_ds(project, codegen), _const(0xBA2, codegen)],
+        codegen=codegen,
+        tags={"ins_addr": 0x4020},
+    )
+    assignment = CAssignment(lhs, rhs, codegen=codegen)
+    root = CStatements([assignment], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    codegen._inertia_segment_function_contract = SegmentFunctionContract(
+        function_addr=0x4010,
+        accesses=tuple(
+            SegmentAccessFact(
+                block_addr=instruction_addr,
+                instruction_addr=instruction_addr,
+                kind=access_kind,
+                address=IRAddress(
+                    space=MemSpace.DS,
+                    offset=0xBA2,
+                    size=2,
+                    status=AddressStatus.STABLE,
+                    segment_origin=SegmentOrigin.PROVEN,
+                ),
+                segment_register="ds",
+                physical_source="ds",
+                verdict=SegmentFactVerdict.PROVEN,
+            )
+            for instruction_addr, access_kind in (
+                (0x4010, SegmentAccessKind.WRITE),
+                (0x4020, SegmentAccessKind.READ),
+            )
+        ),
+    )
+
+    changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
+        project,
+        codegen,
+        (IndexedSegmentedGlobalEvidence8616(0xBA2, "cRow", 0, 2),),
+    )
+
+    assert changed is True
+    assert isinstance(assignment.lhs, CVariable)
+    assert assignment.lhs.name == "cRow"
+    assert isinstance(assignment.rhs, CVariable)
+    assert assignment.rhs.name == "cRow"
+    assert codegen._inertia_segment_access_lowering_stats_8616.materialized_count == 2
+
+
+@pytest.mark.parametrize("materializer", ("named", "indexed"))
+def test_segmented_global_assignment_treats_lvalue_address_as_read(materializer):
+    project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
+    codegen = _DummyCodegen()
+    pointer_load = CFunctionCall(
+        "SEG_U16",
+        None,
+        [_ds(project, codegen), _const(0x7002, codegen)],
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    lhs = CFunctionCall(
+        "SEG_U8",
+        None,
+        [
+            _ds(project, codegen),
+            CBinaryOp("Add", _const(8, codegen), pointer_load, codegen=codegen),
+        ],
+        codegen=codegen,
+        tags={"ins_addr": 0x4020},
+    )
+    assignment = CAssignment(lhs, _const(50, codegen), codegen=codegen)
+    root = CStatements([assignment], addr=0x4010, codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
+    codegen._inertia_segment_function_contract = SegmentFunctionContract(
+        function_addr=0x4010,
+        accesses=(
+            SegmentAccessFact(
+                block_addr=0x4010,
+                instruction_addr=0x4010,
+                kind=SegmentAccessKind.READ,
+                address=IRAddress(
+                    space=MemSpace.DS,
+                    offset=0x7002,
+                    size=2,
+                    status=AddressStatus.STABLE,
+                    segment_origin=SegmentOrigin.PROVEN,
+                ),
+                segment_register="ds",
+                physical_source="ds",
+                verdict=SegmentFactVerdict.PROVEN,
+            ),
+        ),
+    )
+
+    if materializer == "named":
+        changed = materialize_named_segmented_global_loads_8616(
+            project,
+            codegen,
+            {0x7002: ("Rp3D", 2)},
+        )
+    else:
+        changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
+            project,
+            codegen,
+            (IndexedSegmentedGlobalEvidence8616(0x7002, "Rp3D", 0, 2),),
+        )
+
+    assert changed is True
+    assert isinstance(assignment.lhs, CFunctionCall)
+    offset = assignment.lhs.args[1]
+    assert isinstance(offset, CBinaryOp)
+    assert isinstance(offset.rhs, CVariable)
+    assert offset.rhs.name == "Rp3D"
+
+
 def test_indexed_direct_subword_replay_retains_exact_segment_access_provenance(monkeypatch):
     project = SimpleNamespace(arch=Arch86_16(), kb=SimpleNamespace(labels={}))
     codegen = _DummyCodegen()
@@ -1307,6 +1437,10 @@ def test_named_global_aggregate_declaration_replays_after_type_store_appears():
             IndexedSegmentedGlobalEvidence8616(0x42, "g_work", 0, 2, "g_work"),
         ),
     )
+    assert isinstance(assignment.rhs, CUnaryOp)
+    assert isinstance(assignment.rhs.operand, CIndexedVariable)
+    equivalent = segmented_global_loads_module._two_byte_global_struct_type_8616("g_work")
+    assignment.rhs.operand._type = TypeRef(equivalent.name, equivalent)
     assert codegen._inertia_global_declaration_specs_8616[0][0].startswith("struct g_work_entry")
 
     variable_manager = _DummyVariableManager()
@@ -1369,6 +1503,9 @@ def test_named_global_aggregate_reconciles_rollback_restored_inline_declaration(
 
     assert reconcile_registered_named_global_aggregate_declarations_8616(codegen) is True
     assert codegen._inertia_global_declaration_specs_8616 == (("g_work_entry", "g_work", 1),)
+    assert codegen._inertia_named_type_definitions_8616 == (
+        "typedef struct g_work_entry {\n    char field_0;\n    char field_1;\n} g_work_entry;",
+    )
     stats = codegen._inertia_named_global_aggregate_declaration_reconcile_stats_8616
     assert stats.raw_fact_count == 1
     assert stats.normalized_fact_count == 1
@@ -2470,8 +2607,8 @@ def test_indexed_word_store_lvalue_materializes_source_index_evidence():
         statements=root,
         body=root,
         variables_in_use={
-            getattr(up_var, "variable"): up_var,
-            getattr(down_var, "variable"): down_var,
+            up_var.variable: up_var,
+            down_var.variable: down_var,
         },
     )
     stats = SegmentedGlobalLoadStats8616()
@@ -2703,8 +2840,8 @@ def test_indexed_word_store_lvalue_joins_multiple_facts_by_instruction_address()
         statements=root,
         body=root,
         variables_in_use={
-            getattr(row_tmp, "variable"): row_tmp,
-            getattr(bar_temp, "variable"): bar_temp,
+            row_tmp.variable: row_tmp,
+            bar_temp.variable: bar_temp,
         },
         variable_manager=_DummyVariableManager(),
     )
@@ -2774,8 +2911,8 @@ def test_indexed_word_store_lvalue_refuses_ambiguous_untagged_facts():
         statements=root,
         body=root,
         variables_in_use={
-            getattr(row_tmp, "variable"): row_tmp,
-            getattr(bar_temp, "variable"): bar_temp,
+            row_tmp.variable: row_tmp,
+            bar_temp.variable: bar_temp,
         },
     )
     stats = SegmentedGlobalLoadStats8616()
@@ -2983,6 +3120,7 @@ def test_indexed_word_store_pair_reruns_lvalue_source_materialization():
     assert stats.indexed_store_lvalue_materialized_count == 0
 
     materialized_rhs = folded.rhs
+    folded.lhs.index = CVariable(row_var.variable, variable_type=row_var.variable_type, codegen=codegen)
     rerun_stats = SegmentedGlobalLoadStats8616()
     rerun_changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
         project,
@@ -3068,8 +3206,8 @@ def test_indexed_word_store_pairs_preserve_provenance_across_reverse_structured_
         statements=root,
         body=root,
         variables_in_use={
-            getattr(row_tmp, "variable"): row_tmp,
-            getattr(bar_temp, "variable"): bar_temp,
+            row_tmp.variable: row_tmp,
+            bar_temp.variable: bar_temp,
         },
         variable_manager=_DummyVariableManager(),
     )
@@ -3742,23 +3880,25 @@ def test_indexed_byte_store_materializes_signed_remainder_source() -> None:
     )
     stats = SegmentedGlobalLoadStats8616()
 
+    evidence = (
+        IndexedSegmentedGlobalEvidence8616(0x44, "g_work", 0, 2),
+        IndexedSegmentedGlobalEvidence8616(0x45, "g_work", 1, 1),
+    )
+    store_evidence = (
+        IndexedSegmentedGlobalStoreEvidence8616(
+            0x45,
+            1,
+            -2,
+            1,
+            0x4020,
+            source_signed_remainder=SignedRemainderStackSource8616(-4, -6, 2, 1),
+        ),
+    )
     changed = materialize_indexed_segmented_global_loads_from_evidence_8616(
         project,
         codegen,
-        (
-            IndexedSegmentedGlobalEvidence8616(0x44, "g_work", 0, 2),
-            IndexedSegmentedGlobalEvidence8616(0x45, "g_work", 1, 1),
-        ),
-        store_evidence=(
-            IndexedSegmentedGlobalStoreEvidence8616(
-                0x45,
-                1,
-                -2,
-                1,
-                0x4020,
-                source_signed_remainder=SignedRemainderStackSource8616(-4, -6, 2, 1),
-            ),
-        ),
+        evidence,
+        store_evidence=store_evidence,
         stats=stats,
     )
 
@@ -3767,13 +3907,20 @@ def test_indexed_byte_store_materializes_signed_remainder_source() -> None:
     assert assignment.rhs.op == "Add"
     assert isinstance(assignment.rhs.lhs, CBinaryOp)
     assert assignment.rhs.lhs.op == "Mod"
-    assert isinstance(assignment.rhs.lhs.lhs, CTypeCast)
+    assert isinstance(assignment.rhs.lhs.lhs, CSemanticCast8616)
     assert assignment.rhs.lhs.lhs.expr is dividend
-    assert isinstance(assignment.rhs.lhs.rhs, CTypeCast)
+    assert isinstance(assignment.rhs.lhs.rhs, CSemanticCast8616)
     assert assignment.rhs.lhs.rhs.expr is divisor
     assert isinstance(assignment.rhs.rhs, CConstant)
     assert assignment.rhs.rhs.value == 1
     assert stats.indexed_byte_store_source_materialized_count == 1
+    materialized_rhs = assignment.rhs
+    rerun_stats = SegmentedGlobalLoadStats8616()
+    materialize_indexed_segmented_global_loads_from_evidence_8616(
+        project, codegen, evidence, store_evidence=store_evidence, stats=rerun_stats
+    )
+    assert assignment.rhs is materialized_rhs
+    assert rerun_stats.indexed_byte_store_source_materialized_count == 0
 
 
 def test_indexed_byte_pair_store_materializes_word_array_assignment():
@@ -3892,8 +4039,8 @@ def test_indexed_byte_pair_store_uses_store_evidence_for_clobbered_global_source
         statements=root,
         body=root,
         variables_in_use={
-            getattr(row_var, "variable"): row_var,
-            getattr(row_tmp, "variable"): row_tmp,
+            row_var.variable: row_var,
+            row_tmp.variable: row_tmp,
         },
     )
     stats = SegmentedGlobalLoadStats8616()
@@ -3957,9 +4104,9 @@ def test_indexed_byte_pair_store_uses_store_evidence_for_stack_source():
         statements=root,
         body=root,
         variables_in_use={
-            getattr(row_var, "variable"): row_var,
-            getattr(row_tmp, "variable"): row_tmp,
-            getattr(bar_temp, "variable"): bar_temp,
+            row_var.variable: row_var,
+            row_tmp.variable: row_tmp,
+            bar_temp.variable: bar_temp,
         },
     )
     stats = SegmentedGlobalLoadStats8616()
@@ -4757,7 +4904,16 @@ def test_dword_zero_test_replay_records_closed_materialization_evidence():
     assert root.statements[0].variable.name == "clPause"
     assert codegen._inertia_dword_global_zero_test_materialization_record_8616 == (
         DwordGlobalZeroTestMaterializationRecord8616(
-            evidence=(DwordGlobalZeroTestEvidence8616(0x132, 0x132, 0x134, "ax"),),
+            evidence=(
+                DwordGlobalZeroTestEvidence8616(
+                    0x132,
+                    0x132,
+                    0x134,
+                    "ax",
+                    low_instruction_addr=0x4013,
+                    high_instruction_addr=0x4010,
+                ),
+            ),
             raw_fact_count=1,
             normalized_fact_count=1,
             classified_fact_count=1,
@@ -6409,7 +6565,7 @@ def test_direct_global_dword_update_folds_long_msc_flag_suffix_after_scalar_stor
     upper = CAssignment(cl_pause, upper_rhs, codegen=codegen)
     suffix = [CAssignment(tmp(5001), tmp(5000), codegen=codegen)]
     for index in range(5002, 5088):
-        suffix.append(CAssignment(tmp(index), tmp(index - 1), codegen=codegen))
+        suffix.append(CAssignment(tmp(index), tmp(index - 1), codegen=codegen))  # noqa: PERF401
     root = CStatements([low, carry, upper, *suffix], codegen=codegen)
     codegen.cfunc = SimpleNamespace(addr=0x4010, statements=root, body=root)
     stats = SegmentedGlobalLoadStats8616()
@@ -7185,6 +7341,64 @@ def test_direct_global_symbol_store_drops_redundant_high_byte_projection():
     assert assignment.lhs.variable.addr == 0xBAA
     assert assignment.rhs is word_value
     assert stats.direct_symbol_store_materialized_count == 1
+
+
+def test_direct_global_high_byte_cleanup_visits_shared_ast_node_once(monkeypatch):
+    codegen = _DummyCodegen()
+    shared_statement = SimpleNamespace()
+    shared_body = CStatements([shared_statement, SimpleNamespace()], codegen=codegen)
+    root = CStatements(
+        [SimpleNamespace(body=shared_body), SimpleNamespace(body=shared_body)],
+        codegen=codegen,
+    )
+    visits = 0
+
+    def record_visit(stmt, _codegen, _direct_by_offset):
+        nonlocal visits
+        if stmt is shared_statement:
+            visits += 1
+        return None, None
+
+    monkeypatch.setattr(
+        segmented_global_loads_module,
+        "_direct_global_word_assignment_8616",
+        record_visit,
+    )
+
+    changed = segmented_global_loads_module._remove_direct_global_redundant_high_byte_stores_8616(
+        root,
+        codegen,
+        {},
+        SegmentedGlobalLoadStats8616(),
+    )
+
+    assert changed is False
+    assert visits == 1
+
+
+def test_direct_global_word_assignment_uses_exact_identity_before_expression_fallback(monkeypatch):
+    codegen = _DummyCodegen()
+    rhs = _const(7, codegen)
+    assignment = CAssignment(_mem_word(0xBAA, codegen, name="iCompares"), rhs, codegen=codegen)
+    ref = DirectGlobalSymbolRef8616(0xBAA, "iCompares", 0, 2, 0)
+
+    def refuse_fallback(*_args, **_kwargs):
+        raise AssertionError("exact direct-global identity must not use expression fallback")
+
+    monkeypatch.setattr(
+        segmented_global_loads_module,
+        "_make_direct_global_symbol_expr_8616",
+        refuse_fallback,
+    )
+
+    matched_ref, matched_rhs = segmented_global_loads_module._direct_global_word_assignment_8616(
+        assignment,
+        codegen,
+        {(0xBAA, 2): ref},
+    )
+
+    assert matched_ref is ref
+    assert matched_rhs is rhs
 
 
 def test_direct_global_symbol_store_materializes_segment_helper_lvalue_and_drops_high_byte_projection():

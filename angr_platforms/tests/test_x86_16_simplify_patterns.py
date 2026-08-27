@@ -27,7 +27,7 @@ def make_codegen():
         project=SimpleNamespace(arch=archinfo.ArchX86()),
         cfunc=SimpleNamespace(statements=None),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
 
 class TestIdentitySimplifications:
@@ -49,7 +49,7 @@ class TestIdentitySimplifications:
         )
 
         codegen.cfunc.statements = expr
-        changed = _simplify_structured_expressions_8616(codegen)
+        _simplify_structured_expressions_8616(codegen)
 
         result = codegen.cfunc.statements
         # Should simplify to just the variable
@@ -72,7 +72,7 @@ class TestIdentitySimplifications:
         )
 
         codegen.cfunc.statements = expr
-        changed = _simplify_structured_expressions_8616(codegen)
+        _simplify_structured_expressions_8616(codegen)
 
         result = codegen.cfunc.statements
         # Should simplify to just the variable
@@ -95,7 +95,7 @@ class TestIdentitySimplifications:
         )
 
         codegen.cfunc.statements = expr
-        changed = _simplify_structured_expressions_8616(codegen)
+        _simplify_structured_expressions_8616(codegen)
 
         result = codegen.cfunc.statements
         # Should simplify to just the variable
@@ -118,7 +118,7 @@ class TestIdentitySimplifications:
         )
 
         codegen.cfunc.statements = expr
-        changed = _simplify_structured_expressions_8616(codegen)
+        _simplify_structured_expressions_8616(codegen)
 
         result = codegen.cfunc.statements
         # Should simplify to just the variable

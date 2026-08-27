@@ -12,13 +12,12 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TypeAlias
 
 from .core import IRInstr, IRValue, MemSpace
 from .ssa_function import SSAFunctionArtifact
 
-ScalarDefinitionKey8616: TypeAlias = tuple[str, str | None, int, int, int | None]
-ScalarDefinitionIndex8616: TypeAlias = dict[
+type ScalarDefinitionKey8616 = tuple[str, str | None, int, int, int | None]
+type ScalarDefinitionIndex8616 = dict[
     ScalarDefinitionKey8616,
     tuple["ScalarDefinition8616", ...],
 ]

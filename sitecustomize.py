@@ -5,6 +5,7 @@ Layer: Tooling/gates.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -43,10 +44,8 @@ def _apply_memory_cap() -> None:
         return
 
     if hasattr(resource, "RLIMIT_DATA"):
-        try:
+        with contextlib.suppress(OSError, ValueError):
             resource.setrlimit(resource.RLIMIT_DATA, (limit_bytes, limit_bytes))
-        except (OSError, ValueError):
-            pass
 
 
 _apply_memory_cap()
@@ -62,11 +61,11 @@ def _install_msgspec_shim() -> None:
 
     class _MsgSpecJson:
         @staticmethod
-        def encode(obj):
+        def encode(obj):  # noqa: ANN001, ANN205
             return json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
         @staticmethod
-        def decode(data):
+        def decode(data):  # noqa: ANN001, ANN205
             if isinstance(data, memoryview):
                 data = bytes(data)
             if isinstance(data, (bytes, bytearray)):
@@ -76,11 +75,11 @@ def _install_msgspec_shim() -> None:
             return json.loads(data)
 
         @staticmethod
-        def dumps(obj):
+        def dumps(obj):  # noqa: ANN001, ANN205
             return json.dumps(obj)
 
         @staticmethod
-        def loads(data):
+        def loads(data):  # noqa: ANN001, ANN205
             if isinstance(data, memoryview):
                 data = bytes(data)
             if isinstance(data, (bytes, bytearray)):
@@ -90,8 +89,8 @@ def _install_msgspec_shim() -> None:
             return json.loads(data)
 
     msgspec_module = types.ModuleType("msgspec")
-    setattr(msgspec_module, "json", _MsgSpecJson)
-    setattr(msgspec_module, "__all__", ["json"])
+    msgspec_module.json = _MsgSpecJson
+    msgspec_module.__all__ = ["json"]
     sys.modules["msgspec"] = msgspec_module
 
 

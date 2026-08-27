@@ -111,7 +111,7 @@ def apply_patch() -> int:
         pass
 
     patched = 0
-    for name, mod in list(sys.modules.items()):
+    for _name, mod in list(sys.modules.items()):
         if not mod:
             continue
         try:

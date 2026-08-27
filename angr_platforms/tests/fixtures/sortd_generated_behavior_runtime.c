@@ -165,6 +165,12 @@ unsigned long sub_1143a(
     return wide_divisor ? dividend / wide_divisor : 0;
 }
 
+int32_t aNldiv(int32_t dividend, int32_t divisor)
+{
+    last_divisor = (unsigned short)divisor;
+    return divisor ? dividend / divisor : 0;
+}
+
 void reset_runtime_observation(void)
 {
     fake_clock = 0;

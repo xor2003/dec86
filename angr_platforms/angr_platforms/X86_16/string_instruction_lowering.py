@@ -326,7 +326,7 @@ def _render_compact_intrinsic_c(name: str, artifact: StringIntrinsicArtifact) ->
                 lines.append(f"    __x86_16_length = __x86_16_scan_tail({rec.width});")
                 continue
         lines.append("}")
-        return "\n".join(prototype_lines + [""] + lines) + "\n"
+        return "\n".join([*prototype_lines, "", *lines]) + "\n"
 
     return _impl()
 

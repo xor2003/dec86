@@ -35,6 +35,7 @@ class _AstCodegen:
         self.stmt_comments = {}
         self.expr_comments = {}
         self.braces_on_own_lines = False
+        self.indent_delta = 4
         self.display_block_addrs = False
         self.display_vvar_ids = False
         self.cstyle_null_cmp = False
@@ -45,6 +46,10 @@ class _AstCodegen:
     def next_idx(self, _name: str) -> int:
         self._next_idx += 1
         return self._next_idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 class TestStructuringCodegen:

@@ -23,6 +23,10 @@ class _Codegen:
     def next_idx(self, _name: str) -> int:
         self._next_index += 1
         return self._next_index
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _dispatch_conditions() -> tuple[ConditionIR, ConditionIR]:

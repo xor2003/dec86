@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,8 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CBreak,
     CConstant,
+    CExpression,
+    CFunctionCall,
     CIfBreak,
     CIfElse,
     CStatements,
@@ -15,7 +18,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CWhileLoop,
 )
 from angr.sim_type import SimTypeShort
-from angr.sim_variable import SimRegisterVariable, SimStackVariable
+from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
@@ -27,6 +30,10 @@ from angr_platforms.X86_16.structuring.loop_break_jcc import (
     loop_branch_guard_facts_8616,
     loop_header_duplicate_guard_removal_facts_8616,
     materialize_unconsumed_loop_break_jcc_8616,
+)
+from angr_platforms.X86_16.widening.segmented_load_identity import (
+    SegmentedLoadIdentity8616,
+    segmented_load_tags_8616,
 )
 
 
@@ -40,6 +47,10 @@ class _DummyCodegen:
     def next_idx(self, _name: str) -> int:
         self._idx += 1
         return self._idx
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 class _Insn:
@@ -58,13 +69,23 @@ def _reg(name: str, codegen: _DummyCodegen) -> CVariable:
     return CVariable(SimRegisterVariable(0, 2, name=name), codegen=codegen)
 
 
+def _global(addr: int, codegen: _DummyCodegen) -> CVariable:
+    return CVariable(SimMemoryVariable(addr, 2), codegen=codegen)
+
+
 def _fingerprint(expr: object, _project: object) -> str:
     return str(getattr(expr, "op", repr(expr)))
 
 
-def _callbacks(jcc: _Insn, *, evidence: list[tuple[object | None, object]]) -> UnconsumedLoopBreakJccCallbacks8616:
+def _callbacks(
+    jcc: _Insn,
+    *,
+    evidence: list[tuple[object | None, object]],
+    condition_lhs: Callable[[_DummyCodegen], CExpression] | None = None,
+) -> UnconsumedLoopBreakJccCallbacks8616:
     def _condition(op: str, project: object, codegen: _DummyCodegen, tags: dict[str, int]) -> CBinaryOp:
-        return CBinaryOp(op, _reg("ax", codegen), _reg("bx", codegen), codegen=codegen, tags=dict(tags))
+        lhs = condition_lhs(codegen) if condition_lhs is not None else _reg("ax", codegen)
+        return CBinaryOp(op, lhs, _reg("bx", codegen), codegen=codegen, tags=dict(tags))
 
     return UnconsumedLoopBreakJccCallbacks8616(
         linear_jcc_block_starts=lambda _project, _codegen: ((0x4000, jcc),),
@@ -415,6 +436,65 @@ def test_structuring_refuses_duplicate_untagged_semantic_break_guard():
     assert evidence == []
 
 
+def test_structuring_refuses_segmented_alias_of_existing_global_break_guard() -> None:
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    segmented_load = CFunctionCall(
+        "opaque_segment_load",
+        None,
+        [],
+        codegen=codegen,
+        tags=segmented_load_tags_8616(
+            SegmentedLoadIdentity8616(
+                space=MemSpace.DS,
+                offset=0x0BA2,
+                width=2,
+                region=0x4000,
+            )
+        ),
+    )
+    existing_guard = CIfBreak(
+        CBinaryOp(
+            "CmpLE",
+            segmented_load,
+            _reg("bx", codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    taken_stmt = CAssignment(
+        _reg("bx", codegen),
+        _const(2, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    loop = CWhileLoop(
+        _const(1, codegen),
+        CStatements([existing_guard, taken_stmt], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([loop], codegen=codegen)
+    codegen.cfunc.statements = root
+    codegen.cfunc.body = root
+    evidence: list[tuple[object | None, object]] = []
+
+    changed = materialize_unconsumed_loop_break_jcc_8616(
+        project,
+        codegen,
+        _callbacks(
+            _Insn(0x4005, "jg", 0x4010),
+            evidence=evidence,
+            condition_lhs=lambda owner: _global(0x0BA2, owner),
+        ),
+    )
+
+    assert changed is False
+    assert loop.body.statements == [existing_guard, taken_stmt]
+    assert len(loop_branch_guard_facts_8616(codegen)) == 1
+    assert codegen._inertia_unconsumed_loop_break_jcc_stats_8616.refused_duplicate_guard == 1
+    assert evidence == []
+
+
 def test_structuring_loop_break_fact_reader_requires_typed_tuple() -> None:
     codegen = _DummyCodegen()
     fact = LoopBranchGuardFact8616(
@@ -646,7 +726,7 @@ def test_structuring_unconsumed_loop_break_jcc_inverts_existing_single_break_ife
     assert evidence == [(body_edge_cond, rewritten_cond)]
 
 
-def test_structuring_loop_break_replay_prefers_exact_typed_stack_condition(monkeypatch):
+def test_structuring_loop_break_replay_accepts_equivalent_typed_block_boundary(monkeypatch):
     project = SimpleNamespace(arch=Arch86_16())
     codegen = _DummyCodegen()
     stale_stack = CVariable(
@@ -677,7 +757,7 @@ def test_structuring_loop_break_replay_prefers_exact_typed_stack_condition(monke
             lhs=IRValue(MemSpace.REG, name="ax", offset=0, size=2),
             rhs=IRValue(MemSpace.SS, name="bp", offset=-6, size=2),
             src_insn=0x4005,
-            block_addr=0x4000,
+            block_addr=0x3FFE,
             taken_target=0x4010,
             fallthrough_target=0x4007,
         ),

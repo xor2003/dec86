@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import typing
 from dataclasses import dataclass
-from typing import Any, TypeAlias
+from typing import Any
 
 from ..callsite_summary import CallsiteSummary8616
 
-CarrierKey8616: TypeAlias = tuple[str, str | int]
+type CarrierKey8616 = tuple[str, str | int]
 
 __all__ = [
     "CarrierKey8616",

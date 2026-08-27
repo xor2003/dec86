@@ -120,5 +120,5 @@ For a narrower local loop with only linters: `make linters-hard PYTHON=./.venv/b
 
 For the changed surface, run `make quality-dev PYTHON=./.venv/bin/python`.
 For global typing debt accounting, run `make linters PYTHON=./.venv/bin/python`.
-Read `reference/project-map.md`, `reference/decompiler-map.md`, and `reference/agent-rules.md`.
+Read `reference/project-map.md`, `reference/decompiler-map.md`, `reference/agent-rules.md`, `reference/real-mode-edge-policy.md`, and `reference/frontend-backend-migration-policy.md`.
 This includes the Supplemental glossary and long-running-agent guidance.

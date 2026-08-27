@@ -7,6 +7,7 @@ cache keys, outcomes, and structured validation statuses after each test.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -99,10 +100,8 @@ def finish_cache_event_capture(event_path: Path) -> CacheEventSummary:
     events = _load_event_objects(event_path)
     event_path.unlink(missing_ok=True)
     for directory in (event_path.parent, event_path.parent.parent, event_path.parent.parent.parent):
-        try:
+        with contextlib.suppress(OSError):
             directory.rmdir()
-        except OSError:
-            pass
     action_counts: dict[str, Counter[str]] = {}
     statuses_by_key: dict[str, set[str]] = {}
     contexts_by_key: dict[str, dict[str, object]] = {}

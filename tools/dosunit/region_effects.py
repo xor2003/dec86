@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 from collections import defaultdict
 from pathlib import Path
@@ -49,7 +49,7 @@ STACK_READ_MNEMONICS = {"pop", "ret", "retf", "iret"}
 STACK_WRITE_MNEMONICS = {"push", "call", "lcall"}
 
 
-def summarize_region_effects(
+def summarize_region_effects(  # noqa: D103
     *,
     exe_path: Path,
     functions_catalog: dict[str, Any],
@@ -107,7 +107,7 @@ def summarize_region_effects(
     return document
 
 
-def compare_region_effect_documents(
+def compare_region_effect_documents(  # noqa: D103
     *,
     oracle: dict[str, Any],
     candidate: dict[str, Any],
@@ -173,7 +173,7 @@ def compare_region_effect_documents(
 
 def _summarize_function_regions(
     *,
-    project: Any,
+    project: Any,  # noqa: ANN401
     linked_base: int,
     function: dict[str, Any],
     max_regions: int,
@@ -212,7 +212,7 @@ def _summarize_function_regions(
         try:
             block = project.factory.block(at, size=min(0x80, end - at), opt_level=0)
             _ = block.vex
-        except Exception as ex:  # noqa: BLE001
+        except Exception as ex:
             refusals.append(
                 _refusal(
                     function_id,
@@ -284,7 +284,7 @@ def _summarize_region(
     return region
 
 
-def _instruction_summary(insn: Any, *, function_base: int) -> dict[str, Any]:
+def _instruction_summary(insn: Any, *, function_base: int) -> dict[str, Any]:  # noqa: ANN401
     regs_read, regs_written = _regs_access(insn)
     operands = [_operand_summary(insn, operand) for operand in insn.operands]
     memory_reads = [
@@ -324,7 +324,7 @@ def _instruction_summary(insn: Any, *, function_base: int) -> dict[str, Any]:
     }
 
 
-def _operand_summary(insn: Any, operand: Any) -> dict[str, Any]:
+def _operand_summary(insn: Any, operand: Any) -> dict[str, Any]:  # noqa: ANN401
     access = _access_name(int(getattr(operand, "access", 0) or 0))
     width = int(getattr(operand, "size", 0) or 0) * 8
     if operand.type == CAPSTONE_OP_REG:
@@ -342,7 +342,7 @@ def _operand_summary(insn: Any, operand: Any) -> dict[str, Any]:
     return {"kind": "unknown", "width": width, "access": access}
 
 
-def _memory_operand_summary(insn: Any, operand: Any, *, access: str, width: int) -> dict[str, Any]:
+def _memory_operand_summary(insn: Any, operand: Any, *, access: str, width: int) -> dict[str, Any]:  # noqa: ANN401
     mem = operand.mem
     explicit_segment = _reg_name(insn, mem.segment) if mem.segment else None
     base = _reg_name(insn, mem.base) if mem.base else None
@@ -363,10 +363,10 @@ def _memory_operand_summary(insn: Any, operand: Any, *, access: str, width: int)
     return summary
 
 
-def _regs_access(insn: Any) -> tuple[set[str], set[str]]:
+def _regs_access(insn: Any) -> tuple[set[str], set[str]]:  # noqa: ANN401
     try:
         read, written = insn.regs_access()
-    except Exception:  # noqa: BLE001
+    except Exception:
         read = getattr(insn, "regs_read", [])
         written = getattr(insn, "regs_write", [])
     return {_normalize_reg(_reg_name(insn, reg)) for reg in read}, {
@@ -374,7 +374,7 @@ def _regs_access(insn: Any) -> tuple[set[str], set[str]]:
     }
 
 
-def _reg_name(insn: Any, reg: int) -> str:
+def _reg_name(insn: Any, reg: int) -> str:  # noqa: ANN401
     if not reg:
         return ""
     return str(insn.reg_name(reg)).lower()
@@ -435,7 +435,7 @@ def _memory_expr(memory: dict[str, Any]) -> str:
     return f"{memory['space']}:[{expr}]"
 
 
-def _implicit_stack_reads(insn: Any) -> list[dict[str, Any]]:
+def _implicit_stack_reads(insn: Any) -> list[dict[str, Any]]:  # noqa: ANN401
     if str(insn.mnemonic).lower() not in STACK_READ_MNEMONICS:
         return []
     return [
@@ -454,7 +454,7 @@ def _implicit_stack_reads(insn: Any) -> list[dict[str, Any]]:
     ]
 
 
-def _implicit_stack_writes(insn: Any) -> list[dict[str, Any]]:
+def _implicit_stack_writes(insn: Any) -> list[dict[str, Any]]:  # noqa: ANN401
     if str(insn.mnemonic).lower() not in STACK_WRITE_MNEMONICS:
         return []
     return [
@@ -473,7 +473,7 @@ def _implicit_stack_writes(insn: Any) -> list[dict[str, Any]]:
     ]
 
 
-def _instruction_control(insn: Any) -> dict[str, Any]:
+def _instruction_control(insn: Any) -> dict[str, Any]:  # noqa: ANN401
     mnemonic = str(insn.mnemonic).lower()
     if mnemonic in REGION_BRANCH_MNEMONICS:
         return {
@@ -492,14 +492,14 @@ def _instruction_control(insn: Any) -> dict[str, Any]:
     return {"kind": "none"}
 
 
-def _direct_target(insn: Any) -> str | None:
+def _direct_target(insn: Any) -> str | None:  # noqa: ANN401
     if len(insn.operands) == 1 and insn.operands[0].type == CAPSTONE_OP_IMM:
         return normalize_hex(int(insn.operands[0].imm))
     return None
 
 
 def _region_exits(
-    insn: Any, *, segment_para: int, function_base: int
+    insn: Any, *, segment_para: int, function_base: int  # noqa: ANN401
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     mnemonic = str(insn.mnemonic).lower()
     next_linear = int(insn.address) + int(insn.size)
@@ -538,7 +538,7 @@ def _region_exits(
     return exits, successors
 
 
-def _target_int(insn: Any) -> int | None:
+def _target_int(insn: Any) -> int | None:  # noqa: ANN401
     if len(insn.operands) == 1 and insn.operands[0].type == CAPSTONE_OP_IMM:
         return int(insn.operands[0].imm)
     return None
@@ -600,7 +600,7 @@ def _compare_regions(oracle_region: dict[str, Any], candidate_region: dict[str, 
         mismatches.append(
             {"kind": "instruction_count_changed", "oracle": len(oracle_insns), "candidate": len(candidate_insns)}
         )
-    for idx, (oracle_insn, candidate_insn) in enumerate(zip(oracle_insns, candidate_insns)):
+    for idx, (oracle_insn, candidate_insn) in enumerate(zip(oracle_insns, candidate_insns, strict=False)):
         oracle_context = _instruction_context(oracle_insn)
         candidate_context = _instruction_context(candidate_insn)
         oracle_mnemonic = oracle_insn.get("mnemonic")

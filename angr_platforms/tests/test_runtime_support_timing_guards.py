@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+import signal
 import threading
 import time
 
@@ -8,6 +10,7 @@ import angr_platforms.X86_16.lowering.stack_lowering_from_facts as stack_lowerin
 import angr_platforms.X86_16.tail_validation as tail_validation
 import pytest
 
+import inertia_decompiler.analysis_timeout as analysis_timeout_support
 from inertia_decompiler.runtime_support import (
     AnalysisTimeout,
     guard_angr_structuring_codegen_internal_timing,
@@ -28,6 +31,25 @@ def test_process_alarm_timeout_does_not_leave_daemon_work_running():
         )
 
     assert all(thread.name != thread_name for thread in threading.enumerate())
+
+
+def test_process_alarm_defers_timeout_inside_finalizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    retries: list[tuple[int, float]] = []
+
+    def record_retry(timer: int, seconds: float) -> tuple[float, float]:
+        retries.append((timer, seconds))
+        return (0.0, 0.0)
+
+    def __del__() -> None:
+        frame = inspect.currentframe()
+        assert frame is not None
+        analysis_timeout_support.raise_timeout(signal.SIGALRM, frame)
+
+    monkeypatch.setattr(analysis_timeout_support.signal, "setitimer", record_retry)
+
+    __del__()
+
+    assert retries == [(signal.ITIMER_REAL, analysis_timeout_support._FINALIZER_RETRY_SECONDS)]
 
 
 def test_guard_structuring_timing_preserves_stack_lowering_from_facts_signature(monkeypatch):

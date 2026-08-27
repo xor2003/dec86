@@ -15,12 +15,12 @@ __all__ = [
     "STACK_PROBE_FACT_STAT_KEYS",
     "callsite_stack_probe_evidence_8616",
     "ensure_stack_probe_fact_stats_8616",
+    "format_stack_probe_fact_stats_8616",
     "record_callsite_summary_fact_8616",
     "record_callsite_summary_map_facts_8616",
-    "record_stack_arg_materialization_8616",
-    "record_stable_ss_lowering_replacement_8616",
     "record_stable_ss_lowering_refusal_8616",
-    "format_stack_probe_fact_stats_8616",
+    "record_stable_ss_lowering_replacement_8616",
+    "record_stack_arg_materialization_8616",
 ]
 
 STACK_PROBE_FACT_STAT_KEYS: tuple[str, ...] = (
@@ -69,7 +69,7 @@ def ensure_stack_probe_fact_stats_8616(codegen: Any) -> dict[str, int]:
     """Return the per-codegen stack-probe fact trace counters."""
     stats = codegen._inertia_stack_probe_fact_stats if hasattr(codegen, "_inertia_stack_probe_fact_stats") else None
     if not isinstance(stats, dict):
-        stats = {key: 0 for key in STACK_PROBE_FACT_STAT_KEYS}
+        stats = dict.fromkeys(STACK_PROBE_FACT_STAT_KEYS, 0)
         codegen._inertia_stack_probe_fact_stats = stats
     for key in STACK_PROBE_FACT_STAT_KEYS:
         value = stats.get(key)

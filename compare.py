@@ -23,16 +23,16 @@ logging.getLogger("angr_platforms.X86_16.parse").setLevel("DEBUG")
 FLAGS = {"CF": 0, "PF": 2, "AF": 4, "ZF": 6, "SF": 7, "DF": 10, "OF": 11}
 
 
-def assembler(lines, bitness=0) -> bytes:
+def assembler(lines, bitness=0) -> bytes:  # noqa: ANN001, D103
     import keystone as ks
 
     ks_ = ks.Ks(ks.KS_ARCH_X86, {16: ks.KS_MODE_16, 32: ks.KS_MODE_32}[bitness])
-    data, count = ks_.asm(lines, as_bytes=True)
+    data, _count = ks_.asm(lines, as_bytes=True)
     print(data)
     return data
 
 
-def step(simgr, insn_bytes):
+def step(simgr, insn_bytes):  # noqa: ANN001, ANN201, D103
     # Step to the next instruction (execute the current block)
     simgr.step(num_inst=1, insn_bytes=insn_bytes)
     # Get the new state after execution
@@ -40,7 +40,7 @@ def step(simgr, insn_bytes):
     return new_state
 
 
-def prepare(arch, data):
+def prepare(arch, data):  # noqa: ANN001, ANN201, D103
     # Create an Angr project
     addr = 0x100  # 0x400000
     project = angr.load_shellcode(
@@ -59,10 +59,10 @@ def prepare(arch, data):
     return simgr
 
 
-def compare_states(instruction, state32_, state16_):
-    def _impl():
+def compare_states(instruction, state32_, state16_):  # noqa: ANN001, ANN201, D103
+    def _impl():  # noqa: ANN202
         differencies = []
-        for state32, state16 in zip(state32_, state16_):
+        for state32, state16 in zip(state32_, state16_, strict=False):
             state16.regs.eip &= 0xFFFF
             skip_regs = {"eflags", "d"}
             if not instruction.startswith("j") and not instruction.startswith("l"):
@@ -105,14 +105,14 @@ def compare_states(instruction, state32_, state16_):
     return _impl()
 
 
-def filter_symbolic(value32):
+def filter_symbolic(value32):  # noqa: ANN001, ANN201, D103
     value32 = value32.replace("{UNINITIALIZED}", "").replace("reg_", "")
     value32 = re.sub(r"_\d_32", "", value32)
     value32 = re.sub(r"\[(\d+):\1\]", r"[\g<1>]", value32)
     return value32
 
 
-def compare_instructions_impact(instruction: str):
+def compare_instructions_impact(instruction: str):  # noqa: ANN201, D103
     arch_16 = Arch86_16()  # get architecture
     arch_32 = ArchX86()  # get architecture
     print("~~32~~")
@@ -307,7 +307,7 @@ out dx,al
 """
 
 
-def test_instructions():
+def test_instructions() -> None:  # noqa: D103
     for line in filter(None, LIST.splitlines()):
         result = compare_instructions_impact(line)
         assert not result, result
@@ -328,7 +328,7 @@ xchg
 """
 
 
-def test_prog():
+def test_prog() -> None:  # noqa: D103
     for instr in filter(None, INSTR.splitlines()):
         proc = f"""
           push    bp
@@ -364,8 +364,8 @@ def test_prog():
         func.prototype = cca.prototype
 
         dec = project.analyses[Decompiler].prep()(func, cfg=cfg.model)
-        assert dec.codegen is not None, "Failed to decompile function %s." % repr(func)
-        print("Decompiled function %s\n%s" % (repr(func), dec.codegen.text))
+        assert dec.codegen is not None, f"Failed to decompile function {func!r}."
+        print(f"Decompiled function {func!r}\n{dec.codegen.text}")
 
 
 if __name__ == "__main__":

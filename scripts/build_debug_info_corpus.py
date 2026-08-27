@@ -286,8 +286,7 @@ def _dos_join(*parts: str) -> str:
 def _run(cmd: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         encoding="latin1",
         errors="replace",
@@ -313,8 +312,7 @@ def _run_with_env(
             cmd,
             cwd=str(cwd) if cwd is not None else None,
             env=merged_env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             encoding="latin1",
             errors="replace",
@@ -366,17 +364,7 @@ def _build_ms(spec: CompilerSpec, out_dir: Path, *, kvikdos: Path, compilers_roo
     path_dos = "e:\\" + spec.bin_dir if spec.bin_dir else "e:\\"
 
     compile_cmd = (
-        _kvikdos_base(kvikdos, out_dir, root)
-        + [f"--path-dos={path_dos}"]
-        + _env_args(spec)
-        + [
-            f"--prog={compiler_dos}",
-            compiler_dos,
-            *spec.compile_flags,
-            "/c",
-            "/Foc:\\DBG.OBJ",
-            "c:\\DBG.C",
-        ]
+        [*_kvikdos_base(kvikdos, out_dir, root), f"--path-dos={path_dos}", *_env_args(spec), f"--prog={compiler_dos}", compiler_dos, *spec.compile_flags, "/c", "/Foc:\\DBG.OBJ", "c:\\DBG.C"]
     )
     compile_proc = _run(compile_cmd, timeout=90)
 
@@ -492,13 +480,7 @@ def _build_ms_wine_in_stage(
         linker_dos = "e:\\" + _dos_join(spec.bin_dir, spec.linker)
         library_dos = "e:\\" + _dos_join(spec.lib_dir, spec.library)
         link_command = (
-            _kvikdos_base(kvikdos, out_dir, real_root)
-            + [
-                f"--prog={linker_dos}",
-                linker_dos,
-                *spec.link_flags,
-                f"c:\\DBG.OBJ,c:\\DBG.EXE,c:\\DBG.MAP,{library_dos};",
-            ]
+            [*_kvikdos_base(kvikdos, out_dir, real_root), f"--prog={linker_dos}", linker_dos, *spec.link_flags, f"c:\\DBG.OBJ,c:\\DBG.EXE,c:\\DBG.MAP,{library_dos};"]
         )
         link_proc = _run(link_command, timeout=90)
     built = (out_dir / "DBG.EXE").exists() and compile_proc.returncode == 0 and link_proc.returncode == 0
@@ -523,16 +505,7 @@ def _build_ms_dosbox_hx(
     hxldr_dos = "e:\\" + _dos_join(spec.bin_dir, "HXLDR32.EXE")
     library_dos = "e:\\" + _dos_join(spec.lib_dir, spec.library)
 
-    compile_cmd = _dosbox_mount_cmd(dosbox, out_dir, root) + [
-        "-c",
-        "set GOTNT=-NOPAGE",
-        "-c",
-        f"{hdpmi_dos} -r > c:\\hdpmi.log",
-        "-c",
-        f"{hxldr_dos} > c:\\hxldr.log",
-        "-c",
-        f"{compiler_dos} {' '.join(spec.compile_flags)} /c /Foc:\\DBG.OBJ c:\\DBG.C > c:\\compile.log",
-    ]
+    compile_cmd = [*_dosbox_mount_cmd(dosbox, out_dir, root), "-c", "set GOTNT=-NOPAGE", "-c", f"{hdpmi_dos} -r > c:\\hdpmi.log", "-c", f"{hxldr_dos} > c:\\hxldr.log", "-c", f"{compiler_dos} {' '.join(spec.compile_flags)} /c /Foc:\\DBG.OBJ c:\\DBG.C > c:\\compile.log"]
     if "dosbox-staging" in str(dosbox):
         compile_cmd.append("--exit")
     else:
@@ -548,10 +521,7 @@ def _build_ms_dosbox_hx(
     if not (out_dir / "DBG.OBJ").exists():
         return False, compile_log, "compile failed; link skipped\n"
 
-    link_cmd = _dosbox_mount_cmd(dosbox, out_dir, root) + [
-        "-c",
-        f"{linker_dos} {' '.join(spec.link_flags)} c:\\DBG.OBJ,c:\\DBG.EXE,c:\\DBG.MAP,{library_dos}; > c:\\link.log",
-    ]
+    link_cmd = [*_dosbox_mount_cmd(dosbox, out_dir, root), "-c", f"{linker_dos} {' '.join(spec.link_flags)} c:\\DBG.OBJ,c:\\DBG.EXE,c:\\DBG.MAP,{library_dos}; > c:\\link.log"]
     if "dosbox-staging" in str(dosbox):
         link_cmd.append("--exit")
     else:
@@ -570,17 +540,7 @@ def _build_borland(spec: CompilerSpec, out_dir: Path, *, kvikdos: Path, compiler
     lib_prefix = "e:\\" + spec.lib_dir + "\\" if spec.lib_dir else "e:\\"
 
     compile_cmd = (
-        _kvikdos_base(kvikdos, out_dir, root)
-        + [f"--path-dos={path_dos}"]
-        + _env_args(spec)
-        + [
-            f"--prog={compiler_dos}",
-            compiler_dos,
-            *spec.compile_flags,
-            "-c",
-            "-oc:\\DBG.OBJ",
-            "c:\\DBG.C",
-        ]
+        [*_kvikdos_base(kvikdos, out_dir, root), f"--path-dos={path_dos}", *_env_args(spec), f"--prog={compiler_dos}", compiler_dos, *spec.compile_flags, "-c", "-oc:\\DBG.OBJ", "c:\\DBG.C"]
     )
     compile_proc = _run(compile_cmd, timeout=90)
     link_cmd = (
@@ -620,20 +580,7 @@ def _dosbox_mount_cmd(dosbox: Path, out_dir: Path, root: Path) -> list[str]:
         )
     else:
         cmd.append("-noconsole")
-    return cmd + [
-        "-c",
-        f"mount c {out_dir}",
-        "-c",
-        f'mount e "{root}"',
-        "-c",
-        "c:",
-        "-c",
-        "set PATH=e:\\BIN",
-        "-c",
-        "set INCLUDE=e:\\INCLUDE",
-        "-c",
-        "set LIB=e:\\LIB",
-    ]
+    return [*cmd, "-c", f"mount c {out_dir}", "-c", f'mount e "{root}"', "-c", "c:", "-c", "set PATH=e:\\BIN", "-c", "set INCLUDE=e:\\INCLUDE", "-c", "set LIB=e:\\LIB"]
 
 
 def _build_borland_dosbox(
@@ -648,10 +595,7 @@ def _build_borland_dosbox(
     linker_dos = "e:\\" + _dos_join(spec.bin_dir, spec.linker)
     lib_prefix = "e:\\" + spec.lib_dir + "\\" if spec.lib_dir else "e:\\"
 
-    compile_cmd = _dosbox_mount_cmd(dosbox, out_dir, root) + [
-        "-c",
-        f"{compiler_dos} {' '.join(spec.compile_flags)} -c -oc:\\DBG.OBJ c:\\DBG.C > c:\\compile.log",
-    ]
+    compile_cmd = [*_dosbox_mount_cmd(dosbox, out_dir, root), "-c", f"{compiler_dos} {' '.join(spec.compile_flags)} -c -oc:\\DBG.OBJ c:\\DBG.C > c:\\compile.log"]
     if "dosbox-staging" in str(dosbox):
         compile_cmd.append("--exit")
     else:
@@ -661,10 +605,7 @@ def _build_borland_dosbox(
     if not (out_dir / "DBG.OBJ").exists():
         return False, compile_log, "compile failed; link skipped\n"
 
-    link_cmd = _dosbox_mount_cmd(dosbox, out_dir, root) + [
-        "-c",
-        f"{linker_dos} {' '.join(spec.link_flags)} {lib_prefix}C0S+c:\\DBG.OBJ,c:\\DBG.EXE,c:\\DBG.MAP,{lib_prefix}CS; > c:\\link.log",
-    ]
+    link_cmd = [*_dosbox_mount_cmd(dosbox, out_dir, root), "-c", f"{linker_dos} {' '.join(spec.link_flags)} {lib_prefix}C0S+c:\\DBG.OBJ,c:\\DBG.EXE,c:\\DBG.MAP,{lib_prefix}CS; > c:\\link.log"]
     if "dosbox-staging" in str(dosbox):
         link_cmd.append("--exit")
     else:
@@ -680,7 +621,7 @@ def _debug_signatures(exe_path: Path) -> list[str]:
     signatures: list[str] = []
     for signature in (b"NB00", b"NB02", b"NB04", b"NB05", b"NB08", b"NB09"):
         if signature in data:
-            signatures.append(signature.decode("ascii"))
+            signatures.append(signature.decode("ascii"))  # noqa: PERF401
     if b"\xfb\x52" in data:
         signatures.append("TDINFO_MAGIC")
     return signatures

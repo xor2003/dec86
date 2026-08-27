@@ -7,10 +7,10 @@ Responsibility: collect optional sidecar/debug metadata without making it requir
 from __future__ import annotations
 
 import typing
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 import angr
 from angr_platforms.X86_16.codeview_nb00 import parse_codeview_nb00
@@ -408,7 +408,7 @@ def _load_tdinfo_sidecar(
     debug_source_files.extend(tdinfo.source_files)
     debug_type_names.extend(tdinfo.type_names)
     for descriptor in tdinfo.type_descriptors:
-        debug_type_descriptors.append(
+        debug_type_descriptors.append(  # noqa: PERF401
             DebugTypeDescriptorEvidence(
                 type_index=descriptor.type_index,
                 kind=descriptor.kind.name,
@@ -425,7 +425,7 @@ def _load_tdinfo_sidecar(
             )
         )
     for ref in tdinfo.type_references:
-        debug_type_references.append(
+        debug_type_references.append(  # noqa: PERF401
             DebugTypeReferenceEvidence(
                 name=ref.name,
                 type_index=ref.type_index,
@@ -441,7 +441,7 @@ def _load_tdinfo_sidecar(
         )
     )
     for member in tdinfo.type_members:
-        debug_type_members.append(
+        debug_type_members.append(  # noqa: PERF401
             DebugTypeMemberEvidence(
                 name=member.name,
                 offset=member.offset,
@@ -452,7 +452,7 @@ def _load_tdinfo_sidecar(
             )
         )
     for member in tdinfo.enum_members:
-        debug_enum_members.append(
+        debug_enum_members.append(  # noqa: PERF401
             DebugEnumMemberEvidence(
                 name=member.name,
                 value=member.value,
@@ -1046,7 +1046,7 @@ def _lst_code_region(metadata: LSTMetadata | None, addr: int | None) -> tuple[in
         code_labels = metadata.code_labels
         if not isinstance(code_labels, dict) or not code_labels:
             return None
-        ordered = sorted(int(k) for k in code_labels.keys() if isinstance(k, int))
+        ordered = sorted(int(k) for k in code_labels if isinstance(k, int))
         if not ordered:
             return None
         if not (ordered[0] <= addr <= ordered[-1]):

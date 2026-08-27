@@ -22,6 +22,23 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from inertia_decompiler.cache_runtime_contract import cache_runtime_contract_8616  # noqa: E402
+
+
+def _ensure_deterministic_python_runtime_8616() -> None:
+    """Re-exec the batch entrypoint before decompiler imports with stable hashing."""
+    if cache_runtime_contract_8616().allows_semantic_cache and os.environ.get("PYTHON_JIT") == "1":
+        return
+    env = os.environ.copy()
+    env["PYTHONHASHSEED"] = "0"
+    env["PYTHON_JIT"] = "1"
+    executable = sys.executable
+    os.execvpe(executable, [executable, str(Path(__file__).resolve()), *sys.argv[1:]], env)
+
+
+if __name__ == "__main__":
+    _ensure_deterministic_python_runtime_8616()
+
 from inertia_decompiler import cli as decompiler_cli  # noqa: E402
 
 

@@ -2,7 +2,8 @@
 
 Layer: Types/Lowering.
 Responsibility: join independent signedness and pointer/value evidence for one
-logical input, then align its callee stack identity with exact SSA source pieces.
+logical input, validate logical-memory source slices, then align its callee
+stack identity with exact SSA source pieces.
 Consumes alias, widening, and typed facts.
 This module does not collect callers, resolve SSA, or mutate codegen.
 Do not recover semantics from COD, source, assembly, or rendered C text.
@@ -17,7 +18,11 @@ from ..callsite_summary import (
     CallsitePushSourceKind8616,
     CallsiteSummary8616,
 )
-from ..ir import IRAddress
+from ..ir import IRAddress, MemSpace
+from ..ir.logical_memory_contracts import (
+    IRLogicalMemoryArtifact8616,
+    IRMemoryAccessKind8616,
+)
 from .callee_pointer_evidence import CalleePointerArgumentEvidence8616
 from .condition_argument_type_facts import (
     ConditionArgumentFactsResult8616,
@@ -33,12 +38,17 @@ from .interprocedural_storage_contracts import (
     StorageTrialSignedness8616,
     StorageTrialValueClass8616,
 )
-from .interprocedural_storage_reaching_contracts import PhysicalCallArgument8616
+from .interprocedural_storage_reaching_contracts import (
+    CallArgumentDefinitionFailure8616,
+    PhysicalCallArgument8616,
+    PhysicalCallArgumentPiece8616,
+)
 
 __all__ = [
     "InputArgumentTypeClassification8616",
     "callee_storage_pieces_8616",
     "classify_input_argument_8616",
+    "logical_source_definitions_failure_8616",
 ]
 
 
@@ -86,9 +96,9 @@ def _logical_summary_class_8616(
 
 def _source_is_bp_address_8616(argument: PhysicalCallArgument8616) -> bool:
     """Return whether structured call evidence proves an address-of source."""
-    if not argument.source:
+    if len(argument.pieces) != 1 or not argument.pieces[0].source:
         return False
-    source_kind = argument.source[0]
+    source_kind = argument.pieces[0].source[0]
     return source_kind in {
         CallsitePushSourceKind8616.BP_ADDRESS,
         CallsitePushSourceKind8616.BP_ADDRESS.value,
@@ -174,9 +184,72 @@ def _definition_width_8616(definition: StorageReachingDefinition8616) -> int:
     """Return one exact SSA source-piece width."""
     source_storage = definition.source_storage
     if source_storage is not None:
-        return source_storage.width
+        source_width = source_storage.width
+        return source_width if isinstance(source_width, int) else 0
     value_width = definition.value.size
     return value_width if isinstance(value_width, int) else 0
+
+
+def logical_source_definitions_failure_8616(
+    logical_memory: IRLogicalMemoryArtifact8616 | None,
+    function_addr: int,
+    physical: PhysicalCallArgumentPiece8616,
+    definitions: tuple[StorageReachingDefinition8616, ...],
+) -> CallArgumentDefinitionFailure8616 | None:
+    """Verify memory-source definitions against one authoritative logical read."""
+    source = physical.source
+    source_kind = source[0] if source else None
+    is_bp_value = source_kind in {
+        CallsitePushSourceKind8616.BP_VALUE,
+        CallsitePushSourceKind8616.BP_VALUE.value,
+    }
+    is_global_value = source_kind in {
+        CallsitePushSourceKind8616.GLOBAL_VALUE,
+        CallsitePushSourceKind8616.GLOBAL_VALUE.value,
+    }
+    if not is_bp_value and not is_global_value:
+        return None
+    if (
+        logical_memory is None
+        or logical_memory.function_addr != function_addr
+        or not logical_memory.closed
+    ):
+        return CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_NOT_FOUND
+    matches = tuple(
+        access
+        for access in logical_memory.accesses
+        if access.kind is IRMemoryAccessKind8616.READ
+        and access.key.insn_addr == physical.push_addr
+        and access.address.size == physical.width
+        and (
+            (
+                is_bp_value
+                and len(source) in {2, 3}
+                and access.address.space is MemSpace.SS
+                and access.address.base == ("bp",)
+                and access.address.offset == source[1]
+            )
+            or (
+                is_global_value
+                and len(source) == 3
+                and access.address.space in {MemSpace.DS, MemSpace.ES}
+                and not access.address.base
+                and access.address.offset == source[1]
+            )
+        )
+    )
+    if not matches:
+        return CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_NOT_FOUND
+    if len(matches) != 1:
+        return CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_CONFLICT
+    slices = matches[0].execution_slices
+    definition_sites = tuple(
+        (definition.block_addr, definition.instr_index) for definition in definitions
+    )
+    slice_sites = tuple((item.block_addr, item.instr_index) for item in slices)
+    if definition_sites != slice_sites:
+        return CallArgumentDefinitionFailure8616.SOURCE_DEFINITION_CONFLICT
+    return None
 
 
 def callee_storage_pieces_8616(

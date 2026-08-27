@@ -11,9 +11,10 @@ import os
 import re
 import sys
 import time
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Protocol, cast
+from typing import Any, Protocol, cast
 
 import angr
 from angr_platforms.X86_16.arch_86_16 import Arch86_16

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, cast
 
 from ..semantics.direct_global_ordering import (
     DirectGlobalOrdering8616,
@@ -68,7 +68,7 @@ class ProjectGlobalOrderingCollector8616(Protocol):
         ...
 
 
-ProjectGlobalOrderingCollectorTuple8616: TypeAlias = tuple[ProjectGlobalOrderingCollector8616, ...]
+type ProjectGlobalOrderingCollectorTuple8616 = tuple[ProjectGlobalOrderingCollector8616, ...]
 
 
 class _ProjectGlobalSignednessSurface8616(Protocol):

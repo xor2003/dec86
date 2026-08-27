@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import angr
 import pytest
+from angr_platforms.X86_16.alias.carry_borrow_contracts import CarryBorrowOperandRole8616
 from angr_platforms.X86_16.alias.carry_borrow_projection import (
     CarryBorrowAliasFailure8616,
     project_carry_borrow_aliases_8616,
@@ -128,13 +129,29 @@ def test_semantics_retains_exact_segmented_memory_word_loads() -> None:
     assert link.high_rhs.memory_word is not None
     low_word = link.low_rhs.memory_word
     high_word = link.high_rhs.memory_word
-    assert tuple((address.space, address.offset) for address in low_word.addresses) == (
-        (MemSpace.DS, 0x2000),
-        (MemSpace.DS, 0x2001),
+    assert tuple(
+        (load.address.space, load.address.offset, load.address.size)
+        for load in low_word.execution_loads
+    ) == (
+        (MemSpace.DS, 0x2000, 1),
+        (MemSpace.DS, 0x2001, 1),
     )
-    assert tuple((address.space, address.offset) for address in high_word.addresses) == (
-        (MemSpace.DS, 0x2002),
-        (MemSpace.DS, 0x2003),
+    assert tuple(
+        (load.address.space, load.address.offset, load.address.size)
+        for load in high_word.execution_loads
+    ) == (
+        (MemSpace.DS, 0x2002, 1),
+        (MemSpace.DS, 0x2003, 1),
+    )
+    assert (low_word.logical_address.space, low_word.logical_address.offset, low_word.size) == (
+        MemSpace.DS,
+        0x2000,
+        2,
+    )
+    assert (high_word.logical_address.space, high_word.logical_address.offset, high_word.size) == (
+        MemSpace.DS,
+        0x2002,
+        2,
     )
 
     aliases = project_carry_borrow_aliases_8616(evidence)
@@ -143,11 +160,9 @@ def test_semantics_retains_exact_segmented_memory_word_loads() -> None:
     fact = aliases.facts[0]
     assert fact.source_memory is not None
     assert fact.source_memory.space is MemSpace.DS
-    assert tuple(address.offset for address in fact.source_memory.addresses) == (
-        0x2000,
-        0x2001,
-        0x2002,
-        0x2003,
+    assert tuple((address.offset, address.size) for address in fact.source_memory.addresses) == (
+        (0x2000, 2),
+        (0x2002, 2),
     )
     assert fact.source_memory.storage.identity == ("memory", ("ds", 0x2000, 4))
 
@@ -268,6 +283,7 @@ def test_alias_refuses_mismatched_source_definition() -> None:
     assert refused.complete
     assert refused.stats.raw_fact_count == refused.stats.failure_count == 1
     assert refused.resolutions[0].failure is CarryBorrowAliasFailure8616.SOURCE_DEFINITION_MISMATCH
+    assert refused.resolutions[0].failure_operand is CarryBorrowOperandRole8616.LOW_LHS
 
     widening = widen_carry_borrow_values_8616(refused)
     assert widening.complete

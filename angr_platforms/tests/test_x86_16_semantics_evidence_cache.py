@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from angr_platforms.X86_16.ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
+from angr_platforms.X86_16.ir.logical_memory_contracts import IRMemoryAccessKind8616
 from angr_platforms.X86_16.semantics.evidence_cache import (
     AccessRecord8616,
     collect_accesses_for_function,
@@ -16,13 +18,34 @@ def test_x86_16_semantics_evidence_cache_tracks_function_context() -> None:
 
 
 def test_x86_16_semantics_evidence_cache_records_function_accesses() -> None:
-    addr = object()
+    addr = IRAddress(
+        MemSpace.DS,
+        offset=0x1234,
+        size=2,
+        status=AddressStatus.STABLE,
+        segment_origin=SegmentOrigin.PROVEN,
+    )
 
     with collect_accesses_for_function(0x2000) as collection:
-        record_access(0x2000, 1, addr, insn_addr=0x2002)
+        record_access(
+            0x2000,
+            1,
+            addr,
+            block_addr=0x2000,
+            insn_addr=0x2002,
+            address_bits=16,
+        )
 
     assert collection.accesses == [
-        AccessRecord8616(function_addr=0x2000, insn_addr=0x2002, mode=1, addr=addr)
+        AccessRecord8616(
+            function_addr=0x2000,
+            block_addr=0x2000,
+            insn_addr=0x2002,
+            access_ordinal=0,
+            kind=IRMemoryAccessKind8616.WRITE,
+            address_bits=16,
+            address=addr,
+        )
     ]
 
 

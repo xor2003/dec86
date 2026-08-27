@@ -16,7 +16,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal
 
 if __package__:
     from .generated_c_contracts import (
@@ -44,7 +44,7 @@ DEFAULT_LINK_FLAGS: tuple[str, ...] = ()
 DEFAULT_DECOMPILE: Path = REPO_ROOT / "decompile.py"
 DEFAULT_SIGNATURE_CATALOG: Path = REPO_ROOT / "signature_catalogs" / "all_compilers_catalog_bundle.zip"
 DECOMPILE_PROCESS_SETUP_TIMEOUT_SECONDS: int = 120
-ExpectedStatus: TypeAlias = Literal["required", "xfail"]
+type ExpectedStatus = Literal["required", "xfail"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,15 +75,15 @@ ARGS_FIXTURE: QuickCFixtureSpec = QuickCFixtureSpec(
     run_args=("-v", "alpha", "beta"),
     generated_c_contract=GeneratedCContract(
         required_fragments=(
-            "sub_10010(SEG_PTR(inertia_ds, arg_5[local_2]), 104)",
-            "sub_10010(SEG_PTR(inertia_ds, arg_5[local_2]), 118)",
+            "sub_10010(SEG_PTR(inertia_ds, arg_6[local_2]), 104)",
+            "sub_10010(SEG_PTR(inertia_ds, arg_6[local_2]), 118)",
         ),
         forbidden_fragments=(
             "SEG_U16(ds, arg_5 + (local_2 << 1))",
             "local_2 = 104;",
             "local_2 = 118;",
         ),
-        minimum_occurrences=(("arg_5[local_2]", 3),),
+        minimum_occurrences=(("arg_6[local_2]", 3),),
         guarded_assignments=(
             CallGuardedAssignmentRequirement(
                 guard_call="sub_10010",
@@ -161,8 +161,7 @@ class DecompileTargetSelection:
 def _run(cmd: list[str], *, timeout: int = 90) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         encoding="latin1",
         errors="replace",
@@ -184,8 +183,7 @@ def _run_with_env(
         merged_env.update(env)
     return subprocess.run(
         cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
         encoding="latin1",
         errors="replace",
@@ -588,45 +586,19 @@ def build_fixture(
     shutil.copyfile(source_path, source_copy)
 
     compile_cmd = (
-        _kvikdos_base(kvikdos, out_dir, quickc_root)
-        + [
-            "--path-dos=e:\\",
-            "--env=INCLUDE=e:\\INCLUDE",
-            "--env=LIB=e:\\",
-            "--prog=e:\\QCL.EXE",
-            "e:\\QCL.EXE",
-            *spec.compiler_flags,
-            "/c",
-            f"/Foc:\\{stem}.OBJ",
-            f"c:\\{stem}.C",
-        ]
+        [*_kvikdos_base(kvikdos, out_dir, quickc_root), "--path-dos=e:\\", "--env=INCLUDE=e:\\INCLUDE", "--env=LIB=e:\\", "--prog=e:\\QCL.EXE", "e:\\QCL.EXE", *spec.compiler_flags, "/c", f"/Foc:\\{stem}.OBJ", f"c:\\{stem}.C"]
     )
     compile_proc, compile_seconds = _timed_run(compile_cmd)
     result["stages"].append(_stage_result("compile", compile_cmd, compile_proc, wall_seconds=compile_seconds))
 
     link_cmd = (
-        _kvikdos_base(kvikdos, out_dir, quickc_root)
-        + [
-            "--env=LIB=e:\\",
-            "--prog=e:\\LINK.EXE",
-            "e:\\LINK.EXE",
-            *spec.link_flags,
-            f"c:\\{stem}.OBJ,c:\\{stem}.EXE,c:\\{stem}.MAP,e:\\SLIBCE.LIB;",
-        ]
+        [*_kvikdos_base(kvikdos, out_dir, quickc_root), "--env=LIB=e:\\", "--prog=e:\\LINK.EXE", "e:\\LINK.EXE", *spec.link_flags, f"c:\\{stem}.OBJ,c:\\{stem}.EXE,c:\\{stem}.MAP,e:\\SLIBCE.LIB;"]
     )
     link_proc, link_seconds = _timed_run(link_cmd)
     result["stages"].append(_stage_result("link", link_cmd, link_proc, wall_seconds=link_seconds))
 
     run_cmd = (
-        [
-            str(kvikdos),
-            f"--mount=c:{out_dir}/",
-            "--drive=c",
-            "--cwd-dos=c:\\",
-            f"--prog=c:\\{stem}.EXE",
-            f"c:\\{stem}.EXE",
-        ]
-        + list(spec.run_args)
+        [str(kvikdos), f"--mount=c:{out_dir}/", "--drive=c", "--cwd-dos=c:\\", f"--prog=c:\\{stem}.EXE", f"c:\\{stem}.EXE", *list(spec.run_args)]
     )
     if (out_dir / f"{stem}.EXE").is_file():
         run_proc, run_seconds = _timed_run(run_cmd)

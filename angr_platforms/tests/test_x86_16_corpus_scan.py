@@ -753,11 +753,11 @@ def test_scan_safe_oversized_functions_use_bounded_probe_before_lift_only(monkey
     code = b"\x90" * 2608
 
     class FakeFactory:
-        def block(self, addr: int, size: int):  # noqa: ANN001
+        def block(self, addr: int, size: int):
             raise AssertionError("oversized scan-safe lift_only should not call factory.block before the gate")
 
     class FakeAnalyses:
-        def CFGFast(self, *args, **kwargs):  # noqa: ANN001, ARG002
+        def CFGFast(self, *args, **kwargs):
             raise AssertionError("CFGFast should not run for oversized scan-safe lift_only")
 
     class FakeProject:

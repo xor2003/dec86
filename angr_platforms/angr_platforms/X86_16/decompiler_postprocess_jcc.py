@@ -67,6 +67,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimRegisterVariable, SimStackVariable
 
+from .condition_call_effects import classify_condition_call_effects_8616
 from .decompiler_postprocess_flags import _c_expr_uses_register_8616
 from .decompiler_postprocess_utils import (
     _iter_c_nodes_deep_8616,
@@ -74,6 +75,7 @@ from .decompiler_postprocess_utils import (
     _same_c_expression_8616,
     _structured_codegen_node_8616,
 )
+from .frontend_function_instructions import collect_function_instruction_inventory_8616
 from .frontend_instruction_reachability import decoded_block_instructions_8616
 from .ir.condition_ir import JCC_TO_COND_8616, ConditionIR
 from .ir.core import IRValue
@@ -415,10 +417,8 @@ def _register_exprs_by_ins_addr_8616(codegen: Any, project: Any) -> dict[tuple[i
                     node.lhs if any(isinstance(child, CFunctionCall) for child in _iter_c_nodes_deep_8616(rhs)) else rhs
                 )
                 reg_exprs[(ins_addr, reg_name.lower(), int(reg_size))] = expr
-        try:
+        with contextlib.suppress(Exception):
             codegen._inertia_jcc_register_exprs_by_ins_addr_8616 = reg_exprs
-        except Exception:
-            pass
         return reg_exprs
 
     return _impl()
@@ -517,29 +517,23 @@ def _wide_call_return_pair_expr_8616(
         _log.warning(
             "[jcc-rewrite] wide-call-return candidate ins_addr=%#x hi=%r lo=%r", int(ins_addr), hi_expr, lo_expr
         )
-    try:
+    with contextlib.suppress(Exception):
         codegen._inertia_jcc_wide_call_return_pair_candidates_8616 = (
             int(getattr(codegen, "_inertia_jcc_wide_call_return_pair_candidates_8616", 0) or 0) + 1
         )
-    except Exception:
-        pass
     call_expr = _call_return_expr_before_insn_8616(project, codegen, int(ins_addr))
     if call_expr is None:
         if debug_jcc:
             _log.warning("[jcc-rewrite] wide-call-return refused-no-call ins_addr=%#x", int(ins_addr))
-        try:
+        with contextlib.suppress(Exception):
             codegen._inertia_jcc_wide_call_return_pair_refused_8616 = (
                 int(getattr(codegen, "_inertia_jcc_wide_call_return_pair_refused_8616", 0) or 0) + 1
             )
-        except Exception:
-            pass
         return None
-    try:
+    with contextlib.suppress(Exception):
         codegen._inertia_jcc_wide_call_return_pair_materialized_8616 = (
             int(getattr(codegen, "_inertia_jcc_wide_call_return_pair_materialized_8616", 0) or 0) + 1
         )
-    except Exception:
-        pass
     if debug_jcc:
         _log.warning("[jcc-rewrite] wide-call-return materialized ins_addr=%#x expr=%r", int(ins_addr), call_expr)
     return cast(object | None, call_expr)
@@ -588,7 +582,7 @@ def _stack_arg_width_from_type_8616(arg_type: object) -> int:
 
 def _is_unstable_stack_arg_name_8616(name: object) -> bool:
     return isinstance(name, str) and (
-        name.startswith("arg_") or name.startswith("local_") or name.startswith("stack_bp_") or name.startswith("s_")
+        name.startswith(("arg_", "local_", "stack_bp_", "s_"))
     )
 
 
@@ -614,7 +608,7 @@ def _prototype_arg_name_for_stack_offset_8616(
         if not arg_names or len(arg_names) != len(args):
             continue
         cursor = 4
-        for name, arg_type in zip(arg_names, args):
+        for name, arg_type in zip(arg_names, args, strict=False):
             if cursor == int(disp) and isinstance(name, str) and name and not _is_unstable_stack_arg_name_8616(name):
                 return name
             cursor += _stack_arg_width_from_type_8616(arg_type)
@@ -665,8 +659,7 @@ def _stack_slot_expr_8616(
         return None
 
     def _candidate_exprs() -> Iterator[Any]:
-        for arg in tuple(getattr(cfunc, "arg_list", ()) or ()):
-            yield arg
+        yield from tuple(getattr(cfunc, "arg_list", ()) or ())
         variables_in_use = getattr(cfunc, "variables_in_use", None)
         if isinstance(variables_in_use, dict):
             yield from variables_in_use.values()
@@ -759,10 +752,10 @@ def _bp_operand_stack_expr_8616(codegen: Any, disp: int, size: int = 2) -> Any:
 def _low_byte_expr_from_assignment_8616(expr: Any) -> Any:
     def _impl() -> Any:
         if isinstance(expr, CBinaryOp) and expr.op == "Or":
-            if isinstance(expr.lhs, CBinaryOp) and expr.lhs.op == "And" and isinstance(expr.lhs.rhs, CConstant):
+            if isinstance(expr.lhs, CBinaryOp) and expr.lhs.op == "And" and isinstance(expr.lhs.rhs, CConstant):  # noqa: SIM102
                 if int(expr.lhs.rhs.value) == 0xFF00:
                     return expr.rhs
-            if isinstance(expr.rhs, CBinaryOp) and expr.rhs.op == "And" and isinstance(expr.rhs.rhs, CConstant):
+            if isinstance(expr.rhs, CBinaryOp) and expr.rhs.op == "And" and isinstance(expr.rhs.rhs, CConstant):  # noqa: SIM102
                 if int(expr.rhs.rhs.value) == 0xFF00:
                     return expr.lhs
         return expr
@@ -848,55 +841,25 @@ def _branch_target_imm_8616(insn: Any) -> int | None:
 
 
 def _function_insns_for_codegen_8616(project: Any, codegen: Any) -> tuple[Any, ...]:
-    cache = getattr(codegen, "_inertia_jcc_function_insns_8616", None)
-    if isinstance(cache, tuple):
-        return cache
     func_addr = getattr(getattr(codegen, "cfunc", None), "addr", None)
     if not isinstance(func_addr, int):
         return ()
-    try:
-        function = project.kb.functions.function(addr=func_addr, create=False)
-    except Exception:
-        function = None
-    if function is None:
-        return ()
-    insns: list[object] = []
-    for block_addr in sorted(getattr(function, "block_addrs_set", ()) or ()):
-        try:
-            decoded = decoded_block_instructions_8616(project, block_addr, opt_level=0)
-        except Exception:
-            continue
-        insns.extend(decoded)
-    func_size = int(getattr(function, "size", 0) or 0)
-    linear_size = max(func_size, 0x400)
-    if 0 < linear_size <= 0x4000:
-        addr = int(func_addr)
-        end_addr = int(func_addr) + int(linear_size)
-        linear_insns = []
-        while addr < end_addr:
-            try:
-                decoded = decoded_block_instructions_8616(project, addr, num_inst=1, opt_level=0)
-            except Exception:
-                break
-            if not decoded:
-                break
-            insn = decoded[0]
-            linear_insns.append(insn)
-            size = int(getattr(insn, "size", 0) or 0)
-            if str(getattr(insn, "mnemonic", "")).lower() in {"ret", "retf", "iret"}:
-                break
-            if size <= 0:
-                break
-            addr += size
-        insns.extend(tuple(linear_insns))
-    by_addr: dict[int, Any] = {}
-    for insn in insns:
-        by_addr.setdefault(int(getattr(insn, "address", 0) or 0), insn)
-    result = tuple(sorted(by_addr.values(), key=lambda item: int(getattr(item, "address", 0) or 0)))
-    try:
+    cache = getattr(codegen, "_inertia_jcc_function_insns_8616", None)
+    cache_entry = getattr(codegen, "_inertia_jcc_function_entry_8616", None)
+    if (
+        isinstance(cache, tuple)
+        and cache_entry in {None, func_addr}
+        and all(int(getattr(insn, "address", -1)) >= func_addr for insn in cache)
+    ):
+        return cache
+    inventory = collect_function_instruction_inventory_8616(
+        project,
+        function_entry=func_addr,
+    )
+    result = inventory.instructions if inventory.complete else ()
+    with contextlib.suppress(Exception):
         codegen._inertia_jcc_function_insns_8616 = result
-    except Exception:
-        pass
+        codegen._inertia_jcc_function_entry_8616 = func_addr
     return result
 
 
@@ -941,7 +904,7 @@ def _linear_insns_before_addr_8616(
     start_candidates = sorted({addr for addr in start_candidates if 0 <= addr < stop_addr})
     if not start_candidates:
         return ()
-    start_addr = start_candidates[0]
+    start_addr = int(func_addr) if isinstance(func_addr, int) and func_addr in start_candidates else start_candidates[0]
     if stop_addr <= start_addr:
         return ()
     end_addr = min(stop_addr, start_addr + int(max_bytes))
@@ -1061,10 +1024,7 @@ def _call_args_from_push_setup_8616(
     if isinstance(arg_count, int):
         if arg_count < 0 or len(pushed) < arg_count:
             return None
-        if arg_count == 0:
-            pushed = []
-        else:
-            pushed = pushed[-arg_count:]
+        pushed = [] if arg_count == 0 else pushed[-arg_count:]
         if any(item is None for item in pushed):
             return None
     return tuple(reversed(pushed))
@@ -1076,10 +1036,8 @@ def _call_return_expr_before_insn_8616(project: Any, codegen: Any, ins_addr: int
     linear_insns = _linear_insns_before_addr_8616(project, codegen, int(ins_addr))
     if linear_insns:
         insns = _merge_unique_insns_by_addr_8616(insns, linear_insns)
-        try:
+        with contextlib.suppress(Exception):
             codegen._inertia_jcc_function_insns_8616 = insns
-        except Exception:
-            pass
     if not insns:
         return None
     index_by_addr = {int(getattr(insn, "address", -1)): idx for idx, insn in enumerate(insns)}
@@ -1123,10 +1081,8 @@ def _call_return_expr_before_insn_8616(project: Any, codegen: Any, ins_addr: int
         seen = getattr(codegen, "_inertia_jcc_call_return_debug_logged_8616", None)
         if not isinstance(seen, set):
             seen = set()
-            try:
+            with contextlib.suppress(Exception):
                 codegen._inertia_jcc_call_return_debug_logged_8616 = seen
-            except Exception:
-                pass
         key = int(ins_addr)
         if key not in seen:
             seen.add(key)
@@ -2259,9 +2215,7 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
                 if cond is not None and _walk(cond):
                     return True
                 expr = getattr(node, "expr", None)
-                if expr is not None and _walk(expr):
-                    return True
-                return False
+                return bool(expr is not None and _walk(expr))
 
             return _walk(expr)
 
@@ -2313,7 +2267,7 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
                 seen.add(marker)
                 if isinstance(node, CBinaryOp):
                     op = node.op
-                    if isinstance(op, str) and op.startswith("Cmp"):
+                    if isinstance(op, str) and op.startswith("Cmp"):  # noqa: SIM102
                         if not _c_expr_uses_register_8616(node, flags_offset):
                             return not _expr_uses_nonsegment_register_carrier_8616(node)
                     return _walk(node.lhs) or _walk(node.rhs)
@@ -2481,7 +2435,7 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
                     int(getattr(codegen, "_inertia_jcc_decoded_condition_fingerprint_evidence_count_8616", 0) or 0) + 1
                 )
             codegen_dynamic._inertia_jcc_decoded_condition_fingerprints_8616 = tuple(
-                dict.fromkeys(existing + (fingerprint,))
+                dict.fromkeys((*existing, fingerprint))
             )
 
         def _record_decoded_guard_fingerprint_8616(decoded: _DecodedCmpGuard8616) -> None:
@@ -2736,10 +2690,7 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
             if stmts is not None:
                 if type(stmts).__name__ == "CStatements":
                     stmts = getattr(stmts, "statements", None)
-                if _structured_codegen_node_8616(stmts):
-                    raw_stmts = (stmts,)
-                else:
-                    raw_stmts = tuple(stmts or ())
+                raw_stmts = (stmts,) if _structured_codegen_node_8616(stmts) else tuple(stmts or ())
                 flattened: list[object] = []
                 for stmt in raw_stmts:
                     if type(stmt).__name__ == "CStatements":
@@ -2922,12 +2873,10 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
 
             _walk_block(cfunc)
             if local_count:
-                try:
+                with contextlib.suppress(Exception):
                     codegen_dynamic._inertia_jcc_call_return_register_rebindings = (
                         int(getattr(codegen, "_inertia_jcc_call_return_register_rebindings", 0) or 0) + local_count
                     )
-                except Exception:
-                    pass
                 if bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE")):
                     _log.warning("[jcc-rewrite] rebound adjacent call-return register reads count=%d", local_count)
             return local_changed
@@ -2955,12 +2904,10 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
                 rebound = True
             if not rebound:
                 return decoded
-            try:
+            with contextlib.suppress(Exception):
                 codegen_dynamic._inertia_jcc_call_return_rebindings = (
                     int(getattr(codegen, "_inertia_jcc_call_return_rebindings", 0) or 0) + 1
                 )
-            except Exception:
-                pass
             if bool(os.environ.get("INERTIA_DEBUG_JCC_REWRITE")):
                 _log.warning("[jcc-rewrite] rebound call-return guard key=%r source=%r", key, source)
             return _DecodedCmpGuard8616(
@@ -3189,6 +3136,8 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
             body: object | None = None,
             polarity_evidence: _JccPolarityEvidence8616 | None = None,
         ) -> object | None:
+            if classify_condition_call_effects_8616(cond).has_semantic_call:
+                return None
             key = _condition_tags_8616(cond)
             ins_addr = None if key is None else key[0]
             block_addr = None if key is None else key[1]
@@ -3197,7 +3146,7 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
                 _log.warning(
                     "[jcc-rewrite] candidate key=%r uses_flags=%s cond_type=%s cond_op=%s",
                     key,
-                    _c_expr_uses_register_8616(cond, flags_offset)
+                    _c_expr_uses_register_8616(cond, flags_offset)  # noqa: RUF034
                     if isinstance(ins_addr, int) and isinstance(block_addr, int)
                     else _c_expr_uses_register_8616(cond, flags_offset),
                     type(cond).__name__ if cond is not None else None,
@@ -3333,7 +3282,7 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
                 continue
             _collect_decoded_signature_8616(cond)
 
-        if bool(os.environ.get("INERTIA_ENABLE_JCC_CALL_RETURN_REBIND")):
+        if bool(os.environ.get("INERTIA_ENABLE_JCC_CALL_RETURN_REBIND")):  # noqa: SIM102
             if _rebind_adjacent_call_return_register_conditions_8616():
                 changed = True
 
@@ -3605,27 +3554,6 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
             if pruned_changed:
                 changed = True
 
-        def _condition_contains_real_call_8616(cond: object) -> bool:
-            if cond is None:
-                return False
-            for child in _iter_c_nodes_deep_8616(cond):
-                if not isinstance(child, CFunctionCall):
-                    continue
-                callee = child.callee_target
-                if isinstance(callee, str) and callee in {
-                    "SEG_PTR",
-                    "MK_FP",
-                    "SEG_U8",
-                    "SEG_U16",
-                    "SEG_U32",
-                    "MEM_U8",
-                    "MEM_U16",
-                    "MEM_U32",
-                }:
-                    continue
-                return True
-            return False
-
         def _cmp_root_op_8616(cond: object) -> str | None:
             node = cond
             while isinstance(node, CTypeCast):
@@ -3641,7 +3569,7 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
         def _is_stable_materialized_guard_8616(cond: object) -> bool:
             if cond is None:
                 return False
-            if _condition_contains_real_call_8616(cond):
+            if classify_condition_call_effects_8616(cond).has_semantic_call:
                 return False
             if _expr_uses_nonsegment_register_carrier_8616(cond):
                 return False
@@ -3650,7 +3578,7 @@ def _rewrite_decoded_jcc_conditions_8616(project: object, codegen: object) -> bo
         def _is_raw_register_guard_8616(cond: object) -> bool:
             if cond is None:
                 return False
-            if _condition_contains_real_call_8616(cond):
+            if classify_condition_call_effects_8616(cond).has_semantic_call:
                 return False
             return _expr_uses_nonsegment_register_carrier_8616(cond)
 

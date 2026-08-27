@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Protocol, cast
 
 from .cod_extract import CODProcMetadata
@@ -26,13 +26,13 @@ __all__ = [
 ]
 
 
-class ExactInstructionCoverageSource8616(str, Enum):
+class ExactInstructionCoverageSource8616(StrEnum):
     """Frontend evidence source proving the expected instruction identity."""
 
     COD_EXACT_IMAGE = "cod_exact_image"
 
 
-class ExactInstructionCoverageVerdict8616(str, Enum):
+class ExactInstructionCoverageVerdict8616(StrEnum):
     """Recovery verdict for one exact instruction census."""
 
     COMPLETE = "complete"

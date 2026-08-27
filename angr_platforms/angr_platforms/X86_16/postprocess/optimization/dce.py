@@ -35,6 +35,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 from angr.sim_variable import SimMemoryVariable, SimRegisterVariable, SimStackVariable, SimVariable
 
 from ...decompiler_postprocess_utils import _iter_c_nodes_deep_8616, _same_c_expression_8616
+from .dce_purity import PURE_LOCAL_BINARY_OPS_8616, PURE_LOCAL_UNARY_OPS_8616
 from .dce_walk import (
     DceValuePurity8616,
     _DceWalkContext8616,
@@ -389,28 +390,17 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
             if isinstance(node, CTypeCast):
                 continue
             if isinstance(node, CUnaryOp):
-                if _dynamic_dce_getattr_8616(node, "op", None) in {
-                    "Dereference",
-                    "Reference",
-                    "AddressOf",
-                    "Neg",
-                    "Not",
-                    "BitNot",
-                }:
+                if _dynamic_dce_getattr_8616(node, "op", None) in (
+                    PURE_LOCAL_UNARY_OPS_8616 | {"Dereference", "Reference", "AddressOf"}
+                ):
                     if _dynamic_dce_getattr_8616(node, "op", None) == "Dereference":
                         saw_discardable_artifact = True
                     continue
                 return False
-            if isinstance(node, CBinaryOp) and _dynamic_dce_getattr_8616(node, "op", None) not in {
-                "Add",
-                "Sub",
-                "Mul", "Mull",
-                "Shl",
-                "Shr",
-                "And",
-                "Or",
-                "Xor",
-            }:
+            if (
+                isinstance(node, CBinaryOp)
+                and _dynamic_dce_getattr_8616(node, "op", None) not in PURE_LOCAL_BINARY_OPS_8616
+            ):
                 return False
         return saw_discardable_artifact
 
@@ -420,9 +410,7 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
         var = _dynamic_dce_getattr_8616(lhs, "variable", None)
         if isinstance(var, SimStackVariable):
             return True
-        if isinstance(var, SimRegisterVariable):
-            return True
-        return False
+        return bool(isinstance(var, SimRegisterVariable))
 
     def _is_frame_anchor_stack_lvalue_8616(lhs: object) -> bool:
         if not isinstance(lhs, CVariable):
@@ -611,19 +599,13 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
                         if _address_expr_is_pure_global_read_address_8616(expr)
                         else DceValuePurity8616.UNKNOWN
                     )
-                if op in {"Neg", "Not", "BitNot"}:
+                if op in PURE_LOCAL_UNARY_OPS_8616:
                     return _expr_value_purity_8616(operand, active)
                 return DceValuePurity8616.UNKNOWN
-            if isinstance(expr, CBinaryOp) and _dynamic_dce_getattr_8616(expr, "op", None) in {
-                "Add",
-                "Sub",
-                "Mul", "Mull",
-                "Shl",
-                "Shr",
-                "And",
-                "Or",
-                "Xor",
-            }:
+            if (
+                isinstance(expr, CBinaryOp)
+                and _dynamic_dce_getattr_8616(expr, "op", None) in PURE_LOCAL_BINARY_OPS_8616
+            ):
                 return _merge_value_purity_8616(
                     _expr_value_purity_8616(_dynamic_dce_getattr_8616(expr, "lhs", None), active),
                     _expr_value_purity_8616(_dynamic_dce_getattr_8616(expr, "rhs", None), active),
@@ -677,32 +659,10 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
             if isinstance(node, CTypeCast):
                 continue
             if isinstance(node, CUnaryOp):
-                if node.op in {
-                    "Reference",
-                    "AddressOf",
-                    "Neg",
-                    "Not",
-                    "BitNot",
-                    "BitwiseNeg",
-                }:
+                if node.op in (PURE_LOCAL_UNARY_OPS_8616 | {"Reference", "AddressOf"}):
                     continue
                 return False
-            if isinstance(node, CBinaryOp) and node.op not in {
-                "Add",
-                "Sub",
-                "Mul", "Mull",
-                "Shl",
-                "Shr",
-                "And",
-                "Or",
-                "Xor",
-                "CmpEQ",
-                "CmpNE",
-                "CmpLT",
-                "CmpLE",
-                "CmpGT",
-                "CmpGE",
-            }:
+            if isinstance(node, CBinaryOp) and node.op not in PURE_LOCAL_BINARY_OPS_8616:
                 return False
         return True
 
@@ -981,7 +941,7 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
             if hasattr(node, "statements"):
                 yield node
                 for stmt in list(_dynamic_dce_getattr_8616(node, "statements", ()) or ()):
-                    stack.append(stmt)
+                    stack.append(stmt)  # noqa: PERF402
             for attr in (
                 "condition",
                 "cond",
@@ -1021,8 +981,8 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
             _collect_expr(rhs)
             lhs = _dynamic_dce_getattr_8616(stmt, "lhs", None)
             if (
-                isinstance(lhs, CUnaryOp)
-                and _dynamic_dce_getattr_8616(lhs, "op", None) in {"Dereference", "Reference"}
+                (isinstance(lhs, CUnaryOp)
+                and _dynamic_dce_getattr_8616(lhs, "op", None) in {"Dereference", "Reference"})
                 or isinstance(lhs, (CFunctionCall, CIndexedVariable, CStructField, CVariableField))
             ):
                 _collect_expr(lhs)
@@ -1037,7 +997,7 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
         if condition_and_nodes:
             for pair in condition_and_nodes:
                 if len(pair) >= 1:
-                    condition_roots.append(pair[0])
+                    condition_roots.append(pair[0])  # noqa: PERF401
         if condition_roots:
             for child in condition_roots:
                 _collect_expr(child)
@@ -1081,7 +1041,7 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
                 work.append(child)
         for pair in _dynamic_dce_getattr_8616(stmt, "condition_and_nodes", ()) or ():
             if len(pair) >= 2:
-                work.append(pair[1])
+                work.append(pair[1])  # noqa: PERF401
         cases = _dynamic_dce_getattr_8616(stmt, "cases", None)
         work.extend(_iter_switch_case_bodies_8616(cases))
 
@@ -1196,7 +1156,7 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
         name = _var_name(var_node)
         if not name:
             return False
-        return name.startswith("vvar_") or name.startswith("tmp_") or name.startswith("ir_")
+        return name.startswith(("vvar_", "tmp_", "ir_"))
 
     def _lhs_key_and_name_8616(lhs: object) -> tuple[tuple[str, int | str] | None, tuple[str, str] | None, bool]:
         dirty_key = _dirty_key(lhs)
@@ -1348,10 +1308,10 @@ def _dead_code_elimination_8616(codegen: object) -> bool:
                 variable_name = _dynamic_dce_getattr_8616(variable, "name", None)
                 key_is_dead = cvar_key in pruned_decl_keys and int(live_reads.get(cvar_key, 0)) <= 0
                 name_is_dead = (
-                    isinstance(cvar_name, str)
-                    and cvar_name in pruned_decl_names
-                    or isinstance(variable_name, str)
-                    and variable_name in pruned_decl_names
+                    (isinstance(cvar_name, str)
+                    and cvar_name in pruned_decl_names)
+                    or (isinstance(variable_name, str)
+                    and variable_name in pruned_decl_names)
                 )
                 if key_is_dead or name_is_dead:
                     del mapping[variable]

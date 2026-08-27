@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from ...widening.widening_copyprop_8616 import _widening_copy_propagation_8616
 from ...widening.widening_memory_fold_8616 import _widening_store_to_load_forwarding_8616
@@ -23,11 +24,11 @@ from .local_declarations import dedupe_equivalent_stack_local_declarations_8616
 from .trivial_copy import prune_adjacent_temporary_copy_assignments_8616
 
 __all__ = [
-    "OptimizationPassSpec",
     "OPTIMIZATION_PASSES",
+    "OptimizationPassSpec",
+    "_normalize_cfunc_root_for_optimization_8616",
     "_run_optimization_passes_8616",
     "describe_x86_16_optimization_passes",
-    "_normalize_cfunc_root_for_optimization_8616",
 ]
 
 

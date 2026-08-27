@@ -30,6 +30,7 @@ AST/codegen compatibility objects.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from collections.abc import Iterator
@@ -126,10 +127,10 @@ PROJECTION_CLEANUP_RULES: tuple[tuple[str, str], ...] = (
 
 
 __all__ = [
-    "_simplify_structured_expressions_8616",
-    "_simplify_boolean_cites_8616",
     "_eliminate_single_use_temporaries_8616",
     "_maybe_eliminate_single_use_temporaries_8616",
+    "_simplify_boolean_cites_8616",
+    "_simplify_structured_expressions_8616",
     "describe_x86_16_projection_cleanup_rules",
 ]
 
@@ -1278,7 +1279,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                 tags=node.tags,
             )
 
-        if isinstance(node, CBinaryOp) and node.op == "Mul":
+        if isinstance(node, CBinaryOp) and node.op == "Mul":  # noqa: SIM102
             if _is_c_constant_int_8616(node.lhs, 0) or _is_c_constant_int_8616(node.rhs, 0):
                 type_ = (
                     node.type or node.lhs.type or node.rhs.type
@@ -1302,7 +1303,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
             if _is_c_constant_int_8616(node.rhs, 0):
                 return node.lhs
 
-        if isinstance(node, CBinaryOp) and node.op == "And":
+        if isinstance(node, CBinaryOp) and node.op == "And":  # noqa: SIM102
             if _is_c_constant_int_8616(node.lhs, 0) or _is_c_constant_int_8616(node.rhs, 0):
                 type_ = (
                     node.type or node.lhs.type or node.rhs.type
@@ -1325,7 +1326,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                     try:
                         for operand_type in (operand.lhs.type, operand.rhs.type):
                             if operand_type is not None:
-                                operand_type.size
+                                operand_type.size  # noqa: B018
                     except ValueError:
                         return node
                     return CBinaryOp(
@@ -1353,7 +1354,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
         ):
             return node.lhs
         if isinstance(node, CBinaryOp) and node.op in {"CmpEQ", "CmpNE"}:
-            if isinstance(node.rhs, CConstant) and node.rhs.value == 0:
+            if isinstance(node.rhs, CConstant) and node.rhs.value == 0:  # noqa: SIM102
                 if isinstance(node.lhs, CBinaryOp) and node.lhs.op == "Sub" and isinstance(node.lhs.rhs, CConstant):
                     return CBinaryOp(
                         node.op,
@@ -1362,7 +1363,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                         codegen=codegen,
                         tags=node.tags,
                     )
-            if isinstance(node.lhs, CConstant) and node.lhs.value == 0:
+            if isinstance(node.lhs, CConstant) and node.lhs.value == 0:  # noqa: SIM102
                 if isinstance(node.rhs, CBinaryOp) and node.rhs.op == "Sub" and isinstance(node.rhs.rhs, CConstant):
                     return CBinaryOp(
                         node.op,
@@ -1715,7 +1716,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                 immediate = None
                 shifted_immediate = None
                 replacement_lhs = None
-                if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
+                if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):  # noqa: SIM102
                     if isinstance(stmt, CAssignment) or isinstance(next_stmt, CAssignment):
                         same_lhs = (
                             isinstance(stmt, CAssignment)
@@ -1765,19 +1766,15 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                             shifted_immediate = _match_word_or_carrier_pair_shift_8616(
                                 next_stmt.rhs, stmt.lhs, next_stmt.lhs
                             )
-                        try:
+                        with contextlib.suppress(Exception):
                             cast(Any, codegen)._inertia_word_or_update_candidates = (
                                 int(getattr(codegen, "_inertia_word_or_update_candidates", 0) or 0) + 1
                             )
-                        except Exception:
-                            pass
                 if isinstance(stmt, CAssignment) and isinstance(stmt.lhs, CVariable):
-                    try:
+                    with contextlib.suppress(Exception):
                         cast(Any, codegen)._inertia_word_arithmetic_shift_candidates = (
                             int(getattr(codegen, "_inertia_word_arithmetic_shift_candidates", 0) or 0) + 1
                         )
-                    except Exception:
-                        pass
                     duplicate_shift = _match_duplicate_word_arithmetic_shift_8616(
                         stmt.rhs,
                         stmt.lhs,
@@ -1793,12 +1790,10 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                             codegen=codegen,
                         )
                         new_statements.append(CAssignment(stmt.lhs, replacement_rhs, codegen=codegen))
-                        try:
+                        with contextlib.suppress(Exception):
                             cast(Any, codegen)._inertia_word_arithmetic_shift_materialized_count = (
                                 int(getattr(codegen, "_inertia_word_arithmetic_shift_materialized_count", 0) or 0) + 1
                             )
-                        except Exception:
-                            pass
                         changed_local = True
                         i += 1
                         continue
@@ -1809,12 +1804,10 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                     and isinstance(next_stmt.lhs, CVariable)
                     and _stack_word_contains_high_byte_8616(replacement_lhs, next_stmt.lhs)
                 ):
-                    try:
+                    with contextlib.suppress(Exception):
                         cast(Any, codegen)._inertia_word_arithmetic_update_candidates = (
                             int(getattr(codegen, "_inertia_word_arithmetic_update_candidates", 0) or 0) + 1
                         )
-                    except Exception:
-                        pass
                     current_assignment = cast(CAssignment, stmt)
                     next_assignment = cast(CAssignment, next_stmt)
                     arithmetic_update = _match_stack_word_arithmetic_update_8616(
@@ -1834,12 +1827,10 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                             codegen=codegen,
                         )
                         new_statements.append(CAssignment(replacement_lhs, replacement_rhs, codegen=codegen))
-                        try:
+                        with contextlib.suppress(Exception):
                             cast(Any, codegen)._inertia_word_arithmetic_update_materialized_count = (
                                 int(getattr(codegen, "_inertia_word_arithmetic_update_materialized_count", 0) or 0) + 1
                             )
-                        except Exception:
-                            pass
                         changed_local = True
                         i += 2
                         continue
@@ -1856,12 +1847,10 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                         codegen=codegen,
                     )
                     new_statements.append(CAssignment(replacement_lhs, replacement_rhs, codegen=codegen))
-                    try:
+                    with contextlib.suppress(Exception):
                         cast(Any, codegen)._inertia_word_or_update_materialized_count = (
                             int(getattr(codegen, "_inertia_word_or_update_materialized_count", 0) or 0) + 1
                         )
-                    except Exception:
-                        pass
                     changed_local = True
                     i += 2
                     continue
@@ -1869,7 +1858,7 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                     if os.environ.get("INERTIA_DEBUG_WORD_OR_UPDATE"):
                         term_debug = []
                         for term in _or_terms_8616(stmt.rhs):
-                            term_debug.append(
+                            term_debug.append(  # noqa: PERF401
                                 (
                                     type(term).__name__,
                                     _c_constant_int_value_8616(term),
@@ -1890,12 +1879,10 @@ def _simplify_structured_expressions_8616(codegen: object) -> bool:
                             shifted_immediate,
                             term_debug,
                         )
-                    try:
+                    with contextlib.suppress(Exception):
                         cast(Any, codegen)._inertia_word_or_update_refused = (
                             int(getattr(codegen, "_inertia_word_or_update_refused", 0) or 0) + 1
                         )
-                    except Exception:
-                        pass
                 visit(stmt)
                 new_statements.append(stmt)
                 i += 1

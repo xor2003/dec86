@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, Protocol, cast
+from typing import Protocol, cast
 
 from ..widening.global_object_layout import GlobalObjectLayoutEvidence8616
 from .callee_global_object_collection import (

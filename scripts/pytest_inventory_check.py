@@ -85,7 +85,7 @@ def validate_inventory_payload(payload: object) -> InventoryAudit:
         errors.append(f"schema_version must be >= {MIN_SCHEMA_VERSION}")
     raw_records = payload.get("records")
     if not isinstance(raw_records, list):
-        return InventoryAudit(0, (), tuple((*errors, "records is not a list")))
+        return InventoryAudit(0, (), (*errors, "records is not a list"))
     seen: set[str] = set()
     statuses: dict[str, int] = {}
     for index, raw_record in enumerate(raw_records):

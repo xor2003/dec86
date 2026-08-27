@@ -1,8 +1,8 @@
 """Collect project-wide storage evidence for object layout widening.
 
 Layer: Types/Lowering orchestration.
-Responsibility: collect exact instruction-backed direct and indexed DS views
-across known function bounds and delegate object extent classification to
+Responsibility: collect exact direct DS views, resolve indexed Alias program
+evidence across known function bounds, and delegate object classification to
 Widening. This module does not choose C types or mutate generated C.
 Consumes alias, widening, and typed facts.
 Do not recover semantics from COD, source, assembly, or rendered C text.
@@ -12,16 +12,21 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias, cast, runtime_checkable
+from typing import Protocol, cast
 
+from ..alias.indexed_address_program import (
+    IndexedAliasFunctionSelection8616,
+    IndexedAliasProgramEvidence8616,
+    build_indexed_alias_program_evidence_8616,
+)
 from ..ir.core import AddressStatus, IRAddress, MemSpace, SegmentOrigin
 from ..widening.global_object_layout import (
     DirectGlobalObjectLayoutEvidence8616,
     DirectGlobalStorageView8616,
     GlobalObjectLayoutEvidence8616,
-    IndexedStorageCopy8616,
-    IndexedStorageView8616,
     recover_direct_global_object_layout_evidence_8616,
+)
+from ..widening.indexed_global_object_layout import (
     recover_global_object_layout_evidence_8616,
 )
 
@@ -40,59 +45,7 @@ class DirectGlobalStorageEvidenceBoundary8616(Protocol):
         ...
 
 
-class IndexedStorageEvidenceBoundary8616(Protocol):
-    """Shared exact fields exposed by indexed load and store evidence."""
-
-    @property
-    def base_offset(self) -> int:
-        """Return the exact DS base displacement."""
-        ...
-
-    @property
-    def width(self) -> int:
-        """Return the accessed storage width in bytes."""
-        ...
-
-    @property
-    def index_stack_offset(self) -> int:
-        """Return the exact BP-relative identity of the index."""
-        ...
-
-    @property
-    def index_shift(self) -> int:
-        """Return the binary-proven index shift."""
-        ...
-
-
-@runtime_checkable
-class IndexedStorageCopyEvidenceBoundary8616(IndexedStorageEvidenceBoundary8616, Protocol):
-    """Optional whole-copy fields exposed by indexed store evidence."""
-
-    @property
-    def source_base_offset(self) -> int | None:
-        """Return the source DS base when an exact indexed source exists."""
-        ...
-
-    @property
-    def source_width(self) -> int | None:
-        """Return the exact source width when known."""
-        ...
-
-    @property
-    def source_index_stack_offset(self) -> int | None:
-        """Return the source index storage identity when known."""
-        ...
-
-    @property
-    def source_index_shift(self) -> int | None:
-        """Return the source index shift when known."""
-        ...
-
-
-IndexedStorageEvidenceCollector8616: TypeAlias = Callable[
-    [object, object], Iterable[IndexedStorageEvidenceBoundary8616]
-]
-DirectGlobalStorageEvidenceCollector8616: TypeAlias = Callable[
+type DirectGlobalStorageEvidenceCollector8616 = Callable[
     [object, object], Iterable[DirectGlobalStorageEvidenceBoundary8616]
 ]
 
@@ -104,6 +57,27 @@ class _ProjectGlobalObjectLayoutSurface8616(Protocol):
     _inertia_original_project: object
     _inertia_project_global_object_layout_evidence_8616: GlobalObjectLayoutEvidence8616
     _inertia_project_direct_global_object_layout_evidence_8616: DirectGlobalObjectLayoutEvidence8616
+    _inertia_indexed_alias_program_evidence_8616: IndexedAliasProgramEvidence8616
+
+
+class _FunctionManager8616(Protocol):
+    """Third-party angr function lookup consumed at the orchestration boundary."""
+
+    def function(self, *, addr: int, create: bool = False) -> object | None:
+        """Return an exact recovered function without creating one."""
+        ...
+
+
+class _KnowledgeBase8616(Protocol):
+    """Third-party angr knowledge-base surface used for exact function lookup."""
+
+    functions: _FunctionManager8616
+
+
+class _EvidenceProject8616(Protocol):
+    """Original analysis project used to rebuild earlier-layer evidence."""
+
+    kb: _KnowledgeBase8616
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,9 +90,8 @@ class FunctionRangeView8616:
 
 def collect_project_global_object_layout_evidence_8616(
     project: object,
-    collectors: tuple[IndexedStorageEvidenceCollector8616, ...],
 ) -> GlobalObjectLayoutEvidence8616:
-    """Collect and cache exact indexed storage views across known functions."""
+    """Collect Alias program evidence and cache its Widening layouts."""
     surface = cast(_ProjectGlobalObjectLayoutSurface8616, project)
     try:
         cached = surface._inertia_project_global_object_layout_evidence_8616
@@ -139,63 +112,53 @@ def collect_project_global_object_layout_evidence_8616(
     except AttributeError:
         evidence_project = project
 
-    views: list[IndexedStorageView8616] = []
-    copies: list[IndexedStorageCopy8616] = []
-    for bounds in ranges:
-        if (
-            not isinstance(bounds, tuple)
-            or len(bounds) != 2
-            or not isinstance(bounds[0], int)
-            or not isinstance(bounds[1], int)
-            or bounds[1] <= bounds[0]
-        ):
-            raise TypeError("project function ranges contain an invalid (start, end) pair")
-        function = FunctionRangeView8616(addr=bounds[0], size=bounds[1] - bounds[0])
-        for collector in collectors:
-            for fact in collector(evidence_project, function):
-                destination_address = IRAddress(
-                    space=MemSpace.DS,
-                    offset=fact.base_offset & 0xFFFF,
-                    size=fact.width,
-                    status=AddressStatus.STABLE,
-                    segment_origin=SegmentOrigin.PROVEN,
+    try:
+        program = surface._inertia_indexed_alias_program_evidence_8616
+    except AttributeError:
+        program = None
+    if (
+        not isinstance(program, IndexedAliasProgramEvidence8616)
+        and evidence_project is not project
+    ):
+        try:
+            program = cast(
+                _ProjectGlobalObjectLayoutSurface8616,
+                evidence_project,
+            )._inertia_indexed_alias_program_evidence_8616
+        except AttributeError:
+            program = None
+    if not isinstance(program, IndexedAliasProgramEvidence8616):
+        selections: list[IndexedAliasFunctionSelection8616] = []
+        for bounds in ranges:
+            if (
+                not isinstance(bounds, tuple)
+                or len(bounds) != 2
+                or not isinstance(bounds[0], int)
+                or not isinstance(bounds[1], int)
+                or bounds[1] <= bounds[0]
+            ):
+                raise TypeError(
+                    "project function ranges contain an invalid (start, end) pair"
                 )
-                views.append(
-                    IndexedStorageView8616(
-                        function_addr=function.addr,
-                        address=destination_address,
-                        index_stack_offset=fact.index_stack_offset,
-                        index_shift=fact.index_shift,
-                    )
+            try:
+                function = cast(
+                    _EvidenceProject8616,
+                    evidence_project,
+                ).kb.functions.function(
+                    addr=bounds[0],
+                    create=False,
                 )
-                if not isinstance(fact, IndexedStorageCopyEvidenceBoundary8616):
-                    continue
-                if (
-                    not isinstance(fact.source_base_offset, int)
-                    or not isinstance(fact.source_width, int)
-                    or not isinstance(fact.source_index_stack_offset, int)
-                    or not isinstance(fact.source_index_shift, int)
-                ):
-                    continue
-                copies.append(
-                    IndexedStorageCopy8616(
-                        function_addr=function.addr,
-                        source_address=IRAddress(
-                            space=MemSpace.DS,
-                            offset=fact.source_base_offset & 0xFFFF,
-                            size=fact.source_width,
-                            status=AddressStatus.STABLE,
-                            segment_origin=SegmentOrigin.PROVEN,
-                        ),
-                        destination_address=destination_address,
-                        source_index_stack_offset=fact.source_index_stack_offset,
-                        destination_index_stack_offset=fact.index_stack_offset,
-                        source_index_shift=fact.source_index_shift,
-                        destination_index_shift=fact.index_shift,
-                    )
-                )
-
-    result = recover_global_object_layout_evidence_8616(views, copies)
+            except (AttributeError, KeyError, TypeError):
+                function = None
+            selections.append(
+                IndexedAliasFunctionSelection8616(bounds[0], function)
+            )
+        program = build_indexed_alias_program_evidence_8616(
+            evidence_project,
+            selections,
+        )
+        surface._inertia_indexed_alias_program_evidence_8616 = program
+    result = recover_global_object_layout_evidence_8616(program)
     surface._inertia_project_global_object_layout_evidence_8616 = result
     return result
 
@@ -238,7 +201,7 @@ def collect_project_direct_global_object_layout_evidence_8616(
         function = FunctionRangeView8616(addr=bounds[0], size=bounds[1] - bounds[0])
         for collector in collectors:
             for fact in collector(evidence_project, function):
-                views.append(
+                views.append(  # noqa: PERF401
                     DirectGlobalStorageView8616(
                         function_addr=function.addr,
                         address=IRAddress(
@@ -260,9 +223,6 @@ __all__ = [
     "DirectGlobalStorageEvidenceBoundary8616",
     "DirectGlobalStorageEvidenceCollector8616",
     "FunctionRangeView8616",
-    "IndexedStorageCopyEvidenceBoundary8616",
-    "IndexedStorageEvidenceBoundary8616",
-    "IndexedStorageEvidenceCollector8616",
     "collect_project_direct_global_object_layout_evidence_8616",
     "collect_project_global_object_layout_evidence_8616",
 ]

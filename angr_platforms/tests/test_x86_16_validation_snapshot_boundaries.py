@@ -22,7 +22,7 @@ class _FunctionLookup:
 
 
 def _codegen(project: object) -> SimpleNamespace:
-    return SimpleNamespace(project=project, next_idx=lambda _kind: 0)
+    return SimpleNamespace(project=project, next_idx=lambda _kind: 0, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 0)
 
 
 def test_validation_snapshot_preserves_callee_function_identity() -> None:

@@ -18,6 +18,7 @@ from angr.sim_variable import SimStackVariable
 
 from .c_ast_utils import _iter_c_nodes_deep_8616
 from .callsite_summary import CallsitePushSourceKind8616, CallsiteSummary8616
+from .lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
 
 
 class CallArgumentSourceIssueKind8616(StrEnum):
@@ -93,9 +94,12 @@ def _stack_offsets_from_push_source_8616(source: object) -> tuple[int, ...]:
     return tuple(sorted(offsets))
 
 
-def _stack_offsets_from_c_argument_8616(argument: object) -> tuple[int, ...]:
+def _stack_offsets_from_c_argument_8616(
+    codegen: object,
+    argument: object,
+) -> tuple[int, ...]:
     """Collect direct BP-relative storage identities from a final C argument."""
-    projected_offset = _stack_byte_projection_offset_8616(argument)
+    projected_offset = _stack_byte_projection_offset_8616(codegen, argument)
     if projected_offset is not None:
         return (projected_offset,)
 
@@ -104,16 +108,17 @@ def _stack_offsets_from_c_argument_8616(argument: object) -> tuple[int, ...]:
         if not isinstance(node, CVariable):
             continue
         variable = node.variable
-        if (
-            isinstance(variable, SimStackVariable)
-            and variable.base == "bp"
-            and isinstance(variable.offset, int)
-        ):
-            offsets.add(variable.offset)
+        if isinstance(variable, SimStackVariable) and variable.base == "bp":
+            bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+            if isinstance(bp_offset, int):
+                offsets.add(bp_offset)
     return tuple(sorted(offsets))
 
 
-def _stack_byte_projection_offset_8616(argument: object) -> int | None:
+def _stack_byte_projection_offset_8616(
+    codegen: object,
+    argument: object,
+) -> int | None:
     """Return the exact BP byte selected by a whole-argument right shift."""
     while isinstance(argument, CTypeCast):
         argument = argument.expr
@@ -140,7 +145,8 @@ def _stack_byte_projection_offset_8616(argument: object) -> int | None:
         or byte_index >= variable.size
     ):
         return None
-    return variable.offset + byte_index
+    bp_offset = machine_bp_offset_for_stack_variable_8616(codegen, variable)
+    return bp_offset + byte_index if isinstance(bp_offset, int) else None
 
 
 def call_argument_source_stack_dependencies_8616(
@@ -164,6 +170,7 @@ def call_argument_source_stack_dependencies_8616(
 
 
 def call_argument_source_dependency_facts_8616(
+    codegen: object,
     summary: CallsiteSummary8616,
     arguments: tuple[object, ...],
 ) -> tuple[CallArgumentSourceDependencyFact8616, ...]:
@@ -175,7 +182,7 @@ def call_argument_source_dependency_facts_8616(
         CallArgumentSourceDependencyFact8616(
             argument_index=index,
             expected_stack_offsets=expected,
-            actual_stack_offsets=_stack_offsets_from_c_argument_8616(arguments[index]),
+            actual_stack_offsets=_stack_offsets_from_c_argument_8616(codegen, arguments[index]),
         )
         for index, expected in enumerate(dependencies)
         if expected

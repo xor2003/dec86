@@ -26,6 +26,10 @@ class _FakeCodegen(SimpleNamespace):
     def next_idx(self, _kind: str) -> int:
         self._next += 1
         return self._next
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+    def next_ident(self, name: str) -> str:
+        return name
 
 
 def _mk_codegen_with_statements(statements):

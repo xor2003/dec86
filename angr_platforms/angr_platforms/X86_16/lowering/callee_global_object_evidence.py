@@ -10,11 +10,14 @@ This module does not mutate codegen state.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Sequence
 
-from ..callsite_summary import CallsiteSummary8616
+from ..callsite_summary import (
+    CallsitePushSourceKind8616,
+    CallsiteSummary8616,
+)
 from ..widening.global_object_layout import (
     GlobalObjectLayout8616,
     GlobalObjectLayoutEvidence8616,
@@ -28,6 +31,14 @@ class CalleeGlobalObjectInterfaceVerdict8616(StrEnum):
     COMPLETE = "complete"
     ANCHORED_WITH_UNKNOWN_CALLERS = "anchored_with_unknown_callers"
     CONFLICT = "conflict"
+
+
+class CalleePointerSourceKind8616(StrEnum):
+    """Typed storage-space class for one proven pointer argument source."""
+
+    GLOBAL_OBJECT = "global_object"
+    STACK_OBJECT = "stack_object"
+    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +81,7 @@ class CalleeGlobalObjectSourceFamilyFact8616:
     field_offsets: tuple[int, ...]
 
 
-def _affine_global_pointer_source_8616(
+def affine_global_pointer_source_8616(
     source: object,
 ) -> AffineGlobalPointerSource8616 | None:
     """Normalize one structured callsite push source without text parsing."""
@@ -100,6 +111,51 @@ def _affine_global_pointer_source_8616(
     return AffineGlobalPointerSource8616(
         additive[0][1] & 0xFFFF,
         (origin, *index_operations),
+    )
+
+
+def classify_callee_pointer_source_8616(
+    source: object,
+) -> CalleePointerSourceKind8616:
+    """Classify one pointer source without guessing an unknown address space."""
+    if affine_global_pointer_source_8616(source) is not None:
+        return CalleePointerSourceKind8616.GLOBAL_OBJECT
+    if (
+        isinstance(source, tuple)
+        and source
+        and source[0]
+        in {
+            CallsitePushSourceKind8616.BP_ADDRESS.value,
+            CallsitePushSourceKind8616.BP_INDEX_ADDRESS.value,
+        }
+    ):
+        return CalleePointerSourceKind8616.STACK_OBJECT
+    return CalleePointerSourceKind8616.UNKNOWN
+
+
+def logical_pointer_argument_sources_8616(
+    summary: CallsiteSummary8616,
+    pointer_argument_indices: tuple[int, ...],
+) -> tuple[tuple[int, object], ...] | None:
+    """Project physical pushes to exact near-pointer sources in C argument order."""
+    if (
+        len(set(pointer_argument_indices)) != len(pointer_argument_indices)
+        or any(index < 0 for index in pointer_argument_indices)
+        or len(summary.arg_widths) != len(summary.push_arg_sources)
+        or any(width != 2 for width in summary.arg_widths)
+    ):
+        return None
+    if summary.logical_arg_widths and (
+        len(summary.logical_arg_widths) != len(summary.push_arg_sources)
+        or any(width != 2 for width in summary.logical_arg_widths)
+    ):
+        return None
+    logical_sources = tuple(reversed(summary.push_arg_sources))
+    if any(index >= len(logical_sources) for index in pointer_argument_indices):
+        return None
+    return tuple(
+        (argument_index, logical_sources[argument_index])
+        for argument_index in pointer_argument_indices
     )
 
 
@@ -146,7 +202,8 @@ def recover_callee_global_object_interface_evidence_8616(
     pointer_argument_indices: tuple[int, ...],
 ) -> CalleeGlobalObjectInterfaceEvidence8616:
     """Join all direct caller sources to one proven aggregate family."""
-    raw_count = sum(len(summary.push_arg_sources) for summary in summaries)
+    expected_arg_count = len(pointer_argument_indices)
+    raw_count = len(summaries) * expected_arg_count
     normalized_count = 0
     classified_source_count = 0
     families: set[int] = set()
@@ -154,6 +211,7 @@ def recover_callee_global_object_interface_evidence_8616(
     classified_summaries: list[
         tuple[
             CallsiteSummary8616,
+            tuple[tuple[int, object], ...],
             tuple[AffineGlobalPointerSource8616 | None, ...],
             tuple[GlobalObjectLayout8616 | None, ...],
         ]
@@ -161,11 +219,17 @@ def recover_callee_global_object_interface_evidence_8616(
     layouts_by_base = {
         layout.address.offset & 0xFFFF: layout for layout in layout_evidence.layouts
     }
-    expected_arg_count = len(pointer_argument_indices)
     for summary in summaries:
+        projected_sources = logical_pointer_argument_sources_8616(
+            summary,
+            pointer_argument_indices,
+        )
+        if projected_sources is None:
+            invalid_callsites += 1
+            continue
         sources = tuple(
-            _affine_global_pointer_source_8616(source)
-            for source in summary.push_arg_sources
+            affine_global_pointer_source_8616(source)
+            for _argument_index, source in projected_sources
         )
         normalized_count += sum(source is not None for source in sources)
         family, source_layouts = _classify_summary_sources_8616(
@@ -176,14 +240,15 @@ def recover_callee_global_object_interface_evidence_8616(
         classified_source_count += classified
         if (
             expected_arg_count == 0
-            or len(sources) != expected_arg_count
             or family is None
             or classified != len(sources)
         ):
             invalid_callsites += 1
             continue
         families.add(family)
-        classified_summaries.append((summary, sources, source_layouts))
+        classified_summaries.append(
+            (summary, projected_sources, sources, source_layouts)
+        )
     complete = (
         bool(summaries)
         and invalid_callsites == 0
@@ -209,7 +274,7 @@ def recover_callee_global_object_interface_evidence_8616(
             CalleeGlobalObjectSourceFamilyFact8616(
                 target_addr=target_addr,
                 callsite_addr=summary.callsite_addr,
-                argument_index=pointer_argument_indices[source_index],
+                argument_index=projected_sources[source_index][0],
                 base_offset=source.base_offset,
                 canonical_base_offset=layout.address.offset & 0xFFFF,
                 index_identity=source.index_identity,
@@ -217,7 +282,7 @@ def recover_callee_global_object_interface_evidence_8616(
                 element_width=layout.element_width,
                 field_offsets=layout.field_offsets,
             )
-            for summary, sources, source_layouts in classified_summaries
+            for summary, projected_sources, sources, source_layouts in classified_summaries
             for source_index, (source, layout) in enumerate(
                 zip(sources, source_layouts, strict=True)
             )
@@ -236,7 +301,6 @@ def recover_callee_global_object_interface_evidence_8616(
         classified_fact_count=classified_count,
         materialized_count=0,
         failure_count=(raw_count - classified_source_count)
-        + invalid_callsites
         + int(len(families) > 1),
         callsite_addrs=tuple(sorted(summary.callsite_addr for summary in summaries)),
         source_facts=source_facts,
@@ -248,5 +312,9 @@ __all__ = [
     "CalleeGlobalObjectInterfaceEvidence8616",
     "CalleeGlobalObjectInterfaceVerdict8616",
     "CalleeGlobalObjectSourceFamilyFact8616",
+    "CalleePointerSourceKind8616",
+    "affine_global_pointer_source_8616",
+    "classify_callee_pointer_source_8616",
+    "logical_pointer_argument_sources_8616",
     "recover_callee_global_object_interface_evidence_8616",
 ]

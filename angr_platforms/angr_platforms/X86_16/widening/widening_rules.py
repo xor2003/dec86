@@ -294,10 +294,7 @@ def _coalesce_direct_ss_local_word_statements(
                 visit(body)
             if node.else_node is not None:
                 visit(node.else_node)
-        elif isinstance(node, structured_c.CWhileLoop):
-            visit(_dynamic_attr_8616(node, "condition", None))
-            visit(_dynamic_attr_8616(node, "body", None))
-        elif hasattr(structured_c, "CDoWhileLoop") and isinstance(node, _dynamic_attr_8616(structured_c, "CDoWhileLoop")):
+        elif isinstance(node, structured_c.CWhileLoop) or (hasattr(structured_c, "CDoWhileLoop") and isinstance(node, _dynamic_attr_8616(structured_c, "CDoWhileLoop"))):
             visit(_dynamic_attr_8616(node, "condition", None))
             visit(_dynamic_attr_8616(node, "body", None))
         elif hasattr(structured_c, "CForLoop") and isinstance(node, _dynamic_attr_8616(structured_c, "CForLoop")):
@@ -753,10 +750,7 @@ def _coalesce_segmented_word_store_statements(
                 visit(body)
             if node.else_node is not None:
                 visit(node.else_node)
-        elif isinstance(node, structured_c.CWhileLoop):
-            visit(_dynamic_attr_8616(node, "condition", None))
-            visit(_dynamic_attr_8616(node, "body", None))
-        elif hasattr(structured_c, "CDoWhileLoop") and isinstance(node, _dynamic_attr_8616(structured_c, "CDoWhileLoop")):
+        elif isinstance(node, structured_c.CWhileLoop) or (hasattr(structured_c, "CDoWhileLoop") and isinstance(node, _dynamic_attr_8616(structured_c, "CDoWhileLoop"))):
             visit(_dynamic_attr_8616(node, "condition", None))
             visit(_dynamic_attr_8616(node, "body", None))
         elif hasattr(structured_c, "CForLoop") and isinstance(node, _dynamic_attr_8616(structured_c, "CForLoop")):

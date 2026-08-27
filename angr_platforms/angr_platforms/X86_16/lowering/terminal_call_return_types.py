@@ -30,10 +30,12 @@ from ..simos_86_16 import SimCC8616MSCsmall
 from .return_type_evidence import proven_function_result_observation_8616
 
 __all__ = (
+    "CalleeResultContract8616",
     "TerminalCallReturnTypeEvidence8616",
     "TerminalCallReturnTypeResult8616",
     "TerminalCallReturnTypeSource8616",
     "apply_terminal_call_return_type_evidence_8616",
+    "callee_result_contract_8616",
     "collect_terminal_call_return_type_evidence_8616",
 )
 
@@ -57,6 +59,14 @@ class _SignedTypeSurface8616(Protocol):
     """Optional signedness field exposed by concrete angr integer types."""
 
     signed: bool | None
+
+
+class CalleeResultContract8616(Enum):
+    """Typed result contract proven for one callee."""
+
+    VALUE = "value"
+    VOID = "void"
+    UNKNOWN = "unknown"
 
 
 class TerminalCallReturnTypeSource8616(Enum):
@@ -91,6 +101,30 @@ class TerminalCallReturnTypeResult8616:
 
     changed: bool
     evidence: TerminalCallReturnTypeEvidence8616
+
+
+def callee_result_contract_8616(callee: object | None) -> CalleeResultContract8616:
+    """Classify only an explicit, non-guessed callee result type."""
+    if callee is None:
+        return CalleeResultContract8616.UNKNOWN
+    callee_surface = cast(_FunctionSurface8616, callee)
+    if callee_surface.is_prototype_guessed:
+        return CalleeResultContract8616.UNKNOWN
+    prototype = callee_surface.prototype
+    if not isinstance(prototype, SimTypeFunction):
+        return CalleeResultContract8616.UNKNOWN
+    return_type = prototype.returnty
+    if isinstance(return_type, SimTypeBottom):
+        return (
+            CalleeResultContract8616.VOID
+            if return_type.label == "void"
+            else CalleeResultContract8616.UNKNOWN
+        )
+    return (
+        CalleeResultContract8616.VALUE
+        if isinstance(return_type, SimType)
+        else CalleeResultContract8616.UNKNOWN
+    )
 
 
 def _dynamic_attr_8616(obj: object, name: str, default: object = None) -> object:

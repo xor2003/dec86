@@ -13,11 +13,12 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
-from typing import Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 
 from ..callsite_summary import (
-    CallsiteArgumentClass8616,
+    CallsitePushExprOp8616,
+    CallsitePushSourceKind8616,
     CallsiteSummary8616,
     callsite_machine_frame_kind_8616,
 )
@@ -97,6 +98,100 @@ def _refused_effect_8616(
     return IRCallStackEffect8616(escaped_ranges=escaped, complete=False), failure
 
 
+def _source_kind_8616(source: object) -> CallsitePushSourceKind8616 | None:
+    """Normalize one structured physical source kind without text heuristics."""
+    if not isinstance(source, tuple) or not source:
+        return None
+    raw_kind = source[0]
+    if isinstance(raw_kind, CallsitePushSourceKind8616):
+        return raw_kind
+    if not isinstance(raw_kind, str):
+        return None
+    try:
+        return CallsitePushSourceKind8616(raw_kind)
+    except ValueError:
+        return None
+
+
+def _expression_stack_offset_8616(
+    source: tuple[object, ...],
+) -> tuple[int | None, CallStackEffectFailure8616 | None]:
+    """Resolve an exact BP-derived address expression or retain typed uncertainty."""
+    if len(source) != 3 or not isinstance(source[1], tuple) or not isinstance(source[2], tuple):
+        return None, CallStackEffectFailure8616.ARGUMENT_SOURCES_INCOMPLETE
+    offset, failure = _stack_address_offset_8616(source[1])
+    if failure is not None:
+        return None, failure
+    for operation in source[2]:
+        if not isinstance(operation, tuple) or not operation:
+            return None, CallStackEffectFailure8616.ARGUMENT_SOURCES_INCOMPLETE
+        raw_op = operation[0]
+        try:
+            op = raw_op if isinstance(raw_op, CallsitePushExprOp8616) else CallsitePushExprOp8616(raw_op)
+        except (TypeError, ValueError):
+            return None, CallStackEffectFailure8616.ARGUMENT_SOURCES_INCOMPLETE
+        if op in {CallsitePushExprOp8616.ADD, CallsitePushExprOp8616.SUB}:
+            if len(operation) != 2 or not isinstance(operation[1], int):
+                return None, CallStackEffectFailure8616.ARGUMENT_SOURCES_INCOMPLETE
+            if offset is not None:
+                offset += operation[1] if op is CallsitePushExprOp8616.ADD else -operation[1]
+            continue
+        if op in {
+            CallsitePushExprOp8616.ADD_SOURCE,
+            CallsitePushExprOp8616.ADC_SOURCE,
+            CallsitePushExprOp8616.SUB_SOURCE,
+            CallsitePushExprOp8616.SBB_SOURCE,
+        }:
+            if len(operation) != 2 or not isinstance(operation[1], tuple):
+                return None, CallStackEffectFailure8616.ARGUMENT_SOURCES_INCOMPLETE
+            nested_offset, nested_failure = _stack_address_offset_8616(operation[1])
+            if nested_failure is not None:
+                return None, nested_failure
+            if offset is not None or nested_offset is not None:
+                return None, CallStackEffectFailure8616.POINTER_ARGUMENT_MAY_ESCAPE
+            continue
+        if offset is not None:
+            return None, CallStackEffectFailure8616.POINTER_ARGUMENT_MAY_ESCAPE
+    return offset, None
+
+
+def _stack_address_offset_8616(source: object) -> tuple[int | None, CallStackEffectFailure8616 | None]:
+    """Return exact caller-frame address provenance from one physical PUSH source."""
+    kind = _source_kind_8616(source)
+    if kind is None or not isinstance(source, tuple):
+        return None, CallStackEffectFailure8616.ARGUMENT_SOURCES_INCOMPLETE
+    if kind is CallsitePushSourceKind8616.BP_ADDRESS:
+        if len(source) < 2 or not isinstance(source[1], int):
+            return None, CallStackEffectFailure8616.ARGUMENT_SOURCES_INCOMPLETE
+        return source[1], None
+    if kind is CallsitePushSourceKind8616.BP_INDEX_ADDRESS:
+        return None, CallStackEffectFailure8616.POINTER_ARGUMENT_MAY_ESCAPE
+    if kind is CallsitePushSourceKind8616.EXPR:
+        return _expression_stack_offset_8616(source)
+    return None, None
+
+
+def _stack_address_offsets_8616(
+    summary: CallsiteSummary8616,
+) -> tuple[tuple[int, ...], CallStackEffectFailure8616 | None]:
+    """Classify all exact caller-frame addresses passed by physical PUSH provenance."""
+    if len(summary.push_arg_sources) != summary.arg_count:
+        return (), CallStackEffectFailure8616.ARGUMENT_SOURCES_INCOMPLETE
+    offsets: list[int] = []
+    for source in summary.push_arg_sources:
+        offset, failure = _stack_address_offset_8616(source)
+        if failure is not None:
+            return (), failure
+        if offset is not None:
+            offsets.append(offset)
+    return tuple(dict.fromkeys(offsets)), None
+
+
+def _range_contains_bp_offset_8616(address: IRAddress, offset: int) -> bool:
+    """Return whether one exact BP address lies inside a tracked byte range."""
+    return bool(address.offset <= offset < address.offset + address.size)
+
+
 def _effect_from_summary_8616(
     summary: CallsiteSummary8616,
     ranges: tuple[IRAddress, ...],
@@ -118,33 +213,35 @@ def _effect_from_summary_8616(
         return _refused_effect_8616(ranges, CallStackEffectFailure8616.STACK_CLEANUP_UNKNOWN)
     if argument_bytes != stack_cleanup:
         return _refused_effect_8616(ranges, CallStackEffectFailure8616.STACK_CLEANUP_MISMATCH)
-    if summary.arg_count:
-        if (
-            len(summary.logical_arg_widths) != summary.arg_count
-            or len(summary.logical_arg_classes) != summary.arg_count
-            or sum(summary.logical_arg_widths) != sum(summary.arg_widths)
-        ):
-            return _refused_effect_8616(
-                ranges,
-                CallStackEffectFailure8616.ARGUMENT_CLASSES_INCOMPLETE,
-            )
-        if any(
-            argument_class is CallsiteArgumentClass8616.POINTER
-            for argument_class in summary.logical_arg_classes
-        ):
-            return _refused_effect_8616(
-                ranges,
-                CallStackEffectFailure8616.POINTER_ARGUMENT_MAY_ESCAPE,
-            )
+    stack_address_offsets, source_failure = _stack_address_offsets_8616(summary)
+    if source_failure is not None:
+        return _refused_effect_8616(ranges, source_failure)
     net_stack_delta = (
         stack_cleanup
         if stack_cleanup > 0 and summary.stack_cleanup_instruction_addr is None
         else 0
     )
+    escaped_ranges = tuple(
+        address
+        for address in ranges
+        if any(
+            _range_contains_bp_offset_8616(address, offset)
+            for offset in stack_address_offsets
+        )
+    )
+    escaped_identities = {
+        (item.space, item.base, item.offset, item.size) for item in escaped_ranges
+    }
     return (
         IRCallStackEffect8616(
             net_stack_delta=net_stack_delta,
-            preserved_ranges=ranges,
+            preserved_ranges=tuple(
+                address
+                for address in ranges
+                if (address.space, address.base, address.offset, address.size)
+                not in escaped_identities
+            ),
+            escaped_ranges=escaped_ranges,
             complete=True,
         ),
         None,
@@ -244,18 +341,10 @@ def materialize_call_stack_effects_8616(
         "call_stack_effect_failure_count": stats.failure_count,
     }
     return CallStackEffectArtifact8616(
-        IRFunctionArtifact(
-            artifact.function_addr,
-            tuple(rewritten_blocks),
-            artifact.refusals,
-            summary,
-        ),
+        replace(artifact, blocks=tuple(rewritten_blocks), summary=summary),
         tuple(facts),
         stats,
     )
 
 
-__all__ = [
-    "CallStackEffectArtifact8616",
-    "materialize_call_stack_effects_8616",
-]
+__all__ = ["CallStackEffectArtifact8616", "materialize_call_stack_effects_8616"]

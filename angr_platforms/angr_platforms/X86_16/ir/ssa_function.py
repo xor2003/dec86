@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .core import IRFunctionArtifact, IRRefusal, IRValue, MemSpace
+from .logical_memory_contracts import IRLogicalMemoryArtifact8616
 from .ssa import SSABlock, build_x86_16_block_local_ssa
 from .ssa_memory import build_x86_16_function_memory_ssa
 from .ssa_memory_contracts import (
@@ -24,15 +25,15 @@ from .ssa_memory_contracts import (
 )
 
 __all__ = [
+    "SSACallStackEffectSite8616",
     "SSAFunctionArtifact",
     "SSAIncomingValue",
-    "SSAPhiNode",
     "SSAMemoryAccess8616",
     "SSAMemoryBinding8616",
-    "SSACallStackEffectSite8616",
     "SSAMemoryOverlap8616",
     "SSAMemoryPhiNode8616",
     "SSAMemoryStats8616",
+    "SSAPhiNode",
     "build_x86_16_function_ssa",
     "build_x86_16_ir_predecessor_map",
 ]
@@ -85,9 +86,10 @@ class SSAFunctionArtifact:
     memory_overlaps: tuple[SSAMemoryOverlap8616, ...] = ()
     memory_call_effects: tuple[SSACallStackEffectSite8616, ...] = ()
     memory_refusals: tuple[IRRefusal, ...] = ()
-    memory_stats: SSAMemoryStats8616 = SSAMemoryStats8616()
+    memory_stats: SSAMemoryStats8616 = SSAMemoryStats8616()  # noqa: RUF009
     predecessor_map: dict[int, tuple[int, ...]] = field(default_factory=dict)
     summary: dict[str, object] = field(default_factory=dict)
+    logical_memory: IRLogicalMemoryArtifact8616 | None = None
 
     def to_dict(self) -> dict[str, object]:
         """Return a deterministic JSON-friendly representation."""
@@ -112,6 +114,9 @@ class SSAFunctionArtifact:
                 hex(addr): [hex(pred) for pred in preds] for addr, preds in sorted(self.predecessor_map.items())
             },
             "summary": dict(self.summary),
+            "logical_memory": (
+                None if self.logical_memory is None else self.logical_memory.to_dict()
+            ),
         }
 
 
@@ -177,7 +182,12 @@ def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifa
     def _impl() -> SSAFunctionArtifact:
         local_blocks = tuple(build_x86_16_block_local_ssa(block) for block in artifact.blocks)
         pred_map = build_x86_16_ir_predecessor_map(artifact)
-        memory_ssa = build_x86_16_function_memory_ssa(artifact.function_addr, local_blocks, pred_map)
+        memory_ssa = build_x86_16_function_memory_ssa(
+            artifact.function_addr,
+            local_blocks,
+            pred_map,
+            artifact.logical_memory,
+        )
         local_blocks = memory_ssa.blocks
         local_by_addr = {block.addr: block for block in local_blocks}
         exits_by_addr = {block.addr: _block_exit_versions(block) for block in local_blocks}
@@ -228,6 +238,7 @@ def build_x86_16_function_ssa(artifact: IRFunctionArtifact) -> SSAFunctionArtifa
             memory_stats=memory_ssa.stats,
             predecessor_map=pred_map,
             summary=summary,
+            logical_memory=memory_ssa.logical_memory,
         )
 
     return _impl()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
@@ -18,6 +19,10 @@ from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimRegisterVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallerReturnUseVerdict8616
+from angr_platforms.X86_16.frontend_function_instructions import (
+    FunctionInstructionInventory8616,
+    FunctionInstructionInventoryStatus8616,
+)
 from angr_platforms.X86_16.structuring.return_chains import (
     BranchTargetReturnBlockResult8616,
     BranchTargetReturnScanCallbacks8616,
@@ -152,6 +157,12 @@ class _DummyCodegen:
         self._idx += 1
         return self._idx
 
+    def next_ident(self, name: str) -> str:
+        return name
+
+    def next_node_idx(self) -> int:
+        return self.next_idx("")
+
 
 def test_return_chain_codegen_state_initializes_dynamic_codegen_fields():
     codegen = SimpleNamespace()
@@ -256,7 +267,7 @@ def _terminal_call_callbacks(
     blocks,
     block_ranges,
     successors,
-    call_result_contract=lambda _call: TerminalCallResultContract8616.UNKNOWN,
+    call_result_contract=lambda _call: TerminalCallResultContract8616.VALUE,
 ) -> TerminalCallResultReturnCallbacks8616:
     return TerminalCallResultReturnCallbacks8616(
         iter_c_nodes_deep=_iter_nodes,
@@ -270,12 +281,18 @@ def _terminal_call_callbacks(
 
 def _callbacks(final_value: int) -> ReturnChainFlattenCallbacks8616:
     return ReturnChainFlattenCallbacks8616(
+        set_cfunc_statements_root=_set_cfunc_statements_root,
         final_return_value=lambda _project, _codegen: final_value,
         expr_fingerprint=lambda expr, _project: f"const:{expr.value}" if isinstance(expr, CConstant) else repr(expr),
         iter_c_nodes_deep=_iter_nodes,
         single_if_return=_single_if_return,
         const_return_value=_const_return_value,
     )
+
+
+def _set_cfunc_statements_root(codegen, root):
+    codegen.cfunc.statements = root
+    codegen.cfunc.body = root
 
 
 def _count_callbacks() -> ReturnChainCountCallbacks8616:
@@ -823,7 +840,7 @@ def _selector_callbacks(
         selector_condition_call_addrs_from_cfg=lambda _project, _codegen: set(allowed_from_cfg or set()),
         selector_function_has_unsafe_effects=lambda _project, _codegen, _allowed: unsafe_effects,
         clone_c_value_for_codegen_tree=lambda expr: expr,
-        set_cfunc_statements_root=lambda codegen, root: setattr(codegen.cfunc, "statements", root),
+        set_cfunc_statements_root=_set_cfunc_statements_root,
         expr_fingerprint=lambda expr, _project: f"const:{expr.value}" if isinstance(expr, CConstant) else repr(expr),
     )
 
@@ -867,7 +884,8 @@ def _next_target_after_jcc(block, _block_addr: int, jcc_addr: int) -> int | None
 def test_structuring_return_chain_flattening_rebuilds_cfg_proven_chain():
     project = SimpleNamespace(arch=Arch86_16())
     codegen = _DummyCodegen()
-    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=CStatements(statements=[], codegen=codegen))
+    stale_root = CStatements(statements=[], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=stale_root, body=stale_root)
     cond_one = _const(1, codegen)
     cond_two = _const(2, codegen)
 
@@ -880,6 +898,7 @@ def test_structuring_return_chain_flattening_rebuilds_cfg_proven_chain():
 
     statements = tuple(codegen.cfunc.statements.statements)
     assert changed is True
+    assert codegen.cfunc.statements is codegen.cfunc.body
     assert len(statements) == 3
     assert all(isinstance(stmt, CIfElse) for stmt in statements[:2])
     assert isinstance(statements[-1], CReturn)
@@ -1012,7 +1031,8 @@ def test_structuring_return_chain_flattening_is_idempotent_for_existing_chain():
     codegen = _DummyCodegen()
     cond_one = _const(1, codegen)
     cond_two = _const(2, codegen)
-    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=CStatements(statements=[], codegen=codegen))
+    stale_root = CStatements(statements=[], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(addr=0x4010, statements=stale_root, body=stale_root)
     flatten_conditional_return_chain_8616(project, codegen, [(cond_one, 7), (cond_two, 9)], _callbacks(11))
     root = codegen.cfunc.statements
 
@@ -1025,6 +1045,7 @@ def test_structuring_return_chain_flattening_is_idempotent_for_existing_chain():
 
     assert changed is False
     assert codegen.cfunc.statements is root
+    assert codegen.cfunc.body is root
 
 
 def test_structuring_return_chain_suffix_rebuilds_after_semantic_prefix():
@@ -1048,6 +1069,7 @@ def test_structuring_return_chain_suffix_rebuilds_after_semantic_prefix():
 
     statements = tuple(codegen.cfunc.statements.statements)
     assert changed is True
+    assert codegen.cfunc.statements is codegen.cfunc.body
     assert statements[0] is setup
     assert len(statements) == 4
     assert all(isinstance(stmt, CIfElse) for stmt in statements[1:3])
@@ -1800,6 +1822,7 @@ def test_structuring_materialize_sequential_decrement_switch_return_chain_builds
         return getattr(local_insns[index + 1], "target", None)
 
     callbacks = SequentialDecrementSwitchCallbacks8616(
+        set_cfunc_statements_root=_set_cfunc_statements_root,
         selector_stack_expr=lambda _project, _codegen: selector,
         selector_function_has_unsafe_effects=lambda _project, _codegen: False,
         selector_raw_stack_aliases=lambda _project, _selector: {"selector": ("stack:-2:2",)},
@@ -1817,6 +1840,7 @@ def test_structuring_materialize_sequential_decrement_switch_return_chain_builds
     assert materialize_sequential_decrement_switch_return_chain_8616(project, codegen, callbacks)
 
     statements = tuple(codegen.cfunc.statements.statements)
+    assert codegen.cfunc.statements is codegen.cfunc.body
     assert len(statements) == 3
     assert isinstance(statements[0], CIfElse)
     assert isinstance(statements[1], CIfElse)
@@ -1824,6 +1848,11 @@ def test_structuring_materialize_sequential_decrement_switch_return_chain_builds
     assert codegen._inertia_decrement_switch_return_materialized_8616 is True
     assert codegen._inertia_sequential_decrement_switch_return_materialized_8616 is True
     assert codegen._inertia_return_selector_materialized_8616 is True
+    conditions = tuple(stmt.condition_and_nodes[0][0] for stmt in statements[:2])
+    assert tuple((cond.op, cond.rhs.value) for cond in conditions) == (("CmpEQ", 0), ("CmpEQ", 1))
+    assert codegen._inertia_return_chain_materialized_condition_fingerprints_8616 == tuple(
+        repr(cond) for cond in conditions
+    )
     assert codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 == (
         "const:10",
         "const:11",
@@ -1846,6 +1875,7 @@ def test_structuring_materialize_sequential_decrement_switch_return_chain_refuse
         SimpleNamespace(address=0x1005, mnemonic="jmp", target=0x3000),
     )
     callbacks = SequentialDecrementSwitchCallbacks8616(
+        set_cfunc_statements_root=_set_cfunc_statements_root,
         selector_stack_expr=lambda _project, _codegen: selector,
         selector_function_has_unsafe_effects=lambda _project, _codegen: False,
         selector_raw_stack_aliases=lambda _project, _selector: {},
@@ -1892,6 +1922,7 @@ def test_structuring_materialize_complex_decrement_switch_return_chain_builds_ca
         return getattr(local_insns[index + 1], "target", None)
 
     callbacks = ComplexDecrementSwitchCallbacks8616(
+        set_cfunc_statements_root=_set_cfunc_statements_root,
         selector_stack_expr=lambda _project, _codegen: selector,
         selector_function_has_unsafe_effects=lambda _project, _codegen: False,
         selector_raw_stack_aliases=lambda _project, _selector: {"selector": ("stack:-2:2",)},
@@ -1912,11 +1943,22 @@ def test_structuring_materialize_complex_decrement_switch_return_chain_builds_ca
     assert materialize_complex_decrement_switch_return_chain_8616(project, codegen, callbacks)
 
     statements = tuple(codegen.cfunc.statements.statements)
+    assert codegen.cfunc.statements is codegen.cfunc.body
     assert len(statements) == 5
     assert all(isinstance(stmt, CIfElse) for stmt in statements[:4])
     assert isinstance(statements[4], CReturn)
     assert codegen._inertia_decrement_switch_return_materialized_8616 is True
     assert codegen._inertia_return_selector_materialized_8616 is True
+    conditions = tuple(stmt.condition_and_nodes[0][0] for stmt in statements[:4])
+    assert tuple((cond.op, cond.rhs.value) for cond in conditions) == (
+        ("CmpEQ", 0),
+        ("CmpLT", 1),
+        ("CmpLE", 2),
+        ("CmpEQ", 3),
+    )
+    assert codegen._inertia_return_chain_materialized_condition_fingerprints_8616 == tuple(
+        repr(cond) for cond in conditions
+    )
     assert codegen._inertia_return_expr_chain_materialized_return_fingerprints_8616 == (
         "const:10",
         "const:11",
@@ -1947,6 +1989,7 @@ def test_structuring_materialize_complex_decrement_switch_return_chain_refuses_d
         SimpleNamespace(address=0x100B, mnemonic="jmp", target=0x4000),
     )
     callbacks = ComplexDecrementSwitchCallbacks8616(
+        set_cfunc_statements_root=_set_cfunc_statements_root,
         selector_stack_expr=lambda _project, _codegen: selector,
         selector_function_has_unsafe_effects=lambda _project, _codegen: False,
         selector_raw_stack_aliases=lambda _project, _selector: {},
@@ -1970,7 +2013,7 @@ def test_structuring_selector_function_has_unsafe_effects_flags_memory_write():
     codegen = _DummyCodegen()
     insn = SimpleNamespace(address=0x1000, mnemonic="mov", operands=(_mem_operand(4, -2, 2), _reg_operand(1)))
     callbacks = SelectorUnsafeEffectsCallbacks8616(
-        function_insns=lambda _project, _codegen: (insn,),
+        function_inventory=lambda _project, _codegen: _complete_instruction_inventory(insn),
         direct_call_target=lambda _insn: None,
         callee_name_for_target=lambda _project, _target: (None, None),
         target_is_stack_probe_helper=lambda _project, _target, _name: False,
@@ -1984,7 +2027,7 @@ def test_structuring_selector_function_has_unsafe_effects_allows_proven_conditio
     codegen = _DummyCodegen()
     insn = SimpleNamespace(address=0x1010, size=3, mnemonic="call", operands=(), target=0x2000)
     callbacks = SelectorUnsafeEffectsCallbacks8616(
-        function_insns=lambda _project, _codegen: (insn,),
+        function_inventory=lambda _project, _codegen: _complete_instruction_inventory(insn),
         direct_call_target=lambda local_insn: getattr(local_insn, "target", None),
         callee_name_for_target=lambda _project, _target: ("compare_selector", object()),
         target_is_stack_probe_helper=lambda _project, _target, _name: False,
@@ -1998,7 +2041,45 @@ def test_structuring_selector_function_has_unsafe_effects_flags_indirect_call():
     codegen = _DummyCodegen()
     insn = SimpleNamespace(address=0x1010, size=3, mnemonic="call", operands=(), target=None)
     callbacks = SelectorUnsafeEffectsCallbacks8616(
-        function_insns=lambda _project, _codegen: (insn,),
+        function_inventory=lambda _project, _codegen: _complete_instruction_inventory(insn),
+        direct_call_target=lambda _insn: None,
+        callee_name_for_target=lambda _project, _target: (None, None),
+        target_is_stack_probe_helper=lambda _project, _target, _name: False,
+    )
+
+    assert selector_function_has_unsafe_effects_8616(project, codegen, callbacks)
+
+
+def _complete_instruction_inventory(*insns: object) -> FunctionInstructionInventory8616:
+    return FunctionInstructionInventory8616(
+        function_entry=0x1000,
+        block_addrs=(0x1000,),
+        instructions=insns,
+        status=FunctionInstructionInventoryStatus8616.COMPLETE,
+        raw_fact_count=1,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=1,
+        failure_count=0,
+    )
+
+
+def test_structuring_selector_function_refuses_incomplete_instruction_inventory():
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    inventory = FunctionInstructionInventory8616(
+        function_entry=0x1000,
+        block_addrs=(0x1000,),
+        instructions=(),
+        status=FunctionInstructionInventoryStatus8616.DECODE_REFUSED,
+        raw_fact_count=1,
+        normalized_fact_count=1,
+        classified_fact_count=1,
+        materialized_count=0,
+        failure_count=1,
+    )
+    callbacks = SelectorUnsafeEffectsCallbacks8616(
+        function_inventory=lambda _project, _codegen: inventory,
         direct_call_target=lambda _insn: None,
         callee_name_for_target=lambda _project, _target: (None, None),
         target_is_stack_probe_helper=lambda _project, _target, _name: False,
@@ -2496,7 +2577,17 @@ def test_structuring_terminal_call_result_closed_unused_overrides_local_carrier(
     assert tuple(root.statements) == (assignment, returned_carrier)
 
 
-def test_structuring_terminal_call_result_refuses_explicit_void_callee():
+@pytest.mark.parametrize(
+    ("result_contract", "expected_status"),
+    (
+        (TerminalCallResultContract8616.VOID, TerminalCallResultReturnStatus8616.CALLEE_RETURNS_VOID),
+        (
+            TerminalCallResultContract8616.UNKNOWN,
+            TerminalCallResultReturnStatus8616.CALLEE_RESULT_CONTRACT_UNKNOWN,
+        ),
+    ),
+)
+def test_structuring_terminal_call_result_refuses_nonvalue_callee_contract(result_contract, expected_status):
     codegen = _DummyCodegen()
     call = CFunctionCall("outtext", None, [], tags={"ins_addr": 0x104}, codegen=codegen)
     call_statement = CExpressionStatement(call, codegen=codegen)
@@ -2506,7 +2597,7 @@ def test_structuring_terminal_call_result_refuses_explicit_void_callee():
         {},
         (),
         {},
-        call_result_contract=lambda _call: TerminalCallResultContract8616.VOID,
+        call_result_contract=lambda _call: result_contract,
     )
 
     stats = materialize_terminal_call_result_return_8616(
@@ -2516,7 +2607,7 @@ def test_structuring_terminal_call_result_refuses_explicit_void_callee():
         callbacks=callbacks,
     )
 
-    assert stats.status is TerminalCallResultReturnStatus8616.CALLEE_RETURNS_VOID
+    assert stats.status is expected_status
     assert stats.materialized_count == 0
     assert stats.failure_count == 1
     assert tuple(root.statements) == (call_statement, empty_return)

@@ -6,6 +6,7 @@ Forbidden: using COD text as required proof for arguments, types, control flow, 
 
 from __future__ import annotations
 
+import contextlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -284,10 +285,8 @@ def extract_cod_proc_metadata(cod_path: Path, proc_name: str, proc_kind: str = "
             _remember_asm_globals(asm_text, offset_global_re, global_names, seen_globals, segment_registers)
 
         raw_entries: list[dict[str, object]] = []
-        try:
+        with contextlib.suppress(Exception):
             raw_entries = extract_cod_function_entries(cod_path, proc_name, proc_kind)
-        except Exception:
-            pass
         string_literals = _extract_cod_data_string_literals(lines)
         symbol_aliases = _extract_cod_symbol_aliases(lines)
         global_refs = _extract_cod_global_refs_from_entries(raw_entries, symbol_aliases)
@@ -769,9 +768,8 @@ def infer_cod_logic_start(entries: list[dict[str, object]]) -> int | None:
             continue
         for later_entry in entries[idx + 1 :]:
             later_text = str(later_entry.get("text", "")).lower()
-            if call_re.search(later_text):
-                if "chkstk" not in later_text:
-                    return None
+            if call_re.search(later_text) and "chkstk" not in later_text:
+                return None
         if idx + 1 < len(entries):
             return _cod_entry_offset_8616(entries[idx + 1])
     return None

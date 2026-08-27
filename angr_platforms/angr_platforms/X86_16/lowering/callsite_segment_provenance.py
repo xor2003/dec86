@@ -51,5 +51,5 @@ def attach_callsite_segment_address_provenance_8616(
             tags = dict(current_tags) if isinstance(current_tags, dict) else {}
             prior = tags.get(_SOURCE_ADDRS_TAG, ())
             prior_addrs = tuple(addr for addr in prior if isinstance(addr, int)) if isinstance(prior, tuple) else ()
-            tags[_SOURCE_ADDRS_TAG] = tuple(sorted(set((*prior_addrs, *exact_addrs))))
+            tags[_SOURCE_ADDRS_TAG] = tuple(sorted({*prior_addrs, *exact_addrs}))
             boundary.tags = tags

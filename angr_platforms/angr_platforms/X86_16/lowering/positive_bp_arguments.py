@@ -10,10 +10,12 @@ Do not recover semantics from COD, source, assembly, or rendered C text.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, Sequence, cast
+from typing import Any, Protocol, cast
 
 from angr.analyses.decompiler.structured_codegen import c as structured_c
+from angr.knowledge_plugins.functions.function import PrototypeSource
 from angr.sim_type import SimType, SimTypeChar, SimTypeFunction, SimTypeInt, SimTypeShort
 from angr.sim_variable import SimStackVariable
 
@@ -24,6 +26,7 @@ from .callee_argument_interface import (
     reconcile_callee_argument_interface_8616,
 )
 from .stack_c_ast_matching import _stack_variable_read_offsets_8616
+from .stack_prototype_layout import stack_prototype_argument_layout_8616
 
 
 class _PositiveBpCFunction8616(Protocol):
@@ -52,6 +55,7 @@ class _FunctionSurface8616(Protocol):
     """angr function metadata updated with the recovered binary ABI."""
 
     prototype: object
+    prototype_source: PrototypeSource
     is_prototype_guessed: bool
 
 
@@ -118,7 +122,7 @@ def _existing_interface_matches_8616(
     if len(existing) != len(desired) or len(tuple(prototype.args or ())) != len(desired):
         return False
     cursor = 4
-    for current, wanted in zip(existing, desired):
+    for current, wanted in zip(existing, desired, strict=False):
         if not isinstance(current, structured_c.CVariable):
             return False
         current_variable = current.variable
@@ -242,6 +246,23 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
     raw_count = sum(len(bucket) for bucket in candidates.values())
     normalized_count = len(candidates)
     read_offsets = _stack_variable_read_offsets_8616(cfunc.statements)
+    try:
+        project_arch = cast(Any, project).arch
+        function_layout = (
+            stack_prototype_argument_layout_8616(function.prototype, project_arch)
+            if function is not None and not function.is_prototype_guessed
+            else ()
+        )
+    except AttributeError:
+        function_layout = ()
+    layout_by_offset = {argument.offset: argument for argument in function_layout}
+    authoritative_layout_end = (
+        function_layout[-1].offset + function_layout[-1].storage_width
+        if function_layout
+        and function is not None
+        and function.prototype_source >= PrototypeSource.SIGNATURES
+        else None
+    )
     desired: list[structured_c.CVariable] = []
     desired_names: list[str] = []
     desired_variables: set[SimStackVariable] = set()
@@ -249,6 +270,8 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
     for offset in sorted(candidates):
         if offset < cursor:
             continue
+        if authoritative_layout_end is not None and offset >= authoritative_layout_end:
+            break
         if offset != cursor:
             break
         if offset not in read_offsets:
@@ -261,12 +284,19 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
             body_bucket,
             key=_candidate_width_8616,
         )
-        width = max(_candidate_width_8616(item) for item in body_bucket)
+        layout_argument = layout_by_offset.get(offset)
+        width = (
+            layout_argument.storage_width
+            if layout_argument is not None
+            else max(_candidate_width_8616(item) for item in body_bucket)
+        )
         variable = cast(SimStackVariable, canonical.variable)
         variable.size = width
         name = _canonical_argument_name_8616(canonical)
         variable.name = name
-        if not isinstance(canonical.variable_type, SimType):
+        if layout_argument is not None:
+            canonical.variable_type = layout_argument.argument_type
+        elif not isinstance(canonical.variable_type, SimType):
             canonical.variable_type = SimTypeShort(False)
         desired.append(canonical)
         desired_names.append(name)
@@ -329,9 +359,9 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
             argument_type,
             proven_width=2 if cast(SimStackVariable, candidate.variable).offset in word_access_offsets else None,
         )
-        for candidate, argument_type in zip(desired, source_types)
+        for candidate, argument_type in zip(desired, source_types, strict=False)
     ]
-    for candidate, argument_type in zip(desired, argument_types):
+    for candidate, argument_type in zip(desired, argument_types, strict=False):
         candidate.variable_type = argument_type
     new_prototype = SimTypeFunction(argument_types, return_type, arg_names=desired_names, variadic=variadic)
     try:
@@ -340,7 +370,7 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
     except AttributeError:
         pass
 
-    changed = len(existing_args) != len(desired) or any(current is not wanted for current, wanted in zip(existing_args, desired))
+    changed = len(existing_args) != len(desired) or any(current is not wanted for current, wanted in zip(existing_args, desired, strict=False))
     if changed:
         cfunc.arg_list = desired
     if cfunc.functy != new_prototype:
@@ -355,7 +385,8 @@ def materialize_positive_bp_arguments_8616(project: object, codegen: object) -> 
 
     if function is not None:
         function.prototype = new_prototype
-        function.is_prototype_guessed = False
+        if function.prototype_source < PrototypeSource.CCA_DECOMPILER:
+            function.prototype_source = PrototypeSource.CCA_DECOMPILER
 
     if isinstance(variables_in_use, dict):
         for variable in tuple(variables_in_use):

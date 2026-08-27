@@ -11,14 +11,13 @@ postprocess, or CLI/reporting work here. Never infer stack identity here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
-from typing import TypeAlias
+from enum import StrEnum
 
 from .core import IRBlock, IRInstr, IRValue, MemSpace, SegmentOrigin
 
 __all__ = [
-    "InstructionStateKey",
     "SEGMENT_REGISTERS",
+    "InstructionStateKey",
     "SegmentRegisterState",
     "SegmentRestoreSource",
     "SegmentValueKind8616",
@@ -29,10 +28,10 @@ __all__ = [
 ]
 
 SEGMENT_REGISTERS: tuple[str, ...] = ("cs", "ds", "es", "ss", "fs", "gs")
-InstructionStateKey: TypeAlias = int | tuple[int, int]
+type InstructionStateKey = int | tuple[int, int]
 
 
-class SegmentValueKind8616(str, Enum):
+class SegmentValueKind8616(StrEnum):
     """Typed provenance class for one segment-register state."""
 
     UNKNOWN = "unknown"

@@ -128,10 +128,8 @@ def _unlink_same_inode(lock_path: Path, *, device: int, inode: int) -> bool:
         return True
     if current.st_dev != device or current.st_ino != inode:
         return False
-    try:
+    with contextlib.suppress(FileNotFoundError):
         lock_path.unlink()
-    except FileNotFoundError:
-        pass
     return True
 
 
@@ -170,7 +168,7 @@ def cache_path_lock(lock_path: Path, *, timeout_seconds: float = 600.0) -> Itera
             if _reclaim_stale_lock(lock_path):
                 continue
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"timed out waiting for cache key lock: {lock_path}")
+                raise TimeoutError(f"timed out waiting for cache key lock: {lock_path}")  # noqa: B904
             time.sleep(0.05)
         except BaseException:
             if descriptor is not None:

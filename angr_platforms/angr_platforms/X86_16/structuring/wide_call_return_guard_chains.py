@@ -13,9 +13,9 @@ rendered C, assembly text, source files, or helper names.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
-from typing import Callable, TypeAlias
+from enum import StrEnum
 
 from angr.analyses.decompiler.structured_codegen.c import (
     CExpression,
@@ -29,11 +29,11 @@ from ..ir.condition_ir import ConditionIR
 from ..pipeline.errors import PipelineHardError
 from .branch_return_expressions import sole_return_statement_8616
 
-DirectInstructionAddress8616: TypeAlias = Callable[[object], int | None]
-SameExpression8616: TypeAlias = Callable[[CExpression, CExpression], bool]
+type DirectInstructionAddress8616 = Callable[[object], int | None]
+type SameExpression8616 = Callable[[CExpression, CExpression], bool]
 
 
-class WideCallReturnGuardCollapseStatus8616(str, Enum):
+class WideCallReturnGuardCollapseStatus8616(StrEnum):
     """Typed outcome of one wide call-return nested-guard inspection."""
 
     NOT_APPLICABLE = "not_applicable"
@@ -41,7 +41,7 @@ class WideCallReturnGuardCollapseStatus8616(str, Enum):
     MATERIALIZED = "materialized"
 
 
-class WideCallReturnGuardCollapseReason8616(str, Enum):
+class WideCallReturnGuardCollapseReason8616(StrEnum):
     """Typed reason for accepting, refusing, or ignoring one candidate."""
 
     ELSE_HAS_NO_STATEMENT = "else_has_no_statement"

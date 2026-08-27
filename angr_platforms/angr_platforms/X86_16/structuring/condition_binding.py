@@ -14,14 +14,13 @@ semantics. Ambiguous or unavailable materializations are refused.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TypeAlias
 
 from angr.analyses.decompiler.structured_codegen.c import CExpression
 
 from ..ir.condition_ir import ConditionIR
 
-ConditionMaterializer8616: TypeAlias = Callable[[ConditionIR], CExpression | None]
-ConditionExpressionComparer8616: TypeAlias = Callable[[CExpression, CExpression], bool]
+type ConditionMaterializer8616 = Callable[[ConditionIR], CExpression | None]
+type ConditionExpressionComparer8616 = Callable[[CExpression, CExpression], bool]
 
 
 def select_unique_condition_by_expression_8616(

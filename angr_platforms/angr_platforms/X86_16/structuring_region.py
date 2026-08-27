@@ -18,9 +18,8 @@ from __future__ import annotations
 import enum
 import logging
 from dataclasses import dataclass, field
-from typing import TypeAlias
 
-CNode: TypeAlias = object
+type CNode = object
 
 
 def _dynamic_codegen_attr_8616(obj: object, name: str, default: object = None) -> object:
@@ -497,7 +496,7 @@ class RegionGraphBuilder:
                     continue
                 for succ_addr in succs:
                     if isinstance(succ_addr, int) and succ_addr in blocks:
-                        edges.append((block_addr, succ_addr))
+                        edges.append((block_addr, succ_addr))  # noqa: PERF401
 
         return edges
 
@@ -517,7 +516,7 @@ def compute_dominators(graph: RegionGraph) -> DominatorInfo:
 
         Returns:
             DominatorInfo object with cached relationships
-        """
+        """  # noqa: RUF002
         if graph.entry is None:
             return DominatorInfo()
 

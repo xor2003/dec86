@@ -31,6 +31,8 @@ _decompile = module_from_spec(_spec)
 sys.modules[_spec.name] = _decompile
 _spec.loader.exec_module(_decompile)
 
+import contextlib
+
 from angr_platforms.X86_16 import decompiler_postprocess as postprocess
 
 
@@ -42,10 +44,8 @@ class _FakePrototype:
         self.variadic = variadic
 
     def with_arch(self, _arch):
-        try:
+        with contextlib.suppress(Exception):
             self.returnty = self.returnty.with_arch(_arch)
-        except Exception:
-            pass
         self.args = [arg.with_arch(_arch) if hasattr(arg, "with_arch") else arg for arg in self.args]
         return self
 
@@ -72,7 +72,7 @@ def test_positive_bp_arg_promotion_materializes_contained_high_byte_arg():
     project = SimpleNamespace(arch=arch)
     word_var = SimStackVariable(4, 2, base="bp", name="frequency", region=0x1000)
     high_var = SimStackVariable(5, 1, base="bp", name="arg_5", region=0x1000)
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     word_cvar = structured_c.CVariable(word_var, variable_type=SimTypeShort(False), codegen=codegen)
     high_cvar = structured_c.CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
     call = structured_c.CFunctionCall(
@@ -117,7 +117,7 @@ def test_positive_bp_arg_promotion_keeps_high_byte_assignment_destination_withou
     project = SimpleNamespace(arch=arch)
     word_var = SimStackVariable(4, 2, base="bp", name="frequency", region=0x1000)
     high_var = SimStackVariable(5, 1, base="bp", name="arg_5", region=0x1000)
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     word_cvar = structured_c.CVariable(word_var, variable_type=SimTypeShort(False), codegen=codegen)
     high_cvar = structured_c.CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
     assignment = structured_c.CAssignment(
@@ -153,7 +153,7 @@ def test_positive_bp_arg_promotion_prunes_stale_high_byte_formal_without_lane_fa
     word_var = SimStackVariable(4, 2, base="bp", name="frequency", region=0x1000)
     high_var = SimStackVariable(5, 1, base="bp", name="arg_5", region=0x1000)
     duration_var = SimStackVariable(6, 2, base="bp", name="duration", region=0x1000)
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     word_cvar = structured_c.CVariable(word_var, variable_type=SimTypeShort(False), codegen=codegen)
     high_cvar = structured_c.CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
     duration_cvar = structured_c.CVariable(duration_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -198,7 +198,7 @@ def test_pointer_arg_offset_map_uses_prototype_names_for_duplicate_arg_names():
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=arch),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     first_cvar = structured_c.CVariable(first_var, variable_type=pointer_type, codegen=c_codegen)
     second_cvar = structured_c.CVariable(second_var, variable_type=pointer_type, codegen=c_codegen)
     codegen = SimpleNamespace(
@@ -231,7 +231,7 @@ def test_positive_bp_arg_promotion_uses_source_name_for_generic_arg_slot():
         arch=arch,
         kb=SimpleNamespace(functions=SimpleNamespace(function=lambda **_kwargs: func)),
     )
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     arg_cvar = structured_c.CVariable(arg_var, variable_type=SimTypeShort(False), codegen=codegen)
     root = structured_c.CStatements([structured_c.CExpressionStatement(arg_cvar, codegen=codegen)], codegen=codegen)
     cfunc = SimpleNamespace(
@@ -270,7 +270,7 @@ def test_stack_prototype_promotion_collapses_existing_contained_high_byte_arg():
     word_var = SimStackVariable(4, 2, base="bp", name="frequency", region=0x1000)
     high_var = SimStackVariable(5, 1, base="bp", name="arg_5", region=0x1000)
     duration_var = SimStackVariable(6, 2, base="bp", name="duration", region=0x1000)
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     word_cvar = structured_c.CVariable(word_var, variable_type=SimTypeShort(False), codegen=codegen)
     high_cvar = structured_c.CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
     duration_cvar = structured_c.CVariable(duration_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -318,7 +318,7 @@ def test_positive_bp_arg_promotion_uses_body_reference_for_contained_high_byte_a
     word_var = SimStackVariable(4, 2, base="bp", name="frequency", region=0x1000)
     high_var = SimStackVariable(5, 1, base="bp", name="arg_5", region=0x1000)
     duration_var = SimStackVariable(6, 2, base="bp", name="duration", region=0x1000)
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     word_cvar = structured_c.CVariable(word_var, variable_type=SimTypeShort(False), codegen=codegen)
     high_cvar = structured_c.CVariable(high_var, variable_type=SimTypeShort(False), codegen=codegen)
     duration_cvar = structured_c.CVariable(duration_var, variable_type=SimTypeShort(False), codegen=codegen)
@@ -375,7 +375,7 @@ def test_prototype_stack_layout_uses_cod_offsets_for_near_function_pointer_args(
             arg_list=[],
             functy=None,
         ),
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     prototype = SimTypeFunction(
         [fnptr_type, value_type],
         SimTypeShort(False).with_arch(arch),
@@ -404,7 +404,7 @@ def test_prototype_stack_layout_reuses_body_stack_slot_missing_from_variable_map
     prototype = SimTypeFunction([arg_type], SimTypeShort(False).with_arch(arch), arg_names=("local",)).with_arch(arch)
     func = SimpleNamespace(addr=0x1000, prototype=prototype, is_prototype_guessed=False)
     project = SimpleNamespace(arch=arch)
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     body_var = SimStackVariable(4, 2, base="bp", name="local_4", region=0x1000)
     body_cvar = structured_c.CVariable(body_var, variable_type=arg_type, codegen=codegen)
     ret = structured_c.CReturn(body_cvar, codegen=codegen)
@@ -470,7 +470,7 @@ def test_lowering_materializes_normalized_stack_annotation_prototype_before_post
             functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     cfunc = SimpleNamespace(
         addr=0x1000,
         name="inc_one",
@@ -481,7 +481,7 @@ def test_lowering_materializes_normalized_stack_annotation_prototype_before_post
         prototype=func.prototype,
         statements=structured_c.CStatements([], codegen=c_codegen),
     )
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
     changed = materialize_annotated_stack_prototype_8616(project, codegen)
 
@@ -524,10 +524,10 @@ def test_lowering_materializes_wide_argument_from_adjacent_annotation_starts() -
             functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     physical_args = []
     variables_in_use = {}
-    for offset, name in zip((4, 6, 8, 10, 12), physical_prototype.arg_names):
+    for offset, name in zip((4, 6, 8, 10, 12), physical_prototype.arg_names, strict=False):
         variable = SimStackVariable(offset, 2, base="bp", name=name, region=0x1000)
         cvar = structured_c.CVariable(variable, variable_type=short_type, codegen=c_codegen)
         variables_in_use[variable] = cvar
@@ -541,7 +541,7 @@ def test_lowering_materializes_wide_argument_from_adjacent_annotation_starts() -
         prototype=physical_prototype,
         statements=structured_c.CStatements([], codegen=c_codegen),
     )
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
     assert materialize_annotated_stack_prototype_8616(project, codegen)
 
@@ -572,7 +572,7 @@ def test_lowering_stack_prototype_preserves_explicit_void_return_type():
             functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     cfunc = SimpleNamespace(
         addr=0x1000,
         variables_in_use={},
@@ -582,7 +582,7 @@ def test_lowering_stack_prototype_preserves_explicit_void_return_type():
         prototype=func.prototype,
         statements=structured_c.CStatements([], codegen=c_codegen),
     )
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
     changed = materialize_annotated_stack_prototype_8616(project, codegen)
 
@@ -623,7 +623,7 @@ def test_lowering_explicit_annotated_zero_args_blocks_legacy_positive_bp_promoti
             functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     stale_var = SimStackVariable(4, 2, base="bp", name="arg_4", region=0x1000)
     stale_cvar = structured_c.CVariable(stale_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     cfunc = SimpleNamespace(
@@ -635,7 +635,7 @@ def test_lowering_explicit_annotated_zero_args_blocks_legacy_positive_bp_promoti
         prototype=guessed_prototype,
         statements=structured_c.CStatements([], codegen=c_codegen),
     )
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
     changed = materialize_annotated_stack_prototype_8616(project, codegen)
 
@@ -670,7 +670,7 @@ def test_lowering_explicit_zero_args_without_positive_stack_facts_blocks_legacy_
             functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     stale_var = SimStackVariable(4, 2, base="bp", name="arg_4", region=0x1000)
     stale_cvar = structured_c.CVariable(stale_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     cfunc = SimpleNamespace(
@@ -682,7 +682,7 @@ def test_lowering_explicit_zero_args_without_positive_stack_facts_blocks_legacy_
         prototype=guessed_prototype,
         statements=structured_c.CStatements([], codegen=c_codegen),
     )
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
     changed = materialize_annotated_stack_prototype_8616(project, codegen)
 
@@ -713,7 +713,7 @@ def test_lowering_materializes_wide_stack_annotation_prototype_and_prunes_high_w
             functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     high_a = SimStackVariable(6, 2, base="bp", name="local_6", region=0x1000)
     high_b = SimStackVariable(10, 2, base="bp", name="local_a", region=0x1000)
     high_a_cvar = structured_c.CVariable(high_a, variable_type=SimTypeShort(False), codegen=c_codegen)
@@ -728,7 +728,7 @@ def test_lowering_materializes_wide_stack_annotation_prototype_and_prunes_high_w
         prototype=func.prototype,
         statements=structured_c.CStatements([], codegen=c_codegen),
     )
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
     changed = materialize_annotated_stack_prototype_8616(project, codegen)
 
@@ -764,7 +764,7 @@ def test_lowering_constrains_guessed_wide_args_to_exact_independent_word_slots()
             functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     which_var = SimStackVariable(2, 2, base="bp", name="arg_2", region=0x1000)
     value_var = SimStackVariable(4, 2, base="bp", name="arg_4", region=0x1000)
     which_cvar = structured_c.CVariable(which_var, variable_type=SimTypeShort(False), codegen=c_codegen)
@@ -779,7 +779,7 @@ def test_lowering_constrains_guessed_wide_args_to_exact_independent_word_slots()
         prototype=func.prototype,
         statements=structured_c.CStatements([], codegen=c_codegen),
     )
-    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False)
+    codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, cfunc=cfunc, cstyle_null_cmp=False, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
     changed = materialize_annotated_stack_prototype_8616(project, codegen)
 
@@ -812,7 +812,7 @@ def test_reconcile_exact_stack_argument_prototype_narrows_all_word_slots():
             functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     which_var = SimStackVariable(4, 2, base="bp", name="which", region=0x1000)
     value_var = SimStackVariable(6, 4, base="bp", name="value", region=0x1000)
     which = structured_c.CVariable(which_var, variable_type=SimTypeShort(False), codegen=c_codegen)
@@ -865,7 +865,7 @@ def test_reconcile_aggregates_split_call_sources_covering_one_wide_stack_object(
             functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     file_var = SimStackVariable(4, 2, base="bp", name="file", region=0x1000)
     cmdline_var = SimStackVariable(6, 4, base="bp", name="cmdline", region=0x1000)
     file_arg = structured_c.CVariable(file_var, variable_type=short_type, codegen=c_codegen)
@@ -916,7 +916,7 @@ def test_reconcile_uses_exact_near_pointer_parameter_slot_width() -> None:
             functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     count_var = SimStackVariable(4, 2, base="bp", name="count", region=0x1000)
     values_var = SimStackVariable(6, 2, base="bp", name="values", region=0x1000)
     count = structured_c.CVariable(count_var, variable_type=guessed_wide, codegen=c_codegen)
@@ -962,7 +962,7 @@ def test_reconcile_retains_exact_width_fact_when_prototype_is_already_correct() 
             functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     value_var = SimStackVariable(4, 2, base="bp", name="value", region=0x1000)
     value = structured_c.CVariable(value_var, variable_type=short_type, codegen=c_codegen)
     cfunc = SimpleNamespace(
@@ -999,7 +999,7 @@ def test_reconcile_replaces_stale_zero_arg_function_metadata_from_exact_stack_ar
             functions=SimpleNamespace(function=lambda addr, create=False: func if addr == 0x1000 else None)
         ),
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     left_var = SimStackVariable(4, 2, base="bp", name="left", region=0x1000)
     right_var = SimStackVariable(6, 2, base="bp", name="right", region=0x1000)
     left = structured_c.CVariable(left_var, variable_type=short_type, codegen=c_codegen)
@@ -1057,7 +1057,7 @@ def test_materialize_uses_abi_word_for_vex_wide_simtype_int() -> None:
         name="value",
         region=0x1000,
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     value = structured_c.CVariable(
         stack_var,
         variable_type=int_type,
@@ -1074,7 +1074,7 @@ def test_materialize_uses_abi_word_for_vex_wide_simtype_int() -> None:
         cfunc=cfunc,
         next_idx=lambda _name: 1,
         project=project,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
     changed = materialize_annotated_stack_prototype_8616(project, codegen)
 
@@ -1115,7 +1115,7 @@ def test_materialize_preserves_exact_near_pointer_stack_slot_width() -> None:
         ),
     )
     stack_var = SimStackVariable(4, 2, base="bp", name="values", region=0x1000)
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=project, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     values = structured_c.CVariable(
         stack_var,
         variable_type=pointer_type,
@@ -1132,7 +1132,7 @@ def test_materialize_preserves_exact_near_pointer_stack_slot_width() -> None:
         cfunc=cfunc,
         next_idx=lambda _name: 1,
         project=project,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
 
     changed = materialize_annotated_stack_prototype_8616(project, codegen)
 
@@ -1150,7 +1150,7 @@ def test_positive_stack_specs_normalization_prefers_arg_list_over_stale_bp2_slot
     first_var = SimStackVariable(4, 2, base="bp", name="value", region=0x1000)
     second_var = SimStackVariable(6, 2, base="bp", name="limit", region=0x1000)
     stale_var = SimStackVariable(2, 2, base="bp", name="local_2", region=0x1000)
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     first_cvar = structured_c.CVariable(first_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     second_cvar = structured_c.CVariable(second_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     stale_cvar = structured_c.CVariable(stale_var, variable_type=SimTypeShort(False), codegen=c_codegen)
@@ -1168,7 +1168,7 @@ def test_positive_stack_specs_normalization_prefers_arg_list_over_stale_bp2_slot
 
 
 def test_bp_stack_prototype_promotion_rejects_mixed_stack_regions(monkeypatch):
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     project = SimpleNamespace(
         arch=SimpleNamespace(),
         kb=SimpleNamespace(
@@ -1239,7 +1239,7 @@ def test_bp_stack_prototype_promotion_uses_annotated_stack_vars():
 
 def test_bp_stack_prototype_promotion_preserves_pointer_evidence():
     stack_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     stack_cvar = structured_c.CVariable(stack_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     func = SimpleNamespace(
         prototype=_FakePrototype(
@@ -1284,7 +1284,7 @@ def test_bp_stack_prototype_promotion_preserves_pointer_evidence():
 
 def test_bp_stack_prototype_promotion_preserves_pointer_evidence_without_annotations():
     stack_var = SimStackVariable(4, 2, base="bp", name="s", region=0x1000)
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     stack_cvar = structured_c.CVariable(stack_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     func = SimpleNamespace(
         prototype=_FakePrototype(
@@ -1326,7 +1326,7 @@ def test_bp_stack_prototype_promotion_preserves_pointer_evidence_without_annotat
 
 def test_bp_stack_prototype_promotion_respects_scalar_source_decl_over_weak_pointer_promotion():
     stack_var = SimStackVariable(6, 2, base="bp", name="iRow2", region=0x1000)
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     stack_cvar = structured_c.CVariable(stack_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     func = SimpleNamespace(
         prototype=_FakePrototype(
@@ -1369,7 +1369,7 @@ def test_bp_stack_prototype_promotion_respects_scalar_source_decl_over_weak_poin
             arg_list=[None, stack_cvar],
             functy=func.prototype,
         ),
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     stack_cvar.codegen = codegen
 
     postprocess._promote_stack_prototype_from_bp_loads_8616(project, codegen)
@@ -1381,7 +1381,7 @@ def test_bp_stack_prototype_promotion_demotes_pointer_cvar_from_structured_scala
     arch = Arch86_16()
     first_stack_var = SimStackVariable(4, 2, base="bp", name="iRow1", region=0x1000)
     stack_var = SimStackVariable(6, 2, base="bp", name="iRow2", region=0x1000)
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     first_stack_cvar = structured_c.CVariable(
         first_stack_var,
         variable_type=SimTypeShort(False).with_arch(arch),
@@ -1425,7 +1425,7 @@ def test_bp_stack_prototype_promotion_demotes_pointer_cvar_from_structured_scala
             arg_list=[first_stack_cvar, stack_cvar],
             functy=func.prototype,
         ),
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     first_stack_cvar.codegen = codegen
     stack_cvar.codegen = codegen
 
@@ -1440,7 +1440,7 @@ def test_annotation_arg_sync_demotes_pointer_from_structured_scalar_arg():
     arch = Arch86_16()
     first_stack_var = SimStackVariable(4, 2, base="bp", name="iRow1", region=0x1000)
     second_stack_var = SimStackVariable(6, 2, base="bp", name="iRow2", region=0x1000)
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     first_stack_cvar = structured_c.CVariable(
         first_stack_var,
         variable_type=SimTypeShort(False).with_arch(arch),
@@ -1496,7 +1496,7 @@ def test_annotation_arg_sync_ignores_project_cod_source_flags_without_structured
     arch = Arch86_16()
     first_stack_var = SimStackVariable(2, 2, base="bp", name="iRow1", region=0x1000)
     second_stack_var = SimStackVariable(4, 2, base="bp", name="iRow2", region=0x1000)
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     first_stack_cvar = structured_c.CVariable(
         first_stack_var,
         variable_type=SimTypeShort(False).with_arch(arch),
@@ -1556,7 +1556,7 @@ def test_fallback_arg_promotion_demotes_pointer_from_project_cod_scalar_flags():
     arch = Arch86_16()
     first_stack_var = SimStackVariable(2, 2, base="bp", name="iRow1", region=0x1000)
     second_stack_var = SimStackVariable(4, 2, base="bp", name="iRow2", region=0x1000)
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     first_stack_cvar = structured_c.CVariable(
         first_stack_var,
         variable_type=SimTypeShort(False).with_arch(arch),
@@ -1620,7 +1620,7 @@ def test_apply_annotations_uses_structured_prototype_for_active_function():
             }
         },
     )
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     first_stack_cvar = structured_c.CVariable(
         SimStackVariable(2, 2, base="bp", name="iRow1", region=0x1000),
         variable_type=SimTypeShort(False).with_arch(arch),
@@ -1695,7 +1695,7 @@ def test_annotation_rewrites_do_not_alias_next_argument_to_shifted_placeholder_n
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=arch),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     word = SimTypeShort(False).with_arch(arch)
     which = structured_c.CVariable(
         SimStackVariable(4, 2, base="bp", name="which", region=0x1000),
@@ -1753,7 +1753,7 @@ def test_annotation_rewrites_do_not_alias_next_argument_to_shifted_placeholder_n
 
 def test_unify_positive_bp_arg_stack_variables_replaces_duplicate_body_slots():
     arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     arg_cvar = structured_c.CVariable(
         SimStackVariable(6, 2, base="bp", name="iRow2", region=0x1000),
         variable_type=SimTypeShort(False).with_arch(arch),
@@ -1795,7 +1795,7 @@ def test_unify_positive_bp_arg_stack_variables_replaces_duplicate_body_slots():
 
 def test_unify_positive_bp_arg_stack_variables_rebinds_shifted_header_arg_to_body_slot():
     arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     stale_arg_cvar = structured_c.CVariable(
         SimStackVariable(2, 2, base="bp", name="local", region=0x1000),
         variable_type=SimTypeShort(True).with_arch(arch),
@@ -1832,7 +1832,7 @@ def test_unify_positive_bp_arg_stack_variables_rebinds_shifted_header_arg_to_bod
 
 def test_unify_positive_bp_arg_stack_variables_does_not_shift_real_bp4_arg_to_bp6():
     arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     first_arg_cvar = structured_c.CVariable(
         SimStackVariable(4, 2, base="bp", name="which", region=0x1000),
         variable_type=SimTypeShort(True).with_arch(arch),
@@ -1868,7 +1868,7 @@ def test_unify_positive_bp_arg_stack_variables_does_not_shift_real_bp4_arg_to_bp
 
 def test_unify_positive_bp_arg_stack_variables_refuses_selector_return_contract():
     arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     arg_cvar = structured_c.CVariable(
         SimStackVariable(6, 2, base="bp", name="iRow2", region=0x1000),
         variable_type=SimTypeShort(False).with_arch(arch),
@@ -1962,7 +1962,7 @@ def test_lowering_attaches_cod_stack_aliases_as_normalized_stack_specs():
     )
 
     class _Functions:
-        def function(self, *, addr, create=False):  # noqa: ARG002
+        def function(self, *, addr, create=False):
             return active if addr == 0x1000 else None
 
     project = SimpleNamespace(
@@ -2027,7 +2027,7 @@ def test_bp_stack_prototype_promotion_shrinks_overguessed_stack_arguments():
 
 
 def test_bp_stack_prototype_promotion_counts_only_real_stack_arguments():
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1)
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     prototype = _FakePrototype(args=[], arg_names=(), returnty=SimTypeShort(False))
     func = SimpleNamespace(prototype=prototype, is_prototype_guessed=True, info={})
     project = SimpleNamespace(
@@ -2063,7 +2063,7 @@ def test_bp_stack_prototype_promotion_counts_only_real_stack_arguments():
 
 
 def test_bp_stack_return_address_pruning_keeps_annotated_arguments():
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     arg_var = SimStackVariable(2, 2, base="bp", name="segment", region=0x1000)
     arg_cvar = structured_c.CVariable(arg_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     prototype = _FakePrototype(args=[SimTypeShort(False)], arg_names=("segment",), returnty=SimTypeShort(False))
@@ -2092,7 +2092,7 @@ def test_bp_stack_return_address_pruning_keeps_annotated_arguments():
 
 
 def test_bp_stack_return_address_pruning_drops_body_assignment_artifact():
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     retaddr_var = SimStackVariable(0, 2, base="bp", name="local_0", region=0x1000)
     retaddr_cvar = structured_c.CVariable(retaddr_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     rhs = structured_c.CVariable(
@@ -2131,7 +2131,7 @@ def test_bp_stack_return_address_pruning_drops_body_assignment_artifact():
 
 
 def test_bp_stack_return_address_pruning_walks_cstatements_root_without_body_alias():
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     retaddr_var = SimStackVariable(0, 2, base="bp", name="local_0", region=0x1000)
     retaddr_cvar = structured_c.CVariable(retaddr_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     rhs = structured_c.CVariable(
@@ -2170,7 +2170,7 @@ def test_bp_stack_return_address_pruning_walks_cstatements_root_without_body_ali
 
 
 def test_bp_stack_return_address_pruning_refuses_selector_return_contract():
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     arg_var = SimStackVariable(6, 2, base="bp", name="limit", region=0x1000)
     arg_cvar = structured_c.CVariable(arg_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     codegen = SimpleNamespace(
@@ -2191,7 +2191,7 @@ def test_bp_stack_return_address_pruning_refuses_selector_return_contract():
 
 def test_classify_return_shape_promotes_scalar_returns_from_void_prototypes(monkeypatch):
     monkeypatch.setenv("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "1")
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     ret = structured_c.CReturn(
         structured_c.CConstant(0, SimTypeShort(False), codegen=c_codegen),
         codegen=c_codegen,
@@ -2216,7 +2216,7 @@ def test_classify_return_shape_promotes_scalar_returns_from_void_prototypes(monk
 
 
 def test_classify_return_shape_does_not_treat_unused_callers_as_void():
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     ret = structured_c.CReturn(
         structured_c.CConstant(0, SimTypeShort(False), codegen=c_codegen),
         codegen=c_codegen,
@@ -2267,7 +2267,7 @@ def test_classify_return_shape_does_not_treat_unused_callers_as_void():
 
 def test_classify_return_shape_ignores_source_return_lines_when_returns_are_missing(monkeypatch):
     monkeypatch.setenv("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "1")
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     prototype = _FakePrototype(returnty=SimTypeBottom())
     func = SimpleNamespace(
         prototype=prototype,
@@ -2296,7 +2296,7 @@ def test_classify_return_shape_ignores_source_return_lines_when_returns_are_miss
 
 def test_classify_return_shape_is_idempotent_for_structured_void_prototype_when_returns_are_missing(monkeypatch):
     monkeypatch.setenv("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "1")
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     prototype = _FakePrototype(args=[], arg_names=(), returnty=SimTypeBottom(label="void"))
     func = SimpleNamespace(
         prototype=prototype,
@@ -2321,7 +2321,7 @@ def test_classify_return_shape_is_idempotent_for_structured_void_prototype_when_
 
 def test_classify_return_shape_treats_explicit_void_returns_as_void(monkeypatch):
     monkeypatch.setenv("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "1")
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     ret = structured_c.CReturn(None, codegen=c_codegen)
     prototype = _FakePrototype(args=[], arg_names=(), returnty=SimTypeShort(False))
     func = SimpleNamespace(prototype=prototype, is_prototype_guessed=True, info={})
@@ -2342,7 +2342,7 @@ def test_classify_return_shape_treats_explicit_void_returns_as_void(monkeypatch)
 
 
 def test_classify_return_shape_refuses_unused_guessed_no_return_as_void():
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     prototype = _FakePrototype(args=[SimTypeLong(False)], arg_names=("wait",), returnty=SimTypeShort(False))
     func = SimpleNamespace(
         prototype=prototype,
@@ -2367,7 +2367,7 @@ def test_classify_return_shape_refuses_unused_guessed_no_return_as_void():
 
 
 def test_classify_return_shape_keeps_unresolved_unused_return_carrier():
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     unresolved_var = SimStackVariable(-2, 2, base="bp", name="vvar_21", region=0x1000)
     unresolved_return = structured_c.CReturn(
         structured_c.CVariable(unresolved_var, variable_type=SimTypeShort(False), codegen=c_codegen),
@@ -2398,7 +2398,7 @@ def test_classify_return_shape_keeps_unresolved_unused_return_carrier():
 
 
 def test_classify_return_shape_keeps_unobserved_terminal_call_result():
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     call = structured_c.CFunctionCall("outtext", None, [], codegen=c_codegen)
     call_return = structured_c.CReturn(call, codegen=c_codegen)
     prototype = _FakePrototype(args=[], arg_names=(), returnty=SimTypeShort(False))
@@ -2437,7 +2437,7 @@ def test_classify_return_shape_keeps_unobserved_terminal_call_result():
 
 def test_collapse_adjacent_unresolved_return_carrier_uses_concrete_ax_return():
     arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     unresolved_var = SimStackVariable(-2, 2, base="bp", name="vvar_21", region=0x1000)
     ax_var = SimRegisterVariable(0, 2, name="ax")
     unresolved_return = structured_c.CReturn(
@@ -2464,7 +2464,7 @@ def test_collapse_adjacent_unresolved_return_carrier_uses_concrete_ax_return():
 
 def test_collapse_terminal_unresolved_return_carrier_uses_concrete_ax_variable():
     arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     unresolved_var = SimStackVariable(-2, 2, base="bp", name="vvar_21", region=0x1000)
     ax_var = SimRegisterVariable(0, 2, name="ax")
     ax_cvar = structured_c.CVariable(ax_var, variable_type=SimTypeShort(False), codegen=c_codegen)
@@ -2498,7 +2498,7 @@ def test_collapse_terminal_unresolved_return_carrier_uses_concrete_ax_variable()
 
 def test_collapse_terminal_dirty_unresolved_return_carrier_uses_concrete_ax_variable():
     arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     dirty_return = structured_c.CReturn(
         structured_c.CDirtyExpression(SimpleNamespace(varid=21, name="vvar_21"), codegen=c_codegen),
         codegen=c_codegen,
@@ -2531,7 +2531,7 @@ def test_collapse_terminal_dirty_unresolved_return_carrier_uses_concrete_ax_vari
 
 def test_collapse_terminal_dirty_register_tagged_return_carrier_uses_concrete_ax_variable():
     arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     dirty_return = structured_c.CReturn(
         structured_c.CDirtyExpression(SimpleNamespace(varid=21, name="r0|4b"), codegen=c_codegen),
         codegen=c_codegen,
@@ -2564,7 +2564,7 @@ def test_collapse_terminal_dirty_register_tagged_return_carrier_uses_concrete_ax
 
 def test_collapse_terminal_dirty_unresolved_return_carrier_uses_dirty_ax_carrier():
     arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     dirty_return = structured_c.CReturn(
         structured_c.CDirtyExpression(SimpleNamespace(varid=21, name="vvar_21"), codegen=c_codegen),
         codegen=c_codegen,
@@ -2596,7 +2596,7 @@ def test_collapse_terminal_dirty_unresolved_return_carrier_uses_dirty_ax_carrier
 
 def test_void_return_value_prune_preserves_call_side_effect_and_control_flow():
     arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     call = structured_c.CFunctionCall(
         "DrawTime",
         None,
@@ -2645,7 +2645,7 @@ def test_void_return_value_prune_preserves_call_side_effect_and_control_flow():
 
 def test_void_return_value_prune_drops_unused_call_result_carrier_declaration():
     arch = Arch86_16()
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=arch), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     carrier_var = SimStackVariable(-2, 2, base="bp", name="vvar_21", region=0x1000)
     carrier = structured_c.CVariable(carrier_var, variable_type=SimTypeShort(False), codegen=c_codegen)
     call = structured_c.CFunctionCall("outtext", None, [], codegen=c_codegen)
@@ -2684,7 +2684,7 @@ def test_void_return_value_prune_drops_unused_call_result_carrier_declaration():
 
 def test_classify_return_shape_promotes_far_pointer_returns_from_void_prototypes(monkeypatch):
     monkeypatch.setenv("INERTIA_ENABLE_RETURN_SHAPE_CLASSIFY", "1")
-    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()))
+    c_codegen = SimpleNamespace(next_idx=lambda _name: 1, project=SimpleNamespace(arch=Arch86_16()), next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     ret = structured_c.CReturn(
         structured_c.CFunctionCall(
             "MK_FP",

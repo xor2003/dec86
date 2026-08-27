@@ -11,11 +11,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 __all__ = [
-    "ValidationState",
-    "ValidationRecord",
     "ValidationAggregate",
-    "build_validation_record_8616",
+    "ValidationRecord",
+    "ValidationState",
     "aggregate_validation_records_8616",
+    "build_validation_record_8616",
     "format_validation_aggregate_report_8616",
 ]
 
@@ -155,7 +155,7 @@ def format_validation_aggregate_report_8616(agg: ValidationAggregate) -> str:
             lines.append("")
             lines.append("  Uncollected functions:")
             for name in sorted(uncollected_names):
-                lines.append(f"    - {name}")
+                lines.append(f"    - {name}")  # noqa: PERF401
     return "\n".join(lines)
 
 

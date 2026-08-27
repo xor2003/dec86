@@ -29,9 +29,9 @@ from typing import Protocol, cast
 # a fresh DataAccess with facts recording enabled.
 
 __all__ = [
-    "transfer_semantic_alias_facts_to_codegen_8616",
-    "collect_semantic_alias_facts_from_project_8616",
     "collect_normalized_semantic_alias_facts_from_project_8616",
+    "collect_semantic_alias_facts_from_project_8616",
+    "transfer_semantic_alias_facts_to_codegen_8616",
 ]
 
 
@@ -188,7 +188,7 @@ def collect_normalized_semantic_alias_facts_from_project_8616(
                 sp_delta_known=True,
                 frame_base="bp",
                 frame_kind="bp",
-                evidence=tuple(frame.evidence) + (f"proven_sp_delta={proven_sp_delta}",),
+                evidence=(*tuple(frame.evidence), f"proven_sp_delta={proven_sp_delta}"),
             )
 
         normalized = normalize_semantic_accesses_8616(raw_accesses, frame)

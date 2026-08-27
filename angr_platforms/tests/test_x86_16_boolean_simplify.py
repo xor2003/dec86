@@ -20,7 +20,7 @@ def test_not_of_bitmask_simplifies_to_zero_compare():
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=archinfo.ArchX86()),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     lhs = _decompile.structured_c.CVariable(
         _decompile.SimRegisterVariable(2, 2, name="Status"),
         codegen=codegen,
@@ -46,7 +46,7 @@ def test_high_byte_projection_constant_helper_is_shared():
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=archinfo.ArchX86()),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     low = _decompile.structured_c.CBinaryOp(
         "And",
         _decompile.structured_c.CConstant(0x0034, _decompile.SimTypeShort(False), codegen=codegen),
@@ -74,7 +74,7 @@ def test_widening_analysis_helper_handles_linear_and_projection_forms():
         next_idx=lambda _name: 1,
         project=SimpleNamespace(arch=archinfo.ArchX86()),
         cstyle_null_cmp=False,
-    )
+    next_ident = lambda name: f"{name}_0", next_node_idx = lambda : 1)
     base = _decompile.structured_c.CVariable(
         _decompile.SimRegisterVariable(30, 2, name="ax"),
         codegen=codegen,

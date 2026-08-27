@@ -249,7 +249,7 @@ def scan_pointer_return_flow_8616(
     phi_conflict = False
     while pending:
         progress = False
-        for block_addr in sorted(tuple(pending)):
+        for block_addr in sorted(pending):
             predecessors = artifact.predecessor_map[block_addr]
             if any(predecessor not in outputs for predecessor in predecessors):
                 continue

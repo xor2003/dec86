@@ -1,4 +1,4 @@
-from __future__ import annotations
+from __future__ import annotations  # noqa: D100
 
 import math
 
@@ -11,14 +11,14 @@ from meta_harness.config import (
 )
 
 
-def test_runtime_config_reads_multiline_evidence_files(monkeypatch, tmp_path):
+def test_runtime_config_reads_multiline_evidence_files(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("EVIDENCE_INPUT_FILES", "a.txt\nb.txt\n")
     cfg = RuntimeConfig.from_env([])
     assert cfg.evidence_input_files == ["a.txt", "b.txt"]
 
 
-def test_runtime_config_reads_repo_harness_config_file(monkeypatch, tmp_path):
+def test_runtime_config_reads_repo_harness_config_file(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     monkeypatch.delenv("HARNESS_CONFIG", raising=False)
     harness_conf = tmp_path / ".codex_harness.conf"
@@ -61,7 +61,7 @@ def test_runtime_config_reads_repo_harness_config_file(monkeypatch, tmp_path):
     assert cfg.repo_standing_tasks == ["task one", "task two"]
 
 
-def test_environment_overrides_repo_harness_config(monkeypatch, tmp_path):
+def test_environment_overrides_repo_harness_config(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     (tmp_path / ".codex_harness.conf").write_text('SWEEP_LABEL="from-file"\n', encoding="utf-8")
     monkeypatch.setenv("SWEEP_LABEL", "from-env")
@@ -71,7 +71,7 @@ def test_environment_overrides_repo_harness_config(monkeypatch, tmp_path):
     assert cfg.sweep_label == "from-env"
 
 
-def test_runtime_config_uses_default_evidence_files(monkeypatch, tmp_path):
+def test_runtime_config_uses_default_evidence_files(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     monkeypatch.delenv("EVIDENCE_INPUT_FILES", raising=False)
     cfg = RuntimeConfig.from_env([])
@@ -80,7 +80,7 @@ def test_runtime_config_uses_default_evidence_files(monkeypatch, tmp_path):
     assert cfg.evidence_input_files == CORE_EVIDENCE_INPUT_FILES + expected_f14
 
 
-def test_llm_config_provider_override(monkeypatch, tmp_path):
+def test_llm_config_provider_override(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     monkeypatch.setenv("LLM_PROVIDER", "ollama")
     monkeypatch.setenv("REVIEWER_PROVIDER", "codex")
@@ -89,13 +89,13 @@ def test_llm_config_provider_override(monkeypatch, tmp_path):
     assert cfg.provider_for_key("reviewer") == "codex"
 
 
-def test_runtime_config_uses_default_operator_comments_file(monkeypatch, tmp_path):
+def test_runtime_config_uses_default_operator_comments_file(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     cfg = RuntimeConfig.from_env([])
     assert cfg.operator_comments_file == tmp_path / "HARNESS_COMMENTS.md"
 
 
-def test_runtime_config_uses_default_runtime_record_files(monkeypatch, tmp_path):
+def test_runtime_config_uses_default_runtime_record_files(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     cfg = RuntimeConfig.from_env([])
     assert cfg.history_log_file == tmp_path / ".codex_automation" / "history.jsonl"
@@ -104,7 +104,7 @@ def test_runtime_config_uses_default_runtime_record_files(monkeypatch, tmp_path)
     assert cfg.session_ledger_file == tmp_path / ".codex_automation" / "sessions.jsonl"
 
 
-def test_runtime_config_uses_default_consecutive_worker_failure_limit(monkeypatch, tmp_path):
+def test_runtime_config_uses_default_consecutive_worker_failure_limit(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     cfg = RuntimeConfig.from_env([])
     assert cfg.max_consecutive_worker_failures == 3
@@ -117,13 +117,13 @@ def test_runtime_config_uses_default_consecutive_worker_failure_limit(monkeypatc
     assert cfg.scheduled_maintenance_interval_cycles == 3
 
 
-def test_runtime_config_uses_default_worker_session_log_budget(monkeypatch, tmp_path):
+def test_runtime_config_uses_default_worker_session_log_budget(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     cfg = RuntimeConfig.from_env([])
     assert cfg.max_worker_session_log_bytes == 512 * 1024
 
 
-def test_runtime_config_uses_web_ui_defaults(monkeypatch, tmp_path):
+def test_runtime_config_uses_web_ui_defaults(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     cfg = RuntimeConfig.from_env([])
     assert cfg.web_ui_enabled is True
@@ -132,7 +132,7 @@ def test_runtime_config_uses_web_ui_defaults(monkeypatch, tmp_path):
     assert cfg.web_ui_port == 8765
 
 
-def test_runtime_config_uses_compact_prompt_defaults_and_default_models(monkeypatch, tmp_path):
+def test_runtime_config_uses_compact_prompt_defaults_and_default_models(monkeypatch, tmp_path) -> None:  # noqa: ANN001, D103
     monkeypatch.setenv("ROOT_DIR", str(tmp_path))
     cfg = RuntimeConfig.from_env([])
     assert cfg.compact_prompts is True

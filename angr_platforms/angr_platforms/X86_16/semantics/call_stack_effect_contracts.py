@@ -28,6 +28,7 @@ class CallStackEffectFailure8616(StrEnum):
 
     ARGUMENT_CLASSES_INCOMPLETE = "argument_classes_incomplete"
     ARGUMENT_COUNT_UNKNOWN = "argument_count_unknown"
+    ARGUMENT_SOURCES_INCOMPLETE = "argument_sources_incomplete"
     ARGUMENT_WIDTHS_INCOMPLETE = "argument_widths_incomplete"
     CALL_ADDRESS_MISSING = "call_address_missing"
     DUPLICATE_CALL_ADDRESS = "duplicate_call_address"

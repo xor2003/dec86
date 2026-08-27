@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from x86_16_timeout_support import scaled_decompile_timeout as _scaled_timeout
+
 from scripts.check_sortd_sidecar_free import mz_executable_image
 from scripts.generated_c_contracts import (
     BranchBodyEffectsRequirement,
@@ -15,19 +17,6 @@ from scripts.generated_c_contracts import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLI_PATH = REPO_ROOT / "decompile.py"
 SORTDEMO_EXE = REPO_ROOT / "SORTDEMO.EXE"
-
-
-def _scaled_timeout(timeout: int) -> int:
-    raw_scale = os.environ.get("INERTIA_TEST_DECOMPILE_TIMEOUT_SCALE", "").strip()
-    if not raw_scale:
-        return timeout
-    try:
-        scale = float(raw_scale)
-    except ValueError:
-        return timeout
-    if scale <= 1.0:
-        return timeout
-    return max(timeout, int(round(timeout * scale)))
 
 
 def _run_decompile_addr(
@@ -174,14 +163,15 @@ def test_sortd_swaps_sidecar_free_materializes_aggregate_interface(
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "typedef struct g_08F0_entry" in result.stdout
-    assert "short sub_107b8(g_08F0_entry *left, g_08F0_entry *right)" in result.stdout
+    assert "void sub_107b8(g_08F0_entry *left, g_08F0_entry *right)" in result.stdout
     assert "g_08F0_entry local_2;" in result.stdout
+    assert "g_0BA4 += 1;" in result.stdout
     assert "local_2 = left[0];" in result.stdout
     assert "left[0] = right[0];" in result.stdout
     assert "right[0] = local_2;" in result.stdout
-    assert "return 0;" in result.stdout
-    assert "void sub_107b8" not in result.stdout
-    assert "return;" not in result.stdout
+    assert "return;" in result.stdout
+    assert "short sub_107b8" not in result.stdout
+    assert "return 0;" not in result.stdout
     assert "unsigned short *left" not in result.stdout
     assert "validation_failed" not in combined
 
@@ -248,8 +238,8 @@ def test_sortd_percolate_down_uses_canonical_shifted_global_view(
     assert "validation=passed" in combined
     assert "whole-tail validation clean across 1 functions" in combined
     assert "extern g_08F0_entry g_0B4C[];" in result.stdout
-    assert "if (local_4 + 1 <= arg)" in result.stdout
-    assert result.stdout.count("if (local_4 <= arg)") == 1
+    assert "if (local_4 + 1 <= arg_4)" in result.stdout
+    assert result.stdout.count("if (local_4 <= arg_4)") == 1
     assert (
         "g_0B4C[local_4 + 1].field_0 > g_0B4C[local_4].field_0"
         in result.stdout

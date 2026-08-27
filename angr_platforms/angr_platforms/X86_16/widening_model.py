@@ -112,9 +112,9 @@ def merge_storage_slice_domains(
 
 
 __all__ = (
-    "StorageJoinAnalysis",
-    "RegisterWideningCandidate",
     "WIDENING_PIPELINE",
+    "RegisterWideningCandidate",
+    "StorageJoinAnalysis",
     "WideningCandidate",
     "WideningPipelineSpec",
     "WideningProof",

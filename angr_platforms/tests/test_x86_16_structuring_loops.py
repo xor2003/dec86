@@ -1,76 +1,87 @@
+"""Tests for RegionGraph projection into exact natural-loop topology."""
+
 from angr_platforms.X86_16.structuring_loops import (
-    compute_loop_body,
-    compute_loop_confidence,
+    LoopTopologyStats8616,
+    LoopTopologyVerdict8616,
     detect_natural_loop,
 )
 from angr_platforms.X86_16.structuring_region import Region, RegionGraph, RegionType, compute_dominators
 
 
-def _make_simple_loop():
-    entry = Region(block_addr=0x1000, region_type=RegionType.Linear)
-    header = Region(block_addr=0x1001, region_type=RegionType.Linear)
-    body = Region(block_addr=0x1002, region_type=RegionType.Linear)
-    exit_region = Region(block_addr=0x1003, region_type=RegionType.Linear)
-
+def _make_region_graph(edges: list[tuple[int, int]]) -> tuple[RegionGraph, dict[int, Region]]:
+    """Build one RegionGraph with stable integer identities."""
+    region_ids = sorted({node for edge in edges for node in edge})
+    regions = {
+        region_id: Region(block_addr=region_id, region_type=RegionType.Linear)
+        for region_id in region_ids
+    }
     graph = RegionGraph()
-    graph.entry = entry
-    for region in (entry, header, body, exit_region):
+    graph.entry = regions[0]
+    for region in regions.values():
         graph.add_node(region)
-
-    graph.add_edge(entry, header)
-    graph.add_edge(header, body)
-    graph.add_edge(body, header)
-    graph.add_edge(header, exit_region)
-    return graph, header, body
+    for source, target in edges:
+        graph.add_edge(regions[source], regions[target])
+    return graph, regions
 
 
-def test_detect_natural_loop_returns_typed_summary():
-    graph, header, body = _make_simple_loop()
-    dominators = compute_dominators(graph)
-
-    info = detect_natural_loop(graph, dominators, header)
-
-    assert info is not None
-    assert info.header == header
-    assert info.back_edges == [body]
-    assert info.has_single_exit is True
-    assert info.is_reducible is True
-    assert info.confidence > 0.6
-
-
-def test_compute_loop_body_excludes_exit_regions():
-    graph, header, body = _make_simple_loop()
-    dominators = compute_dominators(graph)
-
-    loop_body = compute_loop_body(graph, dominators, header, [body])
-
-    assert header in loop_body
-    assert body in loop_body
-    assert len(loop_body) == 2
-
-
-def test_compute_loop_confidence_penalizes_large_body():
-    graph, header, body = _make_simple_loop()
-    dominators = compute_dominators(graph)
-    small_body = compute_loop_body(graph, dominators, header, [body])
-    small_confidence = compute_loop_confidence(
-        header,
-        [body],
-        small_body,
-        [(header, next(iter(set(graph.successors(header)) - {body})))],
-        True,
+def _graph_snapshot(graph: RegionGraph) -> tuple[tuple[int | None, str, tuple[int | None, ...], tuple[int | None, ...]], ...]:
+    """Capture node types and exact adjacency for mutation checks."""
+    return tuple(
+        (
+            region.region_id,
+            region.region_type.value,
+            tuple(sorted(successor.region_id for successor in graph.successors(region) if successor.region_id is not None)),
+            tuple(
+                sorted(predecessor.region_id for predecessor in graph.predecessors(region) if predecessor.region_id is not None)
+            ),
+        )
+        for region in sorted(graph.nodes, key=lambda item: item.region_id or 0)
     )
 
-    large_body = set(small_body)
-    for index in range(60):
-        large_body.add(Region(block_addr=0x2000 + index, region_type=RegionType.Linear))
 
-    large_confidence = compute_loop_confidence(
-        header,
-        [body],
-        large_body,
-        [(header, Region(block_addr=0x3000, region_type=RegionType.Linear))],
-        True,
-    )
+def test_detect_natural_loop_returns_exact_typed_topology():
+    """The RegionGraph adapter preserves all exact first-slice edges."""
+    graph, regions = _make_region_graph([(0, 1), (1, 2), (1, 4), (2, 3), (3, 1)])
+    before = _graph_snapshot(graph)
 
-    assert large_confidence < small_confidence
+    topology = detect_natural_loop(graph, compute_dominators(graph), regions[1])
+
+    assert topology is not None
+    assert topology.verdict is LoopTopologyVerdict8616.PROVEN
+    assert topology.body == (1, 2, 3)
+    assert topology.entry_edges == ((0, 1),)
+    assert topology.backedges == ((3, 1),)
+    assert topology.exit_edges == ((1, 4),)
+    assert topology.stats == LoopTopologyStats8616(1, 1, 1, 1, 0)
+    assert _graph_snapshot(graph) == before
+
+
+def test_region_graph_external_non_header_entry_refuses():
+    """The adapter cannot turn an abnormal body entry into a natural loop."""
+    graph, regions = _make_region_graph([(0, 1), (1, 2), (1, 4), (2, 3), (3, 1), (0, 2)])
+
+    topology = detect_natural_loop(graph, compute_dominators(graph), regions[1])
+
+    assert topology is not None
+    assert topology.verdict is LoopTopologyVerdict8616.UNKNOWN_REFUSE
+    assert topology.refusal_reason == "external-non-header-entry"
+
+
+def test_region_graph_reversed_insertion_order_is_equivalent():
+    """RegionGraph set iteration and edge insertion cannot change topology."""
+    edges = [(0, 1), (1, 2), (1, 4), (2, 3), (3, 1)]
+    graph_a, regions_a = _make_region_graph(edges)
+    graph_b, regions_b = _make_region_graph(list(reversed(edges)))
+
+    topology_a = detect_natural_loop(graph_a, compute_dominators(graph_a), regions_a[1])
+    topology_b = detect_natural_loop(graph_b, compute_dominators(graph_b), regions_b[1])
+
+    assert topology_a is not None
+    assert topology_b == topology_a
+
+
+def test_region_without_backedge_has_no_loop_candidate():
+    """Forward-only control flow does not invent a topology candidate."""
+    graph, regions = _make_region_graph([(0, 1), (1, 2)])
+
+    assert detect_natural_loop(graph, compute_dominators(graph), regions[1]) is None

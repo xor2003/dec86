@@ -237,10 +237,9 @@ def _materialize_required_pointer_casts_8616(
         if _type_width_bytes_8616(expected) != widths[index]:
             return False, False, 0
         argument = args[index]
-        if isinstance(argument, CSemanticCast8616):
-            if argument.dst_type == expected:
-                materialized += 1
-                continue
+        if isinstance(argument, CSemanticCast8616) and argument.dst_type == expected:
+            materialized += 1
+            continue
         current = _expression_type_8616(argument)
         if isinstance(current, SimTypeArray):
             current = SimTypePointer(current.elem_type).with_arch(codegen.project.arch)

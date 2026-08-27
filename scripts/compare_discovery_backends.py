@@ -40,7 +40,7 @@ class FunctionRecord:
 def _load_project(binary: Path, use_sidecar: bool, *, include_library_functions: bool) -> object:
     project = _build_project(binary, force_blob=False, base_addr=0x10000, entry_point=0x1000)
     # Dynamic angr boundary: discovery options are attached to Project for existing CLI helpers.
-    setattr(project, "_inertia_include_library_functions", include_library_functions)
+    project._inertia_include_library_functions = include_library_functions
     if use_sidecar:
         lst_metadata = _load_lst_metadata(
             binary,
@@ -50,7 +50,7 @@ def _load_project(binary: Path, use_sidecar: bool, *, include_library_functions:
         )
         if lst_metadata is not None:
             # Dynamic angr boundary: sidecar metadata is consumed through project-scoped compatibility attrs.
-            setattr(project, "_inertia_lst_metadata", lst_metadata)
+            project._inertia_lst_metadata = lst_metadata
     return project
 
 
@@ -67,7 +67,7 @@ def _discovery_image_end(project: object) -> int:
 
 
 def _estimate_sizes(addrs: list[int], image_end: int) -> dict[int, int]:
-    sorted_addrs = sorted(set(int(a) for a in addrs))
+    sorted_addrs = sorted({int(a) for a in addrs})
     out: dict[int, int] = {}
     for index, addr in enumerate(sorted_addrs):
         if index + 1 < len(sorted_addrs):
@@ -118,7 +118,7 @@ def _discover_angr(
                     include_library_functions=include_library_functions,
                 ),
             )
-    except Exception as ex:  # noqa: BLE001
+    except Exception as ex:
         return [], 0.0, f"failed: {ex}"
     elapsed = time.perf_counter() - start
 
@@ -170,7 +170,7 @@ def _discover_rizin(binary: Path, *, timeout_seconds: int) -> tuple[list[Functio
 
     records: list[FunctionRecord] = []
     for addr in result.offsets:
-        records.append(
+        records.append(  # noqa: PERF401
             FunctionRecord(
                 addr=int(addr),
                 size=None,
@@ -282,8 +282,8 @@ def _collect_overlaps(records: list[FunctionRecord]) -> list[tuple[int, int]]:
         intervals.append((record.addr, end, record.addr))
     intervals.sort()
     for i in range(1, len(intervals)):
-        prev_start, prev_end, prev_addr = intervals[i - 1]
-        cur_start, cur_end, cur_addr = intervals[i]
+        _prev_start, prev_end, prev_addr = intervals[i - 1]
+        cur_start, _cur_end, cur_addr = intervals[i]
         if cur_start < prev_end:
             overlaps.append((prev_addr, cur_addr))
     return overlaps

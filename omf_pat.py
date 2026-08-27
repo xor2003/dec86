@@ -6,6 +6,7 @@ Responsibility: parse optional OMF/PAT signature evidence without controlling de
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import pickle
 import re
@@ -460,14 +461,12 @@ def ensure_pat_from_omf_input(
 
         try:
             if _run_local_plb(input_path, out_path, flair_root=flair_root):
-                try:
+                with contextlib.suppress(OSError):
                     lines.extend(
                         line
                         for line in out_path.read_text(errors="ignore").splitlines()
                         if line.strip() and line.strip() != "---"
                     )
-                except OSError:
-                    pass
         except Exception:
             # FLAIR attempt failed - continue to fallback
             pass
@@ -485,10 +484,8 @@ def ensure_pat_from_omf_input(
                     except OSError:
                         pass
                     finally:
-                        try:
+                        with contextlib.suppress(Exception):
                             fallback_path.unlink(missing_ok=True)
-                        except Exception:
-                            pass
             except Exception:
                 # Fallback generation failed - continue
                 pass
@@ -505,10 +502,8 @@ def ensure_pat_from_omf_input(
                     except OSError:
                         pass
                     finally:
-                        try:
+                        with contextlib.suppress(Exception):
                             fallback_path.unlink(missing_ok=True)
-                        except Exception:
-                            pass
             except Exception:
                 # Fallback generation failed - continue
                 pass
@@ -1812,10 +1807,8 @@ def _run_local_plb(input_path: Path, out_path: Path, *, flair_root: Path | None 
     except (OSError, subprocess.TimeoutExpired):
         return False
     finally:
-        try:
+        with contextlib.suppress(Exception):
             tmp_path.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 def _load_project_image(project) -> tuple[int, bytes] | None:
@@ -1914,10 +1907,8 @@ def load_cached_pat_regex_specs(pat_path: Path, cache_dir: Path) -> tuple[Cached
         pass
     modules = parse_pat_file(pat_path)
     specs = tuple(_compile_pat_module_to_cached_regex(module) for module in modules)
-    try:
+    with contextlib.suppress(OSError):
         cache_path.write_bytes(pickle.dumps(specs, protocol=pickle.HIGHEST_PROTOCOL))
-    except OSError:
-        pass
     return specs
 
 
@@ -2038,7 +2029,7 @@ def _decode_pat_bytes(text: str) -> list[int | None]:
 def _encode_pat_bytes(data: bytes | bytearray | tuple[int | None, ...] | list[int | None]) -> str:
     parts: list[str] = []
     for byte in data:
-        parts.append(".." if byte is None else f"{byte:02X}")
+        parts.append(".." if byte is None else f"{byte:02X}")  # noqa: PERF401
     return "".join(parts)
 
 

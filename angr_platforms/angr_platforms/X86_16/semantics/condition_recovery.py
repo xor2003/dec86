@@ -37,10 +37,10 @@ from ..ir.core import IRCondition, IRValue, MemSpace
 __all__ = [
     "ConditionConfidence",
     "RecoveredCondition",
-    "classify_flag_mask_bit_8616",
-    "build_typed_condition_from_flag_mask_8616",
     "build_typed_condition_from_cmp_pair_8616",
+    "build_typed_condition_from_flag_mask_8616",
     "build_typed_condition_from_test_self_8616",
+    "classify_flag_mask_bit_8616",
 ]
 
 _FLAG_CF = 0x1
@@ -304,30 +304,28 @@ def _same_operand_test_8616(lhs: object, rhs: object) -> bool:
     rhs_reg = _dynamic_boundary_attr_8616(rhs, "reg")
     if isinstance(lhs_reg, int) and isinstance(rhs_reg, int):
         return lhs_reg == rhs_reg
-    if lhs is rhs:
-        return True
-    return False
+    return lhs is rhs
 
 
 # JCC mnemonic → condition op mapping (unsigned by default)
 _JCC_UNSIGNED_OP_8616: dict[str, ConditionOp] = {
-    **{mnemonic: "eq" for mnemonic in JCC_EQ_MNEMONICS_8616},
-    **{mnemonic: "ne" for mnemonic in JCC_NE_MNEMONICS_8616},
-    **{mnemonic: "ult" for mnemonic in JCC_ULT_MNEMONICS_8616},
-    **{mnemonic: "uge" for mnemonic in JCC_UGE_MNEMONICS_8616},
-    **{mnemonic: "ule" for mnemonic in JCC_ULE_MNEMONICS_8616},
-    **{mnemonic: "ugt" for mnemonic in JCC_UGT_MNEMONICS_8616},
+    **dict.fromkeys(JCC_EQ_MNEMONICS_8616, "eq"),
+    **dict.fromkeys(JCC_NE_MNEMONICS_8616, "ne"),
+    **dict.fromkeys(JCC_ULT_MNEMONICS_8616, "ult"),
+    **dict.fromkeys(JCC_UGE_MNEMONICS_8616, "uge"),
+    **dict.fromkeys(JCC_ULE_MNEMONICS_8616, "ule"),
+    **dict.fromkeys(JCC_UGT_MNEMONICS_8616, "ugt"),
 }
 
 _JCC_SIGNED_OP_8616: dict[str, ConditionOp] = {
-    **{mnemonic: "slt" for mnemonic in JCC_SLT_MNEMONICS_8616},
-    **{mnemonic: "sge" for mnemonic in JCC_SGE_MNEMONICS_8616},
-    **{mnemonic: "sle" for mnemonic in JCC_SLE_MNEMONICS_8616},
-    **{mnemonic: "sgt" for mnemonic in JCC_SGT_MNEMONICS_8616},
+    **dict.fromkeys(JCC_SLT_MNEMONICS_8616, "slt"),
+    **dict.fromkeys(JCC_SGE_MNEMONICS_8616, "sge"),
+    **dict.fromkeys(JCC_SLE_MNEMONICS_8616, "sle"),
+    **dict.fromkeys(JCC_SGT_MNEMONICS_8616, "sgt"),
 }
 
 _JCC_COMPARE_OP_8616: dict[str, ConditionOp] = {
-    **{mnemonic: "compare" for mnemonic in _JCC_COMPARISON_MNEMONICS_8616},
+    **dict.fromkeys(_JCC_COMPARISON_MNEMONICS_8616, "compare"),
 }
 
 

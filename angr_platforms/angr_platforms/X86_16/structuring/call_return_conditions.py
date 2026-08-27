@@ -38,8 +38,8 @@ from ..call_target_identity import (
     resolve_x86_16_call_target_function_8616,
     x86_16_call_targets_equivalent_8616,
 )
+from ..caller_return_use_contracts import CallsiteReturnUseKind8616
 from ..callsite_summary import (
-    CallsiteReturnUseKind8616,
     CallsiteSummary8616,
     bind_structured_callsite_identity_8616,
     structured_callsite_addr_8616,
@@ -54,6 +54,22 @@ from ..lowering.stack_lowering_from_facts import (
     materialize_stack_cvar_at_offset_from_facts_8616,
 )
 from ..pipeline.errors import PipelineHardError
+from ..structured_tags import copy_structured_tags_8616
+from .call_return_register_placement import (
+    CallReturnRegisterPlacementVerdict8616,
+    classify_call_return_register_placement_8616,
+    consume_exact_call_return_register_placement_8616,
+)
+from .call_return_store_placement import (
+    CallReturnStorePlacement8616,
+    bind_adjacent_standalone_call_store_8616,
+    bind_proven_call_result_bridge_8616,
+    find_adjacent_assigned_call_store_8616,
+    find_adjacent_standalone_call_store_8616,
+    find_proven_call_result_bridge_8616,
+    is_exact_call_return_stack_destination_8616,
+)
+from .condition_replay import bind_condition_replay_identity_8616
 from .expression_substitution import replace_exact_expression_8616
 
 
@@ -98,6 +114,7 @@ class _CallReturnCodegen8616(Protocol):
     _inertia_callsite_summary_inventory_8616: dict[int, CallsiteSummary8616]
     _inertia_callsite_summaries: dict[int, CallsiteSummary8616]
     _inertia_call_return_condition_stats_8616: CallReturnConditionStats8616
+    _inertia_call_return_store_bridges_8616: dict[int, CallReturnStoreBridgeRecord8616]
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,19 +126,63 @@ class CallReturnConditionStats8616:
     classified_fact_count: int = 0
     materialized_count: int = 0
     failure_count: int = 0
+    store_bridge_materialized_count: int = 0
+    store_bridge_reused_carrier_count: int = 0
+    store_bridge_return_registers: tuple[str, ...] = ()
 
 
-def _condition_key_8616(expression: object) -> tuple[int, int] | None:
+@dataclass(frozen=True, slots=True)
+class CallReturnStoreBridgeRecord8616:
+    """Durable typed proof that one callsite was bound through its result store."""
+
+    callsite_addr: int
+    return_register: str
+    reused_carrier_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _StoredCallReturnConditionResult8616:
+    """One materialized value-return condition and its bridge accounting."""
+
+    expression: CExpression
+    changed: bool
+    store_bridge_materialized: bool = False
+    reused_carrier_count: int = 0
+
+
+def structured_condition_key_8616(expression: object) -> tuple[int, int] | None:
     """Return one exact typed condition instruction/block identity."""
     for node in _iter_c_nodes_deep_8616(expression):
-        tags = node.tags if isinstance(node, CExpression) else None
-        if not isinstance(tags, dict):
+        tags = copy_structured_tags_8616(node.tags) if isinstance(node, CExpression) else None
+        if tags is None:
             continue
         ins_addr = tags.get("ins_addr")
         block_addr = tags.get("vex_block_addr")
         if isinstance(ins_addr, int) and isinstance(block_addr, int):
             return ins_addr, block_addr
     return None
+
+
+def _condition_from_structured_callsite_identity_8616(
+    expression: object,
+    inventory: dict[int, CallsiteSummary8616],
+    conditions_by_block: dict[int, ConditionIR],
+) -> ConditionIR | None:
+    """Select one condition from exact structured callsite return-block identity."""
+    matches: list[ConditionIR] = []
+    for node in _iter_c_nodes_deep_8616(expression):
+        if not isinstance(node, CFunctionCall):
+            continue
+        callsite_addr = structured_callsite_addr_8616(node)
+        summary = inventory.get(callsite_addr) if isinstance(callsite_addr, int) else None
+        condition = (
+            conditions_by_block.get(summary.return_addr)
+            if summary is not None and isinstance(summary.return_addr, int)
+            else None
+        )
+        if condition is not None and condition not in matches:
+            matches.append(condition)
+    return matches[0] if len(matches) == 1 else None
 
 
 def _return_register_slice_8616(
@@ -237,27 +298,6 @@ def _target_calls_8616(
     return tuple(matches)
 
 
-def _canonical_stack_offset_8616(offset: int) -> int:
-    """Normalize a 16-bit BP displacement to its signed identity."""
-    return offset - 0x10000 if offset >= 0x8000 else offset
-
-
-def _is_exact_stack_destination_8616(
-    expression: object,
-    evidence: CallReturnStackStoreEvidence8616,
-) -> bool:
-    """Return whether one C variable is the exact proven return-store object."""
-    if not isinstance(expression, CVariable) or not isinstance(expression.variable, SimStackVariable):
-        return False
-    variable = expression.variable
-    return (
-        variable.base == "bp"
-        and isinstance(variable.offset, int)
-        and _canonical_stack_offset_8616(variable.offset) == evidence.dst_offset
-        and int(variable.size) == evidence.width
-    )
-
-
 def _stack_destination_count_8616(
     expression: object,
     evidence: CallReturnStackStoreEvidence8616,
@@ -266,7 +306,7 @@ def _stack_destination_count_8616(
     return sum(
         1
         for node in _iter_c_nodes_deep_8616(expression)
-        if _is_exact_stack_destination_8616(node, evidence)
+        if is_exact_call_return_stack_destination_8616(node, evidence)
     )
 
 
@@ -313,7 +353,7 @@ def _materialize_stored_return_condition_8616(
     summary: CallsiteSummary8616,
     register_slice: tuple[int, int],
     summary_map: dict[int, CallsiteSummary8616],
-) -> tuple[CExpression, bool] | None:
+) -> _StoredCallReturnConditionResult8616 | None:
     """Bind a value-return store and its branch to one exact stack local."""
     evidence = classify_call_return_stack_store_8616(summary)
     if evidence is None or evidence.width != register_slice[1]:
@@ -322,18 +362,41 @@ def _materialize_stored_return_condition_8616(
     if call is None:
         return None
     assignment = _unique_call_assignment_8616(root, call)
+    store_placement: CallReturnStorePlacement8616 | None = None
+    bridge_placement: CallReturnStorePlacement8616 | None = None
+    bridge_reused_carrier_count = 0
     if assignment is None:
-        return None
-    if _is_exact_stack_destination_8616(assignment.lhs, evidence):
+        bridge_placement = find_proven_call_result_bridge_8616(root, call, evidence)
+        store_placement = bridge_placement
+        if store_placement is None:
+            store_placement = find_adjacent_standalone_call_store_8616(root, call, evidence)
+        if store_placement is None:
+            return None
+        assignment = store_placement.store_assignment
+    elif not is_exact_call_return_stack_destination_8616(assignment.lhs, evidence):
+        store_placement = find_adjacent_assigned_call_store_8616(
+            root,
+            assignment,
+            call,
+            evidence,
+        )
+        if store_placement is not None:
+            assignment = store_placement.store_assignment
+    if is_exact_call_return_stack_destination_8616(assignment.lhs, evidence):
         destination = assignment.lhs
         if not isinstance(destination, CVariable):
             return None
+        register_count = _expression_return_register_count_8616(expression, register_slice)
+        destination_count = _stack_destination_count_8616(expression, evidence)
+        if not (
+            (register_count == 1 and destination_count == 0)
+            or (register_count == 0 and destination_count == 1)
+        ):
+            return None
         changed = False
-        if _expression_return_register_count_8616(expression, register_slice) == 1:
+        if register_count == 1:
             expression = _replace_return_register_8616(expression, register_slice, destination)
             changed = True
-        elif _expression_return_register_count_8616(expression, register_slice) != 0:
-            return None
         for node in _iter_c_nodes_deep_8616(root):
             if not isinstance(node, CReturn):
                 continue
@@ -346,10 +409,33 @@ def _materialize_stored_return_condition_8616(
                 changed = True
         if _stack_destination_count_8616(expression, evidence) != 1:
             return None
+        if store_placement is not None:
+            if bridge_placement is not None:
+                reused_carrier_count = bind_proven_call_result_bridge_8616(
+                    root,
+                    bridge_placement,
+                    call,
+                    destination,
+                )
+                if reused_carrier_count is None:
+                    return None
+                bridge_reused_carrier_count = reused_carrier_count
+                assignment = bridge_placement.store_assignment
+            else:
+                assignment = bind_adjacent_standalone_call_store_8616(
+                    store_placement,
+                    call,
+                )
+            changed = True
         _remove_redundant_return_bridge_8616(root, destination, register_slice, assignment)
         bind_structured_callsite_identity_8616(call, summary)
         summary_map[id(call)] = summary
-        return expression, changed
+        return _StoredCallReturnConditionResult8616(
+            expression,
+            changed,
+            store_bridge_materialized=bridge_placement is not None,
+            reused_carrier_count=bridge_reused_carrier_count,
+        )
     old_lhs = assignment.lhs
     if not isinstance(old_lhs, CVariable) or not isinstance(old_lhs.variable, SimRegisterVariable):
         return None
@@ -406,14 +492,14 @@ def _materialize_stored_return_condition_8616(
         changed = True
     elif remaining_registers != 0:
         return None
-    if not changed or not _is_exact_stack_destination_8616(assignment.lhs, evidence):
+    if not changed or not is_exact_call_return_stack_destination_8616(assignment.lhs, evidence):
         return None
     if _stack_destination_count_8616(expression, evidence) != 1:
         return None
     _remove_redundant_return_bridge_8616(root, destination, register_slice, assignment)
     bind_structured_callsite_identity_8616(call, summary)
     summary_map[id(call)] = summary
-    return expression, True
+    return _StoredCallReturnConditionResult8616(expression, True)
 
 
 def _remove_redundant_return_bridge_8616(
@@ -473,6 +559,15 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
         for condition in conditions
         if isinstance(condition.src_insn, int) and isinstance(condition.block_addr, int)
     }
+    conditions_by_block_candidates: dict[int, list[ConditionIR]] = {}
+    for condition in conditions:
+        if isinstance(condition.block_addr, int):
+            conditions_by_block_candidates.setdefault(condition.block_addr, []).append(condition)
+    conditions_by_block = {
+        block_addr: candidates[0]
+        for block_addr, candidates in conditions_by_block_candidates.items()
+        if len(candidates) == 1
+    }
     summaries_by_return = {
         summary.return_addr: summary
         for summary in inventory.values()
@@ -487,6 +582,8 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
         and isinstance(summary.target_addr, int)
     }
     raw = normalized = classified = materialized = failed = 0
+    store_bridges = reused_carriers = 0
+    store_bridge_return_registers: set[str] = set()
     changed = False
     try:
         summary_map = typed_codegen._inertia_callsite_summaries
@@ -495,12 +592,28 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
         typed_codegen._inertia_callsite_summaries = summary_map
     if not isinstance(summary_map, dict):
         raise TypeError("structured callsite summary map must be a dict")
+    try:
+        store_bridge_records = typed_codegen._inertia_call_return_store_bridges_8616
+    except AttributeError:
+        store_bridge_records = {}
+        typed_codegen._inertia_call_return_store_bridges_8616 = store_bridge_records
+    if not isinstance(store_bridge_records, dict) or any(
+        not isinstance(callsite_addr, int) or not isinstance(record, CallReturnStoreBridgeRecord8616)
+        for callsite_addr, record in store_bridge_records.items()
+    ):
+        raise TypeError("call-return store bridge carrier must contain typed records")
     for node in _iter_c_nodes_deep_8616(root):
         if not isinstance(node, CIfElse) or len(node.condition_and_nodes) != 1:
             continue
         expression, body = node.condition_and_nodes[0]
-        key = _condition_key_8616(expression)
-        condition = condition_by_key.get(key) if key is not None else None
+        key = structured_condition_key_8616(expression)
+        condition = _condition_from_structured_callsite_identity_8616(
+            expression,
+            inventory,
+            conditions_by_block,
+        )
+        if condition is None:
+            condition = condition_by_key.get(key) if key is not None else None
         if condition is None or not isinstance(condition.block_addr, int):
             continue
         summary = summaries_by_return.get(condition.block_addr)
@@ -516,6 +629,7 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
             failed += 1
             continue
         normalized += 1
+        bind_condition_replay_identity_8616(expression, condition)
         if summary.return_use_kind is CallsiteReturnUseKind8616.VALUE:
             stored_result = _materialize_stored_return_condition_8616(
                 project,
@@ -530,23 +644,116 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
             if stored_result is None:
                 failed += 1
                 continue
-            replacement, stored_changed = stored_result
+            replacement = stored_result.expression
             node.condition_and_nodes = [(replacement, body)]
             classified += 1
             materialized += 1
-            changed = stored_changed or changed
+            if stored_result.store_bridge_materialized and isinstance(summary.return_register, str):
+                store_bridge_records[summary.callsite_addr] = CallReturnStoreBridgeRecord8616(
+                    callsite_addr=summary.callsite_addr,
+                    return_register=summary.return_register.lower(),
+                    reused_carrier_count=stored_result.reused_carrier_count,
+                )
+            bridge_record = store_bridge_records.get(summary.callsite_addr)
+            if (
+                bridge_record is not None
+                and isinstance(summary.return_register, str)
+                and bridge_record.return_register == summary.return_register.lower()
+            ):
+                store_bridges += 1
+                reused_carriers += bridge_record.reused_carrier_count
+                store_bridge_return_registers.add(bridge_record.return_register)
+            changed = stored_result.changed or changed
             continue
         existing_count = _existing_callsite_count_8616(expression, summary.callsite_addr)
+        placement = (
+            classify_call_return_register_placement_8616(
+                root,
+                node,
+                callsite_addr=summary.callsite_addr,
+                condition_producer_insn=condition.producer_insn,
+                register_slice=register_slice,
+            )
+            if isinstance(condition.producer_insn, int)
+            else None
+        )
+        if placement is not None and placement.verdict is CallReturnRegisterPlacementVerdict8616.EXACT:
+            existing_call = placement.call
+            if (
+                existing_call is None
+                or len(_target_calls_8616(project, existing_call, target_addr)) != 1
+                or any(
+                    len(_target_calls_8616(project, duplicate.call, target_addr)) != 1
+                    for duplicate in placement.redundant_assignments
+                )
+            ):
+                failed += 1
+                continue
+            if existing_count == 1:
+                condition_calls = _target_calls_8616(project, expression, target_addr)
+                if len(condition_calls) != 1:
+                    failed += 1
+                    continue
+                replacement = replace_exact_expression_8616(
+                    expression,
+                    condition_calls[0],
+                    existing_call,
+                )
+            elif existing_count == 0:
+                unbound_target_calls = _target_calls_8616(
+                    project,
+                    expression,
+                    target_addr,
+                )
+                return_register_count = _expression_return_register_count_8616(
+                    expression,
+                    register_slice,
+                )
+                if len(unbound_target_calls) == 1 and return_register_count == 0:
+                    replacement = replace_exact_expression_8616(
+                        expression,
+                        unbound_target_calls[0],
+                        existing_call,
+                    )
+                elif not unbound_target_calls and return_register_count == 1:
+                    replacement = _replace_return_register_8616(
+                        expression,
+                        register_slice,
+                        existing_call,
+                    )
+                else:
+                    failed += 1
+                    continue
+            else:
+                failed += 1
+                continue
+            if not consume_exact_call_return_register_placement_8616(placement):
+                failed += 1
+                continue
+            node.condition_and_nodes = [(replacement, body)]
+            bind_structured_callsite_identity_8616(existing_call, summary)
+            summary_map[id(existing_call)] = summary
+            classified += 1
+            materialized += 1
+            changed = True
+            continue
+        if placement is not None and placement.verdict is not CallReturnRegisterPlacementVerdict8616.MISSING:
+            failed += 1
+            continue
         if existing_count == 1:
             exact_calls = _target_calls_8616(project, expression, target_addr)
             if len(exact_calls) != 1:
                 failed += 1
                 continue
+            bind_structured_callsite_identity_8616(exact_calls[0], summary)
             summary_map[id(exact_calls[0])] = summary
             classified += 1
             materialized += 1
             continue
         if existing_count != 0:
+            failed += 1
+            continue
+        if _existing_callsite_count_8616(root, summary.callsite_addr) != 0:
             failed += 1
             continue
         target_calls = _target_calls_8616(project, expression, target_addr)
@@ -575,7 +782,7 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
         call = CFunctionCall(callee.name, callee, [], codegen=codegen)
         bind_structured_callsite_identity_8616(call, summary)
         summary_map[id(call)] = summary
-        original_tags = dict(expression.tags) if isinstance(expression.tags, dict) else {}
+        original_tags = copy_structured_tags_8616(expression.tags) or {}
         replacement = _replace_return_register_8616(expression, register_slice, call)
         if replacement is call:
             replacement = CBinaryOp(
@@ -588,7 +795,16 @@ def materialize_call_return_conditions_8616(project: object, codegen: object) ->
         node.condition_and_nodes = [(replacement, body)]
         materialized += 1
         changed = True
-    stats = CallReturnConditionStats8616(raw, normalized, classified, materialized, failed)
+    stats = CallReturnConditionStats8616(
+        raw_fact_count=raw,
+        normalized_fact_count=normalized,
+        classified_fact_count=classified,
+        materialized_count=materialized,
+        failure_count=failed,
+        store_bridge_materialized_count=store_bridges,
+        store_bridge_reused_carrier_count=reused_carriers,
+        store_bridge_return_registers=tuple(sorted(store_bridge_return_registers)),
+    )
     typed_codegen._inertia_call_return_condition_stats_8616 = stats
     if stats.classified_fact_count > 0 and stats.materialized_count == 0:
         raise PipelineHardError("classified call-return conditions were not materialized")

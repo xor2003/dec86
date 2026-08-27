@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
@@ -38,7 +38,7 @@ SERIAL_WORKER_CACHE_SCHEMA_8616: int = 2
 SERIAL_WORKER_CACHE_MAX_ENTRIES_8616: int = 256
 SERIAL_WORKER_CACHE_ANALYSIS_TIMEOUT_FIELD_8616: str = "cache_analysis_timeout"
 
-class SerialWorkerCacheVerdict8616(str, Enum):
+class SerialWorkerCacheVerdict8616(StrEnum):
     """Typed outcome of a serial clean-worker cache lookup."""
 
     HIT = "hit"
@@ -47,7 +47,7 @@ class SerialWorkerCacheVerdict8616(str, Enum):
     DISABLED = "disabled"
 
 
-class SerialWorkerCacheReason8616(str, Enum):
+class SerialWorkerCacheReason8616(StrEnum):
     """Structured reason for a serial clean-worker cache verdict."""
 
     DIAGNOSTICS = "diagnostics"

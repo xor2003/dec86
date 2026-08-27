@@ -8,7 +8,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CStatements,
     CVariable,
 )
-from angr.sim_type import SimTypeBottom, SimTypeFunction, SimTypeShort
+from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16 import decompiler_postprocess as postprocess
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
@@ -126,7 +126,7 @@ def test_callsite_finalization_does_not_repeat_direct_stack_after_indexed_replay
     monkeypatch.setattr(
         cli_decompilation,
         "finalize_shared_call_occurrences_8616",
-        lambda _codegen: calls.append("occurrences") or False,
+        lambda _project, _codegen: calls.append("occurrences") or False,
     )
     monkeypatch.setattr(
         cli_decompilation,
@@ -146,7 +146,7 @@ def test_callsite_finalization_does_not_repeat_direct_stack_after_indexed_replay
     monkeypatch.setattr(
         cli_decompilation,
         "_replay_runtime_segment_lowering_after_regen_8616",
-        lambda _codegen: calls.append("runtime") or False,
+        lambda _codegen: calls.append("runtime") or True,
     )
 
     assert cli_decompilation._finalize_callsite_arguments_after_noncall_regen_8616(codegen) is True
@@ -155,7 +155,6 @@ def test_callsite_finalization_does_not_repeat_direct_stack_after_indexed_replay
         "calls",
         "interfaces",
         "occurrences",
-        "named",
         "indexed",
         "stack_address",
         "runtime",
@@ -181,7 +180,8 @@ def test_regenerated_noncall_finalization_returns_lowering_ownership_after_clean
         calls.append("structuring")
         return True
 
-    def shared_calls(candidate_codegen: object) -> bool:
+    def shared_calls(candidate_project: object, candidate_codegen: object) -> bool:
+        assert candidate_project is project
         assert candidate_codegen is codegen
         calls.append("shared_calls")
         return False
@@ -239,13 +239,11 @@ def test_regenerated_noncall_finalization_returns_lowering_ownership_after_clean
         "structuring",
         "cleanup",
         "indexed_global",
-        "shared_calls",
         "simplify",
         "call_return_selector",
-        "indexed_global",
         "direct_stack",
         "runtime_segment",
-        "indexed_global",
+        "shared_calls",
     ]
 
 
@@ -403,55 +401,6 @@ def test_regenerate_replays_stack_semantics_after_tree_replacement(monkeypatch) 
     assert regenerated is True
     assert text == fresh_text
     assert replay_roots[-1] is codegen.cfunc
-
-
-def test_return_chain_restore_syncs_void_header_from_scalar_prototype():
-    prototype = SimTypeFunction([SimTypeShort(True)], SimTypeShort(True))
-    function = SimpleNamespace(name="classify", prototype=prototype)
-    codegen = SimpleNamespace(cfunc=SimpleNamespace(prototype=None, functy=None))
-    c_text = "void classify(short x)\n{\n    return -1;\n}\n"
-
-    synced = cli_decompilation._sync_restored_return_chain_signature_from_prototype_8616(
-        function,
-        codegen,
-        c_text,
-    )
-
-    assert synced.startswith("short classify(short x)")
-    assert "return -1;" in synced
-    assert codegen._inertia_return_chain_signature_synced_8616 is True
-
-
-def test_return_chain_restore_prefers_scalar_function_prototype_over_stale_void_cfunc():
-    prototype = SimTypeFunction([SimTypeShort(True)], SimTypeShort(False))
-    stale_void = SimTypeFunction([SimTypeShort(True)], SimTypeBottom(label="void"))
-    function = SimpleNamespace(name="cmp_i16", prototype=prototype)
-    codegen = SimpleNamespace(cfunc=SimpleNamespace(prototype=None, functy=stale_void))
-    c_text = "void cmp_i16(short a, short b)\n{\n    return -1;\n}\n"
-
-    synced = cli_decompilation._sync_restored_return_chain_signature_from_prototype_8616(
-        function,
-        codegen,
-        c_text,
-    )
-
-    assert synced.startswith("unsigned short cmp_i16(short a, short b)")
-
-
-def test_return_chain_restore_keeps_void_header_for_void_prototype():
-    prototype = SimTypeFunction([], SimTypeBottom(label="void"))
-    function = SimpleNamespace(name="DrawTime", prototype=prototype)
-    codegen = SimpleNamespace(cfunc=SimpleNamespace(prototype=None, functy=None))
-    c_text = "void DrawTime(void)\n{\n    return;\n}\n"
-
-    synced = cli_decompilation._sync_restored_return_chain_signature_from_prototype_8616(
-        function,
-        codegen,
-        c_text,
-    )
-
-    assert synced == c_text
-    assert not hasattr(codegen, "_inertia_return_chain_signature_synced_8616")
 
 
 def test_regeneration_arg_local_split_detector_flags_regressed_header_arg():
@@ -821,6 +770,10 @@ def test_pointer_arg_indirect_load_stats_fail_when_classified_load_not_materiali
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _Codegen()
     codegen.project = SimpleNamespace(arch=Arch86_16())
@@ -876,6 +829,10 @@ def test_pointer_arg_indirect_load_stats_count_existing_indexed_load(monkeypatch
         def next_idx(self, _name):
             self._idx += 1
             return self._idx
+        def next_node_idx(self) -> int:
+            return self.next_idx("")
+        def next_ident(self, name: str) -> str:
+            return name
 
     codegen = _Codegen()
     codegen.project = SimpleNamespace(arch=Arch86_16())
