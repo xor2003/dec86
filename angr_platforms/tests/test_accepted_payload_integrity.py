@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import subprocess
+import sys
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -55,6 +57,25 @@ def test_accepted_payload_integrity_rejects_post_validation_replacement() -> Non
 
     assert report.verdict is AcceptedPayloadIntegrityVerdict8616.VALIDATED_PAYLOAD_MISMATCH
     assert not report.passed
+
+
+def test_accepted_payload_integrity_import_stays_outside_work_item_graph() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "import inertia_decompiler.accepted_payload_integrity; "
+                "raise SystemExit(int('inertia_decompiler.work_items' in sys.modules))"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_direct_cache_artifact_refuses_post_validation_replacement() -> None:
