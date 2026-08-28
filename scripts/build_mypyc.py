@@ -20,6 +20,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.mypyc_build_cache import MypycBuildCacheLayout, reconcile_mypyc_build_cache  # noqa: E402
+
 TARGET_MODULES: list[str] = [
     "angr_platforms.X86_16.lowering.callsite_prototype_declarations",
     "angr_platforms.X86_16.lowering.callsite_prototype_seeding",
@@ -64,7 +66,7 @@ MYPYC_CACHE_DIR: Path = Path(".cache") / "mypyc"
 MYPYC_LIB_DIR: Path = MYPYC_CACHE_DIR / "lib"
 MYPYC_TEMP_DIR: Path = MYPYC_CACHE_DIR / "temp"
 MYPYC_CGEN_DIR: Path = MYPYC_CACHE_DIR / "cgen"
-MYPYC_BUILD_SCHEMA: str = "3-module-cohort"
+MYPYC_BUILD_SCHEMA: str = "4-incremental-module-cohort"
 
 
 @dataclass(frozen=True)
@@ -143,18 +145,11 @@ def _module_to_path(value: str) -> str:
 
 
 def _ensure_build_layout(modules: list[str]) -> None:
-    """Reset artifacts when the schema or compiled module cohort changes."""
-    cache_root = REPO_ROOT / MYPYC_CACHE_DIR
-    schema_path = cache_root / "build-schema.txt"
-    try:
-        current_schema = schema_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        current_schema = ""
-    if current_schema == "\n".join((MYPYC_BUILD_SCHEMA, *sorted(modules))):
-        return
-    shutil.rmtree(cache_root, ignore_errors=True)
-    cache_root.mkdir(parents=True, exist_ok=True)
-    schema_path.write_text("\n".join((MYPYC_BUILD_SCHEMA, *sorted(modules), "")), encoding="utf-8")
+    """Reconcile schema and cohort state without rebuilding unchanged modules."""
+    layout = MypycBuildCacheLayout(
+        REPO_ROOT, MYPYC_CACHE_DIR, MYPYC_LIB_DIR, MYPYC_CGEN_DIR, MYPYC_BUILD_SCHEMA
+    )
+    reconcile_mypyc_build_cache(layout, modules, _module_to_path)
 
 
 def _collect_module_states(modules: Iterable[str]) -> list[ModuleState]:
@@ -176,7 +171,7 @@ def _collect_module_states(modules: Iterable[str]) -> list[ModuleState]:
 
 def _build_stale(module_states: list[ModuleState], *, inplace: bool = False) -> list[ModuleState]:
     stale: list[ModuleState] = []
-    control_inputs = [REPO_ROOT / "pyproject.toml", REPO_ROOT / "scripts" / "build_mypyc.py"]
+    control_inputs = [REPO_ROOT / path for path in ("pyproject.toml", "scripts/build_mypyc.py", "scripts/mypyc_build_cache.py")]
     for module_state in module_states:
         source_mtime = module_state.source_path.stat().st_mtime if module_state.source_path.exists() else 0
         control_mtime = max((item.stat().st_mtime for item in control_inputs if item.exists()), default=0)

@@ -71,25 +71,108 @@ def test_build_mypyc_requires_main_and_native_helper_artifacts(
     assert build_mypyc._build_stale([state]) == []
 
 
-def test_build_mypyc_resets_native_cache_when_module_cohort_changes(
+def test_build_mypyc_reconciles_only_changed_module_artifacts(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """Do not reuse extensions linked against a removed experimental module."""
+    """Preserve unchanged artifacts while removing a retired module exactly."""
     monkeypatch.setattr(build_mypyc, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(build_mypyc, "MYPYC_CACHE_DIR", Path("native-cache"))
+    monkeypatch.setattr(build_mypyc, "MYPYC_LIB_DIR", Path("native-cache/lib"))
+    monkeypatch.setattr(build_mypyc, "MYPYC_CGEN_DIR", Path("native-cache/cgen"))
 
     build_mypyc._ensure_build_layout(["example.alpha"])
     sentinel = tmp_path / "native-cache" / "old-extension.so"
     sentinel.write_bytes(b"native")
+    artifact_dir = tmp_path / "native-cache" / "lib" / "example"
+    artifact_dir.mkdir(parents=True)
+    suffix = EXTENSION_SUFFIXES[0]
+    alpha_main = artifact_dir / f"alpha{suffix}"
+    alpha_native = artifact_dir / f"alpha__mypyc{suffix}"
+    alpha_main.write_bytes(b"main")
+    alpha_native.write_bytes(b"native")
     build_mypyc._ensure_build_layout(["example.alpha"])
     assert sentinel.is_file()
+    assert alpha_main.is_file()
+    assert alpha_native.is_file()
 
     build_mypyc._ensure_build_layout(["example.beta"])
+    assert sentinel.is_file()
+    assert not alpha_main.exists()
+    assert not alpha_native.exists()
+    assert (tmp_path / "native-cache" / "build-schema.txt").read_text(encoding="utf-8") == (
+        f"{build_mypyc.MYPYC_BUILD_SCHEMA}\n"
+    )
+    assert (tmp_path / "native-cache" / "module-cohort.txt").read_text(encoding="utf-8") == (
+        "example.beta\n"
+    )
+
+
+def test_build_mypyc_schema_change_resets_complete_cache(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Discard every old artifact when native compatibility schema changes."""
+    monkeypatch.setattr(build_mypyc, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(build_mypyc, "MYPYC_CACHE_DIR", Path("native-cache"))
+    monkeypatch.setattr(build_mypyc, "MYPYC_LIB_DIR", Path("native-cache/lib"))
+    monkeypatch.setattr(build_mypyc, "MYPYC_CGEN_DIR", Path("native-cache/cgen"))
+    build_mypyc._ensure_build_layout(["example.alpha"])
+    sentinel = tmp_path / "native-cache" / "old-extension.so"
+    sentinel.write_bytes(b"native")
+
+    monkeypatch.setattr(build_mypyc, "MYPYC_BUILD_SCHEMA", "next-schema")
+    build_mypyc._ensure_build_layout(["example.alpha"])
+
     assert not sentinel.exists()
     assert (tmp_path / "native-cache" / "build-schema.txt").read_text(encoding="utf-8") == (
-        f"{build_mypyc.MYPYC_BUILD_SCHEMA}\nexample.beta\n"
+        "next-schema\n"
     )
+
+
+def test_build_mypyc_refuses_artifact_directory_outside_cache(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Fail closed before cache reconciliation can target an external path."""
+    monkeypatch.setattr(build_mypyc, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(build_mypyc, "MYPYC_CACHE_DIR", Path("native-cache"))
+    monkeypatch.setattr(build_mypyc, "MYPYC_LIB_DIR", Path("outside-native-lib"))
+    monkeypatch.setattr(build_mypyc, "MYPYC_CGEN_DIR", Path("native-cache/cgen"))
+
+    try:
+        build_mypyc._ensure_build_layout(["example.alpha"])
+    except ValueError as exc:
+        assert "escapes cache root" in str(exc)
+    else:
+        raise AssertionError("external mypyc artifact directory unexpectedly accepted")
+
+
+def test_build_mypyc_refuses_nested_artifact_symlink_outside_cache(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Do not follow a nested package symlink while retiring one module."""
+    monkeypatch.setattr(build_mypyc, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(build_mypyc, "MYPYC_CACHE_DIR", Path("native-cache"))
+    monkeypatch.setattr(build_mypyc, "MYPYC_LIB_DIR", Path("native-cache/lib"))
+    monkeypatch.setattr(build_mypyc, "MYPYC_CGEN_DIR", Path("native-cache/cgen"))
+    build_mypyc._ensure_build_layout(["example.alpha"])
+    package_parent = tmp_path / "native-cache" / "lib"
+    package_parent.mkdir(parents=True)
+    external_package = tmp_path / "external-package"
+    external_package.mkdir()
+    external_artifact = external_package / f"alpha{EXTENSION_SUFFIXES[0]}"
+    external_artifact.write_bytes(b"external")
+    (package_parent / "example").symlink_to(external_package, target_is_directory=True)
+
+    try:
+        build_mypyc._ensure_build_layout([])
+    except ValueError as exc:
+        assert "escapes cache root" in str(exc)
+    else:
+        raise AssertionError("nested external artifact symlink unexpectedly followed")
+    assert external_artifact.read_bytes() == b"external"
 
 
 def test_make_parallel_defaults_share_cpu_budget() -> None:
