@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from inertia_decompiler.cache import _cache_file_fingerprint, _recovery_cache_key
-from inertia_decompiler.cache_runtime_contract import timing_diagnostics_requested_8616
+from inertia_decompiler.cache_runtime_contract import live_decompilation_diagnostics_requested_8616
 from inertia_decompiler.cli_arg_parser import CliArguments
 
 DIRECT_REQUEST_CACHE_NAMESPACE_8616: str = "direct_accepted_result"
@@ -98,7 +98,7 @@ def direct_request_cache_enabled_8616(args: CliArguments) -> bool:
         and not args.dump_layers
         and not telemetry_requested
         and not clean_worker_transport
-        and not timing_diagnostics_requested_8616()
+        and not live_decompilation_diagnostics_requested_8616()
     )
 
 

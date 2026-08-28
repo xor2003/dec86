@@ -31,15 +31,16 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   identical current C, and both validation gates passing.
 - Current segment/global materialization totals about 8.2 seconds. Its first
   productive replay costs 4.74 seconds: indexed lowering is 2.61 seconds and
-  runtime segment lowering is 1.39 seconds. Late stable replays total less than
-  one second.
+  runtime segment lowering is 1.39 seconds. The latter spends about 0.75 seconds
+  in positive-BP argument materialization, including 0.713 seconds on the first
+  all-caller argument-width census. Late stable replays total under one second.
 - The first indexed replay spends 2.40 seconds collecting project-wide global
   object source evidence. The artifact is cached only inside one project, so
   each isolated function worker rebuilds the same all-caller evidence.
-- A direct-process profile attributes 30.19 seconds of a fully invalidated run
-  to indexed Alias/Widening context preparation, including 23.53 seconds in
-  program evidence construction for 21 function selections. The source-scoped
-  persistent cache correctly removes this cost from stable development runs.
+- An opt-in clean-worker cProfile of the six-function CMP16 sweep attributes
+  17.64 of 33.95 profiled seconds in its slowest worker to Structuring
+  validation priming, including 5.79 seconds of callsite-summary work and 2.09
+  seconds of callee argument evidence. All six generated functions validate.
 - `decompiler_postprocess_stage.py` is 17,846 lines. It is a major development,
   review, and typing cost, but postprocess is no longer the leading runtime
   owner. Extraction must follow the runtime-critical correctness work.
@@ -53,7 +54,7 @@ All measurements are checkout-specific; refresh them after correctness is restor
 
 | Priority | Problem | User-visible impact | Development impact |
 | --- | --- | --- | --- |
-| P1 | Project global-object source evidence is rebuilt in every isolated worker | Adds about 2.40 seconds per affected function and repeats whole-program caller work | Whole-binary parallel runs duplicate the same immutable evidence in each process |
+| P1 | Project-wide global-source and callee-arity evidence is rebuilt in every isolated worker | Adds about 3.1 seconds per affected function and repeats whole-program caller work | Whole-binary parallel runs duplicate the same immutable evidence in each process |
 | P1 | The first productive segment/global replay costs about 4.74 seconds | Large functions remain slow even with stable evidence caches | Indexed and runtime-segment owners dominate the remaining semantic replay time |
 | P1 | Cold indexed Alias/Widening context construction relifts the function census | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Alias/IR/Widening edits legitimately rebuild a roughly 30-second program artifact |
 | P1 | Stable semantic consumers still rebuild full AST witnesses before some skips | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests skip consumer work but still pay generation cost |
@@ -77,49 +78,47 @@ All measurements are checkout-specific; refresh them after correctness is restor
 
 ## Ordered Work
 
-### 1. Persist Project Global-Object Source Evidence
+### 1. Persist Project-Wide Caller Evidence
 
 **Status:** pending coordination with the active indexed-evidence transport work
 
 **Reason:** The first indexed replay spends 2.40 seconds rebuilding immutable
-all-caller source-family evidence in each isolated worker. Layouts and bounded
-ranges already cross the persistent parent/worker boundary; source evidence
-does not.
+global-source evidence, while the first runtime replay spends another 0.713
+seconds rebuilding callee arity/width evidence. Neither all-caller artifact
+crosses the persistent parent/worker boundary.
 
 **Work:**
 
-- Add a typed codec for complete `GlobalObjectSourceEvidence8616` and its source
-  facts at the Types/Lowering owner.
-- Extend the coherent indexed-evidence bundle so layouts, bounded ranges, and
-  source evidence share one cache schema and dependency identity.
-- Collect source evidence once on the complete parent catalog and transport it
+- Add typed codecs for complete global-source and callee arity/width evidence.
+- Extend the coherent project-evidence bundle so layouts, ranges, source facts,
+  and caller-interface facts share one schema and dependency identity.
+- Collect both artifacts once on the complete parent catalog and transport them
   without reclassification into clean workers.
-- Include every source-evidence owner in the scoped cache digest and reject
-  partial or incoherent bundles.
+- Include every evidence owner in the scoped cache digest and reject partial or
+  incoherent bundles.
 - Preserve closed raw/normalized/classified/materialized/failure accounting.
 
-**DoD:** A warm isolated worker performs zero all-caller source census rebuilds;
-the first indexed replay falls by at least 2 seconds; bundle codec round trips
+**DoD:** A warm isolated worker performs zero transported all-caller rebuilds;
+the first indexed/runtime replays fall by at least 2.7 seconds; codec round trips
 are exact; stale, partial, and layout-mismatched records are refused; generated
 C, validation, determinism, and the 2 GB budget are unchanged.
 
-**Definition of Failure:** CLI reclassifies semantic facts; source evidence can
-be paired with a different layout or pointer-target census; cache invalidation
+**Definition of Failure:** CLI reclassifies semantic facts; evidence can be
+paired with a different layout, caller census, or target; cache invalidation
 omits an owner; a missing artifact silently becomes empty evidence; output or
 validation changes; or measured worker time does not materially improve.
 
 ### 2. Reduce the First Productive Segment/Global Replay
 
-**Status:** measured; child attribution in progress
+**Status:** child attribution complete; blocked on Step 1 transport
 
-**Reason:** The first replay costs 4.74 seconds after stable cache reuse. The
-2.40-second source collector is Step 1; runtime-segment lowering contributes
-1.39 seconds and the remaining indexed mutation contributes about 0.20 seconds.
+**Reason:** The first replay costs 4.74 seconds after stable cache reuse. Step 1
+owns 2.40 seconds of indexed work and 0.713 seconds of runtime caller census;
+remaining repeated runtime AST walks are the next measured owner.
 
 **Work:**
 
-- Reprofile runtime-segment child passes and retain exact mutation/result
-  accounting.
+- Reprofile after Step 1 and retain exact mutation/result accounting.
 - Reuse read-only AST query projections only inside one unchanged root
   generation; invalidate immediately after mutation.
 - Avoid rerunning evidence collectors whose typed project artifact is already

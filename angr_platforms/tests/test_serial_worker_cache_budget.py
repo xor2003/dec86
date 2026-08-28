@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+import pstats
 from dataclasses import replace
 from pathlib import Path
 
 import inertia_decompiler.cache as cache_module
+import inertia_decompiler.serial_clean_worker_cli as worker_cli
 import inertia_decompiler.serial_worker_cache as worker_cache
 from inertia_decompiler.cache_runtime_contract import timing_diagnostics_requested_8616
 
@@ -46,21 +49,26 @@ def test_serial_worker_cache_key_excludes_analysis_budget(tmp_path: Path) -> Non
     )
 
 
-def test_timing_diagnostics_disable_serial_worker_result_reuse(
+def test_live_diagnostics_disable_serial_worker_result_reuse(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    """A timing request must execute the clean worker instead of cached C."""
-    monkeypatch.setenv("INERTIA_DEBUG_TIMING", "true")
-
-    result = worker_cache.load_serial_worker_cache_8616(
-        _inputs(tmp_path / "timing.exe", timeout=60),
-        enabled=True,
+    """A live diagnostic request must execute the worker instead of cached C."""
+    diagnostic_requests = (
+        ("INERTIA_DEBUG_TIMING", "true"),
+        ("INERTIA_OTEL_CPROFILE_PATH", "worker.prof"),
     )
-
-    assert result.verdict is worker_cache.SerialWorkerCacheVerdict8616.DISABLED
-    assert result.reason is worker_cache.SerialWorkerCacheReason8616.DIAGNOSTICS
-    assert result.key is None
+    for name, value in diagnostic_requests:
+        monkeypatch.delenv("INERTIA_DEBUG_TIMING", raising=False)
+        monkeypatch.delenv("INERTIA_OTEL_CPROFILE_PATH", raising=False)
+        monkeypatch.setenv(name, value)
+        result = worker_cache.load_serial_worker_cache_8616(
+            _inputs(tmp_path / "timing.exe", timeout=60),
+            enabled=True,
+        )
+        assert result.verdict is worker_cache.SerialWorkerCacheVerdict8616.DISABLED
+        assert result.reason is worker_cache.SerialWorkerCacheReason8616.DIAGNOSTICS
+        assert result.key is None
 
 
 def test_disabled_timing_values_preserve_cache_reuse(monkeypatch) -> None:
@@ -68,6 +76,17 @@ def test_disabled_timing_values_preserve_cache_reuse(monkeypatch) -> None:
     for value in ("", "0", "false", "FALSE", "no", "off", " Off "):
         monkeypatch.setenv("INERTIA_DEBUG_TIMING", value)
         assert not timing_diagnostics_requested_8616()
+
+
+def test_clean_worker_cprofile_writes_explicit_pid_path(monkeypatch, tmp_path: Path) -> None:
+    """The opt-in worker profiler must write a readable process-specific file."""
+    profile_template = tmp_path / "worker-{pid}.prof"
+    monkeypatch.setenv("INERTIA_OTEL_CPROFILE_PATH", str(profile_template))
+    monkeypatch.setattr(worker_cli, "_core_main", lambda _argv: 7)
+
+    assert worker_cli.main(["sample.exe"]) == 7
+    profile_path = tmp_path / f"worker-{os.getpid()}.prof"
+    assert pstats.Stats(str(profile_path)).total_calls > 0
 
 
 def test_serial_worker_cache_budget_reuse_is_monotonic(monkeypatch, tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 TIMING_DIAGNOSTIC_ENV_8616: str = "INERTIA_DEBUG_TIMING"
+WORKER_CPROFILE_ENV_8616: str = "INERTIA_OTEL_CPROFILE_PATH"
 _DISABLED_DIAGNOSTIC_VALUES_8616: frozenset[str] = frozenset({"", "0", "false", "no", "off"})
 
 
@@ -59,3 +60,12 @@ def timing_diagnostics_requested_8616(
     source = os.environ if environment is None else environment
     raw_value = source.get(TIMING_DIAGNOSTIC_ENV_8616)
     return bool(raw_value is not None and raw_value.strip().lower() not in _DISABLED_DIAGNOSTIC_VALUES_8616)
+
+
+def live_decompilation_diagnostics_requested_8616(
+    environment: Mapping[str, str] | None = None,
+) -> bool:
+    """Return whether final-C caches must yield to live diagnostic execution."""
+    source = os.environ if environment is None else environment
+    profile_path = source.get(WORKER_CPROFILE_ENV_8616, "").strip()
+    return timing_diagnostics_requested_8616(source) or bool(profile_path)

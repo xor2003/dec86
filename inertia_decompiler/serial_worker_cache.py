@@ -30,7 +30,7 @@ from inertia_decompiler.cache import (
     _store_cache_json,
     is_non_semantic_cache_environment_name,
 )
-from inertia_decompiler.cache_runtime_contract import timing_diagnostics_requested_8616
+from inertia_decompiler.cache_runtime_contract import live_decompilation_diagnostics_requested_8616
 from inertia_decompiler.cli_arg_parser import CliArguments
 from inertia_decompiler.direct_addr_failure_family import FailureFamilySnapshot
 
@@ -211,7 +211,7 @@ def load_serial_worker_cache_8616(
     enabled: bool,
 ) -> SerialWorkerCacheLookup8616:
     """Load one exact validated result or return an explicit miss/refusal."""
-    if not enabled or timing_diagnostics_requested_8616():
+    if not enabled or live_decompilation_diagnostics_requested_8616():
         return SerialWorkerCacheLookup8616(
             SerialWorkerCacheVerdict8616.DISABLED,
             None,

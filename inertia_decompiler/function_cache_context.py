@@ -21,7 +21,7 @@ from angr_platforms.X86_16.compiler_helpers import x86_16_compiler_helper_target
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 
 from inertia_decompiler.cache import _function_decompilation_cache_key
-from inertia_decompiler.cache_runtime_contract import timing_diagnostics_requested_8616
+from inertia_decompiler.cache_runtime_contract import live_decompilation_diagnostics_requested_8616
 from inertia_decompiler.sidecar_cache import lst_metadata_content_digest_8616
 from inertia_decompiler.work_items import FunctionWorkItem
 
@@ -224,7 +224,7 @@ def function_decompilation_cache_key_8616(
     enable_postprocess: bool,
 ) -> dict[str, object] | None:
     """Build a cache key or refuse reuse for unsupported semantic evidence."""
-    if timing_diagnostics_requested_8616():
+    if live_decompilation_diagnostics_requested_8616():
         return None
     try:
         context = build_function_cache_context_8616(

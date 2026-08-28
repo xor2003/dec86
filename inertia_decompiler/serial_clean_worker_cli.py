@@ -6,12 +6,33 @@ Forbidden: owning decompiler semantics, source-backed recovery, or postprocess s
 
 from __future__ import annotations
 
+import cProfile
+import os
+import sys
+from pathlib import Path
+
+from inertia_decompiler.cache_runtime_contract import WORKER_CPROFILE_ENV_8616
 from inertia_decompiler.cli_core import main as _core_main
 
 
+def _worker_profile_path_8616(raw_path: str) -> Path:
+    """Expand the process placeholder in one explicit worker profile path."""
+    return Path(raw_path.replace("{pid}", str(os.getpid()))).expanduser()
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Run one clean worker without importing the legacy CLI compatibility surface."""
-    return _core_main(argv)
+    """Run one clean worker, optionally recording opt-in cProfile evidence."""
+    raw_profile_path = os.environ.get(WORKER_CPROFILE_ENV_8616, "").strip()
+    if not raw_profile_path:
+        return int(_core_main(argv))
+    profile_path = _worker_profile_path_8616(raw_profile_path)
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profiler = cProfile.Profile()
+    try:
+        return int(profiler.runcall(_core_main, argv))
+    finally:
+        profiler.dump_stats(profile_path)
+        print(f"[profile] clean worker cProfile: {profile_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":
