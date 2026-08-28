@@ -9,6 +9,8 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, replace
 
 from .core import IRAddress, IRAtom, IRBinaryValue, IRBlock, IRCondition, IRInstr, IRValue, MemSpace
@@ -54,6 +56,41 @@ class SSABlock:
             "bindings": [item.to_dict() for item in self.bindings],
             "refusals": list(self.refusals),
         }
+
+
+_BLOCK_LOCAL_SSA_CACHE_MAX_ENTRIES_8616 = 128
+_BLOCK_LOCAL_SSA_CACHE_LOCK_8616 = threading.RLock()
+_BLOCK_LOCAL_SSA_CACHE_8616: OrderedDict[int, tuple[IRBlock, SSABlock]] = OrderedDict()
+
+
+def _cached_block_local_ssa_8616(block: IRBlock) -> SSABlock | None:
+    """Return a projection only for the same immutable block object."""
+    key = id(block)
+    with _BLOCK_LOCAL_SSA_CACHE_LOCK_8616:
+        cached = _BLOCK_LOCAL_SSA_CACHE_8616.get(key)
+        if cached is None:
+            return None
+        cached_block, result = cached
+        if cached_block is not block:
+            del _BLOCK_LOCAL_SSA_CACHE_8616[key]
+            return None
+        _BLOCK_LOCAL_SSA_CACHE_8616.move_to_end(key)
+        return result
+
+
+def _publish_block_local_ssa_8616(block: IRBlock, result: SSABlock) -> SSABlock:
+    """Publish one bounded identity-safe immutable block projection."""
+    key = id(block)
+    with _BLOCK_LOCAL_SSA_CACHE_LOCK_8616:
+        cached = _BLOCK_LOCAL_SSA_CACHE_8616.get(key)
+        if cached is not None and cached[0] is block:
+            _BLOCK_LOCAL_SSA_CACHE_8616.move_to_end(key)
+            return cached[1]
+        _BLOCK_LOCAL_SSA_CACHE_8616[key] = (block, result)
+        _BLOCK_LOCAL_SSA_CACHE_8616.move_to_end(key)
+        while len(_BLOCK_LOCAL_SSA_CACHE_8616) > _BLOCK_LOCAL_SSA_CACHE_MAX_ENTRIES_8616:
+            _BLOCK_LOCAL_SSA_CACHE_8616.popitem(last=False)
+    return result
 
 
 def _version_key(value: IRValue) -> _VersionKey:
@@ -179,8 +216,8 @@ def _record_temporary_snapshot(
         snapshots[destination.source_tmp] = arguments[0]
 
 
-def build_x86_16_block_local_ssa(block: IRBlock) -> SSABlock:
-    """Rewrite a typed IR block into deterministic block-local SSA form."""
+def _build_x86_16_block_local_ssa_uncached(block: IRBlock) -> SSABlock:
+    """Rewrite one typed IR block without consulting the identity cache."""
     versions: dict[_VersionKey, int] = {}
     snapshots: _TemporarySnapshots = {}
     definitions: _CurrentDefinitions = {}
@@ -211,3 +248,14 @@ def build_x86_16_block_local_ssa(block: IRBlock) -> SSABlock:
             )
         )
     return SSABlock(addr=block.addr, instrs=tuple(rewritten), bindings=tuple(bindings))
+
+
+def build_x86_16_block_local_ssa(block: IRBlock) -> SSABlock:
+    """Return deterministic block-local SSA, reusing the same immutable input."""
+    cached = _cached_block_local_ssa_8616(block)
+    if cached is not None:
+        return cached
+    return _publish_block_local_ssa_8616(
+        block,
+        _build_x86_16_block_local_ssa_uncached(block),
+    )

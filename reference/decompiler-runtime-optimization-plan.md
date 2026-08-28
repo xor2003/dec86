@@ -99,8 +99,8 @@ new improvement.
 
 ### Immediate Priority Queue
 
-1. Coordinate the 32.6-profiler-second indexed-Alias owner before editing it;
-   do not duplicate the concurrent Frontend/indexed-Alias implementation.
+1. Coordinate the remaining indexed-Alias owner before editing it; do not
+   duplicate the concurrent Frontend/indexed-Alias implementation.
 2. Complete Task 3D's consumer-specific mutation generation. Task 3H's exact
    trace proved all three expensive Structuring direct-stack and segment/global
    rounds productive, so no replay can be removed until an upstream owner
@@ -1053,6 +1053,56 @@ three selected MS C tiny pipelines. The exact target retained hash
 profile time fell 159.1 -> 144.4 seconds with about seven million fewer calls.
 The 59.36-second low-overhead sample remains inside the existing wall/RSS noise
 band and receives no standalone wall-time claim.
+
+### 4J. Reuse Immutable Block-Local SSA Projections
+
+**Status:** completed
+
+**Reason:** The current cold profile records 990 block-local SSA projections
+for 495 IR blocks and 5.61 cumulative seconds. IR diagnostics build each
+projection to count bindings, then function SSA immediately rebuilds the same
+immutable block. This is duplicate proof construction, not new evidence.
+
+**Work:**
+
+- Retain a bounded IR-owned cache of immutable `SSABlock` projections.
+- Reuse only the identical `IRBlock` object; do not use structural dataclass
+  equality because provenance fields intentionally excluded from equality still
+  affect the SSA result.
+- Keep cache publication thread-safe and cap retained entries well below the
+  current 2 GB aggregate memory budget.
+- Prove exact-object reuse and distinct-object provenance isolation before
+  measuring the cold target.
+
+**DoD:** Focused SSA, VEX-import, indexed-Alias, and condition-artifact tests pass
+under `pytest -n 7`; Ruff with `--fix`, strict mypy, architecture, ownership,
+and changed-file gates pass; uncached block projections fall from 990 toward the
+495 unique-block inventory and cumulative SSA time falls materially; the exact
+SORTD C hash, function validation, whole-tail validation, and required calls are
+unchanged; peak RSS remains below 2 GB without a material unexplained increase.
+
+**Definition of Failure:** Structurally equal but distinct blocks share a cached
+result, source temporary or instruction provenance changes disappear, mutable
+results escape, cache growth is unbounded, lock behavior serializes unrelated
+expensive construction, exact output or validation changes, memory grows beyond
+the budget, or measured duplicate SSA work does not fall enough to justify the
+cache.
+
+**Completion evidence:** IR now retains at most 128 immutable block-local SSA
+projections and reuses them only by exact `IRBlock` object identity. Regressions
+prove same-object reuse and prevent structurally equal blocks with distinct
+`source_tmp` provenance from colliding. Uncached construction fell from 990 to
+533 calls and cumulative block-local SSA time fell from 5.61 to 2.85
+profiler-seconds; indexed-Alias program construction fell from 22.83 to 20.33
+seconds in the current profile. A semantic-cache-bypassed current-tree A/B ran
+in 54.91 seconds / 362,568 KiB with the cache and 57.14 seconds / 354,736 KiB
+with only this cache disabled. Both generated exact hash
+`9dc16640f0e4bb61e7ba04aa7d46c903ad80e06842b0cd5ed3cd610bbf011ec0`,
+reported `validation=passed`, and completed clean whole-tail validation.
+The focused IR/Alias surface passes 88 tests, `make check-files` passes 75
+owned tests plus its file-level gates, and `quality-dev` passes strict mypy over
+238 sources, Ruff, mypyc smoke over 38 modules, architecture, ownership, 1,863
+curated tests, and the CMP16, LOOPS, and FPTR MS C quality pipelines.
 
 ### 5. Make Validation and Rollback Work Dirty-Pass Driven
 
