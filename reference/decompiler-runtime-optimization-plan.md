@@ -3,41 +3,55 @@
 ## Goal
 
 Reduce cold, no-sidecar decompilation time without weakening semantic recovery,
-tail validation, generated-C stability, type coverage, or layer ownership. The
-next optimization is accepted only after the current correctness baseline is
-green again.
+tail validation, generated-C stability, type coverage, or layer ownership.
+Optimize the largest measured wall-time owner first and reject speculative
+caches or replay suppression that cannot demonstrate useful hits.
 
 Completed task bodies and rejected experiment logs were removed on 2026-08-28.
 Git history through `3ca6f9497` retains their implementation and evidence.
 
 ## Current Evidence
 
-- The latest cold default `sub_10ce0` run took 139.73 seconds and 691,464 KiB
-  peak RSS. It emitted SHA-256
-  `c18c611d72c4159c1eb501732c8c1fde2569490a0da36a0eaf6ee1773bce03a8`,
-  but failed call-argument validation at callsite `0x10d2f`, target `0x107b8`:
-  expected `BP+4`, actual `BP+5`. This is not an accepted baseline.
-- The current focused regression set has 95 passing and 3 failing tests under
-  `pytest -n 7`.
-- Two failures recover a proven 32-bit call-return/stack comparison as a
-  two-byte `SimStackVariable`. The low offset is correct (`BP-4`) but the width
-  is not; this can truncate or mistype a 32-bit comparison.
-- The third failure emits an explicit, semantically plausible condition,
-  `if ((short)arg_4 <= 2)`, with one `return 0` and one `return 1`. Its current
-  mismatch is the expected identifier `arg`, so it is a contract/naming gate
-  until a focused semantic comparison proves otherwise.
-- The latest direct-core profile records 166,496,618 calls and 91.848 profiler
-  seconds. `_prime_structuring_validation_semantics_8616` owns 73.894 inclusive
-  seconds, about 80% of the profile.
-- Inclusive children of Structuring priming include segment/global
-  materialization (22.727 seconds), segment/global semantic priming
-  (20.996 seconds), the broad Lowering replay (14.216 seconds), runtime segment
-  lowering (11.911 seconds), and direct-stack materialization (11.505 seconds).
-  These values overlap and must not be added as independent costs.
-- The shared deep C-AST iterator makes 2,088,147 calls and owns 23.440 seconds;
-  child replacement owns 9.558 seconds. Query-index work is useful only when a
-  current aggregate profile proves that a bounded consumer cohort reduces this
-  total.
+- The exact no-sidecar `sub_10ce0` regression now emits SHA-256
+  `9047373bc10d3e1f485895af5fbd73831b03ef576d7afabf33cfa9080b0a85fd`,
+  preserves the `0x10d2f -> 0x107b8` call as
+  `sub_107b8(&g_0B4C[arg_4], &g_0B4C[arg_6])`, and reports
+  `validation=passed` plus clean whole-tail validation for the focused
+  function.
+- The focused semantic regression set has 245 passing tests under
+  `pytest -n 7`; strict mypy, Ruff with `--fix`, and the architecture import
+  check also pass for the changed surface.
+- Exact typed projection evidence now distinguishes the proven
+  `DS:0x0B4C + (BP+6)*2` source from the adjacent but wrong `BP+4` source.
+  Replaying the direct-stack consumer repairs the wrong projection and accepts
+  the exact projection as already materialized.
+- On the focused scheduler probe, 13 direct-stack requests changed on every
+  replay before this slice. They now close as 5 changed, 3 stable, and 5
+  skipped, with 8 executions and no failures. The five skipped requests still
+  pay full-AST regeneration because their caller has no covered consumer
+  generation scope yet.
+- A current ordinary warm run takes 63.82 seconds and about 344 MiB RSS. The
+  accepted post-change run took 68.35 seconds and 678,680 KiB RSS while
+  preserving the accepted hash and both validation gates, so this slice has no
+  end-to-end timing credit yet. A
+  timing-heavy owner run takes 75.03 seconds and about 676 MiB RSS, so debug
+  instrumentation materially affects both runtime and memory.
+- Current wall-clock component timing attributes about 9-10 seconds to all
+  segment/global materialization, but late stable replays contribute only
+  about 1 second. The first replay contributes 4.52 seconds, including 2.60
+  seconds of indexed lowering and 1.26 seconds of runtime segment lowering.
+- The first semantic convergence, validation priming/snapshots, and
+  post-validation render stabilization cost roughly 9, 7, and 8 seconds
+  respectively. The render stabilization phase repeats direct-stack and
+  segment/global consumers after AST regeneration and is the next bounded
+  optimization target.
+- A current cProfile run records 307,317,122 calls and 226.377 profiler seconds,
+  but it inflates segment/global materialization to 35.381 seconds while direct
+  wall timing measures about 9-10 seconds. cProfile remains useful for call
+  relationships, not standalone acceptance timing.
+- An exact byte/CFG raw-IR registry experiment produced 20 lookups and zero
+  hits on the target path. It was fully removed under the Definition of
+  Failure; no hashing overhead remains.
 - Frontend lifting owns about 8.9 seconds and is secondary to Structuring
   replay on the current profile.
 - `decompiler_postprocess_stage.py` is 17,846 lines. It is a major development,
@@ -54,13 +68,11 @@ restored and before claiming a speedup.
 
 | Priority | Problem | User-visible impact | Development impact |
 | --- | --- | --- | --- |
-| P0 | SORTD call argument is validated as `BP+5` instead of `BP+4` | Current generated C cannot be certified equivalent; a call can receive the wrong byte/word source | Blocks semantic acceptance of every pending optimization and makes wall-time comparisons non-authoritative |
-| P0 | Proven 32-bit JCC stack pair is materialized as two bytes | A long comparison can be truncated or receive the wrong signedness/type | Two tests fail; the current compatibility decoder is consuming a width contract incorrectly |
-| P1 | Structuring validation priming owns about 80% of direct-core profile time | Large functions decompile slowly and reach timeout/fallback more often | Dominates edit-run feedback and hides smaller optimization effects |
-| P1 | Deep C-AST traversal owns 23.440 seconds | Adds latency to every large-function run | Encourages repeated ad hoc scans unless accepted mutation generations own index validity |
-| P1 | Peak RSS is about 675 MiB for one cold large function | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four similar workers could consume about 2.7 GiB before overhead |
+| P1 | Validation/render stabilization rebuilds full ASTs before stable semantic consumers can be skipped | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests now skip their consumer work, but still pay the dominant AST-regeneration cost |
+| P1 | Cold indexed Alias/Widening context construction relifts the function census | Cold no-sidecar runs remain much slower than stable-cache runs | Frequent Alias/Widening edits invalidate the correct source-scoped persistent cache |
+| P1 | Deep C-AST traversal remains a major profiled owner | Adds latency to every large-function run | Encourages repeated ad hoc scans unless accepted mutation generations own index validity |
+| P1 | Instrumented peak RSS reaches about 676 MiB for one large function | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four similar workers can exceed the budget before process overhead |
 | P1 | The postprocess stage is 17,846 lines | No direct semantic failure, but ownership mistakes are easier to introduce | Slow comprehension, review, typing, and agent handoff |
-| P2 | Boolean-condition test expects `arg`, output uses `arg_4` | Current observed output remains readable and has the expected branch/returns | Full test gate remains red until the naming contract or stale expectation is resolved |
 | P2 | JIT is unavailable in the installed interpreter | No runtime improvement from `PYTHON_JIT=1` | Repeated JIT trials waste time; profile-guided mypyc is the only current native path |
 
 ## Acceptance Invariants
@@ -80,78 +92,10 @@ restored and before claiming a speedup.
 
 ## Ordered Work
 
-### 1. Restore the Correctness Baseline
+### 1. Publish Consumer-Specific Mutation Generations
 
-**Status:** in progress; blocks all performance acceptance
-
-**Reason:** The current SORTD call-argument mismatch can change call semantics,
-and the 32-bit JCC width regression can change long comparisons. Performance
-work on a semantically rejected output is not an improvement.
-
-**Work:**
-
-- Trace the `0x10d2f -> 0x107b8` argument from binary IR through Alias stack
-  identity, Widening, Types/Lowering, Structuring consumption, and validation.
-- Fix the first authoritative coordinate owner that changes `BP+4` to `BP+5`.
-  Do not patch the rendered call, validator, CLI, or postprocess text.
-- Trace the proven adjacent two-word stack object consumed by the 32-bit JCC.
-  Preserve the four-byte Widening/Types object instead of reusing a narrow
-  same-offset `CVariable` in the compatibility decoder.
-- Classify the boolean-condition failure by semantic equivalence. If `arg_4`
-  is the canonical current argument name, update only the stale naming
-  expectation; otherwise fix the authoritative argument declaration owner.
-- Add focused negative tests for adjacent-but-unproved words, same-offset
-  narrow subviews, changed call argument classes, and signed/unsigned long
-  comparisons.
-- Re-run the focused function regression before and after each semantic fix.
-
-**DoD:** The 98-test focused set passes under `pytest -n 7`; the 32-bit operand
-is a proved four-byte object; the boolean sample keeps one explicit condition
-and both returns; the exact SORTD function and whole-file tail validation pass;
-required calls and argument classes match binary evidence; a new cold baseline
-records time, RSS, hash, and validation.
-
-**Definition of Failure:** A coordinate or width is repaired in Rewrite, CLI,
-rendered C, or validator policy; two adjacent words are widened without Alias
-or Widening proof; a test is weakened before semantic equivalence is shown; a
-required call/branch disappears; validation remains failed; or the fix depends
-on SORTD addresses, names, source text, or sidecars.
-
-### 2. Accept Pending Exact-Evidence Reuse
-
-**Status:** implementation present; end-to-end acceptance blocked by Step 1
-
-**Reason:** Equivalent-architecture condition relift reuse and the typed
-assignment projection have focused evidence, but neither can be credited while
-the shared semantic baseline fails.
-
-**Work:**
-
-- Re-run equivalent/fresh architecture cache tests and prove changed bytes,
-  bit mode, semantic feature state, unknown architecture identity, incomplete
-  artifacts, and LRU eviction still miss safely.
-- Re-run assignment projection tests for missing, unique, and ambiguous
-  outcomes. Ambiguous assignments remain fail-closed.
-- Confirm the default route does not claim a 46.56-second assignment-scan gain
-  when the legacy CLI stack rerun is disabled.
-- Compare accepted output and validation after Step 1 without changing either
-  implementation merely to match a historical hash.
-
-**DoD:** Focused Ruff with `--fix`, strict mypy, architecture, ownership, and
-pytest gates pass; equivalent fresh architectures perform zero repeated direct
-lifts; assignment lookup uses one typed projection per accepted generation;
-accepted SORTD output and both validation gates remain stable; only measured
-owners receive performance credit.
-
-**Definition of Failure:** Different lift semantics share a cache entry;
-unknown architectures become equality-scoped; mutable or incomplete artifacts
-are reused; duplicate assignments are guessed; CLI owns semantic stack
-recovery; stale AST nodes survive a generation change; or a disabled code path
-is credited with default-route speedup.
-
-### 3. Publish Consumer-Specific Mutation Generations
-
-**Status:** in progress; prerequisite for safe replay suppression
+**Status:** in progress; exact direct-stack projection reuse accepted, but its
+caller still lacks a complete authoritative generation scope
 
 **Reason:** Exact full-AST fingerprints can prove stability but cost seconds on
 productive Structuring rounds. Call order, object identity, and pass booleans
@@ -169,6 +113,12 @@ cannot prove that direct-stack or segment/global inputs are unchanged.
 - Retain exact AST witnessing only for paths not yet covered by authoritative
   generations.
 - Keep closed counters for executed, changed, skipped-stable, and failed work.
+- Preserve the accepted direct-stack projection matcher: it uses instruction
+  provenance plus destination and source storage identity, rejects adjacent
+  machine-BP offsets, and never relies on rendered names or text.
+- Move the next skip boundary ahead of full-AST regeneration only after every
+  relevant mutation in that caller advances the direct-stack consumer
+  generation.
 
 **DoD:** At least one formerly repeated expensive replay is skipped without a
 full-AST fingerprint; every relevant mutation advances the corresponding
@@ -180,9 +130,9 @@ order, object identity, or an unverified `changed` result; a relevant mutation
 does not invalidate its consumer; generations are owned by CLI/Rewrite for
 earlier semantics; accounting does not close; or productive work is skipped.
 
-### 4. Reduce Structuring Validation Priming
+### 2. Reduce Structuring Validation Priming
 
-**Status:** blocked on Step 3
+**Status:** blocked on Step 1
 
 **Reason:** Structuring priming owns 73.894 of 91.848 direct-core profiler
 seconds. Its direct-stack, segment/global, runtime-segment, and broad replay
@@ -210,9 +160,9 @@ intervening mutation can be missed; another expensive whole-AST fingerprint is
 added; productive Lowering is skipped; output/validation changes; or measured
 prime time does not fall by at least 10%.
 
-### 5. Bound Remaining C-AST Traversal
+### 3. Bound Remaining C-AST Traversal
 
-**Status:** pending after Steps 3-4 reprofile
+**Status:** pending after Steps 1-2 reprofile
 
 **Reason:** The deep iterator owns 23.440 seconds and child replacement owns
 9.558 seconds, but previous bounded cohorts reduced call counts without
@@ -240,13 +190,13 @@ receives cached nodes; semantic facts are inferred from C text or shape alone;
 only a microbenchmark improves; aggregate traversal time is flat; memory is
 unbounded; or ordering changes.
 
-### 6. Make Validation Transactions Dirty-Pass Driven
+### 4. Make Validation Transactions Dirty-Pass Driven
 
 **Status:** in progress
 
 **Reason:** Validation is authoritative, but a provably stable pass should not
 pay changed-pass regeneration, snapshot, cycle-scan, and tail-summary costs.
-This follows Step 3 because reliable mutation generations are the safety
+This follows Step 1 because reliable mutation generations are the safety
 boundary.
 
 **Work:**
@@ -269,7 +219,7 @@ restore metadata and AST together; declaration or typed-input changes are
 missed; validator strength is reduced; or saved work is not visible in a
 current profile.
 
-### 7. Split and Type the Postprocess Stage
+### 5. Split and Type the Postprocess Stage
 
 **Status:** in progress; secondary runtime priority
 
@@ -297,9 +247,9 @@ and validation remain unchanged.
 untyped owned contract; semantic recovery moves into Rewrite; the stage grows;
 public behavior exists only as implementation detail; or focused gates fail.
 
-### 8. Compile Only a Reprofiled Hotspot With mypyc
+### 6. Compile Only a Reprofiled Hotspot With mypyc
 
-**Status:** pending after Steps 3-7
+**Status:** pending after Steps 1-5
 
 **Reason:** Previous `c_ast_utils` and `vex_import` native experiments produced
 no repeatable runtime gain and increased memory or build cost. mypyc is useful
@@ -323,7 +273,7 @@ continues to pass.
 `Any` is hidden to satisfy mypyc; output or validation changes; build/startup
 cost consumes the gain; memory materially regresses; or timing is noise.
 
-### 9. Tune Outer Function Parallelism
+### 7. Tune Outer Function Parallelism
 
 **Status:** pending after single-function memory and time fall
 
@@ -350,7 +300,7 @@ failure, timeout, and fallback counts do not regress.
 improves because functions disappear or fall back; output order changes;
 timeouts increase; or worker overhead makes the default slower.
 
-### 10. Final Regression and Performance Ratchet
+### 8. Final Regression and Performance Ratchet
 
 **Status:** pending
 

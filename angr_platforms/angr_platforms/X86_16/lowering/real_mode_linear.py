@@ -137,6 +137,10 @@ from .consumed_call_push_evidence import (
     ConsumedCallPushEvidenceStatus8616,
     normalize_consumed_call_push_evidence_8616,
 )
+from .direct_stack_segmented_projection import (
+    SegmentedStackSourceProjection8616,
+    projected_segmented_stack_assignment_present_8616,
+)
 from .frame_instruction_evidence import canonical_frame_instruction_addresses_8616
 from .frame_prologue_carriers import is_exact_push_bp_carrier_8616
 from .frame_register_carriers import collect_frame_register_carriers_8616
@@ -15581,8 +15585,29 @@ def materialize_direct_stack_mov_instructions_8616(
                 fact,
                 dst_cvar,
             )
+            projected_segmented_source_present = bool(
+                fact.source_kind is DirectStackMoveSourceKind8616.SEGMENTED_MEMORY
+                and fact.source_segment_name == "ds"
+                and isinstance(fact.source_displacement, int)
+                and isinstance(fact.source_index_offset, int)
+                and isinstance(fact.source_index_shift, int)
+                and isinstance(fact.source_access_width, int)
+                and projected_segmented_stack_assignment_present_8616(
+                    codegen,
+                    root,
+                    SegmentedStackSourceProjection8616(
+                        instruction_addr=fact.ins_addr,
+                        destination_machine_bp_offset=fact.dst_offset,
+                        destination_width=fact.width,
+                        source_displacement=fact.source_displacement,
+                        source_index_machine_bp_offset=fact.source_index_offset,
+                        source_index_byte_scale=1 << fact.source_index_shift,
+                        source_access_width=fact.source_access_width,
+                    ),
+                )
+            )
             replay_reconciled = False
-            if not signed_idiv_assignment_present:
+            if not signed_idiv_assignment_present and not projected_segmented_source_present:
                 replay_reconciled = _replace_tagged_statement_assignment_8616(
                     root,
                     project,
@@ -15657,7 +15682,7 @@ def materialize_direct_stack_mov_instructions_8616(
                 root,
                 dst_expr,
                 source_expr,
-            ) or signed_idiv_assignment_present:
+            ) or signed_idiv_assignment_present or projected_segmented_source_present:
                 if (
                     fact.source_kind
                     is DirectStackMoveSourceKind8616.SIGNED_IDIV_REMAINDER
