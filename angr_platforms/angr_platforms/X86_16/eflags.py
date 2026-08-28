@@ -25,6 +25,7 @@ from .semantics.status_flag_contracts import (
 type VexExpr = Any
 type FlagValue = int | VexExpr
 type FlagValueFactory = Callable[[], FlagValue]
+type StatusFlagValueFactories = tuple[tuple[StatusFlag8616, FlagValueFactory], ...]
 
 
 class Eflags:
@@ -187,17 +188,26 @@ class Eflags:
             return normalized_written
         return normalized_written & ~dead_writes
 
-    def _set_live_status_flag_8616(
+    def _set_live_status_flags_8616(
         self,
         flags: FlagValue,
         live_writes: StatusFlag8616,
-        flag: StatusFlag8616,
-        value: FlagValueFactory,
+        values: StatusFlagValueFactories,
     ) -> VexExpr:
-        """Lazily materialize one live status-bit equation into packed FLAGS."""
-        if not live_writes & flag:
+        """Lazily pack all live status-bit equations into one FLAGS update."""
+        selected = tuple((flag, value) for flag, value in values if live_writes & flag)
+        if not selected:
             return cast(VexExpr, flags)
-        return self.set_flag(flags, int(flag).bit_length() - 1, value())
+        flags16 = self.constant(flags, Type.int_16) if isinstance(flags, int) else flags.cast_to(Type.int_16)
+        live_mask = sum(int(flag) for flag, _value in selected)
+        packed = self.constant(0, Type.int_16)
+        for flag, value_factory in selected:
+            value = value_factory()
+            value1 = self.constant(value, Type.int_1) if isinstance(value, int) else value.cast_to(Type.int_1)
+            packed |= value1.cast_to(Type.int_16) << (int(flag).bit_length() - 1)
+        return (flags16 & self.constant((~live_mask) & 0xFFFF, Type.int_16)) | (
+            packed & self.constant(live_mask, Type.int_16)
+        )
 
     def _status_flag_write_is_dead_8616(self, written: StatusFlag8616) -> bool:
         """Return whether every status bit written by this instruction is dead."""
@@ -212,22 +222,16 @@ class Eflags:
         size = v1.width
         result = v1 + self.constant(1, v1.ty)
 
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.PARITY, lambda: self.chk_parity(result)
-        )
-        flags = self._set_live_status_flag_8616(
+        flags = self._set_live_status_flags_8616(
             flags,
             live_writes,
-            StatusFlag8616.AUXILIARY,
-            lambda: self._adjust_flag(v1, self.constant(1, v1.ty), result),
-        )
-        flags = self._set_live_status_flag_8616(flags, live_writes, StatusFlag8616.ZERO, lambda: result == 0)
-        flags = self._set_live_status_flag_8616(flags, live_writes, StatusFlag8616.SIGN, lambda: result[size - 1])
-        flags = self._set_live_status_flag_8616(
-            flags,
-            live_writes,
-            StatusFlag8616.OVERFLOW,
-            lambda: v1 == self.constant((1 << (size - 1)) - 1, v1.ty),
+            (
+                (StatusFlag8616.PARITY, lambda: self.chk_parity(result)),
+                (StatusFlag8616.AUXILIARY, lambda: self._adjust_flag(v1, self.constant(1, v1.ty), result)),
+                (StatusFlag8616.ZERO, lambda: result == 0),
+                (StatusFlag8616.SIGN, lambda: result[size - 1]),
+                (StatusFlag8616.OVERFLOW, lambda: v1 == self.constant((1 << (size - 1)) - 1, v1.ty)),
+            ),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
@@ -242,31 +246,26 @@ class Eflags:
         result = v1 + v2_expr
         wide = self._wider_type(v1.ty)
 
-        flags = self._set_live_status_flag_8616(
+        flags = self._set_live_status_flags_8616(
             flags,
             live_writes,
-            StatusFlag8616.CARRY,
-            lambda: (
-                (v1.cast_to(wide) + v2_expr.cast_to(wide)) >> size & self.constant(1, wide)
-            ).cast_to(Type.int_1),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.PARITY, lambda: self.chk_parity(result)
-        )
-        flags = self._set_live_status_flag_8616(
-            flags,
-            live_writes,
-            StatusFlag8616.AUXILIARY,
-            lambda: self._adjust_flag(v1, v2_expr, result),
-        )
-        flags = self._set_live_status_flag_8616(flags, live_writes, StatusFlag8616.ZERO, lambda: result == 0)
-        flags = self._set_live_status_flag_8616(flags, live_writes, StatusFlag8616.SIGN, lambda: result[size - 1])
-        flags = self._set_live_status_flag_8616(
-            flags,
-            live_writes,
-            StatusFlag8616.OVERFLOW,
-            lambda: (((~(v1 ^ v2_expr)) & (v1 ^ result)) >> (size - 1) & self.constant(1, v1.ty)).cast_to(
-                Type.int_1
+            (
+                (
+                    StatusFlag8616.CARRY,
+                    lambda: (
+                        (v1.cast_to(wide) + v2_expr.cast_to(wide)) >> size & self.constant(1, wide)
+                    ).cast_to(Type.int_1),
+                ),
+                (StatusFlag8616.PARITY, lambda: self.chk_parity(result)),
+                (StatusFlag8616.AUXILIARY, lambda: self._adjust_flag(v1, v2_expr, result)),
+                (StatusFlag8616.ZERO, lambda: result == 0),
+                (StatusFlag8616.SIGN, lambda: result[size - 1]),
+                (
+                    StatusFlag8616.OVERFLOW,
+                    lambda: (
+                        ((~(v1 ^ v2_expr)) & (v1 ^ result)) >> (size - 1) & self.constant(1, v1.ty)
+                    ).cast_to(Type.int_1),
+                ),
             ),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
@@ -285,25 +284,28 @@ class Eflags:
         size = v1.width
         result = v1 + v2_expr + carry_expr
         wide = self._wider_type(v1.ty)
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.CARRY,
-            lambda: ((v1.cast_to(wide) + v2_expr.cast_to(wide) + carry_expr.cast_to(wide))
-                     >> size & self.constant(1, wide)).cast_to(Type.int_1),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.PARITY, lambda: self.chk_parity(result)
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.AUXILIARY, lambda: self._adjust_flag(v1, v2_expr, result)
-        )
-        flags = self._set_live_status_flag_8616(flags, live_writes, StatusFlag8616.ZERO, lambda: result == 0)
-        flags = self._set_live_status_flag_8616(flags, live_writes, StatusFlag8616.SIGN, lambda: result[size - 1])
-        flags = self._set_live_status_flag_8616(
+        flags = self._set_live_status_flags_8616(
             flags,
             live_writes,
-            StatusFlag8616.OVERFLOW,
-            lambda: (((~(v1 ^ v2_expr)) & (v1 ^ result)) >> (size - 1) & self.constant(1, v1.ty)).cast_to(
-                Type.int_1
+            (
+                (
+                    StatusFlag8616.CARRY,
+                    lambda: (
+                        (v1.cast_to(wide) + v2_expr.cast_to(wide) + carry_expr.cast_to(wide))
+                        >> size
+                        & self.constant(1, wide)
+                    ).cast_to(Type.int_1),
+                ),
+                (StatusFlag8616.PARITY, lambda: self.chk_parity(result)),
+                (StatusFlag8616.AUXILIARY, lambda: self._adjust_flag(v1, v2_expr, result)),
+                (StatusFlag8616.ZERO, lambda: result == 0),
+                (StatusFlag8616.SIGN, lambda: result[size - 1]),
+                (
+                    StatusFlag8616.OVERFLOW,
+                    lambda: (
+                        ((~(v1 ^ v2_expr)) & (v1 ^ result)) >> (size - 1) & self.constant(1, v1.ty)
+                    ).cast_to(Type.int_1),
+                ),
             ),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
@@ -314,23 +316,17 @@ class Eflags:
         if live_writes == StatusFlag8616.NONE:
             return
         flags = self.get_gpreg(reg16_t.FLAGS)
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.CARRY, lambda: self.constant(0)
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.PARITY, lambda: self.chk_parity(result)
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.AUXILIARY, lambda: self.constant(0, Type.int_1)
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.ZERO, lambda: result == 0
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.SIGN, lambda: result[result.width - 1]
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.OVERFLOW, lambda: self.constant(0)
+        flags = self._set_live_status_flags_8616(
+            flags,
+            live_writes,
+            (
+                (StatusFlag8616.CARRY, lambda: self.constant(0)),
+                (StatusFlag8616.PARITY, lambda: self.chk_parity(result)),
+                (StatusFlag8616.AUXILIARY, lambda: self.constant(0, Type.int_1)),
+                (StatusFlag8616.ZERO, lambda: result == 0),
+                (StatusFlag8616.SIGN, lambda: result[result.width - 1]),
+                (StatusFlag8616.OVERFLOW, lambda: self.constant(0)),
+            ),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
@@ -354,22 +350,22 @@ class Eflags:
         result = v1 - v2
         size = v1.width
 
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.CARRY, lambda: (v1 < v2).cast_to(Type.int_1)
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.PARITY, lambda: self.chk_parity(result)
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.AUXILIARY, lambda: self._adjust_flag(v1, v2, result)
-        )
-        flags = self._set_live_status_flag_8616(flags, live_writes, StatusFlag8616.ZERO, lambda: result == 0)
-        flags = self._set_live_status_flag_8616(flags, live_writes, StatusFlag8616.SIGN, lambda: result[size - 1])
-        flags = self._set_live_status_flag_8616(
+        flags = self._set_live_status_flags_8616(
             flags,
             live_writes,
-            StatusFlag8616.OVERFLOW,
-            lambda: ((((v1 ^ v2) & (v1 ^ result)) >> (size - 1)) & self.constant(1, v1.ty)).cast_to(Type.int_1),
+            (
+                (StatusFlag8616.CARRY, lambda: (v1 < v2).cast_to(Type.int_1)),
+                (StatusFlag8616.PARITY, lambda: self.chk_parity(result)),
+                (StatusFlag8616.AUXILIARY, lambda: self._adjust_flag(v1, v2, result)),
+                (StatusFlag8616.ZERO, lambda: result == 0),
+                (StatusFlag8616.SIGN, lambda: result[size - 1]),
+                (
+                    StatusFlag8616.OVERFLOW,
+                    lambda: (
+                        ((v1 ^ v2) & (v1 ^ result)) >> (size - 1) & self.constant(1, v1.ty)
+                    ).cast_to(Type.int_1),
+                ),
+            ),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
@@ -384,24 +380,26 @@ class Eflags:
         result = v1 - v2_expr - c_expr
         size = v1.width
         wider = self._wider_type(v1.ty)
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.CARRY,
-            lambda: (v1.cast_to(wider) < (v2_expr.cast_to(wider) + c_expr.cast_to(wider))).cast_to(Type.int_1),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.PARITY, lambda: self.chk_parity(result)
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.AUXILIARY, lambda: self._adjust_flag(v1, v2_expr, result)
-        )
-        flags = self._set_live_status_flag_8616(flags, live_writes, StatusFlag8616.ZERO, lambda: result == 0)
-        flags = self._set_live_status_flag_8616(flags, live_writes, StatusFlag8616.SIGN, lambda: result[size - 1])
-        flags = self._set_live_status_flag_8616(
+        flags = self._set_live_status_flags_8616(
             flags,
             live_writes,
-            StatusFlag8616.OVERFLOW,
-            lambda: ((((v1 ^ v2_expr) & (v1 ^ result)) >> (size - 1)) & self.constant(1, v1.ty)).cast_to(
-                Type.int_1
+            (
+                (
+                    StatusFlag8616.CARRY,
+                    lambda: (
+                        v1.cast_to(wider) < (v2_expr.cast_to(wider) + c_expr.cast_to(wider))
+                    ).cast_to(Type.int_1),
+                ),
+                (StatusFlag8616.PARITY, lambda: self.chk_parity(result)),
+                (StatusFlag8616.AUXILIARY, lambda: self._adjust_flag(v1, v2_expr, result)),
+                (StatusFlag8616.ZERO, lambda: result == 0),
+                (StatusFlag8616.SIGN, lambda: result[size - 1]),
+                (
+                    StatusFlag8616.OVERFLOW,
+                    lambda: (
+                        ((v1 ^ v2_expr) & (v1 ^ result)) >> (size - 1) & self.constant(1, v1.ty)
+                    ).cast_to(Type.int_1),
+                ),
             ),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
@@ -436,19 +434,16 @@ class Eflags:
         result = v1 - v2
         size = v1.width
 
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.PARITY, lambda: self.chk_parity(result)
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.AUXILIARY, lambda: self._adjust_flag(v1, v2, result)
-        )
-        flags = self._set_live_status_flag_8616(flags, live_writes, StatusFlag8616.ZERO, lambda: result == 0)
-        flags = self._set_live_status_flag_8616(flags, live_writes, StatusFlag8616.SIGN, lambda: result[size - 1])
-        flags = self._set_live_status_flag_8616(
+        flags = self._set_live_status_flags_8616(
             flags,
             live_writes,
-            StatusFlag8616.OVERFLOW,
-            lambda: v1 == self.constant(1 << (size - 1), v1.ty),
+            (
+                (StatusFlag8616.PARITY, lambda: self.chk_parity(result)),
+                (StatusFlag8616.AUXILIARY, lambda: self._adjust_flag(v1, v2, result)),
+                (StatusFlag8616.ZERO, lambda: result == 0),
+                (StatusFlag8616.SIGN, lambda: result[size - 1]),
+                (StatusFlag8616.OVERFLOW, lambda: v1 == self.constant(1 << (size - 1), v1.ty)),
+            ),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 
@@ -508,30 +503,22 @@ class Eflags:
                 if live_writes & carry_live
                 else None
             )
-            flags = self._set_live_status_flag_8616(
-                flags, live_writes, StatusFlag8616.CARRY, lambda: cast(VexExpr, cf)
+            values: StatusFlagValueFactories = (
+                (StatusFlag8616.CARRY, lambda: cast(VexExpr, cf)),
+                (StatusFlag8616.PARITY, lambda: self.chk_parity(cast(VexExpr, result))),
+                (StatusFlag8616.ZERO, lambda: (cast(VexExpr, result) == 0).cast_to(Type.int_1)),
+                (StatusFlag8616.SIGN, lambda: cast(VexExpr, result)[v.width - 1].cast_to(Type.int_1)),
             )
-            flags = self._set_live_status_flag_8616(
-                flags, live_writes, StatusFlag8616.PARITY, lambda: self.chk_parity(cast(VexExpr, result))
-            )
-            flags = self._set_live_status_flag_8616(
-                flags, live_writes, StatusFlag8616.ZERO, lambda: (cast(VexExpr, result) == 0).cast_to(Type.int_1)
-            )
-            flags = self._set_live_status_flag_8616(
-                flags,
-                live_writes,
-                StatusFlag8616.SIGN,
-                lambda: cast(VexExpr, result)[v.width - 1].cast_to(Type.int_1),
-            )
-            if masked_const_count == 1 and live_writes & StatusFlag8616.OVERFLOW:
-                flags = self._set_live_status_flag_8616(
-                    flags,
-                    live_writes,
-                    StatusFlag8616.OVERFLOW,
-                    lambda: (
+            if masked_const_count == 1:
+                values += (
+                    (
+                        StatusFlag8616.OVERFLOW,
+                        lambda: (
                         cast(VexExpr, result)[v.width - 1].cast_to(Type.int_1) ^ cast(VexExpr, cf)
                     ).cast_to(Type.int_1),
+                    ),
                 )
+            flags = self._set_live_status_flags_8616(flags, live_writes, values)
             self.set_gpreg(reg16_t.FLAGS, flags)
             return
         c = self._mask_shift_count(c)
@@ -544,40 +531,40 @@ class Eflags:
             if live_writes & (StatusFlag8616.CARRY | StatusFlag8616.OVERFLOW)
             else None
         )
-        flags = self._set_live_status_flag_8616(
+        flags = self._set_live_status_flags_8616(
             flags,
             live_writes,
-            StatusFlag8616.CARRY,
-            lambda: self._ite(unchanged, self.get_flag(0), cast(VexExpr, cf)),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags,
-            live_writes,
-            StatusFlag8616.PARITY,
-            lambda: self._ite(unchanged, self.get_flag(2), self.chk_parity(cast(VexExpr, result))),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags,
-            live_writes,
-            StatusFlag8616.ZERO,
-            lambda: self._ite(unchanged, self.get_flag(6), (cast(VexExpr, result) == 0).cast_to(Type.int_1)),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags,
-            live_writes,
-            StatusFlag8616.SIGN,
-            lambda: self._ite(unchanged, self.get_flag(7), cast(VexExpr, result)[size - 1].cast_to(Type.int_1)),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags,
-            live_writes,
-            StatusFlag8616.OVERFLOW,
-            lambda: self._ite(
-                unchanged, self.get_flag(11),
-                self._ite(
-                    c == self.constant(1, Type.int_8),
-                    (cast(VexExpr, result)[size - 1].cast_to(Type.int_1) ^ cast(VexExpr, cf)).cast_to(Type.int_1),
-                    self.get_flag(11),
+            (
+                (StatusFlag8616.CARRY, lambda: self._ite(unchanged, self.get_flag(0), cast(VexExpr, cf))),
+                (
+                    StatusFlag8616.PARITY,
+                    lambda: self._ite(unchanged, self.get_flag(2), self.chk_parity(cast(VexExpr, result))),
+                ),
+                (
+                    StatusFlag8616.ZERO,
+                    lambda: self._ite(
+                        unchanged, self.get_flag(6), (cast(VexExpr, result) == 0).cast_to(Type.int_1)
+                    ),
+                ),
+                (
+                    StatusFlag8616.SIGN,
+                    lambda: self._ite(
+                        unchanged, self.get_flag(7), cast(VexExpr, result)[size - 1].cast_to(Type.int_1)
+                    ),
+                ),
+                (
+                    StatusFlag8616.OVERFLOW,
+                    lambda: self._ite(
+                        unchanged,
+                        self.get_flag(11),
+                        self._ite(
+                            c == self.constant(1, Type.int_8),
+                            (
+                                cast(VexExpr, result)[size - 1].cast_to(Type.int_1) ^ cast(VexExpr, cf)
+                            ).cast_to(Type.int_1),
+                            self.get_flag(11),
+                        ),
+                    ),
                 ),
             ),
         )
@@ -647,23 +634,16 @@ class Eflags:
             result = v >> self.constant(1, Type.int_8) if live_writes & ~(
                 StatusFlag8616.CARRY | StatusFlag8616.OVERFLOW
             ) else None
-            flags = self._set_live_status_flag_8616(
-                flags, live_writes, StatusFlag8616.CARRY, lambda: v[0].cast_to(Type.int_1)
-            )
-            flags = self._set_live_status_flag_8616(
-                flags, live_writes, StatusFlag8616.PARITY, lambda: self.chk_parity(cast(VexExpr, result))
-            )
-            flags = self._set_live_status_flag_8616(
-                flags, live_writes, StatusFlag8616.ZERO, lambda: (cast(VexExpr, result) == 0).cast_to(Type.int_1)
-            )
-            flags = self._set_live_status_flag_8616(
+            flags = self._set_live_status_flags_8616(
                 flags,
                 live_writes,
-                StatusFlag8616.SIGN,
-                lambda: cast(VexExpr, result)[v.width - 1].cast_to(Type.int_1),
-            )
-            flags = self._set_live_status_flag_8616(
-                flags, live_writes, StatusFlag8616.OVERFLOW, lambda: v[v.width - 1].cast_to(Type.int_1)
+                (
+                    (StatusFlag8616.CARRY, lambda: v[0].cast_to(Type.int_1)),
+                    (StatusFlag8616.PARITY, lambda: self.chk_parity(cast(VexExpr, result))),
+                    (StatusFlag8616.ZERO, lambda: (cast(VexExpr, result) == 0).cast_to(Type.int_1)),
+                    (StatusFlag8616.SIGN, lambda: cast(VexExpr, result)[v.width - 1].cast_to(Type.int_1)),
+                    (StatusFlag8616.OVERFLOW, lambda: v[v.width - 1].cast_to(Type.int_1)),
+                ),
             )
             self.set_gpreg(reg16_t.FLAGS, flags)
             return
@@ -677,29 +657,37 @@ class Eflags:
             if live_writes & StatusFlag8616.CARRY
             else None
         )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.CARRY,
-            lambda: self._ite(unchanged, self.get_flag(0), cast(VexExpr, cf)),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.PARITY,
-            lambda: self._ite(unchanged, self.get_flag(2), self.chk_parity(cast(VexExpr, result))),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.ZERO,
-            lambda: self._ite(unchanged, self.get_flag(6), (cast(VexExpr, result) == 0).cast_to(Type.int_1)),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.SIGN,
-            lambda: self._ite(unchanged, self.get_flag(7), cast(VexExpr, result)[size - 1].cast_to(Type.int_1)),
-        )
-        flags = self._set_live_status_flag_8616(
+        flags = self._set_live_status_flags_8616(
             flags,
             live_writes,
-            StatusFlag8616.OVERFLOW,
-            lambda: self._ite(
-                unchanged, self.get_flag(11),
-                self._ite(c == self.constant(1, Type.int_8), v[size - 1].cast_to(Type.int_1), self.get_flag(11)),
+            (
+                (StatusFlag8616.CARRY, lambda: self._ite(unchanged, self.get_flag(0), cast(VexExpr, cf))),
+                (
+                    StatusFlag8616.PARITY,
+                    lambda: self._ite(unchanged, self.get_flag(2), self.chk_parity(cast(VexExpr, result))),
+                ),
+                (
+                    StatusFlag8616.ZERO,
+                    lambda: self._ite(
+                        unchanged, self.get_flag(6), (cast(VexExpr, result) == 0).cast_to(Type.int_1)
+                    ),
+                ),
+                (
+                    StatusFlag8616.SIGN,
+                    lambda: self._ite(
+                        unchanged, self.get_flag(7), cast(VexExpr, result)[size - 1].cast_to(Type.int_1)
+                    ),
+                ),
+                (
+                    StatusFlag8616.OVERFLOW,
+                    lambda: self._ite(
+                        unchanged,
+                        self.get_flag(11),
+                        self._ite(
+                            c == self.constant(1, Type.int_8), v[size - 1].cast_to(Type.int_1), self.get_flag(11)
+                        ),
+                    ),
+                ),
             ),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
@@ -715,23 +703,16 @@ class Eflags:
             result = v.sar(self.constant(1, Type.int_8)) if live_writes & ~(
                 StatusFlag8616.CARRY | StatusFlag8616.OVERFLOW
             ) else None
-            flags = self._set_live_status_flag_8616(
-                flags, live_writes, StatusFlag8616.CARRY, lambda: v[0].cast_to(Type.int_1)
-            )
-            flags = self._set_live_status_flag_8616(
-                flags, live_writes, StatusFlag8616.PARITY, lambda: self.chk_parity(cast(VexExpr, result))
-            )
-            flags = self._set_live_status_flag_8616(
-                flags, live_writes, StatusFlag8616.ZERO, lambda: (cast(VexExpr, result) == 0).cast_to(Type.int_1)
-            )
-            flags = self._set_live_status_flag_8616(
+            flags = self._set_live_status_flags_8616(
                 flags,
                 live_writes,
-                StatusFlag8616.SIGN,
-                lambda: cast(VexExpr, result)[v.width - 1].cast_to(Type.int_1),
-            )
-            flags = self._set_live_status_flag_8616(
-                flags, live_writes, StatusFlag8616.OVERFLOW, lambda: self.constant(0, Type.int_1)
+                (
+                    (StatusFlag8616.CARRY, lambda: v[0].cast_to(Type.int_1)),
+                    (StatusFlag8616.PARITY, lambda: self.chk_parity(cast(VexExpr, result))),
+                    (StatusFlag8616.ZERO, lambda: (cast(VexExpr, result) == 0).cast_to(Type.int_1)),
+                    (StatusFlag8616.SIGN, lambda: cast(VexExpr, result)[v.width - 1].cast_to(Type.int_1)),
+                    (StatusFlag8616.OVERFLOW, lambda: self.constant(0, Type.int_1)),
+                ),
             )
             self.set_gpreg(reg16_t.FLAGS, flags)
             return
@@ -745,25 +726,32 @@ class Eflags:
             if live_writes & StatusFlag8616.CARRY
             else None
         )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.CARRY,
-            lambda: self._ite(unchanged, self.get_flag(0), cast(VexExpr, cf)),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.PARITY,
-            lambda: self._ite(unchanged, self.get_flag(2), self.chk_parity(cast(VexExpr, result))),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.ZERO,
-            lambda: self._ite(unchanged, self.get_flag(6), (cast(VexExpr, result) == 0).cast_to(Type.int_1)),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.SIGN,
-            lambda: self._ite(unchanged, self.get_flag(7), cast(VexExpr, result)[size - 1].cast_to(Type.int_1)),
-        )
-        flags = self._set_live_status_flag_8616(
-            flags, live_writes, StatusFlag8616.OVERFLOW,
-            lambda: self._ite(unchanged, self.get_flag(11), self.constant(0, Type.int_1)),
+        flags = self._set_live_status_flags_8616(
+            flags,
+            live_writes,
+            (
+                (StatusFlag8616.CARRY, lambda: self._ite(unchanged, self.get_flag(0), cast(VexExpr, cf))),
+                (
+                    StatusFlag8616.PARITY,
+                    lambda: self._ite(unchanged, self.get_flag(2), self.chk_parity(cast(VexExpr, result))),
+                ),
+                (
+                    StatusFlag8616.ZERO,
+                    lambda: self._ite(
+                        unchanged, self.get_flag(6), (cast(VexExpr, result) == 0).cast_to(Type.int_1)
+                    ),
+                ),
+                (
+                    StatusFlag8616.SIGN,
+                    lambda: self._ite(
+                        unchanged, self.get_flag(7), cast(VexExpr, result)[size - 1].cast_to(Type.int_1)
+                    ),
+                ),
+                (
+                    StatusFlag8616.OVERFLOW,
+                    lambda: self._ite(unchanged, self.get_flag(11), self.constant(0, Type.int_1)),
+                ),
+            ),
         )
         self.set_gpreg(reg16_t.FLAGS, flags)
 

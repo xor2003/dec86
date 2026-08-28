@@ -1003,6 +1003,57 @@ reduced direct lifts from 669 to 437 and relift cumulative time from 7.13 to
 the 49.82-57.00-second pre-change range and receives no end-to-end wall-time
 credit.
 
+### 4I. Pack Live Status Bits Once Per Instruction
+
+**Status:** completed
+
+**Reason:** The accepted cold profile records 4,860 `Eflags.set_flag` calls and
+3.59 cumulative seconds rebuilding packed FLAGS one bit at a time. Each update
+recasts the same prior FLAGS value, creates another clear mask, and extends the
+same expression chain. The liveness owner already decides which values are
+required; packing those proven-live values together preserves semantics while
+removing repeated container work and reducing downstream expression size.
+
+**Work:**
+
+- Replace sequential live-bit updates with one Frontend-owned helper that
+  evaluates the same live factories in architectural bit order.
+- Cast the prior FLAGS value once, clear the complete live mask once, pack each
+  one-bit value at its architectural position, and publish one combined value.
+- Preserve every non-live FLAGS bit, undefined-bit policy, lazy dead-value
+  refusal, and integer/dynamic pyvex boundaries.
+- Add focused whole-dead, partial-live, all-live, and concrete FLAGS projection
+  regressions before measuring the exact target.
+
+**DoD:** Focused flag/lifter/80386 tests pass under `pytest -n 7`; Ruff with
+`--fix`, strict mypy, architecture, ownership, and changed-file gates pass; the
+exact target preserves required conditions, C hash or a demonstrably improved
+validated C generation, function validation, and whole-tail validation;
+`set_flag` calls and packed-FLAGS cumulative time fall materially without
+increasing failed liveness accounting.
+
+**Definition of Failure:** A dead value factory is evaluated, a non-live FLAGS
+bit changes, integer and pyvex values diverge, value evaluation order changes,
+undefined flag policy is guessed, required branch conditions disappear,
+liveness failures increase, generated C or validation regresses, or measured
+packing/traversal cost does not fall enough to justify the rewrite.
+
+**Completion evidence:** `eflags.py` now evaluates the same live factories in
+architectural order and publishes one masked FLAGS value per instruction; it
+shrunk from 776 to 764 lines. Concrete full/partial/dead regressions prove
+sequential equivalence, preservation of unrelated bits, stable factory order,
+and lazy refusal of dead factories. Ruff with `--fix`, strict mypy, startup
+architecture, ownership, 244 focused flag/CFG/80386 tests, and the complete
+`quality-dev` gate pass; the latter includes 1,863 curated pytest checks and all
+three selected MS C tiny pipelines. The exact target retained hash
+`9dc16640f0e4bb61e7ba04aa7d46c903ad80e06842b0cd5ed3cd610bbf011ec0`,
+`validation=passed`, and clean whole-tail validation. `set_flag` fell from
+4,860 calls / 3.59 seconds to 86 / 0.065; the replacement batch owner costs
+5.06 versus 6.23 seconds, VEX statements fell 43,518 -> 42,042, and total cold
+profile time fell 159.1 -> 144.4 seconds with about seven million fewer calls.
+The 59.36-second low-overhead sample remains inside the existing wall/RSS noise
+band and receives no standalone wall-time claim.
+
 ### 5. Make Validation and Rollback Work Dirty-Pass Driven
 
 **Status:** in progress
@@ -1939,3 +1990,9 @@ record the failed experiment, and continue with the next evidence-backed design.
   pytest checks and all three selected MS C tiny pipelines. The exact SORTD
   hash and both validation gates remain unchanged; the cold profile reduced
   direct lifts 669 -> 437 and relift cumulative time 7.13 -> 5.11 seconds.
+- Task 4I replaced repeated live-bit FLAGS reconstruction with one exact masked
+  update per instruction. The exact SORTD hash and both validation gates remain
+  unchanged; 244 flag/CFG/80386 tests and `quality-dev` pass. Sequential
+  `set_flag` work fell 4,860 -> 86 calls, VEX statements fell by 1,476, and the
+  cold profile fell from 159.1 to 144.4 seconds with about seven million fewer
+  Python calls.
