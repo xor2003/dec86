@@ -114,14 +114,21 @@ new improvement.
 1. Restore or coordinate the current SORTD whole-tail acceptance point before
    claiming another end-to-end speedup. Do not modify the concurrently owned
    call-argument/parameter surface merely to make the performance run pass.
-2. Complete Task 5's dirty-pass and retry reuse work. The latest cold run shows
-   validation retries now dominate user feedback, including one 63-second retry.
-3. Complete Task 3D's consumer-specific mutation generation. Task 3H's exact
-   trace proved all three expensive Structuring direct-stack and segment/global
-   rounds productive, so no replay can be removed until an upstream owner
-   publishes narrower invalidation evidence.
-4. Coordinate the remaining indexed-Alias owner before editing it; do not
-   duplicate the concurrent Frontend/indexed-Alias implementation.
+2. Reopen Task 4 for the dominant single-function cost. The exact in-process
+   `sub_10ce0` profile records 311.7 million calls, 32.93 cumulative seconds in
+   the shared deep iterator, 11.21 seconds in the Rewrite iterator, and 9.37
+   seconds in repeated cycle scans. Migrate only read-only queries, keyed by an
+   authoritative accepted-mutation generation.
+3. Coordinate the cold direct-run Alias census under Task 2. The same profile
+   charges 27.54 seconds to preparing the 21-function indexed Alias context,
+   including 21.12 seconds building local and whole-program artifacts. Do not
+   duplicate the concurrent indexed-Alias implementation.
+4. Complete Task 5's dirty-pass work, then Task 3D's consumer-specific mutation
+   generation. Normal clean workers already refuse evidence-equivalent retries;
+   the earlier 63-second forced-serial retry is not the default critical path.
+   Task 3H's exact trace proved all three expensive Structuring direct-stack and
+   segment/global rounds productive, so no replay can be removed until an
+   upstream owner publishes narrower invalidation evidence.
 5. Revisit Task 3H only after that mutation impact can distinguish rebuilt
    stack/global consumers; five later validation-prime calls are already free.
    Current low-overhead timing charges about 3.5 seconds to eight direct-stack
@@ -677,30 +684,39 @@ also reported productive changes. Removing any of them now would trigger this
 task's Definition of Failure. The safe dependency is Task 3D's authoritative
 consumer mutation impact, not another call-order or full-AST cache.
 
-### 4. Build a Request-Owned C-AST Traversal Index
+### 4. Build a Generation-Owned C-AST Query Index
 
-**Status:** rejected and removed
+**Status:** reopened; implementation must coordinate with the concurrent owner
 
-**Reason:** Deep C-AST iterators account for tens of millions of visits. Many
-passes independently rediscover the same nodes and parent relationships.
+**Reason:** The exact in-process `sub_10ce0` profile records 311.7 million Python
+calls. The shared deep iterator costs 32.93 cumulative seconds across 2.82
+million generator calls, a second Rewrite iterator costs 11.21 seconds, and 85
+cycle scans cost 9.37 seconds. Structuring semantic priming totals 74.19 seconds.
+This dominates the 27.54-second cold Alias census and all individual cleanup
+passes. The earlier bounded index experiment did not migrate enough consumers
+to change this workload, so its negative result does not cover this scope.
 
 **Work:**
 
-- Add a typed, request-owned AST index outside the 18k-line orchestrator.
+- Use a typed query index outside the 18k-line orchestrator only for read-only
+  projections whose required fields are explicit in the contract.
 - Index nodes, parents, statement blocks, calls, assignments, variables, and
   stable storage identities needed by multiple consumers.
-- Invalidate only on an authoritative AST mutation generation change.
-- Migrate the highest-frequency read-only consumers first; retain dynamic
-  boundary narrowing for third-party angr nodes.
+- Key reuse only by the authoritative accepted-mutation generation; never by
+  pass order, rendered C, or an unverified `changed` return value.
+- Migrate the measured highest-frequency read-only consumers first, then rerun
+  the exact profile after each bounded cohort. Keep mutating walks uncached.
 
 **DoD:** Profiling shows fewer deep iterator calls and lower cumulative traversal
 time; index construction occurs at most once per unchanged generation; migrated
 consumers return results equivalent to uncached traversal in positive and
 negative fixtures; memory remains within the 2 GB aggregate budget.
 
-**Definition of Failure:** Cached parents/nodes survive mutation, consumers
-derive semantic facts from C text or node shape alone, traversal count does not
-fall, peak memory is unbounded, or ordering becomes nondeterministic.
+**Definition of Failure:** Cached parents/nodes survive any accepted or witnessed
+mutation, a mutating consumer receives cached nodes, consumers derive semantic
+facts from C text or shape alone, the exact profile does not materially reduce
+the 32.93-second iterator cost, peak memory is unbounded, output or validation
+changes, or ordering becomes nondeterministic.
 
 ### 4A. Prefilter Impossible Direct-Stack Reload Placements
 
