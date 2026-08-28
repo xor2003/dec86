@@ -11,7 +11,10 @@ import os
 import sys
 from pathlib import Path
 
-from inertia_decompiler.cache_runtime_contract import WORKER_CPROFILE_ENV_8616
+from inertia_decompiler.cache_runtime_contract import (
+    WORKER_CPROFILE_ENV_8616,
+    WORKER_IN_PROCESS_PROFILE_ENV_8616,
+)
 from inertia_decompiler.cli_core import main as _core_main
 
 
@@ -25,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     raw_profile_path = os.environ.get(WORKER_CPROFILE_ENV_8616, "").strip()
     if not raw_profile_path:
         return int(_core_main(argv))
+    os.environ[WORKER_IN_PROCESS_PROFILE_ENV_8616] = "1"
     profile_path = _worker_profile_path_8616(raw_profile_path)
     profile_path.parent.mkdir(parents=True, exist_ok=True)
     profiler = cProfile.Profile()

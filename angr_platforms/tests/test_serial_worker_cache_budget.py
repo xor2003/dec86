@@ -11,7 +11,10 @@ from pathlib import Path
 import inertia_decompiler.cache as cache_module
 import inertia_decompiler.serial_clean_worker_cli as worker_cli
 import inertia_decompiler.serial_worker_cache as worker_cache
-from inertia_decompiler.cache_runtime_contract import timing_diagnostics_requested_8616
+from inertia_decompiler.cache_runtime_contract import (
+    WORKER_IN_PROCESS_PROFILE_ENV_8616,
+    timing_diagnostics_requested_8616,
+)
 
 
 def _inputs(binary: Path, *, timeout: int) -> worker_cache.SerialWorkerCacheInputs8616:
@@ -82,9 +85,17 @@ def test_clean_worker_cprofile_writes_explicit_pid_path(monkeypatch, tmp_path: P
     """The opt-in worker profiler must write a readable process-specific file."""
     profile_template = tmp_path / "worker-{pid}.prof"
     monkeypatch.setenv("INERTIA_OTEL_CPROFILE_PATH", str(profile_template))
-    monkeypatch.setattr(worker_cli, "_core_main", lambda _argv: 7)
+    observed_profile_modes: list[str | None] = []
+
+    def core_main(_argv: list[str] | None) -> int:
+        """Record whether profiling keeps decompilation inside this process."""
+        observed_profile_modes.append(os.environ.get(WORKER_IN_PROCESS_PROFILE_ENV_8616))
+        return 7
+
+    monkeypatch.setattr(worker_cli, "_core_main", core_main)
 
     assert worker_cli.main(["sample.exe"]) == 7
+    assert observed_profile_modes == ["1"]
     profile_path = tmp_path / f"worker-{os.getpid()}.prof"
     assert pstats.Stats(str(profile_path)).total_calls > 0
 
