@@ -19,11 +19,12 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   `sub_107b8(&g_0B4C[arg_4], &g_0B4C[arg_6])`, and reports
   `validation=passed` plus clean whole-tail validation for the focused
   function.
-- The focused semantic regression set has 245 passing tests under
-  `pytest -n 7`; strict mypy, Ruff with `--fix`, and the architecture import
-  check also pass for the changed surface.
-- The timing-cache policy passes its focused and owned changed-surface gates;
-  strict mypy and Ruff pass for all five touched production modules.
+- The neighbor-cache slice passes 81 focused and 29 mapped tests under
+  `pytest -n 7`; strict mypy, Ruff `--fix`, architecture, context, and ownership
+  checks pass for the changed surface.
+- The current shared-tree pipeline has 1,861 pytest passes and four unrelated
+  direct-stack failures; one of three external constructs passes. The failing
+  `apply_twice` external case remains status 4 with this cache disabled.
 - Timing diagnostics now preserve upstream discovery/evidence cache identity
   while refusing direct, serial-worker, and function-result C reuse. An
   accepted repeated run fell from 160.85 to 46.90 seconds wall and from 119.01
@@ -40,13 +41,13 @@ Git history through `3ca6f9497` retains their implementation and evidence.
 - An opt-in clean-worker cProfile of the six-function CMP16 sweep attributes
   17.64 of 33.95 profiled seconds in its slowest worker to Structuring
   validation priming, including 5.79 seconds of callsite-summary work and 2.09
-  seconds of callee argument evidence. All six generated functions validate.
-- `decompiler_postprocess_stage.py` is 17,846 lines. It is a major development,
-  review, and typing cost, but postprocess is no longer the leading runtime
-  owner. Extraction must follow the runtime-critical correctness work.
-- CPython 3.14.7 exposes `sys._jit`, but this build reports both
-  `is_available() == False` and `is_enabled() == False`; `PYTHON_JIT=1` is
-  currently inert. mypyc remains the available native-compilation experiment.
+  seconds of callee argument evidence. A same-checkout profiled A/B reduced 60
+  neighbor-call queries to 15 collectors, helper time from 0.762 to 0.108
+  seconds, and wall from 43.586 to 42.785 seconds; both runs returned status 0.
+- The 17,846-line `decompiler_postprocess_stage.py` remains a development,
+  review, and typing cost, but is no longer the leading runtime owner.
+- CPython 3.14.7 reports `sys._jit.is_available() == False`; `PYTHON_JIT=1` is
+  inert, so mypyc remains the available native-compilation experiment.
 
 All measurements are checkout-specific; refresh them after correctness is restored before claiming a speedup.
 

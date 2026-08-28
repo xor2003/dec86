@@ -21,6 +21,10 @@ import claripy
 from angr import SimProcedure
 from angr.sim_type import SimTypeFunction
 
+from .function_evidence_inventory import (
+    FunctionEvidenceKind8616,
+    collect_function_binary_evidence_8616,
+)
 from .helper_abi import (
     known_helper_abi_8616,
     known_helper_signature_declarations_8616,
@@ -2103,7 +2107,33 @@ def collect_neighbor_call_targets(function: object) -> list[CallTargetSeed]:
 
         return recovered
 
-    return _impl()
+    def _build_cached_evidence(
+        _project: object | None,
+        _function: object,
+    ) -> list[CallTargetSeed]:
+        """Adapt the closed collector to the shared evidence inventory."""
+        return _impl()
+
+    project = _x86_16_project_for_function_8616(function)
+    if project is None:
+        return []
+    function_addr = _analysis_function_addr_8616(function)
+    function_size = _dynamic_analysis_int_attr_8616(function, "size")
+    if function_addr is None or function_size is None or function_size <= 0:
+        return _impl()
+    try:
+        function_content = bytes(cast(Any, project).loader.memory.load(function_addr, function_size))
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return _impl()
+    return list(
+        collect_function_binary_evidence_8616(
+            project,
+            function,
+            kind=FunctionEvidenceKind8616.NEIGHBOR_CALL_TARGETS,
+            builder=_build_cached_evidence,
+            content_identity=function_content,
+        )
+    )
 
 
 def patch_far_call_sites(function: object, far_targets: list[FarCallTarget]) -> bool:

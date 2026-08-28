@@ -85,6 +85,117 @@ def test_changed_binary_surface_invalidates_address_cache() -> None:
     assert build_count == 2
 
 
+def test_changed_callsite_surface_invalidates_address_cache() -> None:
+    project = SimpleNamespace()
+    build_count = 0
+
+    class Function:
+        addr = 0x1234
+        size = 12
+        blocks = ()
+
+        def __init__(self) -> None:
+            self.target = 0x1400
+
+        def get_call_sites(self) -> tuple[int]:
+            return (0x1238,)
+
+        def get_call_target(self, _callsite_addr: int) -> int:
+            return self.target
+
+        def get_call_return(self, _callsite_addr: int) -> int:
+            return 0x123B
+
+    function = Function()
+
+    def builder(_project: object | None, _function: object) -> tuple[int]:
+        nonlocal build_count
+        build_count += 1
+        return (function.target,)
+
+    assert collect_function_binary_evidence_8616(
+        project,
+        function,
+        kind=FunctionEvidenceKind8616.NEIGHBOR_CALL_TARGETS,
+        builder=builder,
+    ) == (0x1400,)
+    function.target = 0x1500
+    assert collect_function_binary_evidence_8616(
+        project,
+        function,
+        kind=FunctionEvidenceKind8616.NEIGHBOR_CALL_TARGETS,
+        builder=builder,
+    ) == (0x1500,)
+    assert build_count == 2
+
+
+def test_changed_content_identity_invalidates_address_cache() -> None:
+    project = SimpleNamespace()
+    function = SimpleNamespace(addr=0x1234, size=2, blocks=())
+    build_count = 0
+
+    def builder(_project: object | None, _function: object) -> tuple[int]:
+        nonlocal build_count
+        build_count += 1
+        return (build_count,)
+
+    assert collect_function_binary_evidence_8616(
+        project,
+        function,
+        kind=FunctionEvidenceKind8616.NEIGHBOR_CALL_TARGETS,
+        builder=builder,
+        content_identity=b"\x90\xc3",
+    ) == (1,)
+    assert collect_function_binary_evidence_8616(
+        project,
+        function,
+        kind=FunctionEvidenceKind8616.NEIGHBOR_CALL_TARGETS,
+        builder=builder,
+        content_identity=b"\xcc\xc3",
+    ) == (2,)
+    assert build_count == 2
+
+
+def test_builder_mutation_is_resnapshotted_before_cache_storage() -> None:
+    project = SimpleNamespace()
+    build_count = 0
+
+    class Function:
+        addr = 0x1234
+        size = 12
+        blocks = ()
+
+        def __init__(self) -> None:
+            self.callsites: dict[int, tuple[int, int]] = {}
+
+        def get_call_sites(self) -> tuple[int, ...]:
+            return tuple(self.callsites)
+
+        def get_call_target(self, callsite_addr: int) -> int:
+            return self.callsites[callsite_addr][0]
+
+        def get_call_return(self, callsite_addr: int) -> int:
+            return self.callsites[callsite_addr][1]
+
+    function = Function()
+
+    def builder(_project: object | None, _function: object) -> tuple[int]:
+        nonlocal build_count
+        build_count += 1
+        function.callsites[0x1238] = (0x1400, 0x123B)
+        return (0x1400,)
+
+    for _iteration in range(2):
+        assert collect_function_binary_evidence_8616(
+            project,
+            function,
+            kind=FunctionEvidenceKind8616.NEIGHBOR_CALL_TARGETS,
+            builder=builder,
+        ) == (0x1400,)
+
+    assert build_count == 1
+
+
 def test_opaque_function_cache_retains_and_checks_owner(monkeypatch) -> None:
     project = SimpleNamespace()
     build_count = 0

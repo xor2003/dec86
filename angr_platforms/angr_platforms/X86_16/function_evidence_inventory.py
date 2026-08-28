@@ -24,6 +24,7 @@ class FunctionEvidenceKind8616(Enum):
     INDEXED_GLOBAL_LOAD_SITES = "indexed_global_load_sites"
     INDEXED_GLOBAL_STORES = "indexed_global_stores"
     FAR_POINTER_SEGMENTED_LOADS = "far_pointer_segmented_loads"
+    NEIGHBOR_CALL_TARGETS = "neighbor_call_targets"
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,8 @@ class FunctionBinarySurface8616:
     identity: FunctionBinaryIdentity8616
     size: int
     blocks: tuple[tuple[int, int], ...]
+    callsites: tuple[tuple[int, int | None, int | None], ...]
+    content_identity: bytes | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +69,15 @@ class _FunctionBoundary8616(Protocol):
     size: int
     blocks: Sequence[_BlockBoundary8616]
 
+    def get_call_sites(self) -> Iterable[int]:
+        """Return machine callsite addresses known by the recovered CFG."""
+
+    def get_call_target(self, callsite_addr: int) -> int | None:
+        """Return the recovered target for one machine callsite."""
+
+    def get_call_return(self, callsite_addr: int) -> int | None:
+        """Return the recovered continuation for one machine callsite."""
+
 
 class _ProjectInventoryBoundary8616(Protocol):
     """Dynamic project field retaining request-owned evidence inventories."""
@@ -76,7 +88,11 @@ class _ProjectInventoryBoundary8616(Protocol):
     ]
 
 
-def _function_binary_surface_8616(function: object) -> FunctionBinarySurface8616:
+def _function_binary_surface_8616(
+    function: object,
+    *,
+    content_identity: bytes | None,
+) -> FunctionBinarySurface8616:
     """Snapshot stable binary coordinates and the decoded block surface."""
     boundary = cast(_FunctionBoundary8616, function)
     try:
@@ -106,7 +122,32 @@ def _function_binary_surface_8616(function: object) -> FunctionBinarySurface8616
         except AttributeError:
             size = -1
         extents.append((block_addr, size))
-    return FunctionBinarySurface8616(identity, function_size, tuple(sorted(extents)))
+    callsites: list[tuple[int, int | None, int | None]] = []
+    try:
+        callsite_addrs = tuple(boundary.get_call_sites())
+    except (AttributeError, TypeError):
+        callsite_addrs = ()
+    for raw_callsite_addr in callsite_addrs:
+        try:
+            callsite_addr = int(raw_callsite_addr)
+            target = boundary.get_call_target(callsite_addr)
+            return_addr = boundary.get_call_return(callsite_addr)
+        except (AttributeError, TypeError, ValueError):
+            continue
+        callsites.append(
+            (
+                callsite_addr,
+                target if isinstance(target, int) else None,
+                return_addr if isinstance(return_addr, int) else None,
+            )
+        )
+    return FunctionBinarySurface8616(
+        identity,
+        function_size,
+        tuple(sorted(extents)),
+        tuple(sorted(callsites)),
+        content_identity,
+    )
 
 
 def collect_function_binary_evidence_8616[EvidenceT8616](
@@ -115,11 +156,15 @@ def collect_function_binary_evidence_8616[EvidenceT8616](
     *,
     kind: FunctionEvidenceKind8616,
     builder: Callable[[object | None, object], Iterable[EvidenceT8616]],
+    content_identity: bytes | None = None,
 ) -> tuple[EvidenceT8616, ...]:
     """Return cached immutable evidence or collect it for the current surface."""
     if project is None:
         return tuple(builder(project, function))
-    surface = _function_binary_surface_8616(function)
+    surface = _function_binary_surface_8616(
+        function,
+        content_identity=content_identity,
+    )
     typed_project = cast(_ProjectInventoryBoundary8616, project)
     try:
         inventories = typed_project._inertia_function_evidence_inventories_8616
@@ -135,9 +180,14 @@ def collect_function_binary_evidence_8616[EvidenceT8616](
     if cached is not None and cached.surface == surface and fallback_owner_matches:
         return cast(tuple[EvidenceT8616, ...], cached.evidence)
     evidence = tuple(builder(project, function))
+    collected_surface = _function_binary_surface_8616(
+        function,
+        content_identity=content_identity,
+    )
     fallback_owner = function if surface.identity.address is None else None
-    inventories[key] = FunctionEvidenceInventory8616(
-        surface,
+    collected_key = (kind, collected_surface.identity)
+    inventories[collected_key] = FunctionEvidenceInventory8616(
+        collected_surface,
         cast(tuple[object, ...], evidence),
         fallback_owner,
     )
