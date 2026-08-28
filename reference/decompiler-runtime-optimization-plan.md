@@ -114,35 +114,39 @@ new improvement.
 1. Restore or coordinate the current SORTD whole-tail acceptance point before
    claiming another end-to-end speedup. Do not modify the concurrently owned
    call-argument/parameter surface merely to make the performance run pass.
-2. Reopen Task 4 for the dominant single-function cost. The exact in-process
-   `sub_10ce0` profile records 311.7 million calls, 32.93 cumulative seconds in
-   the shared deep iterator, 11.21 seconds in the Rewrite iterator, and 9.37
-   seconds in repeated cycle scans. Migrate only read-only queries, keyed by an
-   authoritative accepted-mutation generation.
-3. Coordinate the cold direct-run Alias census under Task 2. The same profile
+2. Complete Task 4M at the typed pipeline owner once the concurrent structured-
+   AST query-index owner lands. The current profile charges 46.56 seconds to
+   534 whole-AST assignment lookups from the CLI stack adapter. Build one exact
+   assignment projection per accepted generation; do not optimize semantic
+   stack recovery in the CLI layer or create a competing query-index owner.
+3. Continue Task 4 only with aggregate-profile evidence. Three bounded read-
+   only cohorts reduced shared-iterator calls by about 7%, but cumulative
+   iterator time stayed effectively flat and the profiled run timed out. Local
+   microbenchmark wins alone no longer justify another traversal cohort.
+4. Coordinate the cold direct-run Alias census under Task 2. The same profile
    charges 27.54 seconds to preparing the 21-function indexed Alias context,
    including 21.12 seconds building local and whole-program artifacts. Do not
    duplicate the concurrent indexed-Alias implementation.
-4. Complete Task 5's dirty-pass work, then Task 3D's consumer-specific mutation
+5. Complete Task 5's dirty-pass work, then Task 3D's consumer-specific mutation
    generation. Normal clean workers already refuse evidence-equivalent retries;
    the earlier 63-second forced-serial retry is not the default critical path.
    Task 3H's exact trace proved all three expensive Structuring direct-stack and
    segment/global rounds productive, so no replay can be removed until an
    upstream owner publishes narrower invalidation evidence.
-5. Revisit Task 3H only after that mutation impact can distinguish rebuilt
+6. Revisit Task 3H only after that mutation impact can distinguish rebuilt
    stack/global consumers; five later validation-prime calls are already free.
    Current low-overhead timing charges about 3.5 seconds to eight direct-stack
    rounds, including productive rounds that must still run.
-6. Revisit Task 4G only with a design that materially reduces lift work. The
+7. Revisit Task 4G only with a design that materially reduces lift work. The
    tested `skip_stmts` and `cross_insn_opt` factory modes preserved the exact
    reachability surface but changed measured CPU time by only about 2%, below
    the acceptance threshold.
-7. Use Task 5C's accepted Rewrite generation to shrink the 18k-line stage under
+8. Use Task 5C's accepted Rewrite generation to shrink the 18k-line stage under
    Task 6. Do not move semantic recovery into Rewrite.
-8. Re-profile the exact cold target with low-overhead timing before selecting a
+9. Re-profile the exact cold target with low-overhead timing before selecting a
    mypyc cohort. `PYTHON_JIT=1` is currently inert because the installed CPython
    reports `sys._jit.is_available() == False`.
-9. Tune outer workers only after single-function costs fall. Keep deterministic
+10. Tune outer workers only after single-function costs fall. Keep deterministic
    ordering and aggregate memory at or below 2 GB.
 
 ### 1. Freeze a Current Baseline and Verify the New Lowering Boundary
@@ -686,7 +690,8 @@ consumer mutation impact, not another call-order or full-AST cache.
 
 ### 4. Build a Generation-Owned C-AST Query Index
 
-**Status:** in progress; three read-only traversal cohorts completed
+**Status:** in progress; three read-only traversal cohorts completed, aggregate
+completion gate failed
 
 **Reason:** The exact in-process `sub_10ce0` profile records 311.7 million Python
 calls. The shared deep iterator costs 32.93 cumulative seconds across 2.82
@@ -749,6 +754,14 @@ passes with 17 tests plus Ruff, strict mypy, architecture, context, and ownershi
 checks. Captured `sub_10ce0` output retains the same SHA-256 and both validation
 gates at 58.57 seconds / 343,732 KiB. The 1,305-line owner shrank in this cohort;
 aggregate profiling remains the Task 4 completion gate.
+
+**Aggregate gate evidence:** The exact follow-up profile made 411.5 million
+calls over 249.73 profiler-seconds and timed out at 208 seconds before producing
+accepted C. Shared deep-iterator calls fell from 2.819 million to 2.623 million
+(about 7%), but cumulative iterator time stayed effectively flat at 32.80
+seconds versus 32.93 seconds. Task 4 therefore remains open under its Definition
+of Failure. The profile exposed a larger N-by-AST defect: 534 CLI stack-alias
+assignment lookups consumed 46.56 seconds. Task 4M owns that next correction.
 
 ### 4A. Prefilter Impossible Direct-Stack Reload Placements
 
@@ -1261,6 +1274,47 @@ zero additional lifts. End-to-end acceptance remains open: the concurrent
 shared tree's unique-key default-parallel run took 193.32 seconds / 660,436 KiB
 and failed pre-existing call-argument/parameter whole-tail evidence in
 `sub_101f0`, so this task makes no full-run speedup or semantic-acceptance claim.
+
+### 4M. Replace Repeated CLI Assignment Scans with One Typed Projection
+
+**Status:** blocked on the concurrent structured-AST query-index owner
+
+**Reason:** The aggregate profile charges 46.56 seconds to 534 calls of the
+single-assignment lookup used by stack-byte-offset rewriting. Each distinct
+`CVariable` identity causes another complete AST traversal because the current
+cache is keyed only by the queried node identity. This is the largest isolated
+postprocess cost in the profile. The CLI is a fallback/reporting boundary and
+must not become the owner of semantic stack-alias evidence.
+
+**Work:**
+
+- Extend the authoritative typed pipeline query index, once landed, with one
+  immutable assignment projection built from its existing assignment census.
+- Key exact lookups by owned AST variable identity and explicit normalized
+  structural fields needed for compatibility; keep temporary-register and
+  width distinctions explicit.
+- Return typed missing, unique, and ambiguous outcomes. Duplicate assignment
+  identities are `UNKNOWN_REFUSE`; never select one by order or rendered text.
+- Let the CLI stack adapter consume the projection without owning new semantic
+  recovery. Earlier Alias/Lowering evidence remains authoritative.
+- Scope reuse to one accepted mutation generation. Rebuild after every
+  accepted or witnessed AST mutation; never retain node references across a
+  generation boundary.
+
+**DoD:** Positive, missing, and duplicate fixtures prove exact parity with the
+current lookup for variable identity, normalized name, register identity,
+width, and supported temporary forms; 534 full-AST scans become one index build
+plus bounded lookups; the 46.56-second profile owner falls materially; exact C
+hash, function validation, and whole-tail validation remain unchanged; Ruff
+with `--fix`, strict mypy, architecture/ownership checks, focused tests under
+`pytest -n 7`, and changed-file gates pass within the 2 GB memory budget.
+
+**Definition of Failure:** The new index competes with another AST-query owner,
+semantic stack recovery remains newly owned by CLI, duplicate assignments are
+guessed, lookup relies on rendered C/assembly or corpus identity, mutable nodes
+survive a generation change, exact output or validation changes, peak memory is
+unbounded, or aggregate profiling does not materially reduce the measured
+46.56-second owner.
 
 ### 5. Make Validation and Rollback Work Dirty-Pass Driven
 
