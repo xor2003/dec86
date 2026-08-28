@@ -686,7 +686,7 @@ consumer mutation impact, not another call-order or full-AST cache.
 
 ### 4. Build a Generation-Owned C-AST Query Index
 
-**Status:** reopened; implementation must coordinate with the concurrent owner
+**Status:** in progress; first read-only tag-projection cohort completed
 
 **Reason:** The exact in-process `sub_10ce0` profile records 311.7 million Python
 calls. The shared deep iterator costs 32.93 cumulative seconds across 2.82
@@ -717,6 +717,18 @@ mutation, a mutating consumer receives cached nodes, consumers derive semantic
 facts from C text or shape alone, the exact profile does not materially reduce
 the 32.93-second iterator cost, peak memory is unbounded, output or validation
 changes, or ordering becomes nondeterministic.
+
+**First cohort evidence:** Structuring now collects instruction and VEX-block
+entry tags in one typed read-only subtree projection. The condition-surface
+consumer walks each branch body once instead of once per projection. Its exact
+200-call, 40-branch benchmark improved from 0.482920 to 0.352376 seconds (27%).
+Focused tests pass 28/28 under `pytest -n 7`; Ruff and strict mypy pass for both
+non-test owners. The captured `sub_10ce0` C remains byte-identical at SHA-256
+`14d97d8ac34d7b95308a8855a18224c76cf2251f151304b7c265791222dc808c`,
+with function and whole-tail validation passing at 344,116 KiB RSS. Task 4
+remains open until an exact follow-up profile materially reduces the aggregate
+32.93-second iterator cost. The shared gate also has one unrelated concurrent
+segment-global fixture failure, so no broad-suite claim is made.
 
 ### 4A. Prefilter Impossible Direct-Stack Reload Placements
 

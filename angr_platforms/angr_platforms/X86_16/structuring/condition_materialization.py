@@ -117,6 +117,7 @@ from .single_branch_return_orientation import (
     classify_direct_or_one_hop_target_orientation_8616,
     classify_single_branch_return_orientation_8616,
 )
+from .tagged_subtree_projection import collect_structured_subtree_entry_tags_8616
 from .total_return_suffixes import (
     TotalReturnSuffixPruneStats8616,
     prune_unreachable_total_return_suffixes_8616,
@@ -369,40 +370,17 @@ def condition_chain_successors_8616(project: object, codegen: object) -> dict[in
 
 def _first_tagged_ins_addr_8616(node: object) -> int | None:
     """Return the first binary instruction tag in one structured C subtree."""
-    addresses: list[int] = []
-    for current in _iter_c_nodes_deep_8616(node):
-        boundary = cast(_ConditionMaterializationTaggedNode8616, current)
-        try:
-            tags = boundary.tags
-        except AttributeError:
-            continue
-        copied_tags = copy_structured_tags_8616(tags)
-        ins_addr = copied_tags.get("ins_addr") if copied_tags is not None else None
-        if isinstance(ins_addr, int):
-            addresses.append(ins_addr)
-    return min(addresses) if addresses else None
+    return collect_structured_subtree_entry_tags_8616(node).first_instruction_addr
 
 
 def _tagged_block_addrs_8616(node: object) -> tuple[int, ...]:
     """Return every VEX block tag in one structured C subtree."""
-    addresses: set[int] = set()
-    for current in _iter_c_nodes_deep_8616(node):
-        boundary = cast(_ConditionMaterializationTaggedNode8616, current)
-        try:
-            tags = boundary.tags
-        except AttributeError:
-            continue
-        copied_tags = copy_structured_tags_8616(tags)
-        block_addr = copied_tags.get("vex_block_addr") if copied_tags is not None else None
-        if isinstance(block_addr, int):
-            addresses.add(block_addr)
-    return tuple(sorted(addresses))
+    return collect_structured_subtree_entry_tags_8616(node).block_addrs
 
 
 def _first_tagged_block_addr_8616(node: object) -> int | None:
     """Return the first VEX block tag in one structured C subtree."""
-    addresses = _tagged_block_addrs_8616(node)
-    return addresses[0] if addresses else None
+    return collect_structured_subtree_entry_tags_8616(node).first_block_addr
 
 
 def _first_tagged_cfg_target_8616(node: object) -> int | None:
@@ -412,7 +390,8 @@ def _first_tagged_cfg_target_8616(node: object) -> int | None:
     start with a later instruction in the same VEX block, which is not a valid
     successor key and can make a terminal branch look disconnected.
     """
-    return _first_tagged_block_addr_8616(node) or _first_tagged_ins_addr_8616(node)
+    entry_tags = collect_structured_subtree_entry_tags_8616(node)
+    return entry_tags.first_block_addr or entry_tags.first_instruction_addr
 
 
 def _cfg_reaches_address_8616(
@@ -553,6 +532,7 @@ def structuring_condition_surface_token_8616(codegen: object) -> tuple[tuple[obj
         if isinstance(node, (CForLoop, CWhileLoop, CDoWhileLoop)):
             condition = node.condition
             tags = _copied_condition_tags_8616(condition)
+            body_entry_tags = collect_structured_subtree_entry_tags_8616(node.body)
             surface.append(
                 (
                     "loop",
@@ -560,8 +540,8 @@ def structuring_condition_surface_token_8616(codegen: object) -> tuple[tuple[obj
                     id(condition),
                     _condition_key_from_tags_8616(condition),
                     _condition_structure_token_8616(condition),
-                    _first_tagged_block_addr_8616(node.body),
-                    _first_tagged_ins_addr_8616(node.body),
+                    body_entry_tags.first_block_addr,
+                    body_entry_tags.first_instruction_addr,
                     tags.get("inertia_jcc_polarity_evidence_8616"),
                     tags.get(
                         "inertia_structuring_condition_cfg_materialized_8616"
@@ -575,6 +555,10 @@ def structuring_condition_surface_token_8616(codegen: object) -> tuple[tuple[obj
         pairs = tuple(node.condition_and_nodes)
         for condition, body in pairs:
             tags = _copied_condition_tags_8616(condition)
+            body_entry_tags = collect_structured_subtree_entry_tags_8616(body)
+            else_entry_tags = collect_structured_subtree_entry_tags_8616(
+                node.else_node
+            )
             surface.append(
                 (
                     "ifelse",
@@ -583,10 +567,10 @@ def structuring_condition_surface_token_8616(codegen: object) -> tuple[tuple[obj
                     _condition_structure_token_8616(condition),
                     len(pairs),
                     node.else_node is not None,
-                    _first_tagged_block_addr_8616(body),
-                    _first_tagged_ins_addr_8616(body),
-                    _first_tagged_block_addr_8616(node.else_node),
-                    _first_tagged_ins_addr_8616(node.else_node),
+                    body_entry_tags.first_block_addr,
+                    body_entry_tags.first_instruction_addr,
+                    else_entry_tags.first_block_addr,
+                    else_entry_tags.first_instruction_addr,
                     tags.get("inertia_jcc_polarity_evidence_8616"),
                     tags.get("inertia_structuring_condition_cfg_materialized_8616") is True,
                 )

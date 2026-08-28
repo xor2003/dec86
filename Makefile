@@ -778,6 +778,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/structuring/stored_call_return_early_exit.py \
 	angr_platforms/angr_platforms/X86_16/structuring/control_flow.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_materialization.py \
+	angr_platforms/angr_platforms/X86_16/structuring/tagged_subtree_projection.py \
 	angr_platforms/angr_platforms/X86_16/structuring/single_branch_return_orientation.py \
 	angr_platforms/angr_platforms/X86_16/structuring/shared_call_occurrence_finalization.py \
 	angr_platforms/angr_platforms/X86_16/structuring/shared_call_result_aliases.py \
@@ -1559,6 +1560,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/structuring/stored_call_return_early_exit.py \
 	angr_platforms/angr_platforms/X86_16/structuring/control_flow.py \
 	angr_platforms/angr_platforms/X86_16/structuring/condition_materialization.py \
+	angr_platforms/angr_platforms/X86_16/structuring/tagged_subtree_projection.py \
 	angr_platforms/angr_platforms/X86_16/structuring/single_branch_return_orientation.py \
 	angr_platforms/angr_platforms/X86_16/structuring/shared_call_occurrence_finalization.py \
 	angr_platforms/angr_platforms/X86_16/structuring/shared_call_result_aliases.py \
