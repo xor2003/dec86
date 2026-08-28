@@ -11,6 +11,7 @@ structuring, rewrite, postprocess, or CLI/reporting work here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 __all__ = (
     "ConditionReliftArtifactCache8616",
@@ -25,13 +26,38 @@ class ConditionReliftCacheRequest8616:
     expected_condition_blocks: frozenset[int]
 
 
+@runtime_checkable
+class _LiftSemanticsKeyBoundary8616(Protocol):
+    """Frontend boundary for architectures with stable lift semantics."""
+
+    def lifting_semantics_key_8616(self) -> tuple[object, ...]:
+        """Return immutable fields that determine exact-byte lifting."""
+
+
+def _architecture_semantics_key_8616(
+    architecture: object,
+) -> tuple[object, ...] | None:
+    """Return an owned lift key, retaining identity for unknown boundaries."""
+    if not isinstance(architecture, _LiftSemanticsKeyBoundary8616):
+        return None
+    return architecture.lifting_semantics_key_8616()
+
+
 @dataclass(frozen=True, slots=True)
 class _ConditionReliftCacheEntry8616[ArtifactT]:
     """One architecture-scoped immutable cache entry."""
 
     architecture: object
+    architecture_semantics_key: tuple[object, ...] | None
     request: ConditionReliftCacheRequest8616
     artifact: ArtifactT
+
+    def matches_architecture(self, architecture: object) -> bool:
+        """Match owned equivalent architectures or unknown exact identities."""
+        candidate_key = _architecture_semantics_key_8616(architecture)
+        if self.architecture_semantics_key is not None and candidate_key is not None:
+            return self.architecture_semantics_key == candidate_key
+        return self.architecture is architecture
 
 
 class ConditionReliftArtifactCache8616[ArtifactT]:
@@ -46,9 +72,9 @@ class ConditionReliftArtifactCache8616[ArtifactT]:
         self._entries: list[_ConditionReliftCacheEntry8616[ArtifactT]] = []
 
     def lookup(self, architecture: object, request: ConditionReliftCacheRequest8616) -> ArtifactT | None:
-        """Return and promote an exact architecture-identity cache hit."""
+        """Return and promote an exact lift-semantics cache hit."""
         for index, entry in enumerate(self._entries):
-            if entry.architecture is architecture and entry.request == request:
+            if entry.matches_architecture(architecture) and entry.request == request:
                 if index != len(self._entries) - 1:
                     self._entries.append(self._entries.pop(index))
                 return entry.artifact
@@ -64,7 +90,14 @@ class ConditionReliftArtifactCache8616[ArtifactT]:
         self._entries = [
             entry
             for entry in self._entries
-            if not (entry.architecture is architecture and entry.request == request)
+            if not (entry.matches_architecture(architecture) and entry.request == request)
         ]
-        self._entries.append(_ConditionReliftCacheEntry8616(architecture, request, artifact))
+        self._entries.append(
+            _ConditionReliftCacheEntry8616(
+                architecture,
+                _architecture_semantics_key_8616(architecture),
+                request,
+                artifact,
+            )
+        )
         del self._entries[: max(0, len(self._entries) - self._max_entries)]

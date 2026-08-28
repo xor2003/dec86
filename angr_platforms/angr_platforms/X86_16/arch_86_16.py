@@ -6,6 +6,7 @@ Forbidden: decompiler semantic recovery, alias/type ownership, or rewrite cleanu
 
 from __future__ import annotations
 
+import os
 from typing import Any, ClassVar, cast
 
 from archinfo import ArchError, Endness, RegisterOffset
@@ -65,6 +66,21 @@ class Arch86_16(Arch):  # type: ignore[misc, unused-ignore] # dynamic archinfo b
                 self.vex_offsets[alias_name.lower()] = reg.vex_offset
             for subregister_name, subregister_offset, _subregister_size in reg.subregisters:
                 self.vex_offsets[subregister_name.lower()] = reg.vex_offset + subregister_offset
+
+    def lifting_semantics_key_8616(self) -> tuple[object, ...]:
+        """Return immutable frontend fields that determine exact-byte lifting."""
+        runtime_endness = cast(Any, self).endness
+        return (
+            type(self),
+            self.name,
+            int(self.bits),
+            runtime_endness,
+            self.instruction_endness,
+            self.memory_endness,
+            self.register_endness,
+            self.vex_arch,
+            os.environ.get("INERTIA_ENABLE_AFFINE_SWITCH_CONDITIONS") == "1",
+        )
 
     name = "86_16"
     bits = 16

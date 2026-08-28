@@ -80,6 +80,18 @@ until its mutation contract is isolated.
   condition-refresh result, and the prime-order regression records the current
   carrier-prune boundary without relaxing production to accept `None` or an
   untyped boolean.
+- A partial forced-serial cold census exposed 156 condition-artifact requests:
+  1,197 supplied block ranges but only 202 conditional owners. Validation
+  retries repeatedly create equivalent `Arch86_16` instances, while the relift
+  cache historically required exact Python architecture-object identity. The
+  run was stopped after more than five minutes because one validation retry
+  alone consumed 63 seconds; this is evidence for prioritizing retry reuse, not
+  a valid end-to-end timing baseline.
+- The 2026-08-28 shared tree no longer satisfies the previous SORTD acceptance
+  point: a unique-key default-parallel run took 193.32 seconds / 660,436 KiB,
+  decompiled 18/20 functions, and failed the whole-tail guard for `sub_101f0` on
+  call-argument/parameter evidence. Performance work must not present that run
+  as accepted or compare its changed output hash with the prior accepted hash.
 
 All timings above are checkout-specific and must be refreshed before claiming a
 new improvement.
@@ -99,26 +111,31 @@ new improvement.
 
 ### Immediate Priority Queue
 
-1. Coordinate the remaining indexed-Alias owner before editing it; do not
-   duplicate the concurrent Frontend/indexed-Alias implementation.
-2. Complete Task 3D's consumer-specific mutation generation. Task 3H's exact
+1. Restore or coordinate the current SORTD whole-tail acceptance point before
+   claiming another end-to-end speedup. Do not modify the concurrently owned
+   call-argument/parameter surface merely to make the performance run pass.
+2. Complete Task 5's dirty-pass and retry reuse work. The latest cold run shows
+   validation retries now dominate user feedback, including one 63-second retry.
+3. Complete Task 3D's consumer-specific mutation generation. Task 3H's exact
    trace proved all three expensive Structuring direct-stack and segment/global
    rounds productive, so no replay can be removed until an upstream owner
    publishes narrower invalidation evidence.
-3. Revisit Task 3H only after that mutation impact can distinguish rebuilt
+4. Coordinate the remaining indexed-Alias owner before editing it; do not
+   duplicate the concurrent Frontend/indexed-Alias implementation.
+5. Revisit Task 3H only after that mutation impact can distinguish rebuilt
    stack/global consumers; five later validation-prime calls are already free.
    Current low-overhead timing charges about 3.5 seconds to eight direct-stack
    rounds, including productive rounds that must still run.
-4. Revisit Task 4G only with a design that materially reduces lift work. The
+6. Revisit Task 4G only with a design that materially reduces lift work. The
    tested `skip_stmts` and `cross_insn_opt` factory modes preserved the exact
    reachability surface but changed measured CPU time by only about 2%, below
    the acceptance threshold.
-5. Use Task 5C's accepted Rewrite generation to shrink the 18k-line stage under
+7. Use Task 5C's accepted Rewrite generation to shrink the 18k-line stage under
    Task 6. Do not move semantic recovery into Rewrite.
-6. Re-profile the exact cold target with low-overhead timing before selecting a
+8. Re-profile the exact cold target with low-overhead timing before selecting a
    mypyc cohort. `PYTHON_JIT=1` is currently inert because the installed CPython
    reports `sys._jit.is_available() == False`.
-7. Tune outer workers only after single-function costs fall. Keep deterministic
+9. Tune outer workers only after single-function costs fall. Keep deterministic
    ordering and aggregate memory at or below 2 GB.
 
 ### 1. Freeze a Current Baseline and Verify the New Lowering Boundary
@@ -1149,6 +1166,53 @@ direct lifts from 437 to 405, retained hash
 reported `validation=passed`, and completed clean whole-tail validation in
 54.16 seconds at 362,912 KiB RSS. The timing remains within the current noise
 band and receives no standalone wall-time credit.
+
+### 4L. Reuse Relift Evidence Across Equivalent Frontend Architectures
+
+**Status:** implementation completed; shared-tree acceptance blocked
+
+**Reason:** Validation retries and isolated function projects construct fresh
+`Arch86_16` objects with identical lift semantics. The exact-byte relift cache
+required Python object identity, so every fresh project rebuilt the same typed
+condition artifact. A partial serial census observed 1,197 supplied block
+ranges for 202 conditional owners across 156 artifact requests.
+
+**Work:**
+
+- Publish an immutable frontend-owned lift-semantics key containing the exact
+  architecture class, bit mode, endness configuration, pyvex architecture, and
+  the semantic affine-condition feature state.
+- Match complete relift entries by that key and the existing exact byte/request
+  contract; retain identity-only matching for unknown architecture boundaries.
+- Prove equivalent `Arch86_16` instances hit, changed bit modes miss, unknown
+  objects remain identity-scoped, semantic feature changes miss, incomplete
+  artifacts remain uncached, and LRU eviction behavior is unchanged.
+- Measure one real SORTD relift request across two fresh projects, then run the
+  changed-file gate and the current end-to-end target.
+
+**DoD:** Ruff with `--fix`, strict mypy, architecture, ownership, and focused
+tests pass; an equivalent fresh project performs zero second-pass direct lifts
+and returns the identical immutable complete artifact; changed bytes, changed
+bit mode, semantic feature state, unknown architecture identity, and incomplete evidence still miss;
+the accepted exact SORTD C hash, function validation, and whole-tail validation
+remain unchanged once the shared tree has an accepted baseline again.
+
+**Definition of Failure:** Different lift semantics share an entry; unknown
+third-party architectures become equality-scoped; mutable or incomplete
+artifacts are reused; the cache becomes unbounded or nondeterministic; the
+frontend key omits a runtime field that affects exact-byte lifting; focused
+direct lifts do not fall; or accepted generated C/validation changes.
+
+**Implementation evidence:** The frontend now exposes a typed immutable
+lift-semantics key, while the IR cache preserves identity fallback for unknown
+architectures. Thirteen focused tests and the complete changed-file gate pass,
+including strict mypy for both production owners. On the real 12-block SORTD
+sleep function, the first fresh project took 21.66 ms and 12 direct lifts; an
+equivalent second project returned the same complete artifact in 0.082 ms with
+zero additional lifts. End-to-end acceptance remains open: the concurrent
+shared tree's unique-key default-parallel run took 193.32 seconds / 660,436 KiB
+and failed pre-existing call-argument/parameter whole-tail evidence in
+`sub_101f0`, so this task makes no full-run speedup or semantic-acceptance claim.
 
 ### 5. Make Validation and Rollback Work Dirty-Pass Driven
 
