@@ -611,6 +611,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/global_object_program_requirement.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_interface.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_sources.py \
+	angr_platforms/angr_platforms/X86_16/lowering/global_object_source_codec.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_type_surface.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_pointer_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_global_evidence.py \
@@ -1395,6 +1396,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/global_object_program_requirement.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_interface.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_sources.py \
+	angr_platforms/angr_platforms/X86_16/lowering/global_object_source_codec.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_global_object_type_surface.py \
 	angr_platforms/angr_platforms/X86_16/lowering/callee_pointer_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/indexed_global_evidence.py \
@@ -1982,6 +1984,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/tests/test_x86_16_callee_global_object_interface.py \
 	angr_platforms/tests/test_x86_16_global_object_program_requirement.py \
 	angr_platforms/tests/test_x86_16_callee_global_object_sources.py \
+	angr_platforms/tests/test_x86_16_global_object_source_codec.py \
 	angr_platforms/tests/test_x86_16_callee_pointer_evidence.py \
 	angr_platforms/tests/test_x86_16_direct_stack_move_branches.py \
 	angr_platforms/tests/test_x86_16_direct_stack_move_ownership_priority.py \
@@ -2310,6 +2313,7 @@ QA_PYTEST_TARGETS := \
 	angr_platforms/tests/test_x86_16_callee_global_object_interface.py \
 	angr_platforms/tests/test_x86_16_global_object_program_requirement.py \
 	angr_platforms/tests/test_x86_16_callee_global_object_sources.py \
+	angr_platforms/tests/test_x86_16_global_object_source_codec.py \
 	angr_platforms/tests/test_x86_16_callee_pointer_evidence.py \
 	angr_platforms/tests/test_x86_16_direct_stack_move_branches.py \
 	angr_platforms/tests/test_x86_16_direct_stack_move_ownership_priority.py \

@@ -45,6 +45,67 @@ class GlobalObjectSourceEvidence8616:
     failure_count: int
     pointer_target_addrs: tuple[int, ...] = ()
 
+    def validate(self) -> None:
+        """Reject incoherent collection counters or project target identity."""
+        counters = (
+            self.raw_fact_count,
+            self.normalized_fact_count,
+            self.classified_fact_count,
+            self.materialized_count,
+            self.failure_count,
+        )
+        if any(count < 0 for count in counters):
+            raise ValueError("global source evidence counters must be nonnegative")
+        if not (
+            self.raw_fact_count >= self.normalized_fact_count >= self.classified_fact_count
+        ):
+            raise ValueError("global source evidence counters are not monotonic")
+        if self.classified_fact_count != len(self.source_facts):
+            raise ValueError("global source evidence classified count disagrees with facts")
+        if self.materialized_count > self.classified_fact_count:
+            raise ValueError("global source evidence materialized count exceeds classification")
+        if self.failure_count < self.raw_fact_count - self.classified_fact_count:
+            raise ValueError("global source evidence failure count does not close collection")
+        if self.pointer_target_addrs != tuple(sorted(set(self.pointer_target_addrs))):
+            raise ValueError("global source evidence pointer targets are not canonical")
+        if any(target_addr < 0 for target_addr in self.pointer_target_addrs):
+            raise ValueError("global source evidence has a negative pointer target")
+        if self.scope_addr is None and any(
+            fact.target_addr not in self.pointer_target_addrs for fact in self.source_facts
+        ):
+            raise ValueError("project global source fact has no pointer-target dependency")
+
+
+def project_global_object_source_evidence_8616(
+    project: object,
+) -> GlobalObjectSourceEvidence8616 | None:
+    """Return attached project-wide source evidence when structurally valid."""
+    surface = cast(_ProjectSourceEvidenceSurface8616, project)
+    try:
+        evidence = surface._inertia_project_global_object_source_evidence_8616
+    except AttributeError:
+        return None
+    if not isinstance(evidence, GlobalObjectSourceEvidence8616):
+        raise TypeError("project global source evidence has a wrong type")
+    evidence.validate()
+    if evidence.scope_addr is not None:
+        raise ValueError("attached project global source evidence has a local scope")
+    return evidence
+
+
+def attach_project_global_object_source_evidence_8616(
+    project: object,
+    evidence: GlobalObjectSourceEvidence8616,
+) -> None:
+    """Attach one already-classified project-wide source-family census."""
+    evidence.validate()
+    if evidence.scope_addr is not None:
+        raise ValueError("cannot attach local-scope global source evidence to a project")
+    cast(
+        _ProjectSourceEvidenceSurface8616,
+        project,
+    )._inertia_project_global_object_source_evidence_8616 = evidence
+
 
 def join_global_object_source_facts_8616(
     scope_addr: int | None,
@@ -140,7 +201,7 @@ def collect_project_global_object_source_evidence_8616(
         facts,
         pointer_targets,
     )
-    surface._inertia_project_global_object_source_evidence_8616 = joined
+    attach_project_global_object_source_evidence_8616(project, joined)
     if os.environ.get("INERTIA_DEBUG_CALLEE_GLOBAL_OBJECT_SOURCES") == "1":
         _LOGGER.warning("project global object source joined=%s", joined)
     return joined
@@ -148,6 +209,8 @@ def collect_project_global_object_source_evidence_8616(
 
 __all__ = [
     "GlobalObjectSourceEvidence8616",
+    "attach_project_global_object_source_evidence_8616",
     "collect_project_global_object_source_evidence_8616",
     "join_global_object_source_facts_8616",
+    "project_global_object_source_evidence_8616",
 ]

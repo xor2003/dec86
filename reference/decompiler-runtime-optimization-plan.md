@@ -81,7 +81,7 @@ All measurements are checkout-specific; refresh them after correctness is restor
 
 ### 1. Persist Project-Wide Caller Evidence
 
-**Status:** pending coordination with the active indexed-evidence transport work
+**Status:** in progress; source codec accepted, parent collection and dirty transport pending
 
 **Reason:** The first indexed replay spends 2.40 seconds rebuilding immutable
 global-source evidence, while the first runtime replay spends another 0.713
