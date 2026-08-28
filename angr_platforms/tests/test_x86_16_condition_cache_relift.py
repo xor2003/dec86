@@ -8,6 +8,10 @@ from angr_platforms.X86_16.ir.condition_cache_relift import (
     ConditionReliftBlock8616,
     relift_function_condition_cache_8616,
 )
+from angr_platforms.X86_16.ir.condition_cache_relift_cache import (
+    ConditionReliftArtifactCache8616,
+    ConditionReliftCacheRequest8616,
+)
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
 from angr_platforms.X86_16.ir.core import IRValue, MemSpace
 from angr_platforms.X86_16.lowering.condition_transfer import transfer_typed_conditions_to_codegen_8616
@@ -33,6 +37,84 @@ SLEEP_BLOCK_ADDRS = (
     0x10F6D,
 )
 SLEEP_CONDITION_BLOCKS = frozenset({0x10F55, 0x10F5D, 0x10F62})
+
+
+def test_exact_relift_cache_requires_same_bytes_and_architecture(monkeypatch: MonkeyPatch) -> None:
+    from angr_platforms.X86_16.ir import condition_cache_relift as relift
+    from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
+
+    block_addr = 0x2200
+    payload = bytearray(b"\x90\x90")
+    arch = object()
+    lifts: list[tuple[bytes, object]] = []
+    condition = ConditionIR(
+        "ne",
+        "ax",
+        0,
+        source=("cmp", "jne"),
+        src_insn=block_addr,
+        block_addr=block_addr,
+    )
+
+    def load(_address: int, size: int) -> bytes:
+        return bytes(payload[:size])
+
+    def direct_lift(data: bytes, address: int, architecture: object) -> None:
+        lifts.append((data, architecture))
+        Instruction_ANY._inertia_module_condition_cache[address] = [condition]
+
+    project = SimpleNamespace(arch=arch, loader=SimpleNamespace(memory=SimpleNamespace(load=load)))
+    blocks = (ConditionReliftBlock8616(block_addr, 2),)
+    expected = frozenset({block_addr})
+    monkeypatch.setattr(relift, "_direct_lift_8616", direct_lift)
+
+    first = relift_function_condition_cache_8616(project, blocks, expected)
+    second = relift_function_condition_cache_8616(project, blocks, expected)
+    payload[0] = 0x91
+    changed_bytes = relift_function_condition_cache_8616(project, blocks, expected)
+    project.arch = object()
+    changed_arch = relift_function_condition_cache_8616(project, blocks, expected)
+
+    assert first is not None and first.stats.complete
+    assert second is first
+    assert changed_bytes is not first
+    assert changed_arch is not changed_bytes
+    assert lifts == [(b"\x90\x90", arch), (b"\x91\x90", arch), (b"\x91\x90", project.arch)]
+
+
+def test_exact_relift_cache_refuses_incomplete_artifacts(monkeypatch: MonkeyPatch) -> None:
+    from angr_platforms.X86_16.ir import condition_cache_relift as relift
+
+    lifts: list[int] = []
+    project = SimpleNamespace(
+        arch=object(),
+        loader=SimpleNamespace(memory=SimpleNamespace(load=lambda _address, size: bytes(size))),
+    )
+    blocks = (ConditionReliftBlock8616(0x2300, 2),)
+    monkeypatch.setattr(relift, "_direct_lift_8616", lambda _data, address, _arch: lifts.append(address))
+
+    first = relift_function_condition_cache_8616(project, blocks, frozenset({0x2300}))
+    second = relift_function_condition_cache_8616(project, blocks, frozenset({0x2300}))
+
+    assert first is not None and not first.stats.complete
+    assert second is not None and not second.stats.complete
+    assert lifts == [0x2300, 0x2300]
+
+
+def test_exact_relift_cache_evicts_oldest_entry() -> None:
+    cache = ConditionReliftArtifactCache8616[str](max_entries=2)
+    arch = object()
+    requests = tuple(
+        ConditionReliftCacheRequest8616(((address, 1, bytes([address])),), frozenset())
+        for address in range(3)
+    )
+
+    for index, request in enumerate(requests):
+        cache.publish(arch, request, str(index))
+
+    assert cache.lookup(arch, requests[0]) is None
+    assert cache.lookup(arch, requests[1]) == "1"
+    assert cache.lookup(arch, requests[2]) == "2"
 
 
 def test_exact_relift_refuses_missing_expected_condition_and_restores_lifter_state(monkeypatch) -> None:

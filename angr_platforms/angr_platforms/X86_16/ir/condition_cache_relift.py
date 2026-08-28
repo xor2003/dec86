@@ -19,12 +19,18 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Mapping
-from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any, Protocol, cast
 
 import pyvex
 
+from .condition_cache_relift_cache import ConditionReliftArtifactCache8616, ConditionReliftCacheRequest8616
+from .condition_cache_relift_contracts import (
+    ConditionCacheReliftArtifact8616,
+    ConditionCacheReliftFailure8616,
+    ConditionCacheReliftFailureReason8616,
+    ConditionCacheReliftStats8616,
+    ConditionReliftBlock8616,
+)
 from .condition_ir import ConditionFailure, ConditionIR, ConditionSource
 
 __all__ = (
@@ -73,72 +79,8 @@ class _FactoryProjectBoundary8616(Protocol):
     factory: _FactoryBoundary8616
 
 
-@dataclass(frozen=True, slots=True, order=True)
-class ConditionReliftBlock8616:
-    """One exact current-function block range to pass through the lifter."""
-
-    address: int
-    size: int
-
-
-class ConditionCacheReliftFailureReason8616(StrEnum):
-    """Typed reasons why an exact condition-cache relift did not close."""
-
-    INVALID_BLOCK_RANGE = "invalid_block_range"
-    BYTE_READ_FAILED = "byte_read_failed"
-    VEX_LIFT_FAILED = "vex_lift_failed"
-    EXPECTED_CONDITION_MISSING = "expected_condition_missing"
-
-
-@dataclass(frozen=True, slots=True)
-class ConditionCacheReliftFailure8616:
-    """One exact block-level condition-cache relift refusal."""
-
-    block_addr: int
-    reason: ConditionCacheReliftFailureReason8616
-    detail: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class ConditionCacheReliftStats8616:
-    """Closed evidence counters for expected conditional block owners."""
-
-    raw_fact_count: int
-    normalized_fact_count: int
-    classified_fact_count: int
-    materialized_count: int
-    failure_count: int
-
-    @property
-    def complete(self) -> bool:
-        """Return whether every expected owner produced typed evidence."""
-        return bool(
-            self.raw_fact_count == self.normalized_fact_count
-            and self.normalized_fact_count == self.classified_fact_count
-            and self.classified_fact_count == self.materialized_count
-            and self.failure_count == 0
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class ConditionCacheReliftArtifact8616:
-    """Isolated typed condition and pending-source evidence from one relift."""
-
-    conditions_by_block: tuple[tuple[int, tuple[ConditionIR, ...]], ...]
-    pending_sources_by_addr: tuple[tuple[int, ConditionSource], ...]
-    failures: tuple[ConditionCacheReliftFailure8616, ...]
-    stats: ConditionCacheReliftStats8616
-
-    def condition_cache(self) -> dict[int, list[ConditionIR]]:
-        """Return a mutable cache projection for the existing transfer consumer."""
-        return {address: list(conditions) for address, conditions in self.conditions_by_block}
-
-    def pending_source_cache(self) -> dict[int, ConditionSource]:
-        """Return a mutable pending-source projection for edge collection."""
-        return dict(self.pending_sources_by_addr)
-
-
 _CONDITION_RELIFT_LOCK_8616 = threading.RLock()
+_COMPLETE_RELIFT_CACHE_8616 = ConditionReliftArtifactCache8616[ConditionCacheReliftArtifact8616](max_entries=32)
 
 
 def has_typed_condition_cache_evidence_8616(
@@ -202,6 +144,47 @@ def _direct_lift_8616(data: bytes, address: int, arch: object) -> None:
     )
 
 
+def _load_exact_block_bytes_8616(
+    memory: _LoaderMemoryBoundary8616,
+    blocks: tuple[ConditionReliftBlock8616, ...],
+    failures: list[ConditionCacheReliftFailure8616],
+) -> tuple[tuple[ConditionReliftBlock8616, bytes], ...]:
+    """Read valid exact block bytes while retaining every typed refusal."""
+    loaded: list[tuple[ConditionReliftBlock8616, bytes]] = []
+    for block in blocks:
+        if block.address < 0 or block.size <= 0:
+            failures.append(
+                ConditionCacheReliftFailure8616(
+                    block_addr=block.address,
+                    reason=ConditionCacheReliftFailureReason8616.INVALID_BLOCK_RANGE,
+                    detail=f"size={block.size}",
+                )
+            )
+            continue
+        try:
+            data = bytes(cast(Any, memory.load(block.address, block.size)))
+        except Exception as error:
+            failures.append(
+                ConditionCacheReliftFailure8616(
+                    block_addr=block.address,
+                    reason=ConditionCacheReliftFailureReason8616.BYTE_READ_FAILED,
+                    detail=_failure_detail_8616(error),
+                )
+            )
+            continue
+        if len(data) != block.size:
+            failures.append(
+                ConditionCacheReliftFailure8616(
+                    block_addr=block.address,
+                    reason=ConditionCacheReliftFailureReason8616.BYTE_READ_FAILED,
+                    detail=f"expected={block.size} actual={len(data)}",
+                )
+            )
+            continue
+        loaded.append((block, data))
+    return tuple(loaded)
+
+
 def relift_function_condition_cache_8616(
     project: object,
     blocks: tuple[ConditionReliftBlock8616, ...],
@@ -232,6 +215,11 @@ def relift_function_condition_cache_8616(
         )
         for address in sorted(expected_condition_blocks - block_addresses)
     ]
+    loaded_blocks = _load_exact_block_bytes_8616(memory, ordered_blocks, failures)
+    cache_request = ConditionReliftCacheRequest8616(
+        block_bytes=tuple((block.address, block.size, data) for block, data in loaded_blocks),
+        expected_condition_blocks=expected_condition_blocks,
+    )
     lifted_blocks: set[int] = set()
 
     # The custom lifter's current evidence recorder is class-scoped.  Isolate
@@ -240,6 +228,10 @@ def relift_function_condition_cache_8616(
     from ..lift_86_16 import Instruction_ANY
 
     with _CONDITION_RELIFT_LOCK_8616:
+        if not failures:
+            cached = _COMPLETE_RELIFT_CACHE_8616.lookup(arch, cache_request)
+            if cached is not None:
+                return cached
         original_condition_cache = Instruction_ANY._inertia_module_condition_cache
         original_pending_sources = Instruction_ANY._inertia_pending_condition_sources_by_addr
         original_affine_state = Instruction_ANY._inertia_condition_reg_affine_state_8616
@@ -253,36 +245,7 @@ def relift_function_condition_cache_8616(
         Instruction_ANY._inertia_condition_index_reg_state_8616 = {}
         Instruction_ANY._inertia_condition_reg_value_state_8616 = {}
         try:
-            for block in ordered_blocks:
-                if block.address < 0 or block.size <= 0:
-                    failures.append(
-                        ConditionCacheReliftFailure8616(
-                            block_addr=block.address,
-                            reason=ConditionCacheReliftFailureReason8616.INVALID_BLOCK_RANGE,
-                            detail=f"size={block.size}",
-                        )
-                    )
-                    continue
-                try:
-                    data = bytes(cast(Any, memory.load(block.address, block.size)))
-                except Exception as error:
-                    failures.append(
-                        ConditionCacheReliftFailure8616(
-                            block_addr=block.address,
-                            reason=ConditionCacheReliftFailureReason8616.BYTE_READ_FAILED,
-                            detail=_failure_detail_8616(error),
-                        )
-                    )
-                    continue
-                if len(data) != block.size:
-                    failures.append(
-                        ConditionCacheReliftFailure8616(
-                            block_addr=block.address,
-                            reason=ConditionCacheReliftFailureReason8616.BYTE_READ_FAILED,
-                            detail=f"expected={block.size} actual={len(data)}",
-                        )
-                    )
-                    continue
+            for block, data in loaded_blocks:
                 try:
                     _direct_lift_8616(data, block.address, arch)
                 except Exception as error:
@@ -331,16 +294,19 @@ def relift_function_condition_cache_8616(
             Instruction_ANY._inertia_condition_index_reg_state_8616 = original_index_state
             Instruction_ANY._inertia_condition_reg_value_state_8616 = original_value_state
 
-    stats = ConditionCacheReliftStats8616(
-        raw_fact_count=len(expected_condition_blocks),
-        normalized_fact_count=len(normalized_expected),
-        classified_fact_count=len(expected_condition_blocks & lifted_blocks),
-        materialized_count=len(materialized_blocks),
-        failure_count=len(failures),
-    )
-    return ConditionCacheReliftArtifact8616(
-        conditions_by_block=conditions_by_block,
-        pending_sources_by_addr=pending_sources,
-        failures=tuple(failures),
-        stats=stats,
-    )
+        stats = ConditionCacheReliftStats8616(
+            raw_fact_count=len(expected_condition_blocks),
+            normalized_fact_count=len(normalized_expected),
+            classified_fact_count=len(expected_condition_blocks & lifted_blocks),
+            materialized_count=len(materialized_blocks),
+            failure_count=len(failures),
+        )
+        artifact = ConditionCacheReliftArtifact8616(
+            conditions_by_block=conditions_by_block,
+            pending_sources_by_addr=pending_sources,
+            failures=tuple(failures),
+            stats=stats,
+        )
+        if artifact.stats.complete:
+            _COMPLETE_RELIFT_CACHE_8616.publish(arch, cache_request, artifact)
+        return artifact

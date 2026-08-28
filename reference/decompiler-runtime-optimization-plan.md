@@ -45,12 +45,25 @@ until its mutation contract is isolated.
 - `lowering/register_local_declarations.py` is currently typed, documented,
   ownership-mapped, and included in focused Ruff/mypy targets. It remains a
   protected verification target because concurrent work introduced it.
-- The current shared-tree pure-binary `0x10554` generation is hash
-  `f86bd521ce979ae1ee2b5789853ac813978cf9d1928c7e73d3189f491c28db78`.
-  A live trace-mode run completed in 40.54 seconds at 273,964 KiB RSS with
-  `validation=passed` and clean whole-tail validation. This supersedes the
-  older hash only for new shared-tree acceptance; historical before/after
-  measurements remain tied to their recorded generation.
+- A 2026-08-28 isolated low-overhead cold run is the latest shared-tree
+  acceptance point: 57.00 seconds wall time, 359,940 KiB peak RSS, hash
+  `9dc16640f0e4bb61e7ba04aa7d46c903ad80e06842b0cd5ed3cd610bbf011ec0`,
+  `validation=passed`, and clean whole-tail validation. A second timing-enabled
+  cold run completed in 49.82 seconds at 356,908 KiB RSS with the same output
+  and validation. The spread is retained as noise rather than presented as a
+  speedup.
+- The corresponding unique-key cold cProfile run recorded 244.2 million calls
+  and 150.1 profiler-seconds. Structuring owned 72.1 seconds; exact indexed-
+  Alias program construction owned 32.6 seconds; deep C-AST traversal owned
+  22.9 seconds; postprocess owned 17.5 seconds; exact condition-cache relifting
+  owned 7.1 seconds across 36 requests and 669 direct lifts. Building broad
+  structured-AST query indexes cost only 2.0 seconds, so more query-index work
+  is not the next largest target.
+- The highest indexed-Alias and Frontend owners currently overlap active work
+  in `indexed_address_program.py`, `function_ssa_registry.py`, Frontend
+  reachability/boundary modules, and callee census. They remain the leading
+  measured optimization opportunity, but this plan will not create conflicting
+  implementations while those owners are being changed concurrently.
 - The refreshed in-child profile records 131.3 million calls and 77.4
   profiler-seconds. `_prime_structuring_validation_semantics_8616` owns 57.7
   inclusive seconds, but caller attribution proves that only the stage-entry
@@ -86,24 +99,26 @@ new improvement.
 
 ### Immediate Priority Queue
 
-1. Complete Task 3D's consumer-specific mutation generation. Task 3H's exact
+1. Coordinate the 32.6-profiler-second indexed-Alias owner before editing it;
+   do not duplicate the concurrent Frontend/indexed-Alias implementation.
+2. Complete Task 3D's consumer-specific mutation generation. Task 3H's exact
    trace proved all three expensive Structuring direct-stack and segment/global
    rounds productive, so no replay can be removed until an upstream owner
    publishes narrower invalidation evidence.
-2. Revisit Task 3H only after that mutation impact can distinguish rebuilt
+3. Revisit Task 3H only after that mutation impact can distinguish rebuilt
    stack/global consumers; five later validation-prime calls are already free.
    Current low-overhead timing charges about 3.5 seconds to eight direct-stack
    rounds, including productive rounds that must still run.
-3. Revisit Task 4G only with a design that materially reduces lift work. The
+4. Revisit Task 4G only with a design that materially reduces lift work. The
    tested `skip_stmts` and `cross_insn_opt` factory modes preserved the exact
    reachability surface but changed measured CPU time by only about 2%, below
    the acceptance threshold.
-4. Use Task 5C's accepted Rewrite generation to shrink the 18k-line stage under
+5. Use Task 5C's accepted Rewrite generation to shrink the 18k-line stage under
    Task 6. Do not move semantic recovery into Rewrite.
-5. Re-profile the exact cold target with low-overhead timing before selecting a
+6. Re-profile the exact cold target with low-overhead timing before selecting a
    mypyc cohort. `PYTHON_JIT=1` is currently inert because the installed CPython
    reports `sys._jit.is_available() == False`.
-6. Tune outer workers only after single-function costs fall. Keep deterministic
+7. Tune outer workers only after single-function costs fall. Keep deterministic
    ordering and aggregate memory at or below 2 GB.
 
 ### 1. Freeze a Current Baseline and Verify the New Lowering Boundary
@@ -941,6 +956,53 @@ guessed successor, region or 16-bit address rules change, counters do not close,
 the isolated owner does not improve materially, memory grows without a bounded
 contract, or output and validation change.
 
+### 4H. Reuse Exact Condition Relifts by Immutable Binary Evidence
+
+**Status:** completed
+
+**Reason:** The latest cold profile attributes 7.1 profiler-seconds to 36
+`relift_function_condition_cache_8616` requests and 669 direct lifts. The
+returned artifact is immutable and depends on exact block bytes, block ranges,
+expected condition owners, and architecture semantics. Repeating that lift for
+an unchanged request adds no evidence.
+
+**Work:**
+
+- Add a bounded IR-owned cache for complete immutable relift artifacts.
+- Key reuse by architecture object identity, ordered block addresses and exact
+  bytes, and expected condition-owner addresses; read the current bytes before
+  every lookup so loader-memory changes invalidate the entry.
+- Never cache byte-read failures, lift failures, or incomplete evidence.
+- Preserve the isolated lifter-state transaction and closed evidence counters
+  on every cache miss.
+
+**DoD:** Focused tests prove an identical request lifts once, changed bytes and
+changed architecture identity force a fresh lift, and incomplete artifacts are
+not reused; Ruff with `--fix`, strict mypy, and condition-transfer tests pass
+under `pytest -n 7`; the exact cold target preserves C hash and both validation
+gates; direct-lift count and relift cumulative time fall materially without
+unbounded memory growth.
+
+**Definition of Failure:** A changed byte range or architecture reuses stale
+conditions, a failed/incomplete artifact suppresses a retry, cache identity
+depends only on function address, mutable ambient lifter state escapes into the
+artifact, entries grow without a fixed bound, exact output or validation
+changes, or the profile owner does not fall enough to justify the cache.
+
+**Completion evidence:** The IR owner now rereads exact loader bytes and reuses
+only complete immutable artifacts under a 32-entry architecture-identity cache.
+Changed bytes, changed architecture identity, incomplete retry, and bounded
+eviction regressions pass. The implementation extracted immutable contracts so
+`condition_cache_relift.py` shrank from 346 to 312 lines. Ruff with `--fix`,
+strict mypy, startup architecture, ownership, and 43 focused relift/transfer
+tests pass. The exact cold target retained hash
+`9dc16640f0e4bb61e7ba04aa7d46c903ad80e06842b0cd5ed3cd610bbf011ec0`,
+`validation=passed`, and clean whole-tail validation. A comparable cold profile
+reduced direct lifts from 669 to 437 and relift cumulative time from 7.13 to
+5.11 profiler-seconds (28.3%). Its 61.75-second low-overhead sample did not beat
+the 49.82-57.00-second pre-change range and receives no end-to-end wall-time
+credit.
+
 ### 5. Make Validation and Rollback Work Dirty-Pass Driven
 
 **Status:** in progress
@@ -1350,6 +1412,14 @@ isolated `.so`, rather than the source checkout, was imported. Generated C was
 byte-identical and both validation gates passed, but wall time changed only
 55.16 -> 54.64 seconds while RSS rose from 319,312 to 659,196 KiB. This is
 noise with a material memory regression, so the walker is not promoted.
+
+**Rejected `vex_import` candidate:** The module passed strict mypy and an
+incremental native build completed in 11.73 seconds. Controlled source and
+native runs from the same parent import context preserved the exact accepted C
+hash and both validation gates, but measured 55.33 seconds / 694,380 KiB and
+55.41 seconds / 694,784 KiB respectively. The native path provided no runtime
+gain, so it was removed from the mypyc cohort and the normal 38-module build was
+restored.
 
 ### 7A. Make mypyc Module-Cohort Changes Incremental
 
@@ -1852,3 +1922,20 @@ record the failed experiment, and continue with the next evidence-backed design.
   refresh/lowering/carrier-prune sequence. Ruff with `--fix` passes and the
   complete focused module passes 70 tests under `pytest -n 7`; production was
   not weakened to tolerate legacy `None` or boolean mocks.
+- A 2026-08-28 isolated refresh established 57.00 seconds / 359,940 KiB for a
+  low-overhead cold run and 49.82 seconds / 356,908 KiB for a timing-enabled
+  cold run. Both produced exact hash
+  `9dc16640f0e4bb61e7ba04aa7d46c903ad80e06842b0cd5ed3cd610bbf011ec0`,
+  `validation=passed`, and clean whole-tail validation. The unique-key cold
+  profile recorded 150.1 profiler-seconds and moved exact condition relifting,
+  at 7.1 seconds across 36 requests, ahead of further broad query indexing.
+- Compiling `ir/vex_import.py` with mypyc was rejected after controlled source
+  and native runs measured 55.33 and 55.41 seconds respectively with equivalent
+  roughly 695 MiB peak RSS. Exact output and validation matched, but there was
+  no performance benefit; the normal 38-module cohort was restored.
+- Task 4H added bounded exact-byte reuse for complete condition-relift
+  artifacts. The source owner shrank from 346 to 312 lines, 159 condition-
+  surface tests and the full `quality-dev` gate pass, including 1,863 curated
+  pytest checks and all three selected MS C tiny pipelines. The exact SORTD
+  hash and both validation gates remain unchanged; the cold profile reduced
+  direct lifts 669 -> 437 and relift cumulative time 7.13 -> 5.11 seconds.
