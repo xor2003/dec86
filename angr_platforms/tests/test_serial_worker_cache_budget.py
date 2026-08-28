@@ -8,6 +8,7 @@ from pathlib import Path
 
 import inertia_decompiler.cache as cache_module
 import inertia_decompiler.serial_worker_cache as worker_cache
+from inertia_decompiler.cache_runtime_contract import timing_diagnostics_requested_8616
 
 
 def _inputs(binary: Path, *, timeout: int) -> worker_cache.SerialWorkerCacheInputs8616:
@@ -43,6 +44,30 @@ def test_serial_worker_cache_key_excludes_analysis_budget(tmp_path: Path) -> Non
     assert worker_cache.build_serial_worker_cache_key_8616(inputs) == (
         worker_cache.build_serial_worker_cache_key_8616(replace(inputs, timeout=240))
     )
+
+
+def test_timing_diagnostics_disable_serial_worker_result_reuse(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A timing request must execute the clean worker instead of cached C."""
+    monkeypatch.setenv("INERTIA_DEBUG_TIMING", "true")
+
+    result = worker_cache.load_serial_worker_cache_8616(
+        _inputs(tmp_path / "timing.exe", timeout=60),
+        enabled=True,
+    )
+
+    assert result.verdict is worker_cache.SerialWorkerCacheVerdict8616.DISABLED
+    assert result.reason is worker_cache.SerialWorkerCacheReason8616.DIAGNOSTICS
+    assert result.key is None
+
+
+def test_disabled_timing_values_preserve_cache_reuse(monkeypatch) -> None:
+    """Explicit false values must not request live timing diagnostics."""
+    for value in ("", "0", "false", "FALSE", "no", "off", " Off "):
+        monkeypatch.setenv("INERTIA_DEBUG_TIMING", value)
+        assert not timing_diagnostics_requested_8616()
 
 
 def test_serial_worker_cache_budget_reuse_is_monotonic(monkeypatch, tmp_path: Path) -> None:

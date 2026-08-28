@@ -16,6 +16,7 @@ import inertia_decompiler.cli_core as cli_core
 import inertia_decompiler.direct_request_cache as direct_cache
 import inertia_decompiler.direct_request_fast_path as direct_fast_path
 import inertia_decompiler.direct_request_identity as direct_identity
+import inertia_decompiler.function_cache_context as function_cache_context
 from inertia_decompiler.cli_arg_parser import CliArguments
 from inertia_decompiler.direct_addr_failure_family import build_failure_family_snapshot
 
@@ -172,9 +173,7 @@ def test_direct_request_cache_key_addresses_sidecars_by_content(tmp_path):
     assert second_key == first_key
 
     second_sidecar.write_text("different sidecar evidence", encoding="ascii")
-    assert direct_identity.build_direct_request_cache_key_8616(
-        _inputs(_args(second_binary))
-    ) != first_key
+    assert direct_identity.build_direct_request_cache_key_8616(_inputs(_args(second_binary))) != first_key
 
 
 def test_direct_request_cache_bypasses_live_diagnostic_modes(tmp_path):
@@ -247,9 +246,9 @@ def test_direct_request_hit_precedes_function_recovery(monkeypatch, tmp_path, ca
     ],
 )
 def test_lightweight_tail_validation_projection_matches_authoritative_validator(snapshot):
-    assert direct_cache._tail_validation_record_passed_8616(
+    assert direct_cache._tail_validation_record_passed_8616(snapshot) == x86_16_tail_validation_snapshot_passed(
         snapshot
-    ) == x86_16_tail_validation_snapshot_passed(snapshot)
+    )
 
 
 def test_tail_snapshot_diagnostic_uses_pipeline_order_after_json_sorting():
@@ -313,3 +312,30 @@ def test_entrypoint_cache_hit_does_not_import_full_cli(monkeypatch):
         assert decompile_entrypoint._run_entrypoint() == 0
     finally:
         ModuleType.__setattr__(decompile_entrypoint, "_ensure_cli", original_ensure_cli)
+
+
+def test_timing_diagnostics_reuse_evidence_but_disable_final_result_caches(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Timing must preserve evidence keys while forcing live decompilation."""
+    args = _args(tmp_path / "timing.exe")
+    assert direct_identity.direct_request_cache_enabled_8616(args)
+
+    monkeypatch.setenv("INERTIA_DEBUG_TIMING", "1")
+
+    assert "INERTIA_DEBUG_TIMING" not in cache_module._cache_runtime_environment()
+    assert not direct_identity.direct_request_cache_enabled_8616(args)
+    assert (
+        function_cache_context.function_decompilation_cache_key_8616(
+            object(),
+            binary_path=None,
+            api_style="raw",
+            cod_metadata=None,
+            synthetic_globals=None,
+            lst_metadata=None,
+            enable_structured_simplify=True,
+            enable_postprocess=True,
+        )
+        is None
+    )

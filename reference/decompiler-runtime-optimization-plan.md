@@ -12,8 +12,9 @@ Git history through `3ca6f9497` retains their implementation and evidence.
 
 ## Current Evidence
 
-- The exact no-sidecar `sub_10ce0` regression now emits SHA-256
-  `9047373bc10d3e1f485895af5fbd73831b03ef576d7afabf33cfa9080b0a85fd`,
+- In the current shared-worktree snapshot, the exact no-sidecar `sub_10ce0`
+  regression emits SHA-256
+  `14d97d8ac34d7b95308a8855a18224c76cf2251f151304b7c265791222dc808c`,
   preserves the `0x10d2f -> 0x107b8` call as
   `sub_107b8(&g_0B4C[arg_4], &g_0B4C[arg_6])`, and reports
   `validation=passed` plus clean whole-tail validation for the focused
@@ -21,39 +22,24 @@ Git history through `3ca6f9497` retains their implementation and evidence.
 - The focused semantic regression set has 245 passing tests under
   `pytest -n 7`; strict mypy, Ruff with `--fix`, and the architecture import
   check also pass for the changed surface.
-- Exact typed projection evidence now distinguishes the proven
-  `DS:0x0B4C + (BP+6)*2` source from the adjacent but wrong `BP+4` source.
-  Replaying the direct-stack consumer repairs the wrong projection and accepts
-  the exact projection as already materialized.
-- On the focused scheduler probe, 13 direct-stack requests changed on every
-  replay before this slice. They now close as 5 changed, 3 stable, and 5
-  skipped, with 8 executions and no failures. The five skipped requests still
-  pay full-AST regeneration because their caller has no covered consumer
-  generation scope yet.
-- A current ordinary warm run takes 63.82 seconds and about 344 MiB RSS. The
-  accepted post-change run took 68.35 seconds and 678,680 KiB RSS while
-  preserving the accepted hash and both validation gates, so this slice has no
-  end-to-end timing credit yet. A
-  timing-heavy owner run takes 75.03 seconds and about 676 MiB RSS, so debug
-  instrumentation materially affects both runtime and memory.
-- Current wall-clock component timing attributes about 9-10 seconds to all
-  segment/global materialization, but late stable replays contribute only
-  about 1 second. The first replay contributes 4.52 seconds, including 2.60
-  seconds of indexed lowering and 1.26 seconds of runtime segment lowering.
-- The first semantic convergence, validation priming/snapshots, and
-  post-validation render stabilization cost roughly 9, 7, and 8 seconds
-  respectively. The render stabilization phase repeats direct-stack and
-  segment/global consumers after AST regeneration and is the next bounded
-  optimization target.
-- A current cProfile run records 307,317,122 calls and 226.377 profiler seconds,
-  but it inflates segment/global materialization to 35.381 seconds while direct
-  wall timing measures about 9-10 seconds. cProfile remains useful for call
-  relationships, not standalone acceptance timing.
-- An exact byte/CFG raw-IR registry experiment produced 20 lookups and zero
-  hits on the target path. It was fully removed under the Definition of
-  Failure; no hashing overhead remains.
-- Frontend lifting owns about 8.9 seconds and is secondary to Structuring
-  replay on the current profile.
+- The timing-cache policy passes its focused and owned changed-surface gates;
+  strict mypy and Ruff pass for all five touched production modules.
+- Timing diagnostics now preserve upstream discovery/evidence cache identity
+  while refusing direct, serial-worker, and function-result C reuse. An
+  accepted repeated run fell from 160.85 to 46.90 seconds wall and from 119.01
+  to 41.02 seconds decompilation, at 304,876 KiB RSS, with live stage timings,
+  identical current C, and both validation gates passing.
+- Current segment/global materialization totals about 8.2 seconds. Its first
+  productive replay costs 4.74 seconds: indexed lowering is 2.61 seconds and
+  runtime segment lowering is 1.39 seconds. Late stable replays total less than
+  one second.
+- The first indexed replay spends 2.40 seconds collecting project-wide global
+  object source evidence. The artifact is cached only inside one project, so
+  each isolated function worker rebuilds the same all-caller evidence.
+- A direct-process profile attributes 30.19 seconds of a fully invalidated run
+  to indexed Alias/Widening context preparation, including 23.53 seconds in
+  program evidence construction for 21 function selections. The source-scoped
+  persistent cache correctly removes this cost from stable development runs.
 - `decompiler_postprocess_stage.py` is 17,846 lines. It is a major development,
   review, and typing cost, but postprocess is no longer the leading runtime
   owner. Extraction must follow the runtime-critical correctness work.
@@ -61,45 +47,102 @@ Git history through `3ca6f9497` retains their implementation and evidence.
   `is_available() == False` and `is_enabled() == False`; `PYTHON_JIT=1` is
   currently inert. mypyc remains the available native-compilation experiment.
 
-All measurements are checkout-specific. Refresh them after correctness is
-restored and before claiming a speedup.
+All measurements are checkout-specific; refresh them after correctness is restored before claiming a speedup.
 
 ## Remaining Problem Impact
 
 | Priority | Problem | User-visible impact | Development impact |
 | --- | --- | --- | --- |
-| P1 | Validation/render stabilization rebuilds full ASTs before stable semantic consumers can be skipped | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests now skip their consumer work, but still pay the dominant AST-regeneration cost |
-| P1 | Cold indexed Alias/Widening context construction relifts the function census | Cold no-sidecar runs remain much slower than stable-cache runs | Frequent Alias/Widening edits invalidate the correct source-scoped persistent cache |
+| P1 | Project global-object source evidence is rebuilt in every isolated worker | Adds about 2.40 seconds per affected function and repeats whole-program caller work | Whole-binary parallel runs duplicate the same immutable evidence in each process |
+| P1 | The first productive segment/global replay costs about 4.74 seconds | Large functions remain slow even with stable evidence caches | Indexed and runtime-segment owners dominate the remaining semantic replay time |
+| P1 | Cold indexed Alias/Widening context construction relifts the function census | Fully invalidated no-sidecar runs remain much slower than stable-cache runs | Alias/IR/Widening edits legitimately rebuild a roughly 30-second program artifact |
+| P1 | Stable semantic consumers still rebuild full AST witnesses before some skips | Large functions decompile slowly and reach timeout/fallback more often | Five direct-stack requests skip consumer work but still pay generation cost |
 | P1 | Deep C-AST traversal remains a major profiled owner | Adds latency to every large-function run | Encourages repeated ad hoc scans unless accepted mutation generations own index validity |
-| P1 | Instrumented peak RSS reaches about 676 MiB for one large function | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four similar workers can exceed the budget before process overhead |
+| P1 | A fully invalidated run reaches about 677 MiB RSS | Aggressive outer parallelism can exceed the 2 GB aggregate budget | Four cold workers can exceed the budget before process overhead |
 | P1 | The postprocess stage is 17,846 lines | No direct semantic failure, but ownership mistakes are easier to introduce | Slow comprehension, review, typing, and agent handoff |
 | P2 | JIT is unavailable in the installed interpreter | No runtime improvement from `PYTHON_JIT=1` | Repeated JIT trials waste time; profile-guided mypyc is the only current native path |
 
 ## Acceptance Invariants
 
 - Preserve `IR -> Alias -> Widening -> Types -> Structuring -> Rewrite`.
-- Introduce storage width, call arguments, and condition semantics at their
-  earliest authoritative owner, never in Rewrite or CLI fallback.
+- Introduce semantics at their earliest authoritative owner, never in Rewrite
+  or CLI fallback.
 - Unknown evidence is `UNKNOWN_REFUSE`; it is never permission to delete code.
 - Identical input and options produce deterministic C and status output.
-- Every semantic change preserves required calls, branches, memory effects,
-  return effects, and `validation=passed`.
+- Preserve calls, branches, memory/return effects, and `validation=passed`.
 - No test, validator, architecture check, ownership check, or typing rule is
   weakened to obtain a speedup.
-- Every benchmark records command, revision/worktree state, wall time, peak
-  RSS, output hash, function validation, and whole-tail validation.
+- Benchmarks record checkout, command, wall, RSS, C hash, and validation.
 - Keep aggregate decompiler worker memory at or below 2 GB.
 
 ## Ordered Work
 
-### 1. Publish Consumer-Specific Mutation Generations
+### 1. Persist Project Global-Object Source Evidence
+
+**Status:** pending coordination with the active indexed-evidence transport work
+
+**Reason:** The first indexed replay spends 2.40 seconds rebuilding immutable
+all-caller source-family evidence in each isolated worker. Layouts and bounded
+ranges already cross the persistent parent/worker boundary; source evidence
+does not.
+
+**Work:**
+
+- Add a typed codec for complete `GlobalObjectSourceEvidence8616` and its source
+  facts at the Types/Lowering owner.
+- Extend the coherent indexed-evidence bundle so layouts, bounded ranges, and
+  source evidence share one cache schema and dependency identity.
+- Collect source evidence once on the complete parent catalog and transport it
+  without reclassification into clean workers.
+- Include every source-evidence owner in the scoped cache digest and reject
+  partial or incoherent bundles.
+- Preserve closed raw/normalized/classified/materialized/failure accounting.
+
+**DoD:** A warm isolated worker performs zero all-caller source census rebuilds;
+the first indexed replay falls by at least 2 seconds; bundle codec round trips
+are exact; stale, partial, and layout-mismatched records are refused; generated
+C, validation, determinism, and the 2 GB budget are unchanged.
+
+**Definition of Failure:** CLI reclassifies semantic facts; source evidence can
+be paired with a different layout or pointer-target census; cache invalidation
+omits an owner; a missing artifact silently becomes empty evidence; output or
+validation changes; or measured worker time does not materially improve.
+
+### 2. Reduce the First Productive Segment/Global Replay
+
+**Status:** measured; child attribution in progress
+
+**Reason:** The first replay costs 4.74 seconds after stable cache reuse. The
+2.40-second source collector is Step 1; runtime-segment lowering contributes
+1.39 seconds and the remaining indexed mutation contributes about 0.20 seconds.
+
+**Work:**
+
+- Reprofile runtime-segment child passes and retain exact mutation/result
+  accounting.
+- Reuse read-only AST query projections only inside one unchanged root
+  generation; invalidate immediately after mutation.
+- Avoid rerunning evidence collectors whose typed project artifact is already
+  attached and coherent.
+- Keep productive materialization and every refusal path unchanged.
+
+**DoD:** The first replay falls by at least 15%; at least one measured child
+owner materially improves; current C hash and both validation gates remain
+stable; focused equivalence/mutation tests and strict typing pass.
+
+**Definition of Failure:** A productive lowering is skipped; an AST index
+survives mutation; evidence is inferred from rendered text; closed accounting
+is weakened; only a microbenchmark improves; or output/validation changes.
+
+### 3. Publish Consumer-Specific Mutation Generations
 
 **Status:** in progress; exact direct-stack projection reuse accepted, but its
 caller still lacks a complete authoritative generation scope
 
 **Reason:** Exact full-AST fingerprints can prove stability but cost seconds on
 productive Structuring rounds. Call order, object identity, and pass booleans
-cannot prove that direct-stack or segment/global inputs are unchanged.
+cannot prove that direct-stack or segment/global inputs are unchanged. The same
+generation contract is required before validation-prime replays can be removed.
 
 **Work:**
 
@@ -119,48 +162,21 @@ cannot prove that direct-stack or segment/global inputs are unchanged.
 - Move the next skip boundary ahead of full-AST regeneration only after every
   relevant mutation in that caller advances the direct-stack consumer
   generation.
+- Remove or narrow a validation-prime replay only when no relevant generation
+  changes before the authoritative later replay.
 
 **DoD:** At least one formerly repeated expensive replay is skipped without a
 full-AST fingerprint; every relevant mutation advances the corresponding
 consumer generation; counters close; focused mutation/misreport tests pass;
-accepted C and both validation gates remain unchanged.
+validation-prime time falls by at least 10%; accepted C and both validation
+gates remain unchanged.
 
 **Definition of Failure:** Stability is inferred from rendered text, call
 order, object identity, or an unverified `changed` result; a relevant mutation
 does not invalidate its consumer; generations are owned by CLI/Rewrite for
 earlier semantics; accounting does not close; or productive work is skipped.
 
-### 2. Reduce Structuring Validation Priming
-
-**Status:** blocked on Step 1
-
-**Reason:** Structuring priming owns 73.894 of 91.848 direct-core profiler
-seconds. Its direct-stack, segment/global, runtime-segment, and broad replay
-children are currently the largest feedback bottleneck, but earlier traces
-showed productive rounds that cannot be removed by position alone.
-
-**Work:**
-
-- Capture each expensive consumer's exact input generation and mutation
-  result inside the one productive stage-entry prime.
-- Remove or narrow only a replay subsumed by a later authoritative replay with
-  no intervening relevant generation change.
-- Preserve productive early lowering needed by calls, returns, loops, and
-  condition materialization.
-- Keep the existing primed marker that makes later per-pass prime calls free.
-- Re-profile after each bounded replay change.
-
-**DoD:** Validation-prime cumulative time falls by at least 10%; at least one
-duplicate direct-stack, segment/global, runtime-segment, or broad replay is
-removed or narrowed; all productive rounds remain; exact output and validation
-are stable; focused gates and an uncontended cold run pass below 2 GB RSS.
-
-**Definition of Failure:** An owner boolean is the sole mutation witness; an
-intervening mutation can be missed; another expensive whole-AST fingerprint is
-added; productive Lowering is skipped; output/validation changes; or measured
-prime time does not fall by at least 10%.
-
-### 3. Bound Remaining C-AST Traversal
+### 4. Bound Remaining C-AST Traversal
 
 **Status:** pending after Steps 1-2 reprofile
 
@@ -190,13 +206,13 @@ receives cached nodes; semantic facts are inferred from C text or shape alone;
 only a microbenchmark improves; aggregate traversal time is flat; memory is
 unbounded; or ordering changes.
 
-### 4. Make Validation Transactions Dirty-Pass Driven
+### 5. Make Validation Transactions Dirty-Pass Driven
 
 **Status:** in progress
 
 **Reason:** Validation is authoritative, but a provably stable pass should not
 pay changed-pass regeneration, snapshot, cycle-scan, and tail-summary costs.
-This follows Step 1 because reliable mutation generations are the safety
+This follows Step 3 because reliable mutation generations are the safety
 boundary.
 
 **Work:**
@@ -219,7 +235,7 @@ restore metadata and AST together; declaration or typed-input changes are
 missed; validator strength is reduced; or saved work is not visible in a
 current profile.
 
-### 5. Split and Type the Postprocess Stage
+### 6. Split and Type the Postprocess Stage
 
 **Status:** in progress; secondary runtime priority
 
@@ -247,9 +263,9 @@ and validation remain unchanged.
 untyped owned contract; semantic recovery moves into Rewrite; the stage grows;
 public behavior exists only as implementation detail; or focused gates fail.
 
-### 6. Compile Only a Reprofiled Hotspot With mypyc
+### 7. Compile Only a Reprofiled Hotspot With mypyc
 
-**Status:** pending after Steps 1-5
+**Status:** pending after Steps 1-6
 
 **Reason:** Previous `c_ast_utils` and `vex_import` native experiments produced
 no repeatable runtime gain and increased memory or build cost. mypyc is useful
@@ -273,7 +289,7 @@ continues to pass.
 `Any` is hidden to satisfy mypyc; output or validation changes; build/startup
 cost consumes the gain; memory materially regresses; or timing is noise.
 
-### 7. Tune Outer Function Parallelism
+### 8. Tune Outer Function Parallelism
 
 **Status:** pending after single-function memory and time fall
 
@@ -300,7 +316,7 @@ failure, timeout, and fallback counts do not regress.
 improves because functions disappear or fall back; output order changes;
 timeouts increase; or worker overhead makes the default slower.
 
-### 8. Final Regression and Performance Ratchet
+### 9. Final Regression and Performance Ratchet
 
 **Status:** pending
 

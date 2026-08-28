@@ -21,6 +21,7 @@ from angr_platforms.X86_16.compiler_helpers import x86_16_compiler_helper_target
 from angr_platforms.X86_16.lst_extract import LSTMetadata
 
 from inertia_decompiler.cache import _function_decompilation_cache_key
+from inertia_decompiler.cache_runtime_contract import timing_diagnostics_requested_8616
 from inertia_decompiler.sidecar_cache import lst_metadata_content_digest_8616
 from inertia_decompiler.work_items import FunctionWorkItem
 
@@ -75,13 +76,10 @@ def _stable_json_value(value: object) -> StableJsonValue:
         return {"enum": value.__class__.__qualname__, "value": _stable_json_value(value.value)}
     if isinstance(value, Mapping):
         entries: list[tuple[StableJsonValue, StableJsonValue]] = [
-            (_stable_json_value(key), _stable_json_value(item_value))
-            for key, item_value in value.items()
+            (_stable_json_value(key), _stable_json_value(item_value)) for key, item_value in value.items()
         ]
         entries.sort(key=lambda item: json.dumps(item[0], sort_keys=True, separators=(",", ":")))
-        normalized_entries: list[StableJsonValue] = [
-            {"key": key, "value": item_value} for key, item_value in entries
-        ]
+        normalized_entries: list[StableJsonValue] = [{"key": key, "value": item_value} for key, item_value in entries]
         return {"mapping": normalized_entries}
     if isinstance(value, tuple | list):
         return {"sequence": [_stable_json_value(item) for item in value]}
@@ -145,9 +143,7 @@ def _function_recovery_shape_record(function: object) -> dict[str, object]:
                 edge_data = graph.get_edge_data(edge[0], edge[1])
             except AttributeError:
                 edge_data = None
-            edge_records.append(
-                (_graph_node_record(edge[0]), _graph_node_record(edge[1]), edge_data)
-            )
+            edge_records.append((_graph_node_record(edge[0]), _graph_node_record(edge[1]), edge_data))
         edge_records.sort(
             key=lambda record: (
                 record[0],
@@ -185,8 +181,7 @@ def _project_evidence_record(project: object | None) -> dict[str, object]:
     if project is None:
         return {"caller_return_use": {}, "compiler_helper_targets": ()}
     caller_evidence = {
-        addr: asdict(evidence)
-        for addr, evidence in caller_return_use_evidence_by_addr_8616(project).items()
+        addr: asdict(evidence) for addr, evidence in caller_return_use_evidence_by_addr_8616(project).items()
     }
     return {
         "caller_return_use": caller_evidence,
@@ -207,9 +202,7 @@ def build_function_cache_context_8616(
     except AttributeError:
         project = None
     sidecar_digest = (
-        lst_metadata_content_digest_8616(lst_metadata)
-        if lst_metadata is not None
-        else item.sidecar_metadata_digest
+        lst_metadata_content_digest_8616(lst_metadata) if lst_metadata is not None else item.sidecar_metadata_digest
     )
     return FunctionCacheContext8616(
         recovery_shape_digest=_stable_digest(_function_recovery_shape_record(item.function)),
@@ -231,6 +224,8 @@ def function_decompilation_cache_key_8616(
     enable_postprocess: bool,
 ) -> dict[str, object] | None:
     """Build a cache key or refuse reuse for unsupported semantic evidence."""
+    if timing_diagnostics_requested_8616():
+        return None
     try:
         context = build_function_cache_context_8616(
             item,

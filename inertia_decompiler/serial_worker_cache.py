@@ -30,6 +30,7 @@ from inertia_decompiler.cache import (
     _store_cache_json,
     is_non_semantic_cache_environment_name,
 )
+from inertia_decompiler.cache_runtime_contract import timing_diagnostics_requested_8616
 from inertia_decompiler.cli_arg_parser import CliArguments
 from inertia_decompiler.direct_addr_failure_family import FailureFamilySnapshot
 
@@ -37,6 +38,7 @@ SERIAL_WORKER_CACHE_NAMESPACE_8616: str = "serial_clean_worker"
 SERIAL_WORKER_CACHE_SCHEMA_8616: int = 2
 SERIAL_WORKER_CACHE_MAX_ENTRIES_8616: int = 256
 SERIAL_WORKER_CACHE_ANALYSIS_TIMEOUT_FIELD_8616: str = "cache_analysis_timeout"
+
 
 class SerialWorkerCacheVerdict8616(StrEnum):
     """Typed outcome of a serial clean-worker cache lookup."""
@@ -96,8 +98,7 @@ def semantic_worker_environment_8616(environment: Mapping[str, str]) -> tuple[tu
         sorted(
             (name, value)
             for name, value in environment.items()
-            if name.startswith("INERTIA_")
-            and not is_non_semantic_cache_environment_name(name)
+            if name.startswith("INERTIA_") and not is_non_semantic_cache_environment_name(name)
         )
     )
 
@@ -197,7 +198,7 @@ def _validated_result_record_8616(
         segment_evidence = segment_program_function_evidence_from_record_8616(
             record.get("segment_program_function_evidence")
         )
-    except (PipelineHardError, ValueError):
+    except PipelineHardError, ValueError:
         return None
     if expected_function_addrs and segment_evidence.function_addr not in expected_function_addrs:
         return None
@@ -210,7 +211,7 @@ def load_serial_worker_cache_8616(
     enabled: bool,
 ) -> SerialWorkerCacheLookup8616:
     """Load one exact validated result or return an explicit miss/refusal."""
-    if not enabled:
+    if not enabled or timing_diagnostics_requested_8616():
         return SerialWorkerCacheLookup8616(
             SerialWorkerCacheVerdict8616.DISABLED,
             None,
@@ -273,9 +274,7 @@ def _prune_serial_worker_cache_8616(max_entries: int) -> None:
     namespace_dir = DECOMPILATION_CACHE_DIR / SERIAL_WORKER_CACHE_NAMESPACE_8616
     try:
         entries = sorted(
-            (path.stat().st_mtime_ns, path.name, path)
-            for path in namespace_dir.glob("*.json")
-            if path.is_file()
+            (path.stat().st_mtime_ns, path.name, path) for path in namespace_dir.glob("*.json") if path.is_file()
         )
     except OSError:
         return
@@ -304,14 +303,10 @@ def store_serial_worker_cache_8616(
         with _cache_key_lock(SERIAL_WORKER_CACHE_NAMESPACE_8616, lookup.key):
             existing = _load_cache_json(SERIAL_WORKER_CACHE_NAMESPACE_8616, lookup.key)
             existing_timeout = (
-                existing.get(SERIAL_WORKER_CACHE_ANALYSIS_TIMEOUT_FIELD_8616)
-                if existing is not None
-                else None
+                existing.get(SERIAL_WORKER_CACHE_ANALYSIS_TIMEOUT_FIELD_8616) if existing is not None else None
             )
             existing_validated = (
-                _validated_result_record_8616(existing, result_schema=result_schema)
-                if existing is not None
-                else None
+                _validated_result_record_8616(existing, result_schema=result_schema) if existing is not None else None
             )
             if (
                 isinstance(existing_timeout, int)
@@ -323,7 +318,7 @@ def store_serial_worker_cache_8616(
             _store_cache_json(SERIAL_WORKER_CACHE_NAMESPACE_8616, lookup.key, validated)
             if _load_cache_json(SERIAL_WORKER_CACHE_NAMESPACE_8616, lookup.key) != validated:
                 return False
-    except (OSError, TimeoutError):
+    except OSError, TimeoutError:
         return False
     _prune_serial_worker_cache_8616(max_entries)
     return True

@@ -1,7 +1,8 @@
 """Typed runtime eligibility for semantic decompiler caches.
 
 Layer: CLI/fallback/reporting.
-Responsibility: refuse semantic cache reuse unless Python hash ordering is deterministic.
+Responsibility: classify deterministic semantic-cache eligibility and live
+diagnostics that must execute instead of reusing final generated-C results.
 """
 
 from __future__ import annotations
@@ -10,6 +11,9 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+
+TIMING_DIAGNOSTIC_ENV_8616: str = "INERTIA_DEBUG_TIMING"
+_DISABLED_DIAGNOSTIC_VALUES_8616: frozenset[str] = frozenset({"", "0", "false", "no", "off"})
 
 
 class CacheRuntimeVerdict8616(StrEnum):
@@ -46,3 +50,12 @@ def cache_runtime_contract_8616(
     else:
         verdict = CacheRuntimeVerdict8616.HASH_SEED_NONZERO
     return CacheRuntimeContract8616(verdict=verdict, python_hash_seed=raw_seed)
+
+
+def timing_diagnostics_requested_8616(
+    environment: Mapping[str, str] | None = None,
+) -> bool:
+    """Return whether the current request needs live stage timing output."""
+    source = os.environ if environment is None else environment
+    raw_value = source.get(TIMING_DIAGNOSTIC_ENV_8616)
+    return bool(raw_value is not None and raw_value.strip().lower() not in _DISABLED_DIAGNOSTIC_VALUES_8616)
