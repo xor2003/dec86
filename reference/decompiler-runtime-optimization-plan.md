@@ -686,7 +686,7 @@ consumer mutation impact, not another call-order or full-AST cache.
 
 ### 4. Build a Generation-Owned C-AST Query Index
 
-**Status:** in progress; two read-only traversal cohorts completed
+**Status:** in progress; three read-only traversal cohorts completed
 
 **Reason:** The exact in-process `sub_10ce0` profile records 311.7 million Python
 calls. The shared deep iterator costs 32.93 cumulative seconds across 2.82
@@ -739,6 +739,16 @@ for the respective paths. `make check-files` passes with 50 tests, Ruff, strict
 mypy, architecture, context, and ownership checks. Captured `sub_10ce0` output
 retains the same SHA-256 and both validation gates at 60.49 seconds / 343,800
 KiB. Aggregate re-profiling remains required before Task 4 can close.
+
+**Third cohort evidence:** Loop-break Structuring now captures condition keys,
+loop-header JCCs, typed loop conditions, and break-guard nodes in one immutable
+pre-mutation surface instead of four whole-AST walks. Empty decoded-condition
+split work also closes before scanning loops. The exact 200-call, 40-loop
+benchmark improved from 0.706474 to 0.302534 seconds (57%). `make check-files`
+passes with 17 tests plus Ruff, strict mypy, architecture, context, and ownership
+checks. Captured `sub_10ce0` output retains the same SHA-256 and both validation
+gates at 58.57 seconds / 343,732 KiB. The 1,305-line owner shrank in this cohort;
+aggregate profiling remains the Task 4 completion gate.
 
 ### 4A. Prefilter Impossible Direct-Stack Reload Placements
 

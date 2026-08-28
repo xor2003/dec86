@@ -97,6 +97,16 @@ class UnconsumedLoopBreakJccStats8616:
 
 
 @dataclass(frozen=True, slots=True)
+class _LoopBreakInitialSurface8616:
+    """Read-only AST projections captured before loop-break mutation starts."""
+
+    condition_keys: frozenset[tuple[int, int]]
+    loop_header_jcc_addrs: frozenset[int]
+    typed_loop_condition_jcc_addrs: frozenset[int]
+    break_nodes_by_key: tuple[tuple[tuple[int, int], tuple[object, ...]], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class UnconsumedLoopBreakJccCallbacks8616:
     """Dynamic adapters for CFG/JCC proof and C AST expression handling."""
 
@@ -189,25 +199,6 @@ def _condition_tags_8616(condition: object) -> tuple[int, int] | None:
     if isinstance(ins_addr, int) and isinstance(block_addr, int):
         return int(ins_addr), int(block_addr)
     return None
-
-
-def _condition_keys_in_codegen_8616(codegen: object) -> frozenset[tuple[int, int]]:
-    """Collect existing condition proof keys from the generated C AST."""
-    keys: set[tuple[int, int]] = set()
-    cfunc = _dynamic_attr_8616(codegen, "cfunc", None)
-    root = _dynamic_attr_8616(cfunc, "statements", None) if cfunc is not None else None
-    for node in (root, *_iter_c_nodes_deep_8616(root)):
-        cond_pairs = _dynamic_attr_8616(node, "condition_and_nodes", None)
-        if isinstance(cond_pairs, (list, tuple)):
-            for cond, _body in tuple(cond_pairs):
-                key = _condition_tags_8616(cond)
-                if key is not None:
-                    keys.add(key)
-        cond = _dynamic_attr_8616(node, "condition", None)
-        key = _condition_tags_8616(cond)
-        if key is not None:
-            keys.add(key)
-    return frozenset(keys)
 
 
 def _typed_conditions_by_key_8616(codegen: object) -> dict[tuple[int, int], tuple[ConditionIR, ...]]:
@@ -360,17 +351,49 @@ def _set_break_guard_condition_8616(node: object, condition: object) -> bool:
     return True
 
 
-def _break_guard_nodes_by_key_8616(root: object) -> dict[tuple[int, int], tuple[object, ...]]:
-    """Collect C AST break-guard nodes keyed by JCC proof tags."""
-    nodes_by_key: dict[tuple[int, int], list[object]] = {}
-    for node in (root, *_iter_c_nodes_deep_8616(root)):
-        condition = _break_guard_condition_8616(node)
-        if condition is None:
-            continue
-        key = _condition_tags_8616(condition)
-        if key is not None:
-            nodes_by_key.setdefault(key, []).append(node)
-    return {key: tuple(nodes) for key, nodes in nodes_by_key.items()}
+def _collect_loop_break_initial_surface_8616(
+    root: object,
+) -> _LoopBreakInitialSurface8616:
+    """Collect all pre-mutation loop-break projections in one AST walk."""
+    condition_keys: set[tuple[int, int]] = set()
+    loop_header_jcc_addrs: set[int] = set()
+    typed_loop_condition_jcc_addrs: set[int] = set()
+    break_nodes_by_key: dict[tuple[int, int], list[object]] = {}
+    for node in _iter_c_nodes_deep_8616(root):
+        for condition, _body in _condition_body_pairs_8616(
+            _dynamic_attr_8616(node, "condition_and_nodes", ())
+        ):
+            key = _condition_tags_8616(condition)
+            if key is not None:
+                condition_keys.add(key)
+        condition = _dynamic_attr_8616(node, "condition", None)
+        condition_key = _condition_tags_8616(condition)
+        if condition_key is not None:
+            condition_keys.add(condition_key)
+        if (
+            isinstance(node, (CForLoop, CWhileLoop, CDoWhileLoop))
+            and isinstance(_dynamic_attr_8616(node, "body", None), CStatements)
+            and condition_key is not None
+        ):
+            loop_header_jcc_addrs.add(condition_key[0])
+            tags = _dynamic_attr_8616(condition, "tags", None)
+            if (
+                isinstance(tags, Mapping)
+                and tags.get("inertia_typed_loop_condition_bound_8616") is True
+            ):
+                typed_loop_condition_jcc_addrs.add(condition_key[0])
+        break_condition = _break_guard_condition_8616(node)
+        break_key = _condition_tags_8616(break_condition)
+        if break_key is not None:
+            break_nodes_by_key.setdefault(break_key, []).append(node)
+    return _LoopBreakInitialSurface8616(
+        condition_keys=frozenset(condition_keys),
+        loop_header_jcc_addrs=frozenset(loop_header_jcc_addrs),
+        typed_loop_condition_jcc_addrs=frozenset(typed_loop_condition_jcc_addrs),
+        break_nodes_by_key=tuple(
+            (key, tuple(nodes)) for key, nodes in sorted(break_nodes_by_key.items())
+        ),
+    )
 
 
 def _semantic_break_guards_in_loop_8616(
@@ -430,32 +453,6 @@ def _loop_nodes_with_body_8616(
         if isinstance(_dynamic_attr_8616(node, "body", None), CStatements):
             loops.append(node)
     return tuple(loops)
-
-
-def _loop_header_jcc_addrs_8616(root: object) -> frozenset[int]:
-    """Return exact JCC identities already represented by loop headers."""
-    jcc_addrs: set[int] = set()
-    for loop in _loop_nodes_with_body_8616(root):
-        key = _condition_tags_8616(loop.condition)
-        if key is not None:
-            jcc_addrs.add(key[0])
-    return frozenset(jcc_addrs)
-
-
-def _typed_loop_condition_jcc_addrs_8616(root: object) -> frozenset[int]:
-    """Return JCCs already bound as typed loop continuations."""
-    jcc_addrs: set[int] = set()
-    for loop in _loop_nodes_with_body_8616(root):
-        condition = loop.condition
-        tags = _dynamic_attr_8616(condition, "tags", None)
-        key = _condition_tags_8616(condition)
-        if (
-            isinstance(tags, Mapping)
-            and tags.get("inertia_typed_loop_condition_bound_8616") is True
-            and key is not None
-        ):
-            jcc_addrs.add(key[0])
-    return frozenset(jcc_addrs)
 
 
 def _normalized_condition_fingerprint_8616(value: str) -> str:
@@ -735,6 +732,8 @@ def _split_materialized_loop_header_condition_chains_8616(
     remove its now-redundant body break. This restores the binary CFG shape
     without deleting or inventing an effect.
     """
+    if not decoded_conditions_by_jcc:
+        return False
     facts_by_jcc = {
         fact.jcc_addr: fact
         for fact in loop_branch_guard_facts_8616(codegen)
@@ -942,10 +941,11 @@ def materialize_unconsumed_loop_break_jcc_8616(
     if root is None:
         return False
     stats = _unconsumed_loop_break_jcc_stats_8616(codegen)
-    existing_condition_keys = _condition_keys_in_codegen_8616(codegen)
-    existing_loop_header_jcc_addrs = _loop_header_jcc_addrs_8616(root)
-    typed_loop_condition_jcc_addrs = _typed_loop_condition_jcc_addrs_8616(root)
-    existing_break_nodes_by_key = _break_guard_nodes_by_key_8616(root)
+    initial_surface = _collect_loop_break_initial_surface_8616(root)
+    existing_condition_keys = initial_surface.condition_keys
+    existing_loop_header_jcc_addrs = initial_surface.loop_header_jcc_addrs
+    typed_loop_condition_jcc_addrs = initial_surface.typed_loop_condition_jcc_addrs
+    existing_break_nodes_by_key = dict(initial_surface.break_nodes_by_key)
     typed_conditions_by_key = _typed_conditions_by_key_8616(codegen)
     decoded_conditions_by_jcc: dict[int, CExpression] = {}
     changed = False
