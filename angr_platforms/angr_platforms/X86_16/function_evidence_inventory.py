@@ -92,6 +92,7 @@ def _function_binary_surface_8616(
     function: object,
     *,
     content_identity: bytes | None,
+    include_callsites: bool,
 ) -> FunctionBinarySurface8616:
     """Snapshot stable binary coordinates and the decoded block surface."""
     boundary = cast(_FunctionBoundary8616, function)
@@ -123,9 +124,12 @@ def _function_binary_surface_8616(
             size = -1
         extents.append((block_addr, size))
     callsites: list[tuple[int, int | None, int | None]] = []
-    try:
-        callsite_addrs = tuple(boundary.get_call_sites())
-    except (AttributeError, TypeError):
+    if include_callsites:
+        try:
+            callsite_addrs = tuple(boundary.get_call_sites())
+        except (AttributeError, TypeError):
+            callsite_addrs = ()
+    else:
         callsite_addrs = ()
     for raw_callsite_addr in callsite_addrs:
         try:
@@ -161,9 +165,11 @@ def collect_function_binary_evidence_8616[EvidenceT8616](
     """Return cached immutable evidence or collect it for the current surface."""
     if project is None:
         return tuple(builder(project, function))
+    include_callsites = kind is FunctionEvidenceKind8616.NEIGHBOR_CALL_TARGETS
     surface = _function_binary_surface_8616(
         function,
         content_identity=content_identity,
+        include_callsites=include_callsites,
     )
     typed_project = cast(_ProjectInventoryBoundary8616, project)
     try:
@@ -183,6 +189,7 @@ def collect_function_binary_evidence_8616[EvidenceT8616](
     collected_surface = _function_binary_surface_8616(
         function,
         content_identity=content_identity,
+        include_callsites=include_callsites,
     )
     fallback_owner = function if surface.identity.address is None else None
     collected_key = (kind, collected_surface.identity)

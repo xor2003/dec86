@@ -129,6 +129,27 @@ def test_changed_callsite_surface_invalidates_address_cache() -> None:
     assert build_count == 2
 
 
+def test_block_only_evidence_does_not_query_callsite_surface() -> None:
+    project = SimpleNamespace()
+
+    class Function:
+        addr = 0x1234
+        size = 12
+        blocks = ()
+
+        def get_call_sites(self) -> tuple[int, ...]:
+            raise AssertionError("block-only evidence must not inspect callsites")
+
+    function = Function()
+
+    assert collect_function_binary_evidence_8616(
+        project,
+        function,
+        kind=FunctionEvidenceKind8616.INSTRUCTION_SUMMARIES,
+        builder=lambda _project, _function: (0x1234,),
+    ) == (0x1234,)
+
+
 def test_changed_content_identity_invalidates_address_cache() -> None:
     project = SimpleNamespace()
     function = SimpleNamespace(addr=0x1234, size=2, blocks=())
