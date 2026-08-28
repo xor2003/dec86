@@ -1116,6 +1116,16 @@ TEST_OWNERSHIP_RULES: tuple[TestOwnershipRule, ...] = (
         tests=("angr_platforms/tests/test_x86_16_pipeline_contracts.py",),
     ),
     TestOwnershipRule(
+        owner="x86-16-structured-assignment-index",
+        paths=(
+            "angr_platforms/angr_platforms/X86_16/pipeline/structured_assignment_index.py",
+            "angr_platforms/angr_platforms/X86_16/pipeline/structured_ast_query_index.py",
+        ),
+        tests=(
+            "angr_platforms/tests/test_x86_16_structured_assignment_index.py",
+        ),
+    ),
+    TestOwnershipRule(
         owner="pipeline-invariants",
         paths=("angr_platforms/angr_platforms/X86_16/pipeline/invariants.py",),
         tests=("angr_platforms/tests/test_x86_16_rewrite_boundary.py",),

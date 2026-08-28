@@ -1277,7 +1277,8 @@ and failed pre-existing call-argument/parameter whole-tail evidence in
 
 ### 4M. Replace Repeated CLI Assignment Scans with One Typed Projection
 
-**Status:** blocked on the concurrent structured-AST query-index owner
+**Status:** implemented; acceptance blocked by the current shared-tree
+call-argument validation failure
 
 **Reason:** The aggregate profile charges 46.56 seconds to 534 calls of the
 single-assignment lookup used by stack-byte-offset rewriting. Each distinct
@@ -1315,6 +1316,27 @@ guessed, lookup relies on rendered C/assembly or corpus identity, mutable nodes
 survive a generation change, exact output or validation changes, peak memory is
 unbounded, or aggregate profiling does not materially reduce the measured
 46.56-second owner.
+
+**Implementation evidence:** The pipeline now owns one typed assignment
+projection over the existing structured-AST query census. It returns explicit
+`missing`, `unique`, and fail-closed `ambiguous` verdicts; the CLI supplies only
+its compatibility identities and iterates the indexed assignment tuple for the
+three-round alias fixed point. A 64-assignment regression records one build and
+62 bounded lookups while making any legacy CLI tree scan fail. Twenty-two
+focused assignment-index, stack-rewrite, reload-prefilter, and control-flow
+tests pass under `pytest -n 7`; the changed-file gate passes Ruff with `--fix`,
+strict mypy, type/doc ratchets, architecture, ownership, and 14 owned tests.
+
+The current default nontrivial-function route no longer executes this legacy
+CLI helper unless `INERTIA_ENABLE_LEGACY_CLI_STACK_RERUN=1`, so a captured
+direct-core profile contains no assignment-lookup owner to compare with the old
+46.56 seconds. The cold default `sub_10ce0` run completed in 139.73 seconds at
+691,464 KiB RSS and emitted SHA-256
+`c18c611d72c4159c1eb501732c8c1fde2569490a0da36a0eaf6ee1773bce03a8`, but the
+current shared tree fails the independent call-argument validation gate at
+callsite `0x10d2f` (`expected-bp=+0x4`, `actual-bp=+0x5`). Keep Task 4M open for
+accepted hash/validation comparison after that concurrent baseline is restored;
+do not attribute the current default-route wall time to this now-disabled owner.
 
 ### 5. Make Validation and Rollback Work Dirty-Pass Driven
 

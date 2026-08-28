@@ -186,6 +186,8 @@ LINTERS_DEV_MYPY_FILES ?= \
 	angr_platforms/angr_platforms/X86_16/widening/global_object_layout.py \
 	angr_platforms/angr_platforms/X86_16/widening/global_object_layout_codec.py \
 	angr_platforms/angr_platforms/X86_16/widening/indexed_global_object_layout.py \
+	angr_platforms/angr_platforms/X86_16/pipeline/structured_assignment_index.py \
+	angr_platforms/angr_platforms/X86_16/pipeline/structured_ast_query_index.py \
 	angr_platforms/angr_platforms/X86_16/widening/terminal_memory_output_views.py
 
 LINTERS_DEV_MYPY_FILES += \
@@ -869,6 +871,8 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/pipeline/linear_guard.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/recovery_coverage_guard.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/render_authority.py \
+	angr_platforms/angr_platforms/X86_16/pipeline/structured_assignment_index.py \
+	angr_platforms/angr_platforms/X86_16/pipeline/structured_ast_query_index.py \
 	inertia_decompiler/__init__.py \
 	inertia_decompiler/acceptance_scorecard.py \
 	inertia_decompiler/analysis_timeout.py \
@@ -1651,6 +1655,8 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/pipeline/linear_guard.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/recovery_coverage_guard.py \
 	angr_platforms/angr_platforms/X86_16/pipeline/render_authority.py \
+	angr_platforms/angr_platforms/X86_16/pipeline/structured_assignment_index.py \
+	angr_platforms/angr_platforms/X86_16/pipeline/structured_ast_query_index.py \
 	inertia_decompiler/__init__.py \
 	inertia_decompiler/acceptance_scorecard.py \
 	inertia_decompiler/analysis_timeout.py \

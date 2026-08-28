@@ -14,6 +14,15 @@ from typing import Any, cast
 from angr.analyses.decompiler.structured_codegen import c as structured_c
 from angr.sim_type import SimTypeChar, SimTypePointer, SimTypeShort
 from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16.pipeline.structured_assignment_index import (
+    StructuredAssignmentIdentityIndex8616,
+    StructuredAssignmentIdentityKey8616,
+    StructuredAssignmentIdentityKind8616,
+    StructuredAssignmentLookupVerdict8616,
+)
+from angr_platforms.X86_16.pipeline.structured_ast_query_index import (
+    StructuredAstQueryIndex8616,
+)
 
 _LINEAR_TEMP_NAME_RE_8616 = re.compile(r"(?:v\d+|vvar_\d+|ir_\d+|tmp_\d+)")
 
@@ -84,8 +93,9 @@ def _rewrite_ss_stack_byte_offsets(
     synthetic_sp_anchor: Any | None = None
     _UNRESOLVED_SINGLE_ASSIGN = object()
     dirty_expr_single_assignment_cache: dict[str, object | None] = {}
-    dirty_expr_single_assignment_index: dict[str, object | None] | None = None
     cvar_single_assignment_cache: dict[int, object | None] = {}
+    structured_query_index: StructuredAstQueryIndex8616 | None = None
+    assignment_identity_index: StructuredAssignmentIdentityIndex8616 | None = None
 
     def _safe_dirty_attr_8616(obj: object, attr: str) -> object | None:
         try:
@@ -179,19 +189,90 @@ def _rewrite_ss_stack_byte_offsets(
                     keys.append(("name", normalized_name))
         return tuple(dict.fromkeys(keys))
 
+    def _assignment_keys_for_cvar(
+        cvar: structured_c.CVariable,
+        *,
+        include_virtual_name: bool,
+    ) -> tuple[StructuredAssignmentIdentityKey8616, ...]:
+        keys: list[StructuredAssignmentIdentityKey8616] = []
+        variable = _dynamic_codegen_attr(cvar, "variable", None)
+        if variable is not None:
+            keys.append(
+                StructuredAssignmentIdentityKey8616(
+                    StructuredAssignmentIdentityKind8616.VARIABLE_OBJECT,
+                    id(variable),
+                )
+            )
+            reg = _dynamic_codegen_attr(variable, "reg", None)
+            size = _dynamic_codegen_attr(variable, "size", None)
+            if not _is_linear_temp(cvar) and isinstance(reg, int) and isinstance(size, int):
+                keys.append(
+                    StructuredAssignmentIdentityKey8616(
+                        StructuredAssignmentIdentityKind8616.REGISTER,
+                        reg,
+                        size,
+                    )
+                )
+        name = _dynamic_codegen_attr(cvar, "name", None) or _dynamic_codegen_attr(variable, "name", None)
+        normalized_name = _strip_typed_suffix_8616(name)
+        if isinstance(normalized_name, str) and normalized_name:
+            keys.append(
+                StructuredAssignmentIdentityKey8616(
+                    StructuredAssignmentIdentityKind8616.CVARIABLE_NAME,
+                    normalized_name,
+                )
+            )
+            if include_virtual_name:
+                keys.append(
+                    StructuredAssignmentIdentityKey8616(
+                        StructuredAssignmentIdentityKind8616.VIRTUAL_NAME,
+                        normalized_name,
+                    )
+                )
+        return tuple(dict.fromkeys(keys))
+
+    def _assignment_identity_keys_for_lhs(
+        lhs: object,
+    ) -> tuple[StructuredAssignmentIdentityKey8616, ...]:
+        keys = list(_assignment_keys_for_cvar(lhs, include_virtual_name=True)) if isinstance(
+            lhs, structured_c.CVariable
+        ) else []
+        lhs_varid = _safe_dirty_attr_8616(_dynamic_codegen_attr(lhs, "dirty", None), "varid")
+        if isinstance(lhs_varid, int):
+            keys.append(
+                StructuredAssignmentIdentityKey8616(
+                    StructuredAssignmentIdentityKind8616.VIRTUAL_NAME,
+                    f"vvar_{lhs_varid}",
+                )
+            )
+        return tuple(dict.fromkeys(keys))
+
+    def _assignment_index() -> StructuredAssignmentIdentityIndex8616 | None:
+        nonlocal assignment_identity_index, structured_query_index
+        if assignment_identity_index is not None:
+            return assignment_identity_index
+        root = _dynamic_codegen_attr(_dynamic_codegen_attr(codegen, "cfunc", None), "statements", None)
+        if root is None:
+            return None
+        structured_query_index = StructuredAstQueryIndex8616.build(root)
+        assignment_identity_index = StructuredAssignmentIdentityIndex8616.build(
+            structured_query_index,
+            _assignment_identity_keys_for_lhs,
+        )
+        _dynamic_codegen_setattr(
+            codegen,
+            "_inertia_ss_stack_assignment_index_builds_8616",
+            int(_dynamic_codegen_attr(codegen, "_inertia_ss_stack_assignment_index_builds_8616", 0) or 0) + 1,
+        )
+        return assignment_identity_index
+
     def _single_assignment_expr_for_virtual_name(name: str) -> object | None:
-        nonlocal dirty_expr_single_assignment_index
         normalized_name = _strip_typed_suffix_8616(name)
         if not normalized_name:
             return None
         cached = dirty_expr_single_assignment_cache.get(normalized_name)
         if cached is not None:
             return None if cached is _UNRESOLVED_SINGLE_ASSIGN else cached
-        root = _dynamic_codegen_attr(_dynamic_codegen_attr(codegen, "cfunc", None), "statements", None)
-        if root is None:
-            dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGN
-            return None
-
         target_varid = None
         if normalized_name.startswith("vvar_"):
             suffix = normalized_name.removeprefix("vvar_")
@@ -201,43 +282,19 @@ def _rewrite_ss_stack_byte_offsets(
             dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGN
             return None
 
-        if dirty_expr_single_assignment_index is None:
-            index: dict[str, object | None] = {}
-            scanned = 0
-            for stmt in iter_c_nodes_deep(root):
-                if not isinstance(stmt, structured_c.CAssignment):
-                    continue
-                scanned += 1
-                lhs = _dynamic_codegen_attr(stmt, "lhs", None)
-                lhs_keys: set[str] = set()
-                if isinstance(lhs, structured_c.CVariable):
-                    lhs_name = _dynamic_codegen_attr(lhs, "name", None) or _dynamic_codegen_attr(_dynamic_codegen_attr(lhs, "variable", None), "name", None)
-                    lhs_name = _strip_typed_suffix_8616(lhs_name)
-                    if isinstance(lhs_name, str) and lhs_name:
-                        lhs_keys.add(lhs_name)
-                lhs_varid = _safe_dirty_attr_8616(_dynamic_codegen_attr(lhs, "dirty", None), "varid")
-                if isinstance(lhs_varid, int):
-                    lhs_keys.add(f"vvar_{lhs_varid}")
-                if not lhs_keys:
-                    continue
-                rhs = _dynamic_codegen_attr(stmt, "rhs", None)
-                for lhs_key in lhs_keys:
-                    if lhs_key in index:
-                        index[lhs_key] = _UNRESOLVED_SINGLE_ASSIGN
-                    else:
-                        index[lhs_key] = rhs
-            dirty_expr_single_assignment_index = index
-            codegen._inertia_ss_stack_virtual_assignment_index_scanned = (
-                int(_dynamic_codegen_attr(codegen, "_inertia_ss_stack_virtual_assignment_index_scanned", 0) or 0) + scanned
-            )
-            codegen._inertia_ss_stack_virtual_assignment_index_keys = int(
-                _dynamic_codegen_attr(codegen, "_inertia_ss_stack_virtual_assignment_index_keys", 0) or 0
-            ) + len(index)
-
-        resolved = dirty_expr_single_assignment_index.get(normalized_name)
-        if resolved is _UNRESOLVED_SINGLE_ASSIGN:
+        index = _assignment_index()
+        if index is None:
             dirty_expr_single_assignment_cache[normalized_name] = _UNRESOLVED_SINGLE_ASSIGN
             return None
+        result = index.lookup(
+            (
+                StructuredAssignmentIdentityKey8616(
+                    StructuredAssignmentIdentityKind8616.VIRTUAL_NAME,
+                    normalized_name,
+                ),
+            )
+        )
+        resolved = result.rhs if result.verdict is StructuredAssignmentLookupVerdict8616.UNIQUE else None
         dirty_expr_single_assignment_cache[normalized_name] = (
             resolved if resolved is not None else _UNRESOLVED_SINGLE_ASSIGN
         )
@@ -252,53 +309,15 @@ def _rewrite_ss_stack_byte_offsets(
         if cache_key in cvar_single_assignment_cache:
             return cvar_single_assignment_cache[cache_key]
 
-        root = _dynamic_codegen_attr(_dynamic_codegen_attr(codegen, "cfunc", None), "statements", None)
-        if root is None or not isinstance(node_cvar, structured_c.CVariable):
+        if not isinstance(node_cvar, structured_c.CVariable):
             cvar_single_assignment_cache[cache_key] = None
             return None
-
-        node_var = _dynamic_codegen_attr(node_cvar, "variable", None)
-        node_name = _dynamic_codegen_attr(node_cvar, "name", None) or _dynamic_codegen_attr(node_var, "name", None)
-        node_reg = _dynamic_codegen_attr(node_var, "reg", None)
-        node_size = _dynamic_codegen_attr(node_var, "size", None)
-        node_linear_temp = _is_linear_temp(node_cvar)
-
-        def _same_lhs(lhs: object) -> bool:
-            if not isinstance(lhs, structured_c.CVariable):
-                return False
-            lhs_var = _dynamic_codegen_attr(lhs, "variable", None)
-            if lhs_var is node_var:
-                return True
-            lhs_name = _dynamic_codegen_attr(lhs, "name", None) or _dynamic_codegen_attr(lhs_var, "name", None)
-            lhs_name = _strip_typed_suffix_8616(lhs_name)
-            normalized_node_name = _strip_typed_suffix_8616(node_name)
-            if isinstance(normalized_node_name, str) and normalized_node_name and lhs_name == normalized_node_name:
-                return True
-            lhs_reg = _dynamic_codegen_attr(lhs_var, "reg", None)
-            lhs_size = _dynamic_codegen_attr(lhs_var, "size", None)
-            lhs_linear_temp = _is_linear_temp(lhs)
-            if node_linear_temp or lhs_linear_temp:
-                return False
-            return (
-                isinstance(node_reg, int)
-                and isinstance(node_size, int)
-                and isinstance(lhs_reg, int)
-                and isinstance(lhs_size, int)
-                and lhs_reg == node_reg
-                and lhs_size == node_size
-            )
-
-        matches = []
-        for stmt in iter_c_nodes_deep(root):
-            if not isinstance(stmt, structured_c.CAssignment):
-                continue
-            if not _same_lhs(_dynamic_codegen_attr(stmt, "lhs", None)):
-                continue
-            matches.append(_dynamic_codegen_attr(stmt, "rhs", None))
-            if len(matches) > 1:
-                cvar_single_assignment_cache[cache_key] = None
-                return None
-        resolved = matches[0] if len(matches) == 1 else None
+        index = _assignment_index()
+        if index is None:
+            cvar_single_assignment_cache[cache_key] = None
+            return None
+        result = index.lookup(_assignment_keys_for_cvar(node_cvar, include_virtual_name=False))
+        resolved = result.rhs if result.verdict is StructuredAssignmentLookupVerdict8616.UNIQUE else None
         cvar_single_assignment_cache[cache_key] = resolved
         return resolved
 
@@ -729,11 +748,13 @@ def _rewrite_ss_stack_byte_offsets(
 
     def _collect_stack_pointer_aliases() -> None:
         aliases: dict[object, object] = {}
+        index = _assignment_index()
+        if index is None or structured_query_index is None:
+            return
+        assignments = structured_query_index.assignments
         for _ in range(3):
             changed_local = False
-            for walk_node in iter_c_nodes_deep(codegen.cfunc.statements):
-                if not isinstance(walk_node, structured_c.CAssignment):
-                    continue
+            for walk_node in assignments:
                 lhs = _dynamic_codegen_attr(walk_node, "lhs", None)
                 if isinstance(lhs, structured_c.CVariable):
                     if not _is_linear_temp(lhs):
@@ -1084,5 +1105,12 @@ def _rewrite_ss_stack_byte_offsets(
         changed = True
     if replace_c_children(root, transform):
         changed = True
+
+    if assignment_identity_index is not None:
+        _dynamic_codegen_setattr(
+            codegen,
+            "_inertia_ss_stack_assignment_index_stats_8616",
+            assignment_identity_index.stats(),
+        )
 
     return changed
