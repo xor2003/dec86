@@ -1104,6 +1104,52 @@ owned tests plus its file-level gates, and `quality-dev` passes strict mypy over
 238 sources, Ruff, mypyc smoke over 38 modules, architecture, ownership, 1,863
 curated tests, and the CMP16, LOOPS, and FPTR MS C quality pipelines.
 
+### 4K. Refuse Empty Condition-Relift Work
+
+**Status:** completed
+
+**Reason:** Current-tree instrumentation found four indexed-Alias census
+functions containing 23 valid blocks but zero canonical conditional owners,
+plus repeated zero-block requests during current-function recovery. Entering
+loader reads, global lifter-state isolation, and direct lifts cannot materialize
+condition evidence when the authoritative expected-owner set is empty.
+
+**Work:**
+
+- Return a closed empty typed artifact before loader reads and lifter-state
+  mutation when the expected-owner set is empty and every supplied block range
+  is valid.
+- Preserve one empty condition row per canonical block and retain the existing
+  refusal path for invalid block ranges or unavailable project boundaries.
+- Prove that neither loader reads nor direct lifts run on the empty-owner path.
+- Measure direct-lift count and exact output after focused condition gates.
+
+**DoD:** The empty-owner regression proves zero byte reads and zero direct lifts
+while returning closed counters and deterministic block rows; invalid-range and
+expected-condition regressions still pass; Ruff with `--fix`, strict mypy,
+architecture, ownership, and changed-file gates pass; the exact SORTD C hash
+and both validation gates remain unchanged; direct lifts fall by the measured
+empty-owner block inventory without increasing failures.
+
+**Definition of Failure:** A non-empty expected-owner set takes the fast path,
+invalid ranges become accepted, a third-party boundary fixture changes from
+`None` to an owned artifact, deterministic block rows disappear, any required
+typed condition or pending source is lost, failures increase, exact output or
+validation changes, or measured direct-lift work does not fall.
+
+**Completion evidence:** The IR relift owner now returns a closed typed artifact
+before byte reads or lifter-state mutation only when the expected-owner set is
+empty and every supplied block range is valid. A focused regression proves zero
+loader reads, zero direct lifts, deterministic empty block rows, and closed
+counters. The seven-file condition surface passes 66 tests, strict mypy and Ruff
+pass, and `make check-files` passes its architecture, context, ownership,
+ratchet, and owned-test gates. A semantic-cache-bypassed exact SORTD run reduced
+direct lifts from 437 to 405, retained hash
+`9dc16640f0e4bb61e7ba04aa7d46c903ad80e06842b0cd5ed3cd610bbf011ec0`,
+reported `validation=passed`, and completed clean whole-tail validation in
+54.16 seconds at 362,912 KiB RSS. The timing remains within the current noise
+band and receives no standalone wall-time credit.
+
 ### 5. Make Validation and Rollback Work Dirty-Pass Driven
 
 **Status:** in progress

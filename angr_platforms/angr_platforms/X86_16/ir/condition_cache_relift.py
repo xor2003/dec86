@@ -215,6 +215,17 @@ def relift_function_condition_cache_8616(
         )
         for address in sorted(expected_condition_blocks - block_addresses)
     ]
+    if not expected_condition_blocks and all(
+        block.address >= 0 and block.size > 0 for block in ordered_blocks
+    ):
+        return ConditionCacheReliftArtifact8616(
+            conditions_by_block=tuple(
+                (address, ()) for address in sorted(block_addresses)
+            ),
+            pending_sources_by_addr=(),
+            failures=(),
+            stats=ConditionCacheReliftStats8616(0, 0, 0, 0, 0),
+        )
     loaded_blocks = _load_exact_block_bytes_8616(memory, ordered_blocks, failures)
     cache_request = ConditionReliftCacheRequest8616(
         block_bytes=tuple((block.address, block.size, data) for block, data in loaded_blocks),
