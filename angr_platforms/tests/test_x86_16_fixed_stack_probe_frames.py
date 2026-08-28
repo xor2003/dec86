@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from types import SimpleNamespace
 
 from angr.analyses.decompiler.structured_codegen.c import (
@@ -14,6 +15,7 @@ from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
+from angr_platforms.X86_16.lowering import fixed_stack_probe_frames
 from angr_platforms.X86_16.lowering.fixed_stack_probe_frames import lower_fixed_stack_probe_frames_8616
 
 
@@ -100,6 +102,53 @@ def test_refuses_name_only_probe_without_typed_helper_evidence() -> None:
         isinstance(statement, CExpressionStatement) and statement.expr is call
         for statement in root.statements
     )
+
+
+def test_zero_typed_probe_facts_refuse_ast_traversal(monkeypatch) -> None:
+    """No typed input facts must close the evidence loop without AST work."""
+    codegen, _root, _call = _fixed_probe_codegen(
+        allocation_size=2,
+        stack_probe_helper=False,
+    )
+
+    def refuse_walk(_root: object) -> Iterator[object]:
+        raise AssertionError("zero fixed-probe facts must not traverse the AST")
+        yield
+
+    monkeypatch.setattr(
+        fixed_stack_probe_frames,
+        "_iter_c_nodes_deep_8616",
+        refuse_walk,
+    )
+
+    stats = lower_fixed_stack_probe_frames_8616(codegen)
+
+    assert stats == fixed_stack_probe_frames.FixedStackProbeFrameLoweringStats8616(
+        0, 0, 0, 0, 0, 0, 0
+    )
+
+
+def test_positive_typed_probe_facts_use_one_ast_census(monkeypatch) -> None:
+    """Positive evidence must share one read-only AST census."""
+    codegen, _root, _call = _fixed_probe_codegen(allocation_size=2)
+    original = fixed_stack_probe_frames._iter_c_nodes_deep_8616
+    walk_count = 0
+
+    def counted_walk(root: object) -> Iterator[object]:
+        nonlocal walk_count
+        walk_count += 1
+        yield from original(root)
+
+    monkeypatch.setattr(
+        fixed_stack_probe_frames,
+        "_iter_c_nodes_deep_8616",
+        counted_walk,
+    )
+
+    stats = lower_fixed_stack_probe_frames_8616(codegen)
+
+    assert stats.materialized_count == 1
+    assert walk_count == 1
 
 
 def test_refuses_probe_not_covered_by_frame_or_with_live_return() -> None:

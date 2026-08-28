@@ -50,6 +50,16 @@ class FixedStackProbeFrameLoweringStats8616:
         return self.materialized_count > 0
 
 
+@dataclass(frozen=True, slots=True)
+class _FixedStackProbeSurface8616:
+    """One request-local census of the structured surfaces used by this owner."""
+
+    frame_extent: int
+    containers: tuple[CStatements, ...]
+    live_call_ids: frozenset[int]
+    standalone_occurrences: tuple[tuple[int, int], ...]
+
+
 def _dynamic_codegen_attr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
     """Read optional metadata across the dynamic third-party angr codegen boundary."""
     return getattr(obj, name, default)
@@ -66,19 +76,37 @@ def _structured_root_8616(codegen: object) -> object | None:
     return cast(object, _dynamic_codegen_attr_8616(cfunc, "body", None))
 
 
-def _recovered_bp_frame_extent_8616(root: object) -> int:
-    """Return the deepest live negative BP-local offset represented in the C AST."""
+def _collect_fixed_stack_probe_surface_8616(
+    root: object,
+) -> _FixedStackProbeSurface8616:
+    """Collect every read-only AST projection needed by fixed-probe lowering."""
     extent = 0
-    for node in (root, *_iter_c_nodes_deep_8616(root)):
-        if not isinstance(node, CVariable):
+    containers: list[CStatements] = []
+    live_call_ids: set[int] = set()
+    standalone_occurrences: dict[int, int] = {}
+    for node in _iter_c_nodes_deep_8616(root):
+        if isinstance(node, CVariable):
+            variable = node.variable
+            offset = variable.offset if isinstance(variable, SimStackVariable) else None
+            if isinstance(offset, int) and offset < 0:
+                extent = max(extent, -offset)
+        if isinstance(node, CFunctionCall):
+            live_call_ids.add(id(node))
+        if not isinstance(node, CStatements):
             continue
-        variable = node.variable
-        if not isinstance(variable, SimStackVariable):
-            continue
-        offset = variable.offset
-        if isinstance(offset, int) and offset < 0:
-            extent = max(extent, -offset)
-    return extent
+        containers.append(node)
+        for statement in tuple(node.statements or ()):
+            call = _standalone_call_8616(statement)
+            if call is None:
+                continue
+            call_id = id(call)
+            standalone_occurrences[call_id] = standalone_occurrences.get(call_id, 0) + 1
+    return _FixedStackProbeSurface8616(
+        frame_extent=extent,
+        containers=tuple(containers),
+        live_call_ids=frozenset(live_call_ids),
+        standalone_occurrences=tuple(sorted(standalone_occurrences.items())),
+    )
 
 
 def _standalone_call_8616(statement: object) -> CFunctionCall | None:
@@ -87,18 +115,6 @@ def _standalone_call_8616(statement: object) -> CFunctionCall | None:
         return None
     expression = statement.expr
     return expression if isinstance(expression, CFunctionCall) else None
-
-
-def _statement_containers_8616(root: object) -> tuple[CStatements, ...]:
-    """Return each mutable statement container in deterministic tree order."""
-    containers: list[CStatements] = []
-    seen_ids: set[int] = set()
-    for node in (root, *_iter_c_nodes_deep_8616(root)):
-        if not isinstance(node, CStatements) or id(node) in seen_ids:
-            continue
-        seen_ids.add(id(node))
-        containers.append(node)
-    return tuple(containers)
 
 
 def lower_fixed_stack_probe_frames_8616(codegen: object) -> FixedStackProbeFrameLoweringStats8616:
@@ -120,20 +136,19 @@ def lower_fixed_stack_probe_frames_8616(codegen: object) -> FixedStackProbeFrame
         if summary.stack_probe_helper
     }
     raw_fact_count = len(probe_summaries)
-    frame_extent = _recovered_bp_frame_extent_8616(root) if root is not None else 0
-    standalone_occurrences: dict[int, int] = {}
-    live_call_ids: set[int] = set()
-    containers = _statement_containers_8616(root) if root is not None else ()
-    for container in containers:
-        for statement in tuple(container.statements or ()):
-            call = _standalone_call_8616(statement)
-            if call is not None:
-                call_id = id(call)
-                live_call_ids.add(call_id)
-                standalone_occurrences[call_id] = standalone_occurrences.get(call_id, 0) + 1
-        for node in _iter_c_nodes_deep_8616(container):
-            if isinstance(node, CFunctionCall):
-                live_call_ids.add(id(node))
+    if raw_fact_count == 0:
+        stats = FixedStackProbeFrameLoweringStats8616(0, 0, 0, 0, 0, 0, 0)
+        cast(Any, codegen)._inertia_fixed_stack_probe_frame_lowering_stats_8616 = stats
+        return stats
+    surface = (
+        _collect_fixed_stack_probe_surface_8616(root)
+        if root is not None
+        else _FixedStackProbeSurface8616(0, (), frozenset(), ())
+    )
+    frame_extent = surface.frame_extent
+    containers = surface.containers
+    live_call_ids = surface.live_call_ids
+    standalone_occurrences = dict(surface.standalone_occurrences)
 
     normalized_fact_count = sum(node_id in live_call_ids for node_id in probe_summaries)
     classified_ids: set[int] = set()

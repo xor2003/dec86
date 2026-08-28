@@ -686,7 +686,7 @@ consumer mutation impact, not another call-order or full-AST cache.
 
 ### 4. Build a Generation-Owned C-AST Query Index
 
-**Status:** in progress; first read-only tag-projection cohort completed
+**Status:** in progress; two read-only traversal cohorts completed
 
 **Reason:** The exact in-process `sub_10ce0` profile records 311.7 million Python
 calls. The shared deep iterator costs 32.93 cumulative seconds across 2.82
@@ -729,6 +729,16 @@ with function and whole-tail validation passing at 344,116 KiB RSS. Task 4
 remains open until an exact follow-up profile materially reduces the aggregate
 32.93-second iterator cost. The shared gate also has one unrelated concurrent
 segment-global fixture failure, so no broad-suite claim is made.
+
+**Second cohort evidence:** Fixed-stack-probe Lowering now closes a typed zero-
+fact request before traversing the AST and shares one request-local census for
+frame extent, statement containers, live calls, and standalone occurrences on
+positive evidence. A 500-call, 201-node zero-fact benchmark improved from
+0.907537 to 0.001013 seconds; focused regressions prove zero and one traversal
+for the respective paths. `make check-files` passes with 50 tests, Ruff, strict
+mypy, architecture, context, and ownership checks. Captured `sub_10ce0` output
+retains the same SHA-256 and both validation gates at 60.49 seconds / 343,800
+KiB. Aggregate re-profiling remains required before Task 4 can close.
 
 ### 4A. Prefilter Impossible Direct-Stack Reload Placements
 
