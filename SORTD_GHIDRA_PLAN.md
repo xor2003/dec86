@@ -44,6 +44,13 @@ PYTHONHASHSEED=0 PYTHON_JIT=1 ./decompile.py SORTD.EXE \
 - Sleep `0x10f38` passes live Tail Validation and its permanent executable-only
   gate with exactly two binary-proven clock calls, correct loop-exit ownership,
   and the exact four-byte positive-BP parameter materialized by Types/Lowering
+- InitMenu `0x10060` now derives its pause guard from the exact block-local
+  dword `OR` inputs, preserves both calls in the zero branch, and passes whole-
+  tail validation without an unsupported condition or raw flag carrier
+- InitMenu's sidecar-assisted output also drops only typed, proven-unobserved
+  physical AX/EAX call-result assignments in Types/Lowering; assigned fixed
+  stack probes remain owned by the existing typed frame lowering. Both the
+  sidecar-free and sidecar-assisted outputs pass strict portable-C compilation
 - ReInitBars `0x10678` is ratified with exactly one clock call at binary
   callsite `0x10683`; Lowering recognizes the third-party AIL tag protocol and
   removes only the duplicate carrier statement for that exact callsite
@@ -85,19 +92,20 @@ The last complete focused target refresh is red. At `12:49:42 +02:00` it reporte
 17-node retry reported **1 passed and 16 failed in 164.52 seconds**: the
 sidecar HeapSort timeout passed on retry, so it is tracked as performance and
 flakiness debt rather than counted as a reproducible semantic failure. Sleep
-remains closed. Swaps and the independently exposed DrawTime carry-bit failure
-are also closed by focused regressions and live Tail Validation. The 15
-remaining reproducible failures are grouped by symptom before the earliest
+remains closed. Swaps, the independently exposed DrawTime carry-bit failure,
+and all three InitMenu failures are also closed by focused regressions and live
+Tail Validation. The 12 remaining reproducible failures are grouped by symptom
+before the earliest
 owning contract is proved:
 
-- three InitMenu validation/condition failures
 - five validation-clean loop/control-flow shape failures
 - five call, object, or indexed-storage materialization failures
 - one DrawFrame structuring/postprocess validation failure
 - one RunMenu portable-C declaration failure
 
-The next implementation target is InitMenu. Work stops after this checkpoint;
-InitMenu has not started in this execution window.
+The next implementation target is the validation-clean loop/control-flow
+family. Work stops at this checkpoint because the requested InitMenu step is
+complete and committed independently before the next owner family begins.
 
 The first live SORTD repair also closed a general Types/Lowering carrier-loss
 defect for wide call outputs. Sleep `0x10f38` now materializes its proven wide
@@ -153,8 +161,8 @@ output do not advance the percentage.
 | 5. Proof-backed readability | 8% | 0% | not started | - | 0h | 8-12h | Starts only after the semantic and behavior gates remain closed. |
 | 6. Profiling and performance | 10% | 70% | pre-ledger | - | unknown | 8-12h | Measure aggregate PSS and profile the single-function serial tail. |
 | 7. Reko mechanisms | 8% | 0% | not started | - | 0h | 10-16h | Implement only mechanisms supported by owned typed evidence. |
-| 8. Ghidra mechanisms | 34% | 88% | pre-ledger | - | unknown | 45-72h | Close the six current live SORTD owner families, finish open call/type/CFG mechanisms, and rerun all acceptance gates. |
-| **Total** | **100%** | **71%** | - | - | **historical total unavailable** | **93-141h** | Weighted completion remains 71%. Sleep, Swaps, and DrawTime meet their function-fix DoD, but no additional weighted task has reached its task-level DoD. |
+| 8. Ghidra mechanisms | 34% | 89% | pre-ledger | - | unknown | 44-68h | Close the four remaining live SORTD owner families, finish open call/type/CFG mechanisms, and rerun all acceptance gates. |
+| **Total** | **100%** | **71%** | - | - | **historical total unavailable** | **92-137h** | Weighted completion remains 71% after rounding. Sleep, Swaps, DrawTime, and InitMenu meet their function-fix DoD. |
 
 Task-owner estimates above overlap where Tasks 3 and 8 share a mechanism. They
 are not summed. The non-overlapping forecast table below is the authoritative
@@ -170,7 +178,7 @@ source for the total remaining estimate.
 | Packed FLAGS preservation validation and production lift context | `2026-08-29 09:21 +02:00` | `2026-08-29 09:31 +02:00` | 9-10m | 10m | completed | 0h | Seventeen focused context/validation tests have 16 passes; the only remaining failure is the end-to-end smoke shape. The previous whole-postprocess `uninitialized eflags` discard is gone, and the live AST exposes the next independent Structuring defect. |
 | Collapse pure identical-return guards in Structuring | `2026-08-29 09:34 +02:00` | `2026-08-29 10:10 +02:00` | 26-31m engineering; test waits excluded | 36m | completed | 0h | Structuring owns the typed pure-guard proof and closed evidence counters; Tail Validation consumes its exact delta. Widening now propagates block definitions into returns, and regenerated argument names preserve the Lowering-owned BP/entry-SP projection. Ruff, MyPy for all eight production files, the type/doc ratchet, startup architecture/context/ownership checks, 17 focused tests, and the complete 568-test owned surface pass. |
 | Original six focused failures | `2026-08-29 10:10 +02:00` | `2026-08-29 11:06 +02:00` | 40-50m; test waits excluded | 56m | completed | 0h | The final C-declaration smoke now emits `return lhs + rhs;`; Beep and DrawTime remain validation-clean. Twenty-five focused and 188 changed-surface tests pass. Ruff `--fix`, direct MyPy over seven production modules, file type/doc ratchets, and startup architecture/context/ownership checks pass. |
-| Current focused-lane failure closure | `2026-08-29 11:14 +02:00` | - | 117-143m local plus 25-35m parallel agent time at `13:43`; waits excluded | 2h29m at `13:43` | in progress | 8-21.5h | The two ALU integrations and complete Sleep, Swaps, and DrawTime function DoDs pass. The last complete lane had 17 failures; 16 reproduced and the sidecar HeapSort timeout passed on retry. Fifteen failures remain in five owner families. |
+| Current focused-lane failure closure | `2026-08-29 11:14 +02:00` | - | 152-188m local plus 25-35m parallel agent time at `13:43`; waits excluded | 4h02m at `15:16` | in progress | 6.5-17.5h | The two ALU integrations and complete Sleep, Swaps, DrawTime, and InitMenu function DoDs pass. The last complete lane had 17 failures; 16 reproduced and the sidecar HeapSort timeout passed on retry. Twelve failures remain in four owner families. |
 | Frontend/debug and test-profile contract closure | `2026-08-29 11:27 +02:00` (delegated window) | `2026-08-29 11:49 +02:00` | 10-15m agent time, overlapped | 22m | completed | 0h | A truly unsupported `SLDT EAX` fixture preserves the required clear exit, and the inventory replacement selects the current topology regression. Eight focused tests plus Ruff and MyPy pass. |
 | Stack-coordinate, argument-identity, and stack-object unit closure | `2026-08-29 11:27 +02:00` (parallel local/delegated window) | `2026-08-29 11:49 +02:00` | 15-22m, overlapped | 22m | completed | 0h | Canonical entry-SP coordinates and exact body-owned argument identity now agree. Thirteen focused tests pass; the fixture-only canonicalization changes preserve production refusal behavior. |
 | Wide call-output, loop control-flow, and argument closure for live Sleep | `2026-08-29 11:36 +02:00` | `2026-08-29 12:41 +02:00` | 47-58m engineering; test waits excluded | 1h05m | completed | 0h | Live Tail Validation, the permanent executable-only Sleep test, the combined 151-test Types/Lowering and Structuring surface, direct Ruff/MyPy, and parallel `make linters-files` pass. The function retains two clock calls and one 32-bit argument. |
@@ -183,7 +191,23 @@ source for the total remaining estimate.
 | Reproduce and symptom-cluster the 17 focused failures | `2026-08-29 12:49:42 +02:00` | `2026-08-29 12:54:19 +02:00` | 4m37s; test waits excluded | 4m37s plus 2m45s retry test wall | completed | 0h | Exact 17-node retry: 16 failed and one sidecar HeapSort timeout passed. The 16 failures are assigned to six symptom families; earliest-layer owner proof remains part of each implementation row, not this clustering row. |
 | Swaps destination identity and validation-blind-spot closure | `2026-08-29 12:54:19 +02:00` | `2026-08-29 13:32 +02:00` | 31-35m; waits excluded | 37m41s | completed | 0h | Two failing-before regressions prove the machine-BP/entry-SP collision and the validation blind spot. Exact coordinate selection preserves all three object-copy effects; duplicate storage identity is refused. The live Swaps regression passes with `validation=passed`, strict C syntax, and the correct three assignments. |
 | DrawTime carry-predicate sibling-join closure | `2026-08-29 13:30 +02:00` | `2026-08-29 13:43 +02:00` | 10-13m; waits excluded | 13m | completed | 0h | A failing-before CFG-ownership regression proves the low subtraction may be a sibling of the flags definition. Types/Lowering now performs the existing unique exact arithmetic fallback for a typed missing predicate. The live DrawTime regression and a 72-test carry/Swaps cluster pass with clean Tail Validation and C syntax. |
-| Required project gates after the fix | `2026-08-29 08:51 +02:00` | - | 222-269m local plus 25-35m parallel agent time at `13:43`; test time excluded | 4h52m at `13:43` | in progress | 14-38h | Focused pytest was measured at 17 failures, 16 reproducible; Swaps is closed and DrawTime's newly exposed failure is closed. External MSC6 last had two validation failures. Close the five remaining live families, then rerun focused pytest, external tiny examples, `quality-hard`, and `test-pipeline` before claiming the gate. |
+| InitMenu condition, call-result, and final-brace closure | `2026-08-29 14:23 +02:00` (approximate; first command lost at compaction) | `2026-08-29 15:16 +02:00` | 35-45m; waits excluded | 53m | completed | 0h | Frontend publishes the exact dword-OR zero condition; Types/Lowering removes only typed unobserved AX/EAX results and assigned fixed probes with frame proof; Rewrite only forces braces around already-structured multi-statement bodies. All three live tests, 94 focused tests, Ruff, MyPy, type/doc ratchets, and startup architecture checks pass. |
+| Required project gates after the fix | `2026-08-29 08:51 +02:00` | - | 257-314m local plus 25-35m parallel agent time at `13:43`; test time excluded | 6h25m at `15:16` | in progress | 12.5-34h | Focused pytest was measured at 17 failures, 16 reproducible; Swaps, DrawTime, and InitMenu are closed. External MSC6 last had two validation failures. Close the four remaining live families, then rerun focused pytest, external tiny examples, `quality-hard`, and `test-pipeline` before claiming the gate. |
+
+#### InitMenu step 5c closure contract
+
+Reason: a block-local dword zero test, unused physical call-result carriers, and
+multi-statement C bracing had distinct owners; conflating them would move
+semantics into Rewrite and make Tail Validation less trustworthy.
+
+Definition of done: the exact binary-derived condition reaches Structuring,
+both branch calls survive, only typed unobserved AX/EAX results are discarded,
+the generated sidecar-free and sidecar-assisted C compiles, Tail Validation is
+clean, and the permanent live and refusal tests pass.
+
+Definition of failure: any source/name/address/rendered-text recovery, semantic
+statement movement in Rewrite, deletion under unknown return-use evidence,
+lost call, unsupported/raw flag carrier, validation failure, or C compile error.
 
 ### Forecasted Execution Steps
 
@@ -197,8 +221,8 @@ The final cell in each row is that row's DoD. Missing any listed condition,
 weakening a gate, or moving semantics to a later layer is its definition of
 failure; the detailed reason and failure clauses remain authoritative in the
 numbered task section below.
-The rows are non-overlapping and currently sum to the same rounded 93-141h total
-as the weighted task ledger. Estimates for the six live families are deliberately
+The rows are non-overlapping and currently sum to the same rounded 92-137h total
+as the weighted task ledger. Estimates for the remaining live families are deliberately
 separate: a passing test count cannot hide an independent semantic owner or a
 validation blind spot.
 
@@ -210,7 +234,7 @@ validation blind spot.
 | 4 | Close ALU carry/borrow effect-order integrations | `2026-08-29 11:27 +02:00` (delegated) | `2026-08-29 12:07 +02:00` | 25-35m agent time, overlapped; exact timer unavailable | complete | Generated C preserves one low-half operation and one proven high-half carry/borrow effect; both focused integrations and the 52-test suite pass. |
 | 5a | Fix Swaps destination identity and the Tail Validation blind spot | `2026-08-29 12:54:19 +02:00` | `2026-08-29 13:32 +02:00` | 31-35m; test waits excluded | complete | The first incorrect consumer was Types/Lowering's raw entry-SP lookup for machine-BP arguments. Two unit regressions, live C semantics, Tail Validation, strict C syntax, and the changed-surface checks pass. |
 | 5b | Close DrawTime carry-predicate sibling ownership | `2026-08-29 13:30 +02:00` | `2026-08-29 13:43 +02:00` | 10-13m; test waits excluded | complete | A typed missing predicate searches the complete function only through the existing unique exact arithmetic/CFG ownership proof. Ambiguous and mismatched evidence still refuse; the focused and live regressions pass. |
-| 5c | Close the three InitMenu validation/condition failures | not started | - | 0h | 1.5-4h | Explicit binary-backed conditions and the pause guard validate without Rewrite semantics or source/address-specific recovery. |
+| 5c | Close the three InitMenu validation/condition failures | `2026-08-29 14:23 +02:00` (approximate) | `2026-08-29 15:16 +02:00` | 35-45m focused; 63.22s final live-test wall separate | complete | Exact binary-backed conditions and the pause guard validate; both calls survive; sidecar-free and sidecar-assisted C compile; Rewrite adds braces only and does not recover semantics. |
 | 5d | Close the five validation-clean loop/control-flow shape failures | not started | - | 0h | 2-5h | ReInitBars, BubbleSort, PercolateUp, and the remaining loop cases use CFG-owned loop/exit structure and retain required calls and stores. |
 | 5e | Close the five call/object/indexed-storage materialization failures | not started | - | 0h | 3-8h | Segmented live-ins, object widths, pointer classes, calls, and indexed global storage are materialized from closed typed evidence. |
 | 5f | Close the DrawFrame validation failure | not started | - | 0h | 1-3h | DrawFrame passes Tail Validation with no semantic repair in Structuring cleanup or Rewrite. |
@@ -235,14 +259,15 @@ validation blind spot.
 | `2026-08-29 12:59 +02:00` | 95-145h | +7h / +14h | The exact retry reduced 17 failures to 16 reproducible failures but exposed six independent owner families. Swaps also reveals a Tail Validation blind spot, so the previous single-bucket 2.25-9.5h estimate was not defensible. |
 | `2026-08-29 13:16 +02:00` | 94-144h | -1h / -1h after rounding | Live pass-by-pass identity tracing isolates Swaps to one Types/Lowering coordinate-consumer defect. The step remains open because its failing-before test, production correction, and Tail Validation rejection case have not all passed. |
 | `2026-08-29 13:43 +02:00` | 93-141h | -1h / -3h after rounding | Swaps passes its complete function-fix DoD. DrawTime's independently exposed carry-predicate failure also has a failing-before generic regression, an earliest-layer fix, live `validation=passed`, strict C syntax, and a 72-test related cluster. |
+| `2026-08-29 15:16 +02:00` | 92-137h | -1h / -4h after rounding | InitMenu's three live failures close in 35-45 focused minutes across their distinct Frontend, Types/Lowering, and cleanup owners. The permanent three-test live gate and 94 focused tests pass. |
 
-Current expected finish for the complete plan is **93-141 focused engineering
-hours**, approximately **2.4-4.8 working weeks** at 30-40 focused hours per
-week, or roughly **2026-09-15 through 2026-10-01** if work continues at that
-rate. The midpoint forecast is about **117 focused hours / 2026-09-21**.
+Current expected finish for the complete plan is **92-137 focused engineering
+hours**, approximately **2.3-4.6 working weeks** at 30-40 focused hours per
+week, or roughly **2026-09-15 through 2026-09-30** if work continues at that
+rate. The midpoint forecast is about **115 focused hours / 2026-09-21**.
 This is a range, not a calendar promise: newly exposed semantic failures can
-increase it. The next recalibration occurs when the InitMenu owner family meets
-its DoD, then after every subsequent family, using measured focused time per
+increase it. The next recalibration occurs when the loop/control-flow owner
+family meets its DoD, then after every subsequent family, using measured focused time per
 independent root cause rather than the raw count of failing tests.
 
 ## Historical Measured Baseline

@@ -163,6 +163,7 @@ from .lowering.terminal_call_return_types import (
 from .lowering.terminal_return_render_projection import (
     project_terminal_return_renderability_8616,
 )
+from .lowering.unobserved_call_results import lower_unobserved_call_result_assignments_8616
 from .lowering.unobserved_returns import neutralize_unobserved_unresolved_returns_8616
 from .lowering.wide_call_output_assignments import lower_wide_call_output_stack_assignments_8616
 from .lowering.wide_stack_pair_evidence import proven_wide_stack_ir_pair_8616
@@ -2234,6 +2235,7 @@ def _replay_structuring_lowering_before_validation_8616(
     changed = bool(_materialize_structuring_callsite_prototypes_8616(project, codegen)) or changed
     changed = materialize_call_return_conditions_8616(project, codegen) or changed
     changed = bool(_materialize_structuring_callsite_stack_arguments_8616(project, codegen)) or changed
+    changed = lower_unobserved_call_result_assignments_8616(codegen) or changed
     changed = replay_call_return_switch_selectors_8616(codegen) or changed
     changed = bool(_materialize_structuring_pointer_arg_indirect_loads_8616(project, codegen)) or changed
     changed = bool(_materialize_structuring_stdlib_call_chains_8616(project, codegen)) or changed

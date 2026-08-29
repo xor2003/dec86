@@ -12,7 +12,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CVariable,
 )
 from angr.sim_type import SimTypeShort
-from angr.sim_variable import SimStackVariable
+from angr.sim_variable import SimRegisterVariable, SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.callsite_summary import CallsiteSummary8616
 from angr_platforms.X86_16.lowering import fixed_stack_probe_frames
@@ -167,4 +167,23 @@ def test_refuses_probe_not_covered_by_frame_or_with_live_return() -> None:
     assert any(
         isinstance(statement, CExpressionStatement) and statement.expr is live_call
         for statement in live_root.statements
+    )
+
+
+def test_lowers_assigned_fixed_probe_when_return_is_unused() -> None:
+    codegen, root, call = _fixed_probe_codegen(allocation_size=2)
+    carrier = CVariable(
+        SimRegisterVariable(0, 4, name="eax"),
+        variable_type=SimTypeShort(False),
+        codegen=codegen,
+    )
+    root.statements[0] = CAssignment(carrier, call, codegen=codegen)
+
+    stats = lower_fixed_stack_probe_frames_8616(codegen)
+
+    assert stats.classified_fact_count == 1
+    assert stats.materialized_count == 1
+    assert all(
+        not (isinstance(statement, CAssignment) and statement.rhs is call)
+        for statement in root.statements
     )

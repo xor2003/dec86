@@ -1,7 +1,7 @@
 """Lower binary-proven fixed stack probes into recovered BP-local frame objects.
 
 Layer: Types/Lowering.
-Responsibility: remove an unused standalone compiler stack-probe call only when
+Responsibility: remove an unused compiler stack-probe call statement only when
 typed callsite evidence proves a fixed allocation covered by recovered BP locals.
 Consumes alias, widening, and typed facts.
 Do not recover semantics from COD, source, assembly, or rendered C text.
@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from angr.analyses.decompiler.structured_codegen.c import (
+    CAssignment,
     CExpressionStatement,
     CFunctionCall,
     CStatements,
@@ -57,7 +58,7 @@ class _FixedStackProbeSurface8616:
     frame_extent: int
     containers: tuple[CStatements, ...]
     live_call_ids: frozenset[int]
-    standalone_occurrences: tuple[tuple[int, int], ...]
+    statement_occurrences: tuple[tuple[int, int], ...]
 
 
 def _dynamic_codegen_attr_8616(obj: object, name: str, default: object = None) -> Any:  # noqa: ANN401
@@ -83,7 +84,7 @@ def _collect_fixed_stack_probe_surface_8616(
     extent = 0
     containers: list[CStatements] = []
     live_call_ids: set[int] = set()
-    standalone_occurrences: dict[int, int] = {}
+    statement_occurrences: dict[int, int] = {}
     for node in _iter_c_nodes_deep_8616(root):
         if isinstance(node, CVariable):
             variable = node.variable
@@ -96,25 +97,27 @@ def _collect_fixed_stack_probe_surface_8616(
             continue
         containers.append(node)
         for statement in tuple(node.statements or ()):
-            call = _standalone_call_8616(statement)
+            call = _probe_call_statement_8616(statement)
             if call is None:
                 continue
             call_id = id(call)
-            standalone_occurrences[call_id] = standalone_occurrences.get(call_id, 0) + 1
+            statement_occurrences[call_id] = statement_occurrences.get(call_id, 0) + 1
     return _FixedStackProbeSurface8616(
         frame_extent=extent,
         containers=tuple(containers),
         live_call_ids=frozenset(live_call_ids),
-        standalone_occurrences=tuple(sorted(standalone_occurrences.items())),
+        statement_occurrences=tuple(sorted(statement_occurrences.items())),
     )
 
 
-def _standalone_call_8616(statement: object) -> CFunctionCall | None:
-    """Return a direct standalone call without interpreting its rendered name."""
-    if not isinstance(statement, CExpressionStatement):
-        return None
-    expression = statement.expr
-    return expression if isinstance(expression, CFunctionCall) else None
+def _probe_call_statement_8616(statement: object) -> CFunctionCall | None:
+    """Return a direct call statement without interpreting its rendered name."""
+    if isinstance(statement, CExpressionStatement):
+        expression = statement.expr
+        return expression if isinstance(expression, CFunctionCall) else None
+    if isinstance(statement, CAssignment):
+        return statement.rhs if isinstance(statement.rhs, CFunctionCall) else None
+    return None
 
 
 def lower_fixed_stack_probe_frames_8616(codegen: object) -> FixedStackProbeFrameLoweringStats8616:
@@ -148,13 +151,13 @@ def lower_fixed_stack_probe_frames_8616(codegen: object) -> FixedStackProbeFrame
     frame_extent = surface.frame_extent
     containers = surface.containers
     live_call_ids = surface.live_call_ids
-    standalone_occurrences = dict(surface.standalone_occurrences)
+    statement_occurrences = dict(surface.statement_occurrences)
 
     normalized_fact_count = sum(node_id in live_call_ids for node_id in probe_summaries)
     classified_ids: set[int] = set()
     for node_id, summary in probe_summaries.items():
         allocation_size = summary.stack_probe_allocation_size
-        if standalone_occurrences.get(node_id) != 1:
+        if statement_occurrences.get(node_id) != 1:
             continue
         if summary.arg_count != 0 or summary.stack_cleanup not in {None, 0}:
             continue
@@ -171,7 +174,7 @@ def lower_fixed_stack_probe_frames_8616(codegen: object) -> FixedStackProbeFrame
         statements = list(container.statements or ())
         retained: list[object] = []
         for statement in statements:
-            call = _standalone_call_8616(statement)
+            call = _probe_call_statement_8616(statement)
             if call is not None and id(call) in classified_ids:
                 if tuple(call.args or ()):
                     retained.append(statement)

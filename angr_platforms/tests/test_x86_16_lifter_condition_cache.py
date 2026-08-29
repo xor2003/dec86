@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pyvex
+from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.ir.condition_ir import ConditionIR
+from angr_platforms.X86_16.ir.core import IRBinaryValue, IRValue, MemSpace
 from angr_platforms.X86_16.lift_86_16 import Instruction_ANY
 
 
@@ -45,3 +48,44 @@ def test_lifter_condition_cache_deduplicates_without_operand_equality() -> None:
     assert len(cached) == 1
     assert cached[0] is conditions[0]
     assert instruction.emu._inertia_typed_conditions == list(conditions)
+
+
+def test_direct_word_pair_or_zero_test_uses_block_local_value_provenance(monkeypatch) -> None:
+    """Keep both direct DS operands in MOV/OR/JZ condition evidence."""
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_index_reg_state_8616", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
+
+    pyvex.lift(
+        bytes.fromhex("a134010b063201740290c3"),
+        0x4000,
+        Arch86_16(),
+        opt_level=0,
+    )
+
+    [condition] = Instruction_ANY._inertia_module_condition_cache[0x4000]
+    assert isinstance(condition, ConditionIR)
+    assert condition.op == "zero"
+    assert condition.src_insn == 0x4007
+    assert condition.producer_insn == 0x4003
+    assert condition.lhs == IRBinaryValue(
+        op="or",
+        lhs=IRValue(
+            MemSpace.DS,
+            offset=0x0134,
+            size=2,
+            expr=("cmp-ds",),
+            memory_access_size=2,
+            memory_access_insn=0x4000,
+        ),
+        rhs=IRValue(
+            MemSpace.DS,
+            offset=0x0132,
+            size=2,
+            expr=("cmp-ds",),
+            memory_access_size=2,
+            memory_access_insn=0x4003,
+        ),
+        size=2,
+    )

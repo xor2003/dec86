@@ -299,7 +299,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     and not self.instr.invalid_opcode_extension
                     and matched_semantics
                     and str(matched_semantics[0]).startswith(
-                        ("add_reg_", "cmp_", "mov_reg_", "sub_reg_", "test_")
+                        ("add_reg_", "and_reg_", "cmp_", "mov_reg_", "or_reg_", "sub_reg_", "test_", "xor_reg_")
                     )
                     else None
                 )
@@ -2190,6 +2190,13 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 ):
                     preserved_shift_reg = reg_name
         result = self._arithmetic_result_value_from_semantics_8616(semantics) if semantics is not None else None
+        logical_operation = str(semantics[0]).partition("_")[0] if semantics is not None else ""
+        if semantics is not None and logical_operation in {"and", "or", "xor"}:
+            self._record_logical_result_condition_source_8616(
+                logical_operation,
+                str(semantics[1]),
+                object(),
+            )
         if semantics is not None and str(semantics[0]).startswith("cmp_"):
             typed_operands = self._condition_operands_from_cmp_semantics_8616(semantics)
             if typed_operands is not None:
@@ -2374,17 +2381,18 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         dst_reg: str,
     ) -> IRBinaryValue | None:
         """Build the typed value computed by a logical register ALU instruction."""
-        semantics = self.simple_semantics
+        semantics = self.simple_semantics or self.condition_value_semantics
         if not isinstance(semantics, tuple) or len(semantics) < 3:
             return None
         kind = str(semantics[0])
         expected_prefix = f"{op_name}_reg_"
         if not kind.startswith(expected_prefix):
             return None
-        lhs = self._condition_unshifted_index_reg_value_8616(
-            dst_reg,
-            width_bits=16,
-        ) or self._condition_reg_value_8616(dst_reg, width_bits=16)
+        lhs = (
+            self._condition_proven_reg_value_8616(dst_reg, width_bits=16)
+            or self._condition_unshifted_index_reg_value_8616(dst_reg, width_bits=16)
+            or self._condition_reg_value_8616(dst_reg, width_bits=16)
+        )
         if lhs is None:
             return None
         rhs: IRValue | None = None

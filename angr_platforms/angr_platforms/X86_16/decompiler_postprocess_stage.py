@@ -203,6 +203,7 @@ from .postprocess.optimization.pass_driver import (
     OPTIMIZATION_PASSES,
     _normalize_cfunc_root_for_optimization_8616,
 )
+from .postprocess.optimization.structured_braces import normalize_multi_statement_braces_8616
 from .postprocess.optimization.trivial_copy import prune_adjacent_temporary_copy_assignments_8616
 from .postprocess.pass_runtime import (
     CallArgumentAstEffect8616,
@@ -8427,6 +8428,11 @@ def _build_decompiler_postprocess_passes() -> tuple[DecompilerPostprocessPassSpe
         DecompilerPostprocessPassSpec(
             "_dedupe_equivalent_stack_local_declarations_final_8616",
             dedupe_equivalent_stack_local_declarations_8616,
+            False,
+        ),
+        DecompilerPostprocessPassSpec(
+            "_normalize_multi_statement_braces_final_8616",
+            normalize_multi_statement_braces_8616,
             False,
         ),
     )

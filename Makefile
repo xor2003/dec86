@@ -833,6 +833,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/lowering/semantic_cast.py \
 	angr_platforms/angr_platforms/X86_16/lowering/return_type_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/return_liveness_replay.py \
+	angr_platforms/angr_platforms/X86_16/lowering/unobserved_call_results.py \
 	angr_platforms/angr_platforms/X86_16/lowering/unobserved_returns.py \
 	angr_platforms/angr_platforms/X86_16/lowering/unused_void_return_types.py \
 	angr_platforms/angr_platforms/X86_16/lowering/scalar_return_types.py \
@@ -900,6 +901,7 @@ QA_TYPED_FILES := \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_setup.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_condition_carriers.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/pass_driver.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/optimization/structured_braces.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/trivial_copy.py \
 	angr_platforms/angr_platforms/X86_16/semantics/__init__.py \
 	angr_platforms/angr_platforms/X86_16/semantics/alias_query.py \
@@ -1734,6 +1736,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/lowering/semantic_cast.py \
 	angr_platforms/angr_platforms/X86_16/lowering/return_type_evidence.py \
 	angr_platforms/angr_platforms/X86_16/lowering/return_liveness_replay.py \
+	angr_platforms/angr_platforms/X86_16/lowering/unobserved_call_results.py \
 	angr_platforms/angr_platforms/X86_16/lowering/unobserved_returns.py \
 	angr_platforms/angr_platforms/X86_16/lowering/unused_void_return_types.py \
 	angr_platforms/angr_platforms/X86_16/lowering/scalar_return_types.py \
@@ -1801,6 +1804,7 @@ QA_RUFF_TARGETS := \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_setup.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/dead_condition_carriers.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/pass_driver.py \
+	angr_platforms/angr_platforms/X86_16/postprocess/optimization/structured_braces.py \
 	angr_platforms/angr_platforms/X86_16/postprocess/optimization/trivial_copy.py \
 	angr_platforms/angr_platforms/X86_16/semantics/__init__.py \
 	angr_platforms/angr_platforms/X86_16/semantics/alias_query.py \
