@@ -1776,7 +1776,7 @@ def _canonicalize_global_word_pair_condition_fingerprint_8616(value: str) -> str
 def _canonicalize_final_branch_condition_fingerprint_8616(value: str) -> str:
     """Normalize exact storage-view equivalences for final branch validation."""
     return _canonicalize_global_word_pair_condition_fingerprint_8616(
-        _canonicalize_linear_ds_deref_condition_fingerprint_8616(value)
+        canonicalize_condition_storage_fingerprint_8616(value)
     )
 
 
@@ -1850,65 +1850,9 @@ def _canonicalize_additive_fingerprint_for_compare_8616(value: str) -> str:
     return _canonicalize_expr(value)
 
 
-def _linear_ds_const_offset_fingerprint_8616(value: str) -> int | None:
-    terms: list[tuple[int, str]] = []
-
-    def _flatten(term: str, sign: int) -> None:
-        call = _split_fingerprint_call_8616(term)
-        if call is None:
-            terms.append((sign, term))
-            return
-        op, args_text = call
-        args = _split_fingerprint_args_8616(args_text)
-        if op == "Add":
-            for arg in args:
-                _flatten(arg, sign)
-            return
-        if op == "Sub" and len(args) == 2:
-            _flatten(args[0], sign)
-            _flatten(args[1], -sign)
-            return
-        terms.append((sign, term))
-
-    _flatten(value, 1)
-    saw_ds_base = False
-    const_total = 0
-    for sign, term in terms:
-        if sign > 0 and term in {"Mul(reg:ds,const:16)", "Mul(const:16,reg:ds)"}:
-            saw_ds_base = True
-            continue
-        const_value = _const_fingerprint_value_8616(term)
-        if isinstance(const_value, int):
-            const_total += sign * const_value
-            continue
-        return None
-    return const_total if saw_ds_base else None
-
-
 def _canonicalize_linear_ds_deref_condition_fingerprint_8616(value: str) -> str:
-    """Canonicalize equivalent DS-backed values inside validation expressions."""
-
-    def _canonicalize_expr(expr: str, *, preserve_global_address: bool = False) -> str:
-        call = _split_fingerprint_call_8616(expr)
-        if call is None:
-            if not preserve_global_address and expr.startswith("global:"):
-                return f"ds_global:{expr[len('global:') :]}"
-            return expr
-        op, args_text = call
-        args = _split_fingerprint_args_8616(args_text)
-        if op == "Dereference" and len(args) == 1:
-            offset = _linear_ds_const_offset_fingerprint_8616(args[0])
-            if isinstance(offset, int) and offset >= 0:
-                return f"ds_global:{offset:#x}"
-        canonical_args = [
-            _canonicalize_expr(arg, preserve_global_address=op == "Reference")
-            for arg in args
-        ]
-        if op == "Or":
-            canonical_args = list(dict.fromkeys(canonical_args))
-        return f"{op}({','.join(canonical_args)})"
-
-    return _canonicalize_expr(value)
+    """Compatibility wrapper for the Condition IR storage owner."""
+    return canonicalize_condition_storage_fingerprint_8616(value)
 
 
 def _canonicalize_segmented_write_fingerprint_for_compare_8616(value: str) -> str:

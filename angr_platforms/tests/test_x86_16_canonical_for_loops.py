@@ -21,6 +21,7 @@ from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
 from angr_platforms.X86_16.arch_86_16 import Arch86_16
 from angr_platforms.X86_16.structuring.canonical_for_loops import (
+    canonical_loop_validation_shape_8616,
     recover_canonical_for_loops_8616,
 )
 
@@ -223,6 +224,203 @@ def test_recovers_typed_zero_comparison_guards() -> None:
         ]
         assert len(projected) == 1
         assert isinstance(projected[0], CForLoop)
+
+
+def test_recovers_exact_comparison_pretest_loop_as_for() -> None:
+    codegen = _Codegen()
+    induction = _local(-4, codegen)
+    initializer = CAssignment(induction, _const(0, codegen), codegen=codegen)
+    guard = CIfBreak(
+        CBinaryOp(
+            "CmpLE",
+            _const(8, codegen),
+            induction,
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    iterator = CAssignment(
+        _local(-4, codegen),
+        CBinaryOp(
+            "Add",
+            _local(-4, codegen),
+            _const(1, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    payload = CAssignment(_local(-8, codegen), induction, codegen=codegen)
+    loop = CWhileLoop(
+        _const(1, codegen),
+        CStatements([guard, payload, iterator], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([initializer, loop], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    assert recover_canonical_for_loops_8616(codegen) is True
+    assert len(root.statements) == 1
+    recovered = root.statements[0]
+    assert isinstance(recovered, CForLoop)
+    assert isinstance(recovered.condition, CBinaryOp)
+    assert recovered.condition.op == "CmpGT"
+    assert recovered.body.statements == [payload]
+
+
+def test_recovers_unary_negated_ordered_pretest_loop_as_for() -> None:
+    codegen = _Codegen()
+    induction = _local(-4, codegen)
+    initializer = CAssignment(induction, _const(0, codegen), codegen=codegen)
+    continuation = CBinaryOp(
+        "CmpGT",
+        _const(8, codegen),
+        induction,
+        codegen=codegen,
+    )
+    guard = CIfElse(
+        [(CUnaryOp("Not", continuation, codegen=codegen), CBreak(codegen=codegen))],
+        codegen=codegen,
+    )
+    iterator = CAssignment(
+        _local(-4, codegen),
+        CBinaryOp("Add", _local(-4, codegen), _const(1, codegen), codegen=codegen),
+        codegen=codegen,
+    )
+    payload = CAssignment(_local(-8, codegen), induction, codegen=codegen)
+    loop = CWhileLoop(
+        _const(1, codegen),
+        CStatements([guard, payload, iterator], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([initializer, loop], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    validation_shape = canonical_loop_validation_shape_8616(loop)
+    assert validation_shape is not None
+    assert validation_shape.condition is continuation
+    assert recover_canonical_for_loops_8616(codegen) is True
+    assert isinstance(root.statements[0], CForLoop)
+    assert root.statements[0].condition is continuation
+
+
+def test_refuses_comparison_pretest_guard_without_induction_variable() -> None:
+    codegen = _Codegen()
+    induction = _local(-4, codegen)
+    initializer = CAssignment(induction, _const(0, codegen), codegen=codegen)
+    guard = CIfBreak(
+        CBinaryOp(
+            "CmpLE",
+            _local(-8, codegen),
+            _local(-10, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    iterator = CAssignment(
+        _local(-4, codegen),
+        CBinaryOp(
+            "Add",
+            _local(-4, codegen),
+            _const(1, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    loop = CWhileLoop(
+        _const(1, codegen),
+        CStatements([guard, iterator], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([initializer, loop], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    assert recover_canonical_for_loops_8616(codegen) is False
+    assert root.statements == [initializer, loop]
+
+
+def test_recovers_conditional_loop_with_exact_inverse_leading_break() -> None:
+    codegen = _Codegen()
+    induction = _local(-4, codegen)
+    initializer = CAssignment(induction, _const(0, codegen), codegen=codegen)
+    continuation = CBinaryOp(
+        "CmpGT",
+        _const(8, codegen),
+        induction,
+        codegen=codegen,
+    )
+    guard = CIfBreak(
+        CBinaryOp(
+            "CmpLE",
+            _const(8, codegen),
+            induction,
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    iterator = CAssignment(
+        _local(-4, codegen),
+        CBinaryOp(
+            "Add",
+            _local(-4, codegen),
+            _const(1, codegen),
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    payload = CAssignment(_local(-8, codegen), induction, codegen=codegen)
+    loop = CWhileLoop(
+        continuation,
+        CStatements([guard, payload, iterator], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([initializer, loop], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    assert recover_canonical_for_loops_8616(codegen) is True
+    assert len(root.statements) == 1
+    recovered = root.statements[0]
+    assert isinstance(recovered, CForLoop)
+    assert recovered.condition is continuation
+    assert recovered.body.statements == [payload]
+
+
+def test_refuses_conditional_loop_with_noninverse_leading_break() -> None:
+    codegen = _Codegen()
+    induction = _local(-4, codegen)
+    initializer = CAssignment(induction, _const(0, codegen), codegen=codegen)
+    loop = CWhileLoop(
+        CBinaryOp("CmpGT", _const(8, codegen), induction, codegen=codegen),
+        CStatements(
+            [
+                CIfBreak(
+                    CBinaryOp(
+                        "CmpLT",
+                        _const(8, codegen),
+                        induction,
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                ),
+                CAssignment(
+                    _local(-4, codegen),
+                    CBinaryOp(
+                        "Add",
+                        _local(-4, codegen),
+                        _const(1, codegen),
+                        codegen=codegen,
+                    ),
+                    codegen=codegen,
+                ),
+            ],
+            codegen=codegen,
+        ),
+        codegen=codegen,
+    )
+    root = CStatements([initializer, loop], codegen=codegen)
+    codegen.cfunc = SimpleNamespace(statements=root)
+
+    assert recover_canonical_for_loops_8616(codegen) is False
+    assert root.statements == [initializer, loop]
 
 
 def test_refuses_mismatched_iterator_storage() -> None:

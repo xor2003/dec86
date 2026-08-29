@@ -38,6 +38,7 @@ from .direct_stack_move_loop_sites import (
 from .direct_stack_move_ownership import (
     direct_stack_move_branch_owned_addresses_8616,
 )
+from .pretest_condition_surface import pretest_condition_surface_8616
 
 log: logging.Logger = logging.getLogger(__name__)
 
@@ -217,10 +218,11 @@ def _pretest_initializer_sites_8616(
         if isinstance(statements, list):
             for statement in tuple(statements):
                 if isinstance(statement, (structured_c.CForLoop, structured_c.CWhileLoop)):
-                    condition = statement.condition
+                    surface = pretest_condition_surface_8616(statement)
                     body = statement.body
                     condition_addresses = {
                         comparable_address_8616(project, address, evidence.move_addr)
+                        for condition in surface.conditions
                         for address in _tree_tag_addresses_8616(condition)
                     }
                     body_addresses = {
@@ -241,7 +243,10 @@ def _pretest_initializer_sites_8616(
                     if (
                         owns_condition
                         and owns_body
-                        and _tree_reads_stack_offset_8616(codegen, condition, dst_offset)
+                        and any(
+                            _tree_reads_stack_offset_8616(codegen, condition, dst_offset)
+                            for condition in surface.conditions
+                        )
                     ):
                         sites.append(
                             DirectStackMovePretestInitializerSite8616(

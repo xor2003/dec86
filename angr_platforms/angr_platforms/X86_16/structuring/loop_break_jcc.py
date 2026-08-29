@@ -509,7 +509,7 @@ def _existing_nonbreak_branch_consumes_jcc_8616(
     return matches == 1
 
 
-def _loop_header_consumes_jcc_8616(
+def _loop_headers_consuming_jcc_8616(
     root: object,
     *,
     project: object,
@@ -518,12 +518,12 @@ def _loop_header_consumes_jcc_8616(
     exit_target: int | None,
     decoded_condition_fingerprint: str,
     callbacks: UnconsumedLoopBreakJccCallbacks8616,
-) -> bool:
-    """Return whether one enclosing loop header already represents the JCC."""
+) -> tuple[CForLoop | CWhileLoop | CDoWhileLoop, ...]:
+    """Return the unique enclosing loop header that represents the JCC."""
     expected = _normalized_condition_fingerprint_8616(
         decoded_condition_fingerprint
     )
-    matches = 0
+    matches: list[CForLoop | CWhileLoop | CDoWhileLoop] = []
     for loop_node in _loop_nodes_with_body_8616(root):
         loop_body = _dynamic_attr_8616(loop_node, "body", None)
         if not isinstance(loop_body, CStatements):
@@ -541,8 +541,8 @@ def _loop_header_consumes_jcc_8616(
             callbacks.expr_fingerprint(loop_node.condition, project)
         )
         if actual == expected:
-            matches += 1
-    return matches == 1
+            matches.append(loop_node)
+    return tuple(matches) if len(matches) == 1 else ()
 
 
 def _first_statement_index_containing_ins_addr_8616(statements: Sequence[object], target_addr: int) -> int | None:
@@ -1106,9 +1106,8 @@ def materialize_unconsumed_loop_break_jcc_8616(
         ):
             stats.refused_existing_condition += 1
             continue
-        if (
-            not existing_break_nodes
-            and _loop_header_consumes_jcc_8616(
+        consuming_loop_headers = (
+            _loop_headers_consuming_jcc_8616(
                 root,
                 project=project,
                 body_target=int(body_target),
@@ -1117,9 +1116,27 @@ def materialize_unconsumed_loop_break_jcc_8616(
                 decoded_condition_fingerprint=decoded_condition_fingerprint,
                 callbacks=callbacks,
             )
-        ):
-            stats.refused_existing_condition += 1
-            continue
+            if not existing_break_nodes
+            else ()
+        )
+        if consuming_loop_headers:
+            existing_break_nodes = tuple(
+                dict.fromkeys(
+                    guard
+                    for loop_node in consuming_loop_headers
+                    for guard in _semantic_break_guards_in_loop_8616(
+                        cast(CStatements, loop_node.body),
+                        project=project,
+                        guard_condition=guard_cond,
+                        guard_condition_fingerprint=guard_condition_fingerprint,
+                        callbacks=callbacks,
+                    )
+                )
+            )
+            if not existing_break_nodes:
+                stats.refused_existing_condition += 1
+                continue
+            has_existing_condition_without_break = False
         if (
             has_existing_condition_without_break
             and jcc_addr not in existing_loop_header_jcc_addrs

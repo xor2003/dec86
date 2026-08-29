@@ -33,6 +33,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 
 from ..c_ast_utils import _iter_c_node_children_8616, _same_c_expression_8616
+from ..ir.condition_ir import inverted_comparison_op_8616
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +56,7 @@ class CanonicalForLoopRecoveryStats8616:
 class CanonicalLoopValidationShape8616:
     """Typed semantic projection shared with tail validation."""
 
-    condition: CVariable
+    condition: CExpression
     suppressed_control_node_ids: frozenset[int]
     suppressed_body_write_node_ids: frozenset[int]
 
@@ -194,6 +195,63 @@ def _nonzero_loop_induction_8616(condition: CExpression) -> CVariable | None:
     return None
 
 
+def _ordered_comparison_uses_induction_8616(
+    condition: CExpression,
+    induction: CVariable,
+) -> bool:
+    """Prove one stable ordered comparison operand is the induction value."""
+    if not isinstance(condition, CBinaryOp) or condition.op not in {
+        "CmpLT",
+        "CmpLE",
+        "CmpGT",
+        "CmpGE",
+    }:
+        return False
+    if not isinstance(condition.lhs, (CVariable, CConstant)) or not isinstance(
+        condition.rhs,
+        (CVariable, CConstant),
+    ):
+        return False
+    lhs_matches = _same_variable_8616(condition.lhs, induction)
+    rhs_matches = _same_variable_8616(condition.rhs, induction)
+    return lhs_matches != rhs_matches
+
+
+def _pretest_continuation_condition_8616(
+    break_condition: CExpression,
+    induction: CVariable,
+) -> CExpression | None:
+    """Invert one exact leading break into the loop continuation condition."""
+    zero_induction = _zero_break_induction_8616(break_condition)
+    if zero_induction is not None:
+        return induction if _same_variable_8616(zero_induction, induction) else None
+    ordered_condition = break_condition
+    invert_comparison = True
+    if isinstance(break_condition, CUnaryOp) and break_condition.op == "Not":
+        operand = break_condition.operand
+        if not isinstance(operand, CExpression):
+            return None
+        ordered_condition = operand
+        invert_comparison = False
+    if not _ordered_comparison_uses_induction_8616(
+        ordered_condition,
+        induction,
+    ):
+        return None
+    if not invert_comparison:
+        return ordered_condition
+    inverted_op = inverted_comparison_op_8616(ordered_condition.op)
+    if inverted_op is None:
+        return None
+    return CBinaryOp(
+        inverted_op,
+        ordered_condition.lhs,
+        ordered_condition.rhs,
+        codegen=ordered_condition.codegen,
+        tags=dict(ordered_condition.tags),
+    )
+
+
 def _contains_current_loop_continue_8616(statement: CStatement | None) -> bool:
     """Find a continue targeting the candidate loop, stopping at nested loops."""
     if statement is None:
@@ -232,9 +290,9 @@ def _break_control_node_ids_8616(statement: CStatement) -> frozenset[int]:
 
 def _pretest_loop_components_8616(
     loop: CWhileLoop,
-) -> tuple[CVariable, CStatement, CAssignment] | None:
-    """Prove the zero guard and affine iterator without control-flow policy."""
-    if not _unconditional_while_8616(loop) or not isinstance(loop.body, CStatements):
+) -> tuple[CVariable, CExpression, CStatement, CAssignment] | None:
+    """Prove a leading break and affine iterator without control-flow policy."""
+    if not isinstance(loop.body, CStatements):
         return None
     body_locations = _linear_statement_locations_8616(loop.body)
     if len(body_locations) < 2:
@@ -242,18 +300,50 @@ def _pretest_loop_components_8616(
     guard = body_locations[0].statement
     iterator = body_locations[-1].statement
     guard_condition = _pretest_break_condition_8616(guard)
-    induction = (
-        _zero_break_induction_8616(guard_condition)
-        if isinstance(guard_condition, CExpression)
-        else None
-    )
     if (
-        induction is None
+        not isinstance(guard_condition, CExpression)
         or not isinstance(iterator, CAssignment)
-        or not _affine_self_update_8616(iterator, induction)
+        or not isinstance(iterator.lhs, CVariable)
+        or not _affine_self_update_8616(iterator, iterator.lhs)
     ):
         return None
-    return induction, guard, iterator
+    induction = iterator.lhs
+    continuation = _pretest_continuation_condition_8616(
+        guard_condition,
+        induction,
+    )
+    if continuation is None:
+        return None
+    if not _unconditional_while_8616(loop):
+        if not isinstance(loop.condition, CExpression) or not _same_c_expression_8616(
+            loop.condition,
+            continuation,
+        ):
+            return None
+        continuation = loop.condition
+    return induction, continuation, guard, iterator
+
+
+def _for_loop_induction_8616(loop: CForLoop) -> CVariable | None:
+    """Prove the iterator and continuation share one induction storage."""
+    condition = loop.condition
+    iterator = loop.iterator
+    if (
+        not isinstance(condition, CExpression)
+        or not isinstance(iterator, CAssignment)
+        or not isinstance(iterator.lhs, CVariable)
+        or not _affine_self_update_8616(iterator, iterator.lhs)
+    ):
+        return None
+    induction = iterator.lhs
+    nonzero = _nonzero_loop_induction_8616(condition)
+    if nonzero is not None:
+        return induction if _same_variable_8616(nonzero, induction) else None
+    return (
+        induction
+        if _ordered_comparison_uses_induction_8616(condition, induction)
+        else None
+    )
 
 
 def canonical_loop_validation_shape_8616(
@@ -262,19 +352,9 @@ def canonical_loop_validation_shape_8616(
     """Prove the canonical semantic surface shared by while and for forms."""
     if isinstance(loop, CForLoop):
         initializer = loop.initializer
-        iterator = loop.iterator
         condition = loop.condition
-        induction = (
-            _nonzero_loop_induction_8616(condition)
-            if isinstance(condition, CExpression)
-            else None
-        )
-        if (
-            induction is None
-            or not isinstance(iterator, CAssignment)
-            or not _affine_self_update_8616(iterator, induction)
-            or _contains_current_loop_continue_8616(loop.body)
-        ):
+        induction = _for_loop_induction_8616(loop)
+        if induction is None or _contains_current_loop_continue_8616(loop.body):
             return None
         if initializer is not None and (
             not isinstance(initializer, CAssignment)
@@ -282,13 +362,17 @@ def canonical_loop_validation_shape_8616(
             or not _same_variable_8616(initializer.lhs, induction)
         ):
             return None
-        return CanonicalLoopValidationShape8616(induction, frozenset(), frozenset())
+        return CanonicalLoopValidationShape8616(
+            cast(CExpression, condition),
+            frozenset(),
+            frozenset(),
+        )
     components = _pretest_loop_components_8616(loop)
     if components is None or _contains_current_loop_continue_8616(loop.body):
         return None
-    induction, guard, iterator = components
+    induction, continuation, guard, iterator = components
     return CanonicalLoopValidationShape8616(
-        condition=induction,
+        condition=continuation,
         suppressed_control_node_ids=_break_control_node_ids_8616(guard),
         suppressed_body_write_node_ids=frozenset({id(iterator)}),
     )
@@ -332,12 +416,7 @@ def _materialize_canonical_for_loop_8616(
         if loop.initializer is not None:
             return False
         counts.raw += 1
-        condition = loop.condition
-        induction = (
-            _nonzero_loop_induction_8616(condition)
-            if isinstance(condition, CExpression)
-            else None
-        )
+        induction = _for_loop_induction_8616(loop)
         iterator = loop.iterator
         if (
             not isinstance(initializer.lhs, CVariable)
@@ -361,7 +440,7 @@ def _materialize_canonical_for_loop_8616(
         return True
     if not isinstance(loop, CWhileLoop):
         return False
-    if not _unconditional_while_8616(loop) or not isinstance(loop.body, CStatements):
+    if not isinstance(loop.body, CStatements):
         return False
     body_locations = _linear_statement_locations_8616(loop.body)
     if len(body_locations) < 2:
@@ -375,10 +454,12 @@ def _materialize_canonical_for_loop_8616(
     counts.raw += 1
     components = _pretest_loop_components_8616(loop)
     induction = components[0] if components is not None else None
+    continuation = components[1] if components is not None else None
     if (
         not isinstance(initializer.lhs, CVariable)
         or induction is None
         or not _same_variable_8616(initializer.lhs, induction)
+        or continuation is None
         or not _affine_self_update_8616(iterator, initializer.lhs)
     ):
         return False
@@ -389,7 +470,7 @@ def _materialize_canonical_for_loop_8616(
     try:
         canonical = CForLoop(
             initializer,
-            induction,
+            continuation,
             iterator,
             loop.body,
             codegen=cast(Any, codegen),

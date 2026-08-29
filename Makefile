@@ -304,7 +304,7 @@ LINTERS_DEV_MYPY_FILES += \
 
 LINTERS_DEV_LIZARD_PATHS ?= inertia_decompiler/decompile_file_summary.py
 
-.PHONY: quality quality-dev quality-fast quality-hard decompiler-check decompiler-check-fast decompiler-check-expanded architecture-check architecture-check-fast agent-context-check test-ownership-check linters linters-hard linters-dev linters-dev-locked linters-files check-files check-all pytest pytest-profile pytest-inventory pytest-inventory-check pytest-files pytest-all ruff ruff-files ruff-all pyright pyright-files pyright-all mypy mypy-dev mypy-files mypy-all mypyc mypyc-smoke type-ratchet-files type-ratchet-changed vulture lizard lizard-dev test-pipeline test-pipeline-fast test-pipeline-expanded test-layer test-agent-confidence msc6-examples sortdemo-selftest monkeytype-trace monkeytype-stubs monkeytype-apply decomp-opt-regression decomp-opt-regression-suite decomp-opt-regression-thread types
+.PHONY: quality quality-dev quality-fast quality-hard decompiler-check decompiler-check-fast decompiler-check-expanded architecture-check architecture-check-fast agent-context-check test-ownership-check linters linters-hard linters-dev linters-dev-locked linters-files check-files check-all pytest pytest-profile pytest-inventory pytest-inventory-check pytest-files pytest-all ruff ruff-files ruff-all pyright pyright-files pyright-all mypy mypy-dev mypy-files mypy-all mypyc mypyc-smoke type-ratchet-files type-ratchet-changed vulture lizard lizard-dev test-pipeline test-pipeline-fast test-pipeline-expanded test-layer test-agent-confidence msc6-examples sortdemo-selftest monkeytype-trace monkeytype-stubs monkeytype-apply decomp-opt-regression decomp-opt-regression-inputs decomp-opt-regression-suite decomp-opt-regression-thread types
 
 quality: linters type-ratchet-changed decompiler-check decomp-opt-regression-suite
 
@@ -3071,17 +3071,33 @@ msc6-examples:
 sortdemo-selftest:
 	$(PYTHON) scripts/build_sortdemo_selftest.py --clean
 
-DECOMP_OPT_REGRESSION_ARGS ?= --max-functions 20 -q
+# Compare one deterministic validated artifact per corpus binary. Functional
+# coverage belongs to test-pipeline; this gate isolates pure-Python vs mypyc quality.
+DECOMP_OPT_REGRESSION_ARGS ?= --max-functions 1 -q
 DECOMP_OPT_REGRESSION_TIMEOUT ?= 180
 DECOMP_OPT_REGRESSION_BINARIES ?= \
 	examples/build_msc6_tiny/CMP16.EXE \
 	examples/build_msc6_tiny/LOOPS.EXE \
 	examples/build_msc6_tiny/FPTR.EXE
+DECOMP_OPT_REGRESSION_CONSTRUCTS ?= compare16,loops_jumps,function_pointers
+
+decomp-opt-regression-inputs:
+	@missing=0; \
+	for binary in $(DECOMP_OPT_REGRESSION_BINARIES); do \
+		test -f "$$binary" || missing=1; \
+	done; \
+	if test "$$missing" -eq 1; then \
+		$(PYTHON) scripts/build_msc6_examples.py \
+			--out-dir examples/build_msc6_tiny \
+			--only-constructs $(DECOMP_OPT_REGRESSION_CONSTRUCTS) \
+			--skip-constructs $(DECOMP_OPT_REGRESSION_CONSTRUCTS) \
+			--harvest-success-code 0; \
+	fi
 
 decomp-opt-regression:
 	flock "$(MYPYC_ARTIFACT_LOCK)" $(PYTHON) scripts/benchmark_optimization_quality_guard.py examples/build_msc6/CMP16.EXE -- $(DECOMP_OPT_REGRESSION_ARGS)
 
-decomp-opt-regression-suite:
+decomp-opt-regression-suite: decomp-opt-regression-inputs
 	@for binary in $(DECOMP_OPT_REGRESSION_BINARIES); do \
 		echo "/* decompilation quality guard: $$binary */"; \
 		flock "$(MYPYC_ARTIFACT_LOCK)" $(PYTHON) scripts/benchmark_optimization_quality_guard.py "$$binary" \

@@ -896,7 +896,7 @@ def validate_structured_def_use_8616(
     break_exit_scopes: list[list[_DefUseFlowState8616] | None] = []
 
     def _check_reads(
-        expr: object,
+        expr: OpaqueValidationNode8616,
         defined: set[_DefUseStorageByte8616],
         *,
         context: str,

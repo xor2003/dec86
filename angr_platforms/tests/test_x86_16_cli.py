@@ -2218,7 +2218,8 @@ def test_canonicalized_direct_clean_worker_emits_parent_label(monkeypatch, capsy
     captured = capsys.readouterr()
     assert return_code == 0
     assert "function: 0x10560 InitBars" in captured.out
-    assert "void sub_10560(void) {}" in captured.out
+    assert "void InitBars(void) {}" in captured.out
+    assert "sub_10560" not in captured.out
     assert "canonical clean worker validation=passed" in captured.err
     assert seen["caller_return_evidence_by_addr"] == {}
 

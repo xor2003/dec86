@@ -613,6 +613,109 @@ def test_structuring_removes_break_duplicated_by_exact_jcc_loop_header() -> None
     )
 
 
+def test_structuring_removes_untagged_break_duplicated_by_exact_jcc_loop_header() -> None:
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    loop_condition = CBinaryOp(
+        "CmpGT",
+        _reg("ax", codegen),
+        _reg("bx", codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4005, "vex_block_addr": 0x4003},
+    )
+    break_condition = CBinaryOp(
+        "CmpLE",
+        _reg("ax", codegen),
+        _reg("bx", codegen),
+        codegen=codegen,
+    )
+    duplicate_break = CIfBreak(
+        break_condition,
+        codegen=codegen,
+        cstyle_ifs=True,
+    )
+    taken_stmt = CAssignment(
+        _reg("bx", codegen),
+        _const(2, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    loop = CWhileLoop(
+        loop_condition,
+        CStatements([duplicate_break, taken_stmt], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([loop], codegen=codegen)
+    codegen.cfunc.statements = root
+    codegen.cfunc.body = root
+    evidence: list[tuple[object | None, object]] = []
+
+    changed = materialize_unconsumed_loop_break_jcc_8616(
+        project,
+        codegen,
+        _callbacks(_Insn(0x4005, "jg", 0x4010), evidence=evidence),
+    )
+
+    assert changed is True
+    assert loop.body.statements == [taken_stmt]
+    assert evidence == [(break_condition, loop_condition)]
+    stats = codegen._inertia_unconsumed_loop_break_jcc_stats_8616
+    assert stats.materialized_count == 1
+    assert stats.removed_loop_header_duplicate_guard == 1
+    assert len(loop_header_duplicate_guard_removal_facts_8616(codegen)) == 1
+
+
+def test_structuring_refuses_ambiguous_untagged_loop_header_breaks() -> None:
+    project = SimpleNamespace(arch=Arch86_16())
+    codegen = _DummyCodegen()
+    loop_condition = CBinaryOp(
+        "CmpGT",
+        _reg("ax", codegen),
+        _reg("bx", codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4005, "vex_block_addr": 0x4003},
+    )
+    duplicate_breaks = [
+        CIfBreak(
+            CBinaryOp(
+                "CmpLE",
+                _reg("ax", codegen),
+                _reg("bx", codegen),
+                codegen=codegen,
+            ),
+            codegen=codegen,
+            cstyle_ifs=True,
+        )
+        for _ in range(2)
+    ]
+    taken_stmt = CAssignment(
+        _reg("bx", codegen),
+        _const(2, codegen),
+        codegen=codegen,
+        tags={"ins_addr": 0x4010},
+    )
+    loop = CWhileLoop(
+        loop_condition,
+        CStatements([*duplicate_breaks, taken_stmt], codegen=codegen),
+        codegen=codegen,
+    )
+    root = CStatements([loop], codegen=codegen)
+    codegen.cfunc.statements = root
+    codegen.cfunc.body = root
+    evidence: list[tuple[object | None, object]] = []
+
+    changed = materialize_unconsumed_loop_break_jcc_8616(
+        project,
+        codegen,
+        _callbacks(_Insn(0x4005, "jg", 0x4010), evidence=evidence),
+    )
+
+    assert changed is False
+    assert loop.body.statements == [*duplicate_breaks, taken_stmt]
+    assert loop_header_duplicate_guard_removal_facts_8616(codegen) == ()
+    assert evidence == []
+
+
 def test_structuring_does_not_classify_existing_ordinary_if_as_loop_guard() -> None:
     project = SimpleNamespace(arch=Arch86_16())
     codegen = _DummyCodegen()

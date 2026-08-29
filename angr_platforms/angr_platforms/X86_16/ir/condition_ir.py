@@ -571,11 +571,12 @@ def inverted_comparison_op_8616(op: str) -> str | None:
 
 
 def canonicalize_condition_storage_fingerprint_8616(value: str) -> str:
-    """Canonicalize explicitly proven named BP arguments to stack slots.
+    """Canonicalize explicitly proven BP and DS storage identities.
 
-    The input token already carries exact BP offset and optional byte size.
-    This is lossless Condition IR fingerprint normalization, not recovery from
-    rendered C or a variable name.
+    Input tokens already carry exact BP offsets or a DS-relative linear
+    address.  This is lossless Condition IR fingerprint normalization, not
+    recovery from rendered C or a variable name, and it never merges segment
+    spaces.
     """
 
     def _replace(match: re.Match[str]) -> str:
@@ -586,7 +587,40 @@ def canonicalize_condition_storage_fingerprint_8616(value: str) -> str:
             f"{size_text}"
         )
 
-    return _STACK_ARG_STORAGE_FINGERPRINT_RE_8616.sub(_replace, value)
+    stack_normalized = _STACK_ARG_STORAGE_FINGERPRINT_RE_8616.sub(
+        _replace,
+        value,
+    )
+    return _canonicalize_ds_storage_fingerprint_8616(stack_normalized)
+
+
+def _canonicalize_ds_storage_fingerprint_8616(
+    value: str,
+    *,
+    preserve_global_address: bool = False,
+) -> str:
+    """Project exact DS-relative values onto one segmented storage token."""
+    call = _split_fingerprint_call_8616(value)
+    if call is None:
+        if not preserve_global_address and value.startswith("global:"):
+            return f"ds_global:{value[len('global:') :]}"
+        return value
+    op, args_text = call
+    args = _split_fingerprint_args_8616(args_text)
+    if op == "Dereference" and len(args) == 1:
+        parsed = _linear_ds_offset_fingerprint_8616(args[0])
+        if parsed is not None and parsed[0] and parsed[1] >= 0:
+            return f"ds_global:{parsed[1]:#x}"
+    normalized = [
+        _canonicalize_ds_storage_fingerprint_8616(
+            arg,
+            preserve_global_address=op == "Reference",
+        )
+        for arg in args
+    ]
+    if op == "Or":
+        normalized = list(dict.fromkeys(normalized))
+    return f"{op}({','.join(normalized)})"
 
 
 def normalize_condition_fingerprint_string_8616(
@@ -933,14 +967,19 @@ def _linear_ds_offset_fingerprint_8616(value: str) -> tuple[bool, int] | None:
         return True, 0
     if op == "Shl" and len(args) == 2 and args[0] == "reg:ds" and args[1] == "const:4":
         return True, 0
-    if op != "Add" or len(args) != 2:
+    if op not in {"Add", "Sub"} or not args:
         return None
-    left = _linear_ds_offset_fingerprint_8616(args[0])
-    right = _linear_ds_offset_fingerprint_8616(args[1])
-    if left is None or right is None:
-        return None
-    left_has_ds, left_offset = left
-    right_has_ds, right_offset = right
-    if left_has_ds and right_has_ds:
-        return None
-    return left_has_ds or right_has_ds, left_offset + right_offset
+    has_ds = False
+    offset = 0
+    for index, arg in enumerate(args):
+        parsed = _linear_ds_offset_fingerprint_8616(arg)
+        if parsed is None:
+            return None
+        arg_has_ds, arg_offset = parsed
+        sign = -1 if op == "Sub" and index > 0 else 1
+        if arg_has_ds:
+            if has_ds or sign < 0:
+                return None
+            has_ds = True
+        offset += sign * arg_offset
+    return has_ds, offset

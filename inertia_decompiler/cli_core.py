@@ -129,6 +129,7 @@ from inertia_decompiler.function_worker_policy import (
     select_function_worker_policy_8616,
 )
 from inertia_decompiler.generated_c_artifacts import write_generated_function_c
+from inertia_decompiler.generated_c_function_extraction import relabel_generated_function_definition
 from inertia_decompiler.library_function_classifier import (
     filter_code_labels_for_library_policy,
     is_library_like_function_name,
@@ -2374,7 +2375,13 @@ def _run_canonicalized_direct_clean_worker_8616(
             return 4
         print("/* canonical clean worker validation=passed */", file=sys.stderr)
         print("[tail-validation] whole-tail validation clean across 1 functions", file=sys.stderr)
-        print(result.payload)
+        anonymous_name = f"sub_{canonical.canonical_addr:x}"
+        try:
+            payload = relabel_generated_function_definition(result.payload, anonymous_name, function.name)
+        except ValueError as ex:
+            print(f"[dbg] canonical clean worker label unchanged: {ex}", file=sys.stderr)
+            payload = result.payload
+        print(payload)
         return 0
     if result.partial_payload:
         print(result.partial_payload)
@@ -6266,6 +6273,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
             checked_status = checked_acceptance.status
             checked_blocker = checked_acceptance.blocker
             if checked_status == "ok":
+                print("[dbg] direct fallback validation=passed", file=sys.stderr)
                 return checked_acceptance.gcc_checked_payload or payload_for_acceptance
             _dump_validation_failed_payload_if_requested_8616(
                 payload_for_acceptance,
@@ -6422,6 +6430,7 @@ def _run_direct_addr_cli_8616(context: _DirectAddrCliContext8616) -> int:
                         accepted_side_payload = (
                             side_payload_checked if isinstance(side_payload_checked, str) else side_payload
                         )
+                        print("[dbg] direct sidecar fallback validation=passed", file=sys.stderr)
                         _emit_optional_source_sidecar_c_block(
                             args.binary,
                             side_func.name,

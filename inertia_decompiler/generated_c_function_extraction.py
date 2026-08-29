@@ -36,6 +36,39 @@ def generated_function_definition_span(
     raise ValueError(f"unterminated generated definition for {function_name}")
 
 
+def relabel_generated_function_definition(
+    source: str,
+    old_name: str,
+    new_name: str,
+) -> str:
+    """Relabel one exact generated definition without changing its body or calls."""
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", new_name) is None:
+        raise ValueError(f"invalid generated function label {new_name!r}")
+    definition_pattern = re.compile(
+        rf"\b{re.escape(old_name)}(?=\s*\([^;\n]*\)\s*\{{)"
+    )
+    matches = tuple(definition_pattern.finditer(source))
+    if not matches:
+        labeled_pattern = re.compile(
+            rf"\b{re.escape(new_name)}(?=\s*\([^;\n]*\)\s*\{{)"
+        )
+        labeled_matches = tuple(labeled_pattern.finditer(source))
+        if len(labeled_matches) != 1:
+            raise ValueError(
+                f"expected one generated definition for {old_name} or {new_name}, "
+                f"found {len(labeled_matches)}"
+            )
+        generated_function_definition_span(source, new_name)
+        return source
+    if len(matches) != 1:
+        raise ValueError(
+            f"expected one generated definition for {old_name}, found {len(matches)}"
+        )
+    match = matches[0]
+    generated_function_definition_span(source, old_name)
+    return source[: match.start()] + new_name + source[match.end() :]
+
+
 def load_generated_function_artifacts(
     directory: Path,
     addresses: tuple[int, ...],

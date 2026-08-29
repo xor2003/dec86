@@ -171,6 +171,31 @@ class TestConditionOpNormalization:
             "stack_slot:SS:BP+0x4:size2)"
         )
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        (
+            (
+                "CmpGT(Dereference(Add(Mul(reg:ds,const:16),const:2978)),"
+                "stack_slot:SS:BP-0x8:size2)",
+                "CmpGT(ds_global:0xba2,stack_slot:SS:BP-0x8:size2)",
+            ),
+            (
+                "CmpGT(global:0xba2,stack_slot:SS:BP-0x8:size2)",
+                "CmpGT(ds_global:0xba2,stack_slot:SS:BP-0x8:size2)",
+            ),
+            (
+                "CmpNE(Reference(global:0xba2),const:0)",
+                "CmpNE(Reference(global:0xba2),const:0)",
+            ),
+        ),
+    )
+    def test_ds_condition_storage_normalizes_without_flattening_segment_space(
+        self,
+        value: str,
+        expected: str,
+    ) -> None:
+        assert canonicalize_condition_storage_fingerprint_8616(value) == expected
+
     def test_lt_u_normalizes_to_ult(self):
         assert normalize_condition_op_8616("lt_u") == "ult"
 

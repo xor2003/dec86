@@ -102,6 +102,27 @@ class _ProjectBoundary8616(Protocol):
     kb: _KnowledgeBaseBoundary8616
 
 
+class _LoadedObjectBoundary8616(Protocol):
+    """Third-party loaded-image bounds used to recognize rebased call targets."""
+
+    min_addr: int
+    max_addr: int
+
+
+class _LoaderBoundary8616(Protocol):
+    """Third-party loader surface used by rebased exact slices."""
+
+    main_object: _LoadedObjectBoundary8616
+
+
+class _RebasedProjectBoundary8616(Protocol):
+    """Owned exact-slice link back to the original loaded binary."""
+
+    loader: _LoaderBoundary8616
+    _inertia_original_project: object
+    _inertia_original_linear_delta: int
+
+
 class _FunctionBoundary8616(Protocol):
     """Third-party angr function identity consumed by the projection."""
 
@@ -158,6 +179,21 @@ class _StatusFlagFunctionSummaryResolver8616:
         if not isinstance(canonical, int):
             return None
         return self._project.kb.functions.function(addr=canonical, create=False)
+
+    def _original_binary_target(self, target: int) -> tuple[object, int] | None:
+        """Translate an out-of-slice near-call target to the original image."""
+        try:
+            rebased = cast(_RebasedProjectBoundary8616, self._project_object)
+            image = rebased.loader.main_object
+            image_start = int(image.min_addr)
+            image_end = int(image.max_addr) + 1
+            original_project = rebased._inertia_original_project
+            linear_delta = int(rebased._inertia_original_linear_delta)
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if image_start <= target < image_end or linear_delta == 0:
+            return None
+        return original_project, target + linear_delta
 
     def _instruction_effect(
         self,
@@ -271,6 +307,15 @@ class _StatusFlagFunctionSummaryResolver8616:
             return None
         self._active.add(function_address)
         try:
+            original_target = self._original_binary_target(function_address)
+            if original_target is not None:
+                original_project, original_address = original_target
+                effect = _StatusFlagFunctionSummaryResolver8616(
+                    original_project
+                ).effect_for_address(original_address)
+                if effect is not None:
+                    self._effect_cache[function_address] = effect
+                return effect
             summary = summarize_binary_status_flag_entry_reads_8616(
                 self._project_object,
                 entry_address=function_address,

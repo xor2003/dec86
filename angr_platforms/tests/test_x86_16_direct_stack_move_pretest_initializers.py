@@ -7,8 +7,10 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CBinaryOp,
     CConstant,
     CForLoop,
+    CIfBreak,
     CStatements,
     CVariable,
+    CWhileLoop,
 )
 from angr.sim_type import SimTypeShort
 from angr.sim_variable import SimStackVariable
@@ -67,7 +69,15 @@ def _surface(
     *,
     assignment_in_body: bool = True,
     condition_reads_destination: bool = True,
-) -> tuple[object, object, object, CStatements, CForLoop, CAssignment]:
+    condition_in_leading_break: bool = False,
+) -> tuple[
+    object,
+    object,
+    object,
+    CStatements,
+    CForLoop | CWhileLoop,
+    CAssignment,
+]:
     project = SimpleNamespace(arch=ArchX86())
     codegen = SimpleNamespace(
         next_idx=lambda _name: 1,
@@ -102,10 +112,6 @@ def _surface(
         codegen=codegen,
         tags={"ins_addr": 0x10275},
     )
-    body = CStatements(
-        [assignment, body_marker] if assignment_in_body else [body_marker],
-        codegen=codegen,
-    )
     condition = CBinaryOp(
         "CmpLE",
         CSemanticCast8616(
@@ -126,7 +132,18 @@ def _surface(
         codegen=codegen,
         tags={"ins_addr": 0x1025F},
     )
-    loop = CForLoop(None, condition, iterator, body, codegen=codegen)
+    body_items = [assignment, body_marker] if assignment_in_body else [body_marker]
+    if condition_in_leading_break:
+        body_items.insert(0, CIfBreak(condition, codegen=codegen))
+        body = CStatements(body_items, codegen=codegen)
+        loop = CWhileLoop(
+            CConstant(1, SimTypeShort(False), codegen=codegen),
+            body,
+            codegen=codegen,
+        )
+    else:
+        body = CStatements(body_items, codegen=codegen)
+        loop = CForLoop(None, condition, iterator, body, codegen=codegen)
     root = CStatements([loop], codegen=codegen)
     codegen.cfunc = SimpleNamespace(statements=root, body=root)
     codegen._inertia_direct_stack_move_facts_8616 = (
@@ -174,6 +191,20 @@ def test_pretest_initializer_replay_is_idempotent() -> None:
     assert codegen.cfunc.statements.statements == [assignment, loop]
     stats = codegen._inertia_direct_stack_move_pretest_initializer_placement_8616
     assert stats.already_materialized_count == 1
+
+
+def test_moves_initializer_when_header_evidence_is_in_leading_break() -> None:
+    project, function, codegen, body, loop, assignment = _surface(
+        condition_in_leading_break=True,
+    )
+
+    assert materialize_direct_stack_move_pretest_initializers_8616(
+        project,
+        codegen,
+        function,
+    )
+    assert codegen.cfunc.statements.statements == [assignment, loop]
+    assert assignment not in body.statements
 
 
 def test_places_detached_lowering_assignment_at_proven_scope() -> None:

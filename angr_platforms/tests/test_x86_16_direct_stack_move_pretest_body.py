@@ -9,6 +9,7 @@ from angr.analyses.decompiler.structured_codegen.c import (
     CAssignment,
     CBinaryOp,
     CConstant,
+    CIfBreak,
     CStatements,
     CVariable,
     CWhileLoop,
@@ -128,6 +129,7 @@ def _surface(
     *,
     assignment_in_root: bool = True,
     duplicate_loop: bool = False,
+    header_in_leading_break: bool = False,
 ) -> tuple[object, _Codegen, CStatements, CStatements, CAssignment, CWhileLoop]:
     """Build the hoisted-definition AST shape seen in sidecar-free PercolateUp."""
     project = SimpleNamespace(arch=Arch86_16())
@@ -202,12 +204,29 @@ def _surface(
             tags={"ins_addr": 0x10A0D},
         )
         nested_use = CStatements([destination_use], codegen=codegen)
-        body = CStatements(
-            [body_marker, nested_use],
-            codegen=codegen,
-        )
+        body_items: list[object] = [body_marker, nested_use]
+        if header_in_leading_break:
+            body_items.insert(
+                0,
+                CIfBreak(
+                    CBinaryOp(
+                        "CmpEQ",
+                        source,
+                        CConstant(0, word, codegen=codegen),
+                        codegen=codegen,
+                        tags={"ins_addr": 0x109F9},
+                    ),
+                    codegen=codegen,
+                ),
+            )
+        body = CStatements(body_items, codegen=codegen)
         loop = CWhileLoop(
-            CConstant(1, word, codegen=codegen, tags={"ins_addr": 0x109F9}),
+            CConstant(
+                1,
+                word,
+                codegen=codegen,
+                tags={} if header_in_leading_break else {"ins_addr": 0x109F9},
+            ),
             body,
             codegen=codegen,
         )
@@ -277,6 +296,20 @@ def test_pretest_body_replay_is_idempotent() -> None:
     assert body.statements[1] is assignment
     stats = codegen._inertia_direct_stack_move_pretest_body_placement_8616
     assert stats.already_materialized_count == 1
+
+
+def test_moves_body_definition_when_header_is_in_leading_break() -> None:
+    project, codegen, root, body, assignment, loop = _surface(
+        header_in_leading_break=True,
+    )
+
+    assert materialize_direct_stack_move_pretest_body_ownership_8616(
+        project,
+        codegen,
+        _function(),
+    )
+    assert root.statements == [root.statements[0], loop]
+    assert assignment in body.statements
 
 
 def test_loop_entry_service_falls_through_to_pretest_body_owner() -> None:

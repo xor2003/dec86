@@ -45,6 +45,7 @@ from .direct_stack_move_pretest_body_evidence import (
     DirectStackMovePretestBodyEvidence8616,
     recover_direct_stack_move_pretest_body_evidence_8616,
 )
+from .pretest_condition_surface import pretest_condition_surface_8616
 
 __all__ = (
     "DirectStackMovePretestBodyStats8616",
@@ -140,9 +141,11 @@ def _pretest_body_sites_8616(
             statements,
             list,
         ):
+            surface = pretest_condition_surface_8616(node)
             condition_tags = frozenset(
                 comparable_address_8616(project, address, evidence.move_addr)
-                for address in _tree_tag_addresses_8616(_ast_field_8616(node, "condition"))
+                for condition in surface.conditions
+                for address in _tree_tag_addresses_8616(condition)
             )
             body_tags = frozenset(
                 comparable_address_8616(project, address, evidence.move_addr)

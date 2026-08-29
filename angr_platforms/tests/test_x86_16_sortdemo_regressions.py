@@ -503,8 +503,12 @@ def test_sortdemo_bubblesort_direct_path_validates_and_preserves_array_calls():
     assert final_body.count("iLimit = iSwitch;") == 1
     initial_limit = final_body.index("iLimit = cRow;")
     outer_loop = final_body.index("do", initial_limit)
-    for_header = "for (iRow = 0; iLimit > iRow; iRow = iRow + 1)"
-    if for_header in final_body:
+    for_headers = (
+        "for (iRow = 0; iLimit > iRow; iRow = iRow + 1)",
+        "for (iRow = 0; iLimit > iRow; iRow += 1)",
+    )
+    for_header = next((header for header in for_headers if header in final_body), None)
+    if for_header is not None:
         inner_loop = final_body.index(for_header, outer_loop)
         next_limit = final_body.index("iLimit = iSwitch;", inner_loop)
     else:
