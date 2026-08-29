@@ -34,6 +34,7 @@ from .callsite_summary import (
     CallsiteSummary8616,
     caller_return_use_evidence_by_addr_8616,
     callsite_target_name_for_project_8616,
+    structured_callsite_addr_8616,
 )
 from .helper_abi import (
     known_helper_is_variadic_8616,
@@ -49,7 +50,10 @@ from .lowering.return_type_evidence import (
     FunctionReturnClass8616,
     proven_function_return_class_8616,
 )
+from .lowering.stack_prototype_layout import stack_prototype_argument_layout_8616
 from .lowering.stack_prototype_materialization import FunctionParameterWidthFact8616
+from .lowering.stack_variable_coordinates import machine_bp_offset_for_stack_variable_8616
+from .pipeline.structured_ast_query_index import StructuredAstQueryIndex8616
 from .validation_call_argument_sources import (
     CallArgumentSourceDependencyFact8616,
     CallArgumentSourceIssue8616,
@@ -73,7 +77,10 @@ __all__ = [
     "FunctionReturnClassIssue8616",
     "FunctionReturnClassIssueKind8616",
     "FunctionReturnClassValidationReport8616",
+    "RequiredCallMatch8616",
+    "RequiredCallValidationSurface8616",
     "RequiredCallsiteValidationReport8616",
+    "build_required_call_validation_surface_8616",
     "validate_call_argument_classes_8616",
     "validate_call_interfaces_8616",
     "validate_function_parameters_8616",
@@ -149,7 +156,7 @@ class _CVariableStorageSurface8616(Protocol):
 
 
 class _ProjectArchSurface8616(Protocol):
-    """Third-party project architecture used for ABI pointer width."""
+    """Third-party project architecture used to bind emitted C types."""
 
     arch: Arch
 
@@ -257,6 +264,14 @@ class FunctionParameterValidationReport8616:
     def issue_tokens(self) -> tuple[str, ...]:
         """Return deterministic issue tokens for canonical tail snapshots."""
         return tuple(issue.token() for issue in self.issues)
+
+
+@dataclass(frozen=True, slots=True)
+class _FinalFunctionParameter8616:
+    """One final logical C type joined to its exact ABI stack storage width."""
+
+    parameter_type: SimType
+    storage_width_bytes: int
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -419,12 +434,20 @@ class RequiredCallsiteValidationReport8616:
 
 
 @dataclass(frozen=True, slots=True)
-class _RequiredCallMatch8616:
+class RequiredCallMatch8616:
     """One canonical required summary and its surviving final call, if any."""
 
     summary_key: int
     summary: CallsiteSummary8616
     call: CFunctionCall | None
+
+
+@dataclass(frozen=True, slots=True)
+class RequiredCallValidationSurface8616:
+    """Canonical required-call matches shared by one validation request."""
+
+    raw_summary_count: int
+    matches: tuple[RequiredCallMatch8616, ...]
 
 
 def _final_function_return_surface_8616(
@@ -505,42 +528,70 @@ def _parameter_evidence_8616(
 
 def _final_function_parameters_8616(
     codegen: object,
-) -> tuple[int | None, dict[int, SimType] | None]:
-    """Map final emitted parameter types by exact positive BP offset."""
+) -> tuple[int | None, dict[int, _FinalFunctionParameter8616] | None]:
+    """Map final parameter types and ABI storage by exact positive BP offset."""
     try:
         cfunc = cast(_CodegenFunctionSurface8616, codegen).cfunc
         surface = cast(_CFunctionParameterSurface8616, cfunc)
         function_addr = surface.addr
         function_type = surface.functy
-        raw_arg_list = surface.arg_list
     except AttributeError:
         return None, None
     normalized_addr = function_addr if isinstance(function_addr, int) else None
-    if (
-        not isinstance(function_type, SimTypeFunction)
-        or not isinstance(raw_arg_list, Sequence)
-        or isinstance(raw_arg_list, (str, bytes))
-    ):
+    if not isinstance(function_type, SimTypeFunction):
         return normalized_addr, None
     arg_types = tuple(function_type.args or ())
-    arg_list = tuple(raw_arg_list)
+    try:
+        raw_arg_list = surface.arg_list
+    except AttributeError:
+        raw_arg_list = ()
+    arg_list = (
+        tuple(raw_arg_list)
+        if isinstance(raw_arg_list, Sequence) and not isinstance(raw_arg_list, (str, bytes))
+        else ()
+    )
+    if arg_types and not arg_list:
+        try:
+            arch = cast(_ProjectArchSurface8616, cast(_CodegenProjectSurface8616, codegen).project).arch
+        except AttributeError:
+            return normalized_addr, None
+        layout = stack_prototype_argument_layout_8616(function_type, arch)
+        if len(layout) != len(arg_types):
+            return normalized_addr, None
+        return normalized_addr, {
+            argument.offset: _FinalFunctionParameter8616(
+                parameter_type=argument.argument_type,
+                storage_width_bytes=argument.storage_width,
+            )
+            for argument in layout
+        }
     if len(arg_types) != len(arg_list):
         return normalized_addr, None
-    by_offset: dict[int, SimType] = {}
+    by_offset: dict[int, _FinalFunctionParameter8616] = {}
     for cvar, arg_type in zip(arg_list, arg_types, strict=False):
         try:
             variable = cast(_CVariableStorageSurface8616, cvar).variable
         except AttributeError:
             return normalized_addr, None
+        bp_offset = (
+            machine_bp_offset_for_stack_variable_8616(codegen, variable)
+            if isinstance(variable, SimStackVariable)
+            else None
+        )
         if (
             not isinstance(variable, SimStackVariable)
-            or not isinstance(variable.offset, int)
-            or variable.offset < 4
+            or not isinstance(bp_offset, int)
+            or bp_offset < 4
+            or not isinstance(variable.size, int)
+            or variable.size <= 0
             or not isinstance(arg_type, SimType)
-            or variable.offset in by_offset
+            or bp_offset in by_offset
         ):
             return normalized_addr, None
-        by_offset[variable.offset] = arg_type
+        by_offset[bp_offset] = _FinalFunctionParameter8616(
+            parameter_type=arg_type,
+            storage_width_bytes=variable.size,
+        )
     return normalized_addr, by_offset
 
 
@@ -548,7 +599,7 @@ def _parameter_type_width_bytes_8616(
     project: object,
     parameter_type: SimType,
 ) -> int | None:
-    """Return the ABI width of one emitted C parameter type."""
+    """Return the logical C width of one emitted parameter type."""
     if isinstance(
         parameter_type,
         (SimTypePointer, SimTypeArray, SimTypeFixedSizeArray),
@@ -561,11 +612,10 @@ def _parameter_type_width_bytes_8616(
         except AttributeError:
             return None
         return width_bytes if isinstance(width_bytes, int) and width_bytes > 0 else None
-    else:
-        try:
-            bits = cast(_SizedTypeSurface8616, parameter_type).size
-        except (AttributeError, ValueError):
-            return None
+    try:
+        bits = cast(_SizedTypeSurface8616, parameter_type).size
+    except (AttributeError, ValueError):
+        return None
     if not isinstance(bits, int) or bits <= 0:
         return None
     return max(1, (bits + 7) // 8)
@@ -628,17 +678,18 @@ def validate_function_parameters_8616(
             continue
         expected_width = next(iter(widths))
         classified_count += 1
-        parameter_type = (
+        parameter = (
             parameter_types.get(stack_offset)
             if parameter_types is not None
             else None
         )
-        actual_width = (
-            _parameter_type_width_bytes_8616(project, parameter_type)
-            if parameter_type is not None
+        logical_width = (
+            _parameter_type_width_bytes_8616(project, parameter.parameter_type)
+            if parameter is not None
             else None
         )
-        if actual_width is None:
+        storage_width = parameter.storage_width_bytes if parameter is not None else None
+        if logical_width is None or storage_width is None:
             issues.append(
                 FunctionParameterIssue8616(
                     kind=FunctionParameterIssueKind8616.TYPE_SURFACE_UNAVAILABLE,
@@ -647,28 +698,31 @@ def validate_function_parameters_8616(
                     expected_width_bytes=expected_width,
                 )
             )
-        elif actual_width != expected_width:
+        elif logical_width > storage_width or expected_width not in {
+            logical_width,
+            storage_width,
+        }:
             issues.append(
                 FunctionParameterIssue8616(
                     kind=FunctionParameterIssueKind8616.WIDTH_MISMATCH,
                     function_addr=function_addr,
                     stack_offset=stack_offset,
                     expected_width_bytes=expected_width,
-                    actual_width_bytes=actual_width,
+                    actual_width_bytes=logical_width,
                 )
             )
         else:
             materialized_count += 1
     for stack_offset in pointer_offsets:
         classified_count += 1
-        parameter_type = (
+        parameter = (
             parameter_types.get(stack_offset)
             if parameter_types is not None
             else None
         )
         actual_class = (
-            _parameter_type_class_8616(parameter_type)
-            if parameter_type is not None
+            _parameter_type_class_8616(parameter.parameter_type)
+            if parameter is not None
             else None
         )
         if actual_class is None:
@@ -749,9 +803,13 @@ def validate_function_return_class_8616(
 
 def _callsite_addr_8616(node: CFunctionCall) -> int | None:
     """Return an exact instruction address from structured node tags."""
-    tags = node.tags
-    if not isinstance(tags, Mapping):
-        return None
+    exact_callsite = structured_callsite_addr_8616(node)
+    if isinstance(exact_callsite, int):
+        return exact_callsite
+    try:
+        tags = dict(node.tags.items())
+    except (AttributeError, TypeError, ValueError):
+        tags = {}
     for key in ("ins_addr", "insn_addr", "stmt_addr", "addr"):
         value = tags.get(key)
         if isinstance(value, int):
@@ -896,17 +954,21 @@ def _call_matches_resolved_target_name_8616(
     )
 
 
-def _required_call_matches_8616(
+def build_required_call_validation_surface_8616(
     codegen: object,
     root: object,
-) -> tuple[int, tuple[_RequiredCallMatch8616, ...]]:
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
+) -> RequiredCallValidationSurface8616:
     """Match canonical non-probe callsite summaries to surviving C calls."""
+    if query_index is not None:
+        query_index.require_root(root)
     try:
         raw_summaries = cast(_CodegenCallsiteSurface8616, codegen)._inertia_callsite_summaries
     except AttributeError:
         raw_summaries = None
     if not isinstance(raw_summaries, Mapping):
-        return 0, ()
+        return RequiredCallValidationSurface8616(0, ())
     typed_items = tuple(
         (key, summary)
         for key, summary in raw_summaries.items()
@@ -917,14 +979,15 @@ def _required_call_matches_8616(
         for key, summary in typed_items
         if not summary.stack_probe_helper and isinstance(summary.target_addr, int)
     )
-    calls = tuple(node for node in _iter_c_nodes_deep_8616(root) if isinstance(node, CFunctionCall))
+    nodes = query_index.nodes if query_index is not None else _iter_c_nodes_deep_8616(root)
+    calls = tuple(node for node in nodes if isinstance(node, CFunctionCall))
     try:
         project = cast(_CodegenProjectSurface8616, codegen).project
     except AttributeError:
         project = None
     required = _canonical_required_summary_items_8616(required_candidates, calls)
     available = list(calls)
-    matches: list[_RequiredCallMatch8616] = []
+    matches: list[RequiredCallMatch8616] = []
     for summary_key, summary in sorted(
         required,
         key=lambda item: (item[1].callsite_addr, item[1].target_addr or -1, item[0]),
@@ -1015,18 +1078,25 @@ def _required_call_matches_8616(
             if len(named_matches) == 1:
                 match_index = named_matches[0]
         if match_index is None:
-            matches.append(_RequiredCallMatch8616(summary_key, summary, None))
+            matches.append(RequiredCallMatch8616(summary_key, summary, None))
             continue
-        matches.append(_RequiredCallMatch8616(summary_key, summary, available.pop(match_index)))
-    return len(typed_items), tuple(matches)
+        matches.append(RequiredCallMatch8616(summary_key, summary, available.pop(match_index)))
+    return RequiredCallValidationSurface8616(len(typed_items), tuple(matches))
 
 
 def validate_required_callsites_8616(
     codegen: object,
     root: object,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
+    surface: RequiredCallValidationSurface8616 | None = None,
 ) -> RequiredCallsiteValidationReport8616:
     """Match non-probe typed callsite summaries to final structured calls."""
-    raw_fact_count, matches = _required_call_matches_8616(codegen, root)
+    surface = surface or build_required_call_validation_surface_8616(
+        codegen, root, query_index=query_index
+    )
+    raw_fact_count = surface.raw_summary_count
+    matches = surface.matches
     missing = tuple(
         _required_summary_token_8616(match.summary)
         for match in matches
@@ -1217,9 +1287,15 @@ def _materialized_argument_class_8616(
 def validate_call_argument_classes_8616(
     codegen: object,
     root: object,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
+    surface: RequiredCallValidationSurface8616 | None = None,
 ) -> CallArgumentClassValidationReport8616:
     """Refuse final arguments that contradict binary classes or dependencies."""
-    _raw_summary_count, matches = _required_call_matches_8616(codegen, root)
+    surface = surface or build_required_call_validation_surface_8616(
+        codegen, root, query_index=query_index
+    )
+    matches = surface.matches
     proven_matches = tuple(
         match
         for match in matches
@@ -1228,7 +1304,7 @@ def validate_call_argument_classes_8616(
     raw_class_fact_count = sum(len(match.summary.logical_arg_classes) for match in matches)
     normalized_class_fact_count = sum(len(match.summary.logical_arg_classes) for match in proven_matches)
     classified: list[
-        tuple[_RequiredCallMatch8616, int, CallsiteArgumentClass8616, object]
+        tuple[RequiredCallMatch8616, int, CallsiteArgumentClass8616, object]
     ] = []
     for match in proven_matches:
         assert match.call is not None
@@ -1241,7 +1317,7 @@ def validate_call_argument_classes_8616(
             for index, expected_class in enumerate(expected_classes)
         )
     source_facts: list[
-        tuple[_RequiredCallMatch8616, CallArgumentSourceDependencyFact8616]
+        tuple[RequiredCallMatch8616, CallArgumentSourceDependencyFact8616]
     ] = []
     raw_source_fact_count = 0
     normalized_source_fact_count = 0
@@ -1320,15 +1396,22 @@ def validate_call_argument_classes_8616(
 def validate_call_interfaces_8616(
     codegen: object,
     root: object,
+    *,
+    query_index: StructuredAstQueryIndex8616 | None = None,
+    surface: RequiredCallValidationSurface8616 | None = None,
 ) -> CallInterfaceValidationReport8616:
     """Refuse final direct calls whose arity contradicts typed binary facts."""
-    raw_fact_count, matches = _required_call_matches_8616(codegen, root)
+    surface = surface or build_required_call_validation_surface_8616(
+        codegen, root, query_index=query_index
+    )
+    raw_fact_count = surface.raw_summary_count
+    matches = surface.matches
     matched = tuple(match for match in matches if match.call is not None)
     try:
         project = cast(_CodegenProjectSurface8616, codegen).project
     except AttributeError:
         project = None
-    classified: list[tuple[_RequiredCallMatch8616, int]] = []
+    classified: list[tuple[RequiredCallMatch8616, int]] = []
     for match in matched:
         expected_count = (
             _expected_call_argument_count_8616(match.summary, match.call, project)

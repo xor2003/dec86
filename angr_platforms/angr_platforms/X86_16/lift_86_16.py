@@ -20,6 +20,7 @@ from pyvex.lifting import register
 from pyvex.lifting.util import GymratLifter, Instruction, JumpKind, ParseError
 from pyvex.lifting.util.syntax_wrapper import VexValue
 from pyvex.lifting.util.vex_helper import Type
+from pyvex.stmt import Dirty
 
 from inertia_decompiler.runtime_support import AnalysisTimeout
 
@@ -122,6 +123,18 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
     simple_semantics: tuple[Any, ...] | None
     condition_value_semantics: tuple[Any, ...] | None
     _past_instructions: list[Any] | tuple[Any, ...] = ()
+
+    def dirty(self, ret_type: object, func_name: str, args: list[object]) -> Any:
+        """Emit one Dirty helper with complete no-memory-effect metadata."""
+        result = super().dirty(ret_type, func_name, args)
+        statement = self.irsb_c.irsb.statements[-1]
+        if isinstance(statement, Dirty):
+            if func_name == "x86g_dirtyhelper_OUT":
+                statement.tmp = 0xFFFFFFFF
+            statement.mFx = "Ifx_None"
+            statement.mSize = 0
+            statement.nFxState = 0
+        return result
     _future_instructions: list[Any] | tuple[Any, ...] = ()
     _inertia_consumed_last_condition_8616: IRCondition
     _inertia_consumed_last_condition_addr_8616: int | None
@@ -286,7 +299,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     and not self.instr.invalid_opcode_extension
                     and matched_semantics
                     and str(matched_semantics[0]).startswith(
-                        ("add_reg_", "cmp_", "mov_reg_", "sub_reg_")
+                        ("add_reg_", "cmp_", "mov_reg_", "sub_reg_", "test_")
                     )
                     else None
                 )
@@ -304,12 +317,8 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     or self.instr.invalid_opcode_extension
                 ):
                     matched_semantics = None
-                if matched_semantics and str(matched_semantics[0]).startswith("add_reg_"):
-                    self.condition_value_semantics = matched_semantics
-                    self.simple_semantics = None
-                else:
-                    self.simple_semantics = matched_semantics
-                    self.condition_value_semantics = full_lift_value_semantics
+                self.simple_semantics = matched_semantics
+                self.condition_value_semantics = full_lift_value_semantics
                 if self.simple_semantics is not None:
                     bitstrm.bytepos = self.start + cs_prefix_len + self.cs.size
                     self.bitwidth = (cs_prefix_len + self.cs.size) * 8
@@ -479,6 +488,7 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         src_imm = self._imm16_value(src)
         src_imm8 = self._imm8_value(src)
         dst_mem = self._bp_mem(dst)
+        dst_mem8 = self._bp_mem(dst, width_bytes=1)
         src_mem = self._bp_mem(src)
         src_mem8 = self._bp_mem(src, width_bytes=1)
         dst_abs_mem = self._direct_mem16(dst)
@@ -522,6 +532,10 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         if cmp_sem is not None:
             return cmp_sem
         if mnemonic == "test" and self._next_instruction_is_simple_jcc_from_bytes_8616():
+            if dst_mem8 is not None and src_imm8 is not None:
+                return ("test_mem_imm8", dst_mem8, src_imm8)
+            if dst_mem is not None and src_imm is not None:
+                return ("test_mem_imm16", dst_mem, src_imm)
             if dst_abs_mem8 is not None and src_imm8 is not None:
                 return ("test_abs_imm8", dst_abs_mem8, src_imm8)
             if dst_abs_mem is not None and src_imm is not None:
@@ -805,22 +819,35 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
         return _impl()
 
     def _lift_simple_test_8616(self, kind: str) -> bool:
-        """Lift a direct-memory TEST into typed masked-condition evidence."""
-        if kind not in {"test_abs_imm8", "test_abs_imm16"}:
+        """Lift a direct or frame-relative TEST into typed masked-condition evidence."""
+        if kind not in {
+            "test_abs_imm8",
+            "test_abs_imm16",
+            "test_mem_imm8",
+            "test_mem_imm16",
+        }:
             return False
-        _kind, offset, immediate = cast(tuple[str, int, int], self.simple_semantics)
-        width_bits = 8 if kind == "test_abs_imm8" else 16
-        value = self._load_abs8(offset) if width_bits == 8 else self._load_abs16(offset)
+        _kind, location, immediate = cast(tuple[str, object, int], self.simple_semantics)
+        width_bits = 8 if kind.endswith("imm8") else 16
+        if kind.startswith("test_mem_"):
+            memory = cast(_BPMemorySpec8616, location)
+            value = self._load_mem8(memory) if width_bits == 8 else self._load_mem16(memory)
+            typed_value = self._condition_stack_value_8616(memory, width_bits=width_bits)
+        else:
+            offset = cast(int, location)
+            value = self._load_abs8(offset) if width_bits == 8 else self._load_abs16(offset)
+            typed_value = self._condition_direct_ds_value_8616(offset, width_bits=width_bits)
+        if typed_value is None:
+            return False
         mask = self.constant(immediate, Type.int_8) if width_bits == 8 else self._const16(immediate)
         result = value & mask
-        typed_value = self._condition_direct_ds_value_8616(offset, width_bits=width_bits)
         typed_mask = self._condition_const_value_8616(immediate, width_bits=width_bits)
         normalized = IRBinaryValue(op="and", lhs=typed_value, rhs=typed_mask, size=width_bits // 8)
         self._record_test_condition_source(
             result,
             width_bits=width_bits,
             normalized_value=normalized,
-            producer_semantics=(kind, offset, immediate),
+            producer_semantics=(kind, location, immediate),
         )
         self.emu.set_last_condition(
             IRCondition(op="masked_zero", args=(typed_value, typed_mask), expr=(kind,))
@@ -2172,6 +2199,37 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                     normalized_rhs=typed_operands[1],
                     producer_semantics=semantics,
                 )
+        if semantics is not None and str(semantics[0]).startswith("test_"):
+            kind, location, immediate = cast(tuple[str, object, int], semantics)
+            width_bits = 8 if kind.endswith("imm8") else 16
+            typed_value = (
+                self._condition_stack_value_8616(
+                    cast(_BPMemorySpec8616, location),
+                    width_bits=width_bits,
+                )
+                if kind.startswith("test_mem_")
+                else self._condition_direct_ds_value_8616(
+                    cast(int, location),
+                    width_bits=width_bits,
+                )
+            )
+            if typed_value is not None:
+                typed_mask = self._condition_const_value_8616(
+                    immediate,
+                    width_bits=width_bits,
+                )
+                normalized = IRBinaryValue(
+                    op="and",
+                    lhs=typed_value,
+                    rhs=typed_mask,
+                    size=width_bits // 8,
+                )
+                self._record_test_condition_source(
+                    normalized,
+                    width_bits=width_bits,
+                    normalized_value=normalized,
+                    producer_semantics=semantics,
+                )
         written_registers = set(self._full_lift_written_condition_registers_8616())
         if result is not None:
             written_registers.add(result[0])
@@ -2408,6 +2466,29 @@ class Instruction_ANY(Instruction):  # type: ignore[misc]  # dynamic pyvex base
                 fallthrough_target=fallthrough_target,
             )
         return None
+
+    def record_loop_counter_condition_8616(
+        self,
+        counter_name: str,
+        counter_size: int,
+        displacement: int,
+        instruction_size: int,
+    ) -> None:
+        """Record the post-decrement counter condition owned by plain LOOP."""
+        block_addr = getattr(self.emu, "_inertia_current_block_addr", self.addr)
+        self._record_typed_condition_8616(
+            ConditionIR(
+                op="nonzero",
+                lhs=IRValue(MemSpace.REG, name=counter_name, size=counter_size),
+                source=("loop",),
+                src_insn=self.addr,
+                block_addr=block_addr,
+                producer_insn=self.addr,
+                operand_bind_insn=self.addr,
+                taken_target=self.addr + instruction_size + displacement,
+                fallthrough_target=self.addr + instruction_size,
+            )
+        )
 
     def _emit_simple_jcc(self, taken_cond: Any, target: Any) -> None:
         # Before emitting, record the typed ConditionIR if source available

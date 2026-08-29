@@ -8,12 +8,14 @@ from angr.analyses.decompiler.structured_codegen.c import (
 )
 from angr.sim_type import (
     SimTypeBottom,
+    SimTypeChar,
     SimTypeFunction,
     SimTypeLong,
     SimTypePointer,
     SimTypeShort,
 )
 from angr.sim_variable import SimStackVariable
+from angr_platforms.X86_16 import validation_calls as validation_calls_module
 from angr_platforms.X86_16.callsite_summary import (
     CallerReturnUseEvidence8616,
     CallerReturnUseVerdict8616,
@@ -27,6 +29,7 @@ from angr_platforms.X86_16.lowering.segmented_memory_lowering import (
 from angr_platforms.X86_16.lowering.stack_prototype_materialization import (
     FunctionParameterWidthFact8616,
 )
+from angr_platforms.X86_16.pipeline.structured_ast_query_index import StructuredAstQueryIndex8616
 from angr_platforms.X86_16.tail_validation import (
     X86_16TailValidationSummary,
     build_x86_16_tail_validation_cached_result,
@@ -148,19 +151,23 @@ def _set_parameter_surface(
     parameter_types: tuple[object, ...],
     *,
     offsets: tuple[int, ...],
+    storage_widths: tuple[int, ...] | None = None,
     statements: CStatements | None = None,
 ) -> None:
     """Install final C parameter types and their exact BP storage identities."""
     assert len(parameter_types) == len(offsets)
+    if storage_widths is None:
+        storage_widths = (2,) * len(offsets)
+    assert len(storage_widths) == len(offsets)
     variables = tuple(
         SimStackVariable(
             offset,
-            2,
+            storage_width,
             base="bp",
             name=f"arg_{offset:x}",
             region=0x1000,
         )
-        for offset in offsets
+        for offset, storage_width in zip(offsets, storage_widths, strict=True)
     )
     arg_list = [
         CVariable(variable, variable_type=parameter_type, codegen=codegen)
@@ -200,7 +207,52 @@ def test_function_parameter_validation_refuses_width_mismatch() -> None:
     codegen._inertia_function_parameter_width_facts_8616 = (
         FunctionParameterWidthFact8616(stack_offset=4, width_bytes=2),
     )
-    _set_parameter_surface(codegen, (SimTypeLong(False),), offsets=(4,))
+    _set_parameter_surface(
+        codegen,
+        (SimTypeLong(False),),
+        offsets=(4,),
+        storage_widths=(4,),
+    )
+
+    report = validate_function_parameters_8616(codegen.project, codegen)
+
+    assert report.passed is False
+    assert report.issue_tokens() == (
+        "function-parameter:width-mismatch:function=0x1000:bp=+0x4:"
+        "expected-width=2:actual-width=4",
+    )
+
+
+def test_function_parameter_validation_separates_char_type_from_word_storage() -> None:
+    codegen = _Codegen()
+    codegen._inertia_function_parameter_width_facts_8616 = (
+        FunctionParameterWidthFact8616(stack_offset=4, width_bytes=2),
+    )
+    _set_parameter_surface(
+        codegen,
+        (SimTypeChar(False),),
+        offsets=(4,),
+        storage_widths=(2,),
+    )
+
+    report = validate_function_parameters_8616(codegen.project, codegen)
+
+    assert report.passed
+    assert report.classified_fact_count == 1
+    assert report.materialized_count == 1
+
+
+def test_function_parameter_validation_refuses_type_wider_than_storage() -> None:
+    codegen = _Codegen()
+    codegen._inertia_function_parameter_width_facts_8616 = (
+        FunctionParameterWidthFact8616(stack_offset=4, width_bytes=2),
+    )
+    _set_parameter_surface(
+        codegen,
+        (SimTypeLong(False),),
+        offsets=(4,),
+        storage_widths=(2,),
+    )
 
     report = validate_function_parameters_8616(codegen.project, codegen)
 
@@ -422,6 +474,88 @@ def test_required_callsite_validation_matches_exact_node_identity() -> None:
     assert report.raw_fact_count == 1
     assert report.materialized_count == 1
     assert report.failure_count == 0
+
+
+def test_required_callsite_validation_matches_non_mapping_exact_tags() -> None:
+    """Exact Rust-backed tags distinguish reversed same-target calls."""
+
+    class _TagMap:
+        def __init__(self, values: dict[str, int]) -> None:
+            self._values = dict(values)
+
+        def items(self):
+            return self._values.items()
+
+    codegen = _Codegen()
+    first = CFunctionCall("apply_twice", None, [], tags={}, codegen=codegen)
+    second = CFunctionCall("apply_twice", None, [], tags={}, codegen=codegen)
+    first.tags = _TagMap({"ins_addr": 0x1010})
+    second.tags = _TagMap({"ins_addr": 0x1020})
+    first_summary = _summary(arg_count=0)
+    second_summary = CallsiteSummary8616(
+        callsite_addr=0x1020,
+        target_addr=first_summary.target_addr,
+        return_addr=0x1023,
+        kind=first_summary.kind,
+        arg_count=0,
+        arg_widths=(),
+        stack_cleanup=first_summary.stack_cleanup,
+        return_register=first_summary.return_register,
+        return_used=first_summary.return_used,
+    )
+    codegen._inertia_callsite_summaries = {1: first_summary, 2: second_summary}
+    root = CStatements([second, first], codegen=codegen)
+
+    report = validate_required_callsites_8616(codegen, root)
+
+    assert report.passed
+    assert report.materialized_count == 2
+
+
+def test_required_callsite_validation_consumes_shared_query_index(monkeypatch) -> None:
+    codegen = _Codegen()
+    call = CFunctionCall("apply_twice", None, [], tags={"ins_addr": 0x1010}, codegen=codegen)
+    root = CStatements([call], codegen=codegen)
+    codegen._inertia_callsite_summaries = {id(call): _summary()}
+    query_index = StructuredAstQueryIndex8616.build(root)
+
+    def fail_rewalk(_root: object):
+        raise AssertionError("shared validation query index must prevent a root rewalk")
+        yield
+
+    monkeypatch.setattr(validation_calls_module, "_iter_c_nodes_deep_8616", fail_rewalk)
+
+    report = validate_required_callsites_8616(codegen, root, query_index=query_index)
+
+    assert report.passed
+
+
+def test_call_validators_consume_one_shared_match_surface(monkeypatch) -> None:
+    codegen = _Codegen()
+    call = CFunctionCall("apply_twice", None, [], tags={"ins_addr": 0x1010}, codegen=codegen)
+    root = CStatements([call], codegen=codegen)
+    codegen._inertia_callsite_summaries = {
+        id(call): _summary(arg_count=0, logical_arg_widths=(), logical_arg_classes=())
+    }
+    query_index = StructuredAstQueryIndex8616.build(root)
+    surface = validation_calls_module.build_required_call_validation_surface_8616(
+        codegen,
+        root,
+        query_index=query_index,
+    )
+
+    def fail_rebuild(*_args: object, **_kwargs: object):
+        raise AssertionError("shared required-call surface must prevent rematching")
+
+    monkeypatch.setattr(
+        validation_calls_module,
+        "build_required_call_validation_surface_8616",
+        fail_rebuild,
+    )
+
+    assert validate_required_callsites_8616(codegen, root, surface=surface).passed
+    assert validate_call_interfaces_8616(codegen, root, surface=surface).passed
+    assert validate_call_argument_classes_8616(codegen, root, surface=surface).passed
 
 
 def test_required_callsite_validation_matches_rebased_slice_target_identity() -> None:
@@ -1189,6 +1323,7 @@ def test_final_semantic_refresh_promotes_function_parameter_failure() -> None:
         codegen,
         (SimTypeLong(False),),
         offsets=(4,),
+        storage_widths=(4,),
         statements=root,
     )
     codegen._inertia_tail_validation_snapshot = {

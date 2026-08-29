@@ -69,6 +69,9 @@ from angr_platforms.X86_16.lowering.segmented_global_loads import DirectGlobalSy
 from angr_platforms.X86_16.lowering.segmented_memory_lowering import (
     runtime_segment_push_source_cvar_8616,
 )
+from angr_platforms.X86_16.lowering.stack_variable_coordinates import (
+    record_stack_variable_coordinate_projection_8616,
+)
 from angr_platforms.X86_16.pipeline.errors import PipelineHardError
 from angr_platforms.X86_16.tail_validation import (
     collect_x86_16_tail_validation_summary,
@@ -9473,12 +9476,12 @@ def test_materialize_callsite_stack_arguments_uses_segmented_indirect_push_sourc
     structured_c = _scg.c
 
     argv = structured_c.CVariable(
-        SimStackVariable(6, 2, base="bp", name="argv", region=0x4010),
+        SimStackVariable(4, 2, base="bp", name="argv", region=0x4010),
         variable_type=SimTypeShort(False),
         codegen=codegen,
     )
     index = structured_c.CVariable(
-        SimStackVariable(-2, 2, base="bp", name="index", region=0x4010),
+        SimStackVariable(-4, 2, base="bp", name="index", region=0x4010),
         variable_type=SimTypeShort(False),
         codegen=codegen,
     )
@@ -9487,6 +9490,22 @@ def test_materialize_callsite_stack_arguments_uses_segmented_indirect_push_sourc
         argv.variable: {(argv, argv.variable_type)},
         index.variable: {(index, index.variable_type)},
     }
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=argv.variable,
+        cvar=argv,
+        bp_offset=6,
+        entry_sp_offset=4,
+        size=2,
+    )
+    record_stack_variable_coordinate_projection_8616(
+        codegen,
+        variable=index.variable,
+        cvar=index,
+        bp_offset=-2,
+        entry_sp_offset=-4,
+        size=2,
+    )
     call = CFunctionCall(
         "settextcolor",
         SimpleNamespace(addr=0x1544, name="settextcolor", block_addrs_set={0x1544}),
@@ -10955,3 +10974,58 @@ def test_prune_dead_stack_carriers_refuses_without_materialization_evidence():
 
     assert changed is False
     assert len(root.statements) == 2
+
+
+def test_refresh_callsite_summary_node_ids_preserves_non_dict_exact_callsite_tags():
+    """Rust-backed tag maps must prevent same-target calls from being swapped."""
+
+    class _TagMap:
+        def __init__(self, values):
+            self._values = dict(values)
+
+        def items(self):
+            return self._values.items()
+
+    project = _project()
+    codegen = _empty_codegen(project)
+    callee = SimpleNamespace(addr=0x5000, name="sub_5000")
+    first = CFunctionCall("sub_5000", callee, [], codegen=codegen)
+    second = CFunctionCall("sub_5000", callee, [], codegen=codegen)
+    first.tags = _TagMap({"ins_addr": 0x4010})
+    second.tags = _TagMap({"ins_addr": 0x4020})
+    codegen.cfunc.statements = CStatements(
+        [
+            CExpressionStatement(second, codegen=codegen),
+            CExpressionStatement(first, codegen=codegen),
+        ],
+        addr=0x4000,
+        codegen=codegen,
+    )
+    codegen.cfunc.body = codegen.cfunc.statements
+    first_summary = CallsiteSummary8616(
+        callsite_addr=0x4010,
+        target_addr=0x5000,
+        return_addr=0x4013,
+        kind="direct_near",
+        arg_count=0,
+        arg_widths=(),
+        stack_cleanup=None,
+        return_register=None,
+        return_used=False,
+    )
+    second_summary = CallsiteSummary8616(
+        callsite_addr=0x4020,
+        target_addr=0x5000,
+        return_addr=0x4023,
+        kind="direct_near",
+        arg_count=0,
+        arg_widths=(),
+        stack_cleanup=None,
+        return_register=None,
+        return_used=False,
+    )
+    summaries = {1: first_summary, 2: second_summary}
+
+    assert _refresh_callsite_summary_node_ids_8616(codegen, summaries) is True
+    assert summaries[id(first)].callsite_addr == 0x4010
+    assert summaries[id(second)].callsite_addr == 0x4020

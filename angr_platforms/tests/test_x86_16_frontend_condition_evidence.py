@@ -26,6 +26,9 @@ class _ConditionEmulator:
         """Store the latest typed condition."""
         self._last_condition = condition
 
+    def update_eflags_and(self, _lhs: object, _rhs: object) -> None:
+        """Accept one logical flag update through the shared EFLAGS owner."""
+
 
 def test_direct_byte_test_mask_is_classified_before_a_jcc() -> None:
     instruction = Instruction_ANY(
@@ -35,6 +38,86 @@ def test_direct_byte_test_mask_is_classified_before_a_jcc() -> None:
     )
 
     assert instruction.simple_semantics == ("test_abs_imm8", 0x1234, 1)
+
+
+def test_frame_byte_test_mask_is_classified_before_a_jcc() -> None:
+    instruction = Instruction_ANY(
+        bitstring.ConstBitStream(bytes=b"\xf6\x46\xfc\x01\x74\x02"),
+        Arch86_16(),
+        0x4000,
+    )
+
+    assert instruction.simple_semantics == ("test_mem_imm8", ("bp", 0xFFFC, -4), 1)
+
+
+def test_frame_byte_test_mask_emits_exact_typed_condition(monkeypatch) -> None:
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
+
+    pyvex.lift(
+        bytes.fromhex("f646fc01740290c3"),
+        0x4000,
+        Arch86_16(),
+        opt_level=0,
+    )
+
+    [condition] = Instruction_ANY._inertia_module_condition_cache[0x4000]
+    assert isinstance(condition, ConditionIR)
+    assert condition.op == "zero"
+    assert condition.src_insn == 0x4004
+    assert condition.producer_insn == 0x4000
+    assert condition.producer_semantics == (
+        "test_mem_imm8",
+        ("bp", 0xFFFC, -4),
+        1,
+    )
+    assert condition.lhs == IRBinaryValue(
+        op="and",
+        lhs=IRValue(
+            MemSpace.SS,
+            name="bp",
+            offset=-4,
+            size=1,
+            expr=("cmp-stack", "bp"),
+        ),
+        rhs=IRValue(MemSpace.CONST, const=1, size=1, expr=("cmp-imm",)),
+        size=1,
+    )
+
+
+def test_direct_word_test_full_lift_emits_exact_typed_condition(monkeypatch) -> None:
+    """A segmented word TEST must retain typed evidence through full lifting."""
+    monkeypatch.setattr(Instruction_ANY, "_inertia_module_condition_cache", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_pending_condition_sources_by_addr", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
+
+    pyvex.lift(
+        bytes.fromhex("f706b8030002740290c3"),
+        0x4000,
+        Arch86_16(),
+        opt_level=0,
+    )
+
+    [condition] = Instruction_ANY._inertia_module_condition_cache[0x4000]
+    assert isinstance(condition, ConditionIR)
+    assert condition.op == "zero"
+    assert condition.src_insn == 0x4006
+    assert condition.producer_insn == 0x4000
+    assert condition.producer_semantics == ("test_abs_imm16", 0x03B8, 0x0200)
+    assert condition.lhs == IRBinaryValue(
+        op="and",
+        lhs=IRValue(
+            MemSpace.DS,
+            offset=0x03B8,
+            size=2,
+            expr=("cmp-ds",),
+            memory_access_size=2,
+            memory_access_insn=0x4000,
+        ),
+        rhs=IRValue(MemSpace.CONST, const=0x0200, size=2, expr=("cmp-imm",)),
+        size=2,
+    )
 
 
 def test_inc_ax_before_jne_emits_exact_zero_boundary_condition(monkeypatch) -> None:
@@ -185,7 +268,6 @@ def test_direct_byte_test_mask_emits_exact_typed_access_evidence() -> None:
     instruction.simple_semantics = ("test_abs_imm8", 0x1234, 1)
     instruction._load_abs8 = lambda _offset: 5
     instruction.constant = lambda value, _type: value
-    instruction._update_logical_flags8 = lambda _result: None
 
     assert instruction._lift_simple_test_8616("test_abs_imm8")
     source = instruction.emu._inertia_last_condition_source
@@ -213,6 +295,8 @@ def test_direct_byte_test_mask_emits_exact_typed_access_evidence() -> None:
 
 def test_dec_jcc_does_not_mutate_disabled_affine_state(monkeypatch) -> None:
     monkeypatch.delenv("INERTIA_ENABLE_AFFINE_SWITCH_CONDITIONS", raising=False)
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_index_reg_state_8616", {})
+    monkeypatch.setattr(Instruction_ANY, "_inertia_condition_reg_value_state_8616", {})
     instruction = Instruction_ANY.__new__(Instruction_ANY)
     instruction.addr = 0x4000
     instruction.emu = SimpleNamespace(_inertia_current_block_addr=0x4000)
